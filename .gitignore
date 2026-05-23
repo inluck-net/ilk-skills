@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Editors
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local logs / scratch
+*.log
+*.tmp
+scratch/
+
+# Per-machine config that should not leave the developer's box —
+# personal project paths, secrets, IDE-generated rules, etc. Each
+# operator copies the *.example.json next to it and edits in place.
+skills/ilk-launcher/projects.json
+.cursor/
+**/.ilk-launcher/
+.ilk-data/

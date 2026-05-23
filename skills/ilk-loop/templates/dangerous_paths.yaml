@@ -1,0 +1,31 @@
+# 业务高敏感
+- "apps/auth/**"
+- "apps/users/**/permissions.py"
+- "apps/wallet/**"
+- "apps/payment/**"
+- "apps/orders/**/finalize*.py"
+
+# 数据 schema
+- "**/migrations/**"
+- "**/schema.sql"
+- "**/*.prisma"
+
+# 部署 / CI
+- ".github/**"
+- ".gitea/**"
+- ".gitlab-ci.yml"
+- "deploy/**"
+- "docker-compose*.yml"
+- "Dockerfile*"
+
+# 构建 / 运行时配置
+- "next.config.*"
+- "tsconfig*.json"
+- "pyproject.toml"
+- "requirements*.txt"
+- "package.json"          # 注意是 package.json 不是 lock，lock 单独看 major bump
+- "uv.lock"
+
+# 秘密 / 凭据相关
+- "**/.env*"
+- "secrets/**"

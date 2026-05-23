@@ -1,0 +1,7 @@
+{
+  "_comment": "Registry of projects ilk-launcher knows about. Copy this file to projects.json (which is gitignored) and edit to point at your real project paths. Only name + path here; per-project params live in <path>/docs/plans/.ilk-launch.json. Used by launch.ps1 -ProjectName <name>, launch.ps1 -All, and status_all.py.",
+  "projects": [
+    { "name": "example-a", "path": "C:\\path\\to\\your\\project-a" },
+    { "name": "example-b", "path": "C:\\path\\to\\your\\project-b" }
+  ]
+}

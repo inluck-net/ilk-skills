@@ -1,0 +1,5 @@
+# Force LF line endings for shell scripts and other unix-y formats so
+# Windows checkouts don't autocrlf them and break execution on macOS / Linux.
+*.sh   text eol=lf
+*.bash text eol=lf
+*.py   text eol=lf

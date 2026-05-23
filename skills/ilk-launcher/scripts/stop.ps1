@@ -1,0 +1,96 @@
+<#
+.SYNOPSIS
+  Stop a ilk-launcher-spawned window for a project (tree-kill).
+
+.DESCRIPTION
+  Reads <project>/.ilk-launcher/running.pid, runs taskkill /T /F /PID <n>
+  so the wrapper PowerShell, claude CLI, and any descendants all die
+  together (no orphaned API consumers). Removes the PID file on success.
+
+.PARAMETER ProjectPath
+  Absolute project root path.
+
+.PARAMETER ProjectName
+  Look up the path in ~/.cursor/skills/ilk-launcher/projects.json.
+
+.PARAMETER All
+  Stop every project that has a live PID file.
+
+.EXAMPLE
+  .\stop.ps1 -ProjectName es_api
+
+.EXAMPLE
+  .\stop.ps1 -ProjectPath C:\path\to\your\project
+
+.EXAMPLE
+  .\stop.ps1 -All
+#>
+[CmdletBinding(DefaultParameterSetName = 'ByName')]
+param(
+  [Parameter(ParameterSetName = 'ByPath', Mandatory)]
+  [string]$ProjectPath,
+
+  [Parameter(ParameterSetName = 'ByName', Mandatory)]
+  [string]$ProjectName,
+
+  [Parameter(ParameterSetName = 'All', Mandatory)]
+  [switch]$All
+)
+
+$ErrorActionPreference = 'Stop'
+
+$LauncherDir  = Join-Path $HOME '.cursor\skills\ilk-launcher'
+$ProjectsJson = Join-Path $LauncherDir 'projects.json'
+
+function Read-ProjectsRegistry {
+  if (-not (Test-Path $ProjectsJson)) { return @() }
+  $raw = Get-Content $ProjectsJson -Raw | ConvertFrom-Json
+  if ($null -eq $raw.projects) { return @() }
+  return $raw.projects
+}
+
+function Resolve-ProjectByName {
+  param([string]$Name)
+  $projects = Read-ProjectsRegistry
+  $match = $projects | Where-Object { $_.name -eq $Name }
+  if (-not $match) { throw "Project '$Name' not in projects.json." }
+  return [string]$match.path
+}
+
+function Stop-Project {
+  param([string]$Path, [string]$Name)
+  $pidFile = Join-Path $Path '.ilk-launcher\running.pid'
+  if (-not (Test-Path $pidFile)) {
+    Write-Host "[$Name] no PID file at $pidFile — nothing to stop." -ForegroundColor Yellow
+    return
+  }
+  $targetPid = [int]((Get-Content $pidFile -Raw).Trim())
+  $proc = Get-Process -Id $targetPid -ErrorAction SilentlyContinue
+  if (-not $proc) {
+    Write-Host "[$Name] PID $targetPid no longer alive. Cleaning stale PID file." -ForegroundColor Yellow
+    Remove-Item $pidFile -Force
+    return
+  }
+  Write-Host "[$Name] tree-killing PID $targetPid (and descendants)..." -ForegroundColor Cyan
+  & taskkill /T /F /PID $targetPid 2>&1 | Out-Host
+  Start-Sleep -Milliseconds 500
+  if (Get-Process -Id $targetPid -ErrorAction SilentlyContinue) {
+    Write-Warning "[$Name] PID $targetPid still alive after taskkill. Investigate manually."
+  } else {
+    Write-Host "[$Name] stopped." -ForegroundColor Green
+    Remove-Item $pidFile -Force
+  }
+}
+
+if ($All) {
+  $projects = Read-ProjectsRegistry
+  if (-not $projects -or $projects.Count -eq 0) {
+    throw "projects.json has no projects."
+  }
+  foreach ($p in $projects) { Stop-Project -Path $p.path -Name $p.name }
+  return
+}
+
+$resolvedPath = if ($ProjectPath) { $ProjectPath } else { Resolve-ProjectByName -Name $ProjectName }
+$resolvedName = if ($ProjectName) { $ProjectName } else { (Split-Path $resolvedPath -Leaf) }
+Stop-Project -Path $resolvedPath -Name $resolvedName
