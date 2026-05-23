@@ -77,12 +77,19 @@ fi
 
 # --- discovery --------------------------------------------------------------
 
-mapfile -t SKILL_NAMES < <(
-  find "$SKILLS_SRC" -maxdepth 1 -mindepth 1 -type d -name 'ilk-*' -exec basename {} \; | sort
-)
-mapfile -t COMMAND_FILES < <(
-  find "$COMMANDS_SRC" -maxdepth 1 -mindepth 1 -type f -name 'ilk*' -exec basename {} \; | sort
-)
+# macOS ships bash 3.2 (no `mapfile`), so build the arrays with a
+# portable while-read loop. The IFS reset + `-r` keeps names with
+# spaces / backslashes intact, though `ilk-*` directories don't have
+# either today.
+SKILL_NAMES=()
+while IFS= read -r line; do
+  SKILL_NAMES+=("$line")
+done < <(find "$SKILLS_SRC" -maxdepth 1 -mindepth 1 -type d -name 'ilk-*' -exec basename {} \; | sort)
+
+COMMAND_FILES=()
+while IFS= read -r line; do
+  COMMAND_FILES+=("$line")
+done < <(find "$COMMANDS_SRC" -maxdepth 1 -mindepth 1 -type f -name 'ilk*' -exec basename {} \; | sort)
 
 # --- planning ---------------------------------------------------------------
 
@@ -174,11 +181,6 @@ done
 
 # --- print plan -------------------------------------------------------------
 
-declare -A COUNTS=()
-for action in "${PLAN_ACTION[@]}"; do
-  COUNTS[$action]=$((${COUNTS[$action]:-0} + 1))
-done
-
 mode="DRY-RUN"
 [[ $apply -eq 1 ]] && mode="APPLY"
 
@@ -189,8 +191,17 @@ echo "commands found: ${#COMMAND_FILES[@]} (ilk*)"
 printf 'targets:        '
 printf '%s ' "${TARGET_NAMES[@]}"
 echo
+# bash 3.2 compatibility: count actions by dedup + grep -c instead of
+# `declare -A`. The action set is small and bounded; the few extra
+# greps are not measurable next to filesystem syscalls.
 printf 'actions:        '
-for k in "${!COUNTS[@]}"; do printf '%s=%s ' "$k" "${COUNTS[$k]}"; done
+if [[ ${#PLAN_ACTION[@]} -gt 0 ]]; then
+  while IFS= read -r k; do
+    [[ -z "$k" ]] && continue
+    cnt=$(printf '%s\n' "${PLAN_ACTION[@]}" | grep -c -x "$k" || true)
+    printf '%s=%s ' "$k" "$cnt"
+  done < <(printf '%s\n' "${PLAN_ACTION[@]}" | sort -u)
+fi
 echo
 echo
 
@@ -224,29 +235,37 @@ fi
 
 # --- execute ----------------------------------------------------------------
 
-declare -A RESULTS=()
+# bash 3.2 compatibility: collect outcome strings then count with grep,
+# instead of a `declare -A` associative array.
+RESULT_KEYS=()
 for i in "${!PLAN_LINK[@]}"; do
   action="${PLAN_ACTION[$i]}"
   link="${PLAN_LINK[$i]}"
   source="${PLAN_SOURCE[$i]}"
   if [[ "$action" == "skip-correct" ]]; then
-    RESULTS[noop]=$((${RESULTS[noop]:-0} + 1))
+    RESULT_KEYS+=("noop")
     continue
   fi
   if outcome="$(apply_action "$action" "$link" "$source")"; then
     key="$outcome"
     [[ "$outcome" == backed-up:* ]] && key="backed-up"
-    RESULTS[$key]=$((${RESULTS[$key]:-0} + 1))
+    RESULT_KEYS+=("$key")
     printf '[ok] %-12s %s\n' "$outcome" "$link"
   else
-    RESULTS[error]=$((${RESULTS[error]:-0} + 1))
+    RESULT_KEYS+=("error")
     printf '[ERR] %s\n' "$link" >&2
   fi
 done
 
 echo
 printf 'Results:'
-for k in "${!RESULTS[@]}"; do printf ' %s=%s' "$k" "${RESULTS[$k]}"; done
+if [[ ${#RESULT_KEYS[@]} -gt 0 ]]; then
+  while IFS= read -r k; do
+    [[ -z "$k" ]] && continue
+    cnt=$(printf '%s\n' "${RESULT_KEYS[@]}" | grep -c -x "$k" || true)
+    printf ' %s=%s' "$k" "$cnt"
+  done < <(printf '%s\n' "${RESULT_KEYS[@]}" | sort -u)
+fi
 echo
 
 # Bootstrap projects.json from example. projects.json is gitignored
