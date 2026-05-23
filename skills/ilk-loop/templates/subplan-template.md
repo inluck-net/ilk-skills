@@ -7,6 +7,14 @@ tickets:
 priority: P2
 estimated_steps: 0
 last_updated: YYYY-MM-DD
+# --- Meta-project routing (REQUIRED in meta projects, ignored otherwise) ---
+# In a meta project (the parent dir has .ilk-meta.json), every sub-plan must
+# declare exactly one member repo. The ilk-loop driver `cd`s into that
+# repo for all of this sub-plan's commits, local_checks, CI waits, and
+# ship-report generation. The value must match a `name` from .ilk-meta.json.
+# Cross-repo sub-plans are not allowed by convention — coordinate them at
+# the MASTER level via `depends_on` instead.
+repo: <member-name>
 # --- Sub-plan dependencies (see decomposition-principles.md §2-§3) ---
 depends_on: []                 # IDs of prior sub-plans whose status==shipped is required
 data_prereqs: []               # runtime data state required (distinct from depends_on)

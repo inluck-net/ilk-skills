@@ -39,8 +39,16 @@ python "$HOME\.cursor\skills\ilk-loop\scripts\ilk_paths.py" --start .
 
 It prints a JSON object. The fields you need:
 
-- `git_root` — must be non-null; if null, ask the user to run
-  `/ilk-plan` from inside a git repo
+- `project_root` — the actual root: a `.git` directory for single-repo
+  projects, or the parent of `.ilk-meta.json` for meta projects. Must
+  be non-null; if null, ask the user to run `/ilk-plan` from inside a
+  recognized project
+- `project_kind` — `"single"` or `"meta"`. See "Meta-project mode"
+  below — when `meta`, every sub-plan must declare a target member
+  repo
+- `meta_members` — non-empty list only when `project_kind == "meta"`;
+  each entry is `{name, path}`. The `name` values are the legal repo
+  tags you can assign to sub-plans in step 6
 - `project_key` — the externalisation key (read-only; do not invent
   your own)
 - `external_plans_dir` — the canonical destination
@@ -50,13 +58,39 @@ It prints a JSON object. The fields you need:
   currently reads. Possible sources:
   - `external` — already migrated; you'll add to / extend the
     existing layout
-  - `in-tree` — legacy `<root>/docs/plans/` is being used;
-    new plans STILL go to `external_plans_dir`. Tell the user the
-    project is on the legacy layout and recommend running
+  - `in-tree` — legacy `<root>/docs/plans/` is being used (single
+    mode only); new plans STILL go to `external_plans_dir`. Tell the
+    user the project is on the legacy layout and recommend running
     `migrate_plans_to_external.py` between batches.
   - `walk-up` — even more legacy (non-git ancestor); same handling
     as `in-tree`
   - empty string — no plans yet; you'll bootstrap
+
+### Meta-project mode
+
+If `project_kind == "meta"` the user is working in a polyrepo umbrella
+(a parent dir whose children are git repos). The implications for
+planning:
+
+- **Every sub-plan must touch exactly one member repo.** This is a
+  hard convention — cross-repo sub-plans are not allowed. If a change
+  truly needs simultaneous edits in two repos, split it into two
+  sub-plans wired together via `depends_on:` in their frontmatter.
+- **The `Repo` column is mandatory** in the step-5 grouping table.
+- **Each sub-plan's frontmatter must include `repo: <member-name>`** in
+  step 6; the value must exactly match one of the names in
+  `meta_members`.
+- **The MASTER's "Repos in scope" section is required** — a one-line
+  rationale per repo touched in the batch (see master-template.md).
+- The loop driver cd's into the named member repo for that sub-plan's
+  commits, local_checks, CI waits, and ship-report generation. This is
+  invisible from the planner's perspective except that any path you
+  reference inside a sub-plan's commands is relative to that member
+  repo, not the meta root.
+
+If you're unsure which member a given task belongs to, ask the user in
+step 5 — guessing leaks scope into the wrong repo and produces
+misleading ship reports.
 
 Bootstrap the destination if it does not exist:
 
@@ -117,12 +151,23 @@ Apply the rubric from `decomposition-principles.md` while drafting:
   If so, re-scope to constructive or move to master-plan notes.
 - Does each sub-plan pass the fresh-session test (principle 5)?
 
-Show the user a markdown table proposal:
+Show the user a markdown table proposal. **In meta mode add a `Repo`
+column** between Slug and Items so the user can see at a glance which
+member each sub-plan targets:
 
+Single-repo mode:
 ```
 | # | Sub-plan slug | Items | Priority | Why grouped | Steps (est.) |
 |---|---|---|---|---|---|
 | 1 | <slug-1> | <list of items> | P? | <one-line rationale> | <N> |
+| ... |
+```
+
+Meta mode (`Repo` column required; values must come from `meta_members`):
+```
+| # | Sub-plan slug | Repo | Items | Priority | Why grouped | Steps (est.) |
+|---|---|---|---|---|---|---|
+| 1 | <slug-1> | <member-name> | <list of items> | P? | <one-line rationale> | <N> |
 | ... |
 ```
 
@@ -155,6 +200,9 @@ Once approved, write all files in one batch under the
   `~/.cursor/skills/ilk-loop/templates/subplan-template.md`. Fill in
   REAL content, not placeholders:
   - Front-matter with accurate `tickets:` and `estimated_steps:` values
+  - **In meta mode:** `repo: <member-name>` (REQUIRED; must match a
+    name from step-2 `meta_members`). In single mode the field is
+    absent — do not invent values.
   - Tickets-in-scope table with title / type / priority / module per item
   - Concrete objectives (1-line each)
   - Concrete acceptance criteria (observable, testable). **Each AC the
@@ -179,11 +227,12 @@ Once approved, write all files in one batch under the
   - Empty "Findings" section (loop fills during execution)
   - Reference reading section (any docs the executor should pre-load)
 
-## 7. Final QC (three passes)
+## 7. Final QC (four passes)
 
-Run these three passes against every newly-written sub-plan BEFORE
-committing. Findings are warnings (not hard stops); surface them in
-the final report so the user decides to fix or accept.
+Run these passes against every newly-written sub-plan BEFORE
+committing. 7a and 7d findings are warnings (surface to the user);
+7b mutates files; **7c is a hard gate** (meta projects only) — never
+advance to step 8 with an unresolved 7c error.
 
 ### 7a. `local_checks` anti-pattern lint
 
@@ -237,7 +286,26 @@ When in doubt about whether the predicate matches, **default to
 including the assertion** — false positives are cheaper than missed
 invariant violations.
 
-### 7c. Cold-read self-check
+### 7c. `repo:` validation (META PROJECTS ONLY)
+
+Skip this pass when `project_kind == "single"`.
+
+For each newly-written sub-plan, assert:
+
+1. Its frontmatter contains a `repo:` field with a non-empty value.
+2. The value exactly matches one of the names in step-2 `meta_members`.
+
+Output format per failing sub-plan:
+
+```
+ERROR: <slug>: repo=<value> not in meta_members (known: <list>)
+```
+
+Treat this as a HARD failure, not a warning: do not advance to step 8
+until every sub-plan passes. A mistagged sub-plan would route commits
+to the wrong member repo and corrupt the ship report.
+
+### 7d. Cold-read self-check
 
 Re-read every sub-plan body under this prompt-frame:
 
@@ -300,11 +368,13 @@ End your turn with:
 - **Never skip step 5 (user approval)** — grouping decisions are
   subjective; humans always sign off.
 - **Never write files in step 5** — only after approval.
-- **Never skip the three QC passes in step 7** — they are quality
-  gates between writing the files and shipping them to the loop.
-  Skipping sends under-specified or weak-contract sub-plans to worker
-  sessions that will burn cycles before failing or — worse — pass a
-  too-permissive `local_check` and ship broken work.
+- **Never skip the step-7 QC passes** — they are quality gates between
+  writing the files and shipping them to the loop. Skipping sends
+  under-specified or weak-contract sub-plans to worker sessions that
+  will burn cycles before failing or — worse — pass a too-permissive
+  `local_check` and ship broken work. In meta projects, 7c
+  specifically is a HARD gate: an unresolved error there means the
+  loop would route commits to the wrong repo.
 - **No project-repo commit in step 8** — plans live outside the
   project tree. Any sub-plan mutations from step 7b (invariant
   weaving) are written directly to the external files in step 6/7.

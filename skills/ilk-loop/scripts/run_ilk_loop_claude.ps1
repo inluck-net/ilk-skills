@@ -418,6 +418,80 @@ function Get-SubPlanSlug {
   return [System.IO.Path]::GetFileNameWithoutExtension($SubPlanPath)
 }
 
+function Get-SubPlanRepoName {
+  # Read the `repo:` frontmatter field. Returns "" when absent. Used in
+  # meta mode to route per-sub-plan commits/CI to the correct member
+  # repo. In single mode the value is ignored.
+  param([string]$SubPlanPath)
+  $head = Get-Content $SubPlanPath -TotalCount 25 -ErrorAction SilentlyContinue
+  $m = $head | Select-String -Pattern "^repo:\s*(.+)$" | Select-Object -First 1
+  if ($m) { return $m.Matches.Groups[1].Value.Trim() }
+  return ""
+}
+
+# Cached lookup of (kind, members) for the active project. Populated on
+# first use per loop process; cleared via $script:_MetaInfo = $null in
+# tests if needed. Avoids spawning python per sub-plan.
+$script:_MetaInfo = $null
+
+function Get-MetaInfo {
+  param([string]$Project)
+  if ($script:_MetaInfo -and $script:_MetaInfo.Project -eq $Project) {
+    return $script:_MetaInfo
+  }
+  $info = [PSCustomObject]@{
+    Project = $Project
+    Kind    = "single"
+    Members = @{}  # name -> absolute path
+  }
+  $resolver = Join-Path (Split-Path $PSCommandPath -Parent) "ilk_paths.py"
+  if (Test-Path $resolver) {
+    try {
+      $json = & python $resolver --start $Project 2>$null
+      if ($LASTEXITCODE -eq 0 -and $json) {
+        $obj = $json | ConvertFrom-Json -ErrorAction Stop
+        if ($obj.project_kind) { $info.Kind = [string]$obj.project_kind }
+        if ($obj.meta_members) {
+          foreach ($m in $obj.meta_members) {
+            $info.Members[[string]$m.name] = [string]$m.path
+          }
+        }
+      }
+    } catch {
+      # Fall through to defaults; meta resolution is best-effort.
+    }
+  }
+  $script:_MetaInfo = $info
+  return $info
+}
+
+function Resolve-SubPlanRepoDir {
+  <#
+    Returns the absolute working directory to use for git operations
+    (CI wait, reviewer, ship-report) targeting $SubPlanPath.
+
+    - Single mode: returns $Project unchanged.
+    - Meta mode + valid `repo:` declared: returns the member's path.
+    - Meta mode + missing/unknown `repo:`: returns "" and logs a warning;
+      the caller MUST handle the empty string (we don't want to silently
+      run gates against the wrong repo).
+  #>
+  param([string]$Project, [string]$SubPlanPath)
+  $info = Get-MetaInfo -Project $Project
+  if ($info.Kind -ne "meta") { return $Project }
+  $repoName = Get-SubPlanRepoName -SubPlanPath $SubPlanPath
+  if (-not $repoName) {
+    Write-Host ("  ! meta project sub-plan {0} is missing `repo:` frontmatter — skipping gates" -f (Split-Path -Leaf $SubPlanPath)) -ForegroundColor DarkYellow
+    return ""
+  }
+  if (-not $info.Members.ContainsKey($repoName)) {
+    $known = ($info.Members.Keys | Sort-Object) -join ", "
+    Write-Host ("  ! sub-plan {0} declares repo={1} which is not in .ilk-meta.json (known: {2}) — skipping gates" -f (Split-Path -Leaf $SubPlanPath), $repoName, $known) -ForegroundColor DarkYellow
+    return ""
+  }
+  return $info.Members[$repoName]
+}
+
 function Get-SubPlanCiTimeout {
   param([string]$SubPlanPath)
   $head = Get-Content $SubPlanPath -TotalCount 25 -ErrorAction SilentlyContinue
@@ -456,8 +530,16 @@ function Invoke-QualityGatesForSubPlan {
   )
 
   $ts = Get-Date -Format "yyyy-MM-dd-HHmm"
-  $reviewerDir = Join-Path $ProjectPath "docs\plans\reviewer-reports"
-  $shipDir = Join-Path $ProjectPath "docs\plans\ship-reports"
+  # Reports live next to the active plans dir. In meta mode that's the
+  # external dir at ~/.ilk-data/projects/<meta-key>/plans/, so reports
+  # never leak into any member sub-repo's working tree. In legacy
+  # single-repo mode (in-tree plans) the reports stay in-tree as before.
+  $reportsBase = Get-PlansDir -Project $ProjectPath
+  if (-not $reportsBase) {
+    $reportsBase = Join-Path $ProjectPath "docs\plans"
+  }
+  $reviewerDir = Join-Path $reportsBase "reviewer-reports"
+  $shipDir = Join-Path $reportsBase "ship-reports"
   New-Item -ItemType Directory -Force -Path $reviewerDir, $shipDir | Out-Null
   $reviewerOut = Join-Path $reviewerDir "$Slug-$ts.md"
   $shipOut = Join-Path $shipDir "$Slug-$ts.md"
@@ -549,7 +631,8 @@ function Invoke-QualityGatesIfNeeded {
     [string[]]$Repos,
     [hashtable]$HeadsBefore,
     [hashtable]$HeadsAfter,
-    [int]$TotalNew
+    [int]$TotalNew,
+    [hashtable]$NewCommits = $null
   )
   if ($TotalNew -le 0) { return @{ Blocked = $false } }
 
@@ -559,24 +642,52 @@ function Invoke-QualityGatesIfNeeded {
   $pending = Find-ShippedSubPlansPendingGates -PlansDir $plansDir
   if ($pending.Count -eq 0) { return @{ Blocked = $false } }
 
-  $repo = $Project
-  if (-not (Test-Path (Join-Path $repo ".git"))) {
-    $repo = ($Repos | Where-Object { $HeadsAfter[$_] -and $HeadsAfter[$_] -ne "(unknown)" } | Select-Object -First 1)
-  }
-  if (-not $repo) { return @{ Blocked = $false } }
+  $info = Get-MetaInfo -Project $Project
+  $isMeta = ($info.Kind -eq "meta")
 
-  $headSha = $HeadsAfter[$repo]
-  if (-not $headSha -or $headSha -eq "(unknown)") {
-    $headSha = (& git -C $repo rev-parse HEAD).Trim()
-  }
-  $baseSha = $HeadsBefore[$repo]
-  if (-not $baseSha -or $baseSha -eq "(unknown)" -or $baseSha -eq $headSha) {
-    $baseSha = (& git -C $repo rev-parse "$headSha~$TotalNew").Trim()
+  # Single-mode default: pick the repo that owns this project. In meta
+  # mode each sub-plan resolves its own repo from frontmatter, so this
+  # fallback is only used as a safety net.
+  $defaultRepo = $Project
+  if (-not (Test-Path (Join-Path $defaultRepo ".git"))) {
+    $defaultRepo = ($Repos | Where-Object { $HeadsAfter[$_] -and $HeadsAfter[$_] -ne "(unknown)" } | Select-Object -First 1)
   }
 
   foreach ($item in $pending) {
     Write-Host ""
     Write-Host "=== Quality gates: $($item.Slug) ===" -ForegroundColor Magenta
+
+    if ($isMeta) {
+      $repo = Resolve-SubPlanRepoDir -Project $Project -SubPlanPath $item.Path
+      if (-not $repo) {
+        # Resolution failed; helper already emitted a warning. Skip this
+        # sub-plan's gates rather than running them against the wrong
+        # repo — that would produce a misleading ship-report.
+        continue
+      }
+    } else {
+      $repo = $defaultRepo
+    }
+    if (-not $repo) { continue }
+
+    $headSha = $HeadsAfter[$repo]
+    if (-not $headSha -or $headSha -eq "(unknown)") {
+      $headSha = (& git -C $repo rev-parse HEAD).Trim()
+    }
+    $baseSha = $HeadsBefore[$repo]
+    $newInRepo = 1
+    if ($NewCommits -and $NewCommits.ContainsKey($repo)) {
+      $newInRepo = [int]$NewCommits[$repo]
+    } elseif (-not $NewCommits) {
+      # Legacy single-repo call site without -NewCommits: fall back to
+      # $TotalNew (correct only when there's exactly one repo with new
+      # commits, which is the single-repo case).
+      $newInRepo = $TotalNew
+    }
+    if (-not $baseSha -or $baseSha -eq "(unknown)" -or $baseSha -eq $headSha) {
+      $baseSha = (& git -C $repo rev-parse "$headSha~$newInRepo").Trim()
+    }
+
     $result = Invoke-QualityGatesForSubPlan `
       -ProjectPath $Project `
       -Repo $repo `
@@ -1132,7 +1243,8 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
       -Repos $repos `
       -HeadsBefore $headsBefore `
       -HeadsAfter $headsAfter `
-      -TotalNew $totalNew
+      -TotalNew $totalNew `
+      -NewCommits $newCommits
     if ($gateResult.Blocked) {
       $stopReason = $gateResult.Reason
       if ($gateResult.ShipReport) {

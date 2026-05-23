@@ -100,6 +100,21 @@ function Resolve-ProjectByName {
 }
 
 function Resolve-ProjectByCwd {
+  # First try ilk_paths.py — it's authoritative for both single-repo
+  # (.git ancestor) AND meta (.ilk-meta.json ancestor) projects. Falls
+  # back to legacy walk-up only when the helper is unavailable.
+  $resolver = Join-Path $HOME ".cursor\skills\ilk-loop\scripts\ilk_paths.py"
+  if (Test-Path $resolver) {
+    try {
+      $json = & python $resolver --start (Get-Location).Path 2>$null
+      if ($LASTEXITCODE -eq 0 -and $json) {
+        $obj = $json | ConvertFrom-Json -ErrorAction Stop
+        if ($obj.project_root) { return [string]$obj.project_root }
+      }
+    } catch {
+      # Fall through to legacy walk-up
+    }
+  }
   $dir = (Get-Location).Path
   while ($dir) {
     if (Test-Path (Join-Path $dir 'docs\plans')) {
@@ -110,7 +125,22 @@ function Resolve-ProjectByCwd {
     if ($parent -eq $dir) { break }
     $dir = $parent
   }
-  throw "No project found by walking up from $((Get-Location).Path). No docs/plans/MASTER-*.md anywhere on the path. Use -ProjectName or -ProjectPath, or cd into a project."
+  throw "No project found by walking up from $((Get-Location).Path). No .ilk-meta.json, .git, or docs/plans/MASTER-*.md anywhere on the path. Use -ProjectName or -ProjectPath, or cd into a project."
+}
+
+function Get-ExternalPlansDir {
+  # Returns the external plans dir for $ProjectPath (meta-aware), or "".
+  param([string]$ProjectPath)
+  $resolver = Join-Path $HOME ".cursor\skills\ilk-loop\scripts\ilk_paths.py"
+  if (-not (Test-Path $resolver)) { return "" }
+  try {
+    $json = & python $resolver --start $ProjectPath 2>$null
+    if ($LASTEXITCODE -eq 0 -and $json) {
+      $obj = $json | ConvertFrom-Json -ErrorAction Stop
+      if ($obj.external_plans_dir) { return [string]$obj.external_plans_dir }
+    }
+  } catch {}
+  return ""
 }
 
 function Get-ProjectName {
@@ -122,7 +152,18 @@ function Get-ProjectName {
 }
 
 function Read-ProjectConfig {
+  # Look in the external plans dir first (meta-friendly: this is the
+  # single source of truth for both single and meta projects). Fall
+  # back to the legacy in-tree location so single-repo projects that
+  # haven't migrated yet still find their config.
   param([string]$ProjectPath)
+  $extPlans = Get-ExternalPlansDir -ProjectPath $ProjectPath
+  if ($extPlans) {
+    $cfgPath = Join-Path $extPlans '.ilk-launch.json'
+    if (Test-Path $cfgPath) {
+      return Get-Content $cfgPath -Raw | ConvertFrom-Json -AsHashtable
+    }
+  }
   $cfgPath = Join-Path $ProjectPath 'docs\plans\.ilk-launch.json'
   if (-not (Test-Path $cfgPath)) { return @{} }
   return Get-Content $cfgPath -Raw | ConvertFrom-Json -AsHashtable

@@ -35,9 +35,15 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
 
-# Sibling module — resolves plans dir under the new ~/.ilk-data convention
+# Sibling module — resolves plans dir under the new ~/.ilk-data convention,
+# and resolves meta-project state for per-sub-plan cwd switching.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ilk_paths import find_plans_dir as _resolve_plans_dir  # noqa: E402
+from ilk_paths import (  # noqa: E402
+    find_plans_dir as _resolve_plans_dir,
+    find_project_root,
+    read_meta_manifest,
+    MetaManifestError,
+)
 
 
 # ── front-matter / yaml helpers (tiny stdlib parser, schema-specific) ────────
@@ -162,6 +168,55 @@ def find_subplan(project: Path, slug: str) -> Path | None:
     return None
 
 
+def extract_subplan_field(fm_text: str, field: str) -> str:
+    """Read a flat `field: value` from a sub-plan's frontmatter text.
+    Returns "" when the field is absent or empty.
+    """
+    needle = f"{field}:"
+    for line in fm_text.splitlines():
+        s = line.strip()
+        if s.startswith(needle):
+            v = s[len(needle):].strip()
+            return str(_coerce(v))
+    return ""
+
+
+def resolve_run_cwd(project: Path, subplan: Path, fm_text: str) -> tuple[Path, str | None]:
+    """Decide where `local_checks` commands should execute.
+
+    Returns (cwd, error). On error the cwd value is still safe to use
+    for diagnostic purposes but the caller should refuse to run.
+
+    Rules:
+      single mode → cwd = project root, error = None
+      meta mode + valid `repo:` field → cwd = member repo path
+      meta mode + missing `repo:` field → error
+      meta mode + unknown `repo:` value → error
+    """
+    root, kind = find_project_root(project)
+    if kind == "single" or root is None:
+        return project, None
+
+    repo_name = extract_subplan_field(fm_text, "repo")
+    if not repo_name:
+        return project, (
+            f"sub-plan {subplan.name} is missing `repo:` frontmatter, "
+            "which is required in meta projects (see .ilk-meta.json)"
+        )
+    try:
+        manifest = read_meta_manifest(root)
+    except MetaManifestError as e:
+        return project, f"meta manifest invalid: {e}"
+    for member in manifest["repos"]:
+        if member["name"] == repo_name:
+            return member["path"], None
+    known = sorted(m["name"] for m in manifest["repos"])
+    return project, (
+        f"sub-plan {subplan.name} declares repo={repo_name!r} which is not "
+        f"in .ilk-meta.json. Known members: {known}"
+    )
+
+
 def extract_step_local_checks(body: str, step_n: int) -> list[dict]:
     """
     Extract local_checks declared inside a per-step yaml fence.
@@ -266,6 +321,14 @@ def main(argv: list[str]) -> int:
         return 2
 
     fm_text, body = split_frontmatter(read_text(subplan))
+
+    # In meta projects, resolve the member repo to cd into for each check.
+    # In single mode this is a no-op (cwd stays as `project`).
+    run_cwd, repo_error = resolve_run_cwd(project, subplan, fm_text)
+    if repo_error:
+        print(json.dumps({"error": repo_error, "slug": slug, "subplan_path": str(subplan)}))
+        return 2
+
     subplan_checks = parse_local_checks_block(fm_text)
     step_checks: list[dict] = []
     if step is not None:
@@ -273,15 +336,16 @@ def main(argv: list[str]) -> int:
 
     results: list[CheckResult] = []
     for c in subplan_checks:
-        results.append(run_one(c, "subplan", project))
+        results.append(run_one(c, "subplan", run_cwd))
     for c in step_checks:
-        results.append(run_one(c, "step", project))
+        results.append(run_one(c, "step", run_cwd))
 
     passed = all(r.passed for r in results)
     out = {
         "slug": slug,
         "step": step,
         "subplan_path": str(subplan),
+        "run_cwd": str(run_cwd),
         "subplan_check_count": len(subplan_checks),
         "step_check_count": len(step_checks),
         "all_passed": passed,

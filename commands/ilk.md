@@ -10,8 +10,9 @@ Run:
 python "$HOME\.cursor\skills\ilk-loop\scripts\loop_status.py"
 ```
 
-The script walks up from cwd to find `docs/plans/MASTER-*.md` and reports
-each sub-plan's status. Read its output carefully.
+The script resolves the active plans dir (external under `~/.ilk-data`
+preferred; legacy in-tree as fallback) and reports each sub-plan's
+status. Read its output carefully.
 
 - **Exit code 0** → all sub-plans are `shipped`. Tell the user
   "All sub-plans shipped — nothing to do." and STOP. Do not load any
@@ -19,7 +20,13 @@ each sub-plan's status. Read its output carefully.
 - **Exit code 1** → there is a next pending sub-plan. The script printed
   its filename and full path. Continue to step 2.
 - **Exit code 2** → no plans dir found. Tell the user to `cd` into a
-  project that has `docs/plans/MASTER-*.md`. STOP.
+  project that has either `.ilk-meta.json` + external plans, or a
+  `.git` repo + plans. STOP.
+
+If the output includes a `Repo:` line under "Next", this is a
+**meta-project**: each sub-plan targets one member repo and you must
+`cd` into that repo (or use `git -C <member-path>`) for all staging,
+commits, and pushes in step 5. See SKILL.md → "Meta-projects".
 
 ## 2. Load the loop convention
 
@@ -58,9 +65,14 @@ For each step:
 
 1. Do the work (read code, edit, run tests).
 2. Commit with the convention from the sub-plan, message must contain
-   `[plan:<slug>#step-<N>]`.
-3. Bump the sub-plan's `current_step` in front-matter, save, commit:
-   `chore(plans): bump <slug> current_step to <N+1>`.
+   `[plan:<slug>#step-<N>]`. **In meta projects, this commit must
+   land in the member repo named by the sub-plan's `repo:`
+   frontmatter** — `cd <umbrella>/<member>` (or `git -C <member-path>`)
+   before staging.
+3. Bump the sub-plan's `current_step` in front-matter, save. The
+   sub-plan file lives in the external plans dir
+   (`~/.ilk-data/projects/<key>/plans/`) — that file edit is NOT a
+   commit in any member repo (plans live outside SCM).
 4. If a step uncovers a new bug: file a new ticket via the lark-tickets
    skill, add a one-line note under "Out of scope" in the current sub-plan.
    Do NOT silently expand the plan.

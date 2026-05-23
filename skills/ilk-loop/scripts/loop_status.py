@@ -20,7 +20,12 @@ from pathlib import Path
 # active plans directory under the new ~/.ilk-data convention while
 # still supporting legacy in-tree projects.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ilk_paths import find_plans_dir as _resolve_plans_dir  # noqa: E402
+from ilk_paths import (  # noqa: E402
+    find_plans_dir as _resolve_plans_dir,
+    find_project_root,
+    read_meta_manifest,
+    MetaManifestError,
+)
 
 STATUS_ICONS = {
     "shipped": "[OK]",
@@ -207,6 +212,16 @@ def main() -> int:
             file=sys.stderr,
         )
 
+    # Meta-project detection: drives the optional `repo` column.
+    project_root, project_kind = find_project_root(Path.cwd())
+    meta_members: dict[str, Path] = {}
+    if project_kind == "meta" and project_root is not None:
+        try:
+            manifest = read_meta_manifest(project_root)
+            meta_members = {r["name"]: r["path"] for r in manifest["repos"]}
+        except MetaManifestError as e:
+            print(f"[ilk] meta manifest invalid: {e}", file=sys.stderr)
+
     masters = sorted(plans_dir.glob("MASTER-*.md"))
     if not masters:
         print(f"No MASTER-*.md in {plans_dir}.", file=sys.stderr)
@@ -232,28 +247,37 @@ def main() -> int:
                 print(f"  - {t}")
     print()
 
-    rows: list[tuple[str, str, str, str]] = []
+    # Each row is (fname, status, cur_step, est, repo). `repo` is "" in
+    # single-mode projects and the resolved member name in meta-mode.
+    rows: list[tuple[str, str, str, str, str]] = []
     # Prefer actionable work: pending / in-progress. Blocked plans (external
     # deps) should not prevent `/ilk` from advancing later sub-plans that
     # are still machine-verifiable on the current host.
-    next_actionable: tuple[str, str, str, str] | None = None
-    next_blocked: tuple[str, str, str, str] | None = None
-    next_other: tuple[str, str, str, str] | None = None
+    next_actionable: tuple[str, str, str, str, str] | None = None
+    next_blocked: tuple[str, str, str, str, str] | None = None
+    next_other: tuple[str, str, str, str, str] | None = None
+
+    unknown_repos: set[str] = set()
 
     for fname in ordered_files:
         path = plans_dir / fname
         if not path.exists():
-            rows.append((fname, "MISSING", "-", "-"))
+            rows.append((fname, "MISSING", "-", "-", ""))
             continue
         text = path.read_text(encoding="utf-8")
         fm = parse_frontmatter(text)
         status = fm.get("status", "?")
         cur_step = fm.get("current_step", "?")
         est = fm.get("estimated_steps", "?")
-        rows.append((fname, status, cur_step, est))
+        repo = fm.get("repo", "")
+        # In meta mode, surface mismatched repo names so the operator
+        # notices typos / stale member lists at status time.
+        if meta_members and repo and repo not in meta_members:
+            unknown_repos.add(repo)
+        rows.append((fname, status, cur_step, est, repo))
         if status == "shipped":
             continue
-        row = (fname, status, cur_step, est)
+        row = (fname, status, cur_step, est, repo)
         if status in ("pending", "ready", "in-progress"):
             if next_actionable is None:
                 next_actionable = row
@@ -268,14 +292,40 @@ def main() -> int:
         print("Master plan contains no sub-plan references.", file=sys.stderr)
         return 2
 
-    # Render table
+    # In meta mode, render an extra `repo` column. Width is computed to
+    # accommodate the widest member name AND the column header.
+    show_repo = bool(meta_members)
     name_w = max(len(r[0]) for r in rows)
     name_w = max(name_w, len("sub-plan"))
-    print(f"{'sub-plan'.ljust(name_w)}  status            step")
-    print(f"{'-' * name_w}  ----------------  --------")
-    for fname, status, cur, est in rows:
-        icon = STATUS_ICONS.get(status, "[??]")
-        print(f"{fname.ljust(name_w)}  {icon} {status.ljust(13)} {cur}/{est}")
+    if show_repo:
+        repo_w = max([len(r[4]) for r in rows] + [len("repo"), len("(?)")])
+        print(
+            f"{'sub-plan'.ljust(name_w)}  {'repo'.ljust(repo_w)}  status            step"
+        )
+        print(
+            f"{'-' * name_w}  {'-' * repo_w}  ----------------  --------"
+        )
+        for fname, status, cur, est, repo in rows:
+            icon = STATUS_ICONS.get(status, "[??]")
+            shown = repo if repo else "(?)"
+            print(
+                f"{fname.ljust(name_w)}  {shown.ljust(repo_w)}  "
+                f"{icon} {status.ljust(13)} {cur}/{est}"
+            )
+    else:
+        print(f"{'sub-plan'.ljust(name_w)}  status            step")
+        print(f"{'-' * name_w}  ----------------  --------")
+        for fname, status, cur, est, _repo in rows:
+            icon = STATUS_ICONS.get(status, "[??]")
+            print(f"{fname.ljust(name_w)}  {icon} {status.ljust(13)} {cur}/{est}")
+
+    if unknown_repos:
+        print()
+        print(
+            f"[ilk] WARNING: sub-plans reference unknown meta repos: "
+            f"{sorted(unknown_repos)}. Known: {sorted(meta_members)}.",
+            file=sys.stderr,
+        )
 
     print()
     next_pending = next_actionable or next_other or next_blocked
@@ -283,11 +333,18 @@ def main() -> int:
         print(f"All {len(rows)} sub-plans shipped -- nothing to do.")
         return 0
 
-    fname, status, cur, est = next_pending
+    fname, status, cur, est, repo = next_pending
     print(f"Next: {fname}  (status={status}, step={cur}/{est})")
     print(f"Path: {plans_dir / fname}")
+    if show_repo:
+        if not repo:
+            print("Repo: (not declared — meta projects require `repo:` frontmatter)")
+        elif repo not in meta_members:
+            print(f"Repo: {repo}  (UNKNOWN — not in .ilk-meta.json)")
+        else:
+            print(f"Repo: {repo}  ({meta_members[repo]})")
     if next_blocked and next_actionable and next_blocked[0] != next_pending[0]:
-        bname, bstat, bcur, best = next_blocked
+        bname, _bstat, bcur, best, _brepo = next_blocked
         print()
         print(f"(Parked blocked: {bname} step {bcur}/{best} - resume when unblocked.)")
     return 1

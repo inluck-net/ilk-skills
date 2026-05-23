@@ -54,6 +54,14 @@ work and is in production use by the maintainer.
   primitive needed for future multi-agent and best-of-N workflows
   (see `skills/ilk-loop/SKILL.md` → *Concurrent multi-worktree
   execution* for the full mechanism).
+- **Meta-projects (polyrepo umbrellas)** — drop a `.ilk-meta.json` at
+  a non-git parent directory that contains several sibling git repos
+  (e.g. `myproj/` with `api/`, `portal/`, `ops/`, `docs/`) and ilk
+  treats the whole umbrella as **one** project. A single MASTER drives
+  cross-repo batches; each sub-plan declares `repo: <member>` and the
+  loop cd's into that member for commits, local_checks, CI waits, and
+  ship-report generation. See `skills/ilk-loop/docs/meta-projects.md`
+  for the convention and a worked example.
 - **Cross-machine sync via Git** — `install.ps1` (Windows junctions)
   and `install.sh` (macOS / Linux symlinks) populate
   `~/.cursor/skills/`, `~/.claude/skills/`, and the matching

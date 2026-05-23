@@ -78,7 +78,7 @@ def run_loop_status(project_path: Path) -> str:
     if proc.returncode == 0:
         return "all sub-plans shipped"
     if proc.returncode == 2:
-        return "<no docs/plans/MASTER-*.md in project>"
+        return "<no MASTER-*.md plans found>"
 
     # loop_status.py prints a "Next: <slug.md>  (status=..., step=N/M)" line
     # when there is a pending sub-plan. That single line is the entire summary

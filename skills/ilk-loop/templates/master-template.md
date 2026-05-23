@@ -45,6 +45,35 @@ that span more than 3 sub-plans>
 | 1 | 1 | <slug-1> | <list> | <N> | pending |
 | 2 | 2 | <slug-2> | <list> | <N> | pending |
 
+<!--
+META PROJECTS ONLY — delete this block in single-repo projects.
+
+For meta projects (parent dir has .ilk-meta.json), add a `Repo` column
+mapping each sub-plan to exactly one member repo. The value must match
+a `name` in .ilk-meta.json; the loop driver routes that sub-plan's
+commits/CI/ship to the named member.
+
+| # | Order | Slug | Repo | Items | Steps (est.) | Status |
+|---|---|---|---|---|---|---|
+| 1 | 1 | <slug-1> | <member-name> | <list> | <N> | pending |
+| 2 | 2 | <slug-2> | <member-name> | <list> | <N> | pending |
+-->
+
+## Repos in scope (META PROJECTS ONLY)
+
+<!--
+For meta projects: list which member repos this batch touches, with a
+one-line rationale per repo. Helps reviewers understand cross-repo
+coupling before reading individual sub-plans. Single-repo projects:
+delete this section.
+
+| Repo | Why it's in this batch |
+|---|---|
+| <member-1> | <one-line reason> |
+| <member-2> | <one-line reason> |
+-->
+
+
 ## Execution rationale
 
 Why this order. Reference [decomposition-principles.md](../skills/ilk-loop/docs/decomposition-principles.md)
