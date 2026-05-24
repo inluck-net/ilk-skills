@@ -212,6 +212,75 @@ classify_action() {
   esac
 }
 
+# ----- Promotion helper ------------------------------------------------------
+
+handle_promote() {
+  local project="$1"
+  local proj_name="$2"
+  local poll_sec="$3"
+
+  local script_path="${HOME}/.cursor/skills/ilk-loop/scripts/promote_next_master.py"
+  if [[ ! -f "$script_path" ]]; then
+    write_log "promote_next_master.py not found at $script_path — cannot advance queue."
+    return
+  fi
+
+  local json_out
+  json_out=$(python3 "$script_path" --project "$project" 2>/dev/null) || true
+  if [[ -z "$json_out" ]]; then
+    write_log "promote_next_master.py produced no output."
+    return
+  fi
+
+  local promoted
+  promoted=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('promoted') or '')" <<<"$json_out")
+  local demoted
+  demoted=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('demoted') or '')" <<<"$json_out")
+  local queue_remaining
+  queue_remaining=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('queue_remaining',''))" <<<"$json_out")
+
+  if [[ -n "$promoted" ]]; then
+    write_log "queue advanced: demoted=$demoted, promoted=$promoted, queue_remaining=$queue_remaining"
+    if [[ ! -f "$LAUNCH_SCRIPT" ]]; then
+      write_banner "QUEUE ADVANCED — LAUNCHER MISSING" \
+"Project: $proj_name
+Promoted: $promoted
+Expected launcher: $LAUNCH_SCRIPT
+
+Cannot auto-relaunch. Run ilk-launcher manually." 33
+      return
+    fi
+    if ! bash "$LAUNCH_SCRIPT" --project-path "$project" --force; then
+      write_banner "QUEUE ADVANCED — RELAUNCH FAILED" \
+"Project: $proj_name
+Promoted: $promoted
+
+Launch script exited non-zero. Watchdog blocking." 31
+      return
+    fi
+    # Reset state so the next master starts fresh
+    restart_count=0
+    last_restart_class=""
+    saw_alive_once=false
+    write_log "next master launched: $promoted. Resuming polling."
+    sleep "$poll_sec"
+    return
+  fi
+
+  # No next master: queue drained
+  local demoted_note=""
+  if [[ -n "$demoted" ]]; then
+    demoted_note="Marked $demoted as shipped."
+  fi
+  write_banner "ALL MASTERS SHIPPED — QUEUE DRAINED" \
+"Project: $proj_name
+State: clean ship
+$demoted_note
+
+Watchdog exiting cleanly. Job done." 32
+  exit 0
+}
+
 # ----- Argument parsing ------------------------------------------------------
 
 usage() {
@@ -391,9 +460,8 @@ Watchdog PID: $$" 36
           continue
         fi
       elif [[ " ${success_states[*]} " =~ [[:space:]]${sentinel_state}[[:space:]] ]]; then
-        # Promote action — handled in step 4; for now log and sleep
-        write_log "clean ship detected (state=$sentinel_state, iters=$sentinel_iters). Queue advance pending step 4."
-        sleep "$poll_sec"
+        write_log "clean ship detected (state=$sentinel_state, iters=$sentinel_iters). Advancing master queue..."
+        handle_promote "$project" "$proj_name" "$poll_sec"
         continue
       else
         write_log "sentinel terminal state: $sentinel_state (iters=$sentinel_iters) — classifying."
@@ -446,9 +514,7 @@ Watchdog PID: $$" 36
     fi
 
     if [[ "$action" == "promote" ]]; then
-      # Placeholder — step 4 adds promote_next_master.py integration
-      write_log "promote action: queue advancement coming in step 4."
-      sleep "$poll_sec"
+      handle_promote "$project" "$proj_name" "$poll_sec"
       continue
     fi
 
