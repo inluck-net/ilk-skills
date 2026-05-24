@@ -420,7 +420,7 @@ run_watchdog_loop() {
   WATCHDOG_STATE_DIR="$watchdog_dir"
   mkdir -p "$WATCHDOG_STATE_DIR"
   ACTIVITY_LOG="${WATCHDOG_STATE_DIR}/activity.log"
-  local watchdog_pid_file="${WATCHDOG_STATE_DIR}/watchdog.pid"
+  watchdog_pid_file="${WATCHDOG_STATE_DIR}/watchdog.pid"
 
   # Refuse to double-run
   if [[ -f "$watchdog_pid_file" ]]; then
