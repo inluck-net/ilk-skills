@@ -73,8 +73,19 @@ work and is in production use by the maintainer.
 | Platform | Cursor | Claude Code | Installer |
 |---|---|---|---|
 | Windows 10 / 11    | yes | yes | `install.ps1` (junctions for skills, copy-fallback for commands unless Developer Mode is on) |
-| macOS              | yes | yes | `install.sh` (symlinks throughout) |
+| macOS              | yes | yes | `install.sh` (full symlink set including bash entry points) |
 | Linux              | yes | yes | `install.sh` |
+
+## Dependencies
+
+- **bash** — macOS ships 3.2 (ancient but sufficient); any modern Linux
+  distribution is fine.
+- **Python 3** — used by `loop_status.py`, `status_all.py`, and other
+  helpers.
+- **`gtimeout`** *(macOS only)* — the bash runner uses GNU timeout for
+  iteration time-boxing. Install via `brew install coreutils`.
+- **`jq`** *(recommended)* — the bash runner prefers `jq` for JSON
+  parsing when available; falls back to a Python one-liner if missing.
 
 ## Quick start
 
@@ -102,7 +113,7 @@ Edit it to point at your real project paths, then:
 ```bash
 # macOS / Linux equivalent
 /ilk-plan "<describe the task>"
-launch.sh --project-path .
+bash "$HOME/.cursor/skills/ilk-launcher/scripts/launch.sh" --project-path .
 ```
 
 ## Layout
