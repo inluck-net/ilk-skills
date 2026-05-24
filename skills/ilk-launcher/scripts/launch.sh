@@ -411,12 +411,18 @@ start_ilk_window() {
     return 0
   fi
 
-  # Spawn detached process with nohup.
-  # In bash, a background job gets its own process group;
-  # the child PID is also the PGID, so kill -TERM -$pid works.
-  nohup bash -c "$runner_cmd" \
-    > "$log_file" 2>&1 < /dev/null &
-  local pgid=$!
+  # Spawn detached process as its own process-group leader so stop.sh
+  # can `kill -- -$pid` and reap the whole tree (runner + claude + git).
+  # `set -m` inside a subshell enables job control, which is what causes
+  # bash to put the backgrounded child into a new pgrp — without it,
+  # non-interactive bash leaves the child in the launcher's pgrp, and
+  # the launcher exits seconds later, leaving the child group-less.
+  local pgid
+  pgid=$(
+    set -m
+    nohup bash -c "$runner_cmd" > "$log_file" 2>&1 < /dev/null &
+    echo "$!"
+  )
 
   # Write PID file
   local pid_file

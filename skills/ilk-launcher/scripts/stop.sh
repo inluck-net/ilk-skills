@@ -110,7 +110,11 @@ stop_project() {
   fi
 
   echo "[$name] killing process group $target_pid..." >&2
+  # Try the process group first (kills the whole tree if the launcher
+  # spawned it as a pgrp leader), then the PID directly (recovers
+  # orphans from older launches that weren't pgrp leaders).
   kill -- -"$target_pid" 2>/dev/null || true
+  kill -- "$target_pid" 2>/dev/null || true
 
   # Wait up to 5s for the process group to exit
   local waited=0
@@ -122,6 +126,7 @@ stop_project() {
   if kill -0 "$target_pid" 2>/dev/null; then
     echo "[$name] PID $target_pid still alive after SIGTERM. Sending SIGKILL..." >&2
     kill -9 -- -"$target_pid" 2>/dev/null || true
+    kill -9 -- "$target_pid" 2>/dev/null || true
     sleep 1
   fi
 
