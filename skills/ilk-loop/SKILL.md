@@ -138,7 +138,7 @@ Lark tickets that's `待验证`).
 This is the default operation. The `/ilk` slash command body codifies it.
 You should:
 
-1. Run `python ~/.cursor/skills/ilk-loop/scripts/loop_status.py`.
+1. Run `python3 ~/.cursor/skills/ilk-loop/scripts/loop_status.py`.
 2. Open the chat with one line:
    `Next: <sub-plan> step N of M -- <step summary>. Starting work...`
 3. Execute the step per "The loop" above.

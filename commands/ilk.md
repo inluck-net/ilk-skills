@@ -6,8 +6,8 @@ Follow these steps in order. Do NOT skip any.
 
 Run:
 
-```powershell
-python "$HOME\.cursor\skills\ilk-loop\scripts\loop_status.py"
+```bash
+python3 "$HOME/.cursor/skills/ilk-loop/scripts/loop_status.py"
 ```
 
 The script resolves the active plans dir (external under `~/.ilk-data`

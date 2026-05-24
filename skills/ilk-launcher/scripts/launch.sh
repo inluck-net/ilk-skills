@@ -126,8 +126,9 @@ get_external_plans_dir() {
 
 get_project_name() {
   local path="$1"
-  local name
-  name=$(python3 -c "
+  local name=""
+  if [[ -f "$PROJECTS_JSON" ]]; then
+    name=$(python3 -c "
 import json
 with open('$PROJECTS_JSON') as f:
     data = json.load(f)
@@ -136,6 +137,7 @@ for p in data.get('projects', []):
         print(p.get('name',''))
         break
 ")
+  fi
   if [[ -n "$name" ]]; then
     echo "$name"
   else
@@ -233,8 +235,8 @@ resolve_mcp_filter() {
   cfg=$(read_project_config "$project_path")
 
   local has_enable has_disable
-  has_enable=$(python -c "import json,sys; d=json.load(sys.stdin); print('1' if 'worker_enable_mcp' in d else '0')" <<<"$cfg")
-  has_disable=$(python -c "import json,sys; d=json.load(sys.stdin); print('1' if 'worker_disable_mcp' in d else '0')" <<<"$cfg")
+  has_enable=$(python3 -c "import json,sys; d=json.load(sys.stdin); print('1' if 'worker_enable_mcp' in d else '0')" <<<"$cfg")
+  has_disable=$(python3 -c "import json,sys; d=json.load(sys.stdin); print('1' if 'worker_disable_mcp' in d else '0')" <<<"$cfg")
 
   if [[ "$has_enable" == "1" && "$has_disable" == "1" ]]; then
     echo "Error: Specify either worker_disable_mcp or worker_enable_mcp in .ilk-launch.json, not both." >&2
@@ -243,12 +245,12 @@ resolve_mcp_filter() {
 
   if [[ "$has_enable" == "1" ]]; then
     MCP_FILTER_MODE="whitelist"
-    MCP_FILTER_NAMES=$(python -c "import json,sys; d=json.load(sys.stdin); print(','.join(str(x) for x in d.get('worker_enable_mcp', [])))" <<<"$cfg")
+    MCP_FILTER_NAMES=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(','.join(str(x) for x in d.get('worker_enable_mcp', [])))" <<<"$cfg")
     return
   fi
   if [[ "$has_disable" == "1" ]]; then
     MCP_FILTER_MODE="blacklist"
-    MCP_FILTER_NAMES=$(python -c "import json,sys; d=json.load(sys.stdin); print(','.join(str(x) for x in d.get('worker_disable_mcp', [])))" <<<"$cfg")
+    MCP_FILTER_NAMES=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(','.join(str(x) for x in d.get('worker_disable_mcp', [])))" <<<"$cfg")
     return
   fi
 
@@ -276,7 +278,7 @@ build_worker_mcp_config() {
   local out_path="${project_path}/.ilk-launcher/mcp-worker.json"
   mkdir -p "$(dirname "$out_path")"
 
-  python - "$mode" "$names_csv" "$claude_json" "$out_path" <<'PYEOF'
+  python3 - "$mode" "$names_csv" "$claude_json" "$out_path" <<'PYEOF'
 import json, sys
 
 mode = sys.argv[1]

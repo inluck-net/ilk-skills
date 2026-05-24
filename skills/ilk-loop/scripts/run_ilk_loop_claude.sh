@@ -173,8 +173,8 @@ preflight() {
     exit 1
   fi
 
-  if ! command -v python >/dev/null 2>&1; then
-    echo "Error: python not on PATH (needed by loop_status.py)." >&2
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: python3 not on PATH (needed by loop_status.py)." >&2
     exit 1
   fi
 
@@ -224,7 +224,7 @@ preflight() {
 discover_git_repos() {
   local resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
   local json
-  json="$(python "$resolver" --start "$PROJECT_PATH" 2>/dev/null)" || {
+  json="$(python3 "$resolver" --start "$PROJECT_PATH" 2>/dev/null)" || {
     echo "Error: ilk_paths.py failed to resolve project." >&2
     exit 1
   }
@@ -313,7 +313,7 @@ get_ilk_runtime_dir() {
     return 1
   fi
   local json
-  json="$(python "$resolver" --start "$PROJECT_PATH" 2>/dev/null)" || return 1
+  json="$(python3 "$resolver" --start "$PROJECT_PATH" 2>/dev/null)" || return 1
   echo "$json" | jq -r '.external_runtime_dir // empty'
 }
 
@@ -372,7 +372,7 @@ invoke_local_checks() {
     tmp_out=$(mktemp)
 
     local check_exit=0
-    gtimeout "${remain_sec}s" python "$helper_script" --project "$project" --slug "$slug" --step "$step" > "$tmp_out" 2>&1 || check_exit=$?
+    gtimeout "${remain_sec}s" python3 "$helper_script" --project "$project" --slug "$slug" --step "$step" > "$tmp_out" 2>&1 || check_exit=$?
 
     local outcome
     case "$check_exit" in
@@ -397,7 +397,7 @@ invoke_local_checks() {
 }
 
 test_all_shipped() {
-  (cd "$PROJECT_PATH" && python "$LOOP_STATUS_SCRIPT" >/dev/null 2>&1)
+  (cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" >/dev/null 2>&1)
 }
 
 get_plans_dir() {
@@ -437,7 +437,7 @@ invoke_quality_gates_if_needed() {
 }
 
 write_jsonl_record() {
-  python -c "import json,sys; print(json.dumps(json.load(sys.stdin)))" <<< "$1" >> "$JSONL_LOG"
+  python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)))" <<< "$1" >> "$JSONL_LOG"
 }
 
 invoke_claude_iteration() {
@@ -478,11 +478,11 @@ invoke_claude_iteration() {
   if [[ "$SETTINGS_HAS_ENV" -eq 1 ]]; then
     (cd "$cwd" && env -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL -u ANTHROPIC_MODEL \
       gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
-      | tee "$jsonl_log" | python "$renderer" | tee "$iter_log" \
+      | tee "$jsonl_log" | python3 "$renderer" | tee "$iter_log" \
       || exit_code=$?
   else
     (cd "$cwd" && gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
-      | tee "$jsonl_log" | python "$renderer" | tee "$iter_log" \
+      | tee "$jsonl_log" | python3 "$renderer" | tee "$iter_log" \
       || exit_code=$?
   fi
 
@@ -557,7 +557,8 @@ main() {
   local iter_counter=0
 
   if [[ -n "$runtime_dir" ]]; then
-    python -c "import json; print(json.dumps({
+    mkdir -p "$runtime_dir"
+    python3 -c "import json; print(json.dumps({
       'state': 'running',
       'pid': $$,
       'run_id': '$RUN_ID',
@@ -676,7 +677,7 @@ main() {
     # Build new_commits JSON
     local new_commits_json="{}"
     if [[ -s "$new_commits_file" ]]; then
-      new_commits_json=$(python -c "
+      new_commits_json=$(python3 -c "
 import json, sys
 d = {}
 for line in sys.stdin:
@@ -691,7 +692,7 @@ print(json.dumps(d))
     # Build local_checks JSON
     local local_checks_json="[]"
     if [[ -n "$local_checks_results" && -s "$local_checks_results" ]]; then
-      local_checks_json=$(python -c "
+      local_checks_json=$(python3 -c "
 import json, sys
 print(json.dumps([json.loads(l) for l in sys.stdin]))
 " < "$local_checks_results")
@@ -711,7 +712,7 @@ print(json.dumps([json.loads(l) for l in sys.stdin]))
     _STOP_REASON="$iter_stop_reason" \
     _NEW_COMMITS_JSON="$new_commits_json" \
     _LOCAL_CHECKS_JSON="$local_checks_json" \
-    python -c "
+    python3 -c "
 import json, os
 d = {
   'run_id': os.environ['RUN_ID'],
@@ -763,13 +764,13 @@ print(json.dumps(d))
   echo "JSONL:    $JSONL_LOG"
   echo ""
   echo "Final loop_status:"
-  python "$LOOP_STATUS_SCRIPT" 2>&1 || true
+  python3 "$LOOP_STATUS_SCRIPT" 2>&1 || true
 
   # Sentinel teardown (state=<stop_reason>)
   if [[ -n "$runtime_dir" ]]; then
     local ended_at
     ended_at=$(date +%Y-%m-%dT%H:%M:%S%z)
-    python -c "import json; print(json.dumps({
+    python3 -c "import json; print(json.dumps({
       'state': '$stop_reason',
       'pid': $$,
       'run_id': '$RUN_ID',
