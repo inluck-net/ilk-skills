@@ -50,10 +50,30 @@ the design rationale in `<vault>/ai-coding-workflow/tool-evaluations/ilk-launche
 
 <project>/docs/plans/
   .ilk-launch.json        ← per-project params (optional; falls back to defaults)
-<project>/.ilk-launcher/
+
+~/.ilk-data/projects/<key>/runtime/launcher/
   running.pid               ← PID of the spawned PowerShell window (deleted on clean exit)
   last-launch.json          ← metadata of most recent launch (for status display)
+  mcp-worker.json           ← filtered MCP config passed to the runner
 ```
+
+## State directory
+
+All per-project runtime state (PID files, launch metadata, MCP worker
+configs, and postmortems) lives outside the project tree under:
+
+```
+~/.ilk-data/projects/<key>/runtime/launcher/
+```
+
+To discover the exact paths for the project in the current directory:
+
+```bash
+python3 ~/.cursor/skills/ilk-loop/scripts/ilk_paths.py --start . --where
+```
+
+This keeps the project repo clean and avoids accidental commits of
+launcher artifacts.
 
 ## Config files
 
@@ -112,7 +132,7 @@ CLI for a single run:
 
 Mechanism: the launcher reads `~/.claude.json`'s `mcpServers`, filters
 according to the chosen mode, writes the resulting JSON (UTF-8 no BOM)
-to `<project>/.ilk-launcher/mcp-worker.json`, and passes it through
+to `~/.ilk-data/projects/<key>/runtime/launcher/mcp-worker.json`, and passes it through
 `run_ilk_loop_claude.ps1 -McpConfigPath` so every `claude -p` call gets
 `--mcp-config <path> --strict-mcp-config`. `--strict-mcp-config` also
 drops claude.ai-synced servers (Gmail / Drive) for the worker — those
@@ -300,9 +320,9 @@ bash "$HOME/.cursor/skills/ilk-launcher/scripts/stop.sh" --project-name es_api
 bash "$HOME/.cursor/skills/ilk-launcher/scripts/stop.sh" --project-path /path/to/your/project
 ```
 
-Reads `<project>/.ilk-launcher/running.pid`, runs
-`taskkill /T /F /PID <n>` (tree-kill so `claude` and its children die
-with the wrapper), deletes the PID file.
+Reads the PID file from the external launcher dir (resolved via
+ilk_paths.py), runs `taskkill /T /F /PID <n>` (tree-kill so `claude`
+and its children die with the wrapper), deletes the PID file.
 
 ### W4. Launch all registered projects
 
@@ -351,7 +371,7 @@ last few postmortems for this project (produced by the `ilk-feedback`
 skill):
 
 ```
-<project>/.ilk-launcher/postmortems/*.md
+~/.ilk-data/projects/<key>/runtime/launcher/postmortems/*.md
 ```
 
 Each postmortem has a YAML front-matter block with:
