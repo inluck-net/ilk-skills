@@ -703,6 +703,9 @@ print(json.dumps([json.loads(l) for l in sys.stdin]))
     local ts
     ts=$(date +%Y-%m-%dT%H:%M:%S%z)
 
+    PROJECT_PATH="$PROJECT_PATH" \
+    MODEL="$MODEL" \
+    MAX_BUDGET_USD="$MAX_BUDGET_USD" \
     RUN_ID="$RUN_ID" \
     _ITER="$i" \
     _TS="$ts" \
