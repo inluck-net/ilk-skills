@@ -31,6 +31,10 @@ CLI_DRY_RUN=false
 RESOLVED_PATH=""
 RESOLVED_NAME=""
 
+# MCP filter state (populated by resolve_mcp_filter)
+MCP_FILTER_MODE=""
+MCP_FILTER_NAMES=""
+
 # ----- Helpers ---------------------------------------------------------------
 
 read_projects_registry() {
@@ -188,13 +192,122 @@ resolve_params() {
 }
 
 resolve_mcp_filter() {
-  # Step 2 will fill this in.
-  echo "none"
+  local project_path="$1"
+
+  # CLI flags trump per-project config; mutex check at CLI level
+  if [[ -n "$CLI_ENABLE_MCP" && -n "$CLI_DISABLE_MCP" ]]; then
+    echo "Error: Specify either --enable-mcp (whitelist) or --disable-mcp (blacklist), not both." >&2
+    exit 1
+  fi
+  if [[ -n "$CLI_ENABLE_MCP" ]]; then
+    MCP_FILTER_MODE="whitelist"
+    MCP_FILTER_NAMES="$CLI_ENABLE_MCP"
+    return
+  fi
+  if [[ -n "$CLI_DISABLE_MCP" ]]; then
+    MCP_FILTER_MODE="blacklist"
+    MCP_FILTER_NAMES="$CLI_DISABLE_MCP"
+    return
+  fi
+
+  # Fall back to per-project config
+  local cfg
+  cfg=$(read_project_config "$project_path")
+
+  local has_enable has_disable
+  has_enable=$(python -c "import json,sys; d=json.load(sys.stdin); print('1' if 'worker_enable_mcp' in d else '0')" <<<"$cfg")
+  has_disable=$(python -c "import json,sys; d=json.load(sys.stdin); print('1' if 'worker_disable_mcp' in d else '0')" <<<"$cfg")
+
+  if [[ "$has_enable" == "1" && "$has_disable" == "1" ]]; then
+    echo "Error: Specify either worker_disable_mcp or worker_enable_mcp in .ilk-launch.json, not both." >&2
+    exit 1
+  fi
+
+  if [[ "$has_enable" == "1" ]]; then
+    MCP_FILTER_MODE="whitelist"
+    MCP_FILTER_NAMES=$(python -c "import json,sys; d=json.load(sys.stdin); print(','.join(str(x) for x in d.get('worker_enable_mcp', [])))" <<<"$cfg")
+    return
+  fi
+  if [[ "$has_disable" == "1" ]]; then
+    MCP_FILTER_MODE="blacklist"
+    MCP_FILTER_NAMES=$(python -c "import json,sys; d=json.load(sys.stdin); print(','.join(str(x) for x in d.get('worker_disable_mcp', [])))" <<<"$cfg")
+    return
+  fi
+
+  MCP_FILTER_MODE="none"
+  MCP_FILTER_NAMES=""
 }
 
 build_worker_mcp_config() {
-  # Step 2 will fill this in.
-  echo ""
+  local project_path="$1"
+  local mode="$2"
+  local names_csv="$3"
+
+  if [[ "$mode" == "none" || -z "$names_csv" ]]; then
+    echo ""
+    return
+  fi
+
+  local claude_json="${HOME}/.claude.json"
+  if [[ ! -f "$claude_json" ]]; then
+    echo "[ilk] worker MCP filter requested but ~/.claude.json not found; skipping." >&2
+    echo ""
+    return
+  fi
+
+  local out_path="${project_path}/.ilk-launcher/mcp-worker.json"
+  mkdir -p "$(dirname "$out_path")"
+
+  python - "$mode" "$names_csv" "$claude_json" "$out_path" <<'PYEOF'
+import json, sys
+
+mode = sys.argv[1]
+names = [n.strip() for n in sys.argv[2].split(',') if n.strip()]
+claude_json_path = sys.argv[3]
+out_path = sys.argv[4]
+
+with open(claude_json_path, encoding='utf-8') as f:
+    data = json.load(f)
+
+if 'mcpServers' not in data:
+    print('[ilk] worker MCP filter requested but ~/.claude.json has no mcpServers; skipping.', file=sys.stderr)
+    sys.exit(0)
+
+filtered = {}
+kept = []
+skipped = []
+missing = []
+
+if mode == 'whitelist':
+    for want in names:
+        if want in data['mcpServers']:
+            filtered[want] = data['mcpServers'][want]
+            kept.append(want)
+        else:
+            missing.append(want)
+else:
+    # blacklist
+    for name, cfg in data['mcpServers'].items():
+        if name in names:
+            skipped.append(name)
+        else:
+            filtered[name] = cfg
+            kept.append(name)
+
+out = {'mcpServers': filtered}
+with open(out_path, 'w', encoding='utf-8') as f:
+    json.dump(out, f, indent=2, ensure_ascii=False)
+
+if mode == 'whitelist':
+    print(f'[ilk] worker MCP filter (whitelist): kept {", ".join(kept)}', file=sys.stderr)
+    if missing:
+        print(f'[ilk] note: {", ".join(missing)} not in ~/.claude.json mcpServers (typo? claude.ai-synced?)', file=sys.stderr)
+else:
+    if skipped:
+        print(f'[ilk] worker MCP filter (blacklist): disabling {", ".join(skipped)} (kept {", ".join(kept)})', file=sys.stderr)
+
+print(out_path)
+PYEOF
 }
 
 get_pid_file_path() {
@@ -351,13 +464,22 @@ main() {
   echo "[$RESOLVED_NAME] Resolved path: $RESOLVED_PATH"
   echo "[$RESOLVED_NAME] MaxIterations: $max_iter    IterationTimeoutMin: $timeout_min"
 
-  # Steps 2-3 will add MCP filtering and actual spawn here.
+  # MCP filtering
+  resolve_mcp_filter "$RESOLVED_PATH"
+  local mcp_config_path=""
+  mcp_config_path=$(build_worker_mcp_config "$RESOLVED_PATH" "$MCP_FILTER_MODE" "$MCP_FILTER_NAMES")
+  if [[ -n "$mcp_config_path" ]]; then
+    echo "[$RESOLVED_NAME] MCP config: $mcp_config_path (strict -- worker sees only what's listed)"
+  else
+    echo "[$RESOLVED_NAME] MCP config: (default -- worker sees user's full MCP registry)"
+  fi
+
   if [[ "$CLI_DRY_RUN" == true ]]; then
     echo "[$RESOLVED_NAME] DRY RUN — would launch with the above params."
     return
   fi
 
-  echo "[$RESOLVED_NAME] Launch logic not yet implemented (steps 2-3)."
+  echo "[$RESOLVED_NAME] Launch logic not yet implemented (step 3)."
 }
 
 main "$@"
