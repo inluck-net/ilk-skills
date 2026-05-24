@@ -34,6 +34,9 @@ JSONL_LOG=""
 SETTINGS_HAS_ENV=0
 PROJECT_KEY=""
 REPOS=()
+ITER_COMPLETED=0
+ITER_EXIT_CODE=0
+ITER_BUDGET_EXHAUSTED=0
 
 # ----- Argument parsing ------------------------------------------------------
 
@@ -260,11 +263,28 @@ discover_git_repos() {
 }
 
 get_repo_heads() {
-  : # TODO: step 5 — snapshot HEAD of every repo in REPOS
+  local out_file="$1"
+  : > "$out_file"
+  local r
+  for r in "${REPOS[@]}"; do
+    local sha
+    sha=$(git -C "$r" rev-parse HEAD 2>/dev/null) || sha="(unknown)"
+    printf '%s=%s\n' "$r" "$sha" >> "$out_file"
+  done
 }
 
 get_new_commit_count() {
-  : # TODO: step 5 — git rev-list --count Before..After
+  local repo="$1"
+  local before_file="$2"
+  local after_file="$3"
+  local before after
+  before=$(grep -F "$repo=" "$before_file" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
+  after=$(grep -F "$repo=" "$after_file" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
+  if [[ "$before" == "$after" || "$before" == "(unknown)" || "$after" == "(unknown)" ]]; then
+    echo 0
+    return
+  fi
+  git -C "$repo" rev-list --count "${before}..${after}" 2>/dev/null || echo 0
 }
 
 get_local_check_targets() {
@@ -328,7 +348,68 @@ write_jsonl_record() {
 }
 
 invoke_claude_iteration() {
-  : # TODO: step 5 — gtimeout claude -p ... with stream-json tee to renderer
+  local cwd="$1"
+  local iter_log="$2"
+  local prompt_text="$3"
+  local timeout_sec="$4"
+  local budget_usd="${5:-0}"
+  local model_override="${6:-}"
+
+  local jsonl_log="${iter_log}.jsonl"
+  local renderer="${HOME}/.cursor/skills/ilk-loop/scripts/_stream_json_render.py"
+
+  # Build claude args array
+  local claude_args=(
+    "-p"
+    "--dangerously-skip-permissions"
+    "--output-format" "stream-json"
+    "--verbose"
+    "--include-partial-messages"
+  )
+
+  if [[ "$budget_usd" -gt 0 ]]; then
+    claude_args+=("--max-budget-usd" "$budget_usd")
+  fi
+  if [[ -n "$model_override" ]]; then
+    claude_args+=("--model" "$model_override")
+  fi
+  if [[ -n "$MCP_CONFIG_PATH" ]]; then
+    claude_args+=("--mcp-config" "$MCP_CONFIG_PATH" "--strict-mcp-config")
+  fi
+
+  claude_args+=("$prompt_text")
+
+  # Run claude with optional env clear and gtimeout.
+  # The subshell (cd ...) keeps the cwd change local.
+  local exit_code=0
+  if [[ "$SETTINGS_HAS_ENV" -eq 1 ]]; then
+    (cd "$cwd" && env -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL -u ANTHROPIC_MODEL \
+      gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
+      | tee "$jsonl_log" | python "$renderer" | tee "$iter_log" \
+      || exit_code=$?
+  else
+    (cd "$cwd" && gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
+      | tee "$jsonl_log" | python "$renderer" | tee "$iter_log" \
+      || exit_code=$?
+  fi
+
+  # Detect budget-exhausted signals in the raw JSONL
+  local budget_exhausted=0
+  if [[ -f "$jsonl_log" ]] \
+     && grep -qE '"terminal_reason".*budget_exhausted|budget exhausted|budget limit reached' "$jsonl_log" 2>/dev/null; then
+    budget_exhausted=1
+  fi
+
+  # gtimeout returns 124 on timeout
+  local completed=1
+  if [[ "$exit_code" -eq 124 ]]; then
+    completed=0
+    exit_code=-1
+  fi
+
+  ITER_COMPLETED=$completed
+  ITER_EXIT_CODE=$exit_code
+  ITER_BUDGET_EXHAUSTED=$budget_exhausted
 }
 
 # ----- Startup banner --------------------------------------------------------
