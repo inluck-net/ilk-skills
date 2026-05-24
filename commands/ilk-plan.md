@@ -139,6 +139,63 @@ command lists. This determines what counts as loop-shippable in step 6:
 Mention the probe result in the step 5 proposal so the user knows
 which path the plan assumes.
 
+## 4c. Fixture discovery (scan before drafting)
+
+**This step is the single highest-leverage planner improvement** —
+it prevents "false blocked" sub-plans where the loop reports "I need a
+test account / seed data / fixture" while the asset is actually
+sitting in the repo, just unindexed.
+
+Before proposing groupings, sweep the project for existing fixtures
+the planned sub-plans will likely need. Run these globs (`Glob` tool,
+relative to the resolved project root from step 2):
+
+| Glob pattern | What we're looking for |
+|---|---|
+| `**/seed*.py`, `**/seeds/**`, `**/seed*.sh`, `**/seed*.ts` | Seed / factory commands (idempotent data setup) |
+| `**/fixtures/**`, `**/factories/**` | Test fixture modules (Playwright helpers, factory_boy, pytest fixtures) |
+| `**/{staging,test,dev,e2e}-accounts*`, `**/test-creds*` | Account credentials documents |
+| `docs/loop/PRIMER.md`, `docs/loop/fixtures-registry.{yml,yaml,json}` | Project-side loop primer (see ilk-loop SKILL.md → "Project-side fixtures registry") |
+| `AGENTS.md`, `CLAUDE.md` | Top-level agent docs — `grep` for "credentials"/"凭据"/"test account"/"primer" section headings |
+| `**/conftest.py` (Python) | pytest fixture roots |
+
+For each hit, briefly characterise it: 1-line "what it provides".
+Examples:
+
+- `api/apps/system/management/commands/seed_testdata.py` —
+  idempotent seed for portal customers + admin staff (6 roles) + orders.
+- `docs/portal/testing/staging-accounts.md` — portal customer +
+  staff credentials, dev + staging.
+- `docs/e2e-project/fixtures/api-client.ts::ensureCartHasItems` —
+  helper that puts a known item in the active cart.
+
+If `docs/loop/fixtures-registry.{yml,yaml,json}` exists, read it
+fully — it is the authoritative machine-parseable index, and
+sub-plan `data_prereqs` entries reference its keys directly.
+
+**Surface this in the step-5 proposal** as a "Fixtures available"
+table BELOW the sub-plan grouping table:
+
+```
+| Fixture | Location | Used by |
+|---|---|---|
+| portal customer test account | docs/portal/testing/staging-accounts.md | sub-plan-1, sub-plan-3 |
+| seed_testdata cmd | api/apps/system/management/commands/seed_testdata.py | every authed sub-plan, step 0 |
+| ensureCartHasItems helper | docs/e2e-project/fixtures/api-client.ts | sub-plan-2 |
+```
+
+The "Used by" column is what makes this useful — the planner explicitly
+maps which fixture each sub-plan will rely on, so the user can challenge
+("you forgot sub-plan-4 also needs auth"). Sub-plans that touch authed
+routes / protected pages WITHOUT a corresponding fixture entry are a
+red flag: either we missed scanning, or there's a real gap that needs
+to be filed (e.g. "seed doesn't populate cart_items" → ticket for the
+seed command).
+
+Skip this step ONLY if the user's task description is purely a refactor
+/ docs / config change with no runtime data dependency. When in doubt,
+run the globs — they're cheap.
+
 ## 5. Propose grouping (USER APPROVAL REQUIRED)
 
 Apply the rubric from `decomposition-principles.md` while drafting:
@@ -203,6 +260,12 @@ Once approved, write all files in one batch under the
   - **In meta mode:** `repo: <member-name>` (REQUIRED; must match a
     name from step-2 `meta_members`). In single mode the field is
     absent — do not invent values.
+  - **`data_prereqs`** — for every sub-plan that touches authed routes
+    / protected data / seeded state, list the fixtures from the step-4c
+    discovery that this sub-plan will use. Reference by path or, if a
+    `docs/loop/fixtures-registry.*` exists, by registry key. Never
+    leave this as "needs a test account" prose — that is the
+    anti-pattern step 4c exists to kill.
   - Tickets-in-scope table with title / type / priority / module per item
   - Concrete objectives (1-line each)
   - Concrete acceptance criteria (observable, testable). **Each AC the
