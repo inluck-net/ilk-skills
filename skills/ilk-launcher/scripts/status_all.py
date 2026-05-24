@@ -33,17 +33,27 @@ LOOP_STATUS_SCRIPT = HOME / ".cursor" / "skills" / "ilk-loop" / "scripts" / "loo
 
 
 def pid_alive(pid: int) -> bool:
-    """Check whether a Windows PID is alive using tasklist."""
+    """Cross-platform: check whether a PID refers to a live process."""
+    if sys.platform == "win32":
+        try:
+            out = subprocess.check_output(
+                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=10,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+            return False
+        return str(pid) in out
+    # POSIX: signal 0 is a no-op delivery; failure modes tell us state.
     try:
-        out = subprocess.check_output(
-            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=10,
-        )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        os.kill(pid, 0)
+    except PermissionError:
+        # process exists but owned by another user — still alive
+        return True
+    except (ProcessLookupError, OSError):
         return False
-    return str(pid) in out
+    return True
 
 
 def read_pid_file(project_path: Path) -> int | None:
