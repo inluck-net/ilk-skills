@@ -3,9 +3,10 @@
   Stop a ilk-launcher-spawned window for a project (tree-kill).
 
 .DESCRIPTION
-  Reads <project>/.ilk-launcher/running.pid, runs taskkill /T /F /PID <n>
-  so the wrapper PowerShell, claude CLI, and any descendants all die
-  together (no orphaned API consumers). Removes the PID file on success.
+  Reads the PID file from the external launcher dir (resolved via
+  ilk_paths.py), runs taskkill /T /F /PID <n> so the wrapper PowerShell,
+  claude CLI, and any descendants all die together (no orphaned API
+  consumers). Removes the PID file on success.
 
 .PARAMETER ProjectPath
   Absolute project root path.
@@ -57,9 +58,34 @@ function Resolve-ProjectByName {
   return [string]$match.path
 }
 
+function Get-ExternalLauncherDir {
+  param([string]$ProjectPath)
+  $resolver = Join-Path $HOME ".cursor\skills\ilk-loop\scripts\ilk_paths.py"
+  if (-not (Test-Path $resolver)) { return "" }
+  try {
+    $json = & python $resolver --start $ProjectPath 2>$null
+    if ($LASTEXITCODE -eq 0 -and $json) {
+      $obj = $json | ConvertFrom-Json -ErrorAction Stop
+      if ($obj.external_launcher_dir) { return [string]$obj.external_launcher_dir }
+    }
+  } catch {}
+  return ""
+}
+
+function Get-PidFilePath {
+  param([string]$ProjectPath)
+  $dir = Get-ExternalLauncherDir -ProjectPath $ProjectPath
+  if (-not $dir) { return "" }
+  return Join-Path $dir 'running.pid'
+}
+
 function Stop-Project {
   param([string]$Path, [string]$Name)
-  $pidFile = Join-Path $Path '.ilk-launcher\running.pid'
+  $pidFile = Get-PidFilePath -ProjectPath $Path
+  if (-not $pidFile) {
+    Write-Host "[$Name] could not resolve external launcher dir — nothing to stop." -ForegroundColor Yellow
+    return
+  }
   if (-not (Test-Path $pidFile)) {
     Write-Host "[$Name] no PID file at $pidFile — nothing to stop." -ForegroundColor Yellow
     return

@@ -4,8 +4,8 @@ set -euo pipefail
 # =============================================================================
 # ilk-launcher stop (macOS bash port of stop.ps1)
 # =============================================================================
-# Reads <project>/.ilk-launcher/running.pid, kills the process group,
-# and removes the PID file.
+# Reads the PID file from the external launcher dir (resolved via
+# ilk_paths.py), kills the process group, and removes the PID file.
 # =============================================================================
 
 # ----- Globals ---------------------------------------------------------------
@@ -83,12 +83,40 @@ resolve_project_by_cwd() {
   exit 1
 }
 
+get_external_launcher_dir() {
+  local project_path="$1"
+  local resolver
+  resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  if [[ ! -f "$resolver" ]]; then
+    echo ""
+    return
+  fi
+  local json_out
+  if json_out=$(python3 "$resolver" --start "$project_path" 2>/dev/null) && [[ -n "$json_out" ]]; then
+    python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('external_launcher_dir') or '')" <<<"$json_out"
+  else
+    echo ""
+  fi
+}
+
+get_pid_file_path() {
+  local project_path="$1"
+  local launcher_dir
+  launcher_dir=$(get_external_launcher_dir "$project_path")
+  if [[ -z "$launcher_dir" ]]; then
+    echo ""
+    return
+  fi
+  echo "${launcher_dir}/running.pid"
+}
+
 # ----- Stop logic ------------------------------------------------------------
 
 stop_project() {
   local path="$1"
   local name="$2"
-  local pid_file="${path}/.ilk-launcher/running.pid"
+  local pid_file
+  pid_file=$(get_pid_file_path "$path")
 
   if [[ ! -f "$pid_file" ]]; then
     echo "[$name] no running ilk for this project" >&2
