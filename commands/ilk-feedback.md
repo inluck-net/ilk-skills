@@ -9,8 +9,8 @@ Do NOT re-implement the logic here. Specifically:
    or `-ProjectName` / `-ProjectPath` if the user passed one).
 2. Run `python "$HOME\.cursor\skills\ilk-feedback\scripts\collect.py"`
    with the resolved project. The script writes
-   `<project>/.ilk-launcher/postmortems/<run-id>.md` and prints a
-   one-paragraph summary.
+   `~/.ilk-data/projects/<key>/runtime/launcher/postmortems/<run-id>.md`
+   and prints a one-paragraph summary.
 3. Read the generated markdown file. Render in chat:
    - **Classification** (one of the 8 taxonomy labels) + one-sentence
      "what happened"
@@ -25,4 +25,4 @@ Do NOT re-implement the logic here. Specifically:
    - **I'll handle it** (end turn, report path)
 
 If the project has no postmortem-eligible run (no JSONL records, no
-`.ilk-launcher/last-launch.json`), say so and stop — do not invent.
+`~/.ilk-data/projects/<key>/runtime/launcher/last-launch.json`), say so and stop — do not invent.

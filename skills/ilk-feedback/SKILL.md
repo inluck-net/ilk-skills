@@ -4,7 +4,7 @@ description: >-
   Postmortem for the most recent ilk-loop run. Reads the JSONL summary
   + per-iteration logs `run_ilk_loop_claude.ps1` writes, classifies the
   outcome (8 taxonomy labels), recommends next-launch params, saves
-  the report under `<project>/.ilk-launcher/postmortems/`. Triggers:
+  the report under `~/.ilk-data/projects/<key>/runtime/launcher/postmortems/`. Triggers:
   "/ilk-feedback", "postmortem", "debrief", "what went wrong", "why
   did ilk stop", "复盘", "ilk 反馈", "ilk 怎么停了", or after a ilk
   window exits.
@@ -48,7 +48,7 @@ A read-only triage skill that turns the structured logs already produced by
   scripts/
     collect.py            ← reads JSONL + per-iter logs, writes report
 
-<project>/.ilk-launcher/postmortems/
+~/.ilk-data/projects/<key>/runtime/launcher/postmortems/
   <run-id>.md             ← one report per run, frontmatter-headed for cheap reading
 ```
 
@@ -97,7 +97,7 @@ python "$HOME\.cursor\skills\ilk-feedback\scripts\collect.py" -ProjectPath C:\pa
 python "$HOME\.cursor\skills\ilk-feedback\scripts\collect.py"
 ```
 
-The script writes `<project>/.ilk-launcher/postmortems/<run-id>.md` and
+The script writes `~/.ilk-data/projects/<key>/runtime/launcher/postmortems/<run-id>.md` and
 prints a 1-paragraph summary to stdout (classification + recommendations
 + report path).
 
@@ -138,7 +138,7 @@ through 3-day-old runs.
 
 - **Read-only with respect to the running loop.** Never modify `.ilk-loop.log`,
   PID files, or sub-plan front-matter. Only writes new files in
-  `.ilk-launcher/postmortems/`.
+  `~/.ilk-data/projects/<key>/runtime/launcher/postmortems/`.
 - **No L2 auto-improvement.** This skill never modifies `ilk-launcher`
   SKILL.md, `ilk-loop` SKILL.md, sub-plan templates, or any heuristic
   documentation. Trends are surfaced for humans to act on, not auto-applied.

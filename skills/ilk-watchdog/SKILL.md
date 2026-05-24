@@ -36,9 +36,9 @@ launcher.
   SKILL.md                  ← this file
   scripts/
     watchdog.ps1            ← polling loop; -Detach flag spawns its own window
-    stop_watchdog.ps1       ← reads <project>/.ilk-watchdog/watchdog.pid, tree-kills
+    stop_watchdog.ps1       ← reads ~/.ilk-data/projects/<key>/runtime/watchdog/watchdog.pid, tree-kills
 
-<project>/.ilk-watchdog/
+~/.ilk-data/projects/<key>/runtime/watchdog/
   watchdog.pid              ← PID of the watchdog window (deleted on clean exit)
   activity.log              ← append-only event log: poll, dead, classify, relaunch, ...
 ```
@@ -51,7 +51,7 @@ Window 2: watchdog: <project>         (this skill)
 Window 3 (optional): you, in Cursor   (can close anytime)
 
          writes ↓                       ↑ reads PID file
-  <project>/.ilk-launcher/running.pid
+  ~/.ilk-data/projects/<key>/runtime/launcher/running.pid
 ```
 
 The only inter-process channel is the file system. No IPC, no ports.
@@ -131,8 +131,8 @@ Kills only the watchdog window. The ilk window keeps running.
 1. Confirm ilk is running for the target project (`status_all.py` shows
    `running`). If not, tell the user to start ilk first.
 2. Check whether a watchdog is already running for this project (read
-   `<project>/.ilk-watchdog/watchdog.pid`). If alive, refuse with a
-   helpful message — don't double-run.
+   `~/.ilk-data/projects/<key>/runtime/watchdog/watchdog.pid`). If alive,
+   refuse with a helpful message — don't double-run.
 3. Resolve project (cwd walk-up / `-ProjectName` / `-ProjectPath`, same as
    launcher).
 4. Spawn watchdog with `-Detach`. Default `PollMin=5`, `MaxRestarts=5`
