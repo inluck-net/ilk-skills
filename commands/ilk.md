@@ -106,7 +106,47 @@ Specifically:
    bump the step's notes (NOT the plan) and hand control back. Do not
    loop indefinitely.
 
-## 6. Boundary: stop and hand back
+## 6. Before setting `status: blocked` — escalation checklist
+
+A blocked status halts the entire loop pending human intervention.
+That is expensive: the watchdog stops auto-resuming, the user gets
+paged, and any later sub-plans that didn't depend on this one are
+also frozen. Before flipping the switch, work through this checklist:
+
+1. **Project preflight / primer.** Look for these files at the project
+   root (or under `docs/loop/`) — many "I don't know how to do this"
+   blockers are answered there:
+   - `docs/loop/PRIMER.md` — project-side loop primer (test accounts,
+     seed commands, environment, protected routes)
+   - `docs/loop/fixtures-registry.{yml,yaml,json}` — machine-readable
+     fixture index; sub-plan `data_prereqs` keys often reference it
+   - `AGENTS.md` / `CLAUDE.md` — top-level agent docs
+   - If any of these exist and were not in this sub-plan's "Reference
+     reading" list, read them now. Many "blocked" turns out to be
+     "the agent didn't know the project has a seed command".
+
+2. **MASTER cross-cutting invariants.** Re-read the active MASTER's
+   `cross_cutting_invariants` frontmatter. If any invariant has an
+   `assert.command` (e.g. `bash docs/loop/preflight.sh`), run it. The
+   common pattern: a project preflight script that ensures seed has
+   run, MCP servers are connected, and test accounts can log in.
+   Running this often unblocks a stuck step.
+
+3. **Try once with the surfaced context.** If the preflight pass +
+   primer read filled in what you were missing, attempt the step
+   again BEFORE marking blocked.
+
+Only set `status: blocked` when ALL of the following are true:
+- The blocker is a real decision / external action only a human can
+  resolve (design choice, missing credential not in any docs, broken
+  external service, design conflict with implementation, etc.)
+- You've explicitly checked the three sources above
+- You've written what you tried in the sub-plan's "Findings" section
+
+The `blocked` note in the sub-plan should name what kind of input
+unblocks it ("need design decision on X" not "couldn't do step 3").
+
+## 7. Boundary: stop and hand back
 
 Stop and hand back to the human when ANY of these is true:
 
@@ -117,11 +157,12 @@ Stop and hand back to the human when ANY of these is true:
      `关联 commit` field — use the lark-tickets skill.
   3. Commit: `chore(plans): <slug> shipped [plan:<slug>#ship]`.
 - Context starts feeling heavy (many large file reads, repeated re-reads).
-- A step blocks on something only the human can do (external auth,
-  manual review, ambiguous requirement).
+- A step legitimately blocks per the section-6 checklist (you walked
+  through the three escalation sources and the blocker is genuinely a
+  human-only decision).
 - An unexpected new bug surfaces and you've filed a ticket for it.
 
-## 7. Final report
+## 8. Final report
 
 Before ending your turn, run `loop_status.py` again and paste its output
 in your last message so the human sees up-to-date state.

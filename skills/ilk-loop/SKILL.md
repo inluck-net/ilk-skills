@@ -300,6 +300,57 @@ test / build / ci / perf / style).
   Context economy is the entire point of this convention.
 - **PowerShell on Windows**: use `;` not `&&`, and quote paths with spaces.
 
+## Project-side preflight (the standard escalation lever)
+
+A common loop failure mode is "agent set `status: blocked` because it
+didn't know how to do step N", where the answer was actually documented
+in the project but not surfaced to the agent. Projects that drive the
+loop hard should adopt this convention to short-circuit such false
+blockers:
+
+1. **A loop primer.** Drop a `docs/loop/PRIMER.md` at the project root
+   listing what every fresh agent session needs to know: which
+   repos/sub-repos exist, where test accounts live, what the seed
+   command is, which routes are authed, dev vs staging endpoints.
+   Reference it from MASTER's "Reference reading (loaded by every
+   sub-plan)" so the planner and loop both load it.
+
+2. **A machine-readable fixture registry** (optional but recommended):
+   `docs/loop/fixtures-registry.{yml,yaml,json}` mapping short keys to
+   `{creds_doc, seed_cmd, verify_cmd, helper}` entries. Sub-plan
+   `data_prereqs` entries reference these keys directly. The planner's
+   step 4c (in `/ilk-plan`) scans for this file and reads it fully.
+
+3. **A preflight script wired as an invariant.** Drop a
+   `docs/loop/preflight.sh` (idempotent: ensures seed has run, MCP
+   servers connected, test accounts authenticate). Wire it into MASTER
+   frontmatter:
+
+   ```yaml
+   cross_cutting_invariants:
+     - id: loop-preflight
+       applies_when:
+         kind: substring
+         patterns:
+           - "src/app/[locale]/(main)"  # any authed route
+       assert:
+         command: bash docs/loop/preflight.sh
+         timeout: 120
+   ```
+
+   The `/ilk-plan` QC pass 7b weaves the invariant into every matching
+   sub-plan's `local_checks` automatically. When the agent runs that
+   sub-plan, `preflight.sh` is the first check — its failure surfaces
+   the real issue (seed not run, MCP broken, account expired) instead
+   of letting the agent stumble through 5 steps and finally giving up
+   with `blocked`.
+
+The `/ilk` slash command's section 6 ("Before setting `status: blocked`")
+specifically instructs the executor to read the primer, run the
+preflight invariant if present, and retry — *before* flipping a step
+to `blocked`. The skill assumes the project has done item 1; items 2-3
+are upgrades that reduce false blockers further.
+
 ## Concurrent multi-worktree execution
 
 The skill is designed so that **a single repository can host several
