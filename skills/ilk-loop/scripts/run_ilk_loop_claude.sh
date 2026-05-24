@@ -17,14 +17,14 @@ set -euo pipefail
 PROJECT_PATH=""
 MAX_ITERATIONS=30
 ITERATION_TIMEOUT_MIN=30
-LOOP_STATUS_SCRIPT=""
-LOG_DIR=""
+LOOP_STATUS_SCRIPT="${HOME}/.cursor/skills/ilk-loop/scripts/loop_status.py"
+LOG_DIR="${HOME}/.cursor/skills/ilk-loop/logs"
 PROMPT="/ilk please continue the active plan"
 MAX_BUDGET_USD=0
 MODEL=""
 RUN_LOCAL_CHECKS=false
 LOCAL_CHECKS_TIMEOUT_SEC=180
-LOCAL_CHECKS_SCRIPT=""
+LOCAL_CHECKS_SCRIPT="${HOME}/.cursor/skills/ilk-loop/scripts/run_local_checks.py"
 MCP_CONFIG_PATH=""
 
 # Internal state
@@ -36,8 +36,123 @@ REPOS=()
 
 # ----- Argument parsing ------------------------------------------------------
 
+usage() {
+  cat <<'EOF'
+Usage: run_ilk_loop_claude.sh [OPTIONS]
+
+Run the ilk-loop autonomously using Claude Code (`claude`) as the agent CLI,
+until all sub-plans ship, max iterations hit, or progress stalls.
+
+Options:
+  --project-path PATH              Project root containing docs/plans/MASTER-*.md
+                                   and one or more git repos. (required)
+  --max-iterations N               Hard cap on iterations. Default: 30
+  --iteration-timeout-min N        Per-iteration wall-clock timeout, in minutes.
+                                   Default: 30
+  --loop-status-script PATH        Path to loop_status.py.
+                                   Default: ~/.cursor/skills/ilk-loop/scripts/loop_status.py
+  --log-dir PATH                   Where to write per-iteration logs and the JSONL summary.
+                                   Default: ~/.cursor/skills/ilk-loop/logs
+  --prompt TEXT                    The prompt sent to claude.
+                                   Default: "/ilk please continue the active plan"
+  --max-budget-usd N               Optional per-iteration --max-budget-usd cap.
+                                   Default: 0 (no cap)
+  --model MODEL                    Optional --model override.
+                                   Default: "" (claude reads ANTHROPIC_MODEL from env)
+  --run-local-checks               After each productive iteration, scan new commit
+                                   messages for [plan:<slug>#step-N] tags and run
+                                   the matching sub-plan's local_checks.
+  --local-checks-timeout-sec N     Outer wall-clock cap for local_checks per iteration.
+                                   Default: 180
+  --local-checks-script PATH       Path to run_local_checks.py.
+                                   Default: ~/.cursor/skills/ilk-loop/scripts/run_local_checks.py
+  --mcp-config-path PATH           Path to a JSON file with {"mcpServers": {...}} to
+                                   pass to every `claude -p` invocation via
+                                   --mcp-config and --strict-mcp-config.
+  -h, --help                       Show this help message and exit.
+
+Examples:
+  # Smoke test on a project (subscription, no $$ cap)
+  bash run_ilk_loop_claude.sh --project-path /path/to/your/project --max-iterations 1
+
+  # Overnight on subscription endpoint
+  bash run_ilk_loop_claude.sh --project-path /path/to/your/project \
+      --max-iterations 30 --iteration-timeout-min 30
+
+  # Metered endpoint with $5 hard stop per iter
+  bash run_ilk_loop_claude.sh --project-path /path/to/your/project \
+      --max-iterations 30 --max-budget-usd 5
+EOF
+}
+
 parse_args() {
-  : # TODO: step 1 — long-flag arg parsing with defaults and --help
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project-path)
+        PROJECT_PATH="$2"
+        shift 2
+        ;;
+      --max-iterations)
+        MAX_ITERATIONS="$2"
+        shift 2
+        ;;
+      --iteration-timeout-min)
+        ITERATION_TIMEOUT_MIN="$2"
+        shift 2
+        ;;
+      --loop-status-script)
+        LOOP_STATUS_SCRIPT="$2"
+        shift 2
+        ;;
+      --log-dir)
+        LOG_DIR="$2"
+        shift 2
+        ;;
+      --prompt)
+        PROMPT="$2"
+        shift 2
+        ;;
+      --max-budget-usd)
+        MAX_BUDGET_USD="$2"
+        shift 2
+        ;;
+      --model)
+        MODEL="$2"
+        shift 2
+        ;;
+      --run-local-checks)
+        RUN_LOCAL_CHECKS=true
+        shift
+        ;;
+      --local-checks-timeout-sec)
+        LOCAL_CHECKS_TIMEOUT_SEC="$2"
+        shift 2
+        ;;
+      --local-checks-script)
+        LOCAL_CHECKS_SCRIPT="$2"
+        shift 2
+        ;;
+      --mcp-config-path)
+        MCP_CONFIG_PATH="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "Unknown option: $1" >&2
+        usage >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  if [[ -z "$PROJECT_PATH" ]]; then
+    echo "Error: --project-path is required." >&2
+    usage >&2
+    exit 1
+  fi
 }
 
 # ----- Pre-flight checks -----------------------------------------------------
