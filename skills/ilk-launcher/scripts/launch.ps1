@@ -66,23 +66,35 @@ param(
   [switch]$DryRun,
 
   # Comma-separated list of MCP server names to DISABLE for the spawned
-  # worker (only). Common case: "chrome-devtools" — its tool-call results
-  # stay resident for the rest of the session and cost real tokens. When
-  # a batch has no UI sub-plans, the worker doesn't need this MCP and
-  # disabling it saves ~10% per iteration (per `/usage` self-reports).
+  # worker. Blacklist mode — everything from ~/.claude.json's mcpServers
+  # EXCEPT the listed ones is exposed to the worker. Mutually exclusive
+  # with -EnableMcp.
+  [string]$DisableMcp = "",
+
+  # Comma-separated list of MCP server names to ENABLE for the spawned
+  # worker. Whitelist mode — ONLY the listed ones are exposed. The
+  # recommended default for loop workers, since 80% of iterations don't
+  # need any MCP at all and 20% mostly need just `lark-tickets`.
+  # Mutually exclusive with -DisableMcp.
   #
-  # Resolution order:
-  #   1. -DisableMcp on the CLI (this parameter)
-  #   2. .ilk-launch.json's `worker_disable_mcp` array
-  #   3. neither → don't pass --mcp-config (worker sees full registry)
+  # Common case: `worker_enable_mcp: ["lark-tickets"]` keeps ticket
+  # state transitions on sub-plan ship without paying for chrome-devtools
+  # snapshots (stay-resident) or figma context lookups (rarely useful in
+  # execution — design-context happens during /ilk-plan).
   #
-  # Implementation: launcher reads ~/.claude.json's `mcpServers`, removes
-  # the disabled entries, writes a temp file at
+  # Resolution order for either mode:
+  #   1. CLI flag (-DisableMcp or -EnableMcp)
+  #   2. .ilk-launch.json's `worker_disable_mcp` or `worker_enable_mcp`
+  #   3. nothing set → don't pass --mcp-config (worker sees full registry)
+  #
+  # Implementation: launcher filters ~/.claude.json's `mcpServers`
+  # according to the selected mode, writes the result to
   #   <ProjectPath>/.ilk-launcher/mcp-worker.json
-  # and passes it to run_ilk_loop_claude.ps1 via -McpConfigPath. The
-  # runner appends `--mcp-config <path> --strict-mcp-config` to every
-  # `claude -p` invocation.
-  [string]$DisableMcp = ""
+  # and passes it via -McpConfigPath to run_ilk_loop_claude.ps1, which
+  # appends `--mcp-config <path> --strict-mcp-config` to every `claude
+  # -p` invocation. `--strict-mcp-config` also drops claude.ai-synced
+  # servers (Gmail / Drive) for the worker.
+  [string]$EnableMcp = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -204,70 +216,125 @@ function Resolve-Params {
   return @{ MaxIterations = $maxIter; IterationTimeoutMin = $timeout }
 }
 
-function Resolve-DisableMcpList {
+function Resolve-McpFilter {
   <#
-    Resolve which MCP servers should be disabled for the worker. CLI
-    -DisableMcp (comma-separated) trumps the per-project config'`s
-    `worker_disable_mcp` array. Returns an array of names (possibly
-    empty).
+    Decide how to filter MCP servers for the worker. Returns a hashtable
+    @{ Mode = "blacklist"|"whitelist"|""; Names = @() }.
+    Mode "" means "no filtering" — launcher won't pass --mcp-config.
+
+    CLI flags trump per-project config; setting both blacklist and
+    whitelist sources at the SAME level is an error (we don't try to
+    guess which the user meant).
   #>
-  param([string]$ProjectPath, [string]$CliDisableMcp)
-  if (-not [string]::IsNullOrWhiteSpace($CliDisableMcp)) {
-    return @($CliDisableMcp.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  param(
+    [string]$ProjectPath,
+    [string]$CliDisableMcp,
+    [string]$CliEnableMcp
+  )
+
+  $cliDisable = -not [string]::IsNullOrWhiteSpace($CliDisableMcp)
+  $cliEnable  = -not [string]::IsNullOrWhiteSpace($CliEnableMcp)
+  if ($cliDisable -and $cliEnable) {
+    throw "Specify either -DisableMcp (blacklist) or -EnableMcp (whitelist), not both."
   }
+  if ($cliDisable) {
+    $names = @($CliDisableMcp.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    return @{ Mode = "blacklist"; Names = $names }
+  }
+  if ($cliEnable) {
+    $names = @($CliEnableMcp.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    return @{ Mode = "whitelist"; Names = $names }
+  }
+
   $cfg = Read-ProjectConfig -ProjectPath $ProjectPath
-  if ($cfg.ContainsKey('worker_disable_mcp')) {
+  $hasDisable = $cfg.ContainsKey('worker_disable_mcp')
+  $hasEnable  = $cfg.ContainsKey('worker_enable_mcp')
+  if ($hasDisable -and $hasEnable) {
+    throw "Specify either worker_disable_mcp or worker_enable_mcp in .ilk-launch.json, not both."
+  }
+  if ($hasDisable) {
     $raw = $cfg['worker_disable_mcp']
     if ($raw -is [System.Collections.IEnumerable] -and -not ($raw -is [string])) {
-      return @($raw | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+      $names = @($raw | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+      return @{ Mode = "blacklist"; Names = $names }
     }
   }
-  return @()
+  if ($hasEnable) {
+    $raw = $cfg['worker_enable_mcp']
+    if ($raw -is [System.Collections.IEnumerable] -and -not ($raw -is [string])) {
+      $names = @($raw | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+      return @{ Mode = "whitelist"; Names = $names }
+    }
+  }
+  return @{ Mode = ""; Names = @() }
 }
 
 function Build-WorkerMcpConfig {
   <#
     Build a temp MCP config file at <ProjectPath>/.ilk-launcher/mcp-worker.json
-    containing every server from ~/.claude.json'`s mcpServers EXCEPT the
-    ones named in $DisableNames. Returns the absolute path of the temp
-    file, or "" if no filtering should happen (empty disable list, or
-    ~/.claude.json absent / missing mcpServers).
+    containing the MCP servers selected by $Mode + $Names from
+    ~/.claude.json's mcpServers:
+
+      blacklist → all servers EXCEPT $Names
+      whitelist → ONLY servers in $Names that exist in the registry
+
+    Returns the absolute path of the temp file, or "" if no filtering
+    should happen (empty mode/names, or ~/.claude.json absent / missing
+    mcpServers).
 
     The runner appends `--mcp-config <path> --strict-mcp-config` so the
-    worker only sees what we whitelisted. Servers synced from claude.ai
-    (Gmail / Drive / etc.) are NOT in ~/.claude.json'`s mcpServers, so
-    `--strict-mcp-config` also drops those for the worker — desired:
-    workers don't need email / drive access.
+    worker only sees what we wrote. claude.ai-synced servers (Gmail /
+    Drive / etc.) are also dropped for the worker — desired: workers
+    almost never need email / drive access.
   #>
   param(
     [string]$ProjectPath,
-    [string[]]$DisableNames
+    [string]$Mode,
+    [string[]]$Names
   )
-  if (-not $DisableNames -or $DisableNames.Count -eq 0) { return "" }
+  if (-not $Mode -or -not $Names -or $Names.Count -eq 0) { return "" }
   $claudeJson = Join-Path $HOME ".claude.json"
   if (-not (Test-Path $claudeJson)) {
-    Write-Host "[ilk] -DisableMcp requested but ~/.claude.json not found; skipping MCP filter." -ForegroundColor DarkYellow
+    Write-Host "[ilk] worker MCP filter requested but ~/.claude.json not found; skipping." -ForegroundColor DarkYellow
     return ""
   }
   try {
     $parsed = Get-Content $claudeJson -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop
   } catch {
-    Write-Host "[ilk] -DisableMcp requested but ~/.claude.json is malformed; skipping MCP filter." -ForegroundColor DarkYellow
+    Write-Host "[ilk] worker MCP filter requested but ~/.claude.json is malformed; skipping." -ForegroundColor DarkYellow
     return ""
   }
   if (-not $parsed.mcpServers) {
-    Write-Host "[ilk] -DisableMcp requested but ~/.claude.json has no mcpServers; skipping MCP filter." -ForegroundColor DarkYellow
+    Write-Host "[ilk] worker MCP filter requested but ~/.claude.json has no mcpServers; skipping." -ForegroundColor DarkYellow
     return ""
   }
+
   $filtered = [ordered]@{}
+  $kept = @()
   $skipped = @()
-  foreach ($prop in $parsed.mcpServers.PSObject.Properties) {
-    if ($DisableNames -contains $prop.Name) {
-      $skipped += $prop.Name
-      continue
+  $missing = @()
+  if ($Mode -eq "whitelist") {
+    foreach ($want in $Names) {
+      $prop = $parsed.mcpServers.PSObject.Properties[$want]
+      if ($prop) {
+        $filtered[$want] = $prop.Value
+        $kept += $want
+      } else {
+        $missing += $want
+      }
     }
-    $filtered[$prop.Name] = $prop.Value
+  } else {
+    # blacklist
+    foreach ($prop in $parsed.mcpServers.PSObject.Properties) {
+      if ($Names -contains $prop.Name) {
+        $skipped += $prop.Name
+        continue
+      }
+      $filtered[$prop.Name] = $prop.Value
+      $kept += $prop.Name
+    }
   }
+
   $out = [ordered]@{ mcpServers = $filtered }
   $stateDir = Join-Path $ProjectPath '.ilk-launcher'
   if (-not (Test-Path $stateDir)) { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null }
@@ -277,8 +344,16 @@ function Build-WorkerMcpConfig {
   # write UTF-8 without BOM via .NET.
   $json = $out | ConvertTo-Json -Depth 10
   [System.IO.File]::WriteAllText($target, $json, [System.Text.UTF8Encoding]::new($false))
-  if ($skipped.Count -gt 0) {
-    Write-Host ("[ilk] worker MCP filter: disabling {0} (kept {1})" -f ($skipped -join ', '), ($filtered.Keys -join ', ')) -ForegroundColor DarkGray
+
+  if ($Mode -eq "whitelist") {
+    Write-Host ("[ilk] worker MCP filter (whitelist): kept {0}" -f ($kept -join ', ')) -ForegroundColor DarkGray
+    if ($missing.Count -gt 0) {
+      Write-Host ("[ilk] note: {0} not in ~/.claude.json mcpServers (typo? claude.ai-synced?)" -f ($missing -join ', ')) -ForegroundColor DarkYellow
+    }
+  } else {
+    if ($skipped.Count -gt 0) {
+      Write-Host ("[ilk] worker MCP filter (blacklist): disabling {0} (kept {1})" -f ($skipped -join ', '), ($kept -join ', ')) -ForegroundColor DarkGray
+    }
   }
   return $target
 }
@@ -389,8 +464,8 @@ if ($All) {
   }
   foreach ($p in $projects) {
     $params = Resolve-Params -ProjectPath $p.path -CliMaxIter $MaxIterations -CliTimeout $IterationTimeoutMin
-    $disableList = Resolve-DisableMcpList -ProjectPath $p.path -CliDisableMcp $DisableMcp
-    $mcpCfg = Build-WorkerMcpConfig -ProjectPath $p.path -DisableNames $disableList
+    $mcpFilter = Resolve-McpFilter -ProjectPath $p.path -CliDisableMcp $DisableMcp -CliEnableMcp $EnableMcp
+    $mcpCfg = Build-WorkerMcpConfig -ProjectPath $p.path -Mode $mcpFilter.Mode -Names $mcpFilter.Names
     Start-ilkWindow `
       -ProjectPath $p.path `
       -ProjectName $p.name `
@@ -416,8 +491,8 @@ if (-not (Test-Path $resolvedPath)) {
 $resolvedPath = (Resolve-Path $resolvedPath).Path
 $resolvedName = if ($ProjectName) { $ProjectName } else { Get-ProjectName -Path $resolvedPath }
 $params = Resolve-Params -ProjectPath $resolvedPath -CliMaxIter $MaxIterations -CliTimeout $IterationTimeoutMin
-$disableList = Resolve-DisableMcpList -ProjectPath $resolvedPath -CliDisableMcp $DisableMcp
-$mcpCfg = Build-WorkerMcpConfig -ProjectPath $resolvedPath -DisableNames $disableList
+$mcpFilter = Resolve-McpFilter -ProjectPath $resolvedPath -CliDisableMcp $DisableMcp -CliEnableMcp $EnableMcp
+$mcpCfg = Build-WorkerMcpConfig -ProjectPath $resolvedPath -Mode $mcpFilter.Mode -Names $mcpFilter.Names
 
 Start-ilkWindow `
   -ProjectPath $resolvedPath `

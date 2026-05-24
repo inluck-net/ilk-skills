@@ -63,25 +63,60 @@ the design rationale in `<vault>/ai-coding-workflow/tool-evaluations/ilk-launche
 {
   "max_iterations": 40,
   "iteration_timeout_min": 60,
-  "worker_disable_mcp": ["chrome-devtools"]
+  "worker_enable_mcp": ["lark-tickets"]
 }
 ```
 
 Lives in `docs/plans/` (next to MASTER plan) so it travels with the
 project's plan convention. Optional — without it, global defaults apply.
 
-**`worker_disable_mcp`** (optional, array of strings) — for batches that
-don't need certain MCP servers, list them here and the worker spawned
-by `launch.ps1` will run without those MCPs. The classic candidate is
-`chrome-devtools`: when a project's sub-plans have no UI ACs, the
-worker doesn't need it, and dropping it saves ~10% per iteration
-(chrome-devtools snapshots stay resident in the agent's context for
-the rest of the session). Implemented via Claude Code's
-`--mcp-config <path> --strict-mcp-config` flags — the launcher builds
-a filtered copy of `~/.claude.json`'s `mcpServers` (minus the named
-servers) at `<project>/.ilk-launcher/mcp-worker.json` and passes it
-through. Override at launch time with `launch.ps1 -DisableMcp
-"chrome-devtools,figma"`.
+#### Worker MCP filtering
+
+Loop workers usually need a very small subset of the MCPs you have
+registered in Claude Code. The launcher lets you restrict the worker's
+MCP set per project, which cuts iteration cost (chrome-devtools
+snapshots in particular stay resident in the agent's context for the
+rest of each session — at ~10% of total tokens per `/usage` self-reports
+when not actively muted).
+
+Pick **one** of these modes — never both, the launcher will refuse:
+
+**Whitelist** (`worker_enable_mcp`, **recommended default**):
+
+```json
+{ "worker_enable_mcp": ["lark-tickets"] }
+```
+
+Only the named MCPs are exposed to the worker. Best when you want
+deterministic cost discipline: most loop work needs files + git +
+shell, occasionally `lark-tickets` for state transitions on ship.
+chrome-devtools and figma stay off unless a specific batch needs them.
+
+**Blacklist** (`worker_disable_mcp`):
+
+```json
+{ "worker_disable_mcp": ["chrome-devtools", "figma"] }
+```
+
+Everything from `~/.claude.json` is exposed EXCEPT the listed ones.
+Looser, useful when you want most of your registry available but a
+known-expensive server muted.
+
+**Per-launch override** — either mode can be flipped on the launcher
+CLI for a single run:
+
+```powershell
+& launch.ps1 -ProjectPath … -EnableMcp "lark-tickets,chrome-devtools"   # whitelist
+& launch.ps1 -ProjectPath … -DisableMcp "chrome-devtools"               # blacklist
+```
+
+Mechanism: the launcher reads `~/.claude.json`'s `mcpServers`, filters
+according to the chosen mode, writes the resulting JSON (UTF-8 no BOM)
+to `<project>/.ilk-launcher/mcp-worker.json`, and passes it through
+`run_ilk_loop_claude.ps1 -McpConfigPath` so every `claude -p` call gets
+`--mcp-config <path> --strict-mcp-config`. `--strict-mcp-config` also
+drops claude.ai-synced servers (Gmail / Drive) for the worker — those
+are almost never useful in loop work anyway.
 
 ### Global registry: `~/.cursor/skills/ilk-launcher/projects.json`
 
