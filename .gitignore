@@ -23,3 +23,5 @@ skills/ilk-launcher/projects.json
 .cursor/
 **/.ilk-launcher/
 .ilk-data/
+.ilk-watchdog/
+skills/ilk-loop/logs/
