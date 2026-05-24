@@ -3,7 +3,7 @@
   Stop the watchdog window for a project. Does NOT touch ilk itself.
 
 .DESCRIPTION
-  Reads <project>/.ilk-watchdog/watchdog.pid and tree-kills it.
+  Reads ~/.ilk-data/projects/<key>/runtime/watchdog/watchdog.pid and tree-kills it.
   ilk (the loop) is unaffected.
 
 .EXAMPLE
@@ -34,7 +34,25 @@ function Resolve-ByName {
 $resolvedPath = if ($ProjectPath) { $ProjectPath } else { Resolve-ByName -Name $ProjectName }
 $resolvedName = if ($ProjectName) { $ProjectName } else { Split-Path $resolvedPath -Leaf }
 
-$pidFile = Join-Path $resolvedPath '.ilk-watchdog\watchdog.pid'
+function Get-IlkWatchdogDir {
+  param([string]$Project)
+  $resolver = Join-Path $HOME '.cursor\skills\ilk-loop\scripts\ilk_paths.py'
+  if (-not (Test-Path $resolver)) { return $null }
+  try {
+    $json = & python $resolver --start $Project 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $json) { return $null }
+    $obj = $json | ConvertFrom-Json -ErrorAction Stop
+    if ($obj.external_watchdog_dir) { return [string]$obj.external_watchdog_dir }
+  } catch {}
+  return $null
+}
+
+$watchdogDir = Get-IlkWatchdogDir -Project $resolvedPath
+if (-not $watchdogDir) {
+  Write-Host "[$resolvedName] external watchdog dir not resolvable. Ensure ilk_paths.py is present or run the migration script." -ForegroundColor Red
+  exit 1
+}
+$pidFile = Join-Path $watchdogDir 'watchdog.pid'
 if (-not (Test-Path $pidFile)) {
   Write-Host "[$resolvedName] no watchdog.pid file — nothing to stop." -ForegroundColor Yellow
   return

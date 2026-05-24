@@ -4,8 +4,8 @@ set -euo pipefail
 # =============================================================================
 # ilk-watchdog stop (macOS bash port of stop_watchdog.ps1)
 # =============================================================================
-# Reads <project>/.ilk-watchdog/watchdog.pid and kills the process group.
-# Does NOT touch ilk itself.
+# Reads ~/.ilk-data/projects/<key>/runtime/watchdog/watchdog.pid and kills the
+# process group. Does NOT touch ilk itself.
 # =============================================================================
 
 # ----- Globals ---------------------------------------------------------------
@@ -82,12 +82,34 @@ resolve_project_by_cwd() {
   exit 1
 }
 
+get_ilk_watchdog_dir() {
+  local project="$1"
+  local resolver
+  resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  if [[ ! -f "$resolver" ]]; then
+    echo ""
+    return
+  fi
+  local json_out
+  if json_out=$(python3 "$resolver" --start "$project" 2>/dev/null) && [[ -n "$json_out" ]]; then
+    python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('external_watchdog_dir') or '')" <<<"$json_out"
+  else
+    echo ""
+  fi
+}
+
 # ----- Stop logic ------------------------------------------------------------
 
 stop_watchdog() {
   local path="$1"
   local name="$2"
-  local pid_file="${path}/.ilk-watchdog/watchdog.pid"
+  local watchdog_dir
+  watchdog_dir=$(get_ilk_watchdog_dir "$path")
+  if [[ -z "$watchdog_dir" ]]; then
+    echo "[$name] external watchdog dir not resolvable. Ensure ilk_paths.py is present or run the migration script." >&2
+    return 1
+  fi
+  local pid_file="${watchdog_dir}/watchdog.pid"
 
   if [[ ! -f "$pid_file" ]]; then
     echo "[$name] no watchdog.pid file — nothing to stop." >&2
