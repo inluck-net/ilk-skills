@@ -67,6 +67,12 @@ if [[ ! -d "$SKILLS_SRC" ]]; then
   exit 2
 fi
 
+# --- macOS dependency check -------------------------------------------------
+if [[ "$(uname -s)" == "Darwin" ]] && ! command -v gtimeout >/dev/null 2>&1; then
+  echo "Warning: gtimeout not found. The ilk-loop bash runner uses it for" >&2
+  echo "  iteration timeouts. Install with: brew install coreutils" >&2
+fi
+
 # --- target environments ----------------------------------------------------
 
 declare -a TARGET_NAMES=()
