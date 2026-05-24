@@ -304,7 +304,7 @@ invoke_local_checks() {
 }
 
 test_all_shipped() {
-  : # TODO: step 5 — run loop_status.py, return 0 if all shipped
+  (cd "$PROJECT_PATH" && python "$LOOP_STATUS_SCRIPT" >/dev/null 2>&1)
 }
 
 get_plans_dir() {
@@ -344,7 +344,7 @@ invoke_quality_gates_if_needed() {
 }
 
 write_jsonl_record() {
-  : # TODO: step 6 — append compact JSON to JSONL log
+  python -c "import json,sys; print(json.dumps(json.load(sys.stdin)))" <<< "$1" >> "$JSONL_LOG"
 }
 
 invoke_claude_iteration() {
@@ -458,21 +458,117 @@ main() {
   # TODO: step 7
 
   # Initial check: already shipped?
-  # TODO: step 5
+  if test_all_shipped; then
+    echo "All sub-plans already shipped. Nothing to do."
+    local ts
+    ts=$(date +%Y-%m-%dT%H:%M:%S%z)
+    write_jsonl_record "{\"run_id\":\"$RUN_ID\",\"cli\":\"claude\",\"iteration\":0,\"timestamp\":\"$ts\",\"project\":\"$PROJECT_PATH\",\"stop_reason\":\"already-shipped\"}"
+    return 0
+  fi
 
-  # Main loop: for i in 1..MAX_ITERATIONS
-  #   - snapshot HEADs
-  #   - invoke_claude_iteration
-  #   - snapshot HEADs again, diff
-  #   - stall detection (3 consecutive zero-commit iters)
-  #   - optional local_checks
-  #   - write JSONL record
-  #   - optional quality gates
-  #   - check stop conditions
-  # TODO: steps 5-6
+  # Main loop
+  local i
+  local no_progress_streak=0
+  local stop_reason=""
+  local total_iters=0
+
+  for ((i = 1; i <= MAX_ITERATIONS; i++)); do
+    total_iters=$i
+    echo ""
+    echo "--- Iteration $i / $MAX_ITERATIONS ---"
+
+    local iter_start
+    iter_start=$(date +%s)
+
+    local heads_before_file heads_after_file
+    heads_before_file="${RUN_LOG_DIR}/heads-before-${i}.tmp"
+    heads_after_file="${RUN_LOG_DIR}/heads-after-${i}.tmp"
+
+    get_repo_heads "$heads_before_file"
+
+    local iter_log
+    iter_log="${RUN_LOG_DIR}/iter-$(printf '%02d' $i).log"
+
+    local timeout_sec
+    timeout_sec=$((ITERATION_TIMEOUT_MIN * 60))
+
+    invoke_claude_iteration "$PROJECT_PATH" "$iter_log" "$PROMPT" "$timeout_sec" "$MAX_BUDGET_USD" "$MODEL"
+
+    local iter_end iter_dur_sec
+    iter_end=$(date +%s)
+    iter_dur_sec=$((iter_end - iter_start))
+
+    get_repo_heads "$heads_after_file"
+
+    # Compute new commits
+    local total_new=0
+    local r
+    for r in "${REPOS[@]}"; do
+      local count
+      count=$(get_new_commit_count "$r" "$heads_before_file" "$heads_after_file")
+      total_new=$((total_new + count))
+    done
+
+    echo ""
+    echo "  duration: ${iter_dur_sec}s  exit: $ITER_EXIT_CODE  new commits: $total_new"
+
+    # Stall detection
+    local iter_stop_reason=""
+    if [[ "$ITER_COMPLETED" -eq 0 ]]; then
+      iter_stop_reason="timeout"
+    elif [[ "$ITER_BUDGET_EXHAUSTED" -eq 1 ]]; then
+      iter_stop_reason="budget-exhausted"
+    elif [[ "$total_new" -eq 0 ]]; then
+      no_progress_streak=$((no_progress_streak + 1))
+      if [[ "$no_progress_streak" -ge 3 ]]; then
+        iter_stop_reason="no-progress"
+      elif [[ "$ITER_EXIT_CODE" -ne 0 ]]; then
+        echo "  ! agent exited $ITER_EXIT_CODE (likely transient upstream API error). Streak: $no_progress_streak/3. Continuing." >&2
+      fi
+    else
+      no_progress_streak=0
+    fi
+
+    # Write JSONL record
+    local ts
+    ts=$(date +%Y-%m-%dT%H:%M:%S%z)
+    local model_val
+    model_val="${MODEL:-${ANTHROPIC_MODEL:-}}"
+
+    local record
+    record="{\"run_id\":\"$RUN_ID\",\"cli\":\"claude\",\"iteration\":$i,\"timestamp\":\"$ts\",\"project\":\"$PROJECT_PATH\",\"model\":\"$model_val\",\"base_url\":\"${ANTHROPIC_BASE_URL:-}\",\"max_budget_usd\":$MAX_BUDGET_USD,\"duration_sec\":$iter_dur_sec,\"exit_code\":$ITER_EXIT_CODE,\"new_commits_total\":$total_new"
+    if [[ -n "$iter_stop_reason" ]]; then
+      record="$record,\"stop_reason\":\"$iter_stop_reason\""
+    fi
+    record="$record}"
+    write_jsonl_record "$record"
+
+    # Quality gates
+    # TODO: step 6+ (invoke_quality_gates_if_needed)
+
+    if [[ -n "$iter_stop_reason" ]]; then
+      stop_reason="$iter_stop_reason"
+      break
+    fi
+
+    if test_all_shipped; then
+      stop_reason="all-shipped"
+      break
+    fi
+  done
+
+  if [[ -z "$stop_reason" ]]; then
+    stop_reason="max-iterations"
+  fi
 
   # Final report
-  # TODO: step 6
+  echo ""
+  echo "=== Loop ended: $stop_reason ==="
+  echo "Run logs: $RUN_LOG_DIR"
+  echo "JSONL:    $JSONL_LOG"
+  echo ""
+  echo "Final loop_status:"
+  python "$LOOP_STATUS_SCRIPT" 2>&1 || true
 
   # Sentinel teardown (state=<stop_reason>)
   # TODO: step 7
