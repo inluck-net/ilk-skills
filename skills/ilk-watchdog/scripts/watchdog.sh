@@ -5,7 +5,7 @@ set -euo pipefail
 # ilk-watchdog (macOS bash port of watchdog.ps1)
 # =============================================================================
 # Polls ~/.ilk-data/projects/<key>/runtime/last-exit.json (preferred) and
-# falls back to <project>/.ilk-launcher/running.pid every --poll-interval-sec.
+# falls back to ~/.ilk-data/projects/<key>/runtime/launcher/running.pid every --poll-interval-sec.
 # When the loop stops, classifies the run and either relaunches, promotes
 # the next master, or blocks with a loud banner.
 # =============================================================================
@@ -139,6 +139,38 @@ get_ilk_runtime_dir() {
   fi
 }
 
+get_ilk_launcher_dir() {
+  local project="$1"
+  local resolver
+  resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  if [[ ! -f "$resolver" ]]; then
+    echo ""
+    return
+  fi
+  local json_out
+  if json_out=$(python3 "$resolver" --start "$project" 2>/dev/null) && [[ -n "$json_out" ]]; then
+    python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('external_launcher_dir') or '')" <<<"$json_out"
+  else
+    echo ""
+  fi
+}
+
+get_ilk_watchdog_dir() {
+  local project="$1"
+  local resolver
+  resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  if [[ ! -f "$resolver" ]]; then
+    echo ""
+    return
+  fi
+  local json_out
+  if json_out=$(python3 "$resolver" --start "$project" 2>/dev/null) && [[ -n "$json_out" ]]; then
+    python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('external_watchdog_dir') or '')" <<<"$json_out"
+  else
+    echo ""
+  fi
+}
+
 # ----- Sentinel / PID helpers ------------------------------------------------
 
 test_process_alive() {
@@ -151,7 +183,13 @@ test_process_alive() {
 
 read_ilk_pid() {
   local project="$1"
-  local f="${project}/.ilk-launcher/running.pid"
+  local launcher_dir
+  launcher_dir=$(get_ilk_launcher_dir "$project")
+  if [[ -z "$launcher_dir" ]]; then
+    echo ""
+    return
+  fi
+  local f="${launcher_dir}/running.pid"
   if [[ ! -f "$f" ]]; then
     echo ""
     return
@@ -373,7 +411,13 @@ run_watchdog_loop() {
   local poll_sec="$3"
   local max_restarts_cap="$4"
 
-  WATCHDOG_STATE_DIR="${project}/.ilk-watchdog"
+  local watchdog_dir
+  watchdog_dir=$(get_ilk_watchdog_dir "$project")
+  if [[ -z "$watchdog_dir" ]]; then
+    write_log "ERROR: external watchdog dir not resolvable. Ensure ilk_paths.py is present or run the migration script."
+    return
+  fi
+  WATCHDOG_STATE_DIR="$watchdog_dir"
   mkdir -p "$WATCHDOG_STATE_DIR"
   ACTIVITY_LOG="${WATCHDOG_STATE_DIR}/activity.log"
   local watchdog_pid_file="${WATCHDOG_STATE_DIR}/watchdog.pid"
@@ -481,7 +525,7 @@ Watchdog PID: $$" 36
           ilk_pid=$(read_ilk_pid "$project")
           if [[ -z "$ilk_pid" ]]; then
             write_banner "NO ilk PID FILE" \
-              "Project: $proj_name\nNo <project>/.ilk-launcher/running.pid found.\nIs ilk running? Start ilk first, then start watchdog." 31
+              "Project: $proj_name\nNo launcher PID file found.\nIs ilk running? Start ilk first, then start watchdog." 31
             return
           fi
         else
@@ -541,7 +585,7 @@ Read the report tail and decide what to do, then relaunch ilk manually." 31
 "Project: $proj_name
 Last classification: $sentinel_state
 Hard cap is in place to force human review when restarts pile up.
-Inspect <project>/.ilk-launcher/postmortems/ to see the trend, then
+Inspect postmortems under the external launcher dir to see the trend, then
 relaunch manually if it still makes sense." 31
       return
     fi

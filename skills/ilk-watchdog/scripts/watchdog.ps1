@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   Polls ~/.ilk-data/projects/<key>/runtime/last-exit.json (preferred)
-  and falls back to <project>/.ilk-launcher/running.pid every
+  and falls back to ~/.ilk-data/projects/<key>/runtime/launcher/running.pid every
   -PollMin minutes.
   When the PID is dead and not all sub-plans are shipped, runs collect.py
   to classify the run, then:
@@ -108,7 +108,9 @@ function Test-ProcessAlive {
 
 function Read-ilkPid {
   param([string]$Project)
-  $f = Join-Path $Project '.ilk-launcher\running.pid'
+  $launcherDir = Get-IlkLauncherDir -Project $Project
+  if (-not $launcherDir) { return $null }
+  $f = Join-Path $launcherDir 'running.pid'
   if (-not (Test-Path $f)) { return $null }
   $raw = (Get-Content $f -Raw).Trim()
   if (-not $raw) { return $null }
@@ -130,6 +132,40 @@ function Get-IlkRuntimeDir {
     if ($LASTEXITCODE -ne 0 -or -not $json) { return $null }
     $obj = $json | ConvertFrom-Json -ErrorAction Stop
     if ($obj.external_runtime_dir) { return [string]$obj.external_runtime_dir }
+  } catch {}
+  return $null
+}
+
+function Get-IlkLauncherDir {
+  <#
+    Shell out to ilk_paths.py to find ~/.ilk-data/projects/<key>/runtime/launcher/.
+    Returns $null if the resolver is missing or python errors out.
+  #>
+  param([string]$Project)
+  $resolver = Join-Path $HOME '.cursor\skills\ilk-loop\scripts\ilk_paths.py'
+  if (-not (Test-Path $resolver)) { return $null }
+  try {
+    $json = & python $resolver --start $Project 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $json) { return $null }
+    $obj = $json | ConvertFrom-Json -ErrorAction Stop
+    if ($obj.external_launcher_dir) { return [string]$obj.external_launcher_dir }
+  } catch {}
+  return $null
+}
+
+function Get-IlkWatchdogDir {
+  <#
+    Shell out to ilk_paths.py to find ~/.ilk-data/projects/<key>/runtime/watchdog/.
+    Returns $null if the resolver is missing or python errors out.
+  #>
+  param([string]$Project)
+  $resolver = Join-Path $HOME '.cursor\skills\ilk-loop\scripts\ilk_paths.py'
+  if (-not (Test-Path $resolver)) { return $null }
+  try {
+    $json = & python $resolver --start $Project 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $json) { return $null }
+    $obj = $json | ConvertFrom-Json -ErrorAction Stop
+    if ($obj.external_watchdog_dir) { return [string]$obj.external_watchdog_dir }
   } catch {}
   return $null
 }
@@ -284,7 +320,11 @@ function Run-WatchdogLoop {
 
   $script:ProjectPathResolved = $Project
   $script:ProjectNameResolved = $ProjName
-  $script:WatchdogStateDir = Join-Path $Project '.ilk-watchdog'
+  $script:WatchdogStateDir = Get-IlkWatchdogDir -Project $Project
+  if (-not $script:WatchdogStateDir) {
+    Write-Banner -Title "WATCHDOG CONFIG ERROR" -Body "Could not resolve external watchdog dir.`nEnsure ilk_paths.py is present or run the migration script." -Color Red
+    return
+  }
   if (-not (Test-Path $script:WatchdogStateDir)) {
     New-Item -ItemType Directory -Path $script:WatchdogStateDir -Force | Out-Null
   }
@@ -420,7 +460,7 @@ Watchdog exiting cleanly. Job done.
           # second attempt
           $ilkPid = Read-ilkPid -Project $Project
           if (-not $ilkPid) {
-            Write-Banner -Title "NO ilk PID FILE" -Body "Project: $ProjName`nNo <project>/.ilk-launcher/running.pid found.`nIs ilk running? Start ilk first, then start watchdog." -Color Red
+            Write-Banner -Title "NO ilk PID FILE" -Body "Project: $ProjName`nNo launcher PID file found.`nIs ilk running? Start ilk first, then start watchdog." -Color Red
             return
           }
         } else {
@@ -493,7 +533,7 @@ ilk-launcher.
 Project: $ProjName
 Last classification: $klass
 Hard cap is in place to force human review when restarts pile up.
-Inspect <project>/.ilk-launcher/postmortems/ to see the trend, then
+Inspect postmortems under the external launcher dir to see the trend, then
 relaunch manually if it still makes sense.
 "@ -Color Red
         return
@@ -549,8 +589,10 @@ if ($Detach) {
   $proc = Start-Process powershell `
     -ArgumentList @('-NoExit', '-NoProfile', '-Command', $inner) `
     -PassThru
+  $detachedWatchdogDir = Get-IlkWatchdogDir -Project $resolvedPath
+  $detachedActivityLog = if ($detachedWatchdogDir) { Join-Path $detachedWatchdogDir 'activity.log' } else { '(external dir not resolvable)' }
   Write-Host "[ilk-watchdog] detached window spawned. PID $($proc.Id). Title will be 'watchdog: $resolvedName'." -ForegroundColor Green
-  Write-Host "[ilk-watchdog] activity log: $resolvedPath\.ilk-watchdog\activity.log"
+  Write-Host "[ilk-watchdog] activity log: $detachedActivityLog"
   return
 }
 
