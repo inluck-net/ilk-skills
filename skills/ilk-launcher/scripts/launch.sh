@@ -34,80 +34,205 @@ RESOLVED_NAME=""
 # ----- Helpers ---------------------------------------------------------------
 
 read_projects_registry() {
-  # Return JSON array of projects from projects.json, or empty array.
-  :
+  if [[ ! -f "$PROJECTS_JSON" ]]; then
+    echo '[]'
+    return
+  fi
+  python3 -c "import json; data=json.load(open('$PROJECTS_JSON')); print(json.dumps(data.get('projects', [])))"
 }
 
 resolve_project_by_name() {
-  # $1 = name. Look up in projects.json, echo path or exit 1.
-  :
+  local name="$1"
+  local path
+  path=$(python3 -c "
+import json
+with open('$PROJECTS_JSON') as f:
+    data = json.load(f)
+for p in data.get('projects', []):
+    if p.get('name') == '$name':
+        print(p.get('path',''))
+        break
+")
+  if [[ -z "$path" ]]; then
+    local known
+    known=$(python3 -c "
+import json
+with open('$PROJECTS_JSON') as f:
+    data = json.load(f)
+print(', '.join(p.get('name','') for p in data.get('projects', []) if p.get('name')))
+")
+    echo "Project '$name' not in projects.json. Known: $known" >&2
+    exit 1
+  fi
+  echo "$path"
 }
 
 resolve_project_by_cwd() {
-  # Walk up from cwd looking for docs/plans/MASTER-*.md.
-  # Prefer ilk_paths.py if available; fallback to manual walk-up.
-  :
+  local resolver
+  resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  if [[ -f "$resolver" ]]; then
+    local json_out
+    if json_out=$(python3 "$resolver" --start "$(pwd)" 2>/dev/null) && [[ -n "$json_out" ]]; then
+      local root
+      root=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('project_root') or '')" <<<"$json_out")
+      if [[ -n "$root" ]]; then
+        echo "$root"
+        return
+      fi
+    fi
+  fi
+
+  local dir
+  dir="$(pwd)"
+  while true; do
+    if [[ -d "$dir/docs/plans" ]]; then
+      local masters
+      masters=$(find "$dir/docs/plans" -maxdepth 1 -name 'MASTER-*.md' -print -quit 2>/dev/null)
+      if [[ -n "$masters" ]]; then
+        echo "$dir"
+        return
+      fi
+    fi
+    local parent
+    parent="$(dirname "$dir")"
+    if [[ "$parent" == "$dir" ]]; then
+      break
+    fi
+    dir="$parent"
+  done
+  echo "No project found by walking up from $(pwd). No .ilk-meta.json, .git, or docs/plans/MASTER-*.md anywhere on the path. Use --project-name or --project-path, or cd into a project." >&2
+  exit 1
 }
 
 get_external_plans_dir() {
-  # $1 = project path. Echo external plans dir via ilk_paths.py, or empty.
-  :
+  local project_path="$1"
+  local resolver
+  resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  if [[ ! -f "$resolver" ]]; then
+    echo ""
+    return
+  fi
+  local json_out
+  if json_out=$(python3 "$resolver" --start "$project_path" 2>/dev/null) && [[ -n "$json_out" ]]; then
+    python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('external_plans_dir') or '')" <<<"$json_out"
+  else
+    echo ""
+  fi
 }
 
 get_project_name() {
-  # $1 = path. Echo registered name, or basename of path.
-  :
+  local path="$1"
+  local name
+  name=$(python3 -c "
+import json
+with open('$PROJECTS_JSON') as f:
+    data = json.load(f)
+for p in data.get('projects', []):
+    if p.get('path') == '$path':
+        print(p.get('name',''))
+        break
+")
+  if [[ -n "$name" ]]; then
+    echo "$name"
+  else
+    basename "$path"
+  fi
 }
 
 read_project_config() {
-  # $1 = project path. Echo .ilk-launch.json as JSON object, or {}.
-  :
+  local project_path="$1"
+  local ext_plans
+  ext_plans=$(get_external_plans_dir "$project_path")
+  if [[ -n "$ext_plans" ]]; then
+    local cfg_path="${ext_plans}/.ilk-launch.json"
+    if [[ -f "$cfg_path" ]]; then
+      cat "$cfg_path"
+      return
+    fi
+  fi
+  local cfg_path="${project_path}/docs/plans/.ilk-launch.json"
+  if [[ -f "$cfg_path" ]]; then
+    cat "$cfg_path"
+    return
+  fi
+  echo '{}'
 }
 
 resolve_params() {
-  # Determine MaxIterations and IterationTimeoutMin.
-  # Priority: CLI > .ilk-launch.json > defaults.
-  :
+  local project_path="$1"
+  local cli_max_iter="$2"
+  local cli_timeout="$3"
+  local cfg
+  cfg=$(read_project_config "$project_path")
+
+  local max_iter="$DEFAULT_MAX_ITER"
+  local timeout="$DEFAULT_TIMEOUT"
+
+  local cfg_max_iter cfg_timeout
+  cfg_max_iter=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('max_iterations',''))" <<<"$cfg")
+  cfg_timeout=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('iteration_timeout_min',''))" <<<"$cfg")
+
+  if [[ "$cli_max_iter" -gt 0 ]]; then
+    max_iter="$cli_max_iter"
+  elif [[ -n "$cfg_max_iter" ]]; then
+    max_iter="$cfg_max_iter"
+  fi
+
+  if [[ "$cli_timeout" -gt 0 ]]; then
+    timeout="$cli_timeout"
+  elif [[ -n "$cfg_timeout" ]]; then
+    timeout="$cfg_timeout"
+  fi
+
+  echo "${max_iter} ${timeout}"
 }
 
 resolve_mcp_filter() {
-  # Determine MCP filtering mode and names.
-  # Priority: CLI flags > .ilk-launch.json keys.
-  # Error if both blacklist and whitelist specified at same level.
-  # Outputs: mode (whitelist|blacklist|none) and names array.
-  :
+  # Step 2 will fill this in.
+  echo "none"
 }
 
 build_worker_mcp_config() {
-  # $1 = project path, $2 = mode, $3 = space-separated names.
-  # Reads ~/.claude.json mcpServers, filters, writes
-  # <project>/.ilk-launcher/mcp-worker.json as UTF-8 no-BOM JSON.
-  # Echoes path to temp file, or empty if no filtering.
-  :
+  # Step 2 will fill this in.
+  echo ""
 }
 
 get_pid_file_path() {
-  # $1 = project path. Echo path to .ilk-launcher/running.pid.
-  :
+  local project_path="$1"
+  echo "${project_path}/.ilk-launcher/running.pid"
 }
 
 get_launch_meta_path() {
-  # $1 = project path. Echo path to .ilk-launcher/last-launch.json.
-  :
+  local project_path="$1"
+  echo "${project_path}/.ilk-launcher/last-launch.json"
 }
 
 test_running_pid() {
-  # $1 = project path. If PID file exists and kill -0 succeeds, echo PID.
-  # Otherwise remove stale PID file and echo empty.
-  :
+  local project_path="$1"
+  local pid_file
+  pid_file=$(get_pid_file_path "$project_path")
+  if [[ ! -f "$pid_file" ]]; then
+    echo ""
+    return
+  fi
+  local raw_pid
+  raw_pid=$(cat "$pid_file" | tr -d '[:space:]')
+  if [[ -z "$raw_pid" ]]; then
+    rm -f "$pid_file"
+    echo ""
+    return
+  fi
+  if kill -0 "$raw_pid" 2>/dev/null; then
+    echo "$raw_pid"
+  else
+    rm -f "$pid_file"
+    echo ""
+  fi
 }
 
 start_ilk_window() {
-  # $1 = project path, $2 = project name, $3 = max_iter, $4 = timeout_min,
-  # $5 = force, $6 = dry_run, $7 = mcp_config_path.
-  # Spawns detached nohup + setsid process, writes PID file + last-launch.json.
-  # Echoes spawned PID, or empty for dry-run / already-running.
-  :
+  # Step 3 will fill this in.
+  echo ""
 }
 
 # ----- Argument parsing ------------------------------------------------------
@@ -190,15 +315,49 @@ main() {
   parse_args "$@"
 
   if [[ "$CLI_ALL" == true ]]; then
-    # Iterate projects.json and launch each (skip running).
-    :
-  else
-    # Resolve single project: --project-path > --project-name > cwd walk-up
-    :
-
-    # Resolve params, MCP filter, build config, then start window.
-    :
+    # Step 5: --all batch mode.
+    echo "--all batch mode not yet implemented." >&2
+    exit 1
   fi
+
+  # Resolve single project: --project-path > --project-name > cwd walk-up
+  if [[ -n "$CLI_PROJECT_PATH" ]]; then
+    RESOLVED_PATH="$CLI_PROJECT_PATH"
+  elif [[ -n "$CLI_PROJECT_NAME" ]]; then
+    RESOLVED_PATH=$(resolve_project_by_name "$CLI_PROJECT_NAME")
+  else
+    RESOLVED_PATH=$(resolve_project_by_cwd)
+  fi
+
+  if [[ ! -d "$RESOLVED_PATH" ]]; then
+    echo "ProjectPath '$RESOLVED_PATH' does not exist." >&2
+    exit 1
+  fi
+
+  # Normalize to absolute path
+  RESOLVED_PATH="$(cd "$RESOLVED_PATH" && pwd)"
+
+  if [[ -n "$CLI_PROJECT_NAME" ]]; then
+    RESOLVED_NAME="$CLI_PROJECT_NAME"
+  else
+    RESOLVED_NAME=$(get_project_name "$RESOLVED_PATH")
+  fi
+
+  local params
+  params=$(resolve_params "$RESOLVED_PATH" "$CLI_MAX_ITERATIONS" "$CLI_ITERATION_TIMEOUT_MIN")
+  local max_iter="${params%% *}"
+  local timeout_min="${params##* }"
+
+  echo "[$RESOLVED_NAME] Resolved path: $RESOLVED_PATH"
+  echo "[$RESOLVED_NAME] MaxIterations: $max_iter    IterationTimeoutMin: $timeout_min"
+
+  # Steps 2-3 will add MCP filtering and actual spawn here.
+  if [[ "$CLI_DRY_RUN" == true ]]; then
+    echo "[$RESOLVED_NAME] DRY RUN — would launch with the above params."
+    return
+  fi
+
+  echo "[$RESOLVED_NAME] Launch logic not yet implemented (steps 2-3)."
 }
 
 main "$@"
