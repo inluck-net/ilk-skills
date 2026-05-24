@@ -990,7 +990,11 @@ function Invoke-ClaudeIteration {
       while ($lines.TryDequeue([ref]$line)) {
         try { Add-Content -LiteralPath $rawJsonl -Value $line -Encoding utf8 } catch {}
         Write-ClaudeStreamLine -Line $line -HumanLog $LogFile
-        if ($line -match '(?i)max[- ]?budget|budget exhausted|budget limit reached') {
+        # Match claude's actual budget-exhausted signals. Avoid matching the
+        # flag name "--max-budget-usd" that agents often echo in their output.
+        # Real signals: JSON terminal_reason field, or explicit error phrases.
+        if ($line -match '"terminal_reason"\s*:\s*"budget_exhausted"' -or
+            $line -match '(?i)budget\s+exhausted|budget\s+limit\s+reached') {
           $budgetExhausted = $true
         }
         # Detect claude's terminal result event. This is the LAST line claude
@@ -1010,7 +1014,8 @@ function Invoke-ClaudeIteration {
         if (-not [string]::IsNullOrWhiteSpace($eline)) {
           [Console]::Error.WriteLine("[stderr] $eline")
           try { Add-Content -LiteralPath $LogFile -Value "[stderr] $eline" -Encoding utf8 } catch {}
-          if ($eline -match '(?i)max[- ]?budget|budget exhausted|budget limit reached') {
+          if ($eline -match '"terminal_reason"\s*:\s*"budget_exhausted"' -or
+              $eline -match '(?i)budget\s+exhausted|budget\s+limit\s+reached') {
             $budgetExhausted = $true
           }
         }
