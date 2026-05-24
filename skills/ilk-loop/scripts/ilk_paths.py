@@ -364,6 +364,8 @@ def _selftest() -> int:
         "external_plans_dir": str(external_plans_dir(key)) if key else None,
         "external_runtime_dir": str(external_runtime_dir(key)) if key else None,
         "external_logs_dir": str(external_logs_dir(key)) if key else None,
+        "external_launcher_dir": str(external_launcher_dir(key)) if key else None,
+        "external_watchdog_dir": str(external_watchdog_dir(key)) if key else None,
         "resolved_plans_dir": str(plans) if plans else None,
         "resolved_source": src,
         "meta_members": members,
