@@ -248,6 +248,14 @@ def external_logs_dir(key: str) -> Path:
     return project_data_dir(key) / "logs"
 
 
+def external_launcher_dir(key: str) -> Path:
+    return external_runtime_dir(key) / "launcher"
+
+
+def external_watchdog_dir(key: str) -> Path:
+    return external_runtime_dir(key) / "watchdog"
+
+
 # ── plans-dir resolution ─────────────────────────────────────────────────────
 
 PlansSource = Literal["external", "in-tree", "walk-up", ""]
