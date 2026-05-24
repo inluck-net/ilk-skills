@@ -526,9 +526,44 @@ main() {
   parse_args "$@"
 
   if [[ "$CLI_ALL" == true ]]; then
-    # Step 5: --all batch mode.
-    echo "--all batch mode not yet implemented." >&2
-    exit 1
+    if [[ ! -f "$PROJECTS_JSON" ]]; then
+      echo "projects.json has no projects. Add some before using --all." >&2
+      exit 1
+    fi
+    local projects_json
+    projects_json=$(read_projects_registry)
+    local count
+    count=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d))" <<<"$projects_json")
+    if [[ "$count" -eq 0 ]]; then
+      echo "projects.json has no projects. Add some before using --all." >&2
+      exit 1
+    fi
+    python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+for p in d:
+    print(p.get('path','') + '\t' + p.get('name',''))
+" <<<"$projects_json" | while IFS=$'\t' read -r ppath pname; do
+      if [[ ! -d "$ppath" ]]; then
+        echo "[$pname] path '$ppath' does not exist. Skipping." >&2
+        continue
+      fi
+      local live_pid
+      live_pid=$(test_running_pid "$ppath")
+      if [[ -n "$live_pid" && "$CLI_FORCE" != true ]]; then
+        echo "[$pname] already running (PID $live_pid). Skipping." >&2
+        continue
+      fi
+      local params
+      params=$(resolve_params "$ppath" "$CLI_MAX_ITERATIONS" "$CLI_ITERATION_TIMEOUT_MIN")
+      local max_iter="${params%% *}"
+      local timeout_min="${params##* }"
+      resolve_mcp_filter "$ppath"
+      local mcp_config_path=""
+      mcp_config_path=$(build_worker_mcp_config "$ppath" "$MCP_FILTER_MODE" "$MCP_FILTER_NAMES")
+      start_ilk_window "$ppath" "$pname" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path"
+    done
+    return 0
   fi
 
   # Resolve single project: --project-path > --project-name > cwd walk-up
