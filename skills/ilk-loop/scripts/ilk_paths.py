@@ -332,6 +332,8 @@ def _selftest() -> int:
     import argparse
     ap = argparse.ArgumentParser(description="ilk_paths quick lookup")
     ap.add_argument("--start", type=Path, default=Path.cwd())
+    ap.add_argument("--where", action="store_true",
+                    help="Print human-readable state paths (one per line) instead of JSON.")
     args = ap.parse_args()
     g_root = git_root(args.start)
     m_root = meta_root(args.start)
@@ -352,6 +354,17 @@ def _selftest() -> int:
                 member = {"name": m["name"], "path": str(m["path"])}
         except MetaManifestError as e:
             print(f"[ilk] meta manifest invalid: {e}", file=__import__("sys").stderr)
+
+    if args.where:
+        if key is None:
+            print(f"error: no project root for {args.start.resolve()}", file=__import__("sys").stderr)
+            return 1
+        print(f"plans: {external_plans_dir(key)}")
+        print(f"runtime: {external_runtime_dir(key)}")
+        print(f"launcher: {external_launcher_dir(key)}")
+        print(f"watchdog: {external_watchdog_dir(key)}")
+        print(f"logs: {external_logs_dir(key)}")
+        return 0
 
     print(json.dumps({
         "start": str(args.start.resolve()),
