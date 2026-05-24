@@ -9,7 +9,7 @@ in `<LogDir>\\ilk-claude-<run-id>\\`, and produces:
   - Classification (one of 8 taxonomy labels — see SKILL.md)
   - Parameter recommendations for next launch
   - Tail of the last problematic iteration's log
-  - Markdown report saved to <project>/.ilk-launcher/postmortems/<run-id>.md
+  - Markdown report saved to ~/.ilk-data/projects/<key>/runtime/launcher/postmortems/<run-id>.md
     with YAML front-matter so launcher Step 1.5 can read it cheaply.
 
 CLI:
@@ -47,9 +47,15 @@ _ILK_PATHS_DIR = HOME / ".cursor" / "skills" / "ilk-loop" / "scripts"
 if _ILK_PATHS_DIR.is_dir():
     sys.path.insert(0, str(_ILK_PATHS_DIR))
 try:
-    from ilk_paths import find_project_root as _find_project_root  # type: ignore
+    from ilk_paths import (
+        external_launcher_dir,
+        find_project_root as _find_project_root,
+        project_key,
+    )  # type: ignore
 except ImportError:
     _find_project_root = None  # type: ignore
+    external_launcher_dir = None  # type: ignore
+    project_key = None  # type: ignore
 
 # How many lines of the last problematic iter's log to embed in the report.
 TAIL_LINES = 80
@@ -108,7 +114,9 @@ def project_name_for(path: Path) -> str:
 
 
 def read_last_launch(project_path: Path) -> dict | None:
-    f = project_path / ".ilk-launcher" / "last-launch.json"
+    if external_launcher_dir is None or project_key is None:
+        return None
+    f = external_launcher_dir(project_key(project_path)) / "last-launch.json"
     if not f.exists():
         return None
     try:
@@ -622,7 +630,10 @@ def main() -> int:
         tail=tail,
     )
 
-    out_dir = project_path / ".ilk-launcher" / "postmortems"
+    if external_launcher_dir is None or project_key is None:
+        print("ilk_paths not available; cannot resolve external launcher dir.", file=sys.stderr)
+        return 1
+    out_dir = external_launcher_dir(project_key(project_path)) / "postmortems"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{target_run}.md"
     out_path.write_text(report, encoding="utf-8")
