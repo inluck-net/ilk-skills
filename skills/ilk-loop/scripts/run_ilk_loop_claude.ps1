@@ -160,16 +160,20 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 
 # Make sure env-stored auth/model overrides from User scope are visible
 # to this process (Cursor / IDE-spawned shells sometimes have a stale env).
-# Skipped entirely when ~/.claude/settings.json has an `env` block --
-# that file is authoritative in CC Switch / non-Anthropic-endpoint setups,
-# and copying stale User-scope vars on top would re-introduce the same
-# 401 api_retry loop we're trying to avoid downstream.
+# Skipped entirely when ~/.claude/settings.json has a NON-EMPTY `env`
+# block -- that file is authoritative in CC Switch / non-Anthropic-endpoint
+# setups, and copying stale User-scope vars on top would re-introduce the
+# same 401 api_retry loop we're trying to avoid downstream.
+# An empty `env: {}` (CC Switch's canonical "Claude Official" state) does
+# NOT count -- we want OAuth / User-scope fallback in that case.
 $settingsHasEnv = $false
 $settingsJsonPath = Join-Path $HOME ".claude\settings.json"
 if (Test-Path $settingsJsonPath) {
   try {
     $settings = Get-Content $settingsJsonPath -Raw -Encoding utf8 | ConvertFrom-Json
-    if ($settings.env) { $settingsHasEnv = $true }
+    if ($settings.env -and @($settings.env.PSObject.Properties).Count -gt 0) {
+      $settingsHasEnv = $true
+    }
   } catch {}
 }
 if (-not $settingsHasEnv) {
@@ -907,12 +911,14 @@ function Invoke-ClaudeIteration {
   $quoted = $argList | ForEach-Object {
     if ($_ -match '[\s"]') { '"' + ($_ -replace '"','\"') + '"' } else { $_ }
   }
-  # If ~/.claude/settings.json has an `env` block (e.g. CC Switch / Kimi /
-  # MiniMax / any non-Anthropic endpoint configured via settings file),
-  # clear conflicting process-env vars so settings.json is the sole source
-  # of auth. Cursor and some profile setups leak stale ANTHROPIC_API_KEY/
+  # If ~/.claude/settings.json has a NON-EMPTY `env` block (e.g. CC Switch
+  # currently routed to Kimi / MiniMax / any non-Anthropic endpoint), clear
+  # conflicting process-env vars so settings.json is the sole source of
+  # auth. Cursor and some profile setups leak stale ANTHROPIC_API_KEY/
   # BASE_URL/MODEL into child processes, which claude -p picks up and uses
   # instead of settings.json, causing 401 api_retry loops.
+  # An empty `env: {}` (CC Switch's "Claude Official" state) is NOT
+  # authoritative -- skip the clear so claude can find its OAuth token.
   # ANTHROPIC_AUTH_TOKEN is preserved -- it's the canonical "non-Anthropic
   # endpoint" auth field and rarely leaks from other tools.
   $envClear = ""
@@ -920,7 +926,7 @@ function Invoke-ClaudeIteration {
   if (Test-Path $settingsJson) {
     try {
       $settings = Get-Content $settingsJson -Raw -Encoding utf8 | ConvertFrom-Json
-      if ($settings.env) {
+      if ($settings.env -and @($settings.env.PSObject.Properties).Count -gt 0) {
         $envClear = "set ANTHROPIC_API_KEY= && set ANTHROPIC_BASE_URL= && set ANTHROPIC_MODEL= && "
       }
     } catch {}
