@@ -160,14 +160,31 @@ function New-Link {
     New-Item -ItemType Junction -Path $Link -Target $Source -Force | Out-Null
     return "junction"
   }
-  # File symlink — needs admin OR developer mode
-  try {
-    New-Item -ItemType SymbolicLink -Path $Link -Target $Source -Force -ErrorAction Stop | Out-Null
-    return "symlink"
-  } catch {
-    Copy-Item -LiteralPath $Source -Destination $Link -Force -ErrorAction Stop
-    return "copy-fallback"
+  # File symlink — needs admin OR Developer Mode.
+  #
+  # `New-Item -ItemType SymbolicLink` (PowerShell cmdlet) does NOT pass
+  # the SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE flag to the Win32
+  # API, so it still requires admin even when Developer Mode is on. The
+  # built-in `mklink` (cmd.exe) DOES pass the flag and works in Dev Mode
+  # without admin. Use it directly via `cmd /c`.
+  #
+  # Background: https://github.com/PowerShell/PowerShell/issues/12858
+  # ("New-Item -ItemType SymbolicLink does not work with Developer
+  # Mode") — open since 2020, no fix in PS 7.x at time of writing.
+  if (Test-Path -LiteralPath $Link) {
+    Remove-Item -LiteralPath $Link -Force -ErrorAction SilentlyContinue
   }
+  & cmd /c mklink "$Link" "$Source" 2>&1 | Out-Null
+  if ($LASTEXITCODE -eq 0 -and (Test-IsLink -Path $Link)) {
+    return "symlink"
+  }
+  # Last-resort fallback: plain copy. Triggered when neither admin nor
+  # Developer Mode is available — the link won't auto-track repo edits,
+  # so a re-run of `install.ps1 -Apply -Force` is needed after every
+  # command-file change. Users hit by this should enable Developer Mode
+  # (Settings → Privacy & Security → For developers → Developer Mode).
+  Copy-Item -LiteralPath $Source -Destination $Link -Force -ErrorAction Stop
+  return "copy-fallback"
 }
 
 # ---- build plan ------------------------------------------------------------
