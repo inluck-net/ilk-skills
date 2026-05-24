@@ -32,6 +32,7 @@ RUN_ID=""
 RUN_LOG_DIR=""
 JSONL_LOG=""
 SETTINGS_HAS_ENV=0
+PROJECT_KEY=""
 REPOS=()
 
 # ----- Argument parsing ------------------------------------------------------
@@ -218,7 +219,44 @@ preflight() {
 # ----- Helpers ---------------------------------------------------------------
 
 discover_git_repos() {
-  : # TODO: step 3 — resolve project root, call ilk_paths.py, build REPOS array
+  local resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  local json
+  json="$(python "$resolver" --start "$PROJECT_PATH" 2>/dev/null)" || {
+    echo "Error: ilk_paths.py failed to resolve project." >&2
+    exit 1
+  }
+
+  PROJECT_KEY="$(echo "$json" | jq -r '.project_key // empty')"
+  local kind
+  kind="$(echo "$json" | jq -r '.project_kind // "single"')"
+
+  if [[ "$kind" == "meta" ]]; then
+    local count
+    count="$(echo "$json" | jq '.meta_members | length')"
+    if [[ "$count" -eq 0 ]]; then
+      echo "Error: meta project resolved but no member repos found." >&2
+      exit 1
+    fi
+    local i
+    for ((i = 0; i < count; i++)); do
+      local member_path
+      member_path="$(echo "$json" | jq -r ".meta_members[$i].path")"
+      REPOS+=("$member_path")
+    done
+  else
+    local root
+    root="$(echo "$json" | jq -r '.project_root // empty')"
+    if [[ -z "$root" ]]; then
+      echo "Error: Could not resolve project root from ilk_paths.py." >&2
+      exit 1
+    fi
+    REPOS=("$root")
+  fi
+
+  if [[ ${#REPOS[@]} -eq 0 ]]; then
+    echo "Error: No git repos found at or under $PROJECT_PATH" >&2
+    exit 1
+  fi
 }
 
 get_repo_heads() {
@@ -296,7 +334,35 @@ invoke_claude_iteration() {
 # ----- Startup banner --------------------------------------------------------
 
 print_banner() {
-  : # TODO: step 3 — print project/repos/max-iters/timeout/model/budget/MCP config
+  echo ""
+  echo "=== ilk-loop runner (Claude Code) ==="
+  echo "Project:        $PROJECT_PATH"
+  echo "Repos found:    ${#REPOS[@]}"
+  local r
+  for r in "${REPOS[@]}"; do
+    echo "  - $r"
+  done
+  echo "Max iterations: $MAX_ITERATIONS"
+  echo "Iter timeout:   $ITERATION_TIMEOUT_MIN min"
+  if [[ -n "$MODEL" ]]; then
+    echo "Model:          $MODEL"
+  else
+    echo "Model:          ${ANTHROPIC_MODEL:-} (from env)"
+  fi
+  echo "API base:       ${ANTHROPIC_BASE_URL:-}"
+  if [[ "$MAX_BUDGET_USD" -gt 0 ]]; then
+    echo "Per-iter budget: \$${MAX_BUDGET_USD}"
+  else
+    echo "Per-iter budget: unlimited"
+  fi
+  if [[ -n "$MCP_CONFIG_PATH" ]]; then
+    echo "MCP config:     $MCP_CONFIG_PATH (strict -- worker sees only what's listed)"
+  else
+    echo "MCP config:     (default -- worker sees user's full MCP registry)"
+  fi
+  echo "Run logs:       $RUN_LOG_DIR"
+  echo "JSONL summary:  $JSONL_LOG"
+  echo ""
 }
 
 # ----- Main ------------------------------------------------------------------
