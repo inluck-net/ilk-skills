@@ -139,6 +139,79 @@ get_ilk_runtime_dir() {
   fi
 }
 
+# ----- Sentinel / PID helpers ------------------------------------------------
+
+test_process_alive() {
+  local pid="$1"
+  if [[ -z "$pid" || "$pid" -le 0 ]]; then
+    return 1
+  fi
+  kill -0 "$pid" 2>/dev/null
+}
+
+read_ilk_pid() {
+  local project="$1"
+  local f="${project}/.ilk-launcher/running.pid"
+  if [[ ! -f "$f" ]]; then
+    echo ""
+    return
+  fi
+  local raw
+  raw=$(tr -d '[:space:]' < "$f")
+  if [[ -z "$raw" ]]; then
+    rm -f "$f"
+    echo ""
+    return
+  fi
+  echo "$raw"
+}
+
+read_last_exit_state() {
+  local runtime_dir="$1"
+  if [[ -z "$runtime_dir" ]]; then
+    echo ""
+    return
+  fi
+  local f="${runtime_dir}/last-exit.json"
+  if [[ ! -f "$f" ]]; then
+    echo ""
+    return
+  fi
+  python3 -c "
+import json, sys
+try:
+    with open('$f', encoding='utf-8') as fh:
+        d = json.load(fh)
+    print(d.get('state',''))
+    print(d.get('iterations',''))
+    print(d.get('last_iter_at',''))
+except Exception:
+    pass
+"
+}
+
+classify_action() {
+  local state="$1"
+  case "$state" in
+    running)
+      echo "sleep"
+      ;;
+    all-shipped|already-shipped|shipped)
+      echo "promote"
+      ;;
+    no-progress|timeout|budget-exhausted)
+      echo "relaunch"
+      ;;
+    merge-conflict|local-checks-stuck)
+      echo "blacklist"
+      ;;
+    *)
+      # missing file / unknown state -> sleep (poll again)
+      echo "sleep"
+      ;;
+  esac
+}
+
 # ----- Argument parsing ------------------------------------------------------
 
 usage() {
