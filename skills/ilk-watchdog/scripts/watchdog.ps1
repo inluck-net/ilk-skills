@@ -182,10 +182,16 @@ function Read-IlkSentinel {
 function Test-AllShipped {
   param([string]$Project)
   if (-not (Test-Path $LoopStatusPy)) { return $false }
-  $proc = Start-Process -FilePath python -ArgumentList @($LoopStatusPy) `
-    -WorkingDirectory $Project -NoNewWindow -PassThru -Wait `
-    -RedirectStandardOutput 'NUL' -RedirectStandardError 'NUL'
-  return ($proc.ExitCode -eq 0)
+  $tmpOut = [IO.Path]::GetTempFileName()
+  $tmpErr = [IO.Path]::GetTempFileName()
+  try {
+    $proc = Start-Process -FilePath python -ArgumentList @($LoopStatusPy) `
+      -WorkingDirectory $Project -NoNewWindow -PassThru -Wait `
+      -RedirectStandardOutput $tmpOut -RedirectStandardError $tmpErr
+    return ($proc.ExitCode -eq 0)
+  } finally {
+    Remove-Item $tmpOut, $tmpErr -ErrorAction SilentlyContinue
+  }
 }
 
 function Invoke-PostmortemCollect {
