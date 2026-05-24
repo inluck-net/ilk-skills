@@ -85,7 +85,7 @@ loop:
   target = q[0]   # highest priority, FIFO within priority
 
   if a PID is alive for target.project_path:
-      poll <project>/.ilk-launcher/last-exit.json   # observe only
+      poll ~/.ilk-data/projects/<key>/runtime/last-exit.json   # observe only
 
   elif target.master_status == "queued" and no active master in same project:
       promote it to active in-place (edit frontmatter)
@@ -94,7 +94,7 @@ loop:
   elif target.master_status == "active":
       launch.* -ProjectPath target.project_path
 
-  poll <project>/.ilk-launcher/last-exit.json:
+  poll ~/.ilk-data/projects/<key>/runtime/last-exit.json:
     state in {all-shipped, already-shipped}:
         # this master shipped; per-project watchdog promotes next
         # within the same project if any; otherwise project goes

@@ -98,6 +98,35 @@ A sub-plan is `shipped` iff every step is done AND every listed ticket has
 been transitioned to the next workflow state in its tracker (e.g. for
 Lark tickets that's `待验证`).
 
+## Runtime state layout
+
+All per-project runtime artifacts live outside the project tree under:
+
+```
+~/.ilk-data/projects/<project-key>/
+    plans/         # MASTER-*.md and sub-plans
+    runtime/       # last-exit.json, queue cursors
+    runtime/launcher/   # PID files, launch metadata, MCP worker configs
+    runtime/watchdog/   # watchdog PID, activity log
+    logs/          # per-project loop output
+```
+
+To discover the exact paths for the project in the current directory:
+
+```bash
+python3 ~/.cursor/skills/ilk-loop/scripts/ilk_paths.py --start . --where
+```
+
+If you have legacy in-project `.ilk-launcher/` or `.ilk-watchdog/` directories
+from an earlier version, migrate them once with:
+
+```bash
+python3 ~/.cursor/tools/migration/migrate_project_runtime_dirs.py --project . --apply
+```
+
+This keeps the project repo clean and avoids accidental commits of skill
+artifacts.
+
 ## The loop
 
 ```

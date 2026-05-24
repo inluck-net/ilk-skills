@@ -273,6 +273,22 @@ foreach ($r in $rows) {
 Write-Host ""
 Write-Host "Results: $((@($results.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" })) -join ' ')"
 
+# ---- symlink tools/migration (migrate_project_runtime_dirs.py et al.) ------
+$toolsMigrationSrc = Join-Path $RepoRoot "tools\migration"
+foreach ($t in $Targets) {
+  $toolsParent = Split-Path -Parent $t.SkillsDir
+  $toolsDir = Join-Path $toolsParent "tools"
+  if (-not (Test-Path $toolsDir)) {
+    New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
+  }
+  $toolLink = Join-Path $toolsDir "migration"
+  if (Test-Path $toolLink) {
+    Remove-Item -LiteralPath $toolLink -Force -Recurse -ErrorAction SilentlyContinue
+  }
+  New-Item -ItemType Junction -Path $toolLink -Target $toolsMigrationSrc -Force | Out-Null
+  Write-Host ("[ok] {0,-12} {1}" -f "junction", $toolLink) -ForegroundColor Green
+}
+
 # ---- bootstrap projects.json from example ----------------------------------
 # projects.json is gitignored (per-operator paths). Seed it from the
 # example on first install so the launcher works out of the box; never

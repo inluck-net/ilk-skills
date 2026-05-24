@@ -225,6 +225,22 @@ for i in "${!PLAN_LINK[@]}"; do
   printf '%-12s %-22s %-7s %s\n' "${PLAN_TARGET[$i]}" "${PLAN_ACTION[$i]}" "" "${PLAN_LINK[$i]}"
 done
 
+# --- tools ------------------------------------------------------------------
+# tools/migration is symlinked so operators can run migrate_project_runtime_dirs.py
+# (and other migration tools) from any path without needing to know the repo location.
+tools_migration_link() {
+  local target_skills_dir="$1"
+  local link="${target_skills_dir}/../tools/migration"
+  local source="$REPO_ROOT/tools/migration"
+  mkdir -p "$(dirname "$link")"
+  ln -sfn "$source" "$link"
+  printf '[ok] %-12s %s\n' "symlink" "$link"
+}
+
+for i in "${!TARGET_NAMES[@]}"; do
+  tools_migration_link "${TARGET_SKILLS[$i]}"
+done
+
 # blocked summary
 blocked_any=0
 for action in "${PLAN_ACTION[@]}"; do
