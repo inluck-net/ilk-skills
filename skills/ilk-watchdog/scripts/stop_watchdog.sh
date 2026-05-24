@@ -109,7 +109,11 @@ stop_watchdog() {
   fi
 
   echo "[$name] killing watchdog process group $w_pid..." >&2
+  # Try the process group first, then the PID directly — covers
+  # detached launches where the watchdog isn't a pgrp leader
+  # (e.g. plain `nohup ... &` from a non-interactive shell).
   kill -- -"$w_pid" 2>/dev/null || true
+  kill -- "$w_pid" 2>/dev/null || true
 
   # Wait up to 3s for exit
   local waited=0
@@ -121,6 +125,7 @@ stop_watchdog() {
   if kill -0 "$w_pid" 2>/dev/null; then
     echo "[$name] PID $w_pid still alive after SIGTERM. Sending SIGKILL..." >&2
     kill -9 -- -"$w_pid" 2>/dev/null || true
+    kill -9 -- "$w_pid" 2>/dev/null || true
     sleep 1
   fi
 
