@@ -158,7 +158,61 @@ parse_args() {
 # ----- Pre-flight checks -----------------------------------------------------
 
 preflight() {
-  : # TODO: step 2 — gtimeout check, claude check, settings.json env detection
+  # gtimeout is required for per-iteration wall-clock caps on macOS
+  if ! command -v gtimeout >/dev/null 2>&1; then
+    echo "Error: gtimeout not found. Install with: brew install coreutils  # provides gtimeout" >&2
+    exit 1
+  fi
+
+  if ! command -v claude >/dev/null 2>&1; then
+    echo "Error: Claude Code 'claude' not on PATH." >&2
+    exit 1
+  fi
+
+  if ! command -v python >/dev/null 2>&1; then
+    echo "Error: python not on PATH (needed by loop_status.py)." >&2
+    exit 1
+  fi
+
+  if ! command -v git >/dev/null 2>&1; then
+    echo "Error: git not on PATH." >&2
+    exit 1
+  fi
+
+  if [[ ! -d "$PROJECT_PATH" ]]; then
+    echo "Error: Project path does not exist: $PROJECT_PATH" >&2
+    exit 1
+  fi
+  # Resolve to absolute path so downstream git -C calls are unambiguous
+  PROJECT_PATH="$(cd "$PROJECT_PATH" && pwd)"
+
+  if [[ ! -f "$LOOP_STATUS_SCRIPT" ]]; then
+    echo "Error: loop_status.py not found at: $LOOP_STATUS_SCRIPT" >&2
+    exit 1
+  fi
+
+  # Settings.json env detection — same "non-empty env block => authoritative"
+  # semantics as the post-dc24c67 Win version. Empty {} does NOT count.
+  local settings_json="${HOME}/.claude/settings.json"
+  SETTINGS_HAS_ENV=0
+  if [[ -f "$settings_json" ]]; then
+    if jq -e '.env | type == "object" and length > 0' "$settings_json" >/dev/null 2>&1; then
+      SETTINGS_HAS_ENV=1
+      echo "Detected ~/.claude/settings.json env block -- it will be the sole auth source."
+    fi
+  fi
+
+  if [[ "$SETTINGS_HAS_ENV" -eq 0 ]]; then
+    if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+      echo "Warning: ANTHROPIC_API_KEY not set. claude will fall back to interactive auth." >&2
+    fi
+  fi
+
+  mkdir -p "$LOG_DIR"
+  RUN_ID="$(date +%Y%m%d-%H%M%S)"
+  RUN_LOG_DIR="${LOG_DIR}/ilk-claude-${RUN_ID}"
+  mkdir -p "$RUN_LOG_DIR"
+  JSONL_LOG="${LOG_DIR}/.ilk-loop.log"
 }
 
 # ----- Helpers ---------------------------------------------------------------
