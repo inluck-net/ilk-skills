@@ -181,6 +181,19 @@ without `-ProjectPath`.
     -MaxIterations 60 -IterationTimeoutMin 30
 ```
 
+```bash
+# macOS / Linux equivalent:
+bash "$HOME/.cursor/skills/ilk-launcher/scripts/launch.sh"
+
+# By registered name:
+bash "$HOME/.cursor/skills/ilk-launcher/scripts/launch.sh" --project-name es_api
+
+# Explicit path + ad-hoc param override:
+bash "$HOME/.cursor/skills/ilk-launcher/scripts/launch.sh" \
+    --project-path /path/to/your/project \
+    --max-iterations 60 --iteration-timeout-min 30
+```
+
 Effect: a new desktop PowerShell window appears with title
 `ilk: <project-name>` and starts the loop. The window stays open
 after the loop exits (`-NoExit`) so the final 50 lines remain readable.
@@ -280,6 +293,13 @@ When the user says any of these, use `status_progress.py` (NOT `status_all.py`):
 & "$HOME\.cursor\skills\ilk-launcher\scripts\stop.ps1" -ProjectPath C:\path\to\your\project
 ```
 
+```bash
+# macOS / Linux equivalent:
+bash "$HOME/.cursor/skills/ilk-launcher/scripts/stop.sh" --project-name es_api
+# or
+bash "$HOME/.cursor/skills/ilk-launcher/scripts/stop.sh" --project-path /path/to/your/project
+```
+
 Reads `<project>/.ilk-launcher/running.pid`, runs
 `taskkill /T /F /PID <n>` (tree-kill so `claude` and its children die
 with the wrapper), deletes the PID file.
@@ -288,6 +308,11 @@ with the wrapper), deletes the PID file.
 
 ```powershell
 & "$HOME\.cursor\skills\ilk-launcher\scripts\launch.ps1" -All
+```
+
+```bash
+# macOS / Linux equivalent:
+bash "$HOME/.cursor/skills/ilk-launcher/scripts/launch.sh" --all
 ```
 
 Iterates `projects.json` and launches each. Skips any project that
@@ -437,8 +462,6 @@ relaunch with adjusted flags).
   switching users kills the windows. Same caveat as running the script
   manually. For true overnight independence, run via Task Scheduler
   with "Run whether user is logged on or not" — out of scope here.
-- **No Mac equivalent yet**: this skill is Win-only. Mac users currently
-  run the script manually in Terminal.app.
 - **No concurrent run protection**: if you launch twice for the same
   project, you get two ilk processes fighting over commits. The
   launcher refuses to start if `running.pid` exists AND that PID is

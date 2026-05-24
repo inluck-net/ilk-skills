@@ -660,7 +660,21 @@ hand-offs, higher fidelity, and the user only has to tell the agent
 "continue the loop" once. Use Option B only when registering the
 needed MCP isn't worth it for a one-off verification.
 
+## Mac-specific notes
+
+The bash runner (`run_ilk_loop_claude.sh`) requires `gtimeout` from
+GNU `coreutils` for per-iteration wall-clock time-boxing. On macOS:
+
+```bash
+brew install coreutils
+```
+
+Without `gtimeout` the runner refuses to start with a clear error.
+Linux distributions usually ship `timeout` from `coreutils` by default.
+
 ## See also
 
 - `~/.cursor/skills/lark-tickets/SKILL.md` — ticket-tracker integration.
 - `~/.cursor/commands/ilk.md` — the slash command body that drives the loop.
+- `~/.cursor/skills/ilk-loop/scripts/run_ilk_loop_claude.sh` — bash
+  runner (macOS / Linux equivalent of `run_ilk_loop_claude.ps1`).

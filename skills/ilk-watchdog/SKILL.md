@@ -84,6 +84,11 @@ exits after this many restarts to force a human review pass.
 & "$HOME\.cursor\skills\ilk-watchdog\scripts\watchdog.ps1" -ProjectName myproj -Detach
 ```
 
+```bash
+# macOS / Linux equivalent (runs in foreground; background with &):
+bash "$HOME/.cursor/skills/ilk-watchdog/scripts/watchdog.sh" --project-name myproj
+```
+
 `-Detach` makes the script spawn a new desktop PowerShell window
 (`Start-Process powershell -NoExit ...`) running the polling loop, then
 exits immediately so the calling shell is free.
@@ -98,6 +103,12 @@ for debugging, not for unattended use.
     -ProjectName myproj -PollMin 3 -MaxRestarts 3 -Detach
 ```
 
+```bash
+# macOS / Linux equivalent:
+bash "$HOME/.cursor/skills/ilk-watchdog/scripts/watchdog.sh" \
+    --project-name myproj --poll-interval-sec 180 --max-restarts 3
+```
+
 `-PollMin` default 5 (good for 30–60 min iters). Set lower for faster
 recovery on flaky endpoints; higher for very long iters where 5 min
 poll is excessive.
@@ -106,6 +117,11 @@ poll is excessive.
 
 ```powershell
 & "$HOME\.cursor\skills\ilk-watchdog\scripts\stop_watchdog.ps1" -ProjectName myproj
+```
+
+```bash
+# macOS / Linux equivalent:
+bash "$HOME/.cursor/skills/ilk-watchdog/scripts/stop_watchdog.sh" --project-name myproj
 ```
 
 Kills only the watchdog window. The ilk window keeps running.
