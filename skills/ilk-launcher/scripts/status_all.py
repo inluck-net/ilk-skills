@@ -31,6 +31,15 @@ LAUNCHER_DIR = HOME / ".cursor" / "skills" / "ilk-launcher"
 PROJECTS_JSON = LAUNCHER_DIR / "projects.json"
 LOOP_STATUS_SCRIPT = HOME / ".cursor" / "skills" / "ilk-loop" / "scripts" / "loop_status.py"
 
+_ILK_PATHS_DIR = HOME / ".cursor" / "skills" / "ilk-loop" / "scripts"
+if _ILK_PATHS_DIR.is_dir():
+    sys.path.insert(0, str(_ILK_PATHS_DIR))
+try:
+    from ilk_paths import external_launcher_dir, project_key  # type: ignore
+except ImportError:
+    external_launcher_dir = None  # type: ignore
+    project_key = None  # type: ignore
+
 
 def pid_alive(pid: int) -> bool:
     """Cross-platform: check whether a PID refers to a live process."""
@@ -56,8 +65,17 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
+def _get_pid_file_path(project_path: Path) -> Path | None:
+    if external_launcher_dir is None or project_key is None:
+        return None
+    key = project_key(project_path)
+    return external_launcher_dir(key) / "running.pid"
+
+
 def read_pid_file(project_path: Path) -> int | None:
-    pid_file = project_path / ".ilk-launcher" / "running.pid"
+    pid_file = _get_pid_file_path(project_path)
+    if pid_file is None:
+        return None
     if not pid_file.exists():
         return None
     try:
@@ -140,11 +158,12 @@ def main() -> int:
             pid_disp = str(pid)
         else:
             if pid is not None:
-                stale = path / ".ilk-launcher" / "running.pid"
-                try:
-                    stale.unlink()
-                except OSError:
-                    pass
+                stale = _get_pid_file_path(path)
+                if stale:
+                    try:
+                        stale.unlink()
+                    except OSError:
+                        pass
             state = "idle"
             pid_disp = "-"
 
