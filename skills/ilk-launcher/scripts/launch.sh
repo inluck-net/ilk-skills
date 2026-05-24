@@ -143,6 +143,24 @@ for p in data.get('projects', []):
   fi
 }
 
+get_project_key() {
+  local project_path="$1"
+  local resolver
+  resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  if [[ -f "$resolver" ]]; then
+    local json_out
+    if json_out=$(python3 "$resolver" --start "$project_path" 2>/dev/null) && [[ -n "$json_out" ]]; then
+      local key
+      key=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('project_key') or '')" <<<"$json_out")
+      if [[ -n "$key" ]]; then
+        echo "$key"
+        return
+      fi
+    fi
+  fi
+  basename "$project_path"
+}
+
 read_project_config() {
   local project_path="$1"
   local ext_plans
@@ -344,8 +362,88 @@ test_running_pid() {
 }
 
 start_ilk_window() {
-  # Step 3 will fill this in.
-  echo ""
+  local project_path="$1"
+  local project_name="$2"
+  local max_iterations="$3"
+  local timeout_min="$4"
+  local force="$5"
+  local dry_run="$6"
+  local mcp_config_path="$7"
+
+  # Concurrency guard
+  local live_pid
+  live_pid=$(test_running_pid "$project_path")
+  if [[ -n "$live_pid" && "$force" != "true" ]]; then
+    echo "[$project_name] already running (PID $live_pid). Use --force to launch anyway, or stop.sh to kill it." >&2
+    return 1
+  fi
+
+  # Create state dir
+  local state_dir="${project_path}/.ilk-launcher"
+  mkdir -p "$state_dir"
+
+  # Build runner command
+  local runner_cmd
+  runner_cmd="bash \"$LOOP_SCRIPT\" --project-path \"$project_path\" --max-iterations $max_iterations --iteration-timeout-min $timeout_min"
+  if [[ -n "$mcp_config_path" ]]; then
+    runner_cmd="$runner_cmd --mcp-config-path \"$mcp_config_path\""
+  fi
+
+  # Build log path
+  local project_key run_id log_file log_dir
+  project_key=$(get_project_key "$project_path")
+  run_id="$(date +%Y%m%d-%H%M%S)"
+  log_dir="${HOME}/.cursor/skills/ilk-loop/logs/launcher"
+  mkdir -p "$log_dir"
+  log_file="${log_dir}/${project_key}-${run_id}.log"
+
+  if [[ "$dry_run" == "true" ]]; then
+    echo "[$project_name] DRY RUN — would launch:"
+    echo "  ProjectPath: $project_path"
+    echo "  MaxIterations: $max_iterations"
+    echo "  IterationTimeoutMin: $timeout_min"
+    if [[ -n "$mcp_config_path" ]]; then
+      echo "  McpConfigPath: $mcp_config_path"
+    fi
+    echo "  LogFile: $log_file"
+    return 0
+  fi
+
+  # Spawn detached process with nohup.
+  # In bash, a background job gets its own process group;
+  # the child PID is also the PGID, so kill -TERM -$pid works.
+  nohup bash -c "$runner_cmd" \
+    > "$log_file" 2>&1 < /dev/null &
+  local pgid=$!
+
+  # Write PID file
+  local pid_file
+  pid_file=$(get_pid_file_path "$project_path")
+  echo "$pgid" > "$pid_file"
+
+  # Write last-launch.json
+  local meta_path
+  meta_path=$(get_launch_meta_path "$project_path")
+  python3 -c "
+import json
+d = {
+    'project_path': '$project_path',
+    'project_name': '$project_name',
+    'pid': $pgid,
+    'started_at': '$(date +%Y-%m-%dT%H:%M:%S%z)',
+    'max_iterations': $max_iterations,
+    'iteration_timeout_min': $timeout_min,
+    'loop_script': '$LOOP_SCRIPT',
+    'mcp_config_path': '$mcp_config_path',
+    'log_file': '$log_file',
+}
+print(json.dumps(d, indent=2))
+" > "$meta_path"
+
+  echo "[$project_name] launched. PID $pgid."
+  echo "[$project_name] PID file: $pid_file"
+  echo "[$project_name] Log file: $log_file"
+  echo "[$project_name] loop JSONL log: ${HOME}/.cursor/skills/ilk-loop/logs"
 }
 
 # ----- Argument parsing ------------------------------------------------------
@@ -479,7 +577,7 @@ main() {
     return
   fi
 
-  echo "[$RESOLVED_NAME] Launch logic not yet implemented (step 3)."
+  start_ilk_window "$RESOLVED_PATH" "$RESOLVED_NAME" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path"
 }
 
 main "$@"
