@@ -486,10 +486,12 @@ invoke_claude_iteration() {
       || exit_code=$?
   fi
 
-  # Detect budget-exhausted signals in the raw JSONL
+  # Detect budget-exhausted via the terminal result's terminal_reason field only.
+  # Phrase-based patterns ("budget exhausted") match agent thinking/output that
+  # describes budget concepts — only terminal_reason is the authoritative signal.
   local budget_exhausted=0
   if [[ -f "$jsonl_log" ]] \
-     && grep -qE '"terminal_reason".*budget_exhausted|budget exhausted|budget limit reached' "$jsonl_log" 2>/dev/null; then
+     && grep -qE '"terminal_reason"\s*:\s*"budget_exhausted"' "$jsonl_log" 2>/dev/null; then
     budget_exhausted=1
   fi
 
