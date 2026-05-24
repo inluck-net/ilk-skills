@@ -14,6 +14,15 @@
 # Default mode is dry-run: prints what would happen but touches nothing.
 # Pass --apply to execute.
 #
+# macOS entry points installed via directory symlinks (all scripts
+# inside each skill directory are automatically reachable):
+#   ~/.cursor/skills/ilk-launcher/scripts/launch.sh
+#   ~/.cursor/skills/ilk-launcher/scripts/stop.sh
+#   ~/.cursor/skills/ilk-loop/scripts/run_ilk_loop_claude.sh
+#   ~/.cursor/skills/ilk-watchdog/scripts/watchdog.sh
+#   ~/.cursor/skills/ilk-watchdog/scripts/stop_watchdog.sh
+#   ~/.cursor/skills/ilk-loop/scripts/_stream_json_render.py
+#
 # Flags:
 #   --apply         actually create / refresh links
 #   --only-cursor   skip ~/.claude/
