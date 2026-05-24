@@ -124,6 +124,22 @@ get_external_plans_dir() {
   fi
 }
 
+get_external_launcher_dir() {
+  local project_path="$1"
+  local resolver
+  resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  if [[ ! -f "$resolver" ]]; then
+    echo ""
+    return
+  fi
+  local json_out
+  if json_out=$(python3 "$resolver" --start "$project_path" 2>/dev/null) && [[ -n "$json_out" ]]; then
+    python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('external_launcher_dir') or '')" <<<"$json_out"
+  else
+    echo ""
+  fi
+}
+
 get_project_name() {
   local path="$1"
   local name=""
@@ -275,7 +291,13 @@ build_worker_mcp_config() {
     return
   fi
 
-  local out_path="${project_path}/.ilk-launcher/mcp-worker.json"
+  local out_path
+  out_path="$(get_external_launcher_dir "$project_path")/mcp-worker.json"
+  if [[ -z "$out_path" || "$out_path" == "/mcp-worker.json" ]]; then
+    echo "[ilk] could not resolve external launcher dir for $project_path" >&2
+    echo ""
+    return
+  fi
   mkdir -p "$(dirname "$out_path")"
 
   python3 - "$mode" "$names_csv" "$claude_json" "$out_path" <<'PYEOF'
@@ -332,12 +354,24 @@ PYEOF
 
 get_pid_file_path() {
   local project_path="$1"
-  echo "${project_path}/.ilk-launcher/running.pid"
+  local launcher_dir
+  launcher_dir=$(get_external_launcher_dir "$project_path")
+  if [[ -z "$launcher_dir" ]]; then
+    echo ""
+    return
+  fi
+  echo "${launcher_dir}/running.pid"
 }
 
 get_launch_meta_path() {
   local project_path="$1"
-  echo "${project_path}/.ilk-launcher/last-launch.json"
+  local launcher_dir
+  launcher_dir=$(get_external_launcher_dir "$project_path")
+  if [[ -z "$launcher_dir" ]]; then
+    echo ""
+    return
+  fi
+  echo "${launcher_dir}/last-launch.json"
 }
 
 test_running_pid() {
@@ -381,7 +415,12 @@ start_ilk_window() {
   fi
 
   # Create state dir
-  local state_dir="${project_path}/.ilk-launcher"
+  local state_dir
+  state_dir=$(get_external_launcher_dir "$project_path")
+  if [[ -z "$state_dir" ]]; then
+    echo "[$project_name] could not resolve external launcher dir" >&2
+    return 1
+  fi
   mkdir -p "$state_dir"
 
   # Build runner command
@@ -408,6 +447,9 @@ start_ilk_window() {
       echo "  McpConfigPath: $mcp_config_path"
     fi
     echo "  LogFile: $log_file"
+    local pid_file
+    pid_file=$(get_pid_file_path "$project_path")
+    echo "  PID file: $pid_file"
     return 0
   fi
 
@@ -617,6 +659,9 @@ for p in d:
 
   if [[ "$CLI_DRY_RUN" == true ]]; then
     echo "[$RESOLVED_NAME] DRY RUN — would launch with the above params."
+    local pid_file
+    pid_file=$(get_pid_file_path "$RESOLVED_PATH")
+    echo "[$RESOLVED_NAME] PID file: $pid_file"
     return
   fi
 

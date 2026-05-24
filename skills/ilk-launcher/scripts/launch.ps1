@@ -7,7 +7,7 @@
     - Project resolution (cwd walk-up / -ProjectName lookup / -ProjectPath)
     - Per-project parameter resolution (<project>/docs/plans/.ilk-launch.json)
     - Detached window via Start-Process powershell -NoExit
-    - PID file written to <project>/.ilk-launcher/running.pid
+    - PID file written to ~/.ilk-data/projects/<key>/runtime/launcher/running.pid
     - Concurrent-run protection (refuses to start if a live PID exists)
 
   After Start-Process returns, control returns to the caller (Cursor agent
@@ -88,8 +88,8 @@ param(
   #   3. nothing set → don't pass --mcp-config (worker sees full registry)
   #
   # Implementation: launcher filters ~/.claude.json's `mcpServers`
-  # according to the selected mode, writes the result to
-  #   <ProjectPath>/.ilk-launcher/mcp-worker.json
+  # according to the selected mode, writes the result to the external
+  # launcher dir (resolved via ilk_paths.py) as mcp-worker.json
   # and passes it via -McpConfigPath to run_ilk_loop_claude.ps1, which
   # appends `--mcp-config <path> --strict-mcp-config` to every `claude
   # -p` invocation. `--strict-mcp-config` also drops claude.ai-synced
@@ -169,6 +169,20 @@ function Get-ExternalPlansDir {
     if ($LASTEXITCODE -eq 0 -and $json) {
       $obj = $json | ConvertFrom-Json -ErrorAction Stop
       if ($obj.external_plans_dir) { return [string]$obj.external_plans_dir }
+    }
+  } catch {}
+  return ""
+}
+
+function Get-ExternalLauncherDir {
+  param([string]$ProjectPath)
+  $resolver = Join-Path $HOME ".cursor\skills\ilk-loop\scripts\ilk_paths.py"
+  if (-not (Test-Path $resolver)) { return "" }
+  try {
+    $json = & python $resolver --start $ProjectPath 2>$null
+    if ($LASTEXITCODE -eq 0 -and $json) {
+      $obj = $json | ConvertFrom-Json -ErrorAction Stop
+      if ($obj.external_launcher_dir) { return [string]$obj.external_launcher_dir }
     }
   } catch {}
   return ""
@@ -271,9 +285,10 @@ function Resolve-McpFilter {
 
 function Build-WorkerMcpConfig {
   <#
-    Build a temp MCP config file at <ProjectPath>/.ilk-launcher/mcp-worker.json
-    containing the MCP servers selected by $Mode + $Names from
-    ~/.claude.json's mcpServers:
+    Build a temp MCP config file at the external launcher dir
+    (<ProjectPath>'s resolved ~/.ilk-data/projects/<key>/runtime/launcher/)
+    as mcp-worker.json, containing the MCP servers selected by $Mode + $Names
+    from ~/.claude.json's mcpServers:
 
       blacklist → all servers EXCEPT $Names
       whitelist → ONLY servers in $Names that exist in the registry
@@ -336,7 +351,11 @@ function Build-WorkerMcpConfig {
   }
 
   $out = [ordered]@{ mcpServers = $filtered }
-  $stateDir = Join-Path $ProjectPath '.ilk-launcher'
+  $stateDir = Get-ExternalLauncherDir -ProjectPath $ProjectPath
+  if (-not $stateDir) {
+    Write-Host "[ilk] could not resolve external launcher dir for $ProjectPath" -ForegroundColor Red
+    return ""
+  }
   if (-not (Test-Path $stateDir)) { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null }
   $target = Join-Path $stateDir 'mcp-worker.json'
   # PS 5.1's `Out-File -Encoding utf8` writes a BOM. Some JSON parsers
@@ -360,12 +379,16 @@ function Build-WorkerMcpConfig {
 
 function Get-PidFilePath {
   param([string]$ProjectPath)
-  return Join-Path $ProjectPath '.ilk-launcher\running.pid'
+  $dir = Get-ExternalLauncherDir -ProjectPath $ProjectPath
+  if (-not $dir) { throw "Could not resolve external launcher dir for $ProjectPath" }
+  return Join-Path $dir 'running.pid'
 }
 
 function Get-LaunchMetaPath {
   param([string]$ProjectPath)
-  return Join-Path $ProjectPath '.ilk-launcher\last-launch.json'
+  $dir = Get-ExternalLauncherDir -ProjectPath $ProjectPath
+  if (-not $dir) { throw "Could not resolve external launcher dir for $ProjectPath" }
+  return Join-Path $dir 'last-launch.json'
 }
 
 function Test-RunningPid {
@@ -398,7 +421,11 @@ function Start-ilkWindow {
     return $null
   }
 
-  $stateDir = Join-Path $ProjectPath '.ilk-launcher'
+  $stateDir = Get-ExternalLauncherDir -ProjectPath $ProjectPath
+  if (-not $stateDir) {
+    Write-Host "[$ProjectName] could not resolve external launcher dir" -ForegroundColor Red
+    return $null
+  }
   if (-not (Test-Path $stateDir)) { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null }
 
   $title = "ilk: $ProjectName"
@@ -429,6 +456,8 @@ Write-Host '[ilk-launcher] window left open for review. Close manually when done
     Write-Host "  MaxIterations: $MaxIterations"
     Write-Host "  IterationTimeoutMin: $IterationTimeoutMin"
     if ($McpConfigPath) { Write-Host "  McpConfigPath: $McpConfigPath" }
+    $pidFile = Get-PidFilePath -ProjectPath $ProjectPath
+    Write-Host "  PID file: $pidFile"
     return $null
   }
 
