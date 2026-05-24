@@ -288,19 +288,112 @@ get_new_commit_count() {
 }
 
 get_local_check_targets() {
-  : # TODO: step 7 — scan new commits for [plan:<slug>#step-N] tags
+  local repo="$1"
+  local before="$2"
+  local after="$3"
+
+  if [[ "$before" == "$after" || "$before" == "(unknown)" || "$after" == "(unknown)" ]]; then
+    return
+  fi
+
+  local msgs
+  msgs=$(git -C "$repo" log "${before}..${after}" --pretty=format:"%s%n%b" 2>/dev/null) || return
+  [[ -z "$msgs" ]] && return
+
+  # Extract [plan:<slug>#step-<N>] tags and keep max step per slug
+  echo "$msgs" | grep -oE '\[plan:[^#]+#step-[0-9]+\]' | \
+    sed -E 's/\[plan:([^#]+)#step-([0-9]+)\]/\1 \2/' | \
+    sort -t' ' -k1,1 -k2,2nr | \
+    awk '!seen[$1]++ {print $1, $2}'
 }
 
 get_ilk_runtime_dir() {
-  : # TODO: step 7 — resolve external runtime dir via ilk_paths.py
+  local resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  if [[ ! -f "$resolver" ]]; then
+    return 1
+  fi
+  local json
+  json="$(python "$resolver" --start "$PROJECT_PATH" 2>/dev/null)" || return 1
+  echo "$json" | jq -r '.external_runtime_dir // empty'
 }
 
 write_ilk_sentinel() {
-  : # TODO: step 7 — atomic write of last-exit.json (temp + mv)
+  local dir="$1"
+  local data="$2"
+  local target="${dir}/last-exit.json"
+  local tmp="${target}.tmp"
+
+  mkdir -p "$dir" 2>/dev/null || {
+    echo "  ! sentinel write failed: cannot create directory $dir" >&2
+    return
+  }
+
+  printf '%s' "$data" > "$tmp" && mv -f "$tmp" "$target" || {
+    echo "  ! sentinel write failed: cannot write $target" >&2
+    rm -f "$tmp" 2>/dev/null
+    return
+  }
 }
 
 invoke_local_checks() {
-  : # TODO: step 7 — run run_local_checks.py per target with outer timeout
+  local project="$1"
+  local targets_file="$2"
+  local helper_script="$3"
+  local outer_timeout_sec="${4:-180}"
+  local results_file="$5"
+
+  : > "$results_file"
+
+  if [[ ! -f "$targets_file" || ! -s "$targets_file" ]]; then
+    return
+  fi
+  if [[ ! -f "$helper_script" ]]; then
+    return
+  fi
+
+  local deadline
+  deadline=$(($(date +%s) + outer_timeout_sec))
+
+  local slug step
+  while read -r slug step; do
+    local now
+    now=$(date +%s)
+    if [[ "$now" -ge "$deadline" ]]; then
+      echo "{\"slug\":\"$slug\",\"step\":$step,\"outcome\":\"skipped\",\"error\":\"outer timeout reached\"}" >> "$results_file"
+      continue
+    fi
+
+    local remain_sec=$((deadline - now))
+    if [[ "$remain_sec" -lt 5 ]]; then
+      remain_sec=5
+    fi
+
+    local tmp_out
+    tmp_out=$(mktemp)
+
+    local check_exit=0
+    gtimeout "${remain_sec}s" python "$helper_script" --project "$project" --slug "$slug" --step "$step" > "$tmp_out" 2>&1 || check_exit=$?
+
+    local outcome
+    case "$check_exit" in
+      0) outcome="pass" ;;
+      1) outcome="fail" ;;
+      124) outcome="error" ;;
+      *) outcome="error" ;;
+    esac
+
+    local tag
+    case "$outcome" in
+      pass) tag="OK" ;;
+      fail) tag="FAIL" ;;
+      *) tag="ERR" ;;
+    esac
+    echo "  [local_checks $tag] $slug step $step -> $outcome"
+
+    echo "{\"slug\":\"$slug\",\"step\":$step,\"outcome\":\"$outcome\",\"exit_code\":$check_exit}" >> "$results_file"
+
+    rm -f "$tmp_out"
+  done < "$targets_file"
 }
 
 test_all_shipped() {
@@ -455,7 +548,25 @@ main() {
   print_banner
 
   # Sentinel setup (state=running)
-  # TODO: step 7
+  local runtime_dir
+  runtime_dir=$(get_ilk_runtime_dir) || runtime_dir=""
+  local loop_started_at
+  loop_started_at=$(date +%Y-%m-%dT%H:%M:%S%z)
+  local iter_counter=0
+
+  if [[ -n "$runtime_dir" ]]; then
+    python -c "import json; print(json.dumps({
+      'state': 'running',
+      'pid': $$,
+      'run_id': '$RUN_ID',
+      'started_at': '$loop_started_at',
+      'project_path': '$PROJECT_PATH',
+      'cli': 'claude'
+    }))" > "${runtime_dir}/last-exit.json.tmp" && mv -f "${runtime_dir}/last-exit.json.tmp" "${runtime_dir}/last-exit.json"
+    echo "Sentinel: ${runtime_dir}/last-exit.json (state=running)"
+  else
+    echo "Sentinel: skipped (no runtime dir resolved)"
+  fi
 
   # Initial check: already shipped?
   if test_all_shipped; then
@@ -470,10 +581,9 @@ main() {
   local i
   local no_progress_streak=0
   local stop_reason=""
-  local total_iters=0
 
   for ((i = 1; i <= MAX_ITERATIONS; i++)); do
-    total_iters=$i
+    iter_counter=$i
     echo ""
     echo "--- Iteration $i / $MAX_ITERATIONS ---"
 
@@ -500,17 +610,27 @@ main() {
 
     get_repo_heads "$heads_after_file"
 
-    # Compute new commits
+    # Compute new commits per repo
     local total_new=0
+    local new_commits_file
+    new_commits_file=$(mktemp)
     local r
     for r in "${REPOS[@]}"; do
       local count
       count=$(get_new_commit_count "$r" "$heads_before_file" "$heads_after_file")
       total_new=$((total_new + count))
+      if [[ "$count" -gt 0 ]]; then
+        echo "$r $count" >> "$new_commits_file"
+      fi
     done
 
     echo ""
     echo "  duration: ${iter_dur_sec}s  exit: $ITER_EXIT_CODE  new commits: $total_new"
+    if [[ -s "$new_commits_file" ]]; then
+      while read -r repo_line count_line; do
+        echo "    $repo_line : +$count_line"
+      done < "$new_commits_file"
+    fi
 
     # Stall detection
     local iter_stop_reason=""
@@ -529,19 +649,92 @@ main() {
       no_progress_streak=0
     fi
 
-    # Write JSONL record
+    # Optional local_checks
+    local local_checks_results=""
+    if [[ "$RUN_LOCAL_CHECKS" == true && "$total_new" -gt 0 ]]; then
+      local all_targets_file
+      all_targets_file=$(mktemp)
+      for r in "${REPOS[@]}"; do
+        local before after
+        before=$(grep -F "$r=" "$heads_before_file" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
+        after=$(grep -F "$r=" "$heads_after_file" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
+        get_local_check_targets "$r" "$before" "$after" >> "$all_targets_file"
+      done
+      # Merge by slug (max step wins)
+      local merged_targets_file
+      merged_targets_file=$(mktemp)
+      if [[ -s "$all_targets_file" ]]; then
+        sort -t' ' -k1,1 -k2,2nr "$all_targets_file" | awk '!seen[$1]++ {print $1, $2}' > "$merged_targets_file"
+        local_checks_results=$(mktemp)
+        invoke_local_checks "$PROJECT_PATH" "$merged_targets_file" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$local_checks_results"
+      fi
+      rm -f "$all_targets_file" "$merged_targets_file"
+    fi
+
+    # Build new_commits JSON
+    local new_commits_json="{}"
+    if [[ -s "$new_commits_file" ]]; then
+      new_commits_json=$(python -c "
+import json, sys
+d = {}
+for line in sys.stdin:
+  parts = line.strip().rsplit(' ', 1)
+  if len(parts) == 2:
+    d[parts[0]] = int(parts[1])
+print(json.dumps(d))
+" < "$new_commits_file")
+    fi
+    rm -f "$new_commits_file"
+
+    # Build local_checks JSON
+    local local_checks_json="[]"
+    if [[ -n "$local_checks_results" && -s "$local_checks_results" ]]; then
+      local_checks_json=$(python -c "
+import json, sys
+print(json.dumps([json.loads(l) for l in sys.stdin]))
+" < "$local_checks_results")
+      rm -f "$local_checks_results"
+    fi
+
+    # Write JSONL record via Python to avoid bash JSON escaping issues
     local ts
     ts=$(date +%Y-%m-%dT%H:%M:%S%z)
-    local model_val
-    model_val="${MODEL:-${ANTHROPIC_MODEL:-}}"
 
-    local record
-    record="{\"run_id\":\"$RUN_ID\",\"cli\":\"claude\",\"iteration\":$i,\"timestamp\":\"$ts\",\"project\":\"$PROJECT_PATH\",\"model\":\"$model_val\",\"base_url\":\"${ANTHROPIC_BASE_URL:-}\",\"max_budget_usd\":$MAX_BUDGET_USD,\"duration_sec\":$iter_dur_sec,\"exit_code\":$ITER_EXIT_CODE,\"new_commits_total\":$total_new"
-    if [[ -n "$iter_stop_reason" ]]; then
-      record="$record,\"stop_reason\":\"$iter_stop_reason\""
-    fi
-    record="$record}"
-    write_jsonl_record "$record"
+    RUN_ID="$RUN_ID" \
+    _ITER="$i" \
+    _TS="$ts" \
+    _DUR="$iter_dur_sec" \
+    _EXIT="$ITER_EXIT_CODE" \
+    _NEW_TOTAL="$total_new" \
+    _STOP_REASON="$iter_stop_reason" \
+    _NEW_COMMITS_JSON="$new_commits_json" \
+    _LOCAL_CHECKS_JSON="$local_checks_json" \
+    python -c "
+import json, os
+d = {
+  'run_id': os.environ['RUN_ID'],
+  'cli': 'claude',
+  'iteration': int(os.environ['_ITER']),
+  'timestamp': os.environ['_TS'],
+  'project': os.environ['PROJECT_PATH'],
+  'model': os.environ.get('MODEL', '') or os.environ.get('ANTHROPIC_MODEL', ''),
+  'base_url': os.environ.get('ANTHROPIC_BASE_URL', ''),
+  'max_budget_usd': float(os.environ.get('MAX_BUDGET_USD', 0)),
+  'duration_sec': int(os.environ['_DUR']),
+  'exit_code': int(os.environ['_EXIT']),
+  'new_commits_total': int(os.environ['_NEW_TOTAL']),
+}
+nc = os.environ.get('_NEW_COMMITS_JSON', '')
+if nc and nc != '{}':
+  d['new_commits'] = json.loads(nc)
+sr = os.environ.get('_STOP_REASON', '')
+if sr:
+  d['stop_reason'] = sr
+lc = os.environ.get('_LOCAL_CHECKS_JSON', '')
+if lc and lc != '[]':
+  d['local_checks'] = json.loads(lc)
+print(json.dumps(d))
+" >> "$JSONL_LOG"
 
     # Quality gates
     # TODO: step 6+ (invoke_quality_gates_if_needed)
@@ -571,7 +764,22 @@ main() {
   python "$LOOP_STATUS_SCRIPT" 2>&1 || true
 
   # Sentinel teardown (state=<stop_reason>)
-  # TODO: step 7
+  if [[ -n "$runtime_dir" ]]; then
+    local ended_at
+    ended_at=$(date +%Y-%m-%dT%H:%M:%S%z)
+    python -c "import json; print(json.dumps({
+      'state': '$stop_reason',
+      'pid': $$,
+      'run_id': '$RUN_ID',
+      'started_at': '$loop_started_at',
+      'ended_at': '$ended_at',
+      'iterations': $iter_counter,
+      'project_path': '$PROJECT_PATH',
+      'cli': 'claude',
+      'jsonl_log': '$JSONL_LOG'
+    }))" > "${runtime_dir}/last-exit.json.tmp" && mv -f "${runtime_dir}/last-exit.json.tmp" "${runtime_dir}/last-exit.json"
+    echo "Sentinel: ${runtime_dir}/last-exit.json (state=$stop_reason, iters=$iter_counter)"
+  fi
 }
 
 main "$@"
