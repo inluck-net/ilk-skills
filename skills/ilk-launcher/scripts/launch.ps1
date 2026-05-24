@@ -63,7 +63,26 @@ param(
   [int]$MaxIterations = 0,
   [int]$IterationTimeoutMin = 0,
   [switch]$Force,
-  [switch]$DryRun
+  [switch]$DryRun,
+
+  # Comma-separated list of MCP server names to DISABLE for the spawned
+  # worker (only). Common case: "chrome-devtools" — its tool-call results
+  # stay resident for the rest of the session and cost real tokens. When
+  # a batch has no UI sub-plans, the worker doesn't need this MCP and
+  # disabling it saves ~10% per iteration (per `/usage` self-reports).
+  #
+  # Resolution order:
+  #   1. -DisableMcp on the CLI (this parameter)
+  #   2. .ilk-launch.json's `worker_disable_mcp` array
+  #   3. neither → don't pass --mcp-config (worker sees full registry)
+  #
+  # Implementation: launcher reads ~/.claude.json's `mcpServers`, removes
+  # the disabled entries, writes a temp file at
+  #   <ProjectPath>/.ilk-launcher/mcp-worker.json
+  # and passes it to run_ilk_loop_claude.ps1 via -McpConfigPath. The
+  # runner appends `--mcp-config <path> --strict-mcp-config` to every
+  # `claude -p` invocation.
+  [string]$DisableMcp = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -185,6 +204,85 @@ function Resolve-Params {
   return @{ MaxIterations = $maxIter; IterationTimeoutMin = $timeout }
 }
 
+function Resolve-DisableMcpList {
+  <#
+    Resolve which MCP servers should be disabled for the worker. CLI
+    -DisableMcp (comma-separated) trumps the per-project config'`s
+    `worker_disable_mcp` array. Returns an array of names (possibly
+    empty).
+  #>
+  param([string]$ProjectPath, [string]$CliDisableMcp)
+  if (-not [string]::IsNullOrWhiteSpace($CliDisableMcp)) {
+    return @($CliDisableMcp.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  }
+  $cfg = Read-ProjectConfig -ProjectPath $ProjectPath
+  if ($cfg.ContainsKey('worker_disable_mcp')) {
+    $raw = $cfg['worker_disable_mcp']
+    if ($raw -is [System.Collections.IEnumerable] -and -not ($raw -is [string])) {
+      return @($raw | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+    }
+  }
+  return @()
+}
+
+function Build-WorkerMcpConfig {
+  <#
+    Build a temp MCP config file at <ProjectPath>/.ilk-launcher/mcp-worker.json
+    containing every server from ~/.claude.json'`s mcpServers EXCEPT the
+    ones named in $DisableNames. Returns the absolute path of the temp
+    file, or "" if no filtering should happen (empty disable list, or
+    ~/.claude.json absent / missing mcpServers).
+
+    The runner appends `--mcp-config <path> --strict-mcp-config` so the
+    worker only sees what we whitelisted. Servers synced from claude.ai
+    (Gmail / Drive / etc.) are NOT in ~/.claude.json'`s mcpServers, so
+    `--strict-mcp-config` also drops those for the worker — desired:
+    workers don't need email / drive access.
+  #>
+  param(
+    [string]$ProjectPath,
+    [string[]]$DisableNames
+  )
+  if (-not $DisableNames -or $DisableNames.Count -eq 0) { return "" }
+  $claudeJson = Join-Path $HOME ".claude.json"
+  if (-not (Test-Path $claudeJson)) {
+    Write-Host "[ilk] -DisableMcp requested but ~/.claude.json not found; skipping MCP filter." -ForegroundColor DarkYellow
+    return ""
+  }
+  try {
+    $parsed = Get-Content $claudeJson -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    Write-Host "[ilk] -DisableMcp requested but ~/.claude.json is malformed; skipping MCP filter." -ForegroundColor DarkYellow
+    return ""
+  }
+  if (-not $parsed.mcpServers) {
+    Write-Host "[ilk] -DisableMcp requested but ~/.claude.json has no mcpServers; skipping MCP filter." -ForegroundColor DarkYellow
+    return ""
+  }
+  $filtered = [ordered]@{}
+  $skipped = @()
+  foreach ($prop in $parsed.mcpServers.PSObject.Properties) {
+    if ($DisableNames -contains $prop.Name) {
+      $skipped += $prop.Name
+      continue
+    }
+    $filtered[$prop.Name] = $prop.Value
+  }
+  $out = [ordered]@{ mcpServers = $filtered }
+  $stateDir = Join-Path $ProjectPath '.ilk-launcher'
+  if (-not (Test-Path $stateDir)) { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null }
+  $target = Join-Path $stateDir 'mcp-worker.json'
+  # PS 5.1's `Out-File -Encoding utf8` writes a BOM. Some JSON parsers
+  # don't tolerate that (and Claude's --mcp-config doesn't need it), so
+  # write UTF-8 without BOM via .NET.
+  $json = $out | ConvertTo-Json -Depth 10
+  [System.IO.File]::WriteAllText($target, $json, [System.Text.UTF8Encoding]::new($false))
+  if ($skipped.Count -gt 0) {
+    Write-Host ("[ilk] worker MCP filter: disabling {0} (kept {1})" -f ($skipped -join ', '), ($filtered.Keys -join ', ')) -ForegroundColor DarkGray
+  }
+  return $target
+}
+
 function Get-PidFilePath {
   param([string]$ProjectPath)
   return Join-Path $ProjectPath '.ilk-launcher\running.pid'
@@ -215,7 +313,8 @@ function Start-ilkWindow {
     [int]$MaxIterations,
     [int]$IterationTimeoutMin,
     [bool]$Force,
-    [bool]$DryRun
+    [bool]$DryRun,
+    [string]$McpConfigPath = ""
   )
 
   $livePid = Test-RunningPid -ProjectPath $ProjectPath
@@ -229,6 +328,11 @@ function Start-ilkWindow {
 
   $title = "ilk: $ProjectName"
 
+  $mcpArg = ""
+  if ($McpConfigPath) {
+    $mcpArg = " -McpConfigPath '$McpConfigPath'"
+  }
+
   $inner = @"
 `$Host.UI.RawUI.WindowTitle = '$title'
 Write-Host '=== ilk-launcher ===' -ForegroundColor Cyan
@@ -236,7 +340,7 @@ Write-Host "Project: $ProjectPath"
 Write-Host "MaxIterations: $MaxIterations    IterationTimeoutMin: $IterationTimeoutMin"
 Write-Host "Started: `$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 Write-Host '======================' -ForegroundColor Cyan
-& '$LoopScript' -ProjectPath '$ProjectPath' -MaxIterations $MaxIterations -IterationTimeoutMin $IterationTimeoutMin
+& '$LoopScript' -ProjectPath '$ProjectPath' -MaxIterations $MaxIterations -IterationTimeoutMin $IterationTimeoutMin$mcpArg
 `$code = `$LASTEXITCODE
 Write-Host ''
 Write-Host '[ilk-launcher] run_ilk_loop_claude.ps1 exited with code:' `$code -ForegroundColor Yellow
@@ -249,6 +353,7 @@ Write-Host '[ilk-launcher] window left open for review. Close manually when done
     Write-Host "  ProjectPath: $ProjectPath"
     Write-Host "  MaxIterations: $MaxIterations"
     Write-Host "  IterationTimeoutMin: $IterationTimeoutMin"
+    if ($McpConfigPath) { Write-Host "  McpConfigPath: $McpConfigPath" }
     return $null
   }
 
@@ -265,6 +370,7 @@ Write-Host '[ilk-launcher] window left open for review. Close manually when done
     max_iterations         = $MaxIterations
     iteration_timeout_min  = $IterationTimeoutMin
     loop_script            = $LoopScript
+    mcp_config_path        = $McpConfigPath
   }
   $meta | ConvertTo-Json | Out-File -FilePath (Get-LaunchMetaPath -ProjectPath $ProjectPath) -Encoding utf8
 
@@ -283,13 +389,16 @@ if ($All) {
   }
   foreach ($p in $projects) {
     $params = Resolve-Params -ProjectPath $p.path -CliMaxIter $MaxIterations -CliTimeout $IterationTimeoutMin
+    $disableList = Resolve-DisableMcpList -ProjectPath $p.path -CliDisableMcp $DisableMcp
+    $mcpCfg = Build-WorkerMcpConfig -ProjectPath $p.path -DisableNames $disableList
     Start-ilkWindow `
       -ProjectPath $p.path `
       -ProjectName $p.name `
       -MaxIterations $params.MaxIterations `
       -IterationTimeoutMin $params.IterationTimeoutMin `
       -Force:$Force.IsPresent `
-      -DryRun:$DryRun.IsPresent | Out-Null
+      -DryRun:$DryRun.IsPresent `
+      -McpConfigPath $mcpCfg | Out-Null
   }
   return
 }
@@ -307,6 +416,8 @@ if (-not (Test-Path $resolvedPath)) {
 $resolvedPath = (Resolve-Path $resolvedPath).Path
 $resolvedName = if ($ProjectName) { $ProjectName } else { Get-ProjectName -Path $resolvedPath }
 $params = Resolve-Params -ProjectPath $resolvedPath -CliMaxIter $MaxIterations -CliTimeout $IterationTimeoutMin
+$disableList = Resolve-DisableMcpList -ProjectPath $resolvedPath -CliDisableMcp $DisableMcp
+$mcpCfg = Build-WorkerMcpConfig -ProjectPath $resolvedPath -DisableNames $disableList
 
 Start-ilkWindow `
   -ProjectPath $resolvedPath `
@@ -314,4 +425,5 @@ Start-ilkWindow `
   -MaxIterations $params.MaxIterations `
   -IterationTimeoutMin $params.IterationTimeoutMin `
   -Force:$Force.IsPresent `
-  -DryRun:$DryRun.IsPresent | Out-Null
+  -DryRun:$DryRun.IsPresent `
+  -McpConfigPath $mcpCfg | Out-Null

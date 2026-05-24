@@ -1,22 +1,14 @@
 ---
 name: ilk-feedback
 description: >-
-  Generate a postmortem for the most recent ilk-loop run on a project.
-  Reads the JSONL summary log and per-iteration text logs that
-  `run_ilk_loop_claude.ps1` already writes, classifies the outcome
-  (timeout-bound / api-flaky / stuck-no-progress / max-iter-bound /
-  clean-success / interrupted / api-blocked / budget-exhausted /
-  local-checks-stuck), suggests
-  better `MaxIterations` / `IterationTimeoutMin` for the next launch, and
-  saves the report to <project>/.ilk-launcher/postmortems/. Use when the
-  user says any of: "ilk 反馈", "ilk postmortem", "postmortem",
-  "postmortem on <project>", "do a postmortem", "ilk debrief", "debrief",
-  "debrief the last run", "复盘 ilk", "复盘一下", "复盘", "ilk 怎么停了",
-  "/ilk-feedback", "为什么 ilk 中断", "why did ilk stop",
-  "why did <project> stop", "what went wrong", "what went wrong with ilk",
-  "what happened on the last run", "feedback on the last run", or after a
-  ilk window has just exited and the user wants to know what to do next
-  (resume / bump param / fix code first).
+  Postmortem for the most recent ilk-loop run. Reads the JSONL summary
+  + per-iteration logs `run_ilk_loop_claude.ps1` writes, classifies the
+  outcome (8 taxonomy labels), recommends next-launch params, saves
+  the report under `<project>/.ilk-launcher/postmortems/`. Triggers:
+  "/ilk-feedback", "postmortem", "debrief", "what went wrong", "why
+  did ilk stop", "复盘", "ilk 反馈", "ilk 怎么停了", or after a ilk
+  window exits.
+model: haiku
 ---
 
 # ilk-feedback — postmortem skill for ilk-loop runs

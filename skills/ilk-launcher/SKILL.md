@@ -1,13 +1,12 @@
 ---
 name: ilk-launcher
 description: >-
-  Launch the ilk-loop runner for a project in an independent PowerShell
-  window (detached from Cursor) and aggregate run status across registered
-  projects. Use when the user says "start ilk", "launch ilk", "跑 ilk",
-  "启动 ilk", "ilk 状态", "/ilk-launch", "/ilk-status-all",
-  "/ilk-stop", or otherwise wants to start, stop, or check ilk-loop runs
-  on Windows. Companion to ilk-loop — does NOT drive the loop itself,
-  only spawns/observes the existing `run_ilk_loop_claude.ps1` runner.
+  Launch / stop / status the ilk-loop runner in a detached Windows
+  PowerShell window per project. Triggers: "start ilk", "launch ilk",
+  "跑 ilk", "启动 ilk", "ilk 状态", "/ilk-launch", "/ilk-status-all",
+  "/ilk-stop". Companion to ilk-loop — spawns/observes
+  `run_ilk_loop_claude.ps1`, never drives the loop itself.
+model: haiku
 ---
 
 # ilk-launcher — independent-window launcher for ilk-loop
@@ -63,12 +62,26 @@ the design rationale in `<vault>/ai-coding-workflow/tool-evaluations/ilk-launche
 ```json
 {
   "max_iterations": 40,
-  "iteration_timeout_min": 60
+  "iteration_timeout_min": 60,
+  "worker_disable_mcp": ["chrome-devtools"]
 }
 ```
 
 Lives in `docs/plans/` (next to MASTER plan) so it travels with the
 project's plan convention. Optional — without it, global defaults apply.
+
+**`worker_disable_mcp`** (optional, array of strings) — for batches that
+don't need certain MCP servers, list them here and the worker spawned
+by `launch.ps1` will run without those MCPs. The classic candidate is
+`chrome-devtools`: when a project's sub-plans have no UI ACs, the
+worker doesn't need it, and dropping it saves ~10% per iteration
+(chrome-devtools snapshots stay resident in the agent's context for
+the rest of the session). Implemented via Claude Code's
+`--mcp-config <path> --strict-mcp-config` flags — the launcher builds
+a filtered copy of `~/.claude.json`'s `mcpServers` (minus the named
+servers) at `<project>/.ilk-launcher/mcp-worker.json` and passes it
+through. Override at launch time with `launch.ps1 -DisableMcp
+"chrome-devtools,figma"`.
 
 ### Global registry: `~/.cursor/skills/ilk-launcher/projects.json`
 

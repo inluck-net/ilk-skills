@@ -122,7 +122,15 @@ param(
   # iteration unboundedly.
   [int]$LocalChecksTimeoutSec = 180,
 
-  [string]$LocalChecksScript = (Join-Path $HOME ".cursor\skills\ilk-loop\scripts\run_local_checks.py")
+  [string]$LocalChecksScript = (Join-Path $HOME ".cursor\skills\ilk-loop\scripts\run_local_checks.py"),
+
+  # Path to a JSON file with `{"mcpServers": {...}}` to pass to every
+  # `claude -p` invocation via `--mcp-config <path> --strict-mcp-config`.
+  # When set, the worker sees ONLY the MCPs listed here (claude.ai-synced
+  # and registry-scope servers are also dropped). Used by `launch.ps1`'s
+  # -DisableMcp / `worker_disable_mcp` config to skip cost-heavy MCPs
+  # (e.g. chrome-devtools) on batches that don't need them.
+  [string]$McpConfigPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -890,6 +898,9 @@ function Invoke-ClaudeIteration {
   )
   if ($BudgetUsd -gt 0) { $argList += @('--max-budget-usd', $BudgetUsd.ToString([System.Globalization.CultureInfo]::InvariantCulture)) }
   if ($ModelOverride)   { $argList += @('--model', $ModelOverride) }
+  if ($script:McpConfigPath) {
+    $argList += @('--mcp-config', $script:McpConfigPath, '--strict-mcp-config')
+  }
   $argList += $PromptText
 
   # Build a cmd /c command line. Prompt may contain spaces; quote it.
@@ -1071,6 +1082,11 @@ Write-Host "Iter timeout:   $IterationTimeoutMin min"
 Write-Host "Model:          $(if ($Model) { $Model } else { $env:ANTHROPIC_MODEL + ' (from env)' })"
 Write-Host "API base:       $($env:ANTHROPIC_BASE_URL)"
 Write-Host "Per-iter budget: $(if ($MaxBudgetUsd -gt 0) { '$' + $MaxBudgetUsd } else { 'unlimited' })"
+if ($McpConfigPath) {
+  Write-Host "MCP config:     $McpConfigPath (strict — worker sees only what'`s listed)"
+} else {
+  Write-Host "MCP config:     (default — worker sees user's full MCP registry)"
+}
 Write-Host "Run logs:       $RunLogDir"
 Write-Host "JSONL summary:  $JsonlLog"
 Write-Host ""

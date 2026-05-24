@@ -39,6 +39,18 @@ LOOP_LOG_DIR = HOME / ".cursor" / "skills" / "ilk-loop" / "logs"
 JSONL_LOG = LOOP_LOG_DIR / ".ilk-loop.log"
 LOOP_STATUS_SCRIPT = HOME / ".cursor" / "skills" / "ilk-loop" / "scripts" / "loop_status.py"
 
+# Pull in ilk_paths from the sibling ilk-loop skill so meta-project
+# detection is consistent across the suite. Falls back to the legacy
+# walk-up in resolve_by_cwd() if the import fails (e.g. running from a
+# repo clone before install.sh symlinks are in place).
+_ILK_PATHS_DIR = HOME / ".cursor" / "skills" / "ilk-loop" / "scripts"
+if _ILK_PATHS_DIR.is_dir():
+    sys.path.insert(0, str(_ILK_PATHS_DIR))
+try:
+    from ilk_paths import find_project_root as _find_project_root  # type: ignore
+except ImportError:
+    _find_project_root = None  # type: ignore
+
 # How many lines of the last problematic iter's log to embed in the report.
 TAIL_LINES = 80
 
@@ -66,12 +78,21 @@ def resolve_by_name(name: str) -> Path:
 
 def resolve_by_cwd() -> Path:
     cur = Path.cwd()
+    # Prefer ilk_paths' authoritative resolver — it recognises both
+    # single-repo (.git ancestor) and meta-project (.ilk-meta.json
+    # ancestor) layouts. Falls back to the legacy walk-up only if the
+    # ilk-loop skill isn't installed yet.
+    if _find_project_root is not None:
+        root, _kind = _find_project_root(cur)
+        if root is not None:
+            return Path(root)
     for ancestor in [cur, *cur.parents]:
         plans = ancestor / "docs" / "plans"
         if plans.is_dir() and any(plans.glob("MASTER-*.md")):
             return ancestor
     raise SystemExit(
-        f"No docs/plans/MASTER-*.md found walking up from {cur}. "
+        f"No project root (.git or .ilk-meta.json) and no "
+        f"docs/plans/MASTER-*.md found walking up from {cur}. "
         "Pass -ProjectName or -ProjectPath, or cd into a project."
     )
 
