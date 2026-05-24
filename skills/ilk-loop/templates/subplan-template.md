@@ -17,7 +17,29 @@ last_updated: YYYY-MM-DD
 repo: <member-name>
 # --- Sub-plan dependencies (see decomposition-principles.md §2-§3) ---
 depends_on: []                 # IDs of prior sub-plans whose status==shipped is required
-data_prereqs: []               # runtime data state required (distinct from depends_on)
+# --- Runtime data prerequisites (distinct from code deps in depends_on) ---
+# What runtime data state must exist for this sub-plan's steps to run.
+# Three accepted entry shapes — pick whichever fits the prereq:
+#
+#   registry_key:  reference into docs/loop/fixtures-registry.{yml,yaml,json}
+#     - registry_key: test_accounts.portal_customer
+#       # optional: override the registry's verify_cmd for this sub-plan
+#       verify_cmd: "curl -sf -X POST $API/auth/login/ ... | jq -e .data.access"
+#
+#   verify_cmd:    standalone command that proves the prereq holds (exit 0)
+#     - description: "DB has at least one order in PENDING_PAYMENT status"
+#       verify_cmd: "psql -t -c \"select count(*)>0 from orders where status='PENDING_PAYMENT'\" | grep -q t"
+#
+#   description:   free-text fallback when no machine check exists
+#     - description: "design system v2 tokens loaded in tailwind.config.js"
+#
+# A future preflight runner will parse the structured entries and try
+# them in order before the step starts. For now, the planner uses these
+# to drive sub-plan content (step 0 invokes the relevant seed, helper,
+# or curl probe). Free-text "need a test account" is the anti-pattern
+# /ilk-plan step 4c (fixture discovery) exists to prevent — always
+# reference a concrete registry_key or verify_cmd when one exists.
+data_prereqs: []
 # --- Machine-checkable acceptance (see decomposition-principles.md §1) ---
 # Run by the loop driver after each step's commit. Fail-any → step does
 # not advance, output written to "Findings" section.

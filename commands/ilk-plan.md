@@ -262,10 +262,26 @@ Once approved, write all files in one batch under the
     absent — do not invent values.
   - **`data_prereqs`** — for every sub-plan that touches authed routes
     / protected data / seeded state, list the fixtures from the step-4c
-    discovery that this sub-plan will use. Reference by path or, if a
-    `docs/loop/fixtures-registry.*` exists, by registry key. Never
-    leave this as "needs a test account" prose — that is the
-    anti-pattern step 4c exists to kill.
+    discovery that this sub-plan will use. Use the structured schema
+    from `subplan-template.md` (one of `registry_key` / `verify_cmd` /
+    `description` per entry):
+
+    ```yaml
+    data_prereqs:
+      # preferred: reference fixtures-registry.* key
+      - registry_key: test_accounts.portal_customer
+      # next best: standalone verify command
+      - description: "cart has ≥1 item populated"
+        verify_cmd: "curl -sf $API/api/v1/cart | jq -e '.data.items | length > 0'"
+      # fallback only when nothing machine-checkable exists
+      - description: "Figma v2 design tokens referenced (manual eyeball)"
+    ```
+
+    Each `registry_key` MUST exist in the project's
+    `docs/loop/fixtures-registry.{yml,yaml,json}` when one is present
+    (verified in step 7d below). Never leave `data_prereqs` as
+    free-text "needs a test account" prose — that is the anti-pattern
+    step 4c exists to kill.
   - Tickets-in-scope table with title / type / priority / module per item
   - Concrete objectives (1-line each)
   - Concrete acceptance criteria (observable, testable). **Each AC the
@@ -290,12 +306,12 @@ Once approved, write all files in one batch under the
   - Empty "Findings" section (loop fills during execution)
   - Reference reading section (any docs the executor should pre-load)
 
-## 7. Final QC (four passes)
+## 7. Final QC (five passes)
 
 Run these passes against every newly-written sub-plan BEFORE
-committing. 7a and 7d findings are warnings (surface to the user);
-7b mutates files; **7c is a hard gate** (meta projects only) — never
-advance to step 8 with an unresolved 7c error.
+committing. 7a / 7e findings are warnings (surface to the user);
+7b mutates files; **7c (meta projects only) and 7d-errors are hard
+gates** — never advance to step 8 with an unresolved hard finding.
 
 ### 7a. `local_checks` anti-pattern lint
 
@@ -368,7 +384,53 @@ Treat this as a HARD failure, not a warning: do not advance to step 8
 until every sub-plan passes. A mistagged sub-plan would route commits
 to the wrong member repo and corrupt the ship report.
 
-### 7d. Cold-read self-check
+### 7d. `data_prereqs` schema validation
+
+For each sub-plan, walk its frontmatter `data_prereqs:` list. Apply:
+
+1. **Empty allowed** only if the sub-plan touches NO authed routes /
+   protected data / seeded state. If the body mentions login / authed
+   path / customer data / orders / cart / staff role etc. and
+   `data_prereqs` is empty, this is a finding:
+
+   ```
+   WARN: <slug>: body touches authed surface but data_prereqs is empty
+   ```
+
+2. **Entry shape** — each entry must have exactly one of:
+   - `registry_key: <key>` (preferred when a fixtures-registry exists)
+   - `verify_cmd: <command>` (with optional `description`)
+   - `description: <text>` (free-text fallback, lowest preference)
+
+   An entry with NONE of these (a bare string left over from the
+   pre-schema convention) is a finding:
+
+   ```
+   WARN: <slug>: data_prereqs entry "<value>" is not in the structured
+         schema — convert to registry_key / verify_cmd / description
+   ```
+
+3. **Registry key existence** — if the project has
+   `docs/loop/fixtures-registry.{yml,yaml,json}`, every `registry_key:`
+   value MUST resolve to a real key in that file (use dotted-path
+   notation: `test_accounts.portal_customer` → top-level
+   `test_accounts` map, key `portal_customer`). A miss is a hard
+   finding:
+
+   ```
+   ERROR: <slug>: data_prereqs registry_key "<key>" not in fixtures-registry
+   ```
+
+4. **`registry_key` without registry** — if a sub-plan uses
+   `registry_key:` entries but the project has no fixtures-registry
+   file at all, suggest creating one OR converting those entries to
+   `verify_cmd:` form. Surface as a planning recommendation, not a
+   blocker.
+
+Finding counts (warnings + errors) go in the final report. Errors
+should be fixed before launching the loop; warnings are advisory.
+
+### 7e. Cold-read self-check
 
 Re-read every sub-plan body under this prompt-frame:
 
