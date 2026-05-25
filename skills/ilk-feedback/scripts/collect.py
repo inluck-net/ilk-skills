@@ -695,6 +695,15 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
     return "(no narrative for this label)"
 
 
+def split_manual_tail(body: str) -> tuple[str, str]:
+    """Split a postmortem body into (auto_part, manual_tail) at the Manual analysis boundary."""
+    marker = "\n---\n\n## Manual "
+    idx = body.find(marker)
+    if idx == -1:
+        return (body, "")
+    return (body[:idx], body[idx:])
+
+
 # ---------- index mode -------------------------------------------------------
 
 
