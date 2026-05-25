@@ -178,7 +178,10 @@ LOCAL_CHECK_RE = re.compile(
 )
 
 API_RE = re.compile(
-    r"connection timed out|socket hang up|\b50[023]\b|ECONNRESET|rate limit|\b429\b|Anthropic API error|anthropic.* error|connection reset|timeout exceeded",
+    r"connection timed out|socket hang up|"
+    r"\b50[023]\b(?:\s+(?:Bad\s+Gateway|Service\s+Unavailable|Internal\s+Server\s+Error|error)\b|\s*$)|"
+    r"ECONNRESET|rate limit(?!s\b)|\b429\b|Anthropic API error|anthropic\s+API\s+error|"
+    r"connection reset|timeout exceeded",
     re.IGNORECASE,
 )
 
@@ -279,11 +282,50 @@ def classify(
             "iter_at_stop": last.get("iteration"),
             "max_budget_usd": last.get("max_budget_usd"),
         }
+    if last_stop == "already-shipped":
+        return "clean-success", {
+            "iters": iter_count,
+            "commits": new_commits_total,
+        }
     if last_stop == "no-progress":
         # split by error pattern
         last3 = iters[-3:]
         last3_errs = sum(1 for r in last3 if r.get("exit_code") not in (0, None))
         if last3_errs >= 2:
+            # Disambiguate API errors from local-check failures via log keywords.
+            kw = "unknown"
+            last_log_path = last.get("log")
+            if not last_log_path and last.get("run_id"):
+                constructed = (
+                    LOOP_LOG_DIR
+                    / f"ilk-claude-{last.get('run_id')}"
+                    / f"iter-{last.get('iteration', 0):02d}.log"
+                )
+                if constructed.exists():
+                    last_log_path = str(constructed)
+            if last_log_path:
+                kw = classify_log_keywords(tail_log(last_log_path))
+                if kw == "unknown":
+                    # Fallback: raw JSONL stream often has more content than
+                    # the human-readable .log file (especially older runs).
+                    jsonl_path = Path(last_log_path).with_suffix(".log.jsonl")
+                    if jsonl_path.exists():
+                        kw = classify_log_keywords(
+                            tail_log(str(jsonl_path), max_lines=5000)
+                        )
+            if kw == "local-check":
+                fail_iters = sum(
+                    1 for r in last3 if r.get("exit_code") not in (0, None)
+                )
+                pass_iters = sum(
+                    1 for r in last3 if r.get("exit_code") in (0, None)
+                )
+                return "local-checks-stuck", {
+                    "iter_at_stop": last.get("iteration"),
+                    "fail_iters_in_window": fail_iters,
+                    "pass_iters_in_window": pass_iters,
+                    "window_size": len(last3),
+                }
             return "api-blocked", {
                 "iter_at_stop": last.get("iteration"),
                 "last3_errors": last3_errs,
@@ -297,7 +339,12 @@ def classify(
     # last_stop is null → loop didn't break inside the iter loop on a
     # known reason. Could be all-shipped (post-iter break) or max-iter
     # (post-loop) or external interruption.
-    if loop_status_exit(project_path) == 0:
+    #
+    # For *historical* runs, loop_status_exit() reflects the CURRENT project
+    # state, not the state at run time. When the last iter was clean and made
+    # progress, treat it as clean-success rather than interrupted.
+    is_clean = last.get("exit_code") in (0, None) and (last.get("new_commits_total") or 0) > 0
+    if loop_status_exit(project_path) == 0 or is_clean:
         # api-flaky overrides clean-success only if a lot of upstream errors
         if err_rate >= 0.30 and iter_count >= 3:
             return "api-flaky", {
