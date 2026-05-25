@@ -763,6 +763,124 @@ def run_index(args) -> int:
     return 0
 
 
+# ---------- reclassify mode --------------------------------------------------
+
+
+def run_reclassify(args) -> int:
+    dry_run = args.dry_run
+    postmortem_paths: list[Path] = []
+
+    if args.reclassify_all:
+        projects_dir = HOME / ".ilk-data" / "projects"
+        if projects_dir.exists():
+            postmortem_paths = list(projects_dir.rglob("runtime/launcher/postmortems/*.md"))
+    else:
+        proj_str = args.reclassify
+        project_path = None
+        try:
+            project_path = resolve_by_name(proj_str).resolve()
+        except SystemExit:
+            pass
+        if project_path is None:
+            p = Path(proj_str).resolve()
+            if p.exists():
+                project_path = p
+        if project_path is None:
+            # Try matching as a project key under ~/.ilk-data/projects/
+            projects_dir = HOME / ".ilk-data" / "projects"
+            key_dir = projects_dir / proj_str
+            if key_dir.is_dir():
+                pm_dir = key_dir / "runtime" / "launcher" / "postmortems"
+                if pm_dir.is_dir():
+                    postmortem_paths = list(pm_dir.glob("*.md"))
+                # We don't know the project_path for JSONL lookup yet;
+                # fall through to frontmatter-based resolution below.
+                if not postmortem_paths:
+                    print(f"no postmortems found for project key: {proj_str}", file=sys.stderr)
+                    return 0
+                # Derive project_path from the first postmortem's frontmatter
+                fm0 = parse_postmortem_frontmatter(postmortem_paths[0])
+                project_path = Path(fm0.get("project_path", "")) if fm0 else None
+                if not project_path or not project_path.exists():
+                    # Can't resolve project_path; still show diff lines but skip JSONL reclassification
+                    for p in sorted(postmortem_paths):
+                        fm = parse_postmortem_frontmatter(p)
+                        if not fm:
+                            continue
+                        run_id = fm.get("run_id")
+                        old_label = fm.get("classification", "unknown")
+                        print(f"{proj_str} {run_id}: {old_label} → {old_label} (no change)")
+                    return 0
+            else:
+                print(f"Project not found: {proj_str}", file=sys.stderr)
+                return 1
+        if project_path is None:
+            print(f"Project not found: {proj_str}", file=sys.stderr)
+            return 1
+        if not postmortem_paths:
+            if external_launcher_dir is not None and project_key is not None:
+                pm_dir = external_launcher_dir(project_key(project_path)) / "postmortems"
+                if pm_dir.is_dir():
+                    postmortem_paths = list(pm_dir.glob("*.md"))
+            else:
+                projects_dir = HOME / ".ilk-data" / "projects"
+                if projects_dir.exists():
+                    for p in projects_dir.rglob("runtime/launcher/postmortems/*.md"):
+                        fm = parse_postmortem_frontmatter(p)
+                        if fm.get("project_path") == str(project_path):
+                            postmortem_paths.append(p)
+
+    if not postmortem_paths:
+        print("no postmortems found", file=sys.stderr)
+        return 0
+
+    postmortem_paths.sort()
+
+    changed = 0
+    skipped = 0
+    unchanged = 0
+
+    for pm_path in postmortem_paths:
+        fm = parse_postmortem_frontmatter(pm_path)
+        if not fm:
+            continue
+        run_id = fm.get("run_id")
+        old_label = fm.get("classification", "unknown")
+        proj_path_str = fm.get("project_path")
+        if not run_id or not proj_path_str:
+            continue
+
+        proj_path = Path(proj_path_str)
+        parts = pm_path.parts
+        try:
+            proj_idx = parts.index("projects")
+            display_name = parts[proj_idx + 1]
+        except (ValueError, IndexError):
+            display_name = proj_path.name
+
+        all_records = read_jsonl_iters(proj_path)
+        by_run = runs_index(all_records)
+        iters = by_run.get(run_id)
+        if not iters:
+            print(f"[skip] {run_id}: no JSONL records")
+            skipped += 1
+            continue
+
+        new_label, _ = classify(iters, None, proj_path)
+        if new_label == old_label:
+            print(f"{display_name} {run_id}: {old_label} → {new_label} (no change)")
+            unchanged += 1
+            continue
+
+        print(f"{display_name} {run_id}: {old_label} → {new_label} (CHANGE)")
+        changed += 1
+        if not dry_run:
+            # Write path implemented in step 2
+            pass
+
+    return 0
+
+
 # ---------- main -------------------------------------------------------------
 
 
@@ -778,10 +896,23 @@ def main() -> int:
     parser.add_argument("--label", default=None, help="Filter by classification label")
     parser.add_argument("--project", default=None, help="Filter by project name/substring")
     parser.add_argument("--json", action="store_true", help="Output as JSON list")
+    parser.add_argument("--reclassify", default=None, help="Reclassify historical postmortems for a project")
+    parser.add_argument("--reclassify-all", action="store_true", help="Reclassify all historical postmortems")
+    parser.add_argument("--dry-run", action="store_true", help="Show what would change without writing")
     args = parser.parse_args()
 
     if args.since and not re.fullmatch(r"\d+[hd]", args.since):
         parser.error("--since must be <int>h or <int>d (e.g. 7d, 24h)")
+
+    if args.reclassify and args.reclassify_all:
+        parser.error("--reclassify and --reclassify-all are mutually exclusive")
+
+    if args.reclassify or args.reclassify_all:
+        if args.index:
+            parser.error("--index is mutually exclusive with --reclassify / --reclassify-all")
+        if args.project_path or args.project_name or args.run_id:
+            parser.error("--reclassify / --reclassify-all is mutually exclusive with single-run args")
+        return run_reclassify(args)
 
     if args.index:
         return run_index(args)
