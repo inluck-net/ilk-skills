@@ -492,8 +492,16 @@ def render_report(
     last_log_path: str | None = None,
 ) -> str:
     iter_count = len(iters)
-    max_iter_cfg = (last_launch or {}).get("max_iterations") or 0
-    to_cfg = (last_launch or {}).get("iteration_timeout_min") or 0
+    if last_launch is not None:
+        max_iter_cfg = last_launch.get("max_iterations") or 0
+        to_cfg = last_launch.get("iteration_timeout_min") or 0
+    else:
+        max_iter_cfg = next(
+            (r.get("max_iterations") for r in iters if r.get("max_iterations") is not None), "unknown"
+        )
+        to_cfg = next(
+            (r.get("iteration_timeout_min") for r in iters if r.get("iteration_timeout_min") is not None), "unknown"
+        )
     total_elapsed = sum((r.get("duration_sec") or 0) for r in iters)
     new_commits_total = sum((r.get("new_commits_total") or 0) for r in iters)
     err_count = sum(1 for r in iters if r.get("exit_code") not in (0, None))
@@ -501,7 +509,11 @@ def render_report(
     avg_dur = sum(durations_min) / len(durations_min) if durations_min else 0
     max_dur = max(durations_min) if durations_min else 0
 
-    started_at = (last_launch or {}).get("started_at", "?")
+    started_at = (last_launch or {}).get("started_at") if last_launch is not None else None
+    if not started_at and iters:
+        started_at = iters[0].get("timestamp")
+    if not started_at:
+        started_at = "unknown"
     model = next((r.get("model") for r in iters if r.get("model")), "?")
     base_url = next((r.get("base_url") for r in iters if r.get("base_url")), "?")
 
@@ -537,7 +549,7 @@ def render_report(
     body_lines.append(f"| Iterations | {iter_count} / {max_iter_cfg if max_iter_cfg else 'unknown'} |")
     body_lines.append(f"| Total elapsed | {total_elapsed/60:.1f} min |")
     body_lines.append(f"| Avg iter | {avg_dur:.1f} min |")
-    to_disp = f"{to_cfg} min" if to_cfg else "unknown (last-launch.json missing)"
+    to_disp = f"{to_cfg} min" if to_cfg and to_cfg != "unknown" else "unknown (last-launch.json missing)"
     body_lines.append(f"| Max iter | {max_dur:.1f} min (configured timeout: {to_disp}) |")
     body_lines.append(f"| New commits | {new_commits_total} |")
     body_lines.append(f"| Transient API errors | {err_count} |")
