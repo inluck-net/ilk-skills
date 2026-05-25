@@ -172,6 +172,29 @@ def newest_run_id(by_run: dict[str, list[dict]]) -> str | None:
 
 # ---------- classification ---------------------------------------------------
 
+LOCAL_CHECK_RE = re.compile(
+    r"tsc\b|typecheck|vitest|pytest|\bruff\b|eslint|bun run|cargo build|\bmake\b|npm test|npm run|mypy\b|pre-push|pre-commit|TS\d{4}|SyntaxError|ImportError",
+    re.IGNORECASE,
+)
+
+API_RE = re.compile(
+    r"connection timed out|socket hang up|\b50[023]\b|ECONNRESET|rate limit|\b429\b|Anthropic API error|anthropic.* error|connection reset|timeout exceeded",
+    re.IGNORECASE,
+)
+
+
+def classify_log_keywords(lines: list[str]) -> str:
+    """Return 'local-check', 'api', or 'unknown' based on keyword counts."""
+    if not lines:
+        return "unknown"
+    local_count = sum(1 for line in lines if LOCAL_CHECK_RE.search(line))
+    api_count = sum(1 for line in lines if API_RE.search(line))
+    if local_count > api_count:
+        return "local-check"
+    if api_count > local_count:
+        return "api"
+    return "unknown"
+
 
 def loop_status_exit(project_path: Path) -> int:
     if not LOOP_STATUS_SCRIPT.exists():
