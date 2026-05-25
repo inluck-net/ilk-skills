@@ -474,6 +474,42 @@ def resolve_iter_log(run_id: str, iteration: int) -> Path | None:
     return p if p.exists() else None
 
 
+def parse_postmortem_frontmatter(path: Path) -> dict[str, Any]:
+    """Read YAML-like frontmatter from a postmortem .md file."""
+    if not path.exists():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    if not text.startswith("---\n"):
+        return {}
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return {}
+    block = text[4:end]
+    result: dict[str, Any] = {}
+    for line in block.splitlines():
+        line = line.rstrip("\n")
+        if not line.strip():
+            continue
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        # Strip surrounding quotes (render_report uses json.dumps for strings)
+        if len(value) >= 2 and value[0] == value[-1] == '"':
+            value = value[1:-1]
+        # Cast integer-looking values
+        elif re.fullmatch(r"-?\d+", value):
+            value = int(value)
+        result[key] = value
+    return result
+
+
 # ---------- report rendering -------------------------------------------------
 
 
