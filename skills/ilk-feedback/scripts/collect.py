@@ -468,6 +468,12 @@ def tail_log(log_path_str: str | None, max_lines: int = TAIL_LINES) -> list[str]
     return [ln.rstrip("\n") for ln in lines[-max_lines:]]
 
 
+def resolve_iter_log(run_id: str, iteration: int) -> Path | None:
+    """Return the path to a specific iteration log if it exists on disk."""
+    p = LOOP_LOG_DIR / f"ilk-claude-{run_id}" / f"iter-{iteration:02d}.log"
+    return p if p.exists() else None
+
+
 # ---------- report rendering -------------------------------------------------
 
 
