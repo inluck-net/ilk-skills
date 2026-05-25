@@ -489,6 +489,7 @@ def render_report(
     rec_to: int,
     rationale: str,
     tail: list[str],
+    last_log_path: str | None = None,
 ) -> str:
     iter_count = len(iters)
     max_iter_cfg = (last_launch or {}).get("max_iterations") or 0
@@ -505,7 +506,7 @@ def render_report(
     base_url = next((r.get("base_url") for r in iters if r.get("base_url")), "?")
 
     last = iters[-1] if iters else {}
-    last_iter_log = last.get("log") if last else None
+    last_iter_log = last_log_path if last_log_path else last.get("log") if last else None
 
     fm = {
         "project": project_name,
@@ -690,7 +691,12 @@ def main() -> int:
 
     label, facts = classify(iters, last_launch, project_path)
     rec_max, rec_to, rationale = recommend_params(label, iters, last_launch)
-    tail = tail_log((iters[-1].get("log") if iters else None))
+    last_log = iters[-1].get("log") if iters else None
+    if not last_log and iters:
+        resolved = resolve_iter_log(target_run, iters[-1]["iteration"])
+        if resolved:
+            last_log = str(resolved)
+    tail = tail_log(last_log)
 
     report = render_report(
         project_path=project_path,
@@ -704,6 +710,7 @@ def main() -> int:
         rec_to=rec_to,
         rationale=rationale,
         tail=tail,
+        last_log_path=last_log,
     )
 
     if external_launcher_dir is None or project_key is None:
