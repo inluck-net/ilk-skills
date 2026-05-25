@@ -698,7 +698,7 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
 # ---------- index mode -------------------------------------------------------
 
 
-def run_index() -> int:
+def run_index(args) -> int:
     projects_dir = HOME / ".ilk-data" / "projects"
     if not projects_dir.exists():
         print("no postmortems found", file=sys.stderr)
@@ -723,10 +723,26 @@ def run_index() -> int:
             "generated_at": fm.get("generated_at", ""),
             "path": str(postmortem_path),
         })
+    # filters
+    if args.project:
+        proj_filter = args.project.lower()
+        rows = [r for r in rows if proj_filter in r["project"].lower()]
+    if args.label:
+        rows = [r for r in rows if r["classification"] == args.label]
+    if args.since:
+        m = re.fullmatch(r"(\d+)([hd])", args.since)
+        num = int(m.group(1))
+        unit = m.group(2)
+        delta = dt.timedelta(hours=num) if unit == "h" else dt.timedelta(days=num)
+        cutoff = (dt.datetime.now() - delta).isoformat()
+        rows = [r for r in rows if r["generated_at"] >= cutoff]
     if not rows:
         print("no postmortems found", file=sys.stderr)
         return 0
     rows.sort(key=lambda r: r["generated_at"], reverse=True)
+    if args.json:
+        print(json.dumps(rows, indent=2))
+        return 0
     print("| date | project | classification | iters | commits | run_id |")
     print("|---|---|---|---|---|---|")
     for r in rows:
@@ -749,10 +765,17 @@ def main() -> int:
                         help="Specific run_id (YYYYMMDD-HHMMSS). Default: most recent.")
     parser.add_argument("--quiet", action="store_true", help="Suppress progress prints; only output report path.")
     parser.add_argument("--index", action="store_true", help="List all postmortems across projects.")
+    parser.add_argument("--since", default=None, help="Filter by age: e.g. 7d, 24h")
+    parser.add_argument("--label", default=None, help="Filter by classification label")
+    parser.add_argument("--project", default=None, help="Filter by project name/substring")
+    parser.add_argument("--json", action="store_true", help="Output as JSON list")
     args = parser.parse_args()
 
+    if args.since and not re.fullmatch(r"\d+[hd]", args.since):
+        parser.error("--since must be <int>h or <int>d (e.g. 7d, 24h)")
+
     if args.index:
-        return run_index()
+        return run_index(args)
 
     if args.project_path:
         project_path = Path(args.project_path).resolve()
