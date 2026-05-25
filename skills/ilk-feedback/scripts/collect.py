@@ -875,8 +875,40 @@ def run_reclassify(args) -> int:
         print(f"{display_name} {run_id}: {old_label} → {new_label} (CHANGE)")
         changed += 1
         if not dry_run:
-            # Write path implemented in step 2
-            pass
+            try:
+                existing_body = pm_path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            _, manual_tail = split_manual_tail(existing_body)
+
+            new_facts = classify(iters, None, proj_path)[1]
+            rec_max, rec_to, rationale = recommend_params(new_label, iters, None)
+
+            last = iters[-1] if iters else {}
+            last_log = last.get("log")
+            if not last_log:
+                resolved = resolve_iter_log(run_id, last.get("iteration", 0))
+                if resolved:
+                    last_log = str(resolved)
+            tail = tail_log(last_log)
+
+            proj_name = project_name_for(proj_path)
+            report = render_report(
+                project_path=proj_path,
+                project_name=proj_name,
+                run_id=run_id,
+                iters=iters,
+                last_launch=None,
+                label=new_label,
+                facts=new_facts,
+                rec_max=rec_max,
+                rec_to=rec_to,
+                rationale=rationale,
+                tail=tail,
+                last_log_path=last_log,
+            )
+            new_body = report + manual_tail
+            pm_path.write_text(new_body, encoding="utf-8")
 
     return 0
 
