@@ -695,6 +695,49 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
     return "(no narrative for this label)"
 
 
+# ---------- index mode -------------------------------------------------------
+
+
+def run_index() -> int:
+    projects_dir = HOME / ".ilk-data" / "projects"
+    if not projects_dir.exists():
+        print("no postmortems found", file=sys.stderr)
+        return 0
+    rows: list[dict[str, Any]] = []
+    for postmortem_path in projects_dir.rglob("runtime/launcher/postmortems/*.md"):
+        fm = parse_postmortem_frontmatter(postmortem_path)
+        if not fm:
+            continue
+        parts = postmortem_path.parts
+        try:
+            proj_idx = parts.index("projects")
+            project_key_name = parts[proj_idx + 1]
+        except (ValueError, IndexError):
+            project_key_name = "unknown"
+        rows.append({
+            "project": project_key_name,
+            "run_id": fm.get("run_id", "unknown"),
+            "classification": fm.get("classification", "unknown"),
+            "iterations": fm.get("iterations", 0),
+            "new_commits_total": fm.get("new_commits_total", 0),
+            "generated_at": fm.get("generated_at", ""),
+            "path": str(postmortem_path),
+        })
+    if not rows:
+        print("no postmortems found", file=sys.stderr)
+        return 0
+    rows.sort(key=lambda r: r["generated_at"], reverse=True)
+    print("| date | project | classification | iters | commits | run_id |")
+    print("|---|---|---|---|---|---|")
+    for r in rows:
+        date = r["generated_at"][:16] if len(r["generated_at"]) >= 16 else r["generated_at"]
+        print(
+            f"| {date} | {r['project']} | {r['classification']} | "
+            f"{r['iterations']} | {r['new_commits_total']} | {r['run_id']} |"
+        )
+    return 0
+
+
 # ---------- main -------------------------------------------------------------
 
 
@@ -705,7 +748,11 @@ def main() -> int:
     parser.add_argument("-RunId", "--run-id", dest="run_id", default=None,
                         help="Specific run_id (YYYYMMDD-HHMMSS). Default: most recent.")
     parser.add_argument("--quiet", action="store_true", help="Suppress progress prints; only output report path.")
+    parser.add_argument("--index", action="store_true", help="List all postmortems across projects.")
     args = parser.parse_args()
+
+    if args.index:
+        return run_index()
 
     if args.project_path:
         project_path = Path(args.project_path).resolve()
