@@ -154,6 +154,32 @@ Kills only the watchdog window. The ilk window keeps running.
 - **MaxRestarts is a hard ceiling**, no override flag. If a project keeps
   needing more restarts, the trend itself is the signal — ask a human.
 
+## Repo-tree invariant
+
+Watchdog state lives **only** under
+`~/.ilk-data/projects/<key>/runtime/watchdog/`. Never write anything
+into the project tree, and **never modify any repo-tracked file**
+(including `.gitignore`, `.gitattributes`, `README.md`, or any other
+versioned file) to accommodate watchdog artifacts.
+
+If you find a legacy in-project `.ilk-watchdog/` directory from an
+older skill version, the **only** valid actions are:
+
+```bash
+# Option A — direct removal:
+rm -rf <project>/.ilk-watchdog
+
+# Option B — run the migrator (moves any salvageable state to ~/.ilk-data/):
+python3 ~/.cursor/tools/migration/migrate_project_runtime_dirs.py \
+    --project . --apply
+```
+
+Adding `.ilk-watchdog/` to the project's `.gitignore` is **wrong** — it
+bakes the existence of skill state into the project repo. The correct
+invariant is "skill state does not exist in the project at all." If
+`.gitignore` already mentions these paths from a previous mistake,
+that's a separate cleanup; do not add new entries.
+
 ## Known limitations
 
 - **Windows session-bound**: `Start-Process` detaches from Cursor but not

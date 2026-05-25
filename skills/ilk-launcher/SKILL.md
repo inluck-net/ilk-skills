@@ -75,6 +75,33 @@ python3 ~/.cursor/skills/ilk-loop/scripts/ilk_paths.py --start . --where
 This keeps the project repo clean and avoids accidental commits of
 launcher artifacts.
 
+## Repo-tree invariant
+
+Skill artifacts live **only** under `~/.ilk-data/projects/<key>/...`.
+Never write anything into the project tree, and **never modify any
+repo-tracked file** (including `.gitignore`, `.gitattributes`,
+`README.md`, or any other versioned file) to accommodate skill
+artifacts.
+
+If you find legacy in-project `.ilk-launcher/` or `.ilk-watchdog/`
+directories from an older skill version, the **only** valid actions are:
+
+```bash
+# Option A — direct removal:
+rm -rf <project>/.ilk-launcher <project>/.ilk-watchdog
+
+# Option B — run the migrator (moves any salvageable state to ~/.ilk-data/):
+python3 ~/.cursor/tools/migration/migrate_project_runtime_dirs.py \
+    --project . --apply
+```
+
+Adding `.ilk-launcher/` or `.ilk-watchdog/` to the project's
+`.gitignore` is **wrong** — it bakes the existence of skill state into
+the project repo. The correct invariant is "skill state does not exist
+in the project at all." If `.gitignore` already mentions these paths
+from a previous mistake, that's a separate cleanup; do not add new
+entries.
+
 ## Config files
 
 ### Per-project: `<project>/docs/plans/.ilk-launch.json`
@@ -187,6 +214,23 @@ without `-ProjectPath`.
 ## Standard workflows
 
 ### W1. Launch ilk for current / specified project
+
+> **Orientation budget when the user asks to launch:** exactly one
+> `loop_status.py` call, plus a master-plan status flip from `queued` to
+> `active` if needed. That's the whole budget. **Do not**:
+> - inspect git history (`git log`, `git branch`, `git show <branch>:...`)
+> - read proposal docs, MASTER plans, or sub-plans for context
+> - run `--dry-run` before the real launch
+> - re-run `loop_status.py` to "confirm" the first result
+> - `ps`-check unrelated PIDs found in stale state files
+>
+> `loop_status.py` exiting **1** is the **normal** "next plan is pending"
+> signal — it is not an error and does not warrant retry or investigation.
+> If the master is `queued`, flip it to `active` in one edit and continue.
+> If a stale PID file references a dead process, the launcher cleans it
+> up itself — do not pre-clean. A correct launch path is 3–4 tool calls,
+> not 20+. Anything beyond this budget is over-investigation; stop and
+> launch.
 
 ```powershell
 # In Cursor terminal, inside a project (cwd walk-up resolves it):
