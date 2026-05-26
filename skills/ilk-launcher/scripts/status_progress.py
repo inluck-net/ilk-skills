@@ -352,6 +352,17 @@ def build_json(
     remaining = sum(max(0, r["total"] - r["current"]) for r in rows if r["status"] != "shipped")
     eta_min = pace_min * remaining if pace_min is not None and remaining > 0 else None
 
+    cur_slug = cur["slug"] if cur else None
+    json_rows = []
+    for r in rows:
+        json_rows.append({
+            "slug": r["slug"],
+            "status": r["status"],
+            "current_step": r["current"],
+            "estimated_steps": r["total"],
+            "is_current": r["slug"] == cur_slug and r["status"] != "shipped",
+        })
+
     return {
         "project": {
             "name": project_name,
@@ -370,7 +381,7 @@ def build_json(
             "pace_min_per_step": round(pace_min, 1) if pace_min is not None else None,
             "eta_minutes": round(eta_min, 1) if eta_min is not None else None,
         },
-        "rows": rows,
+        "rows": json_rows,
     }
 
 
