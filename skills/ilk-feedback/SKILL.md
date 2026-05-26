@@ -164,6 +164,26 @@ through 3-day-old runs.
 - **Don't fabricate fields.** If a JSONL record is missing a field
   (e.g., older format), report "unknown" rather than guessing.
 
+## Cross-platform notes
+
+Both `run_ilk_loop_claude.ps1` (Windows) and `run_ilk_loop_claude.sh`
+(macOS/Linux) write iteration records to the same JSONL log at
+`~/.cursor/skills/ilk-loop/logs/.ilk-loop.log`. `collect.py` reads
+this file regardless of which runner produced it.
+
+Both `launch.ps1` and `launch.sh` write `last-launch.json` to the same
+external launcher dir (`~/.ilk-data/projects/<key>/runtime/launcher/`).
+
+Project-path comparison is normalized via `_normalize_path_for_compare`
+(lowercase + collapse separators to forward slashes) so a postmortem
+requested on macOS can still classify a run that was launched on Windows
+(and vice-versa).
+
+Invocation on each platform:
+
+- **PowerShell:** `python "$HOME\.cursor\skills\ilk-feedback\scripts\collect.py"`
+- **bash:** `python3 "$HOME/.cursor/skills/ilk-feedback/scripts/collect.py"`
+
 ## Known limitations
 
 - **Doesn't catch quality-gate stops** (P0-3 future work in ilk-loop).
