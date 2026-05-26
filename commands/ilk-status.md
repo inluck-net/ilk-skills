@@ -65,7 +65,16 @@ python3 "<skill-root>\ilk-launcher\scripts\status_progress.py" -ProjectPath <pro
 Replace `<project_root>` with the resolved project path (the directory
 containing `.git` or `.ilk-meta.json`).
 
-Print the output verbatim or in a markdown box. Then add agent judgment:
+Add `--json` when you need structured data for rendering or further
+processing (e.g. extracting ETA, checking launcher PID, comparing
+remaining steps programmatically):
+
+```bash
+python3 "<skill-root>/ilk-launcher/scripts/status_progress.py" --project-path <project_root> --json
+```
+
+For human display, omit `--json` and print the output verbatim or in a
+markdown box. Then add agent judgment:
 
 - Time since last query and steps completed (from chat timestamps)
 - Loop health / anomaly assessment
