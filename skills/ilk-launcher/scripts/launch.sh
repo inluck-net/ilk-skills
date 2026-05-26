@@ -20,6 +20,8 @@ PROJECTS_JSON="${LAUNCHER_DIR}/projects.json"
 LOOP_SCRIPT="${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_claude.sh"
 DEFAULT_MAX_ITER=30
 DEFAULT_TIMEOUT=30
+VALID_ENGINES="claude codex"
+DEFAULT_ENGINE="claude"
 
 # CLI overrides (populated by parse_args)
 CLI_PROJECT_PATH=""
@@ -230,6 +232,35 @@ resolve_params() {
   fi
 
   echo "${max_iter} ${timeout}"
+}
+
+resolve_engine() {
+  local project_path="$1"
+  local cfg
+  cfg=$(read_project_config "$project_path")
+
+  local engine
+  engine=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('worker_engine',''))" <<<"$cfg")
+
+  if [[ -z "$engine" ]]; then
+    engine="$DEFAULT_ENGINE"
+  fi
+
+  # Validate
+  local valid=false
+  local e
+  for e in $VALID_ENGINES; do
+    if [[ "$e" == "$engine" ]]; then
+      valid=true
+      break
+    fi
+  done
+  if [[ "$valid" != "true" ]]; then
+    echo "Error: Invalid worker_engine '$engine'. Valid engines: $VALID_ENGINES" >&2
+    exit 1
+  fi
+
+  echo "$engine"
 }
 
 resolve_mcp_filter() {
@@ -651,6 +682,10 @@ for p in d:
 
   echo "[$RESOLVED_NAME] Resolved path: $RESOLVED_PATH"
   echo "[$RESOLVED_NAME] MaxIterations: $max_iter    IterationTimeoutMin: $timeout_min"
+
+  local engine
+  engine=$(resolve_engine "$RESOLVED_PATH")
+  echo "[$RESOLVED_NAME] WorkerEngine: $engine"
 
   # MCP filtering
   resolve_mcp_filter "$RESOLVED_PATH"

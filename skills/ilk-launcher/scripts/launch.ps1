@@ -109,6 +109,8 @@ $ProjectsJson  = Join-Path $LauncherDir 'projects.json'
 $LoopScript    = Join-Path $SkillRoot 'ilk-loop\scripts\run_ilk_loop_claude.ps1'
 $DefaultMaxIter = 30
 $DefaultTimeout = 30
+$ValidEngines = @('claude', 'codex')
+$DefaultEngine = 'claude'
 
 if (-not (Test-Path $LoopScript)) {
   throw "run_ilk_loop_claude.ps1 not found at $LoopScript. Is ilk-loop skill installed?"
@@ -252,6 +254,16 @@ function Resolve-Params {
              elseif ($cfg.ContainsKey('iteration_timeout_min')) { [int]$cfg.iteration_timeout_min }
              else { $DefaultTimeout }
   return @{ MaxIterations = $maxIter; IterationTimeoutMin = $timeout }
+}
+
+function Resolve-Engine {
+  param([string]$ProjectPath)
+  $cfg = Read-ProjectConfig -ProjectPath $ProjectPath
+  $engine = if ($cfg.ContainsKey('worker_engine')) { [string]$cfg.worker_engine } else { $DefaultEngine }
+  if ($ValidEngines -notcontains $engine) {
+    throw "Invalid worker_engine '$engine'. Valid engines: $($ValidEngines -join ', ')"
+  }
+  return $engine
 }
 
 function Resolve-McpFilter {
@@ -544,6 +556,7 @@ if (-not (Test-Path $resolvedPath)) {
 $resolvedPath = (Resolve-Path $resolvedPath).Path
 $resolvedName = if ($ProjectName) { $ProjectName } else { Get-ProjectName -Path $resolvedPath }
 $params = Resolve-Params -ProjectPath $resolvedPath -CliMaxIter $MaxIterations -CliTimeout $IterationTimeoutMin
+$engine = Resolve-Engine -ProjectPath $resolvedPath
 $mcpFilter = Resolve-McpFilter -ProjectPath $resolvedPath -CliDisableMcp $DisableMcp -CliEnableMcp $EnableMcp
 $mcpCfg = Build-WorkerMcpConfig -ProjectPath $resolvedPath -Mode $mcpFilter.Mode -Names $mcpFilter.Names
 
