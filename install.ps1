@@ -12,6 +12,8 @@
     ~/.cursor/commands/<file> ->  <repo>/commands/<file>
     ~/.claude/skills/<name>   ->  <repo>/skills/<name>
     ~/.claude/commands/<file> ->  <repo>/commands/<file>
+    ~/.codex/skills/<name>    ->  <repo>/skills/<name>
+    ~/.codex/commands/<file>  ->  <repo>/commands/<file>
 
   Each link is a junction (skills directories) or a symlink (single
   command files). Junctions do not require admin privileges; file
@@ -26,10 +28,13 @@
   plan only.
 
 .PARAMETER OnlyCursor
-  Skip ~/.claude/ even if Claude Code is installed.
+  Install only to ~/.cursor/.
 
 .PARAMETER OnlyClaude
-  Skip ~/.cursor/ even if Cursor is installed.
+  Install only to ~/.claude/.
+
+.PARAMETER OnlyCodex
+  Install only to ~/.codex/.
 
 .PARAMETER Force
   Replace existing TARGETS that are already real directories or files
@@ -50,6 +55,10 @@
   .\install.ps1 -Apply -OnlyClaude
   Only link into ~/.claude/.
 
+.EXAMPLE
+  .\install.ps1 -OnlyCodex
+  Dry run for Codex only.
+
 .NOTES
   Idempotent. Re-running -Apply just re-points stale symlinks (e.g.
   if you moved the repo) and is otherwise a no-op.
@@ -59,6 +68,7 @@ param(
   [switch]$Apply,
   [switch]$OnlyCursor,
   [switch]$OnlyClaude,
+  [switch]$OnlyCodex,
   [switch]$Force
 )
 
@@ -72,20 +82,30 @@ if (-not (Test-Path $SkillsSrc)) {
   throw "Cannot find skills/ under repo root: $RepoRoot"
 }
 
-# Targets in priority order. Filtered later by -OnlyCursor / -OnlyClaude.
+# An -OnlyX flag selects exactly one target; when none are set, all
+# targets are included.
+$anyOnly = $OnlyCursor -or $OnlyClaude -or $OnlyCodex
+
 $Targets = @()
-if (-not $OnlyClaude) {
+if (-not $anyOnly -or $OnlyCursor) {
   $Targets += [PSCustomObject]@{
     Name = "Cursor"
     SkillsDir = (Join-Path $HOME ".cursor\skills")
     CommandsDir = (Join-Path $HOME ".cursor\commands")
   }
 }
-if (-not $OnlyCursor) {
+if (-not $anyOnly -or $OnlyClaude) {
   $Targets += [PSCustomObject]@{
     Name = "Claude Code"
     SkillsDir = (Join-Path $HOME ".claude\skills")
     CommandsDir = (Join-Path $HOME ".claude\commands")
+  }
+}
+if (-not $anyOnly -or $OnlyCodex) {
+  $Targets += [PSCustomObject]@{
+    Name = "Codex"
+    SkillsDir = (Join-Path $HOME ".codex\skills")
+    CommandsDir = (Join-Path $HOME ".codex\commands")
   }
 }
 
