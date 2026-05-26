@@ -105,7 +105,16 @@ For each project, add agent judgment:
 
 If idle with pending work: "ilk stopped; run `/ilk-run` to restart."
 If running with no pending work: "all shipped; watchdog will exit cleanly."
-If running with pending work: report progress and ETA.
+If running with pending work: report progress and stale-progress guidance:
+
+| Duration on same step | Assessment | Recommended action (read-only) |
+|---|---|---|
+| Under 30 minutes | Usually healthy | No action needed. |
+| 30–60 minutes | Watching | Consider checking the log tail for activity. |
+| Over 60 minutes, no recent commits or log movement | Likely stuck | Suggest `/ilk-feedback` for a postmortem or log inspection. |
+| PID dead with pending work | Loop stopped | Suggest `/ilk-run` to restart. |
+
+These are recommendations only — never mutate state from this command.
 
 ### PID inspection (only if needed)
 
