@@ -111,11 +111,21 @@ $SkillRoot = Get-IlkSkillRoot
 # --- constants ---------------------------------------------------------------
 $LauncherDir   = Join-Path $SkillRoot 'ilk-launcher'
 $ProjectsJson  = Join-Path $LauncherDir 'projects.json'
-$LoopScript    = Join-Path $SkillRoot 'ilk-loop\scripts\run_ilk_loop_claude.ps1'
 $DefaultMaxIter = 30
 $DefaultTimeout = 30
 $ValidEngines = @('claude', 'codex')
 $DefaultEngine = 'claude'
+
+function Get-RunnerScript {
+  param([string]$EngineName)
+  switch ($EngineName) {
+    'claude' { return Join-Path $SkillRoot 'ilk-loop\scripts\run_ilk_loop_claude.ps1' }
+    'codex'  { return Join-Path $SkillRoot 'ilk-loop\scripts\run_ilk_loop_codex.ps1' }
+    default  { throw "Unknown engine '$EngineName'" }
+  }
+}
+
+$LoopScript = Get-RunnerScript -EngineName 'claude'
 
 if (-not (Test-Path $LoopScript)) {
   throw "run_ilk_loop_claude.ps1 not found at $LoopScript. Is ilk-loop skill installed?"
@@ -460,7 +470,8 @@ function Start-ilkWindow {
     [int]$IterationTimeoutMin,
     [bool]$Force,
     [bool]$DryRun,
-    [string]$McpConfigPath = ""
+    [string]$McpConfigPath = "",
+    [string]$EngineName = "claude"
   )
 
   $livePid = Test-RunningPid -ProjectPath $ProjectPath
@@ -477,6 +488,7 @@ function Start-ilkWindow {
   if (-not (Test-Path $stateDir)) { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null }
 
   $title = "ilk: $ProjectName"
+  $runnerScript = Get-RunnerScript -EngineName $EngineName
 
   $mcpArg = ""
   if ($McpConfigPath) {
@@ -488,9 +500,10 @@ function Start-ilkWindow {
 Write-Host '=== ilk-launcher ===' -ForegroundColor Cyan
 Write-Host "Project: $ProjectPath"
 Write-Host "MaxIterations: $MaxIterations    IterationTimeoutMin: $IterationTimeoutMin"
+Write-Host "WorkerEngine: $EngineName"
 Write-Host "Started: `$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 Write-Host '======================' -ForegroundColor Cyan
-& '$LoopScript' -ProjectPath '$ProjectPath' -MaxIterations $MaxIterations -IterationTimeoutMin $IterationTimeoutMin$mcpArg
+& '$runnerScript' -ProjectPath '$ProjectPath' -MaxIterations $MaxIterations -IterationTimeoutMin $IterationTimeoutMin$mcpArg
 `$code = `$LASTEXITCODE
 Write-Host ''
 Write-Host '[ilk-launcher] run_ilk_loop_claude.ps1 exited with code:' `$code -ForegroundColor Yellow
@@ -503,6 +516,7 @@ Write-Host '[ilk-launcher] window left open for review. Close manually when done
     Write-Host "  ProjectPath: $ProjectPath"
     Write-Host "  MaxIterations: $MaxIterations"
     Write-Host "  IterationTimeoutMin: $IterationTimeoutMin"
+    Write-Host "  WorkerEngine: $EngineName"
     if ($McpConfigPath) { Write-Host "  McpConfigPath: $McpConfigPath" }
     $pidFile = Get-PidFilePath -ProjectPath $ProjectPath
     Write-Host "  PID file: $pidFile"
@@ -523,6 +537,7 @@ Write-Host '[ilk-launcher] window left open for review. Close manually when done
     iteration_timeout_min  = $IterationTimeoutMin
     loop_script            = $LoopScript
     mcp_config_path        = $McpConfigPath
+    worker_engine          = $EngineName
   }
   $meta | ConvertTo-Json | Out-File -FilePath (Get-LaunchMetaPath -ProjectPath $ProjectPath) -Encoding utf8
 
@@ -541,6 +556,7 @@ if ($All) {
   }
   foreach ($p in $projects) {
     $params = Resolve-Params -ProjectPath $p.path -CliMaxIter $MaxIterations -CliTimeout $IterationTimeoutMin
+    $eng = Resolve-Engine -ProjectPath $p.path -CliEngine $Engine
     $mcpFilter = Resolve-McpFilter -ProjectPath $p.path -CliDisableMcp $DisableMcp -CliEnableMcp $EnableMcp
     $mcpCfg = Build-WorkerMcpConfig -ProjectPath $p.path -Mode $mcpFilter.Mode -Names $mcpFilter.Names
     Start-ilkWindow `
@@ -550,7 +566,8 @@ if ($All) {
       -IterationTimeoutMin $params.IterationTimeoutMin `
       -Force:$Force.IsPresent `
       -DryRun:$DryRun.IsPresent `
-      -McpConfigPath $mcpCfg | Out-Null
+      -McpConfigPath $mcpCfg `
+      -EngineName $eng | Out-Null
   }
   return
 }
@@ -579,4 +596,5 @@ Start-ilkWindow `
   -IterationTimeoutMin $params.IterationTimeoutMin `
   -Force:$Force.IsPresent `
   -DryRun:$DryRun.IsPresent `
-  -McpConfigPath $mcpCfg | Out-Null
+  -McpConfigPath $mcpCfg `
+  -EngineName $engine | Out-Null

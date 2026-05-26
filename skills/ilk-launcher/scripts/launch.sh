@@ -17,11 +17,20 @@ _SKILL_ROOT="$(ilk_skill_root)"
 
 LAUNCHER_DIR="${_SKILL_ROOT}/ilk-launcher"
 PROJECTS_JSON="${LAUNCHER_DIR}/projects.json"
-LOOP_SCRIPT="${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_claude.sh"
 DEFAULT_MAX_ITER=30
 DEFAULT_TIMEOUT=30
 VALID_ENGINES="claude codex"
 DEFAULT_ENGINE="claude"
+
+# Runner scripts keyed by engine name
+runner_script_for_engine() {
+  local engine="$1"
+  case "$engine" in
+    claude) echo "${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_claude.sh" ;;
+    codex)  echo "${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_codex.sh" ;;
+    *)      echo "Error: Unknown engine '$engine'" >&2; exit 1 ;;
+  esac
+}
 
 # CLI overrides (populated by parse_args)
 CLI_PROJECT_PATH=""
@@ -447,6 +456,7 @@ start_ilk_window() {
   local force="$5"
   local dry_run="$6"
   local mcp_config_path="$7"
+  local engine="${8:-claude}"
 
   # Concurrency guard
   local live_pid
@@ -466,8 +476,10 @@ start_ilk_window() {
   mkdir -p "$state_dir"
 
   # Build runner command
+  local loop_script
+  loop_script=$(runner_script_for_engine "$engine")
   local runner_cmd
-  runner_cmd="bash \"$LOOP_SCRIPT\" --project-path \"$project_path\" --max-iterations $max_iterations --iteration-timeout-min $timeout_min"
+  runner_cmd="bash \"$loop_script\" --project-path \"$project_path\" --max-iterations $max_iterations --iteration-timeout-min $timeout_min"
   if [[ -n "$mcp_config_path" ]]; then
     runner_cmd="$runner_cmd --mcp-config-path \"$mcp_config_path\""
   fi
@@ -485,6 +497,7 @@ start_ilk_window() {
     echo "  ProjectPath: $project_path"
     echo "  MaxIterations: $max_iterations"
     echo "  IterationTimeoutMin: $timeout_min"
+    echo "  WorkerEngine: $engine"
     if [[ -n "$mcp_config_path" ]]; then
       echo "  McpConfigPath: $mcp_config_path"
     fi
@@ -525,7 +538,8 @@ d = {
     'started_at': '$(date +%Y-%m-%dT%H:%M:%S%z)',
     'max_iterations': $max_iterations,
     'iteration_timeout_min': $timeout_min,
-    'loop_script': '$LOOP_SCRIPT',
+    'worker_engine': '$engine',
+    'loop_script': '$loop_script',
     'mcp_config_path': '$mcp_config_path',
     'log_file': '$log_file',
 }
@@ -658,7 +672,9 @@ for p in d:
       resolve_mcp_filter "$ppath"
       local mcp_config_path=""
       mcp_config_path=$(build_worker_mcp_config "$ppath" "$MCP_FILTER_MODE" "$MCP_FILTER_NAMES")
-      start_ilk_window "$ppath" "$pname" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path"
+      local engine
+      engine=$(resolve_engine "$ppath" "$CLI_ENGINE")
+      start_ilk_window "$ppath" "$pname" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine"
     done
     return 0
   fi
@@ -716,7 +732,7 @@ for p in d:
     return
   fi
 
-  start_ilk_window "$RESOLVED_PATH" "$RESOLVED_NAME" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path"
+  start_ilk_window "$RESOLVED_PATH" "$RESOLVED_NAME" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine"
 }
 
 main "$@"

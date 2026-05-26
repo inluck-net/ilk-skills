@@ -83,6 +83,37 @@ invocation contract is stable and tested. Until then, the launcher
 will reject `--engine codex` with a clear message rather than silently
 routing to Claude.
 
+### Adding a Codex runner
+
+When the Codex CLI contract is stable, add these files:
+
+```
+skills/ilk-loop/scripts/run_ilk_loop_codex.sh    # bash runner
+skills/ilk-loop/scripts/run_ilk_loop_codex.ps1   # PowerShell runner
+```
+
+The runner must accept the same interface as the Claude runner:
+
+| Flag | Purpose |
+|---|---|
+| `--project-path PATH` | Absolute path to the project root |
+| `--max-iterations N` | Hard cap on loop iterations |
+| `--iteration-timeout-min N` | Per-iteration wall-clock timeout |
+| `--mcp-config-path PATH` | Filtered MCP config to pass to the worker |
+
+The runner should invoke the Codex CLI (`codex` or equivalent) in a
+loop, one invocation per sub-plan step, writing structured JSONL logs
+compatible with the `ilk-feedback` postmortem skill. It must exit with
+code 0 on clean ship, non-zero on failure, and write a
+`last-exit.json` sentinel for the watchdog.
+
+The launcher selects the runner based on the resolved `worker_engine`:
+
+```
+engine=claude → run_ilk_loop_claude.sh
+engine=codex  → run_ilk_loop_codex.sh
+```
+
 ## State directory
 
 All per-project runtime state (PID files, launch metadata, MCP worker
