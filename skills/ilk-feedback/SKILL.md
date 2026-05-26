@@ -97,6 +97,16 @@ python "$HOME\.cursor\skills\ilk-feedback\scripts\collect.py" -ProjectPath C:\pa
 python "$HOME\.cursor\skills\ilk-feedback\scripts\collect.py"
 ```
 
+Equivalent bash invocation:
+
+```bash
+python3 "$HOME/.cursor/skills/ilk-feedback/scripts/collect.py" --project-name es_api
+# or by path
+python3 "$HOME/.cursor/skills/ilk-feedback/scripts/collect.py" --project-path /path/to/your/project
+# or cwd walk-up (same resolution as launcher)
+python3 "$HOME/.cursor/skills/ilk-feedback/scripts/collect.py"
+```
+
 The script writes `~/.ilk-data/projects/<key>/runtime/launcher/postmortems/<run-id>.md` and
 prints a 1-paragraph summary to stdout (classification + recommendations
 + report path).
@@ -105,6 +115,12 @@ prints a 1-paragraph summary to stdout (classification + recommendations
 
 ```powershell
 python "$HOME\.cursor\skills\ilk-feedback\scripts\collect.py" -ProjectName es_api -RunId 20260523-110800
+```
+
+Equivalent bash invocation:
+
+```bash
+python3 "$HOME/.cursor/skills/ilk-feedback/scripts/collect.py" --project-name es_api --run-id 20260523-110800
 ```
 
 Useful for re-classifying once a heuristic improves, or for chad reading
@@ -129,8 +145,8 @@ through 3-day-old runs.
    - **(c) I'll handle it** (no further action — user will decide
      manually)
 6. Act on their answer:
-   - (a) → call `ilk-launcher`'s `launch.ps1` with the recommended
-     `MaxIterations` / `IterationTimeoutMin`. Report what you launched.
+   - (a) → call `ilk-launcher`'s `launch.ps1` / `launch.sh` with the
+     recommended `MaxIterations` / `IterationTimeoutMin`. Report what you launched.
    - (b) → open the relevant log file in the editor; do NOT auto-launch.
    - (c) → end your turn with the report path so the user can come back.
 
@@ -153,7 +169,6 @@ through 3-day-old runs.
 - **Doesn't catch quality-gate stops** (P0-3 future work in ilk-loop).
   When `Invoke-QualityGatesIfNeeded` blocks, the loop stop reason isn't
   in JSONL. Will be added when P0-3 lands.
-- **Mac**: not yet. Same Win-only scope as launcher.
 - **Multiple runs same minute**: run_id collisions are theoretically
   possible (two launches in the same second). In practice this hasn't
   happened; if it does, `--run-id` lets you disambiguate.
@@ -162,8 +177,8 @@ through 3-day-old runs.
 
 | Concern | Owner |
 |---|---|
-| Writing per-iteration JSONL + text logs | `run_ilk_loop_claude.ps1` (in `ilk-loop`) |
-| Writing `last-launch.json` (run start metadata) | `ilk-launcher/launch.ps1` |
+| Writing per-iteration JSONL + text logs | `run_ilk_loop_claude.ps1` / `run_ilk_loop_claude.sh` (in `ilk-loop`) |
+| Writing `last-launch.json` (run start metadata) | `ilk-launcher/launch.ps1` / `launch.sh` |
 | **Reading those logs and classifying the run** | **`ilk-feedback`** (this skill) |
 | Writing postmortem markdown | **`ilk-feedback`** |
 | Step 1.5 of launching: read latest postmortems | `ilk-launcher` (consumes our frontmatter) |
@@ -174,6 +189,7 @@ through 3-day-old runs.
 - `~/.cursor/skills/ilk-launcher/SKILL.md` — Step 1.5 reads the
   frontmatter we emit.
 - `~/.cursor/skills/ilk-loop/scripts/run_ilk_loop_claude.ps1` — the
-  source of truth for JSONL log format.
+  source of truth for JSONL log format (PowerShell runner; bash
+  equivalent is `run_ilk_loop_claude.sh`).
 - `<vault>/ai-coding-workflow/tool-evaluations/ilk-launcher.md` —
   design rationale (incl. why "auto-improvement" is not in v0).
