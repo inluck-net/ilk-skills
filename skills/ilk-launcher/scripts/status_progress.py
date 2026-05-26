@@ -325,6 +325,24 @@ def render(
 # ---------- JSON output ------------------------------------------------------
 
 
+def _read_pid(pid_path: Path) -> int | None:
+    """Read a PID file and return the PID, or None if missing/invalid."""
+    try:
+        text = pid_path.read_text(encoding="utf-8").strip()
+        return int(text) if text.isdigit() else None
+    except (OSError, ValueError):
+        return None
+
+
+def _pid_alive(pid: int) -> bool:
+    """Check if a process is alive (signal 0)."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
 def build_json(
     project_name: str,
     project_root: Path,
@@ -363,6 +381,10 @@ def build_json(
             "is_current": r["slug"] == cur_slug and r["status"] != "shipped",
         })
 
+    runtime_dir = plans_dir.parent / "runtime"
+    launcher_pid = _read_pid(runtime_dir / "launcher" / "running.pid")
+    watchdog_pid = _read_pid(runtime_dir / "watchdog" / "watchdog.pid")
+
     return {
         "project": {
             "name": project_name,
@@ -380,6 +402,12 @@ def build_json(
             "remaining_steps": remaining,
             "pace_min_per_step": round(pace_min, 1) if pace_min is not None else None,
             "eta_minutes": round(eta_min, 1) if eta_min is not None else None,
+        },
+        "processes": {
+            "launcher_pid": launcher_pid,
+            "launcher_alive": _pid_alive(launcher_pid) if launcher_pid is not None else None,
+            "watchdog_pid": watchdog_pid,
+            "watchdog_alive": _pid_alive(watchdog_pid) if watchdog_pid is not None else None,
         },
         "rows": json_rows,
     }
