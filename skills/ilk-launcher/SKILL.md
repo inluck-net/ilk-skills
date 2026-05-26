@@ -1,11 +1,11 @@
 ---
 name: ilk-launcher
 description: >-
-  Launch / stop / status the ilk-loop runner in a detached Windows
-  PowerShell window per project. Triggers: "start ilk", "launch ilk",
-  "跑 ilk", "启动 ilk", "ilk 状态", "/ilk-launch", "/ilk-status-all",
-  "/ilk-stop". Companion to ilk-loop — spawns/observes
-  `run_ilk_loop_claude.ps1`, never drives the loop itself.
+  Launch / stop / status the ilk-loop runner in a detached window per
+  project. Triggers: "start ilk", "launch ilk", "跑 ilk", "启动 ilk",
+  "ilk 状态", "/ilk-launch", "/ilk-status-all", "/ilk-stop". Works
+  across Cursor, Claude Code, and Codex. Companion to ilk-loop —
+  spawns/observes `run_ilk_loop_claude.ps1`, never drives the loop itself.
 model: haiku
 ---
 
@@ -30,6 +30,8 @@ the design rationale in `<vault>/ai-coding-workflow/tool-evaluations/ilk-launche
 - The user says: `/ilk-launch`, `/ilk-status-all`, `/ilk-stop`,
   `start ilk`, `launch ilk`, `跑 ilk`, `启动 ilk`, `ilk 状态`,
   `停 ilk`, `关掉 ilk`.
+- Codex users may say: "start the ilk loop", "launch ilk",
+  "check ilk status", "stop ilk" without a slash prefix.
 - The user wants to start ilk-loop on the current project (cwd inside
   a project with `docs/plans/MASTER-*.md`).
 - The user wants to start ilk on a specific named project from the

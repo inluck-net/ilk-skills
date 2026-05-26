@@ -5,7 +5,8 @@ description: >-
   several sub-plans, each step recoverable from disk. Use when the user says
   "/ilk", "resume the loop", "continue the plan", "next step", or refers to
   files under `docs/plans/MASTER-*.md`. Also use to set up the convention in
-  a new project, add a new sub-plan, or check loop status.
+  a new project, add a new sub-plan, or check loop status. Works across
+  Cursor, Claude Code, and Codex.
 ---
 
 # ilk Loop — Master + Sub-Plan execution convention
@@ -17,13 +18,15 @@ the agent never grows past its context window.
 ## When to use
 
 - The user invokes any of the slash commands `/ilk`, `/ilk-plan`, or
-  `/ilk-lark-tickets`.
+  `/ilk-lark-tickets` (Cursor, Claude Code, or Codex).
 - The user says: "resume the loop", "continue the plan", "next step",
   "ship the next sub-plan", "where are we", "loop status".
 - The user asks to **plan** something (turn a task description or batch of
   tickets into master + sub-plans).
 - The user asks to set up `docs/plans/` in a new project.
 - The user asks to add a new sub-plan to an existing master.
+- Codex users may say: "continue the ilk loop", "run the next step",
+  "plan this task", or "ilk plan" without a slash prefix.
 
 ## Architecture
 

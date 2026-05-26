@@ -4,13 +4,14 @@ description: >-
   Auto-restart ilk-loop when it stops for whitelist-classified reasons
   (timeout-bound, max-iter-bound, api-flaky, interrupted) and BLOCK with a
   loud banner for blacklist reasons (stuck-no-progress, api-blocked,
-  budget-exhausted, local-checks-stuck). Runs in a detached desktop PowerShell window
-  independent of Cursor and ilk itself, polls the ilk PID file every
-  N minutes, and uses ilk-feedback's classification to decide whether to
-  relaunch. Use when the user says "watchdog ilk", "守着 ilk",
-  "auto-resume ilk", "/ilk-watch", "babysit ilk", "monitor ilk",
-  "restart ilk if it dies", "看着 ilk", "ilk 自动续跑", or wants ilk
-  to keep running unattended overnight.
+  budget-exhausted, local-checks-stuck). Runs in a detached desktop window
+  independent of the host agent and ilk itself, polls the ilk PID file
+  every N minutes, and uses ilk-feedback's classification to decide
+  whether to relaunch. Works across Cursor, Claude Code, and Codex.
+  Use when the user says "watchdog ilk", "守着 ilk", "auto-resume ilk",
+  "/ilk-watch", "babysit ilk", "monitor ilk", "restart ilk if it dies",
+  "看着 ilk", "ilk 自动续跑", or wants ilk to keep running unattended
+  overnight.
 ---
 
 # ilk-watchdog — auto-resume layer for ilk-loop

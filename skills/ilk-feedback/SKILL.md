@@ -7,7 +7,7 @@ description: >-
   the report under `~/.ilk-data/projects/<key>/runtime/launcher/postmortems/`. Triggers:
   "/ilk-feedback", "postmortem", "debrief", "what went wrong", "why
   did ilk stop", "复盘", "ilk 反馈", "ilk 怎么停了", or after a ilk
-  window exits.
+  window exits. Works across Cursor, Claude Code, and Codex.
 model: haiku
 ---
 
@@ -34,6 +34,8 @@ A read-only triage skill that turns the structured logs already produced by
     `feedback on the last run`, `/ilk-feedback`
   - 中文：`复盘`、`复盘一下`、`复盘 ilk`、`ilk 反馈`、
     `为什么 ilk 中断`、`ilk 怎么停了`
+  - Codex: "postmortem the last run", "why did the loop stop",
+    "ilk feedback"
 - A ilk window just exited (clean or otherwise) and the user wants
   feedback before re-launching.
 - The user wants the agent to consider history before launching ilk
