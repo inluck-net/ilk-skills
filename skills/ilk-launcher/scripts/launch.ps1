@@ -196,6 +196,26 @@ function Get-ProjectName {
   return (Split-Path $Path -Leaf)
 }
 
+function ConvertTo-IlkHashtable {
+  # PS 5.1 lacks `ConvertFrom-Json -AsHashtable` (added in PS 6.0). Read-ProjectConfig
+  # callers downstream expect a hashtable (`$cfg.ContainsKey(...)`, `$cfg['...']`),
+  # not a PSCustomObject. Convert recursively so nested objects also become
+  # hashtables; arrays stay as arrays of converted items; scalars pass through.
+  param($InputObject)
+  if ($null -eq $InputObject) { return $null }
+  if ($InputObject -is [System.Management.Automation.PSCustomObject]) {
+    $h = @{}
+    foreach ($p in $InputObject.PSObject.Properties) {
+      $h[$p.Name] = ConvertTo-IlkHashtable -InputObject $p.Value
+    }
+    return $h
+  }
+  if ($InputObject -is [System.Collections.IList] -and -not ($InputObject -is [string])) {
+    return @($InputObject | ForEach-Object { ConvertTo-IlkHashtable -InputObject $_ })
+  }
+  return $InputObject
+}
+
 function Read-ProjectConfig {
   # Look in the external plans dir first (meta-friendly: this is the
   # single source of truth for both single and meta projects). Fall
@@ -206,12 +226,12 @@ function Read-ProjectConfig {
   if ($extPlans) {
     $cfgPath = Join-Path $extPlans '.ilk-launch.json'
     if (Test-Path $cfgPath) {
-      return Get-Content $cfgPath -Raw | ConvertFrom-Json -AsHashtable
+      return ConvertTo-IlkHashtable (Get-Content $cfgPath -Raw | ConvertFrom-Json)
     }
   }
   $cfgPath = Join-Path $ProjectPath 'docs\plans\.ilk-launch.json'
   if (-not (Test-Path $cfgPath)) { return @{} }
-  return Get-Content $cfgPath -Raw | ConvertFrom-Json -AsHashtable
+  return ConvertTo-IlkHashtable (Get-Content $cfgPath -Raw | ConvertFrom-Json)
 }
 
 function Resolve-Params {
