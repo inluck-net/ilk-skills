@@ -10,6 +10,8 @@
 #   ~/.cursor/commands/<file> ->  <repo>/commands/<file>
 #   ~/.claude/skills/<name>   ->  <repo>/skills/<name>
 #   ~/.claude/commands/<file> ->  <repo>/commands/<file>
+#   ~/.codex/skills/<name>    ->  <repo>/skills/<name>
+#   ~/.codex/commands/<file>  ->  <repo>/commands/<file>
 #
 # Default mode is dry-run: prints what would happen but touches nothing.
 # Pass --apply to execute.
@@ -25,8 +27,9 @@
 #
 # Flags:
 #   --apply         actually create / refresh links
-#   --only-cursor   skip ~/.claude/
-#   --only-claude   skip ~/.cursor/
+#   --only-cursor   install only to ~/.cursor/
+#   --only-claude   install only to ~/.claude/
+#   --only-codex    install only to ~/.codex/
 #   --force         back up real (non-symlink) targets to
 #                   <link>.pre-ilk-<timestamp> before linking
 #
@@ -42,6 +45,7 @@ COMMANDS_SRC="$REPO_ROOT/commands"
 apply=0
 only_cursor=0
 only_claude=0
+only_codex=0
 force=0
 
 while [[ $# -gt 0 ]]; do
@@ -49,6 +53,7 @@ while [[ $# -gt 0 ]]; do
     --apply)        apply=1 ;;
     --only-cursor)  only_cursor=1 ;;
     --only-claude)  only_claude=1 ;;
+    --only-codex)   only_codex=1 ;;
     --force)        force=1 ;;
     -h|--help)
       sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -79,15 +84,24 @@ declare -a TARGET_NAMES=()
 declare -a TARGET_SKILLS=()
 declare -a TARGET_COMMANDS=()
 
-if [[ $only_claude -eq 0 ]]; then
+# An --only-X flag selects exactly one target; when none are set, all
+# targets are included.
+any_only=$(( only_cursor + only_claude + only_codex ))
+
+if [[ $any_only -eq 0 || $only_cursor -eq 1 ]]; then
   TARGET_NAMES+=("Cursor")
   TARGET_SKILLS+=("$HOME/.cursor/skills")
   TARGET_COMMANDS+=("$HOME/.cursor/commands")
 fi
-if [[ $only_cursor -eq 0 ]]; then
+if [[ $any_only -eq 0 || $only_claude -eq 1 ]]; then
   TARGET_NAMES+=("Claude Code")
   TARGET_SKILLS+=("$HOME/.claude/skills")
   TARGET_COMMANDS+=("$HOME/.claude/commands")
+fi
+if [[ $any_only -eq 0 || $only_codex -eq 1 ]]; then
+  TARGET_NAMES+=("Codex")
+  TARGET_SKILLS+=("$HOME/.codex/skills")
+  TARGET_COMMANDS+=("$HOME/.codex/commands")
 fi
 
 # --- discovery --------------------------------------------------------------
