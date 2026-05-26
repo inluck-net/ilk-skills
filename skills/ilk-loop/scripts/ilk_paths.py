@@ -66,6 +66,61 @@ from pathlib import Path
 from typing import Literal
 
 
+# ── skill-root resolution ───────────────────────────────────────────────────
+
+_SKILL_ROOT_CANDIDATES = [
+    Path.home() / ".codex" / "skills",
+    Path.home() / ".cursor" / "skills",
+    Path.home() / ".claude" / "skills",
+]
+
+
+def skill_root(*, from_file: str | os.PathLike | None = None) -> Path:
+    """Resolve the installed ``ilk-*`` skills directory.
+
+    Resolution order:
+
+    1. ``ILK_SKILL_HOME`` environment variable (absolute path to the
+       skills directory, e.g. ``~/.codex/skills``).
+    2. Auto-detect from *from_file*: walk up from that path looking for
+       a ``skills/<name>/scripts/`` ancestor.  Works for any host
+       (Cursor, Claude Code, Codex) since every host installs the same
+       directory structure.
+    3. First existing candidate from ``~/.codex/skills``,
+       ``~/.cursor/skills``, ``~/.claude/skills``.
+
+    Stdlib only.  Raises ``FileNotFoundError`` when nothing matches.
+    """
+    env = os.environ.get("ILK_SKILL_HOME")
+    if env:
+        p = Path(env).expanduser().resolve()
+        if p.is_dir():
+            return p
+
+    if from_file is not None:
+        cur = Path(from_file).resolve()
+        # scripts/<name>/scripts/<this_file> → scripts/<name> → skills dir
+        # The path is: <skills_dir>/<skill_name>/scripts/<script>
+        # So walk up until we find a parent whose parent has ilk-* siblings.
+        for _ in range(6):  # bounded walk
+            if cur.name == "scripts" and cur.parent.name.startswith("ilk-"):
+                candidate = cur.parent.parent  # the skills/ directory
+                if candidate.is_dir():
+                    return candidate
+            cur = cur.parent
+            if cur == cur.parent:
+                break
+
+    for candidate in _SKILL_ROOT_CANDIDATES:
+        if candidate.is_dir():
+            return candidate
+
+    raise FileNotFoundError(
+        "Cannot resolve ilk skill root. Set ILK_SKILL_HOME or install "
+        "skills to ~/.codex/skills, ~/.cursor/skills, or ~/.claude/skills."
+    )
+
+
 # ── project-root derivation ──────────────────────────────────────────────────
 
 META_MARKER = ".ilk-meta.json"

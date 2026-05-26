@@ -19,11 +19,15 @@ param(
   [switch]$SkipWaitCi,
   [string]$CiState = "success",
   [string]$CiUrl = "",
-  [string]$ScriptsDir = "$env:USERPROFILE\.cursor\skills\ilk-loop\scripts"
+  [string]$ScriptsDir = ""
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+. (Join-Path $PSScriptRoot "_ilk_skill_root.ps1")
+$SkillRoot = Get-IlkSkillRoot
+if (-not $ScriptsDir) { $ScriptsDir = Join-Path $SkillRoot "ilk-loop\scripts" }
 
 function Resolve-SubPlan {
   param([string]$Project, [string]$Explicit)

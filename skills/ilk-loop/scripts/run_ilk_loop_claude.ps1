@@ -43,11 +43,11 @@
 
 .PARAMETER LoopStatusScript
   Path to loop_status.py.
-  Default: $HOME\.cursor\skills\ilk-loop\scripts\loop_status.py
+  Default: <skill-root>\ilk-loop\scripts\loop_status.py
 
 .PARAMETER LogDir
   Where to write per-iteration logs and the JSONL summary.
-  Default: $HOME\.cursor\skills\ilk-loop\logs
+  Default: <skill-root>\ilk-loop\logs
 
 .PARAMETER Prompt
   The prompt sent to claude. Default invokes the /ilk slash command.
@@ -99,9 +99,9 @@ param(
 
   [int]$IterationTimeoutMin = 30,
 
-  [string]$LoopStatusScript = (Join-Path $HOME ".cursor\skills\ilk-loop\scripts\loop_status.py"),
+  [string]$LoopStatusScript = "",
 
-  [string]$LogDir = (Join-Path $HOME ".cursor\skills\ilk-loop\logs"),
+  [string]$LogDir = "",
 
   [string]$Prompt = "/ilk please continue the active plan",
 
@@ -122,7 +122,7 @@ param(
   # iteration unboundedly.
   [int]$LocalChecksTimeoutSec = 180,
 
-  [string]$LocalChecksScript = (Join-Path $HOME ".cursor\skills\ilk-loop\scripts\run_local_checks.py"),
+  [string]$LocalChecksScript = "",
 
   # Path to a JSON file with `{"mcpServers": {...}}` to pass to every
   # `claude -p` invocation via `--mcp-config <path> --strict-mcp-config`.
@@ -134,6 +134,15 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# ----- Skill root resolution ------------------------------------------
+. (Join-Path $PSScriptRoot "_ilk_skill_root.ps1")
+$SkillRoot = Get-IlkSkillRoot
+
+# Override defaults that were empty strings (param defaults can't call functions)
+if (-not $LoopStatusScript) { $LoopStatusScript = Join-Path $SkillRoot "ilk-loop\scripts\loop_status.py" }
+if (-not $LogDir)           { $LogDir = Join-Path $SkillRoot "ilk-loop\logs" }
+if (-not $LocalChecksScript){ $LocalChecksScript = Join-Path $SkillRoot "ilk-loop\scripts\run_local_checks.py" }
 
 # ----- Pre-flight ---------------------------------------------------
 
@@ -388,7 +397,7 @@ function Test-AllShipped {
   }
 }
 
-$QualityGateScripts = Join-Path $HOME ".cursor\skills\ilk-loop\scripts"
+$QualityGateScripts = Join-Path $SkillRoot "ilk-loop\scripts"
 
 function Get-PlansDir {
   <#

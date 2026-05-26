@@ -10,13 +10,18 @@ set -euo pipefail
 # the next master, or blocks with a loud banner.
 # =============================================================================
 
+# ----- Skill root resolution -------------------------------------------------
+
+source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_skill_root.sh"
+_SKILL_ROOT="$(ilk_skill_root)"
+
 # ----- Defaults & globals ----------------------------------------------------
 
-LAUNCHER_DIR="${HOME}/.cursor/skills/ilk-launcher"
+LAUNCHER_DIR="${_SKILL_ROOT}/ilk-launcher"
 PROJECTS_JSON="${LAUNCHER_DIR}/projects.json"
 LAUNCH_SCRIPT="${LAUNCHER_DIR}/scripts/launch.sh"
-LOOP_STATUS_PY="${HOME}/.cursor/skills/ilk-loop/scripts/loop_status.py"
-COLLECT_PY="${HOME}/.cursor/skills/ilk-feedback/scripts/collect.py"
+LOOP_STATUS_PY="${_SKILL_ROOT}/ilk-loop/scripts/loop_status.py"
+COLLECT_PY="${_SKILL_ROOT}/ilk-feedback/scripts/collect.py"
 
 POLL_INTERVAL_SEC=60
 MAX_RESTARTS=5
@@ -69,7 +74,7 @@ print(', '.join(p.get('name','') for p in data.get('projects', []) if p.get('nam
 
 resolve_project_by_cwd() {
   local resolver
-  resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ -f "$resolver" ]]; then
     local json_out
     if json_out=$(python3 "$resolver" --start "$(pwd)" 2>/dev/null) && [[ -n "$json_out" ]]; then
@@ -126,7 +131,7 @@ for p in data.get('projects', []):
 get_ilk_runtime_dir() {
   local project="$1"
   local resolver
-  resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ ! -f "$resolver" ]]; then
     echo ""
     return
@@ -142,7 +147,7 @@ get_ilk_runtime_dir() {
 get_ilk_launcher_dir() {
   local project="$1"
   local resolver
-  resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ ! -f "$resolver" ]]; then
     echo ""
     return
@@ -158,7 +163,7 @@ get_ilk_launcher_dir() {
 get_ilk_watchdog_dir() {
   local project="$1"
   local resolver
-  resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ ! -f "$resolver" ]]; then
     echo ""
     return
@@ -257,7 +262,7 @@ handle_promote() {
   local proj_name="$2"
   local poll_sec="$3"
 
-  local script_path="${HOME}/.cursor/skills/ilk-loop/scripts/promote_next_master.py"
+  local script_path="${_SKILL_ROOT}/ilk-loop/scripts/promote_next_master.py"
   if [[ ! -f "$script_path" ]]; then
     write_log "promote_next_master.py not found at $script_path — cannot advance queue."
     return

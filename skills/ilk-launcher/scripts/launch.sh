@@ -8,11 +8,16 @@ set -euo pipefail
 # per-project param resolution, and MCP whitelist/blacklist filtering.
 # =============================================================================
 
+# ----- Skill root resolution -------------------------------------------------
+
+source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_skill_root.sh"
+_SKILL_ROOT="$(ilk_skill_root)"
+
 # ----- Defaults & globals ----------------------------------------------------
 
-LAUNCHER_DIR="${HOME}/.cursor/skills/ilk-launcher"
+LAUNCHER_DIR="${_SKILL_ROOT}/ilk-launcher"
 PROJECTS_JSON="${LAUNCHER_DIR}/projects.json"
-LOOP_SCRIPT="${HOME}/.cursor/skills/ilk-loop/scripts/run_ilk_loop_claude.sh"
+LOOP_SCRIPT="${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_claude.sh"
 DEFAULT_MAX_ITER=30
 DEFAULT_TIMEOUT=30
 
@@ -73,7 +78,7 @@ print(', '.join(p.get('name','') for p in data.get('projects', []) if p.get('nam
 
 resolve_project_by_cwd() {
   local resolver
-  resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ -f "$resolver" ]]; then
     local json_out
     if json_out=$(python3 "$resolver" --start "$(pwd)" 2>/dev/null) && [[ -n "$json_out" ]]; then
@@ -111,7 +116,7 @@ resolve_project_by_cwd() {
 get_external_plans_dir() {
   local project_path="$1"
   local resolver
-  resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ ! -f "$resolver" ]]; then
     echo ""
     return
@@ -127,7 +132,7 @@ get_external_plans_dir() {
 get_external_launcher_dir() {
   local project_path="$1"
   local resolver
-  resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ ! -f "$resolver" ]]; then
     echo ""
     return
@@ -164,7 +169,7 @@ for p in data.get('projects', []):
 get_project_key() {
   local project_path="$1"
   local resolver
-  resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ -f "$resolver" ]]; then
     local json_out
     if json_out=$(python3 "$resolver" --start "$project_path" 2>/dev/null) && [[ -n "$json_out" ]]; then
@@ -434,7 +439,7 @@ start_ilk_window() {
   local project_key run_id log_file log_dir
   project_key=$(get_project_key "$project_path")
   run_id="$(date +%Y%m%d-%H%M%S)"
-  log_dir="${HOME}/.cursor/skills/ilk-loop/logs/launcher"
+  log_dir="${_SKILL_ROOT}/ilk-loop/logs/launcher"
   mkdir -p "$log_dir"
   log_file="${log_dir}/${project_key}-${run_id}.log"
 
@@ -493,7 +498,7 @@ print(json.dumps(d, indent=2))
   echo "[$project_name] launched. PID $pgid."
   echo "[$project_name] PID file: $pid_file"
   echo "[$project_name] Log file: $log_file"
-  echo "[$project_name] loop JSONL log: ${HOME}/.cursor/skills/ilk-loop/logs"
+  echo "[$project_name] loop JSONL log: ${_SKILL_ROOT}/ilk-loop/logs"
 }
 
 # ----- Argument parsing ------------------------------------------------------

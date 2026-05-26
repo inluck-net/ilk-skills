@@ -8,9 +8,14 @@ set -euo pipefail
 # process group. Does NOT touch ilk itself.
 # =============================================================================
 
+# ----- Skill root resolution -------------------------------------------------
+
+source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_skill_root.sh"
+_SKILL_ROOT="$(ilk_skill_root)"
+
 # ----- Globals ---------------------------------------------------------------
 
-LAUNCHER_DIR="${HOME}/.cursor/skills/ilk-launcher"
+LAUNCHER_DIR="${_SKILL_ROOT}/ilk-launcher"
 PROJECTS_JSON="${LAUNCHER_DIR}/projects.json"
 
 CLI_PROJECT_PATH=""
@@ -47,7 +52,7 @@ for p in data.get('projects', []):
 
 resolve_project_by_cwd() {
   local resolver
-  resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ -f "$resolver" ]]; then
     local json_out
     if json_out=$(python3 "$resolver" --start "$(pwd)" 2>/dev/null) && [[ -n "$json_out" ]]; then
@@ -85,7 +90,7 @@ resolve_project_by_cwd() {
 get_ilk_watchdog_dir() {
   local project="$1"
   local resolver
-  resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ ! -f "$resolver" ]]; then
     echo ""
     return

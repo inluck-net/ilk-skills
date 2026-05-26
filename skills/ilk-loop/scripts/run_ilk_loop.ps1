@@ -37,11 +37,11 @@
 
 .PARAMETER LoopStatusScript
   Path to loop_status.py.
-  Default: $HOME\.cursor\skills\ilk-loop\scripts\loop_status.py
+  Default: <skill-root>\ilk-loop\scripts\loop_status.py
 
 .PARAMETER LogDir
   Where to write per-iteration logs and the JSONL summary.
-  Default: $HOME\.cursor\skills\ilk-loop\logs
+  Default: <skill-root>\ilk-loop\logs
 
 .PARAMETER Prompt
   The prompt sent to the agent. Default invokes the /ilk command.
@@ -75,9 +75,9 @@ param(
 
   [int]$IterationTimeoutMin = 30,
 
-  [string]$LoopStatusScript = (Join-Path $HOME ".cursor\skills\ilk-loop\scripts\loop_status.py"),
+  [string]$LoopStatusScript = "",
 
-  [string]$LogDir = (Join-Path $HOME ".cursor\skills\ilk-loop\logs"),
+  [string]$LogDir = "",
 
   [string]$Prompt = "/ilk please continue the active plan",
 
@@ -85,6 +85,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# ----- Skill root resolution ------------------------------------------
+. (Join-Path $PSScriptRoot "_ilk_skill_root.ps1")
+$SkillRoot = Get-IlkSkillRoot
+
+if (-not $LoopStatusScript) { $LoopStatusScript = Join-Path $SkillRoot "ilk-loop\scripts\loop_status.py" }
+if (-not $LogDir)           { $LogDir = Join-Path $SkillRoot "ilk-loop\logs" }
 
 # ----- Pre-flight ---------------------------------------------------
 

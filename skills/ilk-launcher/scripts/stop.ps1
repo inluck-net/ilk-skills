@@ -40,7 +40,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$LauncherDir  = Join-Path $HOME '.cursor\skills\ilk-launcher'
+. (Join-Path $PSScriptRoot "..\..\ilk-loop\scripts\_ilk_skill_root.ps1")
+$SkillRoot = Get-IlkSkillRoot
+
+$LauncherDir  = Join-Path $SkillRoot 'ilk-launcher'
 $ProjectsJson = Join-Path $LauncherDir 'projects.json'
 
 function Read-ProjectsRegistry {
@@ -60,7 +63,7 @@ function Resolve-ProjectByName {
 
 function Get-ExternalLauncherDir {
   param([string]$ProjectPath)
-  $resolver = Join-Path $HOME ".cursor\skills\ilk-loop\scripts\ilk_paths.py"
+  $resolver = Join-Path $SkillRoot "ilk-loop\scripts\ilk_paths.py"
   if (-not (Test-Path $resolver)) { return "" }
   try {
     $json = & python $resolver --start $ProjectPath 2>$null

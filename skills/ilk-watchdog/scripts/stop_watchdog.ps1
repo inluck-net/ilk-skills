@@ -20,7 +20,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$ProjectsJson = Join-Path $HOME '.cursor\skills\ilk-launcher\projects.json'
+. (Join-Path $PSScriptRoot "..\..\ilk-loop\scripts\_ilk_skill_root.ps1")
+$SkillRoot = Get-IlkSkillRoot
+
+$ProjectsJson = Join-Path $SkillRoot 'ilk-launcher\projects.json'
 
 function Resolve-ByName {
   param([string]$Name)
@@ -36,7 +39,7 @@ $resolvedName = if ($ProjectName) { $ProjectName } else { Split-Path $resolvedPa
 
 function Get-IlkWatchdogDir {
   param([string]$Project)
-  $resolver = Join-Path $HOME '.cursor\skills\ilk-loop\scripts\ilk_paths.py'
+  $resolver = Join-Path $SkillRoot 'ilk-loop\scripts\ilk_paths.py'
   if (-not (Test-Path $resolver)) { return $null }
   try {
     $json = & python $resolver --start $Project 2>$null

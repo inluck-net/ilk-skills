@@ -99,10 +99,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# --- skill root resolution ---------------------------------------------------
+. (Join-Path $PSScriptRoot "..\..\ilk-loop\scripts\_ilk_skill_root.ps1")
+$SkillRoot = Get-IlkSkillRoot
+
 # --- constants ---------------------------------------------------------------
-$LauncherDir   = Join-Path $HOME '.cursor\skills\ilk-launcher'
+$LauncherDir   = Join-Path $SkillRoot 'ilk-launcher'
 $ProjectsJson  = Join-Path $LauncherDir 'projects.json'
-$LoopScript    = Join-Path $HOME '.cursor\skills\ilk-loop\scripts\run_ilk_loop_claude.ps1'
+$LoopScript    = Join-Path $SkillRoot 'ilk-loop\scripts\run_ilk_loop_claude.ps1'
 $DefaultMaxIter = 30
 $DefaultTimeout = 30
 
@@ -134,7 +138,7 @@ function Resolve-ProjectByCwd {
   # First try ilk_paths.py — it's authoritative for both single-repo
   # (.git ancestor) AND meta (.ilk-meta.json ancestor) projects. Falls
   # back to legacy walk-up only when the helper is unavailable.
-  $resolver = Join-Path $HOME ".cursor\skills\ilk-loop\scripts\ilk_paths.py"
+  $resolver = Join-Path $SkillRoot "ilk-loop\scripts\ilk_paths.py"
   if (Test-Path $resolver) {
     try {
       $json = & python $resolver --start (Get-Location).Path 2>$null
@@ -162,7 +166,7 @@ function Resolve-ProjectByCwd {
 function Get-ExternalPlansDir {
   # Returns the external plans dir for $ProjectPath (meta-aware), or "".
   param([string]$ProjectPath)
-  $resolver = Join-Path $HOME ".cursor\skills\ilk-loop\scripts\ilk_paths.py"
+  $resolver = Join-Path $SkillRoot "ilk-loop\scripts\ilk_paths.py"
   if (-not (Test-Path $resolver)) { return "" }
   try {
     $json = & python $resolver --start $ProjectPath 2>$null
@@ -176,7 +180,7 @@ function Get-ExternalPlansDir {
 
 function Get-ExternalLauncherDir {
   param([string]$ProjectPath)
-  $resolver = Join-Path $HOME ".cursor\skills\ilk-loop\scripts\ilk_paths.py"
+  $resolver = Join-Path $SkillRoot "ilk-loop\scripts\ilk_paths.py"
   if (-not (Test-Path $resolver)) { return "" }
   try {
     $json = & python $resolver --start $ProjectPath 2>$null
@@ -500,7 +504,7 @@ Write-Host '[ilk-launcher] window left open for review. Close manually when done
 
   Write-Host "[$ProjectName] launched. PID $($proc.Id). Title: '$title'." -ForegroundColor Green
   Write-Host "[$ProjectName] PID file: $pidFile"
-  Write-Host "[$ProjectName] loop JSONL log: $HOME\.cursor\skills\ilk-loop\logs (see run_ilk_loop_claude.ps1 -LogDir)"
+  Write-Host "[$ProjectName] loop JSONL log: $SkillRoot\ilk-loop\logs (see run_ilk_loop_claude.ps1 -LogDir)"
   return $proc.Id
 }
 

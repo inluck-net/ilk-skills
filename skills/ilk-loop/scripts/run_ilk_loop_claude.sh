@@ -11,20 +11,25 @@ set -euo pipefail
 # shared across platforms) so the bash script stays focused on orchestration.
 # =============================================================================
 
+# ----- Skill root resolution -------------------------------------------------
+
+source "$(dirname "${BASH_SOURCE[0]}")/_ilk_skill_root.sh"
+_SKILL_ROOT="$(ilk_skill_root)"
+
 # ----- Defaults & globals ----------------------------------------------------
 
 # Populated by argument parsing in main().
 PROJECT_PATH=""
 MAX_ITERATIONS=30
 ITERATION_TIMEOUT_MIN=30
-LOOP_STATUS_SCRIPT="${HOME}/.cursor/skills/ilk-loop/scripts/loop_status.py"
-LOG_DIR="${HOME}/.cursor/skills/ilk-loop/logs"
+LOOP_STATUS_SCRIPT="${_SKILL_ROOT}/ilk-loop/scripts/loop_status.py"
+LOG_DIR="${_SKILL_ROOT}/ilk-loop/logs"
 PROMPT="/ilk please continue the active plan"
 MAX_BUDGET_USD=0
 MODEL=""
 RUN_LOCAL_CHECKS=false
 LOCAL_CHECKS_TIMEOUT_SEC=180
-LOCAL_CHECKS_SCRIPT="${HOME}/.cursor/skills/ilk-loop/scripts/run_local_checks.py"
+LOCAL_CHECKS_SCRIPT="${_SKILL_ROOT}/ilk-loop/scripts/run_local_checks.py"
 MCP_CONFIG_PATH=""
 
 # Internal state
@@ -54,9 +59,9 @@ Options:
   --iteration-timeout-min N        Per-iteration wall-clock timeout, in minutes.
                                    Default: 30
   --loop-status-script PATH        Path to loop_status.py.
-                                   Default: ~/.cursor/skills/ilk-loop/scripts/loop_status.py
+                                   Default: <skill-root>/ilk-loop/scripts/loop_status.py
   --log-dir PATH                   Where to write per-iteration logs and the JSONL summary.
-                                   Default: ~/.cursor/skills/ilk-loop/logs
+                                   Default: <skill-root>/ilk-loop/logs
   --prompt TEXT                    The prompt sent to claude.
                                    Default: "/ilk please continue the active plan"
   --max-budget-usd N               Optional per-iteration --max-budget-usd cap.
@@ -69,7 +74,7 @@ Options:
   --local-checks-timeout-sec N     Outer wall-clock cap for local_checks per iteration.
                                    Default: 180
   --local-checks-script PATH       Path to run_local_checks.py.
-                                   Default: ~/.cursor/skills/ilk-loop/scripts/run_local_checks.py
+                                   Default: <skill-root>/ilk-loop/scripts/run_local_checks.py
   --mcp-config-path PATH           Path to a JSON file with {"mcpServers": {...}} to
                                    pass to every `claude -p` invocation via
                                    --mcp-config and --strict-mcp-config.
@@ -222,7 +227,7 @@ preflight() {
 # ----- Helpers ---------------------------------------------------------------
 
 discover_git_repos() {
-  local resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  local resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   local json
   json="$(python3 "$resolver" --start "$PROJECT_PATH" 2>/dev/null)" || {
     echo "Error: ilk_paths.py failed to resolve project." >&2
@@ -308,7 +313,7 @@ get_local_check_targets() {
 }
 
 get_ilk_runtime_dir() {
-  local resolver="${HOME}/.cursor/skills/ilk-loop/scripts/ilk_paths.py"
+  local resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ ! -f "$resolver" ]]; then
     return 1
   fi
@@ -449,7 +454,7 @@ invoke_claude_iteration() {
   local model_override="${6:-}"
 
   local jsonl_log="${iter_log}.jsonl"
-  local renderer="${HOME}/.cursor/skills/ilk-loop/scripts/_stream_json_render.py"
+  local renderer="${_SKILL_ROOT}/ilk-loop/scripts/_stream_json_render.py"
 
   # Build claude args array
   local claude_args=(

@@ -57,13 +57,17 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# --- skill root resolution ---------------------------------------------------
+. (Join-Path $PSScriptRoot "..\..\ilk-loop\scripts\_ilk_skill_root.ps1")
+$SkillRoot = Get-IlkSkillRoot
+
 # --- constants --------------------------------------------------------------
 
-$LauncherDir   = Join-Path $HOME '.cursor\skills\ilk-launcher'
+$LauncherDir   = Join-Path $SkillRoot 'ilk-launcher'
 $ProjectsJson  = Join-Path $LauncherDir 'projects.json'
 $LaunchScript  = Join-Path $LauncherDir 'scripts\launch.ps1'
-$LoopStatusPy  = Join-Path $HOME '.cursor\skills\ilk-loop\scripts\loop_status.py'
-$CollectPy     = Join-Path $HOME '.cursor\skills\ilk-feedback\scripts\collect.py'
+$LoopStatusPy  = Join-Path $SkillRoot 'ilk-loop\scripts\loop_status.py'
+$CollectPy     = Join-Path $SkillRoot 'ilk-feedback\scripts\collect.py'
 
 $WhitelistClasses = @('timeout-bound', 'max-iter-bound', 'api-flaky', 'interrupted')
 $BlacklistClasses = @('stuck-no-progress', 'api-blocked', 'budget-exhausted', 'local-checks-stuck')
@@ -125,7 +129,7 @@ function Get-IlkRuntimeDir {
     mode.
   #>
   param([string]$Project)
-  $resolver = Join-Path $HOME '.cursor\skills\ilk-loop\scripts\ilk_paths.py'
+  $resolver = Join-Path $SkillRoot 'ilk-loop\scripts\ilk_paths.py'
   if (-not (Test-Path $resolver)) { return $null }
   try {
     $json = & python $resolver --start $Project 2>$null
@@ -142,7 +146,7 @@ function Get-IlkLauncherDir {
     Returns $null if the resolver is missing or python errors out.
   #>
   param([string]$Project)
-  $resolver = Join-Path $HOME '.cursor\skills\ilk-loop\scripts\ilk_paths.py'
+  $resolver = Join-Path $SkillRoot 'ilk-loop\scripts\ilk_paths.py'
   if (-not (Test-Path $resolver)) { return $null }
   try {
     $json = & python $resolver --start $Project 2>$null
@@ -159,7 +163,7 @@ function Get-IlkWatchdogDir {
     Returns $null if the resolver is missing or python errors out.
   #>
   param([string]$Project)
-  $resolver = Join-Path $HOME '.cursor\skills\ilk-loop\scripts\ilk_paths.py'
+  $resolver = Join-Path $SkillRoot 'ilk-loop\scripts\ilk_paths.py'
   if (-not (Test-Path $resolver)) { return $null }
   try {
     $json = & python $resolver --start $Project 2>$null
@@ -179,7 +183,7 @@ function Invoke-PromoteNextMaster {
     only call this after a confirmed clean ship.
   #>
   param([string]$Project)
-  $script = Join-Path $HOME '.cursor\skills\ilk-loop\scripts\promote_next_master.py'
+  $script = Join-Path $SkillRoot 'ilk-loop\scripts\promote_next_master.py'
   if (-not (Test-Path $script)) {
     Write-Log "promote_next_master.py not found at $script — cannot advance queue."
     return $null
