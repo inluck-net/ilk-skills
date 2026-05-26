@@ -81,7 +81,7 @@ def write_status(path: Path, new_status: str) -> bool:
 
     new_text = m.group(1) + new_fm + m.group(3) + text[m.end():]
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(new_text, encoding="utf-8", newline="\n")
+    tmp.write_text(new_text, encoding="utf-8")
     os.replace(tmp, path)
     return True
 

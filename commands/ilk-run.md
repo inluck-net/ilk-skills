@@ -9,7 +9,38 @@ watchdog", "launch supervised ilk", `/ilk-run`, "跑 ilk 并守着",
 Do NOT inspect `docs/plans/` manually as the source of truth. Always use
 the external-plan-aware scripts.
 
-## 1. Resolve project and check queue
+## 1. Resolve project context
+
+Resolve the project once with `ilk_paths.py` and reuse the result for every
+later step. Do not rely on `$(pwd)` / `(Get-Location)` as the launch project
+— always use the `project_root` returned here.
+
+```bash
+# macOS / Linux
+python3 "<skill-root>/ilk-loop/scripts/ilk_paths.py" --start .
+```
+
+```powershell
+# Windows
+python3 "<skill-root>\ilk-loop\scripts\ilk_paths.py" --start .
+```
+
+The script prints a JSON object. Extract at minimum:
+
+- `project_root` — absolute path to use for `--project-path` / `-ProjectPath`.
+- `project_key` — stable key for locating runtime/postmortem artifacts.
+- `external_launcher_dir` — where `last-launch.json` and launcher logs live.
+- `external_watchdog_dir` — where watchdog `activity.log` and `watchdog.log`
+  live.
+
+If `project_root` is `null` (no `.git` ancestor and no `.ilk-meta.json`),
+tell the user to `cd` into a project root and STOP. Do not fall back to
+the current directory.
+
+Bind these to shell variables you can reuse below; the examples in later
+sections refer to `$PROJECT_ROOT` (bash) or `$ProjectRoot` (PowerShell).
+
+## 2. Check queue
 
 Run `loop_status.py` to confirm there is pending work:
 
@@ -30,7 +61,7 @@ python3 "<skill-root>\ilk-loop\scripts\loop_status.py"
 - Exit 2 → no plans dir found. Tell the user to `cd` into a project with
   plans. STOP.
 
-## 2. Read the next pending sub-plan
+## 3. Read the next pending sub-plan
 
 Read the sub-plan file path printed by `loop_status.py` to understand:
 
@@ -42,13 +73,10 @@ Read the sub-plan file path printed by `loop_status.py` to understand:
   - `wait_ci` / "push and wait" → CI-bound (15–60 min/step)
   - Pure refactors / docs → fast
 
-## 3. Read recent postmortems (history-aware)
+## 4. Read recent postmortems (history-aware)
 
-Check the last 3 postmortems in:
-
-```
-~/.ilk-data/projects/<key>/runtime/launcher/postmortems/*.md
-```
+Check the last 3 postmortems under
+`<external_launcher_dir>/postmortems/*.md` (resolved in section 1).
 
 Apply these soft rules to adjust launch params:
 
@@ -61,7 +89,7 @@ Apply these soft rules to adjust launch params:
 | Mostly `clean-success` | No adjustment; trust estimate |
 | No postmortems | First run — proceed with estimate only |
 
-## 4. Pick launch parameters
+## 5. Pick launch parameters
 
 **MaxIterations** — baseline = `estimated_steps - current_step`:
 
@@ -86,7 +114,7 @@ Floor: 10. Ceiling: 60 unless user overrides.
 
 Floor: 15. Ceiling: 120.
 
-## 5. Launch ilk
+## 6. Launch ilk
 
 ```bash
 # macOS / Linux
@@ -107,7 +135,7 @@ Report: window title, PID, resolved params, rationale.
 After launch, read `<external-launcher-dir>/last-launch.json` to get the
 loop log path. The authoritative field is `log_file`.
 
-## 6. Start watchdog
+## 7. Start watchdog
 
 ```bash
 # macOS / Linux
@@ -134,7 +162,7 @@ The watchdog writes two logs:
 
 Report: watchdog PID, polling interval, max restarts, both log paths.
 
-## 7. Summary
+## 8. Summary
 
 Read `last-launch.json` and resolve watchdog dir, then print a single
 summary block:
