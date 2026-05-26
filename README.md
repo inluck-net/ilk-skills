@@ -78,6 +78,16 @@ work and is in production use by the maintainer.
   `commands/` directories straight from a clone of this repo. Push
   on one machine, pull on the other, re-run the installer, done.
 
+## Codex support boundary
+
+All skills install and function under Codex via `~/.codex/skills/`.
+Planning (`/ilk-plan`), single-step execution (`/ilk`), status
+(`/ilk-status`), and postmortem (`/ilk-feedback`) work identically
+across all three hosts. Detached autonomous loop runs (`/ilk-run` with
+watchdog) currently rely on the Claude Code CLI runner
+(`run_ilk_loop_claude.sh`); a dedicated Codex runner will close that
+gap.
+
 ## Platforms
 
 | Platform | Cursor | Claude Code | Codex | Installer |
