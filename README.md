@@ -110,27 +110,34 @@ cd ilk-skills
 ./install.sh --apply
 ```
 
+The installer creates symlinks (or junctions on Windows) into
+`~/.cursor/skills/`, `~/.claude/skills/`, and `~/.codex/skills/`.
+Use `--only-codex` / `-OnlyCodex` to install for a single host only.
+
 The first install seeds `skills/ilk-launcher/projects.json` from
 `projects.example.json` (this real file is gitignored, per-operator).
 Edit it to point at your real project paths, then:
 
 ```powershell
-# In any project under git control
+# In any project under git control (Cursor / Claude Code)
 /ilk-plan "<describe the task>"     # writes plan to ~/.ilk-data/...
 & launch.ps1 -ProjectPath .         # spawns a detached loop window
 ```
 
 ```bash
-# macOS / Linux equivalent
+# macOS / Linux equivalent (Cursor / Claude Code)
 /ilk-plan "<describe the task>"
-bash "$HOME/.cursor/skills/ilk-launcher/scripts/launch.sh" --project-path .
+bash "$HOME/.claude/skills/ilk-launcher/scripts/launch.sh" --project-path .
 ```
+
+Codex users invoke the same skills through natural language — the
+installer places identical files under `~/.codex/skills/`.
 
 ## Layout
 
 ```
 skills/         per-skill SKILL.md + scripts
-commands/       Cursor / Claude slash command bodies (ilk*.md)
+commands/       slash command bodies for Cursor, Claude Code, and Codex (ilk*.md)
 install.ps1     Windows installer
 install.sh      macOS / Linux installer
 tools/          manual, dry-run-by-default utilities (e.g. plan migration)
