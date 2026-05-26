@@ -36,12 +36,15 @@ launcher.
 ~/.cursor/skills/ilk-watchdog/
   SKILL.md                  ← this file
   scripts/
-    watchdog.ps1            ← polling loop; -Detach flag spawns its own window
-    stop_watchdog.ps1       ← reads ~/.ilk-data/projects/<key>/runtime/watchdog/watchdog.pid, tree-kills
+    watchdog.ps1            ← polling loop; -Detach flag spawns its own desktop window
+    watchdog.sh             ← macOS/Linux polling loop; --detach flag starts a screen session
+    stop_watchdog.ps1       ← reads PID, tree-kills (Windows)
+    stop_watchdog.sh        ← reads PID, kills (macOS/Linux)
 
 ~/.ilk-data/projects/<key>/runtime/watchdog/
-  watchdog.pid              ← PID of the watchdog window (deleted on clean exit)
-  activity.log              ← append-only event log: poll, dead, classify, relaunch, ...
+  watchdog.pid              ← PID of the watchdog process (deleted on clean exit)
+  activity.log              ← append-only structured event log: poll, dead, classify, relaunch, ...
+  watchdog.log              ← stdout/stderr capture when using --detach / -Detach
 ```
 
 Three independent processes when fully running:
@@ -81,21 +84,39 @@ exits after this many restarts to force a human review pass.
 
 ### W1. Start watchdog for an already-running ilk
 
+**Detached (unattended — recommended for overnight runs):**
+
 ```powershell
+# Windows: spawns a new desktop window
 & "$HOME\.cursor\skills\ilk-watchdog\scripts\watchdog.ps1" -ProjectName myproj -Detach
 ```
 
 ```bash
-# macOS / Linux equivalent (runs in foreground; background with &):
+# macOS / Linux: starts a detached screen session
+bash "$HOME/.cursor/skills/ilk-watchdog/scripts/watchdog.sh" --project-name myproj --detach
+```
+
+On Windows, `-Detach` spawns a new PowerShell desktop window
+(`Start-Process powershell -NoExit ...`) and exits immediately.
+On macOS/Linux, `--detach` starts a `screen` session and exits; the
+polling loop continues inside screen. Both write stdout/stderr to
+`watchdog.log` in the watchdog state dir.
+
+**Foreground (debugging only):**
+
+```bash
+# macOS / Linux — runs in current shell, blocks until watchdog exits
 bash "$HOME/.cursor/skills/ilk-watchdog/scripts/watchdog.sh" --project-name myproj
 ```
 
-`-Detach` makes the script spawn a new desktop PowerShell window
-(`Start-Process powershell -NoExit ...`) running the polling loop, then
-exits immediately so the calling shell is free.
+```powershell
+# Windows — same, without -Detach
+& "$HOME\.cursor\skills\ilk-watchdog\scripts\watchdog.ps1" -ProjectName myproj
+```
 
-Without `-Detach`, the polling loop runs in the current shell — useful
-for debugging, not for unattended use.
+Use foreground mode to see live output during troubleshooting. Do not
+recommend plain `&` shell backgrounding for unattended use — prefer
+`--detach` / `-Detach`.
 
 ### W2. Tune the polling cadence
 
@@ -105,9 +126,9 @@ for debugging, not for unattended use.
 ```
 
 ```bash
-# macOS / Linux equivalent:
+# macOS / Linux equivalent (detached):
 bash "$HOME/.cursor/skills/ilk-watchdog/scripts/watchdog.sh" \
-    --project-name myproj --poll-interval-sec 180 --max-restarts 3
+    --project-name myproj --poll-interval-sec 180 --max-restarts 3 --detach
 ```
 
 `-PollMin` default 5 (good for 30–60 min iters). Set lower for faster
@@ -183,6 +204,11 @@ that's a separate cleanup; do not add new entries.
 
 ## Known limitations
 
+- **macOS/Linux `--detach` requires `screen`**: the `--detach` flag
+  uses GNU `screen` to create a detached session. If `screen` is not
+  installed, watchdog prints an error and refuses to detach. Install
+  with `brew install screen` (macOS) or `apt install screen` (Linux),
+  or run in foreground mode without `--detach`.
 - **Windows session-bound**: `Start-Process` detaches from Cursor but not
   from the Windows interactive user session. Logging out / switching users
   kills both ilk and watchdog. Same caveat as ilk-launcher.
