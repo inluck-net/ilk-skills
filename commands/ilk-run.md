@@ -83,7 +83,9 @@ Read the sub-plan file path printed by `loop_status.py` to understand:
 ## 4. Read recent postmortems (history-aware)
 
 Check the last 3 postmortems under
-`<external_launcher_dir>/postmortems/*.md` (resolved in section 1).
+`<external_launcher_dir>/postmortems/*.md`. The launcher dir was resolved
+in section 1 from `project_key`, so you do not need to recompute it —
+e.g. `~/.ilk-data/projects/<project_key>/runtime/launcher/postmortems/`.
 
 Apply these soft rules to adjust launch params:
 
@@ -167,27 +169,35 @@ bash "<skill-root>/ilk-watchdog/scripts/watchdog.sh" \
     -PollMin 5 -MaxRestarts 5 -Detach
 ```
 
-After launch, resolve the watchdog dir to get log paths:
+The watchdog uses `external_watchdog_dir` (resolved in section 1) for its
+log output:
 
-```bash
-# macOS / Linux
-python3 "<skill-root>/ilk-loop/scripts/ilk_paths.py" --start "$(pwd)" --where
-```
+- `<external_watchdog_dir>/activity.log` — structured activity log of
+  every poll, classification, and restart decision.
+- `<external_watchdog_dir>/watchdog.log` — stdout/stderr captured when
+  `--detach` was passed.
 
-The watchdog writes two logs:
-- `<external-watchdog-dir>/activity.log` — structured activity log
-- `<external-watchdog-dir>/watchdog.log` — stdout/stderr when using `--detach`
+Behavior, stated precisely: the watchdog polls the loop's PID file every
+`--poll-interval-sec` seconds. When the loop exits, it reads the
+postmortem and consults the classification whitelist. It **restarts** on
+whitelist-classified exits (e.g. `clean-success`, `timeout-bound`,
+`max-iter-bound`, `api-flaky`, `interrupted`) and promotes the next
+MASTER if the active queue drains cleanly. It **blocks with a banner**
+on blacklist exits (`stuck-no-progress`, `api-blocked`,
+`budget-exhausted`, `local-checks-stuck`) and stops polling. It does not
+blindly restart on every exit.
 
 Report: watchdog PID, polling interval, max restarts, both log paths.
 
 ## 8. Summary
 
-Read `last-launch.json` and resolve watchdog dir, then print a single
-summary block:
+Read `<external_launcher_dir>/last-launch.json` (the launcher dir was
+resolved in section 1 from `project_key`), then print a single summary
+block. All paths come from the section-1 resolution — do not recompute:
 
 ```
-ilk launched: <project-name>
-  Window:     ilk: <project-name>
+ilk launched: <project_key>
+  Window:     ilk: <project_key>
   PID:        <pid>
   Iterations: <max-iterations>
   Timeout:    <timeout-min> min
@@ -195,16 +205,17 @@ ilk launched: <project-name>
   Logs:
     Loop log:      <last-launch.json .log_file>
     Loop JSONL:    <skill-root>/ilk-loop/logs/.ilk-loop.log
-    Watchdog act:  <external-watchdog-dir>/activity.log
-    Watchdog out:  <external-watchdog-dir>/watchdog.log
+    Watchdog act:  <external_watchdog_dir>/activity.log
+    Watchdog out:  <external_watchdog_dir>/watchdog.log
   Tail (macOS/Linux):
     tail -f "<loop-log>"
-    tail -f "<watchdog-activity-log>"
+    tail -f "<external_watchdog_dir>/activity.log"
   Tail (Windows):
     Get-Content "<loop-log>" -Wait
-    Get-Content "<watchdog-activity-log>" -Wait
+    Get-Content "<external_watchdog_dir>\activity.log" -Wait
   Plan:       <next-sub-plan> (step <current>/<total>)
 ```
 
 Tell the user they can check progress with `/ilk-status` and stop with
-`/ilk-stop`.
+`/ilk-stop`. Postmortems for this run will land under
+`<external_launcher_dir>/postmortems/` keyed by `project_key`.
