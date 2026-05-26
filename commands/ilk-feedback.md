@@ -7,7 +7,7 @@ Do NOT re-implement the logic here. Specifically:
 
 1. Resolve the project (cwd walk-up via `ilk_paths.find_project_root()`,
    or `-ProjectName` / `-ProjectPath` if the user passed one).
-2. Run `python "$HOME\.cursor\skills\ilk-feedback\scripts\collect.py"`
+2. Run `python "<skill-root>/ilk-feedback/scripts/collect.py"`
    with the resolved project. The script writes
    `~/.ilk-data/projects/<key>/runtime/launcher/postmortems/<run-id>.md`
    and prints a one-paragraph summary.

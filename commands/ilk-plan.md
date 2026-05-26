@@ -9,7 +9,7 @@ directory** (under `~/.ilk-data/`), ready to be executed by `/ilk`.
 **Plans live OUTSIDE the project repo** so the project's git history
 stays clean of skill artifacts. The exact location is derived from
 the project's `.git` root and resolved by
-`~/.cursor/skills/ilk-loop/scripts/ilk_paths.py`. Legacy projects
+`<skill-root>/ilk-loop/scripts/ilk_paths.py`. Legacy projects
 that still keep plans in-tree under `<root>/docs/plans/` are
 supported by the resolver as a fallback; do not migrate an in-flight
 project mid-run — use `migrate_plans_to_external.py` between batches.
@@ -20,11 +20,11 @@ Follow these steps in order. Do NOT skip the user-approval gate.
 
 Read these two files in parallel:
 
-1. `~/.cursor/skills/ilk-loop/SKILL.md` — front-matter conventions,
+1. `<skill-root>/ilk-loop/SKILL.md` — front-matter conventions,
    state machine, commit-message rules. Pay particular attention to
    "Standard workflows" → workflow #5 ("Generate plans from a task
    description").
-2. `~/.cursor/skills/ilk-loop/docs/decomposition-principles.md` — how
+2. `<skill-root>/ilk-loop/docs/decomposition-principles.md` — how
    to slice a goal so the loop can actually drive it. This is the
    rubric for step 5 (grouping proposal) and step 6 (writing the
    files). Do not skip it.
@@ -34,7 +34,7 @@ Read these two files in parallel:
 Run the resolver to find out where this project's plans live:
 
 ```powershell
-python "$HOME\.cursor\skills\ilk-loop\scripts\ilk_paths.py" --start .
+python "<skill-root>/ilk-loop/scripts/ilk_paths.py" --start .
 ```
 
 It prints a JSON object. The fields you need:
@@ -96,7 +96,7 @@ Bootstrap the destination if it does not exist:
 
 - `mkdir` `external_plans_dir` (Python: the resolver also has
   `external_plans_dir(key)` if you want the path programmatically)
-- Copy `~/.cursor/skills/ilk-loop/templates/README.md` into the new
+- Copy `<skill-root>/ilk-loop/templates/README.md` into the new
   dir as `README.md`
 - Tell the user: "Created `~/.ilk-data/projects/<key>/plans/`
   scaffolding."
@@ -254,7 +254,7 @@ Once approved, write all files in one batch under the
   - "Progress log" table (1 row: the creation entry)
 
 - One file per sub-plan: `<external_plans_dir>/YYYY-MM-DD-<slug>.md`, derived from
-  `~/.cursor/skills/ilk-loop/templates/subplan-template.md`. Fill in
+  `<skill-root>/ilk-loop/templates/subplan-template.md`. Fill in
   REAL content, not placeholders:
   - Front-matter with accurate `tickets:` and `estimated_steps:` values
   - **In meta mode:** `repo: <member-name>` (REQUIRED; must match a
@@ -470,7 +470,7 @@ user explicitly:
 
 > The new plans were written to `~/.ilk-data/projects/<key>/plans/`,
 > NOT to `<project>/docs/plans/`. Run
-> `python ~/.cursor/skills/ilk-loop/scripts/migrate_plans_to_external.py
+> `python <skill-root>/ilk-loop/scripts/migrate_plans_to_external.py
 > --project . --apply` once the current loop is idle to migrate the
 > legacy plans alongside, then commit the resulting deletions in the
 > project repo.
@@ -484,7 +484,7 @@ End your turn with:
 2. QC pass results: lint findings (count), invariants woven (count),
    cold-read gaps surfaced (count). Each non-zero count expanded with
    a short bullet list so the user can act.
-3. The output of `python "$HOME\.cursor\skills\ilk-loop\scripts\loop_status.py"`
+3. The output of `python "<skill-root>/ilk-loop/scripts/loop_status.py"`
    so the user sees the new pending state.
 4. Tell the user: "Ready to execute. Open a fresh chat and type `/ilk`."
 

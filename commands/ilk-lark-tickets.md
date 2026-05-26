@@ -8,7 +8,7 @@ update each ticket with its `关联 plan` URL and transition to `计划中`.
 
 > **Prerequisite**: this command depends on a separate `lark-tickets`
 > skill (the Bitable adapter) being installed at
-> `~/.cursor/skills/lark-tickets/`. That skill is **not** part of
+> `<skill-root>/lark-tickets/`. That skill is **not** part of
 > `ilk-skills`. Skip this command and use plain `/ilk-plan` if you
 > don't have a Lark Bitable to read from.
 
@@ -17,9 +17,9 @@ Follow these steps in order. Do NOT skip the user-approval gate.
 ## 1. Load conventions
 
 Read in parallel:
-- `~/.cursor/skills/ilk-loop/SKILL.md` (workflow #6: "Generate plans
+- `<skill-root>/ilk-loop/SKILL.md` (workflow #6: "Generate plans
   from Lark tickets")
-- `~/.cursor/skills/lark-tickets/SKILL.md` (CLI usage, ticket fields)
+- `<skill-root>/lark-tickets/SKILL.md` (CLI usage, ticket fields)
 
 ## 2. Verify project context
 
@@ -32,7 +32,7 @@ Read in parallel:
 ## 3. Pull the ticket batch
 
 ```powershell
-python $HOME\.cursor\skills\lark-tickets\scripts\cli.py list --status 可执行 --limit 100
+python <skill-root>/lark-tickets/scripts/cli.py list --status 可执行 --limit 100
 ```
 
 If the result is empty, tell the user "No 可执行 tickets to plan." and STOP.
@@ -53,7 +53,7 @@ tickets, write a one-off helper script to parallelise:
 import json, subprocess, sys
 from pathlib import Path
 
-CLI = os.path.expanduser(r"~\.cursor\skills\lark-tickets\scripts\cli.py")
+CLI = os.path.expanduser(r"<skill-root>/lark-tickets/scripts/cli.py")
 RECORDS = [
     # paste (ticket_id, record_id) tuples from step 3
 ]
@@ -120,7 +120,7 @@ For batches of 10+ tickets, write a one-off helper:
 ```python
 # Save to docs/plans/_update_tickets.py (delete after use)
 import subprocess, sys
-CLI = os.path.expanduser(r"~\.cursor\skills\lark-tickets\scripts\cli.py")
+CLI = os.path.expanduser(r"<skill-root>/lark-tickets/scripts/cli.py")
 GITEE_BASE = "https://gitee.com/<org>/<repo>/blob/<branch>/docs/plans"
 
 ROUTING = [
@@ -161,7 +161,7 @@ End your turn with:
 1. Summary: "Pulled N 可执行 tickets, grouped into M sub-plans, plans
    pushed, all N tickets updated in Lark to 计划中."
 2. The output of
-   `python "$HOME\.cursor\skills\ilk-loop\scripts\loop_status.py"`.
+   `python "<skill-root>/ilk-loop/scripts/loop_status.py"`.
 3. "Ready to execute. Open a fresh chat and type `/ilk`."
 
 ## Boundary rules

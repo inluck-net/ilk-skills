@@ -7,7 +7,7 @@ Follow these steps in order. Do NOT skip any.
 Run:
 
 ```bash
-python3 "$HOME/.cursor/skills/ilk-loop/scripts/loop_status.py"
+python3 "<skill-root>/ilk-loop/scripts/loop_status.py"
 ```
 
 The script resolves the active plans dir (external under `~/.ilk-data`
@@ -30,7 +30,7 @@ commits, and pushes in step 5. See SKILL.md → "Meta-projects".
 
 ## 2. Load the loop convention
 
-Read `~/.cursor/skills/ilk-loop/SKILL.md` so you know the front-matter
+Read `<skill-root>/ilk-loop/SKILL.md` so you know the front-matter
 spec, state machine, commit message conventions, and lark-tickets
 integration.
 
@@ -85,7 +85,7 @@ expected to take more than ~10s.
 
 Specifically:
 
-1. **Read `~/.cursor/skills/long-running-commands/SKILL.md` first** if you
+1. **Read `<skill-root>/long-running-commands/SKILL.md` first** if you
    haven't already in this session.
 2. **Always run tests with the mandatory flags** from that skill:
    - Django: `--verbosity=2 --noinput --keepdb`
