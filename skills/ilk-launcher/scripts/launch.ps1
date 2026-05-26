@@ -94,7 +94,12 @@ param(
   # appends `--mcp-config <path> --strict-mcp-config` to every `claude
   # -p` invocation. `--strict-mcp-config` also drops claude.ai-synced
   # servers (Gmail / Drive) for the worker.
-  [string]$EnableMcp = ""
+  [string]$EnableMcp = "",
+
+  # Worker engine: "claude" (default) or "codex". CLI override wins
+  # over .ilk-launch.json's worker_engine. "codex" is not yet supported
+  # and will produce a clear error.
+  [string]$Engine = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -257,9 +262,16 @@ function Resolve-Params {
 }
 
 function Resolve-Engine {
-  param([string]$ProjectPath)
-  $cfg = Read-ProjectConfig -ProjectPath $ProjectPath
-  $engine = if ($cfg.ContainsKey('worker_engine')) { [string]$cfg.worker_engine } else { $DefaultEngine }
+  param(
+    [string]$ProjectPath,
+    [string]$CliEngine = ""
+  )
+  if (-not [string]::IsNullOrWhiteSpace($CliEngine)) {
+    $engine = $CliEngine
+  } else {
+    $cfg = Read-ProjectConfig -ProjectPath $ProjectPath
+    $engine = if ($cfg.ContainsKey('worker_engine')) { [string]$cfg.worker_engine } else { $DefaultEngine }
+  }
   if ($ValidEngines -notcontains $engine) {
     throw "Invalid worker_engine '$engine'. Valid engines: $($ValidEngines -join ', ')"
   }
@@ -556,7 +568,7 @@ if (-not (Test-Path $resolvedPath)) {
 $resolvedPath = (Resolve-Path $resolvedPath).Path
 $resolvedName = if ($ProjectName) { $ProjectName } else { Get-ProjectName -Path $resolvedPath }
 $params = Resolve-Params -ProjectPath $resolvedPath -CliMaxIter $MaxIterations -CliTimeout $IterationTimeoutMin
-$engine = Resolve-Engine -ProjectPath $resolvedPath
+$engine = Resolve-Engine -ProjectPath $resolvedPath -CliEngine $Engine
 $mcpFilter = Resolve-McpFilter -ProjectPath $resolvedPath -CliDisableMcp $DisableMcp -CliEnableMcp $EnableMcp
 $mcpCfg = Build-WorkerMcpConfig -ProjectPath $resolvedPath -Mode $mcpFilter.Mode -Names $mcpFilter.Names
 

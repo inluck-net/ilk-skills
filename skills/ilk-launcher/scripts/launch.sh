@@ -33,6 +33,7 @@ CLI_ENABLE_MCP=""
 CLI_ALL=false
 CLI_FORCE=false
 CLI_DRY_RUN=false
+CLI_ENGINE=""
 
 # Resolved values
 RESOLVED_PATH=""
@@ -236,11 +237,16 @@ resolve_params() {
 
 resolve_engine() {
   local project_path="$1"
-  local cfg
-  cfg=$(read_project_config "$project_path")
+  local cli_engine="$2"
 
-  local engine
-  engine=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('worker_engine',''))" <<<"$cfg")
+  local engine=""
+  if [[ -n "$cli_engine" ]]; then
+    engine="$cli_engine"
+  else
+    local cfg
+    cfg=$(read_project_config "$project_path")
+    engine=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('worker_engine',''))" <<<"$cfg")
+  fi
 
   if [[ -z "$engine" ]]; then
     engine="$DEFAULT_ENGINE"
@@ -550,6 +556,7 @@ Options:
   --all                        Launch every project in projects.json.
   --force                      Skip the "already running" check.
   --dry-run                    Print resolved plan but do not spawn.
+  --engine ENGINE              Worker engine: claude (default) or codex.
   -h, --help                   Show this help and exit.
 EOF
 }
@@ -592,6 +599,10 @@ parse_args() {
       --dry-run)
         CLI_DRY_RUN=true
         shift
+        ;;
+      --engine)
+        CLI_ENGINE="$2"
+        shift 2
         ;;
       -h|--help)
         usage
@@ -684,7 +695,7 @@ for p in d:
   echo "[$RESOLVED_NAME] MaxIterations: $max_iter    IterationTimeoutMin: $timeout_min"
 
   local engine
-  engine=$(resolve_engine "$RESOLVED_PATH")
+  engine=$(resolve_engine "$RESOLVED_PATH" "$CLI_ENGINE")
   echo "[$RESOLVED_NAME] WorkerEngine: $engine"
 
   # MCP filtering
