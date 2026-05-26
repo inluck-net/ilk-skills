@@ -19,12 +19,29 @@ When the user asks about the current project (default):
 ```bash
 # macOS / Linux — queue state
 python3 "<skill-root>/ilk-loop/scripts/loop_status.py"
+# Exit codes: 0 = all shipped, 1 = pending work exists (normal), 2 = no plans / invalid project
 ```
 
 ```powershell
 # Windows
 python3 "<skill-root>\ilk-loop\scripts\loop_status.py"
+# Exit codes: 0 = all shipped, 1 = pending work exists (normal), 2 = no plans / invalid project
 ```
+
+Interpret the exit code before proceeding:
+
+- **Exit code 0** — all sub-plans shipped. Report this to the user and stop;
+  no further status checks are needed.
+- **Exit code 1** — active or pending work exists. This is a **normal status
+  outcome, not a tool failure.** Do NOT present it as an error or wrap it in
+  "command failed" language. Continue to the rich dashboard below.
+- **Exit code 2** — no plans directory or invalid project context. Report
+  this to the user; suggest they `cd` into a project with plans or run
+  `/ilk-plan` to create one.
+
+> **Important:** Some shells print "Exit code 1" in the tool result footer.
+> This is informational, not an error. Agents must not re-raise it or skip
+> downstream checks because of it.
 
 Then run the rich progress dashboard:
 
