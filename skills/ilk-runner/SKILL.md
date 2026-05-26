@@ -49,7 +49,9 @@ ilk-runner (this skill)
    `launch.ps1` on Windows) with resolved params.
 6. **Start watchdog**: invoke `ilk-watchdog/scripts/watchdog.sh` (or
    `watchdog.ps1`) in background with default polling.
-7. **Report**: window title, PID, params, watchdog PID, log paths.
+7. **Report**: window title, PID, params, watchdog PID, log paths
+   (loop log from `last-launch.json`, JSONL summary, watchdog activity
+   log, watchdog stdout/stderr log), and copy-ready tail commands.
 
 ### W2. Status check (`/ilk-status`)
 
