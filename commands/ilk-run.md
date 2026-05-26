@@ -123,17 +123,21 @@ Floor: 15. Ceiling: 120.
 
 ## 6. Launch ilk
 
+Pass `project_root` (resolved in section 1) explicitly so the launcher
+never has to walk up from cwd or look up `--project-name` in
+`projects.json`:
+
 ```bash
 # macOS / Linux
 bash "<skill-root>/ilk-launcher/scripts/launch.sh" \
-    --project-path "$(pwd)" \
+    --project-path "$PROJECT_ROOT" \
     --max-iterations <N> --iteration-timeout-min <M>
 ```
 
 ```powershell
 # Windows
 & "<skill-root>\ilk-launcher\scripts\launch.ps1" `
-    -ProjectPath (Get-Location) `
+    -ProjectPath $ProjectRoot `
     -MaxIterations <N> -IterationTimeoutMin <M>
 ```
 
@@ -144,16 +148,23 @@ loop log path. The authoritative field is `log_file`.
 
 ## 7. Start watchdog
 
+Start the watchdog with the same resolved `project_root` so it watches the
+exact loop you just launched. Do not use `--project-name` / `-ProjectName`
+here — name lookups depend on `projects.json` being current, and the
+supervised flow already knows the path:
+
 ```bash
 # macOS / Linux
 bash "<skill-root>/ilk-watchdog/scripts/watchdog.sh" \
-    --project-name <project-name> --poll-interval-sec 300 --max-restarts 5 --detach
+    --project-path "$PROJECT_ROOT" \
+    --poll-interval-sec 300 --max-restarts 5 --detach
 ```
 
 ```powershell
 # Windows
 & "<skill-root>\ilk-watchdog\scripts\watchdog.ps1" `
-    -ProjectName <project-name> -PollMin 5 -MaxRestarts 5 -Detach
+    -ProjectPath $ProjectRoot `
+    -PollMin 5 -MaxRestarts 5 -Detach
 ```
 
 After launch, resolve the watchdog dir to get log paths:
