@@ -20,7 +20,7 @@ python3 "<skill-root>/ilk-loop/scripts/loop_status.py"
 
 ```powershell
 # Windows
-python3 "$HOME\skills\ilk-loop\scripts\loop_status.py"
+python3 "<skill-root>\ilk-loop\scripts\loop_status.py"
 ```
 
 - Exit 0 → all sub-plans shipped. Tell the user "All sub-plans shipped —
@@ -97,7 +97,7 @@ bash "<skill-root>/ilk-launcher/scripts/launch.sh" \
 
 ```powershell
 # Windows
-& "$HOME\skills\ilk-launcher\scripts\launch.ps1" `
+& "<skill-root>\ilk-launcher\scripts\launch.ps1" `
     -ProjectPath (Get-Location) `
     -MaxIterations <N> -IterationTimeoutMin <M>
 ```
@@ -114,7 +114,7 @@ bash "<skill-root>/ilk-watchdog/scripts/watchdog.sh" \
 
 ```powershell
 # Windows
-& "$HOME\skills\ilk-watchdog\scripts\watchdog.ps1" `
+& "<skill-root>\ilk-watchdog\scripts\watchdog.ps1" `
     -ProjectName <project-name> -PollMin 5 -MaxRestarts 5 -Detach
 ```
 

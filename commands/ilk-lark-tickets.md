@@ -88,8 +88,8 @@ This becomes the input to step 6 below.
 
 ## 6. Delegate to /ilk-plan core workflow
 
-Now follow `/ilk-plan` workflow steps 4-7 from
-`~/.cursor/commands/ilk-plan.md`:
+Now follow `/ilk-plan` workflow steps 4-7 (the universal planning
+workflow):
 
 - Step 4: Read existing plans (collision avoidance).
 - Step 5: **Propose grouping (USER APPROVAL REQUIRED)**.

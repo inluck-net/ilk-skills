@@ -23,7 +23,7 @@ python3 "<skill-root>/ilk-loop/scripts/loop_status.py"
 
 ```powershell
 # Windows
-python3 "$HOME\skills\ilk-loop\scripts\loop_status.py"
+python3 "<skill-root>\ilk-loop\scripts\loop_status.py"
 ```
 
 Then run the rich progress dashboard:
@@ -35,7 +35,7 @@ python3 "<skill-root>/ilk-launcher/scripts/status_progress.py"
 
 ```powershell
 # Windows
-python3 "$HOME\skills\ilk-launcher\scripts\status_progress.py"
+python3 "<skill-root>\ilk-launcher\scripts\status_progress.py"
 ```
 
 Print the output verbatim or in a markdown box. Then add agent judgment:
@@ -55,7 +55,7 @@ python3 "<skill-root>/ilk-launcher/scripts/status_all.py"
 
 ```powershell
 # Windows
-python3 "$HOME\skills\ilk-launcher\scripts\status_all.py"
+python3 "<skill-root>\ilk-launcher\scripts\status_all.py"
 ```
 
 Shows a table:
