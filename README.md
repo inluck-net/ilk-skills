@@ -12,9 +12,14 @@ workflows into a single set of skills.
 
 ## Status
 
-**v0.1** — first public-clean release. Repository is private during
-incubation; the API surface is stable enough to drive real overnight
-work and is in production use by the maintainer.
+**v0.5** — Codex parity release. All skills and slash commands install
+under `~/.codex/skills/` and `~/.codex/commands/` alongside Cursor and
+Claude Code; hardcoded `~/.cursor` paths are replaced with a skill-root
+resolver, command prompts are host-neutral, and the launcher gained a
+`worker_engine` config + `--engine` override to select between the
+Claude and (forthcoming) Codex runners. New `ilk-runner` skill plus
+`/ilk-run` and `/ilk-status` slash commands sequence launcher + watchdog
+for supervised unattended runs.
 
 ## Components
 
