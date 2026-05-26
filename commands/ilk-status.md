@@ -14,7 +14,11 @@ strictly read-only.
 
 ## 1. Current-project status (default)
 
-When the user asks about the current project (default):
+When the user asks about the current project (default). Run these steps
+**sequentially** — each depends on the previous result. Do NOT run them in
+parallel.
+
+### 1a. Queue state
 
 ```bash
 # macOS / Linux — queue state
@@ -28,32 +32,38 @@ python3 "<skill-root>\ilk-loop\scripts\loop_status.py"
 # Exit codes: 0 = all shipped, 1 = pending work exists (normal), 2 = no plans / invalid project
 ```
 
-Interpret the exit code before proceeding:
+### 1b. Interpret the exit code before proceeding
 
 - **Exit code 0** — all sub-plans shipped. Report this to the user and stop;
   no further status checks are needed.
 - **Exit code 1** — active or pending work exists. This is a **normal status
   outcome, not a tool failure.** Do NOT present it as an error or wrap it in
-  "command failed" language. Continue to the rich dashboard below.
+  "command failed" language. Continue to step 1c.
 - **Exit code 2** — no plans directory or invalid project context. Report
   this to the user; suggest they `cd` into a project with plans or run
-  `/ilk-plan` to create one.
+  `/ilk-plan` to create one. Do NOT continue to step 1c.
 
 > **Important:** Some shells print "Exit code 1" in the tool result footer.
 > This is informational, not an error. Agents must not re-raise it or skip
 > downstream checks because of it.
 
-Then run the rich progress dashboard:
+### 1c. Rich progress dashboard
+
+Only run this step if step 1b resolved to exit code 1. Pass the project
+root explicitly:
 
 ```bash
 # macOS / Linux
-python3 "<skill-root>/ilk-launcher/scripts/status_progress.py"
+python3 "<skill-root>/ilk-launcher/scripts/status_progress.py" --project-path <project_root>
 ```
 
 ```powershell
 # Windows
-python3 "<skill-root>\ilk-launcher\scripts\status_progress.py"
+python3 "<skill-root>\ilk-launcher\scripts\status_progress.py" -ProjectPath <project_root>
 ```
+
+Replace `<project_root>` with the resolved project path (the directory
+containing `.git` or `.ilk-meta.json`).
 
 Print the output verbatim or in a markdown box. Then add agent judgment:
 
