@@ -125,6 +125,23 @@ def read_last_launch(project_path: Path) -> dict | None:
         return None
 
 
+def _normalize_path_for_compare(p: str | os.PathLike) -> str:
+    """Normalize a path for cross-platform equality comparison.
+
+    JSONL `project` records are written verbatim by whichever loop
+    runner produced them (PowerShell uses backslashes; bash uses
+    forward slashes). We want a query on either platform to match
+    records produced on either platform when they refer to the same
+    logical path.
+
+    Strategy: lowercase + collapse separators to forward slashes.
+    That's sufficient because path equality here is checked against
+    records this runner *itself* wrote — we never need to resolve
+    symlinks or canonicalise drive letters.
+    """
+    return str(p).replace("\\", "/").lower()
+
+
 def read_jsonl_iters(project_path: Path) -> list[dict]:
     """
     Return ALL iteration records for this project across all runs.
@@ -133,8 +150,7 @@ def read_jsonl_iters(project_path: Path) -> list[dict]:
     if not JSONL_LOG.exists():
         return []
     records = []
-    project_path_str = str(project_path)
-    project_path_norm = project_path_str.replace("/", "\\").lower()
+    project_path_norm = _normalize_path_for_compare(project_path)
     with JSONL_LOG.open("r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             line = line.strip()
@@ -144,7 +160,7 @@ def read_jsonl_iters(project_path: Path) -> list[dict]:
                 rec = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            rec_proj = str(rec.get("project", "")).replace("/", "\\").lower()
+            rec_proj = _normalize_path_for_compare(rec.get("project", ""))
             if rec_proj == project_path_norm:
                 records.append(rec)
     return records
