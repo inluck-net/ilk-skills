@@ -22,6 +22,12 @@ work and is in production use by the maintainer.
   master plan + sub-plans with machine-checkable acceptance criteria.
 - **`/ilk`** *(slash command)* — pick the active master and run the
   next pending step.
+- **`/ilk-run`** *(slash command)* — start the loop with its watchdog
+  for unattended runs. Launches ilk in a detached window, then starts
+  the watchdog to auto-restart on clean exits.
+- **`/ilk-status`** *(slash command)* — read-only progress check.
+  Shows queue state and rich dashboard without launching or stopping
+  anything.
 - **`ilk-loop`** *(skill)* — the iterative engine: detached
   PowerShell driver, per-step `local_checks`, `[plan:<slug>#step-N]`
   commit tagging, `last-exit.json` sentinel for IPC.
@@ -33,6 +39,9 @@ work and is in production use by the maintainer.
 - **`ilk-watchdog`** *(skill)* — auto-resume layer. Reads
   `last-exit.json` fast-path, falls back to PID checks, advances the
   MASTER queue via `promote_next_master.py` on clean ship.
+- **`ilk-runner`** *(skill)* — orchestration layer that sequences
+  launcher + watchdog for supervised unattended runs. Owns the
+  workflow guardrails; delegates to launcher and watchdog.
 
 ## Features
 
