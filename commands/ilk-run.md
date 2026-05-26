@@ -54,12 +54,19 @@ python3 "<skill-root>/ilk-loop/scripts/loop_status.py"
 python3 "<skill-root>\ilk-loop\scripts\loop_status.py"
 ```
 
-- Exit 0 → all sub-plans shipped. Tell the user "All sub-plans shipped —
-  nothing to run." and STOP.
-- Exit 1 → pending work exists. The script printed the next sub-plan path.
-  Continue.
-- Exit 2 → no plans dir found. Tell the user to `cd` into a project with
-  plans. STOP.
+`loop_status.py` exit codes are queue-state signals, not error codes —
+non-zero is normal in the no-work and no-context cases:
+
+- **Exit 0** — every sub-plan is `shipped`. There is nothing to launch.
+  Tell the user "All sub-plans shipped — nothing to run." and STOP. Do
+  not start the loop or watchdog.
+- **Exit 1** — work remains (a `pending` or `in-progress` sub-plan).
+  This is the normal success path for `/ilk-run`. The script printed the
+  next sub-plan filename and full path; continue with section 3.
+- **Exit 2** — invalid context (no plans dir resolved for `project_root`).
+  Tell the user to `cd` into a project that has external plans under
+  `~/.ilk-data/projects/<project_key>/plans/` (or legacy `docs/plans/`)
+  and STOP.
 
 ## 3. Read the next pending sub-plan
 
