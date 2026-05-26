@@ -59,6 +59,30 @@ the design rationale in `<vault>/ai-coding-workflow/tool-evaluations/ilk-launche
   mcp-worker.json           ← filtered MCP config passed to the runner
 ```
 
+## Worker engine boundary
+
+The launcher and all ilk skills are **host-agnostic**: they install and
+run identically under Cursor, Claude Code, and Codex. Any host can
+invoke planning (`/ilk-plan`), single-step execution (`/ilk`), status
+(`/ilk-status`), and postmortem (`/ilk-feedback`).
+
+The **detached loop runner** is a different story. Today the only
+runner is `run_ilk_loop_claude.sh` (and its PowerShell twin), which
+spawns `claude -p` per iteration. This means:
+
+| Capability | Cursor | Claude Code | Codex |
+|---|---|---|---|
+| Install skills | yes | yes | yes |
+| Plan / step / status / postmortem | yes | yes | yes |
+| Detached autonomous loop (`/ilk-run`) | yes (via Claude Code CLI) | yes | **not yet** |
+
+Codex users can drive the loop interactively (one step at a time via
+`/ilk`) but cannot yet launch a detached autonomous run. A dedicated
+`run_ilk_loop_codex.sh` runner will close that gap once the Codex CLI
+invocation contract is stable and tested. Until then, the launcher
+will reject `--engine codex` with a clear message rather than silently
+routing to Claude.
+
 ## State directory
 
 All per-project runtime state (PID files, launch metadata, MCP worker
