@@ -322,6 +322,58 @@ def render(
     return "\n".join(out)
 
 
+# ---------- JSON output ------------------------------------------------------
+
+
+def build_json(
+    project_name: str,
+    project_root: Path,
+    plans_dir: Path,
+    master_name: str,
+    rows: list[dict],
+    pace_min: float | None,
+    repos: list[Path],
+    step_commit_count: int,
+) -> dict[str, Any]:
+    """Build the machine-readable JSON structure for --json mode."""
+    cur = find_current_in_progress(rows)
+    current_block: dict[str, Any] | None = None
+    if cur:
+        current_block = {
+            "slug": cur["slug"],
+            "status": cur["status"],
+            "current_step": cur["current"],
+            "estimated_steps": cur["total"],
+        }
+
+    shipped = sum(1 for r in rows if r["status"] == "shipped")
+    in_prog = sum(1 for r in rows if r["status"] == "in-progress")
+    pending = sum(1 for r in rows if r["status"] in ("pending", ""))
+    remaining = sum(max(0, r["total"] - r["current"]) for r in rows if r["status"] != "shipped")
+    eta_min = pace_min * remaining if pace_min is not None and remaining > 0 else None
+
+    return {
+        "project": {
+            "name": project_name,
+            "root": str(project_root),
+        },
+        "plans": {
+            "dir": str(plans_dir),
+            "master": master_name,
+        },
+        "current": current_block,
+        "summary": {
+            "shipped": shipped,
+            "in_progress": in_prog,
+            "pending": pending,
+            "remaining_steps": remaining,
+            "pace_min_per_step": round(pace_min, 1) if pace_min is not None else None,
+            "eta_minutes": round(eta_min, 1) if eta_min is not None else None,
+        },
+        "rows": rows,
+    }
+
+
 # ---------- main -------------------------------------------------------------
 
 
@@ -335,6 +387,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Rich single-project ilk progress dashboard.")
     parser.add_argument("-ProjectPath", "--project-path", dest="project_path", default=None)
     parser.add_argument("-ProjectName", "--project-name", dest="project_name", default=None)
+    parser.add_argument("--json", dest="json_mode", action="store_true",
+                        help="Emit machine-readable JSON instead of the human-readable dashboard.")
     args = parser.parse_args()
 
     if args.project_path:
@@ -361,16 +415,29 @@ def main() -> int:
     timestamps = collect_step_commit_timestamps(repos)
     pace_min = compute_pace_min_per_step(timestamps, PACE_WINDOW)
 
-    print(render(
-        project_name=project_name,
-        project_root=project_root,
-        plans_dir=plans_dir,
-        master_name=master.name,
-        rows=rows,
-        pace_min=pace_min,
-        repos=repos,
-        step_commit_count=len(timestamps),
-    ))
+    if args.json_mode:
+        data = build_json(
+            project_name=project_name,
+            project_root=project_root,
+            plans_dir=plans_dir,
+            master_name=master.name,
+            rows=rows,
+            pace_min=pace_min,
+            repos=repos,
+            step_commit_count=len(timestamps),
+        )
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    else:
+        print(render(
+            project_name=project_name,
+            project_root=project_root,
+            plans_dir=plans_dir,
+            master_name=master.name,
+            rows=rows,
+            pace_min=pace_min,
+            repos=repos,
+            step_commit_count=len(timestamps),
+        ))
     return 0
 
 
