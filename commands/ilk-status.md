@@ -107,6 +107,25 @@ If idle with pending work: "ilk stopped; run `/ilk-run` to restart."
 If running with no pending work: "all shipped; watchdog will exit cleanly."
 If running with pending work: report progress and ETA.
 
+### PID inspection (only if needed)
+
+Avoid `ps ... | tail` pipelines — they break on short-lived processes and
+are fragile across shells. Use explicit no-pipeline commands:
+
+```bash
+# macOS / Linux — check if PID is alive with elapsed time
+ps -p "$PID" -o pid=,etime=,command=
+```
+
+```powershell
+# Windows
+Get-Process -Id <pid> -ErrorAction SilentlyContinue | Select-Object Id, StartTime, ProcessName
+```
+
+Only inspect PIDs when the script output is ambiguous (e.g. state shows
+`running` but no recent progress). Prefer the script output over manual
+process checks.
+
 ## 4. Boundary rules
 
 This command is **read-only**. It must NOT:
