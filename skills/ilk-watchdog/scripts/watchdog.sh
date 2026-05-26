@@ -638,6 +638,74 @@ relaunch manually if it still makes sense." 31
   done
 }
 
+# ----- Detach helper ----------------------------------------------------------
+
+detach_watchdog() {
+  local project="$1"
+  local proj_name="$2"
+
+  if ! command -v screen &>/dev/null; then
+    echo "ERROR: 'screen' is not installed. Install it (brew install screen) or run without --detach." >&2
+    exit 1
+  fi
+
+  # Build the foreground command (re-invoke without --detach)
+  local self="${BASH_SOURCE[0]}"
+  local cmd="bash '$self' --project-path '$project'"
+  if [[ -n "$CLI_POLL_INTERVAL_SEC" ]]; then
+    cmd="$cmd --poll-interval-sec '$CLI_POLL_INTERVAL_SEC'"
+  fi
+  if [[ -n "$CLI_MAX_RESTARTS" ]]; then
+    cmd="$cmd --max-restarts '$CLI_MAX_RESTARTS'"
+  fi
+
+  local session_name="ilk-watchdog-$(basename "$project")"
+
+  # Resolve watchdog PID file path so we can wait for it
+  local watchdog_dir
+  watchdog_dir=$(get_ilk_watchdog_dir "$project")
+  if [[ -z "$watchdog_dir" ]]; then
+    echo "ERROR: cannot resolve external watchdog dir for $project." >&2
+    exit 1
+  fi
+  mkdir -p "$watchdog_dir"
+  local pid_file="${watchdog_dir}/watchdog.pid"
+  local log_file="${watchdog_dir}/watchdog.log"
+
+  # Remove stale PID file if the process is dead
+  if [[ -f "$pid_file" ]]; then
+    local existing_pid
+    existing_pid=$(tr -d '[:space:]' < "$pid_file")
+    if [[ -n "$existing_pid" ]] && ! test_process_alive "$existing_pid"; then
+      rm -f "$pid_file"
+    fi
+  fi
+
+  # Launch in screen
+  screen -dmS "$session_name" bash -c "$cmd >> '$log_file' 2>&1"
+
+  # Wait up to 10s for PID file to appear
+  local waited=0
+  while [[ $waited -lt 10 ]]; do
+    if [[ -f "$pid_file" ]]; then
+      local new_pid
+      new_pid=$(tr -d '[:space:]' < "$pid_file")
+      if [[ -n "$new_pid" ]] && test_process_alive "$new_pid"; then
+        echo "Watchdog detached. screen session: $session_name"
+        echo "PID: $new_pid"
+        echo "Log: $log_file"
+        echo "Activity log: ${watchdog_dir}/activity.log"
+        exit 0
+      fi
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  echo "ERROR: watchdog PID file not found after 10s. Check screen session: screen -r $session_name" >&2
+  exit 1
+}
+
 # ----- Main ------------------------------------------------------------------
 
 main() {
@@ -672,6 +740,12 @@ main() {
   fi
   if [[ -n "$CLI_MAX_RESTARTS" ]]; then
     MAX_RESTARTS="$CLI_MAX_RESTARTS"
+  fi
+
+  # Detach mode: launch in screen and exit
+  if [[ "$CLI_DETACH" == true ]]; then
+    detach_watchdog "$RESOLVED_PATH" "$RESOLVED_NAME"
+    return
   fi
 
   run_watchdog_loop "$RESOLVED_PATH" "$RESOLVED_NAME" "$POLL_INTERVAL_SEC" "$MAX_RESTARTS"
