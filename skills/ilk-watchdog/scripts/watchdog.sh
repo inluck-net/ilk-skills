@@ -31,6 +31,7 @@ CLI_PROJECT_PATH=""
 CLI_PROJECT_NAME=""
 CLI_POLL_INTERVAL_SEC=""
 CLI_MAX_RESTARTS=""
+CLI_DETACH=false
 
 # Resolved values
 RESOLVED_PATH=""
@@ -337,6 +338,7 @@ Options:
   --project-name NAME          Look up path in projects.json.
   --poll-interval-sec N        Polling interval in seconds. Default 60.
   --max-restarts N             Hard cap on consecutive relaunches. Default 5.
+  --detach                     Start watchdog in a detached screen session and exit.
   -h, --help                   Show this help and exit.
 EOF
 }
@@ -359,6 +361,10 @@ parse_args() {
       --max-restarts)
         CLI_MAX_RESTARTS="$2"
         shift 2
+        ;;
+      --detach)
+        CLI_DETACH=true
+        shift
         ;;
       -h|--help)
         usage
