@@ -104,12 +104,15 @@ bash "<skill-root>/ilk-launcher/scripts/launch.sh" \
 
 Report: window title, PID, resolved params, rationale.
 
+After launch, read `<external-launcher-dir>/last-launch.json` to get the
+loop log path. The authoritative field is `log_file`.
+
 ## 6. Start watchdog
 
 ```bash
 # macOS / Linux
 bash "<skill-root>/ilk-watchdog/scripts/watchdog.sh" \
-    --project-name <project-name> --poll-interval-sec 300 --max-restarts 5 &
+    --project-name <project-name> --poll-interval-sec 300 --max-restarts 5 --detach
 ```
 
 ```powershell
@@ -118,11 +121,23 @@ bash "<skill-root>/ilk-watchdog/scripts/watchdog.sh" \
     -ProjectName <project-name> -PollMin 5 -MaxRestarts 5 -Detach
 ```
 
-Report: watchdog PID, polling interval, max restarts, activity log path.
+After launch, resolve the watchdog dir to get log paths:
+
+```bash
+# macOS / Linux
+python3 "<skill-root>/ilk-loop/scripts/ilk_paths.py" --start "$(pwd)" --where
+```
+
+The watchdog writes two logs:
+- `<external-watchdog-dir>/activity.log` — structured activity log
+- `<external-watchdog-dir>/watchdog.log` — stdout/stderr when using `--detach`
+
+Report: watchdog PID, polling interval, max restarts, both log paths.
 
 ## 7. Summary
 
-Print a single summary block:
+Read `last-launch.json` and resolve watchdog dir, then print a single
+summary block:
 
 ```
 ilk launched: <project-name>
@@ -131,7 +146,17 @@ ilk launched: <project-name>
   Iterations: <max-iterations>
   Timeout:    <timeout-min> min
   Watchdog:   PID <watchdog-pid>, poll every <poll-min> min, max <max-restarts> restarts
-  Activity:   ~/.ilk-data/projects/<key>/runtime/watchdog/activity.log
+  Logs:
+    Loop log:      <last-launch.json .log_file>
+    Loop JSONL:    <skill-root>/ilk-loop/logs/.ilk-loop.log
+    Watchdog act:  <external-watchdog-dir>/activity.log
+    Watchdog out:  <external-watchdog-dir>/watchdog.log
+  Tail (macOS/Linux):
+    tail -f "<loop-log>"
+    tail -f "<watchdog-activity-log>"
+  Tail (Windows):
+    Get-Content "<loop-log>" -Wait
+    Get-Content "<watchdog-activity-log>" -Wait
   Plan:       <next-sub-plan> (step <current>/<total>)
 ```
 
