@@ -1,8 +1,9 @@
 # ilk-skills
 
-A staged execution loop toolkit for [Cursor](https://cursor.com) and
-[Claude Code](https://claude.com/code), unifying Windows and macOS
-agent workflows into a single set of skills.
+A staged execution loop toolkit for [Cursor](https://cursor.com),
+[Claude Code](https://claude.com/code), and
+[Codex](https://openai.com/codex), unifying Windows and macOS agent
+workflows into a single set of skills.
 
 > *ilk* — "of that kind". A kind of plan-loop: you decompose work into
 > a sequenced **plan**, the loop drives a fresh AI session per step,
@@ -64,17 +65,17 @@ work and is in production use by the maintainer.
   for the convention and a worked example.
 - **Cross-machine sync via Git** — `install.ps1` (Windows junctions)
   and `install.sh` (macOS / Linux symlinks) populate
-  `~/.cursor/skills/`, `~/.claude/skills/`, and the matching
+  `~/.cursor/skills/`, `~/.claude/skills/`, `~/.codex/skills/`, and the matching
   `commands/` directories straight from a clone of this repo. Push
   on one machine, pull on the other, re-run the installer, done.
 
 ## Platforms
 
-| Platform | Cursor | Claude Code | Installer |
-|---|---|---|---|
-| Windows 10 / 11    | yes | yes | `install.ps1` (junctions for skills, copy-fallback for commands unless Developer Mode is on) |
-| macOS              | yes | yes | `install.sh` (full symlink set including bash entry points) |
-| Linux              | yes | yes | `install.sh` |
+| Platform | Cursor | Claude Code | Codex | Installer |
+|---|---|---|---|---|
+| Windows 10 / 11    | yes | yes | yes | `install.ps1` (junctions for skills, copy-fallback for commands unless Developer Mode is on) |
+| macOS              | yes | yes | yes | `install.sh` (full symlink set including bash entry points) |
+| Linux              | yes | yes | yes | `install.sh` |
 
 ## Dependencies
 
