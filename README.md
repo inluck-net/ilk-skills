@@ -153,10 +153,16 @@ installer places identical files under `~/.codex/skills/`.
 ```
 skills/         per-skill SKILL.md + scripts
 commands/       slash command bodies for Cursor, Claude Code, and Codex (ilk*.md)
+docs/           repo-level documentation
+docs/standards/ external standards this repo follows + compliance table
 install.ps1     Windows installer
 install.sh      macOS / Linux installer
 tools/          manual, dry-run-by-default utilities (e.g. plan migration)
 ```
+
+See [`docs/standards/`](docs/standards/agentskills-io.md) for the
+agentskills.io references this repo tracks and the current per-skill
+compliance status.
 
 ## License
 
