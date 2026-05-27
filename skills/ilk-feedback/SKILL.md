@@ -8,7 +8,8 @@ description: >-
   "/ilk-feedback", "postmortem", "debrief", "what went wrong", "why
   did ilk stop", "复盘", "ilk 反馈", "ilk 怎么停了", or after a ilk
   window exits. Works across Cursor, Claude Code, and Codex.
-model: haiku
+metadata:
+  preferred_model: haiku
 ---
 
 # ilk-feedback — postmortem skill for ilk-loop runs

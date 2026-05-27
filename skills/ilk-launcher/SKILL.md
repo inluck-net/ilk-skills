@@ -6,7 +6,8 @@ description: >-
   "ilk 状态", "/ilk-launch", "/ilk-status-all", "/ilk-stop". Works
   across Cursor, Claude Code, and Codex. Companion to ilk-loop —
   spawns/observes `run_ilk_loop_claude.ps1`, never drives the loop itself.
-model: haiku
+metadata:
+  preferred_model: haiku
 ---
 
 # ilk-launcher — independent-window launcher for ilk-loop
