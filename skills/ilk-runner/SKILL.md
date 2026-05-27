@@ -14,6 +14,10 @@ A thin orchestration layer that sequences ilk-launcher and ilk-watchdog
 to start a supervised ilk run, or shows progress status. Owns the
 workflow guardrails; never reimplements launcher or watchdog logic.
 
+> **`ilk-runner` has no `scripts/` directory.** All scripts live in sibling
+> skills: `ilk-loop/scripts/`, `ilk-launcher/scripts/`, `ilk-watchdog/scripts/`.
+> Do not resolve paths under `ilk-runner/scripts/` — they do not exist.
+
 ## When to use
 
 - User says: "start ilk with watchdog", "launch supervised ilk",
