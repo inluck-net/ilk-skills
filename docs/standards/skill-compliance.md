@@ -36,13 +36,28 @@ amending the Notes column when it ships.
 | `agentskills-progressive-disclosure` | Progressive disclosure |
 | `agentskills-directory-conventions` | Progressive disclosure (support-dir naming), Notes |
 
-## How to update this table
+## Update policy
 
-When a sub-plan changes a skill's state:
+This table is intentionally close to the code so it stays accurate. It
+must be updated whenever any of the following happens:
+
+- A sub-plan listed in [Sub-plan ownership](#sub-plan-ownership) ships a
+  step that changes a skill's state for one of its owned columns.
+- A new skill is added under `skills/` — append a row with each column
+  set to `gap` / `ok` / `n/a` as appropriate.
+- A skill is removed or renamed — update or delete its row in the same
+  commit as the rename.
+- A new standard is adopted in this repo — add a companion file under
+  `docs/standards/` (see `agentskills-io.md` → "Future standards"), then
+  extend this table with the new columns or link out to a sibling table
+  in the new file.
+
+When you update a row:
 
 1. Edit the relevant row(s) in the table above, flipping `gap` to `ok`
    (or vice versa) and refreshing the Notes column with the action taken
    and the commit short-hash.
 2. Bump the snapshot date at the top.
 3. Commit the change as part of the same step that fixed the underlying
-   issue, not as a separate "update compliance table" commit.
+   issue, not as a separate "update compliance table" commit. This keeps
+   the audit trail aligned with the code change.
