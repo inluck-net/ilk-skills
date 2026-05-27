@@ -9,6 +9,11 @@ watchdog", "launch supervised ilk", `/ilk-run`, "跑 ilk 并守着",
 Do NOT inspect `docs/plans/` manually as the source of truth. Always use
 the external-plan-aware scripts.
 
+> **`ilk-run` is a command, not a skill root.** There is no
+> `~/.claude/skills/ilk-run/scripts` (or host-equivalent) directory.
+> All scripts referenced here live in sibling skills:
+> `ilk-loop/scripts/`, `ilk-launcher/scripts/`, `ilk-watchdog/scripts/`.
+
 ## 1. Resolve project context
 
 Resolve the project once with `ilk_paths.py` and reuse the result for every
