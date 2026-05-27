@@ -27,9 +27,10 @@ workflow guardrails; never reimplements launcher or watchdog logic.
 ```
 ilk-runner (this skill)
   ├── /ilk-run  → delegates to:
-  │     ├── ilk-loop/scripts/loop_status.py   (queue check)
-  │     ├── ilk-launcher/scripts/launch.sh    (spawn window)
-  │     └── ilk-watchdog/scripts/watchdog.sh  (auto-restart)
+  │     ├── ilk-loop/scripts/loop_status.py        (queue check)
+  │     ├── ilk-loop/scripts/promote_next_master.py (queue promotion)
+  │     ├── ilk-launcher/scripts/launch.sh          (spawn window)
+  │     └── ilk-watchdog/scripts/watchdog.sh        (auto-restart)
   └── /ilk-status → delegates to:
         ├── ilk-loop/scripts/loop_status.py       (queue state)
         └── ilk-launcher/scripts/status_progress.py (rich dashboard)
@@ -39,17 +40,30 @@ ilk-runner (this skill)
 
 ### W1. Supervised launch (`/ilk-run`)
 
-1. **Check queue**: run `loop_status.py`. If all shipped, report and stop.
-2. **Read sub-plan**: understand remaining steps, risk signals.
-3. **Read postmortems**: adjust launch params from history (see
+1. **Check queue**: run `loop_status.py`. Apply the queue-state decision
+   table before proceeding:
+   - All shipped, no queued masters → report "nothing to run" and STOP.
+   - Active master has pending/in-progress work → proceed to step 2.
+   - Active master all shipped + queued master exists → promote (see
+     below), then proceed.
+   - No active master + queued master exists → promote (see below),
+     then proceed.
+   - Multiple active masters → report queue integrity issue and STOP.
+2. **Promote if needed**: run
+   `promote_next_master.py --project "$PROJECT_ROOT"` (or PowerShell
+   equivalent). Inspect JSON output for `"promoted": true`. If promotion
+   fails, treat it as a hard stop. After promotion, re-run
+   `loop_status.py` to confirm the newly active master has pending work.
+3. **Read sub-plan**: understand remaining steps, risk signals.
+4. **Read postmortems**: adjust launch params from history (see
    `ilk-launcher/SKILL.md` § "Agent decision guide").
-4. **Pick params**: `MaxIterations` and `IterationTimeoutMin` based on
+5. **Pick params**: `MaxIterations` and `IterationTimeoutMin` based on
    remaining work + step character.
-5. **Launch ilk**: invoke `ilk-launcher/scripts/launch.sh` (or
+6. **Launch ilk**: invoke `ilk-launcher/scripts/launch.sh` (or
    `launch.ps1` on Windows) with resolved params.
-6. **Start watchdog**: invoke `ilk-watchdog/scripts/watchdog.sh --detach`
+7. **Start watchdog**: invoke `ilk-watchdog/scripts/watchdog.sh --detach`
    (or `watchdog.ps1 -Detach` on Windows) with default polling.
-7. **Report**: window title, PID, params, watchdog PID, log paths
+8. **Report**: window title, PID, params, watchdog PID, log paths
    (loop log from `last-launch.json`, JSONL summary, watchdog activity
    log, watchdog stdout/stderr log), and copy-ready tail commands.
 
@@ -63,6 +77,12 @@ ilk-runner (this skill)
 
 - Always use `loop_status.py` — never inspect `docs/plans/` manually.
 - Always use external-plan-aware scripts from `~/.ilk-data`.
+- Use `promote_next_master.py` for queue advancement — do not hand-edit
+  master plan frontmatter.
+- If the active master is fully shipped but queued masters exist, promote
+  before launching. Never launch against a fully shipped active master.
+- Multiple active masters are a hard stop — report the issue, do not
+  launch.
 - `/ilk-status` is read-only: no launching, stopping, or editing.
 - Preserve existing launcher/watchdog defaults unless user specifies
   overrides.
