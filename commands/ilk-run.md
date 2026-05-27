@@ -68,6 +68,40 @@ non-zero is normal in the no-work and no-context cases:
   `~/.ilk-data/projects/<project_key>/plans/` (or legacy `docs/plans/`)
   and STOP.
 
+### Queue-state decision table
+
+When the active master is fully shipped but queued masters remain,
+`/ilk-run` must promote the next queued master before launching. Do NOT
+launch against a fully shipped active master — the worker will exit
+immediately.
+
+| Queue state | Behavior |
+|---|---|
+| Active master has pending/in-progress work | Launch current active master. |
+| Active master all shipped + queued master exists | Run `promote_next_master.py`, re-run `loop_status.py`, then launch. |
+| No active master + queued master exists | Run `promote_next_master.py`, re-run `loop_status.py`, then launch. |
+| All masters shipped + no queued | Report nothing to run. STOP. |
+| Multiple active masters | Report queue integrity issue. STOP. Do not launch. |
+
+Promotion is done via `promote_next_master.py`:
+
+```bash
+# macOS / Linux
+python3 "<skill-root>/ilk-loop/scripts/promote_next_master.py" --project "$PROJECT_ROOT"
+```
+
+```powershell
+# Windows
+python3 "<skill-root>\ilk-loop\scripts\promote_next_master.py" --project $ProjectRoot
+```
+
+Inspect the JSON output for `"promoted": true` before proceeding. If
+promotion fails, treat it as a hard stop — do not attempt to launch.
+
+**After promotion, always re-run `loop_status.py`** to confirm the newly
+active master has pending work before continuing to section 3. Do not
+skip this re-check.
+
 ## 3. Read the next pending sub-plan
 
 Read the sub-plan file path printed by `loop_status.py` to understand:
