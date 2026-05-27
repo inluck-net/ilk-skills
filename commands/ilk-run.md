@@ -14,20 +14,26 @@ the external-plan-aware scripts.
 > All scripts referenced here live in sibling skills:
 > `ilk-loop/scripts/`, `ilk-launcher/scripts/`, `ilk-watchdog/scripts/`.
 
+`<skill-root>` below means the installed skills base directory —
+`~/.claude/skills/`, `~/.cursor/skills/`, or `~/.codex/skills/` depending
+on the host agent. It is **not** `ilk-run` itself.
+
 ## 1. Resolve project context
 
-Resolve the project once with `ilk_paths.py` and reuse the result for every
-later step. Do not rely on `$(pwd)` / `(Get-Location)` as the launch project
-— always use the `project_root` returned here.
+Resolve the project once with `ilk_paths.py` (owned by `ilk-loop`) and reuse
+the result for every later step. Do not rely on `$(pwd)` / `(Get-Location)`
+as the launch project — always use the `project_root` returned here.
 
 ```bash
 # macOS / Linux
 python3 "<skill-root>/ilk-loop/scripts/ilk_paths.py" --start .
+# e.g. python3 ~/.claude/skills/ilk-loop/scripts/ilk_paths.py --start .
 ```
 
 ```powershell
 # Windows
 python3 "<skill-root>\ilk-loop\scripts\ilk_paths.py" --start .
+# e.g. python3 "$env:USERPROFILE\.claude\skills\ilk-loop\scripts\ilk_paths.py" --start .
 ```
 
 The script prints a JSON object. Extract at minimum:
