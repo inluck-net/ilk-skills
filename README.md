@@ -75,7 +75,7 @@ for supervised unattended runs.
   treats the whole umbrella as **one** project. A single MASTER drives
   cross-repo batches; each sub-plan declares `repo: <member>` and the
   loop cd's into that member for commits, local_checks, CI waits, and
-  ship-report generation. See `skills/ilk-loop/docs/meta-projects.md`
+  ship-report generation. See `skills/ilk-loop/references/meta-projects.md`
   for the convention and a worked example.
 - **Cross-machine sync via Git** — `install.ps1` (Windows junctions)
   and `install.sh` (macOS / Linux symlinks) populate

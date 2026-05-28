@@ -24,7 +24,7 @@ Read these two files in parallel:
    state machine, commit-message rules. Pay particular attention to
    "Standard workflows" → workflow #5 ("Generate plans from a task
    description").
-2. `<skill-root>/ilk-loop/docs/decomposition-principles.md` — how
+2. `<skill-root>/ilk-loop/references/decomposition-principles.md` — how
    to slice a goal so the loop can actually drive it. This is the
    rubric for step 5 (grouping proposal) and step 6 (writing the
    files). Do not skip it.

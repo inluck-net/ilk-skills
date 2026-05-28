@@ -44,7 +44,7 @@ Group-by-group runtime state required + known external blockers.
 after each step's commit. By default they are compile-only; the
 sub-plan body should add at least one runtime smoke (live API call,
 integration test, browser assertion) per the
-[Decomposition Principles](../docs/decomposition-principles.md) doc.
+[Decomposition Principles](../references/decomposition-principles.md) doc.
 
 What `local_checks` covers vs what manual verification covers:
 

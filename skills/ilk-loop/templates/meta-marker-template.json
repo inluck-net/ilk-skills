@@ -1,5 +1,5 @@
 {
-  "_comment": "ilk-skills meta-project marker. Drop this file at the root of a 'polyrepo' parent directory that itself is not a git repo but contains several sibling git repos that ship together as one logical product. ilk-loop will treat this directory as the project root, derive project_key from its absolute path, and store plans/runtime/logs under ~/.ilk-data/projects/<key>/. Each sub-plan declares repo: <member-name> to route its commits/CI/ship into the right member repo. See ilk-loop/docs/meta-projects.md for the full convention.",
+  "_comment": "ilk-skills meta-project marker. Drop this file at the root of a 'polyrepo' parent directory that itself is not a git repo but contains several sibling git repos that ship together as one logical product. ilk-loop will treat this directory as the project root, derive project_key from its absolute path, and store plans/runtime/logs under ~/.ilk-data/projects/<key>/. Each sub-plan declares repo: <member-name> to route its commits/CI/ship into the right member repo. See ilk-loop/references/meta-projects.md for the full convention.",
 
   "name": "<short project name; e.g. myproj>",
   "repos": [

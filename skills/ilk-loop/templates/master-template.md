@@ -76,7 +76,7 @@ delete this section.
 
 ## Execution rationale
 
-Why this order. Reference [decomposition-principles.md](../skills/ilk-loop/docs/decomposition-principles.md)
+Why this order. Reference [decomposition-principles.md](../skills/ilk-loop/references/decomposition-principles.md)
 when justifying group boundaries (principle 4).
 
 ## Cross-workstream dependencies
