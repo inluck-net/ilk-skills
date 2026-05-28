@@ -196,6 +196,22 @@ get_project_key() {
   basename "$project_path"
 }
 
+get_external_logs_dir() {
+  local project_path="$1"
+  local resolver
+  resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
+  if [[ ! -f "$resolver" ]]; then
+    echo ""
+    return
+  fi
+  local json_out
+  if json_out=$(python3 "$resolver" --start "$project_path" 2>/dev/null) && [[ -n "$json_out" ]]; then
+    python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('external_logs_dir') or '')" <<<"$json_out"
+  else
+    echo ""
+  fi
+}
+
 read_project_config() {
   local project_path="$1"
   local ext_plans
@@ -484,11 +500,20 @@ start_ilk_window() {
     runner_cmd="$runner_cmd --mcp-config-path \"$mcp_config_path\""
   fi
 
-  # Build log path
-  local project_key run_id log_file log_dir
+  # Build log path — prefer external logs dir, fall back to legacy skill-root
+  local project_key run_id log_file log_dir jsonl_log legacy_log_dir
   project_key=$(get_project_key "$project_path")
   run_id="$(date +%Y%m%d-%H%M%S)"
-  log_dir="${_SKILL_ROOT}/ilk-loop/logs/launcher"
+  local ext_logs
+  ext_logs=$(get_external_logs_dir "$project_path")
+  legacy_log_dir="${_SKILL_ROOT}/ilk-loop/logs"
+  if [[ -n "$ext_logs" ]]; then
+    log_dir="${ext_logs}/launcher"
+    jsonl_log="${ext_logs}/.ilk-loop.log"
+  else
+    log_dir="${legacy_log_dir}/launcher"
+    jsonl_log="${legacy_log_dir}/.ilk-loop.log"
+  fi
   mkdir -p "$log_dir"
   log_file="${log_dir}/${project_key}-${run_id}.log"
 
@@ -502,6 +527,7 @@ start_ilk_window() {
       echo "  McpConfigPath: $mcp_config_path"
     fi
     echo "  LogFile: $log_file"
+    echo "  JsonlLog: $jsonl_log"
     local pid_file
     pid_file=$(get_pid_file_path "$project_path")
     echo "  PID file: $pid_file"
@@ -527,8 +553,13 @@ start_ilk_window() {
   echo "$pgid" > "$pid_file"
 
   # Write last-launch.json
-  local meta_path
+  local meta_path per_run_dir
   meta_path=$(get_launch_meta_path "$project_path")
+  if [[ -n "$ext_logs" ]]; then
+    per_run_dir="${ext_logs}/runs/${run_id}"
+  else
+    per_run_dir="${legacy_log_dir}/runs/${run_id}"
+  fi
   python3 -c "
 import json
 d = {
@@ -542,6 +573,9 @@ d = {
     'loop_script': '$loop_script',
     'mcp_config_path': '$mcp_config_path',
     'log_file': '$log_file',
+    'log_dir': '$per_run_dir',
+    'jsonl_log': '$jsonl_log',
+    'legacy_log_dir': '$legacy_log_dir',
 }
 print(json.dumps(d, indent=2))
 " > "$meta_path"
@@ -549,7 +583,7 @@ print(json.dumps(d, indent=2))
   echo "[$project_name] launched. PID $pgid."
   echo "[$project_name] PID file: $pid_file"
   echo "[$project_name] Log file: $log_file"
-  echo "[$project_name] loop JSONL log: ${_SKILL_ROOT}/ilk-loop/logs"
+  echo "[$project_name] JSONL log: $jsonl_log"
 }
 
 # ----- Argument parsing ------------------------------------------------------
