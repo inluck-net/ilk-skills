@@ -399,7 +399,7 @@ Blacklist (block): $($BlacklistClasses -join ', ')
         if ($sentinel.state -eq 'running') {
           # Loop is alive per sentinel. Verify pid if we have one.
           if ($sentinel.pid -and -not (Test-ProcessAlive -ProcessId ([int]$sentinel.pid))) {
-            Write-Log ("sentinel says running but pid {0} is dead — treating as crash." -f $sentinel.pid)
+            Write-Log ("sentinel says running but pid {0} is dead — treating as stale-running." -f $sentinel.pid)
             $sentinelTerminal = $true
           } else {
             if (-not $sawAliveOnce) {
