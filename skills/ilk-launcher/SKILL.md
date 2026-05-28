@@ -389,7 +389,8 @@ stops the loop. Reads the PID file from the external launcher dir
 so `claude` and its children die with the wrapper), deletes the PID file.
 After stopping, scans for orphaned worker processes (claude, gtimeout,
 tee, stream renderer) that share the same run ID or project path and
-terminates them.
+terminates them. Reports the repo's dirty-tree state (tracked and
+untracked files) as a read-only summary.
 
 To stop only the watchdog without touching ilk itself, use the
 watchdog's own script directly:

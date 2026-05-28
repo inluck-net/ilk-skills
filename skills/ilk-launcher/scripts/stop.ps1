@@ -185,6 +185,19 @@ function Stop-Project {
   if ($launcherDir) {
     Kill-Orphans -ProjectPath $Path -StoppedPid $targetPid -LauncherDir $launcherDir -Name $Name
   }
+
+  # Report dirty tree state (read-only, does not mutate)
+  Write-Host "[$Name] repo state:" -ForegroundColor Cyan
+  try {
+    $dirty = & git -C $Path status --short 2>$null
+    if (-not $dirty) {
+      Write-Host "[$Name]   (clean)" -ForegroundColor Gray
+    } else {
+      foreach ($line in $dirty) { Write-Host "[$Name]   $line" -ForegroundColor Yellow }
+    }
+  } catch {
+    Write-Host "[$Name]   (not a git repo)" -ForegroundColor Gray
+  }
 }
 
 if ($All) {

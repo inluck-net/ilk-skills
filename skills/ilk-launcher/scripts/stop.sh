@@ -265,6 +265,18 @@ stop_project() {
   if [[ -n "$launcher_dir" ]]; then
     kill_orphans "$path" "$target_pid" "$launcher_dir" "$name"
   fi
+
+  # Report dirty tree state (read-only, does not mutate)
+  echo "[$name] repo state:" >&2
+  local dirty
+  dirty=$(cd "$path" && git status --short 2>/dev/null) || dirty=""
+  if [[ -z "$dirty" ]]; then
+    echo "[$name]   (clean)" >&2
+  else
+    echo "$dirty" | while IFS= read -r dline; do
+      echo "[$name]   $dline" >&2
+    done
+  fi
 }
 
 # ----- Argument parsing ------------------------------------------------------
