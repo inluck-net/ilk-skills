@@ -242,6 +242,47 @@ def test_read_jsonl_iters_empty_when_no_files() -> None:
         _check("returns empty list", result == [], f"got {result}")
 
 
+# ── QC regression guards ────────────────────────────────────────────────────
+
+def test_jsonl_candidates_never_legacy_only() -> None:
+    """_jsonl_log_candidates must never return only the legacy skill-root path.
+
+    This is the QC guard for the external-first log discovery contract.
+    If ilk_paths is available, the external dir candidate MUST appear.
+    If only legacy path is returned, the function has regressed to
+    single-source hardcoding.
+    """
+    print("test_jsonl_candidates_never_legacy_only:")
+    with tempfile.TemporaryDirectory() as td:
+        ext_dir = Path(td) / "ext-logs"
+        ext_dir.mkdir()
+        fake_key = "test-key"
+
+        with patch.object(collect, "external_logs_dir", lambda k: ext_dir / k):
+            with patch.object(collect, "project_key", lambda _p: fake_key):
+                candidates = collect._jsonl_log_candidates(Path("/fake/proj"))
+                legacy = collect.LOOP_LOG_DIR / ".ilk-loop.log"
+                external = ext_dir / fake_key / ".ilk-loop.log"
+                _check("candidates is not just legacy",
+                       len(candidates) > 1 or candidates[0] != legacy,
+                       f"candidates: {[str(c) for c in candidates]}")
+                _check("external dir candidate present when ilk_paths available",
+                       external in candidates,
+                       f"expected {external} in {candidates}")
+
+
+def test_jsonl_candidates_without_ilk_paths() -> None:
+    """_jsonl_log_candidates falls back to legacy when ilk_paths unavailable."""
+    print("test_jsonl_candidates_without_ilk_paths:")
+    with patch.object(collect, "external_logs_dir", None):
+        with patch.object(collect, "project_key", None):
+            candidates = collect._jsonl_log_candidates(Path("/fake/proj"))
+            legacy = collect.LOOP_LOG_DIR / ".ilk-loop.log"
+            _check("legacy path present as fallback",
+                   legacy in candidates,
+                   f"expected {legacy} in {candidates}")
+
+
 # ── runner ───────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -258,6 +299,8 @@ def main() -> int:
         test_resolve_iter_log_external_root,
         test_read_jsonl_iters_deduplication,
         test_read_jsonl_iters_empty_when_no_files,
+        test_jsonl_candidates_never_legacy_only,
+        test_jsonl_candidates_without_ilk_paths,
     ]
     for t in tests:
         t()
