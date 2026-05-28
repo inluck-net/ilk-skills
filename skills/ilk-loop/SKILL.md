@@ -135,6 +135,20 @@ python3 <skill-root>/../tools/migration/migrate_project_runtime_dirs.py --projec
 This keeps the project repo clean and avoids accidental commits of skill
 artifacts.
 
+### Preserving active-run evidence before log cleanup
+
+Before deleting any legacy `<skill-root>/ilk-loop/logs/` directory or
+migrating log files, preserve the current run's evidence so
+`/ilk-feedback` can still generate a postmortem:
+
+```bash
+python3 <skill-root>/ilk-loop/scripts/preserve_active_run.py --project-path .
+```
+
+This copies per-iteration logs, JSONL entries, the sentinel, and launcher
+metadata into `~/.ilk-data/projects/<key>/logs/archive/<run-id>/`. The
+helper is idempotent — running it twice does not duplicate files.
+
 ## The loop
 
 ```

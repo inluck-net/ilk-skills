@@ -5,6 +5,12 @@ migrate_project_runtime_dirs — move <project>/.ilk-launcher/ and
 
 Default mode is dry-run: prints what would happen but touches nothing.
 Pass --apply to perform the migration.
+
+NOTE: If you also plan to remove legacy log directories under
+<skill-root>/ilk-loop/logs/, run preserve_active_run.py FIRST to
+archive active-run evidence:
+
+    python3 <skill-root>/ilk-loop/scripts/preserve_active_run.py --project-path .
 """
 from __future__ import annotations
 
