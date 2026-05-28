@@ -303,6 +303,21 @@ def external_logs_dir(key: str) -> Path:
     return project_data_dir(key) / "logs"
 
 
+def logs_launcher_dir(key: str) -> Path:
+    """Launcher stdout/stderr logs: ~/.ilk-data/projects/<key>/logs/launcher/"""
+    return external_logs_dir(key) / "launcher"
+
+
+def run_log_dir(key: str, run_id: str) -> Path:
+    """Per-run iteration artifacts: ~/.ilk-data/projects/<key>/logs/runs/<run_id>/"""
+    return external_logs_dir(key) / "runs" / run_id
+
+
+def jsonl_summary_path(key: str) -> Path:
+    """Stable JSONL summary for all runs: ~/.ilk-data/projects/<key>/logs/.ilk-loop.log"""
+    return external_logs_dir(key) / ".ilk-loop.log"
+
+
 def external_launcher_dir(key: str) -> Path:
     return external_runtime_dir(key) / "launcher"
 
@@ -419,6 +434,8 @@ def _selftest() -> int:
         print(f"launcher: {external_launcher_dir(key)}")
         print(f"watchdog: {external_watchdog_dir(key)}")
         print(f"logs: {external_logs_dir(key)}")
+        print(f"logs-launcher: {logs_launcher_dir(key)}")
+        print(f"jsonl-summary: {jsonl_summary_path(key)}")
         return 0
 
     print(json.dumps({
@@ -432,6 +449,8 @@ def _selftest() -> int:
         "external_plans_dir": str(external_plans_dir(key)) if key else None,
         "external_runtime_dir": str(external_runtime_dir(key)) if key else None,
         "external_logs_dir": str(external_logs_dir(key)) if key else None,
+        "logs_launcher_dir": str(logs_launcher_dir(key)) if key else None,
+        "jsonl_summary_path": str(jsonl_summary_path(key)) if key else None,
         "external_launcher_dir": str(external_launcher_dir(key)) if key else None,
         "external_watchdog_dir": str(external_watchdog_dir(key)) if key else None,
         "resolved_plans_dir": str(plans) if plans else None,
