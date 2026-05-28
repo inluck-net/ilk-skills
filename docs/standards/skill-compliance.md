@@ -4,7 +4,7 @@ Compliance snapshot for the skills in this repo against the standards
 recorded in [`agentskills-io.md`](agentskills-io.md). One row per skill.
 Update the relevant rows whenever a sub-plan closes a gap.
 
-- **Snapshot date:** 2026-05-28
+- **Snapshot date:** 2026-05-28 (updated after paths-and-runtime-hygiene)
 - **Validator:** `python3 tools/check_skill_frontmatter.py` enforces
   the Frontmatter and Description-length columns automatically.
 - **Reference:** [`agentskills-io.md`](agentskills-io.md)
@@ -19,11 +19,11 @@ Update the relevant rows whenever a sub-plan closes a gap.
 
 | Skill | Frontmatter | Description length | Progressive disclosure | Path portability | Runtime / package hygiene | Notes / next action |
 |---|---|---|---|---|---|---|
-| `ilk-feedback` | ok — moved haiku hint to `metadata.preferred_model` (ce144c5) | ok — 474 chars, well under 1024 limit | ok — body ~217 lines, supporting material in `scripts/` | gap — `~/.cursor/...` examples present | ok — no committed runtime artifacts in skill dir | Frontmatter normalized; rewrite host-specific paths in paths-and-runtime-hygiene. |
-| `ilk-launcher` | ok — moved haiku hint to `metadata.preferred_model` (ce144c5) | ok — 331 chars, well under 1024 limit | gap — `SKILL.md` is ~611 lines; deep launcher mechanics belong in references | gap — `~/.cursor/...` examples present | gap — committed `projects.json` is user-mutable runtime config; should be example-only in package | Frontmatter normalized; split SKILL.md per progressive-disclosure sub-plan; demote `projects.json` to example-only in paths-and-runtime-hygiene. |
-| `ilk-loop` | ok — only `name` and `description` | ok — single paragraph router hint | gap — `SKILL.md` is ~712 lines; meta-projects and worktrees sections are reference-grade | gap — many `~/.cursor/...` paths in body | gap — `skills/ilk-loop/logs/` ships ~160 runtime log files inside the skill package | Move worktree/meta-projects detail under `references/` per progressive-disclosure; rewrite path examples; delete `logs/` and add it to `.gitignore` per paths-and-runtime-hygiene. |
+| `ilk-feedback` | ok — moved haiku hint to `metadata.preferred_model` (ce144c5) | ok — 474 chars, well under 1024 limit | ok — body ~217 lines, supporting material in `scripts/` | ok — uses `<skill-root>` placeholder; remaining `~/.cursor` refs are the placeholder definition (08adae7) | ok — no committed runtime artifacts in skill dir | All four target columns now `ok`. |
+| `ilk-launcher` | ok — moved haiku hint to `metadata.preferred_model` (ce144c5) | ok — 331 chars, well under 1024 limit | gap — `SKILL.md` is ~611 lines; deep launcher mechanics belong in references | ok — uses `<skill-root>` placeholder; bootstrap example marked Cursor-specific (08adae7) | gap — committed `projects.json.example` is user-mutable runtime config; should be example-only in package | Path portability now `ok`; split SKILL.md per progressive-disclosure sub-plan; demote `projects.json` to example-only when that lands. |
+| `ilk-loop` | ok — only `name` and `description` | ok — single paragraph router hint | gap — `SKILL.md` is ~712 lines; meta-projects and worktrees sections are reference-grade | ok — uses `<skill-root>` placeholder; remaining `~/.cursor` refs are the placeholder definition (08adae7) | ok — `skills/ilk-loop/logs/` already gitignored; on-disk runtime artifacts deleted as part of step 1 | Path portability + runtime hygiene now `ok`; progressive-disclosure pass still pending. |
 | `ilk-runner` | ok — only `name` and `description` | ok — single paragraph router hint | ok — body ~108 lines, no scripts of its own | ok — no host-specific paths in body | ok — no committed runtime artifacts | No action expected; revisit if it grows past best-practices length. |
-| `ilk-watchdog` | ok — only `name` and `description` | ok — single paragraph router hint | ok — body ~249 lines | gap — `~/.cursor/...` examples present | ok — no committed runtime artifacts in skill dir | Rewrite host-specific paths in paths-and-runtime-hygiene. |
+| `ilk-watchdog` | ok — only `name` and `description` | ok — single paragraph router hint | ok — body ~249 lines | ok — uses `<skill-root>` placeholder; remaining `~/.cursor` refs are the placeholder definition (08adae7) | ok — no committed runtime artifacts in skill dir | All four target columns now `ok`. |
 
 ## Sub-plan ownership
 
