@@ -31,6 +31,38 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# ── Log source / destination map ─────────────────────────────────────────────
+#
+# Writers (which script produces which log):
+#
+#   run_ilk_loop_claude.sh / .ps1   (runner scripts)
+#     JSONL summary    → <skill-root>/ilk-loop/logs/.ilk-loop.log
+#     Per-iter log     → <skill-root>/ilk-loop/logs/ilk-claude-<run-id>/iter-NN.log
+#     Per-iter JSONL   → <skill-root>/ilk-loop/logs/ilk-claude-<run-id>/iter-NN.log.jsonl
+#     Sentinel         → ~/.ilk-data/projects/<key>/runtime/last-exit.json
+#
+#   launch.sh / launch.ps1          (launcher scripts)
+#     PID file         → ~/.ilk-data/projects/<key>/runtime/launcher/running.pid
+#     Launch metadata  → ~/.ilk-data/projects/<key>/runtime/launcher/last-launch.json
+#     Launcher log     → <skill-root>/ilk-loop/logs/launcher/<project-key>-<run-id>.log
+#
+#   collect.py (this file — reader + postmortem writer)
+#     Postmortem       → ~/.ilk-data/projects/<key>/runtime/launcher/postmortems/<run-id>.md
+#
+# Readers:
+#
+#   collect.py reads:
+#     1. JSONL summary   (for iteration records + classification)
+#     2. Per-iter logs   (for tail extraction and keyword classification)
+#     3. last-launch.json (for max_iterations, iteration_timeout_min, started_at)
+#     4. last-exit.json  (indirectly via loop_status_exit)
+#
+# Canonical log roots (ordered by preference):
+#   1. last-launch.json → log_file, log_dir fields (if present)
+#   2. ilk_paths.external_logs_dir(project_key) → ~/.ilk-data/projects/<key>/logs/
+#   3. Legacy <skill-root>/ilk-loop/logs/ (pre-externalisation location)
+#
+# ─────────────────────────────────────────────────────────────────────────────
 
 HOME = Path(os.path.expanduser("~"))
 LAUNCHER_DIR = HOME / ".cursor" / "skills" / "ilk-launcher"
