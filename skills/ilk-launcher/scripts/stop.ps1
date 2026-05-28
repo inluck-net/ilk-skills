@@ -93,8 +93,21 @@ function Mark-SentinelInterrupted {
   }
 }
 
+function Stop-WatchdogForProject {
+  param([string]$Path, [string]$Name)
+  $watchdogStop = Join-Path $SkillRoot "ilk-watchdog\scripts\stop_watchdog.ps1"
+  if (-not (Test-Path $watchdogStop)) { return }
+  try {
+    & $watchdogStop -ProjectPath $Path 2>&1 | ForEach-Object { Write-Host "[$Name] $_" }
+  } catch {}
+}
+
 function Stop-Project {
   param([string]$Path, [string]$Name)
+
+  # Stop watchdog first — it must not try to restart the loop after we kill it.
+  Stop-WatchdogForProject -Path $Path -Name $Name
+
   $pidFile = Get-PidFilePath -ProjectPath $Path
   if (-not $pidFile) {
     Write-Host "[$Name] could not resolve external launcher dir — nothing to stop." -ForegroundColor Yellow

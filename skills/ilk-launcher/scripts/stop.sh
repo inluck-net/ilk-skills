@@ -131,12 +131,28 @@ mark_sentinel_interrupted() {
   fi
 }
 
+# ----- Watchdog integration --------------------------------------------------
+
+stop_watchdog_for_project() {
+  local path="$1"
+  local name="$2"
+  local watchdog_stop="${_SKILL_ROOT}/ilk-watchdog/scripts/stop_watchdog.sh"
+  if [[ ! -f "$watchdog_stop" ]]; then
+    return 0
+  fi
+  bash "$watchdog_stop" --project-path "$path" 2>&1 | sed "s/^/[$name] /" || true
+}
+
 # ----- Stop logic ------------------------------------------------------------
 
 stop_project() {
   local path="$1"
   local name="$2"
   local pid_file
+
+  # Stop watchdog first — it must not try to restart the loop after we kill it.
+  stop_watchdog_for_project "$path" "$name"
+
   pid_file=$(get_pid_file_path "$path")
 
   if [[ ! -f "$pid_file" ]]; then

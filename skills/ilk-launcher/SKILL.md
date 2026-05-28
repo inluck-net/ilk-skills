@@ -383,9 +383,20 @@ bash "$HOME/.cursor/skills/ilk-launcher/scripts/stop.sh" --project-name es_api
 bash "$HOME/.cursor/skills/ilk-launcher/scripts/stop.sh" --project-path /path/to/your/project
 ```
 
-Reads the PID file from the external launcher dir (resolved via
-ilk_paths.py), runs `taskkill /T /F /PID <n>` (tree-kill so `claude`
-and its children die with the wrapper), deletes the PID file.
+Stops the watchdog first (so it doesn't try to restart the loop), then
+stops the loop. Reads the PID file from the external launcher dir
+(resolved via ilk_paths.py), runs `taskkill /T /F /PID <n>` (tree-kill
+so `claude` and its children die with the wrapper), deletes the PID file.
+
+To stop only the watchdog without touching ilk itself, use the
+watchdog's own script directly:
+
+```bash
+bash "$HOME/.cursor/skills/ilk-watchdog/scripts/stop_watchdog.sh" --project-name es_api
+```
+```powershell
+& "$HOME\.cursor\skills\ilk-watchdog\scripts\stop_watchdog.ps1" -ProjectName es_api
+```
 
 ### W4. Launch all registered projects
 
