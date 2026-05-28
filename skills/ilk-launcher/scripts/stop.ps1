@@ -93,6 +93,50 @@ function Mark-SentinelInterrupted {
   }
 }
 
+function Kill-Orphans {
+  param([string]$ProjectPath, [int]$StoppedPid, [string]$LauncherDir, [string]$Name)
+
+  $lastLaunch = Join-Path $LauncherDir 'last-launch.json'
+  if (-not (Test-Path $lastLaunch)) {
+    Write-Host "[$Name] orphan scan: no last-launch.json — skipping." -ForegroundColor Yellow
+    return
+  }
+  $launch = Get-Content $lastLaunch -Raw | ConvertFrom-Json
+  $logFile = $launch.log_file
+  if (-not $logFile) {
+    Write-Host "[$Name] orphan scan: no log_file in last-launch.json — skipping." -ForegroundColor Yellow
+    return
+  }
+  # Extract run ID (YYYYMMDD-HHMMSS) from the log file path
+  $runMatch = [regex]::Match($logFile, '(\d{8}-\d{6})')
+  if (-not $runMatch.Success) {
+    Write-Host "[$Name] orphan scan: no run ID found in log path — skipping." -ForegroundColor Yellow
+    return
+  }
+  $runId = $runMatch.Groups[1].Value
+
+  $myPid = $PID
+  $candidates = Get-CimInstance Win32_Process |
+    Where-Object {
+      $_.ProcessId -ne $StoppedPid -and
+      $_.ProcessId -ne $myPid -and
+      ($_.CommandLine -match [regex]::Escape($runId) -or $_.CommandLine -match [regex]::Escape($ProjectPath))
+    }
+
+  $found = 0
+  foreach ($proc in $candidates) {
+    $cmdLine = if ($proc.CommandLine) { $proc.CommandLine.Substring(0, [Math]::Min(120, $proc.CommandLine.Length)) } else { "(unknown)" }
+    Write-Host "[$Name] orphan scan: killing PID $($proc.ProcessId) — $cmdLine" -ForegroundColor Yellow
+    try { Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+    $found++
+  }
+  if ($found -eq 0) {
+    Write-Host "[$Name] orphan scan: no orphaned workers found." -ForegroundColor Gray
+  } else {
+    Write-Host "[$Name] orphan scan: terminated $found worker process(es)." -ForegroundColor Green
+  }
+}
+
 function Stop-WatchdogForProject {
   param([string]$Path, [string]$Name)
   $watchdogStop = Join-Path $SkillRoot "ilk-watchdog\scripts\stop_watchdog.ps1"
@@ -134,6 +178,12 @@ function Stop-Project {
     Write-Host "[$Name] stopped." -ForegroundColor Green
     Mark-SentinelInterrupted -ProjectPath $Path -StoppedPid $targetPid
     Remove-Item $pidFile -Force
+  }
+
+  # Scan for orphaned worker processes (claude, gtimeout, tee, renderer)
+  $launcherDir = Get-ExternalLauncherDir -ProjectPath $Path
+  if ($launcherDir) {
+    Kill-Orphans -ProjectPath $Path -StoppedPid $targetPid -LauncherDir $launcherDir -Name $Name
   }
 }
 

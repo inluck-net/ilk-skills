@@ -387,6 +387,9 @@ Stops the watchdog first (so it doesn't try to restart the loop), then
 stops the loop. Reads the PID file from the external launcher dir
 (resolved via ilk_paths.py), runs `taskkill /T /F /PID <n>` (tree-kill
 so `claude` and its children die with the wrapper), deletes the PID file.
+After stopping, scans for orphaned worker processes (claude, gtimeout,
+tee, stream renderer) that share the same run ID or project path and
+terminates them.
 
 To stop only the watchdog without touching ilk itself, use the
 watchdog's own script directly:

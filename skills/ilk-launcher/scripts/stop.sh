@@ -131,6 +131,61 @@ mark_sentinel_interrupted() {
   fi
 }
 
+# ----- Orphan scan -----------------------------------------------------------
+
+kill_orphans() {
+  local project_path="$1"
+  local stopped_pid="$2"
+  local launcher_dir="$3"
+  local name="$4"
+
+  # Read last-launch.json to get the log file path (contains run ID)
+  local last_launch="${launcher_dir}/last-launch.json"
+  local run_id=""
+  if [[ -f "$last_launch" ]]; then
+    run_id=$(python3 -c "
+import json, re, sys
+with open('$last_launch') as f:
+    d = json.load(f)
+logf = d.get('log_file', '')
+m = re.search(r'(\d{8}-\d{6})', logf)
+if m: print(m.group(1))
+" 2>/dev/null) || run_id=""
+  fi
+
+  if [[ -z "$run_id" ]]; then
+    echo "[$name] orphan scan: no run ID in last-launch.json — skipping." >&2
+    return 0
+  fi
+
+  # Find candidate processes whose command line matches the run ID or
+  # project path.  Exclude this shell and the stopped PID itself.
+  local my_pid=$$
+  local found=0
+  while IFS= read -r line; do
+    local cpid
+    cpid=$(echo "$line" | awk '{print $1}')
+    [[ -z "$cpid" ]] && continue
+    [[ "$cpid" == "$stopped_pid" ]] && continue
+    [[ "$cpid" == "$my_pid" ]] && continue
+
+    # Skip if this PID is the grep itself
+    local cmd
+    cmd=$(echo "$line" | sed 's/^[[:space:]]*[0-9]*[[:space:]]*//')
+    echo "$cmd" | grep -q "kill_orphans" && continue
+
+    echo "[$name] orphan scan: killing PID $cpid — ${cmd:0:120}" >&2
+    kill "$cpid" 2>/dev/null || true
+    found=$((found + 1))
+  done < <(ps -ax -o pid=,command= 2>/dev/null | grep -E "$run_id|$project_path" | grep -v "grep" || true)
+
+  if [[ "$found" -eq 0 ]]; then
+    echo "[$name] orphan scan: no orphaned workers found." >&2
+  else
+    echo "[$name] orphan scan: terminated $found worker process(es)." >&2
+  fi
+}
+
 # ----- Watchdog integration --------------------------------------------------
 
 stop_watchdog_for_project() {
@@ -202,6 +257,13 @@ stop_project() {
     echo "[$name] stopped." >&2
     mark_sentinel_interrupted "$path" "$target_pid"
     rm -f "$pid_file"
+  fi
+
+  # Scan for orphaned worker processes (claude, gtimeout, tee, renderer)
+  local launcher_dir
+  launcher_dir=$(get_external_launcher_dir "$path")
+  if [[ -n "$launcher_dir" ]]; then
+    kill_orphans "$path" "$target_pid" "$launcher_dir" "$name"
   fi
 }
 
