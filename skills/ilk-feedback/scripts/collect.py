@@ -163,13 +163,22 @@ def _jsonl_log_candidates(project_path: Path, last_launch: dict | None = None) -
     """Return ordered candidate paths for the JSONL summary log.
 
     Resolution order:
-      1. last-launch.json → log_file / log_dir fields
-      2. ilk_paths.external_logs_dir(project_key)
-      3. Legacy <skill-root>/ilk-loop/logs/.ilk-loop.log
+      1. last-launch.json → jsonl_log field (canonical, set by new launchers)
+      2. last-launch.json → log_file / log_dir fields (older metadata)
+      3. ilk_paths.external_logs_dir(project_key)
+      4. Legacy <skill-root>/ilk-loop/logs/.ilk-loop.log
     """
     candidates: list[Path] = []
 
-    # 1. last-launch.json hints
+    # 1. last-launch.json canonical jsonl_log field
+    if last_launch:
+        jsonl_log = last_launch.get("jsonl_log")
+        if jsonl_log:
+            p = Path(jsonl_log)
+            if p not in candidates:
+                candidates.append(p)
+
+    # 2. last-launch.json older hints
     if last_launch:
         log_file = last_launch.get("log_file")
         if log_file:
@@ -182,13 +191,13 @@ def _jsonl_log_candidates(project_path: Path, last_launch: dict | None = None) -
             if p not in candidates:
                 candidates.append(p)
 
-    # 2. External logs dir
+    # 3. External logs dir
     if external_logs_dir is not None and project_key is not None:
         p = external_logs_dir(project_key(project_path)) / ".ilk-loop.log"
         if p not in candidates:
             candidates.append(p)
 
-    # 3. Legacy skill-root logs dir
+    # 4. Legacy skill-root logs dir
     if LOOP_LOG_DIR not in [c.parent for c in candidates]:
         candidates.append(LOOP_LOG_DIR / ".ilk-loop.log")
 
