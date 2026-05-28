@@ -243,6 +243,7 @@ try:
     print(d.get('state',''))
     print(d.get('iterations',''))
     print(d.get('last_iter_at',''))
+    print(d.get('pid',''))
 except Exception:
     pass
 "
@@ -495,6 +496,7 @@ Watchdog PID: $$" 36
     local sentinel_state=""
     local sentinel_iters=""
     local sentinel_last_iter=""
+    local sentinel_pid=""
     local sentinel_terminal=false
 
     # ---------- Sentinel fast-path -----------------------------------
@@ -504,17 +506,19 @@ Watchdog PID: $$" 36
       sentinel_state=$(echo "$sentinel_raw" | sed -n '1p')
       sentinel_iters=$(echo "$sentinel_raw" | sed -n '2p')
       sentinel_last_iter=$(echo "$sentinel_raw" | sed -n '3p')
+      sentinel_pid=$(echo "$sentinel_raw" | sed -n '4p')
     fi
 
     if [[ -n "$sentinel_state" ]]; then
       if [[ "$sentinel_state" == "running" ]]; then
         local loop_pid=""
-        # third line of sentinel_raw is last_iter_at; pid is not stored there.
-        # The PS1 checks sentinel.pid; our read_last_exit_state doesn't return pid.
-        # For now, trust the running state and check the PID file.
+        # Prefer PID file; fall back to sentinel's own pid field.
         loop_pid=$(read_ilk_pid "$project")
+        if [[ -z "$loop_pid" && -n "$sentinel_pid" ]]; then
+          loop_pid="$sentinel_pid"
+        fi
         if [[ -n "$loop_pid" ]] && ! test_process_alive "$loop_pid"; then
-          write_log "sentinel says running but pid $loop_pid is dead — treating as crash."
+          write_log "sentinel says running but pid $loop_pid is dead — treating as stale-running."
           sentinel_terminal=true
         else
           if [[ "$saw_alive_once" == false ]]; then
