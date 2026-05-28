@@ -23,7 +23,8 @@ PROJECT_PATH=""
 MAX_ITERATIONS=30
 ITERATION_TIMEOUT_MIN=30
 LOOP_STATUS_SCRIPT="${_SKILL_ROOT}/ilk-loop/scripts/loop_status.py"
-LOG_DIR="${_SKILL_ROOT}/ilk-loop/logs"
+LOG_DIR=""
+JSONL_LOG_PATH=""
 PROMPT="/ilk please continue the active plan"
 MAX_BUDGET_USD=0
 MODEL=""
@@ -60,8 +61,10 @@ Options:
                                    Default: 30
   --loop-status-script PATH        Path to loop_status.py.
                                    Default: <skill-root>/ilk-loop/scripts/loop_status.py
-  --log-dir PATH                   Where to write per-iteration logs and the JSONL summary.
-                                   Default: <skill-root>/ilk-loop/logs
+  --log-dir PATH                   Per-run artifact directory (iter logs, heads files).
+                                   Default: ~/.ilk-data/projects/<key>/logs/runs/<run-id>
+  --jsonl-log PATH                 Path to the stable project-level JSONL summary file.
+                                   Default: ~/.ilk-data/projects/<key>/logs/.ilk-loop.log
   --prompt TEXT                    The prompt sent to claude.
                                    Default: "/ilk please continue the active plan"
   --max-budget-usd N               Optional per-iteration --max-budget-usd cap.
@@ -115,6 +118,10 @@ parse_args() {
         ;;
       --log-dir)
         LOG_DIR="$2"
+        shift 2
+        ;;
+      --jsonl-log)
+        JSONL_LOG_PATH="$2"
         shift 2
         ;;
       --prompt)
@@ -217,11 +224,41 @@ preflight() {
     fi
   fi
 
-  mkdir -p "$LOG_DIR"
   RUN_ID="$(date +%Y%m%d-%H%M%S)"
-  RUN_LOG_DIR="${LOG_DIR}/ilk-claude-${RUN_ID}"
-  mkdir -p "$RUN_LOG_DIR"
-  JSONL_LOG="${LOG_DIR}/.ilk-loop.log"
+
+  # Resolve external log paths via ilk_paths.py unless explicitly provided
+  local legacy_log_dir="${_SKILL_ROOT}/ilk-loop/logs"
+  if [[ -z "$LOG_DIR" || -z "$JSONL_LOG_PATH" ]]; then
+    local resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
+    local ext_logs=""
+    if [[ -f "$resolver" ]]; then
+      ext_logs=$(python3 -c "
+import sys; sys.path.insert(0, '$(dirname "$resolver")')
+from ilk_paths import find_project_root, project_key, external_logs_dir
+from pathlib import Path
+root, _ = find_project_root(Path('$PROJECT_PATH'))
+if root: print(external_logs_dir(project_key(root)))
+" 2>/dev/null) || ext_logs=""
+    fi
+    if [[ -z "$LOG_DIR" ]]; then
+      if [[ -n "$ext_logs" ]]; then
+        LOG_DIR="${ext_logs}/runs/${RUN_ID}"
+      else
+        LOG_DIR="${legacy_log_dir}/runs/${RUN_ID}"
+      fi
+    fi
+    if [[ -z "$JSONL_LOG_PATH" ]]; then
+      if [[ -n "$ext_logs" ]]; then
+        JSONL_LOG_PATH="${ext_logs}/.ilk-loop.log"
+      else
+        JSONL_LOG_PATH="${legacy_log_dir}/.ilk-loop.log"
+      fi
+    fi
+  fi
+
+  mkdir -p "$LOG_DIR"
+  RUN_LOG_DIR="$LOG_DIR"
+  JSONL_LOG="$JSONL_LOG_PATH"
 }
 
 # ----- Helpers ---------------------------------------------------------------

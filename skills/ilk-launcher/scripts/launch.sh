@@ -499,9 +499,11 @@ start_ilk_window() {
   if [[ -n "$mcp_config_path" ]]; then
     runner_cmd="$runner_cmd --mcp-config-path \"$mcp_config_path\""
   fi
+  # Pass resolved log paths so the runner writes to external locations
+  runner_cmd="$runner_cmd --log-dir \"$per_run_dir\" --jsonl-log \"$jsonl_log\""
 
   # Build log path — prefer external logs dir, fall back to legacy skill-root
-  local project_key run_id log_file log_dir jsonl_log legacy_log_dir
+  local project_key run_id log_file log_dir jsonl_log legacy_log_dir per_run_dir
   project_key=$(get_project_key "$project_path")
   run_id="$(date +%Y%m%d-%H%M%S)"
   local ext_logs
@@ -510,9 +512,11 @@ start_ilk_window() {
   if [[ -n "$ext_logs" ]]; then
     log_dir="${ext_logs}/launcher"
     jsonl_log="${ext_logs}/.ilk-loop.log"
+    per_run_dir="${ext_logs}/runs/${run_id}"
   else
     log_dir="${legacy_log_dir}/launcher"
     jsonl_log="${legacy_log_dir}/.ilk-loop.log"
+    per_run_dir="${legacy_log_dir}/runs/${run_id}"
   fi
   mkdir -p "$log_dir"
   log_file="${log_dir}/${project_key}-${run_id}.log"
@@ -553,13 +557,8 @@ start_ilk_window() {
   echo "$pgid" > "$pid_file"
 
   # Write last-launch.json
-  local meta_path per_run_dir
+  local meta_path
   meta_path=$(get_launch_meta_path "$project_path")
-  if [[ -n "$ext_logs" ]]; then
-    per_run_dir="${ext_logs}/runs/${run_id}"
-  else
-    per_run_dir="${legacy_log_dir}/runs/${run_id}"
-  fi
   python3 -c "
 import json
 d = {
