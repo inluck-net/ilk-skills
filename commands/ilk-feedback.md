@@ -2,6 +2,13 @@ Generate a postmortem for the most recent ilk-loop run on this project,
 then surface a recommended next step (resume / bump param / investigate
 first).
 
+Log discovery is external-first: `collect.py` reads from
+`~/.ilk-data/projects/<key>/logs/` (canonical), then falls back to
+legacy `<skill-root>/ilk-loop/logs/` for older runs. A preserved
+archive at `~/.ilk-data/projects/<key>/logs/archive/<run-id>/` is
+also checked when the original log path no longer exists (common in
+self-hosting projects where the skill repo modified its own paths).
+
 Invoke the `ilk-feedback` skill — its `SKILL.md` has the full workflow.
 Do NOT re-implement the logic here. Specifically:
 

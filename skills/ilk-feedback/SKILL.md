@@ -2,9 +2,10 @@
 name: ilk-feedback
 description: >-
   Postmortem for the most recent ilk-loop run. Reads the JSONL summary
-  + per-iteration logs `run_ilk_loop_claude.ps1` writes, classifies the
-  outcome (8 taxonomy labels), recommends next-launch params, saves
-  the report under `~/.ilk-data/projects/<key>/runtime/launcher/postmortems/`. Triggers:
+  + per-iteration logs (external-first from `~/.ilk-data`, with legacy
+  skill-root fallback), classifies the outcome (9 taxonomy labels incl.
+  self-hosting-drift), recommends next-launch params, saves the report
+  under `~/.ilk-data/projects/<key>/runtime/launcher/postmortems/`. Triggers:
   "/ilk-feedback", "postmortem", "debrief", "what went wrong", "why
   did ilk stop", "复盘", "ilk 反馈", "ilk 怎么停了", or after a ilk
   window exits. Works across Cursor, Claude Code, and Codex.
@@ -55,9 +56,54 @@ A read-only triage skill that turns the structured logs already produced by
   scripts/
     collect.py            ← reads JSONL + per-iter logs, writes report
 
-~/.ilk-data/projects/<key>/runtime/launcher/postmortems/
-  <run-id>.md             ← one report per run, frontmatter-headed for cheap reading
+~/.ilk-data/projects/<key>/
+  logs/
+    .ilk-loop.log         ← JSONL summary (canonical, external location)
+    runs/<run-id>/
+      iter-NN.log          ← per-iteration text log
+      iter-NN.log.jsonl    ← per-iteration structured log
+    archive/<run-id>/      ← preserved evidence (see preserve_active_run.py)
+  runtime/
+    launcher/
+      postmortems/
+        <run-id>.md        ← one report per run, frontmatter-headed
+
+<skill-root>/ilk-loop/logs/   ← legacy fallback (pre-externalisation)
+  .ilk-loop.log
+  ilk-claude-<run-id>/iter-NN.log
 ```
+
+## Log discovery (external-first resolution)
+
+`collect.py` resolves log files in this order, using the first hit:
+
+1. **`last-launch.json` fields** — `jsonl_log`, `log_file`, `log_dir`
+   (written by `launch.sh` / `launch.ps1` into
+   `~/.ilk-data/projects/<key>/runtime/launcher/`).
+2. **`~/.ilk-data/projects/<key>/logs/`** — canonical external log root
+   (used by modern runners `run_ilk_loop_claude.sh` / `.ps1`).
+3. **Legacy `<skill-root>/ilk-loop/logs/`** — pre-externalisation
+   fallback. Only needed for runs that predate the migration.
+
+Per-iteration logs (`iter-NN.log`) follow the same resolution order.
+The script deduplicates records across all candidate files by
+`(run_id, iteration)` so a postmortem requested after a migration
+still finds evidence from both old and new locations.
+
+### Preservation archive
+
+Before deleting or migrating legacy skill-root logs, run:
+
+```bash
+python3 "<skill-root>/ilk-loop/scripts/preserve_active_run.py"
+```
+
+This copies the active run's per-iteration logs, JSONL entries, sentinel
+(`last-exit.json`), and launcher metadata into
+`~/.ilk-data/projects/<key>/logs/archive/<run-id>/`. Idempotent — safe
+to run twice. The archive is one of the log-discovery candidates, so
+`collect.py` will find evidence there even after the original paths are
+removed.
 
 A postmortem report header looks like:
 
