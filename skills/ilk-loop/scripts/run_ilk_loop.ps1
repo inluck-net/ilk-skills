@@ -40,8 +40,8 @@
   Default: <skill-root>\ilk-loop\scripts\loop_status.py
 
 .PARAMETER LogDir
-  Where to write per-iteration logs and the JSONL summary.
-  Default: <skill-root>\ilk-loop\logs
+  Per-run artifact directory (iter logs, heads files).
+  Default: ~/.ilk-data/projects/<key>/logs/runs/<run-id>
 
 .PARAMETER Prompt
   The prompt sent to the agent. Default invokes the /ilk command.

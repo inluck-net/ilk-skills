@@ -174,9 +174,10 @@ through 3-day-old runs.
 ## Cross-platform notes
 
 Both `run_ilk_loop_claude.ps1` (Windows) and `run_ilk_loop_claude.sh`
-(macOS/Linux) write iteration records to the same JSONL log at
-`<skill-root>/ilk-loop/logs/.ilk-loop.log`. `collect.py` reads
-this file regardless of which runner produced it.
+(macOS/Linux) write iteration records to the project-level JSONL log at
+`~/.ilk-data/projects/<key>/logs/.ilk-loop.log` (resolved via
+`last-launch.json.jsonl_log`). `collect.py` reads this file, falling
+back to legacy `<skill-root>/ilk-loop/logs/.ilk-loop.log` for older runs.
 
 Both `launch.ps1` and `launch.sh` write `last-launch.json` to the same
 external launcher dir (`~/.ilk-data/projects/<key>/runtime/launcher/`).

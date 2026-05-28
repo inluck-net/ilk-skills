@@ -249,7 +249,7 @@ ilk launched: <project_key>
   Watchdog:   PID <watchdog-pid>, poll every <poll-min> min, max <max-restarts> restarts
   Logs:
     Loop log:      <last-launch.json .log_file>
-    Loop JSONL:    <skill-root>/ilk-loop/logs/.ilk-loop.log
+    Loop JSONL:    <last-launch.json .jsonl_log>
     Watchdog act:  <external_watchdog_dir>/activity.log
     Watchdog out:  <external_watchdog_dir>/watchdog.log
   Tail (macOS/Linux):

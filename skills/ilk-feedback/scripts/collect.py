@@ -36,15 +36,15 @@ from typing import Any
 # Writers (which script produces which log):
 #
 #   run_ilk_loop_claude.sh / .ps1   (runner scripts)
-#     JSONL summary    → <skill-root>/ilk-loop/logs/.ilk-loop.log
-#     Per-iter log     → <skill-root>/ilk-loop/logs/ilk-claude-<run-id>/iter-NN.log
-#     Per-iter JSONL   → <skill-root>/ilk-loop/logs/ilk-claude-<run-id>/iter-NN.log.jsonl
+#     JSONL summary    → ~/.ilk-data/projects/<key>/logs/.ilk-loop.log
+#     Per-iter log     → ~/.ilk-data/projects/<key>/logs/runs/<run-id>/iter-NN.log
+#     Per-iter JSONL   → ~/.ilk-data/projects/<key>/logs/runs/<run-id>/iter-NN.log.jsonl
 #     Sentinel         → ~/.ilk-data/projects/<key>/runtime/last-exit.json
 #
 #   launch.sh / launch.ps1          (launcher scripts)
 #     PID file         → ~/.ilk-data/projects/<key>/runtime/launcher/running.pid
 #     Launch metadata  → ~/.ilk-data/projects/<key>/runtime/launcher/last-launch.json
-#     Launcher log     → <skill-root>/ilk-loop/logs/launcher/<project-key>-<run-id>.log
+#     Launcher log     → ~/.ilk-data/projects/<key>/logs/launcher/<project-key>-<run-id>.log
 #
 #   collect.py (this file — reader + postmortem writer)
 #     Postmortem       → ~/.ilk-data/projects/<key>/runtime/launcher/postmortems/<run-id>.md
