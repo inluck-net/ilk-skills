@@ -19,14 +19,19 @@ These scripts resolve skill root, pick `python` vs `python3`, check the
 queue, promote when needed, launch, and start the watchdog. **Run them with
 `powershell -File` even when the agent shell is Git Bash.**
 
+**Git Bash (Cursor default on Windows):**
+
+```bash
+powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME/.cursor/skills/ilk-runner/scripts/ilk-run.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME/.cursor/skills/ilk-runner/scripts/ilk-status.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME/.cursor/skills/ilk-runner/scripts/ilk-stop.ps1"
+```
+
+**PowerShell shell:**
+
 ```powershell
-# /ilk-run — supervised launch (from project cwd or pass -Start)
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.cursor\skills\ilk-runner\scripts\ilk-run.ps1"
-
-# /ilk-status — read-only progress
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.cursor\skills\ilk-runner\scripts\ilk-status.ps1"
-
-# /ilk-stop — stop loop + watchdog
 powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.cursor\skills\ilk-runner\scripts\ilk-stop.ps1"
 ```
 

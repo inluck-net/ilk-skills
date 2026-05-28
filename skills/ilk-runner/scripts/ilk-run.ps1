@@ -73,18 +73,134 @@ function Get-DefaultLaunchParams {
   )
   $maxIter = 30
   $timeout = 30
+  $totalRemaining = 0
+  $pendingPlans = 0
 
-  if ($StatusOutput -match 'step=(\d+)/(\d+)') {
+  foreach ($line in ($StatusOutput -split "`n")) {
+    if ($line -match '\[  \] pending|\[\.\.\] in-progress|\[>>\] ready') {
+      $pendingPlans++
+    }
+    if ($line -match '\s(\d+)/(\d+)\s*$') {
+      $cur = [int]$Matches[1]
+      $est = [int]$Matches[2]
+      $totalRemaining += [Math]::Max($est - $cur, 0)
+    }
+  }
+
+  if ($totalRemaining -gt 0) {
+    if ($pendingPlans -gt 1) {
+      $maxIter = [Math]::Min([Math]::Max([int][Math]::Ceiling($totalRemaining * 1.5), 20), 60)
+    } else {
+      $maxIter = [Math]::Min([Math]::Max($totalRemaining * 2, 10), 60)
+    }
+  } elseif ($StatusOutput -match 'step=(\d+)/(\d+)') {
     $cur = [int]$Matches[1]
     $est = [int]$Matches[2]
     $remaining = [Math]::Max($est - $cur, 1)
     $maxIter = [Math]::Min([Math]::Max($remaining * 2, 10), 60)
   }
 
+  # Step character heuristics from Next/path line or sub-plan names in table
+  if ($StatusOutput -match 'playwright|e2e|chrome-devtools') { $timeout = 45 }
+  elseif ($StatusOutput -match 'wait_ci|push and wait') { $timeout = 60 }
+
   return @{
-    MaxIterations        = $maxIter
-    IterationTimeoutMin  = $timeout
+    MaxIterations       = $maxIter
+    IterationTimeoutMin = $timeout
   }
+}
+
+function Read-PostmortemFrontmatter {
+  param([string]$FilePath)
+  $text = Get-Content $FilePath -Raw -ErrorAction SilentlyContinue
+  if (-not $text -or -not $text.StartsWith('---')) { return @{} }
+  $end = $text.IndexOf("`n---", 3)
+  if ($end -lt 0) { return @{} }
+  $fm = @{}
+  foreach ($raw in $text.Substring(3, $end - 3).Split("`n")) {
+    $line = $raw.Trim()
+    if ($line -and $line.Contains(':')) {
+      $k, $v = $line.Split(':', 2)
+      $fm[$k.Trim()] = $v.Trim().Trim('"')
+    }
+  }
+  return $fm
+}
+
+function Get-LaunchParamsFromHistory {
+  param(
+    [string]$LauncherDir,
+    [string]$StatusOutput,
+    [int]$OverrideMax,
+    [int]$OverrideTimeout
+  )
+  $params = Get-DefaultLaunchParams -StatusOutput $StatusOutput
+  $maxIter = $params.MaxIterations
+  $timeout = $params.IterationTimeoutMin
+
+  $postmortemDir = Join-Path $LauncherDir 'postmortems'
+  if (-not (Test-Path $postmortemDir)) {
+    return @{ MaxIterations = $maxIter; IterationTimeoutMin = $timeout; Warnings = @() }
+  }
+
+  $recent = Get-ChildItem $postmortemDir -Filter '*.md' |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 3
+
+  $classifications = @()
+  $recMax = 0
+  $recTimeout = 0
+  foreach ($file in $recent) {
+    $fm = Read-PostmortemFrontmatter -FilePath $file.FullName
+    if ($fm['classification']) { $classifications += $fm['classification'] }
+    if ($fm['recommended_max_iterations'] -match '^\d+$') {
+      $v = [int]$fm['recommended_max_iterations']
+      if ($v -gt $recMax) { $recMax = $v }
+    }
+    if ($fm['recommended_iteration_timeout_min'] -match '^\d+$') {
+      $v = [int]$fm['recommended_iteration_timeout_min']
+      if ($v -gt $recTimeout) { $recTimeout = $v }
+    }
+  }
+
+  $warnings = @()
+  $timeoutBound = @($classifications | Where-Object { $_ -eq 'timeout-bound' }).Count
+  $maxIterBound = @($classifications | Where-Object { $_ -eq 'max-iter-bound' }).Count
+  $apiFlaky = @($classifications | Where-Object { $_ -in @('api-flaky', 'api-blocked') }).Count
+  $stuck = @($classifications | Where-Object { $_ -eq 'stuck-no-progress' }).Count
+
+  if ($timeoutBound -ge 2 -and $recTimeout -gt $timeout) {
+    $timeout = [Math]::Min($recTimeout, 120)
+    Write-Host "Postmortem adjust: IterationTimeoutMin -> $timeout ($timeoutBound recent timeout-bound)"
+  }
+  if ($maxIterBound -ge 2 -and $recMax -gt $maxIter) {
+    $maxIter = [Math]::Min($recMax, 60)
+    Write-Host "Postmortem adjust: MaxIterations -> $maxIter ($maxIterBound recent max-iter-bound)"
+  }
+  if ($apiFlaky -ge 2) {
+    $warnings += "WARNING: $($apiFlaky) of last 3 runs were api-flaky/api-blocked — endpoint may be unstable."
+  }
+  if ($stuck -ge 2) {
+    $warnings += "WARNING: $($stuck) of last 3 runs were stuck-no-progress — sub-plan may need restructuring."
+  }
+
+  if ($OverrideMax -gt 0) { $maxIter = $OverrideMax }
+  if ($OverrideTimeout -gt 0) { $timeout = $OverrideTimeout }
+
+  return @{
+    MaxIterations       = $maxIter
+    IterationTimeoutMin = $timeout
+    Warnings            = $warnings
+  }
+}
+
+function Test-SelfHostingProject {
+  param([string]$ProjectRoot)
+  $markers = @(
+    (Join-Path $ProjectRoot 'skills\ilk-loop'),
+    (Join-Path $ProjectRoot 'skills\ilk-launcher')
+  )
+  return ($markers | Where-Object { Test-Path $_ }).Count -ge 2
 }
 
 # --- 1. Resolve project ------------------------------------------------------
@@ -151,9 +267,24 @@ if ($status.ExitCode -ne 1) {
 }
 
 # --- 3. Launch params --------------------------------------------------------
-$defaults = Get-DefaultLaunchParams -StatusOutput $status.Output
-if ($MaxIterations -le 0) { $MaxIterations = $defaults.MaxIterations }
-if ($IterationTimeoutMin -le 0) { $IterationTimeoutMin = $defaults.IterationTimeoutMin }
+if (Test-SelfHostingProject -ProjectRoot $ProjectRoot) {
+  Write-Host ""
+  Write-Host "WARNING: Self-hosting detected — this project supplies the installed ilk skills."
+  Write-Host "         A run may modify runner code mid-flight. See /ilk-run section S."
+}
+
+$paramPlan = Get-LaunchParamsFromHistory -LauncherDir $LauncherDir -StatusOutput $status.Output `
+  -OverrideMax $MaxIterations -OverrideTimeout $IterationTimeoutMin
+$MaxIterations = $paramPlan.MaxIterations
+$IterationTimeoutMin = $paramPlan.IterationTimeoutMin
+foreach ($warn in $paramPlan.Warnings) { Write-Host $warn }
+
+if ($status.Output -match 'Next: (\S+)') {
+  Write-Host "Next sub-plan: $($Matches[1])"
+}
+if ($status.Output -match 'Path: (.+)') {
+  Write-Host "Sub-plan path: $($Matches[1].Trim())"
+}
 
 Write-Host ""
 Write-Host "Launch params: MaxIterations=$MaxIterations IterationTimeoutMin=$IterationTimeoutMin"

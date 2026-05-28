@@ -46,40 +46,31 @@ ilk-runner (this skill)
 
 ### W1. Supervised launch (`/ilk-run`)
 
-**Windows:** run `ilk-runner/scripts/ilk-run.ps1` via
-`powershell -NoProfile -ExecutionPolicy Bypass -File ...` (see
-`commands/_windows-agent-shell.md`). Do not call `python3` or paste
-PowerShell variables into Git Bash.
+**Windows (mandatory):** run **only** `ilk-runner/scripts/ilk-run.ps1` via
+Shell — do not call `python`/`ilk_paths`/`loop_status` manually.
 
-**macOS/Linux:** run `ilk-runner/scripts/ilk-run.sh`, or follow the steps
-below manually.
+Git Bash (Cursor default on Windows):
+
+```bash
+powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME/.cursor/skills/ilk-runner/scripts/ilk-run.ps1"
+```
+
+Never use `$env:USERPROFILE` in Git Bash. See `commands/ilk-run.md` section W.
+
+**macOS/Linux:** run `ilk-runner/scripts/ilk-run.sh`, or follow manual
+sections M1–M8 in `commands/ilk-run.md`:
 
 1. **Check queue**: run `loop_status.py`. Apply the queue-state decision
-   table before proceeding:
-   - All shipped, no queued masters → report "nothing to run" and STOP.
-   - Active master has pending/in-progress work → proceed to step 2.
-   - Active master all shipped + queued master exists → promote (see
-     below), then proceed.
-   - No active master + queued master exists → promote (see below),
-     then proceed.
-   - Multiple active masters → report queue integrity issue and STOP.
+   table before proceeding.
 2. **Promote if needed**: run
-   `promote_next_master.py --project "$PROJECT_ROOT"` (or PowerShell
-   equivalent). Inspect JSON output for `"promoted": true`. If promotion
-   fails, treat it as a hard stop. After promotion, re-run
-   `loop_status.py` to confirm the newly active master has pending work.
-3. **Read sub-plan**: understand remaining steps, risk signals.
-4. **Read postmortems**: adjust launch params from history (see
-   `ilk-launcher/SKILL.md` § "Agent decision guide").
-5. **Pick params**: `MaxIterations` and `IterationTimeoutMin` based on
-   remaining work + step character.
-6. **Launch ilk**: invoke `ilk-launcher/scripts/launch.sh` (or
-   `launch.ps1` on Windows) with resolved params.
-7. **Start watchdog**: invoke `ilk-watchdog/scripts/watchdog.sh --detach`
-   (or `watchdog.ps1 -Detach` on Windows) with default polling.
-8. **Report**: window title, PID, params, watchdog PID, log paths
-   (loop log from `last-launch.json`, JSONL summary, watchdog activity
-   log, watchdog stdout/stderr log), and copy-ready tail commands.
+   `promote_next_master.py --project "$PROJECT_ROOT"`. Inspect JSON for
+   `"promoted": true`. Re-run `loop_status.py` after promotion.
+3. **Read sub-plan**: remaining steps, risk signals.
+4. **Read postmortems**: adjust launch params from history.
+5. **Pick params**: `MaxIterations` and `IterationTimeoutMin`.
+6. **Launch ilk**: `launch.sh` with resolved params.
+7. **Start watchdog**: `watchdog.sh --detach`.
+8. **Report**: PID, params, log paths, tail commands.
 
 ### W2. Status check (`/ilk-status`)
 
@@ -89,6 +80,7 @@ below manually.
 
 ## Guardrails
 
+- **Windows `/ilk-run`:** use `ilk-run.ps1` only — never manual python steps in Bash.
 - Always use `loop_status.py` — never inspect `docs/plans/` manually.
 - Always use external-plan-aware scripts from `~/.ilk-data`.
 - Use `promote_next_master.py` for queue advancement — do not hand-edit
