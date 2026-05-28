@@ -9,14 +9,37 @@ watchdog", "launch supervised ilk", `/ilk-run`, "跑 ilk 并守着",
 Do NOT inspect `docs/plans/` manually as the source of truth. Always use
 the external-plan-aware scripts.
 
-> **`ilk-run` is a command, not a skill root.** There is no
-> `~/.claude/skills/ilk-run/scripts` (or host-equivalent) directory.
-> All scripts referenced here live in sibling skills:
+> **`ilk-run` is a command, not a skill root.** Orchestration scripts live in
+> `ilk-runner/scripts/` (`ilk-run.ps1` on Windows, `ilk-run.sh` on macOS/Linux).
+> All other scripts referenced here live in sibling skills:
 > `ilk-loop/scripts/`, `ilk-launcher/scripts/`, `ilk-watchdog/scripts/`.
 
 `<skill-root>` below means the installed skills base directory —
 `~/.claude/skills/`, `~/.cursor/skills/`, or `~/.codex/skills/` depending
 on the host agent. It is **not** `ilk-run` itself.
+
+## Windows: agent shell (read first)
+
+On Windows, Cursor's Shell tool often runs **Git Bash**, not PowerShell.
+Do **not** paste PowerShell blocks (`$env:USERPROFILE`, `Write-Output`) into
+Git Bash, and do **not** use `python3` unless you have verified it exists
+(Windows typically provides `python` only).
+
+**Preferred — one PowerShell command (works from Git Bash or PowerShell):**
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.cursor\skills\ilk-runner\scripts\ilk-run.ps1"
+```
+
+Optional overrides: `-MaxIterations 40 -IterationTimeoutMin 45 -DryRun`
+
+The script resolves skill root, picks `python` vs `python3`, checks the
+queue, promotes when needed, launches, and starts the watchdog. See
+`commands/_windows-agent-shell.md` for Git-Bash step-by-step fallbacks.
+
+If you run the steps below manually instead of `ilk-run.ps1`, use the
+**PowerShell** blocks on Windows — but invoke them via
+`powershell -NoProfile -File ...`, not inside Git Bash.
 
 ## 1. Resolve project context
 
@@ -31,9 +54,9 @@ python3 "<skill-root>/ilk-loop/scripts/ilk_paths.py" --start .
 ```
 
 ```powershell
-# Windows
-python3 "<skill-root>\ilk-loop\scripts\ilk_paths.py" --start .
-# e.g. python3 "$env:USERPROFILE\.claude\skills\ilk-loop\scripts\ilk_paths.py" --start .
+# Windows — use python, not python3
+python "<skill-root>\ilk-loop\scripts\ilk_paths.py" --start .
+# e.g. python "$env:USERPROFILE\.cursor\skills\ilk-loop\scripts\ilk_paths.py" --start .
 ```
 
 The script prints a JSON object. Extract at minimum:
@@ -62,7 +85,7 @@ python3 "<skill-root>/ilk-loop/scripts/loop_status.py"
 
 ```powershell
 # Windows
-python3 "<skill-root>\ilk-loop\scripts\loop_status.py"
+python "<skill-root>\ilk-loop\scripts\loop_status.py"
 ```
 
 `loop_status.py` exit codes are queue-state signals, not error codes —
@@ -103,7 +126,7 @@ python3 "<skill-root>/ilk-loop/scripts/promote_next_master.py" --project "$PROJE
 
 ```powershell
 # Windows
-python3 "<skill-root>\ilk-loop\scripts\promote_next_master.py" --project $ProjectRoot
+python "<skill-root>\ilk-loop\scripts\promote_next_master.py" --project $ProjectRoot
 ```
 
 Inspect the JSON output for `"promoted": true` before proceeding. If

@@ -12,6 +12,20 @@ the external-plan-aware scripts.
 Do NOT launch, stop, edit plans, or mutate any state. This command is
 strictly read-only.
 
+`<skill-root>` below means the installed skills base directory —
+`~/.claude/skills/`, `~/.cursor/skills/`, or `~/.codex/skills/` depending
+on the host agent.
+
+## Windows: agent shell (read first)
+
+**Preferred:**
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.cursor\skills\ilk-runner\scripts\ilk-status.ps1"
+```
+
+See `commands/_windows-agent-shell.md`. On Windows use `python`, not `python3`.
+
 ## 1. Current-project status (default)
 
 When the user asks about the current project (default). Run these steps
@@ -28,7 +42,7 @@ python3 "<skill-root>/ilk-loop/scripts/loop_status.py"
 
 ```powershell
 # Windows
-python3 "<skill-root>\ilk-loop\scripts\loop_status.py"
+python "<skill-root>\ilk-loop\scripts\loop_status.py"
 # Exit codes: 0 = all shipped, 1 = pending work exists (normal), 2 = no plans / invalid project
 ```
 
@@ -59,7 +73,7 @@ python3 "<skill-root>/ilk-launcher/scripts/status_progress.py" --project-path <p
 
 ```powershell
 # Windows
-python3 "<skill-root>\ilk-launcher\scripts\status_progress.py" -ProjectPath <project_root>
+python "<skill-root>\ilk-launcher\scripts\status_progress.py" -ProjectPath <project_root>
 ```
 
 Replace `<project_root>` with the resolved project path (the directory
@@ -91,7 +105,7 @@ python3 "<skill-root>/ilk-launcher/scripts/status_all.py"
 
 ```powershell
 # Windows
-python3 "<skill-root>\ilk-launcher\scripts\status_all.py"
+python "<skill-root>\ilk-launcher\scripts\status_all.py"
 ```
 
 Shows a table:

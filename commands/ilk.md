@@ -7,7 +7,13 @@ Follow these steps in order. Do NOT skip any.
 Run:
 
 ```bash
+# macOS / Linux
 python3 "<skill-root>/ilk-loop/scripts/loop_status.py"
+```
+
+```powershell
+# Windows — use python, not python3; or run ilk-status.ps1
+python "<skill-root>\ilk-loop\scripts\loop_status.py"
 ```
 
 The script resolves the active plans dir (external under `~/.ilk-data`

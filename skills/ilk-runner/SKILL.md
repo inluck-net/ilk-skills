@@ -14,9 +14,11 @@ A thin orchestration layer that sequences ilk-launcher and ilk-watchdog
 to start a supervised ilk run, or shows progress status. Owns the
 workflow guardrails; never reimplements launcher or watchdog logic.
 
-> **`ilk-runner` has no `scripts/` directory.** All scripts live in sibling
-> skills: `ilk-loop/scripts/`, `ilk-launcher/scripts/`, `ilk-watchdog/scripts/`.
-> Do not resolve paths under `ilk-runner/scripts/` — they do not exist.
+> **`ilk-runner` scripts** live in `ilk-runner/scripts/` (`ilk-run.ps1`,
+> `ilk-status.ps1`, `ilk-stop.ps1` on Windows; `ilk-run.sh` on macOS/Linux).
+> Prefer these on Windows so agents do not mix Git Bash and PowerShell.
+> Other scripts live in sibling skills: `ilk-loop/scripts/`,
+> `ilk-launcher/scripts/`, `ilk-watchdog/scripts/`.
 
 ## When to use
 
@@ -43,6 +45,14 @@ ilk-runner (this skill)
 ## Workflows
 
 ### W1. Supervised launch (`/ilk-run`)
+
+**Windows:** run `ilk-runner/scripts/ilk-run.ps1` via
+`powershell -NoProfile -ExecutionPolicy Bypass -File ...` (see
+`commands/_windows-agent-shell.md`). Do not call `python3` or paste
+PowerShell variables into Git Bash.
+
+**macOS/Linux:** run `ilk-runner/scripts/ilk-run.sh`, or follow the steps
+below manually.
 
 1. **Check queue**: run `loop_status.py`. Apply the queue-state decision
    table before proceeding:

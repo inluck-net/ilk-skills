@@ -14,6 +14,17 @@ worker artifacts.
 `~/.claude/skills/`, `~/.cursor/skills/`, or `~/.codex/skills/` depending
 on the host agent.
 
+## Windows: agent shell (read first)
+
+**Preferred:**
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.cursor\skills\ilk-runner\scripts\ilk-stop.ps1"
+```
+
+Add `-ResetWorkerChanges` only when the user explicitly requests a reset.
+See `commands/_windows-agent-shell.md`. On Windows use `python`, not `python3`.
+
 ## 1. Resolve project context
 
 Resolve the project once with `ilk_paths.py` (owned by `ilk-loop`).
@@ -25,7 +36,7 @@ python3 "<skill-root>/ilk-loop/scripts/ilk_paths.py" --start .
 
 ```powershell
 # Windows
-python3 "<skill-root>\ilk-loop\scripts\ilk_paths.py" --start .
+python "<skill-root>\ilk-loop\scripts\ilk_paths.py" --start .
 ```
 
 Extract `project_root` from the JSON output. If `project_root` is `null`,
