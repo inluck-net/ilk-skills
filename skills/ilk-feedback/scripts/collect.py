@@ -613,7 +613,7 @@ def resolve_iter_log(
         roots = _iter_log_root_candidates(project_path, last_launch)
     else:
         roots = [LOOP_LOG_DIR]
-    rel = f"ilk-claude-{run_id}" / f"iter-{iteration:02d}.log"
+    rel = Path(f"ilk-claude-{run_id}") / f"iter-{iteration:02d}.log"
     for root in roots:
         p = root / rel
         if p.exists():
