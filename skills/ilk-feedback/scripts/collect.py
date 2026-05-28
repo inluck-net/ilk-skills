@@ -80,16 +80,22 @@ if _ILK_PATHS_DIR.is_dir():
     sys.path.insert(0, str(_ILK_PATHS_DIR))
 try:
     from ilk_paths import (
+        archive_run_dir,
         external_launcher_dir,
         external_logs_dir,
+        external_runtime_dir,
         find_project_root as _find_project_root,
         project_key,
+        skill_root as _skill_root,
     )  # type: ignore
 except ImportError:
     _find_project_root = None  # type: ignore
     external_launcher_dir = None  # type: ignore
     external_logs_dir = None  # type: ignore
+    external_runtime_dir = None  # type: ignore
+    archive_run_dir = None  # type: ignore
     project_key = None  # type: ignore
+    _skill_root = None  # type: ignore
 
 # How many lines of the last problematic iter's log to embed in the report.
 TAIL_LINES = 80
@@ -359,15 +365,82 @@ def loop_status_exit(project_path: Path) -> int:
         return -1
 
 
-def classify(
+def collect_self_hosting_facts(
+    project_path: Path,
+    last_launch: dict | None,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """Collect facts indicating self-hosting / runtime-path drift.
+
+    Self-hosting means the project being modified is the same repo that
+    supplies the installed ``ilk-*`` skills.  Path drift means the log
+    or runner paths changed during the run (old path gone, preserved
+    archive exists).
+
+    Returns a dict of facts merged into the classification facts.
+    """
+    facts: dict[str, Any] = {}
+
+    # 1. Is the project the skill source?
+    skill_root_path = None
+    is_self_hosting = False
+    if _skill_root is not None:
+        try:
+            skill_root_path = _skill_root()
+        except (FileNotFoundError, OSError):
+            pass
+    if skill_root_path is not None:
+        proj_norm = _normalize_path_for_compare(project_path)
+        skill_norm = _normalize_path_for_compare(skill_root_path)
+        # Direct match: project IS the skills dir (legacy layout)
+        # or project is a parent of the skills dir (repo-clone layout
+        # where skills are installed under ~/.cursor/skills from this repo)
+        is_self_hosting = (
+            proj_norm == skill_norm
+            or skill_norm.startswith(proj_norm + "/")
+            or proj_norm.startswith(skill_norm + "/")
+        )
+    facts["skill_root_path"] = str(skill_root_path) if skill_root_path else None
+    facts["is_self_hosting"] = is_self_hosting
+
+    # 2. Does the launch log path still exist?
+    launch_log_path = None
+    if last_launch:
+        launch_log_path = last_launch.get("log_file") or last_launch.get("jsonl_log")
+    facts["launch_log_path"] = launch_log_path
+    facts["launch_log_exists"] = (
+        Path(launch_log_path).exists() if launch_log_path else None
+    )
+
+    # 3. Does a preserved archive exist for this run?
+    archive_exists = False
+    archive_path = None
+    if run_id and archive_run_dir is not None and project_key is not None:
+        try:
+            root, _kind = _find_project_root(project_path) if _find_project_root else (None, "single")
+            if root is not None:
+                key = project_key(root)
+                archive_path = str(archive_run_dir(key, run_id))
+                archive_exists = Path(archive_path).is_dir()
+        except (OSError, ValueError):
+            pass
+    facts["preserved_archive_path"] = archive_path
+    facts["preserved_archive_exists"] = archive_exists
+
+    # 4. Log path drift: original gone but preserved replacement exists
+    facts["log_path_drifted"] = (
+        facts["launch_log_exists"] is False and archive_exists
+    )
+
+    return facts
+
+
+def _classify_core(
     iters: list[dict],
     last_launch: dict | None,
     project_path: Path,
 ) -> tuple[str, dict[str, Any]]:
-    """
-    Return (label, facts_dict) where facts_dict has the metrics used in the
-    report and recommendations.
-    """
+    """Core classification logic (no self-hosting facts)."""
     if not iters:
         return "interrupted", {
             "reason": "no JSONL records for this run — possibly failed before first iter completed",
@@ -511,6 +584,24 @@ def classify(
         "max_iter_configured": max_iter_configured,
         "note": "no JSONL stop_reason; loop_status not 0; iter < max — likely external kill (stop.ps1, window closed, or process crash)",
     }
+
+
+def classify(
+    iters: list[dict],
+    last_launch: dict | None,
+    project_path: Path,
+) -> tuple[str, dict[str, Any]]:
+    """Classify a run and include self-hosting drift facts.
+
+    Delegates to ``_classify_core`` for the taxonomy label, then merges
+    self-hosting / runtime-path drift facts into the returned dict.
+    """
+    run_id = iters[-1].get("run_id") if iters else None
+    sh_facts = collect_self_hosting_facts(project_path, last_launch, run_id)
+
+    label, facts = _classify_core(iters, last_launch, project_path)
+    facts.update(sh_facts)
+    return label, facts
 
 
 # ---------- recommendations --------------------------------------------------
