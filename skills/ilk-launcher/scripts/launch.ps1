@@ -209,12 +209,41 @@ function Get-ExternalLauncherDir {
   return ""
 }
 
+function Get-ExternalLogsDir {
+  param([string]$ProjectPath)
+  $resolver = Join-Path $SkillRoot "ilk-loop\scripts\ilk_paths.py"
+  if (-not (Test-Path $resolver)) { return "" }
+  try {
+    $json = & python $resolver --start $ProjectPath 2>$null
+    if ($LASTEXITCODE -eq 0 -and $json) {
+      $obj = $json | ConvertFrom-Json -ErrorAction Stop
+      if ($obj.external_logs_dir) { return [string]$obj.external_logs_dir }
+    }
+  } catch {}
+  return ""
+}
+
 function Get-ProjectName {
   param([string]$Path)
   $projects = Read-ProjectsRegistry
   $match = $projects | Where-Object { $_.path -eq $Path }
   if ($match) { return [string]$match.name }
   return (Split-Path $Path -Leaf)
+}
+
+function Get-ProjectKey {
+  param([string]$ProjectPath)
+  $resolver = Join-Path $SkillRoot "ilk-loop\scripts\ilk_paths.py"
+  if (Test-Path $resolver) {
+    try {
+      $json = & python $resolver --start $ProjectPath 2>$null
+      if ($LASTEXITCODE -eq 0 -and $json) {
+        $obj = $json | ConvertFrom-Json -ErrorAction Stop
+        if ($obj.project_key) { return [string]$obj.project_key }
+      }
+    } catch {}
+  }
+  return (Split-Path $ProjectPath -Leaf)
 }
 
 function ConvertTo-IlkHashtable {
@@ -487,6 +516,23 @@ function Start-ilkWindow {
   }
   if (-not (Test-Path $stateDir)) { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null }
 
+  # Resolve external log paths — prefer ~/.ilk-data, fall back to legacy skill-root
+  $extLogs = Get-ExternalLogsDir -ProjectPath $ProjectPath
+  $legacyLogDir = Join-Path $SkillRoot 'ilk-loop\logs'
+  $runId = Get-Date -Format 'yyyyMMdd-HHmmss'
+  $projectKey = Get-ProjectKey -ProjectPath $ProjectPath
+  if ($extLogs) {
+    $logDir    = Join-Path $extLogs 'launcher'
+    $jsonlLog  = Join-Path $extLogs '.ilk-loop.log'
+    $perRunDir = Join-Path $extLogs "runs\$runId"
+  } else {
+    $logDir    = Join-Path $legacyLogDir 'launcher'
+    $jsonlLog  = Join-Path $legacyLogDir '.ilk-loop.log'
+    $perRunDir = Join-Path $legacyLogDir "runs\$runId"
+  }
+  if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+  $logFile = Join-Path $logDir "$projectKey-$runId.log"
+
   $title = "ilk: $ProjectName"
   $runnerScript = Get-RunnerScript -EngineName $EngineName
 
@@ -518,6 +564,8 @@ Write-Host '[ilk-launcher] window left open for review. Close manually when done
     Write-Host "  IterationTimeoutMin: $IterationTimeoutMin"
     Write-Host "  WorkerEngine: $EngineName"
     if ($McpConfigPath) { Write-Host "  McpConfigPath: $McpConfigPath" }
+    Write-Host "  LogFile: $logFile"
+    Write-Host "  JsonlLog: $jsonlLog"
     $pidFile = Get-PidFilePath -ProjectPath $ProjectPath
     Write-Host "  PID file: $pidFile"
     return $null
@@ -538,12 +586,17 @@ Write-Host '[ilk-launcher] window left open for review. Close manually when done
     loop_script            = $LoopScript
     mcp_config_path        = $McpConfigPath
     worker_engine          = $EngineName
+    log_file               = $logFile
+    log_dir                = $perRunDir
+    jsonl_log              = $jsonlLog
+    legacy_log_dir         = $legacyLogDir
   }
   $meta | ConvertTo-Json | Out-File -FilePath (Get-LaunchMetaPath -ProjectPath $ProjectPath) -Encoding utf8
 
   Write-Host "[$ProjectName] launched. PID $($proc.Id). Title: '$title'." -ForegroundColor Green
   Write-Host "[$ProjectName] PID file: $pidFile"
-  Write-Host "[$ProjectName] loop JSONL log: $SkillRoot\ilk-loop\logs (see run_ilk_loop_claude.ps1 -LogDir)"
+  Write-Host "[$ProjectName] Log file: $logFile"
+  Write-Host "[$ProjectName] JSONL log: $jsonlLog"
   return $proc.Id
 }
 
