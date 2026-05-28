@@ -17,6 +17,10 @@
 .PARAMETER All
   Stop every project that has a live PID file.
 
+.PARAMETER ResetWorkerChanges
+  Preview and reset tracked/untracked worker artifacts. Requires explicit
+  opt-in. Logs and postmortems are preserved.
+
 .EXAMPLE
   .\stop.ps1 -ProjectName es_api
 
@@ -25,6 +29,9 @@
 
 .EXAMPLE
   .\stop.ps1 -All
+
+.EXAMPLE
+  .\stop.ps1 -ProjectName es_api -ResetWorkerChanges
 #>
 [CmdletBinding(DefaultParameterSetName = 'ByName')]
 param(
@@ -35,7 +42,9 @@ param(
   [string]$ProjectName,
 
   [Parameter(ParameterSetName = 'All', Mandatory)]
-  [switch]$All
+  [switch]$All,
+
+  [switch]$ResetWorkerChanges
 )
 
 $ErrorActionPreference = 'Stop'
@@ -137,6 +146,46 @@ function Kill-Orphans {
   }
 }
 
+function Reset-WorkerChanges {
+  param([string]$Path, [string]$Name)
+
+  Write-Host "[$Name] --- reset preview (dry run) ---" -ForegroundColor Cyan
+
+  # Show tracked changes that would be restored
+  $tracked = & git -C $Path diff --name-only 2>$null
+  if ($tracked) {
+    Write-Host "[$Name] tracked files to restore:" -ForegroundColor Yellow
+    foreach ($f in $tracked) { Write-Host "[$Name]   git restore: $f" -ForegroundColor Yellow }
+  } else {
+    Write-Host "[$Name]   (no tracked changes)" -ForegroundColor Gray
+  }
+
+  # Show untracked files that would be removed
+  $untracked = & git -C $Path ls-files --others --exclude-standard 2>$null
+  if ($untracked) {
+    Write-Host "[$Name] untracked files to remove:" -ForegroundColor Yellow
+    foreach ($f in $untracked) { Write-Host "[$Name]   rm: $f" -ForegroundColor Yellow }
+  } else {
+    Write-Host "[$Name]   (no untracked files)" -ForegroundColor Gray
+  }
+
+  if (-not $tracked -and -not $untracked) {
+    Write-Host "[$Name] nothing to reset." -ForegroundColor Gray
+    return
+  }
+
+  Write-Host "[$Name] --- applying reset ---" -ForegroundColor Cyan
+
+  if ($tracked) {
+    & git -C $Path restore . 2>&1 | ForEach-Object { Write-Host "[$Name]   $_" }
+    Write-Host "[$Name] tracked files restored." -ForegroundColor Green
+  }
+  if ($untracked) {
+    & git -C $Path clean -fd 2>&1 | ForEach-Object { Write-Host "[$Name]   $_" }
+    Write-Host "[$Name] untracked files removed." -ForegroundColor Green
+  }
+}
+
 function Stop-WatchdogForProject {
   param([string]$Path, [string]$Name)
   $watchdogStop = Join-Path $SkillRoot "ilk-watchdog\scripts\stop_watchdog.ps1"
@@ -197,6 +246,11 @@ function Stop-Project {
     }
   } catch {
     Write-Host "[$Name]   (not a git repo)" -ForegroundColor Gray
+  }
+
+  # Optional: reset worker changes if explicitly requested
+  if ($ResetWorkerChanges) {
+    Reset-WorkerChanges -Path $Path -Name $Name
   }
 }
 

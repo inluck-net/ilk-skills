@@ -402,6 +402,29 @@ bash "$HOME/.cursor/skills/ilk-watchdog/scripts/stop_watchdog.sh" --project-name
 & "$HOME\.cursor\skills\ilk-watchdog\scripts\stop_watchdog.ps1" -ProjectName es_api
 ```
 
+#### Resetting wrong-model worker artifacts
+
+By default, stop never touches tracked files or untracked artifacts. If a
+loop ran with the wrong model and left dirty worker output, use the reset
+flag to preview and clean up:
+
+```bash
+# macOS / Linux — preview then reset
+bash "$HOME/.cursor/skills/ilk-launcher/scripts/stop.sh" --project-name es_api --reset-worker-changes
+```
+```powershell
+# Windows — preview then reset
+& "$HOME\.cursor\skills\ilk-launcher\scripts\stop.ps1" -ProjectName es_api -ResetWorkerChanges
+```
+
+The reset mode:
+1. Shows a dry-run preview of tracked files that would be restored and
+   untracked files that would be removed.
+2. Runs `git restore .` for tracked changes and `git clean -fd` for
+   untracked files.
+3. Preserves logs and postmortem evidence (those live outside the project
+   tree under `~/.ilk-data`).
+
 ### W4. Launch all registered projects
 
 ```powershell

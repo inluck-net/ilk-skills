@@ -21,6 +21,7 @@ PROJECTS_JSON="${LAUNCHER_DIR}/projects.json"
 CLI_PROJECT_PATH=""
 CLI_PROJECT_NAME=""
 CLI_ALL=false
+CLI_RESET=false
 
 # ----- Helpers (mirrored from launch.sh) -------------------------------------
 
@@ -186,6 +187,60 @@ if m: print(m.group(1))
   fi
 }
 
+# ----- Reset mode ------------------------------------------------------------
+
+reset_worker_changes() {
+  local path="$1"
+  local name="$2"
+
+  echo "[$name] --- reset preview (dry run) ---" >&2
+
+  # Show tracked changes that would be restored
+  local tracked
+  tracked=$(cd "$path" && git diff --name-only 2>/dev/null) || tracked=""
+  if [[ -n "$tracked" ]]; then
+    echo "[$name] tracked files to restore:" >&2
+    echo "$tracked" | while IFS= read -r f; do
+      echo "[$name]   git restore: $f" >&2
+    done
+  else
+    echo "[$name]   (no tracked changes)" >&2
+  fi
+
+  # Show untracked files that would be removed
+  local untracked
+  untracked=$(cd "$path" && git ls-files --others --exclude-standard 2>/dev/null) || untracked=""
+  if [[ -n "$untracked" ]]; then
+    echo "[$name] untracked files to remove:" >&2
+    echo "$untracked" | while IFS= read -r f; do
+      echo "[$name]   rm: $f" >&2
+    done
+  else
+    echo "[$name]   (no untracked files)" >&2
+  fi
+
+  if [[ -z "$tracked" && -z "$untracked" ]]; then
+    echo "[$name] nothing to reset." >&2
+    return 0
+  fi
+
+  echo "[$name] --- applying reset ---" >&2
+
+  if [[ -n "$tracked" ]]; then
+    (cd "$path" && git restore . 2>&1) | while IFS= read -r line; do
+      echo "[$name]   $line" >&2
+    done
+    echo "[$name] tracked files restored." >&2
+  fi
+
+  if [[ -n "$untracked" ]]; then
+    (cd "$path" && git clean -fd 2>&1) | while IFS= read -r line; do
+      echo "[$name]   $line" >&2
+    done
+    echo "[$name] untracked files removed." >&2
+  fi
+}
+
 # ----- Watchdog integration --------------------------------------------------
 
 stop_watchdog_for_project() {
@@ -277,6 +332,11 @@ stop_project() {
       echo "[$name]   $dline" >&2
     done
   fi
+
+  # Optional: reset worker changes if explicitly requested
+  if [[ "$CLI_RESET" == true ]]; then
+    reset_worker_changes "$path" "$name"
+  fi
 }
 
 # ----- Argument parsing ------------------------------------------------------
@@ -291,6 +351,9 @@ Options:
   --project-path PATH    Absolute path to project root.
   --project-name NAME    Look up path in projects.json.
   --all                  Stop every project in projects.json.
+  --reset-worker-changes Preview and reset tracked/untracked worker artifacts.
+                         Requires explicit opt-in. Logs and postmortems are
+                         preserved.
   -h, --help             Show this help and exit.
 EOF
 }
@@ -308,6 +371,10 @@ parse_args() {
         ;;
       --all)
         CLI_ALL=true
+        shift
+        ;;
+      --reset-worker-changes)
+        CLI_RESET=true
         shift
         ;;
       -h|--help)
