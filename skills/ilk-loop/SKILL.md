@@ -30,8 +30,13 @@ the agent never grows past its context window.
 
 ## Architecture
 
+`<skill-root>` below means the installed skills base directory —
+`~/.cursor/skills/` (Cursor), `~/.claude/skills/` (Claude Code), or
+`~/.codex/skills/` (Codex) — depending on the host agent. The companion
+`commands/` directory is its sibling, e.g. `~/.cursor/commands/`.
+
 ```
-~/.cursor/skills/ilk-loop/
+<skill-root>/ilk-loop/
   SKILL.md                            ← this file
   scripts/
     loop_status.py                    ← universal status checker
@@ -39,7 +44,7 @@ the agent never grows past its context window.
     README.md                         ← scaffold for <project>/docs/plans/README.md
     subplan-template.md               ← starter sub-plan body
 
-~/.cursor/commands/
+<skill-root>/../commands/
   ilk.md                            ← /ilk              -- execute next step
   ilk-plan.md                       ← /ilk-plan         -- plan from a task description
   ilk-lark-tickets.md               ← /ilk-lark-tickets -- plan from Lark 可执行 tickets
@@ -117,14 +122,14 @@ All per-project runtime artifacts live outside the project tree under:
 To discover the exact paths for the project in the current directory:
 
 ```bash
-python3 ~/.cursor/skills/ilk-loop/scripts/ilk_paths.py --start . --where
+python3 <skill-root>/ilk-loop/scripts/ilk_paths.py --start . --where
 ```
 
 If you have legacy in-project `.ilk-launcher/` or `.ilk-watchdog/` directories
 from an earlier version, migrate them once with:
 
 ```bash
-python3 ~/.cursor/tools/migration/migrate_project_runtime_dirs.py --project . --apply
+python3 <skill-root>/../tools/migration/migrate_project_runtime_dirs.py --project . --apply
 ```
 
 This keeps the project repo clean and avoids accidental commits of skill
@@ -170,7 +175,7 @@ artifacts.
 This is the default operation. The `/ilk` slash command body codifies it.
 You should:
 
-1. Run `python3 ~/.cursor/skills/ilk-loop/scripts/loop_status.py`.
+1. Run `python3 <skill-root>/ilk-loop/scripts/loop_status.py`.
 2. Open the chat with one line:
    `Next: <sub-plan> step N of M -- <step summary>. Starting work...`
 3. Execute the step per "The loop" above.
@@ -182,13 +187,13 @@ When the user says "set up ilk-loop here" or similar:
 
 1. Verify cwd is inside a git repo (or `<project>/`).
 2. Create `<project>/docs/plans/` if missing.
-3. Copy `~/.cursor/skills/ilk-loop/templates/README.md` to
+3. Copy `<skill-root>/ilk-loop/templates/README.md` to
    `<project>/docs/plans/README.md` (the in-repo copy is intentional — it
    makes the convention discoverable to anyone browsing the repo).
 4. Ask the user what tickets / scope this first batch covers, then create a
    `MASTER-YYYY-MM-DD-execution-plan.md` from skeleton.
 5. Create one or more sub-plan files using
-   `~/.cursor/skills/ilk-loop/templates/subplan-template.md`.
+   `<skill-root>/ilk-loop/templates/subplan-template.md`.
 
 ### 3. Add a new sub-plan to an existing master
 
@@ -551,7 +556,7 @@ Drop a `.ilk-meta.json` at the umbrella root:
 Or scaffold it from disk:
 
 ```powershell
-python ~/.cursor/skills/ilk-loop/scripts/init_meta_project.py `
+python <skill-root>/ilk-loop/scripts/init_meta_project.py `
   --root C:\path\to\umbrella
 ```
 
@@ -640,7 +645,7 @@ claude mcp add chrome-devtools --scope user -- npx chrome-devtools-mcp@latest --
 ```
 
 Requires Chrome to be running with `--remote-debugging-port=9222`
-(see `~/.cursor/skills/browser-automation/SKILL.md`).
+(see `<skill-root>/browser-automation/SKILL.md`).
 
 Once registered, the loop has full parity with Cursor: it can
 `take_snapshot`, `click`, `type_text`, `evaluate_script`,
@@ -706,7 +711,7 @@ Linux distributions usually ship `timeout` from `coreutils` by default.
 
 ## See also
 
-- `~/.cursor/skills/lark-tickets/SKILL.md` — ticket-tracker integration.
-- `~/.cursor/commands/ilk.md` — the slash command body that drives the loop.
-- `~/.cursor/skills/ilk-loop/scripts/run_ilk_loop_claude.sh` — bash
+- `<skill-root>/lark-tickets/SKILL.md` — ticket-tracker integration.
+- `<skill-root>/../commands/ilk.md` — the slash command body that drives the loop.
+- `<skill-root>/ilk-loop/scripts/run_ilk_loop_claude.sh` — bash
   runner (macOS / Linux equivalent of `run_ilk_loop_claude.ps1`).

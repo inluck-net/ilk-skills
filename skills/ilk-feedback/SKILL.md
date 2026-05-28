@@ -45,8 +45,12 @@ A read-only triage skill that turns the structured logs already produced by
 
 ## Architecture
 
+`<skill-root>` below means the installed skills base directory —
+`~/.cursor/skills/` (Cursor), `~/.claude/skills/` (Claude Code), or
+`~/.codex/skills/` (Codex) — depending on the host agent.
+
 ```
-~/.cursor/skills/ilk-feedback/
+<skill-root>/ilk-feedback/
   SKILL.md
   scripts/
     collect.py            ← reads JSONL + per-iter logs, writes report
@@ -171,7 +175,7 @@ through 3-day-old runs.
 
 Both `run_ilk_loop_claude.ps1` (Windows) and `run_ilk_loop_claude.sh`
 (macOS/Linux) write iteration records to the same JSONL log at
-`~/.cursor/skills/ilk-loop/logs/.ilk-loop.log`. `collect.py` reads
+`<skill-root>/ilk-loop/logs/.ilk-loop.log`. `collect.py` reads
 this file regardless of which runner produced it.
 
 Both `launch.ps1` and `launch.sh` write `last-launch.json` to the same
@@ -184,8 +188,8 @@ requested on macOS can still classify a run that was launched on Windows
 
 Invocation on each platform:
 
-- **PowerShell:** `python "$HOME\.cursor\skills\ilk-feedback\scripts\collect.py"`
-- **bash:** `python3 "$HOME/.cursor/skills/ilk-feedback/scripts/collect.py"`
+- **PowerShell:** `python "<skill-root>\ilk-feedback\scripts\collect.py"`
+- **bash:** `python3 "<skill-root>/ilk-feedback/scripts/collect.py"`
 
 ## Known limitations
 
@@ -209,9 +213,9 @@ Invocation on each platform:
 
 ## See also
 
-- `~/.cursor/skills/ilk-launcher/SKILL.md` — Step 1.5 reads the
+- `<skill-root>/ilk-launcher/SKILL.md` — Step 1.5 reads the
   frontmatter we emit.
-- `~/.cursor/skills/ilk-loop/scripts/run_ilk_loop_claude.ps1` — the
+- `<skill-root>/ilk-loop/scripts/run_ilk_loop_claude.ps1` — the
   source of truth for JSONL log format (PowerShell runner; bash
   equivalent is `run_ilk_loop_claude.sh`).
 - `<vault>/ai-coding-workflow/tool-evaluations/ilk-launcher.md` —

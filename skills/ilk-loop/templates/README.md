@@ -4,7 +4,7 @@ This folder hosts execution plans for this project, organised as a
 **master plan** that indexes several **sub-plans**. Each sub-plan is a
 sequence of small, atomic steps. The whole system is designed so that any
 fresh chat session can resume the work from disk, without re-deriving
-context — see `~/.cursor/skills/ilk-loop/SKILL.md` for the full
+context — see `<skill-root>/ilk-loop/SKILL.md` (where `<skill-root>` is `~/.cursor/skills`, `~/.claude/skills`, or `~/.codex/skills` depending on the host) for the full
 convention.
 
 ## Convention
@@ -65,6 +65,6 @@ Or in a fresh Cursor chat, type `/ilk` — that will:
    new ticket and add a line under the sub-plan's "Out of scope" section —
    do not silently expand the plan.
 
-See `~/.cursor/skills/ilk-loop/SKILL.md` for full details, the state
+See `<skill-root>/ilk-loop/SKILL.md` for full details, the state
 machine, integration with the lark-tickets skill, and commit-message
 conventions.

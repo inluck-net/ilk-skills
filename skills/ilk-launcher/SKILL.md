@@ -42,8 +42,12 @@ the design rationale in `<vault>/ai-coding-workflow/tool-evaluations/ilk-launche
 
 ## Architecture
 
+`<skill-root>` below means the installed skills base directory —
+`~/.cursor/skills/` (Cursor), `~/.claude/skills/` (Claude Code), or
+`~/.codex/skills/` (Codex) — depending on the host agent.
+
 ```
-~/.cursor/skills/ilk-launcher/
+<skill-root>/ilk-launcher/
   SKILL.md                  ← this file
   projects.json             ← global registry: name + path (params live with project)
   scripts/
@@ -127,7 +131,7 @@ configs, and postmortems) lives outside the project tree under:
 To discover the exact paths for the project in the current directory:
 
 ```bash
-python3 ~/.cursor/skills/ilk-loop/scripts/ilk_paths.py --start . --where
+python3 <skill-root>/ilk-loop/scripts/ilk_paths.py --start . --where
 ```
 
 This keeps the project repo clean and avoids accidental commits of
@@ -149,7 +153,7 @@ directories from an older skill version, the **only** valid actions are:
 rm -rf <project>/.ilk-launcher <project>/.ilk-watchdog
 
 # Option B — run the migrator (moves any salvageable state to ~/.ilk-data/):
-python3 ~/.cursor/tools/migration/migrate_project_runtime_dirs.py \
+python3 <skill-root>/../tools/migration/migrate_project_runtime_dirs.py \
     --project . --apply
 ```
 
@@ -223,22 +227,24 @@ to `~/.ilk-data/projects/<key>/runtime/launcher/mcp-worker.json`, and passes it 
 drops claude.ai-synced servers (Gmail / Drive) for the worker — those
 are almost never useful in loop work anyway.
 
-### Global registry: `~/.cursor/skills/ilk-launcher/projects.json`
+### Global registry: `<skill-root>/ilk-launcher/projects.json`
 
 > **First-run bootstrap**: this file is gitignored (per-operator data).
 > After running `install.ps1` / `install.sh`, copy
 > `projects.example.json` next to it as `projects.json` and edit the
-> entries to point at your real project paths:
+> entries to point at your real project paths. The bootstrap snippets
+> below use the Cursor install path (`$HOME/.cursor/skills`); substitute
+> `.claude` or `.codex` for the other hosts.
 >
 > ```powershell
-> # Win
+> # Win (Cursor; use .claude or .codex for the other hosts)
 > $dir = "$HOME\.cursor\skills\ilk-launcher"
 > if (-not (Test-Path "$dir\projects.json")) {
 >   Copy-Item "$dir\projects.example.json" "$dir\projects.json"
 > }
 > ```
 > ```bash
-> # macOS / Linux
+> # macOS / Linux (Cursor; use .claude or .codex for the other hosts)
 > dir="$HOME/.cursor/skills/ilk-launcher"
 > [[ -f "$dir/projects.json" ]] || cp "$dir/projects.example.json" "$dir/projects.json"
 > ```
@@ -605,7 +611,7 @@ only spawns, observes-via-PID, and kills.
 
 ## See also
 
-- `~/.cursor/skills/ilk-loop/SKILL.md` — the loop itself.
+- `<skill-root>/ilk-loop/SKILL.md` — the loop itself.
 - `<vault>/ai-coding-workflow/tool-evaluations/ilk-launcher.md` —
   design rationale (why detached windows, not Cursor-hosted background).
 - `<vault>/ai-coding-workflow/gap-analysis.md` P0-3 — the future

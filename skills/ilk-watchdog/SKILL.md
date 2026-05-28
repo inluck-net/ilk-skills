@@ -32,8 +32,12 @@ launcher.
 
 ## Architecture
 
+`<skill-root>` below means the installed skills base directory —
+`~/.cursor/skills/` (Cursor), `~/.claude/skills/` (Claude Code), or
+`~/.codex/skills/` (Codex) — depending on the host agent.
+
 ```
-~/.cursor/skills/ilk-watchdog/
+<skill-root>/ilk-watchdog/
   SKILL.md                  ← this file
   scripts/
     watchdog.ps1            ← polling loop; -Detach flag spawns its own desktop window
@@ -192,7 +196,7 @@ older skill version, the **only** valid actions are:
 rm -rf <project>/.ilk-watchdog
 
 # Option B — run the migrator (moves any salvageable state to ~/.ilk-data/):
-python3 ~/.cursor/tools/migration/migrate_project_runtime_dirs.py \
+python3 <skill-root>/../tools/migration/migrate_project_runtime_dirs.py \
     --project . --apply
 ```
 
@@ -243,7 +247,7 @@ that's a separate cleanup; do not add new entries.
 
 ## See also
 
-- `~/.cursor/skills/ilk-feedback/SKILL.md` — the classifier this skill
+- `<skill-root>/ilk-feedback/SKILL.md` — the classifier this skill
   consumes.
-- `~/.cursor/skills/ilk-launcher/SKILL.md` — the launcher this skill
+- `<skill-root>/ilk-launcher/SKILL.md` — the launcher this skill
   invokes on whitelist hits.
