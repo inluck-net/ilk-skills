@@ -91,6 +91,7 @@ The `recommended_*` fields are what `ilk-launcher` Step 1.5 reads.
 | `budget-exhausted` | last iter's `stop_reason="budget-exhausted"` | `--max-budget-usd` cap. Raise it or accept the cap. |
 | `interrupted` | last record's `stop_reason=null` AND not `clean-success` AND iter count < MaxIterations | Window was killed externally (chad ran `stop.ps1` or closed window). |
 | `local-checks-stuck` | last iter's `local_checks` had ≥1 fail AND ≥3 of last 5 iters had failing checks (and fail iters > pass iters) | Agent kept committing but sub-plan `local_checks` kept failing — AC may be wrong/over-specified, step too coarse, or a real bug. Read the failing check output before relaunching. Only fires when loop ran with `-RunLocalChecks`. |
+| `self-hosting-drift` | project is the skill source (`is_self_hosting=true`) AND launch log path disappeared or preserved archive exists for a missing path | The project being modified is the same repo that supplies installed `ilk-*` skills, and runtime paths/log evidence changed during the run. Preserve evidence, clean stale sentinel, relaunch from stable runner. Does NOT override `clean-success`, `local-checks-stuck`, `budget-exhausted`, or `timeout-bound` when those have intact evidence. |
 
 ## Standard workflow
 
