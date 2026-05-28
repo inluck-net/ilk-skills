@@ -724,6 +724,16 @@ def recommend_params(
             "here. Params unchanged."
         )
 
+    if label == "self-hosting-drift":
+        return cur_max, cur_to, (
+            "self-hosting project experienced runtime path drift — log/runner "
+            "paths changed during the run. **Do not auto-relaunch yet.** "
+            "1) Preserve evidence (run preserve_active_run.py if not already "
+            "archived). 2) Clean the stale sentinel (last-exit.json reports "
+            "state=running for a dead PID). 3) Relaunch from a stable/snapshot "
+            "runner when available."
+        )
+
     if label == "interrupted":
         return cur_max, cur_to, (
             "loop didn't reach a natural stop (window killed externally). "
@@ -894,6 +904,20 @@ def render_report(
     body_lines.append(_label_narrative(label, facts))
     body_lines.append("")
 
+    if label == "self-hosting-drift":
+        body_lines.append("## Self-hosting drift details\n")
+        body_lines.append("| Fact | Value |")
+        body_lines.append("|---|---|")
+        body_lines.append(f"| Skill root | `{facts.get('skill_root_path', 'unknown')}` |")
+        body_lines.append(f"| Is self-hosting | {facts.get('is_self_hosting', 'unknown')} |")
+        body_lines.append(f"| Launch log path | `{facts.get('launch_log_path', 'unknown')}` |")
+        body_lines.append(f"| Launch log exists | {facts.get('launch_log_exists', 'unknown')} |")
+        body_lines.append(f"| Preserved archive path | `{facts.get('preserved_archive_path', 'none')}` |")
+        body_lines.append(f"| Preserved archive exists | {facts.get('preserved_archive_exists', 'unknown')} |")
+        body_lines.append(f"| Log path drifted | {facts.get('log_path_drifted', 'unknown')} |")
+        body_lines.append(f"| Original classification | `{facts.get('original_label', 'unknown')}` |")
+        body_lines.append("")
+
     body_lines.append("## Recommendation for next launch\n")
     body_lines.append(f"- `MaxIterations`: **{rec_max}** (was {max_iter_cfg if max_iter_cfg else 'unknown'})")
     body_lines.append(f"- `IterationTimeoutMin`: **{rec_to}** (was {to_cfg if to_cfg else 'unknown'})")
@@ -901,10 +925,16 @@ def render_report(
     body_lines.append("")
 
     body_lines.append("## Suggested next action\n")
-    body_lines.append("Pick one (the agent will surface this as a 3-way question):")
-    body_lines.append(f"- (a) Resume now with `-MaxIterations {rec_max} -IterationTimeoutMin {rec_to}`")
-    body_lines.append("- (b) Investigate the tail below first; resume later")
-    body_lines.append("- (c) Manual handling — leave the loop idle, decide outside this skill")
+    if label == "self-hosting-drift":
+        body_lines.append("**Do not auto-relaunch** until drift is resolved:")
+        body_lines.append("- (a) Preserve evidence — run `preserve_active_run.py` if not already archived")
+        body_lines.append("- (b) Clean stale sentinel — remove `last-exit.json` with `state=running` for dead PID")
+        body_lines.append("- (c) Relaunch from a stable/snapshot runner when available")
+    else:
+        body_lines.append("Pick one (the agent will surface this as a 3-way question):")
+        body_lines.append(f"- (a) Resume now with `-MaxIterations {rec_max} -IterationTimeoutMin {rec_to}`")
+        body_lines.append("- (b) Investigate the tail below first; resume later")
+        body_lines.append("- (c) Manual handling — leave the loop idle, decide outside this skill")
     body_lines.append("")
 
     if last_iter_log:
