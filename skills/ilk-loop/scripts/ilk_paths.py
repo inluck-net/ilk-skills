@@ -12,6 +12,7 @@ live OUTSIDE the project tree, under:
         plans/         # MASTER-*.md and sub-plans
         runtime/       # last-exit.json, queue cursors, etc.
         logs/          # per-project loop output
+        logs/archive/  # preserved active-run evidence before cleanup
 
 This keeps the project repo clean (no skill artifacts polluting SCM) and
 makes the same skill suite usable across personal and employer projects
@@ -313,6 +314,11 @@ def run_log_dir(key: str, run_id: str) -> Path:
     return external_logs_dir(key) / "runs" / run_id
 
 
+def archive_run_dir(key: str, run_id: str) -> Path:
+    """Preserved active-run evidence: ~/.ilk-data/projects/<key>/logs/archive/<run_id>/"""
+    return external_logs_dir(key) / "archive" / run_id
+
+
 def jsonl_summary_path(key: str) -> Path:
     """Stable JSONL summary for all runs: ~/.ilk-data/projects/<key>/logs/.ilk-loop.log"""
     return external_logs_dir(key) / ".ilk-loop.log"
@@ -436,6 +442,7 @@ def _selftest() -> int:
         print(f"logs: {external_logs_dir(key)}")
         print(f"logs-launcher: {logs_launcher_dir(key)}")
         print(f"jsonl-summary: {jsonl_summary_path(key)}")
+        print(f"archive: {external_logs_dir(key) / 'archive'}")
         return 0
 
     print(json.dumps({
@@ -453,6 +460,7 @@ def _selftest() -> int:
         "jsonl_summary_path": str(jsonl_summary_path(key)) if key else None,
         "external_launcher_dir": str(external_launcher_dir(key)) if key else None,
         "external_watchdog_dir": str(external_watchdog_dir(key)) if key else None,
+        "archive_base": str(external_logs_dir(key) / "archive") if key else None,
         "resolved_plans_dir": str(plans) if plans else None,
         "resolved_source": src,
         "meta_members": members,
