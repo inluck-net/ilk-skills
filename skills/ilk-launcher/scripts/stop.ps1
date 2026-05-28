@@ -82,6 +82,17 @@ function Get-PidFilePath {
   return Join-Path $dir 'running.pid'
 }
 
+function Mark-SentinelInterrupted {
+  param([string]$ProjectPath, [int]$StoppedPid)
+  $launcherDir = Get-ExternalLauncherDir -ProjectPath $ProjectPath
+  if (-not $launcherDir) { return }
+  $runtimeDir = Split-Path $launcherDir -Parent
+  $marker = Join-Path $SkillRoot "ilk-launcher\scripts\mark_sentinel_interrupted.ps1"
+  if (Test-Path $marker) {
+    try { & $marker -RuntimeDir $runtimeDir -StoppedPid $StoppedPid } catch {}
+  }
+}
+
 function Stop-Project {
   param([string]$Path, [string]$Name)
   $pidFile = Get-PidFilePath -ProjectPath $Path
@@ -97,6 +108,7 @@ function Stop-Project {
   $proc = Get-Process -Id $targetPid -ErrorAction SilentlyContinue
   if (-not $proc) {
     Write-Host "[$Name] PID $targetPid no longer alive. Cleaning stale PID file." -ForegroundColor Yellow
+    Mark-SentinelInterrupted -ProjectPath $Path -StoppedPid $targetPid
     Remove-Item $pidFile -Force
     return
   }
@@ -107,6 +119,7 @@ function Stop-Project {
     Write-Warning "[$Name] PID $targetPid still alive after taskkill. Investigate manually."
   } else {
     Write-Host "[$Name] stopped." -ForegroundColor Green
+    Mark-SentinelInterrupted -ProjectPath $Path -StoppedPid $targetPid
     Remove-Item $pidFile -Force
   }
 }

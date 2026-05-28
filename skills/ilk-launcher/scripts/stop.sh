@@ -115,6 +115,22 @@ get_pid_file_path() {
   echo "${launcher_dir}/running.pid"
 }
 
+mark_sentinel_interrupted() {
+  local project_path="$1"
+  local stopped_pid="$2"
+  local launcher_dir
+  launcher_dir=$(get_external_launcher_dir "$project_path")
+  if [[ -z "$launcher_dir" ]]; then
+    return
+  fi
+  local runtime_dir
+  runtime_dir="$(dirname "$launcher_dir")"
+  local marker="${_SKILL_ROOT}/ilk-launcher/scripts/mark_sentinel_interrupted.sh"
+  if [[ -f "$marker" ]]; then
+    bash "$marker" "$runtime_dir" "$stopped_pid" 2>/dev/null || true
+  fi
+}
+
 # ----- Stop logic ------------------------------------------------------------
 
 stop_project() {
@@ -138,6 +154,7 @@ stop_project() {
 
   if ! kill -0 "$target_pid" 2>/dev/null; then
     echo "[$name] PID $target_pid no longer alive. Cleaning stale PID file." >&2
+    mark_sentinel_interrupted "$path" "$target_pid"
     rm -f "$pid_file"
     return 0
   fi
@@ -167,6 +184,7 @@ stop_project() {
     echo "[$name] PID $target_pid still alive after SIGKILL. Investigate manually." >&2
   else
     echo "[$name] stopped." >&2
+    mark_sentinel_interrupted "$path" "$target_pid"
     rm -f "$pid_file"
   fi
 }
