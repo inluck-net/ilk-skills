@@ -81,12 +81,14 @@ if _ILK_PATHS_DIR.is_dir():
 try:
     from ilk_paths import (
         external_launcher_dir,
+        external_logs_dir,
         find_project_root as _find_project_root,
         project_key,
     )  # type: ignore
 except ImportError:
     _find_project_root = None  # type: ignore
     external_launcher_dir = None  # type: ignore
+    external_logs_dir = None  # type: ignore
     project_key = None  # type: ignore
 
 # How many lines of the last problematic iter's log to embed in the report.
@@ -157,6 +159,76 @@ def read_last_launch(project_path: Path) -> dict | None:
         return None
 
 
+def _jsonl_log_candidates(project_path: Path, last_launch: dict | None = None) -> list[Path]:
+    """Return ordered candidate paths for the JSONL summary log.
+
+    Resolution order:
+      1. last-launch.json → log_file / log_dir fields
+      2. ilk_paths.external_logs_dir(project_key)
+      3. Legacy <skill-root>/ilk-loop/logs/.ilk-loop.log
+    """
+    candidates: list[Path] = []
+
+    # 1. last-launch.json hints
+    if last_launch:
+        log_file = last_launch.get("log_file")
+        if log_file:
+            p = Path(log_file)
+            if p not in candidates:
+                candidates.append(p)
+        log_dir = last_launch.get("log_dir")
+        if log_dir:
+            p = Path(log_dir) / ".ilk-loop.log"
+            if p not in candidates:
+                candidates.append(p)
+
+    # 2. External logs dir
+    if external_logs_dir is not None and project_key is not None:
+        p = external_logs_dir(project_key(project_path)) / ".ilk-loop.log"
+        if p not in candidates:
+            candidates.append(p)
+
+    # 3. Legacy skill-root logs dir
+    if LOOP_LOG_DIR not in [c.parent for c in candidates]:
+        candidates.append(LOOP_LOG_DIR / ".ilk-loop.log")
+
+    return candidates
+
+
+def _iter_log_root_candidates(project_path: Path, last_launch: dict | None = None) -> list[Path]:
+    """Return ordered candidate directories that may contain iter-NN.log files.
+
+    Each candidate is a directory that may contain
+    ``ilk-claude-<run-id>/iter-NN.log`` subdirectories.
+
+    Resolution order:
+      1. last-launch.json → log_dir field
+      2. ilk_paths.external_logs_dir(project_key)
+      3. Legacy <skill-root>/ilk-loop/logs/
+    """
+    candidates: list[Path] = []
+
+    # 1. last-launch.json hint
+    if last_launch:
+        log_dir = last_launch.get("log_dir")
+        if log_dir:
+            p = Path(log_dir)
+            if p not in candidates:
+                candidates.append(p)
+
+    # 2. External logs dir
+    if external_logs_dir is not None and project_key is not None:
+        p = external_logs_dir(project_key(project_path))
+        if p not in candidates:
+            candidates.append(p)
+
+    # 3. Legacy skill-root logs dir
+    if LOOP_LOG_DIR not in candidates:
+        candidates.append(LOOP_LOG_DIR)
+
+    return candidates
+
+
 def _normalize_path_for_compare(p: str | os.PathLike) -> str:
     """Normalize a path for cross-platform equality comparison.
 
@@ -174,27 +246,42 @@ def _normalize_path_for_compare(p: str | os.PathLike) -> str:
     return str(p).replace("\\", "/").lower()
 
 
-def read_jsonl_iters(project_path: Path) -> list[dict]:
+def read_jsonl_iters(project_path: Path, last_launch: dict | None = None) -> list[dict]:
+    """Return ALL iteration records for this project across all runs.
+
+    Scans all candidate JSONL files (external, last-launch.json hint,
+    legacy) and de-duplicates by (run_id, iteration).
     """
-    Return ALL iteration records for this project across all runs.
-    Each record is a dict matching Write-JsonlRecord in run_ilk_loop_claude.ps1.
-    """
-    if not JSONL_LOG.exists():
-        return []
-    records = []
     project_path_norm = _normalize_path_for_compare(project_path)
-    with JSONL_LOG.open("r", encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            rec_proj = _normalize_path_for_compare(rec.get("project", ""))
-            if rec_proj == project_path_norm:
-                records.append(rec)
+    seen: set[tuple[str, int]] = set()
+    records: list[dict] = []
+
+    for candidate in _jsonl_log_candidates(project_path, last_launch):
+        if not candidate.exists():
+            continue
+        try:
+            with candidate.open("r", encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    rec_proj = _normalize_path_for_compare(rec.get("project", ""))
+                    if rec_proj != project_path_norm:
+                        continue
+                    rid = rec.get("run_id", "")
+                    it = rec.get("iteration", 0)
+                    key = (rid, it)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    records.append(rec)
+        except OSError:
+            continue
+
     return records
 
 
@@ -344,13 +431,11 @@ def classify(
             kw = "unknown"
             last_log_path = last.get("log")
             if not last_log_path and last.get("run_id"):
-                constructed = (
-                    LOOP_LOG_DIR
-                    / f"ilk-claude-{last.get('run_id')}"
-                    / f"iter-{last.get('iteration', 0):02d}.log"
+                resolved = resolve_iter_log(
+                    last.get("run_id"), last.get("iteration", 0), project_path, last_launch
                 )
-                if constructed.exists():
-                    last_log_path = str(constructed)
+                if resolved:
+                    last_log_path = str(resolved)
             if last_log_path:
                 kw = classify_log_keywords(tail_log(last_log_path))
                 if kw == "unknown":
@@ -516,10 +601,24 @@ def tail_log(log_path_str: str | None, max_lines: int = TAIL_LINES) -> list[str]
     return [ln.rstrip("\n") for ln in lines[-max_lines:]]
 
 
-def resolve_iter_log(run_id: str, iteration: int) -> Path | None:
-    """Return the path to a specific iteration log if it exists on disk."""
-    p = LOOP_LOG_DIR / f"ilk-claude-{run_id}" / f"iter-{iteration:02d}.log"
-    return p if p.exists() else None
+def resolve_iter_log(
+    run_id: str, iteration: int, project_path: Path | None = None, last_launch: dict | None = None
+) -> Path | None:
+    """Return the path to a specific iteration log if it exists on disk.
+
+    Searches all candidate log root directories (external, last-launch.json
+    hint, legacy) for ``ilk-claude-<run_id>/iter-NN.log``.
+    """
+    if project_path is not None:
+        roots = _iter_log_root_candidates(project_path, last_launch)
+    else:
+        roots = [LOOP_LOG_DIR]
+    rel = f"ilk-claude-{run_id}" / f"iter-{iteration:02d}.log"
+    for root in roots:
+        p = root / rel
+        if p.exists():
+            return p
+    return None
 
 
 def parse_postmortem_frontmatter(path: Path) -> dict[str, Any]:
@@ -935,7 +1034,7 @@ def run_reclassify(args) -> int:
             last = iters[-1] if iters else {}
             last_log = last.get("log")
             if not last_log:
-                resolved = resolve_iter_log(run_id, last.get("iteration", 0))
+                resolved = resolve_iter_log(run_id, last.get("iteration", 0), proj_path)
                 if resolved:
                     last_log = str(resolved)
             tail = tail_log(last_log)
@@ -1010,10 +1109,12 @@ def main() -> int:
     project_name = args.project_name or project_name_for(project_path)
     last_launch = read_last_launch(project_path)
 
-    all_records = read_jsonl_iters(project_path)
+    all_records = read_jsonl_iters(project_path, last_launch)
     if not all_records:
+        candidates = _jsonl_log_candidates(project_path, last_launch)
+        looked_at = ", ".join(str(c) for c in candidates)
         print(f"[ilk-feedback] No JSONL records for project {project_path}.")
-        print(f"[ilk-feedback] Has ilk ever run for this project? Looked at {JSONL_LOG}")
+        print(f"[ilk-feedback] Has ilk ever run for this project? Looked at {looked_at}")
         return 1
 
     by_run = runs_index(all_records)
@@ -1031,7 +1132,7 @@ def main() -> int:
     rec_max, rec_to, rationale = recommend_params(label, iters, last_launch)
     last_log = iters[-1].get("log") if iters else None
     if not last_log and iters:
-        resolved = resolve_iter_log(target_run, iters[-1]["iteration"])
+        resolved = resolve_iter_log(target_run, iters[-1]["iteration"], project_path, last_launch)
         if resolved:
             last_log = str(resolved)
     tail = tail_log(last_log)
