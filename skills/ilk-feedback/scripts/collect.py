@@ -586,6 +586,47 @@ def _classify_core(
     }
 
 
+def _classify_self_hosting_drift(
+    core_label: str,
+    core_facts: dict[str, Any],
+    sh_facts: dict[str, Any],
+) -> tuple[str, dict[str, Any]] | None:
+    """Return ``(label, facts)`` if self-hosting drift applies, else ``None``.
+
+    Conservative trigger: only fires when the project is the skill source
+    AND the launch log path has disappeared (or a preserved archive exists
+    for a path that no longer does).  More-specific labels
+    (``clean-success``, ``local-checks-stuck``, ``budget-exhausted``,
+    ``timeout-bound``) are never overridden — those have intact evidence
+    and a clearer diagnosis.
+    """
+    if not sh_facts.get("is_self_hosting"):
+        return None
+
+    has_drift = (
+        sh_facts.get("log_path_drifted")
+        or sh_facts.get("launch_log_exists") is False
+        or (sh_facts.get("preserved_archive_exists") and not sh_facts.get("launch_log_exists"))
+    )
+    if not has_drift:
+        return None
+
+    # Don't override labels that already have strong, intact evidence.
+    preserve_labels = {"clean-success", "local-checks-stuck", "budget-exhausted", "timeout-bound"}
+    if core_label in preserve_labels:
+        return None
+
+    facts = {**core_facts, **sh_facts}
+    facts["original_label"] = core_label
+    facts["drift_reason"] = (
+        "self-hosting project with runtime path drift: "
+        f"launch_log_exists={sh_facts.get('launch_log_exists')}, "
+        f"preserved_archive_exists={sh_facts.get('preserved_archive_exists')}, "
+        f"log_path_drifted={sh_facts.get('log_path_drifted')}"
+    )
+    return "self-hosting-drift", facts
+
+
 def classify(
     iters: list[dict],
     last_launch: dict | None,
@@ -595,12 +636,21 @@ def classify(
 
     Delegates to ``_classify_core`` for the taxonomy label, then merges
     self-hosting / runtime-path drift facts into the returned dict.
+    When self-hosting + path drift is detected and the core label is not
+    more specific, overrides to ``self-hosting-drift``.
     """
     run_id = iters[-1].get("run_id") if iters else None
     sh_facts = collect_self_hosting_facts(project_path, last_launch, run_id)
 
     label, facts = _classify_core(iters, last_launch, project_path)
-    facts.update(sh_facts)
+
+    # Check for self-hosting drift override
+    drift_result = _classify_self_hosting_drift(label, facts, sh_facts)
+    if drift_result is not None:
+        label, facts = drift_result
+    else:
+        facts.update(sh_facts)
+
     return label, facts
 
 
@@ -936,6 +986,18 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
         return (
             f"Hit `--max-budget-usd` ({facts.get('max_budget_usd')}). Loop stopped "
             "to protect spend."
+        )
+    if label == "self-hosting-drift":
+        orig = facts.get("original_label", "unknown")
+        return (
+            f"This project is the skill source (self-hosting) and runtime "
+            f"paths drifted during the run. The original classification was "
+            f"`{orig}`, but log evidence is incomplete: "
+            f"launch_log_exists={facts.get('launch_log_exists')}, "
+            f"preserved_archive_exists={facts.get('preserved_archive_exists')}, "
+            f"log_path_drifted={facts.get('log_path_drifted')}. "
+            "Preserve evidence, clean the stale sentinel, and relaunch from "
+            "a stable/snapshot runner when available."
         )
     if label == "interrupted":
         return facts.get("note") or "Loop did not reach a natural stop."
