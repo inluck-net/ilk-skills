@@ -110,6 +110,15 @@ function Test-ProcessAlive {
   return [bool](Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
 }
 
+function Test-ProcessCommandAlive {
+  param([int]$ProcessId, [string]$ExpectedCommand)
+  if (-not (Test-ProcessAlive -ProcessId $ProcessId)) { return $false }
+  $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+  if (-not $proc) { return $false }
+  $actual = $proc.ProcessName.ToLower()
+  return $actual -like "*$($ExpectedCommand.ToLower())*"
+}
+
 function Read-ilkPid {
   param([string]$Project)
   $launcherDir = Get-IlkLauncherDir -Project $Project

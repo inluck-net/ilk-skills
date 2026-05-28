@@ -187,6 +187,20 @@ test_process_alive() {
   kill -0 "$pid" 2>/dev/null
 }
 
+test_process_command_alive() {
+  local pid="$1"
+  local expected="$2"
+  if ! test_process_alive "$pid"; then
+    return 1
+  fi
+  local actual
+  actual=$(ps -p "$pid" -o comm= 2>/dev/null | xargs basename 2>/dev/null || true)
+  if [[ -z "$actual" ]]; then
+    return 0  # can't determine; alive is sufficient
+  fi
+  [[ "$actual" == *"$expected"* ]]
+}
+
 read_ilk_pid() {
   local project="$1"
   local launcher_dir

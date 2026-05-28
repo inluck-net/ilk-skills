@@ -43,6 +43,7 @@ PROJECTS_JSON = LAUNCHER_DIR / "projects.json"
 # Reuse loop_status.py's helpers to guarantee identical discovery + ordering.
 sys.path.insert(0, str(LOOP_SCRIPTS))
 from loop_status import find_plans_dir, parse_frontmatter, extract_master_order, pick_active_master  # type: ignore
+from pid_health import pid_alive, pid_command_alive  # type: ignore
 
 BAR_WIDTH = 10
 PACE_WINDOW = 5  # rolling window of step commits used for "min/step"
@@ -334,15 +335,6 @@ def _read_pid(pid_path: Path) -> int | None:
         return None
 
 
-def _pid_alive(pid: int) -> bool:
-    """Check if a process is alive (signal 0)."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, ProcessLookupError):
-        return False
-
-
 def build_json(
     project_name: str,
     project_root: Path,
@@ -405,9 +397,9 @@ def build_json(
         },
         "processes": {
             "launcher_pid": launcher_pid,
-            "launcher_alive": _pid_alive(launcher_pid) if launcher_pid is not None else None,
+            "launcher_alive": pid_alive(launcher_pid) if launcher_pid is not None else None,
             "watchdog_pid": watchdog_pid,
-            "watchdog_alive": _pid_alive(watchdog_pid) if watchdog_pid is not None else None,
+            "watchdog_alive": pid_alive(watchdog_pid) if watchdog_pid is not None else None,
         },
         "rows": json_rows,
     }
