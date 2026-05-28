@@ -46,8 +46,12 @@
   Default: <skill-root>\ilk-loop\scripts\loop_status.py
 
 .PARAMETER LogDir
-  Where to write per-iteration logs and the JSONL summary.
-  Default: <skill-root>\ilk-loop\logs
+  Per-run artifact directory (iter logs, heads files).
+  Default: ~/.ilk-data/projects/<key>/logs/runs/<run-id>
+
+.PARAMETER JsonlLogPath
+  Path to the stable project-level JSONL summary file.
+  Default: ~/.ilk-data/projects/<key>/logs/.ilk-loop.log
 
 .PARAMETER Prompt
   The prompt sent to claude. Default invokes the /ilk slash command.
@@ -103,6 +107,8 @@ param(
 
   [string]$LogDir = "",
 
+  [string]$JsonlLogPath = "",
+
   [string]$Prompt = "/ilk please continue the active plan",
 
   [double]$MaxBudgetUsd = 0,
@@ -141,8 +147,31 @@ $SkillRoot = Get-IlkSkillRoot
 
 # Override defaults that were empty strings (param defaults can't call functions)
 if (-not $LoopStatusScript) { $LoopStatusScript = Join-Path $SkillRoot "ilk-loop\scripts\loop_status.py" }
-if (-not $LogDir)           { $LogDir = Join-Path $SkillRoot "ilk-loop\logs" }
 if (-not $LocalChecksScript){ $LocalChecksScript = Join-Path $SkillRoot "ilk-loop\scripts\run_local_checks.py" }
+
+$RunId = Get-Date -Format "yyyyMMdd-HHmmss"
+
+# Resolve external log paths via ilk_paths.py unless explicitly provided
+$legacyLogDir = Join-Path $SkillRoot "ilk-loop\logs"
+if (-not $LogDir -or -not $JsonlLogPath) {
+  $extLogs = ""
+  $resolver = Join-Path $SkillRoot "ilk-loop\scripts\ilk_paths.py"
+  if (Test-Path $resolver) {
+    try {
+      $json = & python $resolver --start $ProjectPath 2>$null
+      if ($LASTEXITCODE -eq 0 -and $json) {
+        $obj = $json | ConvertFrom-Json -ErrorAction Stop
+        if ($obj.external_logs_dir) { $extLogs = [string]$obj.external_logs_dir }
+      }
+    } catch {}
+  }
+  if (-not $LogDir) {
+    $LogDir = if ($extLogs) { Join-Path $extLogs "runs\$RunId" } else { Join-Path $legacyLogDir "runs\$RunId" }
+  }
+  if (-not $JsonlLogPath) {
+    $JsonlLogPath = if ($extLogs) { Join-Path $extLogs ".ilk-loop.log" } else { Join-Path $legacyLogDir ".ilk-loop.log" }
+  }
+}
 
 # ----- Pre-flight ---------------------------------------------------
 
@@ -198,10 +227,11 @@ if (-not $settingsHasEnv) {
 }
 
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
-$RunId     = Get-Date -Format "yyyyMMdd-HHmmss"
-$RunLogDir = Join-Path $LogDir "ilk-claude-$RunId"
-New-Item -ItemType Directory -Path $RunLogDir -Force | Out-Null
-$JsonlLog  = Join-Path $LogDir ".ilk-loop.log"
+$RunLogDir = $LogDir
+$JsonlLog  = $JsonlLogPath
+# Ensure JSONL parent dir exists
+$jsonlParent = Split-Path $JsonlLog -Parent
+if ($jsonlParent -and -not (Test-Path $jsonlParent)) { New-Item -ItemType Directory -Path $jsonlParent -Force | Out-Null }
 
 # ----- Helpers ------------------------------------------------------
 

@@ -549,7 +549,7 @@ Write-Host "MaxIterations: $MaxIterations    IterationTimeoutMin: $IterationTime
 Write-Host "WorkerEngine: $EngineName"
 Write-Host "Started: `$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 Write-Host '======================' -ForegroundColor Cyan
-& '$runnerScript' -ProjectPath '$ProjectPath' -MaxIterations $MaxIterations -IterationTimeoutMin $IterationTimeoutMin$mcpArg
+& '$runnerScript' -ProjectPath '$ProjectPath' -MaxIterations $MaxIterations -IterationTimeoutMin $IterationTimeoutMin -LogDir '$perRunDir' -JsonlLogPath '$jsonlLog'$mcpArg
 `$code = `$LASTEXITCODE
 Write-Host ''
 Write-Host '[ilk-launcher] run_ilk_loop_claude.ps1 exited with code:' `$code -ForegroundColor Yellow
