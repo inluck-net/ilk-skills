@@ -261,6 +261,7 @@ def render(
     pace_min: float | None,
     repos: list[Path],
     step_commit_count: int,
+    sentinel: dict[str, Any] | None = None,
 ) -> str:
     out: list[str] = []
     out.append(f"项目: {project_name}    路径: {project_root}")
@@ -275,6 +276,12 @@ def render(
         out.append("当前: (no in-progress sub-plan)")
     if common:
         out.append(f"批次日期: {common}")
+
+    if sentinel and sentinel.get("stale"):
+        out.append("")
+        out.append(f"⚠ STALE-RUNNING: sentinel says state=running but pid {sentinel['pid']} is dead")
+        out.append(f"  last-exit.json: {sentinel['last_exit_path']}")
+
     out.append("")
 
     shipped = sum(1 for r in rows if r["status"] == "shipped")
@@ -335,6 +342,46 @@ def _read_pid(pid_path: Path) -> int | None:
         return None
 
 
+def _read_last_exit(runtime_dir: Path) -> dict[str, Any] | None:
+    """Read last-exit.json from the runtime dir. Returns parsed dict or None."""
+    f = runtime_dir / "last-exit.json"
+    if not f.exists():
+        return None
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def detect_sentinel_health(
+    runtime_dir: Path,
+    launcher_pid: int | None,
+) -> dict[str, Any]:
+    """Detect stale-running sentinel: last-exit.json says running but PID is dead.
+
+    Returns a dict with:
+      - state: str (the sentinel's state field, or "unknown")
+      - stale: bool (True if state=running but PID is dead)
+      - pid: int|None (the PID from running.pid)
+      - last_exit_path: str (path to last-exit.json)
+    """
+    sentinel = _read_last_exit(runtime_dir)
+    sentinel_state = (sentinel.get("state") or "") if sentinel else ""
+    last_exit_path = str(runtime_dir / "last-exit.json")
+
+    stale = False
+    if sentinel_state == "running" and launcher_pid is not None:
+        if not pid_alive(launcher_pid):
+            stale = True
+
+    return {
+        "state": sentinel_state or "unknown",
+        "stale": stale,
+        "pid": launcher_pid,
+        "last_exit_path": last_exit_path,
+    }
+
+
 def build_json(
     project_name: str,
     project_root: Path,
@@ -376,6 +423,7 @@ def build_json(
     runtime_dir = plans_dir.parent / "runtime"
     launcher_pid = _read_pid(runtime_dir / "launcher" / "running.pid")
     watchdog_pid = _read_pid(runtime_dir / "watchdog" / "watchdog.pid")
+    sentinel = detect_sentinel_health(runtime_dir, launcher_pid)
 
     return {
         "project": {
@@ -401,6 +449,7 @@ def build_json(
             "watchdog_pid": watchdog_pid,
             "watchdog_alive": pid_alive(watchdog_pid) if watchdog_pid is not None else None,
         },
+        "sentinel": sentinel,
         "rows": json_rows,
     }
 
@@ -446,6 +495,10 @@ def main() -> int:
     timestamps = collect_step_commit_timestamps(repos)
     pace_min = compute_pace_min_per_step(timestamps, PACE_WINDOW)
 
+    runtime_dir = plans_dir.parent / "runtime"
+    launcher_pid = _read_pid(runtime_dir / "launcher" / "running.pid")
+    sentinel = detect_sentinel_health(runtime_dir, launcher_pid)
+
     if args.json_mode:
         data = build_json(
             project_name=project_name,
@@ -468,6 +521,7 @@ def main() -> int:
             pace_min=pace_min,
             repos=repos,
             step_commit_count=len(timestamps),
+            sentinel=sentinel,
         ))
     return 0
 
