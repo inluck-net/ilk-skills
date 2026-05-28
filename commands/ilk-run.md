@@ -264,3 +264,24 @@ ilk launched: <project_key>
 Tell the user they can check progress with `/ilk-status` and stop with
 `/ilk-stop`. Postmortems for this run will land under
 `<external_launcher_dir>/postmortems/` keyed by `project_key`.
+
+## 9. Self-hosting projects
+
+If the project being launched is the same repo that supplies the
+installed `ilk-*` skills (i.e. it contains `skills/ilk-loop/`,
+`skills/ilk-launcher/`, etc.), the run is **self-hosting**. A
+self-hosting run can modify the very runner code it depends on.
+
+Before launching a self-hosting run, warn the user:
+
+> **Self-hosting detected** — this project is the source of the
+> installed ilk skills. A run may modify runner/skill code mid-flight,
+> which can cause log path drift or stale sentinels. Consider:
+> 1. Running `preserve_active_run.py` after the run to archive evidence.
+> 2. Checking for `self-hosting-drift` in the postmortem before
+>    relaunching.
+> 3. Using a stable runner snapshot once available.
+
+Do not block the launch — this is advisory. The postmortem taxonomy
+includes a `self-hosting-drift` label that fires when evidence is
+incomplete due to path changes during the run.

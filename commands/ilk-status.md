@@ -123,6 +123,24 @@ If running with pending work: report progress and stale-progress guidance:
 | Over 60 minutes, no recent commits or log movement | Likely stuck | Suggest `/ilk-feedback` for a postmortem or log inspection. |
 | PID dead with pending work | Loop stopped | Suggest `/ilk-run` to restart. |
 
+### Stale sentinel detection
+
+If `status_progress.py` reports `state=running` but the PID is dead
+(check with `ps -p <PID>` on macOS/Linux or `Get-Process -Id <PID>`
+on Windows), the sentinel is stale. This typically happens when:
+
+- The loop exited but `last-exit.json` was not updated (crash, SIGKILL).
+- A self-hosting run replaced the runner code mid-flight.
+
+Report these details to the user:
+- **PID** and the fact it is dead
+- **Sentinel path:** `~/.ilk-data/projects/<key>/runtime/last-exit.json`
+- **Log candidates:** paths that `collect.py` would search
+  (external logs dir, legacy skill-root logs)
+
+Suggest `/ilk-feedback` to classify the run, then clean the stale
+sentinel before relaunching. Do not treat a stale sentinel as healthy.
+
 These are recommendations only — never mutate state from this command.
 
 ### PID inspection (only if needed)

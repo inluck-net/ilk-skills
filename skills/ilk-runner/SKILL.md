@@ -91,6 +91,30 @@ ilk-runner (this skill)
 - Preserve existing launcher/watchdog defaults unless user specifies
   overrides.
 - If all sub-plans shipped, say so — don't launch.
+- If `status_progress.py` reports state=running but the PID is dead,
+  this is a **stale sentinel**. Report: PID, sentinel path
+  (`~/.ilk-data/projects/<key>/runtime/last-exit.json`), and log
+  candidate paths. Do not treat as healthy. Suggest `/ilk-feedback`
+  to classify, then clean the sentinel before relaunching.
+
+## Self-hosting caution
+
+When the project being run is the same repo that supplies the installed
+`ilk-*` skills (self-hosting), a run can modify the very runner/skill
+code it depends on. Risks:
+
+- **Log path drift** — a commit during the run changes where logs are
+  written; the post-run postmortem may not find the original path.
+- **Stale sentinel** — `last-exit.json` reports `state=running` for a
+  PID that already exited (runner code was replaced mid-run).
+- **Lost evidence** — legacy skill-root logs deleted before the
+  postmortem reads them.
+
+Mitigations:
+1. Run `preserve_active_run.py` before any log cleanup.
+2. Use a stable runner snapshot (future work) for self-hosting projects.
+3. After a self-hosting run, check for `self-hosting-drift` in the
+   postmortem before relaunching.
 
 ## Boundary
 
