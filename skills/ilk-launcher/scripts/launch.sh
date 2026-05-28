@@ -491,17 +491,6 @@ start_ilk_window() {
   fi
   mkdir -p "$state_dir"
 
-  # Build runner command
-  local loop_script
-  loop_script=$(runner_script_for_engine "$engine")
-  local runner_cmd
-  runner_cmd="bash \"$loop_script\" --project-path \"$project_path\" --max-iterations $max_iterations --iteration-timeout-min $timeout_min"
-  if [[ -n "$mcp_config_path" ]]; then
-    runner_cmd="$runner_cmd --mcp-config-path \"$mcp_config_path\""
-  fi
-  # Pass resolved log paths so the runner writes to external locations
-  runner_cmd="$runner_cmd --log-dir \"$per_run_dir\" --jsonl-log \"$jsonl_log\""
-
   # Build log path — prefer external logs dir, fall back to legacy skill-root
   local project_key run_id log_file log_dir jsonl_log legacy_log_dir per_run_dir
   project_key=$(get_project_key "$project_path")
@@ -520,6 +509,17 @@ start_ilk_window() {
   fi
   mkdir -p "$log_dir"
   log_file="${log_dir}/${project_key}-${run_id}.log"
+
+  # Build runner command
+  local loop_script
+  loop_script=$(runner_script_for_engine "$engine")
+  local runner_cmd
+  runner_cmd="bash \"$loop_script\" --project-path \"$project_path\" --max-iterations $max_iterations --iteration-timeout-min $timeout_min"
+  if [[ -n "$mcp_config_path" ]]; then
+    runner_cmd="$runner_cmd --mcp-config-path \"$mcp_config_path\""
+  fi
+  # Pass resolved log paths so the runner writes to external locations
+  runner_cmd="$runner_cmd --log-dir \"$per_run_dir\" --jsonl-log \"$jsonl_log\""
 
   if [[ "$dry_run" == "true" ]]; then
     echo "[$project_name] DRY RUN — would launch:"
