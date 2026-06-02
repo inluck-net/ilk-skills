@@ -51,6 +51,22 @@ Either seed the data inline in A's verification step, or declare it
 explicitly in B's frontmatter so the worker knows to verify before
 starting.
 
+**A data prereq must be locally *producible*, not merely *named*.** A
+seed command or backfill helper existing in the repo is not enough if
+the data it depends on lives on infra the worker can't reach. Real
+case (crawler, 2026-05-29): a sub-plan's AC required `inventory_image_url`
+rows that only exist after a backfill whose source was a prod-test box
+that had been offline 12 days. The backfill command was in-repo — a
+fixture scan would have "found" it — but the worker spent its whole
+iteration probing DB topology and `tailscale status`, then stalled with
+zero commits (`stuck-no-progress`). When a `data_prereqs` entry's
+producer needs anything outside the dev box (a remote DB, a VPN-only
+host, a third-party import), the planner must either (a) wire a
+**local** seeding path the worker can actually run, or (b) move the
+dependent AC to a "Manual user verification" section. A `verify_cmd`
+that can only pass when remote infra is up is a latent stall, not a
+contract.
+
 ## 3. Minimal cross-task dependency
 
 If two sub-plans share state, merge them or declare `depends_on` /
@@ -95,6 +111,20 @@ Either:
   success criteria, to be done outside the loop
 
 Diagnostic sub-plans burn worker sessions without bounded progress.
+
+**The same trap hides at step granularity.** A constructive sub-plan
+can still open with a diagnostic *step 0* — "Reproduce the bug",
+"Investigate current state", "Figure out the Figma reference" — that
+produces no commit and has nothing mechanically-checkable to advance
+on. Real case (uccargo, 2026-05-26): step 0 was "Reproduce + Figma
+reference"; the local dev server was down, the Figma fetch came back
+empty, and the iteration ended with zero commits (`stuck-no-progress`).
+A no-commit step 0 is a stall waiting to happen. Either fold the
+reproduction into step 1 (so the first step ends in a constructive
+commit), or give step 0 a concrete artifact + `local_checks` it must
+produce (e.g. a saved baseline snapshot the AC later diffs against).
+The QC lint flags any step 0 whose verb is purely investigative and
+that carries no commit line.
 
 ## 7. Cross-cutting invariants become test code
 
@@ -146,6 +176,15 @@ Surface gaps in this category:
 - Undeclared external state
 - Terminology not defined in the master plan
 - Design-choice judgment calls not pre-resolved
+- **Artifact/tmp paths outside the project root.** Any path a step
+  writes to (screenshots, dumped API responses, scratch files) must sit
+  **under the resolved `project_root`**. Real case (crawler, 2026-05-29):
+  a step tried to write a network-response dump to
+  `e-com-ops/tmp/...` while the project root was `e-com-ops/crawler/`,
+  and the tool sandbox rejected it (`Access denied: path … is not
+  within …`), wasting a retry. In meta projects this is per-member: the
+  path must be under the sub-plan's `repo` member dir, not the meta
+  root.
 
 Fix obvious gaps inline (add the path, resolve the ambiguity). Surface
 non-obvious ones as "review before launching" notes for the human.
@@ -154,3 +193,75 @@ This is a heuristic — the plan generator already knows the context, so
 it can't truly simulate cold. The empirical version (a real fresh
 session per sub-plan in preflight) is a future runtime feature; for
 now, this is the skill-side approximation that catches obvious misses.
+
+## 10. Environment-reachability prereqs (fast-fail, don't discover)
+
+`data_prereqs` covers *data state* (§2). It does NOT cover whether the
+*runtime environment* a step needs is reachable: is the local dev
+server up? is the staging/preview URL live? is the remote data source
+online? is the external design source (a Figma node) fetchable? is the
+required MCP (`chrome-devtools`) actually connected?
+
+Both `stuck-no-progress` stalls observed across projects to date were
+**reachability** failures, not missing-fixture failures — the worker
+spent an entire iteration *discovering* that a dependency was down,
+then quit with no commit:
+
+- crawler — remote backfill source (`linexcx-server`) offline 12 days.
+- uccargo — `localhost:3000` dev server refused; Figma context empty.
+
+The fix is to make reachability a cheap, declared, **step-0** check
+that fast-fails clean instead of a discovery the worker stumbles into.
+Each such prereq is an `env_prereqs` entry carrying a `verify_cmd` that
+exits non-zero in milliseconds when the dependency is down, so the loop
+can surface "blocked: dependency unreachable" immediately rather than
+burning the iteration. Examples drawn from the two failures:
+
+```yaml
+env_prereqs:
+  - description: "portal dev server reachable"
+    verify_cmd: "curl -sf -o /dev/null http://localhost:3000"
+  - description: "staging API reachable"
+    verify_cmd: "curl -sf -o /dev/null https://staging.example.com/health"
+  - description: "backfill data source (linexcx-server) online"
+    verify_cmd: "tailscale ping -c1 linexcx-server"
+  - description: "chrome-devtools MCP connected"
+    verify_cmd: "claude mcp list | grep -q chrome-devtools"
+```
+
+This is the **per-sub-plan** complement to a project-wide
+`docs/loop/preflight.sh` (see ilk-loop SKILL.md → "Project-side
+preflight"). The preflight invariant is the right home for checks that
+apply to *every* authed sub-plan; `env_prereqs` is for reachability
+that's specific to one sub-plan (this sub-plan needs Figma; that one
+needs the queue worker running). When a project has a `preflight.sh`
+wired as a cross-cutting invariant, prefer extending it; otherwise
+declare `env_prereqs` per sub-plan.
+
+## 11. Verification only counts when it's enforced (shipped ≠ verified)
+
+A sub-plan's `local_checks` are the entire correctness story — and they
+run **only when the loop is launched with `-RunLocalChecks`**. Without
+that flag the loop advances on the worker's *self-report*: it sets
+`status: shipped` because the agent said the step was done, never
+having run the playwright/pytest/curl gate. Every other principle in
+this document is theater if the gate never fires.
+
+Real case (uccargo, run 20260602-071915): the postmortem classified it
+`clean-success`, but the loop had been launched without
+`-RunLocalChecks`. A broken e2e test shipped on self-report; the
+classifier only reflected `status: shipped`, not real verification.
+"clean-success" meant "the agent claims it's done", not "the tests are
+green".
+
+Two consequences the planner must encode:
+
+1. **The final report (step 9 of `/ilk-plan`) must warn** whenever any
+   sub-plan carries runtime `local_checks`: tell the user to launch
+   with `-RunLocalChecks`, because otherwise those gates do not run.
+2. **`shipped` is commit-only and local.** It does not mean pushed,
+   does not mean CI-green, does not mean verified in the cloud. A human
+   verify → push → cloud-re-run step is required before trusting a
+   batch the loop reports as shipped. State this in the master plan's
+   "Final success criteria (manual / out-of-band)" section so it's not
+   lost.

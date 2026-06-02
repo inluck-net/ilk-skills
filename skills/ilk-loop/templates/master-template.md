@@ -123,7 +123,17 @@ system or fails its `local_checks`.
 
 ## Final success criteria (manual / out-of-band)
 
-- [ ] CI passes on integrated branch
+> **`shipped` ≠ verified** (see decomposition-principles.md §11). A
+> sub-plan marked `shipped` by the loop is **commit-only and local** —
+> it does not mean pushed, CI-green, or verified in the cloud. And the
+> sub-plan `local_checks` only ran if the loop was launched with
+> `-RunLocalChecks`; without that flag the loop advanced on the worker's
+> self-report. Before trusting this batch, a human must:
+
+- [ ] Confirm the loop ran with `-RunLocalChecks` (else re-run the gates manually)
+- [ ] Verify the changed behaviour (run the e2e / smoke against a live env)
+- [ ] Push the commits
+- [ ] CI passes (cloud re-run, green) on integrated branch
 - [ ] <feature-specific gate>
 - [ ] <human review checkpoint>
 

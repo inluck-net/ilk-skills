@@ -396,6 +396,14 @@ blockers:
    of letting the agent stumble through 5 steps and finally giving up
    with `blocked`.
 
+`preflight.sh` is the **project-wide** form of a reachability check
+(applies to every authed sub-plan). Its **per-sub-plan** complement is
+the sub-plan `env_prereqs:` field (see decomposition-principles.md §10)
+— a fast-fail `verify_cmd` for reachability that's specific to one
+sub-plan (this one needs the dev server up; that one needs Figma). Both
+exist to turn "worker discovers a dependency is down mid-iteration and
+stalls" into "loop reports blocked at step 0 in milliseconds".
+
 The `/ilk` slash command's section 6 ("Before setting `status: blocked`")
 specifically instructs the executor to read the primer, run the
 preflight invariant if present, and retry — *before* flipping a step

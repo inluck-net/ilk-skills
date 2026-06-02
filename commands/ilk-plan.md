@@ -192,9 +192,54 @@ red flag: either we missed scanning, or there's a real gap that needs
 to be filed (e.g. "seed doesn't populate cart_items" → ticket for the
 seed command).
 
+**Producible-locally check (decomposition-principles.md §2).** A
+fixture existing in the repo is NOT enough if the data it produces
+depends on infra the worker can't reach. For each fixture you map to a
+sub-plan, ask: *can the worker actually run this on the dev box?* If a
+seed/backfill command's data source is a remote DB, a VPN-only host, or
+a third-party import (e.g. crawler's `backfill_bigseller_inventory_image_url`,
+whose source box was offline 12 days and stalled the loop), then either
+plan a **local** seeding path or move the dependent AC to "Manual user
+verification". Flag any such fixture in the proposal with a
+`(remote-only — needs local path or manual AC)` note.
+
 Skip this step ONLY if the user's task description is purely a refactor
 / docs / config change with no runtime data dependency. When in doubt,
 run the globs — they're cheap.
+
+## 4d. Environment reachability scan (decomposition-principles.md §10)
+
+`data_prereqs` (step 4c) covers data *state*. This step covers whether
+the runtime *environment* each sub-plan needs is *reachable* — a
+distinct failure mode and, empirically, the one that has actually
+stalled the loop. Both `stuck-no-progress` runs observed across
+projects to date were reachability failures the worker discovered
+mid-iteration and then gave up on with zero commits:
+
+- crawler — remote backfill source (`linexcx-server`) offline 12 days.
+- uccargo — `localhost:3000` dev server refused; Figma context empty.
+
+For each candidate sub-plan, identify the runtime dependencies its
+steps will touch and whether a cheap reachability probe exists:
+
+| Dependency kind | Example `verify_cmd` |
+|---|---|
+| Local dev/preview server | `curl -sf -o /dev/null http://localhost:3000` |
+| Staging / preview URL | `curl -sf -o /dev/null https://staging.example.com/health` |
+| Remote data source (VPN/tailnet) | `tailscale ping -c1 <host>` |
+| External design source (Figma) | covered by a `get_design_context` probe at step 0 |
+| Required MCP (`chrome-devtools`) | `claude mcp list \| grep -q chrome-devtools` |
+
+These become each sub-plan's `env_prereqs` entries in step 6 — a
+step-0 fast-fail so the loop reports "blocked: dependency unreachable"
+in milliseconds rather than burning the iteration. When a reachability
+check applies to EVERY authed sub-plan, prefer wiring it once into
+`docs/loop/preflight.sh` as a cross-cutting invariant (see ilk-loop
+SKILL.md → "Project-side preflight") instead of repeating it per
+sub-plan; `env_prereqs` is for sub-plan-specific reachability.
+
+Surface the env_prereqs you intend to assign in the step-5 proposal,
+in an "Environment prereqs" table alongside the fixtures table.
 
 ## 5. Propose grouping (USER APPROVAL REQUIRED)
 
@@ -282,6 +327,25 @@ Once approved, write all files in one batch under the
     (verified in step 7d below). Never leave `data_prereqs` as
     free-text "needs a test account" prose — that is the anti-pattern
     step 4c exists to kill.
+  - **`env_prereqs`** — for every sub-plan whose steps touch a running
+    service, remote data source, external design source, or required
+    MCP, list the reachability probes from the step-4d scan. Each entry
+    is `{description, verify_cmd}` and must fast-fail (exit non-zero in
+    milliseconds when the dependency is down):
+
+    ```yaml
+    env_prereqs:
+      - description: "portal dev server reachable"
+        verify_cmd: "curl -sf -o /dev/null http://localhost:3000"
+      - description: "chrome-devtools MCP connected"
+        verify_cmd: "claude mcp list | grep -q chrome-devtools"
+    ```
+
+    Leave empty only when the sub-plan touches no running service /
+    remote source / external MCP. When the same reachability check
+    applies to every authed sub-plan, prefer a `docs/loop/preflight.sh`
+    invariant over repeating it here (see ilk-loop SKILL.md →
+    "Project-side preflight").
   - Tickets-in-scope table with title / type / priority / module per item
   - Concrete objectives (1-line each)
   - Concrete acceptance criteria (observable, testable). **Each AC the
@@ -309,9 +373,9 @@ Once approved, write all files in one batch under the
 ## 7. Final QC (five passes)
 
 Run these passes against every newly-written sub-plan BEFORE
-committing. 7a / 7e findings are warnings (surface to the user);
-7b mutates files; **7c (meta projects only) and 7d-errors are hard
-gates** — never advance to step 8 with an unresolved hard finding.
+committing. 7a / 7d-env / 7e findings are warnings (surface to the
+user); 7b mutates files; **7c (meta projects only) and 7d-errors are
+hard gates** — never advance to step 8 with an unresolved hard finding.
 
 ### 7a. `local_checks` anti-pattern lint
 
@@ -334,6 +398,15 @@ per-step `local_checks` yaml block. Warn on each occurrence:
 - Multi-step bash pipelines without `set -o pipefail` semantics —
   mid-pipeline failures slip through; split into separate check
   entries (each its own exit code) or wrap with `bash -o pipefail -c`
+- **Diagnostic / no-commit step 0** (decomposition-principles.md §6) —
+  a step 0 whose verb is purely investigative ("Reproduce",
+  "Investigate", "Root-cause", "Figure out", "复现/排查") AND that
+  carries no commit line is a stall waiting to happen (uccargo,
+  2026-05-26: "Reproduce + Figma reference" step 0 ended with zero
+  commits, `stuck-no-progress`). Either fold the reproduction into
+  step 1 so the first step ends in a constructive commit, or give
+  step 0 a concrete artifact + `local_checks` it must produce. This
+  check reads each sub-plan's step structure, not just `local_checks`.
 
 Output format per finding:
 
@@ -430,6 +503,33 @@ For each sub-plan, walk its frontmatter `data_prereqs:` list. Apply:
 Finding counts (warnings + errors) go in the final report. Errors
 should be fixed before launching the loop; warnings are advisory.
 
+### 7d-env. `env_prereqs` schema + reachability-gap lint
+
+For each sub-plan, walk its frontmatter `env_prereqs:` list:
+
+1. **Entry shape** — each entry must carry a `verify_cmd:` (a
+   `description:` is recommended alongside it). An entry with no
+   `verify_cmd` can't fast-fail and is a finding:
+
+   ```
+   WARN: <slug>: env_prereqs entry "<value>" has no verify_cmd —
+         a reachability prereq the loop can't probe is just prose
+   ```
+
+2. **Reachability gap** — if the sub-plan body mentions a running
+   service, remote source, or external MCP (`localhost:`, a staging
+   URL, `tailscale`/VPN host, `chrome-devtools`, `get_design_context`/
+   Figma) but `env_prereqs` is empty AND no `docs/loop/preflight.sh`
+   invariant covers it, this is a finding — it's the exact shape of the
+   two `stuck-no-progress` stalls:
+
+   ```
+   WARN: <slug>: body needs a reachable runtime dependency but
+         env_prereqs is empty and no preflight invariant covers it
+   ```
+
+Both are warnings (advisory); surface counts in the final report.
+
 ### 7e. Cold-read self-check
 
 Re-read every sub-plan body under this prompt-frame:
@@ -444,6 +544,13 @@ For each sub-plan, list gaps in this category:
 - Undeclared external state
 - Terminology not defined in the master plan
 - Design-choice judgment calls not pre-resolved
+- Artifact/tmp paths outside the resolved `project_root` — any path a
+  step writes to (screenshots, dumped API responses, scratch files)
+  must sit under `project_root` (in meta mode: under the sub-plan's
+  `repo` member dir). The tool sandbox rejects out-of-root writes
+  (crawler, 2026-05-29: a dump to `e-com-ops/tmp/` was denied because
+  root was `e-com-ops/crawler/`, wasting a retry). Rewrite any such
+  path to a project-relative scratch dir.
 
 Fix obvious gaps inline (add the path, resolve the ambiguity).
 Surface non-obvious ones to the user as "review before launching".
@@ -481,12 +588,26 @@ End your turn with:
 
 1. A brief summary: "Wrote 1 master plan + N sub-plans covering M items
    to `~/.ilk-data/projects/<key>/plans/`."
-2. QC pass results: lint findings (count), invariants woven (count),
-   cold-read gaps surfaced (count). Each non-zero count expanded with
-   a short bullet list so the user can act.
+2. QC pass results: lint findings (count, incl. diagnostic step-0),
+   invariants woven (count), env_prereqs findings (count), cold-read
+   gaps surfaced (count). Each non-zero count expanded with a short
+   bullet list so the user can act.
 3. The output of `python "<skill-root>/ilk-loop/scripts/loop_status.py"`
    so the user sees the new pending state.
-4. Tell the user: "Ready to execute. Open a fresh chat and type `/ilk`."
+4. **Verification-enforcement warning (decomposition-principles.md §11).**
+   If ANY newly-written sub-plan carries runtime `local_checks`
+   (frontmatter or per-step), tell the user verbatim:
+
+   > These sub-plans' `local_checks` only run if you launch the loop
+   > with **`-RunLocalChecks`**. Without that flag the loop advances on
+   > the worker's self-report and can mark broken work `shipped` (this
+   > exact gap shipped a broken e2e test on uccargo, run 20260602).
+   > Also: `shipped` is commit-only and local — verify (run the e2e) →
+   > push → cloud-re-run before trusting the batch.
+
+   Skip this only if no sub-plan has any runtime `local_checks`.
+5. Tell the user: "Ready to execute. Open a fresh chat and type `/ilk`
+   (launch with `-RunLocalChecks` so the gates actually run)."
 
 ## Boundary rules
 

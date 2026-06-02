@@ -40,6 +40,28 @@ depends_on: []                 # IDs of prior sub-plans whose status==shipped is
 # /ilk-plan step 4c (fixture discovery) exists to prevent — always
 # reference a concrete registry_key or verify_cmd when one exists.
 data_prereqs: []
+# --- Runtime environment reachability (see decomposition-principles.md §10) ---
+# Distinct from data_prereqs (which is about data *state*). env_prereqs
+# declares whether the runtime environment this sub-plan needs is
+# *reachable*: dev/staging server up, remote data source online, an
+# external design source (Figma) fetchable, a required MCP connected.
+# Each entry carries a cheap verify_cmd that fast-fails (exits non-zero
+# in milliseconds) when the dependency is down, so the loop reports
+# "blocked: dependency unreachable" at step 0 instead of burning a whole
+# iteration discovering it. Both stuck-no-progress stalls observed to
+# date were reachability failures the worker stumbled into mid-iter.
+#
+# Leave empty ([]) only when the sub-plan touches no running service /
+# remote source / external MCP. For project-wide reachability that
+# applies to every authed sub-plan, prefer a docs/loop/preflight.sh
+# invariant (see ilk-loop SKILL.md → "Project-side preflight") instead.
+#
+# env_prereqs:
+#   - description: "portal dev server reachable"
+#     verify_cmd: "curl -sf -o /dev/null http://localhost:3000"
+#   - description: "chrome-devtools MCP connected"
+#     verify_cmd: "claude mcp list | grep -q chrome-devtools"
+env_prereqs: []
 # --- Machine-checkable acceptance (see decomposition-principles.md §1) ---
 # Run by the loop driver after each step's commit. Fail-any → step does
 # not advance, output written to "Findings" section.
