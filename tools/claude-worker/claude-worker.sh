@@ -199,6 +199,14 @@ if ! command -v claude >/dev/null 2>&1; then
 fi
 
 echo "Launching claude with CLAUDE_CONFIG_DIR=$worker_home ..."
+
+# Write a PID file so bootstrap can detect an active worker run before
+# overwriting the provider settings.  The PID stays valid after exec
+# (same process id, different binary).  Bootstrap checks if the PID is
+# still alive; a stale file with a dead PID is harmless.
+pid_file="$worker_home/running.pid"
+echo $$ > "$pid_file"
+
 # Guard the array expansion so an empty claude_args doesn't trip `set -u` on
 # bash 3.2 (the default on macOS).
 exec claude ${claude_args[@]+"${claude_args[@]}"}

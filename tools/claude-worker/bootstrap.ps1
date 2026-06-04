@@ -62,6 +62,10 @@
   Without this flag, official providers are refused to prevent the worker
   from accidentally using the planner's official identity.
 
+.PARAMETER Force
+  Overwrite provider settings even if an active worker/ilk run appears to
+  be using this worker home.
+
 .EXAMPLE
   .\bootstrap.ps1 -BaseUrl https://prov.example/anthropic -AuthToken $tok -Model cheap-1
   Dry-run preview into the default worker home.
@@ -83,7 +87,8 @@ param(
   [switch]$FromCCSwitch,
   [string]$Provider,
   [switch]$Interactive,
-  [switch]$AllowOfficial
+  [switch]$AllowOfficial,
+  [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -332,6 +337,30 @@ if (-not $Apply) {
   Write-Host ""
   Write-Host "Dry-run complete. Re-run with -Apply to bootstrap." -ForegroundColor Cyan
   return
+}
+
+# --- active worker run guard -------------------------------------------------
+# If a worker/ilk loop is running against this home, overwriting the provider
+# mid-run could break it.  Check for a PID file left by claude-worker.ps1.
+$pidFile = Join-Path $WorkerHome "running.pid"
+if (Test-Path -LiteralPath $pidFile) {
+  $runningPid = $null
+  try {
+    $runningPid = [int](Get-Content -LiteralPath $pidFile -Raw).Trim()
+  } catch {}
+  if ($runningPid) {
+    $proc = Get-Process -Id $runningPid -ErrorAction SilentlyContinue
+    if ($proc) {
+      if (-not $Force) {
+        Write-Error "an active worker process (PID $runningPid) appears to be using this worker home. Overwriting the provider settings now could break the running session. Pass -Force to overwrite anyway, or stop the worker first."
+        exit 2
+      }
+      Write-Host "WARNING: active worker PID $runningPid detected; -Force specified, proceeding anyway." -ForegroundColor Yellow
+    } else {
+      # Stale PID file — clean it up.
+      Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+    }
+  }
 }
 
 Write-WorkerConfig

@@ -49,6 +49,9 @@ CCSwitch, to prevent the worker from accidentally using the planner's official
 identity. Pass `--allow-official` / `-AllowOfficial` to override (not
 recommended).
 
+If an active worker process is detected (via `running.pid`), the bootstrap
+refuses to overwrite provider settings. Pass `--force` / `-Force` to override.
+
 ## Launching the worker
 
 ```bash

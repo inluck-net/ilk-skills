@@ -166,6 +166,14 @@ if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
 }
 
 Write-Host "Launching claude with CLAUDE_CONFIG_DIR=$WorkerHome ..."
+
+# Write a PID file so bootstrap can detect an active worker run before
+# overwriting the provider settings.  We write the current shell PID;
+# bootstrap checks if the PID is still alive (stale file with dead PID
+# is harmless).
+$pidFile = Join-Path $WorkerHome "running.pid"
+Set-Content -LiteralPath $pidFile -Value $PID -Encoding ascii
+
 if ($forward.Count -gt 0) {
   & claude @forward
 } else {

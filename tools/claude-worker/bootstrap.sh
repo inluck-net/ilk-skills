@@ -40,6 +40,8 @@
 #                               into the worker (refused by default to prevent
 #                               the worker from accidentally using the planner's
 #                               official identity)
+#   --force                     overwrite provider settings even if an active
+#                               worker/ilk run appears to be using this home
 #   -h | --help                 show this help and exit
 #
 # Exit codes: 0 ok / dry-run, 2 usage error, 3 incomplete provider env.
@@ -62,6 +64,7 @@ from_ccswitch=0
 ccswitch_provider=""
 interactive=0
 allow_official=0
+force=0
 
 usage() {
   sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -123,6 +126,7 @@ while [[ $# -gt 0 ]]; do
     --provider=*)    ccswitch_provider="${1#--provider=}" ;;
     --interactive)   interactive=1 ;;
     --allow-official) allow_official=1 ;;
+    --force)         force=1 ;;
     -h|--help)       usage; exit 0 ;;
     *)               echo "unknown flag: $1" >&2; exit 2 ;;
   esac
@@ -375,6 +379,27 @@ if [[ $apply -eq 0 ]]; then
   echo
   echo "Dry-run complete. Re-run with --apply to bootstrap."
   exit 0
+fi
+
+# --- active worker run guard -------------------------------------------------
+# If a worker/ilk loop is running against this home, overwriting the provider
+# mid-run could break it.  Check for a PID file left by claude-worker.sh.
+pid_file="$worker_home/running.pid"
+if [[ -f "$pid_file" ]]; then
+  running_pid="$(cat "$pid_file" 2>/dev/null || true)"
+  if [[ -n "$running_pid" ]] && kill -0 "$running_pid" 2>/dev/null; then
+    if [[ $force -eq 0 ]]; then
+      echo "WARNING: an active worker process (PID $running_pid) appears to be" >&2
+      echo "using this worker home.  Overwriting the provider settings now could" >&2
+      echo "break the running session." >&2
+      echo "Pass --force to overwrite anyway, or stop the worker first." >&2
+      exit 2
+    fi
+    echo "WARNING: active worker PID $running_pid detected; --force specified, proceeding anyway."
+  else
+    # Stale PID file — clean it up.
+    rm -f "$pid_file"
+  fi
 fi
 
 write_worker_config
