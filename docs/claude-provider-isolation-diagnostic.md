@@ -336,3 +336,90 @@ deterministic.
   link sets pointing at the same single-source repo.
 
 No destructive changes were made.
+
+---
+
+## Step 4 — Recommendation
+
+### Candidate models compared
+
+| # | Model | Isolation strength | Effort | Failure modes |
+|---|-------|--------------------|--------|---------------|
+| A | **`CLAUDE_CONFIG_DIR` alternate home + thin wrapper** | High (separate settings/MCP/skills/commands per home; provider pinned via worker `env`) | Low–Med (installer param + wrapper) | worker `env` token expiry; forgetting `ILK_SKILL_HOME`; both homes share Keychain but worker overrides it via env |
+| B | Wrapper scripts with named homes (no env var) | Same as A — a wrapper is *how* you set `CLAUDE_CONFIG_DIR` | Low | identical to A; really a sub-case of A |
+| C | Symlink swapping (`~/.claude` repointed per role) | **Low / fragile** | Med | **race condition** when planner + worker run concurrently — the whole point fails; non-atomic; easy to corrupt live state |
+| D | Separate macOS user account | **Highest** (OS-level Keychain, config, processes all separate) | High | heavy context-switch (fast-user-switching or `su`), duplicate tool installs, clumsy cross-user repo access, overkill for one operator |
+| E | Container / VM for the worker | Very high | Highest | Claude Code + CCSwitch + MCP + repo mounts inside a container; GUI CCSwitch doesn't belong in a headless container; large maintenance surface |
+
+### Recommended isolation model
+
+**Model A — a `CLAUDE_CONFIG_DIR`-based named worker home, driven by a thin
+wrapper, with the provider pinned in the worker home's `settings.json` `env`
+block.** Concretely:
+
+- **Planner** = default `~/.claude`, empty `env` → Keychain OAuth → official
+  Opus. Left exactly as-is; CCSwitch keeps managing it interactively.
+- **Worker** = `~/.claude-worker`, selected by `CLAUDE_CONFIG_DIR`, with its
+  own `settings.json` `env` (cheap provider `ANTHROPIC_BASE_URL` /
+  `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_MODEL`), its own (minimal) MCP set, and
+  ilk skills/commands linked in. A wrapper exports `CLAUDE_CONFIG_DIR`,
+  `ILK_SKILL_HOME`, and (optionally) the provider env before invoking
+  `claude` / the ilk runner.
+
+**Why A over the others:** it is the only option that is simultaneously
+(1) concurrency-safe — the two homes never write the same file, so a planner
+and a worker can run at the same time (C fails here); (2) low-effort — it
+reuses the `env`-block mechanism the ilk runner *already* understands and the
+provider tokens CCSwitch *already* stores; and (3) reversible — deleting
+`~/.claude-worker` fully removes it with zero impact on the planner. D and E
+deliver marginally stronger isolation that this single-operator,
+single-machine use case does not need, at a large recurring cost.
+
+**Relationship to CCSwitch:** CCSwitch stays the *interactive* switcher for the
+planner's `~/.claude`. For the worker, CCSwitch is used **once** as the source
+of the provider's base-URL/token, which is then pinned into
+`~/.claude-worker/settings.json`. The worker does **not** rely on CCSwitch
+toggling shared state at runtime — eliminating the race where a switch in the
+GUI would yank the provider out from under a running worker loop.
+
+### Tradeoffs, failure modes, rollback
+
+- **Tradeoff:** the worker's provider token is pinned in a plaintext
+  `settings.json` `env` block (same exposure the ilk runner already documents).
+  Acceptable for a local dev token; rotate via the wrapper or a re-pin step.
+- **Failure mode — token expiry:** worker loop 401s. Detected by the existing
+  `api-blocked` postmortem classifier (`collect.py`). Fix = re-pin token.
+- **Failure mode — skill not found in worker home:** caused by the installer
+  not having linked into `~/.claude-worker`. Fix = run the new installer
+  target; set `ILK_SKILL_HOME` in the wrapper as a belt-and-braces default.
+- **Failure mode — accidental shared Keychain use:** if the worker `env` block
+  is empty, the worker silently falls back to the planner's OAuth identity.
+  Mitigation = wrapper asserts a non-empty `ANTHROPIC_BASE_URL` before launch.
+- **Rollback:** `rm -rf ~/.claude-worker` and delete the wrapper. The planner's
+  `~/.claude`, CCSwitch, MCP, and ilk runtime are untouched throughout.
+
+### Follow-up implementation plan (outline — NOT shipped here)
+
+A future, separate batch (per MASTER "Out of scope") would:
+
+1. **Installer parameter** — add `--claude-home <dir>` / `-ClaudeHome` (and a
+   convenience `--only-claude-worker` / `-OnlyClaudeWorker`) to `install.sh`
+   and `install.ps1`, replacing the literal `~/.claude` Claude target with a
+   variable. Link skills, commands, and `tools/migration` into the worker home.
+2. **Worker bootstrap script** — create `~/.claude-worker/`, write a
+   `settings.json` with the provider `env` block (token sourced once from
+   CCSwitch / `cc-switch.db`), and a minimal `.claude.json` (own/empty MCP).
+3. **Wrapper / launcher integration** — a `claude-worker` wrapper (and an ilk
+   runner flag) that exports `CLAUDE_CONFIG_DIR=~/.claude-worker`,
+   `ILK_SKILL_HOME`, asserts a non-empty `ANTHROPIC_BASE_URL`, then execs
+   `claude` / `run_ilk_loop_claude.{sh,ps1}`. The runner's existing env-clear
+   logic already DTRT once the home's `settings.json` env is authoritative.
+4. **Docs + verification** — a PRIMER note and a preflight check that the
+   worker home authenticates (cheap `claude -p "ok"` against the worker home)
+   without disturbing the planner.
+
+This model is feasible; the only code change required is the installer
+parameter (item 1) — everything else is configuration the existing runner
+already supports.
+
+No destructive changes were made.
