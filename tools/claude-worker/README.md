@@ -18,6 +18,46 @@ never extract or print a provider token.
 
 ## One-time setup
 
+### Option A: Import from CCSwitch (recommended)
+
+If you already have providers configured in CCSwitch, you can import them
+directly instead of copying values manually:
+
+macOS / Linux:
+
+```bash
+# List available CCSwitch Claude providers (redacted, no secrets printed):
+bash tools/claude-worker/bootstrap.sh --list-ccswitch-providers
+
+# Import interactively (pick from a menu):
+bash tools/claude-worker/bootstrap.sh --apply --from-ccswitch --interactive --link-skills
+
+# Import a specific provider by id or name:
+bash tools/claude-worker/bootstrap.sh --apply --from-ccswitch --provider <provider-id> --link-skills
+```
+
+Windows (PowerShell):
+
+```powershell
+# List providers
+.\tools\claude-worker\bootstrap.ps1 -ListCcsitchProviders
+
+# Import interactively
+.\tools\claude-worker\bootstrap.ps1 -Apply -FromCcswitch -Interactive -LinkSkills
+
+# Import specific provider
+.\tools\claude-worker\bootstrap.ps1 -Apply -FromCcswitch -Provider <provider-id> -LinkSkills
+```
+
+The import reads CCSwitch config **read-only** — it never mutates CCSwitch
+state, databases, or settings files.
+
+Official/Claude OAuth providers are **refused by default** to prevent the
+worker from accidentally using the planner's official identity. Pass
+`--allow-official` / `-AllowOfficial` to override (not recommended).
+
+### Option B: Manual provider values
+
 macOS / Linux:
 
 ```bash
@@ -44,13 +84,42 @@ bootstrap reads `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` /
 `ANTHROPIC_MODEL` from the environment instead. If any of the three is missing
 it writes nothing and exits 3.
 
-Official/Claude OAuth providers are refused by default when importing from
-CCSwitch, to prevent the worker from accidentally using the planner's official
-identity. Pass `--allow-official` / `-AllowOfficial` to override (not
-recommended).
+## Switching providers later
 
-If an active worker process is detected (via `running.pid`), the bootstrap
-refuses to overwrite provider settings. Pass `--force` / `-Force` to override.
+After initial setup, you can switch the worker to a different CCSwitch provider
+without re-running the full bootstrap:
+
+```bash
+# Preview which provider would be imported (dry-run):
+bash tools/claude-worker/bootstrap.sh --from-ccswitch --provider <new-provider-id>
+
+# Apply the switch:
+bash tools/claude-worker/bootstrap.sh --apply --from-ccswitch --provider <new-provider-id>
+
+# Or pick interactively:
+bash tools/claude-worker/bootstrap.sh --apply --from-ccswitch --interactive
+```
+
+**Important:** Provider switching applies to **new Worker Claude sessions
+only**. Any currently running worker processes keep their old provider until
+restarted. If an active worker is detected, the bootstrap refuses to overwrite
+settings unless you pass `--force` / `-Force`.
+
+A backup of the previous `settings.json` is created automatically
+(`settings.json.pre-ilk-<timestamp>`).
+
+## Safety notes
+
+- **Never prints tokens.** All output shows redacted placeholders like
+  `***set (42 chars)***`.
+- **Read-only CCSwitch access.** The import helper reads the CCSwitch database
+  but never writes to it.
+- **Fail-closed.** If any required provider field is missing, the bootstrap
+  writes nothing and exits 3 — the worker can never silently fall back to the
+  planner's OAuth identity.
+- **Active worker guard.** Overwriting provider settings while a worker is
+  running could break that session. The bootstrap detects this and refuses
+  unless `--force` is passed.
 
 ## Launching the worker
 

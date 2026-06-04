@@ -14,8 +14,12 @@ token — you always supply the token explicitly.
 
 - `claude` (Claude Code CLI) on `PATH`.
 - A worker provider's `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, and
-  `ANTHROPIC_MODEL`. Copy the token from a trusted source — the scripts never
-  fetch it for you.
+  `ANTHROPIC_MODEL`. You can either:
+  - **Import from CCSwitch** (recommended if you have providers configured):
+    `bootstrap.sh --list-ccswitch-providers` to see what's available, then
+    `--from-ccswitch --interactive` or `--from-ccswitch --provider <id>`.
+  - **Copy the token from a trusted source** — the scripts never fetch it
+    for you.
 - The default Planner home stays on `~/.claude`; you do not touch it here.
 
 ## 1. Setup
@@ -23,6 +27,17 @@ token — you always supply the token explicitly.
 ### macOS / Linux
 
 ```bash
+# Option A: Import from CCSwitch (recommended)
+# List available providers (redacted, safe to run):
+bash tools/claude-worker/bootstrap.sh --list-ccswitch-providers
+
+# Import interactively:
+bash tools/claude-worker/bootstrap.sh --apply --from-ccswitch --interactive --link-skills
+
+# Or import a specific provider:
+bash tools/claude-worker/bootstrap.sh --apply --from-ccswitch --provider <provider-id> --link-skills
+
+# Option B: Manual provider values
 # Dry-run first: preview the worker home + link command, write nothing.
 bash tools/claude-worker/bootstrap.sh \
   --base-url https://provider.example.com/anthropic \
@@ -42,6 +57,13 @@ Provider values may also come from the environment (`ANTHROPIC_BASE_URL` /
 ### Windows (PowerShell)
 
 ```powershell
+# Option A: Import from CCSwitch (recommended)
+.\tools\claude-worker\bootstrap.ps1 -ListCcsitchProviders
+.\tools\claude-worker\bootstrap.ps1 -Apply -FromCcswitch -Interactive -LinkSkills
+# Or specific provider:
+.\tools\claude-worker\bootstrap.ps1 -Apply -FromCcswitch -Provider <provider-id> -LinkSkills
+
+# Option B: Manual provider values
 # Dry-run
 .\tools\claude-worker\bootstrap.ps1 `
   -BaseUrl https://provider.example.com/anthropic `
