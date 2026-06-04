@@ -196,3 +196,69 @@ core tension for running a planner and a worker concurrently (analysed in
 Steps 2–4).
 
 No destructive changes were made.
+
+---
+
+## Step 2 — Alternate-home feasibility (safe probes)
+
+### Supported mechanism: `CLAUDE_CONFIG_DIR`
+
+Claude Code **does** support an alternate config home via the
+`CLAUDE_CONFIG_DIR` environment variable. Evidence (read-only):
+
+- The string `CLAUDE_CONFIG_DIR` is present in the installed binary
+  (`@anthropic-ai/claude-code` v2.1.156, both the launcher and the
+  `darwin-arm64` native binary).
+- A harmless probe — `CLAUDE_CONFIG_DIR="$(mktemp -d)" claude --version` —
+  ran cleanly, printed the version, and created **zero** files in the temp
+  home (version path needs no config). It did not prompt for login or mutate
+  anything. The temp dir was removed afterward.
+
+> Not run (per safety rules): launching an *interactive/`-p`* session under a
+> fresh `CLAUDE_CONFIG_DIR`, because the first real session can trigger
+> onboarding/auth writes. Standing up the worker home for real is an
+> implementation-step action requiring manual confirmation — see Step 4.
+
+### Other per-invocation isolation flags (from `claude --help`)
+
+These let a single binary be pointed at different state without a second
+install — useful building blocks for a worker wrapper:
+
+| Flag | Use for isolation |
+|------|-------------------|
+| `--settings <file-or-json>` | inject a provider `env` block (BASE_URL/AUTH_TOKEN/MODEL) for *this run only*, without editing `~/.claude/settings.json` |
+| `--setting-sources <list>` | restrict which setting layers load |
+| `--mcp-config <files...>` + `--strict-mcp-config` | give the worker its own MCP set, ignoring the global one |
+| `--plugin-dir`, `--agents`, `--add-dir` | scope plugins/agents/dirs per run |
+
+### The auth caveat (the crux)
+
+Credentials are stored in the **macOS Keychain** under the fixed service name
+`Claude Code-credentials` — the key does **not** vary with
+`CLAUDE_CONFIG_DIR`. Consequences:
+
+- Two homes that both rely on OAuth would resolve to the **same Anthropic
+  identity** from the Keychain. An alternate home alone does *not* give you a
+  second provider.
+- **Provider divergence comes from env, not from the home.** When
+  `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` (and `ANTHROPIC_MODEL`) are
+  set — via process env or the home's `settings.json` `env` block — Claude
+  Code uses that endpoint and ignores the Keychain OAuth. This is exactly the
+  toggle CCSwitch drives, and exactly what the ilk runner already manipulates.
+
+So the feasible shape is:
+
+- **Planner home** — default `~/.claude`, **empty** `env` block → Keychain
+  OAuth → official Opus / high effort.
+- **Worker home** — `CLAUDE_CONFIG_DIR=~/.claude-worker` with a
+  `settings.json` `env` block carrying the cheap provider's
+  `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_MODEL`. It never
+  needs the Keychain OAuth, so the two roles do not collide on identity.
+
+This means **alternate homes are feasible**, and isolation does *not* require
+CCSwitch to keep toggling the shared `~/.claude` — the worker's provider can
+be pinned in its own home's settings once. The cheap-provider token itself
+must be sourced (one time, by the human) from the CCSwitch provider config /
+`cc-switch.db`; the diagnostic did not extract any token.
+
+No destructive changes were made.
