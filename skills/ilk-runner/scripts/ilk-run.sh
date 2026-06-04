@@ -33,7 +33,10 @@ echo "Project: $PROJECT_KEY"
 echo "Root:    $PROJECT_ROOT"
 
 status_code=0
-status_out="$(cd "$PROJECT_ROOT" && ilk_invoke_python "$LOOP_STATUS_PY" || status_code=$?)"
+set +e
+status_out="$(cd "$PROJECT_ROOT" && ilk_invoke_python "$LOOP_STATUS_PY")"
+status_code=$?
+set -e
 echo ""
 echo "$status_out"
 
@@ -59,7 +62,10 @@ if [[ "$status_code" -eq 0 ]]; then
     fi
     ilk_invoke_python "$PROMOTE_PY" --project "$PROJECT_ROOT"
     status_code=0
-    status_out="$(cd "$PROJECT_ROOT" && ilk_invoke_python "$LOOP_STATUS_PY" || status_code=$?)"
+    set +e
+    status_out="$(cd "$PROJECT_ROOT" && ilk_invoke_python "$LOOP_STATUS_PY")"
+    status_code=$?
+    set -e
     echo ""
     echo "$status_out"
   fi
