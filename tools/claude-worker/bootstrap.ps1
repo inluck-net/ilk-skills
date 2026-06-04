@@ -44,6 +44,19 @@
 .PARAMETER Repo
   Repo root holding install.ps1 (default: inferred from this script).
 
+.PARAMETER ListCCSwitchProviders
+  List discovered CCSwitch Claude providers and exit (redacted; no secrets
+  printed). Read-only; never mutates CCSwitch state.
+
+.PARAMETER FromCCSwitch
+  Import provider settings from CCSwitch. Requires -Provider or -Interactive.
+
+.PARAMETER Provider
+  CCSwitch provider id or name (with -FromCCSwitch).
+
+.PARAMETER Interactive
+  Pick a CCSwitch provider interactively (with -FromCCSwitch).
+
 .EXAMPLE
   .\bootstrap.ps1 -BaseUrl https://prov.example/anthropic -AuthToken $tok -Model cheap-1
   Dry-run preview into the default worker home.
@@ -60,7 +73,11 @@ param(
   [string]$Model,
   [switch]$Apply,
   [switch]$LinkSkills,
-  [string]$Repo
+  [string]$Repo,
+  [switch]$ListCCSwitchProviders,
+  [switch]$FromCCSwitch,
+  [string]$Provider,
+  [switch]$Interactive
 )
 
 $ErrorActionPreference = "Stop"
@@ -76,6 +93,86 @@ if (-not $BaseUrl)    { $BaseUrl    = $env:ANTHROPIC_BASE_URL }
 if (-not $AuthToken)  { $AuthToken  = $env:ANTHROPIC_AUTH_TOKEN }
 if (-not $Model)      { $Model      = $env:ANTHROPIC_MODEL }
 if (-not $Repo)       { $Repo       = $DefaultRepoRoot }
+
+# --- CCSwitch provider discovery (-ListCCSwitchProviders) --------------------
+# List providers and exit early.  Read-only; never exposes tokens.
+$HelperPy = Join-Path $ScriptDir "ccswitch_import.py"
+
+if ($ListCCSwitchProviders) {
+  if (-not (Test-Path -LiteralPath $HelperPy)) {
+    Write-Error "ccswitch_import.py not found at $HelperPy"
+    exit 1
+  }
+  python3 $HelperPy list
+  exit $LASTEXITCODE
+}
+
+# --- CCSwitch provider import (-FromCCSwitch) --------------------------------
+# Import provider settings from CCSwitch into the $BaseUrl / $AuthToken /
+# $Model variables before the fail-closed validation below.
+if ($FromCCSwitch) {
+  if (-not (Test-Path -LiteralPath $HelperPy)) {
+    Write-Error "ccswitch_import.py not found at $HelperPy"
+    exit 1
+  }
+
+  if ([string]::IsNullOrEmpty($Provider) -and -not $Interactive) {
+    Write-Error "-FromCCSwitch requires -Provider <id> or -Interactive"
+    exit 2
+  }
+
+  if ($Interactive) {
+    Write-Host "Available CCSwitch Claude providers:"
+    Write-Host ""
+    python3 $HelperPy list
+    Write-Host ""
+    $Provider = Read-Host "Enter provider id or name"
+    if ([string]::IsNullOrEmpty($Provider)) {
+      Write-Error "no provider selected"
+      exit 2
+    }
+
+    # Preview the selection (redacted) and ask for confirmation.
+    $previewJson = python3 $HelperPy export --provider $Provider
+    if ($LASTEXITCODE -ne 0) {
+      Write-Error "provider '$Provider' not found"
+      exit 1
+    }
+    Write-Host ""
+    Write-Host "Selected provider:"
+    $preview = $previewJson | ConvertFrom-Json
+    Write-Host "  name:       $($preview.name)"
+    Write-Host "  base_url:   $($preview.ANTHROPIC_BASE_URL)"
+    Write-Host "  auth_token: $($preview.ANTHROPIC_AUTH_TOKEN)"
+    Write-Host "  model:      $($preview.ANTHROPIC_MODEL)"
+    Write-Host ""
+    if (-not $Apply) {
+      Write-Host "Dry-run: would import this provider. Re-run with -Apply to proceed." -ForegroundColor Cyan
+      return
+    }
+    $confirm = Read-Host "Import this provider? [y/N]"
+    if ($confirm -notmatch '^[yY]') {
+      Write-Host "Aborted."
+      return
+    }
+  }
+
+  # Export the selected provider's env vars (--machine for raw token).
+  $exportJson = python3 $HelperPy export --provider $Provider --machine
+  if ($LASTEXITCODE -ne 0) {
+    Write-Error "failed to export CCSwitch provider '$Provider'"
+    exit 1
+  }
+
+  # Parse the JSON output into PowerShell variables.
+  $parsed = $exportJson | ConvertFrom-Json
+  $BaseUrl   = $parsed.ANTHROPIC_BASE_URL
+  $AuthToken = $parsed.ANTHROPIC_AUTH_TOKEN
+  $Model     = $parsed.ANTHROPIC_MODEL
+
+  Write-Host "Imported provider '$Provider' from CCSwitch."
+  Write-Host ""
+}
 
 # Mask a secret for logs: never print the value, only a length bucket.
 function Format-Secret {
