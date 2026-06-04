@@ -377,6 +377,9 @@ if [[ $apply -eq 0 ]]; then
   echo "Would create worker home and write settings.json + .claude.json."
   maybe_link_skills
   echo
+  echo "Note: after applying, restart any active Worker Claude sessions to pick"
+  echo "up the new provider (changes apply to new sessions only)."
+  echo
   echo "Dry-run complete. Re-run with --apply to bootstrap."
   exit 0
 fi
@@ -405,5 +408,8 @@ fi
 write_worker_config
 maybe_link_skills
 
+echo
+echo "Provider settings written.  Restart any active Worker Claude sessions"
+echo "to pick up the new provider (changes apply to new sessions only)."
 echo
 echo "Done."

@@ -335,6 +335,9 @@ if (-not $Apply) {
   Write-Host "Would create worker home and write settings.json + .claude.json."
   Invoke-LinkSkills
   Write-Host ""
+  Write-Host "Note: after applying, restart any active Worker Claude sessions to pick" -ForegroundColor Cyan
+  Write-Host "up the new provider (changes apply to new sessions only)." -ForegroundColor Cyan
+  Write-Host ""
   Write-Host "Dry-run complete. Re-run with -Apply to bootstrap." -ForegroundColor Cyan
   return
 }
@@ -366,5 +369,8 @@ if (Test-Path -LiteralPath $pidFile) {
 Write-WorkerConfig
 Invoke-LinkSkills
 
+Write-Host ""
+Write-Host "Provider settings written.  Restart any active Worker Claude sessions" -ForegroundColor Cyan
+Write-Host "to pick up the new provider (changes apply to new sessions only)." -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Done." -ForegroundColor Green
