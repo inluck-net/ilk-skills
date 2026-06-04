@@ -23,6 +23,8 @@
 # Flags (anything else is passed through to `claude`):
 #   --home <dir>        worker Claude home (default: ~/.claude-worker; also
 #                       honors CLAUDE_WORKER_HOME)
+#   --claude-bin <path> Claude Code executable (default: CLAUDE_BIN, then PATH,
+#                       then common macOS/Linux install shims)
 #   --preflight-only    run all checks, print the active worker home, exit 0
 #                       without launching claude (added in step 1)
 #   -h | --help         show this help and exit
@@ -35,6 +37,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 worker_home="${CLAUDE_WORKER_HOME:-$HOME/.claude-worker}"
+claude_bin="${CLAUDE_BIN:-}"
 
 usage() {
   sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -56,6 +59,71 @@ resolve_python() {
   if command -v python3 >/dev/null 2>&1; then echo "python3"; return 0; fi
   if command -v python  >/dev/null 2>&1; then echo "python";  return 0; fi
   if command -v py       >/dev/null 2>&1; then echo "py";      return 0; fi
+  return 1
+}
+
+resolve_claude_bin() {
+  is_stable_claude_bin() {
+    case "$1" in
+      *"/.local/state/fnm_multishells/"*) return 1 ;;
+      *) [[ -x "$1" ]] ;;
+    esac
+  }
+
+  if [[ -n "$claude_bin" ]]; then
+    if is_stable_claude_bin "$claude_bin"; then
+      echo "$claude_bin"
+      return 0
+    fi
+    return 1
+  fi
+
+  local npm_prefix=""
+  if command -v npm >/dev/null 2>&1; then
+    npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+    if [[ -n "$npm_prefix" && -x "$npm_prefix/bin/claude" ]]; then
+      echo "$npm_prefix/bin/claude"
+      return 0
+    fi
+  fi
+
+  local shell_claude=""
+  if command -v zsh >/dev/null 2>&1; then
+    shell_claude="$(zsh -lc 'command -v claude' 2>/dev/null || true)"
+    if [[ -n "$shell_claude" ]] && is_stable_claude_bin "$shell_claude"; then
+      echo "$shell_claude"
+      return 0
+    fi
+  fi
+
+  if command -v claude >/dev/null 2>&1; then
+    local path_claude
+    path_claude="$(command -v claude)"
+    if is_stable_claude_bin "$path_claude"; then
+      echo "$path_claude"
+      return 0
+    fi
+  fi
+
+  local candidates=(
+    ${npm_prefix:+"$npm_prefix/bin/claude"}
+    "$HOME/.local/share/fnm/node-versions/v20.20.2/installation/bin/claude"
+    "$HOME/.local/bin/claude"
+    "$HOME/.npm-global/bin/claude"
+    "$HOME/Library/pnpm/claude"
+    "$HOME/.volta/bin/claude"
+    "/opt/homebrew/bin/claude"
+    "/usr/local/bin/claude"
+    "$HOME/.local/node/bin/claude"
+  )
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -x "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+
   return 1
 }
 
@@ -114,6 +182,12 @@ while [[ $# -gt 0 ]]; do
       worker_home="$1"
       ;;
     --home=*)         worker_home="${1#--home=}" ;;
+    --claude-bin)
+      shift
+      [[ $# -eq 0 ]] && { echo "error: --claude-bin requires a path argument" >&2; exit 2; }
+      claude_bin="$1"
+      ;;
+    --claude-bin=*)   claude_bin="${1#--claude-bin=}" ;;
     *)                claude_args+=("$1") ;;
   esac
   shift
@@ -193,20 +267,25 @@ fi
 export CLAUDE_CONFIG_DIR="$worker_home"
 export ILK_SKILL_HOME="$skill_home"
 
-if ! command -v claude >/dev/null 2>&1; then
-  echo "ERROR: 'claude' not found on PATH; cannot launch the worker." >&2
+if ! resolved_claude_bin="$(resolve_claude_bin)"; then
+  echo "ERROR: Claude Code executable not found; cannot launch the worker." >&2
+  echo "Set CLAUDE_BIN=/path/to/claude or pass --claude-bin /path/to/claude." >&2
   exit 3
 fi
 
 echo "Launching claude with CLAUDE_CONFIG_DIR=$worker_home ..."
+echo "claude bin:      $resolved_claude_bin"
 
 # Write a PID file so bootstrap can detect an active worker run before
 # overwriting the provider settings.  The PID stays valid after exec
 # (same process id, different binary).  Bootstrap checks if the PID is
 # still alive; a stale file with a dead PID is harmless.
 pid_file="$worker_home/running.pid"
-echo $$ > "$pid_file"
+if ! echo $$ > "$pid_file"; then
+  echo "WARN: could not write worker PID file: $pid_file" >&2
+  echo "      provider-switch guardrails may not detect this running session." >&2
+fi
 
 # Guard the array expansion so an empty claude_args doesn't trip `set -u` on
 # bash 3.2 (the default on macOS).
-exec claude ${claude_args[@]+"${claude_args[@]}"}
+exec "$resolved_claude_bin" ${claude_args[@]+"${claude_args[@]}"}

@@ -138,6 +138,20 @@ bash tools/claude-worker/claude-worker.sh
 .\tools\claude-worker\claude-worker.ps1
 ```
 
+If Claude Code is installed but not on `PATH`, the wrapper checks the active
+npm global prefix and common package-manager shims. You can also pin the binary
+explicitly:
+
+```bash
+CLAUDE_BIN="$(npm config get prefix)/bin/claude" bash tools/claude-worker/claude-worker.sh
+bash tools/claude-worker/claude-worker.sh --claude-bin "$(npm config get prefix)/bin/claude"
+```
+
+```powershell
+$env:CLAUDE_BIN = "$HOME\.local\node\bin\claude.cmd"
+.\tools\claude-worker\claude-worker.ps1
+```
+
 The wrapper refuses to launch (exit 3) unless the worker home, its
 `settings.json`, all three `ANTHROPIC_*` values, and the `ilk-runner` skill
 are present — so a misconfigured worker can never silently fall back to the

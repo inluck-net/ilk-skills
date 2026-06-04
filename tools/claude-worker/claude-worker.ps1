@@ -27,6 +27,10 @@
   $env:CLAUDE_WORKER_HOME). A leading ~ is expanded and relative paths are
   made absolute.
 
+.PARAMETER ClaudeBin
+  Claude Code executable path. Defaults to $env:CLAUDE_BIN, then PATH, then
+  common Windows package-manager shims.
+
 .PARAMETER PreflightOnly
   Run all checks, print the active worker home, and exit 0 without launching
   claude.
@@ -48,6 +52,7 @@
 [CmdletBinding()]
 param(
   [string]$WorkerHome,
+  [string]$ClaudeBin,
   [switch]$PreflightOnly,
   [Parameter(ValueFromRemainingArguments = $true)]
   [string[]]$ClaudeArgs
@@ -67,6 +72,10 @@ if ($ClaudeArgs) {
         if ($i + 1 -ge $ClaudeArgs.Count) { Write-Error "--home requires a directory argument"; exit 2 }
         $WorkerHome = $ClaudeArgs[$i + 1]; $i++
       }
+      '--claude-bin' {
+        if ($i + 1 -ge $ClaudeArgs.Count) { Write-Error "--claude-bin requires a path argument"; exit 2 }
+        $ClaudeBin = $ClaudeArgs[$i + 1]; $i++
+      }
       default { $forward += $ClaudeArgs[$i] }
     }
   }
@@ -81,6 +90,37 @@ function Format-Secret {
   param([string]$Value)
   if ([string]::IsNullOrEmpty($Value)) { return "(missing)" }
   return "***set ($($Value.Length) chars)***"
+}
+
+function Resolve-ClaudeBin {
+  param([string]$ExplicitPath)
+
+  if (-not $ExplicitPath) { $ExplicitPath = $env:CLAUDE_BIN }
+  if ($ExplicitPath) {
+    if (Test-Path -LiteralPath $ExplicitPath -PathType Leaf) { return $ExplicitPath }
+    return $null
+  }
+
+  $cmd = Get-Command claude -ErrorAction SilentlyContinue
+  if ($cmd) { return $cmd.Source }
+
+  $candidates = @(
+    (Join-Path $HOME ".local\node\bin\claude.cmd"),
+    (Join-Path $HOME ".local\node\bin\claude.exe"),
+    (Join-Path $HOME ".local\node\bin\claude"),
+    (Join-Path $HOME "AppData\Roaming\npm\claude.cmd"),
+    (Join-Path $HOME "AppData\Roaming\npm\claude.exe"),
+    (Join-Path $HOME ".volta\bin\claude.cmd"),
+    (Join-Path $HOME ".volta\bin\claude.exe"),
+    (Join-Path $HOME "scoop\shims\claude.cmd"),
+    (Join-Path $HOME "scoop\shims\claude.exe")
+  )
+
+  foreach ($candidate in $candidates) {
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+  }
+
+  return $null
 }
 
 # Normalize the worker home: expand leading ~ and make relative paths absolute.
@@ -160,23 +200,30 @@ if ($PreflightOnly) {
 $env:CLAUDE_CONFIG_DIR = $WorkerHome
 $env:ILK_SKILL_HOME    = $SkillHome
 
-if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
-  Write-Error "'claude' not found on PATH; cannot launch the worker."
+$ResolvedClaudeBin = Resolve-ClaudeBin -ExplicitPath $ClaudeBin
+if (-not $ResolvedClaudeBin) {
+  Write-Error "Claude Code executable not found; cannot launch the worker. Set `$env:CLAUDE_BIN or pass --claude-bin /path/to/claude."
   exit 3
 }
 
 Write-Host "Launching claude with CLAUDE_CONFIG_DIR=$WorkerHome ..."
+Write-Host "claude bin:      $ResolvedClaudeBin"
 
 # Write a PID file so bootstrap can detect an active worker run before
 # overwriting the provider settings.  We write the current shell PID;
 # bootstrap checks if the PID is still alive (stale file with dead PID
 # is harmless).
 $pidFile = Join-Path $WorkerHome "running.pid"
-Set-Content -LiteralPath $pidFile -Value $PID -Encoding ascii
+try {
+  Set-Content -LiteralPath $pidFile -Value $PID -Encoding ascii
+} catch {
+  Write-Warning "could not write worker PID file: $pidFile"
+  Write-Warning "provider-switch guardrails may not detect this running session."
+}
 
 if ($forward.Count -gt 0) {
-  & claude @forward
+  & $ResolvedClaudeBin @forward
 } else {
-  & claude
+  & $ResolvedClaudeBin
 }
 exit $LASTEXITCODE
