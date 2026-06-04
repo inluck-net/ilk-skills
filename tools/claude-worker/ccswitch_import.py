@@ -309,6 +309,8 @@ def cmd_export(args: argparse.Namespace) -> None:
     output = {
         "id": match.id,
         "name": match.name,
+        "category": match.category or "",
+        "is_official": match.is_official,
     }
     if not args.machine:
         env["ANTHROPIC_AUTH_TOKEN"] = mask_token(env["ANTHROPIC_AUTH_TOKEN"])

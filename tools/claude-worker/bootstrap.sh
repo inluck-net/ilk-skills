@@ -36,6 +36,10 @@
 #                               --provider or --interactive)
 #   --provider <id>             CCSwitch provider id or name (with --from-ccswitch)
 #   --interactive               pick a CCSwitch provider interactively
+#   --allow-official            allow importing an official/Claude OAuth provider
+#                               into the worker (refused by default to prevent
+#                               the worker from accidentally using the planner's
+#                               official identity)
 #   -h | --help                 show this help and exit
 #
 # Exit codes: 0 ok / dry-run, 2 usage error, 3 incomplete provider env.
@@ -57,6 +61,7 @@ list_ccswitch=0
 from_ccswitch=0
 ccswitch_provider=""
 interactive=0
+allow_official=0
 
 usage() {
   sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -117,6 +122,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --provider=*)    ccswitch_provider="${1#--provider=}" ;;
     --interactive)   interactive=1 ;;
+    --allow-official) allow_official=1 ;;
     -h|--help)       usage; exit 0 ;;
     *)               echo "unknown flag: $1" >&2; exit 2 ;;
   esac
@@ -186,7 +192,8 @@ if [[ $from_ccswitch -eq 1 ]]; then
     echo "$preview_json" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-print(f'  name:       {d.get(\"name\", \"?\")}')
+official = ' [official — refused by default]' if d.get('is_official') else ''
+print(f'  name:       {d.get(\"name\", \"?\")}{official}')
 print(f'  base_url:   {d.get(\"ANTHROPIC_BASE_URL\", \"(not set)\")}')
 print(f'  auth_token: {d.get(\"ANTHROPIC_AUTH_TOKEN\", \"(redacted)\")}')
 print(f'  model:      {d.get(\"ANTHROPIC_MODEL\", \"(not set)\")}')
@@ -208,6 +215,21 @@ print(f'  model:      {d.get(\"ANTHROPIC_MODEL\", \"(not set)\")}')
     echo "error: failed to export CCSwitch provider '$ccswitch_provider'" >&2
     exit 1
   }
+
+  # Refuse official/Claude OAuth providers by default.  Importing an official
+  # provider into the worker home would let the worker use the planner's OAuth
+  # identity, defeating the purpose of dual homes.
+  provider_is_official="$(python3 -c "
+import json, sys
+d = json.loads(sys.argv[1])
+print('1' if d.get('is_official') else '0')
+" "$export_json")"
+  if [[ "$provider_is_official" == "1" && $allow_official -eq 0 ]]; then
+    echo "error: provider '$ccswitch_provider' is an official/Claude OAuth provider." >&2
+    echo "Importing it into the worker home would use the planner's official identity." >&2
+    echo "Pass --allow-official to override (not recommended)." >&2
+    exit 2
+  fi
 
   # Parse the JSON output into shell variables.  Uses python3 for portability
   # (no jq dependency).

@@ -57,6 +57,11 @@
 .PARAMETER Interactive
   Pick a CCSwitch provider interactively (with -FromCCSwitch).
 
+.PARAMETER AllowOfficial
+  Allow importing an official/Claude OAuth provider into the worker home.
+  Without this flag, official providers are refused to prevent the worker
+  from accidentally using the planner's official identity.
+
 .EXAMPLE
   .\bootstrap.ps1 -BaseUrl https://prov.example/anthropic -AuthToken $tok -Model cheap-1
   Dry-run preview into the default worker home.
@@ -77,7 +82,8 @@ param(
   [switch]$ListCCSwitchProviders,
   [switch]$FromCCSwitch,
   [string]$Provider,
-  [switch]$Interactive
+  [switch]$Interactive,
+  [switch]$AllowOfficial
 )
 
 $ErrorActionPreference = "Stop"
@@ -141,7 +147,8 @@ if ($FromCCSwitch) {
     Write-Host ""
     Write-Host "Selected provider:"
     $preview = $previewJson | ConvertFrom-Json
-    Write-Host "  name:       $($preview.name)"
+    $officialLabel = if ($preview.is_official) { " [official — refused by default]" } else { "" }
+    Write-Host "  name:       $($preview.name)$officialLabel"
     Write-Host "  base_url:   $($preview.ANTHROPIC_BASE_URL)"
     Write-Host "  auth_token: $($preview.ANTHROPIC_AUTH_TOKEN)"
     Write-Host "  model:      $($preview.ANTHROPIC_MODEL)"
@@ -162,6 +169,15 @@ if ($FromCCSwitch) {
   if ($LASTEXITCODE -ne 0) {
     Write-Error "failed to export CCSwitch provider '$Provider'"
     exit 1
+  }
+
+  # Refuse official/Claude OAuth providers by default.  Importing an official
+  # provider into the worker home would let the worker use the planner's OAuth
+  # identity, defeating the purpose of dual homes.
+  $exportedData = $exportJson | ConvertFrom-Json
+  if ($exportedData.is_official -and -not $AllowOfficial) {
+    Write-Error "provider '$Provider' is an official/Claude OAuth provider. Importing it into the worker home would use the planner's official identity. Pass -AllowOfficial to override (not recommended)."
+    exit 2
   }
 
   # Parse the JSON output into PowerShell variables.

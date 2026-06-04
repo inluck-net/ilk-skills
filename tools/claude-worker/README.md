@@ -44,6 +44,11 @@ bootstrap reads `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` /
 `ANTHROPIC_MODEL` from the environment instead. If any of the three is missing
 it writes nothing and exits 3.
 
+Official/Claude OAuth providers are refused by default when importing from
+CCSwitch, to prevent the worker from accidentally using the planner's official
+identity. Pass `--allow-official` / `-AllowOfficial` to override (not
+recommended).
+
 ## Launching the worker
 
 ```bash
