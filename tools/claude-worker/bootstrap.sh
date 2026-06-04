@@ -30,7 +30,13 @@
 #                       (delegates to install.sh --claude-home; step 3)
 #   --repo <dir>        repo root holding install.sh (default: inferred from
 #                       this script's location)
-#   -h | --help         show this help and exit
+#   --list-ccswitch-providers   list discovered CCSwitch Claude providers and
+#                               exit (redacted; no secrets printed)
+#   --from-ccswitch             import provider settings from CCSwitch (requires
+#                               --provider or --interactive)
+#   --provider <id>             CCSwitch provider id or name (with --from-ccswitch)
+#   --interactive               pick a CCSwitch provider interactively
+#   -h | --help                 show this help and exit
 #
 # Exit codes: 0 ok / dry-run, 2 usage error, 3 incomplete provider env.
 
@@ -47,6 +53,10 @@ model="${ANTHROPIC_MODEL:-}"
 apply=0
 link_skills=0
 repo_root="$DEFAULT_REPO_ROOT"
+list_ccswitch=0
+from_ccswitch=0
+ccswitch_provider=""
+interactive=0
 
 usage() {
   sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -98,11 +108,32 @@ while [[ $# -gt 0 ]]; do
       repo_root="$1"
       ;;
     --repo=*)        repo_root="${1#--repo=}" ;;
+    --list-ccswitch-providers) list_ccswitch=1 ;;
+    --from-ccswitch) from_ccswitch=1 ;;
+    --provider)
+      shift
+      [[ $# -eq 0 ]] && { echo "error: --provider requires a value" >&2; exit 2; }
+      ccswitch_provider="$1"
+      ;;
+    --provider=*)    ccswitch_provider="${1#--provider=}" ;;
+    --interactive)   interactive=1 ;;
     -h|--help)       usage; exit 0 ;;
     *)               echo "unknown flag: $1" >&2; exit 2 ;;
   esac
   shift
 done
+
+# --- CCSwitch provider discovery (--list-ccswitch-providers) -----------------
+# List providers and exit early.  This is read-only and never exposes tokens.
+if [[ $list_ccswitch -eq 1 ]]; then
+  helper="$SCRIPT_DIR/ccswitch_import.py"
+  if [[ ! -f "$helper" ]]; then
+    echo "error: ccswitch_import.py not found at $helper" >&2
+    exit 1
+  fi
+  python3 "$helper" list
+  exit $?
+fi
 
 # Normalize the worker home: expand a leading ~ and make relative paths
 # absolute. The directory need not exist yet (we may be creating it).
@@ -114,6 +145,57 @@ case "$worker_home" in
   /*) ;;
   *)  worker_home="$(pwd)/$worker_home" ;;
 esac
+
+# --- CCSwitch provider import (--from-ccswitch) ------------------------------
+# Import provider settings from CCSwitch into the base_url / auth_token /
+# model variables before the fail-closed validation below.  This is the only
+# place where bootstrap reads CCSwitch state; it delegates to ccswitch_import.py
+# which is strictly read-only.
+if [[ $from_ccswitch -eq 1 ]]; then
+  helper="$SCRIPT_DIR/ccswitch_import.py"
+  if [[ ! -f "$helper" ]]; then
+    echo "error: ccswitch_import.py not found at $helper" >&2
+    exit 1
+  fi
+
+  # Resolve the provider: either from --provider flag or interactive picker.
+  if [[ -z "$ccswitch_provider" && $interactive -eq 0 ]]; then
+    echo "error: --from-ccswitch requires --provider <id> or --interactive" >&2
+    exit 2
+  fi
+
+  if [[ $interactive -eq 1 ]]; then
+    # Show the list and prompt the user to choose.
+    echo "Available CCSwitch Claude providers:"
+    echo
+    python3 "$helper" list
+    echo
+    read -rp "Enter provider id or name: " ccswitch_provider
+    if [[ -z "$ccswitch_provider" ]]; then
+      echo "error: no provider selected" >&2
+      exit 2
+    fi
+  fi
+
+  # Export the selected provider's env vars (--machine for raw token).
+  export_json="$(python3 "$helper" export --provider "$ccswitch_provider" --machine)" || {
+    echo "error: failed to export CCSwitch provider '$ccswitch_provider'" >&2
+    exit 1
+  }
+
+  # Parse the JSON output into shell variables.  Uses python3 for portability
+  # (no jq dependency).
+  eval "$(python3 -c "
+import json, sys
+d = json.loads(sys.argv[1])
+print(f'base_url={json.dumps(d[\"ANTHROPIC_BASE_URL\"])}')
+print(f'auth_token={json.dumps(d[\"ANTHROPIC_AUTH_TOKEN\"])}')
+print(f'model={json.dumps(d[\"ANTHROPIC_MODEL\"])}')
+" "$export_json")"
+
+  echo "Imported provider '$ccswitch_provider' from CCSwitch."
+  echo
+fi
 
 # --- fail-closed provider validation ---------------------------------------
 # A worker home with an incomplete provider env would let Claude Code fall
