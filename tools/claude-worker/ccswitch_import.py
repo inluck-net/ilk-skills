@@ -188,6 +188,54 @@ def parse_providers_from_db(db_path: Path) -> list[Provider]:
     return providers
 
 
+def normalize_for_worker(provider: Provider) -> dict[str, str]:
+    """Map a Provider to the worker env dict for bootstrap consumption.
+
+    Returns a dict with exactly ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN,
+    and ANTHROPIC_MODEL, plus any extra env keys the provider carries
+    (e.g. ANTHROPIC_DEFAULT_SONNET_MODEL).
+
+    Raises ValueError if the provider is missing required env fields.
+    """
+    if not provider.has_required_env:
+        missing = []
+        if not provider.base_url:
+            missing.append("ANTHROPIC_BASE_URL")
+        if not provider.auth_token:
+            missing.append("ANTHROPIC_AUTH_TOKEN")
+        if not provider.model:
+            missing.append("ANTHROPIC_MODEL")
+        raise ValueError(
+            f"provider '{provider.name}' missing required fields: "
+            f"{', '.join(missing)}"
+        )
+
+    env = {
+        "ANTHROPIC_BASE_URL": provider.base_url,
+        "ANTHROPIC_AUTH_TOKEN": provider.auth_token,
+        "ANTHROPIC_MODEL": provider.model,
+    }
+    env.update(provider.extra_env)
+    return env
+
+
+def provider_summary(provider: Provider) -> dict:
+    """Return a redacted summary dict suitable for JSON display.
+
+    Includes id, name, category, is_current, and the three required env
+    fields (token redacted).  Does NOT include the raw auth_token.
+    """
+    return {
+        "id": provider.id,
+        "name": provider.name,
+        "category": provider.category,
+        "is_current": provider.is_current,
+        "base_url": provider.base_url,
+        "auth_token": mask_token(provider.auth_token),
+        "model": provider.model,
+    }
+
+
 # ── Subcommands ─────────────────────────────────────────────────────────────
 
 def cmd_list(args: argparse.Namespace) -> None:
@@ -205,17 +253,7 @@ def cmd_list(args: argparse.Namespace) -> None:
 
     if args.format == "json":
         # Redacted JSON output.
-        rows = []
-        for p in claude_providers:
-            rows.append({
-                "id": p.id,
-                "name": p.name,
-                "category": p.category,
-                "is_current": p.is_current,
-                "base_url": p.base_url,
-                "auth_token": mask_token(p.auth_token),
-                "model": p.model,
-            })
+        rows = [provider_summary(p) for p in claude_providers]
         print(json.dumps(rows, indent=2))
     else:
         # Human-readable table.
@@ -261,28 +299,20 @@ def cmd_export(args: argparse.Namespace) -> None:
             print(f"  {p.id}  ({p.name})", file=sys.stderr)
         sys.exit(1)
 
-    if not match.has_required_env:
-        missing = []
-        if not match.base_url:
-            missing.append("ANTHROPIC_BASE_URL")
-        if not match.auth_token:
-            missing.append("ANTHROPIC_AUTH_TOKEN")
-        if not match.model:
-            missing.append("ANTHROPIC_MODEL")
-        print(f"error: provider '{match.name}' is missing required fields: "
-              f"{', '.join(missing)}", file=sys.stderr)
+    try:
+        env = normalize_for_worker(match)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    # Build the export payload.
+    # Build the export payload: metadata + env fields.
     output = {
         "id": match.id,
         "name": match.name,
-        "ANTHROPIC_BASE_URL": match.base_url,
-        "ANTHROPIC_AUTH_TOKEN": match.auth_token if args.machine else mask_token(match.auth_token),
-        "ANTHROPIC_MODEL": match.model,
     }
-    if match.extra_env:
-        output["extra_env"] = match.extra_env
+    if not args.machine:
+        env["ANTHROPIC_AUTH_TOKEN"] = mask_token(env["ANTHROPIC_AUTH_TOKEN"])
+    output.update(env)
 
     print(json.dumps(output, indent=2))
 
