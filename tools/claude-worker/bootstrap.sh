@@ -175,6 +175,32 @@ if [[ $from_ccswitch -eq 1 ]]; then
       echo "error: no provider selected" >&2
       exit 2
     fi
+
+    # Preview the selection (redacted) and ask for confirmation.
+    preview_json="$(python3 "$helper" export --provider "$ccswitch_provider")" || {
+      echo "error: provider '$ccswitch_provider' not found" >&2
+      exit 1
+    }
+    echo
+    echo "Selected provider:"
+    echo "$preview_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(f'  name:       {d.get(\"name\", \"?\")}')
+print(f'  base_url:   {d.get(\"ANTHROPIC_BASE_URL\", \"(not set)\")}')
+print(f'  auth_token: {d.get(\"ANTHROPIC_AUTH_TOKEN\", \"(redacted)\")}')
+print(f'  model:      {d.get(\"ANTHROPIC_MODEL\", \"(not set)\")}')
+"
+    echo
+    if [[ $apply -eq 0 ]]; then
+      echo "Dry-run: would import this provider. Re-run with --apply to proceed."
+      exit 0
+    fi
+    read -rp "Import this provider? [y/N] " confirm
+    case "$confirm" in
+      [yY]|[yY][eE][sS]) ;;
+      *) echo "Aborted."; exit 0 ;;
+    esac
   fi
 
   # Export the selected provider's env vars (--machine for raw token).
