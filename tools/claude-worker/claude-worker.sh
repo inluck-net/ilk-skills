@@ -179,3 +179,26 @@ if [[ ${#problems[@]} -gt 0 ]]; then
 fi
 
 echo "Preflight OK: worker home, provider env, and ilk-runner all present."
+
+if [[ $preflight_only -eq 1 ]]; then
+  echo "(--preflight-only: not launching claude)"
+  exit 0
+fi
+
+# --- launch -----------------------------------------------------------------
+# Select the worker home for Claude Code and the ilk skill root, then hand off
+# to claude. The provider token lives in the worker settings.json, which
+# CLAUDE_CONFIG_DIR points Claude Code at — we never put it on the command line
+# or in the environment here.
+export CLAUDE_CONFIG_DIR="$worker_home"
+export ILK_SKILL_HOME="$skill_home"
+
+if ! command -v claude >/dev/null 2>&1; then
+  echo "ERROR: 'claude' not found on PATH; cannot launch the worker." >&2
+  exit 3
+fi
+
+echo "Launching claude with CLAUDE_CONFIG_DIR=$worker_home ..."
+# Guard the array expansion so an empty claude_args doesn't trip `set -u` on
+# bash 3.2 (the default on macOS).
+exec claude ${claude_args[@]+"${claude_args[@]}"}
