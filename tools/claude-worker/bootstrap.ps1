@@ -184,13 +184,45 @@ function Write-WorkerConfig {
   }
 }
 
+# --- link skills/commands into the worker home ------------------------------
+# Either run the custom-home installer or just print the exact command. The
+# installer only runs destructively (-Apply) when the user opted in with BOTH
+# -Apply and -LinkSkills; a dry-run bootstrap previews with a dry-run.
+$InstallPs1 = Join-Path $Repo "install.ps1"
+$LinkCmd = ".\install.ps1 -Apply -ClaudeHome `"$WorkerHome`" -OnlyClaude"
+
+function Invoke-LinkSkills {
+  Write-Host ""
+  Write-Host "Link ilk skills/commands into this worker home with:"
+  Write-Host "  $LinkCmd"
+  if (-not $LinkSkills) {
+    Write-Host "  (pass -LinkSkills to run this automatically under -Apply)"
+    return
+  }
+  # Only ever invoke the installer under -Apply. A dry-run bootstrap stays
+  # strictly non-mutating, so it just shows the command above.
+  if (-not $Apply) {
+    Write-Host "  -LinkSkills: deferred (bootstrap is dry-run; re-run with -Apply to link)"
+    return
+  }
+  if (-not (Test-Path -LiteralPath $InstallPs1)) {
+    Write-Host "  warning: install.ps1 not found at $InstallPs1; skipping link." -ForegroundColor Yellow
+    return
+  }
+  Write-Host "  -LinkSkills: running installer (-Apply) ..."
+  & $InstallPs1 -Apply -ClaudeHome $WorkerHome -OnlyClaude
+}
+
 if (-not $Apply) {
   Write-Host "Would create worker home and write settings.json + .claude.json."
+  Invoke-LinkSkills
   Write-Host ""
   Write-Host "Dry-run complete. Re-run with -Apply to bootstrap." -ForegroundColor Cyan
   return
 }
 
 Write-WorkerConfig
+Invoke-LinkSkills
 
+Write-Host ""
 Write-Host "Done." -ForegroundColor Green

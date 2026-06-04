@@ -210,13 +210,45 @@ EOF
   fi
 }
 
+# --- link skills/commands into the worker home ------------------------------
+# Either run the custom-home installer or just print the exact command. The
+# installer only runs destructively (--apply) when the user opted in with
+# BOTH --apply and --link-skills; a dry-run bootstrap previews with --dry-run.
+install_sh="$repo_root/install.sh"
+link_cmd="bash \"$install_sh\" --apply --claude-home \"$worker_home\" --only-claude"
+
+maybe_link_skills() {
+  echo
+  echo "Link ilk skills/commands into this worker home with:"
+  echo "  $link_cmd"
+  if [[ $link_skills -eq 0 ]]; then
+    echo "  (pass --link-skills to run this automatically under --apply)"
+    return
+  fi
+  # Only ever invoke the installer under --apply. A dry-run bootstrap stays
+  # strictly non-mutating, so it just shows the command above.
+  if [[ $apply -eq 0 ]]; then
+    echo "  --link-skills: deferred (bootstrap is dry-run; re-run with --apply to link)"
+    return
+  fi
+  if [[ ! -f "$install_sh" ]]; then
+    echo "  warning: install.sh not found at $install_sh; skipping link." >&2
+    return
+  fi
+  echo "  --link-skills: running installer (--apply) ..."
+  bash "$install_sh" --apply --claude-home "$worker_home" --only-claude
+}
+
 if [[ $apply -eq 0 ]]; then
   echo "Would create worker home and write settings.json + .claude.json."
+  maybe_link_skills
   echo
   echo "Dry-run complete. Re-run with --apply to bootstrap."
   exit 0
 fi
 
 write_worker_config
+maybe_link_skills
 
+echo
 echo "Done."
