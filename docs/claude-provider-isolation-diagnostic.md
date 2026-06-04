@@ -1,7 +1,7 @@
 # Dual Claude Provider Isolation — Diagnostic Report
 
-**Status:** in progress (diagnostic sub-plan
-`2026-06-04-dual-claude-provider-isolation-diagnostic`)
+**Status:** complete (diagnostic sub-plan
+`2026-06-04-dual-claude-provider-isolation-diagnostic`, shipped 2026-06-04)
 **Machine:** macOS (Darwin 25.5.0), single user `chad`
 **Scope:** Non-destructive investigation only. This report records the
 read-only probes used and the evidence they produced. It does not change any
