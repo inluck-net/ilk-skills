@@ -125,9 +125,15 @@ if [[ $any_only -eq 0 || $only_cursor -eq 1 ]]; then
   TARGET_COMMANDS+=("$HOME/.cursor/commands")
 fi
 if [[ $any_only -eq 0 || $only_claude -eq 1 ]]; then
-  TARGET_NAMES+=("Claude Code")
-  TARGET_SKILLS+=("$HOME/.claude/skills")
-  TARGET_COMMANDS+=("$HOME/.claude/commands")
+  if [[ -n "$claude_home" ]]; then
+    TARGET_NAMES+=("Claude Code [$claude_home]")
+    TARGET_SKILLS+=("$claude_home/skills")
+    TARGET_COMMANDS+=("$claude_home/commands")
+  else
+    TARGET_NAMES+=("Claude Code")
+    TARGET_SKILLS+=("$HOME/.claude/skills")
+    TARGET_COMMANDS+=("$HOME/.claude/commands")
+  fi
 fi
 if [[ $any_only -eq 0 || $only_codex -eq 1 ]]; then
   TARGET_NAMES+=("Codex")
@@ -246,6 +252,7 @@ mode="DRY-RUN"
 
 echo "=== ilk-skills install ($mode) ==="
 echo "repo:           $REPO_ROOT"
+[[ -n "$claude_home" ]] && echo "claude home:    $claude_home (custom)"
 echo "skills found:   ${#SKILL_NAMES[@]} (ilk-*)"
 echo "commands found: ${#COMMAND_FILES[@]} (ilk*)"
 printf 'targets:        '
