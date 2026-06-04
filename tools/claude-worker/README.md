@@ -138,13 +138,14 @@ bash tools/claude-worker/claude-worker.sh
 .\tools\claude-worker\claude-worker.ps1
 ```
 
-If Claude Code is installed but not on `PATH`, the wrapper checks the active
-npm global prefix and common package-manager shims. You can also pin the binary
-explicitly:
+If Claude Code is installed but not on `PATH`, the wrapper checks
+`~/.local/bin/claude`, the active npm global prefix, and common package-manager
+shims. Prefer `~/.local/bin/claude` when you maintain a private stable Claude
+Code binary outside npm/fnm's auto-updated package directory:
 
 ```bash
-CLAUDE_BIN="$(npm config get prefix)/bin/claude" bash tools/claude-worker/claude-worker.sh
-bash tools/claude-worker/claude-worker.sh --claude-bin "$(npm config get prefix)/bin/claude"
+CLAUDE_BIN="$HOME/.local/bin/claude" bash tools/claude-worker/claude-worker.sh
+bash tools/claude-worker/claude-worker.sh --claude-bin "$HOME/.local/bin/claude"
 ```
 
 ```powershell

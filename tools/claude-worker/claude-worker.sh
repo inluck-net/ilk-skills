@@ -66,7 +66,7 @@ resolve_claude_bin() {
   is_stable_claude_bin() {
     case "$1" in
       *"/.local/state/fnm_multishells/"*) return 1 ;;
-      *) [[ -x "$1" ]] ;;
+      *) [[ -x "$1" ]] && "$1" --version >/dev/null 2>&1 ;;
     esac
   }
 
@@ -78,13 +78,9 @@ resolve_claude_bin() {
     return 1
   fi
 
-  local npm_prefix=""
-  if command -v npm >/dev/null 2>&1; then
-    npm_prefix="$(npm config get prefix 2>/dev/null || true)"
-    if [[ -n "$npm_prefix" && -x "$npm_prefix/bin/claude" ]]; then
-      echo "$npm_prefix/bin/claude"
-      return 0
-    fi
+  if is_stable_claude_bin "$HOME/.local/bin/claude"; then
+    echo "$HOME/.local/bin/claude"
+    return 0
   fi
 
   local shell_claude=""
@@ -92,6 +88,15 @@ resolve_claude_bin() {
     shell_claude="$(zsh -lc 'command -v claude' 2>/dev/null || true)"
     if [[ -n "$shell_claude" ]] && is_stable_claude_bin "$shell_claude"; then
       echo "$shell_claude"
+      return 0
+    fi
+  fi
+
+  local npm_prefix=""
+  if command -v npm >/dev/null 2>&1; then
+    npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+    if [[ -n "$npm_prefix" ]] && is_stable_claude_bin "$npm_prefix/bin/claude"; then
+      echo "$npm_prefix/bin/claude"
       return 0
     fi
   fi
