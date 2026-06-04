@@ -36,6 +36,13 @@
 .PARAMETER OnlyCodex
   Install only to ~/.codex/.
 
+.PARAMETER ClaudeHome
+  Use this directory as the Claude Code home instead of the default
+  %USERPROFILE%\.claude (for example a worker home
+  %USERPROFILE%\.claude-worker). Targets <dir>\skills, <dir>\commands,
+  and <dir>\tools\migration. A leading ~ is expanded and relative paths
+  are made absolute; the directory does not need to exist yet.
+
 .PARAMETER Force
   Replace existing TARGETS that are already real directories or files
   (after backing them up to <target>.pre-ilk-<timestamp>). Without
@@ -59,6 +66,11 @@
   .\install.ps1 -OnlyCodex
   Dry run for Codex only.
 
+.EXAMPLE
+  .\install.ps1 -Apply -OnlyClaude -ClaudeHome "$HOME\.claude-worker"
+  Install only into a custom worker Claude home
+  (%USERPROFILE%\.claude-worker\skills, \commands, \tools\migration).
+
 .NOTES
   Idempotent. Re-running -Apply just re-points stale symlinks (e.g.
   if you moved the repo) and is otherwise a no-op.
@@ -69,10 +81,25 @@ param(
   [switch]$OnlyCursor,
   [switch]$OnlyClaude,
   [switch]$OnlyCodex,
+  [string]$ClaudeHome,
   [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
+
+# Normalize a custom Claude home: expand a leading ~ and make relative
+# paths absolute. Conservative — does NOT require the directory to exist
+# yet, so a dry-run can preview a not-yet-created worker home.
+if ($ClaudeHome) {
+  if ($ClaudeHome -eq '~') {
+    $ClaudeHome = $HOME
+  } elseif ($ClaudeHome -match '^~[\\/]') {
+    $ClaudeHome = Join-Path $HOME $ClaudeHome.Substring(2)
+  }
+  if (-not [System.IO.Path]::IsPathRooted($ClaudeHome)) {
+    $ClaudeHome = Join-Path (Get-Location).Path $ClaudeHome
+  }
+}
 
 $RepoRoot = Split-Path -Parent $PSCommandPath
 $SkillsSrc = Join-Path $RepoRoot "skills"
@@ -95,10 +122,18 @@ if (-not $anyOnly -or $OnlyCursor) {
   }
 }
 if (-not $anyOnly -or $OnlyClaude) {
-  $Targets += [PSCustomObject]@{
-    Name = "Claude Code"
-    SkillsDir = (Join-Path $HOME ".claude\skills")
-    CommandsDir = (Join-Path $HOME ".claude\commands")
+  if ($ClaudeHome) {
+    $Targets += [PSCustomObject]@{
+      Name = "Claude Code [$ClaudeHome]"
+      SkillsDir = (Join-Path $ClaudeHome "skills")
+      CommandsDir = (Join-Path $ClaudeHome "commands")
+    }
+  } else {
+    $Targets += [PSCustomObject]@{
+      Name = "Claude Code"
+      SkillsDir = (Join-Path $HOME ".claude\skills")
+      CommandsDir = (Join-Path $HOME ".claude\commands")
+    }
   }
 }
 if (-not $anyOnly -or $OnlyCodex) {
@@ -245,6 +280,7 @@ foreach ($r in $rows) {
 $mode = if ($Apply) { "APPLY" } else { "DRY-RUN" }
 Write-Host "=== ilk-skills install ($mode) ==="
 Write-Host "repo:           $RepoRoot"
+if ($ClaudeHome) { Write-Host "claude home:    $ClaudeHome (custom)" }
 Write-Host "skills found:   $($skillNames.Count) (ilk-*)"
 Write-Host "commands found: $($commandFiles.Count) (ilk*)"
 Write-Host "targets:        $((@($Targets | ForEach-Object { $_.Name })) -join ', ')"
