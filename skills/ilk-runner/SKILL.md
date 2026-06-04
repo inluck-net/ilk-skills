@@ -125,6 +125,23 @@ implementation. Actual launching is in `ilk-launcher`. Actual watching
 is in `ilk-watchdog`. Actual loop execution is in `ilk-loop`. This
 skill just orchestrates them in the right order with the right params.
 
+## Running as a Worker Claude
+
+`/ilk-run` and these scripts default to the active Claude home (`~/.claude`,
+the **Planner**). To run the loop as a cheaper **Worker Claude** on a separate
+provider, launch the runner *through* the worker wrapper so it inherits
+`CLAUDE_CONFIG_DIR` + `ILK_SKILL_HOME` and the wrapper's fail-closed preflight:
+
+```bash
+bash tools/claude-worker/claude-worker.sh /ilk-run
+```
+
+Set up the worker home once with `tools/claude-worker/bootstrap.sh`. See
+[`docs/dual-claude-homes-design.md`](../../docs/dual-claude-homes-design.md)
+and [`tools/claude-worker/README.md`](../../tools/claude-worker/README.md).
+Do **not** use CCSwitch to live-switch the provider during a worker run, and
+do **not** run multiple workers against the same git worktree / project key.
+
 ## See also
 
 - `ilk-launcher/SKILL.md` — spawning, status, stop
@@ -132,3 +149,4 @@ skill just orchestrates them in the right order with the right params.
 - `ilk-loop/SKILL.md` — the loop itself
 - `commands/ilk-run.md` — the command prompt for `/ilk-run`
 - `commands/ilk-status.md` — the command prompt for `/ilk-status`
+- `tools/claude-worker/README.md` — Planner vs Worker Claude setup

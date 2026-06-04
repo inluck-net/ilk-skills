@@ -2,10 +2,20 @@
 
 ## Status
 
-Design draft for a follow-up implementation batch. This document turns the
-diagnostic findings in `docs/claude-provider-isolation-diagnostic.md` into a
-cross-platform design for running separate Planner and Worker Claude Code
-environments on the same machine.
+Implemented. This document turns the diagnostic findings in
+`docs/claude-provider-isolation-diagnostic.md` into a cross-platform design for
+running separate Planner and Worker Claude Code environments on the same
+machine, and the design has now shipped:
+
+- Installers accept a custom Claude home: `install.sh --claude-home <dir>` and
+  `install.ps1 -ClaudeHome <dir>` (both with `--only-claude` / `-OnlyClaude`).
+- Worker bootstrap + wrapper live under `tools/claude-worker/`
+  (`bootstrap.sh` / `bootstrap.ps1`, `claude-worker.sh` / `claude-worker.ps1`).
+  See [`tools/claude-worker/README.md`](../tools/claude-worker/README.md) for
+  setup and launch commands.
+
+The remainder of this document is the design of record; the sections below
+match the shipped behavior.
 
 ## Problem
 
@@ -265,14 +275,21 @@ watchdog state.
 
 ## Implementation Plan
 
-1. Add `--claude-home <dir>` to `install.sh` and `-ClaudeHome <dir>` to
+All five steps have shipped (see the file pointers below):
+
+1. ✅ Added `--claude-home <dir>` to `install.sh` and `-ClaudeHome <dir>` to
    `install.ps1`.
-2. Add worker bootstrap scripts for macOS/Linux and Windows.
-3. Add worker wrappers that set `CLAUDE_CONFIG_DIR` and `ILK_SKILL_HOME` and
-   fail closed when provider env is missing.
-4. Document the planner/worker workflow in command and skill docs.
-5. Add QC checks for install links and wrapper preflight on macOS, with
-   Windows parity documented and script syntax checked where possible.
+2. ✅ Added worker bootstrap scripts for macOS/Linux and Windows
+   (`tools/claude-worker/bootstrap.sh`, `bootstrap.ps1`).
+3. ✅ Added worker wrappers that set `CLAUDE_CONFIG_DIR` and `ILK_SKILL_HOME`
+   and fail closed when provider env is missing
+   (`tools/claude-worker/claude-worker.sh`, `claude-worker.ps1`).
+4. ✅ Documented the planner/worker workflow in `tools/claude-worker/README.md`
+   and cross-referenced it from `commands/ilk-run.md` and
+   `skills/ilk-runner/SKILL.md`.
+5. ✅ Added QC checks for install links and wrapper preflight on macOS, with
+   Windows parity documented and script syntax checked where possible
+   (see `docs/dual-claude-homes-verification.md`).
 
 ## Rollback
 
