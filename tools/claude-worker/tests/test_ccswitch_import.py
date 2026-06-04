@@ -88,7 +88,13 @@ PROVIDER_OFFICIAL = {
     "app_type": "claude",
     "name": "Claude Official",
     "category": "official",
-    "settings_config": {"env": {}, "model": "opus"},
+    "settings_config": {
+        "env": {
+            "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+            "ANTHROPIC_AUTH_TOKEN": "sk-official-secret-token",
+            "ANTHROPIC_MODEL": "opus",
+        },
+    },
 }
 
 PROVIDER_MISSING_TOKEN = {
@@ -187,12 +193,11 @@ class TestParseProvidersFromDb:
         assert full.extra_env["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "test-sonnet"
         assert full.extra_env["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "test-opus"
 
-    def test_official_has_empty_env(self, ccswitch_dir: Path):
+    def test_official_has_env(self, ccswitch_dir: Path):
         providers = parse_providers_from_db(ccswitch_dir / "cc-switch.db")
         official = next(p for p in providers if p.id == "claude-official")
-        assert official.base_url == ""
-        assert official.auth_token == ""
-        assert official.model == ""
+        assert official.base_url == "https://api.anthropic.com"
+        assert official.is_official is True
 
     def test_missing_db_raises(self, tmp_path: Path):
         with pytest.raises(FileNotFoundError, match="not found"):
@@ -243,11 +248,13 @@ class TestNormalizeForWorker:
         with pytest.raises(ValueError, match="missing required fields"):
             normalize_for_worker(incomplete)
 
-    def test_official_raises(self, ccswitch_dir: Path):
+    def test_official_with_env_normalizes(self, ccswitch_dir: Path):
+        """Official providers with env fields still normalize (bootstrap checks
+        is_official separately, not normalize_for_worker)."""
         providers = parse_providers_from_db(ccswitch_dir / "cc-switch.db")
         official = next(p for p in providers if p.id == "claude-official")
-        with pytest.raises(ValueError, match="missing required fields"):
-            normalize_for_worker(official)
+        env = normalize_for_worker(official)
+        assert env["ANTHROPIC_BASE_URL"] == "https://api.anthropic.com"
 
 
 # ── provider_summary ────────────────────────────────────────────────────────
@@ -268,3 +275,66 @@ class TestProviderSummary:
         assert summary["name"] == "Test Provider"
         assert summary["category"] == "custom"
         assert summary["is_current"] is True
+
+
+# ── export includes category/is_official ─────────────────────────────────────
+
+class TestExportIncludesOfficialFlag:
+    """Verify that the export command includes category and is_official fields
+    so bootstrap.sh / bootstrap.ps1 can enforce the official-provider refusal."""
+
+    def test_custom_provider_not_official(self, ccswitch_dir: Path, capsys):
+        """A custom provider should have is_official=False in export output."""
+        from ccswitch_import import cmd_export
+        import argparse
+        args = argparse.Namespace(
+            ccswitch_dir=str(ccswitch_dir),
+            provider="test-provider-1",
+            machine=False,
+        )
+        cmd_export(args)
+        out = json.loads(capsys.readouterr().out)
+        assert out["category"] == "custom"
+        assert out["is_official"] is False
+
+    def test_official_provider_flagged(self, ccswitch_dir: Path, capsys):
+        """An official provider should have is_official=True in export output."""
+        from ccswitch_import import cmd_export
+        import argparse
+        args = argparse.Namespace(
+            ccswitch_dir=str(ccswitch_dir),
+            provider="claude-official",
+            machine=False,
+        )
+        cmd_export(args)
+        out = json.loads(capsys.readouterr().out)
+        assert out["category"] == "official"
+        assert out["is_official"] is True
+
+    def test_export_redacts_token(self, ccswitch_dir: Path, capsys):
+        """Non-machine export must redact the auth token."""
+        from ccswitch_import import cmd_export
+        import argparse
+        args = argparse.Namespace(
+            ccswitch_dir=str(ccswitch_dir),
+            provider="test-provider-1",
+            machine=False,
+        )
+        cmd_export(args)
+        out = json.loads(capsys.readouterr().out)
+        assert "sk-test" not in out["ANTHROPIC_AUTH_TOKEN"]
+        assert "set" in out["ANTHROPIC_AUTH_TOKEN"]
+
+    def test_export_machine_has_raw_token(self, ccswitch_dir: Path, capsys):
+        """Machine export must include the raw token for piping to bootstrap."""
+        from ccswitch_import import cmd_export
+        import argparse
+        args = argparse.Namespace(
+            ccswitch_dir=str(ccswitch_dir),
+            provider="test-provider-1",
+            machine=True,
+        )
+        cmd_export(args)
+        out = json.loads(capsys.readouterr().out)
+        assert out["ANTHROPIC_AUTH_TOKEN"] == "sk-test-secret-token-12345"
+        assert out["is_official"] is False
