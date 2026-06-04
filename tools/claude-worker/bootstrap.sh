@@ -144,9 +144,70 @@ if [[ ${#missing[@]} -gt 0 ]]; then
 fi
 
 # --- write worker config ----------------------------------------------------
-# Implemented in step 1.
+
+# Escape a string for embedding inside a JSON double-quoted value. Handles
+# the cases that actually occur in provider values (backslashes in Windows-y
+# paths, quotes, and stray control chars) without shelling out to python.
+json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"   # backslash first, so we don't double-escape below
+  s="${s//\"/\\\"}"   # double quote
+  s="${s//$'\n'/\\n}" # newline
+  s="${s//$'\r'/\\r}" # carriage return
+  s="${s//$'\t'/\\t}" # tab
+  printf '%s' "$s"
+}
+
+# Back up a pre-existing file before overwriting, mirroring the installer's
+# .pre-ilk-<timestamp> convention, so a previously pinned token is never
+# silently lost.
+backup_if_present() {
+  local f="$1"
+  if [[ -e "$f" ]]; then
+    local backup
+    backup="${f}.pre-ilk-$(date +%Y%m%d-%H%M%S)"
+    cp -p "$f" "$backup"
+    echo "  backed up existing $(basename "$f") -> $backup"
+  fi
+}
+
 write_worker_config() {
-  echo "TODO(step-1): write $worker_home/settings.json and .claude.json"
+  mkdir -p "$worker_home"
+
+  local settings_file="$worker_home/settings.json"
+  local claude_json="$worker_home/.claude.json"
+
+  # settings.json carries the provider auth token, so create it with
+  # owner-only perms from the start (umask scoped to the subshell) and
+  # back up any existing file first.
+  backup_if_present "$settings_file"
+  (
+    umask 077
+    cat > "$settings_file" <<EOF
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "$(json_escape "$base_url")",
+    "ANTHROPIC_AUTH_TOKEN": "$(json_escape "$auth_token")",
+    "ANTHROPIC_MODEL": "$(json_escape "$model")"
+  }
+}
+EOF
+  )
+  chmod 600 "$settings_file"
+  echo "  wrote $settings_file (auth token $(mask_secret "$auth_token"), mode 600)"
+
+  # Minimal .claude.json: worker starts with no MCP servers. Never clobber an
+  # existing one — the user may have curated a small worker MCP set already.
+  if [[ ! -e "$claude_json" ]]; then
+    cat > "$claude_json" <<'EOF'
+{
+  "mcpServers": {}
+}
+EOF
+    echo "  wrote $claude_json (no MCP servers)"
+  else
+    echo "  kept existing $claude_json (left untouched)"
+  fi
 }
 
 if [[ $apply -eq 0 ]]; then
