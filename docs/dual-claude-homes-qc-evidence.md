@@ -96,6 +96,79 @@ $ grep -q -- '--claude-home' install.sh                       # OK
 $ grep -q -- '-ClaudeHome' install.ps1                        # OK
 ```
 
+## QC6 — CCSwitch import (synthetic fixture)
+
+Using a synthetic CCSwitch database fixture with test providers:
+
+```
+$ python3 tools/claude-worker/ccswitch_import.py list --ccswitch-dir /tmp/ccswitch-fixture
+  test-provider-1
+    name:       Test Provider 1
+    base_url:   https://test1.example.com/anthropic
+    auth_token: ***set (33 chars)***
+    model:      claude-sonnet-4-20250514
+
+  test-provider-2 [official]
+    name:       Official Claude
+    base_url:   https://api.anthropic.com
+    auth_token: ***set (40 chars)***
+    model:      claude-sonnet-4-20250514
+```
+
+Token values are redacted (length-bucketed) in human output.
+
+```
+$ python3 tools/claude-worker/ccswitch_import.py export --provider test-provider-1 --ccswitch-dir /tmp/ccswitch-fixture
+{
+  "id": "test-provider-1",
+  "name": "Test Provider 1",
+  "category": "third-party",
+  "is_official": false,
+  "ANTHROPIC_BASE_URL": "https://test1.example.com/anthropic",
+  "ANTHROPIC_AUTH_TOKEN": "***set (33 chars)***",
+  "ANTHROPIC_MODEL": "claude-sonnet-4-20250514"
+}
+```
+
+Export with `--machine` emits the raw token (for piping to bootstrap):
+
+```
+$ python3 tools/claude-worker/ccswitch_import.py export --provider test-provider-1 --machine --ccswitch-dir /tmp/ccswitch-fixture | python3 -c "import json,sys; d=json.load(sys.stdin); print('token present:', bool(d.get('ANTHROPIC_AUTH_TOKEN')))"
+token present: True
+```
+
+Official provider import is refused by default:
+
+```
+$ bash tools/claude-worker/bootstrap.sh --from-ccswitch --provider test-provider-2 --ccswitch-dir /tmp/ccswitch-fixture
+error: provider 'test-provider-2' is an official/Claude OAuth provider.
+Importing it into the worker home would use the planner's official identity.
+Pass --allow-official to override (not recommended).
+exit=2
+```
+
+## QC7 — CCSwitch import via bootstrap (synthetic fixture)
+
+```
+$ bash tools/claude-worker/bootstrap.sh --from-ccswitch --provider test-provider-1 \
+    --home /tmp/ilk-worker-test --ccswitch-dir /tmp/ccswitch-fixture
+Imported provider 'test-provider-1' from CCSwitch.
+
+=== claude-worker bootstrap (DRY-RUN) ===
+worker home:  /tmp/ilk-worker-test
+base url:     https://test1.example.com/anthropic
+auth token:   ***set (33 chars)***
+model:        claude-sonnet-4-20250514
+link skills:  no
+
+Would create worker home and write settings.json + .claude.json.
+Dry-run complete. Re-run with --apply to bootstrap.
+exit=0
+```
+
+The import reads CCSwitch state read-only and populates the bootstrap env vars.
+The token is masked in all output.
+
 ## Windows parity
 
 `pwsh` / Windows PowerShell is **not installed on this macOS QC host**, so the
@@ -128,4 +201,9 @@ under PowerShell and confirm the same exit codes (0 for dry-run/preflight-OK,
 | Bootstrap fail-closed (missing value) | PASS (exit 3) |
 | Wrapper preflight failure (empty home) | PASS (exit 3) |
 | Sub-plan local_checks | PASS |
+| CCSwitch list (redacted output) | PASS |
+| CCSwitch export (redacted JSON) | PASS |
+| CCSwitch export --machine (raw token) | PASS |
+| CCSwitch official provider refusal | PASS (exit 2) |
+| CCSwitch import via bootstrap (dry-run) | PASS |
 | Windows `.ps1` execution | Not run (pwsh absent) — parity documented |
