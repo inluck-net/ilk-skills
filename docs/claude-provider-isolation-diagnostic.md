@@ -109,7 +109,90 @@ config/auth/MCP is home-bound — that is the real subject of this diagnostic.
 
 ---
 
-_Subsequent steps (1–5) append below: config/CCSwitch probes, alternate-home
-feasibility, MCP/command isolation, the recommended isolation model, and QC._
+_Subsequent steps append below._
+
+---
+
+## Step 1 — Read-only Claude Code & CCSwitch path discovery
+
+All probes below were read-only (`ls`, `find`, `stat`, `command -v`,
+`--version`, `cat` of structure with secret values masked, `grep` of logs,
+`security find-generic-password` with no secret printed). No provider switch,
+login, or config write was performed.
+
+### Claude Code
+
+| Item | Finding |
+|------|---------|
+| `claude` binary | on PATH via fnm shell shim; **v2.1.156** |
+| Install method | `installMethod: global` (per `~/.claude.json`) |
+| Config home | `~/.claude/` (dir) **+** `~/.claude.json` (sibling file) |
+| Settings | `~/.claude/settings.json` (model, env, permissions, theme, plugins) |
+| Auth/credentials | **macOS Keychain** item `svce="Claude Code-credentials" acct="chad"` — *not* a file. (`~/.claude/.credentials.json` absent.) |
+| OAuth account | metadata (email, org, seat tier) in `~/.claude.json` → `oauthAccount` |
+| MCP servers | global `chrome-devtools` under `~/.claude.json` → `mcpServers`; **1 of 15** per-project entries also defines its own `mcpServers` |
+| Sessions/history | `~/.claude/sessions/`, `history.jsonl`, `projects/`, `session-env/` |
+| Self-backups | `~/.claude/backups/.claude.json.backup.<epoch-ms>` (rolling) |
+
+Key fact: **auth lives in the Keychain**, keyed by service name, not by the
+config home path. So pointing Claude Code at a different home does **not** by
+itself give it a different identity — both homes would read the same Keychain
+credential unless auth is overridden by env (`ANTHROPIC_*`) or the home uses a
+file credential. This is central to the isolation analysis (Steps 2–4).
+
+Current `~/.claude/settings.json` → `env` is **empty (`{}`)** — i.e. Claude
+Code is presently in "Claude Official" (OAuth) mode, not routed to any
+alternate provider.
+
+### CCSwitch ("CC Switch.app")
+
+| Item | Finding |
+|------|---------|
+| App | `/Applications/CC Switch.app`, bundle `com.ccswitch.desktop`, **v3.13.0** (Tauri) |
+| Store | `~/.cc-switch/cc-switch.db` (~9 MB SQLite), `~/.cc-switch/settings.json`, `~/.cc-switch/logs/cc-switch.log`, `~/.cc-switch/backups/db_backup_*.db` |
+| App-support | `~/Library/Application Support/com.ccswitch.desktop/app_paths.json` (currently `{}`) |
+| Manages | Claude, Codex, Gemini, OpenCode, OpenClaw, OMO providers (multi-tool switcher, not Claude-only) |
+| Current Claude provider | `currentProviderClaude` in `~/.cc-switch/settings.json` = `claude-official` |
+| Skill sync | `skillSyncMethod=auto`, `skillStorageLocation=cc_switch`, `enableClaudePluginIntegration=false` |
+
+### What CCSwitch mutates (evidence-based)
+
+Log lines prove the switch mechanism:
+
+```
+14:14:00  托盘菜单事件: claude_claude-official
+14:14:00  切换到Claude供应商: claude-official        # switch to official
+13:38:35  切换到Claude供应商: 66f41c76-…-11abf60fd28f # earlier: switch to a custom provider (UUID)
+```
+
+Correlating those switch events with file mtimes:
+
+- `~/.claude/settings.json` (mtime 14:14, the official-switch moment) now has
+  `env: {}`. → **On switch, CCSwitch rewrites `~/.claude/settings.json`'s
+  `env` block**: it injects `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` /
+  `ANTHROPIC_MODEL` for a custom provider, and **clears it to `{}` for
+  "Claude Official"** (falling back to the Keychain OAuth token).
+- `~/.claude/backups/.claude.json.backup.<ts>` files cluster at the same
+  switch times → **CCSwitch backs up `~/.claude.json` before writing it.**
+- `~/.cc-switch/cc-switch.db` + `settings.json` (`currentProviderClaude`) are
+  CCSwitch's own state.
+- A periodic `[SESSION-SYNC]` job *reads* (scans) `~/.claude/` and `~/.codex/`
+  session files for usage stats — read-only ingestion into its DB.
+
+This is **independently corroborated by the ilk runner code**
+(`run_ilk_loop_claude.{ps1,sh}`, `run_reviewer.py`): the runner reads
+`~/.claude/settings.json`'s `env` block and, when it is non-empty (CCSwitch
+routed to a non-Anthropic endpoint), clears conflicting *process-env*
+`ANTHROPIC_*` so settings.json is the sole auth source — and treats an empty
+`env: {}` ("Claude Official") as non-authoritative so OAuth still works.
+
+### Mutation summary
+
+CCSwitch operates on a **single, global Claude home (`~/.claude`)**: it
+toggles provider auth by rewriting one shared `settings.json` env block (plus
+`~/.claude.json`) in place. It has **no notion of two simultaneous homes** —
+its model is "one active provider at a time for one `~/.claude`." This is the
+core tension for running a planner and a worker concurrently (analysed in
+Steps 2–4).
 
 No destructive changes were made.
