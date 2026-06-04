@@ -26,12 +26,16 @@
 #   ~/.cursor/skills/ilk-loop/scripts/_stream_json_render.py
 #
 # Flags:
-#   --apply         actually create / refresh links
-#   --only-cursor   install only to ~/.cursor/
-#   --only-claude   install only to ~/.claude/
-#   --only-codex    install only to ~/.codex/
-#   --force         back up real (non-symlink) targets to
-#                   <link>.pre-ilk-<timestamp> before linking
+#   --apply              actually create / refresh links
+#   --dry-run            preview only (the default; accepted for symmetry)
+#   --only-cursor        install only to ~/.cursor/
+#   --only-claude        install only to the Claude Code home
+#   --only-codex         install only to ~/.codex/
+#   --claude-home <dir>  use <dir> as the Claude Code home instead of
+#                        ~/.claude (e.g. a worker home ~/.claude-worker);
+#                        targets <dir>/skills, <dir>/commands, <dir>/tools
+#   --force              back up real (non-symlink) targets to
+#                        <link>.pre-ilk-<timestamp> before linking
 #
 # Idempotent: re-running --apply just re-points stale symlinks (e.g.
 # if you moved the repo) and is otherwise a no-op.
@@ -47,16 +51,29 @@ only_cursor=0
 only_claude=0
 only_codex=0
 force=0
+claude_home=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --apply)        apply=1 ;;
+    --dry-run)      apply=0 ;;
     --only-cursor)  only_cursor=1 ;;
     --only-claude)  only_claude=1 ;;
     --only-codex)   only_codex=1 ;;
     --force)        force=1 ;;
+    --claude-home)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "error: --claude-home requires a directory argument" >&2
+        exit 2
+      fi
+      claude_home="$1"
+      ;;
+    --claude-home=*)
+      claude_home="${1#--claude-home=}"
+      ;;
     -h|--help)
-      sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -66,6 +83,20 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+# Normalize a custom Claude home: expand a leading ~ and make relative
+# paths absolute. Conservative — does NOT require the directory to exist
+# yet, so a dry-run can preview a not-yet-created worker home.
+if [[ -n "$claude_home" ]]; then
+  case "$claude_home" in
+    "~")   claude_home="$HOME" ;;
+    "~/"*) claude_home="$HOME/${claude_home#\~/}" ;;
+  esac
+  case "$claude_home" in
+    /*) ;;
+    *)  claude_home="$(pwd)/$claude_home" ;;
+  esac
+fi
 
 if [[ ! -d "$SKILLS_SRC" ]]; then
   echo "error: cannot find skills/ under repo root: $REPO_ROOT" >&2
