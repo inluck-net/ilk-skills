@@ -262,3 +262,77 @@ must be sourced (one time, by the human) from the CCSwitch provider config /
 `cc-switch.db`; the diagnostic did not extract any token.
 
 No destructive changes were made.
+
+---
+
+## Step 3 — MCP and skill/command isolation
+
+### Where each thing is resolved from
+
+| Layer | Source today | Follows `CLAUDE_CONFIG_DIR`? |
+|-------|--------------|------------------------------|
+| Global MCP servers | `~/.claude.json` → `mcpServers` (observed: `chrome-devtools`) | **Yes** — `.claude.json` is resolved under the config home, so an alternate home starts with an empty `mcpServers`. |
+| Per-project MCP servers | per-project entry inside `~/.claude.json` (observed: 1 of 15 projects) | Yes (same file). |
+| Settings (`env`, model, permissions) | `<home>/settings.json` | Yes — each home has its own. |
+| Skills | `<home>/skills/<name>` (symlinks → repo) | Yes — loaded relative to the home. |
+| Slash commands | `<home>/commands/<file>` (symlinks → repo) | Yes. |
+| Plugins | `<home>/plugins/` | Yes. |
+| Auth (OAuth) | macOS **Keychain** (`Claude Code-credentials`) | **No** — Keychain key is fixed; shared across homes (see Step 2). |
+
+The important split: **everything file-based follows the config home, but the
+Keychain credential does not.** That is why the worker home must assert its
+provider through an `env` block rather than expecting a separate login.
+
+### Consequence for MCP
+
+A second home (`~/.claude-worker`) starts with **no MCP servers**. The worker
+either:
+
+1. gets its own `mcpServers` written into `~/.claude-worker/.claude.json`
+   (independent set — recommended; the worker rarely needs `chrome-devtools`),
+   or
+2. is launched with `--mcp-config <file> --strict-mcp-config` for fully
+   per-invocation MCP, ignoring all home/global config.
+
+Either way MCP is **cleanly isolatable** — the planner's MCP set does not leak
+into the worker.
+
+### Consequence for skills / commands (installer work required)
+
+Skills and commands load from `<home>/skills` and `<home>/commands`. The ilk
+suite must therefore be linked into the worker home as well. **Today both
+installers hard-code the three homes** (`~/.cursor`, `~/.claude`, `~/.codex`):
+
+- `install.sh` builds the Claude target as a literal
+  `TARGET_SKILLS+=("$HOME/.claude/skills")` /
+  `TARGET_COMMANDS+=("$HOME/.claude/commands")`.
+- `install.ps1` builds it as a literal `Join-Path $HOME ".claude\skills"`.
+
+Neither accepts an arbitrary Claude home. To support `~/.claude-worker` the
+follow-up implementation must add a parameter, e.g.:
+
+- **macOS/Linux:** `--claude-home <dir>` (default `~/.claude`), or a new
+  `--only-claude-worker` selector that targets `$HOME/.claude-worker`.
+- **Windows:** `-ClaudeHome <dir>` / `-OnlyClaudeWorker`.
+
+Good news on the side links: the `tools/migration` link is already built as
+`<skills_dir>/../tools/migration`, so it resolves correctly under any home
+(`~/.claude-worker/tools/migration`) with no extra change. Discovery
+(`ilk-*` skills, `ilk*` commands) and the symlink/junction logic are
+home-agnostic — only the **target home list** needs to become a parameter.
+
+`ilk_paths.skill_root()` already prefers `ILK_SKILL_HOME`, then auto-detects
+from the running script, then falls back to `~/.codex` → `~/.cursor` →
+`~/.claude`. A worker launched from `~/.claude-worker/skills/...` would
+auto-detect correctly; setting `ILK_SKILL_HOME` in the worker wrapper makes it
+deterministic.
+
+### Net
+
+- **MCP isolation:** native and clean (per-home `.claude.json` + `--mcp-config`).
+- **Skill/command isolation:** mechanically trivial but **requires a small
+  installer change** to target a second Claude home.
+- **No conflict** between the two homes' skills/commands — they are independent
+  link sets pointing at the same single-source repo.
+
+No destructive changes were made.
