@@ -152,7 +152,7 @@ if ($FromCCSwitch) {
     Write-Host ""
     Write-Host "Selected provider:"
     $preview = $previewJson | ConvertFrom-Json
-    $officialLabel = if ($preview.is_official) { " [official — refused by default]" } else { "" }
+    $officialLabel = if ($preview.is_official) { " [official -- refused by default]" } else { "" }
     Write-Host "  name:       $($preview.name)$officialLabel"
     Write-Host "  base_url:   $($preview.ANTHROPIC_BASE_URL)"
     Write-Host "  auth_token: $($preview.ANTHROPIC_AUTH_TOKEN)"
@@ -229,7 +229,7 @@ Write-Host "link skills:  $(if ($LinkSkills) { 'yes' } else { 'no' })"
 Write-Host ""
 
 if ($missing.Count -gt 0) {
-  Write-Error "incomplete provider env — refusing to write a worker home that would silently fall back to the planner's official OAuth identity."
+  Write-Error "incomplete provider env -- refusing to write a worker home that would silently fall back to the planner's official OAuth identity."
   Write-Host "Missing:" -ForegroundColor Red
   $missing | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
   exit 3
@@ -291,7 +291,7 @@ function Write-WorkerConfig {
   Write-Host "  wrote $settingsFile (auth token $(Format-Secret $AuthToken))"
 
   # Minimal .claude.json: worker starts with no MCP servers. Never clobber an
-  # existing one — the user may have curated a small worker MCP set already.
+  # existing one -- the user may have curated a small worker MCP set already.
   if (-not (Test-Path -LiteralPath $claudeJson)) {
     '{
   "mcpServers": {}
@@ -360,7 +360,7 @@ if (Test-Path -LiteralPath $pidFile) {
       }
       Write-Host "WARNING: active worker PID $runningPid detected; -Force specified, proceeding anyway." -ForegroundColor Yellow
     } else {
-      # Stale PID file — clean it up.
+      # Stale PID file -- clean it up.
       Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
     }
   }

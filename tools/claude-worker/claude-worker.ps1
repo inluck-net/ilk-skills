@@ -18,7 +18,7 @@
       or any cc-switch.db. It only reads the worker home you name.
     * Fails closed: refuses to launch unless the worker home, its
       settings.json, every required ANTHROPIC_* value, and the ilk-runner
-      skill are all present — so the worker can never silently fall back to
+      skill are all present -- so the worker can never silently fall back to
       the planner's official OAuth identity.
     * Token values are masked in all output; the raw token is never printed.
 
@@ -180,7 +180,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $SkillHome "ilk-runner") -PathType C
 Write-Host ""
 
 if ($problems.Count -gt 0) {
-  Write-Error "worker preflight failed — refusing to launch a worker that would silently fall back to the planner's official OAuth identity."
+  Write-Error "worker preflight failed -- refusing to launch a worker that would silently fall back to the planner's official OAuth identity."
   Write-Host "Problems:" -ForegroundColor Red
   $problems | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
   exit 3
@@ -196,7 +196,7 @@ if ($PreflightOnly) {
 # --- launch -----------------------------------------------------------------
 # Point Claude Code at the worker home and the ilk skill root, then hand off.
 # The provider token lives in the worker settings.json (which CLAUDE_CONFIG_DIR
-# points Claude Code at) — never on the command line or in this environment.
+# points Claude Code at) -- never on the command line or in this environment.
 $env:CLAUDE_CONFIG_DIR = $WorkerHome
 $env:ILK_SKILL_HOME    = $SkillHome
 
