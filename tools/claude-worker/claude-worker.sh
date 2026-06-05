@@ -26,7 +26,11 @@
 #   --claude-bin <path> Claude Code executable (default: CLAUDE_BIN, then PATH,
 #                       then common macOS/Linux install shims)
 #   --preflight-only    run all checks, print the active worker home, exit 0
-#                       without launching claude (added in step 1)
+#                       without launching claude
+#   --no-skip-permissions  disable the default --dangerously-skip-permissions
+#                       injection; worker launches with normal permission prompts
+#   --dry-run           run preflight, print resolved claude bin + assembled args,
+#                       exit 0 without launching claude
 #   -h | --help         show this help and exit
 #
 # Exit codes: 0 ok / preflight ok, 2 usage error, 3 incomplete provider env or
@@ -176,24 +180,28 @@ PY
 # Recognized wrapper flags are consumed; everything else is forwarded to
 # claude verbatim (preserved in claude_args).
 preflight_only=0
+no_skip_permissions=0
+dry_run=0
 claude_args=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -h|--help)        usage; exit 0 ;;
-    --preflight-only) preflight_only=1 ;;
+    -h|--help)              usage; exit 0 ;;
+    --preflight-only)       preflight_only=1 ;;
+    --no-skip-permissions)  no_skip_permissions=1 ;;
+    --dry-run)              dry_run=1 ;;
     --home)
       shift
       [[ $# -eq 0 ]] && { echo "error: --home requires a directory argument" >&2; exit 2; }
       worker_home="$1"
       ;;
-    --home=*)         worker_home="${1#--home=}" ;;
+    --home=*)               worker_home="${1#--home=}" ;;
     --claude-bin)
       shift
       [[ $# -eq 0 ]] && { echo "error: --claude-bin requires a path argument" >&2; exit 2; }
       claude_bin="$1"
       ;;
-    --claude-bin=*)   claude_bin="${1#--claude-bin=}" ;;
-    *)                claude_args+=("$1") ;;
+    --claude-bin=*)         claude_bin="${1#--claude-bin=}" ;;
+    *)                      claude_args+=("$1") ;;
   esac
   shift
 done
@@ -264,6 +272,23 @@ if [[ $preflight_only -eq 1 ]]; then
   exit 0
 fi
 
+# --- default --dangerously-skip-permissions ---
+# Unless the user opted out with --no-skip-permissions, inject the flag so the
+# worker launches without permission prompts.  Idempotent: skip if the user
+# already passed it explicitly.
+if [[ $no_skip_permissions -eq 0 ]]; then
+  has_dangerous=0
+  for a in "${claude_args[@]+"${claude_args[@]}"}"; do
+    if [[ "$a" == "--dangerously-skip-permissions" ]]; then
+      has_dangerous=1
+      break
+    fi
+  done
+  if [[ $has_dangerous -eq 0 ]]; then
+    claude_args=("--dangerously-skip-permissions" "${claude_args[@]+"${claude_args[@]}"}")
+  fi
+fi
+
 # --- launch -----------------------------------------------------------------
 # Select the worker home for Claude Code and the ilk skill root, then hand off
 # to claude. The provider token lives in the worker settings.json, which
@@ -278,8 +303,15 @@ if ! resolved_claude_bin="$(resolve_claude_bin)"; then
   exit 3
 fi
 
-echo "Launching claude with CLAUDE_CONFIG_DIR=$worker_home ..."
 echo "claude bin:      $resolved_claude_bin"
+
+if [[ $dry_run -eq 1 ]]; then
+  echo "claude args:     ${claude_args[*]:-}"
+  echo "(--dry-run: not launching claude)"
+  exit 0
+fi
+
+echo "Launching claude with CLAUDE_CONFIG_DIR=$worker_home ..."
 
 # Write a PID file so bootstrap can detect an active worker run before
 # overwriting the provider settings.  The PID stays valid after exec
