@@ -138,6 +138,56 @@ bash tools/claude-worker/claude-worker.sh
 .\tools\claude-worker\claude-worker.ps1
 ```
 
+### The `claude-worker` convenience command
+
+The wrapper injects `--dangerously-skip-permissions` by default so the worker
+launches without permission prompts. Use `--no-skip-permissions` to opt out and
+restore normal prompts. A `--dry-run` flag prints the resolved claude binary and
+assembled arguments without launching, useful for verifying the configuration.
+
+```bash
+# Default: launches with --dangerously-skip-permissions
+bash tools/claude-worker/claude-worker.sh
+
+# Opt out: worker will prompt for permissions normally
+bash tools/claude-worker/claude-worker.sh --no-skip-permissions
+
+# Preview what would run (prints bin + args, exits 0):
+bash tools/claude-worker/claude-worker.sh --dry-run
+```
+
+```powershell
+.\tools\claude-worker\claude-worker.ps1
+.\tools\claude-worker\claude-worker.ps1 --no-skip-permissions
+.\tools\claude-worker\claude-worker.ps1 --dry-run
+```
+
+If the user already passes `--dangerously-skip-permissions` explicitly, the
+wrapper does not add a second copy (idempotent).
+
+**Safety note:** The dangerous default means the worker will not prompt for
+permissions. Only use it in a worker home you trust.
+
+### PATH install
+
+To run `claude-worker` from any directory without typing the full path:
+
+**Windows:** Copy or symlink `tools\claude-worker\claude-worker.cmd` into a
+directory on your PATH (e.g. `C:\Users\<you>\bin`). Then open a fresh shell:
+
+```powershell
+claude-worker --dry-run
+```
+
+**macOS / Linux:** Symlink `tools/claude-worker/claude-worker.sh` as
+`claude-worker` into `~/.local/bin` (or any directory on your PATH):
+
+```bash
+mkdir -p ~/.local/bin
+ln -s "$(pwd)/tools/claude-worker/claude-worker.sh" ~/.local/bin/claude-worker
+claude-worker --dry-run
+```
+
 If Claude Code is installed but not on `PATH`, the wrapper checks
 `~/.local/bin/claude`, the active npm global prefix, and common package-manager
 shims. Prefer `~/.local/bin/claude` when you maintain a private stable Claude
