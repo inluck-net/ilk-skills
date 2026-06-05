@@ -49,7 +49,7 @@
   Exit codes: 0 ok / preflight ok, 2 usage error, 3 incomplete provider env or
   missing worker home / settings / skills.
 #>
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding=$false)]
 param(
   [string]$WorkerHome,
   [string]$ClaudeBin,
