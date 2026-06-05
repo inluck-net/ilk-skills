@@ -35,12 +35,30 @@
   Run all checks, print the active worker home, and exit 0 without launching
   claude.
 
+.PARAMETER NoSkipPermissions
+  Do NOT inject --dangerously-skip-permissions into the forwarded args.
+  By default, the worker launches with --dangerously-skip-permissions so it
+  never prompts for permissions. Pass this switch to restore normal
+  permission prompts.
+
+.PARAMETER DryRun
+  Run the full preflight, print the resolved claude binary and the assembled
+  argv, then exit 0 WITHOUT launching claude. The token is never printed.
+
 .PARAMETER ClaudeArgs
   Remaining arguments are forwarded to `claude` verbatim.
 
 .EXAMPLE
   .\claude-worker.ps1 --preflight-only
   Validate the default worker home without launching.
+
+.EXAMPLE
+  .\claude-worker.ps1 --dry-run
+  Show what would run (with --dangerously-skip-permissions) without launching.
+
+.EXAMPLE
+  .\claude-worker.ps1 --dry-run --no-skip-permissions
+  Show what would run without the skip-permissions default.
 
 .EXAMPLE
   .\claude-worker.ps1 /ilk-run
@@ -54,6 +72,8 @@ param(
   [string]$WorkerHome,
   [string]$ClaudeBin,
   [switch]$PreflightOnly,
+  [switch]$NoSkipPermissions,
+  [switch]$DryRun,
   [Parameter(ValueFromRemainingArguments = $true)]
   [string[]]$ClaudeArgs
 )
@@ -76,9 +96,18 @@ if ($ClaudeArgs) {
         if ($i + 1 -ge $ClaudeArgs.Count) { Write-Error "--claude-bin requires a path argument"; exit 2 }
         $ClaudeBin = $ClaudeArgs[$i + 1]; $i++
       }
+      '--no-skip-permissions' { $NoSkipPermissions = $true }
+      '--dry-run' { $DryRun = $true }
       default { $forward += $ClaudeArgs[$i] }
     }
   }
+}
+
+# Default: inject --dangerously-skip-permissions so the worker never prompts
+# for permissions.  Honour --no-skip-permissions (opt-out) and be idempotent
+# (skip if the user already passed the flag explicitly).
+if (-not $NoSkipPermissions -and $forward -notcontains '--dangerously-skip-permissions') {
+  $forward = @('--dangerously-skip-permissions') + $forward
 }
 
 # Resolve worker home: explicit param wins, else environment, else default.
@@ -204,6 +233,13 @@ $ResolvedClaudeBin = Resolve-ClaudeBin -ExplicitPath $ClaudeBin
 if (-not $ResolvedClaudeBin) {
   Write-Error "Claude Code executable not found; cannot launch the worker. Set `$env:CLAUDE_BIN or pass --claude-bin /path/to/claude."
   exit 3
+}
+
+if ($DryRun) {
+  Write-Host "(--dry-run: not launching claude)"
+  Write-Host "claude bin: $ResolvedClaudeBin"
+  Write-Host "claude args: $($forward -join ' ')"
+  exit 0
 }
 
 Write-Host "Launching claude with CLAUDE_CONFIG_DIR=$WorkerHome ..."
