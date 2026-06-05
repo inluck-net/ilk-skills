@@ -40,7 +40,7 @@ Windows (PowerShell):
 
 ```powershell
 # List providers
-.\tools\claude-worker\bootstrap.ps1 -ListCcsitchProviders
+.\tools\claude-worker\bootstrap.ps1 -ListCCSwitchProviders
 
 # Import interactively
 .\tools\claude-worker\bootstrap.ps1 -Apply -FromCcswitch -Interactive -LinkSkills

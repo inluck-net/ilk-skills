@@ -58,7 +58,7 @@ Provider values may also come from the environment (`ANTHROPIC_BASE_URL` /
 
 ```powershell
 # Option A: Import from CCSwitch (recommended)
-.\tools\claude-worker\bootstrap.ps1 -ListCcsitchProviders
+.\tools\claude-worker\bootstrap.ps1 -ListCCSwitchProviders
 .\tools\claude-worker\bootstrap.ps1 -Apply -FromCcswitch -Interactive -LinkSkills
 # Or specific provider:
 .\tools\claude-worker\bootstrap.ps1 -Apply -FromCcswitch -Provider <provider-id> -LinkSkills
