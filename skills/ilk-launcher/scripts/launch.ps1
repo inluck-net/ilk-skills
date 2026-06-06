@@ -113,15 +113,16 @@ $LauncherDir   = Join-Path $SkillRoot 'ilk-launcher'
 $ProjectsJson  = Join-Path $LauncherDir 'projects.json'
 $DefaultMaxIter = 30
 $DefaultTimeout = 30
-$ValidEngines = @('claude', 'codex')
+$ValidEngines = @('claude', 'codex', 'claude-worker')
 $DefaultEngine = 'claude'
 
 function Get-RunnerScript {
   param([string]$EngineName)
   switch ($EngineName) {
-    'claude' { return Join-Path $SkillRoot 'ilk-loop\scripts\run_ilk_loop_claude.ps1' }
-    'codex'  { return Join-Path $SkillRoot 'ilk-loop\scripts\run_ilk_loop_codex.ps1' }
-    default  { throw "Unknown engine '$EngineName'" }
+    'claude'        { return Join-Path $SkillRoot 'ilk-loop\scripts\run_ilk_loop_claude.ps1' }
+    'claude-worker' { return Join-Path $SkillRoot 'ilk-loop\scripts\run_ilk_loop_claude.ps1' }
+    'codex'         { return Join-Path $SkillRoot 'ilk-loop\scripts\run_ilk_loop_codex.ps1' }
+    default         { throw "Unknown engine '$EngineName'" }
   }
 }
 
@@ -536,13 +537,24 @@ function Start-ilkWindow {
   $title = "ilk: $ProjectName"
   $runnerScript = Get-RunnerScript -EngineName $EngineName
 
+  # Resolve worker-home routing for claude-worker engine.
+  $workerHome    = $null
+  $workerSkills  = $null
+  $envPrepend    = ""
+  if ($EngineName -eq 'claude-worker') {
+    $workerHome   = Join-Path $HOME '.claude-worker'
+    $workerSkills = Join-Path $workerHome 'skills'
+    $envPrepend = "`$env:CLAUDE_CONFIG_DIR = '$workerHome'`r`n" +
+                  "`$env:ILK_SKILL_HOME    = '$workerSkills'`r`n"
+  }
+
   $mcpArg = ""
   if ($McpConfigPath) {
     $mcpArg = " -McpConfigPath '$McpConfigPath'"
   }
 
   $inner = @"
-`$Host.UI.RawUI.WindowTitle = '$title'
+$envPrepend`$Host.UI.RawUI.WindowTitle = '$title'
 Write-Host '=== ilk-launcher ===' -ForegroundColor Cyan
 Write-Host "Project: $ProjectPath"
 Write-Host "MaxIterations: $MaxIterations    IterationTimeoutMin: $IterationTimeoutMin"
@@ -563,8 +575,13 @@ Write-Host '[ilk-launcher] window left open for review. Close manually when done
     Write-Host "  MaxIterations: $MaxIterations"
     Write-Host "  IterationTimeoutMin: $IterationTimeoutMin"
     Write-Host "  WorkerEngine: $EngineName"
-    Write-Host "  ClaudeConfigDir: (default ~/.claude)"
-    Write-Host "  IlkSkillHome: (default)"
+    if ($workerHome) {
+      Write-Host "  ClaudeConfigDir: $workerHome"
+      Write-Host "  IlkSkillHome: $workerSkills"
+    } else {
+      Write-Host "  ClaudeConfigDir: (default ~/.claude)"
+      Write-Host "  IlkSkillHome: (default)"
+    }
     if ($McpConfigPath) { Write-Host "  McpConfigPath: $McpConfigPath" }
     Write-Host "  LogFile: $logFile"
     Write-Host "  JsonlLog: $jsonlLog"

@@ -209,7 +209,9 @@ preflight() {
 
   # Settings.json env detection — same "non-empty env block => authoritative"
   # semantics as the post-dc24c67 Win version. Empty {} does NOT count.
-  local settings_json="${HOME}/.claude/settings.json"
+  local cfg_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  local settings_json="${cfg_dir}/settings.json"
+  echo "[runner] CLAUDE_CONFIG_DIR=$cfg_dir"
   SETTINGS_HAS_ENV=0
   if [[ -f "$settings_json" ]]; then
     if jq -e '.env | type == "object" and length > 0' "$settings_json" >/dev/null 2>&1; then

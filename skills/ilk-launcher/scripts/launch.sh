@@ -19,16 +19,17 @@ LAUNCHER_DIR="${_SKILL_ROOT}/ilk-launcher"
 PROJECTS_JSON="${LAUNCHER_DIR}/projects.json"
 DEFAULT_MAX_ITER=30
 DEFAULT_TIMEOUT=30
-VALID_ENGINES="claude codex"
+VALID_ENGINES="claude codex claude-worker"
 DEFAULT_ENGINE="claude"
 
 # Runner scripts keyed by engine name
 runner_script_for_engine() {
   local engine="$1"
   case "$engine" in
-    claude) echo "${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_claude.sh" ;;
-    codex)  echo "${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_codex.sh" ;;
-    *)      echo "Error: Unknown engine '$engine'" >&2; exit 1 ;;
+    claude)        echo "${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_claude.sh" ;;
+    claude-worker) echo "${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_claude.sh" ;;
+    codex)         echo "${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_codex.sh" ;;
+    *)             echo "Error: Unknown engine '$engine'" >&2; exit 1 ;;
   esac
 }
 
@@ -510,11 +511,21 @@ start_ilk_window() {
   mkdir -p "$log_dir"
   log_file="${log_dir}/${project_key}-${run_id}.log"
 
-  # Build runner command
+  # Build runner command — inject worker-home env vars for claude-worker engine.
   local loop_script
   loop_script=$(runner_script_for_engine "$engine")
+  local env_prefix=""
+  local display_config_dir="(default ~/.claude)"
+  local display_skill_home="(default)"
+  if [[ "$engine" == "claude-worker" ]]; then
+    local worker_home="${HOME}/.claude-worker"
+    local worker_skills="${worker_home}/skills"
+    env_prefix="export CLAUDE_CONFIG_DIR='$worker_home'; export ILK_SKILL_HOME='$worker_skills'; "
+    display_config_dir="$worker_home"
+    display_skill_home="$worker_skills"
+  fi
   local runner_cmd
-  runner_cmd="bash \"$loop_script\" --project-path \"$project_path\" --max-iterations $max_iterations --iteration-timeout-min $timeout_min"
+  runner_cmd="${env_prefix}bash \"$loop_script\" --project-path \"$project_path\" --max-iterations $max_iterations --iteration-timeout-min $timeout_min"
   if [[ -n "$mcp_config_path" ]]; then
     runner_cmd="$runner_cmd --mcp-config-path \"$mcp_config_path\""
   fi
@@ -527,8 +538,8 @@ start_ilk_window() {
     echo "  MaxIterations: $max_iterations"
     echo "  IterationTimeoutMin: $timeout_min"
     echo "  WorkerEngine: $engine"
-    echo "  ClaudeConfigDir: (default ~/.claude)"
-    echo "  IlkSkillHome: (default)"
+    echo "  ClaudeConfigDir: $display_config_dir"
+    echo "  IlkSkillHome: $display_skill_home"
     if [[ -n "$mcp_config_path" ]]; then
       echo "  McpConfigPath: $mcp_config_path"
     fi
@@ -761,8 +772,13 @@ for p in d:
 
   if [[ "$CLI_DRY_RUN" == true ]]; then
     echo "[$RESOLVED_NAME] DRY RUN — would launch with the above params."
-    echo "[$RESOLVED_NAME] ClaudeConfigDir: (default ~/.claude)"
-    echo "[$RESOLVED_NAME] IlkSkillHome: (default)"
+    if [[ "$engine" == "claude-worker" ]]; then
+      echo "[$RESOLVED_NAME] ClaudeConfigDir: ${HOME}/.claude-worker"
+      echo "[$RESOLVED_NAME] IlkSkillHome: ${HOME}/.claude-worker/skills"
+    else
+      echo "[$RESOLVED_NAME] ClaudeConfigDir: (default ~/.claude)"
+      echo "[$RESOLVED_NAME] IlkSkillHome: (default)"
+    fi
     local pid_file
     pid_file=$(get_pid_file_path "$RESOLVED_PATH")
     echo "[$RESOLVED_NAME] PID file: $pid_file"

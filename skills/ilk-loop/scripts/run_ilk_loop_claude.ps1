@@ -205,7 +205,9 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 # An empty `env: {}` (CC Switch's canonical "Claude Official" state) does
 # NOT count -- we want OAuth / User-scope fallback in that case.
 $settingsHasEnv = $false
-$settingsJsonPath = Join-Path $HOME ".claude\settings.json"
+$cfgDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME '.claude' }
+$settingsJsonPath = Join-Path $cfgDir 'settings.json'
+Write-Host "[runner] CLAUDE_CONFIG_DIR=$cfgDir" -ForegroundColor DarkGray
 if (Test-Path $settingsJsonPath) {
   try {
     $settings = Get-Content $settingsJsonPath -Raw -Encoding utf8 | ConvertFrom-Json
