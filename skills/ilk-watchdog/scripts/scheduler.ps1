@@ -54,6 +54,7 @@ $SkillRoot = Get-IlkSkillRoot
 $ScanScript       = Join-Path $PSScriptRoot 'scheduler_scan.py'
 $PromoteScript    = Join-Path $SkillRoot 'ilk-loop\scripts\promote_next_master.py'
 $LaunchScript     = Join-Path $SkillRoot 'ilk-launcher\scripts\launch.ps1'
+$BootstrapScript  = Join-Path $SkillRoot '..\tools\claude-worker\bootstrap.ps1'
 
 # --- helpers -----------------------------------------------------------------
 
@@ -97,6 +98,18 @@ function Get-LiveSentinelCount {
     }
   }
   return $count
+}
+
+function Get-SlotHome {
+  <#
+    Compute the worker home path for a given slot id.
+    Slot 1 = base ~/.claude-worker; slot i>=2 = ~/.claude-worker-<i>.
+  #>
+  param([int]$SlotId)
+  if ($SlotId -le 1) {
+    return (Join-Path $HOME '.claude-worker')
+  }
+  return (Join-Path $HOME ".claude-worker-$SlotId")
 }
 
 function Invoke-SchedulerScan {
@@ -217,8 +230,9 @@ function Run-Scheduler {
       }
     }
 
-    # --- iterate projects in FIFO order ---
-    $selected = $null
+    # --- iterate projects in FIFO order, fill free slots ---
+    $remainingCapacity = $MaxConcurrent - $liveCount
+    $toDispatch = @()
 
     foreach ($proj in $queued) {
       $key = $proj.key
@@ -258,12 +272,13 @@ function Run-Scheduler {
         continue
       }
 
-      # First free, resolvable project in FIFO order
-      $selected = $proj
-      break
+      # Fill free slots: dispatch while capacity remains.
+      if ($toDispatch.Count -lt $remainingCapacity) {
+        $toDispatch += $proj
+      }
     }
 
-    if ($null -eq $selected) {
+    if ($toDispatch.Count -eq 0) {
       if ($DryRun -and $Once) {
         @{ decision = 'idle'; reason = 'no-dispatchable-project' } | ConvertTo-Json -Compress
         return
@@ -273,68 +288,69 @@ function Run-Scheduler {
       continue
     }
 
-    # --- promote-before-dispatch (multi-master queue advancement) ---
-    # If the project has no active master but HAS a promotable queued
-    # master, promote it so the dispatched loop has real work.
-    $key = $selected.key
-    $dataPath = $selected.path
+    # --- promote + dispatch each selected project into a slot ---
+    $slotId = 0
+    foreach ($proj in $toDispatch) {
+      $slotId++
+      $key = $proj.key
+      $dataPath = $proj.path
+      $repo = $proj.repo_path
+      $slotHome = Get-SlotHome -SlotId $slotId
 
-    if (-not $selected.has_active_master) {
-      $plansDir = Join-Path $dataPath 'plans'
+      # promote-before-dispatch (multi-master queue advancement)
+      if (-not $proj.has_active_master) {
+        $plansDir = Join-Path $dataPath 'plans'
+        if ($DryRun -and $Once) {
+          try {
+            $promoJson = & python $PromoteScript --project $dataPath --plans-dir $plansDir --dry-run 2>$null
+            if ($LASTEXITCODE -eq 0 -and $promoJson) {
+              $promo = ($promoJson | Out-String).Trim() | ConvertFrom-Json
+              if ($promo.promoted) {
+                @{ decision = 'promote'; key = $key; promoted = $promo.promoted; demoted = $promo.demoted } | ConvertTo-Json -Compress
+              }
+            }
+          } catch {}
+        } else {
+          Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] promoting queued master for $key..."
+          try {
+            $promoJson = & python $PromoteScript --project $dataPath --plans-dir $plansDir 2>$null
+            if ($LASTEXITCODE -eq 0 -and $promoJson) {
+              $promo = ($promoJson | Out-String).Trim() | ConvertFrom-Json
+              if ($promo.promoted) {
+                Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] promoted $($promo.promoted) (demoted $($promo.demoted))"
+              }
+            }
+          } catch {
+            Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] promotion failed for $key`: $_"
+          }
+        }
+      }
+
+      # dispatch into slot home
       if ($DryRun -and $Once) {
-        # Dry-run: call promote_next_master.py --dry-run to get the plan,
-        # then emit a machine-assertable promote decision.
-        try {
-          $promoJson = & python $PromoteScript --project $dataPath --plans-dir $plansDir --dry-run 2>$null
-          if ($LASTEXITCODE -eq 0 -and $promoJson) {
-            $promo = ($promoJson | Out-String).Trim() | ConvertFrom-Json
-            if ($promo.promoted) {
-              @{ decision = 'promote'; key = $key; promoted = $promo.promoted; demoted = $promo.demoted } | ConvertTo-Json -Compress
-            }
-          }
-        } catch {
-          # promote script failed — proceed to dispatch anyway
-        }
+        @{ decision = 'dispatch'; key = $key; slot = $slotId; command = "launch.ps1 -ProjectPath '$repo' -Engine claude-worker -WorkerHome '$slotHome'" } | ConvertTo-Json -Compress
+      } elseif ($DryRun) {
+        Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] DRY-RUN: would dispatch $key (slot $slotId) via $LaunchScript -ProjectPath '$repo' -Engine claude-worker -WorkerHome '$slotHome'"
       } else {
-        # Real mode: perform the promotion.
-        Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] promoting queued master for $key..."
+        # Ensure slot home exists (lazy-clone from base worker home).
         try {
-          $promoJson = & python $PromoteScript --project $dataPath --plans-dir $plansDir 2>$null
-          if ($LASTEXITCODE -eq 0 -and $promoJson) {
-            $promo = ($promoJson | Out-String).Trim() | ConvertFrom-Json
-            if ($promo.promoted) {
-              Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] promoted $($promo.promoted) (demoted $($promo.demoted))"
-            }
-          }
+          & $BootstrapScript -CloneSlot $slotId 2>$null | Out-Null
         } catch {
-          Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] promotion failed for $key`: $_"
+          Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] warning: slot $slotId bootstrap failed: $_"
+        }
+        Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatching $key (slot $slotId)..."
+        try {
+          & $LaunchScript -ProjectPath $repo -Engine claude-worker -WorkerHome $slotHome -Force
+          $dispatchCount++
+          Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatched $key (slot $slotId, total: $dispatchCount)"
+        } catch {
+          Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatch failed for $key`: $_"
+          $blacklistSkip[$key] = (Get-Date).AddMinutes(5)
         }
       }
     }
 
-    # --- dispatch the selected project ---
-    # Dispatch into the SOURCE repo (repo_path), NOT the ~/.ilk-data data dir.
-    $repo = $selected.repo_path
-
-    if ($DryRun -and $Once) {
-      @{ decision = 'dispatch'; key = $key; command = "launch.ps1 -ProjectPath '$repo' -Engine claude-worker" } | ConvertTo-Json -Compress
-      return
-    }
-
-    if ($DryRun) {
-      Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] DRY-RUN: would dispatch $key via $LaunchScript -ProjectPath '$repo' -Engine claude-worker"
-    } else {
-      Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatching $key..."
-      try {
-        & $LaunchScript -ProjectPath $repo -Engine claude-worker -Force
-        $dispatchCount++
-        Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatched $key (total: $dispatchCount)"
-      } catch {
-        Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatch failed for $key`: $_"
-        # Record in blacklist with 5-min backoff
-        $blacklistSkip[$key] = (Get-Date).AddMinutes(5)
-      }
-    }
+    if ($DryRun -and $Once) { return }
 
     Start-Sleep -Seconds ($PollMin * 60)
   }

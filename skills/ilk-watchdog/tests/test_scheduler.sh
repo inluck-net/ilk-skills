@@ -342,9 +342,10 @@ run_select() {
   echo "=== test_scheduler.sh select ==="
   setup_two_queued_projects
 
-  # Test 1: FIFO — with both projects free, proj-a (older) should be dispatched first
+  # Test 1: FIFO — with both projects free, proj-a (older) should be dispatched first.
+  # Use --max-concurrent 1 so only one project is dispatched per cycle (strict sequential).
   local output
-  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once 2>&1) || die "scheduler exited non-zero: $output"
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 1 2>&1) || die "scheduler exited non-zero: $output"
   output="${output//$'\r'/}"  # strip Windows \r
 
   local decision key
@@ -392,15 +393,17 @@ run_dispatch() {
   echo "=== test_scheduler.sh dispatch ==="
   setup_two_queued_projects
 
-  # Test 1: dispatch command contains -Engine claude-worker and selected project path
+  # Test 1: dispatch command contains -Engine claude-worker and selected project path.
+  # With fill-free-slots, both projects dispatch; parse the first line for proj-a.
   local output
   output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once 2>&1) || die "scheduler exited non-zero: $output"
   output="${output//$'\r'/}"
 
-  local decision key command
-  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
-  key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
-  command=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['command'])" <<<"$output")
+  local first_line decision key command
+  first_line=$(echo "$output" | head -1)
+  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
+  key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
+  command=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['command'])" <<<"$first_line")
   [[ "$decision" == "dispatch" ]] || die "expected 'dispatch', got '$decision'. Output: $output"
   [[ "$key" == "proj-a" ]] || die "expected dispatch of 'proj-a', got '$key'. Output: $output"
   [[ "$command" == *"claude-worker"* ]] || die "expected 'claude-worker' in command, got '$command'. Output: $output"
@@ -801,6 +804,119 @@ run_cap() {
   cleanup
 }
 
+run_fill() {
+  echo "=== test_scheduler.sh fill ==="
+
+  # AC-1: 2 ready projects + MaxConcurrent 5 → both dispatched in one cycle with distinct slots
+  NUM_PROJECTS=2
+  setup_cap_projects
+
+  local output
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 5 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  # Should have exactly 2 dispatch lines
+  local line_count
+  line_count=$(echo "$output" | wc -l | tr -d ' ')
+  [[ "$line_count" == "2" ]] || die "expected 2 dispatch lines, got $line_count. Output: $output"
+
+  local d1_decision d1_key d1_slot d1_command
+  local d2_decision d2_key d2_slot d2_command
+  d1_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$(echo "$output" | head -1)")
+  d1_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$(echo "$output" | head -1)")
+  d1_slot=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['slot'])" <<<"$(echo "$output" | head -1)")
+  d1_command=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['command'])" <<<"$(echo "$output" | head -1)")
+  d2_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$(echo "$output" | tail -1)")
+  d2_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$(echo "$output" | tail -1)")
+  d2_slot=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['slot'])" <<<"$(echo "$output" | tail -1)")
+  d2_command=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['command'])" <<<"$(echo "$output" | tail -1)")
+
+  [[ "$d1_decision" == "dispatch" ]] || die "expected dispatch, got $d1_decision"
+  [[ "$d1_key" == "proj-cap-1" ]] || die "expected proj-cap-1, got $d1_key"
+  [[ "$d1_slot" == "1" ]] || die "expected slot 1, got $d1_slot"
+  [[ "$d1_command" == *"worker-home"* ]] || die "expected --worker-home in command, got $d1_command"
+  [[ "$d1_command" != *"claude-worker-"* ]] || die "slot 1 home should be base (no suffix), got $d1_command"
+
+  [[ "$d2_decision" == "dispatch" ]] || die "expected dispatch, got $d2_decision"
+  [[ "$d2_key" == "proj-cap-2" ]] || die "expected proj-cap-2, got $d2_key"
+  [[ "$d2_slot" == "2" ]] || die "expected slot 2, got $d2_slot"
+  [[ "$d2_command" == *"claude-worker-2"* ]] || die "expected slot 2 home in command, got $d2_command"
+
+  echo "PASS: AC-1 — 2 projects dispatched in one cycle with distinct slot homes"
+
+  # AC-2: 3 ready + MaxConcurrent 2 → exactly 2 dispatched, 3rd not in output
+  NUM_PROJECTS=3
+  setup_cap_projects
+
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 2 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  line_count=$(echo "$output" | wc -l | tr -d ' ')
+  [[ "$line_count" == "2" ]] || die "expected 2 dispatch lines (MaxConcurrent 2), got $line_count. Output: $output"
+
+  d1_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$(echo "$output" | head -1)")
+  d2_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$(echo "$output" | tail -1)")
+  d1_slot=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['slot'])" <<<"$(echo "$output" | head -1)")
+  d2_slot=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['slot'])" <<<"$(echo "$output" | tail -1)")
+
+  [[ "$d1_key" == "proj-cap-1" ]] || die "expected proj-cap-1, got $d1_key"
+  [[ "$d2_key" == "proj-cap-2" ]] || die "expected proj-cap-2, got $d2_key"
+  [[ "$d1_slot" == "1" ]] || die "expected slot 1, got $d1_slot"
+  [[ "$d2_slot" == "2" ]] || die "expected slot 2, got $d2_slot"
+
+  echo "PASS: AC-2 — 3 ready + MaxConcurrent 2 → exactly 2 dispatched"
+
+  # AC-3: 1 busy + MaxConcurrent 2 → 1 dispatched (slot 2 distinct home)
+  NUM_PROJECTS=2
+  setup_cap_projects
+
+  sleep 60 &
+  local busy_pid=$!
+  echo "$busy_pid" > "$FAKE_DATA/projects/proj-cap-1/runtime/launcher/running.pid"
+
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 2 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  local first_line last_line
+  first_line=$(echo "$output" | head -1)
+  last_line=$(echo "$output" | tail -1)
+
+  local busy_decision
+  busy_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
+  [[ "$busy_decision" == "skip-busy" ]] || die "expected skip-busy, got $busy_decision"
+
+  local dispatch_decision dispatch_key dispatch_command
+  dispatch_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
+  dispatch_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$last_line")
+  dispatch_command=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['command'])" <<<"$last_line")
+
+  [[ "$dispatch_decision" == "dispatch" ]] || die "expected dispatch, got $dispatch_decision"
+  [[ "$dispatch_key" == "proj-cap-2" ]] || die "expected proj-cap-2, got $dispatch_key"
+  [[ "$dispatch_command" == *"worker-home"* ]] || die "expected --worker-home in command"
+
+  echo "PASS: AC-3 — 1 busy + MaxConcurrent 2 → 1 dispatched with slot home"
+  kill "$busy_pid" 2>/dev/null || true
+
+  # AC-4: MaxConcurrent 1 → strict sequential (1 dispatched)
+  NUM_PROJECTS=2
+  setup_cap_projects
+
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 1 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  local single_decision single_key single_slot
+  single_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  single_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
+  single_slot=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['slot'])" <<<"$output")
+
+  [[ "$single_decision" == "dispatch" ]] || die "expected dispatch, got $single_decision"
+  [[ "$single_key" == "proj-cap-1" ]] || die "expected proj-cap-1, got $single_key"
+  [[ "$single_slot" == "1" ]] || die "expected slot 1, got $single_slot"
+
+  echo "PASS: AC-4 — MaxConcurrent 1 → strict sequential (1 dispatched)"
+  cleanup
+}
+
 run_all() {
   run_scan
   run_select
@@ -809,6 +925,7 @@ run_all() {
   run_blacklist
   run_unresolved
   run_cap
+  run_fill
   echo "ALL PASS"
 }
 
@@ -834,11 +951,14 @@ case "${1:-all}" in
   cap)
     run_cap
     ;;
+  fill)
+    run_fill
+    ;;
   all)
     run_all
     ;;
   *)
-    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|all}" >&2
+    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|fill|all}" >&2
     exit 1
     ;;
 esac

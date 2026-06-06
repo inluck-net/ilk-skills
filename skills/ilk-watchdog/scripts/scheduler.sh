@@ -22,6 +22,7 @@ _SKILL_ROOT="$(ilk_skill_root)"
 SCAN_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/scheduler_scan.py"
 PROMOTE_SCRIPT="${_SKILL_ROOT}/ilk-loop/scripts/promote_next_master.py"
 LAUNCH_SCRIPT="${_SKILL_ROOT}/ilk-launcher/scripts/launch.sh"
+BOOTSTRAP_SCRIPT="${_SKILL_ROOT}/../tools/claude-worker/bootstrap.sh"
 
 # Resolve python command (python3 preferred, python fallback for Windows).
 # On Windows, `python3` may exist as a Microsoft Store alias that doesn't
@@ -140,6 +141,17 @@ count_live_sentinels() {
     fi
   done
   echo "$count"
+}
+
+get_slot_home() {
+  # Compute the worker home path for a given slot id.
+  # Slot 1 = base ~/.claude-worker; slot i>=2 = ~/.claude-worker-<i>.
+  local slot_id="$1"
+  if [[ "$slot_id" -le 1 ]]; then
+    echo "$HOME/.claude-worker"
+  else
+    echo "$HOME/.claude-worker-${slot_id}"
+  fi
 }
 
 invoke_scheduler_scan() {
@@ -262,13 +274,13 @@ run_scheduler() {
       fi
     done < <(read_blacklist_from_postmortems "$scan_output")
 
-    # --- iterate projects in FIFO order ---
-    local selected_key=""
-    local selected_path=""
-    local selected_repo=""
-    local selected_has_active=""
+    # --- iterate projects in FIFO order, fill free slots ---
+    local remaining_capacity=$((MAX_CONCURRENT - live_count))
     local now_epoch
     now_epoch=$(date +%s)
+
+    # Collect dispatchable projects (keys, paths, repos, has_actives).
+    local -a disp_keys=() disp_paths=() disp_repos=() disp_actives=()
 
     # Parse the JSON array and iterate
     local keys paths repo_paths has_actives
@@ -317,15 +329,16 @@ run_scheduler() {
         continue
       fi
 
-      # First free, resolvable project in FIFO order
-      selected_key="$key"
-      selected_path="$path"
-      selected_repo="$repo"
-      selected_has_active="${has_actives[$i]}"
-      break
+      # Fill free slots: collect while capacity remains.
+      if [[ ${#disp_keys[@]} -lt $remaining_capacity ]]; then
+        disp_keys+=("$key")
+        disp_paths+=("$path")
+        disp_repos+=("$repo")
+        disp_actives+=("${has_actives[$i]}")
+      fi
     done
 
-    if [[ -z "$selected_key" ]]; then
+    if [[ ${#disp_keys[@]} -eq 0 ]]; then
       if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
         echo '{"decision":"idle","reason":"no dispatchable project"}'
         return
@@ -335,61 +348,69 @@ run_scheduler() {
       continue
     fi
 
-    # --- promote-before-dispatch (multi-master queue advancement) ---
-    # If the project has no active master but HAS a promotable queued
-    # master, promote it so the dispatched loop has real work.
-    if [[ "$selected_has_active" == "false" ]]; then
-      local plans_dir="${selected_path}/plans"
+    # --- promote + dispatch each selected project into a slot ---
+    local slot_id=0
+    for j in "${!disp_keys[@]}"; do
+      slot_id=$((slot_id + 1))
+      local dkey="${disp_keys[$j]}"
+      local dpath="${disp_paths[$j]}"
+      local drepo="${disp_repos[$j]}"
+      local dactive="${disp_actives[$j]}"
+      local slot_home
+      slot_home="$(get_slot_home "$slot_id")"
+
+      # promote-before-dispatch (multi-master queue advancement)
+      if [[ "$dactive" == "false" ]]; then
+        local plans_dir="${dpath}/plans"
+        if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+          local promo_json=""
+          promo_json=$($PYTHON "$PROMOTE_SCRIPT" --project "$dpath" --plans-dir "$plans_dir" --dry-run 2>/dev/null) || true
+          if [[ -n "$promo_json" ]]; then
+            local promoted_name
+            promoted_name=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('promoted',''))" <<<"$promo_json" | tr -d '\r')
+            if [[ -n "$promoted_name" ]]; then
+              local demoted_name
+              demoted_name=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('demoted','') or '')" <<<"$promo_json" | tr -d '\r')
+              echo "{\"decision\":\"promote\",\"key\":\"$dkey\",\"promoted\":\"$promoted_name\",\"demoted\":\"$demoted_name\"}"
+            fi
+          fi
+        else
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] promoting queued master for $dkey..."
+          local promo_json=""
+          promo_json=$($PYTHON "$PROMOTE_SCRIPT" --project "$dpath" --plans-dir "$plans_dir" 2>/dev/null) || true
+          if [[ -n "$promo_json" ]]; then
+            local promoted_name
+            promoted_name=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('promoted',''))" <<<"$promo_json" | tr -d '\r')
+            if [[ -n "$promoted_name" ]]; then
+              echo "[$(date '+%Y-%m-%d %H:%M:%S')] promoted $promoted_name"
+            fi
+          fi
+        fi
+      fi
+
+      # dispatch into slot home
       if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
-        # Dry-run: call promote_next_master.py --dry-run to get the plan,
-        # then emit a machine-assertable promote decision.
-        local promo_json=""
-        promo_json=$($PYTHON "$PROMOTE_SCRIPT" --project "$selected_path" --plans-dir "$plans_dir" --dry-run 2>/dev/null) || true
-        if [[ -n "$promo_json" ]]; then
-          local promoted_name
-          promoted_name=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('promoted',''))" <<<"$promo_json" | tr -d '\r')
-          if [[ -n "$promoted_name" ]]; then
-            local demoted_name
-            demoted_name=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('demoted','') or '')" <<<"$promo_json" | tr -d '\r')
-            echo "{\"decision\":\"promote\",\"key\":\"$selected_key\",\"promoted\":\"$promoted_name\",\"demoted\":\"$demoted_name\"}"
-          fi
-        fi
+        # Use forward slashes in paths for valid JSON (Windows backslashes are invalid escapes)
+        local safe_path="${drepo//\\//}"
+        echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"command\":\"launch.sh --project-path '$safe_path' --engine claude-worker --worker-home '$slot_home'\"}"
+      elif [[ "$DRY_RUN" == true ]]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] DRY-RUN: would dispatch $dkey (slot $slot_id) via $LAUNCH_SCRIPT --project-path '$drepo' --engine claude-worker --worker-home '$slot_home'"
       else
-        # Real mode: perform the promotion.
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] promoting queued master for $selected_key..."
-        local promo_json=""
-        promo_json=$($PYTHON "$PROMOTE_SCRIPT" --project "$selected_path" --plans-dir "$plans_dir" 2>/dev/null) || true
-        if [[ -n "$promo_json" ]]; then
-          local promoted_name
-          promoted_name=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('promoted',''))" <<<"$promo_json" | tr -d '\r')
-          if [[ -n "$promoted_name" ]]; then
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] promoted $promoted_name"
-          fi
+        # Ensure slot home exists (lazy-clone from base worker home).
+        bash "$BOOTSTRAP_SCRIPT" --clone-slot "$slot_id" >/dev/null 2>&1 || true
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatching $dkey (slot $slot_id)..."
+        if bash "$LAUNCH_SCRIPT" --project-path "$drepo" --engine claude-worker --worker-home "$slot_home" --force; then
+          dispatch_count=$((dispatch_count + 1))
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatched $dkey (slot $slot_id, total: $dispatch_count)"
+        else
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatch failed for $dkey"
+          blacklist_skip[$dkey]=$(($(date +%s) + 300))
         fi
       fi
-    fi
+    done
 
-    # --- dispatch the selected project ---
-    # Dispatch into the SOURCE repo (selected_repo), NOT the ~/.ilk-data data dir.
     if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
-      # Use forward slashes in paths for valid JSON (Windows backslashes are invalid escapes)
-      local safe_path="${selected_repo//\\//}"
-      echo "{\"decision\":\"dispatch\",\"key\":\"$selected_key\",\"command\":\"launch.sh --project-path '$safe_path' --engine claude-worker\"}"
       return
-    fi
-
-    if [[ "$DRY_RUN" == true ]]; then
-      echo "[$(date '+%Y-%m-%d %H:%M:%S')] DRY-RUN: would dispatch $selected_key via $LAUNCH_SCRIPT --project-path '$selected_repo' --engine claude-worker"
-    else
-      echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatching $selected_key..."
-      if bash "$LAUNCH_SCRIPT" --project-path "$selected_repo" --engine claude-worker --force; then
-        dispatch_count=$((dispatch_count + 1))
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatched $selected_key (total: $dispatch_count)"
-      else
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatch failed for $selected_key"
-        # Record in blacklist with 5-min backoff
-        blacklist_skip[$key]=$(($(date +%s) + 300))
-      fi
     fi
 
     sleep $((POLL_MIN * 60))

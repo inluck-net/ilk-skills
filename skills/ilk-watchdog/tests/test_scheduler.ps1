@@ -16,7 +16,7 @@
                slots, dispatches stop at the cap.
 #>
 param(
-  [ValidateSet('scan', 'select', 'dispatch', 'promote', 'blacklist', 'unresolved', 'cap', 'all')]
+  [ValidateSet('scan', 'select', 'dispatch', 'promote', 'blacklist', 'unresolved', 'cap', 'fill', 'all')]
   [string]$Subcommand = 'all'
 )
 
@@ -384,10 +384,11 @@ function Run-Select {
   Write-Host '=== test_scheduler.ps1 select ==='
   Setup-TwoQueuedProjects
 
-  # Test 1: FIFO — with both projects free, proj-a (older) should be dispatched first
+  # Test 1: FIFO — with both projects free, proj-a (older) should be dispatched first.
+  # Use MaxConcurrent 1 so only one project is dispatched per cycle (strict sequential).
   $env:ILK_DATA_HOME = $FakeData
   try {
-    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once 2>&1
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once -MaxConcurrent 1 2>&1
     if ($LASTEXITCODE -ne 0) {
       throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
     }
@@ -397,7 +398,7 @@ function Run-Select {
 
   $outputStr = ($output | Out-String).Trim()
 
-  # Parse the JSON output
+  # Parse the JSON output (single line with MaxConcurrent 1)
   $json = $outputStr | ConvertFrom-Json
   if ($json.decision -ne 'dispatch') {
     throw "Expected 'dispatch', got '$($json.decision)'. Output: $outputStr"
@@ -454,7 +455,8 @@ function Run-Dispatch {
   Write-Host '=== test_scheduler.ps1 dispatch ==='
   Setup-TwoQueuedProjects
 
-  # Test 1: dispatch command contains -Engine claude-worker and selected project path
+  # Test 1: dispatch command contains -Engine claude-worker and selected project path.
+  # With fill-free-slots, both projects dispatch; parse the first line for proj-a.
   $env:ILK_DATA_HOME = $FakeData
   try {
     $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once 2>&1
@@ -466,7 +468,8 @@ function Run-Dispatch {
   }
 
   $outputStr = ($output | Out-String).Trim()
-  $json = $outputStr | ConvertFrom-Json
+  $lines = @($outputStr -split "`n" | Where-Object { $_.Trim() })
+  $json = $lines[0].Trim() | ConvertFrom-Json
 
   if ($json.decision -ne 'dispatch') {
     throw "Expected 'dispatch', got '$($json.decision)'. Output: $outputStr"
@@ -985,6 +988,127 @@ function Run-Cap {
   Cleanup
 }
 
+function Run-Fill {
+  Write-Host '=== test_scheduler.ps1 fill ==='
+
+  # AC-1: 2 ready projects + MaxConcurrent 5 → both dispatched in one cycle with distinct slots
+  Setup-CapProjects -NumProjects 2
+
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once -MaxConcurrent 5 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+  $lines = @($outputStr -split "`n" | Where-Object { $_.Trim() })
+
+  if ($lines.Count -ne 2) {
+    throw "Expected 2 dispatch lines, got $($lines.Count). Output: $outputStr"
+  }
+
+  $d1 = $lines[0].Trim() | ConvertFrom-Json
+  $d2 = $lines[1].Trim() | ConvertFrom-Json
+
+  if ($d1.decision -ne 'dispatch') { throw "Expected dispatch, got $($d1.decision)" }
+  if ($d1.key -ne 'proj-cap-1') { throw "Expected proj-cap-1, got $($d1.key)" }
+  if ($d1.slot -ne 1) { throw "Expected slot 1, got $($d1.slot)" }
+  if ($d1.command -notlike '*-WorkerHome*claude-worker*') { throw "Expected -WorkerHome in command, got $($d1.command)" }
+  if ($d1.command -like '*claude-worker-*') { throw "Slot 1 home should be base (no suffix), got $($d1.command)" }
+
+  if ($d2.decision -ne 'dispatch') { throw "Expected dispatch, got $($d2.decision)" }
+  if ($d2.key -ne 'proj-cap-2') { throw "Expected proj-cap-2, got $($d2.key)" }
+  if ($d2.slot -ne 2) { throw "Expected slot 2, got $($d2.slot)" }
+  if ($d2.command -notlike '*claude-worker-2*') { throw "Expected slot 2 home in command, got $($d2.command)" }
+
+  Write-Host 'PASS: AC-1 — 2 projects dispatched in one cycle with distinct slot homes'
+
+  # AC-2: 3 ready + MaxConcurrent 2 → exactly 2 dispatched, 3rd not in output
+  Setup-CapProjects -NumProjects 3
+
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once -MaxConcurrent 2 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+  $lines = @($outputStr -split "`n" | Where-Object { $_.Trim() })
+
+  if ($lines.Count -ne 2) {
+    throw "Expected 2 dispatch lines (MaxConcurrent 2), got $($lines.Count). Output: $outputStr"
+  }
+
+  $d1 = $lines[0].Trim() | ConvertFrom-Json
+  $d2 = $lines[1].Trim() | ConvertFrom-Json
+  if ($d1.key -ne 'proj-cap-1') { throw "Expected proj-cap-1, got $($d1.key)" }
+  if ($d2.key -ne 'proj-cap-2') { throw "Expected proj-cap-2, got $($d2.key)" }
+  if ($d1.slot -ne 1) { throw "Expected slot 1, got $($d1.slot)" }
+  if ($d2.slot -ne 2) { throw "Expected slot 2, got $($d2.slot)" }
+
+  Write-Host 'PASS: AC-2 — 3 ready + MaxConcurrent 2 → exactly 2 dispatched'
+
+  # AC-3: 1 busy + MaxConcurrent 2 → 1 dispatched (slot 2 distinct home)
+  Setup-CapProjects -NumProjects 2
+
+  $launcherDir1 = Join-Path $FakeData 'projects\proj-cap-1\runtime\launcher'
+  $PID | Out-File -FilePath (Join-Path $launcherDir1 'running.pid') -Encoding ascii -NoNewline
+
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once -MaxConcurrent 2 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+  $lines = @($outputStr -split "`n" | Where-Object { $_.Trim() })
+
+  $busyLine = $lines[0].Trim() | ConvertFrom-Json
+  if ($busyLine.decision -ne 'skip-busy') { throw "Expected skip-busy, got $($busyLine.decision)" }
+
+  $dispatchLine = $lines[-1].Trim() | ConvertFrom-Json
+  if ($dispatchLine.decision -ne 'dispatch') { throw "Expected dispatch, got $($dispatchLine.decision)" }
+  if ($dispatchLine.key -ne 'proj-cap-2') { throw "Expected proj-cap-2, got $($dispatchLine.key)" }
+  if ($dispatchLine.command -notlike '*claude-worker*') { throw "Expected -WorkerHome in command" }
+
+  Write-Host 'PASS: AC-3 — 1 busy + MaxConcurrent 2 → 1 dispatched with slot home'
+
+  # AC-4: MaxConcurrent 1 → strict sequential (1 dispatched)
+  Setup-CapProjects -NumProjects 2
+
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once -MaxConcurrent 1 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+  $json = $outputStr | ConvertFrom-Json
+
+  if ($json.decision -ne 'dispatch') { throw "Expected dispatch, got $($json.decision)" }
+  if ($json.key -ne 'proj-cap-1') { throw "Expected proj-cap-1, got $($json.key)" }
+  if ($json.slot -ne 1) { throw "Expected slot 1, got $($json.slot)" }
+
+  Write-Host 'PASS: AC-4 — MaxConcurrent 1 → strict sequential (1 dispatched)'
+  Cleanup
+}
+
 # --- main ---------------------------------------------------------------------
 
 switch ($Subcommand) {
@@ -995,5 +1119,6 @@ switch ($Subcommand) {
   'blacklist'  { Run-Blacklist }
   'unresolved' { Run-Unresolved }
   'cap'        { Run-Cap }
-  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Promote; Run-Blacklist; Run-Unresolved; Run-Cap; Write-Host 'ALL PASS' }
+  'fill'       { Run-Fill }
+  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Promote; Run-Blacklist; Run-Unresolved; Run-Cap; Run-Fill; Write-Host 'ALL PASS' }
 }
