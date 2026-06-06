@@ -38,7 +38,14 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve the real script directory even when invoked via a ~/.local/bin symlink.
+script_source="${BASH_SOURCE[0]}"
+while [[ -L "$script_source" ]]; do
+  script_dir="$(cd "$(dirname "$script_source")" && pwd)"
+  script_source="$(readlink "$script_source")"
+  [[ "$script_source" != /* ]] && script_source="$script_dir/$script_source"
+done
+SCRIPT_DIR="$(cd "$(dirname "$script_source")" && pwd)"
 
 # Source shared worker-session helper (sentinel write/remove/test).
 . "$SCRIPT_DIR/_worker_session.sh"
