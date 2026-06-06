@@ -297,6 +297,65 @@ Best-of-N (multiple concurrent workers) is explicitly **out of scope** here —
 it needs isolated git worktrees and separate ilk runtime keys. See the design
 doc's "Best-Of-N Is Separate" section.
 
+## Per-slot worker homes (concurrency substrate)
+
+Slot homes let you run multiple concurrent worker sessions — each in its
+own isolated home — without the shared `~/.claude-worker` race. The base
+`~/.claude-worker` is slot 1; additional slots are `~/.claude-worker-2`,
+`~/.claude-worker-3`, …  The cross-project scheduler routes each
+dispatch to a distinct slot home automatically.
+
+### Creating a slot home
+
+Clone the base worker home into a numbered slot:
+
+```bash
+# macOS / Linux: create slot 2 from the base
+bash tools/claude-worker/bootstrap.sh --clone-slot 2
+
+# Windows PowerShell
+.\tools\claude-worker\bootstrap.ps1 -CloneSlot 2
+```
+
+The clone copies `settings.json` (the provider `env` block — same
+provider as base by default), writes a minimal `.claude.json`, and
+symlinks (or junctions on Windows) `skills/` to the same source the base
+uses. Idempotent (re-run is a no-op / refresh) and lazy (created on
+first use).
+
+**Test override:** pass `--from <base-home>` / `-From` to clone from a
+fake base home (used by tests under `scratch/slot-test/`):
+
+```bash
+bash tools/claude-worker/bootstrap.sh --clone-slot 2 --from /path/to/fake-base
+```
+
+### V2 forward hook (documented intent)
+
+The slot-clone bootstrap accepts an optional `--model` / `-Model`
+parameter so V2 can pin a different `ANTHROPIC_MODEL` /
+`ANTHROPIC_BASE_URL` per slot home, enabling model-diverse best-of-N.
+Currently accepted and pass-through (inherits the base provider). The
+hook is documented here so V2 can deliver it directly without modifying
+the bootstrap contract.
+
+### Launching against a slot home
+
+Use the launcher's `-WorkerHome` / `--worker-home` override (or
+`CLAUDE_WORKER_HOME` env var):
+
+```powershell
+& launch.ps1 -Engine claude-worker -WorkerHome "~/.claude-worker-2" -DryRun
+```
+```bash
+bash launch.sh --engine claude-worker --worker-home ~/.claude-worker-2 --dry-run
+```
+
+The dry-run prints `ClaudeConfigDir: <home>` and `WorkerHome: ready|MISSING`
+for the resolved home. See
+[`skills/ilk-launcher/references/worker-engine.md`](../../skills/ilk-launcher/references/worker-engine.md)
+for full precedence and safety docs.
+
 ## Troubleshooting: stale `running.pid`
 
 The worker wrapper writes a **sentinel file** (`running.pid`) into the worker

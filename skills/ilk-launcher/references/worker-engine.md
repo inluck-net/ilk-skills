@@ -91,6 +91,73 @@ Two safety behaviors back this up:
 - **Nudge** — a real launch on the planner while a bootstrapped worker
   home exists prints a one-line tip pointing at `ILK_DEFAULT_ENGINE`.
 
+### `-WorkerHome` / `CLAUDE_WORKER_HOME` override
+
+By default, `claude-worker` routes to `~/.claude-worker`. You can
+override this to point at a different home — a **slot home** for
+concurrent dispatch, or any alternative worker home:
+
+```powershell
+# PowerShell: CLI flag (highest precedence)
+& launch.ps1 -Engine claude-worker -WorkerHome "~/.claude-worker-2"
+
+# PowerShell: environment variable (middle precedence)
+$env:CLAUDE_WORKER_HOME = "~/.claude-worker-2"
+& launch.ps1 -Engine claude-worker
+
+# bash: CLI flag
+bash launch.sh --engine claude-worker --worker-home ~/.claude-worker-2
+
+# bash: environment variable
+CLAUDE_WORKER_HOME=~/.claude-worker-2 bash launch.sh --engine claude-worker
+```
+
+**Precedence** (first hit wins):
+
+1. **CLI flag** — `-WorkerHome` / `--worker-home`
+2. **Environment variable** — `CLAUDE_WORKER_HOME`
+3. **Hardcoded default** — `~/.claude-worker`
+
+The override replaces the hardcoded home everywhere: `CLAUDE_CONFIG_DIR`,
+`ILK_SKILL_HOME`, `Test-WorkerHomeReady`, and the dry-run readiness line
+(`WorkerHome: ready|MISSING`) all reflect the resolved home. With no
+override, behavior is byte-for-byte as before.
+
+### Slot homes (`~/.claude-worker-<i>`)
+
+Slot homes are the substrate for safe cross-project concurrency and the
+future V2 best-of-N worktree model. A slot home is a **clone** of the
+base `~/.claude-worker`:
+
+- Same `settings.json` provider `env` block (same provider as base by
+  default; overridable per-slot for V2 model-diverse best-of-N).
+- Symlinked (or junctioned on Windows) `skills/` to the same source.
+- Minimal `.claude.json`.
+
+Create a slot home with the bootstrap's `--clone-slot` flag:
+
+```bash
+# Clone the base worker home into ~/.claude-worker-2
+bash tools/claude-worker/bootstrap.sh --clone-slot 2
+
+# PowerShell
+.\tools\claude-worker\bootstrap.ps1 -CloneSlot 2
+```
+
+Slot creation is **idempotent** (re-run is a no-op / refresh) and
+**lazy** (created on first use). The base `~/.claude-worker` is slot 1;
+additional slots are `~/.claude-worker-2`, `~/.claude-worker-3`, …  The
+scheduler's `-MaxConcurrent` flag (sub-plan #3) routes each dispatch to
+a distinct slot home automatically.
+
+**V2 forward hook** (documented intent, not built in this batch): the
+slot-home bootstrap accepts an optional `--model` / `-Model` override so
+V2 can pin a different `ANTHROPIC_MODEL` / `ANTHROPIC_BASE_URL` per slot
+home, enabling model-diverse best-of-N. Currently accepted and
+pass-through (inherits the base provider).
+
+See `tools/claude-worker/README.md` for the full slot-clone reference.
+
 ## Adding a Codex runner
 
 When the Codex CLI contract is stable, add these files:
