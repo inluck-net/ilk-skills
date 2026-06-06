@@ -21,6 +21,16 @@ SCRATCH="$REPO_ROOT/scratch/sched-test"
 # Absolute path to the fake ILK_DATA_HOME
 FAKE_DATA="$SCRATCH/ilk-data"
 
+# Resolve python (python3 preferred; macOS lacks a bare `python`).
+PYTHON=""
+for candidate in python3 python; do
+  if command -v "$candidate" >/dev/null 2>&1 && "$candidate" --version >/dev/null 2>&1; then
+    PYTHON="$candidate"
+    break
+  fi
+done
+[[ -n "$PYTHON" ]] || { echo "FAIL: no working python found on PATH" >&2; exit 1; }
+
 # --- helpers ------------------------------------------------------------------
 
 die() { echo "FAIL: $*" >&2; exit 1; }
@@ -230,28 +240,28 @@ run_scan() {
 
   # Run scheduler_scan.py with the fake ILK_DATA_HOME
   local output
-  output=$(ILK_DATA_HOME="$FAKE_DATA" python "$SCAN_SCRIPT" 2>&1) || die "scheduler_scan.py exited non-zero: $output"
+  output=$(ILK_DATA_HOME="$FAKE_DATA" "$PYTHON" "$SCAN_SCRIPT" 2>&1) || die "scheduler_scan.py exited non-zero: $output"
 
   # Assert: exactly 2 projects returned (proj-b active, proj-c promotable)
   # proj-a (all shipped) and proj-d (all masters shipped) are excluded.
   local count
-  count=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(len(d))" <<<"$output")
+  count=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(len(d))" <<<"$output")
   [[ "$count" == "2" ]] || die "expected 2 projects, got $count. Output: $output"
 
   # Assert: first is proj-b (active master, oldest_queued_ts from active)
   local key0
-  key0=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[0]['key'])" <<<"$output")
+  key0=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[0]['key'])" <<<"$output")
   [[ "$key0" == "proj-b" ]] || die "expected first key 'proj-b', got '$key0'. Output: $output"
 
   # Assert: second is proj-c (queued master only, promotable)
   local key1
-  key1=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[1]['key'])" <<<"$output")
+  key1=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[1]['key'])" <<<"$output")
   [[ "$key1" == "proj-c" ]] || die "expected second key 'proj-c', got '$key1'. Output: $output"
 
   # Assert: oldest_queued_ts starts with 2026-06-06 for both
   local ts0 ts1
-  ts0=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[0]['oldest_queued_ts'])" <<<"$output")
-  ts1=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[1]['oldest_queued_ts'])" <<<"$output")
+  ts0=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[0]['oldest_queued_ts'])" <<<"$output")
+  ts1=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[1]['oldest_queued_ts'])" <<<"$output")
   [[ "$ts0" == "2026-06-06"* ]] || die "expected ts0 starting with '2026-06-06', got '$ts0'. Output: $output"
   [[ "$ts1" == "2026-06-06"* ]] || die "expected ts1 starting with '2026-06-06', got '$ts1'. Output: $output"
 
@@ -349,8 +359,8 @@ run_select() {
   output="${output//$'\r'/}"  # strip Windows \r
 
   local decision key
-  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
-  key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
   [[ "$decision" == "dispatch" ]] || die "expected 'dispatch', got '$decision'. Output: $output"
   [[ "$key" == "proj-a" ]] || die "expected FIFO dispatch of 'proj-a', got '$key'. Output: $output"
   echo "PASS: FIFO dispatch (proj-a first)"
@@ -370,8 +380,8 @@ run_select() {
   local last_line
   last_line=$(echo "$output" | tail -1)
 
-  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
-  key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$last_line")
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
+  key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$last_line")
   [[ "$decision" == "dispatch" ]] || die "expected 'dispatch', got '$decision'. Output: $output"
   [[ "$key" == "proj-b" ]] || die "expected dispatch of 'proj-b' after skip-busy, got '$key'. Output: $output"
 
@@ -379,8 +389,8 @@ run_select() {
   local first_line
   first_line=$(echo "$output" | head -1)
   local first_decision first_key
-  first_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
-  first_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
+  first_decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
+  first_key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
   [[ "$first_decision" == "skip-busy" ]] || die "expected first decision 'skip-busy', got '$first_decision'. Output: $output"
   [[ "$first_key" == "proj-a" ]] || die "expected skip-busy for 'proj-a', got '$first_key'. Output: $output"
 
@@ -401,9 +411,9 @@ run_dispatch() {
 
   local first_line decision key command
   first_line=$(echo "$output" | head -1)
-  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
-  key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
-  command=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['command'])" <<<"$first_line")
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
+  key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
+  command=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['command'])" <<<"$first_line")
   [[ "$decision" == "dispatch" ]] || die "expected 'dispatch', got '$decision'. Output: $output"
   [[ "$key" == "proj-a" ]] || die "expected dispatch of 'proj-a', got '$key'. Output: $output"
   [[ "$command" == *"claude-worker"* ]] || die "expected 'claude-worker' in command, got '$command'. Output: $output"
@@ -416,9 +426,9 @@ run_dispatch() {
   output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-dispatches 0 2>&1) || die "scheduler exited non-zero: $output"
   output="${output//$'\r'/}"
 
-  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
   local reason
-  reason=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['reason'])" <<<"$output")
+  reason=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['reason'])" <<<"$output")
   [[ "$decision" == "idle" ]] || die "expected 'idle', got '$decision'. Output: $output"
   [[ "$reason" == *"budget"* ]] || die "expected 'budget' in reason, got '$reason'. Output: $output"
   echo "PASS: -MaxDispatches 0 yields idle: budget ceiling"
@@ -455,14 +465,14 @@ EOF
   last_line=$(echo "$output" | tail -1)
 
   local first_decision first_key
-  first_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
-  first_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
+  first_decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
+  first_key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
   [[ "$first_decision" == "skip-blacklist" ]] || die "expected 'skip-blacklist', got '$first_decision'. Output: $output"
   [[ "$first_key" == "proj-a" ]] || die "expected skip-blacklist for 'proj-a', got '$first_key'. Output: $output"
 
   local last_decision last_key
-  last_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
-  last_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$last_line")
+  last_decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
+  last_key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$last_line")
   [[ "$last_decision" == "dispatch" ]] || die "expected 'dispatch', got '$last_decision'. Output: $output"
   [[ "$last_key" == "proj-b" ]] || die "expected dispatch of 'proj-b', got '$last_key'. Output: $output"
 
@@ -476,7 +486,7 @@ EOF
   output="${output//$'\r'/}"
 
   local decision
-  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
   [[ "$decision" == "idle" ]] || die "expected 'idle' for empty queues, got '$decision'. Output: $output"
 
   echo "PASS: empty queues report idle"
@@ -528,15 +538,15 @@ EOF
 
   local first_line decision key
   first_line=$(echo "$output" | head -1)
-  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
-  key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
+  key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
   [[ "$decision" == "skip-unresolved" ]] || die "expected 'skip-unresolved', got '$decision'. Output: $output"
   [[ "$key" == "proj-c" ]] || die "expected skip-unresolved for 'proj-c', got '$key'. Output: $output"
 
   # With the only project unresolved, the final decision is idle (not dispatch).
   local last_line last_decision
   last_line=$(echo "$output" | tail -1)
-  last_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
+  last_decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
   [[ "$last_decision" == "idle" ]] || die "expected final 'idle', got '$last_decision'. Output: $output"
 
   echo "PASS: skip-unresolved when repo_path cannot resolve, then idle"
@@ -671,16 +681,16 @@ run_promote() {
   second_line=$(echo "$output" | sed -n '2p')
 
   local decision key promoted
-  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
-  key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
-  promoted=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['promoted'])" <<<"$first_line")
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
+  key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
+  promoted=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['promoted'])" <<<"$first_line")
   [[ "$decision" == "promote" ]] || die "expected first decision 'promote', got '$decision'. Output: $output"
   [[ "$key" == "proj-promote" ]] || die "expected promote key 'proj-promote', got '$key'. Output: $output"
   [[ "$promoted" == *"m2-queued"* ]] || die "expected promoted to contain 'm2-queued', got '$promoted'. Output: $output"
 
   local dispatch_decision dispatch_key
-  dispatch_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$second_line")
-  dispatch_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$second_line")
+  dispatch_decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$second_line")
+  dispatch_key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$second_line")
   [[ "$dispatch_decision" == "dispatch" ]] || die "expected second decision 'dispatch', got '$dispatch_decision'. Output: $output"
   [[ "$dispatch_key" == "proj-promote" ]] || die "expected dispatch key 'proj-promote', got '$dispatch_key'. Output: $output"
 
@@ -693,8 +703,8 @@ run_promote() {
   output="${output//$'\r'/}"
 
   local single_decision single_key
-  single_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
-  single_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
+  single_decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  single_key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
   [[ "$single_decision" == "dispatch" ]] || die "expected 'dispatch' (no promote needed), got '$single_decision'. Output: $output"
   [[ "$single_key" == "proj-active" ]] || die "expected key 'proj-active', got '$single_key'. Output: $output"
 
@@ -762,10 +772,10 @@ run_cap() {
   output="${output//$'\r'/}"
 
   local decision reason live maxc
-  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
-  reason=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['reason'])" <<<"$output")
-  live=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['live'])" <<<"$output")
-  maxc=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['max_concurrent'])" <<<"$output")
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  reason=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['reason'])" <<<"$output")
+  live=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['live'])" <<<"$output")
+  maxc=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['max_concurrent'])" <<<"$output")
   [[ "$decision" == "idle" ]] || die "expected 'idle', got '$decision'. Output: $output"
   [[ "$reason" == "capacity-full" ]] || die "expected 'capacity-full', got '$reason'. Output: $output"
   [[ "$live" == "2" ]] || die "expected live=2, got '$live'. Output: $output"
@@ -783,7 +793,7 @@ run_cap() {
   local last_line
   last_line=$(echo "$output" | tail -1)
 
-  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
   [[ "$decision" == "dispatch" ]] || die "expected 'dispatch', got '$decision'. Output: $output"
 
   echo "PASS: MaxConcurrent=3, 2 busy → dispatch 1 free project"
@@ -796,7 +806,7 @@ run_cap() {
   output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 1 2>&1) || die "scheduler exited non-zero: $output"
   output="${output//$'\r'/}"
 
-  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
   [[ "$decision" == "dispatch" ]] || die "expected 'dispatch', got '$decision'. Output: $output"
 
   echo "PASS: MaxConcurrent=1, 0 busy → dispatch one (strict sequential)"
@@ -822,14 +832,14 @@ run_fill() {
 
   local d1_decision d1_key d1_slot d1_command
   local d2_decision d2_key d2_slot d2_command
-  d1_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$(echo "$output" | head -1)")
-  d1_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$(echo "$output" | head -1)")
-  d1_slot=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['slot'])" <<<"$(echo "$output" | head -1)")
-  d1_command=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['command'])" <<<"$(echo "$output" | head -1)")
-  d2_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$(echo "$output" | tail -1)")
-  d2_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$(echo "$output" | tail -1)")
-  d2_slot=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['slot'])" <<<"$(echo "$output" | tail -1)")
-  d2_command=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['command'])" <<<"$(echo "$output" | tail -1)")
+  d1_decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$(echo "$output" | head -1)")
+  d1_key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$(echo "$output" | head -1)")
+  d1_slot=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['slot'])" <<<"$(echo "$output" | head -1)")
+  d1_command=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['command'])" <<<"$(echo "$output" | head -1)")
+  d2_decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$(echo "$output" | tail -1)")
+  d2_key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$(echo "$output" | tail -1)")
+  d2_slot=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['slot'])" <<<"$(echo "$output" | tail -1)")
+  d2_command=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['command'])" <<<"$(echo "$output" | tail -1)")
 
   [[ "$d1_decision" == "dispatch" ]] || die "expected dispatch, got $d1_decision"
   [[ "$d1_key" == "proj-cap-1" ]] || die "expected proj-cap-1, got $d1_key"
@@ -854,10 +864,10 @@ run_fill() {
   line_count=$(echo "$output" | wc -l | tr -d ' ')
   [[ "$line_count" == "2" ]] || die "expected 2 dispatch lines (MaxConcurrent 2), got $line_count. Output: $output"
 
-  d1_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$(echo "$output" | head -1)")
-  d2_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$(echo "$output" | tail -1)")
-  d1_slot=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['slot'])" <<<"$(echo "$output" | head -1)")
-  d2_slot=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['slot'])" <<<"$(echo "$output" | tail -1)")
+  d1_key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$(echo "$output" | head -1)")
+  d2_key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$(echo "$output" | tail -1)")
+  d1_slot=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['slot'])" <<<"$(echo "$output" | head -1)")
+  d2_slot=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['slot'])" <<<"$(echo "$output" | tail -1)")
 
   [[ "$d1_key" == "proj-cap-1" ]] || die "expected proj-cap-1, got $d1_key"
   [[ "$d2_key" == "proj-cap-2" ]] || die "expected proj-cap-2, got $d2_key"
@@ -882,13 +892,13 @@ run_fill() {
   last_line=$(echo "$output" | tail -1)
 
   local busy_decision
-  busy_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
+  busy_decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
   [[ "$busy_decision" == "skip-busy" ]] || die "expected skip-busy, got $busy_decision"
 
   local dispatch_decision dispatch_key dispatch_command
-  dispatch_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
-  dispatch_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$last_line")
-  dispatch_command=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['command'])" <<<"$last_line")
+  dispatch_decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
+  dispatch_key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$last_line")
+  dispatch_command=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['command'])" <<<"$last_line")
 
   [[ "$dispatch_decision" == "dispatch" ]] || die "expected dispatch, got $dispatch_decision"
   [[ "$dispatch_key" == "proj-cap-2" ]] || die "expected proj-cap-2, got $dispatch_key"
@@ -905,9 +915,9 @@ run_fill() {
   output="${output//$'\r'/}"
 
   local single_decision single_key single_slot
-  single_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
-  single_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
-  single_slot=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['slot'])" <<<"$output")
+  single_decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  single_key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
+  single_slot=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['slot'])" <<<"$output")
 
   [[ "$single_decision" == "dispatch" ]] || die "expected dispatch, got $single_decision"
   [[ "$single_key" == "proj-cap-1" ]] || die "expected proj-cap-1, got $single_key"
@@ -915,6 +925,40 @@ run_fill() {
 
   echo "PASS: AC-4 — MaxConcurrent 1 → strict sequential (1 dispatched)"
   cleanup
+}
+
+run_compat() {
+  # Bash 3.2 / macOS portability guards.
+  echo "=== test_scheduler.sh compat ==="
+
+  # Test 1: scheduler.sh must not contain Bash 4-only features.
+  local bash4_features
+  bash4_features=$(grep -n 'declare -A\|mapfile\|readarray' "$SCHEDULER_SCRIPT" || true)
+  if [[ -n "$bash4_features" ]]; then
+    die "Bash 4-only features found in scheduler.sh:\n$bash4_features"
+  fi
+  echo "PASS: no Bash 4-only features (declare -A, mapfile, readarray)"
+
+  # Test 2: scheduler.sh parses cleanly under /bin/bash (bash 3.2 on macOS).
+  if [[ -x /bin/bash ]]; then
+    echo "  /bin/bash version: $(/bin/bash --version 2>&1 | head -1)"
+    /bin/bash -n "$SCHEDULER_SCRIPT" || die "/bin/bash -n failed on scheduler.sh"
+    echo "PASS: /bin/bash -n syntax check passes"
+  else
+    echo "  SKIP: /bin/bash not found (not macOS)"
+  fi
+
+  # Test 3: dry-run dispatches correctly under /bin/bash on macOS.
+  if [[ -x /bin/bash ]]; then
+    setup_two_queued_projects
+    local output decision
+    output=$(ILK_DATA_HOME="$FAKE_DATA" /bin/bash "$SCHEDULER_SCRIPT" --dry-run --once 2>&1) || die "/bin/bash scheduler exited non-zero: $output"
+    output="${output//$'\r'/}"
+    decision=$(echo "$output" | head -1 | "$PYTHON" -c "import json,sys; print(json.loads(sys.stdin.read())['decision'])")
+    [[ "$decision" == "dispatch" ]] || die "expected 'dispatch' under /bin/bash, got '$decision'. Output: $output"
+    echo "PASS: /bin/bash dry-run dispatches correctly"
+    cleanup
+  fi
 }
 
 run_all() {
@@ -926,6 +970,7 @@ run_all() {
   run_unresolved
   run_cap
   run_fill
+  run_compat
   echo "ALL PASS"
 }
 
@@ -954,11 +999,14 @@ case "${1:-all}" in
   fill)
     run_fill
     ;;
+  compat)
+    run_compat
+    ;;
   all)
     run_all
     ;;
   *)
-    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|fill|all}" >&2
+    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|fill|compat|all}" >&2
     exit 1
     ;;
 esac
