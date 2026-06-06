@@ -214,36 +214,48 @@ function Run-Scheduler {
         continue
       }
 
-      # First free project in FIFO order
+      # Cannot dispatch a project whose source repo path is unknown
+      # (never launched + not in projects.json). Skip, don't guess.
+      if ([string]::IsNullOrWhiteSpace($proj.repo_path)) {
+        if ($DryRun -and $Once) {
+          @{ decision = 'skip-unresolved'; key = $key } | ConvertTo-Json -Compress
+        } else {
+          Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] skip-unresolved: $key (no repo path; launch it once or add to projects.json)"
+        }
+        continue
+      }
+
+      # First free, resolvable project in FIFO order
       $selected = $proj
       break
     }
 
     if ($null -eq $selected) {
       if ($DryRun -and $Once) {
-        @{ decision = 'idle'; reason = 'all-queued-projects-blacklisted' } | ConvertTo-Json -Compress
+        @{ decision = 'idle'; reason = 'no-dispatchable-project' } | ConvertTo-Json -Compress
         return
       }
-      Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] idle: all queued projects blacklisted. Polling in $PollMin min."
+      Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] idle: no dispatchable project (all busy/blacklisted/unresolved). Polling in $PollMin min."
       Start-Sleep -Seconds ($PollMin * 60)
       continue
     }
 
     # --- dispatch the selected project ---
+    # Dispatch into the SOURCE repo (repo_path), NOT the ~/.ilk-data data dir.
     $key = $selected.key
-    $path = $selected.path
+    $repo = $selected.repo_path
 
     if ($DryRun -and $Once) {
-      @{ decision = 'dispatch'; key = $key; command = "launch.ps1 -ProjectPath '$path' -Engine claude-worker" } | ConvertTo-Json -Compress
+      @{ decision = 'dispatch'; key = $key; command = "launch.ps1 -ProjectPath '$repo' -Engine claude-worker" } | ConvertTo-Json -Compress
       return
     }
 
     if ($DryRun) {
-      Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] DRY-RUN: would dispatch $key via $LaunchScript -ProjectPath '$path' -Engine claude-worker"
+      Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] DRY-RUN: would dispatch $key via $LaunchScript -ProjectPath '$repo' -Engine claude-worker"
     } else {
       Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatching $key..."
       try {
-        & $LaunchScript -ProjectPath $path -Engine claude-worker -Force
+        & $LaunchScript -ProjectPath $repo -Engine claude-worker -Force
         $dispatchCount++
         Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatched $key (total: $dispatchCount)"
       } catch {

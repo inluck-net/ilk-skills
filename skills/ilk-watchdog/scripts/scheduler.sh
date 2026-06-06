@@ -230,17 +230,20 @@ run_scheduler() {
     # --- iterate projects in FIFO order ---
     local selected_key=""
     local selected_path=""
+    local selected_repo=""
     local now_epoch
     now_epoch=$(date +%s)
 
     # Parse the JSON array and iterate
-    local keys paths
+    local keys paths repo_paths
     mapfile -t keys < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p['key']) for p in d]" <<<"$scan_output" | tr -d '\r')
     mapfile -t paths < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p['path']) for p in d]" <<<"$scan_output" | tr -d '\r')
+    mapfile -t repo_paths < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p.get('repo_path') or '') for p in d]" <<<"$scan_output" | tr -d '\r')
 
     for i in "${!keys[@]}"; do
       local key="${keys[$i]}"
       local path="${paths[$i]}"
+      local repo="${repo_paths[$i]}"
 
       # blacklist skip
       if [[ -n "${blacklist_skip[$key]:-}" ]]; then
@@ -266,35 +269,48 @@ run_scheduler() {
         continue
       fi
 
-      # First free project in FIFO order
+      # Cannot dispatch a project whose source repo path is unknown
+      # (never launched + not in projects.json). Skip, don't guess.
+      if [[ -z "$repo" ]]; then
+        if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+          echo "{\"decision\":\"skip-unresolved\",\"key\":\"$key\"}"
+        else
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip-unresolved: $key (no repo path; launch it once or add to projects.json)"
+        fi
+        continue
+      fi
+
+      # First free, resolvable project in FIFO order
       selected_key="$key"
       selected_path="$path"
+      selected_repo="$repo"
       break
     done
 
     if [[ -z "$selected_key" ]]; then
       if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
-        echo '{"decision":"idle","reason":"all queued projects blacklisted"}'
+        echo '{"decision":"idle","reason":"no dispatchable project"}'
         return
       fi
-      echo "[$(date '+%Y-%m-%d %H:%M:%S')] idle: all queued projects blacklisted. Polling in ${POLL_MIN} min."
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] idle: no dispatchable project (all busy/blacklisted/unresolved). Polling in ${POLL_MIN} min."
       sleep $((POLL_MIN * 60))
       continue
     fi
 
     # --- dispatch the selected project ---
+    # Dispatch into the SOURCE repo (selected_repo), NOT the ~/.ilk-data data dir.
     if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
       # Use forward slashes in paths for valid JSON (Windows backslashes are invalid escapes)
-      local safe_path="${selected_path//\\//}"
+      local safe_path="${selected_repo//\\//}"
       echo "{\"decision\":\"dispatch\",\"key\":\"$selected_key\",\"command\":\"launch.sh --project-path '$safe_path' --engine claude-worker\"}"
       return
     fi
 
     if [[ "$DRY_RUN" == true ]]; then
-      echo "[$(date '+%Y-%m-%d %H:%M:%S')] DRY-RUN: would dispatch $selected_key via $LAUNCH_SCRIPT --project-path '$selected_path' --engine claude-worker"
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] DRY-RUN: would dispatch $selected_key via $LAUNCH_SCRIPT --project-path '$selected_repo' --engine claude-worker"
     else
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatching $selected_key..."
-      if bash "$LAUNCH_SCRIPT" --project-path "$selected_path" --engine claude-worker --force; then
+      if bash "$LAUNCH_SCRIPT" --project-path "$selected_repo" --engine claude-worker --force; then
         dispatch_count=$((dispatch_count + 1))
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatched $selected_key (total: $dispatch_count)"
       else

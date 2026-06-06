@@ -196,6 +196,14 @@ last_updated: 2026-06-03
 
 Queued and waiting.
 EOF
+
+  # Give each project a last-launch.json so repo_path resolves to a SOURCE
+  # repo path that is DELIBERATELY DIFFERENT from the ~/.ilk-data data dir
+  # (under scratch/repos/, not scratch/.../ilk-data/projects/). This is what
+  # proves the scheduler dispatches the repo path, not the data dir.
+  mkdir -p "$proj_a/runtime/launcher" "$proj_b/runtime/launcher"
+  printf '{"project_path":"%s","worker_engine":"claude-worker"}\n' "$SCRATCH/repos/proj-a" > "$proj_a/runtime/launcher/last-launch.json"
+  printf '{"project_path":"%s","worker_engine":"claude-worker"}\n' "$SCRATCH/repos/proj-b" > "$proj_b/runtime/launcher/last-launch.json"
 }
 
 run_select() {
@@ -264,8 +272,10 @@ run_dispatch() {
   [[ "$decision" == "dispatch" ]] || die "expected 'dispatch', got '$decision'. Output: $output"
   [[ "$key" == "proj-a" ]] || die "expected dispatch of 'proj-a', got '$key'. Output: $output"
   [[ "$command" == *"claude-worker"* ]] || die "expected 'claude-worker' in command, got '$command'. Output: $output"
-  [[ "$command" == *"proj-a"* ]] || die "expected 'proj-a' in command path, got '$command'. Output: $output"
-  echo "PASS: dispatch command has claude-worker engine and correct project path"
+  # Must dispatch the SOURCE repo path (scratch/repos/proj-a), NOT the data dir.
+  [[ "$command" == *"repos/proj-a"* ]] || die "expected SOURCE repo path 'repos/proj-a' in command, got '$command'. Output: $output"
+  [[ "$command" != *"ilk-data"* ]] || die "command must NOT contain the data dir (ilk-data); got '$command'. Output: $output"
+  echo "PASS: dispatch command uses the source repo path, not the data dir"
 
   # Test 2: -MaxDispatches 0 yields idle: budget ceiling
   output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-dispatches 0 2>&1) || die "scheduler exited non-zero: $output"
@@ -340,11 +350,70 @@ EOF
 
 # --- main ---------------------------------------------------------------------
 
+run_unresolved() {
+  echo "=== test_scheduler.sh unresolved ==="
+  cleanup
+  mkdir -p "$FAKE_DATA/projects"
+
+  # One queued project with NO last-launch.json and not in any registry →
+  # repo_path cannot resolve → scheduler must skip-unresolved, not dispatch.
+  local proj_c="$FAKE_DATA/projects/proj-c"
+  mkdir -p "$proj_c/plans"
+  cat > "$proj_c/plans/MASTER-2026-06-02-orphan.md" <<'EOF'
+---
+master_plan: 2026-06-02-orphan
+status: active
+---
+
+# MASTER plan: Orphan
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-02-orphan-slug](./2026-06-02-orphan-slug.md) | 2 | pending |
+EOF
+  cat > "$proj_c/plans/2026-06-02-orphan-slug.md" <<'EOF'
+---
+plan: orphan-slug
+status: pending
+current_step: 0
+estimated_steps: 2
+last_updated: 2026-06-02
+---
+
+# Sub-plan: Orphan slug
+
+No last-launch.json, so repo_path cannot resolve.
+EOF
+
+  local output
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  local first_line decision key
+  first_line=$(echo "$output" | head -1)
+  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
+  key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
+  [[ "$decision" == "skip-unresolved" ]] || die "expected 'skip-unresolved', got '$decision'. Output: $output"
+  [[ "$key" == "proj-c" ]] || die "expected skip-unresolved for 'proj-c', got '$key'. Output: $output"
+
+  # With the only project unresolved, the final decision is idle (not dispatch).
+  local last_line last_decision
+  last_line=$(echo "$output" | tail -1)
+  last_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
+  [[ "$last_decision" == "idle" ]] || die "expected final 'idle', got '$last_decision'. Output: $output"
+
+  echo "PASS: skip-unresolved when repo_path cannot resolve, then idle"
+  cleanup
+}
+
 run_all() {
   run_scan
   run_select
   run_dispatch
   run_blacklist
+  run_unresolved
   echo "ALL PASS"
 }
 
@@ -361,11 +430,14 @@ case "${1:-all}" in
   blacklist)
     run_blacklist
     ;;
+  unresolved)
+    run_unresolved
+    ;;
   all)
     run_all
     ;;
   *)
-    echo "Usage: $0 {scan|select|dispatch|blacklist|all}" >&2
+    echo "Usage: $0 {scan|select|dispatch|blacklist|unresolved|all}" >&2
     exit 1
     ;;
 esac

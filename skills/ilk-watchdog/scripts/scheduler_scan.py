@@ -9,9 +9,18 @@ Each entry::
 
     {
       "key": "<project-key>",
-      "path": "<absolute project data dir>",
+      "path": "<absolute project data dir under ~/.ilk-data>",
+      "repo_path": "<absolute SOURCE repo path, or null if unresolved>",
       "oldest_queued_ts": "<ISO 8601 timestamp>"
     }
+
+``path`` is the data dir (used for the per-project sentinel + postmortems).
+``repo_path`` is the real source repo the loop must ``cd`` into — this is
+what the scheduler passes to ``launch.* -ProjectPath``. It is resolved from
+the project's ``runtime/launcher/last-launch.json`` (``project_path``, written
+by every launch), falling back to the ``ilk-launcher/projects.json`` registry.
+``repo_path`` is ``null`` when the project has neither — the scheduler then
+skips it (``skip-unresolved``) rather than dispatching a wrong path.
 
 Sorted by ``oldest_queued_ts`` ascending (oldest first = FIFO).
 
@@ -53,7 +62,46 @@ _ILK_LOOP_SCRIPTS = _SKILL_ROOT / "ilk-loop" / "scripts"
 if _ILK_LOOP_SCRIPTS.is_dir():
     sys.path.insert(0, str(_ILK_LOOP_SCRIPTS))
 
-from ilk_paths import ilk_data_root  # noqa: E402
+from ilk_paths import ilk_data_root, project_key  # noqa: E402
+
+
+def resolve_repo_path(project_dir: Path, key: str) -> str | None:
+    """Resolve the real SOURCE repo path for a project data dir.
+
+    1. ``<data>/runtime/launcher/last-launch.json`` → ``project_path``
+       (written by every launch — the reliable primary source).
+    2. ``<skill-root>/ilk-launcher/projects.json`` registry — match an
+       entry whose path hashes to the same key (covers registered but
+       never-launched projects).
+    3. ``None`` if neither resolves.
+    """
+    last_launch = project_dir / "runtime" / "launcher" / "last-launch.json"
+    if last_launch.is_file():
+        try:
+            data = json.loads(last_launch.read_text(encoding="utf-8-sig"))
+            p = data.get("project_path")
+            if p:
+                return str(p)
+        except (OSError, ValueError):
+            pass
+
+    registry = _SKILL_ROOT / "ilk-launcher" / "projects.json"
+    if registry.is_file():
+        try:
+            data = json.loads(registry.read_text(encoding="utf-8-sig"))
+            for entry in data.get("projects", []):
+                ep = entry.get("path")
+                if not ep:
+                    continue
+                try:
+                    if project_key(Path(ep)) == key:
+                        return str(ep)
+                except (OSError, ValueError):
+                    continue
+        except (OSError, ValueError):
+            pass
+
+    return None
 
 
 def parse_frontmatter(text: str) -> dict[str, str]:
@@ -168,6 +216,7 @@ def scan_projects() -> list[dict]:
         results.append({
             "key": project_dir.name,
             "path": str(project_dir),
+            "repo_path": resolve_repo_path(project_dir, project_dir.name),
             "oldest_queued_ts": oldest.isoformat(),
         })
 

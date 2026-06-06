@@ -14,7 +14,7 @@
                idle: budget ceiling.
 #>
 param(
-  [ValidateSet('scan', 'select', 'dispatch', 'blacklist', 'all')]
+  [ValidateSet('scan', 'select', 'dispatch', 'blacklist', 'unresolved', 'all')]
   [string]$Subcommand = 'all'
 )
 
@@ -224,6 +224,17 @@ last_updated: 2026-06-03
 
 Queued and waiting.
 '@ | Set-Content -Path (Join-Path $plansB '2026-06-03-task-beta.md') -Encoding utf8
+
+  # last-launch.json so repo_path resolves to a SOURCE repo path that is
+  # DELIBERATELY different from the ~/.ilk-data data dir (under scratch\repos\,
+  # not scratch\...\ilk-data\projects\). Proves dispatch uses the repo path.
+  $llA = Join-Path $projA 'runtime\launcher'
+  $llB = Join-Path $projB 'runtime\launcher'
+  New-Item -ItemType Directory -Path $llA, $llB -Force | Out-Null
+  (@{ project_path = (Join-Path $Scratch 'repos\proj-a'); worker_engine = 'claude-worker' } | ConvertTo-Json -Compress) |
+    Set-Content -Path (Join-Path $llA 'last-launch.json') -Encoding utf8
+  (@{ project_path = (Join-Path $Scratch 'repos\proj-b'); worker_engine = 'claude-worker' } | ConvertTo-Json -Compress) |
+    Set-Content -Path (Join-Path $llB 'last-launch.json') -Encoding utf8
 }
 
 function Run-Select {
@@ -323,10 +334,14 @@ function Run-Dispatch {
   if ($json.command -notlike '*-Engine claude-worker*') {
     throw "Expected '-Engine claude-worker' in command, got '$($json.command)'. Output: $outputStr"
   }
-  if ($json.command -notlike '*proj-a*') {
-    throw "Expected 'proj-a' in command path, got '$($json.command)'. Output: $outputStr"
+  # Must dispatch the SOURCE repo path (scratch\repos\proj-a), NOT the data dir.
+  if ($json.command -notlike '*repos*proj-a*') {
+    throw "Expected SOURCE repo path (repos\proj-a) in command, got '$($json.command)'. Output: $outputStr"
   }
-  Write-Host 'PASS: dispatch command has -Engine claude-worker and correct project path'
+  if ($json.command -like '*ilk-data*') {
+    throw "Command must NOT contain the data dir (ilk-data); got '$($json.command)'. Output: $outputStr"
+  }
+  Write-Host 'PASS: dispatch command uses the source repo path, not the data dir'
 
   # Test 2: -MaxDispatches 0 yields idle: budget ceiling
   $env:ILK_DATA_HOME = $FakeData
@@ -431,12 +446,83 @@ function Run-Blacklist {
   Cleanup
 }
 
+function Run-Unresolved {
+  Write-Host '=== test_scheduler.ps1 unresolved ==='
+  Cleanup
+  $projectsDir = Join-Path $FakeData 'projects'
+  New-Item -ItemType Directory -Path $projectsDir -Force | Out-Null
+
+  # One queued project with NO last-launch.json and not in any registry →
+  # repo_path cannot resolve → scheduler must skip-unresolved, not dispatch.
+  $projC = Join-Path $projectsDir 'proj-c'
+  $plansC = Join-Path $projC 'plans'
+  New-Item -ItemType Directory -Path $plansC -Force | Out-Null
+
+  @'
+---
+master_plan: 2026-06-02-orphan
+status: active
+---
+
+# MASTER plan: Orphan
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-02-orphan-slug](./2026-06-02-orphan-slug.md) | 2 | pending |
+'@ | Set-Content -Path (Join-Path $plansC 'MASTER-2026-06-02-orphan.md') -Encoding utf8
+
+  @'
+---
+plan: orphan-slug
+status: pending
+current_step: 0
+estimated_steps: 2
+last_updated: 2026-06-02
+---
+
+# Sub-plan: Orphan slug
+
+No last-launch.json, so repo_path cannot resolve.
+'@ | Set-Content -Path (Join-Path $plansC '2026-06-02-orphan-slug.md') -Encoding utf8
+
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+  $lines = @($outputStr -split "`n" | Where-Object { $_.Trim() })
+  $firstJson = $lines[0].Trim() | ConvertFrom-Json
+  if ($firstJson.decision -ne 'skip-unresolved') {
+    throw "Expected 'skip-unresolved', got '$($firstJson.decision)'. Output: $outputStr"
+  }
+  if ($firstJson.key -ne 'proj-c') {
+    throw "Expected skip-unresolved for 'proj-c', got '$($firstJson.key)'. Output: $outputStr"
+  }
+
+  $lastJson = $lines[-1].Trim() | ConvertFrom-Json
+  if ($lastJson.decision -ne 'idle') {
+    throw "Expected final 'idle', got '$($lastJson.decision)'. Output: $outputStr"
+  }
+
+  Write-Host 'PASS: skip-unresolved when repo_path cannot resolve, then idle'
+  Cleanup
+}
+
 # --- main ---------------------------------------------------------------------
 
 switch ($Subcommand) {
   'scan'      { Run-Scan }
   'select'    { Run-Select }
   'dispatch'  { Run-Dispatch }
-  'blacklist' { Run-Blacklist }
-  'all'       { Run-Scan; Run-Select; Run-Dispatch; Run-Blacklist; Write-Host 'ALL PASS' }
+  'blacklist'  { Run-Blacklist }
+  'unresolved' { Run-Unresolved }
+  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Blacklist; Run-Unresolved; Write-Host 'ALL PASS' }
 }
