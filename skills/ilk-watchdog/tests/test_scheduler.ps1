@@ -4,13 +4,15 @@
 
 .DESCRIPTION
   Subcommands:
-    scan — build a fake ILK_DATA_HOME with 2 projects (one all-shipped,
-           one with a queued sub-plan) and assert scheduler_scan.py lists
-           ONLY the queued one.
+    scan   — build a fake ILK_DATA_HOME with 2 projects (one all-shipped,
+             one with a queued sub-plan) and assert scheduler_scan.py lists
+             ONLY the queued one.
+    select — build 2 queued projects (A older than B), assert FIFO dispatch,
+             then simulate running.pid for A and assert skip-busy → dispatch B.
 #>
 param(
   [Parameter(Mandatory)]
-  [ValidateSet('scan')]
+  [ValidateSet('scan', 'select')]
   [string]$Subcommand
 )
 
@@ -18,7 +20,8 @@ $ErrorActionPreference = 'Stop'
 
 $ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot   = Resolve-Path (Join-Path $ScriptDir '..\..\..')
-$ScanScript = Join-Path $ScriptDir '..\scripts\scheduler_scan.py'
+$ScanScript      = Join-Path $ScriptDir '..\scripts\scheduler_scan.py'
+$SchedulerScript = Join-Path $ScriptDir '..\scripts\scheduler.ps1'
 $Scratch    = Join-Path $RepoRoot 'scratch\sched-test'
 $FakeData   = Join-Path $Scratch 'ilk-data'
 
@@ -144,8 +147,156 @@ function Run-Scan {
   Cleanup
 }
 
+function Setup-TwoQueuedProjects {
+  Cleanup
+
+  $projectsDir = Join-Path $FakeData 'projects'
+  New-Item -ItemType Directory -Path $projectsDir -Force | Out-Null
+
+  # --- Project A: queued, older timestamp (should be dispatched first) ---
+  $projA = Join-Path $projectsDir 'proj-a'
+  $plansA = Join-Path $projA 'plans'
+  New-Item -ItemType Directory -Path $plansA -Force | Out-Null
+
+  @'
+---
+master_plan: 2026-06-01-batch
+batch_date: 2026-06-01
+status: active
+---
+
+# MASTER plan: Batch A
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-01-task-alpha](./2026-06-01-task-alpha.md) | 4 | pending |
+'@ | Set-Content -Path (Join-Path $plansA 'MASTER-2026-06-01-batch.md') -Encoding utf8
+
+  @'
+---
+plan: task-alpha
+status: pending
+current_step: 0
+estimated_steps: 4
+last_updated: 2026-06-01
+---
+
+# Sub-plan: Task Alpha
+
+Queued and waiting.
+'@ | Set-Content -Path (Join-Path $plansA '2026-06-01-task-alpha.md') -Encoding utf8
+
+  # --- Project B: queued, newer timestamp (should be dispatched second) ---
+  $projB = Join-Path $projectsDir 'proj-b'
+  $plansB = Join-Path $projB 'plans'
+  New-Item -ItemType Directory -Path $plansB -Force | Out-Null
+
+  @'
+---
+master_plan: 2026-06-03-batch
+batch_date: 2026-06-03
+status: active
+---
+
+# MASTER plan: Batch B
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-03-task-beta](./2026-06-03-task-beta.md) | 3 | pending |
+'@ | Set-Content -Path (Join-Path $plansB 'MASTER-2026-06-03-batch.md') -Encoding utf8
+
+  @'
+---
+plan: task-beta
+status: pending
+current_step: 0
+estimated_steps: 3
+last_updated: 2026-06-03
+---
+
+# Sub-plan: Task Beta
+
+Queued and waiting.
+'@ | Set-Content -Path (Join-Path $plansB '2026-06-03-task-beta.md') -Encoding utf8
+}
+
+function Run-Select {
+  Write-Host '=== test_scheduler.ps1 select ==='
+  Setup-TwoQueuedProjects
+
+  # Test 1: FIFO — with both projects free, proj-a (older) should be dispatched first
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+
+  # Parse the JSON output
+  $json = $outputStr | ConvertFrom-Json
+  if ($json.decision -ne 'dispatch') {
+    throw "Expected 'dispatch', got '$($json.decision)'. Output: $outputStr"
+  }
+  if ($json.key -ne 'proj-a') {
+    throw "Expected FIFO dispatch of 'proj-a', got '$($json.key)'. Output: $outputStr"
+  }
+  Write-Host 'PASS: FIFO dispatch (proj-a first)'
+
+  # Test 2: simulate a live running.pid for proj-a → skip-busy, dispatch proj-b
+  $launcherDir = Join-Path $FakeData 'projects\proj-a\runtime\launcher'
+  New-Item -ItemType Directory -Path $launcherDir -Force | Out-Null
+  # Use current PID as a definitely-alive process
+  $PID | Out-File -FilePath (Join-Path $launcherDir 'running.pid') -Encoding ascii -NoNewline
+
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+
+  # The output may contain multiple lines. Parse each as JSON.
+  $lines = @($outputStr -split "`n" | Where-Object { $_.Trim() })
+  $lastLine = $lines[-1].Trim()
+  $firstLine = $lines[0].Trim()
+
+  $lastJson = $lastLine | ConvertFrom-Json
+  if ($lastJson.decision -ne 'dispatch') {
+    throw "Expected last decision 'dispatch', got '$($lastJson.decision)'. Output: $outputStr"
+  }
+  if ($lastJson.key -ne 'proj-b') {
+    throw "Expected dispatch of 'proj-b' after skip-busy, got '$($lastJson.key)'. Output: $outputStr"
+  }
+
+  $firstJson = $firstLine | ConvertFrom-Json
+  if ($firstJson.decision -ne 'skip-busy') {
+    throw "Expected first decision 'skip-busy', got '$($firstJson.decision)'. Output: $outputStr"
+  }
+  if ($firstJson.key -ne 'proj-a') {
+    throw "Expected skip-busy for 'proj-a', got '$($firstJson.key)'. Output: $outputStr"
+  }
+
+  Write-Host 'PASS: skip-busy proj-a, dispatch proj-b'
+  Cleanup
+}
+
 # --- main ---------------------------------------------------------------------
 
 switch ($Subcommand) {
-  'scan' { Run-Scan }
+  'scan'   { Run-Scan }
+  'select' { Run-Select }
 }
