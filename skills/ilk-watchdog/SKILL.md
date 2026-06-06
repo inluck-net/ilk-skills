@@ -40,10 +40,13 @@ launcher.
 <skill-root>/ilk-watchdog/
   SKILL.md                  ← this file
   scripts/
-    watchdog.ps1            ← polling loop; -Detach flag spawns its own desktop window
-    watchdog.sh             ← macOS/Linux polling loop; --detach flag starts a screen session
+    watchdog.ps1            ← per-project polling loop; -Detach flag spawns its own desktop window
+    watchdog.sh             ← macOS/Linux per-project polling loop; --detach flag starts a screen session
     stop_watchdog.ps1       ← reads PID, tree-kills (Windows)
     stop_watchdog.sh        ← reads PID, kills (macOS/Linux)
+    scheduler.ps1           ← cross-project scheduler (V1): drains ALL projects' queues FIFO
+    scheduler.sh            ← macOS/Linux cross-project scheduler
+    scheduler_scan.py       ← enumerates projects with queued work, FIFO-ordered (honors $ILK_DATA_HOME)
 
 ~/.ilk-data/projects/<key>/runtime/watchdog/
   watchdog.pid              ← PID of the watchdog process (deleted on clean exit)
@@ -152,6 +155,53 @@ bash "$HOME/.cursor/skills/ilk-watchdog/scripts/stop_watchdog.sh" --project-name
 
 Kills only the watchdog window. The ilk window keeps running.
 
+## Cross-project scheduler (V1)
+
+The per-project watchdog above babysits **one** project. The
+**scheduler** (`scheduler.ps1` / `scheduler.sh`) is its cross-project
+sibling: a single long-lived daemon that drains **every** project's
+queue, one at a time, routed through the cheap worker provider.
+
+How a scan cycle decides:
+
+1. `scheduler_scan.py` enumerates all projects under
+   `~/.ilk-data/projects/*` (honoring `$ILK_DATA_HOME`) that have ≥1
+   non-shipped sub-plan, ordered **FIFO** by oldest-queued timestamp.
+2. The first candidate whose per-project sentinel
+   (`runtime/launcher/running.pid`) is free is dispatched via
+   `ilk-launcher`'s `launch.*` with **`-Engine claude-worker`** (so the
+   run uses the worker home). Busy projects → `skip-busy`.
+3. A project whose most recent postmortem is **blacklist**-classified
+   (reuses `ilk-feedback`'s taxonomy) → `skip-blacklist`, and the scan
+   moves on. One stuck project never starves the others.
+4. If nothing is dispatchable → `idle`. The daemon polls again rather
+   than exiting, so newly-queued work auto-wakes it on a later cycle.
+
+**Guardrails.** Pool cap is fixed at **1** in V1 (no parallelism — that
+is V2, which needs isolated worker homes). A global dispatch / budget
+ceiling caps spend: hitting it reports `idle: budget ceiling` rather
+than crashing.
+
+| Flag (PowerShell / bash) | Default | Meaning |
+|---|---|---|
+| `-PollMin` / `--poll-min N` | 5 | Minutes between scan cycles. |
+| `-MaxDispatches` / `--max-dispatches N` | -1 (unlimited) | Global dispatch ceiling; `0` = plan no dispatches. |
+| `-MaxBudgetUsd` / `--max-budget-usd N` | 0 (unlimited) | Global budget ceiling. |
+| `-DryRun` / `--dry-run` | off | Print the planned decision (JSON) without launching. |
+| `-Once` / `--once` | off | Run a single scan cycle and exit (used by tests). |
+
+```powershell
+& "$HOME\.cursor\skills\ilk-watchdog\scripts\scheduler.ps1" -PollMin 5
+```
+```bash
+bash "$HOME/.cursor/skills/ilk-watchdog/scripts/scheduler.sh" --poll-min 5
+```
+
+The scheduler does **not** replace the per-project watchdog — use the
+watchdog to babysit a single supervised run; use the scheduler to drain
+a backlog across many projects unattended. (Tests exercise it via
+`--dry-run` so no provider call is made.)
+
 ## When the agent invokes this skill
 
 1. Confirm ilk is running for the target project (`status_all.py` shows
@@ -242,8 +292,10 @@ that's a separate cleanup; do not add new entries.
 - `-WithWatchdog` flag on `ilk-launcher`'s `launch.ps1` to start ilk
   + watchdog in one command.
 - Notification on BLOCKED (Windows toast / Telegram bot / email).
-- Cross-project watchdog dashboard (one watchdog window monitoring all
-  projects in `projects.json`).
+- **V2 parallel scheduler** — the V1 scheduler (above) drains projects
+  one at a time (pool cap 1). True parallelism needs isolated worker
+  homes per slot (`~/.claude-worker-1..N`); see
+  `docs/future-work/cross-project-supervisor.md`.
 
 ## See also
 

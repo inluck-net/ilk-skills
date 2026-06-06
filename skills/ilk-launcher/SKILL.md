@@ -70,9 +70,17 @@ The launcher and all ilk skills are **host-agnostic**: Cursor, Claude
 Code, and Codex can all invoke planning, step execution, status, and
 postmortem. The **detached loop runner** today is Claude-only; Codex
 users can drive the loop interactively via `/ilk` but cannot yet launch
-a detached autonomous run. See
-[references/worker-engine.md](references/worker-engine.md) for the
-full capability matrix and instructions for adding a Codex runner.
+a detached autonomous run.
+
+The `worker_engine` config (or `--engine` / `-Engine` override) selects
+the home the detached run uses: `claude` *(default)* routes under the
+planner home `~/.claude`; **`claude-worker`** routes under the cheap
+worker home `~/.claude-worker` (the launcher injects `CLAUDE_CONFIG_DIR`
++ `ILK_SKILL_HOME`) — use it for unattended / cost-sensitive runs;
+`codex` is reserved for the forthcoming Codex runner. See
+[references/worker-engine.md](references/worker-engine.md) for the full
+engine table, capability matrix, and instructions for adding a Codex
+runner.
 
 ## State directory
 

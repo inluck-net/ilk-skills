@@ -231,8 +231,26 @@ Postmortems land under `<external_launcher_dir>/postmortems/`.
 
 By default `/ilk-run` uses the active Claude home (`~/.claude` — the **Planner
 Claude** on its official provider). To run the loop as a cheaper **Worker
-Claude** on a separate Anthropic-compatible provider, launch the runner through
-the worker wrapper so it inherits the worker home and a fail-closed preflight:
+Claude** on a separate Anthropic-compatible provider, there are two paths:
+
+**Preferred — the `claude-worker` launcher engine.** Set the engine and the
+launcher routes the detached run under the worker home for you (injects
+`CLAUDE_CONFIG_DIR=~/.claude-worker` + `ILK_SKILL_HOME`), with the same
+fail-closed settings preflight:
+
+```powershell
+& launch.ps1 -ProjectPath … -Engine claude-worker
+```
+```bash
+bash launch.sh --project-path … --engine claude-worker
+```
+
+Or persist it per-project so the watchdog/scheduler reuse it:
+`{ "worker_engine": "claude-worker" }` in `.ilk-launch.json`. See
+[`skills/ilk-launcher/references/worker-engine.md`](../skills/ilk-launcher/references/worker-engine.md).
+
+**Manual — the worker wrapper.** Launch the runner through the wrapper so it
+inherits the worker home directly (useful for interactive one-offs):
 
 ```bash
 # macOS / Linux
@@ -244,10 +262,10 @@ bash tools/claude-worker/claude-worker.sh /ilk-run
 .\tools\claude-worker\claude-worker.ps1 /ilk-run
 ```
 
-Bootstrap the worker home once (`tools/claude-worker/bootstrap.sh` /
-`bootstrap.ps1`) with explicit provider values. Do **not** live-switch the
-provider with CCSwitch during a worker run. See
-`docs/dual-claude-homes-design.md` and `tools/claude-worker/README.md`.
+Either way, bootstrap the worker home once
+(`tools/claude-worker/bootstrap.sh` / `bootstrap.ps1`) with explicit provider
+values. Do **not** live-switch the provider with CCSwitch during a worker run.
+See `docs/dual-claude-homes-design.md` and `tools/claude-worker/README.md`.
 
 ## S. Self-hosting projects
 

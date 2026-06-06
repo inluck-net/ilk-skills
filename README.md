@@ -12,12 +12,27 @@ workflows into a single set of skills.
 
 ## Status
 
+**v0.8.8** — planner/worker cost split + cross-project scheduling:
+
+- **`claude-worker` launcher engine.** Route the detached loop under the
+  cheap worker home (`~/.claude-worker`) instead of the planner's
+  official provider, for unattended / cost-sensitive runs
+  (`--engine claude-worker`, or `{ "worker_engine": "claude-worker" }`
+  in `.ilk-launch.json`). See
+  [`skills/ilk-launcher/references/worker-engine.md`](skills/ilk-launcher/references/worker-engine.md).
+- **Cross-project scheduler (V1).** A single daemon
+  (`skills/ilk-watchdog/scripts/scheduler.{ps1,sh}`) drains every
+  project's queue FIFO, one at a time, routed through the worker engine —
+  per-project sentinel mutex, poll/idle/auto-wake, pool cap 1, global
+  budget ceiling, non-starving blacklist skip.
+- Earlier milestones: a one-command `claude-worker` PATH installer
+  (v0.8.7) and the dual planner/worker Claude homes design.
+
 **v0.5** — Codex parity release. All skills and slash commands install
 under `~/.codex/skills/` and `~/.codex/commands/` alongside Cursor and
 Claude Code; hardcoded `~/.cursor` paths are replaced with a skill-root
-resolver, command prompts are host-neutral, and the launcher gained a
-`worker_engine` config + `--engine` override to select between the
-Claude and (forthcoming) Codex runners. New `ilk-runner` skill plus
+resolver, command prompts are host-neutral, and the launcher gained the
+`worker_engine` config + `--engine` override. New `ilk-runner` skill plus
 `/ilk-run` and `/ilk-status` slash commands sequence launcher + watchdog
 for supervised unattended runs.
 

@@ -1,7 +1,15 @@
 # Cross-project supervisor (future work)
 
-**Status**: draft / future-work; not scheduled.
-**Last touched**: 2026-05-24
+**Status**: **V1 shipped (v0.8.8)** — the sequential single-worker case
+described here is now implemented as `skills/ilk-watchdog/scripts/scheduler.{ps1,sh}`
++ `scheduler_scan.py` (FIFO drain across all projects, one at a time,
+per-project sentinel mutex, poll/idle/auto-wake, pool cap 1, global
+budget ceiling, non-starving blacklist skip). See the "Cross-project
+scheduler (V1)" section of `skills/ilk-watchdog/SKILL.md`. The remaining
+**future work** is V2: parallel workers, which needs isolated worker
+homes per slot (`~/.claude-worker-1..N`) — see the isolation finding in
+`~/.ilk-data/.../plans/MASTER-2026-06-06-worker-routing-and-scheduler-execution-plan.md`.
+**Last touched**: 2026-06-06
 **Origin**: design discussion in a planning session, after observing
 that two MASTERs across two projects had no auto-chain mechanism.
 

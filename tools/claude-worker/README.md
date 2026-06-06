@@ -255,9 +255,26 @@ planner's official OAuth identity.
 
 ## Running an ilk loop as the worker
 
-The wrapper deliberately does **not** change `/ilk-run` or any runner default.
-Instead, launch the runner *through* the wrapper so the loop inherits the
-worker home and skill root. Two equivalent shapes:
+For **detached / supervised** runs, prefer the launcher's `claude-worker`
+engine — it routes the loop under this worker home for you (injects
+`CLAUDE_CONFIG_DIR=~/.claude-worker` + `ILK_SKILL_HOME`) and is reused by the
+watchdog and the cross-project scheduler:
+
+```powershell
+& launch.ps1 -ProjectPath … -Engine claude-worker
+```
+```bash
+bash launch.sh --project-path … --engine claude-worker
+```
+
+Or persist `{ "worker_engine": "claude-worker" }` in the project's
+`.ilk-launch.json`. See
+[`skills/ilk-launcher/references/worker-engine.md`](../../skills/ilk-launcher/references/worker-engine.md).
+
+The **wrapper** below is the manual/interactive complement: it does **not**
+change `/ilk-run` or any runner default. Launch the runner *through* the
+wrapper so the loop inherits the worker home and skill root. Two equivalent
+shapes:
 
 ```bash
 # A. Forward a slash command to an interactive Claude session:

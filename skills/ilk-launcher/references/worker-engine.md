@@ -22,6 +22,51 @@ invocation contract is stable and tested. Until then, the launcher
 will reject `--engine codex` with a clear message rather than silently
 routing to Claude.
 
+## Engines
+
+The launcher's `worker_engine` — set per-project in `.ilk-launch.json`,
+or overridden per-launch with `--engine` / `-Engine` — selects which
+Claude home (and therefore which provider) the detached loop uses:
+
+| Engine | Runner | Claude home | Provider | Use when |
+|---|---|---|---|---|
+| `claude` *(default)* | `run_ilk_loop_claude.*` | `~/.claude` (planner) | Official Anthropic / OAuth | Default — you want the planner's provider. Behavior unchanged from before. |
+| `claude-worker` | `run_ilk_loop_claude.*` | `~/.claude-worker` (worker) | Cheap Anthropic-compatible, pinned in the worker home's `settings.json` | Unattended / cost-sensitive runs. |
+| `codex` | `run_ilk_loop_codex.*` | n/a | Codex CLI | **Not yet** — rejected with a clear message until the Codex runner lands. |
+
+`claude` and `claude-worker` share the **same** runner script; they
+differ only in which home the detached run points at. For
+`claude-worker`, the launcher injects
+`CLAUDE_CONFIG_DIR=~/.claude-worker` and
+`ILK_SKILL_HOME=~/.claude-worker/skills` into the spawned run, so every
+`claude -p` iteration resolves the worker home and its cheaper provider
+instead of the planner's official one. The runner's settings preflight
+reads `${CLAUDE_CONFIG_DIR}/settings.json` and fails closed if the
+provider env is missing — a misconfigured worker can never silently
+fall back to the planner's OAuth identity.
+
+**Prerequisite:** the worker home must be bootstrapped first
+(`tools/claude-worker/bootstrap.sh` / `.ps1`). See
+`tools/claude-worker/README.md` and `docs/dual-claude-homes-design.md`
+for the planner/worker model.
+
+Examples:
+
+```powershell
+& launch.ps1 -ProjectPath … -Engine claude-worker   # route this run under the worker home
+```
+
+```bash
+bash launch.sh --project-path … --engine claude-worker
+```
+
+Or persist it per-project so every launch (and the watchdog) routes to
+the worker home:
+
+```json
+{ "worker_engine": "claude-worker" }
+```
+
 ## Adding a Codex runner
 
 When the Codex CLI contract is stable, add these files:
@@ -49,8 +94,9 @@ code 0 on clean ship, non-zero on failure, and write a
 The launcher selects the runner based on the resolved `worker_engine`:
 
 ```
-engine=claude → run_ilk_loop_claude.sh
-engine=codex  → run_ilk_loop_codex.sh
+engine=claude        → run_ilk_loop_claude.sh   (planner home: ~/.claude)
+engine=claude-worker → run_ilk_loop_claude.sh   (worker home:  ~/.claude-worker)
+engine=codex         → run_ilk_loop_codex.sh
 ```
 
 ## Worker MCP Filtering
