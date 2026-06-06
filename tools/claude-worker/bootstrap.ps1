@@ -105,6 +105,9 @@ if (-not (Test-Path -LiteralPath $ResolvePyScript)) {
 }
 . (Resolve-Path -LiteralPath $ResolvePyScript).Path
 
+# Dot-source shared worker-session helper (sentinel read/write/test).
+. (Resolve-Path -LiteralPath (Join-Path $ScriptDir "_worker_session.ps1")).Path
+
 # Resolve values: explicit param wins, else environment, else default.
 if (-not $WorkerHome) { $WorkerHome = $env:CLAUDE_WORKER_HOME }
 if (-not $WorkerHome) { $WorkerHome = (Join-Path $HOME ".claude-worker") }
@@ -354,26 +357,32 @@ if (-not $Apply) {
 
 # --- active worker run guard -------------------------------------------------
 # If a worker/ilk loop is running against this home, overwriting the provider
-# mid-run could break it.  Check for a PID file left by claude-worker.ps1.
+# mid-run could break it.  Check for a sentinel left by claude-worker.ps1.
+# Uses identity-checked liveness (PID + start-time) from _worker_session.ps1.
 $pidFile = Join-Path $WorkerHome "running.pid"
-if (Test-Path -LiteralPath $pidFile) {
-  $runningPid = $null
-  try {
-    $runningPid = [int](Get-Content -LiteralPath $pidFile -Raw).Trim()
-  } catch {}
-  if ($runningPid) {
-    $proc = Get-Process -Id $runningPid -ErrorAction SilentlyContinue
-    if ($proc) {
-      if (-not $Force) {
-        Write-Error "an active worker process (PID $runningPid) appears to be using this worker home. Overwriting the provider settings now could break the running session. Pass -Force to overwrite anyway, or stop the worker first."
-        exit 2
-      }
-      Write-Host "WARNING: active worker PID $runningPid detected; -Force specified, proceeding anyway." -ForegroundColor Yellow
-    } else {
-      # Stale PID file -- clean it up.
-      Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
-    }
+if (Test-WorkerSessionActive -PidFile $pidFile) {
+  if (-not $Force) {
+    $sentinelPid = $null
+    try {
+      $content = (Get-Content -LiteralPath $pidFile -Raw).Trim()
+      if ($content -match '^pid=(.+)$') { $sentinelPid = [int]$Matches[1].Trim() }
+      else { $sentinelPid = [int]$content }
+    } catch {}
+    $label = if ($sentinelPid) { "PID $sentinelPid" } else { "(unknown PID)" }
+    Write-Error "an active worker process ($label) appears to be using this worker home. Overwriting the provider settings now could break the running session. Pass -Force to overwrite anyway, or stop the worker first."
+    exit 2
   }
+  $sentinelPid = $null
+  try {
+    $content = (Get-Content -LiteralPath $pidFile -Raw).Trim()
+    if ($content -match '^pid=(.+)$') { $sentinelPid = [int]$Matches[1].Trim() }
+    else { $sentinelPid = [int]$content }
+  } catch {}
+  $label = if ($sentinelPid) { "PID $sentinelPid" } else { "worker" }
+  Write-Host "WARNING: active worker $label detected; -Force specified, proceeding anyway." -ForegroundColor Yellow
+} else {
+  # Stale or non-existent sentinel -- clean it up.
+  Remove-WorkerSentinel -PidFile $pidFile
 }
 
 Write-WorkerConfig
