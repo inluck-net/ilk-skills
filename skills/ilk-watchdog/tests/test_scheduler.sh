@@ -248,6 +248,39 @@ run_select() {
   cleanup
 }
 
+run_dispatch() {
+  echo "=== test_scheduler.sh dispatch ==="
+  setup_two_queued_projects
+
+  # Test 1: dispatch command contains -Engine claude-worker and selected project path
+  local output
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  local decision key command
+  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
+  command=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['command'])" <<<"$output")
+  [[ "$decision" == "dispatch" ]] || die "expected 'dispatch', got '$decision'. Output: $output"
+  [[ "$key" == "proj-a" ]] || die "expected dispatch of 'proj-a', got '$key'. Output: $output"
+  [[ "$command" == *"claude-worker"* ]] || die "expected 'claude-worker' in command, got '$command'. Output: $output"
+  [[ "$command" == *"proj-a"* ]] || die "expected 'proj-a' in command path, got '$command'. Output: $output"
+  echo "PASS: dispatch command has claude-worker engine and correct project path"
+
+  # Test 2: -MaxDispatches 0 yields idle: budget ceiling
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-dispatches 0 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  local reason
+  reason=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['reason'])" <<<"$output")
+  [[ "$decision" == "idle" ]] || die "expected 'idle', got '$decision'. Output: $output"
+  [[ "$reason" == *"budget"* ]] || die "expected 'budget' in reason, got '$reason'. Output: $output"
+  echo "PASS: -MaxDispatches 0 yields idle: budget ceiling"
+
+  cleanup
+}
+
 # --- main ---------------------------------------------------------------------
 
 case "${1:-}" in
@@ -257,8 +290,11 @@ case "${1:-}" in
   select)
     run_select
     ;;
+  dispatch)
+    run_dispatch
+    ;;
   *)
-    echo "Usage: $0 {scan|select}" >&2
+    echo "Usage: $0 {scan|select|dispatch}" >&2
     exit 1
     ;;
 esac

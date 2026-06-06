@@ -39,7 +39,7 @@ if [[ -z "$PYTHON" ]]; then
 fi
 
 POLL_MIN=5
-MAX_DISPATCHES=0
+MAX_DISPATCHES=-1
 MAX_BUDGET_USD=0
 DRY_RUN=false
 ONCE=false
@@ -54,7 +54,7 @@ Single cross-project scheduler (V1).
 
 Options:
   --poll-min N          Polling interval in minutes. Default 5.
-  --max-dispatches N    Global dispatch ceiling. 0 = unlimited. Default 0.
+  --max-dispatches N    Global dispatch ceiling. -1 = unlimited (default). 0 = no dispatches allowed.
   --max-budget-usd N    Global budget ceiling. Default 0 (unlimited).
   --dry-run             Print the planned decision without dispatching.
   --once                Run a single scan cycle and exit (for tests).
@@ -159,7 +159,8 @@ run_scheduler() {
     fi
 
     # --- check budget ceiling ---
-    if [[ "$MAX_DISPATCHES" -gt 0 && "$dispatch_count" -ge "$MAX_DISPATCHES" ]]; then
+    # MAX_DISPATCHES -1 = unlimited; >= 0 = hard ceiling.
+    if [[ "$MAX_DISPATCHES" -ge 0 && "$dispatch_count" -ge "$MAX_DISPATCHES" ]]; then
       if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
         echo '{"decision":"idle","reason":"budget ceiling"}'
         return

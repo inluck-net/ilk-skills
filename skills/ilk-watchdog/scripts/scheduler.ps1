@@ -15,7 +15,7 @@
   Polling interval in minutes. Default 5.
 
 .PARAMETER MaxDispatches
-  Global dispatch ceiling. 0 = unlimited. Default 0.
+  Global dispatch ceiling. -1 = unlimited (default). 0 = no dispatches allowed.
 
 .PARAMETER MaxBudgetUsd
   Global budget ceiling (informational in V1). Default 0 (unlimited).
@@ -34,7 +34,7 @@
 #>
 param(
   [int]$PollMin = 5,
-  [int]$MaxDispatches = 0,
+  [int]$MaxDispatches = -1,
   [double]$MaxBudgetUsd = 0,
   [switch]$DryRun,
   [switch]$Once
@@ -109,7 +109,8 @@ function Run-Scheduler {
     }
 
     # --- check budget ceiling ---
-    if ($MaxDispatches -gt 0 -and $dispatchCount -ge $MaxDispatches) {
+    # MaxDispatches -1 = unlimited; >= 0 = hard ceiling.
+    if ($MaxDispatches -ge 0 -and $dispatchCount -ge $MaxDispatches) {
       if ($DryRun -and $Once) {
         @{ decision = 'idle'; reason = 'budget-ceiling' } | ConvertTo-Json -Compress
         return

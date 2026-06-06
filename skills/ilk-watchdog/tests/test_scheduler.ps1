@@ -4,15 +4,18 @@
 
 .DESCRIPTION
   Subcommands:
-    scan   — build a fake ILK_DATA_HOME with 2 projects (one all-shipped,
-             one with a queued sub-plan) and assert scheduler_scan.py lists
-             ONLY the queued one.
-    select — build 2 queued projects (A older than B), assert FIFO dispatch,
-             then simulate running.pid for A and assert skip-busy → dispatch B.
+    scan     — build a fake ILK_DATA_HOME with 2 projects (one all-shipped,
+               one with a queued sub-plan) and assert scheduler_scan.py lists
+               ONLY the queued one.
+    select   — build 2 queued projects (A older than B), assert FIFO dispatch,
+               then simulate running.pid for A and assert skip-busy → dispatch B.
+    dispatch — assert the planned dispatch command contains -Engine claude-worker
+               and the selected project path; assert -MaxDispatches 0 yields
+               idle: budget ceiling.
 #>
 param(
   [Parameter(Mandatory)]
-  [ValidateSet('scan', 'select')]
+  [ValidateSet('scan', 'select', 'dispatch')]
   [string]$Subcommand
 )
 
@@ -294,9 +297,67 @@ function Run-Select {
   Cleanup
 }
 
+function Run-Dispatch {
+  Write-Host '=== test_scheduler.ps1 dispatch ==='
+  Setup-TwoQueuedProjects
+
+  # Test 1: dispatch command contains -Engine claude-worker and selected project path
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+  $json = $outputStr | ConvertFrom-Json
+
+  if ($json.decision -ne 'dispatch') {
+    throw "Expected 'dispatch', got '$($json.decision)'. Output: $outputStr"
+  }
+  if ($json.key -ne 'proj-a') {
+    throw "Expected dispatch of 'proj-a', got '$($json.key)'. Output: $outputStr"
+  }
+  if ($json.command -notlike '*-Engine claude-worker*') {
+    throw "Expected '-Engine claude-worker' in command, got '$($json.command)'. Output: $outputStr"
+  }
+  if ($json.command -notlike '*proj-a*') {
+    throw "Expected 'proj-a' in command path, got '$($json.command)'. Output: $outputStr"
+  }
+  Write-Host 'PASS: dispatch command has -Engine claude-worker and correct project path'
+
+  # Test 2: -MaxDispatches 0 yields idle: budget ceiling
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once -MaxDispatches 0 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+  $json = $outputStr | ConvertFrom-Json
+
+  if ($json.decision -ne 'idle') {
+    throw "Expected 'idle', got '$($json.decision)'. Output: $outputStr"
+  }
+  if ($json.reason -notlike '*budget*') {
+    throw "Expected 'budget' in reason, got '$($json.reason)'. Output: $outputStr"
+  }
+  Write-Host 'PASS: -MaxDispatches 0 yields idle: budget ceiling'
+
+  Cleanup
+}
+
 # --- main ---------------------------------------------------------------------
 
 switch ($Subcommand) {
-  'scan'   { Run-Scan }
-  'select' { Run-Select }
+  'scan'     { Run-Scan }
+  'select'   { Run-Select }
+  'dispatch' { Run-Dispatch }
 }
