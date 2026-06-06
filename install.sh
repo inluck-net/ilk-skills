@@ -16,6 +16,11 @@
 # Default mode is dry-run: prints what would happen but touches nothing.
 # Pass --apply to execute.
 #
+# PATH entry (opt-in):
+#   --install-path       also install claude-worker onto PATH
+#   --only-path          install ONLY the claude-worker PATH entry (skip skills)
+#   --path-bin-dir <dir> target bin directory (default: ~/.local/bin)
+#
 # macOS entry points installed via directory symlinks (all scripts
 # inside each skill directory are automatically reachable):
 #   ~/.cursor/skills/ilk-launcher/scripts/launch.sh
@@ -36,6 +41,12 @@
 #                        targets <dir>/skills, <dir>/commands, <dir>/tools
 #   --force              back up real (non-symlink) targets to
 #                        <link>.pre-ilk-<timestamp> before linking
+#   --install-path       also install claude-worker onto PATH (in addition
+#                        to the normal skill/command install)
+#   --only-path          install ONLY the claude-worker PATH entry; skip
+#                        all skill/command linking
+#   --path-bin-dir <dir> target bin directory for the PATH entry
+#                        (default: ~/.local/bin)
 #
 # Idempotent: re-running --apply just re-points stale symlinks (e.g.
 # if you moved the repo) and is otherwise a no-op.
@@ -52,6 +63,9 @@ only_claude=0
 only_codex=0
 force=0
 claude_home=""
+install_path=0
+only_path=0
+path_bin_dir=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -61,6 +75,8 @@ while [[ $# -gt 0 ]]; do
     --only-claude)  only_claude=1 ;;
     --only-codex)   only_codex=1 ;;
     --force)        force=1 ;;
+    --install-path) install_path=1 ;;
+    --only-path)    only_path=1 ;;
     --claude-home)
       shift
       if [[ $# -eq 0 ]]; then
@@ -72,8 +88,19 @@ while [[ $# -gt 0 ]]; do
     --claude-home=*)
       claude_home="${1#--claude-home=}"
       ;;
+    --path-bin-dir)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "error: --path-bin-dir requires a directory argument" >&2
+        exit 2
+      fi
+      path_bin_dir="$1"
+      ;;
+    --path-bin-dir=*)
+      path_bin_dir="${1#--path-bin-dir=}"
+      ;;
     -h|--help)
-      sed -n '2,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,50p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -216,6 +243,131 @@ apply_action() {
       ;;
   esac
 }
+
+# --- PATH entry for claude-worker -------------------------------------------
+# Creates a symlink (or re-points a stale one) at <bin-dir>/claude-worker
+# pointing to tools/claude-worker/claude-worker.sh. Idempotent.
+
+CLAUDE_WORKER_SRC="$REPO_ROOT/tools/claude-worker/claude-worker.sh"
+
+# Create or replace the PATH entry (symlink preferred, copy as fallback for
+# environments where ln -s silently copies, e.g. Windows Git Bash without
+# Developer Mode).  Returns 0 on success, 1 on error.
+create_path_entry() {
+  local link="$1" source="$2"
+  # Try symlink first; if the result is not an actual symlink (ln -s may
+  # silently copy on some platforms), fall back to a plain copy.
+  ln -sfn "$source" "$link"
+  if [[ ! -L "$link" ]]; then
+    cp -- "$source" "$link"
+  fi
+}
+
+install_path_entry() {
+  local bin_dir="$1"
+  local link="$bin_dir/claude-worker"
+
+  if [[ ! -f "$CLAUDE_WORKER_SRC" ]]; then
+    echo "error: claude-worker source not found: $CLAUDE_WORKER_SRC" >&2
+    return 1
+  fi
+
+  local entry_mode="DRY-RUN"
+  [[ $apply -eq 1 ]] && entry_mode="APPLY"
+  echo "=== claude-worker PATH entry ($entry_mode) ==="
+  echo "source:    $CLAUDE_WORKER_SRC"
+  echo "target:    $link"
+
+  if [[ $apply -eq 0 ]]; then
+    echo "(dry-run: not writing)"
+    return 0
+  fi
+
+  # Check current state: already correct (symlink or identical copy)?
+  if [[ -L "$link" ]]; then
+    local current current_abs
+    current="$(readlink "$link")"
+    if [[ "$current" = /* ]]; then
+      current_abs="$current"
+    else
+      current_abs="$(cd "$(dirname "$link")" && cd "$(dirname "$current")" 2>/dev/null && pwd)/$(basename "$current")"
+    fi
+    if [[ "$current_abs" == "$CLAUDE_WORKER_SRC" ]]; then
+      echo "noop: $link already points to the correct source"
+    else
+      echo "action:  replace-stale-link"
+      rm -f -- "$link"
+      create_path_entry "$link" "$CLAUDE_WORKER_SRC"
+      echo "updated: $link"
+    fi
+  elif [[ -f "$link" ]]; then
+    # Regular file — could be a previous copy (Windows fallback).  Compare
+    # contents to decide whether we need to refresh.
+    if cmp -s "$CLAUDE_WORKER_SRC" "$link"; then
+      echo "noop: $link already has the correct content"
+    else
+      if [[ $force -eq 1 ]]; then
+        local stamp backup
+        stamp="$(date +%Y%m%d-%H%M%S)"
+        backup="${link}.pre-ilk-${stamp}"
+        mv -- "$link" "$backup"
+        create_path_entry "$link" "$CLAUDE_WORKER_SRC"
+        echo "backed up + updated: $link"
+      else
+        echo "BLOCKED: $link exists and is not a symlink (re-run with --force to back up)" >&2
+        return 1
+      fi
+    fi
+  else
+    echo "action:  create"
+    mkdir -p "$bin_dir"
+    create_path_entry "$link" "$CLAUDE_WORKER_SRC"
+    echo "created: $link"
+  fi
+
+  # Warn if bin_dir is not on PATH
+  local on_path=0
+  local IFS=':'
+  for dir in $PATH; do
+    # Normalize trailing slash for comparison
+    dir="${dir%/}"
+    bin_dir_norm="${bin_dir%/}"
+    if [[ "$dir" == "$bin_dir_norm" ]]; then
+      on_path=1
+      break
+    fi
+  done
+  if [[ $on_path -eq 0 ]]; then
+    echo
+    echo "WARNING: $bin_dir is not on your PATH."
+    echo "Add it by running:"
+    echo
+    echo "  export PATH=\"$bin_dir:\$PATH\""
+    echo
+    echo "To make it permanent, add that line to your shell rc file (~/.bashrc, ~/.zshrc, etc.)."
+  fi
+}
+
+# Default bin dir for PATH entry
+if [[ -z "$path_bin_dir" ]]; then
+  path_bin_dir="$HOME/.local/bin"
+fi
+
+# Resolve path_bin_dir: expand ~ and make relative paths absolute
+case "$path_bin_dir" in
+  "~")   path_bin_dir="$HOME" ;;
+  "~/"*) path_bin_dir="$HOME/${path_bin_dir#\~/}" ;;
+esac
+case "$path_bin_dir" in
+  /*) ;;
+  *)  path_bin_dir="$(pwd)/$path_bin_dir" ;;
+esac
+
+# --only-path: install ONLY the PATH entry, skip all skill/command linking
+if [[ $only_path -eq 1 ]]; then
+  install_path_entry "$path_bin_dir"
+  exit $?
+fi
 
 # --- build plan -------------------------------------------------------------
 
@@ -360,6 +512,12 @@ if [[ -f "$projects_example" && ! -f "$projects_json" ]]; then
   echo
   echo "Created: $projects_json (from projects.example.json)"
   echo "Edit it to point at your real projects before using launch.sh --all."
+fi
+
+# --install-path: also install the claude-worker PATH entry
+if [[ $install_path -eq 1 ]]; then
+  echo
+  install_path_entry "$path_bin_dir"
 fi
 
 echo "Done."
