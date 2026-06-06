@@ -88,6 +88,58 @@ function Invoke-SchedulerScan {
   return ($output | Out-String).Trim() | ConvertFrom-Json
 }
 
+function Read-BlacklistFromPostmortems {
+  <#
+    Scan queued projects for recent postmortem files with blacklist
+    classifications. Returns a hashtable of project key -> backoff expiry.
+  #>
+  param([array]$QueuedProjects)
+  $BlacklistClasses = @('stuck-no-progress', 'api-blocked', 'budget-exhausted', 'local-checks-stuck')
+  $result = @{}
+  if (-not $QueuedProjects) { return $result }
+  foreach ($proj in $QueuedProjects) {
+    $pmDir = Join-Path $proj.path 'runtime\launcher\postmortems'
+    if (-not (Test-Path $pmDir)) { continue }
+    $latest = Get-ChildItem $pmDir -Filter '*.md' -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not $latest) { continue }
+    # Parse frontmatter
+    $lines = Get-Content $latest.FullName -TotalCount 30 -ErrorAction SilentlyContinue
+    if (-not $lines) { continue }
+    $fm = @{}
+    $inFm = $false
+    foreach ($line in $lines) {
+      if ($line.Trim() -eq '---') {
+        if ($inFm) { break }
+        $inFm = $true
+        continue
+      }
+      if ($inFm -and $line -match '^([a-zA-Z_][a-zA-Z0-9_]*):\s*(.+)$') {
+        $fm[$matches[1]] = $matches[2].Trim().Trim('"')
+      }
+    }
+    $klass = $fm['classification']
+    if ($klass -and $BlacklistClasses -contains $klass) {
+      $generated = $fm['generated_at']
+      $backoffMin = 60
+      if ($generated) {
+        try {
+          $genTime = [datetime]::Parse($generated)
+          $expiry = $genTime.AddMinutes($backoffMin)
+          if ((Get-Date) -lt $expiry) {
+            $result[$proj.key] = $expiry
+          }
+        } catch {
+          $result[$proj.key] = (Get-Date).AddMinutes($backoffMin)
+        }
+      } else {
+        $result[$proj.key] = (Get-Date).AddMinutes($backoffMin)
+      }
+    }
+  }
+  return $result
+}
+
 # --- main loop ---------------------------------------------------------------
 
 function Run-Scheduler {
@@ -118,6 +170,18 @@ function Run-Scheduler {
       Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] idle: budget ceiling (dispatched $dispatchCount/$MaxDispatches). Polling in $PollMin min."
       Start-Sleep -Seconds ($PollMin * 60)
       continue
+    }
+
+    # --- merge postmortem-based blacklist entries ---
+    $postmortemBlacklist = Read-BlacklistFromPostmortems -QueuedProjects $queued
+    foreach ($key in $postmortemBlacklist.Keys) {
+      if ($blacklistSkip.ContainsKey($key)) {
+        if ($postmortemBlacklist[$key] -gt $blacklistSkip[$key]) {
+          $blacklistSkip[$key] = $postmortemBlacklist[$key]
+        }
+      } else {
+        $blacklistSkip[$key] = $postmortemBlacklist[$key]
+      }
     }
 
     # --- iterate projects in FIFO order ---

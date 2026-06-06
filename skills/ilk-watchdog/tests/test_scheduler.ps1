@@ -15,7 +15,7 @@
 #>
 param(
   [Parameter(Mandatory)]
-  [ValidateSet('scan', 'select', 'dispatch')]
+  [ValidateSet('scan', 'select', 'dispatch', 'blacklist')]
   [string]$Subcommand
 )
 
@@ -354,10 +354,89 @@ function Run-Dispatch {
   Cleanup
 }
 
+function Run-Blacklist {
+  Write-Host '=== test_scheduler.ps1 blacklist ==='
+  Setup-TwoQueuedProjects
+
+  # Create a postmortem for project A with blacklist classification
+  $pmDir = Join-Path $FakeData 'projects\proj-a\runtime\launcher\postmortems'
+  New-Item -ItemType Directory -Path $pmDir -Force | Out-Null
+
+  $now = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+  @(
+    '---'
+    'project: proj-a'
+    'classification: stuck-no-progress'
+    "generated_at: $now"
+    '---'
+    ''
+    '# Postmortem for proj-a'
+  ) | Set-Content -Path (Join-Path $pmDir '20260606-120000.md') -Encoding utf8
+
+  # Test 1: DryRun+Once should report skip-blacklist for A, dispatch B
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+  $lines = @($outputStr -split "`n" | Where-Object { $_.Trim() })
+  $firstLine = $lines[0].Trim()
+  $lastLine = $lines[-1].Trim()
+
+  $firstJson = $firstLine | ConvertFrom-Json
+  if ($firstJson.decision -ne 'skip-blacklist') {
+    throw "Expected 'skip-blacklist', got '$($firstJson.decision)'. Output: $outputStr"
+  }
+  if ($firstJson.key -ne 'proj-a') {
+    throw "Expected skip-blacklist for 'proj-a', got '$($firstJson.key)'. Output: $outputStr"
+  }
+
+  $lastJson = $lastLine | ConvertFrom-Json
+  if ($lastJson.decision -ne 'dispatch') {
+    throw "Expected 'dispatch', got '$($lastJson.decision)'. Output: $outputStr"
+  }
+  if ($lastJson.key -ne 'proj-b') {
+    throw "Expected dispatch of 'proj-b', got '$($lastJson.key)'. Output: $outputStr"
+  }
+
+  Write-Host 'PASS: skip-blacklist proj-a, dispatch proj-b (non-starvation)'
+
+  # Test 2: empty queues report idle (AC-5)
+  Cleanup
+  $projectsDir = Join-Path $FakeData 'projects'
+  New-Item -ItemType Directory -Path $projectsDir -Force | Out-Null
+
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+  $json = $outputStr | ConvertFrom-Json
+  if ($json.decision -ne 'idle') {
+    throw "Expected 'idle' for empty queues, got '$($json.decision)'. Output: $outputStr"
+  }
+
+  Write-Host 'PASS: empty queues report idle'
+  Cleanup
+}
+
 # --- main ---------------------------------------------------------------------
 
 switch ($Subcommand) {
-  'scan'     { Run-Scan }
-  'select'   { Run-Select }
-  'dispatch' { Run-Dispatch }
+  'scan'      { Run-Scan }
+  'select'    { Run-Select }
+  'dispatch'  { Run-Dispatch }
+  'blacklist' { Run-Blacklist }
 }

@@ -127,6 +127,55 @@ invoke_scheduler_scan() {
   $PYTHON "$SCAN_SCRIPT" | tr -d '\r'
 }
 
+read_blacklist_from_postmortems() {
+  # Check queued projects for recent postmortem files with blacklist
+  # classifications. Outputs one line per blacklisted project: "key epoch".
+  local scan_output="$1"
+  $PYTHON -c "
+import json, sys
+from datetime import datetime, timedelta
+from pathlib import Path
+
+BLACKLIST = {'stuck-no-progress', 'api-blocked', 'budget-exhausted', 'local-checks-stuck'}
+BACKOFF_MIN = 60
+
+projects = json.loads(sys.stdin.read())
+now = datetime.now()
+
+for proj in projects:
+    pm_dir = Path(proj['path']) / 'runtime' / 'launcher' / 'postmortems'
+    if not pm_dir.is_dir():
+        continue
+    pms = sorted(pm_dir.glob('*.md'), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not pms:
+        continue
+    text = pms[0].read_text(encoding='utf-8')
+    if not text.startswith('---'):
+        continue
+    end = text.find('\n---', 3)
+    if end < 0:
+        continue
+    fm = {}
+    for line in text[3:end].splitlines():
+        line = line.strip()
+        if ':' in line:
+            k, _, v = line.partition(':')
+            fm[k.strip()] = v.strip().strip('\"')
+    klass = fm.get('classification', '')
+    if klass in BLACKLIST:
+        generated = fm.get('generated_at', '')
+        expiry = now + timedelta(minutes=BACKOFF_MIN)
+        if generated:
+            try:
+                gen_time = datetime.fromisoformat(generated)
+                expiry = gen_time + timedelta(minutes=BACKOFF_MIN)
+            except (ValueError, TypeError):
+                pass
+        if now < expiry:
+            print(f\"{proj['key']} {int(expiry.timestamp())}\")
+" <<<"$scan_output" | tr -d '\r'
+}
+
 # --- main loop ---------------------------------------------------------------
 
 run_scheduler() {
@@ -169,6 +218,14 @@ run_scheduler() {
       sleep $((POLL_MIN * 60))
       continue
     fi
+
+    # --- merge postmortem-based blacklist entries ---
+    while IFS=' ' read -r bl_key bl_epoch; do
+      [[ -z "$bl_key" ]] && continue
+      if [[ -z "${blacklist_skip[$bl_key]:-}" ]] || [[ "$bl_epoch" -gt "${blacklist_skip[$bl_key]}" ]]; then
+        blacklist_skip[$bl_key]="$bl_epoch"
+      fi
+    done < <(read_blacklist_from_postmortems "$scan_output")
 
     # --- iterate projects in FIFO order ---
     local selected_key=""

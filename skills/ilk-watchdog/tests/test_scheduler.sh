@@ -281,6 +281,63 @@ run_dispatch() {
   cleanup
 }
 
+run_blacklist() {
+  echo "=== test_scheduler.sh blacklist ==="
+  setup_two_queued_projects
+
+  # Create a postmortem for project A with blacklist classification
+  local pm_dir="$FAKE_DATA/projects/proj-a/runtime/launcher/postmortems"
+  mkdir -p "$pm_dir"
+  local now
+  now=$(date '+%Y-%m-%dT%H:%M:%S')
+  cat > "$pm_dir/20260606-120000.md" <<EOF
+---
+project: proj-a
+classification: stuck-no-progress
+generated_at: $now
+---
+
+# Postmortem for proj-a
+EOF
+
+  # Test 1: DryRun+Once should report skip-blacklist for A, dispatch B
+  local output
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  local first_line last_line
+  first_line=$(echo "$output" | head -1)
+  last_line=$(echo "$output" | tail -1)
+
+  local first_decision first_key
+  first_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
+  first_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
+  [[ "$first_decision" == "skip-blacklist" ]] || die "expected 'skip-blacklist', got '$first_decision'. Output: $output"
+  [[ "$first_key" == "proj-a" ]] || die "expected skip-blacklist for 'proj-a', got '$first_key'. Output: $output"
+
+  local last_decision last_key
+  last_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
+  last_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$last_line")
+  [[ "$last_decision" == "dispatch" ]] || die "expected 'dispatch', got '$last_decision'. Output: $output"
+  [[ "$last_key" == "proj-b" ]] || die "expected dispatch of 'proj-b', got '$last_key'. Output: $output"
+
+  echo "PASS: skip-blacklist proj-a, dispatch proj-b (non-starvation)"
+
+  # Test 2: empty queues report idle (AC-5)
+  cleanup
+  mkdir -p "$FAKE_DATA/projects"
+
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  local decision
+  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  [[ "$decision" == "idle" ]] || die "expected 'idle' for empty queues, got '$decision'. Output: $output"
+
+  echo "PASS: empty queues report idle"
+  cleanup
+}
+
 # --- main ---------------------------------------------------------------------
 
 case "${1:-}" in
@@ -293,8 +350,11 @@ case "${1:-}" in
   dispatch)
     run_dispatch
     ;;
+  blacklist)
+    run_blacklist
+    ;;
   *)
-    echo "Usage: $0 {scan|select|dispatch}" >&2
+    echo "Usage: $0 {scan|select|dispatch|blacklist}" >&2
     exit 1
     ;;
 esac
