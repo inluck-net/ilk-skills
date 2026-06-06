@@ -12,9 +12,11 @@
     dispatch — assert the planned dispatch command contains -Engine claude-worker
                and the selected project path; assert -MaxDispatches 0 yields
                idle: budget ceiling.
+    cap      — assert -MaxConcurrent capacity accounting: N busy projects fill
+               slots, dispatches stop at the cap.
 #>
 param(
-  [ValidateSet('scan', 'select', 'dispatch', 'promote', 'blacklist', 'unresolved', 'all')]
+  [ValidateSet('scan', 'select', 'dispatch', 'promote', 'blacklist', 'unresolved', 'cap', 'all')]
   [string]$Subcommand = 'all'
 )
 
@@ -849,6 +851,140 @@ No last-launch.json, so repo_path cannot resolve.
   Cleanup
 }
 
+function Setup-CapProjects {
+  param([int]$NumProjects)
+  Cleanup
+  $projectsDir = Join-Path $FakeData 'projects'
+  New-Item -ItemType Directory -Path $projectsDir -Force | Out-Null
+
+  for ($i = 1; $i -le $NumProjects; $i++) {
+    $proj = Join-Path $projectsDir "proj-cap-$i"
+    $plans = Join-Path $proj 'plans'
+    $llDir = Join-Path $proj 'runtime\launcher'
+    New-Item -ItemType Directory -Path $plans, $llDir -Force | Out-Null
+
+    @"
+---
+master_plan: 2026-06-06-cap-batch
+batch_date: 2026-06-06
+status: active
+---
+
+# MASTER plan: Cap batch $i
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-06-cap-sub](./2026-06-06-cap-sub.md) | 3 | pending |
+"@ | Set-Content -Path (Join-Path $plans 'MASTER-2026-06-06-cap-batch.md') -Encoding utf8
+
+    @"
+---
+plan: cap-sub
+status: pending
+current_step: 0
+estimated_steps: 3
+last_updated: 2026-06-06
+---
+
+# Sub-plan: Cap sub $i
+
+Queued and waiting.
+"@ | Set-Content -Path (Join-Path $plans '2026-06-06-cap-sub.md') -Encoding utf8
+
+    (@{ project_path = (Join-Path $Scratch "repos\proj-cap-$i"); worker_engine = 'claude-worker' } | ConvertTo-Json -Compress) |
+      Set-Content -Path (Join-Path $llDir 'last-launch.json') -Encoding utf8
+  }
+}
+
+function Run-Cap {
+  Write-Host '=== test_scheduler.ps1 cap ==='
+
+  # Test 1: MaxConcurrent=2, 2 busy projects → capacity-full (idle)
+  Setup-CapProjects -NumProjects 3
+
+  # Mark first 2 projects as busy with live PIDs
+  $launcherDir1 = Join-Path $FakeData 'projects\proj-cap-1\runtime\launcher'
+  $launcherDir2 = Join-Path $FakeData 'projects\proj-cap-2\runtime\launcher'
+  $PID | Out-File -FilePath (Join-Path $launcherDir1 'running.pid') -Encoding ascii -NoNewline
+  $PID | Out-File -FilePath (Join-Path $launcherDir2 'running.pid') -Encoding ascii -NoNewline
+
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once -MaxConcurrent 2 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+  $json = $outputStr | ConvertFrom-Json
+
+  if ($json.decision -ne 'idle') {
+    throw "Expected 'idle', got '$($json.decision)'. Output: $outputStr"
+  }
+  if ($json.reason -ne 'capacity-full') {
+    throw "Expected 'capacity-full', got '$($json.reason)'. Output: $outputStr"
+  }
+  if ($json.live -ne 2) {
+    throw "Expected live=2, got '$($json.live)'. Output: $outputStr"
+  }
+  if ($json.max_concurrent -ne 2) {
+    throw "Expected max_concurrent=2, got '$($json.max_concurrent)'. Output: $outputStr"
+  }
+
+  Write-Host 'PASS: MaxConcurrent=2, 2 busy → capacity-full'
+
+  # Test 2: MaxConcurrent=3, 2 busy → capacity=1, dispatch one project
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once -MaxConcurrent 3 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+  $lines = @($outputStr -split "`n" | Where-Object { $_.Trim() })
+  $lastLine = $lines[-1].Trim()
+  $lastJson = $lastLine | ConvertFrom-Json
+
+  if ($lastJson.decision -ne 'dispatch') {
+    throw "Expected 'dispatch', got '$($lastJson.decision)'. Output: $outputStr"
+  }
+
+  Write-Host 'PASS: MaxConcurrent=3, 2 busy → dispatch 1 free project'
+
+  # Test 3: MaxConcurrent=1, 0 busy → dispatch one project (strict sequential)
+  Remove-Item (Join-Path $launcherDir1 'running.pid') -Force -ErrorAction SilentlyContinue
+  Remove-Item (Join-Path $launcherDir2 'running.pid') -Force -ErrorAction SilentlyContinue
+
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once -MaxConcurrent 1 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+  $json = $outputStr | ConvertFrom-Json
+
+  if ($json.decision -ne 'dispatch') {
+    throw "Expected 'dispatch', got '$($json.decision)'. Output: $outputStr"
+  }
+
+  Write-Host 'PASS: MaxConcurrent=1, 0 busy → dispatch one (strict sequential)'
+  Cleanup
+}
+
 # --- main ---------------------------------------------------------------------
 
 switch ($Subcommand) {
@@ -858,5 +994,6 @@ switch ($Subcommand) {
   'promote'    { Run-Promote }
   'blacklist'  { Run-Blacklist }
   'unresolved' { Run-Unresolved }
-  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Promote; Run-Blacklist; Run-Unresolved; Write-Host 'ALL PASS' }
+  'cap'        { Run-Cap }
+  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Promote; Run-Blacklist; Run-Unresolved; Run-Cap; Write-Host 'ALL PASS' }
 }

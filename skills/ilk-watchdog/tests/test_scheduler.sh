@@ -8,6 +8,8 @@ set -euo pipefail
 #   scan — build a fake ILK_DATA_HOME with 2 projects (one all-shipped,
 #          one with a queued sub-plan) and assert scheduler_scan.py lists
 #          ONLY the queued one.
+#   cap  — assert -MaxConcurrent capacity accounting: N busy projects fill
+#          slots, dispatches stop at the cap.
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -697,6 +699,108 @@ run_promote() {
   cleanup
 }
 
+setup_cap_projects() {
+  # Create N queued projects, each with a last-launch.json so repo_path resolves.
+  # Caller sets $NUM_PROJECTS before calling.
+  cleanup
+  mkdir -p "$FAKE_DATA/projects"
+  for i in $(seq 1 "$NUM_PROJECTS"); do
+    local proj="$FAKE_DATA/projects/proj-cap-$i"
+    mkdir -p "$proj/plans" "$proj/runtime/launcher"
+    cat > "$proj/plans/MASTER-2026-06-06-cap-batch.md" <<EOF
+---
+master_plan: 2026-06-06-cap-batch
+batch_date: 2026-06-06
+status: active
+---
+
+# MASTER plan: Cap batch $i
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-06-cap-sub](./2026-06-06-cap-sub.md) | 3 | pending |
+EOF
+    cat > "$proj/plans/2026-06-06-cap-sub.md" <<EOF
+---
+plan: cap-sub
+status: pending
+current_step: 0
+estimated_steps: 3
+last_updated: 2026-06-06
+---
+
+# Sub-plan: Cap sub $i
+
+Queued and waiting.
+EOF
+    printf '{"project_path":"%s","worker_engine":"claude-worker"}\n' "$SCRATCH/repos/proj-cap-$i" > "$proj/runtime/launcher/last-launch.json"
+  done
+}
+
+run_cap() {
+  echo "=== test_scheduler.sh cap ==="
+
+  # Test 1: MaxConcurrent=2, 2 busy projects → capacity-full (idle)
+  NUM_PROJECTS=3
+  setup_cap_projects
+
+  # Mark first 2 projects as busy with live PIDs
+  sleep 60 &
+  local pid1=$!
+  echo "$pid1" > "$FAKE_DATA/projects/proj-cap-1/runtime/launcher/running.pid"
+  sleep 60 &
+  local pid2=$!
+  echo "$pid2" > "$FAKE_DATA/projects/proj-cap-2/runtime/launcher/running.pid"
+
+  local output
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 2 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  local decision reason live maxc
+  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  reason=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['reason'])" <<<"$output")
+  live=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['live'])" <<<"$output")
+  maxc=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['max_concurrent'])" <<<"$output")
+  [[ "$decision" == "idle" ]] || die "expected 'idle', got '$decision'. Output: $output"
+  [[ "$reason" == "capacity-full" ]] || die "expected 'capacity-full', got '$reason'. Output: $output"
+  [[ "$live" == "2" ]] || die "expected live=2, got '$live'. Output: $output"
+  [[ "$maxc" == "2" ]] || die "expected max_concurrent=2, got '$maxc'. Output: $output"
+
+  echo "PASS: MaxConcurrent=2, 2 busy → capacity-full"
+  kill "$pid1" "$pid2" 2>/dev/null || true
+
+  # Test 2: MaxConcurrent=3, 2 busy → capacity=1, dispatch one project
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 3 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  # Output should be 2 lines: skip-busy + skip-busy + dispatch (the free one)
+  # Actually, with 2 busy and 1 free, we get skip-busy, skip-busy, dispatch
+  local last_line
+  last_line=$(echo "$output" | tail -1)
+
+  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
+  [[ "$decision" == "dispatch" ]] || die "expected 'dispatch', got '$decision'. Output: $output"
+
+  echo "PASS: MaxConcurrent=3, 2 busy → dispatch 1 free project"
+
+  # Test 3: MaxConcurrent=1, 0 busy → dispatch one project (strict sequential)
+  # Remove the running.pid files
+  rm -f "$FAKE_DATA/projects/proj-cap-1/runtime/launcher/running.pid"
+  rm -f "$FAKE_DATA/projects/proj-cap-2/runtime/launcher/running.pid"
+
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 1 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  [[ "$decision" == "dispatch" ]] || die "expected 'dispatch', got '$decision'. Output: $output"
+
+  echo "PASS: MaxConcurrent=1, 0 busy → dispatch one (strict sequential)"
+
+  cleanup
+}
+
 run_all() {
   run_scan
   run_select
@@ -704,6 +808,7 @@ run_all() {
   run_promote
   run_blacklist
   run_unresolved
+  run_cap
   echo "ALL PASS"
 }
 
@@ -726,11 +831,14 @@ case "${1:-all}" in
   unresolved)
     run_unresolved
     ;;
+  cap)
+    run_cap
+    ;;
   all)
     run_all
     ;;
   *)
-    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|all}" >&2
+    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|all}" >&2
     exit 1
     ;;
 esac

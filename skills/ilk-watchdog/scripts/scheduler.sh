@@ -2,13 +2,11 @@
 set -euo pipefail
 
 # =============================================================================
-# Single cross-project scheduler (V1 "global watchdog")
+# Single cross-project scheduler (V1.1 — slot pool)
 # =============================================================================
-# Scans all projects for runnable masters, selects the FIFO-first project
-# whose sentinel is free, promotes a queued master if needed, and
-# dispatches it via launch.sh -Engine claude-worker.
-#
-# Pool cap = 1 (V1): if ANY project is busy, no dispatch is planned.
+# Scans all projects for runnable masters, dispatches up to --max-concurrent
+# ready projects per cycle (each routed to a distinct slot home), promotes
+# a queued master if needed, and dispatches via launch.sh -Engine claude-worker.
 #
 # -DryRun prints the planned decision without executing anything.
 # -Once runs a single scan cycle (for tests) instead of the daemon loop.
@@ -41,6 +39,7 @@ if [[ -z "$PYTHON" ]]; then
 fi
 
 POLL_MIN=5
+MAX_CONCURRENT=5
 MAX_DISPATCHES=-1
 MAX_BUDGET_USD=0
 DRY_RUN=false
@@ -52,10 +51,11 @@ usage() {
   cat <<'EOF'
 Usage: scheduler.sh [OPTIONS]
 
-Single cross-project scheduler (V1).
+Single cross-project scheduler (V1.1 — slot pool).
 
 Options:
   --poll-min N          Polling interval in minutes. Default 5.
+  --max-concurrent N    Maximum concurrent live loops. Default 5. Set to 1 for strict sequential.
   --max-dispatches N    Global dispatch ceiling. -1 = unlimited (default). 0 = no dispatches allowed.
   --max-budget-usd N    Global budget ceiling. Default 0 (unlimited).
   --dry-run             Print the planned decision without dispatching.
@@ -69,6 +69,10 @@ parse_args() {
     case "$1" in
       --poll-min)
         POLL_MIN="$2"
+        shift 2
+        ;;
+      --max-concurrent)
+        MAX_CONCURRENT="$2"
         shift 2
         ;;
       --max-dispatches)
@@ -121,6 +125,21 @@ test_running_pid() {
   fi
   kill -0 "$raw" 2>/dev/null
   # kill -0 returns 0 if alive (busy), 1 if dead (free)
+}
+
+count_live_sentinels() {
+  # Count how many projects in the JSON array currently have a live
+  # running.pid sentinel. Outputs the count to stdout.
+  local scan_output="$1"
+  local count=0
+  local paths
+  mapfile -t paths < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p['path']) for p in d]" <<<"$scan_output" | tr -d '\r')
+  for p in "${paths[@]}"; do
+    if test_running_pid "$p"; then
+      count=$((count + 1))
+    fi
+  done
+  echo "$count"
 }
 
 invoke_scheduler_scan() {
@@ -217,6 +236,20 @@ run_scheduler() {
         return
       fi
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] idle: budget ceiling (dispatched ${dispatch_count}/${MAX_DISPATCHES}). Polling in ${POLL_MIN} min."
+      sleep $((POLL_MIN * 60))
+      continue
+    fi
+
+    # --- check concurrency capacity ---
+    # Count live sentinels across all scanned projects.
+    local live_count
+    live_count=$(count_live_sentinels "$scan_output")
+    if [[ "$live_count" -ge "$MAX_CONCURRENT" ]]; then
+      if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+        echo "{\"decision\":\"idle\",\"reason\":\"capacity-full\",\"live\":$live_count,\"max_concurrent\":$MAX_CONCURRENT}"
+        return
+      fi
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] idle: capacity full ($live_count/$MAX_CONCURRENT live). Polling in ${POLL_MIN} min."
       sleep $((POLL_MIN * 60))
       continue
     fi

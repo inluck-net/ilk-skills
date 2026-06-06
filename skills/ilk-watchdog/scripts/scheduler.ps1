@@ -1,19 +1,21 @@
 <#
 .SYNOPSIS
-  Single cross-project scheduler (V1 "global watchdog").
+  Single cross-project scheduler (V1.1 — slot pool).
 
 .DESCRIPTION
-  Scans all projects for runnable masters, selects the FIFO-first project
-  whose sentinel is free, promotes a queued master if needed, and
-  dispatches it via launch.ps1 -Engine claude-worker.
-
-  Pool cap = 1 (V1): if ANY project is busy, no dispatch is planned.
+  Scans all projects for runnable masters, dispatches up to -MaxConcurrent
+  ready projects per cycle (each routed to a distinct slot home), promotes
+  a queued master if needed, and dispatches via launch.ps1 -Engine claude-worker.
 
   -DryRun prints the planned decision without executing anything.
   -Once runs a single scan cycle (for tests) instead of the daemon loop.
 
 .PARAMETER PollMin
   Polling interval in minutes. Default 5.
+
+.PARAMETER MaxConcurrent
+  Maximum number of concurrent live loops across all projects. Default 5.
+  Set to 1 for strict sequential (V1 behavior).
 
 .PARAMETER MaxDispatches
   Global dispatch ceiling. -1 = unlimited (default). 0 = no dispatches allowed.
@@ -31,10 +33,11 @@
   .\scheduler.ps1 -DryRun -Once
 
 .EXAMPLE
-  .\scheduler.ps1 -PollMin 2 -MaxDispatches 5
+  .\scheduler.ps1 -PollMin 2 -MaxConcurrent 3 -MaxDispatches 5
 #>
 param(
   [int]$PollMin = 5,
+  [int]$MaxConcurrent = 5,
   [int]$MaxDispatches = -1,
   [double]$MaxBudgetUsd = 0,
   [switch]$DryRun,
@@ -79,6 +82,21 @@ function Test-RunningPid {
   }
   if ($procId -le 0) { return $false }
   return [bool](Get-Process -Id $procId -ErrorAction SilentlyContinue)
+}
+
+function Get-LiveSentinelCount {
+  <#
+    Count how many projects in the given array currently have a live
+    running.pid sentinel. Reuses Test-RunningPid.
+  #>
+  param([array]$Projects)
+  $count = 0
+  foreach ($proj in $Projects) {
+    if (Test-RunningPid -ProjectDataPath $proj.path) {
+      $count++
+    }
+  }
+  return $count
 }
 
 function Invoke-SchedulerScan {
@@ -170,6 +188,19 @@ function Run-Scheduler {
         return
       }
       Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] idle: budget ceiling (dispatched $dispatchCount/$MaxDispatches). Polling in $PollMin min."
+      Start-Sleep -Seconds ($PollMin * 60)
+      continue
+    }
+
+    # --- check concurrency capacity ---
+    # Count live sentinels across all scanned projects.
+    $liveCount = Get-LiveSentinelCount -Projects $queued
+    if ($liveCount -ge $MaxConcurrent) {
+      if ($DryRun -and $Once) {
+        @{ decision = 'idle'; reason = 'capacity-full'; live = $liveCount; max_concurrent = $MaxConcurrent } | ConvertTo-Json -Compress
+        return
+      }
+      Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] idle: capacity full ($liveCount/$MaxConcurrent live). Polling in $PollMin min."
       Start-Sleep -Seconds ($PollMin * 60)
       continue
     }
