@@ -52,6 +52,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # tools/claude-worker/bootstrap.sh -> repo root is two levels up.
 DEFAULT_REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+# Source shared worker-session helper (sentinel write/remove/test).
+. "$SCRIPT_DIR/_worker_session.sh"
+
 worker_home="${CLAUDE_WORKER_HOME:-$HOME/.claude-worker}"
 base_url="${ANTHROPIC_BASE_URL:-}"
 auth_token="${ANTHROPIC_AUTH_TOKEN:-}"
@@ -386,23 +389,28 @@ fi
 
 # --- active worker run guard -------------------------------------------------
 # If a worker/ilk loop is running against this home, overwriting the provider
-# mid-run could break it.  Check for a PID file left by claude-worker.sh.
+# mid-run could break it.  Check for a sentinel left by claude-worker.sh.
+# Uses identity-checked liveness (PID + start-time) from _worker_session.sh.
 pid_file="$worker_home/running.pid"
-if [[ -f "$pid_file" ]]; then
-  running_pid="$(cat "$pid_file" 2>/dev/null || true)"
-  if [[ -n "$running_pid" ]] && kill -0 "$running_pid" 2>/dev/null; then
-    if [[ $force -eq 0 ]]; then
-      echo "WARNING: an active worker process (PID $running_pid) appears to be" >&2
-      echo "using this worker home.  Overwriting the provider settings now could" >&2
-      echo "break the running session." >&2
-      echo "Pass --force to overwrite anyway, or stop the worker first." >&2
-      exit 2
-    fi
-    echo "WARNING: active worker PID $running_pid detected; --force specified, proceeding anyway."
-  else
-    # Stale PID file — clean it up.
-    rm -f "$pid_file"
+if worker_session_active "$pid_file"; then
+  sentinel_pid=""
+  content="$(cat "$pid_file" 2>/dev/null || true)"
+  if [[ "$content" =~ ^pid=([0-9]+) ]]; then
+    sentinel_pid="${BASH_REMATCH[1]}"
   fi
+  label="${sentinel_pid:+PID $sentinel_pid}"
+  label="${label:-worker}"
+  if [[ $force -eq 0 ]]; then
+    echo "WARNING: an active worker process ($label) appears to be" >&2
+    echo "using this worker home.  Overwriting the provider settings now could" >&2
+    echo "break the running session." >&2
+    echo "Pass --force to overwrite anyway, or stop the worker first." >&2
+    exit 2
+  fi
+  echo "WARNING: active worker $label detected; --force specified, proceeding anyway."
+else
+  # Stale or non-existent sentinel — clean it up.
+  worker_sentinel_remove "$pid_file"
 fi
 
 write_worker_config

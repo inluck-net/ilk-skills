@@ -40,6 +40,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Source shared worker-session helper (sentinel write/remove/test).
+. "$SCRIPT_DIR/_worker_session.sh"
+
 worker_home="${CLAUDE_WORKER_HOME:-$HOME/.claude-worker}"
 claude_bin="${CLAUDE_BIN:-}"
 
@@ -313,16 +316,17 @@ fi
 
 echo "Launching claude with CLAUDE_CONFIG_DIR=$worker_home ..."
 
-# Write a PID file so bootstrap can detect an active worker run before
-# overwriting the provider settings.  The PID stays valid after exec
-# (same process id, different binary).  Bootstrap checks if the PID is
-# still alive; a stale file with a dead PID is harmless.
+# Write a sentinel so bootstrap can detect an active worker run before
+# overwriting the provider settings.  Uses PID + start-time identity so
+# a reused PID is never mistaken for an active worker.
 pid_file="$worker_home/running.pid"
-if ! echo $$ > "$pid_file"; then
-  echo "WARN: could not write worker PID file: $pid_file" >&2
-  echo "      provider-switch guardrails may not detect this running session." >&2
-fi
+worker_sentinel_write "$pid_file"
+
+# Clean up the sentinel on exit (normal, error, or signal).
+trap 'worker_sentinel_remove "$pid_file"' EXIT
 
 # Guard the array expansion so an empty claude_args doesn't trip `set -u` on
 # bash 3.2 (the default on macOS).
-exec "$resolved_claude_bin" ${claude_args[@]+"${claude_args[@]}"}
+# Launch as a child (not exec) so the EXIT trap fires on exit.
+"$resolved_claude_bin" ${claude_args[@]+"${claude_args[@]}"}
+exit $?
