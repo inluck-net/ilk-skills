@@ -121,6 +121,22 @@ test_running_pid() {
   # kill -0 returns 0 if alive (busy), 1 if dead (free)
 }
 
+blacklist_epoch_for_key() {
+  # Bash 3.2 compatible lookup for blacklist backoff entries.
+  # Input format is newline-separated "key epoch"; duplicate keys are allowed
+  # and the maximum epoch wins.
+  local target="$1"
+  local max_epoch=""
+  local key epoch
+  while IFS=' ' read -r key epoch; do
+    [[ -z "$key" || "$key" != "$target" || -z "$epoch" ]] && continue
+    if [[ -z "$max_epoch" || "$epoch" -gt "$max_epoch" ]]; then
+      max_epoch="$epoch"
+    fi
+  done <<<"${blacklist_skip:-}"
+  echo "$max_epoch"
+}
+
 invoke_scheduler_scan() {
   # Run scheduler_scan.py, output JSON to stdout
   # Strip \r for Windows compatibility
@@ -180,8 +196,9 @@ for proj in projects:
 
 run_scheduler() {
   local dispatch_count=0
-  # Associative array for blacklist backoff (key -> expiry epoch)
-  declare -A blacklist_skip
+  # Bash 3.2 compatible blacklist backoff state.
+  # newline-separated entries: "project-key expiry-epoch"
+  local blacklist_skip=""
 
   while true; do
     # --- scan for queued projects ---
@@ -222,9 +239,7 @@ run_scheduler() {
     # --- merge postmortem-based blacklist entries ---
     while IFS=' ' read -r bl_key bl_epoch; do
       [[ -z "$bl_key" ]] && continue
-      if [[ -z "${blacklist_skip[$bl_key]:-}" ]] || [[ "$bl_epoch" -gt "${blacklist_skip[$bl_key]}" ]]; then
-        blacklist_skip[$bl_key]="$bl_epoch"
-      fi
+      blacklist_skip="${blacklist_skip}"$'\n'"${bl_key} ${bl_epoch}"
     done < <(read_blacklist_from_postmortems "$scan_output")
 
     # --- iterate projects in FIFO order ---
@@ -236,9 +251,12 @@ run_scheduler() {
 
     # Parse the JSON array and iterate
     local keys paths repo_paths
-    mapfile -t keys < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p['key']) for p in d]" <<<"$scan_output" | tr -d '\r')
-    mapfile -t paths < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p['path']) for p in d]" <<<"$scan_output" | tr -d '\r')
-    mapfile -t repo_paths < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p.get('repo_path') or '') for p in d]" <<<"$scan_output" | tr -d '\r')
+    keys=()
+    paths=()
+    repo_paths=()
+    while IFS= read -r line; do keys+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p['key']) for p in d]" <<<"$scan_output" | tr -d '\r')
+    while IFS= read -r line; do paths+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p['path']) for p in d]" <<<"$scan_output" | tr -d '\r')
+    while IFS= read -r line; do repo_paths+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p.get('repo_path') or '') for p in d]" <<<"$scan_output" | tr -d '\r')
 
     for i in "${!keys[@]}"; do
       local key="${keys[$i]}"
@@ -246,16 +264,16 @@ run_scheduler() {
       local repo="${repo_paths[$i]}"
 
       # blacklist skip
-      if [[ -n "${blacklist_skip[$key]:-}" ]]; then
-        if [[ "$now_epoch" -lt "${blacklist_skip[$key]}" ]]; then
+      local blacklist_epoch
+      blacklist_epoch="$(blacklist_epoch_for_key "$key")"
+      if [[ -n "$blacklist_epoch" ]]; then
+        if [[ "$now_epoch" -lt "$blacklist_epoch" ]]; then
           if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
             echo "{\"decision\":\"skip-blacklist\",\"key\":\"$key\"}"
           else
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip-blacklist: $key"
           fi
           continue
-        else
-          unset "blacklist_skip[$key]"
         fi
       fi
 
@@ -316,7 +334,7 @@ run_scheduler() {
       else
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatch failed for $selected_key"
         # Record in blacklist with 5-min backoff
-        blacklist_skip[$key]=$(($(date +%s) + 300))
+        blacklist_skip="${blacklist_skip}"$'\n'"${selected_key} $(($(date +%s) + 300))"
       fi
     fi
 
