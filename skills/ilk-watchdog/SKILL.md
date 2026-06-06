@@ -155,12 +155,21 @@ bash "$HOME/.cursor/skills/ilk-watchdog/scripts/stop_watchdog.sh" --project-name
 
 Kills only the watchdog window. The ilk window keeps running.
 
-## Cross-project scheduler (V1)
+## Cross-project scheduler (V1.1 — slot pool)
 
 The per-project watchdog above babysits **one** project. The
 **scheduler** (`scheduler.ps1` / `scheduler.sh`) is its cross-project
 sibling: a single long-lived daemon that drains **every** project's
-queue, one at a time, routed through the cheap worker provider.
+queue, routed through the cheap worker provider.
+
+### Slot pool — cross-project parallel, per-project serial
+
+The scheduler dispatches up to **`-MaxConcurrent`** (default 5) ready
+projects per scan cycle, each routed to a **distinct slot home**
+(`~/.claude-worker` for slot 1, `~/.claude-worker-<i>` for slot i≥2).
+Per-project serialism is still guaranteed by the per-project sentinel
+(`running.pid`) — a busy project is skipped, never double-dispatched.
+Set `-MaxConcurrent 1` for strict sequential (V1-equivalent) behavior.
 
 How a scan cycle decides:
 
@@ -171,11 +180,13 @@ How a scan cycle decides:
    where every master is `shipped` are excluded. Results are ordered
    **FIFO** by oldest-queued timestamp (active masters first, else
    the next-to-promote queued master).
-2. The first candidate whose per-project sentinel
-   (`runtime/launcher/running.pid`) is free is dispatched via
-   `ilk-launcher`'s `launch.*` with **`-Engine claude-worker`** (so the
-   run uses the worker home). Busy projects → `skip-busy`.
-3. **Promote-before-dispatch:** if the selected project has no `active`
+2. The scheduler iterates the FIFO list and collects ready projects
+   (free sentinel + `repo_path`-resolvable + not blacklisted) until
+   live-count reaches `MaxConcurrent` or the list is exhausted. Each
+   collected project is dispatched via `ilk-launcher`'s `launch.*` with
+   **`-Engine claude-worker -WorkerHome <slot-home>`** so each dispatch
+   uses an isolated worker home. Busy projects → `skip-busy`.
+3. **Promote-before-dispatch:** if a selected project has no `active`
    master but HAS a `queued` master, the scheduler promotes it
    (`queued→active`) via `promote_next_master.py` before dispatching.
    This ensures multi-master projects always advance — no redispatch
@@ -187,30 +198,49 @@ How a scan cycle decides:
 5. If nothing is dispatchable → `idle`. The daemon polls again rather
    than exiting, so newly-queued work auto-wakes it on a later cycle.
 
-**Guardrails.** Pool cap is fixed at **1** in V1 (no parallelism — that
-is V2, which needs isolated worker homes). A global dispatch / budget
-ceiling caps spend: hitting it reports `idle: budget ceiling` rather
-than crashing.
+**Guardrails.** `-MaxConcurrent` caps the number of live loops at any
+time (default 5); `-MaxConcurrent 1` reproduces strict-sequential
+behavior. A global dispatch / budget ceiling caps spend: hitting it
+reports `idle: budget ceiling` rather than crashing. The per-project
+sentinel mutex still guarantees ≤1 loop per project.
 
 | Flag (PowerShell / bash) | Default | Meaning |
 |---|---|---|
 | `-PollMin` / `--poll-min N` | 5 | Minutes between scan cycles. |
+| `-MaxConcurrent` / `--max-concurrent N` | 5 | Maximum concurrent live loops across all projects. Set to 1 for strict sequential. |
 | `-MaxDispatches` / `--max-dispatches N` | -1 (unlimited) | Global dispatch ceiling; `0` = plan no dispatches. |
 | `-MaxBudgetUsd` / `--max-budget-usd N` | 0 (unlimited) | Global budget ceiling. |
 | `-DryRun` / `--dry-run` | off | Print the planned decision (JSON) without launching. |
 | `-Once` / `--once` | off | Run a single scan cycle and exit (used by tests). |
 
 ```powershell
-& "$HOME\.cursor\skills\ilk-watchdog\scripts\scheduler.ps1" -PollMin 5
+& "$HOME\.cursor\skills\ilk-watchdog\scripts\scheduler.ps1" -PollMin 5 -MaxConcurrent 5
 ```
 ```bash
-bash "$HOME/.cursor/skills/ilk-watchdog/scripts/scheduler.sh" --poll-min 5
+bash "$HOME/.cursor/skills/ilk-watchdog/scripts/scheduler.sh" --poll-min 5 --max-concurrent 5
 ```
 
 The scheduler does **not** replace the per-project watchdog — use the
 watchdog to babysit a single supervised run; use the scheduler to drain
 a backlog across many projects unattended. (Tests exercise it via
 `--dry-run` so no provider call is made.)
+
+### V2 migration: best-of-N (worktrees + model-diverse)
+
+The slot abstraction is deliberately shaped so V2 is additive. A **slot**
+is `{ id, home, worktree?, model? }`:
+
+- **V1.1 uses** `{ id, home }` — one project per slot, cwd = the project
+  repo, each slot on its own isolated home.
+- **V2 best-of-N adds** `worktree` (N worktrees of ONE repo) + a fan-out
+  stage (N attempts of one task) + an evaluate/merge-the-winner stage.
+- **Model-diverse best-of-N (target):** because each slot home has its own
+  `settings.json` `env` block, slots can pin **different models/providers**
+  (`ANTHROPIC_MODEL` / `ANTHROPIC_BASE_URL`). So V2 can run the same task
+  across N *different models* in N worktrees and pick the winner. The
+  slot-home bootstrap already accepts a per-slot model hook (from the
+  `per-slot-worker-homes` sub-plan); V2 wires it through and adds the
+  evaluation stage.
 
 ## When the agent invokes this skill
 
@@ -302,10 +332,11 @@ that's a separate cleanup; do not add new entries.
 - `-WithWatchdog` flag on `ilk-launcher`'s `launch.ps1` to start ilk
   + watchdog in one command.
 - Notification on BLOCKED (Windows toast / Telegram bot / email).
-- **V2 parallel scheduler** — the V1 scheduler (above) drains projects
-  one at a time (pool cap 1). True parallelism needs isolated worker
-  homes per slot (`~/.claude-worker-1..N`); see
-  `docs/future-work/cross-project-supervisor.md`.
+- **V2 best-of-N scheduler** — the V1.1 scheduler (above) already runs
+  projects in parallel via the slot pool. V2 adds worktree-per-slot
+  (N worktrees of one repo) + fan-out/evaluate-merge for model-diverse
+  best-of-N; see the V2 migration section above and
+  `docs/future-work/best-of-N.md`.
 
 ## See also
 
