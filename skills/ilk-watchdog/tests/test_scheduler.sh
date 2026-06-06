@@ -340,7 +340,15 @@ EOF
 
 # --- main ---------------------------------------------------------------------
 
-case "${1:-}" in
+run_all() {
+  run_scan
+  run_select
+  run_dispatch
+  run_blacklist
+  echo "ALL PASS"
+}
+
+case "${1:-all}" in
   scan)
     run_scan
     ;;
@@ -353,8 +361,11 @@ case "${1:-}" in
   blacklist)
     run_blacklist
     ;;
+  all)
+    run_all
+    ;;
   *)
-    echo "Usage: $0 {scan|select|dispatch|blacklist}" >&2
+    echo "Usage: $0 {scan|select|dispatch|blacklist|all}" >&2
     exit 1
     ;;
 esac

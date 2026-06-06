@@ -14,9 +14,8 @@
                idle: budget ceiling.
 #>
 param(
-  [Parameter(Mandatory)]
-  [ValidateSet('scan', 'select', 'dispatch', 'blacklist')]
-  [string]$Subcommand
+  [ValidateSet('scan', 'select', 'dispatch', 'blacklist', 'all')]
+  [string]$Subcommand = 'all'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -439,4 +438,5 @@ switch ($Subcommand) {
   'select'    { Run-Select }
   'dispatch'  { Run-Dispatch }
   'blacklist' { Run-Blacklist }
+  'all'       { Run-Scan; Run-Select; Run-Dispatch; Run-Blacklist; Write-Host 'ALL PASS' }
 }

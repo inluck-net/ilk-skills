@@ -216,7 +216,7 @@ preflight() {
   if [[ -f "$settings_json" ]]; then
     if jq -e '.env | type == "object" and length > 0' "$settings_json" >/dev/null 2>&1; then
       SETTINGS_HAS_ENV=1
-      echo "Detected ~/.claude/settings.json env block -- it will be the sole auth source."
+      echo "Detected ${settings_json} env block -- it will be the sole auth source."
     fi
   fi
 

@@ -225,7 +225,7 @@ if (-not $settingsHasEnv) {
     Write-Warning "ANTHROPIC_API_KEY not set. claude will fall back to interactive auth."
   }
 } else {
-  Write-Host "Detected ~/.claude/settings.json env block -- it will be the sole auth source." -ForegroundColor DarkGray
+  Write-Host "Detected $settingsJsonPath env block -- it will be the sole auth source." -ForegroundColor DarkGray
 }
 
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
