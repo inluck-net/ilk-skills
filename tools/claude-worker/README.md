@@ -235,6 +235,47 @@ Best-of-N (multiple concurrent workers) is explicitly **out of scope** here —
 it needs isolated git worktrees and separate ilk runtime keys. See the design
 doc's "Best-Of-N Is Separate" section.
 
+## Troubleshooting: stale `running.pid`
+
+The worker wrapper writes a **sentinel file** (`running.pid`) into the worker
+home when a session starts. The sentinel records the wrapper's PID and
+process start time so the bootstrap guard can distinguish a genuinely active
+worker from a stale or reused PID:
+
+```
+pid=82004
+start=2026-06-06T05:46:49.1234567+08:00
+kind=claude-worker
+```
+
+The sentinel is automatically removed when the worker session exits (via
+`finally` / `EXIT` trap). A stale file can remain if the worker was hard-killed
+(`kill -9`, `taskkill /F`, power loss) or the process crashed mid-session.
+
+**Bootstrap now auto-clears stale sentinels.** When `bootstrap` finds a
+`running.pid` whose PID no longer exists (or whose start time doesn't match
+the live process), it removes the file and proceeds normally. You should only
+need to intervene if:
+
+- The bootstrap incorrectly detects an active worker when none is running
+  (report this as a bug — the start-time check should prevent it).
+- You want to force-overwrite settings while a worker is genuinely running:
+  pass `--force` / `-Force`.
+
+Manual cleanup (rarely needed):
+
+```bash
+rm -f "$HOME/.claude-worker/running.pid"
+```
+
+```powershell
+Remove-Item -Force "$HOME\.claude-worker\running.pid"
+```
+
+Legacy bare-integer `running.pid` files (from older versions) are still
+handled: if the PID is alive, the guard conservatively treats it as active;
+if dead, the file is cleaned up.
+
 ## Rollback
 
 The worker home is the only thing these scripts create:

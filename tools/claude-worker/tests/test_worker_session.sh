@@ -77,6 +77,26 @@ echo "=== Additional: legacy bare-integer (dead) -> false ==="
 echo "999999" > "$tmpdir/legacy_dead.pid"
 assert_false "legacy bare-integer (dead PID) returns false" worker_session_active "$tmpdir/legacy_dead.pid"
 
+# --- AC-5: active sentinel (matching) -> bootstrap blocks (exit 2) ---
+echo "=== AC-5: active sentinel (matching) -> bootstrap blocks (exit 2) ==="
+ac5_home="$(mktemp -d)"
+printf "pid=%s\nstart=%s\nkind=claude-worker\n" "$my_pid" "$my_start" > "$ac5_home/running.pid"
+# Run bootstrap WITHOUT --force; should exit 2 (blocked)
+set +e
+CLAUDE_WORKER_HOME="$ac5_home" bash "$SCRIPT_DIR/../bootstrap.sh" --apply --base-url http://x --auth-token tok --model m >/dev/null 2>&1
+ac5_exit=$?
+set -e
+ac5_sentinel_exists=0
+[[ -f "$ac5_home/running.pid" ]] && ac5_sentinel_exists=1
+if [[ $ac5_exit -eq 2 && $ac5_sentinel_exists -eq 1 ]]; then
+  echo "  PASS: bootstrap blocked (exit 2) and sentinel preserved"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: expected exit 2 + sentinel intact; got exit=$ac5_exit sentinel_exists=$ac5_sentinel_exists"
+  fail=$((fail + 1))
+fi
+rm -rf "$ac5_home"
+
 # --- Additional: worker_sentinel_remove idempotent ---
 echo "=== Additional: worker_sentinel_remove idempotent ==="
 echo "test" > "$tmpdir/remove_test.pid"

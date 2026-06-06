@@ -80,6 +80,34 @@ try {
   Assert-False "legacy bare-integer (dead PID) returns false" (Test-WorkerSessionActive -PidFile $sentinelFile)
 
   Write-Host ""
+  Write-Host "=== AC-5: active sentinel (matching) -> bootstrap blocks (exit 2) ==="
+  $ac5Home = Join-Path ([System.IO.Path]::GetTempPath()) "worker-ac5-test-$(Get-Random)"
+  New-Item -ItemType Directory -Path $ac5Home -Force | Out-Null
+  try {
+    $sentinelFile = Join-Path $ac5Home "running.pid"
+    $currentProc = Get-Process -Id $PID
+    $realStart = $currentProc.StartTime.ToString("o")
+    Set-Content -LiteralPath $sentinelFile -Value "pid=$PID`nstart=$realStart`nkind=claude-worker" -Encoding ascii
+    # Run bootstrap WITHOUT -Force; should exit 2 (blocked)
+    # Use Start-Process to avoid PowerShell propagating Write-Error as terminating
+    $env:CLAUDE_WORKER_HOME = $ac5Home
+    $bsPath = Join-Path $TestDir "..\bootstrap.ps1"
+    $proc = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $bsPath, "-Apply", "-BaseUrl", "http://x", "-AuthToken", "tok", "-Model", "m") -NoNewWindow -Wait -PassThru -RedirectStandardError "$TempDir\ac5_stderr.txt" -RedirectStandardOutput "$TempDir\ac5_stdout.txt"
+    $exitCode = $proc.ExitCode
+    $sentinelStillExists = Test-Path -LiteralPath $sentinelFile
+    if ($exitCode -eq 2 -and $sentinelStillExists) {
+      Write-Host "  PASS: bootstrap blocked (exit 2) and sentinel preserved" -ForegroundColor Green
+      $script:passed++
+    } else {
+      Write-Host "  FAIL: expected exit 2 + sentinel intact; got exit=$exitCode sentinelExists=$sentinelStillExists" -ForegroundColor Red
+      $script:failed++
+    }
+    Remove-Item env:CLAUDE_WORKER_HOME -ErrorAction SilentlyContinue
+  } finally {
+    Remove-Item -Recurse -Force $ac5Home -ErrorAction SilentlyContinue
+  }
+
+  Write-Host ""
   Write-Host "=== Additional: Remove-WorkerSentinel idempotent ==="
   $sentinelFile = Join-Path $TempDir "remove-test.pid"
   Set-Content -LiteralPath $sentinelFile -Value "test" -Encoding ascii

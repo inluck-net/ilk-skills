@@ -369,7 +369,9 @@ if (Test-WorkerSessionActive -PidFile $pidFile) {
       else { $sentinelPid = [int]$content }
     } catch {}
     $label = if ($sentinelPid) { "PID $sentinelPid" } else { "(unknown PID)" }
-    Write-Error "an active worker process ($label) appears to be using this worker home. Overwriting the provider settings now could break the running session. Pass -Force to overwrite anyway, or stop the worker first."
+    Write-Host "ERROR: an active worker process ($label) appears to be using this worker home." -ForegroundColor Red
+    Write-Host "Overwriting the provider settings now could break the running session." -ForegroundColor Red
+    Write-Host "Pass -Force to overwrite anyway, or stop the worker first." -ForegroundColor Red
     exit 2
   }
   $sentinelPid = $null
