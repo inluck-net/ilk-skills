@@ -14,7 +14,7 @@
                idle: budget ceiling.
 #>
 param(
-  [ValidateSet('scan', 'select', 'dispatch', 'blacklist', 'unresolved', 'all')]
+  [ValidateSet('scan', 'select', 'dispatch', 'promote', 'blacklist', 'unresolved', 'all')]
   [string]$Subcommand = 'all'
 )
 
@@ -587,6 +587,198 @@ function Run-Blacklist {
   Cleanup
 }
 
+function Setup-PromotableProject {
+  # Project with M1 shipped + M2 queued (promotable) + source repo path resolved
+  Cleanup
+  $projectsDir = Join-Path $FakeData 'projects'
+  New-Item -ItemType Directory -Path $projectsDir -Force | Out-Null
+
+  $projP = Join-Path $projectsDir 'proj-promote'
+  $plansP = Join-Path $projP 'plans'
+  New-Item -ItemType Directory -Path $plansP -Force | Out-Null
+
+  @'
+---
+master_plan: 2026-06-06-m1-done
+batch_date: 2026-06-06
+status: shipped
+---
+
+# MASTER plan: M1 done
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-06-m1-sub](./2026-06-06-m1-sub.md) | 2 | shipped |
+'@ | Set-Content -Path (Join-Path $plansP 'MASTER-2026-06-06-m1-done.md') -Encoding utf8
+
+  @'
+---
+plan: m1-sub
+status: shipped
+current_step: 2
+estimated_steps: 2
+last_updated: 2026-06-05
+---
+
+# Sub-plan: M1 sub
+
+All steps complete.
+'@ | Set-Content -Path (Join-Path $plansP '2026-06-06-m1-sub.md') -Encoding utf8
+
+  @'
+---
+master_plan: 2026-06-06-m2-queued
+batch_date: 2026-06-06
+status: queued
+priority: 1
+created: 2026-06-06T10:00:00+08:00
+---
+
+# MASTER plan: M2 queued
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-06-m2-sub](./2026-06-06-m2-sub.md) | 3 | pending |
+'@ | Set-Content -Path (Join-Path $plansP 'MASTER-2026-06-06-m2-queued.md') -Encoding utf8
+
+  @'
+---
+plan: m2-sub
+status: pending
+current_step: 0
+estimated_steps: 3
+last_updated: 2026-06-06
+---
+
+# Sub-plan: M2 sub
+
+Waiting for promotion.
+'@ | Set-Content -Path (Join-Path $plansP '2026-06-06-m2-sub.md') -Encoding utf8
+
+  # last-launch.json so repo_path resolves
+  $llDir = Join-Path $projP 'runtime\launcher'
+  New-Item -ItemType Directory -Path $llDir -Force | Out-Null
+  (@{ project_path = (Join-Path $Scratch 'repos\proj-promote'); worker_engine = 'claude-worker' } | ConvertTo-Json -Compress) |
+    Set-Content -Path (Join-Path $llDir 'last-launch.json') -Encoding utf8
+}
+
+function Setup-ActiveMasterNoPromote {
+  # Project with an active master that has pending sub-plans (no promotion needed)
+  Cleanup
+  $projectsDir = Join-Path $FakeData 'projects'
+  New-Item -ItemType Directory -Path $projectsDir -Force | Out-Null
+
+  $projA = Join-Path $projectsDir 'proj-active'
+  $plansA = Join-Path $projA 'plans'
+  New-Item -ItemType Directory -Path $plansA -Force | Out-Null
+
+  @'
+---
+master_plan: 2026-06-06-active-batch
+batch_date: 2026-06-06
+status: active
+---
+
+# MASTER plan: Active batch
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-06-active-sub](./2026-06-06-active-sub.md) | 4 | pending |
+'@ | Set-Content -Path (Join-Path $plansA 'MASTER-2026-06-06-active-batch.md') -Encoding utf8
+
+  @'
+---
+plan: active-sub
+status: pending
+current_step: 0
+estimated_steps: 4
+last_updated: 2026-06-06
+---
+
+# Sub-plan: Active sub
+
+Waiting to be executed.
+'@ | Set-Content -Path (Join-Path $plansA '2026-06-06-active-sub.md') -Encoding utf8
+
+  # last-launch.json so repo_path resolves
+  $llDir = Join-Path $projA 'runtime\launcher'
+  New-Item -ItemType Directory -Path $llDir -Force | Out-Null
+  (@{ project_path = (Join-Path $Scratch 'repos\proj-active'); worker_engine = 'claude-worker' } | ConvertTo-Json -Compress) |
+    Set-Content -Path (Join-Path $llDir 'last-launch.json') -Encoding utf8
+}
+
+function Run-Promote {
+  Write-Host '=== test_scheduler.ps1 promote ==='
+
+  # Test 1: M1 shipped + M2 queued → dry-run reports promote(M2) then dispatch (AC-1)
+  Setup-PromotableProject
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+  $lines = @($outputStr -split "`n" | Where-Object { $_.Trim() })
+
+  # First line must be promote decision
+  $promoteLine = $lines[0].Trim() | ConvertFrom-Json
+  if ($promoteLine.decision -ne 'promote') {
+    throw "Expected first decision 'promote', got '$($promoteLine.decision)'. Output: $outputStr"
+  }
+  if ($promoteLine.key -ne 'proj-promote') {
+    throw "Expected promote key 'proj-promote', got '$($promoteLine.key)'. Output: $outputStr"
+  }
+  if ($promoteLine.promoted -notlike '*m2-queued*') {
+    throw "Expected promoted to contain 'm2-queued', got '$($promoteLine.promoted)'. Output: $outputStr"
+  }
+
+  # Second line must be dispatch decision
+  $dispatchLine = $lines[1].Trim() | ConvertFrom-Json
+  if ($dispatchLine.decision -ne 'dispatch') {
+    throw "Expected second decision 'dispatch', got '$($dispatchLine.decision)'. Output: $outputStr"
+  }
+  if ($dispatchLine.key -ne 'proj-promote') {
+    throw "Expected dispatch key 'proj-promote', got '$($dispatchLine.key)'. Output: $outputStr"
+  }
+
+  Write-Host 'PASS: promote(M2) then dispatch (AC-1)'
+
+  # Test 2: active master with pending sub-plans → dispatch with NO promote (AC-2)
+  Setup-ActiveMasterNoPromote
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+  $json = $outputStr | ConvertFrom-Json
+  if ($json.decision -ne 'dispatch') {
+    throw "Expected 'dispatch' (no promote needed), got '$($json.decision)'. Output: $outputStr"
+  }
+  if ($json.key -ne 'proj-active') {
+    throw "Expected key 'proj-active', got '$($json.key)'. Output: $outputStr"
+  }
+
+  Write-Host 'PASS: dispatch with NO promote when active master exists (AC-2)'
+  Cleanup
+}
+
 function Run-Unresolved {
   Write-Host '=== test_scheduler.ps1 unresolved ==='
   Cleanup
@@ -660,10 +852,11 @@ No last-launch.json, so repo_path cannot resolve.
 # --- main ---------------------------------------------------------------------
 
 switch ($Subcommand) {
-  'scan'      { Run-Scan }
-  'select'    { Run-Select }
-  'dispatch'  { Run-Dispatch }
+  'scan'       { Run-Scan }
+  'select'     { Run-Select }
+  'dispatch'   { Run-Dispatch }
+  'promote'    { Run-Promote }
   'blacklist'  { Run-Blacklist }
   'unresolved' { Run-Unresolved }
-  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Blacklist; Run-Unresolved; Write-Host 'ALL PASS' }
+  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Promote; Run-Blacklist; Run-Unresolved; Write-Host 'ALL PASS' }
 }

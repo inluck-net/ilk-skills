@@ -4,8 +4,9 @@ set -euo pipefail
 # =============================================================================
 # Single cross-project scheduler (V1 "global watchdog")
 # =============================================================================
-# Scans all projects for queued sub-plans, selects the FIFO-first project
-# whose sentinel is free, and dispatches it via launch.sh -Engine claude-worker.
+# Scans all projects for runnable masters, selects the FIFO-first project
+# whose sentinel is free, promotes a queued master if needed, and
+# dispatches it via launch.sh -Engine claude-worker.
 #
 # Pool cap = 1 (V1): if ANY project is busy, no dispatch is planned.
 #
@@ -21,6 +22,7 @@ _SKILL_ROOT="$(ilk_skill_root)"
 # --- defaults ----------------------------------------------------------------
 
 SCAN_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/scheduler_scan.py"
+PROMOTE_SCRIPT="${_SKILL_ROOT}/ilk-loop/scripts/promote_next_master.py"
 LAUNCH_SCRIPT="${_SKILL_ROOT}/ilk-launcher/scripts/launch.sh"
 
 # Resolve python command (python3 preferred, python fallback for Windows).
@@ -231,14 +233,16 @@ run_scheduler() {
     local selected_key=""
     local selected_path=""
     local selected_repo=""
+    local selected_has_active=""
     local now_epoch
     now_epoch=$(date +%s)
 
     # Parse the JSON array and iterate
-    local keys paths repo_paths
+    local keys paths repo_paths has_actives
     mapfile -t keys < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p['key']) for p in d]" <<<"$scan_output" | tr -d '\r')
     mapfile -t paths < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p['path']) for p in d]" <<<"$scan_output" | tr -d '\r')
     mapfile -t repo_paths < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p.get('repo_path') or '') for p in d]" <<<"$scan_output" | tr -d '\r')
+    mapfile -t has_actives < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(str(p.get('has_active_master', True)).lower()) for p in d]" <<<"$scan_output" | tr -d '\r')
 
     for i in "${!keys[@]}"; do
       local key="${keys[$i]}"
@@ -284,6 +288,7 @@ run_scheduler() {
       selected_key="$key"
       selected_path="$path"
       selected_repo="$repo"
+      selected_has_active="${has_actives[$i]}"
       break
     done
 
@@ -295,6 +300,40 @@ run_scheduler() {
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] idle: no dispatchable project (all busy/blacklisted/unresolved). Polling in ${POLL_MIN} min."
       sleep $((POLL_MIN * 60))
       continue
+    fi
+
+    # --- promote-before-dispatch (multi-master queue advancement) ---
+    # If the project has no active master but HAS a promotable queued
+    # master, promote it so the dispatched loop has real work.
+    if [[ "$selected_has_active" == "false" ]]; then
+      local plans_dir="${selected_path}/plans"
+      if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+        # Dry-run: call promote_next_master.py --dry-run to get the plan,
+        # then emit a machine-assertable promote decision.
+        local promo_json=""
+        promo_json=$($PYTHON "$PROMOTE_SCRIPT" --project "$selected_path" --plans-dir "$plans_dir" --dry-run 2>/dev/null) || true
+        if [[ -n "$promo_json" ]]; then
+          local promoted_name
+          promoted_name=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('promoted',''))" <<<"$promo_json" | tr -d '\r')
+          if [[ -n "$promoted_name" ]]; then
+            local demoted_name
+            demoted_name=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('demoted','') or '')" <<<"$promo_json" | tr -d '\r')
+            echo "{\"decision\":\"promote\",\"key\":\"$selected_key\",\"promoted\":\"$promoted_name\",\"demoted\":\"$demoted_name\"}"
+          fi
+        fi
+      else
+        # Real mode: perform the promotion.
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] promoting queued master for $selected_key..."
+        local promo_json=""
+        promo_json=$($PYTHON "$PROMOTE_SCRIPT" --project "$selected_path" --plans-dir "$plans_dir" 2>/dev/null) || true
+        if [[ -n "$promo_json" ]]; then
+          local promoted_name
+          promoted_name=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('promoted',''))" <<<"$promo_json" | tr -d '\r')
+          if [[ -n "$promoted_name" ]]; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] promoted $promoted_name"
+          fi
+        fi
+      fi
     fi
 
     # --- dispatch the selected project ---

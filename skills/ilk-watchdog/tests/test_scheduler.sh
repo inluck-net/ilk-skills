@@ -538,10 +538,170 @@ EOF
   cleanup
 }
 
+setup_promotable_project() {
+  # Project with M1 shipped + M2 queued (promotable) + source repo path resolved
+  cleanup
+  mkdir -p "$FAKE_DATA/projects"
+
+  local proj_p="$FAKE_DATA/projects/proj-promote"
+  mkdir -p "$proj_p/plans"
+  cat > "$proj_p/plans/MASTER-2026-06-06-m1-done.md" <<'EOF'
+---
+master_plan: 2026-06-06-m1-done
+batch_date: 2026-06-06
+status: shipped
+---
+
+# MASTER plan: M1 done
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-06-m1-sub](./2026-06-06-m1-sub.md) | 2 | shipped |
+EOF
+  cat > "$proj_p/plans/2026-06-06-m1-sub.md" <<'EOF'
+---
+plan: m1-sub
+status: shipped
+current_step: 2
+estimated_steps: 2
+last_updated: 2026-06-05
+---
+
+# Sub-plan: M1 sub
+
+All steps complete.
+EOF
+
+  cat > "$proj_p/plans/MASTER-2026-06-06-m2-queued.md" <<'EOF'
+---
+master_plan: 2026-06-06-m2-queued
+batch_date: 2026-06-06
+status: queued
+priority: 1
+created: 2026-06-06T10:00:00+08:00
+---
+
+# MASTER plan: M2 queued
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-06-m2-sub](./2026-06-06-m2-sub.md) | 3 | pending |
+EOF
+  cat > "$proj_p/plans/2026-06-06-m2-sub.md" <<'EOF'
+---
+plan: m2-sub
+status: pending
+current_step: 0
+estimated_steps: 3
+last_updated: 2026-06-06
+---
+
+# Sub-plan: M2 sub
+
+Waiting for promotion.
+EOF
+
+  # last-launch.json so repo_path resolves
+  mkdir -p "$proj_p/runtime/launcher"
+  printf '{"project_path":"%s","worker_engine":"claude-worker"}\n' "$SCRATCH/repos/proj-promote" > "$proj_p/runtime/launcher/last-launch.json"
+}
+
+setup_active_master_no_promote() {
+  # Project with an active master that has pending sub-plans (no promotion needed)
+  cleanup
+  mkdir -p "$FAKE_DATA/projects"
+
+  local proj_a="$FAKE_DATA/projects/proj-active"
+  mkdir -p "$proj_a/plans"
+  cat > "$proj_a/plans/MASTER-2026-06-06-active-batch.md" <<'EOF'
+---
+master_plan: 2026-06-06-active-batch
+batch_date: 2026-06-06
+status: active
+---
+
+# MASTER plan: Active batch
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-06-active-sub](./2026-06-06-active-sub.md) | 4 | pending |
+EOF
+  cat > "$proj_a/plans/2026-06-06-active-sub.md" <<'EOF'
+---
+plan: active-sub
+status: pending
+current_step: 0
+estimated_steps: 4
+last_updated: 2026-06-06
+---
+
+# Sub-plan: Active sub
+
+Waiting to be executed.
+EOF
+
+  # last-launch.json so repo_path resolves
+  mkdir -p "$proj_a/runtime/launcher"
+  printf '{"project_path":"%s","worker_engine":"claude-worker"}\n' "$SCRATCH/repos/proj-active" > "$proj_a/runtime/launcher/last-launch.json"
+}
+
+run_promote() {
+  echo "=== test_scheduler.sh promote ==="
+
+  # Test 1: M1 shipped + M2 queued → dry-run reports promote(M2) then dispatch (AC-1)
+  setup_promotable_project
+
+  local output
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  local first_line second_line
+  first_line=$(echo "$output" | head -1)
+  second_line=$(echo "$output" | sed -n '2p')
+
+  local decision key promoted
+  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
+  key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
+  promoted=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['promoted'])" <<<"$first_line")
+  [[ "$decision" == "promote" ]] || die "expected first decision 'promote', got '$decision'. Output: $output"
+  [[ "$key" == "proj-promote" ]] || die "expected promote key 'proj-promote', got '$key'. Output: $output"
+  [[ "$promoted" == *"m2-queued"* ]] || die "expected promoted to contain 'm2-queued', got '$promoted'. Output: $output"
+
+  local dispatch_decision dispatch_key
+  dispatch_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$second_line")
+  dispatch_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$second_line")
+  [[ "$dispatch_decision" == "dispatch" ]] || die "expected second decision 'dispatch', got '$dispatch_decision'. Output: $output"
+  [[ "$dispatch_key" == "proj-promote" ]] || die "expected dispatch key 'proj-promote', got '$dispatch_key'. Output: $output"
+
+  echo "PASS: promote(M2) then dispatch (AC-1)"
+
+  # Test 2: active master with pending sub-plans → dispatch with NO promote (AC-2)
+  setup_active_master_no_promote
+
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  local single_decision single_key
+  single_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  single_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
+  [[ "$single_decision" == "dispatch" ]] || die "expected 'dispatch' (no promote needed), got '$single_decision'. Output: $output"
+  [[ "$single_key" == "proj-active" ]] || die "expected key 'proj-active', got '$single_key'. Output: $output"
+
+  echo "PASS: dispatch with NO promote when active master exists (AC-2)"
+  cleanup
+}
+
 run_all() {
   run_scan
   run_select
   run_dispatch
+  run_promote
   run_blacklist
   run_unresolved
   echo "ALL PASS"
@@ -557,6 +717,9 @@ case "${1:-all}" in
   dispatch)
     run_dispatch
     ;;
+  promote)
+    run_promote
+    ;;
   blacklist)
     run_blacklist
     ;;
@@ -567,7 +730,7 @@ case "${1:-all}" in
     run_all
     ;;
   *)
-    echo "Usage: $0 {scan|select|dispatch|blacklist|unresolved|all}" >&2
+    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|all}" >&2
     exit 1
     ;;
 esac

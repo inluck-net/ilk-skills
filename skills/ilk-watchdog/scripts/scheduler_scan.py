@@ -266,7 +266,8 @@ def scan_projects() -> list[dict]:
             continue
 
         # Active master wins for FIFO timestamp; else next-to-promote queued.
-        if active_ts:
+        has_active = bool(active_ts)
+        if has_active:
             oldest = min(active_ts)
         else:
             oldest = min(queued_ts)
@@ -276,6 +277,7 @@ def scan_projects() -> list[dict]:
             "path": str(project_dir),
             "repo_path": resolve_repo_path(project_dir, project_dir.name),
             "oldest_queued_ts": oldest.isoformat(),
+            "has_active_master": has_active,
         })
 
     # FIFO: oldest first; ties broken by project key for determinism

@@ -100,14 +100,23 @@ def _created(fm: dict) -> str:
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1].strip())
     ap.add_argument("--project", type=Path, default=Path.cwd())
+    ap.add_argument("--plans-dir", type=Path, default=None,
+                    help="explicit plans directory (skips auto-resolution)")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the plan but do not modify any file")
     args = ap.parse_args(argv)
 
-    plans_dir, source = _resolve_plans_dir(args.project)
-    if not plans_dir:
-        print(json.dumps({"error": "no plans dir resolved", "project": str(args.project)}))
-        return 2
+    if args.plans_dir:
+        plans_dir = Path(args.plans_dir)
+        source = "explicit"
+        if not plans_dir.is_dir():
+            print(json.dumps({"error": "explicit plans dir not found", "plans_dir": str(plans_dir)}))
+            return 2
+    else:
+        plans_dir, source = _resolve_plans_dir(args.project)
+        if not plans_dir:
+            print(json.dumps({"error": "no plans dir resolved", "project": str(args.project)}))
+            return 2
 
     masters = sorted(plans_dir.glob("MASTER-*.md"))
     parsed: list[tuple[Path, dict]] = []

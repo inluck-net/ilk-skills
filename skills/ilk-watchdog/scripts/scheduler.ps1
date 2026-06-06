@@ -3,8 +3,9 @@
   Single cross-project scheduler (V1 "global watchdog").
 
 .DESCRIPTION
-  Scans all projects for queued sub-plans, selects the FIFO-first project
-  whose sentinel is free, and dispatches it via launch.ps1 -Engine claude-worker.
+  Scans all projects for runnable masters, selects the FIFO-first project
+  whose sentinel is free, promotes a queued master if needed, and
+  dispatches it via launch.ps1 -Engine claude-worker.
 
   Pool cap = 1 (V1): if ANY project is busy, no dispatch is planned.
 
@@ -47,8 +48,9 @@ $ErrorActionPreference = 'Stop'
 $SkillRoot = Get-IlkSkillRoot
 
 # --- constants ---------------------------------------------------------------
-$ScanScript  = Join-Path $PSScriptRoot 'scheduler_scan.py'
-$LaunchScript = Join-Path $SkillRoot 'ilk-launcher\scripts\launch.ps1'
+$ScanScript       = Join-Path $PSScriptRoot 'scheduler_scan.py'
+$PromoteScript    = Join-Path $SkillRoot 'ilk-loop\scripts\promote_next_master.py'
+$LaunchScript     = Join-Path $SkillRoot 'ilk-launcher\scripts\launch.ps1'
 
 # --- helpers -----------------------------------------------------------------
 
@@ -240,9 +242,47 @@ function Run-Scheduler {
       continue
     }
 
+    # --- promote-before-dispatch (multi-master queue advancement) ---
+    # If the project has no active master but HAS a promotable queued
+    # master, promote it so the dispatched loop has real work.
+    $key = $selected.key
+    $dataPath = $selected.path
+
+    if (-not $selected.has_active_master) {
+      $plansDir = Join-Path $dataPath 'plans'
+      if ($DryRun -and $Once) {
+        # Dry-run: call promote_next_master.py --dry-run to get the plan,
+        # then emit a machine-assertable promote decision.
+        try {
+          $promoJson = & python $PromoteScript --project $dataPath --plans-dir $plansDir --dry-run 2>$null
+          if ($LASTEXITCODE -eq 0 -and $promoJson) {
+            $promo = ($promoJson | Out-String).Trim() | ConvertFrom-Json
+            if ($promo.promoted) {
+              @{ decision = 'promote'; key = $key; promoted = $promo.promoted; demoted = $promo.demoted } | ConvertTo-Json -Compress
+            }
+          }
+        } catch {
+          # promote script failed — proceed to dispatch anyway
+        }
+      } else {
+        # Real mode: perform the promotion.
+        Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] promoting queued master for $key..."
+        try {
+          $promoJson = & python $PromoteScript --project $dataPath --plans-dir $plansDir 2>$null
+          if ($LASTEXITCODE -eq 0 -and $promoJson) {
+            $promo = ($promoJson | Out-String).Trim() | ConvertFrom-Json
+            if ($promo.promoted) {
+              Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] promoted $($promo.promoted) (demoted $($promo.demoted))"
+            }
+          }
+        } catch {
+          Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] promotion failed for $key`: $_"
+        }
+      }
+    }
+
     # --- dispatch the selected project ---
     # Dispatch into the SOURCE repo (repo_path), NOT the ~/.ilk-data data dir.
-    $key = $selected.key
     $repo = $selected.repo_path
 
     if ($DryRun -and $Once) {
