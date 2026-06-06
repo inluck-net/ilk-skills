@@ -96,6 +96,128 @@ last_updated: 2026-06-06
 
 Waiting to be executed.
 EOF
+
+  # Project C: M1 shipped + M2 queued(pending) — MUST be listed (promotable)
+  local proj_c="$FAKE_DATA/projects/proj-c"
+  mkdir -p "$proj_c/plans"
+  cat > "$proj_c/plans/MASTER-2026-06-06-multi-done.md" <<'EOF'
+---
+master_plan: 2026-06-06-multi-done
+batch_date: 2026-06-06
+status: shipped
+---
+
+# MASTER plan: Multi done
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-06-multi-done-sub](./2026-06-06-multi-done-sub.md) | 2 | shipped |
+EOF
+  cat > "$proj_c/plans/2026-06-06-multi-done-sub.md" <<'EOF'
+---
+plan: multi-done-sub
+status: shipped
+current_step: 2
+estimated_steps: 2
+last_updated: 2026-06-05
+---
+
+# Sub-plan: Multi done sub
+
+All steps complete.
+EOF
+
+  cat > "$proj_c/plans/MASTER-2026-06-06-multi-queued.md" <<'EOF'
+---
+master_plan: 2026-06-06-multi-queued
+batch_date: 2026-06-06
+status: queued
+---
+
+# MASTER plan: Multi queued
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-06-multi-queued-sub](./2026-06-06-multi-queued-sub.md) | 3 | pending |
+EOF
+  cat > "$proj_c/plans/2026-06-06-multi-queued-sub.md" <<'EOF'
+---
+plan: multi-queued-sub
+status: pending
+current_step: 0
+estimated_steps: 3
+last_updated: 2026-06-06
+---
+
+# Sub-plan: Multi queued sub
+
+Waiting for promotion.
+EOF
+
+  # Project D: all masters shipped — MUST be excluded
+  local proj_d="$FAKE_DATA/projects/proj-d"
+  mkdir -p "$proj_d/plans"
+  cat > "$proj_d/plans/MASTER-2026-06-06-all-shipped-1.md" <<'EOF'
+---
+master_plan: 2026-06-06-all-shipped-1
+batch_date: 2026-06-06
+status: shipped
+---
+
+# MASTER plan: All shipped 1
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-06-shipped-sub-1](./2026-06-06-shipped-sub-1.md) | 2 | shipped |
+EOF
+  cat > "$proj_d/plans/2026-06-06-shipped-sub-1.md" <<'EOF'
+---
+plan: shipped-sub-1
+status: shipped
+current_step: 2
+estimated_steps: 2
+last_updated: 2026-06-04
+---
+
+# Sub-plan: Shipped sub 1
+
+All steps complete.
+EOF
+
+  cat > "$proj_d/plans/MASTER-2026-06-06-all-shipped-2.md" <<'EOF'
+---
+master_plan: 2026-06-06-all-shipped-2
+batch_date: 2026-06-06
+status: shipped
+---
+
+# MASTER plan: All shipped 2
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-06-shipped-sub-2](./2026-06-06-shipped-sub-2.md) | 1 | shipped |
+EOF
+  cat > "$proj_d/plans/2026-06-06-shipped-sub-2.md" <<'EOF'
+---
+plan: shipped-sub-2
+status: shipped
+current_step: 1
+estimated_steps: 1
+last_updated: 2026-06-04
+---
+
+# Sub-plan: Shipped sub 2
+
+All steps complete.
+EOF
 }
 
 # --- subcommands --------------------------------------------------------------
@@ -108,22 +230,30 @@ run_scan() {
   local output
   output=$(ILK_DATA_HOME="$FAKE_DATA" python "$SCAN_SCRIPT" 2>&1) || die "scheduler_scan.py exited non-zero: $output"
 
-  # Assert: exactly one project returned
+  # Assert: exactly 2 projects returned (proj-b active, proj-c promotable)
+  # proj-a (all shipped) and proj-d (all masters shipped) are excluded.
   local count
   count=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(len(d))" <<<"$output")
-  [[ "$count" == "1" ]] || die "expected 1 project, got $count. Output: $output"
+  [[ "$count" == "2" ]] || die "expected 2 projects, got $count. Output: $output"
 
-  # Assert: it is proj-b
-  local key
-  key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[0]['key'])" <<<"$output")
-  [[ "$key" == "proj-b" ]] || die "expected key 'proj-b', got '$key'. Output: $output"
+  # Assert: first is proj-b (active master, oldest_queued_ts from active)
+  local key0
+  key0=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[0]['key'])" <<<"$output")
+  [[ "$key0" == "proj-b" ]] || die "expected first key 'proj-b', got '$key0'. Output: $output"
 
-  # Assert: oldest_queued_ts matches 2026-06-06
-  local ts
-  ts=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[0]['oldest_queued_ts'])" <<<"$output")
-  [[ "$ts" == "2026-06-06"* ]] || die "expected ts starting with '2026-06-06', got '$ts'. Output: $output"
+  # Assert: second is proj-c (queued master only, promotable)
+  local key1
+  key1=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[1]['key'])" <<<"$output")
+  [[ "$key1" == "proj-c" ]] || die "expected second key 'proj-c', got '$key1'. Output: $output"
 
-  echo "PASS: scan subcommand"
+  # Assert: oldest_queued_ts starts with 2026-06-06 for both
+  local ts0 ts1
+  ts0=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[0]['oldest_queued_ts'])" <<<"$output")
+  ts1=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[1]['oldest_queued_ts'])" <<<"$output")
+  [[ "$ts0" == "2026-06-06"* ]] || die "expected ts0 starting with '2026-06-06', got '$ts0'. Output: $output"
+  [[ "$ts1" == "2026-06-06"* ]] || die "expected ts1 starting with '2026-06-06', got '$ts1'. Output: $output"
+
+  echo "PASS: scan subcommand (runnable-master semantics)"
   cleanup
 }
 

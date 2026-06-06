@@ -108,6 +108,136 @@ last_updated: 2026-06-06
 
 Waiting to be executed.
 '@ | Set-Content -Path (Join-Path $plansB '2026-06-06-queued-slug.md') -Encoding utf8
+
+  # --- Project C: M1 shipped + M2 queued(pending) — MUST be listed (promotable) ---
+  $projC = Join-Path $projectsDir 'proj-c'
+  $plansC = Join-Path $projC 'plans'
+  New-Item -ItemType Directory -Path $plansC -Force | Out-Null
+
+  @'
+---
+master_plan: 2026-06-06-multi-done
+batch_date: 2026-06-06
+status: shipped
+---
+
+# MASTER plan: Multi done
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-06-multi-done-sub](./2026-06-06-multi-done-sub.md) | 2 | shipped |
+'@ | Set-Content -Path (Join-Path $plansC 'MASTER-2026-06-06-multi-done.md') -Encoding utf8
+
+  @'
+---
+plan: multi-done-sub
+status: shipped
+current_step: 2
+estimated_steps: 2
+last_updated: 2026-06-05
+---
+
+# Sub-plan: Multi done sub
+
+All steps complete.
+'@ | Set-Content -Path (Join-Path $plansC '2026-06-06-multi-done-sub.md') -Encoding utf8
+
+  @'
+---
+master_plan: 2026-06-06-multi-queued
+batch_date: 2026-06-06
+status: queued
+---
+
+# MASTER plan: Multi queued
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-06-multi-queued-sub](./2026-06-06-multi-queued-sub.md) | 3 | pending |
+'@ | Set-Content -Path (Join-Path $plansC 'MASTER-2026-06-06-multi-queued.md') -Encoding utf8
+
+  @'
+---
+plan: multi-queued-sub
+status: pending
+current_step: 0
+estimated_steps: 3
+last_updated: 2026-06-06
+---
+
+# Sub-plan: Multi queued sub
+
+Waiting for promotion.
+'@ | Set-Content -Path (Join-Path $plansC '2026-06-06-multi-queued-sub.md') -Encoding utf8
+
+  # --- Project D: all masters shipped — MUST be excluded ---
+  $projD = Join-Path $projectsDir 'proj-d'
+  $plansD = Join-Path $projD 'plans'
+  New-Item -ItemType Directory -Path $plansD -Force | Out-Null
+
+  @'
+---
+master_plan: 2026-06-06-all-shipped-1
+batch_date: 2026-06-06
+status: shipped
+---
+
+# MASTER plan: All shipped 1
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-06-shipped-sub-1](./2026-06-06-shipped-sub-1.md) | 2 | shipped |
+'@ | Set-Content -Path (Join-Path $plansD 'MASTER-2026-06-06-all-shipped-1.md') -Encoding utf8
+
+  @'
+---
+plan: shipped-sub-1
+status: shipped
+current_step: 2
+estimated_steps: 2
+last_updated: 2026-06-04
+---
+
+# Sub-plan: Shipped sub 1
+
+All steps complete.
+'@ | Set-Content -Path (Join-Path $plansD '2026-06-06-shipped-sub-1.md') -Encoding utf8
+
+  @'
+---
+master_plan: 2026-06-06-all-shipped-2
+batch_date: 2026-06-06
+status: shipped
+---
+
+# MASTER plan: All shipped 2
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-06-shipped-sub-2](./2026-06-06-shipped-sub-2.md) | 1 | shipped |
+'@ | Set-Content -Path (Join-Path $plansD 'MASTER-2026-06-06-all-shipped-2.md') -Encoding utf8
+
+  @'
+---
+plan: shipped-sub-2
+status: shipped
+current_step: 1
+estimated_steps: 1
+last_updated: 2026-06-04
+---
+
+# Sub-plan: Shipped sub 2
+
+All steps complete.
+'@ | Set-Content -Path (Join-Path $plansD '2026-06-06-shipped-sub-2.md') -Encoding utf8
 }
 
 function Run-Scan {
@@ -127,25 +257,36 @@ function Run-Scan {
 
   $outputStr = ($output | Out-String).Trim()
 
-  # Assert: exactly one project returned
+  # Assert: exactly 2 projects returned (proj-b active, proj-c promotable)
+  # proj-a (all shipped) and proj-d (all masters shipped) are excluded.
   $count = $outputStr | & python -c "import json,sys; d=json.loads(sys.stdin.read()); print(len(d))"
-  if ($count -ne '1') {
-    throw "Expected 1 project, got $count. Output: $outputStr"
+  if ($count -ne '2') {
+    throw "Expected 2 projects, got $count. Output: $outputStr"
   }
 
-  # Assert: it is proj-b
-  $key = $outputStr | & python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[0]['key'])"
-  if ($key -ne 'proj-b') {
-    throw "Expected key 'proj-b', got '$key'. Output: $outputStr"
+  # Assert: first is proj-b (active master)
+  $key0 = $outputStr | & python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[0]['key'])"
+  if ($key0 -ne 'proj-b') {
+    throw "Expected first key 'proj-b', got '$key0'. Output: $outputStr"
   }
 
-  # Assert: oldest_queued_ts starts with 2026-06-06
-  $ts = $outputStr | & python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[0]['oldest_queued_ts'])"
-  if (-not ($ts -like '2026-06-06*')) {
-    throw "Expected ts starting with '2026-06-06', got '$ts'. Output: $outputStr"
+  # Assert: second is proj-c (queued master only, promotable)
+  $key1 = $outputStr | & python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[1]['key'])"
+  if ($key1 -ne 'proj-c') {
+    throw "Expected second key 'proj-c', got '$key1'. Output: $outputStr"
   }
 
-  Write-Host 'PASS: scan subcommand'
+  # Assert: oldest_queued_ts starts with 2026-06-06 for both
+  $ts0 = $outputStr | & python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[0]['oldest_queued_ts'])"
+  $ts1 = $outputStr | & python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[1]['oldest_queued_ts'])"
+  if (-not ($ts0 -like '2026-06-06*')) {
+    throw "Expected ts0 starting with '2026-06-06', got '$ts0'. Output: $outputStr"
+  }
+  if (-not ($ts1 -like '2026-06-06*')) {
+    throw "Expected ts1 starting with '2026-06-06', got '$ts1'. Output: $outputStr"
+  }
+
+  Write-Host 'PASS: scan subcommand (runnable-master semantics)'
   Cleanup
 }
 

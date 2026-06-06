@@ -1,9 +1,11 @@
-"""Enumerate projects with queued sub-plans, FIFO-annotated.
+"""Enumerate projects with runnable masters, FIFO-annotated.
 
 Resolves the projects root via ``ilk_paths.ilk_data_root() / "projects"``
 (honors ``$ILK_DATA_HOME``). For each project directory, parses every
 MASTER-*.md to find sub-plan references, reads their front-matter, and
-emits a JSON array of projects that have ≥1 non-shipped sub-plan.
+emits a JSON array of projects that have a **runnable master** — an
+``active`` master with ≥1 non-shipped sub-plan, or a ``queued`` master
+(with ≥1 non-shipped sub-plan) that promotion can activate.
 
 Each entry::
 
@@ -24,7 +26,9 @@ skips it (``skip-unresolved``) rather than dispatching a wrong path.
 
 Sorted by ``oldest_queued_ts`` ascending (oldest first = FIFO).
 
-Projects where every sub-plan is ``shipped`` are excluded.
+A project is excluded only when EVERY master is ``shipped`` (no runnable
+master). A project whose only remaining master is ``queued`` is included
+(promotion can activate it).
 
 Exit code 0 always (empty list is valid — means "nothing to do").
 """
@@ -155,8 +159,40 @@ def _parse_ts(raw: str) -> datetime | None:
         return None
 
 
+def _master_has_nonshipped(master_path: Path, plans_dir: Path) -> bool:
+    """Return True if a master has ≥1 non-shipped sub-plan."""
+    try:
+        master_text = master_path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return False
+    for fname in extract_subplan_files(master_text):
+        sub_path = plans_dir / fname
+        if not sub_path.exists():
+            continue
+        try:
+            sub_text = sub_path.read_text(encoding="utf-8-sig")
+        except OSError:
+            continue
+        fm = parse_frontmatter(sub_text)
+        if fm.get("status", "pending") != "shipped":
+            return True
+    return False
+
+
 def scan_projects() -> list[dict]:
-    """Scan all projects and return those with queued work, FIFO-sorted."""
+    """Scan all projects and return those with a runnable master, FIFO-sorted.
+
+    A project has a **runnable master** if:
+    - An ``active`` master has ≥1 non-shipped sub-plan, OR
+    - A ``queued`` master (with ≥1 non-shipped sub-plan) exists that
+      promotion can activate.
+
+    Projects where every master is ``shipped`` are excluded.
+
+    ``oldest_queued_ts`` comes from the runnable master: active first
+    (oldest non-shipped sub-plan timestamp), else the next-to-promote
+    queued master.
+    """
     root = ilk_data_root() / "projects"
     if not root.is_dir():
         return []
@@ -174,8 +210,9 @@ def scan_projects() -> list[dict]:
         if not masters:
             continue
 
-        # Collect all non-shipped sub-plans with their timestamps
-        queued_times: list[datetime] = []
+        # --- pass 1: classify masters by status + runnable check ---
+        active_ts: list[datetime] = []
+        queued_ts: list[datetime] = []
 
         for master_path in masters:
             try:
@@ -183,6 +220,15 @@ def scan_projects() -> list[dict]:
             except OSError:
                 continue
 
+            fm = parse_frontmatter(master_text)
+            master_status = (fm.get("status") or "").strip()
+
+            # Only masters with non-shipped sub-plans are runnable.
+            if not _master_has_nonshipped(master_path, plans_dir):
+                continue
+
+            # Collect per-sub-plan timestamps for FIFO ordering.
+            master_sub_ts: list[datetime] = []
             for fname in extract_subplan_files(master_text):
                 sub_path = plans_dir / fname
                 if not sub_path.exists():
@@ -191,28 +237,40 @@ def scan_projects() -> list[dict]:
                     sub_text = sub_path.read_text(encoding="utf-8-sig")
                 except OSError:
                     continue
-
-                fm = parse_frontmatter(sub_text)
-                status = fm.get("status", "pending")
-
-                if status == "shipped":
+                sub_fm = parse_frontmatter(sub_text)
+                if sub_fm.get("status", "pending") == "shipped":
                     continue
-
-                # Non-shipped: record timestamp for FIFO ordering
-                ts = _parse_ts(fm.get("last_updated", ""))
+                ts = _parse_ts(sub_fm.get("last_updated", ""))
                 if ts is None:
-                    # Fallback to file mtime
                     try:
                         ts = datetime.fromtimestamp(sub_path.stat().st_mtime)
                     except OSError:
                         ts = datetime.min
-                queued_times.append(ts)
+                master_sub_ts.append(ts)
 
-        if not queued_times:
-            # All sub-plans shipped (or no sub-plans) — skip this project
+            if not master_sub_ts:
+                continue
+
+            oldest_sub = min(master_sub_ts)
+
+            if master_status == "active":
+                active_ts.append(oldest_sub)
+            elif master_status == "queued":
+                queued_ts.append(oldest_sub)
+            # Masters with other statuses (e.g. pending, paused) are not
+            # runnable by the queue model — skip them.
+
+        # --- pass 2: decide inclusion + FIFO timestamp ---
+        # A project is included iff it has a runnable master.
+        if not active_ts and not queued_ts:
             continue
 
-        oldest = min(queued_times)
+        # Active master wins for FIFO timestamp; else next-to-promote queued.
+        if active_ts:
+            oldest = min(active_ts)
+        else:
+            oldest = min(queued_ts)
+
         results.append({
             "key": project_dir.name,
             "path": str(project_dir),
