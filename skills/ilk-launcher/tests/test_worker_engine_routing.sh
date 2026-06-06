@@ -107,6 +107,49 @@ configdir_override=$(grep 'ClaudeConfigDir:' "$TMPDIR_OUT/override.txt" || true)
 assert_true "CLI override: no .claude-worker in ClaudeConfigDir" \
   bash -c 'case "'"${configdir_override}"'" in *.claude-worker*) exit 1 ;; *) exit 0 ;; esac'
 
+# --- AC-2: --worker-home override routes to custom home ---
+echo "--- AC-2: --worker-home override ---"
+
+bash "$LAUNCHER" --project-path "$TMPDIR_PROJ" --engine claude-worker --worker-home /test-slot-2 --dry-run 2>&1 | tr -d '\r' > "$TMPDIR_OUT/wh.txt" || true
+
+assert_grep "WorkerHome: ClaudeConfigDir routes to override" \
+  "$TMPDIR_OUT/wh.txt" -q 'ClaudeConfigDir:.*test-slot-2'
+
+assert_grep "WorkerHome: IlkSkillHome routes to override/skills" \
+  "$TMPDIR_OUT/wh.txt" -q 'IlkSkillHome:.*test-slot-2/skills'
+
+# --- AC-3: CLAUDE_WORKER_HOME env var routes (no flag) ---
+echo "--- AC-3: CLAUDE_WORKER_HOME env var ---"
+
+CLAUDE_WORKER_HOME=/test-env-slot bash "$LAUNCHER" --project-path "$TMPDIR_PROJ" --engine claude-worker --dry-run 2>&1 | tr -d '\r' > "$TMPDIR_OUT/envhome.txt" || true
+
+assert_grep "CLAUDE_WORKER_HOME: ClaudeConfigDir routes to env value" \
+  "$TMPDIR_OUT/envhome.txt" -q 'ClaudeConfigDir:.*test-env-slot'
+
+# AC-3 part 2: --worker-home flag overrides CLAUDE_WORKER_HOME
+echo "--- AC-3: --worker-home overrides CLAUDE_WORKER_HOME ---"
+
+CLAUDE_WORKER_HOME=/test-env-slot bash "$LAUNCHER" --project-path "$TMPDIR_PROJ" --engine claude-worker --worker-home /test-flag-slot --dry-run 2>&1 | tr -d '\r' > "$TMPDIR_OUT/flagoverenv.txt" || true
+
+assert_grep "flag beats env: ClaudeConfigDir uses flag value" \
+  "$TMPDIR_OUT/flagoverenv.txt" -q 'ClaudeConfigDir:.*test-flag-slot'
+
+# --- AC-4: no-override unchanged (default still ~/.claude-worker) ---
+echo "--- AC-4: no-override default ---"
+
+bash "$LAUNCHER" --project-path "$TMPDIR_PROJ" --engine claude-worker --dry-run 2>&1 | tr -d '\r' > "$TMPDIR_OUT/noov.txt" || true
+
+assert_grep "no override: ClaudeConfigDir is default .claude-worker" \
+  "$TMPDIR_OUT/noov.txt" -q 'ClaudeConfigDir:.*\.claude-worker'
+
+# --- AC-5: readiness reflects resolved home ---
+echo "--- AC-5: readiness reflects resolved home ---"
+
+bash "$LAUNCHER" --project-path "$TMPDIR_PROJ" --engine claude-worker --worker-home /nonexistent-slot --dry-run 2>&1 | tr -d '\r' > "$TMPDIR_OUT/missing.txt" || true
+
+assert_grep "non-bootstrapped override: WorkerHome shows MISSING" \
+  "$TMPDIR_OUT/missing.txt" -q 'WorkerHome:.*MISSING'
+
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 if [[ "$FAIL_COUNT" -gt 0 ]]; then

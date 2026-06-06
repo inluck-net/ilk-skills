@@ -44,6 +44,7 @@ CLI_ALL=false
 CLI_FORCE=false
 CLI_DRY_RUN=false
 CLI_ENGINE=""
+CLI_WORKER_HOME=""
 
 # Resolved values
 RESOLVED_PATH=""
@@ -262,8 +263,10 @@ resolve_params() {
 }
 
 worker_home_ready() {
-  # Return 0 iff ~/.claude-worker is bootstrapped with a provider env block.
-  local s="$HOME/.claude-worker/settings.json"
+  # Return 0 iff the given worker home is bootstrapped with a provider env block.
+  # Without arg, defaults to ~/.claude-worker.
+  local home="${1:-$HOME/.claude-worker}"
+  local s="$home/settings.json"
   [[ -f "$s" ]] || return 1
   if command -v jq >/dev/null 2>&1; then
     jq -e '.env | type == "object" and length > 0' "$s" >/dev/null 2>&1
@@ -490,6 +493,7 @@ start_ilk_window() {
   local dry_run="$6"
   local mcp_config_path="$7"
   local engine="${8:-claude}"
+  local worker_home_override="${9:-}"
 
   # Concurrency guard
   local live_pid
@@ -534,7 +538,24 @@ start_ilk_window() {
   local display_config_dir="(default ~/.claude)"
   local display_skill_home="(default)"
   if [[ "$engine" == "claude-worker" ]]; then
-    local worker_home="${HOME}/.claude-worker"
+    # Resolve worker home: flag > env > default.
+    local worker_home=""
+    if [[ -n "$worker_home_override" ]]; then
+      worker_home="$worker_home_override"
+    elif [[ -n "${CLAUDE_WORKER_HOME:-}" ]]; then
+      worker_home="$CLAUDE_WORKER_HOME"
+    else
+      worker_home="${HOME}/.claude-worker"
+    fi
+    # Normalize: expand ~ and make relative paths absolute.
+    case "$worker_home" in
+      "~")   worker_home="$HOME" ;;
+      "~/"*) worker_home="$HOME/${worker_home#\~/}" ;;
+    esac
+    case "$worker_home" in
+      /*) ;;
+      *)  worker_home="$(pwd)/$worker_home" ;;
+    esac
     local worker_skills="${worker_home}/skills"
     env_prefix="export CLAUDE_CONFIG_DIR='$worker_home'; export ILK_SKILL_HOME='$worker_skills'; "
     display_config_dir="$worker_home"
@@ -557,10 +578,10 @@ start_ilk_window() {
     echo "  ClaudeConfigDir: $display_config_dir"
     echo "  IlkSkillHome: $display_skill_home"
     if [[ "$engine" == "claude-worker" ]]; then
-      if worker_home_ready; then
+      if worker_home_ready "$worker_home"; then
         echo "  WorkerHome: ready"
       else
-        echo "  WorkerHome: MISSING (bootstrap ~/.claude-worker before a real launch)"
+        echo "  WorkerHome: MISSING (bootstrap $worker_home before a real launch)"
       fi
     fi
     if [[ -n "$mcp_config_path" ]]; then
@@ -576,8 +597,8 @@ start_ilk_window() {
 
   # Fail closed: never launch claude-worker against an un-bootstrapped home
   # (it would land on no provider / no OAuth and fail confusingly).
-  if [[ "$engine" == "claude-worker" ]] && ! worker_home_ready; then
-    echo "[$project_name] engine 'claude-worker' selected but ~/.claude-worker is not bootstrapped (settings.json with a provider env block is missing). Run tools/claude-worker/bootstrap.sh, or use --engine claude." >&2
+  if [[ "$engine" == "claude-worker" ]] && ! worker_home_ready "$worker_home"; then
+    echo "[$project_name] engine 'claude-worker' selected but $worker_home is not bootstrapped (settings.json with a provider env block is missing). Run tools/claude-worker/bootstrap.sh, or use --engine claude." >&2
     return 1
   fi
   # Nudge: launching on the planner (official) provider while a cheap worker
@@ -652,6 +673,8 @@ Options:
   --force                      Skip the "already running" check.
   --dry-run                    Print resolved plan but do not spawn.
   --engine ENGINE              Worker engine: claude (default) or codex.
+  --worker-home PATH           Override worker home for claude-worker engine
+                               (default: ~/.claude-worker; also CLAUDE_WORKER_HOME).
   -h, --help                   Show this help and exit.
 EOF
 }
@@ -697,6 +720,10 @@ parse_args() {
         ;;
       --engine)
         CLI_ENGINE="$2"
+        shift 2
+        ;;
+      --worker-home)
+        CLI_WORKER_HOME="$2"
         shift 2
         ;;
       -h|--help)
@@ -755,7 +782,7 @@ for p in d:
       mcp_config_path=$(build_worker_mcp_config "$ppath" "$MCP_FILTER_MODE" "$MCP_FILTER_NAMES")
       local engine
       engine=$(resolve_engine "$ppath" "$CLI_ENGINE")
-      start_ilk_window "$ppath" "$pname" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine"
+      start_ilk_window "$ppath" "$pname" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine" "$CLI_WORKER_HOME"
     done
     return 0
   fi
@@ -808,8 +835,20 @@ for p in d:
   if [[ "$CLI_DRY_RUN" == true ]]; then
     echo "[$RESOLVED_NAME] DRY RUN — would launch with the above params."
     if [[ "$engine" == "claude-worker" ]]; then
-      echo "[$RESOLVED_NAME] ClaudeConfigDir: ${HOME}/.claude-worker"
-      echo "[$RESOLVED_NAME] IlkSkillHome: ${HOME}/.claude-worker/skills"
+      local resolved_wh="$CLI_WORKER_HOME"
+      if [[ -z "$resolved_wh" && -n "${CLAUDE_WORKER_HOME:-}" ]]; then
+        resolved_wh="$CLAUDE_WORKER_HOME"
+      fi
+      if [[ -z "$resolved_wh" ]]; then
+        resolved_wh="${HOME}/.claude-worker"
+      fi
+      echo "[$RESOLVED_NAME] ClaudeConfigDir: $resolved_wh"
+      echo "[$RESOLVED_NAME] IlkSkillHome: $resolved_wh/skills"
+      if worker_home_ready "$resolved_wh"; then
+        echo "[$RESOLVED_NAME] WorkerHome: ready"
+      else
+        echo "[$RESOLVED_NAME] WorkerHome: MISSING"
+      fi
     else
       echo "[$RESOLVED_NAME] ClaudeConfigDir: (default ~/.claude)"
       echo "[$RESOLVED_NAME] IlkSkillHome: (default)"
@@ -820,7 +859,7 @@ for p in d:
     return
   fi
 
-  start_ilk_window "$RESOLVED_PATH" "$RESOLVED_NAME" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine"
+  start_ilk_window "$RESOLVED_PATH" "$RESOLVED_NAME" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine" "$CLI_WORKER_HOME"
 }
 
 main "$@"

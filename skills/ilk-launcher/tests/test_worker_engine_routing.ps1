@@ -104,6 +104,61 @@ try {
     $ovLine -notmatch '\.claude-worker'
   }
 
+  # --- AC-2: -WorkerHome override routes to custom home ---
+  Write-Host "--- AC-2: -WorkerHome override ---"
+  $outWH = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -ProjectPath $tmpDir -Engine claude-worker -WorkerHome "C:\test-slot-2" -DryRun 2>&1
+  $outWHStr = $outWH -join "`n"
+
+  Assert-Test "WorkerHome: ClaudeConfigDir routes to override" {
+    $outWHStr -match 'ClaudeConfigDir:.*test-slot-2'
+  }
+
+  Assert-Test "WorkerHome: IlkSkillHome routes to override\skills" {
+    $outWHStr -match 'IlkSkillHome:.*test-slot-2\\skills'
+  }
+
+  # --- AC-3: CLAUDE_WORKER_HOME env var routes (no flag) ---
+  Write-Host "--- AC-3: CLAUDE_WORKER_HOME env var ---"
+  $env:CLAUDE_WORKER_HOME = 'C:\test-env-slot'
+  try {
+    $outEnvHome = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -ProjectPath $tmpDir -Engine claude-worker -DryRun 2>&1
+  } finally { Remove-Item Env:\CLAUDE_WORKER_HOME -ErrorAction SilentlyContinue }
+  $outEnvHomeStr = $outEnvHome -join "`n"
+
+  Assert-Test "CLAUDE_WORKER_HOME: ClaudeConfigDir routes to env value" {
+    $outEnvHomeStr -match 'ClaudeConfigDir:.*test-env-slot'
+  }
+
+  # AC-3 part 2: -WorkerHome flag overrides CLAUDE_WORKER_HOME
+  Write-Host "--- AC-3: -WorkerHome overrides CLAUDE_WORKER_HOME ---"
+  $env:CLAUDE_WORKER_HOME = 'C:\test-env-slot'
+  try {
+    $outFlagOverEnv = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -ProjectPath $tmpDir -Engine claude-worker -WorkerHome "C:\test-flag-slot" -DryRun 2>&1
+  } finally { Remove-Item Env:\CLAUDE_WORKER_HOME -ErrorAction SilentlyContinue }
+  $outFlagOverEnvStr = $outFlagOverEnv -join "`n"
+
+  Assert-Test "flag beats env: ClaudeConfigDir uses flag value" {
+    $outFlagOverEnvStr -match 'ClaudeConfigDir:.*test-flag-slot'
+  }
+
+  # --- AC-4: no-override unchanged (default still ~/.claude-worker) ---
+  Write-Host "--- AC-4: no-override default ---"
+  $outNoOv = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -ProjectPath $tmpDir -Engine claude-worker -DryRun 2>&1
+  $outNoOvStr = $outNoOv -join "`n"
+
+  Assert-Test "no override: ClaudeConfigDir is default .claude-worker" {
+    $outNoOvStr -match 'ClaudeConfigDir:.*\.claude-worker'
+  }
+
+  # --- AC-5: fail-closed + readiness reflects resolved home ---
+  Write-Host "--- AC-5: readiness reflects resolved home ---"
+  $outMissing = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -ProjectPath $tmpDir -Engine claude-worker -WorkerHome "C:\nonexistent-slot" -DryRun 2>&1
+  $outMissingStr = $outMissing -join "`n"
+
+  Assert-Test "non-bootstrapped override: WorkerHome shows MISSING" {
+    $outMissingStr -match 'WorkerHome:.*MISSING'
+  }
+
   Write-Host ""
   Write-Host "Results: $passCount passed, $failCount failed"
   if ($failCount -gt 0) {

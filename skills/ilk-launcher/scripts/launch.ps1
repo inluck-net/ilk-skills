@@ -99,7 +99,13 @@ param(
   # Worker engine: "claude" (default) or "codex". CLI override wins
   # over .ilk-launch.json's worker_engine. "codex" is not yet supported
   # and will produce a clear error.
-  [string]$Engine = ""
+  [string]$Engine = "",
+
+  # Override the worker home for claude-worker engine (default:
+  # ~/.claude-worker; also honors $env:CLAUDE_WORKER_HOME).
+  # Precedence: -WorkerHome > $env:CLAUDE_WORKER_HOME > default.
+  # Enables per-slot isolated homes (~/.claude-worker-2, etc.).
+  [string]$WorkerHome = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -302,8 +308,11 @@ function Resolve-Params {
 }
 
 function Test-WorkerHomeReady {
-  # True iff ~/.claude-worker is bootstrapped with a provider env block.
-  $settings = Join-Path $HOME '.claude-worker\settings.json'
+  # True iff the given worker home is bootstrapped with a provider env block.
+  # Without -HomePath, defaults to ~/.claude-worker.
+  param([string]$HomePath = "")
+  if (-not $HomePath) { $HomePath = Join-Path $HOME '.claude-worker' }
+  $settings = Join-Path $HomePath 'settings.json'
   if (-not (Test-Path $settings)) { return $false }
   try {
     $s = Get-Content $settings -Raw -Encoding utf8 | ConvertFrom-Json
@@ -519,7 +528,8 @@ function Start-ilkWindow {
     [bool]$Force,
     [bool]$DryRun,
     [string]$McpConfigPath = "",
-    [string]$EngineName = "claude"
+    [string]$EngineName = "claude",
+    [string]$WorkerHomeOverride = ""
   )
 
   $livePid = Test-RunningPid -ProjectPath $ProjectPath
@@ -556,11 +566,27 @@ function Start-ilkWindow {
   $runnerScript = Get-RunnerScript -EngineName $EngineName
 
   # Resolve worker-home routing for claude-worker engine.
+  # Precedence: -WorkerHome flag > $env:CLAUDE_WORKER_HOME > default ~/.claude-worker.
   $workerHome    = $null
   $workerSkills  = $null
   $envPrepend    = ""
   if ($EngineName -eq 'claude-worker') {
-    $workerHome   = Join-Path $HOME '.claude-worker'
+    if ($WorkerHomeOverride) {
+      $workerHome = $WorkerHomeOverride
+    } elseif ($env:CLAUDE_WORKER_HOME) {
+      $workerHome = $env:CLAUDE_WORKER_HOME
+    } else {
+      $workerHome = Join-Path $HOME '.claude-worker'
+    }
+    # Normalize: expand ~ and make relative paths absolute.
+    if ($workerHome -eq '~') {
+      $workerHome = $HOME
+    } elseif ($workerHome -match '^~[\\/]') {
+      $workerHome = Join-Path $HOME $workerHome.Substring(2)
+    }
+    if (-not [System.IO.Path]::IsPathRooted($workerHome)) {
+      $workerHome = Join-Path (Get-Location).Path $workerHome
+    }
     $workerSkills = Join-Path $workerHome 'skills'
     $envPrepend = "`$env:CLAUDE_CONFIG_DIR = '$workerHome'`r`n" +
                   "`$env:ILK_SKILL_HOME    = '$workerSkills'`r`n"
@@ -596,10 +622,10 @@ Write-Host '[ilk-launcher] window left open for review. Close manually when done
     if ($workerHome) {
       Write-Host "  ClaudeConfigDir: $workerHome"
       Write-Host "  IlkSkillHome: $workerSkills"
-      if (Test-WorkerHomeReady) {
+      if (Test-WorkerHomeReady -HomePath $workerHome) {
         Write-Host "  WorkerHome: ready"
       } else {
-        Write-Host "  WorkerHome: MISSING (bootstrap ~/.claude-worker before a real launch)"
+        Write-Host "  WorkerHome: MISSING (bootstrap $workerHome before a real launch)"
       }
     } else {
       Write-Host "  ClaudeConfigDir: (default ~/.claude)"
@@ -615,8 +641,8 @@ Write-Host '[ilk-launcher] window left open for review. Close manually when done
 
   # Fail closed: never launch claude-worker against an un-bootstrapped home
   # (it would land on no provider / no OAuth and fail confusingly mid-window).
-  if ($EngineName -eq 'claude-worker' -and -not (Test-WorkerHomeReady)) {
-    throw "[$ProjectName] engine 'claude-worker' selected but ~/.claude-worker is not bootstrapped (settings.json with a provider env block is missing). Run tools/claude-worker/bootstrap.ps1, or use -Engine claude."
+  if ($EngineName -eq 'claude-worker' -and -not (Test-WorkerHomeReady -HomePath $workerHome)) {
+    throw "[$ProjectName] engine 'claude-worker' selected but $workerHome is not bootstrapped (settings.json with a provider env block is missing). Run tools/claude-worker/bootstrap.ps1, or use -Engine claude."
   }
   # Nudge: launching on the planner (official) provider while a cheap worker
   # home is available — one line, real launches only.
@@ -673,7 +699,8 @@ if ($All) {
       -Force:$Force.IsPresent `
       -DryRun:$DryRun.IsPresent `
       -McpConfigPath $mcpCfg `
-      -EngineName $eng | Out-Null
+      -EngineName $eng `
+      -WorkerHomeOverride $WorkerHome | Out-Null
   }
   return
 }
@@ -703,4 +730,5 @@ Start-ilkWindow `
   -Force:$Force.IsPresent `
   -DryRun:$DryRun.IsPresent `
   -McpConfigPath $mcpCfg `
-  -EngineName $engine | Out-Null
+  -EngineName $engine `
+  -WorkerHomeOverride $WorkerHome | Out-Null
