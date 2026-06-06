@@ -97,6 +97,14 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $PSCommandPath
 $DefaultRepoRoot = (Resolve-Path (Join-Path $ScriptDir "..\..")).Path
 
+# python3 is often missing on Windows PATH; prefer python, then py -3, then python3.
+$ResolvePyScript = Join-Path $ScriptDir "..\..\skills\ilk-loop\scripts\_resolve_python.ps1"
+if (-not (Test-Path -LiteralPath $ResolvePyScript)) {
+  Write-Error "Python helper not found at $ResolvePyScript"
+  exit 1
+}
+. (Resolve-Path -LiteralPath $ResolvePyScript).Path
+
 # Resolve values: explicit param wins, else environment, else default.
 if (-not $WorkerHome) { $WorkerHome = $env:CLAUDE_WORKER_HOME }
 if (-not $WorkerHome) { $WorkerHome = (Join-Path $HOME ".claude-worker") }
@@ -114,7 +122,7 @@ if ($ListCCSwitchProviders) {
     Write-Error "ccswitch_import.py not found at $HelperPy"
     exit 1
   }
-  python3 $HelperPy list
+  Invoke-IlkPython -ArgumentList @($HelperPy, "list")
   exit $LASTEXITCODE
 }
 
@@ -135,7 +143,7 @@ if ($FromCCSwitch) {
   if ($Interactive) {
     Write-Host "Available CCSwitch Claude providers:"
     Write-Host ""
-    python3 $HelperPy list
+    Invoke-IlkPython -ArgumentList @($HelperPy, "list")
     Write-Host ""
     $Provider = Read-Host "Enter provider id or name"
     if ([string]::IsNullOrEmpty($Provider)) {
@@ -144,11 +152,12 @@ if ($FromCCSwitch) {
     }
 
     # Preview the selection (redacted) and ask for confirmation.
-    $previewJson = python3 $HelperPy export --provider $Provider
-    if ($LASTEXITCODE -ne 0) {
+    $preview = Invoke-IlkPythonCapture -ArgumentList @($HelperPy, "export", "--provider", $Provider)
+    if ($preview.ExitCode -ne 0) {
       Write-Error "provider '$Provider' not found"
       exit 1
     }
+    $previewJson = $preview.Output
     Write-Host ""
     Write-Host "Selected provider:"
     $preview = $previewJson | ConvertFrom-Json
@@ -170,11 +179,12 @@ if ($FromCCSwitch) {
   }
 
   # Export the selected provider's env vars (--machine for raw token).
-  $exportJson = python3 $HelperPy export --provider $Provider --machine
-  if ($LASTEXITCODE -ne 0) {
+  $exported = Invoke-IlkPythonCapture -ArgumentList @($HelperPy, "export", "--provider", $Provider, "--machine")
+  if ($exported.ExitCode -ne 0) {
     Write-Error "failed to export CCSwitch provider '$Provider'"
     exit 1
   }
+  $exportJson = $exported.Output
 
   # Refuse official/Claude OAuth providers by default.  Importing an official
   # provider into the worker home would let the worker use the planner's OAuth

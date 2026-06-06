@@ -33,14 +33,13 @@ function Invoke-IlkPython {
     Push-Location $WorkingDirectory
     try {
       & $py.Exe @allArgs
-      return $LASTEXITCODE
     } finally {
       Pop-Location
     }
+    return
   }
 
   & $py.Exe @allArgs
-  return $LASTEXITCODE
 }
 
 function Invoke-IlkPythonCapture {
