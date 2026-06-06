@@ -261,7 +261,20 @@ resolve_params() {
   echo "${max_iter} ${timeout}"
 }
 
+worker_home_ready() {
+  # Return 0 iff ~/.claude-worker is bootstrapped with a provider env block.
+  local s="$HOME/.claude-worker/settings.json"
+  [[ -f "$s" ]] || return 1
+  if command -v jq >/dev/null 2>&1; then
+    jq -e '.env | type == "object" and length > 0' "$s" >/dev/null 2>&1
+  else
+    grep -q '"env"' "$s"
+  fi
+}
+
 resolve_engine() {
+  # Precedence: CLI --engine > .ilk-launch.json worker_engine
+  #           > $ILK_DEFAULT_ENGINE (machine-wide opt-in) > $DEFAULT_ENGINE.
   local project_path="$1"
   local cli_engine="$2"
 
@@ -272,6 +285,9 @@ resolve_engine() {
     local cfg
     cfg=$(read_project_config "$project_path")
     engine=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('worker_engine',''))" <<<"$cfg")
+    if [[ -z "$engine" && -n "${ILK_DEFAULT_ENGINE:-}" ]]; then
+      engine="$ILK_DEFAULT_ENGINE"
+    fi
   fi
 
   if [[ -z "$engine" ]]; then
@@ -540,6 +556,13 @@ start_ilk_window() {
     echo "  WorkerEngine: $engine"
     echo "  ClaudeConfigDir: $display_config_dir"
     echo "  IlkSkillHome: $display_skill_home"
+    if [[ "$engine" == "claude-worker" ]]; then
+      if worker_home_ready; then
+        echo "  WorkerHome: ready"
+      else
+        echo "  WorkerHome: MISSING (bootstrap ~/.claude-worker before a real launch)"
+      fi
+    fi
     if [[ -n "$mcp_config_path" ]]; then
       echo "  McpConfigPath: $mcp_config_path"
     fi
@@ -549,6 +572,18 @@ start_ilk_window() {
     pid_file=$(get_pid_file_path "$project_path")
     echo "  PID file: $pid_file"
     return 0
+  fi
+
+  # Fail closed: never launch claude-worker against an un-bootstrapped home
+  # (it would land on no provider / no OAuth and fail confusingly).
+  if [[ "$engine" == "claude-worker" ]] && ! worker_home_ready; then
+    echo "[$project_name] engine 'claude-worker' selected but ~/.claude-worker is not bootstrapped (settings.json with a provider env block is missing). Run tools/claude-worker/bootstrap.sh, or use --engine claude." >&2
+    return 1
+  fi
+  # Nudge: launching on the planner (official) provider while a cheap worker
+  # home is available — one line, real launches only.
+  if [[ "$engine" == "claude" ]] && worker_home_ready; then
+    echo "[ilk] tip: a worker home is bootstrapped but this run uses the planner (official) provider. Set ILK_DEFAULT_ENGINE=claude-worker (or worker_engine in .ilk-launch.json) to use the cheaper worker." >&2
   fi
 
   # Spawn detached process as its own process-group leader so stop.sh

@@ -82,6 +82,28 @@ try {
     $outInvalidStr -match '(?i)valid.*engine'
   }
 
+  # --- AC-4: ILK_DEFAULT_ENGINE machine-wide opt-in default ---
+  Write-Host "--- AC-4: ILK_DEFAULT_ENGINE default ---"
+  $env:ILK_DEFAULT_ENGINE = 'claude-worker'
+  try {
+    $outEnv = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -ProjectPath $tmpDir -DryRun 2>&1
+  } finally { Remove-Item Env:\ILK_DEFAULT_ENGINE -ErrorAction SilentlyContinue }
+  $outEnvStr = $outEnv -join "`n"
+  Assert-Test "env default: ClaudeConfigDir routes to .claude-worker" {
+    $outEnvStr -match 'ClaudeConfigDir:.*\.claude-worker'
+  }
+
+  # --- AC-5: explicit -Engine overrides ILK_DEFAULT_ENGINE ---
+  Write-Host "--- AC-5: CLI overrides env default ---"
+  $env:ILK_DEFAULT_ENGINE = 'claude-worker'
+  try {
+    $outOv = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -ProjectPath $tmpDir -Engine claude -DryRun 2>&1
+  } finally { Remove-Item Env:\ILK_DEFAULT_ENGINE -ErrorAction SilentlyContinue }
+  Assert-Test "CLI override: no .claude-worker in ClaudeConfigDir" {
+    $ovLine = ($outOv | Where-Object { $_ -match 'ClaudeConfigDir:' })
+    $ovLine -notmatch '\.claude-worker'
+  }
+
   Write-Host ""
   Write-Host "Results: $passCount passed, $failCount failed"
   if ($failCount -gt 0) {

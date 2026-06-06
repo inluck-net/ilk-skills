@@ -12,7 +12,7 @@ workflows into a single set of skills.
 
 ## Status
 
-**v0.8.8** — planner/worker cost split + cross-project scheduling:
+**v0.8.10** — planner/worker cost split + cross-project scheduling:
 
 - **`claude-worker` launcher engine.** Route the detached loop under the
   cheap worker home (`~/.claude-worker`) instead of the planner's
@@ -20,11 +20,19 @@ workflows into a single set of skills.
   (`--engine claude-worker`, or `{ "worker_engine": "claude-worker" }`
   in `.ilk-launch.json`). See
   [`skills/ilk-launcher/references/worker-engine.md`](skills/ilk-launcher/references/worker-engine.md).
+- **Machine-wide default opt-in** (v0.8.10). Set
+  `ILK_DEFAULT_ENGINE=claude-worker` to default a whole machine to the
+  worker without editing every project. Precedence: CLI `--engine` >
+  `.ilk-launch.json` > `ILK_DEFAULT_ENGINE` > `claude`. The shipped
+  default stays `claude`; a real `claude-worker` launch fails closed if
+  the worker home isn't bootstrapped, and a planner launch nudges when a
+  worker home is available.
 - **Cross-project scheduler (V1).** A single daemon
   (`skills/ilk-watchdog/scripts/scheduler.{ps1,sh}`) drains every
   project's queue FIFO, one at a time, routed through the worker engine —
   per-project sentinel mutex, poll/idle/auto-wake, pool cap 1, global
-  budget ceiling, non-starving blacklist skip.
+  budget ceiling, non-starving blacklist skip. It dispatches each
+  project's real source repo path (v0.8.9).
 - Earlier milestones: a one-command `claude-worker` PATH installer
   (v0.8.7) and the dual planner/worker Claude homes design.
 

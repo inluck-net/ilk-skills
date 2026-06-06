@@ -67,6 +67,30 @@ the worker home:
 { "worker_engine": "claude-worker" }
 ```
 
+### Default-engine precedence
+
+The engine is resolved in this order (first hit wins):
+
+1. **CLI flag** — `-Engine` / `--engine`
+2. **Project config** — `worker_engine` in `.ilk-launch.json`
+3. **Machine-wide opt-in** — the `ILK_DEFAULT_ENGINE` environment variable
+4. **Hardcoded default** — `claude` (planner)
+
+`ILK_DEFAULT_ENGINE` lets you flip a whole machine to the worker without
+editing every project: `export ILK_DEFAULT_ENGINE=claude-worker` (bash) /
+`$env:ILK_DEFAULT_ENGINE = 'claude-worker'` (PowerShell). The shipped
+default stays `claude`, so a fresh install still "just works" on the
+planner's existing credentials.
+
+Two safety behaviors back this up:
+
+- **Fail-closed** — a real launch on `claude-worker` aborts with a clear
+  message if `~/.claude-worker` isn't bootstrapped (it never silently
+  falls through to OAuth). Dry-run shows a `WorkerHome: ready|MISSING`
+  line instead of aborting.
+- **Nudge** — a real launch on the planner while a bootstrapped worker
+  home exists prints a one-line tip pointing at `ILK_DEFAULT_ENGINE`.
+
 ## Adding a Codex runner
 
 When the Codex CLI contract is stable, add these files:

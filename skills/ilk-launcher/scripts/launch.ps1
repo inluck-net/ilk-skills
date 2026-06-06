@@ -301,7 +301,19 @@ function Resolve-Params {
   return @{ MaxIterations = $maxIter; IterationTimeoutMin = $timeout }
 }
 
+function Test-WorkerHomeReady {
+  # True iff ~/.claude-worker is bootstrapped with a provider env block.
+  $settings = Join-Path $HOME '.claude-worker\settings.json'
+  if (-not (Test-Path $settings)) { return $false }
+  try {
+    $s = Get-Content $settings -Raw -Encoding utf8 | ConvertFrom-Json
+    return [bool]($s.env -and @($s.env.PSObject.Properties).Count -gt 0)
+  } catch { return $false }
+}
+
 function Resolve-Engine {
+  # Precedence: CLI -Engine > .ilk-launch.json worker_engine
+  #           > $env:ILK_DEFAULT_ENGINE (machine-wide opt-in) > $DefaultEngine.
   param(
     [string]$ProjectPath,
     [string]$CliEngine = ""
@@ -310,10 +322,16 @@ function Resolve-Engine {
     $engine = $CliEngine
   } else {
     $cfg = Read-ProjectConfig -ProjectPath $ProjectPath
-    $engine = if ($cfg.ContainsKey('worker_engine')) { [string]$cfg.worker_engine } else { $DefaultEngine }
+    if ($cfg.ContainsKey('worker_engine')) {
+      $engine = [string]$cfg.worker_engine
+    } elseif (-not [string]::IsNullOrWhiteSpace($env:ILK_DEFAULT_ENGINE)) {
+      $engine = $env:ILK_DEFAULT_ENGINE.Trim()
+    } else {
+      $engine = $DefaultEngine
+    }
   }
   if ($ValidEngines -notcontains $engine) {
-    throw "Invalid worker_engine '$engine'. Valid engines: $($ValidEngines -join ', ')"
+    throw "Invalid engine '$engine'. Valid engines: $($ValidEngines -join ', '). (Check -Engine, .ilk-launch.json worker_engine, or `$env:ILK_DEFAULT_ENGINE.)"
   }
   return $engine
 }
@@ -578,6 +596,11 @@ Write-Host '[ilk-launcher] window left open for review. Close manually when done
     if ($workerHome) {
       Write-Host "  ClaudeConfigDir: $workerHome"
       Write-Host "  IlkSkillHome: $workerSkills"
+      if (Test-WorkerHomeReady) {
+        Write-Host "  WorkerHome: ready"
+      } else {
+        Write-Host "  WorkerHome: MISSING (bootstrap ~/.claude-worker before a real launch)"
+      }
     } else {
       Write-Host "  ClaudeConfigDir: (default ~/.claude)"
       Write-Host "  IlkSkillHome: (default)"
@@ -588,6 +611,17 @@ Write-Host '[ilk-launcher] window left open for review. Close manually when done
     $pidFile = Get-PidFilePath -ProjectPath $ProjectPath
     Write-Host "  PID file: $pidFile"
     return $null
+  }
+
+  # Fail closed: never launch claude-worker against an un-bootstrapped home
+  # (it would land on no provider / no OAuth and fail confusingly mid-window).
+  if ($EngineName -eq 'claude-worker' -and -not (Test-WorkerHomeReady)) {
+    throw "[$ProjectName] engine 'claude-worker' selected but ~/.claude-worker is not bootstrapped (settings.json with a provider env block is missing). Run tools/claude-worker/bootstrap.ps1, or use -Engine claude."
+  }
+  # Nudge: launching on the planner (official) provider while a cheap worker
+  # home is available — one line, real launches only.
+  if ($EngineName -eq 'claude' -and (Test-WorkerHomeReady)) {
+    Write-Host "[ilk] tip: a worker home is bootstrapped but this run uses the planner (official) provider. Set `$env:ILK_DEFAULT_ENGINE = 'claude-worker' (or worker_engine in .ilk-launch.json) to use the cheaper worker." -ForegroundColor DarkYellow
   }
 
   $proc = Start-Process powershell -ArgumentList @('-NoExit', '-NoProfile', '-Command', $inner) -PassThru

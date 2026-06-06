@@ -77,10 +77,15 @@ the home the detached run uses: `claude` *(default)* routes under the
 planner home `~/.claude`; **`claude-worker`** routes under the cheap
 worker home `~/.claude-worker` (the launcher injects `CLAUDE_CONFIG_DIR`
 + `ILK_SKILL_HOME`) — use it for unattended / cost-sensitive runs;
-`codex` is reserved for the forthcoming Codex runner. See
-[references/worker-engine.md](references/worker-engine.md) for the full
-engine table, capability matrix, and instructions for adding a Codex
-runner.
+`codex` is reserved for the forthcoming Codex runner.
+
+Resolution precedence: CLI `--engine` > `.ilk-launch.json` `worker_engine`
+> **`ILK_DEFAULT_ENGINE`** (machine-wide opt-in env var) > `claude`. A
+real `claude-worker` launch fails closed if `~/.claude-worker` isn't
+bootstrapped; a planner launch nudges when a worker home is available.
+See [references/worker-engine.md](references/worker-engine.md) for the
+full engine table, precedence, capability matrix, and instructions for
+adding a Codex runner.
 
 ## State directory
 

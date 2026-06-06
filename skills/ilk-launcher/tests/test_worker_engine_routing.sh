@@ -90,6 +90,23 @@ assert_true "invalid engine: exits non-zero" test "$exit_invalid" -ne 0
 assert_grep "invalid engine: error mentions valid engines" \
   "$TMPDIR_OUT/invalid.txt" -qi 'valid.*engine'
 
+# --- AC-4: ILK_DEFAULT_ENGINE machine-wide opt-in default ---
+echo "--- AC-4: ILK_DEFAULT_ENGINE default ---"
+
+ILK_DEFAULT_ENGINE=claude-worker bash "$LAUNCHER" --project-path "$TMPDIR_PROJ" --dry-run 2>&1 | tr -d '\r' > "$TMPDIR_OUT/envdef.txt" || true
+
+assert_grep "env default: ClaudeConfigDir routes to .claude-worker" \
+  "$TMPDIR_OUT/envdef.txt" -q 'ClaudeConfigDir:.*\.claude-worker'
+
+# --- AC-5: explicit --engine overrides ILK_DEFAULT_ENGINE ---
+echo "--- AC-5: CLI overrides env default ---"
+
+ILK_DEFAULT_ENGINE=claude-worker bash "$LAUNCHER" --project-path "$TMPDIR_PROJ" --engine claude --dry-run 2>&1 | tr -d '\r' > "$TMPDIR_OUT/override.txt" || true
+
+configdir_override=$(grep 'ClaudeConfigDir:' "$TMPDIR_OUT/override.txt" || true)
+assert_true "CLI override: no .claude-worker in ClaudeConfigDir" \
+  bash -c 'case "'"${configdir_override}"'" in *.claude-worker*) exit 1 ;; *) exit 0 ;; esac'
+
 echo ""
 echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 if [[ "$FAIL_COUNT" -gt 0 ]]; then
