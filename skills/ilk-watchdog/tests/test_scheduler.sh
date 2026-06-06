@@ -16,6 +16,16 @@ SCAN_SCRIPT="$SCRIPT_DIR/../scripts/scheduler_scan.py"
 SCHEDULER_SCRIPT="$SCRIPT_DIR/../scripts/scheduler.sh"
 SCRATCH="$REPO_ROOT/scratch/sched-test"
 
+# Resolve python command (python3 preferred, python fallback).
+PYTHON=""
+for candidate in python3 python; do
+  if command -v "$candidate" >/dev/null 2>&1 && "$candidate" --version >/dev/null 2>&1; then
+    PYTHON="$candidate"
+    break
+  fi
+done
+[[ -n "$PYTHON" ]] || { echo "FAIL: no working python found on PATH" >&2; exit 1; }
+
 # Absolute path to the fake ILK_DATA_HOME
 FAKE_DATA="$SCRATCH/ilk-data"
 
@@ -106,21 +116,21 @@ run_scan() {
 
   # Run scheduler_scan.py with the fake ILK_DATA_HOME
   local output
-  output=$(ILK_DATA_HOME="$FAKE_DATA" python "$SCAN_SCRIPT" 2>&1) || die "scheduler_scan.py exited non-zero: $output"
+  output=$(ILK_DATA_HOME="$FAKE_DATA" "$PYTHON" "$SCAN_SCRIPT" 2>&1) || die "scheduler_scan.py exited non-zero: $output"
 
   # Assert: exactly one project returned
   local count
-  count=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(len(d))" <<<"$output")
+  count=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(len(d))" <<<"$output")
   [[ "$count" == "1" ]] || die "expected 1 project, got $count. Output: $output"
 
   # Assert: it is proj-b
   local key
-  key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[0]['key'])" <<<"$output")
+  key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[0]['key'])" <<<"$output")
   [[ "$key" == "proj-b" ]] || die "expected key 'proj-b', got '$key'. Output: $output"
 
   # Assert: oldest_queued_ts matches 2026-06-06
   local ts
-  ts=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[0]['oldest_queued_ts'])" <<<"$output")
+  ts=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d[0]['oldest_queued_ts'])" <<<"$output")
   [[ "$ts" == "2026-06-06"* ]] || die "expected ts starting with '2026-06-06', got '$ts'. Output: $output"
 
   echo "PASS: scan subcommand"
@@ -216,8 +226,8 @@ run_select() {
   output="${output//$'\r'/}"  # strip Windows \r
 
   local decision key
-  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
-  key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
   [[ "$decision" == "dispatch" ]] || die "expected 'dispatch', got '$decision'. Output: $output"
   [[ "$key" == "proj-a" ]] || die "expected FIFO dispatch of 'proj-a', got '$key'. Output: $output"
   echo "PASS: FIFO dispatch (proj-a first)"
@@ -237,8 +247,8 @@ run_select() {
   local last_line
   last_line=$(echo "$output" | tail -1)
 
-  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
-  key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$last_line")
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
+  key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$last_line")
   [[ "$decision" == "dispatch" ]] || die "expected 'dispatch', got '$decision'. Output: $output"
   [[ "$key" == "proj-b" ]] || die "expected dispatch of 'proj-b' after skip-busy, got '$key'. Output: $output"
 
@@ -246,8 +256,8 @@ run_select() {
   local first_line
   first_line=$(echo "$output" | head -1)
   local first_decision first_key
-  first_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
-  first_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
+  first_decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
+  first_key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
   [[ "$first_decision" == "skip-busy" ]] || die "expected first decision 'skip-busy', got '$first_decision'. Output: $output"
   [[ "$first_key" == "proj-a" ]] || die "expected skip-busy for 'proj-a', got '$first_key'. Output: $output"
 
@@ -266,9 +276,9 @@ run_dispatch() {
   output="${output//$'\r'/}"
 
   local decision key command
-  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
-  key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
-  command=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['command'])" <<<"$output")
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
+  command=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['command'])" <<<"$output")
   [[ "$decision" == "dispatch" ]] || die "expected 'dispatch', got '$decision'. Output: $output"
   [[ "$key" == "proj-a" ]] || die "expected dispatch of 'proj-a', got '$key'. Output: $output"
   [[ "$command" == *"claude-worker"* ]] || die "expected 'claude-worker' in command, got '$command'. Output: $output"
@@ -281,9 +291,9 @@ run_dispatch() {
   output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-dispatches 0 2>&1) || die "scheduler exited non-zero: $output"
   output="${output//$'\r'/}"
 
-  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
   local reason
-  reason=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['reason'])" <<<"$output")
+  reason=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['reason'])" <<<"$output")
   [[ "$decision" == "idle" ]] || die "expected 'idle', got '$decision'. Output: $output"
   [[ "$reason" == *"budget"* ]] || die "expected 'budget' in reason, got '$reason'. Output: $output"
   echo "PASS: -MaxDispatches 0 yields idle: budget ceiling"
@@ -320,14 +330,14 @@ EOF
   last_line=$(echo "$output" | tail -1)
 
   local first_decision first_key
-  first_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
-  first_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
+  first_decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
+  first_key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
   [[ "$first_decision" == "skip-blacklist" ]] || die "expected 'skip-blacklist', got '$first_decision'. Output: $output"
   [[ "$first_key" == "proj-a" ]] || die "expected skip-blacklist for 'proj-a', got '$first_key'. Output: $output"
 
   local last_decision last_key
-  last_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
-  last_key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$last_line")
+  last_decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
+  last_key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$last_line")
   [[ "$last_decision" == "dispatch" ]] || die "expected 'dispatch', got '$last_decision'. Output: $output"
   [[ "$last_key" == "proj-b" ]] || die "expected dispatch of 'proj-b', got '$last_key'. Output: $output"
 
@@ -341,7 +351,7 @@ EOF
   output="${output//$'\r'/}"
 
   local decision
-  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
   [[ "$decision" == "idle" ]] || die "expected 'idle' for empty queues, got '$decision'. Output: $output"
 
   echo "PASS: empty queues report idle"
@@ -393,15 +403,15 @@ EOF
 
   local first_line decision key
   first_line=$(echo "$output" | head -1)
-  decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
-  key=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
+  key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
   [[ "$decision" == "skip-unresolved" ]] || die "expected 'skip-unresolved', got '$decision'. Output: $output"
   [[ "$key" == "proj-c" ]] || die "expected skip-unresolved for 'proj-c', got '$key'. Output: $output"
 
   # With the only project unresolved, the final decision is idle (not dispatch).
   local last_line last_decision
   last_line=$(echo "$output" | tail -1)
-  last_decision=$(python -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
+  last_decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
   [[ "$last_decision" == "idle" ]] || die "expected final 'idle', got '$last_decision'. Output: $output"
 
   echo "PASS: skip-unresolved when repo_path cannot resolve, then idle"
