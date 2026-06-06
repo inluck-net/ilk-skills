@@ -42,6 +42,10 @@
 #                               official identity)
 #   --force                     overwrite provider settings even if an active
 #                               worker/ilk run appears to be using this home
+#   --clone-slot <n>            clone the base worker home into a per-slot home
+#                               (e.g. ~/.claude-worker-2). Idempotent + lazy.
+#   --from <base-home>          base home to clone from (default: ~/.claude-worker)
+#                               Only meaningful with --clone-slot.
 #   -h | --help                 show this help and exit
 #
 # Exit codes: 0 ok / dry-run, 2 usage error, 3 incomplete provider env.
@@ -68,6 +72,8 @@ ccswitch_provider=""
 interactive=0
 allow_official=0
 force=0
+clone_slot=""
+clone_from=""
 
 usage() {
   sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -130,11 +136,94 @@ while [[ $# -gt 0 ]]; do
     --interactive)   interactive=1 ;;
     --allow-official) allow_official=1 ;;
     --force)         force=1 ;;
+    --clone-slot)
+      shift
+      [[ $# -eq 0 ]] && { echo "error: --clone-slot requires a slot number" >&2; exit 2; }
+      clone_slot="$1"
+      ;;
+    --clone-slot=*)  clone_slot="${1#--clone-slot=}" ;;
+    --from)
+      shift
+      [[ $# -eq 0 ]] && { echo "error: --from requires a directory argument" >&2; exit 2; }
+      clone_from="$1"
+      ;;
+    --from=*)        clone_from="${1#--from=}" ;;
     -h|--help)       usage; exit 0 ;;
     *)               echo "unknown flag: $1" >&2; exit 2 ;;
   esac
   shift
 done
+
+# --- Slot-home clone (--clone-slot <n>) -------------------------------------
+# Clone the base worker home into a per-slot home (e.g. ~/.claude-worker-2).
+# Idempotent (re-clone is a no-op / refresh) and lazy (created on first use).
+# Accepts --model (V2 hook; currently ignored, documented for future use).
+if [[ -n "$clone_slot" ]]; then
+  # Resolve the base home to clone from.
+  clone_base="${clone_from:-$HOME/.claude-worker}"
+  case "$clone_base" in
+    "~")   clone_base="$HOME" ;;
+    "~/"*) clone_base="$HOME/${clone_base#\~/}" ;;
+  esac
+  case "$clone_base" in
+    /*) ;;
+    *)  clone_base="$(pwd)/$clone_base" ;;
+  esac
+
+  # Target: <base>-<slot> (e.g. ~/.claude-worker-2).
+  slot_home="${clone_base}-${clone_slot}"
+
+  if [[ ! -d "$clone_base" ]]; then
+    echo "error: base worker home does not exist: $clone_base" >&2
+    exit 1
+  fi
+  if [[ ! -f "$clone_base/settings.json" ]]; then
+    echo "error: base worker home has no settings.json: $clone_base" >&2
+    exit 1
+  fi
+
+  mkdir -p "$slot_home"
+
+  # Copy settings.json (provider env block). Idempotent: overwrite on re-clone.
+  cp -p "$clone_base/settings.json" "$slot_home/settings.json"
+  echo "  cloned settings.json -> $slot_home/settings.json"
+
+  # Minimal .claude.json: never clobber an existing one.
+  if [[ ! -e "$slot_home/.claude.json" ]]; then
+    cat > "$slot_home/.claude.json" <<'EOF'
+{
+  "mcpServers": {}
+}
+EOF
+    echo "  wrote $slot_home/.claude.json (no MCP servers)"
+  else
+    echo "  kept existing $slot_home/.claude.json (left untouched)"
+  fi
+
+  # Link skills: symlink on POSIX, copy fallback.
+  if [[ -d "$clone_base/skills" ]]; then
+    if [[ -L "$slot_home/skills" ]]; then
+      # Already a symlink — verify it points to the right place.
+      current_target="$(readlink "$slot_home/skills")"
+      if [[ "$current_target" == "$clone_base/skills" ]]; then
+        echo "  skills symlink already correct"
+      else
+        rm "$slot_home/skills"
+        ln -s "$clone_base/skills" "$slot_home/skills"
+        echo "  updated skills symlink -> $clone_base/skills"
+      fi
+    elif [[ -d "$slot_home/skills" ]]; then
+      echo "  kept existing skills directory (left untouched)"
+    else
+      ln -s "$clone_base/skills" "$slot_home/skills"
+      echo "  linked skills -> $clone_base/skills"
+    fi
+  fi
+
+  echo
+  echo "Slot home ready: $slot_home"
+  exit 0
+fi
 
 # --- CCSwitch provider discovery (--list-ccswitch-providers) -----------------
 # List providers and exit early.  This is read-only and never exposes tokens.

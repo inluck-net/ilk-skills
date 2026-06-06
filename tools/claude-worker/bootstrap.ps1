@@ -66,6 +66,14 @@
   Overwrite provider settings even if an active worker/ilk run appears to
   be using this worker home.
 
+.PARAMETER CloneSlot
+  Clone the base worker home into a per-slot home (e.g. ~/.claude-worker-2).
+  Idempotent + lazy. Accepts -Model (V2 hook; currently ignored).
+
+.PARAMETER From
+  Base home to clone from (default: ~/.claude-worker). Only meaningful with
+  -CloneSlot.
+
 .EXAMPLE
   .\bootstrap.ps1 -BaseUrl https://prov.example/anthropic -AuthToken $tok -Model cheap-1
   Dry-run preview into the default worker home.
@@ -88,7 +96,9 @@ param(
   [string]$Provider,
   [switch]$Interactive,
   [switch]$AllowOfficial,
-  [switch]$Force
+  [switch]$Force,
+  [int]$CloneSlot,
+  [string]$From
 )
 
 $ErrorActionPreference = "Stop"
@@ -115,6 +125,92 @@ if (-not $BaseUrl)    { $BaseUrl    = $env:ANTHROPIC_BASE_URL }
 if (-not $AuthToken)  { $AuthToken  = $env:ANTHROPIC_AUTH_TOKEN }
 if (-not $Model)      { $Model      = $env:ANTHROPIC_MODEL }
 if (-not $Repo)       { $Repo       = $DefaultRepoRoot }
+
+# --- Slot-home clone (-CloneSlot <n>) ----------------------------------------
+# Clone the base worker home into a per-slot home (e.g. ~/.claude-worker-2).
+# Idempotent (re-clone is a no-op / refresh) and lazy (created on first use).
+# Accepts -Model (V2 hook; currently ignored, documented for future use).
+if ($CloneSlot -gt 0) {
+  # Resolve the base home to clone from.
+  $cloneBase = if ($From) { $From } else { Join-Path $HOME ".claude-worker" }
+  # Normalize: expand ~ and make relative paths absolute.
+  if ($cloneBase -eq '~') {
+    $cloneBase = $HOME
+  } elseif ($cloneBase -match '^~[\\/]') {
+    $cloneBase = Join-Path $HOME $cloneBase.Substring(2)
+  }
+  if (-not [System.IO.Path]::IsPathRooted($cloneBase)) {
+    $cloneBase = Join-Path (Get-Location).Path $cloneBase
+  }
+
+  # Target: <base>-<slot> (e.g. ~/.claude-worker-2).
+  $slotHome = "${cloneBase}-${CloneSlot}"
+
+  if (-not (Test-Path -LiteralPath $cloneBase -PathType Container)) {
+    Write-Error "base worker home does not exist: $cloneBase"
+    exit 1
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $cloneBase "settings.json"))) {
+    Write-Error "base worker home has no settings.json: $cloneBase"
+    exit 1
+  }
+
+  if (-not (Test-Path -LiteralPath $slotHome)) {
+    New-Item -ItemType Directory -Path $slotHome -Force | Out-Null
+  }
+
+  # Copy settings.json (provider env block). Idempotent: overwrite on re-clone.
+  $baseSettings = Join-Path $cloneBase "settings.json"
+  $slotSettings = Join-Path $slotHome "settings.json"
+  Copy-Item -LiteralPath $baseSettings -Destination $slotSettings -Force
+  Write-Host "  cloned settings.json -> $slotSettings"
+
+  # Minimal .claude.json: never clobber an existing one.
+  $slotClaudeJson = Join-Path $slotHome ".claude.json"
+  if (-not (Test-Path -LiteralPath $slotClaudeJson)) {
+    '{
+  "mcpServers": {}
+}' | Set-Content -LiteralPath $slotClaudeJson -Encoding utf8
+    Write-Host "  wrote $slotClaudeJson (no MCP servers)"
+  } else {
+    Write-Host "  kept existing $slotClaudeJson (left untouched)"
+  }
+
+  # Link skills: junction on Windows, copy fallback.
+  $baseSkills = Join-Path $cloneBase "skills"
+  $slotSkills = Join-Path $slotHome "skills"
+  if (Test-Path -LiteralPath $baseSkills -PathType Container) {
+    if (Test-Path -LiteralPath $slotSkills) {
+      $item = Get-Item -LiteralPath $slotSkills
+      if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        # Already a junction/symlink — verify target.
+        $currentTarget = $item.Target
+        if ($currentTarget -and $currentTarget -eq $baseSkills) {
+          Write-Host "  skills junction already correct"
+        } else {
+          Remove-Item -LiteralPath $slotSkills -Force
+          New-Item -ItemType Junction -Path $slotSkills -Target $baseSkills | Out-Null
+          Write-Host "  updated skills junction -> $baseSkills"
+        }
+      } else {
+        Write-Host "  kept existing skills directory (left untouched)"
+      }
+    } else {
+      try {
+        New-Item -ItemType Junction -Path $slotSkills -Target $baseSkills | Out-Null
+        Write-Host "  linked skills (junction) -> $baseSkills"
+      } catch {
+        # Fallback: copy the directory if junction fails (no Developer Mode).
+        Copy-Item -LiteralPath $baseSkills -Destination $slotSkills -Recurse -Force
+        Write-Host "  copied skills (junction failed) -> $slotSkills"
+      }
+    }
+  }
+
+  Write-Host ""
+  Write-Host "Slot home ready: $slotHome"
+  exit 0
+}
 
 # --- CCSwitch provider discovery (-ListCCSwitchProviders) --------------------
 # List providers and exit early.  Read-only; never exposes tokens.
