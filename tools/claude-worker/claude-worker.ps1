@@ -80,6 +80,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Dot-source the session helper for sentinel-based worker tracking.
+$SessionHelper = Join-Path $PSScriptRoot "_worker_session.ps1"
+if (Test-Path -LiteralPath $SessionHelper) {
+  . $SessionHelper
+}
+
 # Accept the bash-style long flags too so the same muscle memory works on both
 # platforms: --home <dir> and --preflight-only are pulled out of the
 # pass-through args before they would reach claude.
@@ -245,21 +251,19 @@ if ($DryRun) {
 Write-Host "Launching claude with CLAUDE_CONFIG_DIR=$WorkerHome ..."
 Write-Host "claude bin:      $ResolvedClaudeBin"
 
-# Write a PID file so bootstrap can detect an active worker run before
-# overwriting the provider settings.  We write the current shell PID;
-# bootstrap checks if the PID is still alive (stale file with dead PID
-# is harmless).
+# Write a sentinel file so bootstrap can detect an active worker run before
+# overwriting the provider settings.  The sentinel records PID + process start
+# time so a reused PID (different start time) is correctly treated as stale.
 $pidFile = Join-Path $WorkerHome "running.pid"
-try {
-  Set-Content -LiteralPath $pidFile -Value $PID -Encoding ascii
-} catch {
-  Write-Warning "could not write worker PID file: $pidFile"
-  Write-Warning "provider-switch guardrails may not detect this running session."
-}
+Write-WorkerSentinel -PidFile $pidFile
 
-if ($forward.Count -gt 0) {
-  & $ResolvedClaudeBin @forward
-} else {
-  & $ResolvedClaudeBin
+try {
+  if ($forward.Count -gt 0) {
+    & $ResolvedClaudeBin @forward
+  } else {
+    & $ResolvedClaudeBin
+  }
+} finally {
+  Remove-WorkerSentinel -PidFile $pidFile
 }
 exit $LASTEXITCODE
