@@ -170,7 +170,52 @@ permissions. Only use it in a worker home you trust.
 
 ### PATH install
 
-To run `claude-worker` from any directory without typing the full path:
+To run `claude-worker` from any directory without typing the full path, use
+the automated installer:
+
+**Windows:**
+
+```powershell
+# Install only the claude-worker shim into $HOME\bin:
+.\install.ps1 -Apply -OnlyPath
+
+# Or install skills/commands AND the shim in one go:
+.\install.ps1 -Apply -InstallPath
+
+# Custom bin directory:
+.\install.ps1 -Apply -OnlyPath -PathBinDir "C:\tools"
+```
+
+**macOS / Linux:**
+
+```bash
+# Install only the claude-worker symlink into ~/.local/bin:
+bash install.sh --apply --only-path
+
+# Or install skills/commands AND the shim in one go:
+bash install.sh --apply --install-path
+
+# Custom bin directory:
+bash install.sh --apply --only-path --path-bin-dir ~/bin
+```
+
+Then open a fresh shell and verify:
+
+```bash
+claude-worker --dry-run
+```
+
+The installer is idempotent — re-running it is a no-op if the entry already
+points to the correct source. On Windows, the installer generates a `.cmd`
+shim with an absolute path to the repo launcher (the existing `claude-worker.cmd`
+uses `%~dp0` and must NOT be copied into a bin directory directly).
+
+If the target bin directory is not on your `PATH`, the installer prints a
+copy-pasteable instruction to add it.
+
+#### Manual fallback
+
+If you prefer to set up the PATH entry manually:
 
 **Windows:** Copy or symlink `tools\claude-worker\claude-worker.cmd` into a
 directory on your PATH (e.g. `C:\Users\<you>\bin`). Then open a fresh shell:
