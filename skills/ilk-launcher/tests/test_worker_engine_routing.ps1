@@ -37,7 +37,14 @@ try {
   # --- AC-3: default engine → planner default, no .claude-worker ---
   Write-Host "--- AC-3: default engine dry-run ---"
 
-  $outDefault = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -ProjectPath $tmpDir -DryRun 2>&1
+  # Unset ILK_DEFAULT_ENGINE so we test the true default (claude)
+  $savedEngine = $env:ILK_DEFAULT_ENGINE
+  $env:ILK_DEFAULT_ENGINE = ''
+  try {
+    $outDefault = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -ProjectPath $tmpDir -DryRun 2>&1
+  } finally {
+    if ($savedEngine) { $env:ILK_DEFAULT_ENGINE = $savedEngine } else { Remove-Item Env:\ILK_DEFAULT_ENGINE -ErrorAction SilentlyContinue }
+  }
   $outDefaultStr = $outDefault -join "`n"
 
   Assert-Test "default: ClaudeConfigDir line present" {
