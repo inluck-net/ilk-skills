@@ -418,12 +418,52 @@ EOF
   cleanup
 }
 
+run_portability() {
+  echo "=== test_scheduler.sh portability ==="
+
+  # Test 1: scheduler.sh must not contain Bash 4-only features
+  local bash4_features
+  bash4_features=$(grep -n 'declare -A\|mapfile\|readarray' "$SCHEDULER_SCRIPT" || true)
+  if [[ -n "$bash4_features" ]]; then
+    die "Bash 4-only features found in scheduler.sh:\n$bash4_features"
+  fi
+  echo "PASS: no Bash 4-only features (declare -A, mapfile, readarray)"
+
+  # Test 2: scheduler.sh must parse cleanly with /bin/bash on macOS
+  if [[ -x /bin/bash ]]; then
+    local bin_bash_version
+    bin_bash_version=$(/bin/bash --version 2>&1 | head -1)
+    echo "  /bin/bash version: $bin_bash_version"
+    /bin/bash -n "$SCHEDULER_SCRIPT" || die "/bin/bash -n failed on scheduler.sh"
+    echo "PASS: /bin/bash -n syntax check passes"
+  else
+    echo "  SKIP: /bin/bash not found (not macOS)"
+  fi
+
+  # Test 3: dry-run works under /bin/bash on macOS
+  if [[ -x /bin/bash ]]; then
+    setup_two_queued_projects
+    local output
+    output=$(ILK_DATA_HOME="$FAKE_DATA" /bin/bash "$SCHEDULER_SCRIPT" --dry-run --once 2>&1) || die "/bin/bash scheduler exited non-zero: $output"
+    output="${output//$'\r'/}"
+
+    local decision
+    decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+    [[ "$decision" == "dispatch" ]] || die "expected 'dispatch' under /bin/bash, got '$decision'. Output: $output"
+    echo "PASS: /bin/bash dry-run dispatches correctly"
+    cleanup
+  fi
+
+  echo "PASS: portability checks"
+}
+
 run_all() {
   run_scan
   run_select
   run_dispatch
   run_blacklist
   run_unresolved
+  run_portability
   echo "ALL PASS"
 }
 
@@ -443,11 +483,14 @@ case "${1:-all}" in
   unresolved)
     run_unresolved
     ;;
+  portability)
+    run_portability
+    ;;
   all)
     run_all
     ;;
   *)
-    echo "Usage: $0 {scan|select|dispatch|blacklist|unresolved|all}" >&2
+    echo "Usage: $0 {scan|select|dispatch|blacklist|unresolved|portability|all}" >&2
     exit 1
     ;;
 esac
