@@ -563,6 +563,8 @@ Write-Host '[ilk-launcher] window left open for review. Close manually when done
     Write-Host "  MaxIterations: $MaxIterations"
     Write-Host "  IterationTimeoutMin: $IterationTimeoutMin"
     Write-Host "  WorkerEngine: $EngineName"
+    Write-Host "  ClaudeConfigDir: (default ~/.claude)"
+    Write-Host "  IlkSkillHome: (default)"
     if ($McpConfigPath) { Write-Host "  McpConfigPath: $McpConfigPath" }
     Write-Host "  LogFile: $logFile"
     Write-Host "  JsonlLog: $jsonlLog"

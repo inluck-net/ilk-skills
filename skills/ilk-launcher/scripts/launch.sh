@@ -527,6 +527,8 @@ start_ilk_window() {
     echo "  MaxIterations: $max_iterations"
     echo "  IterationTimeoutMin: $timeout_min"
     echo "  WorkerEngine: $engine"
+    echo "  ClaudeConfigDir: (default ~/.claude)"
+    echo "  IlkSkillHome: (default)"
     if [[ -n "$mcp_config_path" ]]; then
       echo "  McpConfigPath: $mcp_config_path"
     fi
@@ -759,6 +761,8 @@ for p in d:
 
   if [[ "$CLI_DRY_RUN" == true ]]; then
     echo "[$RESOLVED_NAME] DRY RUN — would launch with the above params."
+    echo "[$RESOLVED_NAME] ClaudeConfigDir: (default ~/.claude)"
+    echo "[$RESOLVED_NAME] IlkSkillHome: (default)"
     local pid_file
     pid_file=$(get_pid_file_path "$RESOLVED_PATH")
     echo "[$RESOLVED_NAME] PID file: $pid_file"
