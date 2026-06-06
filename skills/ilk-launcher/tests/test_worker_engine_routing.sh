@@ -56,6 +56,9 @@ echo "=== test_worker_engine_routing.sh ==="
 # --- AC-3: default engine → planner default, no .claude-worker ---
 echo "--- AC-3: default engine dry-run ---"
 
+# Unset ILK_DEFAULT_ENGINE so the test sees the true hardcoded default (claude),
+# not a machine-wide override.
+unset ILK_DEFAULT_ENGINE
 bash "$LAUNCHER" --project-path "$TMPDIR_PROJ" --dry-run 2>&1 | tr -d '\r' > "$TMPDIR_OUT/default.txt" || true
 
 assert_grep "default: ClaudeConfigDir line present" \
