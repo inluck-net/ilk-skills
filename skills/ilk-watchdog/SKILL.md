@@ -165,16 +165,26 @@ queue, one at a time, routed through the cheap worker provider.
 How a scan cycle decides:
 
 1. `scheduler_scan.py` enumerates all projects under
-   `~/.ilk-data/projects/*` (honoring `$ILK_DATA_HOME`) that have ≥1
-   non-shipped sub-plan, ordered **FIFO** by oldest-queued timestamp.
+   `~/.ilk-data/projects/*` (honoring `$ILK_DATA_HOME`) that have a
+   **runnable master** — an `active` master with ≥1 non-shipped
+   sub-plan, or a `queued` master that promotion can activate. Projects
+   where every master is `shipped` are excluded. Results are ordered
+   **FIFO** by oldest-queued timestamp (active masters first, else
+   the next-to-promote queued master).
 2. The first candidate whose per-project sentinel
    (`runtime/launcher/running.pid`) is free is dispatched via
    `ilk-launcher`'s `launch.*` with **`-Engine claude-worker`** (so the
    run uses the worker home). Busy projects → `skip-busy`.
-3. A project whose most recent postmortem is **blacklist**-classified
+3. **Promote-before-dispatch:** if the selected project has no `active`
+   master but HAS a `queued` master, the scheduler promotes it
+   (`queued→active`) via `promote_next_master.py` before dispatching.
+   This ensures multi-master projects always advance — no redispatch
+   churn when the active master ships and the next master is still
+   `queued`.
+4. A project whose most recent postmortem is **blacklist**-classified
    (reuses `ilk-feedback`'s taxonomy) → `skip-blacklist`, and the scan
    moves on. One stuck project never starves the others.
-4. If nothing is dispatchable → `idle`. The daemon polls again rather
+5. If nothing is dispatchable → `idle`. The daemon polls again rather
    than exiting, so newly-queued work auto-wakes it on a later cycle.
 
 **Guardrails.** Pool cap is fixed at **1** in V1 (no parallelism — that
