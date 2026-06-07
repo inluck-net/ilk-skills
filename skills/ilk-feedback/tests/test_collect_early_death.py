@@ -112,7 +112,7 @@ def test_early_death_emits_interrupted(scratch_env):
     assert pm_path.exists(), f"Postmortem not found at {pm_path}"
 
     head = pm_path.read_text(encoding="utf-8")[:500]
-    assert "classification: interrupted" in head, (
+    assert 'classification: "interrupted"' in head or "classification: interrupted" in head, (
         f"Frontmatter missing 'classification: interrupted'.\nHead:\n{head}"
     )
 
