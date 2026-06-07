@@ -12,6 +12,43 @@ workflows into a single set of skills.
 
 ## Status
 
+**v0.8.13** — empty-repo resilience, `/ilk-schedule`, and macOS-friendly
+monitoring surfaces:
+
+- **Empty-repo / stale-state resilience.** A run pointed at a freshly
+  `git init`'d repo (branch but zero commits) no longer cascades into a hard
+  stop: the runner degrades a missing `HEAD` to `(unknown)` instead of leaking a
+  fatal, `collect.py` classifies a run that died before iter 1 as `interrupted`
+  (instead of failing to produce a postmortem), the watchdog ignores a
+  stale/contradicted sentinel and cross-checks `loop_status` before declaring
+  "queue drained", `promote_next_master` treats `pending` as a `queued` alias,
+  and the launcher's active-guard ignores a finished-but-lingering loop window.
+- **`/ilk-schedule`** *(new slash command)* — launches the single cross-project
+  scheduler detached, the way `/ilk-run` launches the per-project loop+watchdog.
+  Use it to drain **all** projects' queues from one supervisor instead of one
+  watchdog per project. `scheduler.{ps1,sh}` gained `-Detach` / `--detach`.
+- **Monitoring surfaces (esp. for macOS, where detached runs are headless
+  `screen` sessions with no visible window):**
+  - `loop_status.py --json` + `status_all.py` — machine-readable per-project and
+    all-projects status.
+  - `/ilk-status --watch` (bash `--watch` / PowerShell `-Watch`) — a
+    self-refreshing all-projects + slots cockpit. Replaces re-running
+    `/ilk-status`.
+  - **Desktop notifications** on watchdog/scheduler events (ship, blocked,
+    restart, postmortem-failed, queue-drained). macOS `osascript`, Windows
+    toast, Linux `notify-send`. Gated by `ILK_NOTIFY` (`0` disables).
+  - **tmux slot sessions** — set `ILK_MULTIPLEXER=tmux` so the scheduler runs
+    each slot in a named `ilk` session (`tmux attach -t ilk` to see one pane per
+    slot); `screen` stays the fallback (`auto` = tmux if present).
+  - **xbar / SwiftBar menu-bar plugin** (`tools/xbar/`) — glanceable macOS
+    menu-bar status; see [`tools/xbar/README.md`](tools/xbar/README.md).
+
+> **Upgrading on macOS:** `git pull` this repo, then re-run `bash install.sh`
+> to symlink the new `/ilk-schedule` command + scripts into `~/.claude/...`
+> (and your other agent homes). The monitoring surfaces, notifications, and
+> tmux mode are **unverified on macOS** until you exercise them there — see each
+> command doc's "Manual user verification" notes.
+
 **v0.8.10** — planner/worker cost split + cross-project scheduling:
 
 - **`claude-worker` launcher engine.** Route the detached loop under the
@@ -55,7 +92,11 @@ for supervised unattended runs.
   the watchdog to auto-restart on clean exits.
 - **`/ilk-status`** *(slash command)* — read-only progress check.
   Shows queue state and rich dashboard without launching or stopping
-  anything.
+  anything. `--watch` (PowerShell `-Watch`) gives a self-refreshing
+  all-projects + slots cockpit.
+- **`/ilk-schedule`** *(slash command)* — launch the single cross-project
+  scheduler detached (drains every project's queue into slot homes, one
+  supervisor for all). The cross-project sibling of `/ilk-run`; both coexist.
 - **`ilk-loop`** *(skill)* — the iterative engine: detached
   PowerShell driver, per-step `local_checks`, `[plan:<slug>#step-N]`
   commit tagging, `last-exit.json` sentinel for IPC.
@@ -100,6 +141,12 @@ for supervised unattended runs.
   loop cd's into that member for commits, local_checks, CI waits, and
   ship-report generation. See `skills/ilk-loop/references/meta-projects.md`
   for the convention and a worked example.
+- **Ambient observability (cross-platform, macOS-first)** — `status_all.py`
+  exposes all-projects state as JSON, feeding a `/ilk-status --watch` cockpit, an
+  xbar/SwiftBar menu-bar plugin, and event-driven desktop notifications
+  (`ILK_NOTIFY`). On macOS, where detached runs are headless `screen` sessions,
+  `ILK_MULTIPLEXER=tmux` puts each scheduler slot in an attachable `ilk` tmux
+  session. None of these change loop behaviour — they're additive and default-off.
 - **Cross-machine sync via Git** — `install.ps1` (Windows junctions)
   and `install.sh` (macOS / Linux symlinks) populate
   `~/.cursor/skills/`, `~/.claude/skills/`, `~/.codex/skills/`, and the matching

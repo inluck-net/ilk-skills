@@ -212,6 +212,7 @@ sentinel mutex still guarantees ≤1 loop per project.
 | `-MaxBudgetUsd` / `--max-budget-usd N` | 0 (unlimited) | Global budget ceiling. |
 | `-DryRun` / `--dry-run` | off | Print the planned decision (JSON) without launching. |
 | `-Once` / `--once` | off | Run a single scan cycle and exit (used by tests). |
+| `-Detach` / `--detach` | off | Spawn the scheduler detached (Windows: new window; macOS/Linux: `screen` session) and return. |
 
 ```powershell
 & "$HOME\.cursor\skills\ilk-watchdog\scripts\scheduler.ps1" -PollMin 5 -MaxConcurrent 5
@@ -220,10 +221,25 @@ sentinel mutex still guarantees ≤1 loop per project.
 bash "$HOME/.cursor/skills/ilk-watchdog/scripts/scheduler.sh" --poll-min 5 --max-concurrent 5
 ```
 
-The scheduler does **not** replace the per-project watchdog — use the
-watchdog to babysit a single supervised run; use the scheduler to drain
-a backlog across many projects unattended. (Tests exercise it via
-`--dry-run` so no provider call is made.)
+Prefer the **`/ilk-schedule`** slash command (wraps `scheduler … -Detach` and
+resolves the skill root for you) over invoking `scheduler.*` directly — it's the
+cross-project analogue of `/ilk-run`. The scheduler does **not** replace the
+per-project watchdog — use the watchdog to babysit a single supervised run; use
+the scheduler to drain a backlog across many projects unattended. (Tests
+exercise it via `--dry-run` so no provider call is made.)
+
+**Observability (v0.8.13+).** On macOS the scheduler/loops run as headless
+`screen` sessions with no visible window, so use these instead of guessing:
+
+- **`/ilk-status --watch`** (bash `--watch`, PowerShell `-Watch`) — a
+  self-refreshing all-projects + slots cockpit over `status_all.py --json`.
+- **`ILK_MULTIPLEXER=tmux`** — dispatch each slot into a named `ilk` tmux session
+  (`tmux attach -t ilk` to see one pane per slot); `auto` (default) uses tmux if
+  present, else `screen`.
+- **`ILK_NOTIFY`** — desktop notifications on ship / blocked / restart /
+  postmortem-failed / queue-drained (`0` disables). macOS `osascript`, Windows
+  toast, Linux `notify-send`; fire-and-forget, never alters control flow.
+- **xbar / SwiftBar** menu-bar plugin — see `tools/xbar/README.md`.
 
 ### V2 migration: best-of-N (worktrees + model-diverse)
 
