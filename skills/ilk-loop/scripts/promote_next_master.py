@@ -128,8 +128,10 @@ def main(argv: list[str]) -> int:
             return 2
         parsed.append((p, fm))
 
+    PROMOTABLE = {"queued", "pending"}
+
     actives = [(p, fm) for p, fm in parsed if (fm.get("status") or "").strip() == "active"]
-    queued = [(p, fm) for p, fm in parsed if (fm.get("status") or "").strip() == "queued"]
+    queued = [(p, fm) for p, fm in parsed if (fm.get("status") or "").strip() in PROMOTABLE]
 
     queued.sort(key=lambda it: (-_prio(it[1]), _created(it[1])))
 
