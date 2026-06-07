@@ -216,6 +216,20 @@ function Get-ExternalLauncherDir {
   return ""
 }
 
+function Get-ExternalRuntimeDir {
+  param([string]$ProjectPath)
+  $resolver = Join-Path $SkillRoot "ilk-loop\scripts\ilk_paths.py"
+  if (-not (Test-Path $resolver)) { return "" }
+  try {
+    $json = & python $resolver --start $ProjectPath 2>$null
+    if ($LASTEXITCODE -eq 0 -and $json) {
+      $obj = $json | ConvertFrom-Json -ErrorAction Stop
+      if ($obj.external_runtime_dir) { return [string]$obj.external_runtime_dir }
+    }
+  } catch {}
+  return ""
+}
+
 function Get-ExternalLogsDir {
   param([string]$ProjectPath)
   $resolver = Join-Path $SkillRoot "ilk-loop\scripts\ilk_paths.py"
@@ -514,7 +528,27 @@ function Test-RunningPid {
   if (-not $rawPid) { return $null }
   $existingPid = [int]$rawPid
   $proc = Get-Process -Id $existingPid -ErrorAction SilentlyContinue
-  if ($proc) { return $existingPid }
+  if ($proc) {
+    # PID is alive — but if the sentinel says this loop already finished
+    # (terminal state + pid match), treat it as a finished-but-lingering
+    # window rather than a genuinely running loop.
+    $runtimeDir = Get-ExternalRuntimeDir -ProjectPath $ProjectPath
+    if ($runtimeDir) {
+      $sentinelPath = Join-Path $runtimeDir 'last-exit.json'
+      if (Test-Path $sentinelPath) {
+        try {
+          $sentinel = Get-Content $sentinelPath -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop
+          $terminalStates = @('all-shipped', 'already-shipped', 'shipped')
+          if ($sentinel -and $terminalStates -contains $sentinel.state `
+              -and $sentinel.pid -eq $existingPid) {
+            Remove-Item $pidFile -Force
+            return $null
+          }
+        } catch {}
+      }
+    }
+    return $existingPid
+  }
   Remove-Item $pidFile -Force
   return $null
 }
