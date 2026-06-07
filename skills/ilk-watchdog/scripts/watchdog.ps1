@@ -290,6 +290,69 @@ function Read-PostmortemFrontmatter {
   return $fm
 }
 
+function Get-StartupSentinelAction {
+  <#
+    Pure helper: decide what to do with a terminal sentinel at startup.
+    Returns one of: 'stale-ignore', 'work-pending', 'advance', 'classify'.
+
+    - 'stale-ignore': sentinel ended before this watchdog launched — ignore it.
+    - 'work-pending': sentinel says success but loop_status says work pending.
+    - 'advance': sentinel says success and loop_status confirms all shipped.
+    - 'classify': non-success terminal state — hand off to feedback path.
+  #>
+  param(
+    [string]$State,
+    [string]$EndedAt,
+    [datetime]$LaunchTime,
+    [int]$LoopStatusExit
+  )
+
+  $SuccessStates = @('all-shipped', 'already-shipped', 'shipped')
+
+  # Non-success terminal → classify (staleness doesn't matter)
+  if ($SuccessStates -notcontains $State) {
+    return 'classify'
+  }
+
+  # Freshness check: if EndedAt parses and is earlier than LaunchTime, it's stale
+  $ended = [datetime]::MinValue
+  if ([datetime]::TryParse($EndedAt, [ref]$ended)) {
+    if ($ended -lt $LaunchTime) {
+      return 'stale-ignore'
+    }
+  }
+  # If EndedAt doesn't parse, skip freshness and rely on cross-check
+
+  # Cross-check: loop_status says work pending despite success sentinel
+  if ($LoopStatusExit -ne 0) {
+    return 'work-pending'
+  }
+
+  # All clear: advance the queue
+  return 'advance'
+}
+
+function Invoke-LoopStatusExit {
+  <#
+    Run loop_status.py against the project and return its exit code.
+    Returns -1 if the script can't be found or python fails.
+  #>
+  param([string]$Project)
+  if (-not (Test-Path $LoopStatusPy)) { return -1 }
+  $tmpOut = [IO.Path]::GetTempFileName()
+  $tmpErr = [IO.Path]::GetTempFileName()
+  try {
+    $proc = Start-Process -FilePath python -ArgumentList @($LoopStatusPy) `
+      -WorkingDirectory $Project -NoNewWindow -PassThru -Wait `
+      -RedirectStandardOutput $tmpOut -RedirectStandardError $tmpErr
+    return $proc.ExitCode
+  } catch {
+    return -1
+  } finally {
+    Remove-Item $tmpOut, $tmpErr -ErrorAction SilentlyContinue
+  }
+}
+
 # --- the polling loop -------------------------------------------------------
 
 $script:ProjectPathResolved = $null
@@ -373,6 +436,7 @@ Blacklist (block): $($BlacklistClasses -join ', ')
   $restartCount = 0
   $lastRelaunchAt = [datetime]::MinValue
   $sawAliveOnce = $false
+  $LaunchTime = Get-Date
   $RuntimeDir = Get-IlkRuntimeDir -Project $Project
   if ($RuntimeDir) {
     Write-Log "sentinel runtime dir: $RuntimeDir"
@@ -411,6 +475,28 @@ Blacklist (block): $($BlacklistClasses -join ', ')
           }
         }
         elseif ($SuccessStates -contains $sentinel.state) {
+          $sentinelAction = Get-StartupSentinelAction `
+            -State $sentinel.state `
+            -EndedAt $sentinel.ended_at `
+            -LaunchTime $LaunchTime `
+            -LoopStatusExit (Invoke-LoopStatusExit -Project $Project)
+
+          if ($sentinelAction -eq 'stale-ignore') {
+            Write-Log ("sentinel state={0} ended_at={1} is older than watchdog launch {2} — ignoring stale sentinel." -f $sentinel.state, $sentinel.ended_at, $LaunchTime)
+            Start-Sleep -Seconds $PollSec
+            continue
+          }
+          if ($sentinelAction -eq 'work-pending') {
+            Write-Log ("sentinel state={0} but loop_status reports work pending — not draining." -f $sentinel.state)
+            Start-Sleep -Seconds $PollSec
+            continue
+          }
+          if ($sentinelAction -eq 'classify') {
+            Write-Log ("sentinel terminal state: {0} (iters={1}) — classifying." -f $sentinel.state, $sentinel.iterations)
+            $sentinelTerminal = $true
+          }
+          # 'advance' path: proceed with promote/relaunch as before
+          if ($sentinelAction -eq 'advance') {
           Write-Log ("clean ship detected (state={0}, iters={1}). Advancing master queue..." -f $sentinel.state, $sentinel.iterations)
           $advance = Invoke-PromoteNextMaster -Project $Project
           if ($advance -and $advance.promoted) {
@@ -450,6 +536,7 @@ $demotedNote
 Watchdog exiting cleanly. Job done.
 "@ -Color Green
           return
+          } # end: 'advance' path
         }
         else {
           # Terminal non-success state. Skip the wrapper-PID dance and
