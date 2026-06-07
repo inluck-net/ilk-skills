@@ -241,6 +241,40 @@ for proj in projects:
 " <<<"$scan_output" | tr -d '\r'
 }
 
+# --- multiplexer selection (tmux vs screen) -----------------------------------
+
+# ILK_MULTIPLEXER: auto (default) = tmux if present, else screen;
+# screen = force screen; tmux = require tmux.
+resolve_multiplexer() {
+  local mux="${ILK_MULTIPLEXER:-auto}"
+  case "$mux" in
+    screen)
+      echo "screen"
+      ;;
+    tmux)
+      if command -v tmux &>/dev/null; then
+        echo "tmux"
+      else
+        echo "tmux-required-but-missing"
+      fi
+      ;;
+    auto|*)
+      if command -v tmux &>/dev/null; then
+        echo "tmux"
+      else
+        echo "screen"
+      fi
+      ;;
+  esac
+}
+
+# Ensure the ilk tmux session exists.
+ensure_ilmux_session() {
+  if ! tmux has-session -t ilk 2>/dev/null; then
+    tmux new-session -d -s ilk -n "scheduler"
+  fi
+}
+
 # --- main loop ---------------------------------------------------------------
 
 run_scheduler() {
@@ -248,6 +282,13 @@ run_scheduler() {
   # Bash 3.2 compatible blacklist backoff state.
   # newline-separated entries: "project-key expiry-epoch" (max epoch wins).
   local blacklist_skip=""
+
+  local current_mux
+  current_mux="$(resolve_multiplexer)"
+  if [[ "$current_mux" == "tmux-required-but-missing" ]]; then
+    echo "ERROR: ILK_MULTIPLEXER=tmux but tmux not found on PATH" >&2
+    return 1
+  fi
 
   while true; do
     # --- scan for queued projects ---
@@ -422,14 +463,33 @@ run_scheduler() {
       if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
         # Use forward slashes in paths for valid JSON (Windows backslashes are invalid escapes)
         local safe_path="${drepo//\\//}"
-        echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"command\":\"launch.sh --project-path '$safe_path' --engine claude-worker --worker-home '$slot_home'\"}"
+        if [[ "$current_mux" == "tmux" ]]; then
+          echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"tmux\",\"command\":\"tmux new-window -t ilk -n '$dkey' 'launch.sh --project-path \\\"'$safe_path'\\\" --engine claude-worker --worker-home \\\"'$slot_home'\\\"'\"}"
+        else
+          echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"screen\",\"command\":\"launch.sh --project-path '$safe_path' --engine claude-worker --worker-home '$slot_home'\"}"
+        fi
       elif [[ "$DRY_RUN" == true ]]; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] DRY-RUN: would dispatch $dkey (slot $slot_id) via $LAUNCH_SCRIPT --project-path '$drepo' --engine claude-worker --worker-home '$slot_home'"
+        if [[ "$current_mux" == "tmux" ]]; then
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] DRY-RUN [tmux]: would dispatch $dkey (slot $slot_id) via tmux new-window -t ilk -n '$dkey' '$LAUNCH_SCRIPT --project-path $drepo --engine claude-worker --worker-home $slot_home'"
+        else
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] DRY-RUN [screen]: would dispatch $dkey (slot $slot_id) via $LAUNCH_SCRIPT --project-path '$drepo' --engine claude-worker --worker-home '$slot_home'"
+        fi
       else
         # Ensure slot home exists (lazy-clone from base worker home).
         bash "$BOOTSTRAP_SCRIPT" --clone-slot "$slot_id" >/dev/null 2>&1 || true
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatching $dkey (slot $slot_id)..."
-        if bash "$LAUNCH_SCRIPT" --project-path "$drepo" --engine claude-worker --worker-home "$slot_home" --force; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatching $dkey (slot $slot_id) [mux=$current_mux]..."
+        local launch_cmd="bash $LAUNCH_SCRIPT --project-path '$drepo' --engine claude-worker --worker-home '$slot_home' --force"
+        if [[ "$current_mux" == "tmux" ]]; then
+          ensure_ilmux_session
+          if tmux new-window -t ilk -n "$dkey" "$launch_cmd"; then
+            dispatch_count=$((dispatch_count + 1))
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatched $dkey (slot $slot_id, total: $dispatch_count) [tmux]"
+            invoke_ilk_notify "dispatch" "$dkey" "slot $slot_id"
+          else
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] tmux dispatch failed for $dkey"
+            blacklist_skip="${blacklist_skip}"$'\n'"${dkey} $(($(date +%s) + 300))"
+          fi
+        elif bash "$LAUNCH_SCRIPT" --project-path "$drepo" --engine claude-worker --worker-home "$slot_home" --force; then
           dispatch_count=$((dispatch_count + 1))
           echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatched $dkey (slot $slot_id, total: $dispatch_count)"
           invoke_ilk_notify "dispatch" "$dkey" "slot $slot_id"
