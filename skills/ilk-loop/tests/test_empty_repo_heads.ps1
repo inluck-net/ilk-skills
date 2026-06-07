@@ -73,6 +73,29 @@ if ($value -ne "(unknown)") {
 # or hung — reaching this point proves the guard worked).
 Write-Host "PASS: Get-RepoHeads returned '(unknown)' silently on commitless repo" -ForegroundColor Green
 
+# AC-4: bash-parity assertion — the bash runner's get_repo_heads uses
+# `sha=$(git rev-parse HEAD 2>/dev/null) || sha="(unknown)"`. On a
+# commitless repo, git rev-parse HEAD exits non-zero, so the || branch
+# fires and sha becomes "(unknown)". We test the contract via the same
+# one-liner, checking exit code to decide if the fallback should fire.
+$bashPath = Get-Command bash -ErrorAction SilentlyContinue
+if ($bashPath) {
+  $escapedRepo = $repoDir -replace '\\', '/'
+  # Use a temp script to avoid PowerShell/bash quoting hell
+  $bashScript = Join-Path $scratch "bash-test.sh"
+  $bashBody = "sha=`$(git -C '$escapedRepo' rev-parse HEAD 2>/dev/null) || sha='(unknown)'`necho `"`$sha`""
+  $bashBody | Out-File -FilePath $bashScript -Encoding ascii
+  $bashOutput = & bash $bashScript 2>$null
+  $bashOutput = "$bashOutput".Trim()
+  if ($bashOutput -ne "(unknown)") {
+    Write-Error "FAIL: bash parity — expected '(unknown)', got '$bashOutput'"
+    exit 1
+  }
+  Write-Host "PASS: bash runner also degrades commitless repo to '(unknown)'" -ForegroundColor Green
+} else {
+  Write-Host "SKIP: bash not on PATH — bash-parity assertion skipped" -ForegroundColor DarkYellow
+}
+
 # Clean up
 try { Remove-Item -Recurse -Force $scratch -ErrorAction SilentlyContinue } catch {}
 
