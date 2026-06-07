@@ -507,7 +507,7 @@ Watchdog exiting cleanly. Job done.
       Write-Log "running ilk-feedback collect.py to classify the run..."
       $reportPath = Invoke-PostmortemCollect -Project $Project -ProjName $ProjName
       if (-not $reportPath) {
-        Write-Banner -Title "POSTMORTEM FAILED" -Body "Project: $ProjName`ncollect.py did not produce a usable report.`nWatchdog blocking; please triage manually." -Color Red
+        Write-Banner -Title "POSTMORTEM FAILED" -Body "Project: $ProjName`ncollect.py did not produce a usable report.`nWatchdog blocking; please triage manually.`nIf the target repo was just 'git init'd with no commits, run /ilk again after the first commit." -Color Red
         return
       }
       Write-Log "postmortem written: $reportPath"
