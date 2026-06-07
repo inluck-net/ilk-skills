@@ -183,3 +183,32 @@ class TestAC3_LiveCount:
         assert result.returncode == 0
         out = result.stdout
         assert "live" in out.lower() or "1" in out
+
+
+# ── AC-4: command doc + wrapper wiring ───────────────────────────────
+
+class TestAC4_CommandDocAndWrappers:
+    """commands/ilk-status.md documents --watch; wrappers pass flags through."""
+
+    def test_command_doc_mentions_watch(self):
+        """The command doc includes a --watch section."""
+        cmd_doc = REPO_ROOT / "commands" / "ilk-status.md"
+        assert cmd_doc.exists(), f"command doc not found: {cmd_doc}"
+        text = cmd_doc.read_text(encoding="utf-8")
+        assert "--watch" in text, "command doc missing --watch mention"
+
+    def test_ps1_wrapper_passes_watch(self):
+        """ilk-status.ps1 accepts -Watch and passes it to ilk_dashboard.py."""
+        ps1 = REPO_ROOT / "skills" / "ilk-runner" / "scripts" / "ilk-status.ps1"
+        assert ps1.exists(), f"ps1 wrapper not found: {ps1}"
+        text = ps1.read_text(encoding="utf-8")
+        assert "-Watch" in text or "--watch" in text.lower(), "ps1 missing -Watch param"
+        assert "DashboardPy" in text or "dashboard" in text.lower(), "ps1 missing dashboard call"
+
+    def test_sh_wrapper_passes_watch(self):
+        """ilk-status.sh accepts --watch and passes it to ilk_dashboard.py."""
+        sh = REPO_ROOT / "skills" / "ilk-runner" / "scripts" / "ilk-status.sh"
+        assert sh.exists(), f"sh wrapper not found: {sh}"
+        text = sh.read_text(encoding="utf-8")
+        assert "--watch" in text, "sh missing --watch flag"
+        assert "dashboard" in text.lower() or "DASHBOARD" in text, "sh missing dashboard call"

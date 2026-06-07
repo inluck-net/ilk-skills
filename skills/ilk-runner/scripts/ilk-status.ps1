@@ -4,7 +4,9 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$Start = ""
+  [string]$Start = "",
+  [switch]$Watch,
+  [double]$N = 5
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,4 +48,11 @@ if ($status.ExitCode -eq 2) {
 Write-Host ""
 Write-Host "--- progress ---"
 Invoke-IlkPython -WorkingDirectory $ProjectRoot -ArgumentList @($StatusProgressPy, "--project-path", $ProjectRoot) | Out-Null
+
+if ($Watch) {
+  $DashboardPy = Join-Path $SkillRoot "ilk-loop\scripts\ilk_dashboard.py"
+  Invoke-IlkPython -ArgumentList @($DashboardPy, "--watch", "-n", $N)
+  exit $LASTEXITCODE
+}
+
 exit $LASTEXITCODE

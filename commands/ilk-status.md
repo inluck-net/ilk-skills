@@ -94,7 +94,28 @@ markdown box. Then add agent judgment:
 - Loop health / anomaly assessment
 - Recommended action
 
-## 2. All-projects status (when user asks globally)
+## 2. All-projects live dashboard (--watch)
+
+When the user says "ilk watch", "live dashboard", or asks for a self-refreshing
+view of all projects, run the dashboard:
+
+```bash
+# macOS / Linux
+bash "<skill-root>/ilk-runner/scripts/ilk-status.sh" --watch
+# Optional cadence: -n 10 (seconds, default 5)
+```
+
+```powershell
+# Windows
+powershell -NoProfile -ExecutionPolicy Bypass -File "<skill-root>\ilk-runner\scripts\ilk-status.ps1" -Watch
+# Optional cadence: -N 10 (seconds, default 5)
+```
+
+The dashboard refreshes every *N* seconds showing all projects + slot status.
+Press Ctrl+C to exit.  Uses `ilk_dashboard.py` which reads `status_all.py --json`
+on each frame.
+
+## 3. All-projects status (when user asks globally)
 
 When the user asks for "all projects", "global status", or `/ilk-status-all`:
 
