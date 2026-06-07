@@ -68,6 +68,7 @@ $ProjectsJson  = Join-Path $LauncherDir 'projects.json'
 $LaunchScript  = Join-Path $LauncherDir 'scripts\launch.ps1'
 $LoopStatusPy  = Join-Path $SkillRoot 'ilk-loop\scripts\loop_status.py'
 $CollectPy     = Join-Path $SkillRoot 'ilk-feedback\scripts\collect.py'
+$NotifyPy      = Join-Path $SkillRoot 'ilk-watchdog\scripts\ilk_notify.py'
 
 $WhitelistClasses = @('timeout-bound', 'max-iter-bound', 'api-flaky', 'interrupted')
 $BlacklistClasses = @('stuck-no-progress', 'api-blocked', 'budget-exhausted', 'local-checks-stuck')
@@ -77,6 +78,16 @@ $BlacklistClasses = @('stuck-no-progress', 'api-blocked', 'budget-exhausted', 'l
 $RelaunchGraceSec = 90
 
 # --- helpers ----------------------------------------------------------------
+
+function Invoke-IlkNotify {
+  <# Fire-and-forget desktop notification. Failure is swallowed. #>
+  param([string]$Event, [string]$Project, [string]$Detail = "")
+  try {
+    $args = @($NotifyPy, '--event', $Event, '--project', $Project)
+    if ($Detail) { $args += @('--detail', $Detail) }
+    & python @args 2>$null | Out-Null
+  } catch {}
+}
 
 function Read-ProjectsRegistry {
   if (-not (Test-Path $ProjectsJson)) { return @() }
@@ -498,6 +509,7 @@ Blacklist (block): $($BlacklistClasses -join ', ')
           # 'advance' path: proceed with promote/relaunch as before
           if ($sentinelAction -eq 'advance') {
           Write-Log ("clean ship detected (state={0}, iters={1}). Advancing master queue..." -f $sentinel.state, $sentinel.iterations)
+          Invoke-IlkNotify -Event 'ship' -Project $ProjName
           $advance = Invoke-PromoteNextMaster -Project $Project
           if ($advance -and $advance.promoted) {
             Write-Log ("queue advanced: demoted={0}, promoted={1}, queue_remaining={2}" -f $advance.demoted, $advance.promoted, $advance.queue_remaining)
@@ -527,6 +539,7 @@ Cannot auto-relaunch. Run ilk-launcher manually.
           }
           # No next master: queue drained.
           $demotedNote = if ($advance -and $advance.demoted) { "Marked $($advance.demoted) as shipped." } else { "" }
+          Invoke-IlkNotify -Event 'queue-drained' -Project $ProjName
           Write-Banner -Title "ALL MASTERS SHIPPED — QUEUE DRAINED" -Body @"
 Project: $ProjName
 Sentinel: $RuntimeDir\last-exit.json
@@ -594,6 +607,7 @@ Watchdog exiting cleanly. Job done.
       Write-Log "running ilk-feedback collect.py to classify the run..."
       $reportPath = Invoke-PostmortemCollect -Project $Project -ProjName $ProjName
       if (-not $reportPath) {
+        Invoke-IlkNotify -Event 'postmortem-failed' -Project $ProjName
         Write-Banner -Title "POSTMORTEM FAILED" -Body "Project: $ProjName`ncollect.py did not produce a usable report.`nWatchdog blocking; please triage manually.`nIf the target repo was just 'git init'd with no commits, run /ilk again after the first commit." -Color Red
         return
       }
@@ -609,6 +623,7 @@ Watchdog exiting cleanly. Job done.
       }
 
       if ($BlacklistClasses -contains $klass) {
+        Invoke-IlkNotify -Event 'blocked' -Project $ProjName -Detail "classification: $klass"
         Write-Banner -Title "BLOCKED — $($klass.ToUpper())" -Body @"
 Project: $ProjName
 Classification: $klass
@@ -647,6 +662,7 @@ relaunch manually if it still makes sense.
       }
 
       Write-Log "WHITELIST hit ($klass). Restart $restartCount/$MaxRestartsCap with MaxIterations=$recMax IterationTimeoutMin=$recTo."
+      Invoke-IlkNotify -Event 'restart' -Project $ProjName -Detail "classification: $klass"
 
       if (-not (Test-Path $LaunchScript)) {
         Write-Banner -Title "LAUNCH SCRIPT MISSING" -Body "Expected: $LaunchScript`nWatchdog cannot relaunch." -Color Red

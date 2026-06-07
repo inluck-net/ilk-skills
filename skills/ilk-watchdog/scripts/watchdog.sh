@@ -22,6 +22,7 @@ PROJECTS_JSON="${LAUNCHER_DIR}/projects.json"
 LAUNCH_SCRIPT="${LAUNCHER_DIR}/scripts/launch.sh"
 LOOP_STATUS_PY="${_SKILL_ROOT}/ilk-loop/scripts/loop_status.py"
 COLLECT_PY="${_SKILL_ROOT}/ilk-feedback/scripts/collect.py"
+NOTIFY_PY="${_SKILL_ROOT}/ilk-watchdog/scripts/ilk_notify.py"
 
 POLL_INTERVAL_SEC=60
 MAX_RESTARTS=5
@@ -38,6 +39,14 @@ RESOLVED_PATH=""
 RESOLVED_NAME=""
 
 # ----- Helpers (project resolution, same pattern as launch.sh) ---------------
+
+# Fire-and-forget desktop notification. Failure is swallowed.
+invoke_ilk_notify() {
+  local event="$1" project="$2" detail="${3:-}"
+  local args=("$NOTIFY_PY" --event "$event" --project "$project")
+  [[ -n "$detail" ]] && args+=(--detail "$detail")
+  python3 "${args[@]}" 2>/dev/null || true
+}
 
 read_projects_registry() {
   if [[ ! -f "$PROJECTS_JSON" ]]; then
@@ -331,6 +340,7 @@ Launch script exited non-zero. Watchdog blocking." 31
   if [[ -n "$demoted" ]]; then
     demoted_note="Marked $demoted as shipped."
   fi
+  invoke_ilk_notify "queue-drained" "$proj_name"
   write_banner "ALL MASTERS SHIPPED — QUEUE DRAINED" \
 "Project: $proj_name
 State: clean ship
@@ -534,6 +544,7 @@ Watchdog PID: $$" 36
         fi
       elif [[ " ${success_states[*]} " =~ [[:space:]]${sentinel_state}[[:space:]] ]]; then
         write_log "clean ship detected (state=$sentinel_state, iters=$sentinel_iters). Advancing master queue..."
+        invoke_ilk_notify "ship" "$proj_name"
         handle_promote "$project" "$proj_name" "$poll_sec"
         continue
       else
@@ -592,6 +603,7 @@ Watchdog PID: $$" 36
     fi
 
     if [[ "$action" == "blacklist" ]]; then
+      invoke_ilk_notify "blocked" "$proj_name" "classification: $sentinel_state"
       write_banner "BLOCKED — ${sentinel_state^^}" \
 "Project: $proj_name
 Classification: $sentinel_state
@@ -642,6 +654,7 @@ relaunch manually if it still makes sense." 31
     fi
 
     write_log "WHITELIST hit ($sentinel_state). Restart $restart_count/$max_restarts_cap."
+    invoke_ilk_notify "restart" "$proj_name" "classification: $sentinel_state"
 
     if ! bash "$LAUNCH_SCRIPT" --project-path "$project" --force; then
       write_banner "RELAUNCH FAILED" \

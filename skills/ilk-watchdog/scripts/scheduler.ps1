@@ -56,8 +56,19 @@ $ScanScript       = Join-Path $PSScriptRoot 'scheduler_scan.py'
 $PromoteScript    = Join-Path $SkillRoot 'ilk-loop\scripts\promote_next_master.py'
 $LaunchScript     = Join-Path $SkillRoot 'ilk-launcher\scripts\launch.ps1'
 $BootstrapScript  = Join-Path $SkillRoot '..\tools\claude-worker\bootstrap.ps1'
+$NotifyPy         = Join-Path $SkillRoot 'ilk-watchdog\scripts\ilk_notify.py'
 
 # --- helpers -----------------------------------------------------------------
+
+function Invoke-IlkNotify {
+  <# Fire-and-forget desktop notification. Failure is swallowed. #>
+  param([string]$Event, [string]$Project, [string]$Detail = "")
+  try {
+    $args = @($NotifyPy, '--event', $Event, '--project', $Project)
+    if ($Detail) { $args += @('--detail', $Detail) }
+    & python @args 2>$null | Out-Null
+  } catch {}
+}
 
 function Test-RunningPid {
   <#
@@ -343,6 +354,7 @@ function Run-Scheduler {
         try {
           & $LaunchScript -ProjectPath $repo -Engine claude-worker -WorkerHome $slotHome -Force
           $dispatchCount++
+          Invoke-IlkNotify -Event 'dispatch' -Project $key -Detail "slot $slotId"
           Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatched $key (slot $slotId, total: $dispatchCount)"
         } catch {
           Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatch failed for $key`: $_"

@@ -23,6 +23,15 @@ SCAN_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/scheduler_scan.py"
 PROMOTE_SCRIPT="${_SKILL_ROOT}/ilk-loop/scripts/promote_next_master.py"
 LAUNCH_SCRIPT="${_SKILL_ROOT}/ilk-launcher/scripts/launch.sh"
 BOOTSTRAP_SCRIPT="${_SKILL_ROOT}/../tools/claude-worker/bootstrap.sh"
+NOTIFY_PY="${_SKILL_ROOT}/ilk-watchdog/scripts/ilk_notify.py"
+
+# Fire-and-forget desktop notification. Failure is swallowed.
+invoke_ilk_notify() {
+  local event="$1" project="$2" detail="${3:-}"
+  local args=("$NOTIFY_PY" --event "$event" --project "$project")
+  [[ -n "$detail" ]] && args+=(--detail "$detail")
+  $PYTHON "${args[@]}" 2>/dev/null || true
+}
 
 # Resolve python command (python3 preferred, python fallback for Windows).
 # On Windows, `python3` may exist as a Microsoft Store alias that doesn't
@@ -423,6 +432,7 @@ run_scheduler() {
         if bash "$LAUNCH_SCRIPT" --project-path "$drepo" --engine claude-worker --worker-home "$slot_home" --force; then
           dispatch_count=$((dispatch_count + 1))
           echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatched $dkey (slot $slot_id, total: $dispatch_count)"
+          invoke_ilk_notify "dispatch" "$dkey" "slot $slot_id"
         else
           echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatch failed for $dkey"
           blacklist_skip="${blacklist_skip}"$'\n'"${dkey} $(($(date +%s) + 300))"
