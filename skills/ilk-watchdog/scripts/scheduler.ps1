@@ -41,7 +41,8 @@ param(
   [int]$MaxDispatches = -1,
   [double]$MaxBudgetUsd = 0,
   [switch]$DryRun,
-  [switch]$Once
+  [switch]$Once,
+  [switch]$Detach
 )
 
 $ErrorActionPreference = 'Stop'
@@ -357,5 +358,17 @@ function Run-Scheduler {
 }
 
 # --- entry point -------------------------------------------------------------
+
+if ($Detach) {
+  $self = $PSCommandPath
+  $inner = "& '$self' -PollMin $PollMin -MaxConcurrent $MaxConcurrent -MaxDispatches $MaxDispatches -MaxBudgetUsd $MaxBudgetUsd"
+  if ($DryRun) {
+    Write-Host "[ilk-scheduler] (dry-run) would spawn detached: $inner"
+    return
+  }
+  $proc = Start-Process powershell -ArgumentList @('-NoExit','-NoProfile','-Command',$inner) -PassThru
+  Write-Host "[ilk-scheduler] detached window spawned. PID $($proc.Id)."
+  return
+}
 
 Run-Scheduler

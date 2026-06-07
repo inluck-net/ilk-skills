@@ -45,6 +45,7 @@ MAX_DISPATCHES=-1
 MAX_BUDGET_USD=0
 DRY_RUN=false
 ONCE=false
+DETACH=false
 
 # --- argument parsing --------------------------------------------------------
 
@@ -61,6 +62,7 @@ Options:
   --max-budget-usd N    Global budget ceiling. Default 0 (unlimited).
   --dry-run             Print the planned decision without dispatching.
   --once                Run a single scan cycle and exit (for tests).
+  --detach              Spawn this scheduler in a detached screen session and exit.
   -h, --help            Show this help and exit.
 EOF
 }
@@ -90,6 +92,10 @@ parse_args() {
         ;;
       --once)
         ONCE=true
+        shift
+        ;;
+      --detach)
+        DETACH=true
         shift
         ;;
       -h|--help)
@@ -432,7 +438,36 @@ run_scheduler() {
   done
 }
 
+# --- detach helper -----------------------------------------------------------
+
+detach_scheduler() {
+  if ! command -v screen &>/dev/null; then
+    echo "ERROR: 'screen' is not installed. Install it (apt install screen / brew install screen) or run without --detach." >&2
+    exit 1
+  fi
+
+  local self="${BASH_SOURCE[0]}"
+  local cmd="bash '$self' --poll-min '$POLL_MIN' --max-concurrent '$MAX_CONCURRENT' --max-dispatches '$MAX_DISPATCHES' --max-budget-usd '$MAX_BUDGET_USD'"
+
+  if [[ "$DRY_RUN" == true ]]; then
+    echo "[ilk-scheduler] (dry-run) would spawn detached: screen -dmS ilk-scheduler $cmd"
+    exit 0
+  fi
+
+  local session_name="ilk-scheduler"
+
+  screen -dmS "$session_name" bash -c "$cmd"
+  echo "[ilk-scheduler] detached screen session started: $session_name"
+  echo "  Attach with: screen -r $session_name"
+  exit 0
+}
+
 # --- entry point -------------------------------------------------------------
 
 parse_args "$@"
+
+if [[ "$DETACH" == true ]]; then
+  detach_scheduler
+fi
+
 run_scheduler
