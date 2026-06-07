@@ -12,6 +12,8 @@ convention.
 """
 from __future__ import annotations
 
+import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -197,23 +199,137 @@ def pick_active_master(masters: list[Path]) -> tuple[Path, dict]:
     return chosen, queue_view
 
 
-def main() -> int:
-    plans_dir, plans_source = _resolve_plans_dir(Path.cwd())
-    if not plans_dir:
-        print("No MASTER-*.md found in ~/.ilk-data, in-tree docs/plans/, or any ancestor.", file=sys.stderr)
-        print("Run this command from inside a project that uses the ilk-loop convention.", file=sys.stderr)
-        return 2
-    if plans_source != "external":
-        # Soft nudge — does not block, but tells users they're on the
-        # legacy in-tree layout and could migrate.
-        print(
-            f"[ilk] plans dir: {plans_dir} (source: {plans_source}). "
-            "Consider migrating to ~/.ilk-data — see migrate-plans-to-external.py.",
-            file=sys.stderr,
-        )
+def resolve_status(cwd: Path) -> dict:
+    """Resolve all status data and return a structured dict.
 
-    # Meta-project detection: drives the optional `repo` column.
-    project_root, project_kind = find_project_root(Path.cwd())
+    Returns a dict with keys:
+      - master: str (filename)
+      - subplans: list[dict] with slug, status, current_step, estimated_steps
+      - active, queued, shipped: int counts
+      - queue_exit: 0 (all shipped), 1 (pending), 2 (error)
+      - plans_dir: str
+      - next: dict|None with fname, status, cur, est, repo (if any)
+    """
+    plans_dir, plans_source = _resolve_plans_dir(cwd)
+    if not plans_dir:
+        return {"error": "no plans dir found", "queue_exit": 2}
+
+    masters = sorted(plans_dir.glob("MASTER-*.md"))
+    if not masters:
+        return {"error": f"No MASTER-*.md in {plans_dir}", "queue_exit": 2}
+
+    master, queue_view = pick_active_master(masters)
+    master_text = master.read_text(encoding="utf-8")
+    ordered_files = extract_master_order(master_text)
+
+    rows: list[tuple[str, str, str, str, str]] = []
+    next_actionable = None
+    next_blocked = None
+    next_other = None
+
+    for fname in ordered_files:
+        path = plans_dir / fname
+        if not path.exists():
+            rows.append((fname, "MISSING", "-", "-", ""))
+            continue
+        text = path.read_text(encoding="utf-8")
+        fm = parse_frontmatter(text)
+        status = fm.get("status", "?")
+        cur_step = fm.get("current_step", "?")
+        est = fm.get("estimated_steps", "?")
+        repo = fm.get("repo", "")
+        rows.append((fname, status, cur_step, est, repo))
+        if status == "shipped":
+            continue
+        row = (fname, status, cur_step, est, repo)
+        if status in ("pending", "ready", "in-progress"):
+            if next_actionable is None:
+                next_actionable = row
+        elif status == "blocked":
+            if next_blocked is None:
+                next_blocked = row
+        else:
+            if next_other is None:
+                next_other = row
+
+    next_pending = next_actionable or next_other or next_blocked
+
+    # Build subplans list
+    subplans = []
+    for fname, status, cur, est, _repo in rows:
+        # Derive slug: strip YYYY-MM-DD- prefix and .md suffix
+        slug = fname
+        if fname.endswith(".md"):
+            slug = fname[:-3]
+        m = re.match(r"^\d{4}-\d{2}-\d{2}-(.*)$", slug)
+        if m:
+            slug = m.group(1)
+        subplans.append({
+            "fname": fname,
+            "slug": slug,
+            "status": status,
+            "current_step": cur,
+            "estimated_steps": est,
+        })
+
+    # Counts
+    active = queue_view["active_count"]
+    queued = queue_view["queued_count"]
+    shipped = queue_view["shipped_count"]
+
+    # queue_exit: 0 = all shipped, 1 = pending work, 2 = error
+    if next_pending is None:
+        queue_exit = 0
+    else:
+        queue_exit = 1
+
+    result = {
+        "master": master.name,
+        "plans_dir": str(plans_dir),
+        "subplans": subplans,
+        "active": active,
+        "queued": queued,
+        "shipped": shipped,
+        "queue_exit": queue_exit,
+    }
+
+    if next_pending:
+        fname, status, cur, est, repo = next_pending
+        result["next"] = {
+            "fname": fname,
+            "status": status,
+            "cur": cur,
+            "est": est,
+            "repo": repo,
+        }
+    else:
+        result["next"] = None
+
+    return result
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="ilk-loop status checker")
+    ap.add_argument("--json", action="store_true",
+                    help="Emit machine-readable JSON instead of human text")
+    args = ap.parse_args()
+
+    cwd = Path.cwd()
+    data = resolve_status(cwd)
+
+    if args.json:
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+        return data["queue_exit"]
+
+    # ── text mode (original behaviour) ──────────────────────────────────
+    if data["queue_exit"] == 2:
+        print(data.get("error", "Unknown error"), file=sys.stderr)
+        return 2
+
+    plans_dir = Path(data["plans_dir"])
+
+    # Meta-project detection for the optional `repo` column.
+    project_root, project_kind = find_project_root(cwd)
     meta_members: dict[str, Path] = {}
     if project_kind == "meta" and project_root is not None:
         try:
@@ -222,14 +338,9 @@ def main() -> int:
         except MetaManifestError as e:
             print(f"[ilk] meta manifest invalid: {e}", file=sys.stderr)
 
+    # Re-read masters for the queue banner (text mode only).
     masters = sorted(plans_dir.glob("MASTER-*.md"))
-    if not masters:
-        print(f"No MASTER-*.md in {plans_dir}.", file=sys.stderr)
-        return 2
-
     master, queue_view = pick_active_master(masters)
-    master_text = master.read_text(encoding="utf-8")
-    ordered_files = extract_master_order(master_text)
 
     print(f"Plans dir: {plans_dir}")
     print(f"Master:    {master.name}")
@@ -247,53 +358,15 @@ def main() -> int:
                 print(f"  - {t}")
     print()
 
-    # Each row is (fname, status, cur_step, est, repo). `repo` is "" in
-    # single-mode projects and the resolved member name in meta-mode.
+    # Reconstruct rows from subplans for the text table.
     rows: list[tuple[str, str, str, str, str]] = []
-    # Prefer actionable work: pending / in-progress. Blocked plans (external
-    # deps) should not prevent `/ilk` from advancing later sub-plans that
-    # are still machine-verifiable on the current host.
-    next_actionable: tuple[str, str, str, str, str] | None = None
-    next_blocked: tuple[str, str, str, str, str] | None = None
-    next_other: tuple[str, str, str, str, str] | None = None
-
-    unknown_repos: set[str] = set()
-
-    for fname in ordered_files:
-        path = plans_dir / fname
-        if not path.exists():
-            rows.append((fname, "MISSING", "-", "-", ""))
-            continue
-        text = path.read_text(encoding="utf-8")
-        fm = parse_frontmatter(text)
-        status = fm.get("status", "?")
-        cur_step = fm.get("current_step", "?")
-        est = fm.get("estimated_steps", "?")
-        repo = fm.get("repo", "")
-        # In meta mode, surface mismatched repo names so the operator
-        # notices typos / stale member lists at status time.
-        if meta_members and repo and repo not in meta_members:
-            unknown_repos.add(repo)
-        rows.append((fname, status, cur_step, est, repo))
-        if status == "shipped":
-            continue
-        row = (fname, status, cur_step, est, repo)
-        if status in ("pending", "ready", "in-progress"):
-            if next_actionable is None:
-                next_actionable = row
-        elif status == "blocked":
-            if next_blocked is None:
-                next_blocked = row
-        else:
-            if next_other is None:
-                next_other = row
+    for sp in data["subplans"]:
+        rows.append((sp["fname"], sp["status"], sp["current_step"], sp["estimated_steps"], ""))
 
     if not rows:
         print("Master plan contains no sub-plan references.", file=sys.stderr)
         return 2
 
-    # In meta mode, render an extra `repo` column. Width is computed to
-    # accommodate the widest member name AND the column header.
     show_repo = bool(meta_members)
     name_w = max(len(r[0]) for r in rows)
     name_w = max(name_w, len("sub-plan"))
@@ -319,34 +392,22 @@ def main() -> int:
             icon = STATUS_ICONS.get(status, "[??]")
             print(f"{fname.ljust(name_w)}  {icon} {status.ljust(13)} {cur}/{est}")
 
-    if unknown_repos:
-        print()
-        print(
-            f"[ilk] WARNING: sub-plans reference unknown meta repos: "
-            f"{sorted(unknown_repos)}. Known: {sorted(meta_members)}.",
-            file=sys.stderr,
-        )
-
     print()
-    next_pending = next_actionable or next_other or next_blocked
-    if next_pending is None:
+    if data["next"] is None:
         print(f"All {len(rows)} sub-plans shipped -- nothing to do.")
         return 0
 
-    fname, status, cur, est, repo = next_pending
-    print(f"Next: {fname}  (status={status}, step={cur}/{est})")
-    print(f"Path: {plans_dir / fname}")
+    nxt = data["next"]
+    print(f"Next: {nxt['fname']}  (status={nxt['status']}, step={nxt['cur']}/{nxt['est']})")
+    print(f"Path: {plans_dir / nxt['fname']}")
     if show_repo:
+        repo = nxt.get("repo", "")
         if not repo:
             print("Repo: (not declared — meta projects require `repo:` frontmatter)")
         elif repo not in meta_members:
             print(f"Repo: {repo}  (UNKNOWN — not in .ilk-meta.json)")
         else:
             print(f"Repo: {repo}  ({meta_members[repo]})")
-    if next_blocked and next_actionable and next_blocked[0] != next_pending[0]:
-        bname, _bstat, bcur, best, _brepo = next_blocked
-        print()
-        print(f"(Parked blocked: {bname} step {bcur}/{best} - resume when unblocked.)")
     return 1
 
 
