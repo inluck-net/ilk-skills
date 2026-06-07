@@ -583,6 +583,13 @@ relaunch manually if it still makes sense.
   }
 }
 
+# --- dot-source guard --------------------------------------------------------
+# When ILK_DOTSOURCE_ONLY is set, skip the main execution block so tests can
+# dot-source this file to access functions ($WhitelistClasses, Read-PostmortemFrontmatter,
+# etc.) without starting the poller.
+
+if ($env:ILK_DOTSOURCE_ONLY -eq '1') { return }
+
 # --- main -------------------------------------------------------------------
 
 # resolve project
