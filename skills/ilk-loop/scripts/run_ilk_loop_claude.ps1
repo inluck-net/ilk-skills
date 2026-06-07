@@ -255,7 +255,7 @@ function Get-RepoHeads {
   param([string[]]$Repos)
   $heads = @{}
   foreach ($r in $Repos) {
-    $sha = & git -C $r rev-parse HEAD 2>$null
+    $sha = & git -C $r rev-parse --quiet --verify HEAD 2>$null
     if ($LASTEXITCODE -eq 0 -and $sha) {
       $heads[$r] = $sha.Trim()
     } else {
