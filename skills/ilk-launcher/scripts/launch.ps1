@@ -679,6 +679,12 @@ Write-Host '[ilk-launcher] window left open for review. Close manually when done
   return $proc.Id
 }
 
+# --- dot-source guard --------------------------------------------------------
+# When ILK_DOTSOURCE_ONLY is set, skip the main execution block so tests can
+# dot-source this file to access functions (Test-RunningPid, Get-PidFilePath,
+# etc.) without launching a window.
+if ($env:ILK_DOTSOURCE_ONLY -eq '1') { return }
+
 # --- main --------------------------------------------------------------------
 
 if ($All) {
