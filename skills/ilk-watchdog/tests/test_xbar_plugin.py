@@ -137,13 +137,14 @@ class TestAC1_ValidXbarFormat:
         assert "alpha" in out, "missing project 'alpha'"
         assert "beta" in out, "missing project 'beta'"
 
-    def test_rows_contain_state(self):
-        """Each row includes the project state."""
+    def test_rows_contain_liveness_marker(self):
+        """Alive projects are marked with * icon."""
         fxt = _write_fixture(FIXTURE_TWO_ALIVE, "two_alive")
         result = _run_render(fxt)
-        out = result.stdout.lower()
-        # alive projects have state "running"
-        assert "running" in out, "missing state 'running'"
+        out = result.stdout
+        # alive projects get a * icon
+        assert "* alpha" in out, "missing liveness marker for alpha"
+        assert "* beta" in out, "missing liveness marker for beta"
 
 
 # ── AC-2: title reflects live count ────────────────────────────────
@@ -156,8 +157,8 @@ class TestAC2_TitleReflectsLiveCount:
         fxt = _write_fixture(FIXTURE_TWO_ALIVE, "two_alive")
         result = _run_render(fxt)
         title = result.stdout.strip().splitlines()[0]
-        # Accept either a digit "2" or a marker like "▣"
-        assert "2" in title or "▣" in title or "alive" in title.lower(), \
+        # Accept either a digit "2" or a marker like "*"
+        assert "2" in title or "*" in title or "alive" in title.lower(), \
             f"title does not reflect 2 alive: {title!r}"
 
     def test_all_idle_shows_idle_marker(self):
