@@ -1115,6 +1115,12 @@ function Invoke-ClaudeIteration {
   }
 }
 
+# ----- Dot-source guard ---------------------------------------------
+# When set, functions are defined but the main loop does not execute.
+# Used by tests to call internal functions (e.g. Get-RepoHeads) without
+# starting the iteration loop.
+if ($env:ILK_DOTSOURCE_ONLY -eq '1') { return }
+
 # ----- Discovery ----------------------------------------------------
 
 $repos = Get-GitRepos -Root $ProjectPath
