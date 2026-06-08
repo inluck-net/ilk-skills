@@ -96,8 +96,9 @@
 #>
 [CmdletBinding()]
 param(
-  [Parameter(Mandatory)]
-  [string]$ProjectPath,
+  # Not Mandatory — when dot-sourced (tests), no params are passed.
+  # Runtime guard below enforces ProjectPath when the script is run directly.
+  [string]$ProjectPath = "",
 
   [int]$MaxIterations = 30,
 
@@ -174,26 +175,28 @@ if (-not $LogDir -or -not $JsonlLogPath) {
 }
 
 # ----- Pre-flight ---------------------------------------------------
+# Skip when ProjectPath is empty (dot-sourcing for function definitions).
+if ($ProjectPath) {
+  if (-not (Test-Path $ProjectPath)) {
+    throw "ProjectPath does not exist: $ProjectPath"
+  }
+  $ProjectPath = (Resolve-Path $ProjectPath).Path
 
-if (-not (Test-Path $ProjectPath)) {
-  throw "ProjectPath does not exist: $ProjectPath"
-}
-$ProjectPath = (Resolve-Path $ProjectPath).Path
+  if (-not (Test-Path $LoopStatusScript)) {
+    throw "loop_status.py not found at: $LoopStatusScript"
+  }
 
-if (-not (Test-Path $LoopStatusScript)) {
-  throw "loop_status.py not found at: $LoopStatusScript"
-}
+  if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
+    throw "Claude Code 'claude' not on PATH. Install: winget install Anthropic.ClaudeCode"
+  }
 
-if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
-  throw "Claude Code 'claude' not on PATH. Install: winget install Anthropic.ClaudeCode"
-}
+  if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+    throw "python not on PATH (needed by loop_status.py)"
+  }
 
-if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-  throw "python not on PATH (needed by loop_status.py)"
-}
-
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-  throw "git not on PATH"
+  if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    throw "git not on PATH"
+  }
 }
 
 # Make sure env-stored auth/model overrides from User scope are visible
@@ -228,12 +231,15 @@ if (-not $settingsHasEnv) {
   Write-Host "Detected $settingsJsonPath env block -- it will be the sole auth source." -ForegroundColor DarkGray
 }
 
-New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
-$RunLogDir = $LogDir
-$JsonlLog  = $JsonlLogPath
-# Ensure JSONL parent dir exists
-$jsonlParent = Split-Path $JsonlLog -Parent
-if ($jsonlParent -and -not (Test-Path $jsonlParent)) { New-Item -ItemType Directory -Path $jsonlParent -Force | Out-Null }
+# Only create log dirs when running directly (not dot-sourcing)
+if ($LogDir) {
+  New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+  $RunLogDir = $LogDir
+  $JsonlLog  = $JsonlLogPath
+  # Ensure JSONL parent dir exists
+  $jsonlParent = Split-Path $JsonlLog -Parent
+  if ($jsonlParent -and -not (Test-Path $jsonlParent)) { New-Item -ItemType Directory -Path $jsonlParent -Force | Out-Null }
+}
 
 # ----- Helpers ------------------------------------------------------
 
@@ -413,6 +419,120 @@ function Invoke-LocalChecks {
     }
   }
   return $out
+}
+
+function Resolve-BashPath {
+  <#
+    Resolve the path to a bash executable. Prefers git-bash (sh.exe from
+    Git for Windows) over any system bash. Returns $null if not found.
+  #>
+  # 1. Check if bash is on PATH (covers git-bash added to PATH)
+  $bashOnPath = Get-Command bash -ErrorAction SilentlyContinue
+  if ($bashOnPath) { return $bashOnPath.Source }
+
+  # 2. Try common Git for Windows install locations
+  $gitExe = Get-Command git -ErrorAction SilentlyContinue
+  if ($gitExe) {
+    $gitDir = Split-Path (Split-Path $gitExe.Source -Parent) -Parent
+    $candidate = Join-Path $gitDir "bin\bash.exe"
+    if (Test-Path $candidate) { return $candidate }
+    $candidate2 = Join-Path $gitDir "usr\bin\bash.exe"
+    if (Test-Path $candidate2) { return $candidate2 }
+  }
+
+  # 3. Try Program Files
+  foreach ($pf in @("$env:ProgramFiles", "${env:ProgramFiles(x86)}", "$env:LOCALAPPDATA\Programs")) {
+    $candidate = Join-Path $pf "Git\bin\bash.exe"
+    if (Test-Path $candidate) { return $candidate }
+  }
+
+  return $null
+}
+
+function Invoke-LocalCheck {
+  <#
+    Run a single local_checks command through bash and classify the outcome.
+
+    Returns: [PSCustomObject]@{
+      outcome   = "pass" | "fail" | "error"
+      exit_code = <int> or $null
+      stdout    = <string>
+      stderr    = <string>
+      error     = <string> (only when outcome is "error")
+    }
+
+    AC-2 (B1): uses bash so posix gates (grep, bash -n, jq) run.
+    AC-3 (B2): when bash is missing or command can't execute, outcome is "error".
+  #>
+  param(
+    [Parameter(Mandatory)] [string]$Command,
+    [int]$TimeoutSec = 120,
+    [string]$Cwd = ""
+  )
+
+  $result = [PSCustomObject]@{
+    outcome   = "error"
+    exit_code = $null
+    stdout    = ""
+    stderr    = ""
+    error     = ""
+  }
+
+  # Resolve bash
+  $bashPath = Resolve-BashPath
+  if (-not $bashPath) {
+    $result.error = "bash not found (no git-bash or system bash on PATH)"
+    return $result
+  }
+
+  # Build the bash invocation: run the command, capture output
+  # Use System.Diagnostics.Process for reliable I/O redirection on Windows.
+  # Convert Windows paths to POSIX paths (forward slashes) for bash.
+  $posixCommand = $Command -replace '\\', '/'
+  try {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $bashPath
+    $psi.Arguments = "-c `"$posixCommand`""
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    if ($Cwd) { $psi.WorkingDirectory = $Cwd }
+
+    $proc = [System.Diagnostics.Process]::Start($psi)
+
+    # Read stdout/stderr asynchronously to avoid deadlocks
+    $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+    $stderrTask = $proc.StandardError.ReadToEndAsync()
+
+    $exited = $proc.WaitForExit($TimeoutSec * 1000)
+    if (-not $exited) {
+      try { $proc.Kill($true) } catch {}
+      $result.error = "timeout after ${TimeoutSec}s"
+      $result.exit_code = $null
+      return $result
+    }
+
+    # Wait for async reads to complete
+    $stdoutTask.Wait(5000) | Out-Null
+    $stderrTask.Wait(5000) | Out-Null
+
+    $result.exit_code = $proc.ExitCode
+    $result.stdout = $stdoutTask.Result
+    $result.stderr = $stderrTask.Result
+
+    # Classify: 0 = pass, 1 = fail (clean test failure), anything else = error
+    $result.outcome = switch ($proc.ExitCode) {
+      0       { "pass" }
+      1       { "fail" }
+      default { "error" }
+    }
+  } catch {
+    $result.error = "$($_.Exception.Message)"
+    $result.outcome = "error"
+  }
+
+  return $result
 }
 
 function Test-AllShipped {
@@ -1116,10 +1236,18 @@ function Invoke-ClaudeIteration {
 }
 
 # ----- Dot-source guard ---------------------------------------------
-# When set, functions are defined but the main loop does not execute.
-# Used by tests to call internal functions (e.g. Get-RepoHeads) without
-# starting the iteration loop.
-if ($env:ILK_DOTSOURCE_ONLY -eq '1') { return }
+# When dot-sourced (invocation name is '.'), or when ILK_DOTSOURCE_ONLY=1,
+# functions are defined but the main loop does not execute.  Used by tests
+# to call internal functions (e.g. Invoke-LocalCheck) without starting
+# the iteration loop.
+$__isDotSourced = $MyInvocation.InvocationName -eq '.'
+if ($__isDotSourced -or $env:ILK_DOTSOURCE_ONLY -eq '1') { return }
+
+# ----- Runtime validation (only when running directly) ---------------
+
+if (-not $ProjectPath) {
+  throw "ProjectPath is required. Usage: run_ilk_loop_claude.ps1 -ProjectPath <path>"
+}
 
 # ----- Discovery ----------------------------------------------------
 
