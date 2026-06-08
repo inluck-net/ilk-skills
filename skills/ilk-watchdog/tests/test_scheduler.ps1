@@ -16,7 +16,7 @@
                slots, dispatches stop at the cap.
 #>
 param(
-  [ValidateSet('scan', 'select', 'dispatch', 'promote', 'blacklist', 'unresolved', 'cap', 'fill', 'all')]
+  [ValidateSet('scan', 'select', 'dispatch', 'promote', 'blacklist', 'unresolved', 'cap', 'fill', 'gates', 'all')]
   [string]$Subcommand = 'all'
 )
 
@@ -988,6 +988,52 @@ function Run-Cap {
   Cleanup
 }
 
+function Run-Gates {
+  Write-Host '=== test_scheduler.ps1 gates ==='
+
+  # Test 1: default dispatch carries -RunLocalChecks in the command
+  Setup-TwoQueuedProjects
+
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once -MaxConcurrent 1 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+  $json = $outputStr | ConvertFrom-Json
+
+  if ($json.command -notlike '*RunLocalChecks*') {
+    throw "Expected '-RunLocalChecks' in default dispatch command, got '$($json.command)'. Output: $outputStr"
+  }
+  Write-Host 'PASS: default dispatch carries -RunLocalChecks'
+
+  # Test 2: -NoLocalChecks opt-out removes the flag
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once -MaxConcurrent 1 -NoLocalChecks 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+  $json = $outputStr | ConvertFrom-Json
+
+  if ($json.command -like '*RunLocalChecks*') {
+    throw "Expected NO '-RunLocalChecks' with -NoLocalChecks, got '$($json.command)'. Output: $outputStr"
+  }
+  Write-Host 'PASS: -NoLocalChecks removes the gate flag from dispatch'
+
+  Cleanup
+}
+
 function Run-Fill {
   Write-Host '=== test_scheduler.ps1 fill ==='
 
@@ -1120,5 +1166,6 @@ switch ($Subcommand) {
   'unresolved' { Run-Unresolved }
   'cap'        { Run-Cap }
   'fill'       { Run-Fill }
-  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Promote; Run-Blacklist; Run-Unresolved; Run-Cap; Run-Fill; Write-Host 'ALL PASS' }
+  'gates'      { Run-Gates }
+  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Promote; Run-Blacklist; Run-Unresolved; Run-Cap; Run-Fill; Run-Gates; Write-Host 'ALL PASS' }
 }

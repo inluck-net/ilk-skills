@@ -927,6 +927,32 @@ run_fill() {
   cleanup
 }
 
+run_gates() {
+  echo "=== test_scheduler.sh gates ==="
+
+  # Test 1: default dispatch carries --run-local-checks in the command
+  setup_two_queued_projects
+
+  local output
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 1 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  local command
+  command=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['command'])" <<<"$output")
+  [[ "$command" == *"--run-local-checks"* ]] || die "expected '--run-local-checks' in default dispatch command, got '$command'. Output: $output"
+  echo "PASS: default dispatch carries --run-local-checks"
+
+  # Test 2: --no-local-checks opt-out removes the flag
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 1 --no-local-checks 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  command=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['command'])" <<<"$output")
+  [[ "$command" != *"--run-local-checks"* ]] || die "expected NO '--run-local-checks' with --no-local-checks, got '$command'. Output: $output"
+  echo "PASS: --no-local-checks removes the gate flag from dispatch"
+
+  cleanup
+}
+
 run_compat() {
   # Bash 3.2 / macOS portability guards.
   echo "=== test_scheduler.sh compat ==="
@@ -970,6 +996,7 @@ run_all() {
   run_unresolved
   run_cap
   run_fill
+  run_gates
   run_compat
   echo "ALL PASS"
 }
@@ -999,6 +1026,9 @@ case "${1:-all}" in
   fill)
     run_fill
     ;;
+  gates)
+    run_gates
+    ;;
   compat)
     run_compat
     ;;
@@ -1006,7 +1036,7 @@ case "${1:-all}" in
     run_all
     ;;
   *)
-    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|fill|compat|all}" >&2
+    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|fill|gates|compat|all}" >&2
     exit 1
     ;;
 esac
