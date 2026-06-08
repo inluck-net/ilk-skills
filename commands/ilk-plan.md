@@ -294,7 +294,10 @@ Once approved, write all files in one batch under the
 `~/.ilk-data/projects/<key>/plans/`):
 
 - `<external_plans_dir>/MASTER-YYYY-MM-DD-execution-plan.md`:
-  - Front-matter per SKILL.md spec
+  - Front-matter per SKILL.md spec — **write `status: draft`**. The master is
+    authored-but-not-yet-released; `draft` is non-runnable (invisible to the
+    scheduler and `loop_status`), so a live scheduler/loop cannot grab it
+    mid-authoring. It is flipped to `queued` only in step 8, after QC passes.
   - Workstream map (ascii box diagram is fine)
   - Sub-plan registry markdown table
   - Execution rationale section
@@ -602,6 +605,21 @@ advancing to step 8.
 Plans live OUTSIDE the project repo, so there is **nothing to git-add
 inside the project**. The files have already been written to
 `~/.ilk-data/projects/<key>/plans/` in step 6.
+
+### 8a. Release the master (`draft` → `queued`)
+
+The MASTER was written `status: draft` in step 6, so the live scheduler/loop
+could not pick it up while you authored and QC'd it. **Now that step-7 QC has
+passed**, flip the MASTER's front-matter `status: draft → queued` so it
+becomes runnable. Skip this only if QC produced an unresolved hard finding —
+then leave it `draft` and tell the user what to fix.
+
+> ⚠️ A `queued` master is immediately dispatchable by a running scheduler. For
+> a **self-modifying** batch (edits `loop_status.py` / `scheduler_scan.py` /
+> `promote_next_master.py` / `scheduler.*` / `plan_status.py`), do NOT flip to
+> `queued` while the scheduler is live — keep it `draft` (or set
+> `supervised_only: true`) and run it supervised with the scheduler stopped.
+> Surface this in the step-9 report.
 
 If you (or the user) want version history for the plans themselves,
 that's a separate concern: `~/.ilk-data` can be its own git repo or
