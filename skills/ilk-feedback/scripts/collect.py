@@ -84,12 +84,14 @@ try:
         external_launcher_dir,
         external_logs_dir,
         external_runtime_dir,
+        find_plans_dir as _find_plans_dir,
         find_project_root as _find_project_root,
         project_key,
         skill_root as _skill_root,
     )  # type: ignore
 except ImportError:
     _find_project_root = None  # type: ignore
+    _find_plans_dir = None  # type: ignore
     external_launcher_dir = None  # type: ignore
     external_logs_dir = None  # type: ignore
     external_runtime_dir = None  # type: ignore
@@ -453,6 +455,70 @@ def collect_self_hosting_facts(
     return facts
 
 
+# ---------- verification-tier helpers ----------------------------------------
+
+_NON_LOOP_TIERS = {"compile-only", "device-manual"}
+
+
+def _parse_subplan_frontmatter(path: Path) -> dict[str, str]:
+    """Parse YAML-like frontmatter from a sub-plan .md file.
+
+    Returns a flat dict of string keys to string values (enough for
+    ``status``, ``verification_tier``, and ``plan`` fields).
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    if not text.startswith("---\n"):
+        return {}
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return {}
+    result: dict[str, str] = {}
+    for line in text[4:end].splitlines():
+        line = line.rstrip("\n")
+        if not line.strip() or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if key:
+            result[key] = value
+    return result
+
+
+def batch_unverified_tiers(project_path: Path) -> list[dict[str, str]]:
+    """Return shipped sub-plans whose ``verification_tier`` is not ``loop-verified``.
+
+    Each entry is ``{"plan": <slug>, "tier": <tier>, "file": <filename>}``.
+    Absent ``verification_tier`` is treated as ``loop-verified`` (back-compat).
+    Returns an empty list when all shipped sub-plans are loop-verified or
+    when no plans directory is found.
+    """
+    if _find_plans_dir is None:
+        return []
+    plans_dir, _src = _find_plans_dir(project_path)
+    if plans_dir is None:
+        return []
+
+    unverified: list[dict[str, str]] = []
+    for p in sorted(plans_dir.glob("*.md")):
+        if p.name.startswith("MASTER-"):
+            continue
+        fm = _parse_subplan_frontmatter(p)
+        if fm.get("status") != "shipped":
+            continue
+        tier = fm.get("verification_tier") or "loop-verified"
+        if tier in _NON_LOOP_TIERS:
+            unverified.append({
+                "plan": fm.get("plan", p.stem),
+                "tier": tier,
+                "file": p.name,
+            })
+    return unverified
+
+
 def _classify_core(
     iters: list[dict],
     last_launch: dict | None,
@@ -669,6 +735,15 @@ def classify(
     else:
         facts.update(sh_facts)
 
+    # Check for shipped-unverified override: when the label would be
+    # clean-success but ≥1 shipped sub-plan has a non-loop-verified tier,
+    # downgrade to shipped-unverified so the postmortem is honest.
+    if label == "clean-success":
+        unverified = batch_unverified_tiers(project_path)
+        if unverified:
+            label = "shipped-unverified"
+            facts["unverified_sub_plans"] = unverified
+
     return label, facts
 
 
@@ -690,6 +765,12 @@ def recommend_params(
 
     if label == "clean-success":
         return cur_max, cur_to, "kept previous params; run shipped clean"
+
+    if label == "shipped-unverified":
+        return cur_max, cur_to, (
+            "loop shipped but some sub-plans have compile-only or device-manual "
+            "verification tiers — need a human + device pass before trusting."
+        )
 
     if label == "timeout-bound":
         # bump timeout to ~1.5x the highest observed iter (rounded to 5 min,
@@ -983,6 +1064,16 @@ def render_report(
 def _label_narrative(label: str, facts: dict[str, Any]) -> str:
     if label == "clean-success":
         return "All sub-plans shipped. Loop ended naturally on `all-shipped`."
+    if label == "shipped-unverified":
+        subs = facts.get("unverified_sub_plans", [])
+        names = ", ".join(
+            f"`{s['plan']}` ({s['tier']})" for s in subs
+        ) or "(none listed)"
+        return (
+            "All sub-plans shipped, but some have non-loop-verified tiers "
+            "and still need a human + device pass: " + names + ". "
+            "The loop cannot confirm these are actually working."
+        )
     if label == "timeout-bound":
         cfg_to = facts.get("configured_timeout_min")
         cfg_disp = f"{cfg_to} min" if cfg_to else "unknown (no last-launch.json — likely a manual launch before ilk-launcher existed; the loop infers timeout from script defaults)"
