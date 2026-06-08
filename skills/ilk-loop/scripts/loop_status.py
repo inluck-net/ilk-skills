@@ -223,6 +223,7 @@ def resolve_status(cwd: Path) -> dict:
     ordered_files = extract_master_order(master_text)
 
     rows: list[tuple[str, str, str, str, str]] = []
+    tiers: dict[str, str] = {}  # fname -> verification_tier
     next_actionable = None
     next_blocked = None
     next_other = None
@@ -238,6 +239,7 @@ def resolve_status(cwd: Path) -> dict:
         cur_step = fm.get("current_step", "?")
         est = fm.get("estimated_steps", "?")
         repo = fm.get("repo", "")
+        tiers[fname] = fm.get("verification_tier", "").strip() or "loop-verified"
         rows.append((fname, status, cur_step, est, repo))
         if status == "shipped":
             continue
@@ -270,6 +272,7 @@ def resolve_status(cwd: Path) -> dict:
             "status": status,
             "current_step": cur,
             "estimated_steps": est,
+            "verification_tier": tiers.get(fname, "loop-verified"),
         })
 
     # Counts
