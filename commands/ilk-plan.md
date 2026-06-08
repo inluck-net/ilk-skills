@@ -299,9 +299,11 @@ Once approved, write all files in one batch under the
     scheduler and `loop_status`), so a live scheduler/loop cannot grab it
     mid-authoring. It is flipped to `queued` only in step 8, after QC passes.
   - **Set `supervised_only: true`** on the MASTER if ANY sub-plan's
-    `scope_paths` or body touches loop infrastructure (`loop_status.py`,
+    `scope_paths` touches loop infrastructure (`loop_status.py`,
     `scheduler_scan.py`, `promote_next_master.py`, `plan_status.py`,
-    `scheduler.*`). Such a self-modifying batch must never be autonomously
+    `scheduler.*`). A sub-plan must actually *modify* one of those files to
+    trigger this — mere mention or import in prose/test code does not warrant
+    `supervised_only`. Such a self-modifying batch must never be autonomously
     dispatched — the scheduler and `promote_next_master` skip
     `supervised_only`; only manual `/ilk` runs it. Do NOT auto-flip it to
     `queued` while a scheduler is live (keep `draft`, run supervised with the
