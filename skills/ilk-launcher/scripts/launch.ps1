@@ -105,7 +105,13 @@ param(
   # ~/.claude-worker; also honors $env:CLAUDE_WORKER_HOME).
   # Precedence: -WorkerHome > $env:CLAUDE_WORKER_HOME > default.
   # Enables per-slot isolated homes (~/.claude-worker-2, etc.).
-  [string]$WorkerHome = ""
+  [string]$WorkerHome = "",
+
+  # When set, forward -RunLocalChecks to run_ilk_loop_claude.ps1 so the
+  # runner executes local_checks declared in sub-plan frontmatter after
+  # each productive iteration. The scheduler passes this by default;
+  # callers can also set it explicitly.
+  [switch]$RunLocalChecks
 )
 
 $ErrorActionPreference = 'Stop'
@@ -663,6 +669,11 @@ function Start-ilkWindow {
     $mcpArg = " -McpConfigPath '$McpConfigPath'"
   }
 
+  $runLocalChecksFlag = ""
+  if ($RunLocalChecks) {
+    $runLocalChecksFlag = " -RunLocalChecks"
+  }
+
   $inner = @"
 $envPrepend`$Host.UI.RawUI.WindowTitle = '$title'
 Write-Host '=== ilk-launcher ===' -ForegroundColor Cyan
@@ -671,7 +682,7 @@ Write-Host "MaxIterations: $MaxIterations    IterationTimeoutMin: $IterationTime
 Write-Host "WorkerEngine: $EngineName"
 Write-Host "Started: `$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 Write-Host '======================' -ForegroundColor Cyan
-& '$runnerScript' -ProjectPath '$ProjectPath' -MaxIterations $MaxIterations -IterationTimeoutMin $IterationTimeoutMin -LogDir '$perRunDir' -JsonlLogPath '$jsonlLog'$mcpArg
+& '$runnerScript' -ProjectPath '$ProjectPath' -MaxIterations $MaxIterations -IterationTimeoutMin $IterationTimeoutMin -LogDir '$perRunDir' -JsonlLogPath '$jsonlLog'$mcpArg$runLocalChecksFlag
 `$code = `$LASTEXITCODE
 Write-Host ''
 Write-Host '[ilk-launcher] run_ilk_loop_claude.ps1 exited with code:' `$code -ForegroundColor Yellow

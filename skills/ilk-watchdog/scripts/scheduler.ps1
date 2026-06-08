@@ -42,7 +42,8 @@ param(
   [double]$MaxBudgetUsd = 0,
   [switch]$DryRun,
   [switch]$Once,
-  [switch]$Detach
+  [switch]$Detach,
+  [switch]$NoLocalChecks
 )
 
 $ErrorActionPreference = 'Stop'
@@ -190,6 +191,10 @@ function Read-BlacklistFromPostmortems {
 function Run-Scheduler {
   $dispatchCount = 0
   $blacklistSkip = @{}  # project key -> backoff expiry timestamp
+
+  # Gate dispatches with -RunLocalChecks by default (AC-1/AC-5).
+  # Opt-out: -NoLocalChecks switch or $env:ILK_SCHED_NO_GATES = '1'.
+  $runLocalChecksFlag = (-not $NoLocalChecks -and $env:ILK_SCHED_NO_GATES -ne '1')
 
   while ($true) {
     # --- scan for queued projects ---
@@ -340,7 +345,7 @@ function Run-Scheduler {
 
       # dispatch into slot home
       if ($DryRun -and $Once) {
-        @{ decision = 'dispatch'; key = $key; slot = $slotId; command = "launch.ps1 -ProjectPath '$repo' -Engine claude-worker -WorkerHome '$slotHome'" } | ConvertTo-Json -Compress
+        @{ decision = 'dispatch'; key = $key; slot = $slotId; command = "launch.ps1 -ProjectPath '$repo' -Engine claude-worker -WorkerHome '$slotHome'$(if ($runLocalChecksFlag) { ' -RunLocalChecks' })" } | ConvertTo-Json -Compress
       } elseif ($DryRun) {
         Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] DRY-RUN: would dispatch $key (slot $slotId) via $LaunchScript -ProjectPath '$repo' -Engine claude-worker -WorkerHome '$slotHome'"
       } else {
@@ -352,7 +357,7 @@ function Run-Scheduler {
         }
         Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatching $key (slot $slotId)..."
         try {
-          & $LaunchScript -ProjectPath $repo -Engine claude-worker -WorkerHome $slotHome -Force
+          & $LaunchScript -ProjectPath $repo -Engine claude-worker -WorkerHome $slotHome -RunLocalChecks:$runLocalChecksFlag -Force
           $dispatchCount++
           Invoke-IlkNotify -Event 'dispatch' -Project $key -Detail "slot $slotId"
           Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatched $key (slot $slotId, total: $dispatchCount)"
@@ -374,6 +379,7 @@ function Run-Scheduler {
 if ($Detach) {
   $self = $PSCommandPath
   $inner = "& '$self' -PollMin $PollMin -MaxConcurrent $MaxConcurrent -MaxDispatches $MaxDispatches -MaxBudgetUsd $MaxBudgetUsd"
+  if ($NoLocalChecks) { $inner += " -NoLocalChecks" }
   if ($DryRun) {
     Write-Host "[ilk-scheduler] (dry-run) would spawn detached: $inner"
     return
