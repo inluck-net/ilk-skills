@@ -411,6 +411,10 @@ per-step `local_checks` yaml block. Warn on each occurrence:
   step 1 so the first step ends in a constructive commit, or give
   step 0 a concrete artifact + `local_checks` it must produce. This
   check reads each sub-plan's step structure, not just `local_checks`.
+- **per-file-only gate on a shared module** — a `local_check` that runs
+  only the new file's tests while the change touches a shared/imported
+  module hides integration + test-state-leak bugs (decomposition-principles
+  §8, field-log bugs #1/#2); the last step must run the FULL suite.
 
 Output format per finding:
 
