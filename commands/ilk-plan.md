@@ -568,6 +568,28 @@ can't truly simulate cold. The empirical version (a real fresh
 session per sub-plan in preflight) is a future runtime feature; this
 step is the skill-side approximation that catches obvious misses now.
 
+### 7f. `verification_tier` validation
+
+Walk each newly-written sub-plan's frontmatter. For the `verification_tier`
+field:
+
+1. **Presence** — if `verification_tier` is absent, emit a warning (absent
+   is allowed for back-compat but every new sub-plan should declare it):
+
+   ```
+   WARN: <slug>: verification_tier absent (assuming loop-verified)
+   ```
+
+2. **Enum** — if present, assert the value is one of `loop-verified`,
+   `compile-only`, `device-manual`. Anything else is a hard error:
+
+   ```
+   ERROR: <slug>: verification_tier "<value>" not in {loop-verified, compile-only, device-manual}
+   ```
+
+Finding counts go in the final report. Errors should be fixed before
+advancing to step 8.
+
 ## 8. Persist (no project-repo commit)
 
 Plans live OUTSIDE the project repo, so there is **nothing to git-add
