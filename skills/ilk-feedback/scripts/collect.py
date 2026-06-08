@@ -549,18 +549,32 @@ def _classify_core(
     # Guarded by `last iter ended with a fail` so that clean runs
     # (last iter passes or has no checks) are never mis-classified.
     # Only fires when the loop was launched with -RunLocalChecks.
-    last_checks = last.get("local_checks") or []
-    last_failed = any(c.get("outcome") == "fail" for c in last_checks)
+    # `local_checks` may be a per-iteration dict (newer runs: a single summary
+    # record with `outcome`) or a list of check dicts (older shape). Normalize
+    # to a list of dicts and drop any stray non-dict entries — iterating a dict
+    # yields its string keys, and `str.get` does not exist (crash, 2026-06-08).
+    def _items(rec):
+        lc = rec.get("local_checks")
+        if isinstance(lc, dict):
+            return [lc]
+        if isinstance(lc, list):
+            return [c for c in lc if isinstance(c, dict)]
+        return []
+
+    # An `error` outcome (the check command itself failed to run — e.g. `grep`
+    # missing in the worker's cmd.exe shell) is NOT a pass.
+    last_checks = _items(last)
+    last_failed = any(c.get("outcome") in ("fail", "error") for c in last_checks)
     if last_failed:
         recent = iters[-5:] if len(iters) >= 5 else iters
         fail_iters = sum(
             1 for r in recent
-            if any((c.get("outcome") == "fail") for c in (r.get("local_checks") or []))
+            if any(c.get("outcome") in ("fail", "error") for c in _items(r))
         )
         pass_iters = sum(
             1 for r in recent
-            if (r.get("local_checks") or [])
-            and all((c.get("outcome") == "pass") for c in (r.get("local_checks") or []))
+            if _items(r)
+            and all(c.get("outcome") == "pass" for c in _items(r))
         )
         if fail_iters >= 3 and fail_iters > pass_iters:
             return "local-checks-stuck", {
