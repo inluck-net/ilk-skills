@@ -434,3 +434,36 @@ incremental-verify workflow.
 
 See also §12 (verification tier — dependency rule: never queue a sub-plan
 whose runtime correctness depends on an unverified device-manual sub-plan).
+
+### 14.3 Budget the asymmetry (P10)
+
+For device-manual work, the human cost is **root-causing, not coding**, and
+each iteration is minutes (build+flash). Plans should:
+
+1. **Front-load observability (14.1) and the runtime checklist (§5 / §9)**
+   to cut the number of device iterations.
+2. **Treat a device-manual sub-plan as a human debugging session**, not a
+   "review the diff" — size batches accordingly. A 30-line fix that takes
+   6 device cycles to root-cause is not "small" in the relevant sense.
+
+### 14.4 Extract the pure core as a loop-verified gate
+
+Even when the surrounding flow is device-manual, **extract the pure core
+and ship it loop-verified.** A parser unit-tested loop-side, a config
+builder with a real `pytest` gate, a protocol encoder/decoder — these are
+all pure cores that can be verified without a device. The loop-verified
+gate catches regressions in the pure logic while the human focuses device
+cycles on the integration / lifecycle / platform-specific layer.
+
+> Evidence: WeChatRelay's `parseProvisionUri` shipped loop-verified with a
+> real unit test while the scan flow around it was device-manual. The split
+> held perfectly — server work was flawless (58 pytest), device work needed
+> the human pass.
+
+### Cross-references
+
+- **§12 (Verification tier)** — defines `device-manual` and the dependency
+  rule that prevents stacking unverified work.
+- **§5 / §9** — existing P5 runtime failure-mode checklist; sub-plan #2
+  fleshes it out with the concrete 6-item content from the cold-start case
+  study.
