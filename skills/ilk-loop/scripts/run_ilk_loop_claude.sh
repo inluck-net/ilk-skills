@@ -716,6 +716,16 @@ main() {
         invoke_local_checks "$PROJECT_PATH" "$merged_targets_file" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$local_checks_results"
       fi
       rm -f "$all_targets_file" "$merged_targets_file"
+
+      # B2 enforcement: treat "error" as a blocking fail — the loop must
+      # NOT advance/ship when a gate errored (command couldn't execute).
+      if [[ -s "$local_checks_results" ]]; then
+        if grep -q '"outcome":"error"' "$local_checks_results"; then
+          stop_reason="local_checks_errored"
+          echo "Loop stopped: local_checks errored (B2 enforcement)" >&2
+          break
+        fi
+      fi
     fi
 
     # Build new_commits JSON
