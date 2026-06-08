@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Render status_all --json into a Windows tray view-spec dict.
+
+Pure renderer: reads JSON from a file (``--json-from``) or stdin, writes
+the view-spec as JSON to stdout.  No network, no side-effects.
+
+The view-spec is consumed by ``ilk-tray.ps1`` (the NotifyIcon host) which
+paints the tray icon, tooltip, and context-menu rows from it.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+
+# NotifyIcon tooltip hard-limit (Windows).
+_MAX_TOOLTIP = 127
+
+
+def render_tray(entries: list[dict]) -> dict:
+    """Convert a status_all JSON array into a tray view-spec dict.
+
+    Parameters
+    ----------
+    entries:
+        Each dict matches the ``resolve_project_status`` schema from
+        ``status_all.py``: ``project_key``, ``sentinel.alive``, ``step``, etc.
+
+    Returns
+    -------
+    dict
+        Keys: ``icon_state``, ``tooltip``, ``rows``.
+    """
+    if not entries:
+        return {
+            "icon_state": "idle",
+            "tooltip": "ilk: no projects",
+            "rows": [],
+        }
+
+    alive_count = 0
+    stale_count = 0
+    error_count = 0
+    idle_count = 0
+
+    rows: list[dict] = []
+
+    for e in entries:
+        key = e.get("project_key", "?")
+        sent = e.get("sentinel", {})
+        is_alive = sent.get("alive", False)
+        state = sent.get("state", "none")
+        step = e.get("step", "")
+        next_sp = e.get("next_subplan", "")
+
+        # Determine per-project icon_state.
+        if is_alive:
+            icon = "running"
+            alive_count += 1
+        elif state == "running" and not is_alive:
+            # Stale: sentinel says running but process is dead.
+            icon = "attention"
+            stale_count += 1
+        elif state in ("error", "errored"):
+            icon = "attention"
+            error_count += 1
+        else:
+            icon = "idle"
+            idle_count += 1
+
+        # Row label: mirror render_xbar's text convention.
+        label = key
+        if step:
+            label += f"  {step}"
+        if next_sp:
+            label += f"  {next_sp}"
+        if state not in ("running", "none"):
+            label += f"  ({state})"
+
+        rows.append({
+            "label": label,
+            "icon_state": icon,
+            "project_key": key,
+            "action": {"kind": "status", "project_key": key},
+        })
+
+    # Global icon_state: running > attention > idle.
+    if alive_count > 0:
+        global_state = "running"
+    elif stale_count + error_count > 0:
+        global_state = "attention"
+    else:
+        global_state = "idle"
+
+    # Build tooltip summary, truncate if needed.
+    parts: list[str] = []
+    if alive_count:
+        parts.append(f"{alive_count} running")
+    if stale_count:
+        parts.append(f"{stale_count} stale")
+    if error_count:
+        parts.append(f"{error_count} error")
+    if idle_count:
+        parts.append(f"{idle_count} idle")
+    summary = ", ".join(parts) if parts else "no projects"
+    tooltip = f"ilk: {summary}"
+    if len(tooltip) > _MAX_TOOLTIP:
+        tooltip = tooltip[:_MAX_TOOLTIP - 3] + "..."
+
+    return {
+        "icon_state": global_state,
+        "tooltip": tooltip,
+        "rows": rows,
+    }
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Render status_all JSON as a tray view-spec")
+    ap.add_argument("--json-from", type=str, default=None,
+                    help="Path to JSON file (default: read stdin)")
+    args = ap.parse_args()
+
+    if args.json_from:
+        with open(args.json_from, encoding="utf-8") as f:
+            data = json.load(f)
+    else:
+        data = json.load(sys.stdin)
+
+    view = render_tray(data)
+    json.dump(view, sys.stdout, ensure_ascii=False, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
