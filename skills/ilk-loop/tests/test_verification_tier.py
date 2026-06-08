@@ -133,6 +133,18 @@ class TestTextModeTierMarker:
         # beta is shipped with device-manual tier
         assert "⚠ device-manual" in out
 
+    def test_tier_marker_absent_for_pending_non_loop_verified(self, plans_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """A non-loop-verified tier is only a signal once SHIPPED.
+
+        alpha is pending + compile-only — it must NOT be marked, even though
+        its tier is non-loop-verified. (Marking pending rows would dilute the
+        'needs human verification' signal that only applies to shipped work.)
+        """
+        out = self._run_text_mode(plans_dir, monkeypatch, capsys)
+        assert "⚠ compile-only" not in out
+        # ...while the shipped non-loop-verified row is still marked.
+        assert "⚠ device-manual" in out
+
     def test_tier_marker_absent_for_all_loop_verified(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """All-loop-verified batch should have NO tier markers."""
         d = tmp_path / "docs" / "plans"

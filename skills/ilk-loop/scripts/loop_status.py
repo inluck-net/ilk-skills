@@ -370,8 +370,11 @@ def main() -> int:
         print("Master plan contains no sub-plan references.", file=sys.stderr)
         return 2
 
-    def _tier_suffix(tier: str) -> str:
-        return f"  ⚠ {tier}" if tier != "loop-verified" else ""
+    def _tier_suffix(tier: str, status: str) -> str:
+        # Only flag SHIPPED sub-plans: a non-loop-verified tier is only a
+        # "needs human verification" signal once the work has shipped.
+        # Marking pending/in-progress rows would dilute that signal.
+        return f"  ⚠ {tier}" if tier != "loop-verified" and status == "shipped" else ""
 
     show_repo = bool(meta_members)
     name_w = max(len(r[0]) for r in rows)
@@ -387,7 +390,7 @@ def main() -> int:
         for fname, status, cur, est, repo, tier in rows:
             icon = STATUS_ICONS.get(status, "[??]")
             shown = repo if repo else "(?)"
-            suffix = _tier_suffix(tier)
+            suffix = _tier_suffix(tier, status)
             print(
                 f"{fname.ljust(name_w)}  {shown.ljust(repo_w)}  "
                 f"{icon} {status.ljust(13)} {cur}/{est}{suffix}"
@@ -397,7 +400,7 @@ def main() -> int:
         print(f"{'-' * name_w}  ----------------  --------")
         for fname, status, cur, est, _repo, tier in rows:
             icon = STATUS_ICONS.get(status, "[??]")
-            suffix = _tier_suffix(tier)
+            suffix = _tier_suffix(tier, status)
             print(f"{fname.ljust(name_w)}  {icon} {status.ljust(13)} {cur}/{est}{suffix}")
 
     print()

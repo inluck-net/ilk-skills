@@ -309,7 +309,9 @@ def render(
         if cur and r["slug"] == cur["slug"] and r["status"] != "shipped":
             marker = "  ← here"
         tier = r.get("verification_tier", "loop-verified")
-        tier_suffix = f"  ⚠ {tier}" if tier != "loop-verified" else ""
+        # Only flag SHIPPED sub-plans — pending/in-progress non-loop-verified
+        # rows aren't a "needs human verification" signal yet.
+        tier_suffix = f"  ⚠ {tier}" if tier != "loop-verified" and r["status"] == "shipped" else ""
         out.append(f"{bar} {dslug:<{slug_w}} {ratio:<6} {r['status']}{marker}{tier_suffix}")
 
     out.append("")
