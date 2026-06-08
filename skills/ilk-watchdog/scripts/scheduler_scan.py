@@ -169,6 +169,13 @@ def scan_projects() -> list[dict]:
             fm = parse_frontmatter(master_text)
             master_status = (fm.get("status") or "").strip()
 
+            # `supervised_only` masters are never autonomously dispatched.
+            # They edit the loop's own infrastructure (or are otherwise
+            # sensitive) and must be run by a human via manual `/ilk`. The
+            # manual path (loop_status) deliberately still selects them.
+            if (fm.get("supervised_only") or "").strip().lower() in ("true", "yes", "1"):
+                continue
+
             # Only masters with non-shipped sub-plans are runnable.
             if not master_has_nonshipped(master_path, plans_dir):
                 continue
