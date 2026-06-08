@@ -196,10 +196,15 @@ function Test-LivePids {
 }
 
 # --- drift detection -----------------------------------------------------------
+# Detects copy-fallback staleness: command files that are plain files (copies)
+# rather than symlinks/reparse points. This happens on Windows when Developer
+# Mode is off and install.ps1 falls back to copying command files. Such copies
+# do NOT auto-update on git pull — this is the exact footgun ilk-upgrade
+# exists to fix.
+#
+# Also detects added/removed skills/commands after a pull (handled in
+# Invoke-Apply's diff check).
 function Test-Drift {
-  # Check if any installed command file under known homes is a regular file
-  # (copy) rather than a symlink — indicates install was done with copy-fallback
-  # or the link was replaced.
   $homes = @()
   foreach ($candidate in @((Join-Path $HOME ".cursor"), (Join-Path $HOME ".claude"), (Join-Path $HOME ".codex"))) {
     $cmdDir = Join-Path $candidate "commands"
@@ -210,10 +215,21 @@ function Test-Drift {
     $cmdDir = Join-Path $home "commands"
     $cmdFiles = Get-ChildItem -Path $cmdDir -Filter "ilk*" -File -ErrorAction SilentlyContinue
     foreach ($cmdFile in $cmdFiles) {
-      # Test-IsLink: check for ReparsePoint attribute
       $item = Get-Item -LiteralPath $cmdFile.FullName -Force -ErrorAction SilentlyContinue
-      if ($item -and -not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-        return $true  # drift found: regular file, not symlink
+      if (-not $item) { continue }
+
+      # Check ReparsePoint attribute (covers symlinks, junctions, etc.)
+      $isLink = ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq [IO.FileAttributes]::ReparsePoint
+      if (-not $isLink) {
+        # Plain file = copy-fallback detected. This file won't auto-update.
+        return $true
+      }
+
+      # Also check LinkType for additional clarity (symlink vs junction)
+      # Get-Item with -Force exposes .LinkType on reparse points
+      if ($item.LinkType -and $item.LinkType -ne "SymbolicLink" -and $item.LinkType -ne "Junction") {
+        # Unexpected link type — treat as drift
+        return $true
       }
     }
   }
