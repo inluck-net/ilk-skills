@@ -1,0 +1,28 @@
+[
+  {
+    "project_key": "my-app",
+    "path": "/home/user/.ilk-data/projects/my-app",
+    "active_master": "MASTER-2026-06-08-feature-batch.md",
+    "next_subplan": "auth-module",
+    "step": "2/5",
+    "sentinel": {
+      "pid": 12345,
+      "state": "running",
+      "alive": true
+    },
+    "last_class": null
+  },
+  {
+    "project_key": "my-lib",
+    "path": "/home/user/.ilk-data/projects/my-lib",
+    "active_master": "MASTER-2026-06-08-refactor.md",
+    "next_subplan": "",
+    "step": "",
+    "sentinel": {
+      "pid": 0,
+      "state": "none",
+      "alive": false
+    },
+    "last_class": "clean-success"
+  }
+]
