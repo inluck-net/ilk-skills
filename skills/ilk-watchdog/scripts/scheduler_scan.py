@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -67,6 +66,11 @@ if _ILK_LOOP_SCRIPTS.is_dir():
     sys.path.insert(0, str(_ILK_LOOP_SCRIPTS))
 
 from ilk_paths import ilk_data_root, project_key  # noqa: E402
+from plan_status import (  # noqa: E402
+    extract_subplan_files,
+    master_has_nonshipped,
+    parse_frontmatter,
+)
 
 
 def resolve_repo_path(project_dir: Path, key: str) -> str | None:
@@ -108,46 +112,6 @@ def resolve_repo_path(project_dir: Path, key: str) -> str | None:
     return None
 
 
-def parse_frontmatter(text: str) -> dict[str, str]:
-    """Minimal YAML front-matter parser (flat key: value only)."""
-    if not text.startswith("---"):
-        return {}
-    end = text.find("\n---", 3)
-    if end < 0:
-        return {}
-    fm: dict[str, str] = {}
-    for raw in text[3:end].splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or line.startswith("- "):
-            continue
-        if ":" in line:
-            k, _, v = line.partition(":")
-            fm[k.strip()] = v.strip()
-    return fm
-
-
-# Matches sub-plan filenames like 2026-06-06-slug.md at the top level
-# (not in subdirectories).
-_SUBPLAN_RE = re.compile(
-    r"(?:^|(?<=[\s(\[|]))(?:\./)?(\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*\.md)",
-    re.MULTILINE,
-)
-
-
-def extract_subplan_files(master_text: str) -> list[str]:
-    """Return ordered, deduped sub-plan filenames from master body."""
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for f in _SUBPLAN_RE.findall(master_text):
-        if f.startswith("MASTER"):
-            continue
-        if f in seen:
-            continue
-        seen.add(f)
-        ordered.append(f)
-    return ordered
-
-
 def _parse_ts(raw: str) -> datetime | None:
     """Parse an ISO-ish timestamp string. Returns None on failure."""
     if not raw:
@@ -159,24 +123,6 @@ def _parse_ts(raw: str) -> datetime | None:
         return None
 
 
-def _master_has_nonshipped(master_path: Path, plans_dir: Path) -> bool:
-    """Return True if a master has ≥1 non-shipped sub-plan."""
-    try:
-        master_text = master_path.read_text(encoding="utf-8-sig")
-    except OSError:
-        return False
-    for fname in extract_subplan_files(master_text):
-        sub_path = plans_dir / fname
-        if not sub_path.exists():
-            continue
-        try:
-            sub_text = sub_path.read_text(encoding="utf-8-sig")
-        except OSError:
-            continue
-        fm = parse_frontmatter(sub_text)
-        if fm.get("status", "pending") != "shipped":
-            return True
-    return False
 
 
 def scan_projects() -> list[dict]:
@@ -224,7 +170,7 @@ def scan_projects() -> list[dict]:
             master_status = (fm.get("status") or "").strip()
 
             # Only masters with non-shipped sub-plans are runnable.
-            if not _master_has_nonshipped(master_path, plans_dir):
+            if not master_has_nonshipped(master_path, plans_dir):
                 continue
 
             # Collect per-sub-plan timestamps for FIFO ordering.
