@@ -1432,12 +1432,15 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
         Write-Host ("  [local_checks {0}] {1} step {2} -> {3}" -f $tag, $r2.slug, $r2.step, $r2.outcome) -ForegroundColor $color
       }
 
-      # B2 enforcement: treat "error" as a blocking fail — the loop must
-      # NOT advance/ship when a gate errored (command couldn't execute).
-      $errored = $localChecksRun | Where-Object { $_.outcome -eq "error" }
-      if ($errored) {
-        $stopReason = "local_checks_errored"
-        Write-Host "Loop stopped: local_checks errored (B2 enforcement)" -ForegroundColor Red
+      # B2 enforcement: a gate that FAILED (assertion failed) or ERRORED
+      # (command couldn't execute) must BLOCK — the loop must NOT advance/ship
+      # on un-passed gates. (Previously only "error" blocked, so a failing test
+      # gate still shipped.)
+      $blocking = $localChecksRun | Where-Object { $_.outcome -eq "error" -or $_.outcome -eq "fail" }
+      if ($blocking) {
+        $stopReason = "local_checks_failed"
+        $why = ($blocking | ForEach-Object { "$($_.slug)#$($_.step):$($_.outcome)" }) -join ", "
+        Write-Host "Loop stopped: local_checks not passing (B2 enforcement) -> $why" -ForegroundColor Red
         break
       }
     }

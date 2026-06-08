@@ -255,6 +255,36 @@ class CheckResult:
     error: str = ""
 
 
+def _resolve_bash() -> str | None:
+    """Resolve a bash that can run posix gate commands with a Windows cwd.
+
+    Prefer git-bash (MSYS); AVOID the WSL shim at ...\\WindowsApps\\bash.exe —
+    it uses /mnt/c mounts and fails on a Windows cwd / C: path (exit 127). On
+    posix the system bash is fine.
+    """
+    import os
+    import shutil
+    if os.name != "nt":
+        return shutil.which("bash") or "/bin/bash"
+    git = shutil.which("git")
+    if git:
+        gitdir = os.path.dirname(os.path.dirname(git))
+        for rel in (os.path.join("bin", "bash.exe"), os.path.join("usr", "bin", "bash.exe")):
+            cand = os.path.join(gitdir, rel)
+            if os.path.isfile(cand):
+                return cand
+    for pf in (os.environ.get("ProgramFiles", ""), os.environ.get("ProgramFiles(x86)", ""),
+               os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs")):
+        if pf:
+            cand = os.path.join(pf, "Git", "bin", "bash.exe")
+            if os.path.isfile(cand):
+                return cand
+    cand = shutil.which("bash")
+    if cand and "windowsapps" not in cand.lower():
+        return cand
+    return None
+
+
 def run_one(check: dict, scope: str, project: Path, default_timeout: int = 120) -> CheckResult:
     cmd = check.get("command", "")
     timeout = int(check.get("timeout", default_timeout))
@@ -262,11 +292,20 @@ def run_one(check: dict, scope: str, project: Path, default_timeout: int = 120) 
         return CheckResult(command="", scope=scope, timeout=timeout,
                            exit_code=None, duration_sec=0.0, passed=False,
                            error="empty command")
+    bash = _resolve_bash()
+    if not bash:
+        return CheckResult(command=cmd, scope=scope, timeout=timeout,
+                           exit_code=None, duration_sec=0.0, passed=False,
+                           error="bash not found (need git-bash; the WSL shim is unusable)")
     import time
     t0 = time.monotonic()
     try:
+        # Run via bash (git-bash on Windows), NOT shell=True — shell=True uses
+        # cmd.exe on Windows, where posix gates (grep, etc.) don't exist, so
+        # every gate errored and the loop shipped unverified. See the memory
+        # autonomous-gates-not-enforced-windows.
         cp = subprocess.run(
-            cmd, shell=True, cwd=str(project),
+            [bash, "-c", cmd], cwd=str(project),
             capture_output=True, text=True, timeout=timeout,
         )
         dur = time.monotonic() - t0
