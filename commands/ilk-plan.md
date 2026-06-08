@@ -259,17 +259,17 @@ member each sub-plan targets:
 
 Single-repo mode:
 ```
-| # | Sub-plan slug | Items | Priority | Why grouped | Steps (est.) |
-|---|---|---|---|---|---|
-| 1 | <slug-1> | <list of items> | P? | <one-line rationale> | <N> |
+| # | Sub-plan slug | Items | Tier | Priority | Why grouped | Steps (est.) |
+|---|---|---|---|---|---|---|
+| 1 | <slug-1> | <list of items> | <tier> | P? | <one-line rationale> | <N> |
 | ... |
 ```
 
 Meta mode (`Repo` column required; values must come from `meta_members`):
 ```
-| # | Sub-plan slug | Repo | Items | Priority | Why grouped | Steps (est.) |
-|---|---|---|---|---|---|---|
-| 1 | <slug-1> | <member-name> | <list of items> | P? | <one-line rationale> | <N> |
+| # | Sub-plan slug | Repo | Items | Tier | Priority | Why grouped | Steps (est.) |
+|---|---|---|---|---|---|---|---|
+| 1 | <slug-1> | <member-name> | <list of items> | <tier> | P? | <one-line rationale> | <N> |
 | ... |
 ```
 
@@ -302,6 +302,10 @@ Once approved, write all files in one batch under the
   `<skill-root>/ilk-loop/templates/subplan-template.md`. Fill in
   REAL content, not placeholders:
   - Front-matter with accurate `tickets:` and `estimated_steps:` values
+  - **`verification_tier`** — one of `loop-verified`, `compile-only`,
+    `device-manual` (see decomposition-principles §12 for definitions and
+    when each tier is trustworthy). Absent ⇒ treated as `loop-verified`
+    for back-compat, but every new sub-plan should declare it explicitly.
   - **In meta mode:** `repo: <member-name>` (REQUIRED; must match a
     name from step-2 `meta_members`). In single mode the field is
     absent — do not invent values.
