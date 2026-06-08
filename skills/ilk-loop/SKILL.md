@@ -84,7 +84,7 @@ master_plan: YYYY-MM-DD-execution
 batch_date: YYYY-MM-DD
 source_status: <ticket-tracker status that fed this batch>
 total_tickets: 21
-status: pending | in-progress | shipped
+status: draft | queued | active | shipped   # lifecycle: draft (authored, not yet released — non-runnable) → queued → active → shipped (also: paused)
 current_subplan: YYYY-MM-DD-<slug>   # cached pointer; loop_status verifies
 ---
 ```
