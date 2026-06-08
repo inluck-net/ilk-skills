@@ -397,3 +397,40 @@ on) prove correctness before shipping. Never:
 
 See also §11 (shipped ≠ verified — gates must run) and §12 (verification
 tier — what each level actually proves).
+
+---
+
+## 14. Planning device-manual work
+
+Device-manual sub-plans (§12) live in a different economy from loop-verified
+work: the loop produces correct *code* but cannot see *runtime* — isolate
+boundaries, event ordering, cold-vs-warm, OEM quirks. The WeChatRelay
+cold-start bug (30-line fix, ~6 device cycles to root-cause) was expensive
+almost entirely because there were no logs at the decision points. These rules
+make the plan buy down that root-causing cost up front.
+
+### 14.1 Ship with observability (P7)
+
+A device-manual sub-plan must declare, as an AC, **structured
+logs/`debugPrint` at every decision point** the human verifier will need:
+which config was read, which branch was taken, the connection target, and
+success/failure with the error. A device-manual sub-plan whose only
+diagnostics are "it works or it doesn't" is **under-specified** — the human
+will spend entire device cycles guessing instead of reading a log line.
+
+> Evidence: the WeChatRelay cold-start bug only cracked once a
+> `debugPrint('connectWith: host=… token=…')` existed and surfaced
+> `token=EMPTY`. Every cycle before that was blind.
+
+### 14.2 Verify incrementally; don't stack device-manual sub-plans (P9)
+
+After a batch containing device-manual sub-plans ships, **do the
+human+device pass before planning the next batch that builds on it.**
+Stacking unverified device work multiplies the debugging surface — two
+WeChatRelay batches' bugs compounded because they were never verified on a
+device until both had shipped. `/ilk-plan` should flag any batch that
+contains more than one device-manual sub-plan, and recommend the
+incremental-verify workflow.
+
+See also §12 (verification tier — dependency rule: never queue a sub-plan
+whose runtime correctness depends on an unverified device-manual sub-plan).
