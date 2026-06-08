@@ -243,6 +243,13 @@ needs the queue worker running). When a project has a `preflight.sh`
 wired as a cross-cutting invariant, prefer extending it; otherwise
 declare `env_prereqs` per sub-plan.
 
+**Restart affected long-running services after the loop changes their
+code.** A dev server started before the loop keeps serving stale code,
+so manual verification hits removed/renamed endpoints (HTTP 405/410).
+When a sub-plan modifies code that a long-running service loads at
+startup, note the restart requirement in the sub-plan's env_prereqs or
+post-ship section so the human (or a future automation) knows to do it.
+
 ## 11. Verification only counts when it's enforced (shipped ≠ verified)
 
 A sub-plan's `local_checks` are the entire correctness story — and they

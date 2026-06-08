@@ -121,6 +121,13 @@ verify coverage:
 Re-enter supervised mode whenever a sub-plan touches a new external
 system or fails its `local_checks`.
 
+- **Batch by verification tier** (see decomposition-principles.md §12):
+  group `loop-verified` sub-plans into autonomous runs (the loop's
+  runtime gate proves correctness). Group `compile-only` / `device-manual`
+  sub-plans into supervised / human-paired runs — the loop can ship
+  the code but cannot confirm it works, so a human + device pass is
+  required before trusting the result.
+
 ## Final success criteria (manual / out-of-band)
 
 > **`shipped` ≠ verified** (see decomposition-principles.md §11). A

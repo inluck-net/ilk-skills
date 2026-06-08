@@ -71,6 +71,14 @@ data_prereqs: []
 #   - description: "chrome-devtools MCP connected"
 #     verify_cmd: "claude mcp list | grep -q chrome-devtools"
 env_prereqs: []
+# --- Post-ship: restart affected long-running services (P6) ---
+# If this sub-plan modifies code that a long-running service (dev server,
+# queue worker, background process) loads at startup, restart that service
+# after the loop ships. A dev server started before the loop keeps serving
+# stale code → manual verification hits removed/renamed endpoints (HTTP 405).
+# Note the restart requirement here so the human (or a future automation)
+# knows to do it.
+# ---
 # --- Machine-checkable acceptance (see decomposition-principles.md §1) ---
 # Run by the loop driver after each step's commit. Fail-any → step does
 # not advance, output written to "Findings" section.
