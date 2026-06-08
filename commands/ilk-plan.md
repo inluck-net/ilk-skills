@@ -281,6 +281,19 @@ Plus:
   an autonomous batch (loop can drive without human) and
   `compile-only`/`device-manual` into a supervised or human-paired batch.
   Note which batch runs first and why.
+- **Device-manual: don't stack, verify incrementally (P9).** After a batch
+  containing `device-manual` sub-plans ships, **do the human+device pass
+  before planning the next batch that builds on it.** Stacking unverified
+  device work multiplies the debugging surface — two batches' runtime bugs
+  can compound and become exponentially harder to root-cause (see
+  decomposition §14.2). Flag any batch that contains more than one
+  `device-manual` sub-plan and recommend the incremental-verify workflow.
+- **Device-manual: budget as a debugging session (P10).** For
+  `device-manual` work, the human cost is **root-causing, not coding**, and
+  each iteration is minutes (build+flash). A 30-line fix that takes 6 device
+  cycles to root-cause is not "small" in the relevant sense. Size batches
+  accordingly — treat each `device-manual` sub-plan as a human debugging
+  session, not a quick diff review (see decomposition §14.3).
 
 Then ASK the user explicitly: "OK to proceed with this grouping, or want
 to adjust?"

@@ -296,6 +296,12 @@ check that the contract holds inside the actual UX.
   or it doesn't" is under-specified — the human will spend entire device
   cycles guessing instead of reading a log line.
 
+  **Non-UI trigger path (keep-pattern-2):** device features should ship a
+  **non-UI trigger / provisioning path** (e.g. `adb shell am start -d
+  'scheme://...'`, a CLI command, or a scriptable API call) so each device
+  cycle is automatable — the human can reproduce and test without typing /
+  scanning / tapping through the UI every time.
+
 - If anything fails, re-open the loop with this sub-plan flipped back
   to `status: in-progress, current_step: N`. Otherwise no action.
 -->
