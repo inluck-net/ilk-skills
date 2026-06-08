@@ -55,6 +55,7 @@ MAX_BUDGET_USD=0
 DRY_RUN=false
 ONCE=false
 DETACH=false
+NO_LOCAL_CHECKS=false
 
 # --- argument parsing --------------------------------------------------------
 
@@ -72,6 +73,7 @@ Options:
   --dry-run             Print the planned decision without dispatching.
   --once                Run a single scan cycle and exit (for tests).
   --detach              Spawn this scheduler in a detached screen session and exit.
+  --no-local-checks     Opt out of dispatching with --run-local-checks (default is gates ON).
   -h, --help            Show this help and exit.
 EOF
 }
@@ -105,6 +107,10 @@ parse_args() {
         ;;
       --detach)
         DETACH=true
+        shift
+        ;;
+      --no-local-checks)
+        NO_LOCAL_CHECKS=true
         shift
         ;;
       -h|--help)
@@ -283,6 +289,13 @@ run_scheduler() {
   # newline-separated entries: "project-key expiry-epoch" (max epoch wins).
   local blacklist_skip=""
 
+  # Gate dispatches with --run-local-checks by default.
+  # Opt-out: --no-local-checks or ILK_SCHED_NO_GATES=1.
+  local run_local_checks_flag=false
+  if [[ "$NO_LOCAL_CHECKS" != "true" && "${ILK_SCHED_NO_GATES:-}" != "1" ]]; then
+    run_local_checks_flag=true
+  fi
+
   local current_mux
   current_mux="$(resolve_multiplexer)"
   if [[ "$current_mux" == "tmux-required-but-missing" ]]; then
@@ -460,13 +473,18 @@ run_scheduler() {
       fi
 
       # dispatch into slot home
+      local local_checks_flag=""
+      if [[ "$run_local_checks_flag" == "true" ]]; then
+        local_checks_flag=" --run-local-checks"
+      fi
       if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
         # Use forward slashes in paths for valid JSON (Windows backslashes are invalid escapes)
         local safe_path="${drepo//\\//}"
         if [[ "$current_mux" == "tmux" ]]; then
-          echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"tmux\",\"command\":\"tmux new-window -t ilk -n '$dkey' 'launch.sh --project-path \\\"'$safe_path'\\\" --engine claude-worker --worker-home \\\"'$slot_home'\\\"'\"}"
+          local tmux_cmd="tmux new-window -t ilk -n '$dkey' 'launch.sh --project-path \\\"'$safe_path'\\\" --engine claude-worker --worker-home \\\"'$slot_home'\\\"${local_checks_flag}'"
+          echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"tmux\",\"command\":\"$tmux_cmd\"}"
         else
-          echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"screen\",\"command\":\"launch.sh --project-path '$safe_path' --engine claude-worker --worker-home '$slot_home'\"}"
+          echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"screen\",\"command\":\"launch.sh --project-path '$safe_path' --engine claude-worker --worker-home '$slot_home'${local_checks_flag}\"}"
         fi
       elif [[ "$DRY_RUN" == true ]]; then
         if [[ "$current_mux" == "tmux" ]]; then
@@ -478,7 +496,7 @@ run_scheduler() {
         # Ensure slot home exists (lazy-clone from base worker home).
         bash "$BOOTSTRAP_SCRIPT" --clone-slot "$slot_id" >/dev/null 2>&1 || true
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatching $dkey (slot $slot_id) [mux=$current_mux]..."
-        local launch_cmd="bash $LAUNCH_SCRIPT --project-path '$drepo' --engine claude-worker --worker-home '$slot_home' --force"
+        local launch_cmd="bash $LAUNCH_SCRIPT --project-path '$drepo' --engine claude-worker --worker-home '$slot_home'${local_checks_flag} --force"
         if [[ "$current_mux" == "tmux" ]]; then
           ensure_ilmux_session
           if tmux new-window -t ilk -n "$dkey" "$launch_cmd"; then
@@ -489,7 +507,7 @@ run_scheduler() {
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] tmux dispatch failed for $dkey"
             blacklist_skip="${blacklist_skip}"$'\n'"${dkey} $(($(date +%s) + 300))"
           fi
-        elif bash "$LAUNCH_SCRIPT" --project-path "$drepo" --engine claude-worker --worker-home "$slot_home" --force; then
+        elif bash "$LAUNCH_SCRIPT" --project-path "$drepo" --engine claude-worker --worker-home "$slot_home" ${local_checks_flag} --force; then
           dispatch_count=$((dispatch_count + 1))
           echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatched $dkey (slot $slot_id, total: $dispatch_count)"
           invoke_ilk_notify "dispatch" "$dkey" "slot $slot_id"
@@ -518,6 +536,9 @@ detach_scheduler() {
 
   local self="${BASH_SOURCE[0]}"
   local cmd="bash '$self' --poll-min '$POLL_MIN' --max-concurrent '$MAX_CONCURRENT' --max-dispatches '$MAX_DISPATCHES' --max-budget-usd '$MAX_BUDGET_USD'"
+  if [[ "$NO_LOCAL_CHECKS" == "true" ]]; then
+    cmd="$cmd --no-local-checks"
+  fi
 
   if [[ "$DRY_RUN" == true ]]; then
     echo "[ilk-scheduler] (dry-run) would spawn detached: screen -dmS ilk-scheduler $cmd"

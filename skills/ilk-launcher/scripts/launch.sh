@@ -45,6 +45,7 @@ CLI_FORCE=false
 CLI_DRY_RUN=false
 CLI_ENGINE=""
 CLI_WORKER_HOME=""
+CLI_RUN_LOCAL_CHECKS=false
 
 # Resolved values
 RESOLVED_PATH=""
@@ -529,6 +530,7 @@ start_ilk_window() {
   local mcp_config_path="$7"
   local engine="${8:-claude}"
   local worker_home_override="${9:-}"
+  local run_local_checks="${10:-false}"
 
   # Concurrency guard
   local live_pid
@@ -603,6 +605,9 @@ start_ilk_window() {
   runner_cmd="${env_prefix}bash \"$loop_script\" --project-path \"$project_path\" --max-iterations $max_iterations --iteration-timeout-min $timeout_min"
   if [[ -n "$mcp_config_path" ]]; then
     runner_cmd="$runner_cmd --mcp-config-path \"$mcp_config_path\""
+  fi
+  if [[ "$run_local_checks" == "true" ]]; then
+    runner_cmd="$runner_cmd --run-local-checks"
   fi
   # Pass resolved log paths so the runner writes to external locations
   runner_cmd="$runner_cmd --log-dir \"$per_run_dir\" --jsonl-log \"$jsonl_log\""
@@ -713,6 +718,8 @@ Options:
   --engine ENGINE              Worker engine: claude (default) or codex.
   --worker-home PATH           Override worker home for claude-worker engine
                                (default: ~/.claude-worker; also CLAUDE_WORKER_HOME).
+  --run-local-checks           Forward --run-local-checks to the runner so
+                               local_checks fire after each productive iteration.
   -h, --help                   Show this help and exit.
 EOF
 }
@@ -763,6 +770,10 @@ parse_args() {
       --worker-home)
         CLI_WORKER_HOME="$2"
         shift 2
+        ;;
+      --run-local-checks)
+        CLI_RUN_LOCAL_CHECKS=true
+        shift
         ;;
       -h|--help)
         usage
@@ -820,7 +831,7 @@ for p in d:
       mcp_config_path=$(build_worker_mcp_config "$ppath" "$MCP_FILTER_MODE" "$MCP_FILTER_NAMES")
       local engine
       engine=$(resolve_engine "$ppath" "$CLI_ENGINE")
-      start_ilk_window "$ppath" "$pname" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine" "$CLI_WORKER_HOME"
+      start_ilk_window "$ppath" "$pname" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine" "$CLI_WORKER_HOME" "$CLI_RUN_LOCAL_CHECKS"
     done
     return 0
   fi
@@ -897,7 +908,7 @@ for p in d:
     return
   fi
 
-  start_ilk_window "$RESOLVED_PATH" "$RESOLVED_NAME" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine" "$CLI_WORKER_HOME"
+  start_ilk_window "$RESOLVED_PATH" "$RESOLVED_NAME" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine" "$CLI_WORKER_HOME" "$CLI_RUN_LOCAL_CHECKS"
 }
 
 # --- dot-source guard --------------------------------------------------------
