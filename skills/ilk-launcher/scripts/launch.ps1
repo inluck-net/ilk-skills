@@ -553,6 +553,35 @@ function Test-RunningPid {
   return $null
 }
 
+function Write-ToolkitStalenessNotice {
+  # Non-fatal toolkit staleness check — prints one line when behind, silent on
+  # any error (offline, timeout, missing upgrade.ps1).  Must never block or
+  # delay a launch.
+  $upgradePs1 = Join-Path $SkillRoot 'ilk-upgrade\scripts\upgrade.ps1'
+  if (-not (Test-Path $upgradePs1)) { return }
+
+  try {
+    $job = Start-Job -ScriptBlock {
+      param($script)
+      & pwsh -NoProfile -File $script -Check 2>$null
+    } -ArgumentList $upgradePs1
+
+    $completed = Wait-Job $job -Timeout 10
+    if ($completed) {
+      $output = Receive-Job $job -ErrorAction SilentlyContinue
+    }
+  } catch {
+    # Swallow all errors — the notice is best-effort
+  } finally {
+    if ($job) { Remove-Job $job -Force -ErrorAction SilentlyContinue }
+  }
+
+  if ($output -and $output -match '^behind by (\d+) commit') {
+    $count = $Matches[1]
+    Write-Host "[ilk-upgrade] toolkit behind by $count commit(s) — run /ilk-upgrade"
+  }
+}
+
 function Start-ilkWindow {
   param(
     [string]$ProjectPath,
@@ -595,6 +624,9 @@ function Start-ilkWindow {
   }
   if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
   $logFile = Join-Path $logDir "$projectKey-$runId.log"
+
+  # Print toolkit staleness notice (non-fatal, silent on error)
+  Write-ToolkitStalenessNotice
 
   $title = "ilk: $ProjectName"
   $runnerScript = Get-RunnerScript -EngineName $EngineName
