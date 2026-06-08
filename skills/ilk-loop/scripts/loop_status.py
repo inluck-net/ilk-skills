@@ -362,13 +362,16 @@ def main() -> int:
     print()
 
     # Reconstruct rows from subplans for the text table.
-    rows: list[tuple[str, str, str, str, str]] = []
+    rows: list[tuple[str, str, str, str, str, str]] = []  # +verification_tier
     for sp in data["subplans"]:
-        rows.append((sp["fname"], sp["status"], sp["current_step"], sp["estimated_steps"], ""))
+        rows.append((sp["fname"], sp["status"], sp["current_step"], sp["estimated_steps"], "", sp.get("verification_tier", "loop-verified")))
 
     if not rows:
         print("Master plan contains no sub-plan references.", file=sys.stderr)
         return 2
+
+    def _tier_suffix(tier: str) -> str:
+        return f"  ⚠ {tier}" if tier != "loop-verified" else ""
 
     show_repo = bool(meta_members)
     name_w = max(len(r[0]) for r in rows)
@@ -381,19 +384,21 @@ def main() -> int:
         print(
             f"{'-' * name_w}  {'-' * repo_w}  ----------------  --------"
         )
-        for fname, status, cur, est, repo in rows:
+        for fname, status, cur, est, repo, tier in rows:
             icon = STATUS_ICONS.get(status, "[??]")
             shown = repo if repo else "(?)"
+            suffix = _tier_suffix(tier)
             print(
                 f"{fname.ljust(name_w)}  {shown.ljust(repo_w)}  "
-                f"{icon} {status.ljust(13)} {cur}/{est}"
+                f"{icon} {status.ljust(13)} {cur}/{est}{suffix}"
             )
     else:
         print(f"{'sub-plan'.ljust(name_w)}  status            step")
         print(f"{'-' * name_w}  ----------------  --------")
-        for fname, status, cur, est, _repo in rows:
+        for fname, status, cur, est, _repo, tier in rows:
             icon = STATUS_ICONS.get(status, "[??]")
-            print(f"{fname.ljust(name_w)}  {icon} {status.ljust(13)} {cur}/{est}")
+            suffix = _tier_suffix(tier)
+            print(f"{fname.ljust(name_w)}  {icon} {status.ljust(13)} {cur}/{est}{suffix}")
 
     print()
     if data["next"] is None:

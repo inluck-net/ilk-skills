@@ -119,6 +119,7 @@ def read_subplans(plans_dir: Path) -> tuple[list[dict], Path]:
             "status": (fm.get("status") or "pending").strip(),
             "current": current,
             "total": total,
+            "verification_tier": fm.get("verification_tier", "").strip() or "loop-verified",
         })
     return rows, master
 
@@ -307,7 +308,9 @@ def render(
         marker = ""
         if cur and r["slug"] == cur["slug"] and r["status"] != "shipped":
             marker = "  ← here"
-        out.append(f"{bar} {dslug:<{slug_w}} {ratio:<6} {r['status']}{marker}")
+        tier = r.get("verification_tier", "loop-verified")
+        tier_suffix = f"  ⚠ {tier}" if tier != "loop-verified" else ""
+        out.append(f"{bar} {dslug:<{slug_w}} {ratio:<6} {r['status']}{marker}{tier_suffix}")
 
     out.append("")
 
@@ -417,6 +420,7 @@ def build_json(
             "status": r["status"],
             "current_step": r["current"],
             "estimated_steps": r["total"],
+            "verification_tier": r.get("verification_tier", "loop-verified"),
             "is_current": r["slug"] == cur_slug and r["status"] != "shipped",
         })
 
