@@ -40,6 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ilk_paths import find_plans_dir as _resolve_plans_dir  # noqa: E402
+from plan_status import master_has_nonshipped  # noqa: E402
 
 FRONTMATTER_RE = re.compile(r"^(---\s*\n)(.*?)(\n---\s*\n)", re.DOTALL)
 STATUS_LINE_RE = re.compile(r"^(\s*)status\s*:\s*(\S+)\s*$", re.MULTILINE)
@@ -132,6 +133,10 @@ def main(argv: list[str]) -> int:
 
     actives = [(p, fm) for p, fm in parsed if (fm.get("status") or "").strip() == "active"]
     queued = [(p, fm) for p, fm in parsed if (fm.get("status") or "").strip() in PROMOTABLE]
+
+    # Filter out masters whose registered sub-plans are all shipped.
+    actives = [(p, fm) for p, fm in actives if master_has_nonshipped(p, plans_dir)]
+    queued = [(p, fm) for p, fm in queued if master_has_nonshipped(p, plans_dir)]
 
     queued.sort(key=lambda it: (-_prio(it[1]), _created(it[1])))
 
