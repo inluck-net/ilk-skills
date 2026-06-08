@@ -374,7 +374,14 @@ def main() -> int:
         # Only flag SHIPPED sub-plans: a non-loop-verified tier is only a
         # "needs human verification" signal once the work has shipped.
         # Marking pending/in-progress rows would dilute that signal.
-        return f"  ⚠ {tier}" if tier != "loop-verified" and status == "shipped" else ""
+        #
+        # ASCII-only marker on purpose: this script's stdout is machine-
+        # critical (the runner keys off its exit code) and must never crash
+        # on a non-UTF-8 console. A "⚠" glyph raised UnicodeEncodeError on a
+        # zh-CN cp936/GBK console, the script exited 1, and the runner read
+        # that as "pending work" → false stuck-no-progress (wechat-relay,
+        # run 20260608-104937).
+        return f"  (!) needs-verify:{tier}" if tier != "loop-verified" and status == "shipped" else ""
 
     show_repo = bool(meta_members)
     name_w = max(len(r[0]) for r in rows)

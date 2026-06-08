@@ -131,7 +131,7 @@ class TestTextModeTierMarker:
     def test_tier_marker_present_for_non_loop_verified(self, plans_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         out = self._run_text_mode(plans_dir, monkeypatch, capsys)
         # beta is shipped with device-manual tier
-        assert "⚠ device-manual" in out
+        assert "needs-verify:device-manual" in out
 
     def test_tier_marker_absent_for_pending_non_loop_verified(self, plans_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """A non-loop-verified tier is only a signal once SHIPPED.
@@ -141,9 +141,23 @@ class TestTextModeTierMarker:
         'needs human verification' signal that only applies to shipped work.)
         """
         out = self._run_text_mode(plans_dir, monkeypatch, capsys)
-        assert "⚠ compile-only" not in out
+        assert "needs-verify:compile-only" not in out
         # ...while the shipped non-loop-verified row is still marked.
-        assert "⚠ device-manual" in out
+        assert "needs-verify:device-manual" in out
+
+    def test_text_output_is_ascii_safe(self, plans_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """loop_status text output must encode on a non-UTF-8 console.
+
+        Regression guard: the runner keys off this script's exit code, so a
+        UnicodeEncodeError (e.g. a "⚠" glyph on a zh-CN cp936/GBK console)
+        crashed the script → exit 1 → runner read it as pending work → false
+        stuck-no-progress (wechat-relay, run 20260608-104937). The marker
+        path is exercised here (beta is shipped + device-manual).
+        """
+        out = self._run_text_mode(plans_dir, monkeypatch, capsys)
+        # Must round-trip through GBK (the operator's console) without raising.
+        out.encode("gbk")
+        out.encode("ascii")
 
     def test_tier_marker_absent_for_all_loop_verified(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """All-loop-verified batch should have NO tier markers."""
