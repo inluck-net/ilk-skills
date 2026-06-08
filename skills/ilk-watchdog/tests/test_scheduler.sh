@@ -989,6 +989,31 @@ run_mutex() {
   cleanup
 }
 
+run_log() {
+  echo "=== test_scheduler.sh log ==="
+  setup_two_queued_projects
+
+  # Remove any pre-existing scheduler.log.
+  local log_dir="${HOME}/.ilk-data/logs"
+  local log_file="${log_dir}/scheduler.log"
+  rm -f "$log_file"
+
+  # Run a --dry-run --once cycle — should write a decision line to scheduler.log.
+  local output
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 1 2>&1) || die "scheduler exited non-zero: $output"
+
+  # Assert: scheduler.log exists and contains a dispatch line.
+  [[ -f "$log_file" ]] || die "scheduler.log was not created at $log_file"
+
+  local content
+  content=$(cat "$log_file")
+  [[ -n "$content" ]] || die "scheduler.log is empty"
+  [[ "$content" == *"dispatch"* ]] || die "expected 'dispatch' in scheduler.log, got: $content"
+
+  echo "PASS: --dry-run --once writes a decision line to scheduler.log"
+  cleanup
+}
+
 run_compat() {
   # Bash 3.2 / macOS portability guards.
   echo "=== test_scheduler.sh compat ==="
@@ -1034,6 +1059,7 @@ run_all() {
   run_fill
   run_gates
   run_mutex
+  run_log
   run_compat
   echo "ALL PASS"
 }
@@ -1069,6 +1095,9 @@ case "${1:-all}" in
   mutex)
     run_mutex
     ;;
+  log)
+    run_log
+    ;;
   compat)
     run_compat
     ;;
@@ -1076,7 +1105,7 @@ case "${1:-all}" in
     run_all
     ;;
   *)
-    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|fill|gates|mutex|compat|all}" >&2
+    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|fill|gates|mutex|log|compat|all}" >&2
     exit 1
     ;;
 esac

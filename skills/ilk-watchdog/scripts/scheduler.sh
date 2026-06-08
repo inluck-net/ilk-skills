@@ -57,6 +57,9 @@ LAUNCH_SCRIPT="${_SKILL_ROOT}/ilk-launcher/scripts/launch.sh"
 BOOTSTRAP_SCRIPT="${_SKILL_ROOT}/../tools/claude-worker/bootstrap.sh"
 NOTIFY_PY="${_SKILL_ROOT}/ilk-watchdog/scripts/ilk_notify.py"
 
+SCHEDULER_LOG_DIR="${HOME}/.ilk-data/logs"
+SCHEDULER_LOG_FILE="${SCHEDULER_LOG_DIR}/scheduler.log"
+
 # Fire-and-forget desktop notification. Failure is swallowed.
 invoke_ilk_notify() {
   local event="$1" project="$2" detail="${3:-}"
@@ -159,6 +162,19 @@ parse_args() {
 }
 
 # --- helpers -----------------------------------------------------------------
+
+write_scheduler_log() {
+  # Append a decision line to scheduler.log (BOM-free, timestamped).
+  # Usage: write_scheduler_log "decision" ["key"] ["reason"]
+  local decision="$1" key="${2:-}" reason="${3:-}"
+  mkdir -p "$SCHEDULER_LOG_DIR" 2>/dev/null || true
+  local ts
+  ts="$(date '+%Y-%m-%d %H:%M:%S')"
+  local line="[$ts] $decision"
+  [[ -n "$key" ]] && line+=": $key"
+  [[ -n "$reason" ]] && line+=" ($reason)"
+  printf '%s\n' "$line" >> "$SCHEDULER_LOG_FILE" 2>/dev/null || true
+}
 
 test_running_pid() {
   # Check if a project has a live running.pid (sentinel mutex).
@@ -351,10 +367,12 @@ run_scheduler() {
 
     if [[ "$count" == "0" ]]; then
       if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+        write_scheduler_log "idle" "" "all-queues-empty"
         echo '{"decision":"idle","reason":"all queues empty"}'
         return
       fi
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] idle: all queues empty. Polling in ${POLL_MIN} min."
+      write_scheduler_log "idle" "" "all-queues-empty"
       sleep $((POLL_MIN * 60))
       continue
     fi
@@ -363,10 +381,12 @@ run_scheduler() {
     # MAX_DISPATCHES -1 = unlimited; >= 0 = hard ceiling.
     if [[ "$MAX_DISPATCHES" -ge 0 && "$dispatch_count" -ge "$MAX_DISPATCHES" ]]; then
       if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+        write_scheduler_log "idle" "" "budget-ceiling"
         echo '{"decision":"idle","reason":"budget ceiling"}'
         return
       fi
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] idle: budget ceiling (dispatched ${dispatch_count}/${MAX_DISPATCHES}). Polling in ${POLL_MIN} min."
+      write_scheduler_log "idle" "" "budget-ceiling"
       sleep $((POLL_MIN * 60))
       continue
     fi
@@ -377,10 +397,12 @@ run_scheduler() {
     live_count=$(count_live_sentinels "$scan_output")
     if [[ "$live_count" -ge "$MAX_CONCURRENT" ]]; then
       if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+        write_scheduler_log "idle" "" "capacity-full ($live_count/$MAX_CONCURRENT)"
         echo "{\"decision\":\"idle\",\"reason\":\"capacity-full\",\"live\":$live_count,\"max_concurrent\":$MAX_CONCURRENT}"
         return
       fi
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] idle: capacity full ($live_count/$MAX_CONCURRENT live). Polling in ${POLL_MIN} min."
+      write_scheduler_log "idle" "" "capacity-full ($live_count/$MAX_CONCURRENT)"
       sleep $((POLL_MIN * 60))
       continue
     fi
@@ -417,9 +439,11 @@ run_scheduler() {
       blacklist_epoch="$(blacklist_epoch_for_key "$key")"
       if [[ -n "$blacklist_epoch" && "$now_epoch" -lt "$blacklist_epoch" ]]; then
         if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+          write_scheduler_log "skip-blacklist" "$key"
           echo "{\"decision\":\"skip-blacklist\",\"key\":\"$key\"}"
         else
           echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip-blacklist: $key"
+          write_scheduler_log "skip-blacklist" "$key"
         fi
         continue
       fi
@@ -427,9 +451,11 @@ run_scheduler() {
       # Check if project is busy
       if test_running_pid "$path"; then
         if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+          write_scheduler_log "skip-busy" "$key"
           echo "{\"decision\":\"skip-busy\",\"key\":\"$key\"}"
         else
           echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip-busy: $key"
+          write_scheduler_log "skip-busy" "$key"
         fi
         continue
       fi
@@ -438,9 +464,11 @@ run_scheduler() {
       # (never launched + not in projects.json). Skip, don't guess.
       if [[ -z "$repo" ]]; then
         if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+          write_scheduler_log "skip-unresolved" "$key"
           echo "{\"decision\":\"skip-unresolved\",\"key\":\"$key\"}"
         else
           echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip-unresolved: $key (no repo path; launch it once or add to projects.json)"
+          write_scheduler_log "skip-unresolved" "$key"
         fi
         continue
       fi
@@ -456,10 +484,12 @@ run_scheduler() {
 
     if [[ ${#disp_keys[@]} -eq 0 ]]; then
       if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+        write_scheduler_log "idle" "" "no-dispatchable-project"
         echo '{"decision":"idle","reason":"no dispatchable project"}'
         return
       fi
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] idle: no dispatchable project (all busy/blacklisted/unresolved). Polling in ${POLL_MIN} min."
+      write_scheduler_log "idle" "" "no-dispatchable-project"
       sleep $((POLL_MIN * 60))
       continue
     fi
@@ -487,6 +517,7 @@ run_scheduler() {
             if [[ -n "$promoted_name" ]]; then
               local demoted_name
               demoted_name=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('demoted','') or '')" <<<"$promo_json" | tr -d '\r')
+              write_scheduler_log "promote" "$dkey -> $promoted_name"
               echo "{\"decision\":\"promote\",\"key\":\"$dkey\",\"promoted\":\"$promoted_name\",\"demoted\":\"$demoted_name\"}"
             fi
           fi
@@ -499,6 +530,7 @@ run_scheduler() {
             promoted_name=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('promoted',''))" <<<"$promo_json" | tr -d '\r')
             if [[ -n "$promoted_name" ]]; then
               echo "[$(date '+%Y-%m-%d %H:%M:%S')] promoted $promoted_name"
+              write_scheduler_log "promote" "$dkey -> $promoted_name"
             fi
           fi
         fi
@@ -512,6 +544,7 @@ run_scheduler() {
       if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
         # Use forward slashes in paths for valid JSON (Windows backslashes are invalid escapes)
         local safe_path="${drepo//\\//}"
+        write_scheduler_log "dispatch" "$dkey (slot $slot_id)"
         if [[ "$current_mux" == "tmux" ]]; then
           local tmux_cmd="tmux new-window -t ilk -n '$dkey' 'launch.sh --project-path \\\"'$safe_path'\\\" --engine claude-worker --worker-home \\\"'$slot_home'\\\"${local_checks_flag}'"
           echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"tmux\",\"command\":\"$tmux_cmd\"}"
@@ -534,6 +567,7 @@ run_scheduler() {
           if tmux new-window -t ilk -n "$dkey" "$launch_cmd"; then
             dispatch_count=$((dispatch_count + 1))
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatched $dkey (slot $slot_id, total: $dispatch_count) [tmux]"
+            write_scheduler_log "dispatch" "$dkey (slot $slot_id)"
             invoke_ilk_notify "dispatch" "$dkey" "slot $slot_id"
           else
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] tmux dispatch failed for $dkey"
@@ -542,6 +576,7 @@ run_scheduler() {
         elif bash "$LAUNCH_SCRIPT" --project-path "$drepo" --engine claude-worker --worker-home "$slot_home" ${local_checks_flag} --force; then
           dispatch_count=$((dispatch_count + 1))
           echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatched $dkey (slot $slot_id, total: $dispatch_count)"
+          write_scheduler_log "dispatch" "$dkey (slot $slot_id)"
           invoke_ilk_notify "dispatch" "$dkey" "slot $slot_id"
         else
           echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatch failed for $dkey"

@@ -16,7 +16,7 @@
                slots, dispatches stop at the cap.
 #>
 param(
-  [ValidateSet('scan', 'select', 'dispatch', 'promote', 'blacklist', 'unresolved', 'cap', 'fill', 'gates', 'mutex', 'all')]
+  [ValidateSet('scan', 'select', 'dispatch', 'promote', 'blacklist', 'unresolved', 'cap', 'fill', 'gates', 'mutex', 'log', 'all')]
   [string]$Subcommand = 'all'
 )
 
@@ -1203,6 +1203,46 @@ function Run-Mutex {
   Cleanup
 }
 
+function Run-Log {
+  Write-Host '=== test_scheduler.ps1 log ==='
+  Setup-TwoQueuedProjects
+
+  # Remove any pre-existing scheduler.log.
+  $logDir = Join-Path $HOME '.ilk-data\logs'
+  $logFile = Join-Path $logDir 'scheduler.log'
+  if (Test-Path $logFile) {
+    Remove-Item $logFile -Force -ErrorAction SilentlyContinue
+  }
+
+  # Run a -DryRun -Once cycle — should write a decision line to scheduler.log.
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once -MaxConcurrent 1 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output"
+    }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  # Assert: scheduler.log exists and contains a dispatch line.
+  if (-not (Test-Path $logFile)) {
+    throw "scheduler.log was not created at $logFile"
+  }
+
+  $logContent = Get-Content $logFile -Raw -ErrorAction SilentlyContinue
+  if (-not $logContent) {
+    throw "scheduler.log is empty"
+  }
+
+  if ($logContent -notlike '*dispatch*') {
+    throw "Expected 'dispatch' in scheduler.log, got: $logContent"
+  }
+
+  Write-Host 'PASS: -DryRun -Once writes a decision line to scheduler.log'
+  Cleanup
+}
+
 # --- main ---------------------------------------------------------------------
 
 switch ($Subcommand) {
@@ -1216,5 +1256,6 @@ switch ($Subcommand) {
   'fill'       { Run-Fill }
   'gates'      { Run-Gates }
   'mutex'      { Run-Mutex }
-  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Promote; Run-Blacklist; Run-Unresolved; Run-Cap; Run-Fill; Run-Gates; Run-Mutex; Write-Host 'ALL PASS' }
+  'log'        { Run-Log }
+  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Promote; Run-Blacklist; Run-Unresolved; Run-Cap; Run-Fill; Run-Gates; Run-Mutex; Run-Log; Write-Host 'ALL PASS' }
 }

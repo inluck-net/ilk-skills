@@ -75,8 +75,24 @@ $PromoteScript    = Join-Path $SkillRoot 'ilk-loop\scripts\promote_next_master.p
 $LaunchScript     = Join-Path $SkillRoot 'ilk-launcher\scripts\launch.ps1'
 $BootstrapScript  = Join-Path $SkillRoot '..\tools\claude-worker\bootstrap.ps1'
 $NotifyPy         = Join-Path $SkillRoot 'ilk-watchdog\scripts\ilk_notify.py'
+$SchedulerLogDir  = Join-Path $HOME '.ilk-data\logs'
+$SchedulerLogFile = Join-Path $SchedulerLogDir 'scheduler.log'
 
 # --- helpers -----------------------------------------------------------------
+
+function Write-SchedulerLog {
+  <# Append a decision line to scheduler.log (BOM-free, timestamped). #>
+  param([string]$Decision, [string]$Key = "", [string]$Reason = "")
+  try {
+    if (-not (Test-Path $SchedulerLogDir)) {
+      New-Item -ItemType Directory -Path $SchedulerLogDir -Force | Out-Null
+    }
+    $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $line = if ($Key) { "[$ts] $Decision`: $Key" } else { "[$ts] $Decision" }
+    if ($Reason) { $line += " ($Reason)" }
+    [System.IO.File]::AppendAllText($SchedulerLogFile, "$line`n", [System.Text.UTF8Encoding]::new($false))
+  } catch {}
+}
 
 function Invoke-IlkNotify {
   <# Fire-and-forget desktop notification. Failure is swallowed. #>
@@ -219,10 +235,12 @@ function Run-Scheduler {
 
     if (-not $queued -or $queued.Count -eq 0) {
       if ($DryRun -and $Once) {
+        Write-SchedulerLog -Decision 'idle' -Reason 'all-queues-empty'
         @{ decision = 'idle'; reason = 'all-queues-empty' } | ConvertTo-Json -Compress
         return
       }
       Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] idle: all queues empty. Polling in $PollMin min."
+      Write-SchedulerLog -Decision 'idle' -Reason 'all-queues-empty'
       Start-Sleep -Seconds ($PollMin * 60)
       continue
     }
@@ -231,10 +249,12 @@ function Run-Scheduler {
     # MaxDispatches -1 = unlimited; >= 0 = hard ceiling.
     if ($MaxDispatches -ge 0 -and $dispatchCount -ge $MaxDispatches) {
       if ($DryRun -and $Once) {
+        Write-SchedulerLog -Decision 'idle' -Reason 'budget-ceiling'
         @{ decision = 'idle'; reason = 'budget-ceiling' } | ConvertTo-Json -Compress
         return
       }
       Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] idle: budget ceiling (dispatched $dispatchCount/$MaxDispatches). Polling in $PollMin min."
+      Write-SchedulerLog -Decision 'idle' -Reason 'budget-ceiling'
       Start-Sleep -Seconds ($PollMin * 60)
       continue
     }
@@ -244,10 +264,12 @@ function Run-Scheduler {
     $liveCount = Get-LiveSentinelCount -Projects $queued
     if ($liveCount -ge $MaxConcurrent) {
       if ($DryRun -and $Once) {
+        Write-SchedulerLog -Decision 'idle' -Reason "capacity-full ($liveCount/$MaxConcurrent)"
         @{ decision = 'idle'; reason = 'capacity-full'; live = $liveCount; max_concurrent = $MaxConcurrent } | ConvertTo-Json -Compress
         return
       }
       Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] idle: capacity full ($liveCount/$MaxConcurrent live). Polling in $PollMin min."
+      Write-SchedulerLog -Decision 'idle' -Reason "capacity-full ($liveCount/$MaxConcurrent)"
       Start-Sleep -Seconds ($PollMin * 60)
       continue
     }
@@ -276,9 +298,11 @@ function Run-Scheduler {
       if ($blacklistSkip.ContainsKey($key)) {
         if ((Get-Date) -lt $blacklistSkip[$key]) {
           if ($DryRun -and $Once) {
+            Write-SchedulerLog -Decision 'skip-blacklist' -Key $key
             @{ decision = 'skip-blacklist'; key = $key } | ConvertTo-Json -Compress
           } else {
             Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] skip-blacklist: $key"
+            Write-SchedulerLog -Decision 'skip-blacklist' -Key $key
           }
           continue
         } else {
@@ -288,9 +312,11 @@ function Run-Scheduler {
 
       if (Test-RunningPid -ProjectDataPath $path) {
         if ($DryRun -and $Once) {
+          Write-SchedulerLog -Decision 'skip-busy' -Key $key
           @{ decision = 'skip-busy'; key = $key } | ConvertTo-Json -Compress
         } else {
           Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] skip-busy: $key"
+          Write-SchedulerLog -Decision 'skip-busy' -Key $key
         }
         continue
       }
@@ -299,9 +325,11 @@ function Run-Scheduler {
       # (never launched + not in projects.json). Skip, don't guess.
       if ([string]::IsNullOrWhiteSpace($proj.repo_path)) {
         if ($DryRun -and $Once) {
+          Write-SchedulerLog -Decision 'skip-unresolved' -Key $key
           @{ decision = 'skip-unresolved'; key = $key } | ConvertTo-Json -Compress
         } else {
           Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] skip-unresolved: $key (no repo path; launch it once or add to projects.json)"
+          Write-SchedulerLog -Decision 'skip-unresolved' -Key $key
         }
         continue
       }
@@ -314,10 +342,12 @@ function Run-Scheduler {
 
     if ($toDispatch.Count -eq 0) {
       if ($DryRun -and $Once) {
+        Write-SchedulerLog -Decision 'idle' -Reason 'no-dispatchable-project'
         @{ decision = 'idle'; reason = 'no-dispatchable-project' } | ConvertTo-Json -Compress
         return
       }
       Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] idle: no dispatchable project (all busy/blacklisted/unresolved). Polling in $PollMin min."
+      Write-SchedulerLog -Decision 'idle' -Reason 'no-dispatchable-project'
       Start-Sleep -Seconds ($PollMin * 60)
       continue
     }
@@ -340,6 +370,7 @@ function Run-Scheduler {
             if ($LASTEXITCODE -eq 0 -and $promoJson) {
               $promo = ($promoJson | Out-String).Trim() | ConvertFrom-Json
               if ($promo.promoted) {
+                Write-SchedulerLog -Decision 'promote' -Key "$key -> $($promo.promoted)"
                 @{ decision = 'promote'; key = $key; promoted = $promo.promoted; demoted = $promo.demoted } | ConvertTo-Json -Compress
               }
             }
@@ -352,6 +383,7 @@ function Run-Scheduler {
               $promo = ($promoJson | Out-String).Trim() | ConvertFrom-Json
               if ($promo.promoted) {
                 Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] promoted $($promo.promoted) (demoted $($promo.demoted))"
+                Write-SchedulerLog -Decision 'promote' -Key "$key -> $($promo.promoted)"
               }
             }
           } catch {
@@ -362,6 +394,7 @@ function Run-Scheduler {
 
       # dispatch into slot home
       if ($DryRun -and $Once) {
+        Write-SchedulerLog -Decision 'dispatch' -Key "$key (slot $slotId)"
         @{ decision = 'dispatch'; key = $key; slot = $slotId; command = "launch.ps1 -ProjectPath '$repo' -Engine claude-worker -WorkerHome '$slotHome'$(if ($runLocalChecksFlag) { ' -RunLocalChecks' })" } | ConvertTo-Json -Compress
       } elseif ($DryRun) {
         Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] DRY-RUN: would dispatch $key (slot $slotId) via $LaunchScript -ProjectPath '$repo' -Engine claude-worker -WorkerHome '$slotHome'"
@@ -378,6 +411,7 @@ function Run-Scheduler {
           $dispatchCount++
           Invoke-IlkNotify -Event 'dispatch' -Project $key -Detail "slot $slotId"
           Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatched $key (slot $slotId, total: $dispatchCount)"
+          Write-SchedulerLog -Decision 'dispatch' -Key "$key (slot $slotId)"
         } catch {
           Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatch failed for $key`: $_"
           $blacklistSkip[$key] = (Get-Date).AddMinutes(5)
