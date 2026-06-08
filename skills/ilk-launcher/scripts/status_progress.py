@@ -310,8 +310,9 @@ def render(
             marker = "  ← here"
         tier = r.get("verification_tier", "loop-verified")
         # Only flag SHIPPED sub-plans — pending/in-progress non-loop-verified
-        # rows aren't a "needs human verification" signal yet.
-        tier_suffix = f"  ⚠ {tier}" if tier != "loop-verified" and r["status"] == "shipped" else ""
+        # rows aren't a "needs human verification" signal yet. ASCII marker
+        # (see loop_status._tier_suffix: a "⚠" glyph crashes on cp936/GBK).
+        tier_suffix = f"  (!) needs-verify:{tier}" if tier != "loop-verified" and r["status"] == "shipped" else ""
         out.append(f"{bar} {dslug:<{slug_w}} {ratio:<6} {r['status']}{marker}{tier_suffix}")
 
     out.append("")
