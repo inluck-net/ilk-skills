@@ -3,7 +3,7 @@ name: ilk-feedback
 description: >-
   Postmortem for the most recent ilk-loop run. Reads the JSONL summary
   + per-iteration logs (external-first from `~/.ilk-data`, with legacy
-  skill-root fallback), classifies the outcome (9 taxonomy labels incl.
+  skill-root fallback), classifies the outcome (10 taxonomy labels incl. shipped-unverified,
   self-hosting-drift), recommends next-launch params, saves the report
   under `~/.ilk-data/projects/<key>/runtime/launcher/postmortems/`. Triggers:
   "/ilk-feedback", "postmortem", "debrief", "what went wrong", "why
@@ -18,7 +18,7 @@ metadata:
 A read-only triage skill that turns the structured logs already produced by
 `run_ilk_loop_claude.ps1` into:
 
-1. A **classification** of how the run ended (one of 8 taxonomy labels).
+1. A **classification** of how the run ended (one of 10 taxonomy labels).
 2. **Parameter recommendations** for the next launch (consumed by
    `ilk-launcher` Step 1.5).
 3. A **markdown report** persisted to disk for trend analysis.
@@ -129,6 +129,7 @@ The `recommended_*` fields are what `ilk-launcher` Step 1.5 reads.
 | Label | Trigger condition | What it means |
 |---|---|---|
 | `clean-success` | `loop_status.py` exit 0 after run | All sub-plans shipped. |
+| `shipped-unverified` | would-be `clean-success` AND ≥1 shipped sub-plan has `verification_tier ∈ {compile-only, device-manual}` | Loop shipped but some sub-plans need a human + device pass. The postmortem lists which ones. Does NOT auto-relaunch. |
 | `max-iter-bound` | iteration count == MaxIterations AND not all-shipped | Ran out of iterations. Bump `MaxIterations` or break sub-plan smaller. |
 | `timeout-bound` | last iter's `stop_reason="timeout"` | An iter hit `IterationTimeoutMin`. Bump timeout. |
 | `api-flaky` | exit_code != 0 in ≥30% of iters BUT progress made | Endpoint unstable but loop survived. Watch; consider model/endpoint switch. |
