@@ -5,6 +5,7 @@ created: 2026-MM-DDTHH:MM:SS+08:00     # ISO 8601 with TZ + seconds — authorit
 status: draft                           # draft | queued | active | shipped (draft = authored, not yet released; non-runnable)
 priority: null                          # optional integer; lower = jumps queue
 pause_after_ship: false                 # if true, watchdog stops after this MASTER ships
+supervised_only: false                  # if true, the autonomous scheduler + promote NEVER dispatch this master — only manual /ilk runs it. Set true for self-modifying batches (edit loop_status.py / scheduler_scan.py / promote_next_master.py / plan_status.py / scheduler.*).
 branch: null                            # optional child-branch policy:
 #   create_from: HEAD                   #   base ref to fork from
 #   name: spike/<slug>                  #   target branch name
