@@ -74,12 +74,19 @@ def master_has_nonshipped(master_path: Path, plans_dir: Path) -> bool:
     A sub-plan is "registered" if its filename appears in the master body
     via ``extract_subplan_files``.  Missing sub-plan files are skipped
     (not counted as non-shipped).
+
+    Masters with zero registered sub-plans (legacy / malformed) are
+    treated as "has non-shipped" so they are never filtered out.
     """
     try:
         master_text = master_path.read_text(encoding="utf-8-sig")
     except OSError:
         return False
-    for fname in extract_subplan_files(master_text):
+    registered = extract_subplan_files(master_text)
+    if not registered:
+        # No sub-plan references — treat as "has work" (legacy fallback).
+        return True
+    for fname in registered:
         sub_path = plans_dir / fname
         if not sub_path.exists():
             continue
