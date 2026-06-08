@@ -28,6 +28,7 @@ from ilk_paths import (  # noqa: E402
     read_meta_manifest,
     MetaManifestError,
 )
+from plan_status import master_has_nonshipped  # noqa: E402
 
 STATUS_ICONS = {
     "shipped": "[OK]",
@@ -122,12 +123,21 @@ def pick_active_master(masters: list[Path]) -> tuple[Path, dict]:
     a list of upcoming queued titles for display.
     """
     parsed: list[tuple[Path, dict]] = []
+    plans_dir = masters[0].parent if masters else None
     for p in masters:
         try:
             text = p.read_text(encoding="utf-8-sig")
         except OSError:
             continue
         parsed.append((p, parse_frontmatter(text)))
+
+    # Filter out masters whose registered sub-plans are all shipped.
+    # These are terminal and should not be selected for execution.
+    if plans_dir is not None:
+        parsed = [
+            (p, fm) for p, fm in parsed
+            if master_has_nonshipped(p, plans_dir)
+        ]
 
     def _prio(fm: dict) -> int:
         try:
