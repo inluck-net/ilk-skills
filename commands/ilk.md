@@ -162,6 +162,18 @@ Stop and hand back to the human when ANY of these is true:
      to `待验证` and write the relevant commit short-hashes into the
      `关联 commit` field — use the lark-tickets skill.
   3. Commit: `chore(plans): <slug> shipped [plan:<slug>#ship]`.
+  4. **NEEDS HUMAN VERIFICATION check**: run `loop_status.py --json` and
+     inspect each shipped sub-plan's `verification_tier`. If any shipped
+     sub-plan has tier `compile-only` or `device-manual`, print a block:
+
+     ```
+     ⚠ NEEDS HUMAN VERIFICATION
+       - <slug> (tier: compile-only) — <brief note on what needs manual pass>
+       - <slug> (tier: device-manual) — ...
+     ```
+
+     If all shipped sub-plans are `loop-verified`, print:
+     `✓ All shipped sub-plans are loop-verified — no manual pass needed.`
 - Context starts feeling heavy (many large file reads, repeated re-reads).
 - A step legitimately blocks per the section-6 checklist (you walked
   through the three escalation sources and the blocker is genuinely a
@@ -172,6 +184,19 @@ Stop and hand back to the human when ANY of these is true:
 
 Before ending your turn, run `loop_status.py` again and paste its output
 in your last message so the human sees up-to-date state.
+
+**NEEDS HUMAN VERIFICATION block** (always include in final report):
+Run `loop_status.py --json` and check every shipped sub-plan's
+`verification_tier`. Print a summary block:
+
+```
+⚠ NEEDS HUMAN VERIFICATION
+  - <slug> (tier: compile-only) — <what needs manual pass>
+  - <slug> (tier: device-manual) — <what needs manual pass>
+```
+
+Or if all shipped sub-plans are `loop-verified`:
+`✓ All shipped sub-plans are loop-verified — no manual pass needed.`
 
 If the loop is now fully shipped, congratulate the user.
 If not, tell them they can start a fresh chat and type `/ilk` again to
