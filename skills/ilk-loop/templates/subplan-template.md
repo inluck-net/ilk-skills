@@ -267,21 +267,34 @@ check that the contract holds inside the actual UX.
 
   Runtime failure-mode checklist (device-manual / compile-only only):
   A build cannot catch these — verify each on a real device/runtime:
-  - [ ] **Isolate/process boundaries** — code runs in the right
-        isolate/process; no MissingPluginException or cross-boundary
-        call failures.
-  - [ ] **Frame/timing on async capture** — camera/screen capture
-        waits for the first frame; no "No image captured" from
-        calling acquireLatestImage() before any frame exists.
-  - [ ] **Permission/consent timing** — runtime permissions granted
-        before first use; no crash from accessing a protected API
-        before the consent dialog resolves.
-  - [ ] **Intent resolution** — the target app actually resolves the
-        intent/URL; no chooser offering the wrong app, no fallback
-        to an unintended handler.
-  - [ ] **Cross-process channels** — IPC/bridge messages arrive in
-        the expected order; no race between connect events and first
-        data send.
+  - [ ] **Cross-isolate / cross-process shared state** —
+        `SharedPreferences` (and similar) caches are **per-isolate**;
+        a write in one isolate is NOT visible to another. Pass state
+        in the message payload; don't re-read shared storage across
+        an isolate boundary.
+  - [ ] **Event-listener registration ordering** — register `on(event)`
+        listeners **before** any `await` that could let the event fire
+        first (dropped-event class).
+  - [ ] **Cold-start vs warm-start** — deep links / intents behave
+        differently on a fresh process vs a running one. Test **both**,
+        from a true `pm clear` (or platform equivalent).
+  - [ ] **Concurrent connect/reconnect on shared resources** — coalesce;
+        never run two connects on one socket / tunnel / shared resource.
+  - [ ] **Permission/consent timing** — foreground vs background; OEM
+        background-launch blocks (e.g. Huawei). Grant runtime permissions
+        before first use; no crash from accessing a protected API before
+        the consent dialog resolves.
+  - [ ] **OEM divergence** — Huawei/HarmonyOS: no Google backup,
+        background-launch interception, hidden log tags, custom USB debug
+        bridge. Test on target OEM if the feature touches platform APIs.
+
+  **Observability AC (P7):** device-manual sub-plans must include, as an
+  acceptance criterion, `debugPrint` / structured logs at every decision
+  point the human verifier will need: which config was read, which branch
+  was taken, the connection / operation target, and success/failure with
+  the error. A device-manual sub-plan whose only diagnostics are "it works
+  or it doesn't" is under-specified — the human will spend entire device
+  cycles guessing instead of reading a log line.
 
 - If anything fails, re-open the loop with this sub-plan flipped back
   to `status: in-progress, current_step: N`. Otherwise no action.
