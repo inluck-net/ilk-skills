@@ -11,6 +11,7 @@ EXPECTED=(
   ilk-stop.md
   ilk-run.md
   ilk-status.md
+  ilk-upgrade.md
 )
 
 PASS=0
