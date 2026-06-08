@@ -265,3 +265,48 @@ Two consequences the planner must encode:
    batch the loop reports as shipped. State this in the master plan's
    "Final success criteria (manual / out-of-band)" section so it's not
    lost.
+
+## 12. Verification tier
+
+Not all "shipped" sub-plans are equally trustworthy. A sub-plan gated
+by a real runtime smoke (pytest boots the app, a real HTTP/CLI call
+runs) is genuinely verified. A sub-plan gated only by `analyze`/
+`build`/`tsc`/`mypy` is *compile-green* — it may still crash at
+runtime. And a sub-plan whose correctness needs a physical device,
+GUI, or external app cannot be verified by the loop at all.
+
+**Field evidence** (WeChatRelay, 2026-06-08): the loop shipped 20
+sub-plans "green"; 8 were compile-green-but-broken. Every bug fell
+into one of two buckets — (a) **integration** bugs hidden by per-file
+gates, or (b) **runtime/device/platform** bugs that `analyze`/`build`/
+`compile` fundamentally cannot catch.
+
+### The three tiers
+
+Every sub-plan SHOULD declare a `verification_tier` frontmatter field:
+
+- **`loop-verified`** — a runtime gate proves correctness in-loop
+  (pytest boots the app; a real HTTP/CLI/browser smoke runs).
+  Trustworthy when `shipped`. **This is the default** when the field
+  is absent (back-compat with plans that predate tiers).
+
+- **`compile-only`** — only `analyze`/`build`/`tsc`/`mypy` runs.
+  Ships scaffolding; a human must verify behaviour before trusting
+  the sub-plan as working.
+
+- **`device-manual`** — correctness needs a physical device / GUI /
+  external app that the loop cannot reach. The loop can ship the code
+  but cannot confirm it works.
+
+### Dependency rule (don't build blind on blind)
+
+**Never queue a sub-plan whose runtime correctness depends on a
+`compile-only` or `device-manual` sub-plan that has not been
+human-verified.** Stacking unverified on unverified compounds risk —
+each layer may be wrong in ways the next layer silently accommodates,
+making the eventual failure harder to diagnose.
+
+Example: queuing capture-dependent work behind a `device-manual`
+`mediaprojection-capture` sub-plan would stack unverified on
+unverified. Server batches (gated by full pytest) were correctly kept
+independent of the capture.
