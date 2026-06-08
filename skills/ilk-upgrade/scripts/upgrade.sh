@@ -89,9 +89,37 @@ if [[ -n "$dirty_files" ]]; then
   echo "warning: dirty working tree in $REPO_ROOT" >&2
 fi
 
-# --- mode dispatch (populated in steps 2-4) ----------------------------------
+# --- --check: fetch + ahead/behind report ------------------------------------
 
-# case "$mode" in
-#   check)  ... ;;
-#   apply)  ... ;;
-# esac
+do_check() {
+  # Fetch silently; tolerate offline gracefully
+  if ! git -C "$REPO_ROOT" fetch --quiet origin 2>/dev/null; then
+    echo "error: could not reach origin — check your network connection" >&2
+    exit 1
+  fi
+
+  # Resolve upstream; fall back to origin/<branch>
+  local branch upstream behind
+  branch="$(git -C "$REPO_ROOT" symbolic-ref --short HEAD)"
+  upstream="$(git -C "$REPO_ROOT" for-each-ref --format='%(upstream:short)' "refs/heads/$branch" 2>/dev/null || true)"
+  if [[ -z "$upstream" ]]; then
+    upstream="origin/$branch"
+  fi
+
+  behind="$(git -C "$REPO_ROOT" rev-list --count HEAD.."$upstream" 2>/dev/null || echo "0")"
+
+  if [[ "$behind" -eq 0 ]]; then
+    echo "up to date"
+  else
+    local plural=""
+    [[ "$behind" -ne 1 ]] && plural="s"
+    echo "behind by ${behind} commit${plural} — run with --apply"
+  fi
+}
+
+# --- mode dispatch -----------------------------------------------------------
+
+case "$mode" in
+  check)  do_check ;;
+  apply)  echo "error: --apply not yet implemented" >&2; exit 1 ;;
+esac
