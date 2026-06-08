@@ -277,6 +277,10 @@ Plus:
 - Suggested execution order (with a brief 1-2 sentence rationale per
   position).
 - Cross-workstream dependencies (if any).
+- **Batch-by-tier recommendation** — group `loop-verified` sub-plans into
+  an autonomous batch (loop can drive without human) and
+  `compile-only`/`device-manual` into a supervised or human-paired batch.
+  Note which batch runs first and why.
 
 Then ASK the user explicitly: "OK to proceed with this grouping, or want
 to adjust?"
@@ -296,6 +300,9 @@ Once approved, write all files in one batch under the
   - Execution rationale section
   - Cross-workstream dependency notes
   - "Out of scope" section (anything explicitly excluded)
+  - "Rollout strategy" section — state which sub-plans are autonomous
+    (loop-verified) vs supervised/human-paired (compile-only, device-manual),
+    and the recommended run order per tier.
   - "Progress log" table (1 row: the creation entry)
 
 - One file per sub-plan: `<external_plans_dir>/YYYY-MM-DD-<slug>.md`, derived from
@@ -636,7 +643,18 @@ End your turn with:
    > push → cloud-re-run before trusting the batch.
 
    Skip this only if no sub-plan has any runtime `local_checks`.
-5. Tell the user: "Ready to execute. Open a fresh chat and type `/ilk`
+5. **Tier-mix summary.** List the tier breakdown of the batch:
+
+   ```
+   Tier mix: N loop-verified, M compile-only, K device-manual
+   ```
+
+   If any sub-plan is NOT `loop-verified`, append:
+
+   > **NEEDS HUMAN VERIFICATION**: compile-only and device-manual sub-plans
+   > require a human + device pass after the loop marks them `shipped`.
+
+6. Tell the user: "Ready to execute. Open a fresh chat and type `/ilk`
    (launch with `-RunLocalChecks` so the gates actually run)."
 
 ## Boundary rules
