@@ -900,4 +900,10 @@ for p in d:
   start_ilk_window "$RESOLVED_PATH" "$RESOLVED_NAME" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine" "$CLI_WORKER_HOME"
 }
 
-main "$@"
+# --- dot-source guard --------------------------------------------------------
+# When ILK_SKIP_MAIN is set, skip the main execution block so tests can
+# source this file to access functions (print_toolkit_staleness_notice,
+# etc.) without launching a window.
+if [[ "${ILK_SKIP_MAIN:-}" != "1" ]]; then
+  main "$@"
+fi
