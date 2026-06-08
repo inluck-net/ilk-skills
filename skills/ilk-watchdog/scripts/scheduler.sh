@@ -12,6 +12,38 @@ set -euo pipefail
 # -Once runs a single scan cycle (for tests) instead of the daemon loop.
 # =============================================================================
 
+# --- single-instance guard (pidfile) -----------------------------------------
+
+SCHEDULER_PIDFILE="${HOME}/.ilk-data/scheduler.pid"
+
+acquire_scheduler_lock() {
+  # Use a pidfile with liveness check. Portable (no flock dependency).
+  local pidfile="$SCHEDULER_PIDFILE"
+  if [[ -f "$pidfile" ]]; then
+    local old_pid
+    old_pid=$(tr -d '[:space:]' < "$pidfile" 2>/dev/null) || true
+    if [[ -n "$old_pid" && "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" 2>/dev/null; then
+      echo "[ilk-scheduler] already running (PID $old_pid). Exiting."
+      exit 0
+    fi
+    # Stale pidfile — remove and proceed.
+    rm -f "$pidfile"
+  fi
+  # Write our PID.
+  mkdir -p "$(dirname "$pidfile")"
+  echo $$ > "$pidfile"
+}
+
+release_scheduler_lock() {
+  rm -f "$SCHEDULER_PIDFILE" 2>/dev/null || true
+}
+
+# Acquire lock immediately at source time.
+acquire_scheduler_lock
+
+# Release lock on exit (normal, error, or signal).
+trap release_scheduler_lock EXIT
+
 # --- skill root resolution ---------------------------------------------------
 
 source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_skill_root.sh"
@@ -531,6 +563,7 @@ run_scheduler() {
 detach_scheduler() {
   if ! command -v screen &>/dev/null; then
     echo "ERROR: 'screen' is not installed. Install it (apt install screen / brew install screen) or run without --detach." >&2
+    release_scheduler_lock
     exit 1
   fi
 
@@ -542,11 +575,14 @@ detach_scheduler() {
 
   if [[ "$DRY_RUN" == true ]]; then
     echo "[ilk-scheduler] (dry-run) would spawn detached: screen -dmS ilk-scheduler $cmd"
+    release_scheduler_lock
     exit 0
   fi
 
   local session_name="ilk-scheduler"
 
+  # Release lock before spawning child — child acquires its own.
+  release_scheduler_lock
   screen -dmS "$session_name" bash -c "$cmd"
   echo "[ilk-scheduler] detached screen session started: $session_name"
   echo "  Attach with: screen -r $session_name"

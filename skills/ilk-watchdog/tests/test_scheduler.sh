@@ -953,6 +953,42 @@ run_gates() {
   cleanup
 }
 
+run_mutex() {
+  echo "=== test_scheduler.sh mutex ==="
+  setup_two_queued_projects
+
+  # Test: second scheduler.sh launch exits immediately with "already running"
+  # while the first holds the flock.
+  #
+  # Strategy: launch the first instance in the background (it will block in the
+  # poll loop). Then launch a second --dry-run --once instance which should
+  # detect the lock, print "already running", and exit 0.
+
+  # Launch first instance in background.
+  ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" &
+  local first_pid=$!
+
+  # Give it time to acquire the lock.
+  sleep 2
+
+  # Launch second instance — should detect lock and exit immediately.
+  local output exit_code=0
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once 2>&1) || exit_code=$?
+
+  # Clean up the background instance.
+  kill "$first_pid" 2>/dev/null || true
+  wait "$first_pid" 2>/dev/null || true
+
+  # Assert: exit code 0 (graceful bail-out, not an error).
+  [[ "$exit_code" == "0" ]] || die "expected exit code 0 for duplicate scheduler, got $exit_code. Output: $output"
+
+  # Assert: output contains "already running".
+  [[ "$output" == *"already running"* ]] || die "expected 'already running' in output, got: $output"
+
+  echo "PASS: second scheduler exits with 'already running' (lock held)"
+  cleanup
+}
+
 run_compat() {
   # Bash 3.2 / macOS portability guards.
   echo "=== test_scheduler.sh compat ==="
@@ -997,6 +1033,7 @@ run_all() {
   run_cap
   run_fill
   run_gates
+  run_mutex
   run_compat
   echo "ALL PASS"
 }
@@ -1029,6 +1066,9 @@ case "${1:-all}" in
   gates)
     run_gates
     ;;
+  mutex)
+    run_mutex
+    ;;
   compat)
     run_compat
     ;;
@@ -1036,7 +1076,7 @@ case "${1:-all}" in
     run_all
     ;;
   *)
-    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|fill|gates|compat|all}" >&2
+    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|fill|gates|mutex|compat|all}" >&2
     exit 1
     ;;
 esac

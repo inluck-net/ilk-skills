@@ -48,6 +48,23 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# --- single-instance mutex (Global\ilk-scheduler) ----------------------------
+$mutexName = "Global\ilk-scheduler"
+$createdNew = $false
+$mutex = New-Object System.Threading.Mutex($true, $mutexName, [ref]$createdNew)
+if (-not $createdNew) {
+  Write-Host "[ilk-scheduler] already running (mutex held). Exiting."
+  exit 0
+}
+$mutexHeld = $true
+function Release-SchedulerMutex {
+  if ($mutexHeld) {
+    try { $mutex.ReleaseMutex() } catch {}
+    $mutex.Dispose()
+    $mutexHeld = $false
+  }
+}
+
 # --- skill root resolution ---------------------------------------------------
 . (Join-Path $PSScriptRoot "..\..\ilk-loop\scripts\_ilk_skill_root.ps1")
 $SkillRoot = Get-IlkSkillRoot
@@ -382,11 +399,17 @@ if ($Detach) {
   if ($NoLocalChecks) { $inner += " -NoLocalChecks" }
   if ($DryRun) {
     Write-Host "[ilk-scheduler] (dry-run) would spawn detached: $inner"
+    Release-SchedulerMutex
     return
   }
   $proc = Start-Process powershell -ArgumentList @('-NoExit','-NoProfile','-Command',$inner) -PassThru
   Write-Host "[ilk-scheduler] detached window spawned. PID $($proc.Id)."
+  Release-SchedulerMutex
   return
 }
 
-Run-Scheduler
+try {
+  Run-Scheduler
+} finally {
+  Release-SchedulerMutex
+}

@@ -16,7 +16,7 @@
                slots, dispatches stop at the cap.
 #>
 param(
-  [ValidateSet('scan', 'select', 'dispatch', 'promote', 'blacklist', 'unresolved', 'cap', 'fill', 'gates', 'all')]
+  [ValidateSet('scan', 'select', 'dispatch', 'promote', 'blacklist', 'unresolved', 'cap', 'fill', 'gates', 'mutex', 'all')]
   [string]$Subcommand = 'all'
 )
 
@@ -1155,6 +1155,54 @@ function Run-Fill {
   Cleanup
 }
 
+function Run-Mutex {
+  Write-Host '=== test_scheduler.ps1 mutex ==='
+  Setup-TwoQueuedProjects
+
+  # Test: second scheduler.ps1 launch exits immediately with "already running"
+  # while the first holds the Global\ilk-scheduler mutex.
+  #
+  # Strategy: launch the first instance in the background (it will block in the
+  # poll loop). Then launch a second -DryRun -Once instance which should detect
+  # the mutex, print "already running", and exit 0 without producing dispatch JSON.
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    # Launch first instance in background (blocks in poll loop).
+    $firstJob = Start-Job -ScriptBlock {
+      param($SchedulerScript, $FakeData)
+      $env:ILK_DATA_HOME = $FakeData
+      & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript 2>&1
+    } -ArgumentList $SchedulerScript, $FakeData
+
+    # Give it time to acquire the mutex.
+    Start-Sleep -Seconds 2
+
+    # Launch second instance — should detect mutex and exit immediately.
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once 2>&1
+    $exitCode = $LASTEXITCODE
+  } finally {
+    # Clean up the background job.
+    Stop-Job -Job $firstJob -ErrorAction SilentlyContinue
+    Remove-Job -Job $firstJob -Force -ErrorAction SilentlyContinue
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+
+  $outputStr = ($output | Out-String).Trim()
+
+  # Assert: exit code 0 (not an error — graceful bail-out).
+  if ($exitCode -ne 0) {
+    throw "Expected exit code 0 for duplicate scheduler, got $exitCode. Output: $outputStr"
+  }
+
+  # Assert: output contains "already running".
+  if ($outputStr -notlike '*already running*') {
+    throw "Expected 'already running' in output, got: $outputStr"
+  }
+
+  Write-Host 'PASS: second scheduler exits with "already running" (mutex held)'
+  Cleanup
+}
+
 # --- main ---------------------------------------------------------------------
 
 switch ($Subcommand) {
@@ -1167,5 +1215,6 @@ switch ($Subcommand) {
   'cap'        { Run-Cap }
   'fill'       { Run-Fill }
   'gates'      { Run-Gates }
-  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Promote; Run-Blacklist; Run-Unresolved; Run-Cap; Run-Fill; Run-Gates; Write-Host 'ALL PASS' }
+  'mutex'      { Run-Mutex }
+  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Promote; Run-Blacklist; Run-Unresolved; Run-Cap; Run-Fill; Run-Gates; Run-Mutex; Write-Host 'ALL PASS' }
 }
