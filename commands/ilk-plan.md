@@ -614,7 +614,32 @@ Plans live OUTSIDE the project repo, so there is **nothing to git-add
 inside the project**. The files have already been written to
 `~/.ilk-data/projects/<key>/plans/` in step 6.
 
-### 8a. Release the master (`draft` → `queued`)
+### 8a. Auto-register the project (idempotent, opt-out aware)
+
+After the plans are written, register the project so a running
+scheduler can discover it — unless the project opts out.
+
+1. Check for opt-out: read `<project_root>/.ilk-launch.json` (if it
+   exists). If it contains `"autoschedule": false`, **skip
+   registration** and note this in the step-9 report ("Project opted
+   out of auto-scheduling — not registered in projects.json").
+2. Otherwise, run:
+   ```powershell
+   python "<skill-root>/ilk-loop/scripts/register_project.py" --path "<project_root>"
+   ```
+   This is idempotent — safe to re-run if the project is already
+   registered. It writes a `{name, path}` entry to the launcher's
+   `projects.json` registry (BOM-free utf-8).
+3. Capture the output. The JSON result has `added: true/false` and
+   `name`. You'll report this in step 9.
+
+**Why this matters:** a brand-new project is `skip-unresolved` by the
+scheduler until it appears in `projects.json`. This one command makes
+it discoverable — but the scheduler still applies its own
+`active`/`queued` + `supervised_only` + `draft` gates (no surprise
+autonomous runs of supervised/draft work).
+
+### 8b. Release the master (`draft` → `queued`)
 
 The MASTER was written `status: draft` in step 6, so the live scheduler/loop
 could not pick it up while you authored and QC'd it. **Now that step-7 QC has
@@ -655,9 +680,18 @@ End your turn with:
    invariants woven (count), env_prereqs findings (count), cold-read
    gaps surfaced (count). Each non-zero count expanded with a short
    bullet list so the user can act.
-3. The output of `python "<skill-root>/ilk-loop/scripts/loop_status.py"`
+3. **Registration outcome** (from step 8a):
+   - If registered: *"Registered `<name>` in projects.json — a running
+     scheduler can now auto-dispatch its non-`supervised_only` batches;
+     remove the entry to opt out."*
+   - If opted out: *"Project opted out of auto-scheduling
+     (`.ilk-launch.json` `autoschedule: false`) — not registered in
+     projects.json."*
+   - If already registered: *"`<name>` already in projects.json — no
+     change."*
+4. The output of `python "<skill-root>/ilk-loop/scripts/loop_status.py"`
    so the user sees the new pending state.
-4. **Verification-enforcement warning (decomposition-principles.md §11).**
+5. **Verification-enforcement warning (decomposition-principles.md §11).**
    If ANY newly-written sub-plan carries runtime `local_checks`
    (frontmatter or per-step), tell the user verbatim:
 
@@ -669,7 +703,7 @@ End your turn with:
    > push → cloud-re-run before trusting the batch.
 
    Skip this only if no sub-plan has any runtime `local_checks`.
-5. **Tier-mix summary.** List the tier breakdown of the batch:
+6. **Tier-mix summary.** List the tier breakdown of the batch:
 
    ```
    Tier mix: N loop-verified, M compile-only, K device-manual
@@ -680,7 +714,7 @@ End your turn with:
    > **NEEDS HUMAN VERIFICATION**: compile-only and device-manual sub-plans
    > require a human + device pass after the loop marks them `shipped`.
 
-6. Tell the user: "Ready to execute. Open a fresh chat and type `/ilk`
+7. Tell the user: "Ready to execute. Open a fresh chat and type `/ilk`
    (launch with `-RunLocalChecks` so the gates actually run)."
 
 ## Boundary rules
