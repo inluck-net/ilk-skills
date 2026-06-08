@@ -38,3 +38,9 @@ filename encodes the refresh interval (`10s` = every 10 seconds).
 ## Uninstall
 
 Remove the symlink or plugin file from your xbar/SwiftBar plugins directory.
+
+## Windows counterpart
+
+On Windows, use the native system-tray monitor instead:
+[`tools/tray/`](../tray/) — same architecture (status_all → renderer → host),
+native NotifyIcon with logon auto-start.

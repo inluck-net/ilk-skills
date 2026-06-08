@@ -76,8 +76,44 @@ python -m pytest tools/tray/tests/test_render_tray.py -q
 Covers: empty input, all-idle, ≥1 running, stale-running→attention,
 error→attention, tooltip length cap, CLI --json-from, CLI stdin, ASCII safety.
 
-## Install / Uninstall
+## Launch
 
-> **Coming in sub-plan 2** (`tray-host-and-autostart`): the PowerShell
-> NotifyIcon host (`ilk-tray.ps1`) and logon auto-start installer
-> (`install-tray-autostart.ps1`).
+```powershell
+powershell -NoProfile -File tools/tray/ilk-tray.ps1
+```
+
+A tray icon appears in the system notification area. The icon recolors
+by state: green = running, grey = idle, red/amber = attention. The
+dropdown lists every registered project with its step, next sub-plan,
+and state. Click a project to open its status/log directory.
+
+Use `-IntervalSec 30` to change the refresh interval (default: 10s).
+
+## Auto-start (logon)
+
+```powershell
+# Install — creates a per-user Startup shortcut (no admin needed)
+powershell -NoProfile -File tools/tray/install-tray-autostart.ps1
+
+# Uninstall — removes the shortcut
+powershell -NoProfile -File tools/tray/install-tray-autostart.ps1 -Uninstall
+```
+
+The installer is idempotent: re-running refreshes the shortcut without
+duplicating it. Uses `WScript.Shell` to create a `.lnk` in the user's
+Startup folder. No admin, no service, no scheduled task.
+
+## Limitation
+
+The tray icon requires an **interactive desktop session** — it will not
+work in headless / RDP-disconnected / service contexts. This is a
+Windows `NotifyIcon` constraint, not something we can work around.
+
+## Tests (renderer only)
+
+```bash
+python -m pytest tools/tray/tests/test_render_tray.py -q
+```
+
+The renderer is loop-verified (pytest). The host (`ilk-tray.ps1`) is
+device-manual — a human must eyeball the actual tray.
