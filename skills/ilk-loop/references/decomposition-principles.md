@@ -331,3 +331,69 @@ new file's tests. Per-file-only gates hide integration bugs and
 test-state-leak bugs that only surface when the full suite runs
 (WeChatRelay bugs #1/#2). See also §8 anti-pattern
 "per-file-only gate on a shared module".
+
+---
+
+## 13. Bias toward autonomy
+
+The loop's default posture is **autonomous by default, safely**. Every
+design decision should bias toward removing human bottlenecks, not adding
+them.
+
+### Default to scheduler-pickup
+
+A new master plan should flow `draft` → `queued` → scheduler-dispatched
+without human intervention. `supervised_only: false` is the default — only
+flip it when there is a concrete, articulable reason (see the narrow rule
+below). Do not set `supervised_only: true` as a "readiness gate" or
+"because we haven't verified it yet" — that is what verification tiers
+(§12) and gated dispatch (gated autonomous `local_checks`) are for.
+
+### supervised_only is a narrow + persistent SAFETY flag
+
+`supervised_only` exists for one purpose: batches that **modify the
+loop's own runtime infrastructure** (`loop_status.py`,
+`scheduler_scan.py`, `promote_next_master.py`, `plan_status.py`,
+`scheduler.*`). A self-modifying batch must not be dispatched by the
+scheduler or `promote_next_master` while they are live — they would be
+reading code they are simultaneously rewriting.
+
+Key properties:
+- **Narrow** — only triggered when `scope_paths` (not body/prose)
+  actually *modifies* one of those files. A test that imports
+  `loop_status.py`, or prose that mentions `scheduler_scan.py`, does
+  not warrant it.
+- **Persistent** — once set, it stays set until the batch ships. It is
+  not auto-cleared by any "readiness" signal.
+- **Not a readiness gate** — never set `supervised_only: true` because
+  the batch "isn't ready yet" or "needs human review". Use `status:
+  draft` for not-yet-released, and verification tiers for trust level.
+
+### Prefer fixing the gap over inserting a human
+
+When a sub-plan's ACs seem to require human judgment, ask first: "can we
+close this gap with a gate, a test, or a script?" The answer is usually
+yes — and every gate we add is one fewer human-in-the-loop stall.
+
+- Missing runtime smoke → write a pytest or curl-based check (§1).
+- Uncertain dispatch → add a hermetic test that exercises the path (§11).
+- External dependency → declare `env_prereqs` with a fast-fail probe
+  (§10), don't just note "needs human to check".
+
+Insert a human only when the gap is genuinely un-closeable by automation
+(physical device, GUI-only verification, external service with no API).
+
+### The limit: autonomy must stay gated
+
+Autonomy is not reckless. The safety boundary is that autonomous dispatch
+must always be gated — the scheduler applies `active`/`queued` +
+`supervised_only` filters, and `local_checks` (when `-RunLocalChecks` is
+on) prove correctness before shipping. Never:
+
+- Auto-run a batch with no `local_checks` and no verification tier.
+- Self-modify mid-flight (a batch editing `scheduler_scan.py` while the
+  scheduler is running it).
+- Remove gates without replacing them with an equivalent safety net.
+
+See also §11 (shipped ≠ verified — gates must run) and §12 (verification
+tier — what each level actually proves).
