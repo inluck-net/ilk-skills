@@ -197,3 +197,27 @@ class TestAC3_EntrypointShellScript:
         """Script pipes to or invokes render_xbar."""
         text = ENTRYPOINT_SH.read_text(encoding="utf-8")
         assert "render_xbar" in text, "does not reference render_xbar"
+
+
+# ── AC-4: symlink-execution regression ─────────────────────────────
+
+class TestPluginSymlinkResolution:
+    """ilk.10s.sh resolves its repo correctly when invoked via a symlink."""
+
+    def test_symlink_execution_produces_valid_output(self, tmp_path):
+        """Running the plugin via a symlink prints valid xbar output."""
+        link = tmp_path / "ilk.10s.sh"
+        link.symlink_to(ENTRYPOINT_SH)
+        result = subprocess.run(
+            ["bash", str(link)],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert result.returncode == 0, f"exit {result.returncode}: {result.stderr}"
+        assert "not found" not in result.stdout, (
+            f"plugin reported 'not found' — symlink resolution failed:\n{result.stdout}"
+        )
+        lines = result.stdout.strip().splitlines()
+        assert len(lines) >= 2, f"expected ≥2 lines, got {len(lines)}"
+        assert lines[1].strip() == "---", (
+            f"line 2 expected '---', got {lines[1]!r}"
+        )
