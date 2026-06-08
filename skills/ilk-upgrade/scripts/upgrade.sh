@@ -167,7 +167,7 @@ has_drift() {
     [[ -d "$candidate/commands" ]] && homes+=("$candidate")
   done
 
-  for home in "${homes[@]}"; do
+  for home in "${homes[@]+"${homes[@]}"}"; do
     for cmd_file in "$home"/commands/ilk*; do
       [[ -f "$cmd_file" ]] || continue
       if [[ ! -L "$cmd_file" ]]; then
@@ -217,8 +217,8 @@ do_apply() {
     return 0
   fi
 
-  # Fast-forward pull
-  if ! git -C "$REPO_ROOT" pull --ff-only 2>&1; then
+  # Fast-forward pull (suppress git's own output; we print our own summary)
+  if ! git -C "$REPO_ROOT" pull --ff-only >/dev/null 2>&1; then
     echo "error: fast-forward pull failed — rebase or reset manually" >&2
     exit 1
   fi
