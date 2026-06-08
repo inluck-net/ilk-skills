@@ -256,6 +256,25 @@ check that the contract holds inside the actual UX.
 - Open Chrome, navigate to <url>.
 - <step-by-step instructions>
 - Expected: <toast / response / state>
+
+  Runtime failure-mode checklist (device-manual / compile-only only):
+  A build cannot catch these — verify each on a real device/runtime:
+  - [ ] **Isolate/process boundaries** — code runs in the right
+        isolate/process; no MissingPluginException or cross-boundary
+        call failures.
+  - [ ] **Frame/timing on async capture** — camera/screen capture
+        waits for the first frame; no "No image captured" from
+        calling acquireLatestImage() before any frame exists.
+  - [ ] **Permission/consent timing** — runtime permissions granted
+        before first use; no crash from accessing a protected API
+        before the consent dialog resolves.
+  - [ ] **Intent resolution** — the target app actually resolves the
+        intent/URL; no chooser offering the wrong app, no fallback
+        to an unintended handler.
+  - [ ] **Cross-process channels** — IPC/bridge messages arrive in
+        the expected order; no race between connect events and first
+        data send.
+
 - If anything fails, re-open the loop with this sub-plan flipped back
   to `status: in-progress, current_step: N`. Otherwise no action.
 -->
