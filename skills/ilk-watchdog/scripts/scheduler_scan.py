@@ -203,8 +203,10 @@ def scan_projects() -> list[dict]:
                 active_ts.append(oldest_sub)
             elif master_status == "queued":
                 queued_ts.append(oldest_sub)
-            # Masters with other statuses (e.g. pending, paused) are not
-            # runnable by the queue model — skip them.
+            # Masters with other statuses (e.g. draft, pending, paused) are
+            # not runnable by the queue model — skip them. `draft` =
+            # authored-but-not-yet-released (the /ilk-plan authoring gate); it
+            # is intentionally invisible to the autonomous scheduler.
 
         # --- pass 2: decide inclusion + FIFO timestamp ---
         # A project is included iff it has a runnable master.

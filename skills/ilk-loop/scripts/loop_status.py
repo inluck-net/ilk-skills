@@ -168,6 +168,7 @@ def pick_active_master(masters: list[Path]) -> tuple[Path, dict]:
     paused = by_status.get("paused", [])
     shipped = by_status.get("shipped", [])
     legacy = by_status.get("(none)", [])
+    draft = by_status.get("draft", [])
 
     if len(actives) > 1:
         print(
@@ -190,9 +191,9 @@ def pick_active_master(masters: list[Path]) -> tuple[Path, dict]:
     elif legacy:
         # Pure legacy: newest by mtime
         chosen = max(legacy, key=lambda it: it[0].stat().st_mtime)[0]
-    elif paused or shipped:
-        # All masters are terminal — nothing to do, but pick the most
-        # recent so the table renders.
+    elif paused or shipped or draft:
+        # All masters are terminal or not-yet-ready (draft) — nothing to do,
+        # but pick the most recent so the table renders.
         chosen = max(parsed, key=lambda it: it[0].stat().st_mtime)[0]
     else:
         # Defensive: no parseable masters but glob saw files
@@ -204,6 +205,7 @@ def pick_active_master(masters: list[Path]) -> tuple[Path, dict]:
         "paused_count": len(paused),
         "shipped_count": len(shipped),
         "legacy_count": len(legacy),
+        "draft_count": len(draft),
         "queued_titles": [it[0].name for it in queued],
     }
     return chosen, queue_view
@@ -290,7 +292,15 @@ def resolve_status(cwd: Path) -> dict:
     queued = queue_view["queued_count"]
     shipped = queue_view["shipped_count"]
 
-    # queue_exit: 0 = all shipped, 1 = pending work, 2 = error
+    # A `draft` master is authored-but-not-yet-released — non-runnable.
+    # Force nothing-actionable so the loop runner (which keys off this exit
+    # code) never executes it. This is the manual-path complement to
+    # scheduler_scan/promote, which already exclude draft.
+    master_status = parse_frontmatter(master_text).get("status", "").strip().lower()
+    if master_status == "draft":
+        next_pending = None
+
+    # queue_exit: 0 = all shipped / nothing actionable, 1 = pending work, 2 = error
     if next_pending is None:
         queue_exit = 0
     else:
