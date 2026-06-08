@@ -1414,6 +1414,15 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
         $color = if ($r2.outcome -eq "pass") { "Green" } elseif ($r2.outcome -eq "fail") { "Yellow" } else { "DarkYellow" }
         Write-Host ("  [local_checks {0}] {1} step {2} -> {3}" -f $tag, $r2.slug, $r2.step, $r2.outcome) -ForegroundColor $color
       }
+
+      # B2 enforcement: treat "error" as a blocking fail — the loop must
+      # NOT advance/ship when a gate errored (command couldn't execute).
+      $errored = $localChecksRun | Where-Object { $_.outcome -eq "error" }
+      if ($errored) {
+        $stopReason = "local_checks_errored"
+        Write-Host "Loop stopped: local_checks errored (B2 enforcement)" -ForegroundColor Red
+        break
+      }
     }
   }
 
