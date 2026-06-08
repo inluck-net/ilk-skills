@@ -120,9 +120,208 @@ if ($dirtyFiles) {
   Write-Warning "dirty working tree in $RepoRoot"
 }
 
+# --- --check: fetch + ahead/behind report --------------------------------------
+function Invoke-Check {
+  # Fetch silently; tolerate offline gracefully
+  try {
+    git -C $RepoRoot fetch --quiet origin 2>&1 | Out-Null
+  } catch {
+    Write-Error "could not reach origin — check your network connection"
+    exit 1
+  }
+  if ($LASTEXITCODE -ne 0) {
+    Write-Error "could not reach origin — check your network connection"
+    exit 1
+  }
+
+  # Resolve upstream; fall back to origin/<branch>
+  $branch = git -C $RepoRoot symbolic-ref --short HEAD 2>&1
+  $upstream = git -C $RepoRoot for-each-ref --format='%(upstream:short)' "refs/heads/$branch" 2>&1
+  if (-not $upstream -or $LASTEXITCODE -ne 0) {
+    $upstream = "origin/$branch"
+  }
+
+  $behind = git -C $RepoRoot rev-list --count HEAD..$upstream 2>&1
+  if ($LASTEXITCODE -ne 0) { $behind = 0 }
+
+  if ([int]$behind -eq 0) {
+    Write-Host "up to date"
+  } else {
+    $plural = if ([int]$behind -ne 1) { "s" } else { "" }
+    Write-Host "behind by ${behind} commit${plural} — run with -Apply"
+  }
+}
+
+# --- live-loop guard -----------------------------------------------------------
+function Test-LivePids {
+  $dataDir = if ($env:ILK_DATA_DIR) { $env:ILK_DATA_DIR } else { Join-Path $HOME ".ilk-data" }
+  $projectsDir = Join-Path $dataDir "projects"
+
+  if (-not (Test-Path $projectsDir)) {
+    return $true  # no projects dir = no live PIDs
+  }
+
+  $activePids = @()
+
+  # Scan launcher and watchdog PID files
+  $pidFiles = @()
+  $pidFiles += Get-ChildItem -Path $projectsDir -Filter "running.pid" -Recurse -ErrorAction SilentlyContinue |
+    Where-Object { $_.DirectoryName -match "runtime[\\/]launcher$" }
+  $pidFiles += Get-ChildItem -Path $projectsDir -Filter "*.pid" -Recurse -ErrorAction SilentlyContinue |
+    Where-Object { $_.DirectoryName -match "runtime[\\/]watchdog$" }
+
+  foreach ($pidFile in $pidFiles) {
+    $pid = (Get-Content -LiteralPath $pidFile.FullName -Raw -ErrorAction SilentlyContinue).Trim()
+    if (-not $pid) { continue }
+
+    # Check if PID is alive
+    try {
+      $proc = Get-Process -Id [int]$pid -ErrorAction SilentlyContinue
+      if ($proc) {
+        # Extract project name from path
+        $projectDir = $pidFile.Directory.Parent.Parent.Parent
+        $projectName = $projectDir.Name
+        $activePids += "$projectName (PID $pid)"
+      }
+    } catch {
+      # PID not alive — skip
+    }
+  }
+
+  if ($activePids.Count -gt 0) {
+    Write-Error "live loop/watchdog detected — refusing to update skill code:`n$($activePids | ForEach-Object { "  - $_" } | Out-String)Stop the active loop first, or use -Force."
+    return $false
+  }
+  return $true
+}
+
+# --- drift detection -----------------------------------------------------------
+function Test-Drift {
+  # Check if any installed command file under known homes is a regular file
+  # (copy) rather than a symlink — indicates install was done with copy-fallback
+  # or the link was replaced.
+  $homes = @()
+  foreach ($candidate in @((Join-Path $HOME ".cursor"), (Join-Path $HOME ".claude"), (Join-Path $HOME ".codex"))) {
+    $cmdDir = Join-Path $candidate "commands"
+    if (Test-Path $cmdDir) { $homes += $candidate }
+  }
+
+  foreach ($home in $homes) {
+    $cmdDir = Join-Path $home "commands"
+    $cmdFiles = Get-ChildItem -Path $cmdDir -Filter "ilk*" -File -ErrorAction SilentlyContinue
+    foreach ($cmdFile in $cmdFiles) {
+      # Test-IsLink: check for ReparsePoint attribute
+      $item = Get-Item -LiteralPath $cmdFile.FullName -Force -ErrorAction SilentlyContinue
+      if ($item -and -not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        return $true  # drift found: regular file, not symlink
+      }
+    }
+  }
+
+  return $false  # no drift
+}
+
+# --- --apply: ff-only pull + changelog + conditional re-install ----------------
+function Invoke-Apply {
+  # Self-update guard: refuse if a live loop/watchdog is running
+  if (-not $Force) {
+    if (-not (Test-LivePids)) {
+      exit 1
+    }
+  }
+
+  $oldRev = git -C $RepoRoot rev-parse HEAD 2>&1
+
+  # Fetch silently
+  try {
+    git -C $RepoRoot fetch --quiet origin 2>&1 | Out-Null
+  } catch {
+    Write-Error "could not reach origin — check your network connection"
+    exit 1
+  }
+  if ($LASTEXITCODE -ne 0) {
+    Write-Error "could not reach origin — check your network connection"
+    exit 1
+  }
+
+  # Resolve upstream
+  $branch = git -C $RepoRoot symbolic-ref --short HEAD 2>&1
+  $upstream = git -C $RepoRoot for-each-ref --format='%(upstream:short)' "refs/heads/$branch" 2>&1
+  if (-not $upstream -or $LASTEXITCODE -ne 0) {
+    $upstream = "origin/$branch"
+  }
+
+  # Already current?
+  $behind = git -C $RepoRoot rev-list --count HEAD..$upstream 2>&1
+  if ($LASTEXITCODE -ne 0) { $behind = 0 }
+  if ([int]$behind -eq 0) {
+    Write-Host "already current"
+    return
+  }
+
+  # Fast-forward pull (suppress git's own output; we print our own summary)
+  git -C $RepoRoot pull --ff-only 2>&1 | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Error "fast-forward pull failed — rebase or reset manually"
+    exit 1
+  }
+
+  $newRev = git -C $RepoRoot rev-parse HEAD 2>&1
+
+  # Changelog
+  Write-Host ""
+  Write-Host "Changelog:"
+  git -C $RepoRoot log --oneline "${oldRev}..${newRev}" 2>&1
+
+  # Skill/command changes
+  $diffStatus = git -C $RepoRoot diff --name-status $oldRev $newRev -- skills/ commands/ 2>&1
+  if ($diffStatus) {
+    Write-Host ""
+    Write-Host "Skill/command changes:"
+    foreach ($line in ($diffStatus -split "`n")) {
+      if (-not $line.Trim()) { continue }
+      $parts = $line -split "`t"
+      $status = $parts[0]
+      $path = $parts[1]
+      switch -Wildcard ($status) {
+        "A*" { Write-Host "  added: $path" }
+        "D*" { Write-Host "  removed: $path" }
+        "M*" { Write-Host "  modified: $path" }
+        "R*" { Write-Host "  renamed: $path" }
+        default { Write-Host "  $status`: $path" }
+      }
+    }
+  }
+
+  # Drift detection + conditional re-install
+  $needReinstall = $false
+
+  # Check for copy-installed command files
+  if (Test-Drift) {
+    $needReinstall = $true
+  }
+
+  # Check if skills or commands were added/removed
+  if ($diffStatus) {
+    if ($diffStatus -match '^[AD]') {
+      $needReinstall = $true
+    }
+  }
+
+  if ($needReinstall) {
+    Write-Host ""
+    Write-Host "Drift detected — re-running installer..."
+    $installPs1 = Join-Path $RepoRoot "install.ps1"
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $installPs1 -Apply
+    Write-Host "Re-install complete. New code is effective next invocation."
+  } else {
+    Write-Host ""
+    Write-Host "Links current, no re-install needed. New code is effective next invocation."
+  }
+}
+
 # --- mode dispatch -------------------------------------------------------------
-# Step 0: scaffold only — mode dispatch will be filled in later steps.
-# For now, just validate the repo resolution worked.
-Write-Host "repo root: $RepoRoot"
-Write-Host "mode: $mode"
-Write-Host "(scaffold — full logic coming in later steps)"
+switch ($mode) {
+  "check" { Invoke-Check }
+  "apply" { Invoke-Apply }
+}
