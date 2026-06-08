@@ -218,6 +218,43 @@ bash "$HOME/.claude/skills/ilk-launcher/scripts/launch.sh" --project-path .
 Codex users invoke the same skills through natural language — the
 installer places identical files under `~/.codex/skills/`.
 
+## Upgrading ilk-skills
+
+The easiest way to update is the `/ilk-upgrade` command:
+
+```bash
+# macOS / Linux — check what's behind, then apply
+bash "<skill-root>/ilk-upgrade/scripts/upgrade.sh" --check
+bash "<skill-root>/ilk-upgrade/scripts/upgrade.sh" --apply
+```
+
+```powershell
+# Windows
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+    "<skill-root>\ilk-upgrade\scripts\upgrade.ps1" -Check
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+    "<skill-root>\ilk-upgrade\scripts\upgrade.ps1" -Apply
+```
+
+`<skill-root>` is `~/.claude/skills/`, `~/.cursor/skills/`, or
+`~/.codex/skills/` depending on your host agent.
+
+`--check` is read-only — it fetches and reports ahead/behind counts.
+`--apply` pulls with `--ff-only` and re-runs the installer
+automatically when needed. If a live loop is running, `--apply`
+refuses unless you pass `--force`.
+
+**Manual equivalent:**
+
+```bash
+cd /path/to/ilk-skills   # your local clone
+git pull --ff-only
+# macOS / Linux
+./install.sh --apply
+# Windows
+./install.ps1 -Apply
+```
+
 ## Layout
 
 ```
