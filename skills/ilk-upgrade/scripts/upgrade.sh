@@ -117,9 +117,69 @@ do_check() {
   fi
 }
 
+# --- --apply: ff-only pull + changelog ----------------------------------------
+
+do_apply() {
+  local old_rev new_rev
+
+  old_rev="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+
+  # Fetch silently
+  if ! git -C "$REPO_ROOT" fetch --quiet origin 2>/dev/null; then
+    echo "error: could not reach origin — check your network connection" >&2
+    exit 1
+  fi
+
+  # Resolve upstream
+  local branch upstream
+  branch="$(git -C "$REPO_ROOT" symbolic-ref --short HEAD)"
+  upstream="$(git -C "$REPO_ROOT" for-each-ref --format='%(upstream:short)' "refs/heads/$branch" 2>/dev/null || true)"
+  if [[ -z "$upstream" ]]; then
+    upstream="origin/$branch"
+  fi
+
+  # Already current?
+  local behind
+  behind="$(git -C "$REPO_ROOT" rev-list --count HEAD.."$upstream" 2>/dev/null || echo "0")"
+  if [[ "$behind" -eq 0 ]]; then
+    echo "already current"
+    return 0
+  fi
+
+  # Fast-forward pull
+  if ! git -C "$REPO_ROOT" pull --ff-only 2>&1; then
+    echo "error: fast-forward pull failed — rebase or reset manually" >&2
+    exit 1
+  fi
+
+  new_rev="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+
+  # Changelog
+  echo ""
+  echo "Changelog:"
+  git -C "$REPO_ROOT" log --oneline "${old_rev}..${new_rev}"
+
+  # Skill/command changes
+  local diff_status
+  diff_status="$(git -C "$REPO_ROOT" diff --name-status "${old_rev}" "${new_rev}" -- skills/ commands/ 2>/dev/null || true)"
+  if [[ -n "$diff_status" ]]; then
+    echo ""
+    echo "Skill/command changes:"
+    echo "$diff_status" | while IFS=$'\t' read -r status path; do
+      case "$status" in
+        A) echo "  added: $path" ;;
+        D) echo "  removed: $path" ;;
+        M) echo "  modified: $path" ;;
+        R*) echo "  renamed: $path" ;;
+        *) echo "  $status: $path" ;;
+      esac
+    done
+  fi
+}
+
 # --- mode dispatch -----------------------------------------------------------
 
 case "$mode" in
   check)  do_check ;;
-  apply)  echo "error: --apply not yet implemented" >&2; exit 1 ;;
+  apply)  do_apply ;;
 esac
