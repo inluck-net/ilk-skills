@@ -7,6 +7,15 @@ tickets:
 priority: P2
 estimated_steps: 0
 last_updated: YYYY-MM-DD
+# --- Verification tier (see decomposition-principles.md §12) ---
+# How trustworthy is "shipped" for this sub-plan?
+#   loop-verified  — runtime gate proves correctness (pytest boots the app, real
+#                    HTTP/CLI/browser smoke runs). Trustworthy when shipped.
+#   compile-only   — only analyze/build/tsc/mypy runs. Ships scaffolding; a human
+#                    must verify behaviour.
+#   device-manual  — correctness needs a physical device / GUI / external app.
+# Absent ⇒ loop-verified (back-compat with plans that predate tiers).
+verification_tier: loop-verified
 # --- Meta-project routing (REQUIRED in meta projects, ignored otherwise) ---
 # In a meta project (the parent dir has .ilk-meta.json), every sub-plan must
 # declare exactly one member repo. The ilk-loop driver `cd`s into that
