@@ -71,6 +71,17 @@ LOOP_LOG_DIR = HOME / ".cursor" / "skills" / "ilk-loop" / "logs"
 JSONL_LOG = LOOP_LOG_DIR / ".ilk-loop.log"
 LOOP_STATUS_SCRIPT = HOME / ".cursor" / "skills" / "ilk-loop" / "scripts" / "loop_status.py"
 
+# Import loop_status for master-resolution logic (extract_master_order,
+# pick_active_master) so batch_unverified_tiers can scope to the run's
+# active master rather than scanning every shipped sub-plan in the dir.
+_LOOP_STATUS_DIR = HOME / ".cursor" / "skills" / "ilk-loop" / "scripts"
+if _LOOP_STATUS_DIR.is_dir():
+    sys.path.insert(0, str(_LOOP_STATUS_DIR))
+try:
+    import loop_status as _loop_status  # type: ignore
+except ImportError:
+    _loop_status = None  # type: ignore
+
 # Pull in ilk_paths from the sibling ilk-loop skill so meta-project
 # detection is consistent across the suite. Falls back to the legacy
 # walk-up in resolve_by_cwd() if the import fails (e.g. running from a
@@ -491,10 +502,17 @@ def _parse_subplan_frontmatter(path: Path) -> dict[str, str]:
 def batch_unverified_tiers(project_path: Path) -> list[dict[str, str]]:
     """Return shipped sub-plans whose ``verification_tier`` is not ``loop-verified``.
 
+    Scoped to the run's active (or most-recently-shipped) master: only
+    sub-plans referenced in that master's registry are considered.  This
+    prevents a postmortem for master A from flagging device-manual
+    sub-plans that belong to an older, unrelated master B.
+
     Each entry is ``{"plan": <slug>, "tier": <tier>, "file": <filename>}``.
     Absent ``verification_tier`` is treated as ``loop-verified`` (back-compat).
-    Returns an empty list when all shipped sub-plans are loop-verified or
-    when no plans directory is found.
+    Returns an empty list when all shipped sub-plans in the master are
+    loop-verified, when no plans directory is found, or when master
+    resolution fails (graceful degradation — don't break postmortems if
+    loop_status is unavailable).
     """
     if _find_plans_dir is None:
         return []
@@ -502,9 +520,25 @@ def batch_unverified_tiers(project_path: Path) -> list[dict[str, str]]:
     if plans_dir is None:
         return []
 
+    # Resolve the run's master and restrict to its registry.  Mirrors
+    # loop_status.resolve_status / pick_active_master.
+    registry_files: set[str] | None = None
+    if _loop_status is not None:
+        try:
+            masters = sorted(plans_dir.glob("MASTER-*.md"))
+            if masters:
+                chosen_master, _qv = _loop_status.pick_active_master(masters)
+                master_text = chosen_master.read_text(encoding="utf-8")
+                registry_files = set(_loop_status.extract_master_order(master_text))
+        except (OSError, ValueError, AttributeError):
+            registry_files = None
+
     unverified: list[dict[str, str]] = []
     for p in sorted(plans_dir.glob("*.md")):
         if p.name.startswith("MASTER-"):
+            continue
+        # Scope: skip sub-plans not in the run's master registry.
+        if registry_files is not None and p.name not in registry_files:
             continue
         fm = _parse_subplan_frontmatter(p)
         if fm.get("status") != "shipped":
