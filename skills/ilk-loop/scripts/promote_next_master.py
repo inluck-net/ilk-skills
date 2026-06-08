@@ -138,6 +138,15 @@ def main(argv: list[str]) -> int:
     actives = [(p, fm) for p, fm in actives if master_has_nonshipped(p, plans_dir)]
     queued = [(p, fm) for p, fm in queued if master_has_nonshipped(p, plans_dir)]
 
+    # `supervised_only` masters are never auto-promoted or auto-demoted by the
+    # watchdog — they edit the loop's own infrastructure (or are otherwise
+    # sensitive) and must be driven by a human via manual `/ilk`. The manual
+    # path (loop_status.pick_active_master) deliberately still selects them.
+    def _supervised_only(fm: dict) -> bool:
+        return (fm.get("supervised_only") or "").strip().lower() in ("true", "yes", "1")
+    actives = [(p, fm) for p, fm in actives if not _supervised_only(fm)]
+    queued = [(p, fm) for p, fm in queued if not _supervised_only(fm)]
+
     queued.sort(key=lambda it: (-_prio(it[1]), _created(it[1])))
 
     demoted = actives[0][0] if actives else None
