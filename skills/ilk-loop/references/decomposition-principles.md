@@ -160,6 +160,11 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
 - Multi-step bash pipelines without `pipefail` → mid-pipeline failures
   slip through. Either split into separate check entries or wrap with
   `bash -o pipefail -c '...'`.
+- **per-file-only gate on a shared module** → a `local_check` that
+  runs only the new file's tests (`pytest <one file>`) while the
+  change touches a shared/imported module hides integration +
+  test-state-leak bugs (WeChatRelay bugs #1/#2). When the change
+  touches a shared module, the LAST step must run the FULL suite.
 
 ## 9. Cold-read self-check
 
@@ -310,3 +315,12 @@ Example: queuing capture-dependent work behind a `device-manual`
 `mediaprojection-capture` sub-plan would stack unverified on
 unverified. Server batches (gated by full pytest) were correctly kept
 independent of the capture.
+
+### Shared-module full-suite rule
+
+When a sub-plan's changes touch a shared/imported module (not just a
+leaf file), the LAST step must run the FULL test suite, not just the
+new file's tests. Per-file-only gates hide integration bugs and
+test-state-leak bugs that only surface when the full suite runs
+(WeChatRelay bugs #1/#2). See also §8 anti-pattern
+"per-file-only gate on a shared module".
