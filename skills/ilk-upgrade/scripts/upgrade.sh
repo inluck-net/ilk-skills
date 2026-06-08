@@ -57,10 +57,37 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-# --- repo self-resolution (populated in step 1) ------------------------------
+# --- repo self-resolution ----------------------------------------------------
 
-# SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
-# REPO_ROOT="$(cd "$SELF/../../.." && pwd -P)"
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
+REPO_ROOT="$(cd "$SELF/../../.." && pwd -P)"
+
+if [[ ! -d "$REPO_ROOT/.git" ]]; then
+  echo "error: not an ilk-skills clone (no .git): $REPO_ROOT" >&2
+  exit 2
+fi
+if [[ ! -f "$REPO_ROOT/install.sh" ]]; then
+  echo "error: not an ilk-skills clone (no install.sh): $REPO_ROOT" >&2
+  exit 2
+fi
+
+# --- git state guards --------------------------------------------------------
+
+# Detached HEAD check
+if ! git -C "$REPO_ROOT" symbolic-ref -q HEAD >/dev/null 2>&1; then
+  echo "error: detached HEAD in $REPO_ROOT — checkout a branch first" >&2
+  exit 2
+fi
+
+# Dirty tree check (relevant for --apply; --check just notes it)
+dirty_files="$(git -C "$REPO_ROOT" status --porcelain)"
+if [[ -n "$dirty_files" ]]; then
+  if [[ "$mode" == "apply" && $force -eq 0 ]]; then
+    echo "error: dirty working tree in $REPO_ROOT — commit or stash first (or use --force)" >&2
+    exit 2
+  fi
+  echo "warning: dirty working tree in $REPO_ROOT" >&2
+fi
 
 # --- mode dispatch (populated in steps 2-4) ----------------------------------
 
