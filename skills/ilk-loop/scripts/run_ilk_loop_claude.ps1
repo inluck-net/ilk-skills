@@ -426,24 +426,32 @@ function Resolve-BashPath {
     Resolve the path to a bash executable. Prefers git-bash (sh.exe from
     Git for Windows) over any system bash. Returns $null if not found.
   #>
-  # 1. Check if bash is on PATH (covers git-bash added to PATH)
-  $bashOnPath = Get-Command bash -ErrorAction SilentlyContinue
-  if ($bashOnPath) { return $bashOnPath.Source }
+  # IMPORTANT: prefer git-bash (MSYS), which runs a `C:/...` script path and
+  # resolves `C:/` paths. AVOID the WSL shim at ...\WindowsApps\bash.exe — it
+  # uses /mnt/c mounts and fails on a Windows path with
+  # "No such file or directory" (exit 127). So git-bash locations come FIRST,
+  # and a PATH `bash` is accepted only if it is NOT the WindowsApps/WSL shim.
 
-  # 2. Try common Git for Windows install locations
+  # 1. git-bash via the resolved `git` location
   $gitExe = Get-Command git -ErrorAction SilentlyContinue
   if ($gitExe) {
     $gitDir = Split-Path (Split-Path $gitExe.Source -Parent) -Parent
-    $candidate = Join-Path $gitDir "bin\bash.exe"
-    if (Test-Path $candidate) { return $candidate }
-    $candidate2 = Join-Path $gitDir "usr\bin\bash.exe"
-    if (Test-Path $candidate2) { return $candidate2 }
+    foreach ($rel in @("bin\bash.exe", "usr\bin\bash.exe")) {
+      $candidate = Join-Path $gitDir $rel
+      if (Test-Path $candidate) { return $candidate }
+    }
   }
 
-  # 3. Try Program Files
+  # 2. Common Git for Windows install locations
   foreach ($pf in @("$env:ProgramFiles", "${env:ProgramFiles(x86)}", "$env:LOCALAPPDATA\Programs")) {
+    if (-not $pf) { continue }
     $candidate = Join-Path $pf "Git\bin\bash.exe"
     if (Test-Path $candidate) { return $candidate }
+  }
+
+  # 3. Any bash on PATH — EXCEPT the WSL/WindowsApps shim (can't run C:/ paths)
+  foreach ($b in (Get-Command bash -All -ErrorAction SilentlyContinue)) {
+    if ($b.Source -and $b.Source -notmatch 'WindowsApps') { return $b.Source }
   }
 
   return $null
@@ -485,14 +493,21 @@ function Invoke-LocalCheck {
     return $result
   }
 
-  # Build the bash invocation: run the command, capture output
-  # Use System.Diagnostics.Process for reliable I/O redirection on Windows.
-  # Convert Windows paths to POSIX paths (forward slashes) for bash.
-  $posixCommand = $Command -replace '\\', '/'
+  # Write the command to a temp script and run it via bash. This avoids ALL
+  # Windows<->bash quoting hazards: check commands routinely contain their own
+  # quotes (grep -q "pat" file), and a naive `bash -c "<cmd>"` mangles them ->
+  # the command ran with wrong args and grep exited 2 ("error"). Do NOT rewrite
+  # backslashes in the command itself — that corrupts regex escapes (e.g. \+).
+  # Relative paths in the command resolve against $Cwd (how the loop runs a
+  # sub-plan's checks). Written BOM-free with LF.
+  $shFile = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName() + ".sh")
+  [System.IO.File]::WriteAllText($shFile, (($Command -replace "`r`n", "`n")) + "`n", (New-Object System.Text.UTF8Encoding($false)))
   try {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $bashPath
-    $psi.Arguments = "-c `"$posixCommand`""
+    # Pass only the SCRIPT PATH to bash — forward-slashed + quoted (a path is
+    # safe to convert). The command inside the file is byte-for-byte verbatim.
+    $psi.Arguments = '"' + ($shFile -replace '\\', '/') + '"'
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $psi.UseShellExecute = $false
@@ -530,6 +545,8 @@ function Invoke-LocalCheck {
   } catch {
     $result.error = "$($_.Exception.Message)"
     $result.outcome = "error"
+  } finally {
+    Remove-Item $shFile -ErrorAction SilentlyContinue
   }
 
   return $result

@@ -66,23 +66,24 @@ $noMatchFile  = Join-Path $tmpDir "nomatch.txt"
 Write-Host ""
 Write-Host "=== AC-2: bash invocation (grep runs, not cmd.exe) ===" -ForegroundColor Cyan
 
-# (a) grep -q against file that contains the pattern → pass
-$r1 = Invoke-LocalCheck -Command "grep -q 'hello' `"$matchFile`"" -TimeoutSec 10
-Assert-Equal "(a) grep match → outcome=pass" "pass" $r1.outcome
-Assert-Equal "(a) grep match → exit_code=0"   0      $r1.exit_code
+# (a) grep -q against file that contains the pattern -> pass
+# Use a relative path + -Cwd (exactly how the loop runs a sub-plan's checks).
+$r1 = Invoke-LocalCheck -Command "grep -q 'hello' match.txt" -Cwd $tmpDir -TimeoutSec 10
+Assert-Equal "(a) grep match -> outcome=pass" "pass" $r1.outcome
+Assert-Equal "(a) grep match -> exit_code=0"   0      $r1.exit_code
 
-# (b) grep -q against file that lacks the pattern → fail
-$r2 = Invoke-LocalCheck -Command "grep -q 'hello' `"$noMatchFile`"" -TimeoutSec 10
-Assert-Equal "(b) grep no-match → outcome=fail" "fail" $r2.outcome
-Assert-Equal "(b) grep no-match → exit_code=1"   1      $r2.exit_code
+# (b) grep -q against file that lacks the pattern -> fail
+$r2 = Invoke-LocalCheck -Command "grep -q 'hello' nomatch.txt" -Cwd $tmpDir -TimeoutSec 10
+Assert-Equal "(b) grep no-match -> outcome=fail" "fail" $r2.outcome
+Assert-Equal "(b) grep no-match -> exit_code=1"   1      $r2.exit_code
 
 Write-Host ""
 Write-Host "=== AC-3: error blocks (unrunnable command → error, not pass) ===" -ForegroundColor Cyan
 
-# (c) bogus command → error
+# (c) bogus command -> error
 $r3 = Invoke-LocalCheck -Command "definitely-not-a-cmd-xyzzy" -TimeoutSec 10
-Assert-Equal "(c) bogus cmd → outcome=error" "error" $r3.outcome
-Assert-True  "(c) bogus cmd → exit_code is not 0 (or null)" ($r3.exit_code -ne 0 -or $r3.exit_code -eq $null)
+Assert-Equal "(c) bogus cmd -> outcome=error" "error" $r3.outcome
+Assert-True  "(c) bogus cmd -> exit_code is not 0 (or null)" ($r3.exit_code -ne 0 -or $r3.exit_code -eq $null)
 
 Write-Host ""
 Write-Host "=== AC-5: JSONL shape unchanged ===" -ForegroundColor Cyan
