@@ -85,8 +85,17 @@ if (-not $ScriptDir) {
   $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
 
-# Resolve-Path follows symlinks, giving us the real repo path
-$RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..\..\..")).Path
+# The install puts a DIRECTORY JUNCTION at ~/.{claude,cursor,codex}/skills/ilk-upgrade
+# -> <repo>/skills/ilk-upgrade. On Windows, "..\.." traversal and Resolve-Path
+# are LEXICAL across a junction (they walk the .claude home's parents, NOT the
+# junction target), so naively going up three levels lands in ~/.claude, not the
+# repo. Resolve the skill-dir reparse point to its real target first, then go up
+# two levels (ilk-upgrade -> skills -> repo). Falls back to the lexical path when
+# the script is run from a real (non-junction) clone.
+$SkillDir = Split-Path -Parent $ScriptDir            # ...\ilk-upgrade (maybe a junction)
+$skillItem = Get-Item -LiteralPath $SkillDir -Force
+$realSkillDir = if ($skillItem.Target) { @($skillItem.Target)[0] } else { $SkillDir }
+$RepoRoot = (Resolve-Path (Join-Path $realSkillDir "..\..")).Path
 
 if (-not (Test-Path (Join-Path $RepoRoot ".git"))) {
   Write-Error "not an ilk-skills clone (no .git): $RepoRoot"
