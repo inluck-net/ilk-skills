@@ -308,6 +308,7 @@ def resolve_status(cwd: Path) -> dict:
 
     result = {
         "master": master.name,
+        "master_status": master_status or "(none)",
         "plans_dir": str(plans_dir),
         "subplans": subplans,
         "active": active,
@@ -432,7 +433,26 @@ def main() -> int:
 
     print()
     if data["next"] is None:
-        print(f"All {len(rows)} sub-plans shipped -- nothing to do.")
+        # next is None for two very different reasons — don't conflate them.
+        # (a) every sub-plan is genuinely shipped, or (b) the selected master
+        # has non-shipped sub-plans but is non-runnable (status: draft/paused),
+        # so they're HELD, not shipped. Reporting "all shipped" for case (b)
+        # is a lie (the sub-plans are pending) and misled a run report.
+        non_shipped = [sp for sp in data["subplans"] if sp["status"] != "shipped"]
+        mstatus = data.get("master_status", "(none)")
+        if not non_shipped:
+            print(f"All {len(rows)} sub-plans shipped -- nothing to do.")
+        elif mstatus in ("draft", "paused"):
+            print(
+                f"Master is '{mstatus}' (held -- not runnable): "
+                f"{len(non_shipped)} non-shipped sub-plan(s), nothing to run. "
+                f"Set its status to 'queued'/'active' to release it."
+            )
+        else:
+            print(
+                f"Nothing runnable: {len(non_shipped)} non-shipped sub-plan(s), "
+                f"but no actionable next (master status '{mstatus}')."
+            )
         return 0
 
     nxt = data["next"]

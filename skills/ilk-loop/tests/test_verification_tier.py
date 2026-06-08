@@ -203,3 +203,59 @@ class TestTextModeTierMarker:
         (d / "2026-06-08-y.md").write_text(sub_y, encoding="utf-8")
         out = self._run_text_mode(tmp_path, monkeypatch, capsys)
         assert "⚠" not in out
+
+
+class TestDraftMasterReporting:
+    """A draft master is HELD (non-runnable) — must not be reported as 'all shipped'.
+
+    Regression: loop_status nulls `next` for a draft master (correct, so the
+    runner won't execute it), but the text branch printed "All N sub-plans
+    shipped -- nothing to do" even though the sub-plans were pending, not
+    shipped. That false report appeared in a real run log (2026-06-08).
+    """
+
+    def _draft_plans(self, tmp_path: Path) -> Path:
+        d = tmp_path / "docs" / "plans"
+        d.mkdir(parents=True)
+        master = textwrap.dedent("""\
+            ---
+            master_plan: 2026-06-08-draft-test
+            status: draft
+            ---
+
+            ## Sub-plan registry
+
+            | # | Slug | Status |
+            |---|---|---|
+            | 1 | 2026-06-08-held.md | pending |
+        """)
+        sub = textwrap.dedent("""\
+            ---
+            plan: held
+            status: pending
+            current_step: 0
+            estimated_steps: 3
+            ---
+
+            # Held
+        """)
+        (d / "MASTER-2026-06-08-draft-test.md").write_text(master, encoding="utf-8")
+        (d / "2026-06-08-held.md").write_text(sub, encoding="utf-8")
+        return tmp_path
+
+    def test_resolve_status_reports_draft_held(self, tmp_path: Path) -> None:
+        data = resolve_status(self._draft_plans(tmp_path))
+        assert data["master_status"] == "draft"
+        assert data["next"] is None          # non-runnable: runner won't execute it
+        assert data["queue_exit"] == 0
+        assert data["subplans"][0]["status"] == "pending"  # NOT shipped
+
+    def test_text_does_not_claim_all_shipped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        root = self._draft_plans(tmp_path)
+        monkeypatch.chdir(root)
+        monkeypatch.setattr(sys, "argv", ["loop_status.py"])
+        loop_status_main()
+        out = capsys.readouterr().out
+        assert "held" in out.lower()
+        assert "shipped -- nothing to do" not in out  # the false message
+        out.encode("gbk"); out.encode("ascii")  # stays console-safe
