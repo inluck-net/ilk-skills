@@ -275,6 +275,41 @@ worker_home_ready() {
   fi
 }
 
+print_toolkit_staleness_notice() {
+  # Non-fatal toolkit staleness check — prints one line when behind, silent on
+  # any error (offline, timeout, missing upgrade.sh).  Must never block or
+  # delay a launch.
+  local upgrade_sh="${_SKILL_ROOT}/ilk-upgrade/scripts/upgrade.sh"
+  [[ -f "$upgrade_sh" ]] || return 0
+
+  local output
+  # Use a subshell + background kill to enforce a hard 10-second timeout.
+  # On macOS the external `timeout` command may not exist (it's GNU coreutils).
+  if ! output=$(
+    (
+      trap '' PIPE
+      bash "$upgrade_sh" --check 2>/dev/null &
+      local child=$!
+      ( sleep 10 && kill "$child" 2>/dev/null ) &
+      local watchdog=$!
+      wait "$child" 2>/dev/null
+      local rc=$?
+      kill "$watchdog" 2>/dev/null 2>/dev/null || true
+      exit $rc
+    ) 2>/dev/null
+  ) || [[ -z "$output" ]]; then
+    return 0
+  fi
+
+  if [[ "$output" == "behind by "* ]]; then
+    local count
+    count=$(echo "$output" | sed -n 's/^behind by \([0-9]*\) commit.*/\1/p')
+    if [[ -n "$count" ]]; then
+      echo "[ilk-upgrade] toolkit behind by ${count} commit(s) — run /ilk-upgrade"
+    fi
+  fi
+}
+
 resolve_engine() {
   # Precedence: CLI --engine > .ilk-launch.json worker_engine
   #           > $ILK_DEFAULT_ENGINE (machine-wide opt-in) > $DEFAULT_ENGINE.
@@ -511,6 +546,9 @@ start_ilk_window() {
     return 1
   fi
   mkdir -p "$state_dir"
+
+  # Print toolkit staleness notice (non-fatal, silent on error)
+  print_toolkit_staleness_notice
 
   # Build log path — prefer external logs dir, fall back to legacy skill-root
   local project_key run_id log_file log_dir jsonl_log legacy_log_dir per_run_dir
