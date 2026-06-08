@@ -79,14 +79,26 @@ $notifyIcon.Visible = $true
 # ── Tick: pipe status_all --json through render_tray, paint ───────────
 function Invoke-Tick {
   try {
-    # Capture status_all --json output, pipe through render_tray.py.
+    # Capture status_all --json, then hand it to render_tray via a BOM-free
+    # temp file + --json-from. A PowerShell native-to-native pipe
+    # (python | python) does NOT reliably deliver stdin to the second
+    # process on Windows, and Set-Content -Encoding utf8 (PS 5.1) prepends a
+    # BOM that breaks json.load — so write UTF-8 *without* BOM and read it
+    # back via --json-from. (Found in the device-manual verification pass.)
     $jsonOut = & $PYTHON $StatusAll --json 2>$null
     if (-not $jsonOut) { return }
+    $jsonText = ($jsonOut -join "`n")
 
-    $viewJson = $jsonOut | & $PYTHON $RenderTray 2>$null
+    $tmp = [System.IO.Path]::GetTempFileName()
+    try {
+      [System.IO.File]::WriteAllText($tmp, $jsonText, (New-Object System.Text.UTF8Encoding($false)))
+      $viewJson = & $PYTHON $RenderTray --json-from $tmp 2>$null
+    } finally {
+      Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    }
     if (-not $viewJson) { return }
 
-    $view = $viewJson | ConvertFrom-Json
+    $view = ($viewJson -join "`n") | ConvertFrom-Json
 
     # ── Icon (colored dot, runtime-drawn) ──
     $state = $view.icon_state
