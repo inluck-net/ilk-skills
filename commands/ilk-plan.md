@@ -298,6 +298,14 @@ Once approved, write all files in one batch under the
     authored-but-not-yet-released; `draft` is non-runnable (invisible to the
     scheduler and `loop_status`), so a live scheduler/loop cannot grab it
     mid-authoring. It is flipped to `queued` only in step 8, after QC passes.
+  - **Set `supervised_only: true`** on the MASTER if ANY sub-plan's
+    `scope_paths` or body touches loop infrastructure (`loop_status.py`,
+    `scheduler_scan.py`, `promote_next_master.py`, `plan_status.py`,
+    `scheduler.*`). Such a self-modifying batch must never be autonomously
+    dispatched — the scheduler and `promote_next_master` skip
+    `supervised_only`; only manual `/ilk` runs it. Do NOT auto-flip it to
+    `queued` while a scheduler is live (keep `draft`, run supervised with the
+    scheduler stopped). Warn about this in the step-9 report.
   - Workstream map (ascii box diagram is fine)
   - Sub-plan registry markdown table
   - Execution rationale section
