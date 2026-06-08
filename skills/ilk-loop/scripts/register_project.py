@@ -36,21 +36,21 @@ def _normalize_path(p: str | Path) -> str:
 # ── core logic
 
 def _default_registry_path() -> Path:
-    """Resolve the default projects.json path via ilk_paths launcher dir."""
+    """Resolve the default projects.json path.
+
+    The canonical registry is ``<skill-root>/ilk-launcher/projects.json`` —
+    the same file read by ``status_all.py`` (launcher) and
+    ``scheduler_scan.resolve_repo_path``.  A per-project
+    ``external_launcher_dir(key)/projects.json`` exists but nothing reads
+    it; using it as the default was a silent no-op (auto-register wrote to
+    a phantom file the scheduler never saw).
+    """
     # Import ilk_paths from sibling directory
     here = Path(__file__).resolve().parent
     if str(here) not in sys.path:
         sys.path.insert(0, str(here))
-    from ilk_paths import external_launcher_dir, project_key, find_project_root  # type: ignore
-
-    # We need a project root to derive the key.  Use cwd as start.
-    root, _kind = find_project_root(Path.cwd())
-    if root is None:
-        # Fallback: use the skill-root launcher dir (legacy layout)
-        from ilk_paths import skill_root  # type: ignore
-        return skill_root() / "ilk-launcher" / "projects.json"
-    key = project_key(root)
-    return external_launcher_dir(key) / "projects.json"
+    from ilk_paths import skill_root  # type: ignore
+    return skill_root() / "ilk-launcher" / "projects.json"
 
 
 def register_project(

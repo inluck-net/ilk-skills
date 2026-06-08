@@ -23,7 +23,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from register_project import register_project, _normalize_path  # noqa: E402
+from register_project import register_project, _normalize_path, _default_registry_path  # noqa: E402
 
 
 # ── AC-1: basic add ─────────────────────────────────────────────────
@@ -249,6 +249,77 @@ class TestAC6_ExplicitPath:
         assert result["name"] == "custom-name"
         data = json.loads(reg.read_text(encoding="utf-8"))
         assert data["projects"][0]["name"] == "custom-name"
+
+
+# ── AC-7: default registry path (skill-root, not per-project) ───────
+
+class TestAC7_DefaultRegistryPath:
+    """_default_registry_path returns <skill-root>/ilk-launcher/projects.json,
+    the canonical registry read by scheduler and launcher."""
+
+    def test_default_path_is_skill_root(self, tmp_path: Path, monkeypatch):
+        """Without projects_json arg, register_project writes to skill-root path."""
+        # Set up a fake skill root
+        fake_skill_root = tmp_path / "skill-root"
+        launcher_dir = fake_skill_root / "ilk-launcher"
+        launcher_dir.mkdir(parents=True)
+        canonical_reg = launcher_dir / "projects.json"
+
+        # Pre-populate with existing entries (simulating a real registry)
+        existing = {
+            "_comment": "existing",
+            "projects": [
+                {"name": "proj-a", "path": "/a"},
+                {"name": "proj-b", "path": "/b"},
+            ],
+        }
+        canonical_reg.write_text(json.dumps(existing), encoding="utf-8")
+
+        # Monkeypatch skill_root to return our fake path
+        import ilk_paths
+        monkeypatch.setattr(ilk_paths, "skill_root", lambda: fake_skill_root)
+
+        # Create a real directory for the repo
+        repo = tmp_path / "myproject"
+        repo.mkdir()
+
+        # Call register_project WITHOUT projects_json — should use canonical path
+        result = register_project(str(repo))
+
+        assert result["added"] is True
+        assert result["total"] == 3  # 2 existing + 1 new
+
+        # Verify it wrote to the canonical path (not a per-project phantom)
+        data = json.loads(canonical_reg.read_text(encoding="utf-8"))
+        names = [p["name"] for p in data["projects"]]
+        assert "proj-a" in names
+        assert "proj-b" in names
+        assert "myproject" in names
+
+    def test_default_path_idempotent(self, tmp_path: Path, monkeypatch):
+        """Registering a path already in the canonical registry returns added=False."""
+        fake_skill_root = tmp_path / "skill-root"
+        launcher_dir = fake_skill_root / "ilk-launcher"
+        launcher_dir.mkdir(parents=True)
+        canonical_reg = launcher_dir / "projects.json"
+
+        repo = tmp_path / "existing-proj"
+        repo.mkdir()
+
+        existing = {
+            "_comment": "test",
+            "projects": [{"name": "existing-proj", "path": str(repo.resolve())}],
+        }
+        canonical_reg.write_text(json.dumps(existing), encoding="utf-8")
+
+        import ilk_paths
+        monkeypatch.setattr(ilk_paths, "skill_root", lambda: fake_skill_root)
+
+        result = register_project(str(repo))
+
+        assert result["added"] is False
+        assert result["total"] == 1
+        assert "already registered" in result.get("reason", "")
 
 
 # ── Edge cases ──────────────────────────────────────────────────────
