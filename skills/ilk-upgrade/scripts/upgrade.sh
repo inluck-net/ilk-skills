@@ -117,10 +117,81 @@ do_check() {
   fi
 }
 
-# --- --apply: ff-only pull + changelog ----------------------------------------
+# --- live-loop guard ---------------------------------------------------------
+
+check_live_pids() {
+  local data_dir="${ILK_DATA_DIR:-$HOME/.ilk-data}"
+  local projects_dir="$data_dir/projects"
+  local active_pids=()
+
+  if [[ ! -d "$projects_dir" ]]; then
+    return 0
+  fi
+
+  # Scan launcher and watchdog PID files
+  for pidfile in "$projects_dir"/*/runtime/launcher/running.pid \
+                 "$projects_dir"/*/runtime/watchdog/*.pid; do
+    [[ -f "$pidfile" ]] || continue
+    local pid
+    pid="$(cat "$pidfile" 2>/dev/null || true)"
+    [[ -z "$pid" ]] && continue
+    if kill -0 "$pid" 2>/dev/null; then
+      # Extract project name from path
+      local project_dir
+      project_dir="$(dirname "$(dirname "$(dirname "$pidfile")")")"
+      local project_name
+      project_name="$(basename "$project_dir")"
+      active_pids+=("$project_name (PID $pid)")
+    fi
+  done
+
+  if [[ ${#active_pids[@]} -gt 0 ]]; then
+    echo "error: live loop/watchdog detected — refusing to update skill code:" >&2
+    for p in "${active_pids[@]}"; do
+      echo "  - $p" >&2
+    done
+    echo "Stop the active loop first, or use --force." >&2
+    return 1
+  fi
+  return 0
+}
+
+# --- drift detection ---------------------------------------------------------
+
+has_drift() {
+  # Check if any installed command file under known homes is a regular file
+  # (copy) rather than a symlink — indicates install was done with copy-fallback
+  # or the link was replaced.
+  local homes=()
+  for candidate in "$HOME/.cursor" "$HOME/.claude" "$HOME/.codex"; do
+    [[ -d "$candidate/commands" ]] && homes+=("$candidate")
+  done
+
+  for home in "${homes[@]}"; do
+    for cmd_file in "$home"/commands/ilk*; do
+      [[ -f "$cmd_file" ]] || continue
+      if [[ ! -L "$cmd_file" ]]; then
+        return 0  # drift found: regular file, not symlink
+      fi
+    done
+  done
+
+  # Check for added/removed skills or commands between old and new rev
+  # (called after pull, so we compare the pulled changes)
+  return 1  # no drift
+}
+
+# --- --apply: ff-only pull + changelog + conditional re-install --------------
 
 do_apply() {
   local old_rev new_rev
+
+  # Self-update guard: refuse if a live loop/watchdog is running
+  if [[ $force -eq 0 ]]; then
+    if ! check_live_pids; then
+      exit 1
+    fi
+  fi
 
   old_rev="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 
@@ -174,6 +245,31 @@ do_apply() {
         *) echo "  $status: $path" ;;
       esac
     done
+  fi
+
+  # Drift detection + conditional re-install
+  local need_reinstall=0
+
+  # Check for copy-installed command files
+  if has_drift; then
+    need_reinstall=1
+  fi
+
+  # Check if skills or commands were added/removed
+  if [[ -n "$diff_status" ]]; then
+    if echo "$diff_status" | grep -qE '^[AD]'; then
+      need_reinstall=1
+    fi
+  fi
+
+  if [[ $need_reinstall -eq 1 ]]; then
+    echo ""
+    echo "Drift detected — re-running installer..."
+    bash "$REPO_ROOT/install.sh" --apply
+    echo "Re-install complete. New code is effective next invocation."
+  else
+    echo ""
+    echo "Links current, no re-install needed. New code is effective next invocation."
   fi
 }
 
