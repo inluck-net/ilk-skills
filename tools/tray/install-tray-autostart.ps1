@@ -3,18 +3,21 @@
   Install or uninstall logon auto-start for the ilk system-tray monitor.
 
 .DESCRIPTION
-  Creates a per-user Startup shortcut (.lnk) that launches ilk-tray.ps1
-  detached at logon. Idempotent: re-running does not duplicate the entry.
+  Creates a per-user Startup .vbs launcher that starts ilk-tray.ps1 truly
+  hidden at logon (WScript.Shell.Run …, 0 — no console flash). Idempotent:
+  re-running does not duplicate the entry.
 
-  Uses WScript.Shell to create the shortcut (no admin required).
-  The shortcut targets powershell.exe with -WindowStyle Hidden so the
-  tray starts silently.
+  Also removes any stale ilk-tray.lnk left by the previous .lnk-based
+  installer so there is no duplicate entry.
 
 .PARAMETER Uninstall
   Remove the auto-start entry instead of installing it.
 
 .PARAMETER IntervalSec
   Refresh interval in seconds passed to ilk-tray.ps1. Default: 10.
+
+.PARAMETER StartupDir
+  Override the Startup folder path (for testing). Default: per-user Startup.
 
 .EXAMPLE
   powershell -NoProfile -File tools/tray/install-tray-autostart.ps1
@@ -26,7 +29,8 @@
 #>
 param(
   [switch]$Uninstall,
-  [int]$IntervalSec = 10
+  [int]$IntervalSec = 10,
+  [string]$StartupDir
 )
 
 $ErrorActionPreference = "Stop"
@@ -48,14 +52,17 @@ if (-not (Test-Path $IlkTrayPath)) {
   throw "ilk-tray.ps1 not found: $IlkTrayPath"
 }
 
-$StartupDir = [Environment]::GetFolderPath("Startup")
-$ShortcutPath = Join-Path $StartupDir "ilk-tray.lnk"
+if (-not $StartupDir) {
+  $StartupDir = [Environment]::GetFolderPath("Startup")
+}
+$VbsPath = Join-Path $StartupDir "ilk-tray.vbs"
+$StaleLnk = Join-Path $StartupDir "ilk-tray.lnk"
 
 # ── Uninstall ─────────────────────────────────────────────────────────
 if ($Uninstall) {
-  if (Test-Path $ShortcutPath) {
-    Remove-Item -LiteralPath $ShortcutPath -Force
-    Write-Host "Removed: $ShortcutPath"
+  if (Test-Path $VbsPath) {
+    Remove-Item -LiteralPath $VbsPath -Force
+    Write-Host "Removed: $VbsPath"
   } else {
     Write-Host "No auto-start entry found (nothing to remove)."
   }
@@ -63,20 +70,31 @@ if ($Uninstall) {
 }
 
 # ── Install (idempotent) ──────────────────────────────────────────────
-$shell = New-Object -ComObject WScript.Shell
-$shortcut = $shell.CreateShortcut($ShortcutPath)
 
-# Always refresh the target and arguments so an update to this script
-# propagates on re-run (idempotent = same file, not same content).
-$shortcut.TargetPath = "powershell.exe"
-$shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$IlkTrayPath`" -IntervalSec $IntervalSec"
-$shortcut.WorkingDirectory = $ScriptDir
-$shortcut.Description = "ilk system-tray monitor (auto-start)"
-$shortcut.WindowStyle = 7  # Minimized (hidden)
-$shortcut.Save()
+# Remove stale .lnk from the previous .lnk-based installer.
+if (Test-Path $StaleLnk) {
+  Remove-Item -LiteralPath $StaleLnk -Force
+  Write-Host "Removed stale shortcut: $StaleLnk"
+}
 
-Write-Host "Installed: $ShortcutPath"
-Write-Host "Target:    powershell.exe -NoProfile -WindowStyle Hidden -File `"$IlkTrayPath`""
+# Build the hidden .vbs launcher.
+# Window style 0 = truly hidden (no flash, no taskbar entry).
+$psExe = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source
+if (-not $psExe) {
+  $psExe = "powershell.exe"
+}
+$psArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$IlkTrayPath`" -IntervalSec $IntervalSec"
+
+$vbsContent = @"
+Set objShell = CreateObject("WScript.Shell")
+objShell.Run """$psExe"" $psArgs", 0, False
+"@
+
+# Write UTF-8 without BOM (VBS doesn't need BOM and some engines choke on it).
+[System.IO.File]::WriteAllText($VbsPath, $vbsContent, (New-Object System.Text.UTF8Encoding($false)))
+
+Write-Host "Installed: $VbsPath"
+Write-Host "Target:    $psExe $psArgs"
 Write-Host ""
 Write-Host "The tray will start automatically at next logon."
 Write-Host "To remove: powershell -NoProfile -File tools/tray/install-tray-autostart.ps1 -Uninstall"
