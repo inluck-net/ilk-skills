@@ -2,7 +2,7 @@
 title: <human-readable plan title>
 slug: <short-slug>
 created: 2026-MM-DDTHH:MM:SS+08:00     # ISO 8601 with TZ + seconds — authoritative sort key
-status: draft                           # draft | queued | active | shipped (draft = authored, not yet released; non-runnable)
+status: queued                          # draft | queued | active | shipped (draft = authored, not yet released; non-runnable)
 priority: null                          # optional integer; lower = jumps queue
 pause_after_ship: false                 # if true, watchdog stops after this MASTER ships
 supervised_only: false                  # if true, the autonomous scheduler + promote NEVER dispatch this master — only manual /ilk runs it. Set true for self-modifying batches (edit loop_status.py / scheduler_scan.py / promote_next_master.py / plan_status.py / scheduler.*).

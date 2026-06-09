@@ -65,7 +65,7 @@ for `docs/plans/MASTER-*.md`, the same way `git` walks up looking for `.git`.
 ```yaml
 ---
 plan: <short-slug>
-status: pending | in-progress | shipped | blocked
+status: in-progress | pending | shipped | blocked
 current_step: 0           # 0-indexed pointer to the next step to execute
 tickets:                  # ticket ids this sub-plan resolves (any tracker)
   - T-2026-0015
@@ -84,7 +84,7 @@ master_plan: YYYY-MM-DD-execution
 batch_date: YYYY-MM-DD
 source_status: <ticket-tracker status that fed this batch>
 total_tickets: 21
-status: draft | queued | active | shipped   # lifecycle: draft (authored, not yet released — non-runnable) → queued → active → shipped (also: paused)
+status: draft | queued | active | shipped   # lifecycle: draft (authored, not yet released — non-runnable) → queued → active → shipped (also: paused). Legacy `pending` is accepted as `queued` for back-compat.
 supervised_only: false   # if true, the autonomous scheduler + promote_next_master NEVER dispatch this master; only manual /ilk runs it. Set true for self-modifying batches (edits loop_status.py / scheduler_scan.py / promote_next_master.py / plan_status.py / scheduler.*).
 current_subplan: YYYY-MM-DD-<slug>   # cached pointer; loop_status verifies
 ---
