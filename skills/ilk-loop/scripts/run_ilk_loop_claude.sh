@@ -1168,4 +1168,9 @@ print(json.dumps(d))
   fi
 }
 
-main "$@"
+# Dot-source guard: when ILK_DOTSOURCE_ONLY=1, functions are defined but
+# main() does not execute. Lets tests source this script to call internal
+# functions without starting the iteration loop.
+if [[ "${ILK_DOTSOURCE_ONLY:-}" != "1" ]]; then
+  main "$@"
+fi
