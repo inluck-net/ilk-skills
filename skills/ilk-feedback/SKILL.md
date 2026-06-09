@@ -218,6 +218,39 @@ through 3-day-old runs.
   a project.
 - **Don't fabricate fields.** If a JSONL record is missing a field
   (e.g., older format), report "unknown" rather than guessing.
+- **Read-only with respect to the toolkit.** Never write to `skills/**`.
+  The only writes are postmortems (under `~/.ilk-data/projects/<key>/runtime/launcher/postmortems/`)
+  and upstream-candidate backlog entries (under `~/.ilk-data/ilk-skills-improvements/`).
+
+## Upstream-candidate backlog
+
+When a postmortem classification is a **toolkit signal** (currently
+`local-checks-stuck` — agent committed but `local_checks` kept failing),
+`collect.py` automatically emits a structured **upstream candidate** into a
+shared cross-project backlog at `~/.ilk-data/ilk-skills-improvements/candidates.json`.
+
+Each candidate records:
+- **id** — stable dedup key (sha256 of kind + normalised title + gap)
+- **title / gap** — human-readable description of the toolkit/process issue
+- **evidence** — project path, run_id, failing check commands
+- **leverage / severity** — triage hints for the `/ilk-self-improve` adapter
+- **status** — `open` (default) / `planned` / `shipped` / `wontfix`
+- **seen_count / first_seen / last_seen** — dedup + frequency tracking
+
+Adding the same candidate twice (same key) bumps `seen_count` and `last_seen`
+but never duplicates. Cross-project and cross-machine safe (atomic file writes).
+
+The backlog is **consumed** by the `/ilk-self-improve` adapter (sub-plan #6)
+which routes candidates through `/ilk-plan` for human approval. ilk-feedback
+itself stays read-only w.r.t. the toolkit — it only *writes* candidate records,
+never edits `skills/**`.
+
+### Overriding the backlog directory
+
+Set `$ILK_DATA_HOME` to redirect the backlog for testing:
+```bash
+ILK_DATA_HOME=/tmp/test-data python3 collect.py
+```
 
 ## Cross-platform notes
 
