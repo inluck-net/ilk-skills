@@ -1749,5 +1749,12 @@ try {
       jsonl_log    = $JsonlLog
     }
     Write-Host "Sentinel: $RuntimeDir\last-exit.json (state=$finalReason, iters=$script:IterCounter)" -ForegroundColor DarkGray
+
+    # Remove the launcher's running.pid so the scheduler does not see a
+    # stale sentinel and log skip-busy forever.  The -NoExit shell keeps
+    # its PID alive past the loop's real exit, but the loop is done —
+    # the pid file is now misleading.  Best-effort + idempotent.
+    $launcherDir = Join-Path $RuntimeDir 'launcher'
+    Remove-Item (Join-Path $launcherDir 'running.pid') -ErrorAction SilentlyContinue
   }
 }
