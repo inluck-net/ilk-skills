@@ -461,18 +461,31 @@ setup_branch() {
   echo "[runner] === Branch setup ==="
   echo "[runner] target: checkout -B $BRANCH_NAME from $BRANCH_CREATE_FROM"
 
-  # --- Guard: dirty working tree ---
+  # --- Guard: dirty working tree (AC-3) ---
+  # Check for merge/rebase in progress first — these are the most confusing states
+  if [[ -d "$(git -C "$repo" rev-parse --git-dir 2>/dev/null)/MERGE_HEAD" ]]; then
+    echo "Error: a merge is in progress in $repo." >&2
+    echo "       Resolve the merge (git merge --abort or commit) before running." >&2
+    return 1
+  fi
+  if [[ -d "$(git -C "$repo" rev-parse --git-dir 2>/dev/null)/rebase-merge" ]] || \
+     [[ -d "$(git -C "$repo" rev-parse --git-dir 2>/dev/null)/rebase-apply" ]]; then
+    echo "Error: a rebase is in progress in $repo." >&2
+    echo "       Finish or abort the rebase (git rebase --abort) before running." >&2
+    return 1
+  fi
+  # Staged or unstaged changes
   if ! git -C "$repo" diff --quiet 2>/dev/null || \
      ! git -C "$repo" diff --cached --quiet 2>/dev/null; then
     echo "Error: working tree is dirty in $repo." >&2
     echo "       Commit or stash changes before running with a branch: block." >&2
-    echo "       git -C $repo status" >&2
+    echo "         git -C '$repo' stash push -m 'ilk-runner: auto-stash before branch setup'" >&2
+    echo "       Or commit them first." >&2
     return 1
   fi
-  # Also check for untracked files that would be lost
+  # Untracked files — warn but don't block (they won't be lost by checkout)
   if [[ -n "$(git -C "$repo" ls-files --others --exclude-standard 2>/dev/null)" ]]; then
-    echo "Warning: untracked files present in $repo — branch setup will proceed" >&2
-    echo "         but these files will persist on the new branch." >&2
+    echo "[runner] warning: untracked files present — they will persist on the new branch" >&2
   fi
 
   # --- Parse create_from into remote/branch ---
@@ -502,10 +515,19 @@ setup_branch() {
     }
   fi
 
-  # --- Guard: verify the base ref exists ---
+  # --- Guard: verify the base ref exists (AC-4) ---
+  if [[ -z "${BRANCH_CREATE_FROM// /}" ]]; then
+    echo "Error: create_from is empty — cannot branch off nothing." >&2
+    echo "       Check the branch: block in the MASTER plan." >&2
+    return 1
+  fi
   if ! git -C "$repo" rev-parse "$BRANCH_CREATE_FROM" >/dev/null 2>&1; then
-    echo "Error: cannot resolve base ref '$BRANCH_CREATE_FROM'." >&2
-    echo "       After fetch, the ref should exist. Check the create_from value." >&2
+    echo "Error: cannot resolve base ref '$BRANCH_CREATE_FROM' after fetch." >&2
+    echo "       Possible causes:" >&2
+    echo "         - The remote branch was deleted or renamed" >&2
+    echo "         - The create_from value is misspelled" >&2
+    echo "         - Network issue prevented the fetch from completing" >&2
+    echo "       Verify: git -C '$repo' ls-remote ${remote:-origin} ${branch:-$BRANCH_CREATE_FROM}" >&2
     return 1
   fi
 
@@ -513,6 +535,8 @@ setup_branch() {
   echo "[runner] git checkout -B $BRANCH_NAME $BRANCH_CREATE_FROM"
   git -C "$repo" checkout -B "$BRANCH_NAME" "$BRANCH_CREATE_FROM" 2>&1 || {
     echo "Error: git checkout -B $BRANCH_NAME $BRANCH_CREATE_FROM failed." >&2
+    echo "       This usually means the base ref exists but checkout itself failed." >&2
+    echo "       Possible causes: locked index, permission issue, or corrupt ref." >&2
     return 1
   }
 
