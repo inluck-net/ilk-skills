@@ -520,18 +520,37 @@ def batch_unverified_tiers(project_path: Path) -> list[dict[str, str]]:
     if plans_dir is None:
         return []
 
-    # Resolve the run's master and restrict to its registry.  Mirrors
-    # loop_status.resolve_status / pick_active_master.
+    # Resolve THE RUN'S master and restrict to its registry. A postmortem
+    # classifies a just-finished run, whose master is the most-recently-created
+    # one — NOT pick_active_master (that answers "what to run NEXT", and once a
+    # batch ships its all-shipped filter excludes every master and falls back to
+    # the alphabetically-last master, which mis-attributed a prior batch's
+    # device-manual sub-plan, 2026-06-09). Pick newest by `created:` frontmatter,
+    # falling back to mtime.
+    # Self-contained (no loop_status dependency — it isn't importable in every
+    # environment, e.g. CI). Pick newest master by `created:`, fallback mtime;
+    # its registry = the sub-plan filenames it references.
     registry_files: set[str] | None = None
-    if _loop_status is not None:
+    masters = sorted(plans_dir.glob("MASTER-*.md"))
+    if masters:
+        def _created_key(m: Path) -> tuple:
+            created = _parse_subplan_frontmatter(m).get("created", "")
+            try:
+                mtime = m.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            return (created, mtime)
+        chosen_master = max(masters, key=_created_key)
         try:
-            masters = sorted(plans_dir.glob("MASTER-*.md"))
-            if masters:
-                chosen_master, _qv = _loop_status.pick_active_master(masters)
-                master_text = chosen_master.read_text(encoding="utf-8")
-                registry_files = set(_loop_status.extract_master_order(master_text))
-        except (OSError, ValueError, AttributeError):
-            registry_files = None
+            master_text = chosen_master.read_text(encoding="utf-8")
+        except OSError:
+            master_text = ""
+        refs = re.findall(r"(\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*\.md)", master_text)
+        refs_set = {r for r in refs if not r.startswith("MASTER")}
+        # Only scope when the master actually lists sub-plans. A master with no
+        # parseable registry (malformed/minimal) → don't scope (scan all) rather
+        # than exclude everything.
+        registry_files = refs_set if refs_set else None
 
     unverified: list[dict[str, str]] = []
     for p in sorted(plans_dir.glob("*.md")):

@@ -186,11 +186,14 @@ def _write_master(
     subplan_files: list[str],
     *,
     status: str = "active",
+    created: str = "",
 ) -> Path:
     """Create a minimal MASTER .md referencing the given sub-plan files."""
     lines = ["---"]
     lines.append(f"master_plan: {slug}")
     lines.append(f"status: {status}")
+    if created:
+        lines.append(f"created: {created}")
     lines.append("---")
     lines.append(f"# MASTER {slug}\n")
     lines.append("## Sub-plan registry\n")
@@ -203,51 +206,67 @@ def _write_master(
     return p
 
 
-def test_two_masters_scoped_to_active_master(tmp_path: Path) -> None:
-    """AC-4: a non-loop-verified shipped sub-plan in a DIFFERENT master
-    must NOT be pulled into the active master's run classification.
+def test_two_masters_scoped_to_newest_master(tmp_path: Path) -> None:
+    """A postmortem scopes shipped-unverified to the RUN's master = the
+    most-recently-CREATED one. A device-manual sub-plan in an OLDER master must
+    NOT be pulled into the newer batch's run classification.
+
+    (Regression: scoping used pick_active_master, which after a batch ships
+    falls back to the alphabetically-last master and mis-flagged a prior
+    batch's device-manual sub-plan, 2026-06-09.)
 
     Setup:
-      - Master A (active): all loop-verified sub-plans
-      - Master B (shipped): has a device-manual sub-plan
-    Assert: classifying master A's run ⇒ clean-success (B's device-manual
-    sub-plan is NOT returned).
+      - Newest master (created later): all loop-verified sub-plans
+      - Older master: has a device-manual sub-plan
+    Assert: ⇒ clean-success (the older master's device-manual is NOT returned).
     """
     plans_dir = tmp_path / "plans"
     plans_dir.mkdir()
 
-    # Master A (active) — all loop-verified
-    master_a = _write_master(plans_dir, "2026-06-08-clean-batch", [
+    # Newest master (the run's) — all loop-verified
+    _write_master(plans_dir, "2026-06-08-clean-batch", [
         "2026-06-08-alpha.md",
         "2026-06-08-beta.md",
-    ], status="active")
+    ], status="shipped", created="2026-06-08T23:00:00+08:00")
     _write_subplan(plans_dir, "alpha", tier="loop-verified")
     _write_subplan(plans_dir, "beta", tier="loop-verified")
 
-    # Master B (shipped) — has a device-manual sub-plan
+    # Older master — has a device-manual sub-plan
     _write_master(plans_dir, "2026-06-07-old-batch", [
         "2026-06-08-gamma.md",
-    ], status="shipped")
+    ], status="shipped", created="2026-06-07T10:00:00+08:00")
     _write_subplan(plans_dir, "gamma", tier="device-manual")
 
-    # Mock loop_status to select master A as active and extract its registry
-    mock_ls = types.ModuleType("loop_status")
-    mock_ls.pick_active_master = MagicMock(return_value=(master_a, {}))  # type: ignore[attr-defined]
-    mock_ls.extract_master_order = MagicMock(  # type: ignore[attr-defined]
-        return_value=["2026-06-08-alpha.md", "2026-06-08-beta.md"],
-    )
-
+    # No loop_status mock — batch_unverified_tiers resolves the newest master
+    # itself (self-contained).
     with patch.object(collect, "_find_plans_dir", return_value=(plans_dir, "external")):
-        with patch.object(collect, "_loop_status", mock_ls):
-            result = collect.batch_unverified_tiers(plans_dir.parent)
-    # Master A's sub-plans are all loop-verified ⇒ empty
-    assert result == []
+        result = collect.batch_unverified_tiers(plans_dir.parent)
+    assert result == []  # newest (clean) master scoped; gamma NOT pulled in
 
-    # Now verify classify integration: clean-success (not shipped-unverified)
+    # classify integration: clean-success (not shipped-unverified)
     iters = _make_clean_iters()
     with patch.object(collect, "_find_plans_dir", return_value=(plans_dir, "external")):
-        with patch.object(collect, "_loop_status", mock_ls):
-            with patch.object(collect, "collect_self_hosting_facts", return_value={}):
-                label, facts = collect.classify(iters, None, plans_dir.parent)
+        with patch.object(collect, "collect_self_hosting_facts", return_value={}):
+            label, facts = collect.classify(iters, None, plans_dir.parent)
     assert label == "clean-success"
     assert "unverified_sub_plans" not in facts
+
+
+def test_newest_master_with_device_manual_is_flagged(tmp_path: Path) -> None:
+    """The other direction: when the NEWEST (run's) master has a shipped
+    device-manual sub-plan, it IS flagged — proving the scope tracks newest."""
+    plans_dir = tmp_path / "plans"
+    plans_dir.mkdir()
+    _write_master(plans_dir, "2026-06-09-device-batch", [
+        "2026-06-08-dm.md",
+    ], status="shipped", created="2026-06-09T09:00:00+08:00")
+    _write_subplan(plans_dir, "dm", tier="device-manual")
+    # older, clean master that must be ignored
+    _write_master(plans_dir, "2026-06-07-old-clean", [
+        "2026-06-08-ok.md",
+    ], status="shipped", created="2026-06-07T09:00:00+08:00")
+    _write_subplan(plans_dir, "ok", tier="loop-verified")
+
+    with patch.object(collect, "_find_plans_dir", return_value=(plans_dir, "external")):
+        result = collect.batch_unverified_tiers(plans_dir.parent)
+    assert [r["plan"] for r in result] == ["dm"]
