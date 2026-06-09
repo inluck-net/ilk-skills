@@ -343,6 +343,11 @@ function Invoke-Apply {
     Write-Host ""
     Write-Host "Links current, no re-install needed. New code is effective next invocation."
   }
+
+  # Reconcile auto-plan managed block (unconditional on every successful pull)
+  $installPs1AutoPlan = Join-Path $RepoRoot "install.ps1"
+  & pwsh -NoProfile -ExecutionPolicy Bypass -File $installPs1AutoPlan -OnlyAutoPlan -Apply
+  Write-Host "Auto-plan block reconciled."
 }
 
 # --- mode dispatch -------------------------------------------------------------
