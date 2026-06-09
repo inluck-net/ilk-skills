@@ -68,14 +68,20 @@ mkdir -p "$FAKE_HOME"
 BARE="$TMP/bare.git"
 WORK="$TMP/work"
 
-# Create bare remote
-git init --bare "$BARE" >/dev/null 2>&1
+# Create bare remote. Pin the initial branch to 'main' so the fixture is
+# deterministic regardless of the operator's git init.defaultBranch (Windows
+# defaults to 'master', which would break the `git push origin main` below).
+git init -b main --bare "$BARE" >/dev/null 2>&1
 
 # Create working clone
 git clone "$BARE" "$WORK" >/dev/null 2>&1
 cd "$WORK"
 git config user.email "test@test.com"
 git config user.name "Test"
+# Ensure the working clone is on 'main' before the first commit, regardless of
+# the operator's init.defaultBranch (the clone of the empty bare inherits the
+# local default, which may be 'master').
+git checkout -b main >/dev/null 2>&1 || git switch -c main >/dev/null 2>&1 || true
 
 # Create minimal ilk-skills structure
 mkdir -p skills/ilk-upgrade/scripts commands

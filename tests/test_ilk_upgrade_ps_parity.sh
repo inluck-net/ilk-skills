@@ -48,7 +48,13 @@ echo ""
 echo "=== AC-2: repo root resolution via Resolve-Path + PSScriptRoot ==="
 check "ps1 uses \$PSScriptRoot"                 "$ps1" contains '$PSScriptRoot'
 check "ps1 uses Resolve-Path"                   "$ps1" contains 'Resolve-Path'
-check "ps1 walks up three levels (..\..\..)"    "$ps1" contains '..\..\..'
+# Junction-aware resolution: ~/.{claude,cursor,codex}/skills/ilk-upgrade is a
+# directory junction, so "..\..\.." traversal is lexical across it and lands in
+# the .claude home, NOT the repo. upgrade.ps1 resolves the skill-dir reparse
+# target first ($realSkillDir), then goes up two levels (..\..). Assert that
+# real implementation, not the old (broken) literal three-level walk.
+check "ps1 resolves junction skill-dir target"  "$ps1" contains 'realSkillDir'
+check "ps1 joins two levels from real skilldir" "$ps1" contains 'Join-Path $realSkillDir'
 
 echo ""
 echo "=== AC-3: references install.ps1, git pull --ff-only, copy-vs-symlink ==="
