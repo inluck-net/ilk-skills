@@ -1048,6 +1048,82 @@ run_compat() {
   fi
 }
 
+run_stale_sentinel() {
+  echo "=== test_scheduler.sh stale-sentinel ==="
+
+  # Test 1: live pid + terminal last-exit.json → FREE (dispatchable)
+  # This is the core stale-sentinel fix: a lingering -NoExit shell keeps
+  # the pid alive, but the loop already finished — project must be free.
+  setup_two_queued_projects
+
+  # Make proj-a busy with a live pid AND a terminal last-exit.json
+  sleep 60 &
+  local fake_pid=$!
+  echo "$fake_pid" > "$FAKE_DATA/projects/proj-a/runtime/launcher/running.pid"
+  cat > "$FAKE_DATA/projects/proj-a/runtime/last-exit.json" <<EOF
+{"state":"all-shipped","pid":$fake_pid,"run_id":"test-run","iterations":3}
+EOF
+
+  local output
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 1 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  local decision key
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
+  [[ "$decision" == "dispatch" ]] || die "expected 'dispatch' (stale sentinel = free), got '$decision'. Output: $output"
+  [[ "$key" == "proj-a" ]] || die "expected proj-a dispatched (stale sentinel = free), got '$key'. Output: $output"
+
+  echo "PASS: live pid + terminal last-exit.json → FREE (stale sentinel ignored)"
+  kill "$fake_pid" 2>/dev/null || true
+
+  # Test 2: live pid + state=running in last-exit.json → BUSY (no regression)
+  # Use max-concurrent 2 so the capacity check doesn't eat the output
+  # (with max-concurrent 1 and 1 busy project, we'd get capacity-full idle).
+  setup_two_queued_projects
+
+  sleep 60 &
+  local live_pid=$!
+  echo "$live_pid" > "$FAKE_DATA/projects/proj-a/runtime/launcher/running.pid"
+  cat > "$FAKE_DATA/projects/proj-a/runtime/last-exit.json" <<EOF
+{"state":"running","pid":$live_pid,"run_id":"test-run","iterations":1}
+EOF
+
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 2 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  local first_line first_decision first_key
+  first_line=$(echo "$output" | head -1)
+  first_decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
+  first_key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
+  [[ "$first_decision" == "skip-busy" ]] || die "expected 'skip-busy' (state=running → busy), got '$first_decision'. Output: $output"
+  [[ "$first_key" == "proj-a" ]] || die "expected skip-busy for proj-a, got '$first_key'. Output: $output"
+
+  echo "PASS: live pid + state=running → BUSY (no regression)"
+  kill "$live_pid" 2>/dev/null || true
+
+  # Test 3: dead pid + terminal last-exit.json → FREE (pid cleanup path)
+  setup_two_queued_projects
+
+  # Use a definitely-dead pid (99999999 is unlikely to exist)
+  echo "99999999" > "$FAKE_DATA/projects/proj-a/runtime/launcher/running.pid"
+  cat > "$FAKE_DATA/projects/proj-a/runtime/last-exit.json" <<EOF
+{"state":"local_checks_failed","pid":99999999,"run_id":"test-run","iterations":1}
+EOF
+
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 1 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
+  [[ "$decision" == "dispatch" ]] || die "expected 'dispatch' (dead pid = free), got '$decision'. Output: $output"
+  [[ "$key" == "proj-a" ]] || die "expected proj-a dispatched, got '$key'. Output: $output"
+
+  echo "PASS: dead pid + terminal last-exit.json → FREE"
+
+  cleanup
+}
+
 run_all() {
   run_scan
   run_select
@@ -1061,6 +1137,7 @@ run_all() {
   run_mutex
   run_log
   run_compat
+  run_stale_sentinel
   echo "ALL PASS"
 }
 
@@ -1100,6 +1177,9 @@ case "${1:-all}" in
     ;;
   compat)
     run_compat
+    ;;
+  stale-sentinel)
+    run_stale_sentinel
     ;;
   all)
     run_all

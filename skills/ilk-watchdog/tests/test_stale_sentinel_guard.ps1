@@ -98,6 +98,78 @@ if ($action -ne 'advance') {
   $failures += "unparseable EndedAt + all-shipped: expected 'advance', got '$action'"
 }
 
+# --- AC-4: Test-RunningPid stale-sentinel cross-check (scheduler parity) ---
+# Inline the function from scheduler.ps1 to avoid triggering its main script.
+function Test-RunningPid {
+  param([string]$ProjectDataPath)
+  $pidFile = Join-Path $ProjectDataPath 'runtime\launcher\running.pid'
+  if (-not (Test-Path $pidFile)) { return $false }
+  $raw = (Get-Content $pidFile -Raw -ErrorAction SilentlyContinue)
+  if (-not $raw) {
+    Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+    return $false
+  }
+  $raw = $raw.Trim()
+  if (-not $raw) {
+    Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+    return $false
+  }
+  try {
+    $procId = [int]$raw
+  } catch {
+    return $false
+  }
+  if ($procId -le 0) { return $false }
+  $alive = [bool](Get-Process -Id $procId -ErrorAction SilentlyContinue)
+  if (-not $alive) { return $false }
+
+  # Stale-sentinel cross-check
+  $sentinelFile = Join-Path $ProjectDataPath 'runtime\last-exit.json'
+  if (Test-Path $sentinelFile) {
+    try {
+      $sentinel = Get-Content $sentinelFile -Raw -ErrorAction Stop
+      if ($sentinel) {
+        $obj = $sentinel | ConvertFrom-Json -ErrorAction Stop
+        if ($obj.state -and $obj.state -ne 'running') {
+          return $false  # terminal state — project is free
+        }
+      }
+    } catch {}
+  }
+  return $true
+}
+
+# Use current PID as a definitely-alive process
+$alivePid = $PID
+$staleProj = Join-Path $scratch "stale-proj"
+$staleLauncher = Join-Path $staleProj "runtime\launcher"
+New-Item -ItemType Directory -Force -Path $staleLauncher | Out-Null
+
+# Case A: live pid + terminal last-exit.json → not-busy ($false)
+Set-Content (Join-Path $staleLauncher 'running.pid') -Value $alivePid
+$sentinelDir = Join-Path $staleProj "runtime"
+$sentinel = @{ state = "all-shipped"; pid = $alivePid; run_id = "test"; iterations = 3 }
+($sentinel | ConvertTo-Json) | Set-Content (Join-Path $sentinelDir 'last-exit.json') -Encoding UTF8
+$result = Test-RunningPid -ProjectDataPath $staleProj
+if ($result -ne $false) {
+  $failures += "Test-RunningPid: live pid + terminal last-exit.json expected `$false (free), got `$result"
+}
+
+# Case B: live pid + state=running → busy ($true) — no regression
+$sentinelRunning = @{ state = "running"; pid = $alivePid; run_id = "test"; iterations = 1 }
+($sentinelRunning | ConvertTo-Json) | Set-Content (Join-Path $sentinelDir 'last-exit.json') -Encoding UTF8
+$result = Test-RunningPid -ProjectDataPath $staleProj
+if ($result -ne $true) {
+  $failures += "Test-RunningPid: live pid + state=running expected `$true (busy), got `$result"
+}
+
+# Case C: live pid + no last-exit.json → busy ($true)
+Remove-Item (Join-Path $sentinelDir 'last-exit.json') -ErrorAction SilentlyContinue
+$result = Test-RunningPid -ProjectDataPath $staleProj
+if ($result -ne $true) {
+  $failures += "Test-RunningPid: live pid + no sentinel expected `$true (busy), got `$result"
+}
+
 # Clean up
 try { Remove-Item -Recurse -Force $scratch -ErrorAction SilentlyContinue } catch {}
 
@@ -107,4 +179,5 @@ if ($failures.Count -gt 0) {
 }
 
 Write-Host "PASS: Get-StartupSentinelAction — all 7 matrix cases correct" -ForegroundColor Green
+Write-Host "PASS: Test-RunningPid stale-sentinel cross-check — all 3 cases correct" -ForegroundColor Green
 exit 0
