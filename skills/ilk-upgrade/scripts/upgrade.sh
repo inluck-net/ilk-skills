@@ -271,6 +271,10 @@ do_apply() {
     echo ""
     echo "Links current, no re-install needed. New code is effective next invocation."
   fi
+
+  # Reconcile auto-plan managed block (unconditional on every successful pull)
+  bash "$REPO_ROOT/install.sh" --only-auto-plan --apply
+  echo "Auto-plan block reconciled."
 }
 
 # --- mode dispatch -----------------------------------------------------------
