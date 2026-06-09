@@ -1243,6 +1243,10 @@ print(json.dumps(d))
       'jsonl_log': '$JSONL_LOG'
     }))" > "${runtime_dir}/last-exit.json.tmp" && mv -f "${runtime_dir}/last-exit.json.tmp" "${runtime_dir}/last-exit.json"
     echo "Sentinel: ${runtime_dir}/last-exit.json (state=$stop_reason, iters=$iter_counter)"
+
+    # Remove the launcher's running.pid so the scheduler does not see a
+    # stale sentinel and log skip-busy forever.  Best-effort + idempotent.
+    rm -f "${runtime_dir}/launcher/running.pid"
   fi
 }
 
