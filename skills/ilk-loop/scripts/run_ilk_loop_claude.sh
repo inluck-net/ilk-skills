@@ -430,6 +430,65 @@ print(json.dumps(d))
   fi
 }
 
+# ----- Remote classification (Gap 5) ------------------------------------------
+#
+# classify_remote REMOTE
+#
+# Classifies a git remote as "shared" or "personal" based on its URL.
+# Used to decide whether commit trailers ([plan:…#step-N]) should be stripped.
+#
+# Heuristic:
+#   - Personal: remote URL contains a personal namespace pattern
+#     (e.g. inluck-net/*, github.com/inluck-net/*, gitee.com/inluck-net/*)
+#   - Shared: everything else (organization repos, team repos, public repos)
+#   - Default: "shared" when unsure (safer to strip trailers on shared repos)
+#
+# Globals read: none
+# Globals modified: none
+# Prints: "shared" or "personal"
+# Returns: 0 always
+
+classify_remote() {
+  local remote="$1"
+  local repo="${REPOS[0]}"
+
+  if [[ -z "$remote" || -z "$repo" ]]; then
+    echo "shared"
+    return 0
+  fi
+
+  # Get the remote URL
+  local url
+  url=$(git -C "$repo" remote get-url "$remote" 2>/dev/null) || url=""
+  if [[ -z "$url" ]]; then
+    echo "shared"
+    return 0
+  fi
+
+  # Personal namespace patterns (case-insensitive match)
+  # Matches: inluck-net/* on any host (github.com, gitee.com, gitlab.com, etc.)
+  # Also matches SSH-style: git@github.com:inluck-net/*
+  local lower_url
+  lower_url=$(echo "$url" | tr '[:upper:]' '[:lower:]')
+
+  # Check for personal namespace pattern: host/username or host:username
+  # Pattern: (github.com|gitee.com|gitlab.com)[/:]inluck-net/
+  if [[ "$lower_url" =~ (github\.com|gitee\.com|gitlab\.com)[/:]inluck-net/ ]]; then
+    echo "personal"
+    return 0
+  fi
+
+  # Check for generic personal pattern: any host with /inluck-net/ in path
+  if [[ "$lower_url" =~ /inluck-net/ ]]; then
+    echo "personal"
+    return 0
+  fi
+
+  # Default to shared (safer: strip trailers)
+  echo "shared"
+  return 0
+}
+
 # ----- Branch setup (Gap 2) ---------------------------------------------------
 #
 # setup_branch
