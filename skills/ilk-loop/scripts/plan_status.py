@@ -66,6 +66,33 @@ def extract_subplan_files(master_text: str) -> list[str]:
     return ordered
 
 
+# ── status normalization ────────────────────────────────────────────────────
+
+# The live queue model uses master status: queued | active | shipped.
+# Legacy masters may use `status: pending` (the old schema).  Readers
+# should treat `pending` as `queued` so old-schema masters are runnable
+# rather than invisible.
+
+_RUNNABLE_STATUSES = {"queued", "active"}
+
+
+def normalize_master_status(raw_status: str) -> str:
+    """Normalize a raw master front-matter status for queue-model readers.
+
+    Maps legacy ``pending`` to ``queued``; everything else passes through
+    unchanged (lowercased, stripped).
+    """
+    s = raw_status.strip().lower()
+    if s == "pending":
+        return "queued"
+    return s
+
+
+def is_master_runnable_status(raw_status: str) -> bool:
+    """Return True if the (normalized) status is ``queued`` or ``active``."""
+    return normalize_master_status(raw_status) in _RUNNABLE_STATUSES
+
+
 # ── the shared predicate ────────────────────────────────────────────────────
 
 def master_has_nonshipped(master_path: Path, plans_dir: Path) -> bool:

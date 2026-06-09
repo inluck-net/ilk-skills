@@ -69,6 +69,7 @@ from ilk_paths import ilk_data_root, project_key  # noqa: E402
 from plan_status import (  # noqa: E402
     extract_subplan_files,
     master_has_nonshipped,
+    normalize_master_status,
     parse_frontmatter,
     reconcile_master_status,
 )
@@ -176,7 +177,7 @@ def scan_projects() -> list[dict]:
                 continue
 
             fm = parse_frontmatter(master_text)
-            master_status = (fm.get("status") or "").strip()
+            master_status = normalize_master_status(fm.get("status") or "")
 
             # `supervised_only` masters are never autonomously dispatched.
             # They edit the loop's own infrastructure (or are otherwise
@@ -219,10 +220,11 @@ def scan_projects() -> list[dict]:
                 active_ts.append(oldest_sub)
             elif master_status == "queued":
                 queued_ts.append(oldest_sub)
-            # Masters with other statuses (e.g. draft, pending, paused) are
+            # Masters with other statuses (e.g. draft, paused) are
             # not runnable by the queue model — skip them. `draft` =
             # authored-but-not-yet-released (the /ilk-plan authoring gate); it
             # is intentionally invisible to the autonomous scheduler.
+            # Note: legacy `pending` is normalized to `queued` above.
 
         # --- pass 2: decide inclusion + FIFO timestamp ---
         # A project is included iff it has a runnable master.

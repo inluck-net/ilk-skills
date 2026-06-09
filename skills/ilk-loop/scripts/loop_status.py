@@ -28,7 +28,7 @@ from ilk_paths import (  # noqa: E402
     read_meta_manifest,
     MetaManifestError,
 )
-from plan_status import master_has_nonshipped, reconcile_master_status  # noqa: E402
+from plan_status import master_has_nonshipped, normalize_master_status, reconcile_master_status  # noqa: E402
 
 STATUS_ICONS = {
     "shipped": "[OK]",
@@ -160,7 +160,7 @@ def pick_active_master(masters: list[Path]) -> tuple[Path, dict]:
 
     by_status: dict[str, list[tuple[Path, dict]]] = {}
     for item in parsed:
-        st = (item[1].get("status") or "").strip().lower() or "(none)"
+        st = normalize_master_status(item[1].get("status") or "") or "(none)"
         by_status.setdefault(st, []).append(item)
 
     actives = sorted(by_status.get("active", []), key=_sortkey)
