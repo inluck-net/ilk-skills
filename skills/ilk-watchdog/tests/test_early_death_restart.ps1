@@ -84,7 +84,32 @@ if (-not ($WhitelistClasses -contains $klass)) {
   exit 1
 }
 
-# --- AC-3: POSTMORTEM FAILED banner includes empty-repo hint ---
+# --- AC-3: blacklist classification is NOT in WhitelistClasses ---
+# Create a second postmortem with a blacklist classification (local-checks-stuck)
+$blacklistPostmortemDir = Join-Path $runtimeDir "launcher\postmortems"
+$blacklistPm = Join-Path $blacklistPostmortemDir "20260607-130000-blacklist.md"
+$now = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+@"
+---
+project: $key
+classification: local-checks-stuck
+generated_at: $now
+---
+
+# Postmortem for $key (blacklist test)
+"@ | Out-File -FilePath $blacklistPm -Encoding ascii -NoNewline
+
+# Verify local-checks-stuck is in BlacklistClasses (not WhitelistClasses)
+if ($WhitelistClasses -contains 'local-checks-stuck') {
+  Write-Error "FAIL: 'local-checks-stuck' must NOT be in WhitelistClasses"
+  exit 1
+}
+if (-not ($BlacklistClasses -contains 'local-checks-stuck')) {
+  Write-Error "FAIL: 'local-checks-stuck' must be in BlacklistClasses: $($BlacklistClasses -join ', ')"
+  exit 1
+}
+
+# --- AC-4: POSTMORTEM FAILED banner includes empty-repo hint ---
 $watchdogSrc = Get-Content $watchdogPath -Raw
 $hintPhrase = "git init"
 if (-not ($watchdogSrc -match [regex]::Escape($hintPhrase))) {

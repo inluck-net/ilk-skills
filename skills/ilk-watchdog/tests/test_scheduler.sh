@@ -420,7 +420,17 @@ run_dispatch() {
   # Must dispatch the SOURCE repo path (scratch/repos/proj-a), NOT the data dir.
   [[ "$command" == *"repos/proj-a"* ]] || die "expected SOURCE repo path 'repos/proj-a' in command, got '$command'. Output: $output"
   [[ "$command" != *"ilk-data"* ]] || die "command must NOT contain the data dir (ilk-data); got '$command'. Output: $output"
+
+  # Verify watchdog field is present (scheduler attaches a watchdog per dispatch)
+  local watchdog
+  watchdog=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('watchdog',''))" <<<"$first_line")
+  [[ -n "$watchdog" ]] || die "expected 'watchdog' field in dispatch JSON, got empty. Output: $output"
+  [[ "$watchdog" == *"watchdog.sh"* ]] || die "expected 'watchdog.sh' in watchdog field, got '$watchdog'. Output: $output"
+  [[ "$watchdog" == *"repos/proj-a"* ]] || die "expected project path in watchdog field, got '$watchdog'. Output: $output"
+  [[ "$watchdog" == *"--detach"* ]] || die "expected '--detach' in watchdog field, got '$watchdog'. Output: $output"
+
   echo "PASS: dispatch command uses the source repo path, not the data dir"
+  echo "PASS: dispatch includes watchdog field with correct project path"
 
   # Test 2: -MaxDispatches 0 yields idle: budget ceiling
   output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-dispatches 0 2>&1) || die "scheduler exited non-zero: $output"
