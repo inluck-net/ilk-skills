@@ -528,3 +528,58 @@ Autonomy tier and verification tier are orthogonal:
   system operationalizes.
 - **§8 (local_checks anti-patterns)** — gates that even Tier 1
   auto-apply must pass.
+
+---
+
+## 16. Gate-scoping: prefer change-scoped over whole-project
+
+A `local_check` that compiles or tests the **entire project** (`tsc`,
+`mypy`, `cargo build`, `npm run build`, `bun run typecheck`, `./gradlew
+assembleDebug`) is a blunt instrument. It catches regressions broadly,
+but it also:
+
+- **Inflates wall-clock** — a full compile when only one module changed
+  wastes worker time.
+- **Hides the real contract** — a sub-plan that ships a new CLI verb
+  needs a runtime smoke on that verb, not a project-wide typecheck that
+  would pass even if the verb's handler 500s.
+- **Creates latent false-blockers** — if the project has pre-existing
+  type errors on the base commit (common in early-stage repos), a
+  whole-project gate fails on every sub-plan regardless of the change.
+
+### The rule
+
+1. **Prefer change-scoped gates.** Run the test suite for the module
+   that changed (`pytest apps/orders/`, `bun test src/checkout/`), or
+   a targeted smoke (`curl localhost:3000/api/new-endpoint`). A gate
+   that only exercises the changed code is faster, more honest, and
+   less fragile than a whole-project compile.
+
+2. **If a whole-project gate is unavoidable**, the planner must:
+   - Confirm the gate is **green on the BASE commit** (the commit the
+     sub-plan branches from). If it fails on the base, it's a
+     pre-existing failure, not a regression — running it as a
+     `local_check` would false-block every step.
+   - Note in the sub-plan body that the whole-project gate was
+     baseline-verified and the date of that check.
+
+3. **A sub-plan whose ONLY `local_check` is a whole-project compile
+   command** (`tsc`, `mypy`, `cargo build`, `npm run build`, `bun run
+   typecheck`) with no change-scoped runtime smoke is a warning signal.
+   The QC lint in `/ilk-plan` §7a flags this — the planner should add a
+   targeted smoke or document why one is impossible.
+
+### Why not ban whole-project gates outright?
+
+Some projects genuinely have no per-module test runner, or the
+regression surface is cross-module (shared types, config files). In
+those cases a whole-project compile is the honest gate — but the
+planner must still verify baseline-green. The rule is "prefer
+change-scoped; if whole-project, verify baseline", not "never
+whole-project".
+
+### Cross-references
+
+- **§1 (Tight contracts)** — runtime smoke over compile smoke.
+- **§8 (local_checks anti-patterns)** — compile-only as the only check.
+- **§15 (Autonomy tiers)** — Tier 1 auto-apply still needs gates.
