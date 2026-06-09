@@ -56,6 +56,7 @@ PROMOTE_SCRIPT="${_SKILL_ROOT}/ilk-loop/scripts/promote_next_master.py"
 LAUNCH_SCRIPT="${_SKILL_ROOT}/ilk-launcher/scripts/launch.sh"
 BOOTSTRAP_SCRIPT="${_SKILL_ROOT}/../tools/claude-worker/bootstrap.sh"
 NOTIFY_PY="${_SKILL_ROOT}/ilk-watchdog/scripts/ilk_notify.py"
+WATCHDOG_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/watchdog.sh"
 
 SCHEDULER_LOG_DIR="${HOME}/.ilk-data/logs"
 SCHEDULER_LOG_FILE="${SCHEDULER_LOG_DIR}/scheduler.log"
@@ -563,9 +564,9 @@ run_scheduler() {
         write_scheduler_log "dispatch" "$dkey (slot $slot_id)"
         if [[ "$current_mux" == "tmux" ]]; then
           local tmux_cmd="tmux new-window -t ilk -n '$dkey' 'launch.sh --project-path \\\"'$safe_path'\\\" --engine claude-worker --worker-home \\\"'$slot_home'\\\"${local_checks_flag}'"
-          echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"tmux\",\"command\":\"$tmux_cmd\"}"
+          echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"tmux\",\"command\":\"$tmux_cmd\",\"watchdog\":\"watchdog.sh --project-path '$safe_path' --detach\"}"
         else
-          echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"screen\",\"command\":\"launch.sh --project-path '$safe_path' --engine claude-worker --worker-home '$slot_home'${local_checks_flag}\"}"
+          echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"screen\",\"command\":\"launch.sh --project-path '$safe_path' --engine claude-worker --worker-home '$slot_home'${local_checks_flag}\",\"watchdog\":\"watchdog.sh --project-path '$safe_path' --detach\"}"
         fi
       elif [[ "$DRY_RUN" == true ]]; then
         if [[ "$current_mux" == "tmux" ]]; then
@@ -573,6 +574,7 @@ run_scheduler() {
         else
           echo "[$(date '+%Y-%m-%d %H:%M:%S')] DRY-RUN [screen]: would dispatch $dkey (slot $slot_id) via $LAUNCH_SCRIPT --project-path '$drepo' --engine claude-worker --worker-home '$slot_home'"
         fi
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] DRY-RUN: would attach watchdog via $WATCHDOG_SCRIPT --project-path '$drepo' --detach"
       else
         # Ensure slot home exists (lazy-clone from base worker home).
         bash "$BOOTSTRAP_SCRIPT" --clone-slot "$slot_id" >/dev/null 2>&1 || true
@@ -585,6 +587,10 @@ run_scheduler() {
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatched $dkey (slot $slot_id, total: $dispatch_count) [tmux]"
             write_scheduler_log "dispatch" "$dkey (slot $slot_id)"
             invoke_ilk_notify "dispatch" "$dkey" "slot $slot_id"
+            # Attach watchdog for this dispatch (supervises the run).
+            # The watchdog has its own double-spawn guard (watchdog.pid).
+            bash "$WATCHDOG_SCRIPT" --project-path "$drepo" --detach 2>/dev/null || true
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] watchdog attached for $dkey"
           else
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] tmux dispatch failed for $dkey"
             blacklist_skip="${blacklist_skip}"$'\n'"${dkey} $(($(date +%s) + 300))"
@@ -594,6 +600,10 @@ run_scheduler() {
           echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatched $dkey (slot $slot_id, total: $dispatch_count)"
           write_scheduler_log "dispatch" "$dkey (slot $slot_id)"
           invoke_ilk_notify "dispatch" "$dkey" "slot $slot_id"
+          # Attach watchdog for this dispatch (supervises the run).
+          # The watchdog has its own double-spawn guard (watchdog.pid).
+          bash "$WATCHDOG_SCRIPT" --project-path "$drepo" --detach 2>/dev/null || true
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] watchdog attached for $dkey"
         else
           echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatch failed for $dkey"
           blacklist_skip="${blacklist_skip}"$'\n'"${dkey} $(($(date +%s) + 300))"
