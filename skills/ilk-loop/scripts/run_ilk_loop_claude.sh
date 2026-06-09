@@ -430,6 +430,87 @@ print(json.dumps(d))
   fi
 }
 
+# ----- Base-ref freshness (Gap 3) ---------------------------------------------
+#
+# ensure_fresh_base_ref REMOTE BRANCH
+#
+# Compares the local remote-tracking ref (<remote>/<branch>) against the true
+# remote tip via `git ls-remote`. On mismatch, force-refreshes the local ref.
+# Aborts with a clear message on failure.
+#
+# Globals read: PROJECT_PATH (first REPOS entry used as the working tree)
+# Globals modified: none
+# Returns: 0 on success (local ref is now fresh), 1 on unrecoverable error
+
+ensure_fresh_base_ref() {
+  local remote="$1"
+  local branch="$2"
+
+  local repo="${REPOS[0]}"
+  if [[ -z "$repo" ]]; then
+    echo "Error: no git repo resolved for base-ref freshness check." >&2
+    return 1
+  fi
+
+  echo "[runner] freshness preflight: ${remote}/${branch}"
+
+  # 1. Get the local remote-tracking ref SHA
+  local local_sha
+  local_sha=$(git -C "$repo" rev-parse "refs/remotes/${remote}/${branch}" 2>/dev/null) || local_sha=""
+  if [[ -z "$local_sha" ]]; then
+    echo "[runner]   local ref refs/remotes/${remote}/${branch} not found (will fetch)"
+    local_sha="(none)"
+  else
+    echo "[runner]   local  ${local_sha:0:12}"
+  fi
+
+  # 2. Get the true remote tip via ls-remote
+  local ls_output
+  ls_output=$(git -C "$repo" ls-remote "$remote" "refs/heads/${branch}" 2>/dev/null) || {
+    echo "Error: git ls-remote ${remote} refs/heads/${branch} failed." >&2
+    echo "       Check that the remote is reachable and the branch exists." >&2
+    return 1
+  }
+
+  if [[ -z "$ls_output" ]]; then
+    echo "Error: branch '${branch}' not found on remote '${remote}'." >&2
+    echo "       ls-remote returned empty — the branch may not exist upstream." >&2
+    return 1
+  fi
+
+  local remote_sha
+  remote_sha=$(echo "$ls_output" | head -n1 | awk '{print $1}')
+  echo "[runner]   remote ${remote_sha:0:12}"
+
+  # 3. Compare — if they match, we're done
+  if [[ "$local_sha" == "$remote_sha" ]]; then
+    echo "[runner]   OK — local ref is up to date"
+    return 0
+  fi
+
+  # 4. Mismatch — force-refresh
+  echo "[runner]   STALE — local ${local_sha:0:12} != remote ${remote_sha:0:12}"
+  echo "[runner]   force-refreshing ${remote}/${branch}..."
+
+  git -C "$repo" fetch "$remote" "${branch}:refs/remotes/${remote}/${branch}" 2>&1 || {
+    echo "Error: force-refresh fetch failed for ${remote}/${branch}." >&2
+    echo "       The remote may have changed again, or the ref is locked." >&2
+    return 1
+  }
+
+  # Verify the refresh took effect
+  local refreshed_sha
+  refreshed_sha=$(git -C "$repo" rev-parse "refs/remotes/${remote}/${branch}" 2>/dev/null) || refreshed_sha=""
+  if [[ "$refreshed_sha" == "$remote_sha" ]]; then
+    echo "[runner]   refreshed OK — now at ${refreshed_sha:0:12}"
+    return 0
+  else
+    echo "Error: after fetch, local ref is ${refreshed_sha:0:12} but expected ${remote_sha:0:12}." >&2
+    echo "       Possible race or refspec mismatch." >&2
+    return 1
+  fi
+}
+
 get_repo_heads() {
   local out_file="$1"
   : > "$out_file"
