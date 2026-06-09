@@ -193,8 +193,24 @@ test_running_pid() {
   if ! [[ "$raw" =~ ^[0-9]+$ ]]; then
     return 1  # free
   fi
-  kill -0 "$raw" 2>/dev/null
-  # kill -0 returns 0 if alive (busy), 1 if dead (free)
+  if ! kill -0 "$raw" 2>/dev/null; then
+    return 1  # dead pid — free
+  fi
+
+  # Stale-sentinel cross-check: even if the pid is alive, a terminal
+  # last-exit.json means the loop already finished.  The lingering
+  # -NoExit shell keeps the pid alive past the loop's real exit.
+  local sentinel_file="${project_data_path}/runtime/last-exit.json"
+  if [[ -f "$sentinel_file" ]]; then
+    local state
+    # Parse "state" value — grep+sed fallback (no jq dependency).
+    state=$(grep -o '"state"[[:space:]]*:[[:space:]]*"[^"]*"' "$sentinel_file" 2>/dev/null \
+            | head -1 | sed 's/.*"state"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+    if [[ -n "$state" && "$state" != "running" ]]; then
+      return 1  # terminal state — project is free
+    fi
+  fi
+  return 0  # busy
 }
 
 blacklist_epoch_for_key() {
