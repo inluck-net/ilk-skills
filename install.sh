@@ -174,6 +174,153 @@ render_auto_plan_block() {
   echo "<!-- ilk:auto-plan:end -->"
 }
 
+# Insert-or-replace a delimited block in a file (idempotent).
+#   upsert_block <file> <start-marker> <end-marker> <block-content>
+# If the markers already exist, replaces the block between them.
+# If the markers don't exist, appends the block to the file.
+# Creates the file if absent.
+upsert_block() {
+  local file="$1" start="$2" end="$3" content="$4"
+  mkdir -p "$(dirname "$file")"
+  if [[ -f "$file" ]] && grep -qF "$start" "$file"; then
+    # Replace block between markers (inclusive) in-place.
+    # Use a temp file to avoid BSD sed / GNU sed portability issues
+    # with multiline in-place editing.
+    local tmp
+    tmp="$(mktemp)"
+    awk -v s="$start" -v e="$end" -v blk="$content" '
+      $0 == s { printing=0; print blk; skipping=1; next }
+      $0 == e { skipping=0; next }
+      skipping { next }
+      { print }
+    ' "$file" > "$tmp"
+    mv -- "$tmp" "$file"
+  else
+    # Append block (with a leading blank line if file is non-empty).
+    if [[ -s "$file" ]]; then
+      echo >> "$file"
+    fi
+    echo "$content" >> "$file"
+  fi
+}
+
+# Strip a delimited block from a file (inclusive of markers).
+# Leaves surrounding content byte-for-byte intact.
+strip_block() {
+  local file="$1" start="$2" end="$3"
+  if [[ ! -f "$file" ]] || ! grep -qF "$start" "$file"; then
+    return 0
+  fi
+  local tmp
+  tmp="$(mktemp)"
+  awk -v s="$start" -v e="$end" '
+    $0 == s { skipping=1; next }
+    $0 == e { skipping=0; next }
+    skipping { next }
+    { print }
+  ' "$file" > "$tmp"
+  mv -- "$tmp" "$file"
+}
+
+# Reconcile the auto-plan managed block into each host agent's
+# user-global instructions.  Respects dry-run, only-cursor/claude/codex,
+# and the committed preference.
+reconcile_auto_plan() {
+  local pref
+  pref="$(read_auto_plan_pref)"
+  local mode="DRY-RUN"
+  [[ $apply -eq 1 ]] && mode="APPLY"
+
+  echo "=== auto-plan reconcile ($mode) ==="
+  echo "preference: auto_use_ilk_plan=${pref}"
+
+  local block=""
+  if [[ "$pref" == "true" ]]; then
+    block="$(render_auto_plan_block)" || return 1
+  fi
+
+  local start_marker="<!-- ilk:auto-plan:start -->"
+  local end_marker="<!-- ilk:auto-plan:end -->"
+
+  # Determine which home dirs to reconcile into.
+  local -a homes=()
+  local -a home_names=()
+  if [[ $any_only -eq 0 || $only_cursor -eq 1 ]]; then
+    homes+=("$HOME")
+    home_names+=("Cursor")
+  fi
+  if [[ $any_only -eq 0 || $only_claude -eq 1 ]]; then
+    if [[ -n "$claude_home" ]]; then
+      homes+=("$claude_home")
+      home_names+=("Claude Code [$claude_home]")
+    else
+      homes+=("$HOME")
+      home_names+=("Claude Code")
+    fi
+  fi
+  if [[ $any_only -eq 0 || $only_codex -eq 1 ]]; then
+    homes+=("$HOME")
+    home_names+=("Codex")
+  fi
+
+  # Reconcile into shared files (CLAUDE.md, AGENTS.md).
+  local -a shared_files=()
+  local -a shared_labels=()
+  for i in "${!homes[@]}"; do
+    local name="${home_names[$i]}"
+    case "$name" in
+      Cursor*)   ;; # Cursor uses .mdc, not a shared file
+      Claude*)   shared_files+=("${homes[$i]}/.claude/CLAUDE.md"); shared_labels+=("$name") ;;
+      Codex*)    shared_files+=("${homes[$i]}/.codex/AGENTS.md"); shared_labels+=("$name") ;;
+    esac
+  done
+
+  for i in "${!shared_files[@]}"; do
+    local f="${shared_files[$i]}"
+    local label="${shared_labels[$i]}"
+    if [[ "$pref" == "true" ]]; then
+      if [[ $apply -eq 1 ]]; then
+        upsert_block "$f" "$start_marker" "$end_marker" "$block"
+        echo "[ok] reconciled block -> $f ($label)"
+      else
+        echo "(dry-run: would reconcile block -> $f ($label))"
+      fi
+    else
+      if [[ -f "$f" ]] && grep -qF "$start_marker" "$f"; then
+        if [[ $apply -eq 1 ]]; then
+          strip_block "$f" "$start_marker" "$end_marker"
+          echo "[ok] removed block from $f ($label)"
+        else
+          echo "(dry-run: would remove block from $f ($label))"
+        fi
+      fi
+    fi
+  done
+
+  # Reconcile dedicated .mdc file for Cursor.
+  if [[ $any_only -eq 0 || $only_cursor -eq 1 ]]; then
+    local mdc="$HOME/.cursor/rules/ilk-auto-plan.mdc"
+    if [[ "$pref" == "true" ]]; then
+      if [[ $apply -eq 1 ]]; then
+        mkdir -p "$(dirname "$mdc")"
+        cp -- "$REPO_ROOT/conventions/auto-plan-routing.md" "$mdc"
+        echo "[ok] wrote $mdc (Cursor)"
+      else
+        echo "(dry-run: would write $mdc (Cursor))"
+      fi
+    else
+      if [[ -f "$mdc" ]]; then
+        if [[ $apply -eq 1 ]]; then
+          rm -f -- "$mdc"
+          echo "[ok] deleted $mdc (Cursor)"
+        else
+          echo "(dry-run: would delete $mdc (Cursor))"
+        fi
+      fi
+    fi
+  fi
+}
+
 if [[ ! -d "$SKILLS_SRC" ]]; then
   echo "error: cannot find skills/ under repo root: $REPO_ROOT" >&2
   exit 2
@@ -588,4 +735,10 @@ if [[ $install_path -eq 1 ]]; then
   install_path_entry "$path_bin_dir"
 fi
 
+# Auto-plan managed block reconcile (always runs in the normal --apply path;
+# idempotent — no-op when the preference is off and no stale block exists).
+echo
+reconcile_auto_plan
+
+echo
 echo "Done."
