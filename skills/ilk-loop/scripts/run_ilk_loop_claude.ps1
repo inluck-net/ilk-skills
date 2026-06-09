@@ -1121,6 +1121,267 @@ function Invoke-ClaudeIteration {
   }
 }
 
+# ----- Branch setup (Gaps 2+3) ------------------------------------------
+
+$script:BranchCreateFrom = ""
+$script:BranchName = ""
+$script:BranchMergeBack = $false
+
+function Parse-MasterBranchBlock {
+  <#
+    Parse the branch: block from the active MASTER plan's YAML frontmatter.
+    Sets $script:BranchCreateFrom, $script:BranchName, $script:BranchMergeBack.
+    No-op (all stay empty/default) when no branch: block exists.
+  #>
+  param([string]$Project)
+  $resolver = Join-Path $SkillRoot "ilk-loop\scripts\ilk_paths.py"
+  if (-not (Test-Path $resolver)) { return }
+
+  try {
+    $json = & python $resolver --start $Project 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $json) { return }
+    $obj = $json | ConvertFrom-Json -ErrorAction Stop
+    $plansDir = [string]$obj.external_plans_dir
+    if (-not $plansDir -or -not (Test-Path $plansDir)) { return }
+  } catch { return }
+
+  # Find the active MASTER file
+  $masterFile = Get-ChildItem $plansDir -Filter "MASTER-*.md" -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -notlike "*.bak" } | Select-Object -First 1
+  if (-not $masterFile) { return }
+
+  # Parse branch: block from YAML frontmatter using Python (consistent with bash)
+  $parsed = & python -c @"
+import re, sys, json
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+m = re.match(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
+if not m:
+    print('{}')
+    sys.exit(0)
+fm = m.group(1)
+branch_match = re.search(r'^branch:\s*(.*)$', fm, re.MULTILINE)
+if not branch_match:
+    print('{}')
+    sys.exit(0)
+rest = branch_match.group(1).strip()
+if rest in ('null', 'None', '~', ''):
+    print('{}')
+    sys.exit(0)
+if rest.startswith('{'):
+    inner = rest.strip('{}')
+    d = {}
+    for part in re.split(r',\s*', inner):
+        if ':' in part:
+            k, v = part.split(':', 1)
+            k = k.strip()
+            v = v.strip().strip('"').strip("'")
+            if k == 'merge_back':
+                d[k] = v.lower() in ('true', 'yes', '1')
+            else:
+                d[k] = v
+    print(json.dumps(d))
+    sys.exit(0)
+lines = fm.split('\n')
+in_branch = False
+d = {}
+for line in lines:
+    if re.match(r'^branch:\s*$', line):
+        in_branch = True
+        continue
+    if in_branch:
+        if re.match(r'^\s+', line):
+            kv = re.match(r'^\s+(\w+):\s*(.*)$', line)
+            if kv:
+                k, v = kv.group(1), kv.group(2).strip().strip('"').strip("'")
+                if k == 'merge_back':
+                    d[k] = v.lower() in ('true', 'yes', '1')
+                else:
+                    d[k] = v
+        else:
+            break
+print(json.dumps(d))
+"@ $masterFile.FullName 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not $parsed) { return }
+
+  try { $branchObj = $parsed | ConvertFrom-Json -ErrorAction Stop } catch { return }
+  if (-not $branchObj -or -not $branchObj.create_from) {
+    # Check if at least 'name' is present
+    if (-not $branchObj -or -not $branchObj.name) { return }
+  }
+
+  $script:BranchCreateFrom = if ($branchObj.create_from) { [string]$branchObj.create_from } else { "" }
+  $script:BranchName = if ($branchObj.name) { [string]$branchObj.name } else { "" }
+  $script:BranchMergeBack = if ($branchObj.merge_back -eq $true) { $true } else { $false }
+
+  # Default create_from to HEAD if branch block exists but create_from is missing
+  if ($script:BranchName -and -not $script:BranchCreateFrom) {
+    $script:BranchCreateFrom = "HEAD"
+  }
+
+  if ($script:BranchName) {
+    Write-Host "[runner] branch block parsed: create_from=$($script:BranchCreateFrom) name=$($script:BranchName) merge_back=$($script:BranchMergeBack)"
+  }
+}
+
+function Ensure-FreshBaseRef {
+  <#
+    Compares the local remote-tracking ref (<remote>/<branch>) against the true
+    remote tip via `git ls-remote`. On mismatch, force-refreshes the local ref.
+    Returns $true on success, throws on failure.
+  #>
+  param([string]$Remote, [string]$Branch, [string]$Repo)
+
+  Write-Host "[runner] freshness preflight: ${Remote}/${Branch}"
+
+  # 1. Get the local remote-tracking ref SHA
+  $localSha = ""
+  try { $localSha = (& git -C $Repo rev-parse "refs/remotes/${Remote}/${Branch}" 2>$null).Trim() } catch {}
+  if (-not $localSha) {
+    Write-Host "[runner]   local ref refs/remotes/${Remote}/${Branch} not found (will fetch)"
+    $localSha = "(none)"
+  } else {
+    Write-Host "[runner]   local  $($localSha.Substring(0, [Math]::Min(12, $localSha.Length)))"
+  }
+
+  # 2. Get the true remote tip via ls-remote
+  $lsOutput = ""
+  try { $lsOutput = (& git -C $Repo ls-remote $Remote "refs/heads/${Branch}" 2>$null) } catch {}
+  if ($LASTEXITCODE -ne 0) {
+    throw "Error: git ls-remote ${Remote} refs/heads/${Branch} failed. Check that the remote is reachable."
+  }
+  if (-not $lsOutput) {
+    throw "Error: branch '${Branch}' not found on remote '${Remote}'. ls-remote returned empty."
+  }
+
+  $remoteSha = ($lsOutput | Select-Object -First 1).Split("`t")[0]
+  Write-Host "[runner]   remote $($remoteSha.Substring(0, [Math]::Min(12, $remoteSha.Length)))"
+
+  # 3. Compare — if they match, done
+  if ($localSha -eq $remoteSha) {
+    Write-Host "[runner]   OK — local ref is up to date"
+    return $true
+  }
+
+  # 4. Mismatch — force-refresh
+  Write-Host "[runner]   STALE — local $($localSha.Substring(0, [Math]::Min(12, $localSha.Length))) != remote $($remoteSha.Substring(0, [Math]::Min(12, $remoteSha.Length)))"
+  Write-Host "[runner]   force-refreshing ${Remote}/${Branch}..."
+
+  & git -C $Repo fetch $Remote "${Branch}:refs/remotes/${Remote}/${Branch}" 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    throw "Error: force-refresh fetch failed for ${Remote}/${Branch}."
+  }
+
+  # Verify the refresh took effect
+  $refreshedSha = ""
+  try { $refreshedSha = (& git -C $Repo rev-parse "refs/remotes/${Remote}/${Branch}" 2>$null).Trim() } catch {}
+  if ($refreshedSha -eq $remoteSha) {
+    Write-Host "[runner]   refreshed OK — now at $($refreshedSha.Substring(0, [Math]::Min(12, $refreshedSha.Length)))"
+    return $true
+  } else {
+    throw "Error: after fetch, local ref is $refreshedSha but expected $remoteSha."
+  }
+}
+
+function Setup-Branch {
+  <#
+    If the MASTER has a branch: block, this function:
+      1. Guards against dirty working tree / merge/rebase in progress
+      2. Parses create_from into remote/branch
+      3. Fetches + runs freshness preflight
+      4. Checks out -B <name> <create_from>
+    No-op when $script:BranchName is empty.
+  #>
+  param([string[]]$Repos)
+
+  if (-not $script:BranchName) { return $true }
+
+  $repo = $Repos[0]
+  if (-not $repo) {
+    Write-Host "Error: no git repo resolved for branch setup." -ForegroundColor Red
+    return $false
+  }
+
+  Write-Host ""
+  Write-Host "[runner] === Branch setup ===" -ForegroundColor Cyan
+  Write-Host "[runner] target: checkout -B $($script:BranchName) from $($script:BranchCreateFrom)"
+
+  # --- Guard: merge/rebase in progress ---
+  $gitDir = (& git -C $repo rev-parse --git-dir 2>$null).Trim()
+  if ($gitDir -and (Test-Path (Join-Path $gitDir "MERGE_HEAD"))) {
+    Write-Host "Error: a merge is in progress in $repo." -ForegroundColor Red
+    Write-Host "       Resolve the merge (git merge --abort or commit) before running." -ForegroundColor Red
+    return $false
+  }
+  if ($gitDir -and ((Test-Path (Join-Path $gitDir "rebase-merge")) -or (Test-Path (Join-Path $gitDir "rebase-apply")))) {
+    Write-Host "Error: a rebase is in progress in $repo." -ForegroundColor Red
+    Write-Host "       Finish or abort the rebase (git rebase --abort) before running." -ForegroundColor Red
+    return $false
+  }
+
+  # --- Guard: dirty working tree (AC-3) ---
+  $diffExit = & git -C $repo diff --quiet 2>&1; $diffCode = $LASTEXITCODE
+  $cachedExit = & git -C $repo diff --cached --quiet 2>&1; $cachedCode = $LASTEXITCODE
+  if ($diffCode -ne 0 -or $cachedCode -ne 0) {
+    Write-Host "Error: working tree is dirty in $repo." -ForegroundColor Red
+    Write-Host "       Commit or stash changes before running with a branch: block." -ForegroundColor Red
+    return $false
+  }
+
+  # --- Parse create_from into remote/branch ---
+  $remote = ""
+  $branch = $script:BranchCreateFrom
+  if ($script:BranchCreateFrom -match '^([^/]+)/(.+)$') {
+    $remote = $Matches[1]
+    $branch = $Matches[2]
+  }
+
+  # --- Fetch + freshness preflight (only for remote refs) ---
+  if ($remote) {
+    Write-Host "[runner] fetching ${remote} ${branch}..."
+    & git -C $repo fetch $remote $branch 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host "Error: git fetch ${remote} ${branch} failed." -ForegroundColor Red
+      Write-Host "       Check that the remote '${remote}' is configured and reachable." -ForegroundColor Red
+      return $false
+    }
+
+    try { Ensure-FreshBaseRef -Remote $remote -Branch $branch -Repo $repo } catch {
+      Write-Host "Error: base-ref freshness check failed: $_" -ForegroundColor Red
+      return $false
+    }
+  }
+
+  # --- Guard: verify the base ref exists (AC-4) ---
+  if (-not $script:BranchCreateFrom -or $script:BranchCreateFrom.Trim() -eq "") {
+    Write-Host "Error: create_from is empty — cannot branch off nothing." -ForegroundColor Red
+    return $false
+  }
+  $revExit = & git -C $repo rev-parse $script:BranchCreateFrom 2>&1; $revCode = $LASTEXITCODE
+  if ($revCode -ne 0) {
+    Write-Host "Error: cannot resolve base ref '$($script:BranchCreateFrom)' after fetch." -ForegroundColor Red
+    Write-Host "       Possible causes:" -ForegroundColor Red
+    Write-Host "         - The remote branch was deleted or renamed" -ForegroundColor Red
+    Write-Host "         - The create_from value is misspelled" -ForegroundColor Red
+    return $false
+  }
+
+  # --- Checkout -B ---
+  Write-Host "[runner] git checkout -B $($script:BranchName) $($script:BranchCreateFrom)"
+  & git -C $repo checkout -B $script:BranchName $script:BranchCreateFrom 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "Error: git checkout -B failed." -ForegroundColor Red
+    return $false
+  }
+
+  $currentBranch = (& git -C $repo branch --show-current 2>$null).Trim()
+  Write-Host "[runner] now on branch: $currentBranch"
+  Write-Host "[runner] === Branch setup complete ===" -ForegroundColor Cyan
+  Write-Host ""
+  return $true
+}
+
 # ----- Dot-source guard ---------------------------------------------
 # When dot-sourced (invocation name is '.'), or when ILK_DOTSOURCE_ONLY=1,
 # functions are defined but the main loop does not execute.  Lets a test or
@@ -1142,6 +1403,9 @@ if ($repos.Count -eq 0) {
   throw "No git repos found at or under $ProjectPath"
 }
 
+# Parse MASTER branch: block (sets $script:BranchName etc.)
+Parse-MasterBranchBlock -Project $ProjectPath
+
 Write-Host ""
 Write-Host "=== ilk-loop runner (Claude Code) ===" -ForegroundColor Cyan
 Write-Host "Project:        $ProjectPath"
@@ -1156,6 +1420,9 @@ if ($McpConfigPath) {
   Write-Host "MCP config:     $McpConfigPath (strict — worker sees only what'`s listed)"
 } else {
   Write-Host "MCP config:     (default — worker sees user's full MCP registry)"
+}
+if ($script:BranchName) {
+  Write-Host "Branch policy:  checkout -B $($script:BranchName) from $($script:BranchCreateFrom) (merge_back=$($script:BranchMergeBack))"
 }
 Write-Host "Run logs:       $RunLogDir"
 Write-Host "JSONL summary:  $JsonlLog"
@@ -1186,6 +1453,12 @@ if ($RuntimeDir) {
   Write-Host "Sentinel: $RuntimeDir\last-exit.json (state=running)" -ForegroundColor DarkGray
 } else {
   Write-Host "Sentinel: skipped (no runtime dir resolved)" -ForegroundColor DarkYellow
+}
+
+# Branch setup (Gap 2+3): if MASTER has a branch: block, checkout -B from fresh base
+$branchOk = Setup-Branch -Repos $repos
+if (-not $branchOk) {
+  throw "Branch setup failed. Fix the issue and retry."
 }
 
 try {
