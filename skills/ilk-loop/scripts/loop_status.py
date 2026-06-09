@@ -28,7 +28,7 @@ from ilk_paths import (  # noqa: E402
     read_meta_manifest,
     MetaManifestError,
 )
-from plan_status import master_has_nonshipped  # noqa: E402
+from plan_status import master_has_nonshipped, reconcile_master_status  # noqa: E402
 
 STATUS_ICONS = {
     "shipped": "[OK]",
@@ -229,6 +229,11 @@ def resolve_status(cwd: Path) -> dict:
     masters = sorted(plans_dir.glob("MASTER-*.md"))
     if not masters:
         return {"error": f"No MASTER-*.md in {plans_dir}", "queue_exit": 2}
+
+    # Reconcile pass: auto-flip any all-shipped master to status: shipped.
+    # Idempotent — safe to run every invocation.
+    for m in masters:
+        reconcile_master_status(m, plans_dir)
 
     master, queue_view = pick_active_master(masters)
     master_text = master.read_text(encoding="utf-8")
