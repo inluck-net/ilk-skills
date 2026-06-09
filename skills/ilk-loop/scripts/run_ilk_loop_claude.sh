@@ -430,6 +430,98 @@ print(json.dumps(d))
   fi
 }
 
+# ----- Branch setup (Gap 2) ---------------------------------------------------
+#
+# setup_branch
+#
+# If the MASTER has a branch: block, this function:
+#   1. Parses create_from into remote/branch components
+#   2. Fetches the base ref from the remote
+#   3. Runs the freshness preflight (ensure_fresh_base_ref)
+#   4. Guards against dirty working tree
+#   5. Checks out -B <name> <create_from>
+#
+# No-op when BRANCH_NAME is empty (no branch: block in MASTER).
+# Globals read: BRANCH_NAME, BRANCH_CREATE_FROM, PROJECT_PATH, REPOS
+# Globals modified: none
+# Returns: 0 on success, 1 on error
+
+setup_branch() {
+  if [[ -z "$BRANCH_NAME" ]]; then
+    return 0
+  fi
+
+  local repo="${REPOS[0]}"
+  if [[ -z "$repo" ]]; then
+    echo "Error: no git repo resolved for branch setup." >&2
+    return 1
+  fi
+
+  echo ""
+  echo "[runner] === Branch setup ==="
+  echo "[runner] target: checkout -B $BRANCH_NAME from $BRANCH_CREATE_FROM"
+
+  # --- Guard: dirty working tree ---
+  if ! git -C "$repo" diff --quiet 2>/dev/null || \
+     ! git -C "$repo" diff --cached --quiet 2>/dev/null; then
+    echo "Error: working tree is dirty in $repo." >&2
+    echo "       Commit or stash changes before running with a branch: block." >&2
+    echo "       git -C $repo status" >&2
+    return 1
+  fi
+  # Also check for untracked files that would be lost
+  if [[ -n "$(git -C "$repo" ls-files --others --exclude-standard 2>/dev/null)" ]]; then
+    echo "Warning: untracked files present in $repo — branch setup will proceed" >&2
+    echo "         but these files will persist on the new branch." >&2
+  fi
+
+  # --- Parse create_from into remote/branch ---
+  local remote branch
+  if [[ "$BRANCH_CREATE_FROM" == */* ]]; then
+    remote="${BRANCH_CREATE_FROM%%/*}"
+    branch="${BRANCH_CREATE_FROM#*/}"
+  else
+    # No slash — treat as a local ref (e.g. "HEAD", a tag, or a local branch)
+    remote=""
+    branch="$BRANCH_CREATE_FROM"
+  fi
+
+  # --- Fetch + freshness preflight (only for remote refs) ---
+  if [[ -n "$remote" ]]; then
+    echo "[runner] fetching ${remote} ${branch}..."
+    git -C "$repo" fetch "$remote" "$branch" 2>&1 || {
+      echo "Error: git fetch ${remote} ${branch} failed." >&2
+      echo "       Check that the remote '${remote}' is configured and reachable." >&2
+      return 1
+    }
+
+    # Freshness preflight: compare local tracking ref vs true remote tip
+    ensure_fresh_base_ref "$remote" "$branch" || {
+      echo "Error: base-ref freshness check failed." >&2
+      return 1
+    }
+  fi
+
+  # --- Guard: verify the base ref exists ---
+  if ! git -C "$repo" rev-parse "$BRANCH_CREATE_FROM" >/dev/null 2>&1; then
+    echo "Error: cannot resolve base ref '$BRANCH_CREATE_FROM'." >&2
+    echo "       After fetch, the ref should exist. Check the create_from value." >&2
+    return 1
+  fi
+
+  # --- Checkout -B ---
+  echo "[runner] git checkout -B $BRANCH_NAME $BRANCH_CREATE_FROM"
+  git -C "$repo" checkout -B "$BRANCH_NAME" "$BRANCH_CREATE_FROM" 2>&1 || {
+    echo "Error: git checkout -B $BRANCH_NAME $BRANCH_CREATE_FROM failed." >&2
+    return 1
+  }
+
+  echo "[runner] now on branch: $(git -C "$repo" branch --show-current)"
+  echo "[runner] === Branch setup complete ==="
+  echo ""
+  return 0
+}
+
 # ----- Base-ref freshness (Gap 3) ---------------------------------------------
 #
 # ensure_fresh_base_ref REMOTE BRANCH
@@ -801,6 +893,7 @@ main() {
   discover_git_repos
   parse_master_branch_block
   print_banner
+  setup_branch || exit 1
 
   # Sentinel setup (state=running)
   local runtime_dir
