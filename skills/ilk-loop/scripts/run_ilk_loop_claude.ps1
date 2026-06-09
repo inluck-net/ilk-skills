@@ -421,137 +421,6 @@ function Invoke-LocalChecks {
   return $out
 }
 
-function Resolve-BashPath {
-  <#
-    Resolve the path to a bash executable. Prefers git-bash (sh.exe from
-    Git for Windows) over any system bash. Returns $null if not found.
-  #>
-  # IMPORTANT: prefer git-bash (MSYS), which runs a `C:/...` script path and
-  # resolves `C:/` paths. AVOID the WSL shim at ...\WindowsApps\bash.exe — it
-  # uses /mnt/c mounts and fails on a Windows path with
-  # "No such file or directory" (exit 127). So git-bash locations come FIRST,
-  # and a PATH `bash` is accepted only if it is NOT the WindowsApps/WSL shim.
-
-  # 1. git-bash via the resolved `git` location
-  $gitExe = Get-Command git -ErrorAction SilentlyContinue
-  if ($gitExe) {
-    $gitDir = Split-Path (Split-Path $gitExe.Source -Parent) -Parent
-    foreach ($rel in @("bin\bash.exe", "usr\bin\bash.exe")) {
-      $candidate = Join-Path $gitDir $rel
-      if (Test-Path $candidate) { return $candidate }
-    }
-  }
-
-  # 2. Common Git for Windows install locations
-  foreach ($pf in @("$env:ProgramFiles", "${env:ProgramFiles(x86)}", "$env:LOCALAPPDATA\Programs")) {
-    if (-not $pf) { continue }
-    $candidate = Join-Path $pf "Git\bin\bash.exe"
-    if (Test-Path $candidate) { return $candidate }
-  }
-
-  # 3. Any bash on PATH — EXCEPT the WSL/WindowsApps shim (can't run C:/ paths)
-  foreach ($b in (Get-Command bash -All -ErrorAction SilentlyContinue)) {
-    if ($b.Source -and $b.Source -notmatch 'WindowsApps') { return $b.Source }
-  }
-
-  return $null
-}
-
-function Invoke-LocalCheck {
-  <#
-    Run a single local_checks command through bash and classify the outcome.
-
-    Returns: [PSCustomObject]@{
-      outcome   = "pass" | "fail" | "error"
-      exit_code = <int> or $null
-      stdout    = <string>
-      stderr    = <string>
-      error     = <string> (only when outcome is "error")
-    }
-
-    AC-2 (B1): uses bash so posix gates (grep, bash -n, jq) run.
-    AC-3 (B2): when bash is missing or command can't execute, outcome is "error".
-  #>
-  param(
-    [Parameter(Mandatory)] [string]$Command,
-    [int]$TimeoutSec = 120,
-    [string]$Cwd = ""
-  )
-
-  $result = [PSCustomObject]@{
-    outcome   = "error"
-    exit_code = $null
-    stdout    = ""
-    stderr    = ""
-    error     = ""
-  }
-
-  # Resolve bash
-  $bashPath = Resolve-BashPath
-  if (-not $bashPath) {
-    $result.error = "bash not found (no git-bash or system bash on PATH)"
-    return $result
-  }
-
-  # Write the command to a temp script and run it via bash. This avoids ALL
-  # Windows<->bash quoting hazards: check commands routinely contain their own
-  # quotes (grep -q "pat" file), and a naive `bash -c "<cmd>"` mangles them ->
-  # the command ran with wrong args and grep exited 2 ("error"). Do NOT rewrite
-  # backslashes in the command itself — that corrupts regex escapes (e.g. \+).
-  # Relative paths in the command resolve against $Cwd (how the loop runs a
-  # sub-plan's checks). Written BOM-free with LF.
-  $shFile = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName() + ".sh")
-  [System.IO.File]::WriteAllText($shFile, (($Command -replace "`r`n", "`n")) + "`n", (New-Object System.Text.UTF8Encoding($false)))
-  try {
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $bashPath
-    # Pass only the SCRIPT PATH to bash — forward-slashed + quoted (a path is
-    # safe to convert). The command inside the file is byte-for-byte verbatim.
-    $psi.Arguments = '"' + ($shFile -replace '\\', '/') + '"'
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
-    if ($Cwd) { $psi.WorkingDirectory = $Cwd }
-
-    $proc = [System.Diagnostics.Process]::Start($psi)
-
-    # Read stdout/stderr asynchronously to avoid deadlocks
-    $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
-    $stderrTask = $proc.StandardError.ReadToEndAsync()
-
-    $exited = $proc.WaitForExit($TimeoutSec * 1000)
-    if (-not $exited) {
-      try { $proc.Kill($true) } catch {}
-      $result.error = "timeout after ${TimeoutSec}s"
-      $result.exit_code = $null
-      return $result
-    }
-
-    # Wait for async reads to complete
-    $stdoutTask.Wait(5000) | Out-Null
-    $stderrTask.Wait(5000) | Out-Null
-
-    $result.exit_code = $proc.ExitCode
-    $result.stdout = $stdoutTask.Result
-    $result.stderr = $stderrTask.Result
-
-    # Classify: 0 = pass, 1 = fail (clean test failure), anything else = error
-    $result.outcome = switch ($proc.ExitCode) {
-      0       { "pass" }
-      1       { "fail" }
-      default { "error" }
-    }
-  } catch {
-    $result.error = "$($_.Exception.Message)"
-    $result.outcome = "error"
-  } finally {
-    Remove-Item $shFile -ErrorAction SilentlyContinue
-  }
-
-  return $result
-}
-
 function Test-AllShipped {
   param([string]$Project)
   Push-Location $Project
@@ -1254,8 +1123,8 @@ function Invoke-ClaudeIteration {
 
 # ----- Dot-source guard ---------------------------------------------
 # When dot-sourced (invocation name is '.'), or when ILK_DOTSOURCE_ONLY=1,
-# functions are defined but the main loop does not execute.  Used by tests
-# to call internal functions (e.g. Invoke-LocalCheck) without starting
+# functions are defined but the main loop does not execute.  Lets a test or
+# tool dot-source this script to call internal functions without starting
 # the iteration loop.
 $__isDotSourced = $MyInvocation.InvocationName -eq '.'
 if ($__isDotSourced -or $env:ILK_DOTSOURCE_ONLY -eq '1') { return }
