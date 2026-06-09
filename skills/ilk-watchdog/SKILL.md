@@ -228,6 +228,32 @@ per-project watchdog — use the watchdog to babysit a single supervised run; us
 the scheduler to drain a backlog across many projects unattended. (Tests
 exercise it via `--dry-run` so no provider call is made.)
 
+### Supervised dispatch (watchdog per dispatch)
+
+Every scheduler-dispatched run now gets a **watchdog attached automatically**.
+After a successful dispatch (via `launch.ps1` / `launch.sh`), the scheduler
+spawns a per-project watchdog (`watchdog.ps1 -Detach` / `watchdog.sh --detach`)
+that supervises the run:
+
+- **Whitelist-classified stop** (timeout-bound, max-iter-bound, api-flaky,
+  interrupted) → watchdog relaunches the run with postmortem-recommended
+  params, exactly like the manual `/ilk-run` path.
+- **Blacklist-classified stop** (stuck-no-progress, api-blocked,
+  budget-exhausted, local-checks-stuck) → watchdog prints a BLOCKED banner
+  and records the block via `Read-BlacklistFromPostmortems`, so the scheduler
+  will `skip-blacklist` on the next cycle instead of re-dispatching.
+
+**Stale-sentinel interaction.** The stale-sentinel cross-check (from the
+`2026-06-10-scheduler-stale-sentinel-fix` sub-plan) ensures that a terminal
+`last-exit.json` (e.g. `state: all-shipped`) makes the project appear FREE
+even if a lingering `-NoExit` shell keeps the PID alive. The watchdog
+reads the same sentinel to correctly classify the stop.
+
+**Idempotency.** The watchdog's own `watchdog.pid` guard prevents
+double-spawning: if a live watchdog already exists for the project, the
+scheduler's attach call is a no-op (the watchdog refuses to start a
+second one). This makes the attach safe across poll cycles.
+
 **Observability (v0.8.13+).** On macOS the scheduler/loops run as headless
 `screen` sessions with no visible window, so use these instead of guessing:
 
