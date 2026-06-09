@@ -111,10 +111,18 @@ param(
   # runner executes local_checks declared in sub-plan frontmatter after
   # each productive iteration. The scheduler passes this by default;
   # callers can also set it explicitly.
-  [switch]$RunLocalChecks
+  [switch]$RunLocalChecks,
+
+  # Suppress --run-local-checks even when queued sub-plans declare
+  # local_checks (explicit opt-out). Mutually exclusive with -RunLocalChecks.
+  [switch]$NoLocalChecks
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($RunLocalChecks -and $NoLocalChecks) {
+  throw "Error: -RunLocalChecks and -NoLocalChecks are mutually exclusive."
+}
 
 # --- skill root resolution ---------------------------------------------------
 . (Join-Path $PSScriptRoot "..\..\ilk-loop\scripts\_ilk_skill_root.ps1")
@@ -365,6 +373,19 @@ function Resolve-Engine {
   return $engine
 }
 
+function Test-QueuedSubplansDeclareLocalChecks {
+  # Return $true iff any non-shipped sub-plan of the active master
+  # declares local_checks in its frontmatter or per-step blocks.
+  # Used to default -RunLocalChecks ON when gates exist.
+  param([string]$ProjectPath)
+  $detector = Join-Path $LauncherDir 'scripts\_detect_local_checks.py'
+  if (-not (Test-Path $detector)) { return $false }
+  try {
+    & python $detector $ProjectPath 2>$null | Out-Null
+    return $LASTEXITCODE -eq 0
+  } catch { return $false }
+}
+
 function Resolve-McpFilter {
   <#
     Decide how to filter MCP servers for the worker. Returns a hashtable
@@ -598,7 +619,8 @@ function Start-ilkWindow {
     [bool]$DryRun,
     [string]$McpConfigPath = "",
     [string]$EngineName = "claude",
-    [string]$WorkerHomeOverride = ""
+    [string]$WorkerHomeOverride = "",
+    [Nullable[bool]]$RunLocalChecksValue = $null
   )
 
   $livePid = Test-RunningPid -ProjectPath $ProjectPath
@@ -670,7 +692,8 @@ function Start-ilkWindow {
   }
 
   $runLocalChecksFlag = ""
-  if ($RunLocalChecks) {
+  $effectiveRunChecks = if ($null -ne $RunLocalChecksValue) { $RunLocalChecksValue } else { $RunLocalChecks }
+  if ($effectiveRunChecks) {
     $runLocalChecksFlag = " -RunLocalChecks"
   }
 
@@ -696,6 +719,11 @@ Write-Host '[ilk-launcher] window left open for review. Close manually when done
     Write-Host "  MaxIterations: $MaxIterations"
     Write-Host "  IterationTimeoutMin: $IterationTimeoutMin"
     Write-Host "  WorkerEngine: $EngineName"
+    if ($effectiveRunChecks) {
+      Write-Host "  LocalChecks: ON"
+    } else {
+      Write-Host "  LocalChecks: OFF"
+    }
     if ($workerHome) {
       Write-Host "  ClaudeConfigDir: $workerHome"
       Write-Host "  IlkSkillHome: $workerSkills"
@@ -774,6 +802,16 @@ if ($All) {
     $eng = Resolve-Engine -ProjectPath $p.path -CliEngine $Engine
     $mcpFilter = Resolve-McpFilter -ProjectPath $p.path -CliDisableMcp $DisableMcp -CliEnableMcp $EnableMcp
     $mcpCfg = Build-WorkerMcpConfig -ProjectPath $p.path -Mode $mcpFilter.Mode -Names $mcpFilter.Names
+
+    # Per-project auto-detection for -All mode
+    $projRunChecks = $RunLocalChecks.IsPresent
+    if (-not $projRunChecks -and -not $NoLocalChecks.IsPresent) {
+      if (Test-QueuedSubplansDeclareLocalChecks -ProjectPath $p.path) {
+        $projRunChecks = $true
+        Write-Host "[$($p.name)] Gates: ON (queued sub-plan declares local_checks)"
+      }
+    }
+
     Start-ilkWindow `
       -ProjectPath $p.path `
       -ProjectName $p.name `
@@ -783,7 +821,8 @@ if ($All) {
       -DryRun:$DryRun.IsPresent `
       -McpConfigPath $mcpCfg `
       -EngineName $eng `
-      -WorkerHomeOverride $WorkerHome | Out-Null
+      -WorkerHomeOverride $WorkerHome `
+      -RunLocalChecksValue $projRunChecks | Out-Null
   }
   return
 }
@@ -805,6 +844,16 @@ $engine = Resolve-Engine -ProjectPath $resolvedPath -CliEngine $Engine
 $mcpFilter = Resolve-McpFilter -ProjectPath $resolvedPath -CliDisableMcp $DisableMcp -CliEnableMcp $EnableMcp
 $mcpCfg = Build-WorkerMcpConfig -ProjectPath $resolvedPath -Mode $mcpFilter.Mode -Names $mcpFilter.Names
 
+# Auto-detect: default -RunLocalChecks ON when queued sub-plans declare gates.
+# Explicit -RunLocalChecks or -NoLocalChecks on the CLI always wins.
+$resolvedRunChecks = $RunLocalChecks.IsPresent
+if (-not $resolvedRunChecks -and -not $NoLocalChecks.IsPresent) {
+  if (Test-QueuedSubplansDeclareLocalChecks -ProjectPath $resolvedPath) {
+    $resolvedRunChecks = $true
+    Write-Host "[$resolvedName] Gates: ON (queued sub-plan declares local_checks)"
+  }
+}
+
 Start-ilkWindow `
   -ProjectPath $resolvedPath `
   -ProjectName $resolvedName `
@@ -814,4 +863,5 @@ Start-ilkWindow `
   -DryRun:$DryRun.IsPresent `
   -McpConfigPath $mcpCfg `
   -EngineName $engine `
-  -WorkerHomeOverride $WorkerHome | Out-Null
+  -WorkerHomeOverride $WorkerHome `
+  -RunLocalChecksValue $resolvedRunChecks | Out-Null
