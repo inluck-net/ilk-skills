@@ -219,10 +219,14 @@ local_checks:
 - <bullet>
 - <bullet>
 - Commit: `<type>(<scope>): <summary> [plan:<slug>#step-0]`
+  **Note:** If the remote is shared (check `.ilk-remote-type`), omit the
+  `[plan:<slug>#step-N]` trailer from the commit message.
 
 ### Step 1 — <short title>
 - <bullet>
 - Commit: `<type>(<scope>): <summary> [plan:<slug>#step-1]`
+  **Note:** If the remote is shared (check `.ilk-remote-type`), omit the
+  `[plan:<slug>#step-N]` trailer from the commit message.
 
 <!-- ... add more steps as needed; remember to update estimated_steps in front-matter -->
 

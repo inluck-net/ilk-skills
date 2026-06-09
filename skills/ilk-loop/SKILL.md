@@ -340,6 +340,38 @@ sub-plan ship:
 `<type>` follows conventional-commits (feat / fix / chore / refactor / docs /
 test / build / ci / perf / style).
 
+### Shared remote trailer policy
+
+When the loop's commits are destined for a **shared remote** (organization
+repo, team repo, public repo), the `[plan:<slug>#step-N]` trailer MUST be
+omitted from commit messages. This prevents toolchain vocabulary from
+leaking into a shared repo's permanent `git log`.
+
+**How to determine:** The runner writes a `.ilk-remote-type` file in the
+project root containing either `shared` or `personal`. Read this file
+before constructing commit messages.
+
+- **`personal`** → include the `[plan:<slug>#step-N]` trailer (back-compat
+  for personal `inluck-net/*` repos).
+- **`shared`** → omit the trailer entirely. Use the standard commit format
+  without the plan tag.
+
+**Heuristic:** The runner classifies a remote as "personal" if its URL
+contains a personal namespace pattern (e.g. `inluck-net/*` on any host).
+Everything else is classified as "shared" (safer to strip trailers).
+
+**Example:**
+```bash
+# Check remote type before constructing commit message
+remote_type=$(cat .ilk-remote-type 2>/dev/null || echo "shared")
+if [[ "$remote_type" == "personal" ]]; then
+  commit_msg="feat(runner): my change [plan:my-slug#step-0]"
+else
+  commit_msg="feat(runner): my change"
+fi
+git commit -m "$commit_msg"
+```
+
 ## PR / issue body hygiene (shared repos)
 
 When authoring a PR or issue body for a **shared repo** (any repo that is

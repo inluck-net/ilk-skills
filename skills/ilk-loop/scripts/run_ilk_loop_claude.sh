@@ -978,6 +978,25 @@ main() {
   print_banner
   setup_branch || exit 1
 
+  # Determine remote type for commit trailer policy
+  # Write to .ilk-remote-type so the agent knows whether to include trailers
+  local remote_type="shared"  # default
+  local remote_for_branch=""
+  if [[ -n "$BRANCH_NAME" ]]; then
+    # Branch was just set up; get its upstream remote
+    remote_for_branch=$(git -C "${REPOS[0]}" config --get "branch.${BRANCH_NAME}.remote" 2>/dev/null) || remote_for_branch=""
+  fi
+  if [[ -n "$remote_for_branch" ]]; then
+    remote_type=$(classify_remote "$remote_for_branch")
+  else
+    # No branch block or no upstream; check origin as fallback
+    remote_type=$(classify_remote "origin")
+  fi
+  echo "[runner] remote type: $remote_type (remote: ${remote_for_branch:-origin})"
+
+  # Write remote type to file for agent consumption
+  echo "$remote_type" > "${PROJECT_PATH}/.ilk-remote-type"
+
   # Sentinel setup (state=running)
   local runtime_dir
   runtime_dir=$(get_ilk_runtime_dir) || runtime_dir=""

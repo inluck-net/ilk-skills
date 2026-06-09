@@ -1284,6 +1284,60 @@ function Ensure-FreshBaseRef {
   }
 }
 
+# ----- Remote classification (Gap 5) ------------------------------------------
+#
+# Classify-Remote -Remote REMOTE -Repos REPOS
+#
+# Classifies a git remote as "shared" or "personal" based on its URL.
+# Used to decide whether commit trailers ([plan:…#step-N]) should be stripped.
+#
+# Heuristic:
+#   - Personal: remote URL contains a personal namespace pattern
+#     (e.g. inluck-net/*, github.com/inluck-net/*, gitee.com/inluck-net/*)
+#   - Shared: everything else (organization repos, team repos, public repos)
+#   - Default: "shared" when unsure (safer to strip trailers on shared repos)
+#
+# Returns: "shared" or "personal"
+
+function Classify-Remote {
+  param(
+    [string]$Remote,
+    [string[]]$Repos
+  )
+
+  if (-not $Remote -or -not $Repos -or -not $Repos[0]) {
+    return "shared"
+  }
+
+  # Get the remote URL
+  $url = ""
+  try {
+    $url = & git -C $Repos[0] remote get-url $Remote 2>$null
+  } catch { $url = "" }
+  if (-not $url) {
+    return "shared"
+  }
+
+  # Personal namespace patterns (case-insensitive match)
+  # Matches: inluck-net/* on any host (github.com, gitee.com, gitlab.com, etc.)
+  # Also matches SSH-style: git@github.com:inluck-net/*
+  $lowerUrl = $url.ToLower()
+
+  # Check for personal namespace pattern: host/username or host:username
+  # Pattern: (github.com|gitee.com|gitlab.com)[/:]inluck-net/
+  if ($lowerUrl -match '(github\.com|gitee\.com|gitlab\.com)[/:]inluck-net/') {
+    return "personal"
+  }
+
+  # Check for generic personal pattern: any host with /inluck-net/ in path
+  if ($lowerUrl -match '/inluck-net/') {
+    return "personal"
+  }
+
+  # Default to shared (safer: strip trailers)
+  return "shared"
+}
+
 function Setup-Branch {
   <#
     If the MASTER has a branch: block, this function:
@@ -1460,6 +1514,25 @@ $branchOk = Setup-Branch -Repos $repos
 if (-not $branchOk) {
   throw "Branch setup failed. Fix the issue and retry."
 }
+
+# Determine remote type for commit trailer policy (Gap 5)
+# Write to .ilk-remote-type so the agent knows whether to include trailers
+$remoteType = "shared"  # default
+$remoteForBranch = ""
+if ($script:BranchName) {
+  # Branch was just set up; get its upstream remote
+  try {
+    $remoteForBranch = & git -C $repos[0] config --get "branch.$($script:BranchName).remote" 2>$null
+  } catch { $remoteForBranch = "" }
+}
+if ($remoteForBranch) {
+  $remoteType = Classify-Remote -Remote $remoteForBranch -Repos $repos
+} else {
+  # No branch block or no upstream; check origin as fallback
+  $remoteType = Classify-Remote -Remote "origin" -Repos $repos
+}
+Write-Host "[runner] remote type: $remoteType (remote: $($remoteForBranch -or 'origin'))"
+Set-Content -Path (Join-Path $ProjectPath ".ilk-remote-type") -Value $remoteType
 
 try {
 
