@@ -47,6 +47,11 @@
 #                        all skill/command linking
 #   --path-bin-dir <dir> target bin directory for the PATH entry
 #                        (default: ~/.local/bin)
+#   --auto-use-ilk-plan  set auto_use_ilk_plan: true in conventions/config.yml
+#                        (the git-propagated opt-in for auto-plan routing)
+#   --only-auto-plan     reconcile ONLY the auto-plan managed block into host
+#                        agent files (no skill/command linking); used by
+#                        /ilk-upgrade after git pull
 #
 # Idempotent: re-running --apply just re-points stale symlinks (e.g.
 # if you moved the repo) and is otherwise a no-op.
@@ -66,6 +71,8 @@ claude_home=""
 install_path=0
 only_path=0
 path_bin_dir=""
+auto_use_ilk_plan=0
+only_auto_plan=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -77,6 +84,8 @@ while [[ $# -gt 0 ]]; do
     --force)        force=1 ;;
     --install-path) install_path=1 ;;
     --only-path)    only_path=1 ;;
+    --auto-use-ilk-plan) auto_use_ilk_plan=1 ;;
+    --only-auto-plan)    only_auto_plan=1 ;;
     --claude-home)
       shift
       if [[ $# -eq 0 ]]; then
@@ -124,6 +133,46 @@ if [[ -n "$claude_home" ]]; then
     *)  claude_home="$(pwd)/$claude_home" ;;
   esac
 fi
+
+# --- auto-plan routing helpers ------------------------------------------------
+
+# Read the auto_use_ilk_plan boolean from conventions/config.yml.
+# Prints "true" or "false"; defaults to "false" if the key is absent.
+read_auto_plan_pref() {
+  local cfg="$REPO_ROOT/conventions/config.yml"
+  if [[ -f "$cfg" ]] && grep -q '^auto_use_ilk_plan:\s*true' "$cfg"; then
+    echo "true"
+  else
+    echo "false"
+  fi
+}
+
+# Set auto_use_ilk_plan in conventions/config.yml (idempotent).
+# Requires the file to already exist (created in step 0).
+set_auto_plan_pref() {
+  local cfg="$REPO_ROOT/conventions/config.yml"
+  local val="$1"  # true or false
+  if [[ ! -f "$cfg" ]]; then
+    echo "error: conventions/config.yml not found" >&2
+    return 1
+  fi
+  # Portable sed: GNU and BSD both accept this form for a simple substitution.
+  sed -i.bak "s/^auto_use_ilk_plan:.*/auto_use_ilk_plan: ${val}/" "$cfg"
+  rm -f "${cfg}.bak"
+}
+
+# Render the managed block content: marker-wrapped contents of
+# conventions/auto-plan-routing.md.  Prints to stdout.
+render_auto_plan_block() {
+  local snippet="$REPO_ROOT/conventions/auto-plan-routing.md"
+  if [[ ! -f "$snippet" ]]; then
+    echo "error: conventions/auto-plan-routing.md not found" >&2
+    return 1
+  fi
+  echo "<!-- ilk:auto-plan:start -->"
+  cat "$snippet"
+  echo "<!-- ilk:auto-plan:end -->"
+}
 
 if [[ ! -d "$SKILLS_SRC" ]]; then
   echo "error: cannot find skills/ under repo root: $REPO_ROOT" >&2
@@ -366,6 +415,25 @@ esac
 # --only-path: install ONLY the PATH entry, skip all skill/command linking
 if [[ $only_path -eq 1 ]]; then
   install_path_entry "$path_bin_dir"
+  exit $?
+fi
+
+# --auto-use-ilk-plan: set the committed preference to true (then continue
+# to the normal plan/apply flow so the block reconcile happens in the same run).
+if [[ $auto_use_ilk_plan -eq 1 ]]; then
+  if [[ $apply -eq 1 ]]; then
+    set_auto_plan_pref "true"
+    echo "Set auto_use_ilk_plan: true in conventions/config.yml"
+  else
+    echo "(dry-run: would set auto_use_ilk_plan: true in conventions/config.yml)"
+  fi
+fi
+
+# --only-auto-plan: reconcile ONLY the auto-plan managed block (skip all
+# skill/command linking).  Used by /ilk-upgrade to refresh the block after
+# a git pull without touching symlinks.
+if [[ $only_auto_plan -eq 1 ]]; then
+  reconcile_auto_plan
   exit $?
 fi
 
