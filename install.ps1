@@ -63,6 +63,15 @@
 .PARAMETER PathBinDir
   Target bin directory for the PATH entry. Default: $HOME\bin.
 
+.PARAMETER AutoUseIlkPlan
+  Set auto_use_ilk_plan: true in conventions\config.yml (the
+  git-propagated opt-in for auto-plan routing). Implies the managed
+  block will be reconciled in the same run.
+
+.PARAMETER OnlyAutoPlan
+  Reconcile ONLY the auto-plan managed block into host agent files
+  (no skill/command linking). Used by /ilk-upgrade after git pull.
+
 .EXAMPLE
   .\install.ps1
   Dry run from the repo root.
@@ -106,7 +115,9 @@ param(
   [switch]$Force,
   [switch]$InstallPath,
   [switch]$OnlyPath,
-  [string]$PathBinDir
+  [string]$PathBinDir,
+  [switch]$AutoUseIlkPlan,
+  [switch]$OnlyAutoPlan
 )
 
 $ErrorActionPreference = "Stop"
@@ -345,6 +356,188 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$ClaudeWorkerSrc" %*
   }
 }
 
+# ---- auto-plan routing helpers -----------------------------------------------
+
+function Read-AutoPlanPref {
+  <# Read the auto_use_ilk_plan boolean from conventions\config.yml.
+     Returns $true or $false; defaults to $false if the key is absent. #>
+  $cfg = Join-Path $RepoRoot "conventions\config.yml"
+  if (Test-Path $cfg) {
+    $content = Get-Content -LiteralPath $cfg -Raw -ErrorAction SilentlyContinue
+    if ($content -match 'auto_use_ilk_plan:\s*true') { return $true }
+  }
+  return $false
+}
+
+function Set-AutoPlanPref {
+  <# Set auto_use_ilk_plan in conventions\config.yml (idempotent). #>
+  param([bool]$Value)
+  $cfg = Join-Path $RepoRoot "conventions\config.yml"
+  if (-not (Test-Path $cfg)) {
+    throw "conventions\config.yml not found"
+  }
+  $content = Get-Content -LiteralPath $cfg -Raw
+  $content = $content -replace 'auto_use_ilk_plan:.*', "auto_use_ilk_plan: $Value"
+  Set-Content -LiteralPath $cfg -Value $content -Encoding ascii -NoNewline
+}
+
+function Render-AutoPlanBlock {
+  <# Render the managed block content: marker-wrapped contents of
+     conventions\auto-plan-routing.md.  Returns a string. #>
+  $snippet = Join-Path $RepoRoot "conventions\auto-plan-routing.md"
+  if (-not (Test-Path $snippet)) {
+    throw "conventions\auto-plan-routing.md not found"
+  }
+  $body = Get-Content -LiteralPath $snippet -Raw
+  return "<!-- ilk:auto-plan:start -->`n$body<!-- ilk:auto-plan:end -->"
+}
+
+function Upsert-Block {
+  <# Insert-or-replace a delimited block in a file (idempotent).
+     If markers exist, replaces block between them. Otherwise appends. #>
+  param([string]$File, [string]$StartMarker, [string]$EndMarker, [string]$Block)
+  $parent = Split-Path -Parent $File
+  if (-not (Test-Path $parent)) {
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+  }
+  if (Test-Path $File) {
+    $lines = Get-Content -LiteralPath $File -ErrorAction SilentlyContinue
+    if ($lines -contains $StartMarker) {
+      $out = @()
+      $skip = $false
+      foreach ($line in $lines) {
+        if ($line -eq $StartMarker) { $skip = $true; $out += $Block; continue }
+        if ($line -eq $EndMarker) { $skip = $false; continue }
+        if (-not $skip) { $out += $line }
+      }
+      Set-Content -LiteralPath $File -Value ($out -join "`n") -Encoding ascii -NoNewline
+      return
+    }
+    # No markers — append
+    $existing = Get-Content -LiteralPath $File -Raw -ErrorAction SilentlyContinue
+    if ($existing -and $existing.Trim().Length -gt 0) {
+      Add-Content -LiteralPath $File -Value "`n$Block" -Encoding ascii
+    } else {
+      Set-Content -LiteralPath $File -Value $Block -Encoding ascii -NoNewline
+    }
+  } else {
+    Set-Content -LiteralPath $File -Value $Block -Encoding ascii -NoNewline
+  }
+}
+
+function Strip-Block {
+  <# Strip a delimited block from a file (inclusive of markers).
+     Leaves surrounding content byte-for-byte intact. #>
+  param([string]$File, [string]$StartMarker, [string]$EndMarker)
+  if (-not (Test-Path $File)) { return }
+  $lines = Get-Content -LiteralPath $File -ErrorAction SilentlyContinue
+  if (-not ($lines -contains $StartMarker)) { return }
+  $out = @()
+  $skip = $false
+  foreach ($line in $lines) {
+    if ($line -eq $StartMarker) { $skip = $true; continue }
+    if ($line -eq $EndMarker) { $skip = $false; continue }
+    if (-not $skip) { $out += $line }
+  }
+  Set-Content -LiteralPath $File -Value ($out -join "`n") -Encoding ascii -NoNewline
+}
+
+function Reconcile-AutoPlan {
+  <# Reconcile the auto-plan managed block into each host agent's
+     user-global instructions.  Respects -Apply, -OnlyCursor/Claude/Codex,
+     and the committed preference. #>
+  $pref = Read-AutoPlanPref
+  $mode = if ($Apply) { "APPLY" } else { "DRY-RUN" }
+
+  Write-Host "=== auto-plan reconcile ($mode) ==="
+  Write-Host "preference: auto_use_ilk_plan=$pref"
+
+  $block = $null
+  if ($pref) {
+    $block = Render-AutoPlanBlock
+  }
+
+  $startMarker = "<!-- ilk:auto-plan:start -->"
+  $endMarker = "<!-- ilk:auto-plan:end -->"
+
+  # Determine which homes to reconcile into
+  $homes = @()
+  $homeNames = @()
+  if (-not $anyOnly -or $OnlyCursor) {
+    $homes += $HOME; $homeNames += "Cursor"
+  }
+  if (-not $anyOnly -or $OnlyClaude) {
+    if ($ClaudeHome) {
+      $homes += $ClaudeHome; $homeNames += "Claude Code [$ClaudeHome]"
+    } else {
+      $homes += $HOME; $homeNames += "Claude Code"
+    }
+  }
+  if (-not $anyOnly -or $OnlyCodex) {
+    $homes += $HOME; $homeNames += "Codex"
+  }
+
+  # Reconcile shared files (CLAUDE.md, AGENTS.md)
+  $sharedFiles = @()
+  $sharedLabels = @()
+  for ($i = 0; $i -lt $homes.Count; $i++) {
+    $name = $homeNames[$i]
+    switch -Wildcard ($name) {
+      "Cursor*"   { } # Cursor uses .mdc, not a shared file
+      "Claude*"   { $sharedFiles += (Join-Path $homes[$i] ".claude\CLAUDE.md"); $sharedLabels += $name }
+      "Codex*"    { $sharedFiles += (Join-Path $homes[$i] ".codex\AGENTS.md"); $sharedLabels += $name }
+    }
+  }
+
+  for ($i = 0; $i -lt $sharedFiles.Count; $i++) {
+    $f = $sharedFiles[$i]
+    $label = $sharedLabels[$i]
+    if ($pref) {
+      if ($Apply) {
+        Upsert-Block -File $f -StartMarker $startMarker -EndMarker $endMarker -Block $block
+        Write-Host "[ok] reconciled block -> $f ($label)" -ForegroundColor Green
+      } else {
+        Write-Host "(dry-run: would reconcile block -> $f ($label))"
+      }
+    } else {
+      if ((Test-Path $f) -and (Get-Content -LiteralPath $f -ErrorAction SilentlyContinue) -contains $startMarker) {
+        if ($Apply) {
+          Strip-Block -File $f -StartMarker $startMarker -EndMarker $endMarker
+          Write-Host "[ok] removed block from $f ($label)" -ForegroundColor Green
+        } else {
+          Write-Host "(dry-run: would remove block from $f ($label))"
+        }
+      }
+    }
+  }
+
+  # Reconcile dedicated .mdc file for Cursor
+  if (-not $anyOnly -or $OnlyCursor) {
+    $mdc = Join-Path $HOME ".cursor\rules\ilk-auto-plan.mdc"
+    if ($pref) {
+      if ($Apply) {
+        $mdcParent = Split-Path -Parent $mdc
+        if (-not (Test-Path $mdcParent)) {
+          New-Item -ItemType Directory -Path $mdcParent -Force | Out-Null
+        }
+        Copy-Item -LiteralPath (Join-Path $RepoRoot "conventions\auto-plan-routing.md") -Destination $mdc -Force
+        Write-Host "[ok] wrote $mdc (Cursor)" -ForegroundColor Green
+      } else {
+        Write-Host "(dry-run: would write $mdc (Cursor))"
+      }
+    } else {
+      if (Test-Path $mdc) {
+        if ($Apply) {
+          Remove-Item -LiteralPath $mdc -Force
+          Write-Host "[ok] deleted $mdc (Cursor)" -ForegroundColor Green
+        } else {
+          Write-Host "(dry-run: would delete $mdc (Cursor))"
+        }
+      }
+    }
+  }
+}
+
 # Default bin dir for PATH entry
 if (-not $PathBinDir) {
   $PathBinDir = Join-Path $HOME "bin"
@@ -363,6 +556,25 @@ if (-not [System.IO.Path]::IsPathRooted($PathBinDir)) {
 # --OnlyPath: install ONLY the PATH entry, skip all skill/command linking
 if ($OnlyPath) {
   Install-PathEntry -BinDir $PathBinDir
+  return
+}
+
+# --AutoUseIlkPlan: set the committed preference to true (then continue
+# to the normal plan/apply flow so the block reconcile happens in the same run).
+if ($AutoUseIlkPlan) {
+  if ($Apply) {
+    Set-AutoPlanPref -Value $true
+    Write-Host "Set auto_use_ilk_plan: true in conventions\config.yml"
+  } else {
+    Write-Host "(dry-run: would set auto_use_ilk_plan: true in conventions\config.yml)"
+  }
+}
+
+# --OnlyAutoPlan: reconcile ONLY the auto-plan managed block (skip all
+# skill/command linking).  Used by /ilk-upgrade to refresh the block after
+# a git pull without touching symlinks.
+if ($OnlyAutoPlan) {
+  Reconcile-AutoPlan
   return
 }
 
@@ -488,4 +700,10 @@ if ($InstallPath) {
   Install-PathEntry -BinDir $PathBinDir
 }
 
+# Auto-plan managed block reconcile (always runs in the normal -Apply path;
+# idempotent — no-op when the preference is off and no stale block exists).
+Write-Host ""
+Reconcile-AutoPlan
+
+Write-Host ""
 Write-Host "Done." -ForegroundColor Green
