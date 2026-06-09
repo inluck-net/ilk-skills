@@ -450,8 +450,9 @@ per-step `local_checks` yaml block. Warn on each occurrence:
   §8, field-log bugs #1/#2); the last step must run the FULL suite.
 - **Whole-project-only compile gate** (decomposition-principles §16) —
   a sub-plan whose ONLY `local_check` is a whole-project compile
-  command (`tsc`, `mypy`, `cargo build`, `npm run build`, `bun run
-  typecheck`) with no change-scoped runtime smoke. This is a warning:
+  command (`tsc`, `mypy`, `cargo build`, `npm run build`,
+  `bun run typecheck`) with no change-scoped runtime smoke. This is a
+  warning:
   the planner should add a targeted smoke or document why one is
   impossible. If a whole-project gate is unavoidable, the planner must
   confirm it's green on the BASE commit (baseline) to avoid
