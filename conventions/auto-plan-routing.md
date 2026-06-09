@@ -15,10 +15,13 @@ the direct-implement conditions below applies.
 - The work spans multiple modules or layers (e.g. API + UI + migration).
 - The user explicitly says "plan this" or "use ilk-plan".
 
-## Direct-implement (skip /ilk-plan) when ALL of these are true
+## Direct-implement (skip /ilk-plan)
+
+The route-to-/ilk-plan conditions above take precedence: if ANY of them
+holds, plan. Otherwise, direct-implement when ANY of these holds:
 
 - The task is single-shot and completable right now in one session.
-- The scope is still exploratory (spike, prototype, investigation).
+- The scope is exploratory (spike, prototype, investigation).
 - The deliverable is prose, docs, or config (no code logic changes).
 - The user explicitly says "just do it" or "skip planning".
 

@@ -8,4 +8,4 @@
 # install.ps1 -Apply) so the managed block is written into each host
 # agent's user-global instructions.
 
-auto_use_ilk_plan: false
+auto_use_ilk_plan: true
