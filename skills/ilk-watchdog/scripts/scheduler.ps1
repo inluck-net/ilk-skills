@@ -128,7 +128,25 @@ function Test-RunningPid {
     return $false
   }
   if ($procId -le 0) { return $false }
-  return [bool](Get-Process -Id $procId -ErrorAction SilentlyContinue)
+  $alive = [bool](Get-Process -Id $procId -ErrorAction SilentlyContinue)
+  if (-not $alive) { return $false }
+
+  # Stale-sentinel cross-check: even if the pid is alive, a terminal
+  # last-exit.json means the loop already finished.  The lingering
+  # -NoExit shell keeps the pid alive past the loop's real exit.
+  $sentinelFile = Join-Path $ProjectDataPath 'runtime\last-exit.json'
+  if (Test-Path $sentinelFile) {
+    try {
+      $sentinel = Get-Content $sentinelFile -Raw -ErrorAction Stop
+      if ($sentinel) {
+        $obj = $sentinel | ConvertFrom-Json -ErrorAction Stop
+        if ($obj.state -and $obj.state -ne 'running') {
+          return $false  # terminal state — project is free
+        }
+      }
+    } catch {}
+  }
+  return $true
 }
 
 function Get-LiveSentinelCount {
