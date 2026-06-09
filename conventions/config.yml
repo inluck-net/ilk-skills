@@ -1,0 +1,11 @@
+# conventions/config.yml
+# Git-propagated opt-in switch for auto-plan routing.
+#
+# When true, host agents route implementation work to /ilk-plan by default
+# (see conventions/auto-plan-routing.md for the full heuristic).
+#
+# To enable: set to true, commit, then re-run install.sh --apply (or
+# install.ps1 -Apply) so the managed block is written into each host
+# agent's user-global instructions.
+
+auto_use_ilk_plan: false
