@@ -70,6 +70,7 @@ from plan_status import (  # noqa: E402
     extract_subplan_files,
     master_has_nonshipped,
     parse_frontmatter,
+    reconcile_master_status,
 )
 
 
@@ -155,6 +156,14 @@ def scan_projects() -> list[dict]:
         masters = sorted(plans_dir.glob("MASTER-*.md"))
         if not masters:
             continue
+
+        # Reconcile pass: auto-flip any all-shipped master to status: shipped.
+        # Idempotent + best-effort (tolerates concurrent writes).
+        for m in masters:
+            try:
+                reconcile_master_status(m, plans_dir)
+            except OSError:
+                pass
 
         # --- pass 1: classify masters by status + runnable check ---
         active_ts: list[datetime] = []
