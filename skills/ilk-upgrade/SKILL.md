@@ -115,7 +115,11 @@ Effect:
 2. Runs `git pull --ff-only` (fast-forward only — refuses merges).
 3. Detects if `install.sh` / `install.ps1` changed and re-runs the
    installer automatically when needed.
-4. Reports: commit log since last pull, files changed, installer
+4. Reconciles the auto-plan managed block (`install.sh --only-auto-plan --apply` /
+   `install.ps1 -OnlyAutoPlan -Apply`) unconditionally after every successful
+   pull. This ensures `conventions/config.yml` preferences propagate to the
+   host agent's user-global instructions on every upgrade.
+5. Reports: commit log since last pull, files changed, installer
    outcome.
 
 ### W3. Force apply (skip live-loop guard)

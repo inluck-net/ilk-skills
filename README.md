@@ -255,6 +255,46 @@ git pull --ff-only
 ./install.ps1 -Apply
 ```
 
+## Auto-use-ilk-plan routing
+
+The `--auto-use-ilk-plan` / `-AutoUseIlkPlan` flag installs a routing rule
+into each host agent's user-global instructions, so every new session
+defaults to routing implementation work to `/ilk-plan` instead of
+direct-implementing.
+
+**What it manages** (three files, all user-global):
+
+| Host | File | Type |
+|---|---|---|
+| Claude Code | `~/.claude/CLAUDE.md` | delimited managed block |
+| Codex | `~/.codex/AGENTS.md` | delimited managed block |
+| Cursor | `~/.cursor/rules/ilk-auto-plan.mdc` | dedicated owned file |
+
+**Enable it:**
+
+```bash
+# macOS / Linux
+./install.sh --auto-use-ilk-plan --apply
+
+# Windows
+./install.ps1 -AutoUseIlkPlan -Apply
+```
+
+**Disable it** (removes the block/file from all hosts):
+
+```bash
+# macOS / Linux — edit conventions/config.yml, set auto_use_ilk_plan: false, then:
+./install.sh --only-auto-plan --apply
+
+# Windows
+./install.ps1 -OnlyAutoPlan -Apply
+```
+
+**Cross-machine propagation:** commit `conventions/config.yml` with
+`auto_use_ilk_plan: true`, push, then on each machine run
+`/ilk-upgrade --apply`. The upgrade reconciles the block automatically
+after every successful pull — zero per-machine steps needed.
+
 ## Layout
 
 ```
