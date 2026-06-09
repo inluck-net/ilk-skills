@@ -113,6 +113,16 @@ except ImportError:
 # How many lines of the last problematic iter's log to embed in the report.
 TAIL_LINES = 80
 
+# Import improvement_backlog for upstream-candidate emission (step 2 of
+# selfimprove-backlog-and-feedback-candidates sub-plan).
+_COLLECT_DIR = Path(__file__).resolve().parent
+if str(_COLLECT_DIR) not in sys.path:
+    sys.path.insert(0, str(_COLLECT_DIR))
+try:
+    import improvement_backlog as _improvement_backlog
+except ImportError:
+    _improvement_backlog = None  # type: ignore
+
 
 # ---------- project resolution (mirror launcher logic) -----------------------
 
@@ -812,6 +822,77 @@ def classify(
             facts["unverified_sub_plans"] = unverified
 
     return label, facts
+
+
+# ---------- upstream-candidate emission --------------------------------------
+
+# Classification labels that indicate a toolkit/process gap (not project-local).
+# Conservative list — only clear toolkit signals where the sub-plan's
+# local_checks or the loop machinery itself is the likely root cause.
+_TOOLKIT_SIGNAL_LABELS = frozenset({
+    "local-checks-stuck",  # sub-plan AC may be wrong/over-specified
+})
+
+
+def maybe_emit_upstream_candidate(
+    label: str,
+    facts: dict[str, Any],
+    project_path: Path,
+    run_id: str,
+    iters: list[dict],
+) -> None:
+    """Emit an upstream candidate when the classification is a toolkit signal.
+
+    Conservative: only fires for labels in ``_TOOLKIT_SIGNAL_LABELS``.
+    Never emits for project-local findings.
+    """
+    if _improvement_backlog is None:
+        return
+    if label not in _TOOLKIT_SIGNAL_LABELS:
+        return
+
+    last = iters[-1] if iters else {}
+    evidence = {
+        "project": str(project_path),
+        "run_id": run_id,
+        "iter_at_stop": last.get("iteration"),
+    }
+    # Include failing check commands if available
+    fail_checks = []
+    for r in iters[-3:]:
+        lc = r.get("local_checks")
+        if isinstance(lc, dict):
+            lc = [lc]
+        if isinstance(lc, list):
+            for c in lc:
+                if isinstance(c, dict) and c.get("outcome") in ("fail", "error"):
+                    cmd = c.get("command", "")
+                    if cmd and cmd not in fail_checks:
+                        fail_checks.append(cmd)
+    if fail_checks:
+        evidence["failing_checks"] = fail_checks
+
+    gap_desc = (
+        f"Loop classified as '{label}': agent kept committing but "
+        f"local_checks kept failing (fail_iters_in_window="
+        f"{facts.get('fail_iters_in_window')}, "
+        f"pass_iters_in_window={facts.get('pass_iters_in_window')}). "
+        f"Sub-plan AC may be wrong/over-specified or there's a real bug."
+    )
+
+    try:
+        _improvement_backlog.add_candidate(
+            title=f"local-checks-stuck: {project_path.name}",
+            kind="toolkit",
+            gap=gap_desc,
+            evidence=evidence,
+            proposed_fix="Review the sub-plan's local_checks AC for achievability; consider splitting the step or adjusting the check.",
+            leverage="medium",
+            severity="high",
+        )
+    except Exception:
+        # Non-fatal — don't break postmortem generation
+        pass
 
 
 # ---------- recommendations --------------------------------------------------
@@ -1532,6 +1613,11 @@ def main() -> int:
     iters = by_run[target_run]
 
     label, facts = classify(iters, last_launch, project_path)
+
+    # Emit upstream candidate when the classification is a toolkit signal
+    # (conservative — only clear toolkit gaps, never project-local findings).
+    maybe_emit_upstream_candidate(label, facts, project_path, target_run, iters)
+
     rec_max, rec_to, rationale = recommend_params(label, iters, last_launch)
     last_log = iters[-1].get("log") if iters else None
     if not last_log and iters:
