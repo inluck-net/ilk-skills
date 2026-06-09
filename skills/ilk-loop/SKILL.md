@@ -340,6 +340,30 @@ sub-plan ship:
 `<type>` follows conventional-commits (feat / fix / chore / refactor / docs /
 test / build / ci / perf / style).
 
+## PR / issue body hygiene (shared repos)
+
+When authoring a PR or issue body for a **shared repo** (any repo that is
+not a personal single-user project), follow these steps **before push**:
+
+1. **Use the template.** Start from
+   `<skill-root>/ilk-loop/templates/pr-body-template.md`. It has
+   **What / Why / Testing** sections only — no "How it was built".
+   Testing phrases report *outcomes* ("typecheck clean; 42 tests pass"),
+   not process ("the loop ran local_checks").
+
+2. **Run the scrub gate.** Pipe the draft body through
+   `<skill-root>/ilk-loop/scripts/scrub-github-artifact.sh`:
+   ```bash
+   cat draft-body.md | bash <skill-root>/ilk-loop/scripts/scrub-github-artifact.sh /dev/stdin
+   ```
+   If it exits non-zero, the body contains toolchain vocabulary.
+   **Rewrite the offending lines** — do NOT push a body that fails scrub.
+
+3. **Scope boundary.** The gate applies to reviewer-facing artifacts
+   (PR/issue bodies, commit messages on shared repos). Internal plan
+   files, `~/.ilk-data`, and personal `inluck-net/*` history keep the
+   vocabulary — do NOT scrub those.
+
 ## Common gotchas
 
 - **Don't run the loop from outside a project.** `loop_status.py` will
