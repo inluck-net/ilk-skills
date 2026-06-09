@@ -12,6 +12,7 @@ EXPECTED=(
   ilk-run.md
   ilk-status.md
   ilk-upgrade.md
+  ilk-self-improve.md
 )
 
 PASS=0
