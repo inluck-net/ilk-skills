@@ -467,3 +467,64 @@ cycles on the integration / lifecycle / platform-specific layer.
 - **§5 / §9** — existing P5 runtime failure-mode checklist; sub-plan #2
   fleshes it out with the concrete 6-item content from the cold-start case
   study.
+
+---
+
+## 15. Autonomy tiers
+
+Every change the loop can make falls into one of three autonomy tiers.
+The tier determines who approves, how the master plan is configured, and
+whether the scheduler can dispatch it.
+
+### The three tiers
+
+- **Tier 1 — agent-auto-apply.** Low-risk additive changes: docs,
+  heuristics, QC lints, fixture additions, test scaffolding. The agent
+  plans and applies without human gate; the loop ships on `local_checks`
+  pass alone. No `supervised_only`, no `draft` hold. Trust comes from the
+  change being additive (new docs/QC can't break existing behavior) and
+  from `verification_tier: loop-verified` gates catching regressions.
+
+- **Tier 2 — agent-plans-human-approve.** Behavior changes to loop
+  infrastructure: runner, launcher, scheduler, feedback, adapter. The
+  agent plans, the master is `draft` + `supervised_only`, and the human
+  reviews each sub-plan before the loop runs it. This is the default for
+  any sub-plan whose `scope_paths` modifies runtime behavior.
+
+- **Tier 3 — human-only.** Safety-model changes, contested design
+  decisions, external-facing API contracts. The human drives; the agent
+  assists on request. No autonomous dispatch.
+
+### How to assign a tier
+
+1. Walk the sub-plan's `scope_paths`. If any file is loop infrastructure
+   (`loop_status.py`, `scheduler_scan.py`, `promote_next_master.py`,
+   `plan_status.py`, `scheduler.*`, runner scripts, launcher scripts,
+   feedback scripts, adapter commands) and the change modifies runtime
+   behavior → **Tier 2**.
+2. If the change is purely additive (new docs, new QC lint, new fixture,
+   new test file) and touches no runtime path → **Tier 1**.
+3. If the change affects safety model, external API contract, or is
+   contested → **Tier 3**.
+
+When a batch mixes tiers, the master plan's "Rollout strategy" section
+must list each sub-plan's tier. The highest tier in the batch governs the
+master's `supervised_only` setting (any Tier 2 sub-plan → master is
+`supervised_only`).
+
+### Relationship to verification tiers (§12)
+
+Autonomy tier and verification tier are orthogonal:
+- A Tier 1 sub-plan (auto-apply) can be `loop-verified` (docs gated by
+  grep) or `compile-only` (heuristic only).
+- A Tier 2 sub-plan (human-approve) is typically `loop-verified` with
+  runtime `local_checks`, but may be `compile-only` if the change is
+  infra config.
+
+### Cross-references
+
+- **§12 (Verification tier)** — what each verification level proves.
+- **§13 (Bias toward autonomy)** — the general principle this tier
+  system operationalizes.
+- **§8 (local_checks anti-patterns)** — gates that even Tier 1
+  auto-apply must pass.
