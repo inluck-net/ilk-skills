@@ -46,6 +46,7 @@ CLI_DRY_RUN=false
 CLI_ENGINE=""
 CLI_WORKER_HOME=""
 CLI_RUN_LOCAL_CHECKS=false
+CLI_NO_LOCAL_CHECKS=false
 
 # Resolved values
 RESOLVED_PATH=""
@@ -475,6 +476,18 @@ print(out_path)
 PYEOF
 }
 
+queued_subplans_declare_local_checks() {
+  # Return 0 (true) iff any non-shipped sub-plan of the active master
+  # declares local_checks in its frontmatter or per-step blocks.
+  # Used to default --run-local-checks ON when gates exist.
+  local project_path="$1"
+  local detector="${LAUNCHER_DIR}/scripts/_detect_local_checks.py"
+  if [[ ! -f "$detector" ]]; then
+    return 1
+  fi
+  python3 "$detector" "$project_path" >/dev/null 2>&1
+}
+
 get_pid_file_path() {
   local project_path="$1"
   local launcher_dir
@@ -720,6 +733,8 @@ Options:
                                (default: ~/.claude-worker; also CLAUDE_WORKER_HOME).
   --run-local-checks           Forward --run-local-checks to the runner so
                                local_checks fire after each productive iteration.
+  --no-local-checks            Suppress --run-local-checks even when queued
+                               sub-plans declare local_checks (opt-out).
   -h, --help                   Show this help and exit.
 EOF
 }
@@ -775,6 +790,10 @@ parse_args() {
         CLI_RUN_LOCAL_CHECKS=true
         shift
         ;;
+      --no-local-checks)
+        CLI_NO_LOCAL_CHECKS=true
+        shift
+        ;;
       -h|--help)
         usage
         exit 0
@@ -792,6 +811,11 @@ parse_args() {
 
 main() {
   parse_args "$@"
+
+  if [[ "$CLI_RUN_LOCAL_CHECKS" == "true" && "$CLI_NO_LOCAL_CHECKS" == "true" ]]; then
+    echo "Error: --run-local-checks and --no-local-checks are mutually exclusive." >&2
+    exit 1
+  fi
 
   if [[ "$CLI_ALL" == true ]]; then
     if [[ ! -f "$PROJECTS_JSON" ]]; then
@@ -871,6 +895,15 @@ for p in d:
   engine=$(resolve_engine "$RESOLVED_PATH" "$CLI_ENGINE")
   echo "[$RESOLVED_NAME] WorkerEngine: $engine"
 
+  # Auto-detect: default --run-local-checks ON when queued sub-plans declare gates.
+  # Explicit --run-local-checks or --no-local-checks on the CLI always wins.
+  if [[ "$CLI_RUN_LOCAL_CHECKS" == "false" && "$CLI_NO_LOCAL_CHECKS" != "true" ]]; then
+    if queued_subplans_declare_local_checks "$RESOLVED_PATH"; then
+      CLI_RUN_LOCAL_CHECKS=true
+      echo "[$RESOLVED_NAME] Gates: ON (queued sub-plan declares local_checks)"
+    fi
+  fi
+
   # MCP filtering
   resolve_mcp_filter "$RESOLVED_PATH"
   local mcp_config_path=""
@@ -883,6 +916,11 @@ for p in d:
 
   if [[ "$CLI_DRY_RUN" == true ]]; then
     echo "[$RESOLVED_NAME] DRY RUN — would launch with the above params."
+    if [[ "$CLI_RUN_LOCAL_CHECKS" == "true" ]]; then
+      echo "[$RESOLVED_NAME] LocalChecks: ON"
+    else
+      echo "[$RESOLVED_NAME] LocalChecks: OFF"
+    fi
     if [[ "$engine" == "claude-worker" ]]; then
       local resolved_wh="$CLI_WORKER_HOME"
       if [[ -z "$resolved_wh" && -n "${CLAUDE_WORKER_HOME:-}" ]]; then
