@@ -103,3 +103,56 @@ def master_has_nonshipped(master_path: Path, plans_dir: Path) -> bool:
 def is_master_all_shipped(master_path: Path, plans_dir: Path) -> bool:
     """Inverse of ``master_has_nonshipped``."""
     return not master_has_nonshipped(master_path, plans_dir)
+
+
+def reconcile_master_status(master_path: Path, plans_dir: Path) -> bool:
+    """Persist ``status: shipped`` when all registered sub-plans are shipped.
+
+    Reads *master_path*, checks via ``is_master_all_shipped``, and if the
+    stored status is not already ``shipped``, rewrites **only** the
+    ``status:`` line inside the front-matter block.  The rest of the file
+    (registry table, body) is byte-for-byte unchanged.
+
+    Returns True if the file was modified (status flipped), False if no
+    change was needed (already shipped or not all sub-plans shipped).
+
+    Idempotent: safe to call repeatedly — an already-``shipped`` master
+    is a no-op with no rewrite churn.
+    """
+    if not is_master_all_shipped(master_path, plans_dir):
+        return False
+
+    text = master_path.read_text(encoding="utf-8-sig")
+
+    # Already shipped — nothing to do.
+    fm = parse_frontmatter(text)
+    if fm.get("status", "").strip().lower() == "shipped":
+        return False
+
+    # Locate the front-matter block boundaries.
+    if not text.startswith("---"):
+        return False
+    fm_end = text.find("\n---", 3)
+    if fm_end < 0:
+        return False
+
+    frontmatter = text[3:fm_end]
+    rest = text[fm_end:]  # includes the closing --- and everything after
+
+    # Replace only the status: line inside frontmatter.
+    new_fm_lines: list[str] = []
+    replaced = False
+    for line in frontmatter.splitlines(keepends=True):
+        if re.match(r"^\s*status\s*:", line):
+            new_fm_lines.append("status: shipped\n")
+            replaced = True
+        else:
+            new_fm_lines.append(line)
+
+    if not replaced:
+        # No status line in frontmatter — add one at the end.
+        new_fm_lines.append("status: shipped\n")
+
+    new_text = "---" + "".join(new_fm_lines) + rest
+    master_path.write_text(new_text, encoding="utf-8")
+    return True
