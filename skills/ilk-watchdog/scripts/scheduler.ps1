@@ -75,6 +75,7 @@ $PromoteScript    = Join-Path $SkillRoot 'ilk-loop\scripts\promote_next_master.p
 $LaunchScript     = Join-Path $SkillRoot 'ilk-launcher\scripts\launch.ps1'
 $BootstrapScript  = Join-Path $SkillRoot '..\tools\claude-worker\bootstrap.ps1'
 $NotifyPy         = Join-Path $SkillRoot 'ilk-watchdog\scripts\ilk_notify.py'
+$WatchdogPs1      = Join-Path $PSScriptRoot 'watchdog.ps1'
 $SchedulerLogDir  = Join-Path $HOME '.ilk-data\logs'
 $SchedulerLogFile = Join-Path $SchedulerLogDir 'scheduler.log'
 
@@ -413,9 +414,10 @@ function Run-Scheduler {
       # dispatch into slot home
       if ($DryRun -and $Once) {
         Write-SchedulerLog -Decision 'dispatch' -Key "$key (slot $slotId)"
-        @{ decision = 'dispatch'; key = $key; slot = $slotId; command = "launch.ps1 -ProjectPath '$repo' -Engine claude-worker -WorkerHome '$slotHome'$(if ($runLocalChecksFlag) { ' -RunLocalChecks' })" } | ConvertTo-Json -Compress
+        @{ decision = 'dispatch'; key = $key; slot = $slotId; command = "launch.ps1 -ProjectPath '$repo' -Engine claude-worker -WorkerHome '$slotHome'$(if ($runLocalChecksFlag) { ' -RunLocalChecks' })"; watchdog = "watchdog.ps1 -ProjectPath '$repo' -Detach" } | ConvertTo-Json -Compress
       } elseif ($DryRun) {
         Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] DRY-RUN: would dispatch $key (slot $slotId) via $LaunchScript -ProjectPath '$repo' -Engine claude-worker -WorkerHome '$slotHome'"
+        Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] DRY-RUN: would attach watchdog via $WatchdogPs1 -ProjectPath '$repo' -Detach"
       } else {
         # Ensure slot home exists (lazy-clone from base worker home).
         try {
@@ -430,6 +432,22 @@ function Run-Scheduler {
           Invoke-IlkNotify -Event 'dispatch' -Project $key -Detail "slot $slotId"
           Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatched $key (slot $slotId, total: $dispatchCount)"
           Write-SchedulerLog -Decision 'dispatch' -Key "$key (slot $slotId)"
+          # Attach watchdog for this dispatch (supervises the run: classify-on-stop,
+          # resume whitelist / block blacklist).  The watchdog has its own
+          # double-spawn guard (watchdog.pid) so this is idempotent.
+          try {
+            $watchArgs = @(
+              '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $WatchdogPs1,
+              '-ProjectPath', $repo,
+              '-PollMin', '5',
+              '-MaxRestarts', '5',
+              '-Detach'
+            )
+            & powershell @watchArgs 2>$null | Out-Null
+            Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] watchdog attached for $key"
+          } catch {
+            Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] warning: watchdog spawn failed for $key`: $_"
+          }
         } catch {
           Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatch failed for $key`: $_"
           $blacklistSkip[$key] = (Get-Date).AddMinutes(5)
