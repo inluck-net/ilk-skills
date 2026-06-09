@@ -33,6 +33,11 @@ LOCAL_CHECKS_TIMEOUT_SEC=180
 LOCAL_CHECKS_SCRIPT="${_SKILL_ROOT}/ilk-loop/scripts/run_local_checks.py"
 MCP_CONFIG_PATH=""
 
+# Branch config (parsed from MASTER frontmatter branch: block)
+BRANCH_CREATE_FROM=""
+BRANCH_NAME=""
+BRANCH_MERGE_BACK=false
+
 # Internal state
 RUN_ID=""
 RUN_LOG_DIR=""
@@ -303,6 +308,125 @@ discover_git_repos() {
   if [[ ${#REPOS[@]} -eq 0 ]]; then
     echo "Error: No git repos found at or under $PROJECT_PATH" >&2
     exit 1
+  fi
+}
+
+parse_master_branch_block() {
+  # Parse the branch: block from the active MASTER plan's YAML frontmatter.
+  # Sets BRANCH_CREATE_FROM, BRANCH_NAME, BRANCH_MERGE_BACK.
+  # No-op (all stay empty/default) when no branch: block exists.
+  local resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
+  if [[ ! -f "$resolver" ]]; then
+    return 0
+  fi
+
+  local plans_dir
+  plans_dir=$(python3 "$resolver" --start "$PROJECT_PATH" 2>/dev/null | jq -r '.external_plans_dir // empty') || plans_dir=""
+  if [[ -z "$plans_dir" || ! -d "$plans_dir" ]]; then
+    return 0
+  fi
+
+  # Find the active MASTER file
+  local master_file
+  master_file=$(find "$plans_dir" -maxdepth 1 -name 'MASTER-*.md' ! -name '*.bak' 2>/dev/null | head -n1)
+  if [[ -z "$master_file" || ! -f "$master_file" ]]; then
+    return 0
+  fi
+
+  # Parse branch: block from YAML frontmatter (between --- markers)
+  # Uses python3 to extract create_from, name, merge_back safely.
+  local parsed
+  parsed=$(python3 -c "
+import re, sys, json
+
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+
+# Extract frontmatter between --- markers
+m = re.match(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
+if not m:
+    print('{}')
+    sys.exit(0)
+
+fm = m.group(1)
+
+# Find the branch: block — it may be 'branch: null' or a multi-line mapping.
+# Look for 'branch:' at the start of a line.
+branch_match = re.search(r'^branch:\s*(.*)$', fm, re.MULTILINE)
+if not branch_match:
+    print('{}')
+    sys.exit(0)
+
+rest = branch_match.group(1).strip()
+
+# branch: null or branch: '' => no branch block
+if rest in ('null', 'None', '~', ''):
+    print('{}')
+    sys.exit(0)
+
+# branch: { create_from: ..., name: ..., merge_back: ... } — inline mapping
+if rest.startswith('{'):
+    # Simple inline YAML mapping parse
+    inner = rest.strip('{}')
+    d = {}
+    for part in re.split(r',\s*', inner):
+        if ':' in part:
+            k, v = part.split(':', 1)
+            k = k.strip()
+            v = v.strip().strip('\"').strip(\"'\")
+            if k == 'merge_back':
+                d[k] = v.lower() in ('true', 'yes', '1')
+            else:
+                d[k] = v
+    print(json.dumps(d))
+    sys.exit(0)
+
+# Multi-line mapping: branch: on its own line, followed by indented keys
+# Collect indented lines after 'branch:'
+lines = fm.split('\n')
+in_branch = False
+d = {}
+for line in lines:
+    if re.match(r'^branch:\s*$', line):
+        in_branch = True
+        continue
+    if in_branch:
+        if re.match(r'^\s+', line):
+            kv = re.match(r'^\s+(\w+):\s*(.*)$', line)
+            if kv:
+                k, v = kv.group(1), kv.group(2).strip().strip('\"').strip(\"'\")
+                if k == 'merge_back':
+                    d[k] = v.lower() in ('true', 'yes', '1')
+                else:
+                    d[k] = v
+        else:
+            break
+
+print(json.dumps(d))
+" "$master_file") || parsed="{}"
+
+  if [[ "$parsed" == "{}" || -z "$parsed" ]]; then
+    return 0
+  fi
+
+  BRANCH_CREATE_FROM=$(echo "$parsed" | jq -r '.create_from // empty')
+  BRANCH_NAME=$(echo "$parsed" | jq -r '.name // empty')
+  local merge_raw
+  merge_raw=$(echo "$parsed" | jq -r '.merge_back // empty')
+  if [[ -n "$merge_raw" && "$merge_raw" == "true" ]]; then
+    BRANCH_MERGE_BACK=true
+  else
+    BRANCH_MERGE_BACK=false
+  fi
+
+  # Default create_from to HEAD if branch block exists but create_from is missing
+  if [[ -n "$BRANCH_NAME" && -z "$BRANCH_CREATE_FROM" ]]; then
+    BRANCH_CREATE_FROM="HEAD"
+  fi
+
+  if [[ -n "$BRANCH_NAME" ]]; then
+    echo "[runner] branch block parsed: create_from=$BRANCH_CREATE_FROM name=$BRANCH_NAME merge_back=$BRANCH_MERGE_BACK"
   fi
 }
 
@@ -580,6 +704,9 @@ print_banner() {
   else
     echo "MCP config:     (default -- worker sees user's full MCP registry)"
   fi
+  if [[ -n "$BRANCH_NAME" ]]; then
+    echo "Branch policy:  checkout -B $BRANCH_NAME from $BRANCH_CREATE_FROM (merge_back=$BRANCH_MERGE_BACK)"
+  fi
   echo "Run logs:       $RUN_LOG_DIR"
   echo "JSONL summary:  $JSONL_LOG"
   echo ""
@@ -591,6 +718,7 @@ main() {
   parse_args "$@"
   preflight
   discover_git_repos
+  parse_master_branch_block
   print_banner
 
   # Sentinel setup (state=running)
