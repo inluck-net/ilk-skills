@@ -627,6 +627,41 @@ Watchdog exiting cleanly. Job done.
         return
       }
 
+      # Terminal success-needs-human: shipped-unverified means all sub-plans
+      # shipped but some need manual verification (compile-only / device-manual).
+      # Do NOT relaunch — exit cleanly with a human-readable banner.
+      if ($klass -eq 'shipped-unverified') {
+        Write-Log "shipped-unverified: all sub-plans shipped, some need human verification. No relaunch."
+        Invoke-IlkNotify -Event 'needs-verification' -Project $ProjName -Detail "classification: shipped-unverified"
+        Write-Banner -Title "SHIPPED — NEEDS VERIFICATION" -Body @"
+Project: $ProjName
+Classification: shipped-unverified
+Report: $reportPath
+
+All sub-plans shipped, but some have compile-only or device-manual
+verification tiers. A human + device pass is needed before trusting.
+No auto-relaunch. Read the postmortem for details.
+"@ -Color Yellow
+        return
+      }
+
+      # no-evidence: the run started (sentinel present) but left no usable
+      # JSONL records. Triage — do not relaunch blindly.
+      if ($klass -eq 'no-evidence') {
+        Write-Log "no-evidence: run started but left no usable records. Triage required."
+        Invoke-IlkNotify -Event 'triage' -Project $ProjName -Detail "classification: no-evidence"
+        Write-Banner -Title "NO EVIDENCE — TRIAGE REQUIRED" -Body @"
+Project: $ProjName
+Classification: no-evidence
+Report: $reportPath
+
+The run started (sentinel present) but left no usable JSONL records.
+Possibly crashed before iter 1. Check runner logs and sentinel state.
+No auto-relaunch — triage manually.
+"@ -Color Yellow
+        return
+      }
+
       if ($BlacklistClasses -contains $klass) {
         Invoke-IlkNotify -Event 'blocked' -Project $ProjName -Detail "classification: $klass"
         Write-Banner -Title "BLOCKED — $($klass.ToUpper())" -Body @"
