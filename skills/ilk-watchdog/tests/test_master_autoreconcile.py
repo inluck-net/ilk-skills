@@ -194,3 +194,74 @@ class TestReconcileMasterStatus:
         assert ps.reconcile_master_status(master_path, plans) is False
         fm = ps.parse_frontmatter(master_path.read_text(encoding="utf-8"))
         assert fm["status"] == "queued"
+
+
+class TestMissingSubplanNotFalseShip:
+    """AC-1..AC-4: a missing registered sub-plan file counts as non-shipped."""
+
+    def test_missing_file_prevents_ship(self, tmp_path):
+        """AC-1: registry lists 2 sub-plans, only 1 file exists and shipped
+        → master_has_nonshipped is True (missing file = outstanding work)."""
+        plans = tmp_path / "plans"
+        _write_master(plans, "MASTER-test.md", status="active",
+                      subplans=["2026-06-08-a.md", "2026-06-08-b.md"])
+        # Only create one file — the other is missing on disk.
+        _write_subplan(plans, "2026-06-08-a.md", status="shipped",
+                       current_step=3, estimated_steps=3)
+
+        ps = _import_plan_status()
+        master_path = plans / "MASTER-test.md"
+
+        assert ps.master_has_nonshipped(master_path, plans) is True
+        assert ps.is_master_all_shipped(master_path, plans) is False
+
+    def test_missing_file_no_reconcile(self, tmp_path):
+        """AC-2: reconcile_master_status does NOT flip when a sub-plan file
+        is missing (prevents the false-ship that hit MASTER mid-authoring)."""
+        plans = tmp_path / "plans"
+        _write_master(plans, "MASTER-test.md", status="active",
+                      subplans=["2026-06-08-a.md", "2026-06-08-b.md"])
+        _write_subplan(plans, "2026-06-08-a.md", status="shipped",
+                       current_step=3, estimated_steps=3)
+        # 2026-06-08-b.md intentionally NOT created.
+
+        ps = _import_plan_status()
+        master_path = plans / "MASTER-test.md"
+
+        assert ps.reconcile_master_status(master_path, plans) is False
+        fm = ps.parse_frontmatter(master_path.read_text(encoding="utf-8"))
+        assert fm["status"] == "active"
+
+    def test_all_files_present_and_shipped_flips(self, tmp_path):
+        """AC-3: both files present + all shipped → reconcile flips to shipped
+        (regression-safe: the legitimate path still works)."""
+        plans = tmp_path / "plans"
+        _write_master(plans, "MASTER-test.md", status="active",
+                      subplans=["2026-06-08-a.md", "2026-06-08-b.md"])
+        _write_subplan(plans, "2026-06-08-a.md", status="shipped",
+                       current_step=3, estimated_steps=3)
+        _write_subplan(plans, "2026-06-08-b.md", status="shipped",
+                       current_step=3, estimated_steps=3)
+
+        ps = _import_plan_status()
+        master_path = plans / "MASTER-test.md"
+
+        assert ps.reconcile_master_status(master_path, plans) is True
+        fm = ps.parse_frontmatter(master_path.read_text(encoding="utf-8"))
+        assert fm["status"] == "shipped"
+
+    def test_present_but_pending_subplan_no_flip(self, tmp_path):
+        """AC-4: a present-but-pending sub-plan → non-shipped (existing behavior)."""
+        plans = tmp_path / "plans"
+        _write_master(plans, "MASTER-test.md", status="active",
+                      subplans=["2026-06-08-a.md", "2026-06-08-b.md"])
+        _write_subplan(plans, "2026-06-08-a.md", status="shipped",
+                       current_step=3, estimated_steps=3)
+        _write_subplan(plans, "2026-06-08-b.md", status="pending",
+                       current_step=0, estimated_steps=3)
+
+        ps = _import_plan_status()
+        master_path = plans / "MASTER-test.md"
+
+        assert ps.master_has_nonshipped(master_path, plans) is True
+        assert ps.reconcile_master_status(master_path, plans) is False
