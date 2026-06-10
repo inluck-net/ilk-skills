@@ -1150,62 +1150,13 @@ function Parse-MasterBranchBlock {
     Where-Object { $_.Name -notlike "*.bak" } | Select-Object -First 1
   if (-not $masterFile) { return }
 
-  # Parse branch: block from YAML frontmatter using Python (consistent with bash)
-  $parsed = & python -c @"
-import re, sys, json
-path = sys.argv[1]
-# Explicit UTF-8 (BOM-tolerant): masters are UTF-8, but Python's default
-# open() uses the locale encoding (GBK/cp936 on zh-CN Windows), which crashes
-# with UnicodeDecodeError on any non-ASCII byte. See memory gbk-console-ascii.
-with open(path, encoding='utf-8-sig') as f:
-    content = f.read()
-m = re.match(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
-if not m:
-    print('{}')
-    sys.exit(0)
-fm = m.group(1)
-branch_match = re.search(r'^branch:\s*(.*)$', fm, re.MULTILINE)
-if not branch_match:
-    print('{}')
-    sys.exit(0)
-rest = branch_match.group(1).strip()
-if rest in ('null', 'None', '~', ''):
-    print('{}')
-    sys.exit(0)
-if rest.startswith('{'):
-    inner = rest.strip('{}')
-    d = {}
-    for part in re.split(r',\s*', inner):
-        if ':' in part:
-            k, v = part.split(':', 1)
-            k = k.strip()
-            v = v.strip().strip('"').strip("'")
-            if k == 'merge_back':
-                d[k] = v.lower() in ('true', 'yes', '1')
-            else:
-                d[k] = v
-    print(json.dumps(d))
-    sys.exit(0)
-lines = fm.split('\n')
-in_branch = False
-d = {}
-for line in lines:
-    if re.match(r'^branch:\s*$', line):
-        in_branch = True
-        continue
-    if in_branch:
-        if re.match(r'^\s+', line):
-            kv = re.match(r'^\s+(\w+):\s*(.*)$', line)
-            if kv:
-                k, v = kv.group(1), kv.group(2).strip().strip('"').strip("'")
-                if k == 'merge_back':
-                    d[k] = v.lower() in ('true', 'yes', '1')
-                else:
-                    d[k] = v
-        else:
-            break
-print(json.dumps(d))
-"@ $masterFile.FullName 2>$null
+  # Parse branch: block via the standalone parser script. A real .py file
+  # avoids the two failure modes the old inline `python -c @"..."@` here-string
+  # hit on zh-CN Windows: (1) locale-encoding (GBK) crash reading UTF-8 masters,
+  # and (2) the expandable here-string mangling the embedded quotes in
+  # strip('"').strip("'") into a SyntaxError. See memory inline-python-open-needs-utf8.
+  $branchScript = Join-Path $PSScriptRoot 'parse_branch_block.py'
+  $parsed = & python $branchScript $masterFile.FullName 2>$null
   if ($LASTEXITCODE -ne 0 -or -not $parsed) { return }
 
   try { $branchObj = $parsed | ConvertFrom-Json -ErrorAction Stop } catch { return }

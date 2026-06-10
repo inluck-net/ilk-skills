@@ -333,80 +333,12 @@ parse_master_branch_block() {
     return 0
   fi
 
-  # Parse branch: block from YAML frontmatter (between --- markers)
-  # Uses python3 to extract create_from, name, merge_back safely.
-  local parsed
-  parsed=$(python3 -c "
-import re, sys, json
-
-path = sys.argv[1]
-# Explicit UTF-8 (BOM-tolerant): masters are UTF-8; don't rely on the locale
-# default encoding (crashes on non-ASCII under a non-UTF-8 locale).
-with open(path, encoding='utf-8-sig') as f:
-    content = f.read()
-
-# Extract frontmatter between --- markers
-m = re.match(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
-if not m:
-    print('{}')
-    sys.exit(0)
-
-fm = m.group(1)
-
-# Find the branch: block — it may be 'branch: null' or a multi-line mapping.
-# Look for 'branch:' at the start of a line.
-branch_match = re.search(r'^branch:\s*(.*)$', fm, re.MULTILINE)
-if not branch_match:
-    print('{}')
-    sys.exit(0)
-
-rest = branch_match.group(1).strip()
-
-# branch: null or branch: '' => no branch block
-if rest in ('null', 'None', '~', ''):
-    print('{}')
-    sys.exit(0)
-
-# branch: { create_from: ..., name: ..., merge_back: ... } — inline mapping
-if rest.startswith('{'):
-    # Simple inline YAML mapping parse
-    inner = rest.strip('{}')
-    d = {}
-    for part in re.split(r',\s*', inner):
-        if ':' in part:
-            k, v = part.split(':', 1)
-            k = k.strip()
-            v = v.strip().strip('\"').strip(\"'\")
-            if k == 'merge_back':
-                d[k] = v.lower() in ('true', 'yes', '1')
-            else:
-                d[k] = v
-    print(json.dumps(d))
-    sys.exit(0)
-
-# Multi-line mapping: branch: on its own line, followed by indented keys
-# Collect indented lines after 'branch:'
-lines = fm.split('\n')
-in_branch = False
-d = {}
-for line in lines:
-    if re.match(r'^branch:\s*$', line):
-        in_branch = True
-        continue
-    if in_branch:
-        if re.match(r'^\s+', line):
-            kv = re.match(r'^\s+(\w+):\s*(.*)$', line)
-            if kv:
-                k, v = kv.group(1), kv.group(2).strip().strip('\"').strip(\"'\")
-                if k == 'merge_back':
-                    d[k] = v.lower() in ('true', 'yes', '1')
-                else:
-                    d[k] = v
-        else:
-            break
-
-print(json.dumps(d))
-" "$master_file") || parsed="{}"
+  # Parse branch: block via the standalone parser script (single source of
+  # truth shared with the ps1 runner; avoids inline-heredoc quote/encoding
+  # fragility). See skills/ilk-loop/scripts/parse_branch_block.py.
+  local parsed branch_script
+  branch_script="$(dirname "${BASH_SOURCE[0]}")/parse_branch_block.py"
+  parsed=$(python3 "$branch_script" "$master_file") || parsed="{}"
 
   if [[ "$parsed" == "{}" || -z "$parsed" ]]; then
     return 0
