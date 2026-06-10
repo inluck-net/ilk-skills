@@ -243,6 +243,8 @@ function Read-BlacklistFromPostmortems {
 function Run-Scheduler {
   $dispatchCount = 0
   $blacklistSkip = @{}  # project key -> backoff expiry timestamp
+  $dispatchTime = @{}   # project key -> [datetime] of last dispatch
+  $rapidTerminalCount = @{}  # project key -> int consecutive rapid-terminal count
 
   # Gate dispatches with -RunLocalChecks by default (AC-1/AC-5).
   # Opt-out: -NoLocalChecks switch or $env:ILK_SCHED_NO_GATES = '1'.
@@ -305,6 +307,20 @@ function Run-Scheduler {
       }
     }
 
+    # --- merge rapid-terminal backoff entries into blacklistSkip ---
+    foreach ($key in $rapidTerminalCount.Keys) {
+      if ($rapidTerminalCount[$key] -ge 2) {
+        $expiry = (Get-Date).AddMinutes(5)
+        if ($blacklistSkip.ContainsKey($key)) {
+          if ($expiry -gt $blacklistSkip[$key]) {
+            $blacklistSkip[$key] = $expiry
+          }
+        } else {
+          $blacklistSkip[$key] = $expiry
+        }
+      }
+    }
+
     # --- iterate projects in FIFO order, fill free slots ---
     $remainingCapacity = $MaxConcurrent - $liveCount
     $toDispatch = @()
@@ -326,6 +342,33 @@ function Run-Scheduler {
           continue
         } else {
           $blacklistSkip.Remove($key)
+        }
+      }
+
+      # --- rapid-terminal check: project went terminal within ~60s of dispatch ---
+      if ($dispatchTime.ContainsKey($key)) {
+        $sentinelFile = Join-Path $proj.path 'runtime\last-exit.json'
+        if (Test-Path $sentinelFile) {
+          $lastExitTime = (Get-Item $sentinelFile).LastWriteTime
+          $elapsed = $lastExitTime - $dispatchTime[$key]
+          if ($elapsed.TotalSeconds -ge 0 -and $elapsed.TotalSeconds -lt 60) {
+            # Rapid terminal: run ended within 60s of being dispatched.
+            $count = if ($rapidTerminalCount.ContainsKey($key)) { $rapidTerminalCount[$key] + 1 } else { 1 }
+            $rapidTerminalCount[$key] = $count
+            if ($count -ge 2) {
+              if ($DryRun -and $Once) {
+                Write-SchedulerLog -Decision 'skip-rapid-terminal' -Key $key -Reason "count=$count elapsed=$([int]$elapsed.TotalSeconds)s"
+                @{ decision = 'skip-rapid-terminal'; key = $key; count = $count } | ConvertTo-Json -Compress
+              } else {
+                Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] skip-rapid-terminal: $key (count=$count, elapsed=$([int]$elapsed.TotalSeconds)s)"
+                Write-SchedulerLog -Decision 'skip-rapid-terminal' -Key $key -Reason "count=$count elapsed=$([int]$elapsed.TotalSeconds)s"
+              }
+              continue
+            }
+          } else {
+            # Normal-duration run — reset the rapid-terminal counter.
+            $rapidTerminalCount[$key] = 0
+          }
         }
       }
 
@@ -414,6 +457,7 @@ function Run-Scheduler {
       # dispatch into slot home
       if ($DryRun -and $Once) {
         Write-SchedulerLog -Decision 'dispatch' -Key "$key (slot $slotId)"
+        $dispatchTime[$key] = Get-Date
         @{ decision = 'dispatch'; key = $key; slot = $slotId; command = "launch.ps1 -ProjectPath '$repo' -Engine claude-worker -WorkerHome '$slotHome'$(if ($runLocalChecksFlag) { ' -RunLocalChecks' })"; watchdog = "watchdog.ps1 -ProjectPath '$repo' -Detach" } | ConvertTo-Json -Compress
       } elseif ($DryRun) {
         Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] DRY-RUN: would dispatch $key (slot $slotId) via $LaunchScript -ProjectPath '$repo' -Engine claude-worker -WorkerHome '$slotHome'"
@@ -429,6 +473,7 @@ function Run-Scheduler {
         try {
           & $LaunchScript -ProjectPath $repo -Engine claude-worker -WorkerHome $slotHome -RunLocalChecks:$runLocalChecksFlag -Force
           $dispatchCount++
+          $dispatchTime[$key] = Get-Date
           Invoke-IlkNotify -Event 'dispatch' -Project $key -Detail "slot $slotId"
           Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatched $key (slot $slotId, total: $dispatchCount)"
           Write-SchedulerLog -Decision 'dispatch' -Key "$key (slot $slotId)"
