@@ -267,6 +267,10 @@ classify_action() {
     all-shipped|already-shipped|shipped)
       echo "promote"
       ;;
+    shipped-unverified|no-evidence)
+      # Terminal success-needs-human / triage — do NOT relaunch.
+      echo "terminate"
+      ;;
     no-progress|timeout|budget-exhausted)
       echo "relaunch"
       ;;
@@ -610,6 +614,26 @@ Classification: $sentinel_state
 
 Restart will not help this kind of stop. Human triage required.
 Read the report tail and decide what to do, then relaunch ilk manually." 31
+      return
+    fi
+
+    if [[ "$action" == "terminate" ]]; then
+      if [[ "$sentinel_state" == "shipped-unverified" ]]; then
+        invoke_ilk_notify "needs-verification" "$proj_name" "classification: shipped-unverified"
+        write_banner "SHIPPED — NEEDS VERIFICATION" \
+"Project: $proj_name
+Classification: shipped-unverified
+
+All sub-plans shipped, but some need human verification.
+No auto-relaunch. Read the postmortem for details." 33
+      else
+        invoke_ilk_notify "triage" "$proj_name" "classification: $sentinel_state"
+        write_banner "NO EVIDENCE — TRIAGE REQUIRED" \
+"Project: $proj_name
+Classification: $sentinel_state
+
+Run started but left no usable records. Triage manually." 33
+      fi
       return
     fi
 
