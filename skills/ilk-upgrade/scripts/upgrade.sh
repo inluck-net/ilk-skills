@@ -135,12 +135,30 @@ check_live_pids() {
     local pid
     pid="$(cat "$pidfile" 2>/dev/null || true)"
     [[ -z "$pid" ]] && continue
+
+    local project_dir project_name
+    project_dir="$(dirname "$(dirname "$(dirname "$pidfile")")")"
+    project_name="$(basename "$project_dir")"
+
+    # Stale-sentinel guard (mirrors scheduler is_running, v0.9.1): a lingering
+    # detached worker shell can keep a launcher PID alive after the loop exits.
+    # When the project's last-exit.json is terminal (state != running) that PID
+    # is a zombie, not a live loop. Scoped to launcher PIDs; a live watchdog
+    # must still block.
+    case "$pidfile" in
+      */runtime/launcher/running.pid)
+        local sentinel="$project_dir/runtime/last-exit.json"
+        if [[ -f "$sentinel" ]]; then
+          local state
+          state="$(grep -oE '"state"[[:space:]]*:[[:space:]]*"[^"]*"' "$sentinel" 2>/dev/null | head -1 | sed -E 's/.*:[[:space:]]*"([^"]*)".*/\1/')"
+          if [[ -n "$state" && "$state" != "running" ]]; then
+            continue
+          fi
+        fi
+        ;;
+    esac
+
     if kill -0 "$pid" 2>/dev/null; then
-      # Extract project name from path
-      local project_dir
-      project_dir="$(dirname "$(dirname "$(dirname "$pidfile")")")"
-      local project_name
-      project_name="$(basename "$project_dir")"
       active_pids+=("$project_name (PID $pid)")
     fi
   done

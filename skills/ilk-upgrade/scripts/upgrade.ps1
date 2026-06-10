@@ -180,17 +180,34 @@ function Test-LivePids {
     Where-Object { $_.DirectoryName -match "runtime[\\/]watchdog$" }
 
   foreach ($pidFile in $pidFiles) {
-    $pid = (Get-Content -LiteralPath $pidFile.FullName -Raw -ErrorAction SilentlyContinue).Trim()
-    if (-not $pid) { continue }
+    # NOTE: do NOT name this $pid — $PID is a read-only automatic variable.
+    $procId = (Get-Content -LiteralPath $pidFile.FullName -Raw -ErrorAction SilentlyContinue).Trim()
+    if (-not $procId) { continue }
+
+    # Project dir is <projects>/<key>: pidFile lives in <key>/runtime/{launcher,watchdog}/.
+    $projDir = $pidFile.Directory.Parent.Parent
+    $projectName = $projDir.Name
+
+    # Stale-sentinel guard (mirrors scheduler Test-RunningPid, v0.9.1): a
+    # lingering -NoExit worker shell keeps a launcher PID alive after the loop
+    # exits. When the project's last-exit.json is terminal (state != running),
+    # that PID is a zombie shell, NOT a live loop — don't let it block -Apply.
+    # Scoped to launcher PIDs only: a live watchdog must still block.
+    if ($pidFile.Directory.Name -eq 'launcher') {
+      $sentinel = Join-Path $projDir.FullName 'runtime\last-exit.json'
+      if (Test-Path $sentinel) {
+        try {
+          $state = (Get-Content -LiteralPath $sentinel -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json).state
+          if ($state -and $state -ne 'running') { continue }
+        } catch { }
+      }
+    }
 
     # Check if PID is alive
     try {
-      $proc = Get-Process -Id [int]$pid -ErrorAction SilentlyContinue
+      $proc = Get-Process -Id ([int]$procId) -ErrorAction SilentlyContinue
       if ($proc) {
-        # Extract project name from path
-        $projectDir = $pidFile.Directory.Parent.Parent.Parent
-        $projectName = $projectDir.Name
-        $activePids += "$projectName (PID $pid)"
+        $activePids += "$projectName (PID $procId)"
       }
     } catch {
       # PID not alive — skip
