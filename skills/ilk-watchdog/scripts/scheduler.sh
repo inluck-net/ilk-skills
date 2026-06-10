@@ -230,6 +230,81 @@ blacklist_epoch_for_key() {
   echo "$max_epoch"
 }
 
+file_mtime_epoch() {
+  # Cross-platform file modification time as epoch seconds.
+  # Linux: stat -c %Y; macOS/BSD: stat -f %m.
+  local file="$1"
+  if [[ "$(uname)" == "Darwin" ]]; then
+    stat -f %m "$file" 2>/dev/null || echo 0
+  else
+    stat -c %Y "$file" 2>/dev/null || echo 0
+  fi
+}
+
+dispatch_time_epoch_for_key() {
+  # Lookup dispatch time epoch for a key from $dispatch_time.
+  local target="$1"
+  local result=""
+  local key epoch
+  while IFS=' ' read -r key epoch; do
+    [[ -z "$key" || "$key" != "$target" || -z "$epoch" ]] && continue
+    result="$epoch"
+    break
+  done <<<"${dispatch_time:-}"
+  echo "$result"
+}
+
+set_dispatch_time() {
+  # Set dispatch time epoch for a key in $dispatch_time (global).
+  local target="$1" epoch="$2"
+  local new_entries=""
+  local key val found=false
+  while IFS=' ' read -r key val; do
+    if [[ -n "$key" && "$key" == "$target" ]]; then
+      new_entries="${new_entries:+${new_entries}$'\n'}${key} ${epoch}"
+      found=true
+    elif [[ -n "$key" ]]; then
+      new_entries="${new_entries:+${new_entries}$'\n'}${key} ${val}"
+    fi
+  done <<<"${dispatch_time:-}"
+  if [[ "$found" == "false" ]]; then
+    new_entries="${new_entries:+${new_entries}$'\n'}${target} ${epoch}"
+  fi
+  dispatch_time="$new_entries"
+}
+
+rapid_terminal_count_for_key() {
+  # Lookup rapid-terminal count for a key from $rapid_terminal_count.
+  local target="$1"
+  local result=0
+  local key count
+  while IFS=' ' read -r key count; do
+    [[ -z "$key" || "$key" != "$target" || -z "$count" ]] && continue
+    result="$count"
+    break
+  done <<<"${rapid_terminal_count:-}"
+  echo "$result"
+}
+
+set_rapid_terminal_count() {
+  # Set rapid-terminal count for a key in $rapid_terminal_count (global).
+  local target="$1" count="$2"
+  local new_entries=""
+  local key val found=false
+  while IFS=' ' read -r key val; do
+    if [[ -n "$key" && "$key" == "$target" ]]; then
+      new_entries="${new_entries:+${new_entries}$'\n'}${key} ${count}"
+      found=true
+    elif [[ -n "$key" ]]; then
+      new_entries="${new_entries:+${new_entries}$'\n'}${key} ${val}"
+    fi
+  done <<<"${rapid_terminal_count:-}"
+  if [[ "$found" == "false" ]]; then
+    new_entries="${new_entries:+${new_entries}$'\n'}${target} ${count}"
+  fi
+  rapid_terminal_count="$new_entries"
+}
+
 count_live_sentinels() {
   # Count how many projects in the JSON array currently have a live
   # running.pid sentinel. Outputs the count to stdout.
@@ -353,6 +428,10 @@ run_scheduler() {
   # Bash 3.2 compatible blacklist backoff state.
   # newline-separated entries: "project-key expiry-epoch" (max epoch wins).
   local blacklist_skip=""
+  # Dispatch time tracking (newline-separated "key epoch").
+  local dispatch_time=""
+  # Rapid-terminal counter (newline-separated "key count").
+  local rapid_terminal_count=""
 
   # Gate dispatches with --run-local-checks by default.
   # Opt-out: --no-local-checks or ILK_SCHED_NO_GATES=1.
@@ -430,6 +509,16 @@ run_scheduler() {
       blacklist_skip="${blacklist_skip}"$'\n'"${bl_key} ${bl_epoch}"
     done < <(read_blacklist_from_postmortems "$scan_output")
 
+    # --- merge rapid-terminal backoff entries into blacklist_skip ---
+    local rt_key rt_count rt_expiry
+    while IFS=' ' read -r rt_key rt_count; do
+      [[ -z "$rt_key" || -z "$rt_count" ]] && continue
+      if [[ "$rt_count" -ge 2 ]]; then
+        rt_expiry=$(($(date +%s) + 300))
+        blacklist_skip="${blacklist_skip}"$'\n'"${rt_key} ${rt_expiry}"
+      fi
+    done <<<"${rapid_terminal_count:-}"
+
     # --- iterate projects in FIFO order, fill free slots ---
     local remaining_capacity=$((MAX_CONCURRENT - live_count))
     local now_epoch
@@ -463,6 +552,38 @@ run_scheduler() {
           write_scheduler_log "skip-blacklist" "$key"
         fi
         continue
+      fi
+
+      # --- rapid-terminal check: project went terminal within ~60s of dispatch ---
+      local dispatch_epoch
+      dispatch_epoch="$(dispatch_time_epoch_for_key "$key")"
+      if [[ -n "$dispatch_epoch" ]]; then
+        local sentinel_file="${path}/runtime/last-exit.json"
+        if [[ -f "$sentinel_file" ]]; then
+          local exit_epoch
+          exit_epoch="$(file_mtime_epoch "$sentinel_file")"
+          local elapsed=$((exit_epoch - dispatch_epoch))
+          if [[ "$elapsed" -ge 0 && "$elapsed" -lt 60 ]]; then
+            # Rapid terminal: run ended within 60s of being dispatched.
+            local rt_count
+            rt_count="$(rapid_terminal_count_for_key "$key")"
+            rt_count=$((rt_count + 1))
+            set_rapid_terminal_count "$key" "$rt_count"
+            if [[ "$rt_count" -ge 2 ]]; then
+              if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+                write_scheduler_log "skip-rapid-terminal" "$key" "count=$rt_count elapsed=${elapsed}s"
+                echo "{\"decision\":\"skip-rapid-terminal\",\"key\":\"$key\",\"count\":$rt_count}"
+              else
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip-rapid-terminal: $key (count=$rt_count, elapsed=${elapsed}s)"
+                write_scheduler_log "skip-rapid-terminal" "$key" "count=$rt_count elapsed=${elapsed}s"
+              fi
+              continue
+            fi
+          else
+            # Normal-duration run — reset the rapid-terminal counter.
+            set_rapid_terminal_count "$key" 0
+          fi
+        fi
       fi
 
       # Check if project is busy
@@ -568,6 +689,7 @@ run_scheduler() {
         else
           echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"screen\",\"command\":\"launch.sh --project-path '$safe_path' --engine claude-worker --worker-home '$slot_home'${local_checks_flag}\",\"watchdog\":\"watchdog.sh --project-path '$safe_path' --detach\"}"
         fi
+        set_dispatch_time "$dkey" "$(date +%s)"
       elif [[ "$DRY_RUN" == true ]]; then
         if [[ "$current_mux" == "tmux" ]]; then
           echo "[$(date '+%Y-%m-%d %H:%M:%S')] DRY-RUN [tmux]: would dispatch $dkey (slot $slot_id) via tmux new-window -t ilk -n '$dkey' '$LAUNCH_SCRIPT --project-path $drepo --engine claude-worker --worker-home $slot_home'"
@@ -584,6 +706,7 @@ run_scheduler() {
           ensure_ilmux_session
           if tmux new-window -t ilk -n "$dkey" "$launch_cmd"; then
             dispatch_count=$((dispatch_count + 1))
+            set_dispatch_time "$dkey" "$(date +%s)"
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatched $dkey (slot $slot_id, total: $dispatch_count) [tmux]"
             write_scheduler_log "dispatch" "$dkey (slot $slot_id)"
             invoke_ilk_notify "dispatch" "$dkey" "slot $slot_id"
@@ -597,6 +720,7 @@ run_scheduler() {
           fi
         elif bash "$LAUNCH_SCRIPT" --project-path "$drepo" --engine claude-worker --worker-home "$slot_home" ${local_checks_flag} --force; then
           dispatch_count=$((dispatch_count + 1))
+          set_dispatch_time "$dkey" "$(date +%s)"
           echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatched $dkey (slot $slot_id, total: $dispatch_count)"
           write_scheduler_log "dispatch" "$dkey (slot $slot_id)"
           invoke_ilk_notify "dispatch" "$dkey" "slot $slot_id"
