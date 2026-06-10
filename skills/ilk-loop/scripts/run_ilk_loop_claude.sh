@@ -340,7 +340,9 @@ parse_master_branch_block() {
 import re, sys, json
 
 path = sys.argv[1]
-with open(path) as f:
+# Explicit UTF-8 (BOM-tolerant): masters are UTF-8; don't rely on the locale
+# default encoding (crashes on non-ASCII under a non-UTF-8 locale).
+with open(path, encoding='utf-8-sig') as f:
     content = f.read()
 
 # Extract frontmatter between --- markers

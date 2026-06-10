@@ -1154,7 +1154,10 @@ function Parse-MasterBranchBlock {
   $parsed = & python -c @"
 import re, sys, json
 path = sys.argv[1]
-with open(path) as f:
+# Explicit UTF-8 (BOM-tolerant): masters are UTF-8, but Python's default
+# open() uses the locale encoding (GBK/cp936 on zh-CN Windows), which crashes
+# with UnicodeDecodeError on any non-ASCII byte. See memory gbk-console-ascii.
+with open(path, encoding='utf-8-sig') as f:
     content = f.read()
 m = re.match(r'^---\s*\n(.*?)\n---', content, re.DOTALL)
 if not m:
