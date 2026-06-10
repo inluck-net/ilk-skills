@@ -185,16 +185,22 @@ upsert_block() {
   if [[ -f "$file" ]] && grep -qF "$start" "$file"; then
     # Replace block between markers (inclusive) in-place.
     # Use a temp file to avoid BSD sed / GNU sed portability issues
-    # with multiline in-place editing.
-    local tmp
+    # with multiline in-place editing.  Pass the (multi-line) replacement
+    # block via a file read with getline rather than `awk -v`: BSD awk
+    # (macOS) rejects newlines in a -v assignment ("newline in string"),
+    # whereas GNU awk tolerates them.
+    local tmp blkfile
     tmp="$(mktemp)"
-    awk -v s="$start" -v e="$end" -v blk="$content" '
-      $0 == s { printing=0; print blk; skipping=1; next }
+    blkfile="$(mktemp)"
+    printf '%s\n' "$content" > "$blkfile"
+    awk -v s="$start" -v e="$end" -v blkfile="$blkfile" '
+      $0 == s { while ((getline line < blkfile) > 0) print line; close(blkfile); skipping=1; next }
       $0 == e { skipping=0; next }
       skipping { next }
       { print }
     ' "$file" > "$tmp"
     mv -- "$tmp" "$file"
+    rm -f -- "$blkfile"
   else
     # Append block (with a leading blank line if file is non-empty).
     if [[ -s "$file" ]]; then
