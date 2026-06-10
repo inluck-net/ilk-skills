@@ -21,10 +21,16 @@ the launcher's PID file every few minutes, and when ilk stops:
 
 1. Asks `loop_status.py` whether all sub-plans are shipped.
 2. If not, asks `ilk-feedback`'s `collect.py` to classify the run.
+   **The watchdog passes the sentinel's `run_id` via `--run-id`** so
+   collect.py classifies the correct run (not the lexicographically newest
+   one, which may be stale). If the run has no JSONL records, collect.py
+   emits `no-evidence` instead of silently falling back.
 3. If classification is whitelist → relaunches via `ilk-launcher`'s
    `launch.ps1` with the postmortem's recommended params.
 4. If classification is blacklist → prints a loud BLOCKED banner and exits
    so the human is forced to triage.
+5. If classification is terminal (`shipped-unverified`, `no-evidence`) →
+   prints a yellow banner and exits cleanly without relaunching.
 
 Watchdog never modifies plans, never kills ilk, never edits SKILL.md.
 It only watches PID files, reads postmortems, and shells out to the
@@ -74,6 +80,8 @@ Reuses `ilk-feedback`'s 9-class taxonomy. Hard-coded in this skill:
 | Classification | Action |
 |---|---|
 | `clean-success` (or sentinel state `all-shipped`/`shipped`) | Mark current master as `shipped`, promote next queued master to `active`, relaunch via ilk-launcher and keep polling. If the queue is empty, exit cleanly with the "queue drained" banner. |
+| `shipped-unverified` | ✅ TERMINAL — all sub-plans shipped but some need human verification (compile-only / device-manual tiers). No relaunch. Yellow banner. |
+| `no-evidence` | ✅ TERMINAL — run started (sentinel present) but left no usable JSONL records. Triage required. No relaunch. Yellow banner. |
 | `timeout-bound` | ✅ Relaunch with postmortem's recommended params |
 | `max-iter-bound` | ✅ Relaunch with postmortem's recommended params |
 | `api-flaky` | ✅ Relaunch (params usually unchanged) |
