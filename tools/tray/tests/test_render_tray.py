@@ -122,6 +122,21 @@ class TestRunning:
         assert "2/5" in label
         assert "auth-module" in label
 
+    def test_running_row_label_has_no_idle_suffix(self) -> None:
+        # A running row must NOT be tagged (idle)/(stale) — the icon conveys it.
+        entries = [_make_entry("my-app", alive=True, state="running", step="2/5")]
+        label = render_tray(entries)["rows"][0]["label"]
+        assert "(idle)" not in label and "(stale)" not in label
+
+    def test_idle_row_label_marked_idle(self) -> None:
+        # An idle project with pending work shows its NEXT step; tag it (idle)
+        # so the popup row isn't misread as a running task while the tooltip
+        # (correctly) says idle.
+        entries = [_make_entry("my-app", step="1/4", next_subplan="server-wake")]
+        label = render_tray(entries)["rows"][0]["label"]
+        assert "1/4" in label
+        assert "(idle)" in label
+
     def test_row_action_structure(self) -> None:
         entries = [_make_entry("proj-x", alive=True, state="running")]
         view = render_tray(entries)
@@ -150,6 +165,13 @@ class TestStaleRunning:
         entries = [_make_entry("stale-proj", alive=False, state="running")]
         view = render_tray(entries)
         assert "1 stale" in view["tooltip"]
+
+    def test_stale_row_label_marked_stale(self) -> None:
+        # Stale (sentinel says running, process dead) must be tagged (stale) —
+        # previously its label had no suffix and looked like a running row.
+        entries = [_make_entry("stale-proj", alive=False, state="running", step="3/7")]
+        label = render_tray(entries)["rows"][0]["label"]
+        assert "(stale)" in label
 
 
 # ---------------------------------------------------------------------------

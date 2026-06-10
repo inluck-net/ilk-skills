@@ -74,8 +74,15 @@ def render_tray(entries: list[dict]) -> dict:
             label += f"  {step}"
         if next_sp:
             label += f"  {next_sp}"
-        if state not in ("running", "none"):
-            label += f"  ({state})"
+        # Run-state suffix, driven by the computed icon (not the raw sentinel
+        # state), so an idle/stale project is unambiguous: its step/next_subplan
+        # is the NEXT pending work, which otherwise reads like a running task
+        # (the tooltip-says-idle vs popup-looks-running mismatch). A 'running'
+        # row needs no suffix — the icon conveys it.
+        if icon == "idle":
+            label += "  (idle)"
+        elif icon == "attention":
+            label += "  (error)" if state in ("error", "errored") else "  (stale)"
 
         rows.append({
             "label": label,
