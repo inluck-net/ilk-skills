@@ -293,3 +293,59 @@ class TestSchedulerDispatch:
 
         scan = _read_scan_projects(tmp_home=tmp_path)
         assert len(scan) == 0, "supervised_only master must be excluded from dispatch"
+
+
+class TestRapidTerminal:
+    """Scan returns projects correctly when last-exit.json exists (rapid-terminal guard)."""
+
+    def test_scan_with_terminal_sentinel(self, tmp_path):
+        """A project with a terminal last-exit.json is still returned by scan
+        (the scheduler decides whether to back off, not the scanner)."""
+        project_dir = _write_project_data(
+            tmp_path, "test-proj",
+            master_status="active",
+            subplan_status="pending",
+            last_launch_path="/some/real/repo",
+        )
+        # Write a terminal last-exit.json
+        runtime_dir = project_dir / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        (runtime_dir / "last-exit.json").write_text(
+            json.dumps({
+                "state": "local_checks_failed",
+                "run_id": "test-run-001",
+                "pid": 12345,
+                "iterations": 1,
+            }),
+            encoding="utf-8",
+        )
+
+        scan = _read_scan_projects(tmp_home=tmp_path)
+        assert len(scan) == 1
+        assert scan[0]["key"] == "test-proj"
+        assert scan[0]["repo_path"] == "/some/real/repo"
+
+    def test_scan_with_running_sentinel(self, tmp_path):
+        """A project with state=running in last-exit.json is still returned
+        by scan (the scheduler's Test-RunningPid handles busy detection)."""
+        project_dir = _write_project_data(
+            tmp_path, "test-proj",
+            master_status="active",
+            subplan_status="pending",
+            last_launch_path="/some/real/repo",
+        )
+        runtime_dir = project_dir / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        (runtime_dir / "last-exit.json").write_text(
+            json.dumps({
+                "state": "running",
+                "run_id": "test-run-002",
+                "pid": 99999,
+                "iterations": 0,
+            }),
+            encoding="utf-8",
+        )
+
+        scan = _read_scan_projects(tmp_home=tmp_path)
+        assert len(scan) == 1
+        assert scan[0]["key"] == "test-proj"

@@ -1134,6 +1134,68 @@ EOF
   cleanup
 }
 
+run_rapid_terminal() {
+  echo "=== test_scheduler.sh rapid-terminal ==="
+
+  # Test 1: project with recent last-exit.json (within 60s) dispatches normally
+  # in a single cycle. The rapid-terminal counter is in-memory, so multi-cycle
+  # backoff cannot be tested with --once. This test verifies the code path
+  # doesn't crash and produces valid dispatch output.
+  setup_two_queued_projects
+
+  # Create a last-exit.json with a very recent mtime for proj-a
+  cat > "$FAKE_DATA/projects/proj-a/runtime/last-exit.json" <<'EOF'
+{"state":"local_checks_failed","run_id":"test-run","iterations":1}
+EOF
+  # Touch the file to set mtime to now (it's already now since we just wrote it)
+
+  local output
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 1 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  local decision key
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
+  [[ "$decision" == "dispatch" ]] || die "expected 'dispatch' (first cycle always dispatches), got '$decision'. Output: $output"
+  [[ "$key" == "proj-a" ]] || die "expected proj-a dispatched, got '$key'. Output: $output"
+  echo "PASS: project with recent last-exit.json dispatches on first cycle"
+
+  # Test 2: project with old last-exit.json (well past 60s) dispatches normally
+  # and rapid-terminal counter is reset.
+  setup_two_queued_projects
+
+  cat > "$FAKE_DATA/projects/proj-a/runtime/last-exit.json" <<'EOF'
+{"state":"all-shipped","run_id":"test-run","iterations":3}
+EOF
+  # Set mtime to 5 minutes ago
+  local five_min_ago
+  five_min_ago=$(date -d '5 minutes ago' '+%Y%m%d%H%M.%S' 2>/dev/null || date -v-5M '+%Y%m%d%H%M.%S' 2>/dev/null || true)
+  if [[ -n "$five_min_ago" ]]; then
+    touch -t "$five_min_ago" "$FAKE_DATA/projects/proj-a/runtime/last-exit.json" 2>/dev/null || true
+  fi
+
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 1 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
+  [[ "$decision" == "dispatch" ]] || die "expected 'dispatch' (old exit = healthy), got '$decision'. Output: $output"
+  [[ "$key" == "proj-a" ]] || die "expected proj-a dispatched, got '$key'. Output: $output"
+  echo "PASS: project with old last-exit.json dispatches (no false positive)"
+
+  # Test 3: no last-exit.json at all dispatches normally
+  setup_two_queued_projects
+
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 1 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  [[ "$decision" == "dispatch" ]] || die "expected 'dispatch' (no sentinel = normal), got '$decision'. Output: $output"
+  echo "PASS: no last-exit.json dispatches normally"
+
+  cleanup
+}
+
 run_all() {
   run_scan
   run_select
@@ -1148,6 +1210,7 @@ run_all() {
   run_log
   run_compat
   run_stale_sentinel
+  run_rapid_terminal
   echo "ALL PASS"
 }
 
@@ -1191,11 +1254,14 @@ case "${1:-all}" in
   stale-sentinel)
     run_stale_sentinel
     ;;
+  rapid-terminal)
+    run_rapid_terminal
+    ;;
   all)
     run_all
     ;;
   *)
-    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|fill|gates|mutex|log|compat|all}" >&2
+    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|fill|gates|mutex|log|compat|stale-sentinel|rapid-terminal|all}" >&2
     exit 1
     ;;
 esac
