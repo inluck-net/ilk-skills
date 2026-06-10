@@ -255,14 +255,18 @@ function Test-AllShipped {
 }
 
 function Invoke-PostmortemCollect {
-  param([string]$Project, [string]$ProjName)
+  param([string]$Project, [string]$ProjName, [string]$RunId)
   if (-not (Test-Path $CollectPy)) {
     throw "ilk-feedback collect.py not found at $CollectPy"
+  }
+  $collectArgs = @($CollectPy, '-ProjectPath', $Project, '--quiet')
+  if ($RunId) {
+    $collectArgs += @('--run-id', $RunId)
   }
   $tmpOut = [System.IO.Path]::GetTempFileName()
   try {
     $proc = Start-Process -FilePath python `
-      -ArgumentList @($CollectPy, '-ProjectPath', $Project, '--quiet') `
+      -ArgumentList $collectArgs `
       -NoNewWindow -PassThru -Wait `
       -RedirectStandardOutput $tmpOut -RedirectStandardError 'NUL'
     if ($proc.ExitCode -ne 0) {
@@ -605,7 +609,8 @@ Watchdog exiting cleanly. Job done.
       }
 
       Write-Log "running ilk-feedback collect.py to classify the run..."
-      $reportPath = Invoke-PostmortemCollect -Project $Project -ProjName $ProjName
+      $sentinelRunId = if ($sentinel -and $sentinel.run_id) { $sentinel.run_id } else { '' }
+      $reportPath = Invoke-PostmortemCollect -Project $Project -ProjName $ProjName -RunId $sentinelRunId
       if (-not $reportPath) {
         Invoke-IlkNotify -Event 'postmortem-failed' -Project $ProjName
         Write-Banner -Title "POSTMORTEM FAILED" -Body "Project: $ProjName`ncollect.py did not produce a usable report.`nWatchdog blocking; please triage manually.`nIf the target repo was just 'git init'd with no commits, run /ilk again after the first commit." -Color Red
