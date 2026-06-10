@@ -205,6 +205,16 @@ How a scan cycle decides:
    moves on. One stuck project never starves the others.
 5. If nothing is dispatchable → `idle`. The daemon polls again rather
    than exiting, so newly-queued work auto-wakes it on a later cycle.
+6. **Rapid-redispatch backoff:** if a project goes terminal within ~60s of
+   being dispatched (detected via `last-exit.json` modification time vs
+   dispatch timestamp), the scheduler increments a per-project
+   rapid-terminal counter. After **N=2** consecutive rapid terminals, the
+   project is added to `blacklistSkip` with a 5-minute cooldown and the
+   scheduler logs `skip-rapid-terminal`. This bounds the blast radius of
+   ANY future classification gap — even an unhandled terminal state can't
+   cause indefinite re-dispatch. The counter resets when a project runs
+   for longer than 60s (normal-duration run). Cooldown is temporary:
+   after expiry the project becomes dispatchable again.
 
 **Guardrails.** `-MaxConcurrent` caps the number of live loops at any
 time (default 5); `-MaxConcurrent 1` reproduces strict-sequential
