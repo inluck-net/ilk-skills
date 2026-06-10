@@ -1055,13 +1055,15 @@ main() {
       fi
       rm -f "$all_targets_file" "$merged_targets_file"
 
-      # B2 enforcement: treat "error" as a blocking fail — the loop must
-      # NOT advance/ship when a gate errored (command couldn't execute).
+      # B2 enforcement: a gate that ERRORED or FAILED must BLOCK. Do NOT break
+      # here — set iter_stop_reason and let the post-record check below (after
+      # the JSONL write) break. Otherwise a gate-stopped run is never written
+      # to .ilk-loop.log and collect.py / ilk-feedback go blind (falling back
+      # to a stale run -> the misclassification cascade).
       if [[ -s "$local_checks_results" ]]; then
-        if grep -q '"outcome":"error"' "$local_checks_results"; then
-          stop_reason="local_checks_errored"
-          echo "Loop stopped: local_checks errored (B2 enforcement)" >&2
-          break
+        if grep -qE '"outcome":"(error|fail)"' "$local_checks_results"; then
+          iter_stop_reason="local_checks_failed"
+          echo "Loop stopped: local_checks not passing (B2 enforcement)" >&2
         fi
       fi
     fi

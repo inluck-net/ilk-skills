@@ -1575,6 +1575,7 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
   # via -RunLocalChecks. Targets are derived from [plan:<slug>#step-N]
   # tags in this iteration's new commit messages (highest step per slug).
   $localChecksRun = @()
+  $localChecksBlocked = $false
   if ($RunLocalChecks -and $totalNew -gt 0) {
     $allTargets = @()
     foreach ($r in $repos) {
@@ -1605,12 +1606,17 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
       # (command couldn't execute) must BLOCK — the loop must NOT advance/ship
       # on un-passed gates. (Previously only "error" blocked, so a failing test
       # gate still shipped.)
+      # DEFER the break until AFTER Write-JsonlRecord below, so this failing
+      # iteration is still recorded to .ilk-loop.log. Otherwise collect.py /
+      # ilk-feedback never see a run that ended on a gate -> the classifier
+      # goes blind and falls back to a stale run (the misclassification cascade).
       $blocking = $localChecksRun | Where-Object { $_.outcome -eq "error" -or $_.outcome -eq "fail" }
       if ($blocking) {
         $stopReason = "local_checks_failed"
+        $iterStopReason = "local_checks_failed"
+        $localChecksBlocked = $true
         $why = ($blocking | ForEach-Object { "$($_.slug)#$($_.step):$($_.outcome)" }) -join ", "
         Write-Host "Loop stopped: local_checks not passing (B2 enforcement) -> $why" -ForegroundColor Red
-        break
       }
     }
   }
@@ -1634,6 +1640,10 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     stop_reason       = $iterStopReason
     local_checks      = $localChecksRun
   }
+
+  # Deferred B2 break: the failing iteration is now recorded above (so the
+  # classifier can see it); stop before running quality gates / shipping.
+  if ($localChecksBlocked) { break }
 
   if ($totalNew -gt 0) {
     $gateResult = Invoke-QualityGatesIfNeeded `

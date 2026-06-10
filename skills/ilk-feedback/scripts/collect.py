@@ -1674,8 +1674,46 @@ def main() -> int:
                     print(f"[ilk-feedback] iters: 0 / {(last_launch or {}).get('max_iterations', '?')}")
                 print(str(out_path))
                 return 0
-            available = ", ".join(sorted(by_run.keys())[-5:])
-            raise SystemExit(f"run_id '{args.run_id}' not found. Recent: {available}")
+            # No JSONL records AND no sentinel match for this run_id. Degrade to
+            # a no-evidence postmortem (exit 0 with a usable report) instead of
+            # raising SystemExit — a hard exit makes the watchdog report
+            # "POSTMORTEM FAILED" and block. The watchdog handles 'no-evidence'.
+            _avail = ", ".join(sorted(by_run.keys())[-5:])
+            target_run = args.run_id
+            iters = []
+            label = "no-evidence"
+            facts = {
+                "reason": (
+                    f"run {args.run_id} has no JSONL records (and no sentinel "
+                    f"match). Recent runs with records: {_avail}"
+                ),
+            }
+            rec_max, rec_to, rationale = recommend_params(label, iters, last_launch)
+            report = render_report(
+                project_path=project_path,
+                project_name=project_name,
+                run_id=target_run,
+                iters=iters,
+                last_launch=last_launch,
+                label=label,
+                facts=facts,
+                rec_max=rec_max,
+                rec_to=rec_to,
+                rationale=rationale,
+                tail=[],
+            )
+            if external_launcher_dir is None or project_key is None:
+                print("ilk_paths not available; cannot resolve external launcher dir.", file=sys.stderr)
+                return 1
+            out_dir = external_launcher_dir(project_key(project_path)) / "postmortems"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = out_dir / f"{target_run}.md"
+            out_path.write_text(report, encoding="utf-8")
+            if not args.quiet:
+                print(f"[ilk-feedback] project: {project_name}  run: {target_run}")
+                print(f"[ilk-feedback] classification: {label}")
+            print(str(out_path))
+            return 0
         target_run = args.run_id
     else:
         target_run = newest_run_id(by_run)
