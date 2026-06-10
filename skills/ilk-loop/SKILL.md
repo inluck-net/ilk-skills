@@ -95,6 +95,12 @@ The master plan body MUST contain a "Sub-plan registry" markdown table
 extracts ordering from the appearance order of `YYYY-MM-DD-*.md`
 references in the body.
 
+A master is only considered all-shipped when **every** registered sub-plan
+file **exists on disk** and has `status: shipped`. A registered sub-plan
+whose file is missing counts as outstanding work (non-shipped) — this
+prevents autoreconcile from false-shipping a master while sub-plan files
+are still being authored.
+
 ## State machine
 
 ```
