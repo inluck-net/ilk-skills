@@ -1145,9 +1145,29 @@ function Parse-MasterBranchBlock {
     if (-not $plansDir -or -not (Test-Path $plansDir)) { return }
   } catch { return }
 
-  # Find the active MASTER file
-  $masterFile = Get-ChildItem $plansDir -Filter "MASTER-*.md" -File -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -notlike "*.bak" } | Select-Object -First 1
+  # Resolve the ACTIVE master the same way the loop does — via loop_status.py
+  # (registry/queue order), NOT filesystem-enumeration order. Get-ChildItem |
+  # Select-Object -First 1 returns an arbitrary master and diverges from the
+  # executing one whenever a project has >1 master, so branch setup would read a
+  # stale, possibly-shipped master's branch block (handoff bug #1).
+  $masterName = ""
+  Push-Location $Project
+  try {
+    $statusJson = & python $LoopStatusScript --json 2>$null
+  } finally {
+    Pop-Location
+  }
+  if ($statusJson) {
+    try {
+      $statusObj = ($statusJson -join "`n") | ConvertFrom-Json -ErrorAction Stop
+      $masterName = [string]$statusObj.master
+      $statusPlansDir = [string]$statusObj.plans_dir
+      # Prefer loop_status.py's plans_dir so master + dir come from one source.
+      if ($statusPlansDir -and (Test-Path $statusPlansDir)) { $plansDir = $statusPlansDir }
+    } catch { $masterName = "" }
+  }
+  if (-not $masterName) { return }
+  $masterFile = Get-Item -LiteralPath (Join-Path $plansDir $masterName) -ErrorAction SilentlyContinue
   if (-not $masterFile) { return }
 
   # Parse branch: block via the standalone parser script. A real .py file
@@ -1338,11 +1358,23 @@ function Setup-Branch {
   }
 
   # --- Parse create_from into remote/branch ---
+  # Do NOT assume the first path segment is a remote: a branch name can itself
+  # contain slashes (e.g. the single branch `codex/convex-rewrite` on origin).
+  # Only split off a remote when the first segment is an actually-configured
+  # remote; otherwise treat the whole value as a local ref (slashes and all).
+  # See handoff bug #2.
   $remote = ""
   $branch = $script:BranchCreateFrom
   if ($script:BranchCreateFrom -match '^([^/]+)/(.+)$') {
-    $remote = $Matches[1]
-    $branch = $Matches[2]
+    $candidate = $Matches[1]
+    $configuredRemotes = @(& git -C $repo remote 2>$null)
+    if ($configuredRemotes -contains $candidate) {
+      $remote = $candidate
+      $branch = $Matches[2]   # keeps inner slashes: origin/codex/convex-rewrite -> codex/convex-rewrite
+    } else {
+      $remote = ""            # not a remote -> local ref; skip fetch
+      $branch = $script:BranchCreateFrom
+    }
   }
 
   # --- Fetch + freshness preflight (only for remote refs) ---

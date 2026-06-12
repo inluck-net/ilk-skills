@@ -326,10 +326,27 @@ parse_master_branch_block() {
     return 0
   fi
 
-  # Find the active MASTER file
-  local master_file
-  master_file=$(find "$plans_dir" -maxdepth 1 -name 'MASTER-*.md' ! -name '*.bak' 2>/dev/null | head -n1)
-  if [[ -z "$master_file" || ! -f "$master_file" ]]; then
+  # Resolve the ACTIVE master the same way the loop does — via loop_status.py
+  # (registry/queue order), NOT filesystem-enumeration order. `find | head -n1`
+  # returns an arbitrary master and diverges from the executing one whenever a
+  # project has >1 master, so branch setup would read a stale, possibly-shipped
+  # master's branch block (see ilk-runner-branch-setup-bugs handoff, bug #1).
+  local master_file status_json master_name status_plans_dir
+  # NOTE: --json exits 1 when there is pending work (and 2 on error) — both
+  # still print valid JSON to stdout, so keep the captured output and let the
+  # jq guards below decide. `|| true` only prevents set -e from tripping.
+  status_json=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null) || true
+  master_name=$(echo "$status_json" | jq -r '.master // empty' 2>/dev/null)
+  status_plans_dir=$(echo "$status_json" | jq -r '.plans_dir // empty' 2>/dev/null)
+  # Prefer loop_status.py's plans_dir so master + dir come from one source.
+  if [[ -n "$status_plans_dir" && -d "$status_plans_dir" ]]; then
+    plans_dir="$status_plans_dir"
+  fi
+  if [[ -z "$master_name" ]]; then
+    return 0
+  fi
+  master_file="$plans_dir/$master_name"
+  if [[ ! -f "$master_file" ]]; then
     return 0
   fi
 
@@ -482,10 +499,21 @@ setup_branch() {
   fi
 
   # --- Parse create_from into remote/branch ---
-  local remote branch
+  # Do NOT assume the first path segment is a remote: a branch name can itself
+  # contain slashes (e.g. the single branch `codex/convex-rewrite` on origin).
+  # Only split off a remote when the first segment is an actually-configured
+  # remote; otherwise treat the whole value as a local ref (slashes and all).
+  # See ilk-runner-branch-setup-bugs handoff, bug #2.
+  local remote branch candidate
   if [[ "$BRANCH_CREATE_FROM" == */* ]]; then
-    remote="${BRANCH_CREATE_FROM%%/*}"
-    branch="${BRANCH_CREATE_FROM#*/}"
+    candidate="${BRANCH_CREATE_FROM%%/*}"
+    if git -C "$repo" remote | grep -qx "$candidate"; then
+      remote="$candidate"
+      branch="${BRANCH_CREATE_FROM#*/}"   # keeps inner slashes: origin/codex/convex-rewrite -> codex/convex-rewrite
+    else
+      remote=""                           # not a remote -> local ref; skip fetch
+      branch="$BRANCH_CREATE_FROM"
+    fi
   else
     # No slash — treat as a local ref (e.g. "HEAD", a tag, or a local branch)
     remote=""
