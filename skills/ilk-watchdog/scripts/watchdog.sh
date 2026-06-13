@@ -253,6 +253,7 @@ try:
     print(d.get('iterations',''))
     print(d.get('last_iter_at',''))
     print(d.get('pid',''))
+    print(d.get('run_id',''))
 except Exception:
     pass
 "
@@ -284,6 +285,49 @@ classify_action() {
       echo "blacklist"
       ;;
   esac
+}
+
+# Run collect.py to classify a terminal run. Prints the classification label
+# (e.g. "stuck-no-progress") or empty string on failure.
+invoke_postmortem_collect() {
+  local project="$1"
+  local run_id="$2"
+
+  if [[ ! -f "$COLLECT_PY" ]]; then
+    write_log "collect.py not found at $COLLECT_PY"
+    echo ""
+    return
+  fi
+
+  local collect_args=("-ProjectPath" "$project" "--quiet")
+  [[ -n "$run_id" ]] && collect_args+=("--run-id" "$run_id")
+
+  local report_path
+  report_path=$(python3 "$COLLECT_PY" "${collect_args[@]}" 2>/dev/null) || true
+  if [[ -z "$report_path" || ! -f "$report_path" ]]; then
+    write_log "collect.py produced no valid report path: '$report_path'"
+    echo ""
+    return
+  fi
+
+  # Parse classification from postmortem frontmatter
+  local klass
+  klass=$(python3 -c "
+import sys
+in_fm = False
+for line in open('$report_path', encoding='utf-8'):
+    line = line.rstrip()
+    if line.strip() == '---':
+        if in_fm:
+            break
+        in_fm = True
+        continue
+    if in_fm and line.startswith('classification:'):
+        print(line.split(':', 1)[1].strip().strip('\"'))
+        break
+" 2>/dev/null) || true
+
+  echo "$klass"
 }
 
 # ----- Promotion helper ------------------------------------------------------
@@ -518,11 +562,13 @@ Watchdog PID: $$" 36
     # ---------- Sentinel fast-path -----------------------------------
     local sentinel_raw
     sentinel_raw=$(read_last_exit_state "$runtime_dir")
+    local sentinel_run_id=""
     if [[ -n "$sentinel_raw" ]]; then
       sentinel_state=$(echo "$sentinel_raw" | sed -n '1p')
       sentinel_iters=$(echo "$sentinel_raw" | sed -n '2p')
       sentinel_last_iter=$(echo "$sentinel_raw" | sed -n '3p')
       sentinel_pid=$(echo "$sentinel_raw" | sed -n '4p')
+      sentinel_run_id=$(echo "$sentinel_raw" | sed -n '5p')
     fi
 
     if [[ -n "$sentinel_state" ]]; then
@@ -595,8 +641,26 @@ Watchdog PID: $$" 36
     fi
 
     # ---------- Classification & action ------------------------------
+    # When we have a terminal sentinel, run collect.py to get the
+    # classification label (matching ps1 behaviour). Fall back to the
+    # raw sentinel state only if collect.py produced no classification.
+    local classification=""
+    if [[ "$sentinel_terminal" == true ]]; then
+      write_log "running collect.py to classify the run..."
+      classification=$(invoke_postmortem_collect "$project" "$sentinel_run_id")
+      if [[ -n "$classification" ]]; then
+        write_log "classification: $classification"
+      else
+        write_log "collect.py produced no classification; falling back to raw sentinel state: $sentinel_state"
+        classification="$sentinel_state"
+      fi
+    else
+      # Legacy PID path: no sentinel, use raw state
+      classification="$sentinel_state"
+    fi
+
     local action
-    action=$(classify_action "$sentinel_state")
+    action=$(classify_action "$classification")
 
     if [[ "$action" == "sleep" ]]; then
       sleep "$poll_sec"
@@ -609,10 +673,10 @@ Watchdog PID: $$" 36
     fi
 
     if [[ "$action" == "blacklist" ]]; then
-      invoke_ilk_notify "blocked" "$proj_name" "classification: $sentinel_state"
-      write_banner "BLOCKED — ${sentinel_state^^}" \
+      invoke_ilk_notify "blocked" "$proj_name" "classification: $classification"
+      write_banner "BLOCKED — ${classification^^}" \
 "Project: $proj_name
-Classification: $sentinel_state
+Classification: $classification
 
 Restart will not help this kind of stop. Human triage required.
 Read the report tail and decide what to do, then relaunch ilk manually." 31
@@ -620,7 +684,7 @@ Read the report tail and decide what to do, then relaunch ilk manually." 31
     fi
 
     if [[ "$action" == "terminate" ]]; then
-      if [[ "$sentinel_state" == "shipped-unverified" ]]; then
+      if [[ "$classification" == "shipped-unverified" ]]; then
         invoke_ilk_notify "needs-verification" "$proj_name" "classification: shipped-unverified"
         write_banner "SHIPPED — NEEDS VERIFICATION" \
 "Project: $proj_name
@@ -629,10 +693,10 @@ Classification: shipped-unverified
 All sub-plans shipped, but some need human verification.
 No auto-relaunch. Read the postmortem for details." 33
       else
-        invoke_ilk_notify "triage" "$proj_name" "classification: $sentinel_state"
+        invoke_ilk_notify "triage" "$proj_name" "classification: $classification"
         write_banner "NO EVIDENCE — TRIAGE REQUIRED" \
 "Project: $proj_name
-Classification: $sentinel_state
+Classification: $classification
 
 Run started but left no usable records. Triage manually." 33
       fi
@@ -640,9 +704,9 @@ Run started but left no usable records. Triage manually." 33
     fi
 
     # action == relaunch
-    if [[ "$last_restart_class" != "$sentinel_state" ]]; then
+    if [[ "$last_restart_class" != "$classification" ]]; then
       restart_count=1
-      last_restart_class="$sentinel_state"
+      last_restart_class="$classification"
     else
       restart_count=$((restart_count + 1))
     fi
@@ -650,7 +714,7 @@ Run started but left no usable records. Triage manually." 33
     if [[ $restart_count -gt $max_restarts_cap ]]; then
       write_banner "MAX RESTARTS REACHED ($max_restarts_cap)" \
 "Project: $proj_name
-Last classification: $sentinel_state
+Last classification: $classification
 Hard cap is in place to force human review when restarts pile up.
 Inspect postmortems under the external launcher dir to see the trend, then
 relaunch manually if it still makes sense." 31
@@ -669,7 +733,7 @@ relaunch manually if it still makes sense." 31
     done
 
     if [[ $backoff -gt $poll_sec ]]; then
-      write_log "backoff: sleeping ${backoff}s before relaunch (consecutive $sentinel_state restarts: $restart_count/$max_restarts_cap)."
+      write_log "backoff: sleeping ${backoff}s before relaunch (consecutive $classification restarts: $restart_count/$max_restarts_cap)."
       sleep "$backoff"
     fi
 
@@ -679,8 +743,8 @@ relaunch manually if it still makes sense." 31
       return
     fi
 
-    write_log "WHITELIST hit ($sentinel_state). Restart $restart_count/$max_restarts_cap."
-    invoke_ilk_notify "restart" "$proj_name" "classification: $sentinel_state"
+    write_log "WHITELIST hit ($classification). Restart $restart_count/$max_restarts_cap."
+    invoke_ilk_notify "restart" "$proj_name" "classification: $classification"
 
     if ! bash "$LAUNCH_SCRIPT" --project-path "$project" --force; then
       write_banner "RELAUNCH FAILED" \
