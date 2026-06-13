@@ -129,22 +129,44 @@ provider of a worker loop.
 
 ## MCP Isolation
 
-MCP state is file-based and should follow `CLAUDE_CONFIG_DIR`.
+MCP state is file-based and follows `CLAUDE_CONFIG_DIR`.
 
 Planner:
 
-- Uses normal `~/.claude/.claude.json` MCP entries.
+- Uses normal `~/.claude/.claude.json` MCP entries (`mcpServers`), with OAuth
+  tokens in `~/.claude/.credentials.json` (`mcpOAuth`, `claudeAiOauth`).
 - Can keep richer planning/review MCPs.
 
 Worker:
 
-- Uses `~/.claude-worker/.claude.json`.
-- Should start with a minimal MCP set.
-- Can also be launched with `--mcp-config <file> --strict-mcp-config` for
-  per-run MCP isolation.
+- Reads its OWN `~/.claude-worker/.claude.json` (`mcpServers`) — **NOT**
+  `~/.claude.json`. `bootstrap` seeds `mcpServers: {}` and never clobbers, so a
+  worker starts with **zero** MCPs.
+- Should keep a deliberately small set (loops need repo/file/shell more than
+  broad integrations).
 
-Worker MCP should be deliberately small. Implementation loops usually need
-repo/file/shell capabilities more than broad external integrations.
+> **Critical gotcha (cost two stalls, fixed v0.9.5–v0.9.6).** An MCP added to the
+> *interactive* config (`~/.claude.json` or `claude mcp add`) does NOT reach the
+> worker — the worker only reads `~/.claude-worker/.claude.json`. So a sub-plan
+> that hard-gates on an MCP (`env_prereqs: claude mcp list | grep -q figma`) can
+> pass interactive review yet fast-fail to `blocked` in the loop. Two
+> consequences were wired up:
+>
+> 1. **Planner probes the worker surface.** `/ilk-plan` step 4b now runs
+>    `skills/ilk-loop/scripts/worker_mcp.py list` (reads the worker home's
+>    `mcpServers`), NOT the interactive `claude mcp list`, and stops pre-approval
+>    if the worker lacks a needed MCP.
+> 2. **`ilk-worker-mcp` helper** (`tools/claude-worker/ilk-worker-mcp.{ps1,sh}`,
+>    core `worker_mcp_edit.py`) adds an MCP to the worker correctly:
+>    - writes the server entry into `~/.claude-worker/.claude.json` `mcpServers`;
+>    - for an OAuth MCP (figma), copies ONLY that server's `mcpOAuth` entry into
+>      `~/.claude-worker/.credentials.json` — **never** `claudeAiOauth` (that
+>      would inject the planner's Claude identity and break the isolation this
+>      doc exists to enforce);
+>    - `ilk-worker-mcp add figma --from-user`, `... list`, `... verify`.
+
+The worker can also be launched with `--mcp-config <file> --strict-mcp-config`
+for per-run MCP isolation (an alternative to editing the worker home).
 
 ## Skills And Commands
 
