@@ -9,7 +9,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from loop_health import startup_hang_exceeded, hung_alive  # noqa: E402
+from loop_health import startup_hang_exceeded, hung_alive, hung_by_mtimes  # noqa: E402
 
 LH = SCRIPTS_DIR / "loop_health.py"
 
@@ -49,6 +49,35 @@ class TestHungAlive:
 
     def test_exactly_threshold(self):
         assert hung_alive("running", 1000.0, 1000.0 + 30 * 60, 30) is True
+
+
+# ── hung_by_mtimes (the watchdog's real progress decision) ─────────────────
+
+class TestHungByMtimes:
+    def test_fresh_run_not_hung(self):
+        # THE false-positive bug: sentinel just written (recent), JSONL still
+        # from the previous run (old) -> max is recent -> NOT hung.
+        now = 100000.0
+        assert hung_by_mtimes(jsonl_mtime=now - 600 * 60,        # prev run, 10h old
+                              sentinel_mtime=now - 2 * 60,        # this run, 2 min old
+                              now=now, threshold_min=45) is False
+
+    def test_both_stale_hung(self):
+        now = 100000.0
+        assert hung_by_mtimes(now - 60 * 60, now - 50 * 60, now, 45) is True
+
+    def test_jsonl_recent_healthy(self):
+        now = 100000.0
+        assert hung_by_mtimes(now - 2 * 60, now - 600 * 60, now, 45) is False
+
+    def test_both_absent(self):
+        assert hung_by_mtimes(None, None, 100000.0, 45) is False
+        assert hung_by_mtimes(0, 0, 100000.0, 45) is False
+
+    def test_only_sentinel_present(self):
+        now = 100000.0
+        assert hung_by_mtimes(None, now - 50 * 60, now, 45) is True
+        assert hung_by_mtimes(None, now - 2 * 60, now, 45) is False
 
 
 # ── CLI ─────────────────────────────────────────────────────────────

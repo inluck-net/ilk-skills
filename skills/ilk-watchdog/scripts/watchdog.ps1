@@ -493,17 +493,22 @@ Blacklist (block): $($BlacklistClasses -join ', ')
             # Falls back to the sentinel's started_at when the JSONL is absent
             # (the run launched but never logged an iteration).
             $thr = if ($env:ILK_HUNG_THRESHOLD_MIN) { [int]$env:ILK_HUNG_THRESHOLD_MIN } else { 45 }
+            # Progress = the MOST RECENT of the JSONL summary mtime (advances per
+            # iteration) and the sentinel file mtime (written at run start). Taking
+            # the max means a freshly-started run (sentinel just written, but no
+            # iteration logged yet, so the JSONL is still from the PREVIOUS run) is
+            # NOT mistaken for hung. Plain UTC DateTime subtraction — never
+            # DateTimeOffset.ToUnixTimeSeconds (unavailable on some PS builds).
             $jsonl = Join-Path (Split-Path $RuntimeDir -Parent) 'logs\.ilk-loop.log'
-            $progressEpoch = $null
-            if (Test-Path $jsonl) {
-              $progressEpoch = [DateTimeOffset]((Get-Item $jsonl).LastWriteTimeUtc).ToUnixTimeSeconds()
-            } elseif ($sentinel.started_at) {
-              try { $progressEpoch = [DateTimeOffset]::Parse($sentinel.started_at).ToUniversalTime().ToUnixTimeSeconds() } catch {}
-            }
-            if ($null -ne $progressEpoch) {
-              $nowEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-              if (($nowEpoch - $progressEpoch) -ge ($thr * 60)) {
-                $mins = [int](($nowEpoch - $progressEpoch) / 60)
+            $sentinelFile = Join-Path $RuntimeDir 'last-exit.json'
+            $progressTimes = @()
+            if (Test-Path $jsonl)        { $progressTimes += (Get-Item $jsonl).LastWriteTimeUtc }
+            if (Test-Path $sentinelFile) { $progressTimes += (Get-Item $sentinelFile).LastWriteTimeUtc }
+            if ($progressTimes.Count -gt 0) {
+              $progressUtc = ($progressTimes | Sort-Object -Descending | Select-Object -First 1)
+              $staleSec = ([datetime]::UtcNow - $progressUtc).TotalSeconds
+              if ($staleSec -ge ($thr * 60)) {
+                $mins = [int]($staleSec / 60)
                 Write-Banner -Title "BLOCKED — HUNG-ALIVE" -Body "Project: $ProjName`nstate=running but NO progress for ${mins} min (threshold ${thr}).`nThe loop is wedged (e.g. a pre-iter-1 hang). Restart will not help —`ninspect the runner; fix the cause; relaunch with ilk-launcher." -Color Red
                 Invoke-IlkNotify -Event 'blocked' -Project $ProjName -Detail "hung-alive ${mins}m no progress"
                 Write-Log ("hung-alive: state=running, no progress for {0} min (threshold {1}) — BLOCKING." -f $mins, $thr)

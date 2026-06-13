@@ -595,19 +595,24 @@ Watchdog PID: $$" 36
           # state=running but NO progress for a long time = a wedged loop (e.g. a
           # pre-iter-1 hang). Progress = the JSONL summary mtime (advances per
           # iteration); fall back to last-exit.json mtime when the JSONL is absent.
+          # Progress = MOST RECENT of the JSONL summary mtime (advances per
+          # iteration) and the sentinel file mtime (written at run start). Taking
+          # the max means a freshly-started run (sentinel just written, JSONL
+          # still from the PREVIOUS run) is NOT mistaken for hung.
           local thr="${ILK_HUNG_THRESHOLD_MIN:-45}"
           local jsonl="$(dirname "$runtime_dir")/logs/.ilk-loop.log"
-          local progress_file=""
-          if [[ -f "$jsonl" ]]; then
-            progress_file="$jsonl"
-          elif [[ -f "${runtime_dir}/last-exit.json" ]]; then
-            progress_file="${runtime_dir}/last-exit.json"
-          fi
-          if [[ -n "$progress_file" ]]; then
-            local mtime now_epoch
-            mtime=$(stat -f %m "$progress_file" 2>/dev/null || stat -c %Y "$progress_file" 2>/dev/null || echo 0)
+          local sentinel_file="${runtime_dir}/last-exit.json"
+          local mtime=0 m f
+          for f in "$jsonl" "$sentinel_file"; do
+            if [[ -f "$f" ]]; then
+              m=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)
+              [[ "$m" -gt "$mtime" ]] && mtime="$m"
+            fi
+          done
+          if [[ "$mtime" -gt 0 ]]; then
+            local now_epoch
             now_epoch=$(date +%s)
-            if [[ "$mtime" -gt 0 ]] && (( now_epoch - mtime >= thr * 60 )); then
+            if (( now_epoch - mtime >= thr * 60 )); then
               local mins=$(( (now_epoch - mtime) / 60 ))
               write_banner "BLOCKED — HUNG-ALIVE" \
                 "Project: $proj_name\nstate=running but NO progress for ${mins} min (threshold ${thr}).\nThe loop is wedged (e.g. a pre-iter-1 hang). Restart will not help —\ninspect the runner; fix the cause; relaunch with ilk-launcher." 31

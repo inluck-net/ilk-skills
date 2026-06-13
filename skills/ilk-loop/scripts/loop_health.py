@@ -37,6 +37,25 @@ def hung_alive(state: str, last_progress_ts: float,
     return (now - last_progress_ts) >= threshold_min * 60.0
 
 
+def hung_by_mtimes(jsonl_mtime: float | None, sentinel_mtime: float | None,
+                   now: float, threshold_min: float) -> bool:
+    """True iff the MOST RECENT progress signal is stale beyond the threshold.
+
+    Progress = max(JSONL summary mtime, sentinel file mtime). The sentinel is
+    written at run start, so a freshly-started run (sentinel recent, JSONL still
+    from the PREVIOUS run) is correctly NOT hung. Either arg may be None/0 when
+    the file is absent; returns False when both are absent.
+
+    This is the decision both watchdogs implement inline against real file
+    mtimes — kept here so it is unit-tested (a fresh-run false-positive and the
+    DateTimeOffset.ToUnixTimeSeconds crash both shipped without a test).
+    """
+    candidates = [m for m in (jsonl_mtime, sentinel_mtime) if m]
+    if not candidates:
+        return False
+    return (now - max(candidates)) >= threshold_min * 60.0
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Loop progress-health decisions.")
     sub = p.add_subparsers(dest="cmd")
