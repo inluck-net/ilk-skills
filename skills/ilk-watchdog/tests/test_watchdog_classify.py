@@ -277,6 +277,86 @@ def test_no_evidence_classified(scratch_env):
     )
 
 
+# ── dependency-unreachable classification (SP3) ────────────────────────────
+
+
+def _write_iter_log(data_home: Path, key: str, run_id: str, name: str, body: str) -> Path:
+    """Write a per-iteration log file and return its path."""
+    run_dir = _logs_dir(data_home, key) / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    p = run_dir / name
+    p.write_text(body, encoding="utf-8")
+    return p
+
+
+def test_dependency_unreachable_classified_and_names_dep(scratch_env):
+    """A no-progress stall whose iter log shows a missing MCP classifies as
+    dependency-unreachable (NOT stuck-no-progress) and names the dependency."""
+    project_path, env, key = scratch_env
+    data_home = Path(env["ILK_DATA_HOME"])
+
+    run_id = "20260613-095942"
+    _write_sentinel(data_home, key, run_id, "no-progress")
+
+    # Iter log carries the exact figma-stall signal.
+    iter_log = _write_iter_log(
+        data_home, key, run_id, "iter-07.log",
+        "implement to Figma\nFigma MCP not connected\n"
+        "claude mcp list | grep -q figma\n",
+    )
+
+    # Clean exit codes (like the real figma stall) -> would otherwise be
+    # stuck-no-progress. The detector keys off the iter log via "log".
+    _write_jsonl(data_home, key, project_path, [
+        {"run_id": run_id, "iteration": i, "exit_code": 0,
+         "new_commits_total": 0, "stop_reason": "no-progress",
+         "duration_sec": 60, "log": str(iter_log)}
+        for i in (5, 6, 7)
+    ])
+
+    result = subprocess.run(
+        [sys.executable, str(_COLLECT_PY), "-ProjectPath", str(project_path),
+         "--run-id", run_id, "--quiet"],
+        capture_output=True, text=True, env=env,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    text = (_launcher_dir(data_home, key) / "postmortems" / f"{run_id}.md").read_text(encoding="utf-8")
+    assert "dependency-unreachable" in text, text[:600]
+    assert "stuck-no-progress" not in text, text[:600]
+    assert "figma" in text, text[:600]          # names the missing dep
+    assert "ilk-worker-mcp" in text, text[:600]  # remediation hint
+
+
+def test_plain_no_progress_still_stuck(scratch_env):
+    """A no-progress stall with NO dependency signal still classifies as
+    stuck-no-progress (no regression)."""
+    project_path, env, key = scratch_env
+    data_home = Path(env["ILK_DATA_HOME"])
+
+    run_id = "20260613-120000"
+    _write_sentinel(data_home, key, run_id, "no-progress")
+    iter_log = _write_iter_log(
+        data_home, key, run_id, "iter-03.log",
+        "thinking...\nediting files\nno obvious next step\n",
+    )
+    _write_jsonl(data_home, key, project_path, [
+        {"run_id": run_id, "iteration": i, "exit_code": 0,
+         "new_commits_total": 0, "stop_reason": "no-progress",
+         "duration_sec": 60, "log": str(iter_log)}
+        for i in (1, 2, 3)
+    ])
+
+    result = subprocess.run(
+        [sys.executable, str(_COLLECT_PY), "-ProjectPath", str(project_path),
+         "--run-id", run_id, "--quiet"],
+        capture_output=True, text=True, env=env,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    text = (_launcher_dir(data_home, key) / "postmortems" / f"{run_id}.md").read_text(encoding="utf-8")
+    assert "stuck-no-progress" in text, text[:600]
+    assert "dependency-unreachable" not in text, text[:600]
+
+
 # ── classify_action parity (bash watchdog) ─────────────────────────────────
 
 
@@ -292,6 +372,7 @@ def test_no_evidence_classified(scratch_env):
     ("budget-exhausted", "relaunch"),
     ("merge-conflict", "blacklist"),
     ("local-checks-stuck", "blacklist"),
+    ("dependency-unreachable", "blacklist"),
     ("unknown-state", "sleep"),  # fallback
 ])
 def test_classify_action(state, expected_action):
@@ -308,7 +389,7 @@ def test_classify_action(state, expected_action):
             return "terminate"
         if s in ("no-progress", "timeout", "budget-exhausted"):
             return "relaunch"
-        if s in ("merge-conflict", "local-checks-stuck"):
+        if s in ("merge-conflict", "local-checks-stuck", "dependency-unreachable"):
             return "blacklist"
         return "sleep"
 

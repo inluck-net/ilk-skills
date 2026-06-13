@@ -390,6 +390,51 @@ def classify_log_keywords(lines: list[str]) -> str:
     return "unknown"
 
 
+# Signals that a run stalled because a required runtime dependency was
+# UNREACHABLE — the loop worker is missing an MCP, the dev server is down, or
+# an env_prereq probe failed. This is distinct from a genuine no-progress
+# stall: a restart will not help, the fix is a config/reachability change
+# (e.g. `ilk-worker-mcp add figma`). See detect_unreachable_dependency.
+DEPENDENCY_RE = re.compile(
+    r"MCP not connected|no MCP servers|"
+    r"claude\s+mcp\s+list[^\n]*\bgrep\b|"
+    r"blocked:\s*dependency unreachable|dependency unreachable|"
+    r"env[_ ]?prereq[^\n]*(?:unreachable|not connected|failed)",
+    re.IGNORECASE,
+)
+
+# Extract a named MCP/dependency from the unreachable signal, if present.
+_DEP_NAME_RE = re.compile(
+    r"grep\s+-q\s+([A-Za-z0-9_.-]+)|"
+    r"([A-Za-z0-9_.-]+)\s+MCP not connected",
+    re.IGNORECASE,
+)
+
+
+def detect_unreachable_dependency(lines: list[str]) -> str | None:
+    """Return the missing dependency name when the logs show an unreachable
+    env_prereq / missing MCP; else None.
+
+    Falls back to a generic label when the signal is present but no specific
+    name can be extracted.
+    """
+    if not lines:
+        return None
+    hit = False
+    name: str | None = None
+    for line in lines:
+        if DEPENDENCY_RE.search(line):
+            hit = True
+            m = _DEP_NAME_RE.search(line)
+            if m and not name:
+                name = m.group(1) or m.group(2)
+            if name:
+                break
+    if not hit:
+        return None
+    return name or "a required dependency/MCP"
+
+
 def loop_status_exit(project_path: Path) -> int:
     if not LOOP_STATUS_SCRIPT.exists():
         return -1
@@ -666,6 +711,31 @@ def _classify_core(
             "commits": new_commits_total,
         }
     if last_stop == "no-progress":
+        # Reachability case FIRST: the stall was a missing MCP / unreachable
+        # env_prereq, not a genuine no-progress. A restart won't help; the fix
+        # is config/reachability (e.g. `ilk-worker-mcp add <name>`). Detect it
+        # before the generic stuck path — the figma stalls had clean exit codes
+        # and would otherwise fall through to stuck-no-progress.
+        dep_log_path = last.get("log")
+        if not dep_log_path and last.get("run_id"):
+            resolved = resolve_iter_log(
+                last.get("run_id"), last.get("iteration", 0), project_path, last_launch
+            )
+            if resolved:
+                dep_log_path = str(resolved)
+        if dep_log_path:
+            missing = detect_unreachable_dependency(tail_log(dep_log_path))
+            if missing is None:
+                jsonl_path = Path(dep_log_path).with_suffix(".log.jsonl")
+                if jsonl_path.exists():
+                    missing = detect_unreachable_dependency(
+                        tail_log(str(jsonl_path), max_lines=5000)
+                    )
+            if missing:
+                return "dependency-unreachable", {
+                    "iter_at_stop": last.get("iteration"),
+                    "missing_dependency": missing,
+                }
         # split by error pattern
         last3 = iters[-3:]
         last3_errs = sum(1 for r in last3 if r.get("exit_code") not in (0, None))
@@ -955,6 +1025,15 @@ def recommend_params(
         return cur_max, cur_to, (
             "endpoint unstable but loop made progress. Params unchanged. "
             "Watch this trend across 2-3 more runs before switching endpoints."
+        )
+
+    if label == "dependency-unreachable":
+        return cur_max, cur_to, (
+            "the loop stalled because a required runtime dependency was "
+            "unreachable (worker missing an MCP, dev server down, or an "
+            "env_prereq probe failed) - a restart will NOT help. For a missing "
+            "worker MCP: ilk-worker-mcp add <name> then ilk-worker-mcp verify. "
+            "For a dev-server/remote source: bring it up. Params unchanged."
         )
 
     if label == "stuck-no-progress":
@@ -1258,6 +1337,21 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
             "third zero-progress iter, with API errors in 2+ of the last 3 iters. "
             "Triage endpoint, credentials, or model before relaunching."
         )
+    if label == "dependency-unreachable":
+        dep = facts.get("missing_dependency", "a required dependency/MCP")
+        fix = (
+            f"add it to the worker: `ilk-worker-mcp add {dep}` then "
+            f"`ilk-worker-mcp verify`"
+            if dep and "dependency" not in dep
+            else "restore the missing MCP / dev server / remote source"
+        )
+        return (
+            f"The loop stalled at iter {facts.get('iter_at_stop')} because a "
+            f"required runtime dependency was unreachable: **{dep}**. A restart "
+            f"will NOT help — this is a config/reachability gap, not a stuck "
+            f"agent. Fix: {fix}. Then relaunch."
+        )
+
     if label == "stuck-no-progress":
         return (
             f"Agent stalled: 3 consecutive zero-progress iters at "
