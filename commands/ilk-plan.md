@@ -120,24 +120,46 @@ If the resolved plans dir has any unfinished sub-plans, list them briefly
 so the new batch doesn't overlap. If overlap is detected, surface it to
 the user and ask whether to merge / supersede / proceed.
 
-## 4b. Probe loop CLI capabilities
+## 4b. Probe loop CLI capabilities — the WORKER's MCP surface
 
-Run `claude mcp list` once and remember the result. The loop runs via
-Claude Code CLI, so its tool surface = Claude Code built-ins
-(Bash/Edit/Read/Grep/Glob/Task/Write/etc.) PLUS whatever MCPs that
-command lists. This determines what counts as loop-shippable in step 6:
+> **Probe the WORKER, not your interactive session.** The loop runs via the
+> `claude-worker` engine, which pins `CLAUDE_CONFIG_DIR` to a separate worker
+> home (default `~/.claude-worker`) and reads its OWN `.claude.json`
+> `mcpServers` — NOT the `~/.claude.json` that an interactive `claude mcp list`
+> shows. A bare `claude mcp list` here probes the WRONG surface: it can show
+> figma/chrome-devtools "connected" while the worker has none, so an MCP-naming
+> `env_prereq`/AC passes review and then fast-fails to `blocked` in the loop
+> (observed: uccargo, 2026-06-13 — two stalls from exactly this gap).
 
-- If `chrome-devtools` is listed → browser verification IS
+Get the worker's MCP set with the helper (this is the surface the loop runs in):
+
+```bash
+python "<skill-root>/ilk-loop/scripts/worker_mcp.py" list
+# -> {"worker_home": "...", "mcpServers": ["chrome-devtools", "figma"]}
+```
+
+The loop's tool surface = Claude Code built-ins (Bash/Edit/Read/Grep/Glob/
+Task/Write/etc.) PLUS the MCPs in that `mcpServers` list. This determines what
+counts as loop-shippable in step 6. (You may also run the interactive
+`claude mcp list` for comparison, but the WORKER set is authoritative.)
+
+- If `chrome-devtools` is in the worker set → browser verification IS
   loop-shippable; plan browser ACs as normal loop steps.
-- If `chrome-devtools` is NOT listed but the batch needs browser
-  verification → either (a) suggest the user run
-  `claude mcp add chrome-devtools --scope user -- npx chrome-devtools-mcp@latest --browserUrl http://localhost:9222`
-  before approving, or (b) plan those ACs into a "Manual user
-  verification" section per SKILL.md → "Loop-shippable verification"
-  → Option B.
+- **If the batch needs an MCP the worker LACKS** (e.g. figma/chrome-devtools
+  missing from `worker_mcp.py list`): **STOP before the step-5 approval.** Do
+  not write a sub-plan that hard-gates on an MCP the worker can't reach. Tell
+  the user to add it to the worker first:
+  `<toolkit>/tools/claude-worker/ilk-worker-mcp add <name>` (the `ilk-worker-mcp`
+  helper installs the server into the worker home + copies only that server's
+  OAuth, never the planner's Claude identity). Re-probe, then continue.
+  - For a capability with a documented fallback (e.g. figma → build to an
+    existing page pattern), prefer encoding the **degrade path** in step logic
+    over a hard `env_prereq` (see decomposition-principles §"degrade-to-default"
+    and the step-7 env_prereq-vs-fallback lint) — do NOT make it a fast-fail gate.
 
-Mention the probe result in the step 5 proposal so the user knows
-which path the plan assumes.
+Mention the **worker MCP set** (from `worker_mcp.py list`, not the interactive
+session) in the step-5 proposal so the user knows which surface the plan was
+validated against.
 
 ## 4c. Fixture discovery (scan before drafting)
 
