@@ -360,26 +360,31 @@ def test_plain_no_progress_still_stuck(scratch_env):
 # ── classify_action parity (bash watchdog) ─────────────────────────────────
 
 
-@pytest.mark.parametrize("state,expected_action", [
+@pytest.mark.parametrize("label,expected_action", [
     ("running", "sleep"),
     ("all-shipped", "promote"),
     ("already-shipped", "promote"),
     ("shipped", "promote"),
     ("shipped-unverified", "terminate"),
     ("no-evidence", "terminate"),
-    ("no-progress", "relaunch"),
-    ("timeout", "relaunch"),
-    ("budget-exhausted", "relaunch"),
-    ("merge-conflict", "blacklist"),
+    ("timeout-bound", "relaunch"),
+    ("max-iter-bound", "relaunch"),
+    ("api-flaky", "relaunch"),
+    ("interrupted", "relaunch"),
+    ("stuck-no-progress", "blacklist"),
+    ("api-blocked", "blacklist"),
+    ("budget-exhausted", "blacklist"),
     ("local-checks-stuck", "blacklist"),
     ("dependency-unreachable", "blacklist"),
-    ("unknown-state", "sleep"),  # fallback
+    ("merge-conflict", "blacklist"),
+    ("unknown-label", "blacklist"),  # fail-safe: unknown -> blacklist
 ])
-def test_classify_action(state, expected_action):
-    """watchdog.sh classify_action routes states to the correct action."""
-    # We can't easily invoke bash from pytest on all platforms, so test the
-    # logic by importing the case statement as a pure Python equivalent.
-    # This is a direct translation of the bash classify_action function.
+def test_classify_action(label, expected_action):
+    """watchdog.sh classify_action routes classification labels to the correct action.
+
+    This is the pure-Python translation of the bash classify_action function.
+    The bash-backed parity test (step 2) proves the real function matches.
+    """
     def classify_action(s: str) -> str:
         if s == "running":
             return "sleep"
@@ -387,10 +392,11 @@ def test_classify_action(state, expected_action):
             return "promote"
         if s in ("shipped-unverified", "no-evidence"):
             return "terminate"
-        if s in ("no-progress", "timeout", "budget-exhausted"):
+        if s in ("timeout-bound", "max-iter-bound", "api-flaky", "interrupted"):
             return "relaunch"
-        if s in ("merge-conflict", "local-checks-stuck", "dependency-unreachable"):
+        if s in ("stuck-no-progress", "api-blocked", "budget-exhausted",
+                 "local-checks-stuck", "dependency-unreachable", "merge-conflict"):
             return "blacklist"
-        return "sleep"
+        return "blacklist"  # fail-safe: unknown terminal label -> blacklist
 
-    assert classify_action(state) == expected_action
+    assert classify_action(label) == expected_action

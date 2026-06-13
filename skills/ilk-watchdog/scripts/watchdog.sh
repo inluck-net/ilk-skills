@@ -259,8 +259,8 @@ except Exception:
 }
 
 classify_action() {
-  local state="$1"
-  case "$state" in
+  local label="$1"
+  case "$label" in
     running)
       echo "sleep"
       ;;
@@ -271,22 +271,17 @@ classify_action() {
       # Terminal success-needs-human / triage — do NOT relaunch.
       echo "terminate"
       ;;
-    no-progress|timeout|budget-exhausted)
+    timeout-bound|max-iter-bound|api-flaky|interrupted)
+      # Whitelist: transient failures safe to retry.
       echo "relaunch"
       ;;
-    merge-conflict|local-checks-stuck|dependency-unreachable)
-      # dependency-unreachable: a missing MCP / unreachable env_prereq — a
-      # restart won't help; block for a config/reachability fix
-      # (e.g. ilk-worker-mcp add <name>). NOTE: classify_action keys off the
-      # RAW sentinel state here, while dependency-unreachable is a collect.py
-      # *classification* — so on a raw "no-progress" sentinel this arm won't
-      # fire yet (ps1 already acts on the classification). Wiring sh to act on
-      # the collect.py label is tracked as a separate cross-platform-parity fix.
+    stuck-no-progress|api-blocked|budget-exhausted|local-checks-stuck|dependency-unreachable|merge-conflict)
+      # Blacklist: structural failures where a restart won't help.
       echo "blacklist"
       ;;
     *)
-      # missing file / unknown state -> sleep (poll again)
-      echo "sleep"
+      # Unknown terminal label — fail-safe BLOCK (matching ps1 behaviour).
+      echo "blacklist"
       ;;
   esac
 }
