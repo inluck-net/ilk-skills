@@ -277,6 +277,30 @@ def test_no_evidence_classified(scratch_env):
     )
 
 
+# ── startup-hang classification (runner pre-iter-1 abort) ──────────────────
+
+
+def test_startup_hang_classified(scratch_env):
+    """A sentinel with state=startup-hang and NO JSONL records classifies as
+    startup-hang (not no-evidence) — the runner self-aborted a pre-iter-1 hang."""
+    project_path, env, key = scratch_env
+    data_home = Path(env["ILK_DATA_HOME"])
+
+    run_id = "20260613-200000"
+    _write_sentinel(data_home, key, run_id, "startup-hang")
+    # deliberately NO _write_jsonl — a startup hang produces zero iteration records
+
+    result = subprocess.run(
+        [sys.executable, str(_COLLECT_PY), "-ProjectPath", str(project_path),
+         "--run-id", run_id, "--quiet"],
+        capture_output=True, text=True, env=env,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    text = (_launcher_dir(data_home, key) / "postmortems" / f"{run_id}.md").read_text(encoding="utf-8")
+    assert "startup-hang" in text, text[:600]
+    assert "no-evidence" not in text, text[:600]
+
+
 # ── dependency-unreachable classification (SP3) ────────────────────────────
 
 

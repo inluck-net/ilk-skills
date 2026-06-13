@@ -997,6 +997,14 @@ def recommend_params(
             "sentinel state and runner logs before relaunching."
         )
 
+    if label == "startup-hang":
+        return cur_max, cur_to, (
+            "the run hung before iteration 1 and the runner aborted on the "
+            "startup timeout. A restart will NOT help until the cause is fixed "
+            "(usually a wedged pre-iteration step / branch setup). Read the "
+            "runner banner tail, fix the cause, then relaunch. Params unchanged."
+        )
+
     if label == "timeout-bound":
         # bump timeout to ~1.5x the highest observed iter (rounded to 5 min,
         # capped at 120, floored to 15)
@@ -1393,6 +1401,13 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
             "The run may have crashed before iter 1 completed, or all records "
             "were for a different project path. " + (facts.get("reason") or "")
         )
+    if label == "startup-hang":
+        return (
+            "The runner hung BEFORE iteration 1 and aborted on the startup "
+            "timeout (no progress within the threshold). "
+            + (facts.get("reason") or "")
+            + " Not auto-relaunchable — fix the cause, then relaunch."
+        )
     if label == "interrupted":
         return facts.get("note") or "Loop did not reach a natural stop."
     return "(no narrative for this label)"
@@ -1675,7 +1690,21 @@ def main() -> int:
             # Otherwise fall back to "interrupted" (legacy behavior).
             target_run = sentinel.get("run_id") or args.run_id or "unknown"
             iters: list[dict] = []
-            if args.run_id and sentinel.get("run_id") == args.run_id:
+            sentinel_state = (sentinel.get("state") or "").strip()
+            if sentinel_state == "startup-hang":
+                # The runner aborted on the startup timeout (no JSONL iteration
+                # record within the threshold) — a pre-iter-1 hang. Distinct from
+                # no-evidence: the runner self-detected and wrote a terminal state.
+                label = "startup-hang"
+                facts = {
+                    "reason": (
+                        f"run {target_run} hung before iteration 1 and the runner "
+                        "aborted on the startup timeout. A restart will not help "
+                        "until the cause is fixed — check the branch-setup / runner "
+                        "banner tail (often a wedged pre-iteration step)."
+                    ),
+                }
+            elif args.run_id and sentinel.get("run_id") == args.run_id:
                 label = "no-evidence"
                 facts = {
                     "reason": (
