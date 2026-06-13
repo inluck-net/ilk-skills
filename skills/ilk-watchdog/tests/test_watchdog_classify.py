@@ -400,3 +400,56 @@ def test_classify_action(label, expected_action):
         return "blacklist"  # fail-safe: unknown terminal label -> blacklist
 
     assert classify_action(label) == expected_action
+
+
+@pytest.mark.skipif(
+    not __import__("shutil").which("bash"),
+    reason="bash not available on PATH",
+)
+@pytest.mark.parametrize("label,expected_action", [
+    ("running", "sleep"),
+    ("all-shipped", "promote"),
+    ("already-shipped", "promote"),
+    ("shipped", "promote"),
+    ("shipped-unverified", "terminate"),
+    ("no-evidence", "terminate"),
+    ("timeout-bound", "relaunch"),
+    ("max-iter-bound", "relaunch"),
+    ("api-flaky", "relaunch"),
+    ("interrupted", "relaunch"),
+    ("stuck-no-progress", "blacklist"),
+    ("api-blocked", "blacklist"),
+    ("budget-exhausted", "blacklist"),
+    ("local-checks-stuck", "blacklist"),
+    ("dependency-unreachable", "blacklist"),
+    ("merge-conflict", "blacklist"),
+    ("unknown-label", "blacklist"),  # fail-safe: unknown -> blacklist
+])
+def test_classify_action_bash_parity(label, expected_action):
+    """Bash-backed parity test: invoke the REAL classify_action from watchdog.sh.
+
+    This proves the actual bash function matches the Python translation above.
+    Guarded by shutil.which('bash') — skipped on hosts without bash.
+
+    We extract just the classify_action function from watchdog.sh (via sed)
+    to avoid running the script's initialization (which requires a project).
+    """
+    # Use sed to extract the classify_action function definition, then invoke it.
+    # This avoids sourcing the entire watchdog.sh which runs main().
+    result = subprocess.run(
+        [
+            "bash", "-c",
+            f'eval "$(sed -n "/^classify_action()/,/^}}/p" "{_WATCHDOG_SH}")"; classify_action "{label}"',
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, (
+        f"bash classify_action exited {result.returncode} for label={label!r}\n"
+        f"stderr: {result.stderr}"
+    )
+    actual = result.stdout.strip()
+    assert actual == expected_action, (
+        f"classify_action({label!r}): expected {expected_action!r}, got {actual!r}"
+    )
