@@ -176,7 +176,7 @@ class TestAC1_LoopStatusJson:
         assert isinstance(data["subplans"], list)
         assert len(data["subplans"]) >= 1
         sp = data["subplans"][0]
-        for key in ("slug", "status", "current_step", "estimated_steps"):
+        for key in ("slug", "status", "current_step", "estimated_steps", "repo"):
             assert key in sp, f"subplan missing '{key}'"
 
     def test_text_mode_unchanged_when_no_json_flag(self):

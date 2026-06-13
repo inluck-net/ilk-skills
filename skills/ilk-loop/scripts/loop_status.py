@@ -236,7 +236,7 @@ def resolve_status(cwd: Path) -> dict:
         reconcile_master_status(m, plans_dir)
 
     master, queue_view = pick_active_master(masters)
-    master_text = master.read_text(encoding="utf-8")
+    master_text = master.read_text(encoding="utf-8-sig")
     ordered_files = extract_master_order(master_text)
 
     rows: list[tuple[str, str, str, str, str]] = []
@@ -250,7 +250,7 @@ def resolve_status(cwd: Path) -> dict:
         if not path.exists():
             rows.append((fname, "MISSING", "-", "-", ""))
             continue
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8-sig")  # tolerate a BOM (PS-written plans)
         fm = parse_frontmatter(text)
         status = fm.get("status", "?")
         cur_step = fm.get("current_step", "?")
@@ -275,7 +275,7 @@ def resolve_status(cwd: Path) -> dict:
 
     # Build subplans list
     subplans = []
-    for fname, status, cur, est, _repo in rows:
+    for fname, status, cur, est, repo in rows:
         # Derive slug: strip YYYY-MM-DD- prefix and .md suffix
         slug = fname
         if fname.endswith(".md"):
@@ -289,6 +289,7 @@ def resolve_status(cwd: Path) -> dict:
             "status": status,
             "current_step": cur,
             "estimated_steps": est,
+            "repo": repo,
             "verification_tier": tiers.get(fname, "loop-verified"),
         })
 
@@ -390,7 +391,7 @@ def main() -> int:
     # Reconstruct rows from subplans for the text table.
     rows: list[tuple[str, str, str, str, str, str]] = []  # +verification_tier
     for sp in data["subplans"]:
-        rows.append((sp["fname"], sp["status"], sp["current_step"], sp["estimated_steps"], "", sp.get("verification_tier", "loop-verified")))
+        rows.append((sp["fname"], sp["status"], sp["current_step"], sp["estimated_steps"], sp.get("repo", ""), sp.get("verification_tier", "loop-verified")))
 
     if not rows:
         print("Master plan contains no sub-plan references.", file=sys.stderr)
