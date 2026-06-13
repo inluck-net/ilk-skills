@@ -76,7 +76,10 @@ def _read_sentinel(runtime_dir: Path) -> dict | None:
     if not f.is_file():
         return None
     try:
-        return json.loads(f.read_text(encoding="utf-8"))
+        # utf-8-sig: the PowerShell runner writes last-exit.json with a UTF-8
+        # BOM; plain utf-8 makes json.loads choke on the BOM -> None -> the tray
+        # renders every running loop as "(idle)". See inline-python-open-needs-utf8.
+        return json.loads(f.read_text(encoding="utf-8-sig"))
     except (json.JSONDecodeError, OSError):
         return None
 
@@ -90,7 +93,7 @@ def _latest_postmortem_class(launcher_dir: Path) -> str | None:
     if not pms:
         return None
     try:
-        text = pms[0].read_text(encoding="utf-8")
+        text = pms[0].read_text(encoding="utf-8-sig")
     except OSError:
         return None
     fm = parse_frontmatter(text)
@@ -104,7 +107,7 @@ def _resolve_next_subplan(plans_dir: Path, master_text: str) -> tuple[str, str]:
         path = plans_dir / fname
         if not path.exists():
             continue
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8-sig")
         fm = parse_frontmatter(text)
         status = fm.get("status", "pending")
         if status == "shipped":
@@ -134,7 +137,7 @@ def resolve_project_status(project_dir: Path) -> dict:
         masters = sorted(plans_dir.glob("MASTER-*.md"))
         for mp in masters:
             try:
-                mtext = mp.read_text(encoding="utf-8")
+                mtext = mp.read_text(encoding="utf-8-sig")
             except OSError:
                 continue
             mfm = parse_frontmatter(mtext)

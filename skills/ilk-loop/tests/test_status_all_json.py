@@ -301,3 +301,27 @@ class TestAC3_PidLiveness:
         data = json.loads(result.stdout)
         entry = next(e for e in data if e["project_key"].endswith("dead-pid"))
         assert entry["sentinel"]["alive"] is False
+
+    def test_alive_for_bom_encoded_sentinel(self):
+        """The PowerShell runner writes last-exit.json with a UTF-8 BOM. The
+        reader MUST use utf-8-sig, else json.loads chokes on the BOM -> sentinel
+        None -> alive=False, and the tray renders every running loop as "(idle)".
+        Regression for the 2026-06-13 tray-always-idle bug."""
+        proj = _setup_project("bom-pid", pid=os.getpid())
+        key = _project_key(proj)
+        sentinel_path = ILK_DATA / "projects" / key / "runtime" / "last-exit.json"
+        sentinel = {"state": "running", "pid": os.getpid(),
+                    "iterations": 3, "run_id": "bom-run"}
+        # Write WITH a UTF-8 BOM, exactly like the PowerShell runner does.
+        sentinel_path.write_text(json.dumps(sentinel), encoding="utf-8-sig")
+        assert sentinel_path.read_bytes()[:3] == b"\xef\xbb\xbf", "fixture must have a BOM"
+
+        env = {**os.environ, "ILK_DATA_HOME": str(ILK_DATA)}
+        result = subprocess.run(
+            [sys.executable, str(STATUS_ALL), "--json"],
+            capture_output=True, text=True, env=env,
+        )
+        data = json.loads(result.stdout)
+        entry = next(e for e in data if e["project_key"].endswith("bom-pid"))
+        assert entry["sentinel"]["state"] == "running", entry["sentinel"]
+        assert entry["sentinel"]["alive"] is True, entry["sentinel"]
