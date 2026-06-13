@@ -1312,111 +1312,131 @@ function Classify-Remote {
   return "shared"
 }
 
+function Setup-BranchOneRepo {
+  <#
+    Create/checkout $script:BranchName from $script:BranchCreateFrom in ONE repo.
+    Returns:
+      'branched' — branch created/checked out successfully here
+      'skip'     — this repo can't host the branch (not a git repo, dirty tree,
+                   or base ref missing) — non-fatal in a multi-repo project
+      'fail'     — hard error (merge/rebase in progress, fetch/checkout failed)
+    Decisions are made on git EXIT CODES, never on whether git wrote to stderr
+    (git's normal "Switched to a new branch" goes to stderr); git output is piped
+    to Out-Null so it cannot surface as a fatal NativeCommandError.
+  #>
+  param([string]$Repo)
+
+  # git writes normal status (e.g. "Switched to a new branch") to STDERR; under
+  # an inherited $ErrorActionPreference='Stop' that surfaces as a terminating
+  # NativeCommandError and can wedge the harness. Localize to 'Continue' and
+  # decide on $LASTEXITCODE only. NEVER use 2>&1 here (it wraps stderr into the
+  # success stream as ErrorRecords); use 2>$null to discard git's stderr.
+  $ErrorActionPreference = 'Continue'
+
+  $gitDir = (& git -C $Repo rev-parse --git-dir 2>$null)
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "  ! $Repo is not a git repo — skipping branch setup there" -ForegroundColor DarkYellow
+    return 'skip'
+  }
+  $gitDir = "$gitDir".Trim()
+  if ($gitDir -and (Test-Path (Join-Path $gitDir "MERGE_HEAD"))) {
+    Write-Host "Error: a merge is in progress in $Repo (abort/commit before running)." -ForegroundColor Red
+    return 'fail'
+  }
+  if ($gitDir -and ((Test-Path (Join-Path $gitDir "rebase-merge")) -or (Test-Path (Join-Path $gitDir "rebase-apply")))) {
+    Write-Host "Error: a rebase is in progress in $Repo (abort/finish before running)." -ForegroundColor Red
+    return 'fail'
+  }
+
+  # Dirty tree -> skip (non-fatal): only clean repos can host the branch. In a
+  # single-repo project this makes the one repo skip -> branched==0 -> Setup-Branch
+  # fails, preserving the original dirty-tree guard.
+  & git -C $Repo diff --quiet 2>$null;        $diffCode = $LASTEXITCODE
+  & git -C $Repo diff --cached --quiet 2>$null; $cachedCode = $LASTEXITCODE
+  if ($diffCode -ne 0 -or $cachedCode -ne 0) {
+    Write-Host "  ! working tree dirty in $Repo — skipping branch setup there" -ForegroundColor DarkYellow
+    return 'skip'
+  }
+
+  # Parse create_from into remote/branch (per-repo: depends on configured remotes).
+  # Only split off a remote when the first segment is an actually-configured remote
+  # (a branch name can contain slashes, e.g. codex/convex-rewrite).
+  $remote = ""
+  $branch = $script:BranchCreateFrom
+  if ($script:BranchCreateFrom -match '^([^/]+)/(.+)$') {
+    $candidate = $Matches[1]
+    $configuredRemotes = @(& git -C $Repo remote 2>$null)
+    if ($configuredRemotes -contains $candidate) { $remote = $candidate; $branch = $Matches[2] }
+  }
+
+  if ($remote) {
+    Write-Host "[runner] fetching ${remote} ${branch} in $Repo..."
+    & git -C $Repo fetch $remote $branch 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host "Error: git fetch ${remote} ${branch} failed in $Repo." -ForegroundColor Red
+      return 'fail'
+    }
+    try { Ensure-FreshBaseRef -Remote $remote -Branch $branch -Repo $Repo } catch {
+      Write-Host "Error: base-ref freshness check failed in ${Repo}: $_" -ForegroundColor Red
+      return 'fail'
+    }
+  }
+
+  # Base ref must resolve in THIS repo; if not, this repo isn't a target -> skip.
+  & git -C $Repo rev-parse $script:BranchCreateFrom 2>$null | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "  ! base ref '$($script:BranchCreateFrom)' not found in $Repo — skipping" -ForegroundColor DarkYellow
+    return 'skip'
+  }
+
+  & git -C $Repo checkout -B $script:BranchName $script:BranchCreateFrom 2>$null | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "Error: git checkout -B failed in $Repo." -ForegroundColor Red
+    return 'fail'
+  }
+  $cur = (& git -C $Repo branch --show-current 2>$null).Trim()
+  Write-Host "[runner] $Repo now on branch: $cur"
+  return 'branched'
+}
+
 function Setup-Branch {
   <#
-    If the MASTER has a branch: block, this function:
-      1. Guards against dirty working tree / merge/rebase in progress
-      2. Parses create_from into remote/branch
-      3. Fetches + runs freshness preflight
-      4. Checks out -B <name> <create_from>
+    If the MASTER has a branch: block, create/checkout the policy branch in EVERY
+    discovered repo that can host it — so each sub-plan's `repo:` target lands on
+    the feat branch, not just the first repo. Repos that can't host it (not a git
+    repo, dirty, or missing the base ref) are skipped with a warning; a hard git
+    error (merge/rebase/checkout) fails the run, as does branching zero repos.
     No-op when $script:BranchName is empty.
   #>
   param([string[]]$Repos)
 
   if (-not $script:BranchName) { return $true }
-
-  $repo = $Repos[0]
-  if (-not $repo) {
+  if (-not $Repos -or @($Repos).Count -eq 0) {
     Write-Host "Error: no git repo resolved for branch setup." -ForegroundColor Red
+    return $false
+  }
+  if (-not $script:BranchCreateFrom -or $script:BranchCreateFrom.Trim() -eq "") {
+    Write-Host "Error: create_from is empty — cannot branch off nothing." -ForegroundColor Red
     return $false
   }
 
   Write-Host ""
   Write-Host "[runner] === Branch setup ===" -ForegroundColor Cyan
-  Write-Host "[runner] target: checkout -B $($script:BranchName) from $($script:BranchCreateFrom)"
+  Write-Host "[runner] target: checkout -B $($script:BranchName) from $($script:BranchCreateFrom) across $(@($Repos).Count) repo(s)"
 
-  # --- Guard: merge/rebase in progress ---
-  $gitDir = (& git -C $repo rev-parse --git-dir 2>$null).Trim()
-  if ($gitDir -and (Test-Path (Join-Path $gitDir "MERGE_HEAD"))) {
-    Write-Host "Error: a merge is in progress in $repo." -ForegroundColor Red
-    Write-Host "       Resolve the merge (git merge --abort or commit) before running." -ForegroundColor Red
+  $branched = 0
+  foreach ($repo in $Repos) {
+    if (-not $repo) { continue }
+    $r = Setup-BranchOneRepo -Repo $repo
+    if ($r -eq 'fail') { return $false }
+    if ($r -eq 'branched') { $branched++ }
+  }
+
+  if ($branched -eq 0) {
+    Write-Host "Error: could not create '$($script:BranchName)' in any repo (base ref missing or all trees dirty)." -ForegroundColor Red
     return $false
   }
-  if ($gitDir -and ((Test-Path (Join-Path $gitDir "rebase-merge")) -or (Test-Path (Join-Path $gitDir "rebase-apply")))) {
-    Write-Host "Error: a rebase is in progress in $repo." -ForegroundColor Red
-    Write-Host "       Finish or abort the rebase (git rebase --abort) before running." -ForegroundColor Red
-    return $false
-  }
-
-  # --- Guard: dirty working tree (AC-3) ---
-  $diffExit = & git -C $repo diff --quiet 2>&1; $diffCode = $LASTEXITCODE
-  $cachedExit = & git -C $repo diff --cached --quiet 2>&1; $cachedCode = $LASTEXITCODE
-  if ($diffCode -ne 0 -or $cachedCode -ne 0) {
-    Write-Host "Error: working tree is dirty in $repo." -ForegroundColor Red
-    Write-Host "       Commit or stash changes before running with a branch: block." -ForegroundColor Red
-    return $false
-  }
-
-  # --- Parse create_from into remote/branch ---
-  # Do NOT assume the first path segment is a remote: a branch name can itself
-  # contain slashes (e.g. the single branch `codex/convex-rewrite` on origin).
-  # Only split off a remote when the first segment is an actually-configured
-  # remote; otherwise treat the whole value as a local ref (slashes and all).
-  # See handoff bug #2.
-  $remote = ""
-  $branch = $script:BranchCreateFrom
-  if ($script:BranchCreateFrom -match '^([^/]+)/(.+)$') {
-    $candidate = $Matches[1]
-    $configuredRemotes = @(& git -C $repo remote 2>$null)
-    if ($configuredRemotes -contains $candidate) {
-      $remote = $candidate
-      $branch = $Matches[2]   # keeps inner slashes: origin/codex/convex-rewrite -> codex/convex-rewrite
-    } else {
-      $remote = ""            # not a remote -> local ref; skip fetch
-      $branch = $script:BranchCreateFrom
-    }
-  }
-
-  # --- Fetch + freshness preflight (only for remote refs) ---
-  if ($remote) {
-    Write-Host "[runner] fetching ${remote} ${branch}..."
-    & git -C $repo fetch $remote $branch 2>&1
-    if ($LASTEXITCODE -ne 0) {
-      Write-Host "Error: git fetch ${remote} ${branch} failed." -ForegroundColor Red
-      Write-Host "       Check that the remote '${remote}' is configured and reachable." -ForegroundColor Red
-      return $false
-    }
-
-    try { Ensure-FreshBaseRef -Remote $remote -Branch $branch -Repo $repo } catch {
-      Write-Host "Error: base-ref freshness check failed: $_" -ForegroundColor Red
-      return $false
-    }
-  }
-
-  # --- Guard: verify the base ref exists (AC-4) ---
-  if (-not $script:BranchCreateFrom -or $script:BranchCreateFrom.Trim() -eq "") {
-    Write-Host "Error: create_from is empty — cannot branch off nothing." -ForegroundColor Red
-    return $false
-  }
-  $revExit = & git -C $repo rev-parse $script:BranchCreateFrom 2>&1; $revCode = $LASTEXITCODE
-  if ($revCode -ne 0) {
-    Write-Host "Error: cannot resolve base ref '$($script:BranchCreateFrom)' after fetch." -ForegroundColor Red
-    Write-Host "       Possible causes:" -ForegroundColor Red
-    Write-Host "         - The remote branch was deleted or renamed" -ForegroundColor Red
-    Write-Host "         - The create_from value is misspelled" -ForegroundColor Red
-    return $false
-  }
-
-  # --- Checkout -B ---
-  Write-Host "[runner] git checkout -B $($script:BranchName) $($script:BranchCreateFrom)"
-  & git -C $repo checkout -B $script:BranchName $script:BranchCreateFrom 2>&1
-  if ($LASTEXITCODE -ne 0) {
-    Write-Host "Error: git checkout -B failed." -ForegroundColor Red
-    return $false
-  }
-
-  $currentBranch = (& git -C $repo branch --show-current 2>$null).Trim()
-  Write-Host "[runner] now on branch: $currentBranch"
+  Write-Host "[runner] branched $branched repo(s)."
   Write-Host "[runner] === Branch setup complete ===" -ForegroundColor Cyan
   Write-Host ""
   return $true

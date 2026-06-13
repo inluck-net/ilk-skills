@@ -456,112 +456,101 @@ classify_remote() {
 # Globals modified: none
 # Returns: 0 on success, 1 on error
 
+# Create/checkout the policy branch in ONE repo. Returns:
+#   0 = branched, 2 = skip (non-fatal: not a git repo / dirty / base ref missing),
+#   1 = hard fail (merge/rebase in progress, fetch/checkout failed).
+_setup_branch_one_repo() {
+  local repo="$1"
+  local git_dir remote branch candidate
+
+  git_dir="$(git -C "$repo" rev-parse --git-dir 2>/dev/null)" || {
+    echo "  ! $repo is not a git repo — skipping branch setup there" >&2
+    return 2
+  }
+  if [[ -d "$git_dir/MERGE_HEAD" ]]; then
+    echo "Error: a merge is in progress in $repo (abort/commit before running)." >&2
+    return 1
+  fi
+  if [[ -d "$git_dir/rebase-merge" || -d "$git_dir/rebase-apply" ]]; then
+    echo "Error: a rebase is in progress in $repo (abort/finish before running)." >&2
+    return 1
+  fi
+  # Dirty tree -> skip (non-fatal): only clean repos host the branch. A single
+  # dirty repo yields branched==0 -> setup_branch fails (preserves the guard).
+  if ! git -C "$repo" diff --quiet 2>/dev/null || \
+     ! git -C "$repo" diff --cached --quiet 2>/dev/null; then
+    echo "  ! working tree dirty in $repo — skipping branch setup there" >&2
+    return 2
+  fi
+
+  # Parse create_from into remote/branch (per-repo: depends on configured remotes).
+  if [[ "$BRANCH_CREATE_FROM" == */* ]]; then
+    candidate="${BRANCH_CREATE_FROM%%/*}"
+    if git -C "$repo" remote | grep -qx "$candidate"; then
+      remote="$candidate"; branch="${BRANCH_CREATE_FROM#*/}"
+    else
+      remote=""; branch="$BRANCH_CREATE_FROM"
+    fi
+  else
+    remote=""; branch="$BRANCH_CREATE_FROM"
+  fi
+
+  if [[ -n "$remote" ]]; then
+    echo "[runner] fetching ${remote} ${branch} in $repo..."
+    git -C "$repo" fetch "$remote" "$branch" >/dev/null 2>&1 || {
+      echo "Error: git fetch ${remote} ${branch} failed in $repo." >&2
+      return 1
+    }
+    ensure_fresh_base_ref "$remote" "$branch" || {
+      echo "Error: base-ref freshness check failed in $repo." >&2
+      return 1
+    }
+  fi
+
+  # Base ref must resolve in THIS repo; if not, this repo isn't a target -> skip.
+  if ! git -C "$repo" rev-parse "$BRANCH_CREATE_FROM" >/dev/null 2>&1; then
+    echo "  ! base ref '$BRANCH_CREATE_FROM' not found in $repo — skipping" >&2
+    return 2
+  fi
+
+  git -C "$repo" checkout -B "$BRANCH_NAME" "$BRANCH_CREATE_FROM" >/dev/null 2>&1 || {
+    echo "Error: git checkout -B $BRANCH_NAME failed in $repo." >&2
+    return 1
+  }
+  echo "[runner] $repo now on branch: $(git -C "$repo" branch --show-current 2>/dev/null)"
+  return 0
+}
+
 setup_branch() {
   if [[ -z "$BRANCH_NAME" ]]; then
     return 0
   fi
-
-  local repo="${REPOS[0]}"
-  if [[ -z "$repo" ]]; then
+  if [[ ${#REPOS[@]} -eq 0 || -z "${REPOS[0]}" ]]; then
     echo "Error: no git repo resolved for branch setup." >&2
+    return 1
+  fi
+  if [[ -z "${BRANCH_CREATE_FROM// /}" ]]; then
+    echo "Error: create_from is empty — cannot branch off nothing." >&2
     return 1
   fi
 
   echo ""
   echo "[runner] === Branch setup ==="
-  echo "[runner] target: checkout -B $BRANCH_NAME from $BRANCH_CREATE_FROM"
+  echo "[runner] target: checkout -B $BRANCH_NAME from $BRANCH_CREATE_FROM across ${#REPOS[@]} repo(s)"
 
-  # --- Guard: dirty working tree (AC-3) ---
-  # Check for merge/rebase in progress first — these are the most confusing states
-  if [[ -d "$(git -C "$repo" rev-parse --git-dir 2>/dev/null)/MERGE_HEAD" ]]; then
-    echo "Error: a merge is in progress in $repo." >&2
-    echo "       Resolve the merge (git merge --abort or commit) before running." >&2
+  local branched=0 rc
+  for repo in "${REPOS[@]}"; do
+    [[ -z "$repo" ]] && continue
+    _setup_branch_one_repo "$repo"; rc=$?
+    if [[ $rc -eq 1 ]]; then return 1; fi
+    if [[ $rc -eq 0 ]]; then branched=$((branched + 1)); fi
+  done
+
+  if [[ $branched -eq 0 ]]; then
+    echo "Error: could not create '$BRANCH_NAME' in any repo (base ref missing or all dirty)." >&2
     return 1
   fi
-  if [[ -d "$(git -C "$repo" rev-parse --git-dir 2>/dev/null)/rebase-merge" ]] || \
-     [[ -d "$(git -C "$repo" rev-parse --git-dir 2>/dev/null)/rebase-apply" ]]; then
-    echo "Error: a rebase is in progress in $repo." >&2
-    echo "       Finish or abort the rebase (git rebase --abort) before running." >&2
-    return 1
-  fi
-  # Staged or unstaged changes
-  if ! git -C "$repo" diff --quiet 2>/dev/null || \
-     ! git -C "$repo" diff --cached --quiet 2>/dev/null; then
-    echo "Error: working tree is dirty in $repo." >&2
-    echo "       Commit or stash changes before running with a branch: block." >&2
-    echo "         git -C '$repo' stash push -m 'ilk-runner: auto-stash before branch setup'" >&2
-    echo "       Or commit them first." >&2
-    return 1
-  fi
-  # Untracked files — warn but don't block (they won't be lost by checkout)
-  if [[ -n "$(git -C "$repo" ls-files --others --exclude-standard 2>/dev/null)" ]]; then
-    echo "[runner] warning: untracked files present — they will persist on the new branch" >&2
-  fi
-
-  # --- Parse create_from into remote/branch ---
-  # Do NOT assume the first path segment is a remote: a branch name can itself
-  # contain slashes (e.g. the single branch `codex/convex-rewrite` on origin).
-  # Only split off a remote when the first segment is an actually-configured
-  # remote; otherwise treat the whole value as a local ref (slashes and all).
-  # See ilk-runner-branch-setup-bugs handoff, bug #2.
-  local remote branch candidate
-  if [[ "$BRANCH_CREATE_FROM" == */* ]]; then
-    candidate="${BRANCH_CREATE_FROM%%/*}"
-    if git -C "$repo" remote | grep -qx "$candidate"; then
-      remote="$candidate"
-      branch="${BRANCH_CREATE_FROM#*/}"   # keeps inner slashes: origin/codex/convex-rewrite -> codex/convex-rewrite
-    else
-      remote=""                           # not a remote -> local ref; skip fetch
-      branch="$BRANCH_CREATE_FROM"
-    fi
-  else
-    # No slash — treat as a local ref (e.g. "HEAD", a tag, or a local branch)
-    remote=""
-    branch="$BRANCH_CREATE_FROM"
-  fi
-
-  # --- Fetch + freshness preflight (only for remote refs) ---
-  if [[ -n "$remote" ]]; then
-    echo "[runner] fetching ${remote} ${branch}..."
-    git -C "$repo" fetch "$remote" "$branch" 2>&1 || {
-      echo "Error: git fetch ${remote} ${branch} failed." >&2
-      echo "       Check that the remote '${remote}' is configured and reachable." >&2
-      return 1
-    }
-
-    # Freshness preflight: compare local tracking ref vs true remote tip
-    ensure_fresh_base_ref "$remote" "$branch" || {
-      echo "Error: base-ref freshness check failed." >&2
-      return 1
-    }
-  fi
-
-  # --- Guard: verify the base ref exists (AC-4) ---
-  if [[ -z "${BRANCH_CREATE_FROM// /}" ]]; then
-    echo "Error: create_from is empty — cannot branch off nothing." >&2
-    echo "       Check the branch: block in the MASTER plan." >&2
-    return 1
-  fi
-  if ! git -C "$repo" rev-parse "$BRANCH_CREATE_FROM" >/dev/null 2>&1; then
-    echo "Error: cannot resolve base ref '$BRANCH_CREATE_FROM' after fetch." >&2
-    echo "       Possible causes:" >&2
-    echo "         - The remote branch was deleted or renamed" >&2
-    echo "         - The create_from value is misspelled" >&2
-    echo "         - Network issue prevented the fetch from completing" >&2
-    echo "       Verify: git -C '$repo' ls-remote ${remote:-origin} ${branch:-$BRANCH_CREATE_FROM}" >&2
-    return 1
-  fi
-
-  # --- Checkout -B ---
-  echo "[runner] git checkout -B $BRANCH_NAME $BRANCH_CREATE_FROM"
-  git -C "$repo" checkout -B "$BRANCH_NAME" "$BRANCH_CREATE_FROM" 2>&1 || {
-    echo "Error: git checkout -B $BRANCH_NAME $BRANCH_CREATE_FROM failed." >&2
-    echo "       This usually means the base ref exists but checkout itself failed." >&2
-    echo "       Possible causes: locked index, permission issue, or corrupt ref." >&2
-    return 1
-  }
-
-  echo "[runner] now on branch: $(git -C "$repo" branch --show-current)"
+  echo "[runner] branched $branched repo(s)."
   echo "[runner] === Branch setup complete ==="
   echo ""
   return 0
