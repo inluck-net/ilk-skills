@@ -654,6 +654,32 @@ field:
 Finding counts go in the final report. Errors should be fixed before
 advancing to step 8.
 
+### 7g. Degrade-discipline lints (`plan_lint.py`)
+
+Run the planner degrade-discipline lints over every newly-written sub-plan —
+these are the *enforced* form of two guards that used to be prose (and were
+skipped, stalling uccargo twice on 2026-06-13):
+
+```bash
+python "<skill-root>/ilk-loop/scripts/plan_lint.py" <each new sub-plan .md>
+```
+
+It emits two finding classes (both warnings — surface counts in the step-9
+report; fix before launching):
+
+- **env_prereq-vs-fallback contradiction** — a sub-plan that hard-gates on an
+  MCP via `env_prereqs: claude mcp list | grep -q X` AND documents a
+  fallback/degrade path for the *same* X. The env_prereq fast-fails to
+  `blocked` before the fallback can run, so they contradict. X is optional ⇒
+  encode the degrade path in step logic; do NOT make it a hard env_prereq.
+- **block-when-default-exists** — a step instructs `set status: blocked` while
+  the sub-plan documents a safe default/fallback. On a headless loop `blocked`
+  = stall + human; prefer degrade-to-default (see
+  decomposition-principles.md → "Degrade-to-default over block").
+
+`plan_lint.py` exits non-zero when it finds anything; treat findings as
+must-fix-before-launch (a contradiction here is what actually stalled the loop).
+
 ## 8. Persist (no project-repo commit)
 
 Plans live OUTSIDE the project repo, so there is **nothing to git-add

@@ -583,3 +583,48 @@ whole-project".
 - **§1 (Tight contracts)** — runtime smoke over compile smoke.
 - **§8 (local_checks anti-patterns)** — compile-only as the only check.
 - **§15 (Autonomy tiers)** — Tier 1 auto-apply still needs gates.
+
+---
+
+## 17. Degrade-to-default over block (headless autonomy)
+
+On a headless autonomous loop, `status: blocked` is not a clean outcome — it
+is a **stall that requires a human**, the opposite of autonomy (§13). When a
+sub-plan depends on a capability that may be absent (a design source, an
+optional MCP, an external service) **but a safe default exists**, the guard
+must *take the default*, not block.
+
+**Field evidence (uccargo, 2026-06-13 — two stalls).** `/announcements`,
+`/privacy`, and `tickets` were authored to "block cleanly" if Figma was
+unavailable. The worker's Figma MCP was absent (a separate config bug), so the
+sub-plans set `status: blocked` and the loop stalled with zero progress —
+across two runs — even though these are simple pages that follow the existing
+`help/terms` / `notifications`-`orders` pattern. The right behavior was to
+**build to that pattern** when no design is fetchable; the agent itself
+proposed exactly that, but the hard guard pre-empted it.
+
+### Rules
+
+1. **Prefer degrade-to-default.** If `capability X` is absent and a documented
+   safe default/pattern exists, implement to the default + record a Findings
+   note ("built to the help/terms pattern; no Figma frame found"). Proceed.
+2. **Reserve `status: blocked` for genuinely un-closeable gaps** — no safe
+   default, no API, a credential only a human can issue. Blocking because "we
+   haven't verified it" or "the design is uncertain" is an anti-pattern; that
+   is what degrade-to-default and verification tiers (§12) are for.
+3. **A capability with a fallback must not be a hard `env_prereq`.** A hard
+   `env_prereqs: claude mcp list | grep -q X` fast-fails to `blocked` *before*
+   the step-0 fallback can run — the gate and the fallback contradict. Encode
+   the optionality in step logic instead. The `/ilk-plan` step-7g
+   `plan_lint.py` check flags this contradiction mechanically.
+4. **A headless sub-plan must never `AskUserQuestion`.** A headless loop cannot
+   answer it — the call burns idle iterations and stalls (uccargo's first stall
+   fell back to a question). The AC-GUARD must pick the safe default or, only
+   for a truly un-closeable gap, set `blocked` with a specific Findings note.
+
+### Cross-references
+
+- **§10 (env_prereqs)** — hard reachability gates are for dependencies with NO
+  fallback; a degradable capability does not belong there.
+- **§13 (Bias toward autonomy)** — remove human bottlenecks; fix the gap with a
+  default, don't insert a stall.
