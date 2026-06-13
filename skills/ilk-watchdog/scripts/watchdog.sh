@@ -274,7 +274,14 @@ classify_action() {
     no-progress|timeout|budget-exhausted)
       echo "relaunch"
       ;;
-    merge-conflict|local-checks-stuck)
+    merge-conflict|local-checks-stuck|dependency-unreachable)
+      # dependency-unreachable: a missing MCP / unreachable env_prereq — a
+      # restart won't help; block for a config/reachability fix
+      # (e.g. ilk-worker-mcp add <name>). NOTE: classify_action keys off the
+      # RAW sentinel state here, while dependency-unreachable is a collect.py
+      # *classification* — so on a raw "no-progress" sentinel this arm won't
+      # fire yet (ps1 already acts on the classification). Wiring sh to act on
+      # the collect.py label is tracked as a separate cross-platform-parity fix.
       echo "blacklist"
       ;;
     *)

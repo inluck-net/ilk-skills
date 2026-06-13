@@ -12,8 +12,8 @@
       -> relaunch ilk via launch.ps1 with the postmortem's recommended
          MaxIterations / IterationTimeoutMin
     - BLACKLIST (stuck-no-progress / api-blocked / budget-exhausted /
-      local-checks-stuck / unknown) -> print a loud BLOCKED banner and
-      exit, leaving ilk stopped for human triage
+      local-checks-stuck / dependency-unreachable / unknown) -> print a loud
+      BLOCKED banner and exit, leaving ilk stopped for human triage
 
   -Detach makes this script Start-Process itself in a new desktop window
   (with -NoExit) so the polling loop survives the calling shell.
@@ -71,7 +71,7 @@ $CollectPy     = Join-Path $SkillRoot 'ilk-feedback\scripts\collect.py'
 $NotifyPy      = Join-Path $SkillRoot 'ilk-watchdog\scripts\ilk_notify.py'
 
 $WhitelistClasses = @('timeout-bound', 'max-iter-bound', 'api-flaky', 'interrupted')
-$BlacklistClasses = @('stuck-no-progress', 'api-blocked', 'budget-exhausted', 'local-checks-stuck')
+$BlacklistClasses = @('stuck-no-progress', 'api-blocked', 'budget-exhausted', 'local-checks-stuck', 'dependency-unreachable')
 
 # Grace period after a relaunch before we trust the next "PID dead" signal,
 # in case the new ilk hasn't fully started yet.
