@@ -591,6 +591,31 @@ Watchdog PID: $$" 36
               write_log "ilk loop state=running (via sentinel) — watching."
             fi
           fi
+          # --- Hung-alive guard (loop_health.hung_alive contract) ---
+          # state=running but NO progress for a long time = a wedged loop (e.g. a
+          # pre-iter-1 hang). Progress = the JSONL summary mtime (advances per
+          # iteration); fall back to last-exit.json mtime when the JSONL is absent.
+          local thr="${ILK_HUNG_THRESHOLD_MIN:-45}"
+          local jsonl="$(dirname "$runtime_dir")/logs/.ilk-loop.log"
+          local progress_file=""
+          if [[ -f "$jsonl" ]]; then
+            progress_file="$jsonl"
+          elif [[ -f "${runtime_dir}/last-exit.json" ]]; then
+            progress_file="${runtime_dir}/last-exit.json"
+          fi
+          if [[ -n "$progress_file" ]]; then
+            local mtime now_epoch
+            mtime=$(stat -f %m "$progress_file" 2>/dev/null || stat -c %Y "$progress_file" 2>/dev/null || echo 0)
+            now_epoch=$(date +%s)
+            if [[ "$mtime" -gt 0 ]] && (( now_epoch - mtime >= thr * 60 )); then
+              local mins=$(( (now_epoch - mtime) / 60 ))
+              write_banner "BLOCKED — HUNG-ALIVE" \
+                "Project: $proj_name\nstate=running but NO progress for ${mins} min (threshold ${thr}).\nThe loop is wedged (e.g. a pre-iter-1 hang). Restart will not help —\ninspect the runner; fix the cause; relaunch with ilk-launcher." 31
+              invoke_ilk_notify "blocked" "$proj_name" "hung-alive ${mins}m no progress"
+              write_log "hung-alive: state=running, no progress for ${mins} min (threshold ${thr}) — BLOCKING."
+              return
+            fi
+          fi
           sleep "$poll_sec"
           continue
         fi

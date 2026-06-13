@@ -485,6 +485,31 @@ Blacklist (block): $($BlacklistClasses -join ', ')
               $sawAliveOnce = $true
               Write-Log ("ilk loop pid={0} state=running (via sentinel) — watching." -f $sentinel.pid)
             }
+            # --- Hung-alive guard (loop_health.hung_alive contract) ---
+            # state=running + PID alive, but NO progress for a long time = a
+            # wedged loop (e.g. a pre-iter-1 hang). Progress = the JSONL summary
+            # mtime (advances per iteration; the sentinel only updates at
+            # start/end, so it would false-positive on a healthy long run).
+            # Falls back to the sentinel's started_at when the JSONL is absent
+            # (the run launched but never logged an iteration).
+            $thr = if ($env:ILK_HUNG_THRESHOLD_MIN) { [int]$env:ILK_HUNG_THRESHOLD_MIN } else { 45 }
+            $jsonl = Join-Path (Split-Path $RuntimeDir -Parent) 'logs\.ilk-loop.log'
+            $progressEpoch = $null
+            if (Test-Path $jsonl) {
+              $progressEpoch = [DateTimeOffset]((Get-Item $jsonl).LastWriteTimeUtc).ToUnixTimeSeconds()
+            } elseif ($sentinel.started_at) {
+              try { $progressEpoch = [DateTimeOffset]::Parse($sentinel.started_at).ToUniversalTime().ToUnixTimeSeconds() } catch {}
+            }
+            if ($null -ne $progressEpoch) {
+              $nowEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+              if (($nowEpoch - $progressEpoch) -ge ($thr * 60)) {
+                $mins = [int](($nowEpoch - $progressEpoch) / 60)
+                Write-Banner -Title "BLOCKED — HUNG-ALIVE" -Body "Project: $ProjName`nstate=running but NO progress for ${mins} min (threshold ${thr}).`nThe loop is wedged (e.g. a pre-iter-1 hang). Restart will not help —`ninspect the runner; fix the cause; relaunch with ilk-launcher." -Color Red
+                Invoke-IlkNotify -Event 'blocked' -Project $ProjName -Detail "hung-alive ${mins}m no progress"
+                Write-Log ("hung-alive: state=running, no progress for {0} min (threshold {1}) — BLOCKING." -f $mins, $thr)
+                return
+              }
+            }
             Start-Sleep -Seconds $PollSec
             continue
           }
