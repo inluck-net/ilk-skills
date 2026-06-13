@@ -567,6 +567,51 @@ function Run-Blacklist {
 
   Write-Host 'PASS: skip-blacklist proj-a, dispatch proj-b (non-starvation)'
 
+  # Test 1b: a resolve-ack for proj-a (cleared_at >= the postmortem's
+  # generated_at) must UN-blacklist it -> proj-a dispatches.
+  $ackFile = Join-Path $FakeData 'projects\proj-a\runtime\launcher\blacklist-cleared.json'
+  (@{ cleared_at = $now } | ConvertTo-Json -Compress) | Set-Content -Path $ackFile -Encoding utf8
+
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output" }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+  $outputStr = ($output | Out-String).Trim()
+  $lines = @($outputStr -split "`n" | Where-Object { $_.Trim() })
+  foreach ($ln in $lines) {
+    $j = $ln.Trim() | ConvertFrom-Json
+    if ($j.decision -eq 'skip-blacklist' -and $j.key -eq 'proj-a') {
+      throw "proj-a still skip-blacklisted despite a fresh resolve-ack. Output: $outputStr"
+    }
+  }
+  if ($outputStr -notmatch 'proj-a') {
+    throw "Expected proj-a to be dispatchable after resolve-ack. Output: $outputStr"
+  }
+  Write-Host 'PASS: resolve-ack un-blacklists proj-a'
+
+  # Test 1c: a STALE ack (cleared_at BEFORE generated_at) must NOT clear it.
+  $stale = (Get-Date).AddDays(-1).ToString('yyyy-MM-ddTHH:mm:ss')
+  (@{ cleared_at = $stale } | ConvertTo-Json -Compress) | Set-Content -Path $ackFile -Encoding utf8
+
+  $env:ILK_DATA_HOME = $FakeData
+  try {
+    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $SchedulerScript -DryRun -Once 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "scheduler.ps1 exited $LASTEXITCODE. Output: $output" }
+  } finally {
+    Remove-Item Env:\ILK_DATA_HOME -ErrorAction SilentlyContinue
+  }
+  $outputStr = ($output | Out-String).Trim()
+  $lines = @($outputStr -split "`n" | Where-Object { $_.Trim() })
+  $firstJson = $lines[0].Trim() | ConvertFrom-Json
+  if ($firstJson.decision -ne 'skip-blacklist' -or $firstJson.key -ne 'proj-a') {
+    throw "Expected a stale ack to still skip-blacklist proj-a. Output: $outputStr"
+  }
+  Write-Host 'PASS: stale resolve-ack ignored (proj-a still skip-blacklisted)'
+  Remove-Item $ackFile -Force -ErrorAction SilentlyContinue
+
   # Test 2: empty queues report idle (AC-5)
   Cleanup
   $projectsDir = Join-Path $FakeData 'projects'

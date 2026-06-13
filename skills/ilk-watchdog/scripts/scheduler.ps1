@@ -188,52 +188,30 @@ function Invoke-SchedulerScan {
 
 function Read-BlacklistFromPostmortems {
   <#
-    Scan queued projects for recent postmortem files with blacklist
-    classifications. Returns a hashtable of project key -> backoff expiry.
+    Scan queued projects for the blacklist-vs-resolve-ack decision. Delegates to
+    blacklist_status.py (the single source of truth shared with scheduler.sh) so
+    the cleared_at >= generated_at ack-override logic lives in exactly one place.
+    Returns a hashtable of project key -> backoff expiry [datetime] for projects
+    that are currently blacklisted (a resolve-ack or auto-expiry omits the key).
   #>
   param([array]$QueuedProjects)
-  $BlacklistClasses = @('stuck-no-progress', 'api-blocked', 'budget-exhausted', 'local-checks-stuck')
   $result = @{}
   if (-not $QueuedProjects) { return $result }
+  $blScript = Join-Path $PSScriptRoot 'blacklist_status.py'
   foreach ($proj in $QueuedProjects) {
-    $pmDir = Join-Path $proj.path 'runtime\launcher\postmortems'
-    if (-not (Test-Path $pmDir)) { continue }
-    $latest = Get-ChildItem $pmDir -Filter '*.md' -ErrorAction SilentlyContinue |
-              Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not $latest) { continue }
-    # Parse frontmatter
-    $lines = Get-Content $latest.FullName -TotalCount 30 -ErrorAction SilentlyContinue
-    if (-not $lines) { continue }
-    $fm = @{}
-    $inFm = $false
-    foreach ($line in $lines) {
-      if ($line.Trim() -eq '---') {
-        if ($inFm) { break }
-        $inFm = $true
-        continue
-      }
-      if ($inFm -and $line -match '^([a-zA-Z_][a-zA-Z0-9_]*):\s*(.+)$') {
-        $fm[$matches[1]] = $matches[2].Trim().Trim('"')
-      }
-    }
-    $klass = $fm['classification']
-    if ($klass -and $BlacklistClasses -contains $klass) {
-      $generated = $fm['generated_at']
-      $backoffMin = 60
-      if ($generated) {
-        try {
-          $genTime = [datetime]::Parse($generated)
-          $expiry = $genTime.AddMinutes($backoffMin)
-          if ((Get-Date) -lt $expiry) {
-            $result[$proj.key] = $expiry
-          }
-        } catch {
-          $result[$proj.key] = (Get-Date).AddMinutes($backoffMin)
+    try {
+      $raw = (& python $blScript check --project $proj.path 2>$null | Out-String).Trim()
+      if (-not $raw) { continue }
+      $obj = $raw | ConvertFrom-Json
+      if ($obj.blacklisted) {
+        if ($obj.expiry) {
+          try { $result[$proj.key] = [datetime]::Parse($obj.expiry) }
+          catch { $result[$proj.key] = (Get-Date).AddMinutes(60) }
+        } else {
+          $result[$proj.key] = (Get-Date).AddMinutes(60)
         }
-      } else {
-        $result[$proj.key] = (Get-Date).AddMinutes($backoffMin)
       }
-    }
+    } catch { }
   }
   return $result
 }

@@ -342,48 +342,26 @@ read_blacklist_from_postmortems() {
   # Check queued projects for recent postmortem files with blacklist
   # classifications. Outputs one line per blacklisted project: "key epoch".
   local scan_output="$1"
-  $PYTHON -c "
-import json, sys
-from datetime import datetime, timedelta
-from pathlib import Path
-
-BLACKLIST = {'stuck-no-progress', 'api-blocked', 'budget-exhausted', 'local-checks-stuck'}
-BACKOFF_MIN = 60
+  # Delegate the blacklist-vs-resolve-ack decision to blacklist_status.py (the
+  # single source of truth shared with scheduler.ps1), so the cleared_at >=
+  # generated_at ack-override lives in one place.
+  local bl_dir="${_SKILL_ROOT}/ilk-watchdog/scripts"
+  BL_DIR="$bl_dir" $PYTHON -c "
+import json, os, sys
+from datetime import datetime
+sys.path.insert(0, os.environ['BL_DIR'])
+import blacklist_status as bl
 
 projects = json.loads(sys.stdin.read())
-now = datetime.now()
-
 for proj in projects:
-    pm_dir = Path(proj['path']) / 'runtime' / 'launcher' / 'postmortems'
-    if not pm_dir.is_dir():
-        continue
-    pms = sorted(pm_dir.glob('*.md'), key=lambda p: p.stat().st_mtime, reverse=True)
-    if not pms:
-        continue
-    text = pms[0].read_text(encoding='utf-8')
-    if not text.startswith('---'):
-        continue
-    end = text.find('\n---', 3)
-    if end < 0:
-        continue
-    fm = {}
-    for line in text[3:end].splitlines():
-        line = line.strip()
-        if ':' in line:
-            k, _, v = line.partition(':')
-            fm[k.strip()] = v.strip().strip('\"')
-    klass = fm.get('classification', '')
-    if klass in BLACKLIST:
-        generated = fm.get('generated_at', '')
-        expiry = now + timedelta(minutes=BACKOFF_MIN)
-        if generated:
-            try:
-                gen_time = datetime.fromisoformat(generated)
-                expiry = gen_time + timedelta(minutes=BACKOFF_MIN)
-            except (ValueError, TypeError):
-                pass
-        if now < expiry:
-            print(f\"{proj['key']} {int(expiry.timestamp())}\")
+    r = bl.is_blacklisted(proj['path'])
+    if r.get('blacklisted') and r.get('expiry'):
+        try:
+            epoch = int(datetime.fromisoformat(r['expiry']).timestamp())
+        except (ValueError, TypeError):
+            epoch = 0
+        if epoch:
+            print(f\"{proj['key']} {epoch}\")
 " <<<"$scan_output" | tr -d '\r'
 }
 
