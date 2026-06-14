@@ -767,12 +767,15 @@ End your turn with:
    If ANY newly-written sub-plan carries runtime `local_checks`
    (frontmatter or per-step), tell the user verbatim:
 
-   > These sub-plans' `local_checks` only run if you launch the loop
-   > with **`-RunLocalChecks`**. Without that flag the loop advances on
-   > the worker's self-report and can mark broken work `shipped` (this
-   > exact gap shipped a broken e2e test on uccargo, run 20260602).
-   > Also: `shipped` is commit-only and local — verify (run the e2e) →
-   > push → cloud-re-run before trusting the batch.
+   > These sub-plans' `local_checks` **auto-enable** when you launch the
+   > loop — `launch.ps1` detects them and defaults `-RunLocalChecks` ON.
+   > Confirm the **`gates ON (-RunLocalChecks auto-enabled)`** banner in
+   > the launch output. The `-RunLocalChecks`/`-NoLocalChecks` flags live
+   > on `launch.ps1`, not on `ilk-run`. Skipping verification risks
+   > marking broken work `shipped` (this exact gap shipped a broken e2e
+   > test on uccargo, run 20260602). Also: `shipped` is commit-only and
+   > local — verify (run the e2e) → push → cloud-re-run before trusting
+   > the batch.
 
    Skip this only if no sub-plan has any runtime `local_checks`.
 6. **Tier-mix summary.** List the tier breakdown of the batch:
@@ -787,7 +790,8 @@ End your turn with:
    > require a human + device pass after the loop marks them `shipped`.
 
 7. Tell the user: "Ready to execute. Open a fresh chat and type `/ilk`
-   (launch with `-RunLocalChecks` so the gates actually run)."
+   — gates auto-enable when sub-plans declare `local_checks`; confirm
+   the **`gates ON`** banner in the launch output."
 
 ## Boundary rules
 
