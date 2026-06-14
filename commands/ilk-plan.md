@@ -763,7 +763,10 @@ End your turn with:
      change."*
 4. The output of `python "<skill-root>/ilk-loop/scripts/loop_status.py"`
    so the user sees the new pending state.
-5. **Verification-enforcement warning (decomposition-principles.md §11).**
+5. **Gate-status line.** If ANY sub-plan declares `local_checks`, report:
+   *"Gates: N/N sub-plans declare `local_checks` → auto-enabled on launch
+   (banner: `gates ON`)."*
+6. **Verification-enforcement warning (decomposition-principles.md §11).**
    If ANY newly-written sub-plan carries runtime `local_checks`
    (frontmatter or per-step), tell the user verbatim:
 
@@ -778,7 +781,7 @@ End your turn with:
    > the batch.
 
    Skip this only if no sub-plan has any runtime `local_checks`.
-6. **Tier-mix summary.** List the tier breakdown of the batch:
+7. **Tier-mix summary.** List the tier breakdown of the batch:
 
    ```
    Tier mix: N loop-verified, M compile-only, K device-manual
@@ -789,7 +792,7 @@ End your turn with:
    > **NEEDS HUMAN VERIFICATION**: compile-only and device-manual sub-plans
    > require a human + device pass after the loop marks them `shipped`.
 
-7. Tell the user: "Ready to execute. Open a fresh chat and type `/ilk`
+8. Tell the user: "Ready to execute. Open a fresh chat and type `/ilk`
    — gates auto-enable when sub-plans declare `local_checks`; confirm
    the **`gates ON`** banner in the launch output."
 
