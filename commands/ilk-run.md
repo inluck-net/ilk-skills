@@ -61,6 +61,12 @@ Preview without launching: `-DryRun`
 master if needed → estimate launch params from sub-plan + last 3 postmortems
 → `launch.ps1` → `watchdog.ps1 -Detach`.
 
+**Gates auto-enable:** when sub-plans declare `local_checks`, `launch.ps1`
+runs `_detect_local_checks.py` and defaults `-RunLocalChecks` ON. Confirm
+the **`gates ON (-RunLocalChecks auto-enabled)`** banner in the launch
+output. The `-RunLocalChecks`/`-NoLocalChecks` flags live on `launch.ps1`,
+not on `ilk-run`.
+
 **Do not** call `python`, `ilk_paths.py`, or `loop_status.py` manually on
 Windows unless `ilk-run.ps1` is missing or fails.
 
