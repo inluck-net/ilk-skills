@@ -499,8 +499,12 @@ _setup_branch_one_repo() {
 
   if [[ -n "$remote" ]]; then
     echo "[runner] fetching ${remote} ${branch} in $repo..."
-    git -C "$repo" fetch "$remote" "$branch" >/dev/null 2>&1 || {
-      echo "Error: git fetch ${remote} ${branch} failed in $repo." >&2
+    # Use explicit refspec so the tracking ref updates even when
+    # remote.origin.fetch is narrowed (e.g. main-only).  Without this,
+    # `git fetch origin <branch>` only writes FETCH_HEAD and leaves
+    # refs/remotes/origin/<branch> stale → freshness check aborts.
+    git -C "$repo" fetch "$remote" "+refs/heads/$branch:refs/remotes/$remote/$branch" >/dev/null 2>&1 || {
+      echo "Error: git fetch ${remote} refs/heads/${branch} failed in $repo." >&2
       return 1
     }
     ensure_fresh_base_ref "$remote" "$branch" || {
