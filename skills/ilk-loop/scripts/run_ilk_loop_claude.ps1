@@ -1408,10 +1408,10 @@ function Setup-BranchOneRepo {
       # Branch is at-or-ahead of base → reuse it (AC-1: preserve prior-run commits).
       # If already on the branch, even a dirty tree is fine (AC-4: resume-with-dirty).
       if ($currentBranch -ne $script:BranchName) {
-        # Need to switch branches — dirty tree blocks this.
+        # Need to switch branches — auto-stash dirty tree to unblock.
         if ($treeDirty) {
-          Write-Host "  ! working tree dirty in $Repo — cannot switch to $($script:BranchName) (stash or commit first)" -ForegroundColor DarkYellow
-          return 'skip'
+          Write-Host "  ! working tree dirty in $Repo — auto-stashed dirty tree (branch switch to $($script:BranchName))" -ForegroundColor DarkYellow
+          & git -C $Repo stash push -u -m "ilk auto-stash (branch setup)" 2>$null | Out-Null
         }
         & git -C $Repo checkout $script:BranchName 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) {
@@ -1426,10 +1426,10 @@ function Setup-BranchOneRepo {
       # Branch exists but diverged — reuse it (no reset, would lose work).
       # Base reconciliation deferred to PR/merge time.
       if ($currentBranch -ne $script:BranchName) {
-        # Need to switch branches — dirty tree blocks this.
+        # Need to switch branches — auto-stash dirty tree to unblock.
         if ($treeDirty) {
-          Write-Host "  ! working tree dirty in $Repo — cannot switch to $($script:BranchName) (stash or commit first)" -ForegroundColor DarkYellow
-          return 'skip'
+          Write-Host "  ! working tree dirty in $Repo — auto-stashed dirty tree (branch switch to $($script:BranchName))" -ForegroundColor DarkYellow
+          & git -C $Repo stash push -u -m "ilk auto-stash (branch setup)" 2>$null | Out-Null
         }
         & git -C $Repo checkout $script:BranchName 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) {
@@ -1444,10 +1444,10 @@ function Setup-BranchOneRepo {
       Write-Host "WARNING: reusing diverged branch $($script:BranchName) in $Repo (ahead $aheadCount / behind $behindCount of $($script:BranchCreateFrom)). Base reconciliation deferred to PR/merge." -ForegroundColor DarkYellow
     }
   } else {
-    # Branch absent — create from base. Dirty tree blocks this (can't checkout).
+    # Branch absent — create from base. Auto-stash dirty tree to unblock.
     if ($treeDirty) {
-      Write-Host "  ! working tree dirty in $Repo — skipping branch setup there" -ForegroundColor DarkYellow
-      return 'skip'
+      Write-Host "  ! working tree dirty in $Repo — auto-stashed dirty tree (branch create $($script:BranchName))" -ForegroundColor DarkYellow
+      & git -C $Repo stash push -u -m "ilk auto-stash (branch setup)" 2>$null | Out-Null
     }
     & git -C $Repo checkout -B $script:BranchName $script:BranchCreateFrom 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) {
