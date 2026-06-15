@@ -617,6 +617,203 @@ HOOKEOF
   fi
 }
 
+# ===== Test 12: AC-1 reuse — branch ahead of base → reuses, HEAD at ahead tip =====
+test_reuse_ahead_branch() {
+  echo ""
+  echo "--- Test: AC-1 reuse — branch ahead of base → reuses, HEAD at ahead tip ---"
+  setup_repos
+
+  # Advance the remote so there's a base to branch from
+  echo "second" > "$TEST_TMPDIR/tmp_work/file2.txt"
+  git -C "$TEST_TMPDIR/tmp_work" add file2.txt
+  git -C "$TEST_TMPDIR/tmp_work" commit -m "second commit" >/dev/null 2>&1
+  git -C "$TEST_TMPDIR/tmp_work" push origin main >/dev/null 2>&1
+  git -C "$CLONE" fetch origin >/dev/null 2>&1
+
+  source_runner
+
+  # Create the branch from origin/main
+  BRANCH_CREATE_FROM="origin/main"
+  BRANCH_NAME="feat/reuse-test"
+  BRANCH_MERGE_BACK=false
+
+  local output
+  output=$(setup_branch 2>&1) || true
+
+  # Add a commit AHEAD of base on the branch
+  git -C "$CLONE" checkout feat/reuse-test >/dev/null 2>&1
+  echo "ahead-commit" > "$CLONE/ahead.txt"
+  git -C "$CLONE" add ahead.txt
+  git -C "$CLONE" commit -m "commit ahead of base" >/dev/null 2>&1
+  local ahead_sha
+  ahead_sha=$(git -C "$CLONE" rev-parse HEAD)
+
+  # Switch back to main to simulate a fresh run
+  git -C "$CLONE" checkout main >/dev/null 2>&1
+
+  # Now run setup_branch again — should REUSE the existing branch
+  local output2 exit_code=0
+  output2=$(setup_branch 2>&1) || exit_code=$?
+
+  local current
+  current=$(git -C "$CLONE" branch --show-current 2>/dev/null)
+
+  if [[ "$current" == "feat/reuse-test" ]]; then
+    pass "reuse-ahead: landed on existing branch"
+  else
+    fail "reuse-ahead: expected 'feat/reuse-test', got '$current'" "$output2"
+  fi
+
+  # HEAD must be at the AHEAD tip, NOT reset to base
+  local post_sha
+  post_sha=$(git -C "$CLONE" rev-parse HEAD)
+  if [[ "$post_sha" == "$ahead_sha" ]]; then
+    pass "reuse-ahead: HEAD at ahead tip (not reset to base)"
+  else
+    fail "reuse-ahead: HEAD ($post_sha) != ahead tip ($ahead_sha) — was reset?"
+  fi
+
+  if echo "$output2" | grep -q "reusing existing branch"; then
+    pass "reuse-ahead: 'reusing existing branch' message emitted"
+  else
+    fail "reuse-ahead: expected reuse message" "$output2"
+  fi
+}
+
+# ===== Test 13: AC-3 diverged — branch diverged from base → abort, no loss =====
+test_diverged_branch_abort() {
+  echo ""
+  echo "--- Test: AC-3 diverged — branch diverged from base → abort, no loss ---"
+  setup_repos
+
+  # Push a second commit to remote
+  echo "second" > "$TEST_TMPDIR/tmp_work/file2.txt"
+  git -C "$TEST_TMPDIR/tmp_work" add file2.txt
+  git -C "$TEST_TMPDIR/tmp_work" commit -m "second commit" >/dev/null 2>&1
+  git -C "$TEST_TMPDIR/tmp_work" push origin main >/dev/null 2>&1
+  git -C "$CLONE" fetch origin >/dev/null 2>&1
+
+  source_runner
+
+  # Create the branch from origin/main
+  BRANCH_CREATE_FROM="origin/main"
+  BRANCH_NAME="feat/diverge-test"
+  BRANCH_MERGE_BACK=false
+
+  local output
+  output=$(setup_branch 2>&1) || true
+
+  # Add a LOCAL commit on the branch (diverges from base)
+  git -C "$CLONE" checkout feat/diverge-test >/dev/null 2>&1
+  echo "local-only" > "$CLONE/local.txt"
+  git -C "$CLONE" add local.txt
+  git -C "$CLONE" commit -m "local commit diverging from base" >/dev/null 2>&1
+  local diverged_sha
+  diverged_sha=$(git -C "$CLONE" rev-parse HEAD)
+
+  # Advance the remote base PAST the branch's ancestor (diverge)
+  echo "third" > "$TEST_TMPDIR/tmp_work/file3.txt"
+  git -C "$TEST_TMPDIR/tmp_work" add file3.txt
+  git -C "$TEST_TMPDIR/tmp_work" commit -m "third commit — moves base" >/dev/null 2>&1
+  git -C "$TEST_TMPDIR/tmp_work" push origin main >/dev/null 2>&1
+  git -C "$CLONE" fetch origin >/dev/null 2>&1
+
+  # Now run setup_branch — should ABORT because branch diverged from new base
+  local output2 exit_code=0
+  output2=$(setup_branch 2>&1) || exit_code=$?
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    pass "diverge-abort: setup_branch failed as expected"
+  else
+    fail "diverge-abort: setup_branch should fail on diverged branch"
+  fi
+
+  # Branch ref must NOT have moved (no commit loss)
+  local post_sha
+  post_sha=$(git -C "$CLONE" rev-parse feat/diverge-test 2>/dev/null) || post_sha=""
+  if [[ "$post_sha" == "$diverged_sha" ]]; then
+    pass "diverge-abort: branch ref unchanged (no commit loss)"
+  else
+    fail "diverge-abort: branch ref moved from $diverged_sha to $post_sha"
+  fi
+
+  if echo "$output2" | grep -qi "diverged\|not an ancestor\|reconcile"; then
+    pass "diverge-abort: error message mentions diverged/reconcile"
+  else
+    fail "diverge-abort: error message should mention diverged/reconcile" "$output2"
+  fi
+}
+
+# ===== Test 14: AC-4 resume-dirty — already on target ahead + dirty tree → succeeds =====
+test_resume_dirty_on_target() {
+  echo ""
+  echo "--- Test: AC-4 resume-dirty — already on target ahead + dirty tree → succeeds ---"
+  setup_repos
+
+  # Push a second commit to remote
+  echo "second" > "$TEST_TMPDIR/tmp_work/file2.txt"
+  git -C "$TEST_TMPDIR/tmp_work" add file2.txt
+  git -C "$TEST_TMPDIR/tmp_work" commit -m "second commit" >/dev/null 2>&1
+  git -C "$TEST_TMPDIR/tmp_work" push origin main >/dev/null 2>&1
+  git -C "$CLONE" fetch origin >/dev/null 2>&1
+
+  source_runner
+
+  # Create the branch from origin/main
+  BRANCH_CREATE_FROM="origin/main"
+  BRANCH_NAME="feat/dirty-resume"
+  BRANCH_MERGE_BACK=false
+
+  local output
+  output=$(setup_branch 2>&1) || true
+
+  # Add a commit AHEAD of base
+  git -C "$CLONE" checkout feat/dirty-resume >/dev/null 2>&1
+  echo "ahead-commit" > "$CLONE/ahead.txt"
+  git -C "$CLONE" add ahead.txt
+  git -C "$CLONE" commit -m "commit ahead of base" >/dev/null 2>&1
+  local ahead_sha
+  ahead_sha=$(git -C "$CLONE" rev-parse HEAD)
+
+  # Make the tree DIRTY (simulate uncommitted WIP)
+  echo "dirty-wip" > "$CLONE/wip.txt"
+
+  # Repo is already on feat/dirty-resume, ahead of base, with dirty tree.
+  # setup_branch should succeed (AC-4: resume-with-dirty-tree).
+  local output2 exit_code=0
+  output2=$(setup_branch 2>&1) || exit_code=$?
+
+  local current
+  current=$(git -C "$CLONE" branch --show-current 2>/dev/null)
+
+  if [[ "$current" == "feat/dirty-resume" ]]; then
+    pass "resume-dirty: stayed on target branch"
+  else
+    fail "resume-dirty: expected 'feat/dirty-resume', got '$current'" "$output2"
+  fi
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    pass "resume-dirty: setup_branch succeeded with dirty tree"
+  else
+    fail "resume-dirty: setup_branch should succeed, got exit $exit_code" "$output2"
+  fi
+
+  # HEAD must still be at the ahead tip (not reset)
+  local post_sha
+  post_sha=$(git -C "$CLONE" rev-parse HEAD)
+  if [[ "$post_sha" == "$ahead_sha" ]]; then
+    pass "resume-dirty: HEAD at ahead tip (not reset)"
+  else
+    fail "resume-dirty: HEAD ($post_sha) != ahead tip ($ahead_sha)"
+  fi
+
+  if echo "$output2" | grep -q "reusing existing branch"; then
+    pass "resume-dirty: reuse message emitted"
+  else
+    fail "resume-dirty: expected reuse message" "$output2"
+  fi
+}
+
 # ===== Main =====
 
 echo "=== test_runner_branch_setup.sh ==="
@@ -633,6 +830,9 @@ test_bare_slash_local_ref
 test_ps1_structural
 test_postcheckout_hook_tolerance
 test_genuine_checkout_failure
+test_reuse_ahead_branch
+test_diverged_branch_abort
+test_resume_dirty_on_target
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed, $TESTS_RUN total ==="
