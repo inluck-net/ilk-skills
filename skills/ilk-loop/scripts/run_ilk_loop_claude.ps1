@@ -1369,9 +1369,11 @@ function Setup-BranchOneRepo {
 
   if ($remote) {
     Write-Host "[runner] fetching ${remote} ${branch} in $Repo..."
-    & git -C $Repo fetch $remote $branch 2>$null | Out-Null
+    # Use explicit refspec so the tracking ref updates even when
+    # remote.origin.fetch is narrowed (e.g. main-only).
+    & git -C $Repo fetch $remote "+refs/heads/${branch}:refs/remotes/${remote}/${branch}" 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) {
-      Write-Host "Error: git fetch ${remote} ${branch} failed in $Repo." -ForegroundColor Red
+      Write-Host "Error: git fetch ${remote} refs/heads/${branch} failed in $Repo." -ForegroundColor Red
       return 'fail'
     }
     try { Ensure-FreshBaseRef -Remote $remote -Branch $branch -Repo $Repo } catch {
