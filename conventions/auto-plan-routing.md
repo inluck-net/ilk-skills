@@ -5,6 +5,12 @@ agent session (Claude Code, Cursor, Codex) SHOULD route implementation
 work through `/ilk-plan` instead of implementing directly, unless one of
 the direct-implement conditions below applies.
 
+**How to tell routing is active:** the presence of this installed managed
+block in your host-global instructions IS the signal. Do not search the
+target project for a `conventions/config.yml` or treat its absence as
+"routing off" — the `config.yml` is the toolkit clone's opt-in switch,
+reflected here via the installed block.
+
 ## Route to /ilk-plan when ANY of these is true
 
 - The work will not finish in this session (scope too large, many files).
