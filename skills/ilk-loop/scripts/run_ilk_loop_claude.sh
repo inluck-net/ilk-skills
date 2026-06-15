@@ -786,6 +786,33 @@ write_ilk_sentinel() {
   }
 }
 
+finalize_sentinel() {
+  # On EXIT (signal, error, or normal), if the sentinel is still state=running,
+  # rewrite it to a terminal state so stale-running sentinels never survive.
+  # Safe to call multiple times — idempotent (no-op when state != running).
+  [[ -z "$runtime_dir" ]] && return 0
+  local target="${runtime_dir}/last-exit.json"
+  [[ -f "$target" ]] || return 0
+
+  local cur_state
+  cur_state=$(python3 -c "import json; print(json.load(open('$target')).get('state',''))" 2>/dev/null) || return 0
+  [[ "$cur_state" == "running" ]] || return 0
+
+  local ended_at
+  ended_at=$(date +%Y-%m-%dT%H:%M:%S%z)
+  python3 -c "import json; print(json.dumps({
+    'state': 'interrupted',
+    'pid': None,
+    'run_id': '$RUN_ID',
+    'started_at': json.load(open('$target')).get('started_at',''),
+    'ended_at': '$ended_at',
+    'project_path': '$PROJECT_PATH',
+    'cli': 'claude',
+    'stopped_reason': 'runner exited without a terminal state'
+  }))" > "${target}.tmp" && mv -f "${target}.tmp" "$target" || true
+  echo "[runner] finalize_sentinel: wrote terminal state (interrupted)" >&2
+}
+
 invoke_local_checks() {
   local project="$1"
   local targets_file="$2"
@@ -1042,6 +1069,11 @@ main() {
       'cli': 'claude'
     }))" > "${runtime_dir}/last-exit.json.tmp" && mv -f "${runtime_dir}/last-exit.json.tmp" "${runtime_dir}/last-exit.json"
     echo "Sentinel: ${runtime_dir}/last-exit.json (state=running)"
+
+    # Ensure the sentinel is never left as "running" on abnormal exit.
+    # finalize_sentinel is idempotent — no-op when a clean path already set
+    # a terminal state (all-shipped, error, max-iterations, etc.).
+    trap finalize_sentinel EXIT INT TERM
   else
     echo "Sentinel: skipped (no runtime dir resolved)"
   fi
