@@ -165,12 +165,29 @@ function Invoke-Check {
 function Test-LivePids {
   $dataDir = if ($env:ILK_DATA_DIR) { $env:ILK_DATA_DIR } else { Join-Path $HOME ".ilk-data" }
   $projectsDir = Join-Path $dataDir "projects"
+  $activePids = @()
 
-  if (-not (Test-Path $projectsDir)) {
-    return $true  # no projects dir = no live PIDs
+  # Also check the cross-project scheduler PID file (independent of projects dir)
+  $schedulerPidFile = Join-Path $dataDir "scheduler.pid"
+  if (Test-Path $schedulerPidFile) {
+    $schedulerPid = (Get-Content -LiteralPath $schedulerPidFile -Raw -ErrorAction SilentlyContinue).Trim()
+    if ($schedulerPid -and $schedulerPid -match '^\d+$') {
+      try {
+        $schedulerProc = Get-Process -Id ([int]$schedulerPid) -ErrorAction SilentlyContinue
+        if ($schedulerProc) {
+          $activePids += "scheduler (PID $schedulerPid)"
+        }
+      } catch { }
+    }
   }
 
-  $activePids = @()
+  if (-not (Test-Path $projectsDir)) {
+    if ($activePids.Count -gt 0) {
+      Write-Error "live loop/watchdog detected — refusing to update skill code:`n$($activePids | ForEach-Object { "  - $_" } | Out-String)Stop it cleanly first: bash <toolkit>/skills/ilk-watchdog/scripts/stop_watchdog.sh --project-path <project>  (or /ilk-stop). Then re-run, or use -Force to override."
+      return $false
+    }
+    return $true  # no projects dir and no scheduler = no live PIDs
+  }
 
   # Scan launcher and watchdog PID files
   $pidFiles = @()
@@ -215,7 +232,7 @@ function Test-LivePids {
   }
 
   if ($activePids.Count -gt 0) {
-    Write-Error "live loop/watchdog detected — refusing to update skill code:`n$($activePids | ForEach-Object { "  - $_" } | Out-String)Stop the active loop first, or use -Force."
+    Write-Error "live loop/watchdog detected — refusing to update skill code:`n$($activePids | ForEach-Object { "  - $_" } | Out-String)Stop it cleanly first: bash <toolkit>/skills/ilk-watchdog/scripts/stop_watchdog.sh --project-path <project>  (or /ilk-stop). Then re-run, or use -Force to override."
     return $false
   }
   return $true

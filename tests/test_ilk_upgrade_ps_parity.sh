@@ -68,6 +68,8 @@ echo "=== AC-4: live-loop PID guard ==="
 check "ps1 scans running.pid"                   "$ps1" contains 'running.pid'
 check "ps1 references launcher runtime"         "$ps1" contains 'launcher'
 check "ps1 references watchdog runtime"         "$ps1" contains 'watchdog'
+check "ps1 scans scheduler.pid"                 "$ps1" contains 'scheduler.pid'
+check "ps1 names stop_watchdog.sh in error"     "$ps1" contains 'stop_watchdog'
 
 echo ""
 echo "=== Parity: ps1 flag set matches bash engine ==="
