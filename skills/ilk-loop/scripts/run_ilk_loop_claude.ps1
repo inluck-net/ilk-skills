@@ -761,6 +761,38 @@ function Invoke-QualityGatesIfNeeded {
   return @{ Blocked = $false }
 }
 
+function Finalize-Sentinel {
+  <#
+    On exit (signal, error, or normal), if the sentinel is still
+    state=running, rewrite it to a terminal state so stale-running
+    sentinels never survive. Idempotent — no-op when state != running.
+    Called by the trap (Ctrl+C / terminating error) and the finally block.
+  #>
+  if (-not $RuntimeDir) { return }
+  $target = Join-Path $RuntimeDir "last-exit.json"
+  if (-not (Test-Path $target)) { return }
+
+  try {
+    $cur = Get-Content $target -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop
+    if ($cur.state -ne "running") { return }
+
+    $endedAt = (Get-Date).ToString("o")
+    Write-IlkSentinel -Dir $RuntimeDir -Data @{
+      state          = "interrupted"
+      pid            = $null
+      run_id         = $RunId
+      started_at     = $cur.started_at
+      ended_at       = $endedAt
+      project_path   = $ProjectPath
+      cli            = "claude"
+      stopped_reason = "runner exited without a terminal state"
+    }
+    Write-Host "[runner] Finalize-Sentinel: wrote terminal state (interrupted)" -ForegroundColor DarkYellow
+  } catch {
+    # Best-effort — never let sentinel maintenance break the exit path
+  }
+}
+
 function Write-JsonlRecord {
   param([hashtable]$Record)
   $json = $Record | ConvertTo-Json -Compress -Depth 10
@@ -1587,6 +1619,13 @@ if ($RuntimeDir) {
     cli          = "claude"
   }
   Write-Host "Sentinel: $RuntimeDir\last-exit.json (state=running)" -ForegroundColor DarkGray
+
+  # Ensure the sentinel is never left as "running" on abnormal exit.
+  # Finalize-Sentinel is idempotent — no-op when a clean path already set
+  # a terminal state (all-shipped, error, max-iterations, etc.).
+  # Note: this trap catches Ctrl+C and terminating errors. Hard kills
+  # (taskkill /F) bypass all cleanup — the watchdog handles that case.
+  trap { Finalize-Sentinel; break }
 } else {
   Write-Host "Sentinel: skipped (no runtime dir resolved)" -ForegroundColor DarkYellow
 }
