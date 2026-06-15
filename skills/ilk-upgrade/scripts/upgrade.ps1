@@ -288,7 +288,10 @@ function Stop-BounceableDaemons {
       Write-Warning "could not stop $($d.Name) (PID $($state.Pid)): $_"
     }
   }
-  return ,$stopped
+  # Return the names unrolled; callers wrap with @() so 0/1/2 elements all
+  # land as a flat array. (A unary-comma `,$stopped` here would double-wrap
+  # under the caller's @() into a nested array — caught in dogfood.)
+  return $stopped
 }
 
 # Restart the named daemons truly hidden (Start-Process -WindowStyle Hidden,
