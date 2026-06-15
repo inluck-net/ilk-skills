@@ -341,6 +341,48 @@ def read_jsonl_iters(project_path: Path, last_launch: dict | None = None) -> lis
     return records
 
 
+def read_per_iter_jsonl(
+    run_id: str,
+    project_path: Path,
+    last_launch: dict | None = None,
+) -> list[dict]:
+    """Return iteration records from per-iter JSONL for a specific run.
+
+    Reads ``<log-root>/runs/<run-id>/iter-*.jsonl`` from all candidate log
+    directories.  These files are written by the runner during execution and
+    are the fallback evidence when the summary JSONL has no records for this
+    run (e.g. claude-worker runs that wrote per-iter logs but no summary).
+
+    De-duplicates by iteration number.  Returns records sorted by iteration.
+    """
+    seen: set[int] = set()
+    records: list[dict] = []
+    for root in _iter_log_root_candidates(project_path, last_launch):
+        runs_dir = root / "runs" / run_id
+        if not runs_dir.is_dir():
+            continue
+        for jsonl_file in sorted(runs_dir.glob("iter-*.jsonl")):
+            try:
+                with jsonl_file.open("r", encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            rec = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        it = rec.get("iteration", 0)
+                        if it in seen:
+                            continue
+                        seen.add(it)
+                        records.append(rec)
+            except OSError:
+                continue
+    records.sort(key=lambda r: r.get("iteration", 0))
+    return records
+
+
 def runs_index(records: list[dict]) -> dict[str, list[dict]]:
     """Group records by run_id, preserving iteration order within each."""
     by_run: dict[str, list[dict]] = {}
@@ -1752,22 +1794,64 @@ def main() -> int:
     by_run = runs_index(all_records)
     if args.run_id:
         if args.run_id not in by_run:
-            # --run-id R was passed but R has no JSONL records.  Check the
-            # sentinel: if the run started (sentinel exists) it simply left
-            # no usable records → classify as "no-evidence" rather than
-            # silently falling back to newest_run_id (the stale-classify
-            # bug) or erroring out.
-            sentinel = read_sentinel(project_path)
-            sentinel_run = sentinel.get("run_id") if sentinel else None
-            if sentinel_run and sentinel_run == args.run_id:
+            # --run-id R was passed but R has no summary JSONL records.
+            # Try per-iter JSONL fallback first (claude-worker runs write
+            # per-iter logs but may have no summary records).  Only fall
+            # back to sentinel/no-evidence if per-iter also empty.
+            per_iter = read_per_iter_jsonl(args.run_id, project_path, last_launch)
+            if per_iter:
+                target_run = args.run_id
+                iters = per_iter
+            else:
+                sentinel = read_sentinel(project_path)
+                sentinel_run = sentinel.get("run_id") if sentinel else None
+                if sentinel_run and sentinel_run == args.run_id:
+                    target_run = args.run_id
+                    iters = []
+                    label = "no-evidence"
+                    facts: dict[str, Any] = {
+                        "reason": (
+                            f"run {args.run_id} started (sentinel present) but "
+                            "left no usable JSONL records — possibly crashed "
+                            "before iter 1 completed"
+                        ),
+                    }
+                    rec_max, rec_to, rationale = recommend_params(label, iters, last_launch)
+                    report = render_report(
+                        project_path=project_path,
+                        project_name=project_name,
+                        run_id=target_run,
+                        iters=iters,
+                        last_launch=last_launch,
+                        label=label,
+                        facts=facts,
+                        rec_max=rec_max,
+                        rec_to=rec_to,
+                        rationale=rationale,
+                        tail=[],
+                    )
+                    if external_launcher_dir is None or project_key is None:
+                        print("ilk_paths not available; cannot resolve external launcher dir.", file=sys.stderr)
+                        return 1
+                    out_dir = external_launcher_dir(project_key(project_path)) / "postmortems"
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    out_path = out_dir / f"{target_run}.md"
+                    out_path.write_text(report, encoding="utf-8")
+                    if not args.quiet:
+                        print(f"[ilk-feedback] project: {project_name}  run: {target_run}")
+                        print(f"[ilk-feedback] classification: {label}")
+                        print(f"[ilk-feedback] iters: 0 / {(last_launch or {}).get('max_iterations', '?')}")
+                    print(str(out_path))
+                    return 0
+                # No JSONL records AND no sentinel match for this run_id.
+                _avail = ", ".join(sorted(by_run.keys())[-5:])
                 target_run = args.run_id
                 iters = []
                 label = "no-evidence"
-                facts: dict[str, Any] = {
+                facts = {
                     "reason": (
-                        f"run {args.run_id} started (sentinel present) but "
-                        "left no usable JSONL records — possibly crashed "
-                        "before iter 1 completed"
+                        f"run {args.run_id} has no JSONL records (and no sentinel "
+                        f"match). Recent runs with records: {_avail}"
                     ),
                 }
                 rec_max, rec_to, rationale = recommend_params(label, iters, last_launch)
@@ -1794,52 +1878,18 @@ def main() -> int:
                 if not args.quiet:
                     print(f"[ilk-feedback] project: {project_name}  run: {target_run}")
                     print(f"[ilk-feedback] classification: {label}")
-                    print(f"[ilk-feedback] iters: 0 / {(last_launch or {}).get('max_iterations', '?')}")
                 print(str(out_path))
                 return 0
-            # No JSONL records AND no sentinel match for this run_id. Degrade to
-            # a no-evidence postmortem (exit 0 with a usable report) instead of
-            # raising SystemExit — a hard exit makes the watchdog report
-            # "POSTMORTEM FAILED" and block. The watchdog handles 'no-evidence'.
-            _avail = ", ".join(sorted(by_run.keys())[-5:])
-            target_run = args.run_id
-            iters = []
-            label = "no-evidence"
-            facts = {
-                "reason": (
-                    f"run {args.run_id} has no JSONL records (and no sentinel "
-                    f"match). Recent runs with records: {_avail}"
-                ),
-            }
-            rec_max, rec_to, rationale = recommend_params(label, iters, last_launch)
-            report = render_report(
-                project_path=project_path,
-                project_name=project_name,
-                run_id=target_run,
-                iters=iters,
-                last_launch=last_launch,
-                label=label,
-                facts=facts,
-                rec_max=rec_max,
-                rec_to=rec_to,
-                rationale=rationale,
-                tail=[],
-            )
-            if external_launcher_dir is None or project_key is None:
-                print("ilk_paths not available; cannot resolve external launcher dir.", file=sys.stderr)
-                return 1
-            out_dir = external_launcher_dir(project_key(project_path)) / "postmortems"
-            out_dir.mkdir(parents=True, exist_ok=True)
-            out_path = out_dir / f"{target_run}.md"
-            out_path.write_text(report, encoding="utf-8")
-            if not args.quiet:
-                print(f"[ilk-feedback] project: {project_name}  run: {target_run}")
-                print(f"[ilk-feedback] classification: {label}")
-            print(str(out_path))
-            return 0
         target_run = args.run_id
     else:
         target_run = newest_run_id(by_run)
+        # Auto-detected run may have no summary records (e.g. claude-worker
+        # that wrote per-iter logs but no summary).  Try per-iter fallback
+        # before falling through to the summary-only classify path.
+        if target_run and target_run not in by_run:
+            per_iter = read_per_iter_jsonl(target_run, project_path, last_launch)
+            if per_iter:
+                by_run[target_run] = per_iter
 
     iters = by_run[target_run]
 
