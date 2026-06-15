@@ -1724,72 +1724,74 @@ def main() -> int:
 
     all_records = read_jsonl_iters(project_path, last_launch)
     if not all_records:
-        sentinel = read_sentinel(project_path)
-        if sentinel is not None:
-            # A run started but died before iter 1 wrote any JSONL record.
-            # When --run-id is explicit and matches the sentinel, classify
-            # as "no-evidence" (the run exists but has no usable records).
-            # Otherwise fall back to "interrupted" (legacy behavior).
-            target_run = sentinel.get("run_id") or args.run_id or "unknown"
-            iters: list[dict] = []
-            sentinel_state = (sentinel.get("state") or "").strip()
-            if sentinel_state == "startup-hang":
-                # The runner aborted on the startup timeout (no JSONL iteration
-                # record within the threshold) — a pre-iter-1 hang. Distinct from
-                # no-evidence: the runner self-detected and wrote a terminal state.
-                label = "startup-hang"
-                facts = {
-                    "reason": (
-                        f"run {target_run} hung before iteration 1 and the runner "
-                        "aborted on the startup timeout. A restart will not help "
-                        "until the cause is fixed — check the branch-setup / runner "
-                        "banner tail (often a wedged pre-iteration step)."
-                    ),
-                }
-            elif args.run_id and sentinel.get("run_id") == args.run_id:
-                label = "no-evidence"
-                facts = {
-                    "reason": (
-                        f"run {args.run_id} started (sentinel present) but "
-                        "left no usable JSONL records — possibly crashed "
-                        "before iter 1 completed"
-                    ),
-                }
-            else:
-                label, facts = classify(iters, last_launch, project_path)
-            rec_max, rec_to, rationale = recommend_params(label, iters, last_launch)
-            report = render_report(
-                project_path=project_path,
-                project_name=project_name,
-                run_id=target_run,
-                iters=iters,
-                last_launch=last_launch,
-                label=label,
-                facts=facts,
-                rec_max=rec_max,
-                rec_to=rec_to,
-                rationale=rationale,
-                tail=[],
-            )
-            if external_launcher_dir is None or project_key is None:
-                print("ilk_paths not available; cannot resolve external launcher dir.", file=sys.stderr)
-                return 1
-            out_dir = external_launcher_dir(project_key(project_path)) / "postmortems"
-            out_dir.mkdir(parents=True, exist_ok=True)
-            out_path = out_dir / f"{target_run}.md"
-            out_path.write_text(report, encoding="utf-8")
-            if not args.quiet:
-                print(f"[ilk-feedback] project: {project_name}  run: {target_run}")
-                print(f"[ilk-feedback] classification: {label}")
-                print(f"[ilk-feedback] iters: 0 / {(last_launch or {}).get('max_iterations', '?')}")
-            print(str(out_path))
-            return 0
-        # No sentinel either — ilk genuinely never ran here.
-        candidates = _jsonl_log_candidates(project_path, last_launch)
-        looked_at = ", ".join(str(c) for c in candidates)
-        print(f"[ilk-feedback] No JSONL records for project {project_path}.")
-        print(f"[ilk-feedback] Has ilk ever run for this project? Looked at {looked_at}")
-        return 1
+        # Per-iter JSONL fallback: claude-worker runs write per-iter logs
+        # but may have no summary records.  Check per-iter BEFORE sentinel
+        # so we classify from actual iteration data when available.
+        check_run = args.run_id or "unknown"
+        per_iter = read_per_iter_jsonl(check_run, project_path, last_launch)
+        if per_iter:
+            all_records = per_iter
+            # Fall through to the normal classify path below.
+        else:
+            sentinel = read_sentinel(project_path)
+            if sentinel is not None:
+                target_run = sentinel.get("run_id") or args.run_id or "unknown"
+                iters: list[dict] = []
+                sentinel_state = (sentinel.get("state") or "").strip()
+                if sentinel_state == "startup-hang":
+                    label = "startup-hang"
+                    facts = {
+                        "reason": (
+                            f"run {target_run} hung before iteration 1 and the runner "
+                            "aborted on the startup timeout. A restart will not help "
+                            "until the cause is fixed — check the branch-setup / runner "
+                            "banner tail (often a wedged pre-iteration step)."
+                        ),
+                    }
+                elif args.run_id and sentinel.get("run_id") == args.run_id:
+                    label = "no-evidence"
+                    facts = {
+                        "reason": (
+                            f"run {args.run_id} started (sentinel present) but "
+                            "left no usable JSONL records — possibly crashed "
+                            "before iter 1 completed"
+                        ),
+                    }
+                else:
+                    label, facts = classify(iters, last_launch, project_path)
+                rec_max, rec_to, rationale = recommend_params(label, iters, last_launch)
+                report = render_report(
+                    project_path=project_path,
+                    project_name=project_name,
+                    run_id=target_run,
+                    iters=iters,
+                    last_launch=last_launch,
+                    label=label,
+                    facts=facts,
+                    rec_max=rec_max,
+                    rec_to=rec_to,
+                    rationale=rationale,
+                    tail=[],
+                )
+                if external_launcher_dir is None or project_key is None:
+                    print("ilk_paths not available; cannot resolve external launcher dir.", file=sys.stderr)
+                    return 1
+                out_dir = external_launcher_dir(project_key(project_path)) / "postmortems"
+                out_dir.mkdir(parents=True, exist_ok=True)
+                out_path = out_dir / f"{target_run}.md"
+                out_path.write_text(report, encoding="utf-8")
+                if not args.quiet:
+                    print(f"[ilk-feedback] project: {project_name}  run: {target_run}")
+                    print(f"[ilk-feedback] classification: {label}")
+                    print(f"[ilk-feedback] iters: 0 / {(last_launch or {}).get('max_iterations', '?')}")
+                print(str(out_path))
+                return 0
+            # No sentinel either — ilk genuinely never ran here.
+            candidates = _jsonl_log_candidates(project_path, last_launch)
+            looked_at = ", ".join(str(c) for c in candidates)
+            print(f"[ilk-feedback] No JSONL records for project {project_path}.")
+            print(f"[ilk-feedback] Has ilk ever run for this project? Looked at {looked_at}")
+            return 1
 
     by_run = runs_index(all_records)
     if args.run_id:
@@ -1801,7 +1803,7 @@ def main() -> int:
             per_iter = read_per_iter_jsonl(args.run_id, project_path, last_launch)
             if per_iter:
                 target_run = args.run_id
-                iters = per_iter
+                by_run[target_run] = per_iter
             else:
                 sentinel = read_sentinel(project_path)
                 sentinel_run = sentinel.get("run_id") if sentinel else None
