@@ -44,10 +44,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File `
 
 Effect:
 1. Fetches latest from origin.
-2. Runs `git pull --ff-only` (fast-forward only — refuses merges).
-3. Detects if `install.sh` / `install.ps1` changed and re-runs the
+2. **Windows only:** stops the tray + scheduler before the pull (they would
+   otherwise run freshly-pulled code through a stale in-memory driver — e.g.
+   the tray tooltip goes blank), then restarts them afterward. Pass
+   `-NoRestart` to leave them alone.
+3. Runs `git pull --ff-only` (fast-forward only — refuses merges).
+4. Detects if `install.sh` / `install.ps1` changed and re-runs the
    installer automatically when needed.
-4. Reports: commit log since last pull, files changed, installer
+5. Reports: commit log since last pull, files changed, installer
    outcome.
 
 ## 3. Force apply (skip live-loop guard)

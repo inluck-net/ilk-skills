@@ -149,11 +149,42 @@ powershell -NoProfile -ExecutionPolicy Bypass -File `
 5. **Do not** mix this with `/ilk-status` — they operate on different
    repos (toolkit vs project).
 
+## Bounceable daemons (tray + scheduler)
+
+The system-tray monitor (`ilk-tray.ps1`, Windows) and the cross-project
+scheduler (`scheduler.ps1` / `scheduler.sh`) are long-running *observer*
+processes. A pull swaps the python/orchestration code underneath them while
+their **in-memory driver keeps the old logic** — the classic symptom is the
+tray tooltip going blank after an upgrade (it runs freshly-pulled
+`render_tray.py` through a stale tick loop). Unlike per-project loops and
+watchdogs — which carry in-flight work and so *block* the upgrade — these are
+idempotent and safe to bounce.
+
+On Windows, `-Apply` therefore:
+
+1. **Stops** the tray and scheduler before the pull (each publishes its PID:
+   `~/.ilk-data/tray.pid`, `~/.ilk-data/scheduler.pid`).
+2. Pulls + reinstalls + reconciles.
+3. **Restarts** exactly the ones it stopped, now running the fresh code.
+
+If the pull fails, any daemon stopped beforehand is restarted so you are never
+left worse off. Pass `-NoRestart` to opt out entirely (the upgrade then leaves
+tray/scheduler running and only warns that they hold stale in-memory code).
+
+> Restarted daemons launch with **default** args (tray interval, scheduler
+> poll/concurrency). If you ran one with custom flags, re-launch it manually.
+
+> macOS/Linux (`upgrade.sh`) does not yet bounce the scheduler — it still
+> blocks on a live `scheduler.pid` (the conservative default). Parity is a
+> planned follow-up. There is no tray daemon on macOS (xbar re-execs its
+> plugin each interval, so it never skews).
+
 ## Guards
 
 - **Live-loop detection**: `--apply` checks for running loop/watchdog
   PIDs and refuses unless `--force` is passed. This prevents swapping
-  skill code under an active loop.
+  skill code under an active loop. (The scheduler is *not* in this set on
+  Windows — it is bounced, not blocked; see above.)
 - **Fast-forward only**: `git pull --ff-only` refuses non-linear
   histories. If the local clone has diverged, the command reports the
   conflict and exits cleanly — it never force-resets.

@@ -78,6 +78,11 @@ $NotifyPy         = Join-Path $SkillRoot 'ilk-watchdog\scripts\ilk_notify.py'
 $WatchdogPs1      = Join-Path $PSScriptRoot 'watchdog.ps1'
 $SchedulerLogDir  = Join-Path $HOME '.ilk-data\logs'
 $SchedulerLogFile = Join-Path $SchedulerLogDir 'scheduler.log'
+# PID file — published by the long-running daemon so /ilk-upgrade can detect
+# and bounce the scheduler (mirrors scheduler.sh's ${HOME}/.ilk-data/scheduler.pid;
+# honors ILK_DATA_DIR like the upgrade guard does).
+$SchedulerDataDir = if ($env:ILK_DATA_DIR) { $env:ILK_DATA_DIR } else { Join-Path $HOME '.ilk-data' }
+$SchedulerPidFile = Join-Path $SchedulerDataDir 'scheduler.pid'
 
 # --- helpers -----------------------------------------------------------------
 
@@ -502,7 +507,20 @@ if ($Detach) {
 }
 
 try {
+  # Publish our PID (daemon path only — the -Detach parent above returns
+  # without writing, so it never clobbers this child's file).
+  try {
+    if (-not (Test-Path $SchedulerDataDir)) { New-Item -ItemType Directory -Path $SchedulerDataDir -Force | Out-Null }
+    Set-Content -LiteralPath $SchedulerPidFile -Value $PID -Encoding ascii
+  } catch {}
   Run-Scheduler
 } finally {
+  # Remove our PID file only if it still points at us.
+  try {
+    if (Test-Path $SchedulerPidFile) {
+      $rec = (Get-Content -LiteralPath $SchedulerPidFile -Raw -ErrorAction SilentlyContinue).Trim()
+      if ($rec -eq "$PID") { Remove-Item -LiteralPath $SchedulerPidFile -Force -ErrorAction SilentlyContinue }
+    }
+  } catch {}
   Release-SchedulerMutex
 }

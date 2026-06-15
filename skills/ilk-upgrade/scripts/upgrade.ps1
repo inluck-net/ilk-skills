@@ -33,6 +33,12 @@
   caution — updating skill code while a loop is running can cause
   inconsistent behavior.
 
+.PARAMETER NoRestart
+  Do not stop/restart the bounceable daemons (tray, scheduler) around the
+  pull. By default -Apply bounces them so their in-memory driver re-syncs
+  with the freshly-pulled code; with -NoRestart they are left running and
+  the command only warns that they hold stale code until restarted manually.
+
 .EXAMPLE
   pwsh skills\ilk-upgrade\scripts\upgrade.ps1
   Read-only staleness report (default mode).
@@ -58,6 +64,7 @@ param(
   [switch]$Check,
   [switch]$Apply,
   [switch]$Force,
+  [switch]$NoRestart,
   [switch]$Help
 )
 
@@ -73,6 +80,14 @@ if ($Help) {
 # Default mode is check (read-only) — a bare invocation is always safe.
 $mode = "check"
 if ($Apply) { $mode = "apply" }
+
+# Installer invocation engine: prefer pwsh (PowerShell 7) when present, else
+# fall back to the engine running THIS script. Hardcoding `pwsh` breaks on
+# machines that only have Windows PowerShell 5.1 (pwsh not on PATH) — the
+# installer/reconcile calls would die "pwsh is not recognized".
+$InstallerPsExe = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
+if (-not $InstallerPsExe) { $InstallerPsExe = (Get-Process -Id $PID -ErrorAction SilentlyContinue).Path }
+if (-not $InstallerPsExe) { $InstallerPsExe = "powershell.exe" }
 
 # --- repo self-resolution ------------------------------------------------------
 # Resolve from the script's own real path (symlink-resolved) up three levels:
@@ -162,31 +177,17 @@ function Invoke-Check {
 }
 
 # --- live-loop guard -----------------------------------------------------------
+# Blocks -Apply when a per-project loop or watchdog is live — those carry
+# in-flight work and must not have their code swapped underneath them. The
+# cross-project scheduler is NOT checked here: it is a "bounceable" daemon
+# (stopped before the pull and restarted after — see Stop/Restart-BounceableDaemons).
 function Test-LivePids {
   $dataDir = if ($env:ILK_DATA_DIR) { $env:ILK_DATA_DIR } else { Join-Path $HOME ".ilk-data" }
   $projectsDir = Join-Path $dataDir "projects"
   $activePids = @()
 
-  # Also check the cross-project scheduler PID file (independent of projects dir)
-  $schedulerPidFile = Join-Path $dataDir "scheduler.pid"
-  if (Test-Path $schedulerPidFile) {
-    $schedulerPid = (Get-Content -LiteralPath $schedulerPidFile -Raw -ErrorAction SilentlyContinue).Trim()
-    if ($schedulerPid -and $schedulerPid -match '^\d+$') {
-      try {
-        $schedulerProc = Get-Process -Id ([int]$schedulerPid) -ErrorAction SilentlyContinue
-        if ($schedulerProc) {
-          $activePids += "scheduler (PID $schedulerPid)"
-        }
-      } catch { }
-    }
-  }
-
   if (-not (Test-Path $projectsDir)) {
-    if ($activePids.Count -gt 0) {
-      Write-Error "live loop/watchdog detected — refusing to update skill code:`n$($activePids | ForEach-Object { "  - $_" } | Out-String)Stop it cleanly first: bash <toolkit>/skills/ilk-watchdog/scripts/stop_watchdog.sh --project-path <project>  (or /ilk-stop). Then re-run, or use -Force to override."
-      return $false
-    }
-    return $true  # no projects dir and no scheduler = no live PIDs
+    return $true  # no projects dir = no live loop/watchdog PIDs
   }
 
   # Scan launcher and watchdog PID files
@@ -238,6 +239,83 @@ function Test-LivePids {
   return $true
 }
 
+# --- bounceable daemons (tray + scheduler) -------------------------------------
+# The system-tray monitor and the cross-project scheduler are long-running
+# *observer* processes. A pull swaps the python/orchestration code underneath
+# them while their in-memory driver keeps the OLD logic — e.g. the tray runs
+# freshly-pulled render_tray.py through a stale tick loop and the tooltip goes
+# blank. Unlike per-project loops/watchdogs (which carry in-flight work and so
+# BLOCK the upgrade), these are idempotent and safe to bounce: stop before the
+# pull, restart the same ones after, so their driver re-syncs with new code.
+
+function Get-IlkDataDir {
+  if ($env:ILK_DATA_DIR) { return $env:ILK_DATA_DIR }
+  return (Join-Path $HOME ".ilk-data")
+}
+
+# Returns @{ Running = $bool; Pid = <int|null> } for a pid-file-backed daemon.
+function Get-DaemonState {
+  param([string]$PidFile)
+  if (-not (Test-Path $PidFile)) { return @{ Running = $false; Pid = $null } }
+  $procId = (Get-Content -LiteralPath $PidFile -Raw -ErrorAction SilentlyContinue).Trim()
+  if (-not ($procId -match '^\d+$')) { return @{ Running = $false; Pid = $null } }
+  $proc = Get-Process -Id ([int]$procId) -ErrorAction SilentlyContinue
+  if (-not $proc) {
+    # Stale pid file — clean it up.
+    Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
+    return @{ Running = $false; Pid = $null }
+  }
+  return @{ Running = $true; Pid = [int]$procId }
+}
+
+# Stop the tray + scheduler if running; return the list of names actually
+# stopped (so the caller can restart exactly those).
+function Stop-BounceableDaemons {
+  $dataDir = Get-IlkDataDir
+  $stopped = @()
+  foreach ($d in @(
+    @{ Name = "tray";      PidFile = (Join-Path $dataDir "tray.pid") },
+    @{ Name = "scheduler"; PidFile = (Join-Path $dataDir "scheduler.pid") }
+  )) {
+    $state = Get-DaemonState $d.PidFile
+    if (-not $state.Running) { continue }
+    Write-Host "  stopping $($d.Name) (PID $($state.Pid))..."
+    try {
+      Stop-Process -Id $state.Pid -Force -ErrorAction Stop
+      Remove-Item -LiteralPath $d.PidFile -Force -ErrorAction SilentlyContinue
+      $stopped += $d.Name
+    } catch {
+      Write-Warning "could not stop $($d.Name) (PID $($state.Pid)): $_"
+    }
+  }
+  return ,$stopped
+}
+
+# Restart the named daemons truly hidden (Start-Process -WindowStyle Hidden,
+# NOT -Detach — a -NoExit window would linger; see scheduler-inmemory note).
+function Restart-BounceableDaemons {
+  param([string[]]$Names)
+  if (-not $Names -or $Names.Count -eq 0) { return }
+  $psExe = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source
+  if (-not $psExe) { $psExe = "powershell.exe" }
+  foreach ($name in $Names) {
+    $script = switch ($name) {
+      "tray"      { Join-Path $RepoRoot "tools\tray\ilk-tray.ps1" }
+      "scheduler" { Join-Path $RepoRoot "skills\ilk-watchdog\scripts\scheduler.ps1" }
+      default     { $null }
+    }
+    if (-not $script -or -not (Test-Path $script)) {
+      Write-Warning "cannot restart $name — script not found"
+      continue
+    }
+    # Restart with default args; a daemon launched with custom args (interval,
+    # poll, concurrency) reverts to defaults — re-launch manually to preserve them.
+    $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$script`"")
+    Start-Process -FilePath $psExe -ArgumentList $argList -WindowStyle Hidden | Out-Null
+    Write-Host "  restarted $name"
+  }
+}
+
 # --- drift detection -----------------------------------------------------------
 # Detects copy-fallback staleness: command files that are plain files (copies)
 # rather than symlinks/reparse points. This happens on Windows when Developer
@@ -254,8 +332,11 @@ function Test-Drift {
     if (Test-Path $cmdDir) { $homes += $candidate }
   }
 
-  foreach ($home in $homes) {
-    $cmdDir = Join-Path $home "commands"
+  # NOTE: do NOT name this $home — $HOME is a read-only automatic variable
+  # (case-insensitive), so `foreach ($home ...)` throws "Cannot overwrite
+  # variable HOME because it is read-only or constant."
+  foreach ($agentHome in $homes) {
+    $cmdDir = Join-Path $agentHome "commands"
     $cmdFiles = Get-ChildItem -Path $cmdDir -Filter "ilk*" -File -ErrorAction SilentlyContinue
     foreach ($cmdFile in $cmdFiles) {
       $item = Get-Item -LiteralPath $cmdFile.FullName -Force -ErrorAction SilentlyContinue
@@ -318,10 +399,34 @@ function Invoke-Apply {
     return
   }
 
+  # Bounce: stop the tray + scheduler before swapping code underneath them.
+  # -NoRestart opts out of managing daemons (we only warn if any are running).
+  $stoppedDaemons = @()
+  if ($NoRestart) {
+    $dataDir = Get-IlkDataDir
+    $stillUp = @()
+    foreach ($d in @(@{ N = "tray"; F = "tray.pid" }, @{ N = "scheduler"; F = "scheduler.pid" })) {
+      if ((Get-DaemonState (Join-Path $dataDir $d.F)).Running) { $stillUp += $d.N }
+    }
+    if ($stillUp.Count -gt 0) {
+      Write-Warning "-NoRestart: leaving $($stillUp -join ', ') running — they keep stale in-memory code until you restart them manually."
+    }
+  } else {
+    Write-Host ""
+    Write-Host "Stopping bounceable daemons (tray, scheduler)..."
+    $stoppedDaemons = @(Stop-BounceableDaemons)
+    if ($stoppedDaemons.Count -eq 0) { Write-Host "  (none running)" }
+  }
+
   # Fast-forward pull (suppress git's own output; we print our own summary)
   git -C $RepoRoot pull --ff-only 2>&1 | Out-Null
   if ($LASTEXITCODE -ne 0) {
     Write-Error "fast-forward pull failed — rebase or reset manually"
+    # Restore the daemons we stopped — don't leave the user worse off after a no-op.
+    if (-not $NoRestart -and $stoppedDaemons.Count -gt 0) {
+      Write-Host "Restarting daemons stopped before the failed pull..."
+      Restart-BounceableDaemons $stoppedDaemons
+    }
     exit 1
   }
 
@@ -371,7 +476,7 @@ function Invoke-Apply {
     Write-Host ""
     Write-Host "Drift detected — re-running installer..."
     $installPs1 = Join-Path $RepoRoot "install.ps1"
-    & pwsh -NoProfile -ExecutionPolicy Bypass -File $installPs1 -Apply
+    & $InstallerPsExe -NoProfile -ExecutionPolicy Bypass -File $installPs1 -Apply
     Write-Host "Re-install complete. New code is effective next invocation."
   } else {
     Write-Host ""
@@ -380,8 +485,15 @@ function Invoke-Apply {
 
   # Reconcile auto-plan managed block (unconditional on every successful pull)
   $installPs1AutoPlan = Join-Path $RepoRoot "install.ps1"
-  & pwsh -NoProfile -ExecutionPolicy Bypass -File $installPs1AutoPlan -OnlyAutoPlan -Apply
+  & $InstallerPsExe -NoProfile -ExecutionPolicy Bypass -File $installPs1AutoPlan -OnlyAutoPlan -Apply
   Write-Host "Auto-plan block reconciled."
+
+  # Restart the bounceable daemons we stopped — now running the fresh code.
+  if (-not $NoRestart -and $stoppedDaemons.Count -gt 0) {
+    Write-Host ""
+    Write-Host "Restarting bounceable daemons ($($stoppedDaemons -join ', '))..."
+    Restart-BounceableDaemons $stoppedDaemons
+  }
 }
 
 # --- mode dispatch -------------------------------------------------------------

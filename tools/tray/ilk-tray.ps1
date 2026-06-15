@@ -33,7 +33,17 @@ if (-not $createdNew) {
   exit 0
 }
 
-# Ensure the mutex is released on exit (normal or abnormal).
+# ── PID file ───────────────────────────────────────────────────────────
+# Publish our PID so /ilk-upgrade can find and bounce the tray cleanly
+# (the mutex alone can't be signalled). Symmetric with scheduler.pid.
+$dataDir = if ($env:ILK_DATA_DIR) { $env:ILK_DATA_DIR } else { Join-Path $HOME ".ilk-data" }
+$trayPidFile = Join-Path $dataDir "tray.pid"
+try {
+  if (-not (Test-Path $dataDir)) { New-Item -ItemType Directory -Path $dataDir -Force | Out-Null }
+  Set-Content -LiteralPath $trayPidFile -Value $PID -Encoding ascii
+} catch {}
+
+# Ensure the mutex is released and the PID file removed on exit (normal or abnormal).
 $mutexHeld = $true
 function Release-Mutex {
   if ($mutexHeld) {
@@ -41,6 +51,14 @@ function Release-Mutex {
     $mutex.Dispose()
     $mutexHeld = $false
   }
+  # Remove our PID file only if it still points at us (avoid clobbering a
+  # successor instance that may have already taken over).
+  try {
+    if (Test-Path $trayPidFile) {
+      $recorded = (Get-Content -LiteralPath $trayPidFile -Raw -ErrorAction SilentlyContinue).Trim()
+      if ($recorded -eq "$PID") { Remove-Item -LiteralPath $trayPidFile -Force -ErrorAction SilentlyContinue }
+    }
+  } catch {}
 }
 
 # ── Resolve repo root from this script's location (follow symlinks) ───
