@@ -17,10 +17,31 @@ from pathlib import Path
 
 # ── front-matter parsing ────────────────────────────────────────────────────
 
+def _strip_inline_comment(value: str) -> str:
+    """Strip a trailing ``# comment`` from an unquoted YAML scalar.
+
+    Only strips when ``#`` is preceded by whitespace (the standard YAML
+    inline-comment syntax).  Quoted values and values with no space before
+    ``#`` (e.g. ``"a#b"``, ``http://host#frag``) are returned unchanged.
+    """
+    # Quoted value — leave as-is (the caller or YAML parser handles escapes).
+    if value and value[0] in ('"', "'"):
+        return value
+    # Find first occurrence of <space># that could start a comment.
+    idx = value.find(" #")
+    if idx >= 0:
+        return value[:idx].rstrip()
+    return value
+
+
 def parse_frontmatter(text: str) -> dict[str, str]:
     """Minimal YAML front-matter parser (flat key: value only).
 
     Returns an empty dict when *text* has no valid front-matter block.
+
+    Inline ``# comments`` are stripped from unquoted scalar values so that
+    ``status: queued  # note`` parses as ``"queued"``, matching documented
+    template conventions.
     """
     if not text.startswith("---"):
         return {}
@@ -34,7 +55,13 @@ def parse_frontmatter(text: str) -> dict[str, str]:
             continue
         if ":" in line:
             k, _, v = line.partition(":")
-            fm[k.strip()] = v.strip()
+            v = v.strip()
+            v = _strip_inline_comment(v)
+            # Strip surrounding quotes (YAML scalar shorthand).
+            if len(v) >= 2 and ((v[0] == '"' and v[-1] == '"') or
+                                (v[0] == "'" and v[-1] == "'")):
+                v = v[1:-1]
+            fm[k.strip()] = v
     return fm
 
 
@@ -80,9 +107,11 @@ def normalize_master_status(raw_status: str) -> str:
     """Normalize a raw master front-matter status for queue-model readers.
 
     Maps legacy ``pending`` to ``queued``; everything else passes through
-    unchanged (lowercased, stripped).
+    unchanged (lowercased, stripped).  Also strips a trailing inline
+    ``# comment`` as a defensive second layer (``parse_frontmatter`` should
+    already have done this, but callers may pass raw values).
     """
-    s = raw_status.strip().lower()
+    s = _strip_inline_comment(raw_status).strip().lower()
     if s == "pending":
         return "queued"
     return s
