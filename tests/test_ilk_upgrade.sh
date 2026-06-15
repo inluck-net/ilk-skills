@@ -198,6 +198,43 @@ rm -f "$WORK/dirty_file.txt"
 out="$(HOME="$FAKE_HOME" bash "$UPGRADE" --apply --force 2>&1 || true)"
 check "force overrides dirty tree" "$out" contains "Changelog:"
 
+# === Test 9: scheduler.pid guard refuses --apply ============================
+
+echo ""
+echo "=== Test 9: scheduler.pid guard refuses --apply ==="
+advance_remote
+
+# Clean up any leftover PID files from earlier tests
+rm -rf "$ILK_DATA_DIR"
+
+# Create a fake scheduler PID file with a live PID
+mkdir -p "$ILK_DATA_DIR"
+echo "$$" > "$ILK_DATA_DIR/scheduler.pid"
+
+out="" exit_code=0
+out="$(HOME="$FAKE_HOME" ILK_DATA_DIR="$ILK_DATA_DIR" bash "$UPGRADE" --apply 2>&1)" || exit_code=$?
+check_exit "scheduler.pid guard exit code" 1 "$exit_code"
+check "scheduler.pid guard error message" "$out" contains "live loop/watchdog detected"
+check "scheduler.pid listed in output" "$out" contains "scheduler (PID"
+
+# Clean up
+rm -f "$ILK_DATA_DIR/scheduler.pid"
+
+# === Test 10: guard error names stop_watchdog.sh =============================
+
+echo ""
+echo "=== Test 10: guard error names stop_watchdog.sh ==="
+
+# Re-create the scheduler PID to trigger the guard
+echo "$$" > "$ILK_DATA_DIR/scheduler.pid"
+
+out="" exit_code=0
+out="$(HOME="$FAKE_HOME" ILK_DATA_DIR="$ILK_DATA_DIR" bash "$UPGRADE" --apply 2>&1)" || exit_code=$?
+check "guard error names stop_watchdog.sh" "$out" contains "stop_watchdog.sh"
+
+# Clean up
+rm -f "$ILK_DATA_DIR/scheduler.pid"
+
 # === Results ================================================================
 
 echo ""

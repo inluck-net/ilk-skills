@@ -124,7 +124,25 @@ check_live_pids() {
   local projects_dir="$data_dir/projects"
   local active_pids=()
 
+  # Also check the cross-project scheduler PID file (independent of projects dir)
+  local scheduler_pidfile="$data_dir/scheduler.pid"
+  if [[ -f "$scheduler_pidfile" ]]; then
+    local scheduler_pid
+    scheduler_pid="$(cat "$scheduler_pidfile" 2>/dev/null || true)"
+    if [[ -n "$scheduler_pid" && "$scheduler_pid" =~ ^[0-9]+$ ]] && kill -0 "$scheduler_pid" 2>/dev/null; then
+      active_pids+=("scheduler (PID $scheduler_pid)")
+    fi
+  fi
+
   if [[ ! -d "$projects_dir" ]]; then
+    if [[ ${#active_pids[@]} -gt 0 ]]; then
+      echo "error: live loop/watchdog detected — refusing to update skill code:" >&2
+      for p in "${active_pids[@]}"; do
+        echo "  - $p" >&2
+      done
+      echo "Stop it cleanly first: bash $REPO_ROOT/skills/ilk-watchdog/scripts/stop_watchdog.sh --project-path <project>  (or /ilk-stop). Then re-run, or use --force to override." >&2
+      return 1
+    fi
     return 0
   fi
 
@@ -162,16 +180,6 @@ check_live_pids() {
       active_pids+=("$project_name (PID $pid)")
     fi
   done
-
-  # Also check the cross-project scheduler PID file
-  local scheduler_pidfile="$data_dir/scheduler.pid"
-  if [[ -f "$scheduler_pidfile" ]]; then
-    local scheduler_pid
-    scheduler_pid="$(cat "$scheduler_pidfile" 2>/dev/null || true)"
-    if [[ -n "$scheduler_pid" && "$scheduler_pid" =~ ^[0-9]+$ ]] && kill -0 "$scheduler_pid" 2>/dev/null; then
-      active_pids+=("scheduler (PID $scheduler_pid)")
-    fi
-  fi
 
   if [[ ${#active_pids[@]} -gt 0 ]]; then
     echo "error: live loop/watchdog detected — refusing to update skill code:" >&2
