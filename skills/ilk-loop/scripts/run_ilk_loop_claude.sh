@@ -513,10 +513,23 @@ _setup_branch_one_repo() {
     return 2
   fi
 
-  git -C "$repo" checkout -B "$BRANCH_NAME" "$BRANCH_CREATE_FROM" >/dev/null 2>&1 || {
-    echo "Error: git checkout -B $BRANCH_NAME failed in $repo." >&2
-    return 1
-  }
+  if ! git -C "$repo" checkout -B "$BRANCH_NAME" "$BRANCH_CREATE_FROM" >/dev/null 2>&1; then
+    # Non-zero exit may be a benign post-checkout hook failure (lefthook/husky).
+    # Verify the actual outcome before aborting: if HEAD is on the target branch
+    # AND HEAD SHA equals the resolved base SHA, the checkout landed despite the
+    # hook noise — warn and continue.
+    local _actual_branch _actual_sha _target_sha
+    _actual_branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null) || _actual_branch=""
+    _actual_sha=$(git -C "$repo" rev-parse HEAD 2>/dev/null) || _actual_sha=""
+    _target_sha=$(git -C "$repo" rev-parse "$BRANCH_CREATE_FROM" 2>/dev/null) || _target_sha=""
+
+    if [[ "$_actual_branch" == "$BRANCH_NAME" && -n "$_actual_sha" && "$_actual_sha" == "$_target_sha" ]]; then
+      echo "WARNING: git checkout -B $BRANCH_NAME exited non-zero in $repo, but checkout landed despite post-checkout hook failure (HEAD is on $BRANCH_NAME at ${_actual_sha:0:12}). Continuing." >&2
+    else
+      echo "Error: git checkout -B $BRANCH_NAME failed in $repo (HEAD=$_actual_branch at ${_actual_sha:0:12}, expected branch=$BRANCH_NAME at ${_target_sha:0:12})." >&2
+      return 1
+    fi
+  fi
   echo "[runner] $repo now on branch: $(git -C "$repo" branch --show-current 2>/dev/null)"
   return 0
 }
