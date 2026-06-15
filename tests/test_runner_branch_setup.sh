@@ -14,6 +14,7 @@ set -euo pipefail
 #   AC-4: missing/unfetchable base => abort with clear error
 #   AC-5: stale local ref => force-refresh (ls-remote detects mismatch)
 #   AC-6: ps1 has structural keywords (grep)
+#   AC-7: narrow remote.origin.fetch — explicit refspec updates tracking ref
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -814,6 +815,83 @@ test_resume_dirty_on_target() {
   fi
 }
 
+# ===== Test 15: narrow remote.origin.fetch — explicit refspec updates tracking ref =====
+test_narrow_refspec_base_fetch() {
+  echo ""
+  echo "--- Test: narrow remote.origin.fetch — explicit refspec updates tracking ref ---"
+  setup_repos
+
+  # Create a non-main branch on the remote and advance it.
+  git -C "$TEST_TMPDIR/tmp_work" checkout -b feature-base >/dev/null 2>&1
+  echo "feature-content" > "$TEST_TMPDIR/tmp_work/feature.txt"
+  git -C "$TEST_TMPDIR/tmp_work" add feature.txt
+  git -C "$TEST_TMPDIR/tmp_work" commit -m "feature base commit" >/dev/null 2>&1
+  git -C "$TEST_TMPDIR/tmp_work" push origin feature-base >/dev/null 2>&1
+  git -C "$TEST_TMPDIR/tmp_work" checkout main >/dev/null 2>&1
+
+  # Narrow the clone's remote.origin.fetch to main-only.
+  git -C "$CLONE" config remote.origin.fetch "+refs/heads/main:refs/remotes/origin/main"
+
+  # Clone now has NO tracking ref for feature-base.
+  # Advance the remote feature-base so there's a freshness mismatch to detect.
+  git -C "$TEST_TMPDIR/tmp_work" checkout feature-base >/dev/null 2>&1
+  echo "more-content" > "$TEST_TMPDIR/tmp_work/more.txt"
+  git -C "$TEST_TMPDIR/tmp_work" add more.txt
+  git -C "$TEST_TMPDIR/tmp_work" commit -m "advance feature-base" >/dev/null 2>&1
+  git -C "$TEST_TMPDIR/tmp_work" push origin feature-base >/dev/null 2>&1
+  git -C "$TEST_TMPDIR/tmp_work" checkout main >/dev/null 2>&1
+
+  # Get the true remote tip for feature-base.
+  local expected_sha
+  expected_sha=$(git -C "$TEST_TMPDIR/tmp_work" rev-parse feature-base)
+
+  source_runner
+
+  # Drive setup_branch targeting the non-main branch.
+  BRANCH_CREATE_FROM="origin/feature-base"
+  BRANCH_NAME="feat/narrow-refspec-test"
+  BRANCH_MERGE_BACK=false
+
+  local output exit_code=0
+  output=$(setup_branch 2>&1) || exit_code=$?
+
+  # AC-1: the local tracking ref for feature-base must equal the remote tip.
+  local tracking_sha
+  tracking_sha=$(git -C "$CLONE" rev-parse "refs/remotes/origin/feature-base" 2>/dev/null) || tracking_sha=""
+
+  if [[ "$tracking_sha" == "$expected_sha" ]]; then
+    pass "narrow-refspec: tracking ref updated to remote tip despite narrow fetch config"
+  else
+    fail "narrow-refspec: tracking ref ($tracking_sha) != remote tip ($expected_sha)" "$output"
+  fi
+
+  # AC-2: branch setup must have succeeded (freshness check passed).
+  local current
+  current=$(git -C "$CLONE" branch --show-current 2>/dev/null)
+
+  if [[ "$current" == "feat/narrow-refspec-test" ]]; then
+    pass "narrow-refspec: freshness check passed, branch created"
+  else
+    fail "narrow-refspec: expected branch 'feat/narrow-refspec-test', got '$current'" "$output"
+  fi
+
+  # HEAD must point to the remote tip.
+  local head_sha
+  head_sha=$(git -C "$CLONE" rev-parse HEAD)
+  if [[ "$head_sha" == "$expected_sha" ]]; then
+    pass "narrow-refspec: HEAD at remote tip"
+  else
+    fail "narrow-refspec: HEAD ($head_sha) != remote tip ($expected_sha)"
+  fi
+
+  # The "base-ref freshness check failed" error must be absent.
+  if echo "$output" | grep -q "base-ref freshness check failed"; then
+    fail "narrow-refspec: regressed — freshness check failed" "$output"
+  else
+    pass "narrow-refspec: no freshness-check failure"
+  fi
+}
+
 # ===== Main =====
 
 echo "=== test_runner_branch_setup.sh ==="
@@ -833,6 +911,7 @@ test_genuine_checkout_failure
 test_reuse_ahead_branch
 test_diverged_branch_abort
 test_resume_dirty_on_target
+test_narrow_refspec_base_fetch
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed, $TESTS_RUN total ==="
