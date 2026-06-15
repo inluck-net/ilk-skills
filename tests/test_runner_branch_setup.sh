@@ -164,10 +164,10 @@ test_no_branch_block() {
   fi
 }
 
-# ===== Test 3: AC-3 — dirty working tree => abort =====
+# ===== Test 3: AC-3 — dirty working tree => auto-stash + proceed =====
 test_dirty_tree() {
   echo ""
-  echo "--- Test: AC-3 — dirty working tree => abort ---"
+  echo "--- Test: AC-3 — dirty working tree => auto-stash + proceed ---"
   setup_repos
   source_runner
 
@@ -185,16 +185,16 @@ test_dirty_tree() {
   local current
   current=$(git -C "$CLONE" branch --show-current 2>/dev/null)
 
-  if [[ "$current" == "main" ]]; then
-    pass "AC-3: dirty tree => stayed on main (aborted)"
+  if [[ "$current" == "feat/dirty-test" ]]; then
+    pass "AC-3: dirty tree => auto-stashed and switched to target branch"
   else
-    fail "AC-3: expected to stay on main, but switched to '$current'"
+    fail "AC-3: expected 'feat/dirty-test', got '$current'"
   fi
 
-  if echo "$output" | grep -qi "dirty\|stash"; then
-    pass "AC-3: error message mentions dirty/stash"
+  if echo "$output" | grep -q "auto-stashed dirty tree"; then
+    pass "AC-3: auto-stash message emitted"
   else
-    fail "AC-3: error message should mention dirty or stash" "$output"
+    fail "AC-3: expected 'auto-stashed dirty tree' message" "$output"
   fi
 }
 
@@ -852,7 +852,72 @@ test_resume_dirty_on_target() {
   fi
 }
 
-# ===== Test 15: narrow remote.origin.fetch — explicit refspec updates tracking ref =====
+# ===== Test 15: AC-1 dirty-tree auto-stash — dirty tree + branch switch => stash + proceed =====
+test_dirty_tree_auto_stash() {
+  echo ""
+  echo "--- Test: AC-1 dirty-tree auto-stash — dirty tree + branch switch => stash + proceed ---"
+  setup_repos
+
+  # Advance the remote so there's a base to branch from
+  echo "second" > "$TEST_TMPDIR/tmp_work/file2.txt"
+  git -C "$TEST_TMPDIR/tmp_work" add file2.txt
+  git -C "$TEST_TMPDIR/tmp_work" commit -m "second commit" >/dev/null 2>&1
+  git -C "$TEST_TMPDIR/tmp_work" push origin main >/dev/null 2>&1
+  git -C "$CLONE" fetch origin >/dev/null 2>&1
+
+  source_runner
+
+  BRANCH_CREATE_FROM="origin/main"
+  BRANCH_NAME="feat/dirty-stash-test"
+  BRANCH_MERGE_BACK=false
+
+  # Make the tree dirty with a tracked file modification
+  echo "dirty-content" > "$CLONE/file.txt"
+
+  local output exit_code=0
+  output=$(setup_branch 2>&1) || exit_code=$?
+
+  # Should succeed (auto-stash + checkout)
+  if [[ "$exit_code" -eq 0 ]]; then
+    pass "dirty-stash: setup_branch succeeded (auto-stashed dirty tree)"
+  else
+    fail "dirty-stash: setup_branch should succeed, got exit $exit_code" "$output"
+  fi
+
+  # Should be on the target branch
+  local current
+  current=$(git -C "$CLONE" branch --show-current 2>/dev/null)
+  if [[ "$current" == "feat/dirty-stash-test" ]]; then
+    pass "dirty-stash: landed on target branch"
+  else
+    fail "dirty-stash: expected 'feat/dirty-stash-test', got '$current'" "$output"
+  fi
+
+  # Log must contain the auto-stash marker
+  if echo "$output" | grep -q "auto-stashed dirty tree"; then
+    pass "dirty-stash: 'auto-stashed dirty tree' message emitted"
+  else
+    fail "dirty-stash: expected 'auto-stashed dirty tree' message" "$output"
+  fi
+
+  # Stash must contain the entry (recoverable)
+  local stash_count
+  stash_count=$(git -C "$CLONE" stash list 2>/dev/null | wc -l | tr -d ' ')
+  if [[ "$stash_count" -ge 1 ]]; then
+    pass "dirty-stash: stash list has entry (recoverable)"
+  else
+    fail "dirty-stash: stash list is empty — changes not preserved"
+  fi
+
+  # Should NOT abort or skip
+  if echo "$output" | grep -qi "skipping branch setup\|cannot switch.*stash or commit first"; then
+    fail "dirty-stash: regressed — still skips/aborts on dirty tree" "$output"
+  else
+    pass "dirty-stash: no skip/abort on dirty tree"
+  fi
+}
+
+# ===== Test 16: narrow remote.origin.fetch — explicit refspec updates tracking ref =====
 test_narrow_refspec_base_fetch() {
   echo ""
   echo "--- Test: narrow remote.origin.fetch — explicit refspec updates tracking ref ---"
@@ -948,6 +1013,7 @@ test_genuine_checkout_failure
 test_reuse_ahead_branch
 test_diverged_branch_reuse
 test_resume_dirty_on_target
+test_dirty_tree_auto_stash
 test_narrow_refspec_base_fetch
 
 echo ""
