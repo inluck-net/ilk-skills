@@ -163,6 +163,16 @@ check_live_pids() {
     fi
   done
 
+  # Also check the cross-project scheduler PID file
+  local scheduler_pidfile="$data_dir/scheduler.pid"
+  if [[ -f "$scheduler_pidfile" ]]; then
+    local scheduler_pid
+    scheduler_pid="$(cat "$scheduler_pidfile" 2>/dev/null || true)"
+    if [[ -n "$scheduler_pid" && "$scheduler_pid" =~ ^[0-9]+$ ]] && kill -0 "$scheduler_pid" 2>/dev/null; then
+      active_pids+=("scheduler (PID $scheduler_pid)")
+    fi
+  fi
+
   if [[ ${#active_pids[@]} -gt 0 ]]; then
     echo "error: live loop/watchdog detected — refusing to update skill code:" >&2
     for p in "${active_pids[@]}"; do
