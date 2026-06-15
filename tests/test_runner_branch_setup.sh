@@ -681,10 +681,10 @@ test_reuse_ahead_branch() {
   fi
 }
 
-# ===== Test 13: AC-3 diverged — branch diverged from base → abort, no loss =====
-test_diverged_branch_abort() {
+# ===== Test 13: AC-3 diverged — branch diverged from base → reuse + warn, no loss =====
+test_diverged_branch_reuse() {
   echo ""
-  echo "--- Test: AC-3 diverged — branch diverged from base → abort, no loss ---"
+  echo "--- Test: AC-3 diverged — branch diverged from base → reuse + warn, no loss ---"
   setup_repos
 
   # Push a second commit to remote
@@ -719,29 +719,66 @@ test_diverged_branch_abort() {
   git -C "$TEST_TMPDIR/tmp_work" push origin main >/dev/null 2>&1
   git -C "$CLONE" fetch origin >/dev/null 2>&1
 
-  # Now run setup_branch — should ABORT because branch diverged from new base
+  # Switch back to main to simulate a fresh run
+  git -C "$CLONE" checkout main >/dev/null 2>&1
+
+  # Now run setup_branch — should REUSE the diverged branch (not abort)
   local output2 exit_code=0
   output2=$(setup_branch 2>&1) || exit_code=$?
 
-  if [[ "$exit_code" -ne 0 ]]; then
-    pass "diverge-abort: setup_branch failed as expected"
+  # Should succeed (reuse, not abort)
+  if [[ "$exit_code" -eq 0 ]]; then
+    pass "diverge-reuse: setup_branch succeeded (reused diverged branch)"
   else
-    fail "diverge-abort: setup_branch should fail on diverged branch"
+    fail "diverge-reuse: setup_branch should succeed on diverged branch, got exit $exit_code" "$output2"
+  fi
+
+  # Should be on the diverged branch
+  local current
+  current=$(git -C "$CLONE" branch --show-current 2>/dev/null)
+  if [[ "$current" == "feat/diverge-test" ]]; then
+    pass "diverge-reuse: landed on diverged branch"
+  else
+    fail "diverge-reuse: expected 'feat/diverge-test', got '$current'" "$output2"
+  fi
+
+  # HEAD must be at the diverged tip (no reset, no commit loss)
+  local post_sha
+  post_sha=$(git -C "$CLONE" rev-parse HEAD)
+  if [[ "$post_sha" == "$diverged_sha" ]]; then
+    pass "diverge-reuse: HEAD at diverged tip (no reset)"
+  else
+    fail "diverge-reuse: HEAD ($post_sha) != diverged tip ($diverged_sha) — was reset?"
   fi
 
   # Branch ref must NOT have moved (no commit loss)
-  local post_sha
-  post_sha=$(git -C "$CLONE" rev-parse feat/diverge-test 2>/dev/null) || post_sha=""
-  if [[ "$post_sha" == "$diverged_sha" ]]; then
-    pass "diverge-abort: branch ref unchanged (no commit loss)"
+  local branch_sha
+  branch_sha=$(git -C "$CLONE" rev-parse feat/diverge-test 2>/dev/null) || branch_sha=""
+  if [[ "$branch_sha" == "$diverged_sha" ]]; then
+    pass "diverge-reuse: branch ref unchanged (no commit loss)"
   else
-    fail "diverge-abort: branch ref moved from $diverged_sha to $post_sha"
+    fail "diverge-reuse: branch ref moved from $diverged_sha to $branch_sha"
   fi
 
-  if echo "$output2" | grep -qi "diverged\|not an ancestor\|reconcile"; then
-    pass "diverge-abort: error message mentions diverged/reconcile"
+  # Warning must mention "reusing diverged branch"
+  if echo "$output2" | grep -q "reusing diverged branch"; then
+    pass "diverge-reuse: warning mentions 'reusing diverged branch'"
   else
-    fail "diverge-abort: error message should mention diverged/reconcile" "$output2"
+    fail "diverge-reuse: expected 'reusing diverged branch' warning" "$output2"
+  fi
+
+  # Warning should include ahead/behind counts
+  if echo "$output2" | grep -q "ahead.*behind"; then
+    pass "diverge-reuse: warning includes ahead/behind counts"
+  else
+    fail "diverge-reuse: warning should include ahead/behind counts" "$output2"
+  fi
+
+  # Should NOT abort or mention "reconcile manually"
+  if echo "$output2" | grep -qi "abort\|reconcile manually"; then
+    fail "diverge-reuse: should not abort or mention 'reconcile manually'" "$output2"
+  else
+    pass "diverge-reuse: no abort or 'reconcile manually' in output"
   fi
 }
 
@@ -909,7 +946,7 @@ test_ps1_structural
 test_postcheckout_hook_tolerance
 test_genuine_checkout_failure
 test_reuse_ahead_branch
-test_diverged_branch_abort
+test_diverged_branch_reuse
 test_resume_dirty_on_target
 test_narrow_refspec_base_fetch
 
