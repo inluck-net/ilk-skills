@@ -178,7 +178,7 @@ check_live_pids() {
     for p in "${active_pids[@]}"; do
       echo "  - $p" >&2
     done
-    echo "Stop the active loop first, or use --force." >&2
+    echo "Stop it cleanly first: bash $REPO_ROOT/skills/ilk-watchdog/scripts/stop_watchdog.sh --project-path <project>  (or /ilk-stop). Then re-run, or use --force to override." >&2
     return 1
   fi
   return 0
