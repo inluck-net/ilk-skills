@@ -551,9 +551,23 @@ _setup_branch_one_repo() {
       _ahead_count=$(git -C "$repo" rev-list --count "$BRANCH_CREATE_FROM".."$BRANCH_NAME" 2>/dev/null) || _ahead_count="?"
       echo "[runner] reusing existing branch $BRANCH_NAME (ahead of $BRANCH_CREATE_FROM by $_ahead_count commits)"
     else
-      # Branch exists but diverged — do NOT reset (would lose work). Abort.
-      echo "Error: branch $BRANCH_NAME exists in $repo but diverged from $BRANCH_CREATE_FROM (base is not an ancestor). Refusing to reset — reconcile manually." >&2
-      return 1
+      # Branch exists but diverged — reuse it (no reset, would lose work).
+      # Base reconciliation deferred to PR/merge time.
+      if [[ "$_current_branch" != "$BRANCH_NAME" ]]; then
+        # Need to switch branches — dirty tree blocks this.
+        if [[ "$_tree_dirty" -eq 1 ]]; then
+          echo "  ! working tree dirty in $repo — cannot switch to $BRANCH_NAME (stash or commit first)" >&2
+          return 2
+        fi
+        if ! git -C "$repo" checkout "$BRANCH_NAME" >/dev/null 2>&1; then
+          echo "Error: git checkout $BRANCH_NAME failed in $repo." >&2
+          return 1
+        fi
+      fi
+      local _ahead_count _behind_count
+      _ahead_count=$(git -C "$repo" rev-list --count "$BRANCH_CREATE_FROM".."$BRANCH_NAME" 2>/dev/null) || _ahead_count="?"
+      _behind_count=$(git -C "$repo" rev-list --count "$BRANCH_NAME".."$BRANCH_CREATE_FROM" 2>/dev/null) || _behind_count="?"
+      echo "WARNING: reusing diverged branch $BRANCH_NAME in $repo (ahead $_ahead_count / behind $_behind_count of $BRANCH_CREATE_FROM). Base reconciliation deferred to PR/merge." >&2
     fi
   else
     # Branch absent — create from base. Dirty tree blocks this (can't checkout).
