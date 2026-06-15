@@ -497,6 +497,126 @@ test_ps1_structural() {
   fi
 }
 
+# ===== Test 10: benign post-checkout hook — checkout lands despite hook failure =====
+test_postcheckout_hook_tolerance() {
+  echo ""
+  echo "--- Test: post-checkout hook tolerance (checkout lands despite hook failure) ---"
+  setup_repos
+
+  # Advance the remote so there's something to branch from
+  echo "second" > "$TEST_TMPDIR/tmp_work/file2.txt"
+  git -C "$TEST_TMPDIR/tmp_work" add file2.txt
+  git -C "$TEST_TMPDIR/tmp_work" commit -m "second commit" >/dev/null 2>&1
+  git -C "$TEST_TMPDIR/tmp_work" push origin main >/dev/null 2>&1
+  git -C "$CLONE" fetch origin >/dev/null 2>&1
+
+  # Install a post-checkout hook that exits non-zero
+  mkdir -p "$CLONE/.git/hooks"
+  cat > "$CLONE/.git/hooks/post-checkout" <<'HOOKEOF'
+#!/bin/sh
+echo "post-checkout hook deliberately failing" >&2
+exit 1
+HOOKEOF
+  chmod +x "$CLONE/.git/hooks/post-checkout"
+
+  source_runner
+
+  BRANCH_CREATE_FROM="origin/main"
+  BRANCH_NAME="feat/hook-tolerance"
+  BRANCH_MERGE_BACK=false
+
+  local output exit_code=0
+  output=$(setup_branch 2>&1) || exit_code=$?
+
+  local current
+  current=$(git -C "$CLONE" branch --show-current 2>/dev/null)
+
+  if [[ "$current" == "feat/hook-tolerance" ]]; then
+    pass "hook-tolerance: checkout landed on target branch despite hook failure"
+  else
+    fail "hook-tolerance: expected branch 'feat/hook-tolerance', got '$current'" "$output"
+  fi
+
+  if [[ "$exit_code" -eq 0 ]]; then
+    pass "hook-tolerance: setup_branch succeeded (did not abort)"
+  else
+    fail "hook-tolerance: setup_branch should succeed, got exit $exit_code" "$output"
+  fi
+
+  if echo "$output" | grep -q "checkout landed despite"; then
+    pass "hook-tolerance: warning message emitted"
+  else
+    fail "hook-tolerance: expected 'checkout landed despite' warning" "$output"
+  fi
+
+  # Verify HEAD is at the correct SHA
+  local local_sha remote_sha
+  local_sha=$(git -C "$CLONE" rev-parse HEAD)
+  remote_sha=$(git -C "$CLONE" rev-parse origin/main)
+  if [[ "$local_sha" == "$remote_sha" ]]; then
+    pass "hook-tolerance: HEAD points to fresh base"
+  else
+    fail "hook-tolerance: HEAD ($local_sha) != origin/main ($remote_sha)"
+  fi
+}
+
+# ===== Test 11: genuine checkout failure still aborts =====
+test_genuine_checkout_failure() {
+  echo ""
+  echo "--- Test: genuine checkout failure still aborts ---"
+  setup_repos
+
+  # Advance the remote
+  echo "second" > "$TEST_TMPDIR/tmp_work/file2.txt"
+  git -C "$TEST_TMPDIR/tmp_work" add file2.txt
+  git -C "$TEST_TMPDIR/tmp_work" commit -m "second commit" >/dev/null 2>&1
+  git -C "$TEST_TMPDIR/tmp_work" push origin main >/dev/null 2>&1
+  git -C "$CLONE" fetch origin >/dev/null 2>&1
+
+  # Install a post-checkout hook that:
+  #   1. Switches HEAD back to main (simulating a genuine failure where HEAD didn't land)
+  #   2. Exits non-zero
+  mkdir -p "$CLONE/.git/hooks"
+  cat > "$CLONE/.git/hooks/post-checkout" <<'HOOKEOF'
+#!/bin/sh
+# Simulate genuine failure: move HEAD away from the target branch
+git checkout main 2>/dev/null
+exit 1
+HOOKEOF
+  chmod +x "$CLONE/.git/hooks/post-checkout"
+
+  source_runner
+
+  BRANCH_CREATE_FROM="origin/main"
+  BRANCH_NAME="feat/genuine-fail"
+  BRANCH_MERGE_BACK=false
+
+  local output exit_code=0
+  output=$(setup_branch 2>&1) || exit_code=$?
+
+  local current
+  current=$(git -C "$CLONE" branch --show-current 2>/dev/null)
+
+  # Should abort — HEAD is NOT on the target branch
+  if [[ "$current" == "main" ]]; then
+    pass "genuine-fail: stayed on main (aborted)"
+  else
+    fail "genuine-fail: expected to stay on main, but switched to '$current'" "$output"
+  fi
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    pass "genuine-fail: setup_branch failed as expected"
+  else
+    fail "genuine-fail: setup_branch should fail, got exit 0"
+  fi
+
+  if echo "$output" | grep -q "Error:.*failed"; then
+    pass "genuine-fail: error message emitted"
+  else
+    fail "genuine-fail: expected error message" "$output"
+  fi
+}
+
 # ===== Main =====
 
 echo "=== test_runner_branch_setup.sh ==="
@@ -511,6 +631,8 @@ test_active_master_selection
 test_slash_branch_name
 test_bare_slash_local_ref
 test_ps1_structural
+test_postcheckout_hook_tolerance
+test_genuine_checkout_failure
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed, $TESTS_RUN total ==="
