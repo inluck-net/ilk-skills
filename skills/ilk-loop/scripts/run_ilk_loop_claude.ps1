@@ -1391,7 +1391,7 @@ function Setup-BranchOneRepo {
 
   # Three-way branch logic (SP4 — reuse existing branch ahead of base):
   #   1. Branch exists AND base is its ancestor → reuse (no reset).
-  #   2. Branch exists but base is NOT ancestor (diverged) → abort, no loss.
+  #   2. Branch exists but base is NOT ancestor (diverged) → reuse + warn (no reset).
   #   3. Branch absent → create from base (existing behavior).
   $branchExists = $false
   & git -C $Repo rev-parse $script:BranchName 2>$null | Out-Null
@@ -1423,9 +1423,25 @@ function Setup-BranchOneRepo {
       try { $aheadCount = (& git -C $Repo rev-list --count "$($script:BranchCreateFrom)..$($script:BranchName)" 2>$null).Trim() } catch {}
       Write-Host "[runner] reusing existing branch $($script:BranchName) (ahead of $($script:BranchCreateFrom) by $aheadCount commits)"
     } else {
-      # Branch exists but diverged — do NOT reset (would lose work). Abort.
-      Write-Host "Error: branch $($script:BranchName) exists in $Repo but diverged from $($script:BranchCreateFrom) (base is not an ancestor). Refusing to reset — reconcile manually." -ForegroundColor Red
-      return 'fail'
+      # Branch exists but diverged — reuse it (no reset, would lose work).
+      # Base reconciliation deferred to PR/merge time.
+      if ($currentBranch -ne $script:BranchName) {
+        # Need to switch branches — dirty tree blocks this.
+        if ($treeDirty) {
+          Write-Host "  ! working tree dirty in $Repo — cannot switch to $($script:BranchName) (stash or commit first)" -ForegroundColor DarkYellow
+          return 'skip'
+        }
+        & git -C $Repo checkout $script:BranchName 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+          Write-Host "Error: git checkout $($script:BranchName) failed in $Repo." -ForegroundColor Red
+          return 'fail'
+        }
+      }
+      $aheadCount = "?"
+      $behindCount = "?"
+      try { $aheadCount = (& git -C $Repo rev-list --count "$($script:BranchCreateFrom)..$($script:BranchName)" 2>$null).Trim() } catch {}
+      try { $behindCount = (& git -C $Repo rev-list --count "$($script:BranchName)..$($script:BranchCreateFrom)" 2>$null).Trim() } catch {}
+      Write-Host "WARNING: reusing diverged branch $($script:BranchName) in $Repo (ahead $aheadCount / behind $behindCount of $($script:BranchCreateFrom)). Base reconciliation deferred to PR/merge." -ForegroundColor DarkYellow
     }
   } else {
     # Branch absent — create from base. Dirty tree blocks this (can't checkout).
