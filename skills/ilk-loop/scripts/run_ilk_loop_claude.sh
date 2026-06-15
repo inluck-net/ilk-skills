@@ -475,12 +475,14 @@ _setup_branch_one_repo() {
     echo "Error: a rebase is in progress in $repo (abort/finish before running)." >&2
     return 1
   fi
-  # Dirty tree -> skip (non-fatal): only clean repos host the branch. A single
-  # dirty repo yields branched==0 -> setup_branch fails (preserves the guard).
+  # Dirty tree guard: defer until we know whether a branch switch is needed.
+  # If the repo is already on $BRANCH_NAME and it's ahead of base, a dirty tree
+  # is fine (resume-with-dirty-tree, AC-4). We only block dirty trees when a
+  # branch *switch* or *create* is required.
+  local _tree_dirty=0
   if ! git -C "$repo" diff --quiet 2>/dev/null || \
      ! git -C "$repo" diff --cached --quiet 2>/dev/null; then
-    echo "  ! working tree dirty in $repo — skipping branch setup there" >&2
-    return 2
+    _tree_dirty=1
   fi
 
   # Parse create_from into remote/branch (per-repo: depends on configured remotes).
@@ -513,21 +515,64 @@ _setup_branch_one_repo() {
     return 2
   fi
 
-  if ! git -C "$repo" checkout -B "$BRANCH_NAME" "$BRANCH_CREATE_FROM" >/dev/null 2>&1; then
-    # Non-zero exit may be a benign post-checkout hook failure (lefthook/husky).
-    # Verify the actual outcome before aborting: if HEAD is on the target branch
-    # AND HEAD SHA equals the resolved base SHA, the checkout landed despite the
-    # hook noise — warn and continue.
-    local _actual_branch _actual_sha _target_sha
-    _actual_branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null) || _actual_branch=""
-    _actual_sha=$(git -C "$repo" rev-parse HEAD 2>/dev/null) || _actual_sha=""
-    _target_sha=$(git -C "$repo" rev-parse "$BRANCH_CREATE_FROM" 2>/dev/null) || _target_sha=""
+  # Three-way branch logic (SP4 — reuse existing branch ahead of base):
+  #   1. Branch exists AND base is its ancestor → reuse (no reset).
+  #   2. Branch exists but base is NOT ancestor (diverged) → abort, no loss.
+  #   3. Branch absent → create from base (existing behavior).
+  local _branch_exists=0
+  if git -C "$repo" rev-parse "$BRANCH_NAME" >/dev/null 2>&1; then
+    _branch_exists=1
+  fi
 
-    if [[ "$_actual_branch" == "$BRANCH_NAME" && -n "$_actual_sha" && "$_actual_sha" == "$_target_sha" ]]; then
-      echo "WARNING: git checkout -B $BRANCH_NAME exited non-zero in $repo, but checkout landed despite post-checkout hook failure (HEAD is on $BRANCH_NAME at ${_actual_sha:0:12}). Continuing." >&2
+  local _current_branch
+  _current_branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null) || _current_branch=""
+
+  if [[ "$_branch_exists" -eq 1 ]]; then
+    # Branch exists — check if base is an ancestor.
+    if git -C "$repo" merge-base --is-ancestor "$BRANCH_CREATE_FROM" "$BRANCH_NAME" 2>/dev/null; then
+      # Branch is at-or-ahead of base → reuse it (AC-1: preserve prior-run commits).
+      # If already on the branch, even a dirty tree is fine (AC-4: resume-with-dirty).
+      if [[ "$_current_branch" != "$BRANCH_NAME" ]]; then
+        # Need to switch branches — dirty tree blocks this.
+        if [[ "$_tree_dirty" -eq 1 ]]; then
+          echo "  ! working tree dirty in $repo — cannot switch to $BRANCH_NAME (stash or commit first)" >&2
+          return 2
+        fi
+        if ! git -C "$repo" checkout "$BRANCH_NAME" >/dev/null 2>&1; then
+          echo "Error: git checkout $BRANCH_NAME failed in $repo." >&2
+          return 1
+        fi
+      fi
+      local _ahead_count
+      _ahead_count=$(git -C "$repo" rev-list --count "$BRANCH_CREATE_FROM".."$BRANCH_NAME" 2>/dev/null) || _ahead_count="?"
+      echo "[runner] reusing existing branch $BRANCH_NAME (ahead of $BRANCH_CREATE_FROM by $_ahead_count commits)"
     else
-      echo "Error: git checkout -B $BRANCH_NAME failed in $repo (HEAD=$_actual_branch at ${_actual_sha:0:12}, expected branch=$BRANCH_NAME at ${_target_sha:0:12})." >&2
+      # Branch exists but diverged — do NOT reset (would lose work). Abort.
+      echo "Error: branch $BRANCH_NAME exists in $repo but diverged from $BRANCH_CREATE_FROM (base is not an ancestor). Refusing to reset — reconcile manually." >&2
       return 1
+    fi
+  else
+    # Branch absent — create from base. Dirty tree blocks this (can't checkout).
+    if [[ "$_tree_dirty" -eq 1 ]]; then
+      echo "  ! working tree dirty in $repo — skipping branch setup there" >&2
+      return 2
+    fi
+    if ! git -C "$repo" checkout -B "$BRANCH_NAME" "$BRANCH_CREATE_FROM" >/dev/null 2>&1; then
+      # Non-zero exit may be a benign post-checkout hook failure (lefthook/husky).
+      # Verify the actual outcome before aborting: if HEAD is on the target branch
+      # AND HEAD SHA equals the resolved base SHA, the checkout landed despite the
+      # hook noise — warn and continue.
+      local _actual_branch _actual_sha _target_sha
+      _actual_branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null) || _actual_branch=""
+      _actual_sha=$(git -C "$repo" rev-parse HEAD 2>/dev/null) || _actual_sha=""
+      _target_sha=$(git -C "$repo" rev-parse "$BRANCH_CREATE_FROM" 2>/dev/null) || _target_sha=""
+
+      if [[ "$_actual_branch" == "$BRANCH_NAME" && -n "$_actual_sha" && "$_actual_sha" == "$_target_sha" ]]; then
+        echo "WARNING: git checkout -B $BRANCH_NAME exited non-zero in $repo, but checkout landed despite post-checkout hook failure (HEAD is on $BRANCH_NAME at ${_actual_sha:0:12}). Continuing." >&2
+      else
+        echo "Error: git checkout -B $BRANCH_NAME failed in $repo (HEAD=$_actual_branch at ${_actual_sha:0:12}, expected branch=$BRANCH_NAME at ${_target_sha:0:12})." >&2
+        return 1
+      fi
     fi
   fi
   echo "[runner] $repo now on branch: $(git -C "$repo" branch --show-current 2>/dev/null)"
