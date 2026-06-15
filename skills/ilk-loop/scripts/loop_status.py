@@ -84,7 +84,7 @@ def extract_master_order(master_text: str) -> list[str]:
     # bracket, paren, or `./`) — but specifically NOT `/`, which would
     # mean the filename lives in a subdirectory.
     pattern = re.compile(
-        r"(?:^|(?<=[\s(\[|]))(?:\./)?(\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*\.md)",
+        r"(?:^|(?<=[\s(\[|]))(?:\./)?(\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*(?:\.md)?)",
         re.MULTILINE,
     )
     seen: set[str] = set()
@@ -92,6 +92,10 @@ def extract_master_order(master_text: str) -> list[str]:
     for f in pattern.findall(master_text):
         if f.startswith("MASTER"):
             continue
+        # Normalize: ensure every slug ends with .md so downstream
+        # code can resolve the file on disk consistently.
+        if not f.endswith(".md"):
+            f = f + ".md"
         if f in seen:
             continue
         seen.add(f)
