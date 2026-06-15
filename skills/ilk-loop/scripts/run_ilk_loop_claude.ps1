@@ -1348,15 +1348,13 @@ function Setup-BranchOneRepo {
     return 'fail'
   }
 
-  # Dirty tree -> skip (non-fatal): only clean repos can host the branch. In a
-  # single-repo project this makes the one repo skip -> branched==0 -> Setup-Branch
-  # fails, preserving the original dirty-tree guard.
+  # Dirty tree guard: defer until we know whether a branch switch is needed.
+  # If the repo is already on $BranchName and it's ahead of base, a dirty tree
+  # is fine (resume-with-dirty-tree, AC-4). We only block dirty trees when a
+  # branch *switch* or *create* is required.
   & git -C $Repo diff --quiet 2>$null;        $diffCode = $LASTEXITCODE
   & git -C $Repo diff --cached --quiet 2>$null; $cachedCode = $LASTEXITCODE
-  if ($diffCode -ne 0 -or $cachedCode -ne 0) {
-    Write-Host "  ! working tree dirty in $Repo — skipping branch setup there" -ForegroundColor DarkYellow
-    return 'skip'
-  }
+  $treeDirty = ($diffCode -ne 0 -or $cachedCode -ne 0)
 
   # Parse create_from into remote/branch (per-repo: depends on configured remotes).
   # Only split off a remote when the first segment is an actually-configured remote
@@ -1389,24 +1387,69 @@ function Setup-BranchOneRepo {
     return 'skip'
   }
 
-  & git -C $Repo checkout -B $script:BranchName $script:BranchCreateFrom 2>$null | Out-Null
-  if ($LASTEXITCODE -ne 0) {
-    # Non-zero exit may be a benign post-checkout hook failure (lefthook/husky).
-    # Verify the actual outcome before aborting: if HEAD is on the target branch
-    # AND HEAD SHA equals the resolved base SHA, the checkout landed despite the
-    # hook noise — warn and continue.
-    $actualBranch = ""
-    $actualSha = ""
-    $targetSha = ""
-    try { $actualBranch = (& git -C $Repo rev-parse --abbrev-ref HEAD 2>$null).Trim() } catch {}
-    try { $actualSha = (& git -C $Repo rev-parse HEAD 2>$null).Trim() } catch {}
-    try { $targetSha = (& git -C $Repo rev-parse $script:BranchCreateFrom 2>$null).Trim() } catch {}
+  # Three-way branch logic (SP4 — reuse existing branch ahead of base):
+  #   1. Branch exists AND base is its ancestor → reuse (no reset).
+  #   2. Branch exists but base is NOT ancestor (diverged) → abort, no loss.
+  #   3. Branch absent → create from base (existing behavior).
+  $branchExists = $false
+  & git -C $Repo rev-parse $script:BranchName 2>$null | Out-Null
+  if ($LASTEXITCODE -eq 0) { $branchExists = $true }
 
-    if ($actualBranch -eq $script:BranchName -and $actualSha -and $actualSha -eq $targetSha) {
-      Write-Host "WARNING: git checkout -B $($script:BranchName) exited non-zero in $Repo, but checkout landed despite post-checkout hook failure (HEAD is on $($script:BranchName) at $($actualSha.Substring(0, [Math]::Min(12, $actualSha.Length)))). Continuing." -ForegroundColor DarkYellow
+  $currentBranch = ""
+  try { $currentBranch = (& git -C $Repo rev-parse --abbrev-ref HEAD 2>$null).Trim() } catch {}
+
+  if ($branchExists) {
+    # Branch exists — check if base is an ancestor.
+    & git -C $Repo merge-base --is-ancestor $script:BranchCreateFrom $script:BranchName 2>$null
+    $isAncestor = ($LASTEXITCODE -eq 0)
+    if ($isAncestor) {
+      # Branch is at-or-ahead of base → reuse it (AC-1: preserve prior-run commits).
+      # If already on the branch, even a dirty tree is fine (AC-4: resume-with-dirty).
+      if ($currentBranch -ne $script:BranchName) {
+        # Need to switch branches — dirty tree blocks this.
+        if ($treeDirty) {
+          Write-Host "  ! working tree dirty in $Repo — cannot switch to $($script:BranchName) (stash or commit first)" -ForegroundColor DarkYellow
+          return 'skip'
+        }
+        & git -C $Repo checkout $script:BranchName 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+          Write-Host "Error: git checkout $($script:BranchName) failed in $Repo." -ForegroundColor Red
+          return 'fail'
+        }
+      }
+      $aheadCount = "?"
+      try { $aheadCount = (& git -C $Repo rev-list --count "$($script:BranchCreateFrom)..$($script:BranchName)" 2>$null).Trim() } catch {}
+      Write-Host "[runner] reusing existing branch $($script:BranchName) (ahead of $($script:BranchCreateFrom) by $aheadCount commits)"
     } else {
-      Write-Host "Error: git checkout -B failed in $Repo (HEAD=$actualBranch at $($actualSha.Substring(0, [Math]::Min(12, $actualSha.Length))), expected branch=$($script:BranchName) at $($targetSha.Substring(0, [Math]::Min(12, $targetSha.Length))))." -ForegroundColor Red
+      # Branch exists but diverged — do NOT reset (would lose work). Abort.
+      Write-Host "Error: branch $($script:BranchName) exists in $Repo but diverged from $($script:BranchCreateFrom) (base is not an ancestor). Refusing to reset — reconcile manually." -ForegroundColor Red
       return 'fail'
+    }
+  } else {
+    # Branch absent — create from base. Dirty tree blocks this (can't checkout).
+    if ($treeDirty) {
+      Write-Host "  ! working tree dirty in $Repo — skipping branch setup there" -ForegroundColor DarkYellow
+      return 'skip'
+    }
+    & git -C $Repo checkout -B $script:BranchName $script:BranchCreateFrom 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      # Non-zero exit may be a benign post-checkout hook failure (lefthook/husky).
+      # Verify the actual outcome before aborting: if HEAD is on the target branch
+      # AND HEAD SHA equals the resolved base SHA, the checkout landed despite the
+      # hook noise — warn and continue.
+      $actualBranch = ""
+      $actualSha = ""
+      $targetSha = ""
+      try { $actualBranch = (& git -C $Repo rev-parse --abbrev-ref HEAD 2>$null).Trim() } catch {}
+      try { $actualSha = (& git -C $Repo rev-parse HEAD 2>$null).Trim() } catch {}
+      try { $targetSha = (& git -C $Repo rev-parse $script:BranchCreateFrom 2>$null).Trim() } catch {}
+
+      if ($actualBranch -eq $script:BranchName -and $actualSha -and $actualSha -eq $targetSha) {
+        Write-Host "WARNING: git checkout -B $($script:BranchName) exited non-zero in $Repo, but checkout landed despite post-checkout hook failure (HEAD is on $($script:BranchName) at $($actualSha.Substring(0, [Math]::Min(12, $actualSha.Length)))). Continuing." -ForegroundColor DarkYellow
+      } else {
+        Write-Host "Error: git checkout -B failed in $Repo (HEAD=$actualBranch at $($actualSha.Substring(0, [Math]::Min(12, $actualSha.Length))), expected branch=$($script:BranchName) at $($targetSha.Substring(0, [Math]::Min(12, $targetSha.Length))))." -ForegroundColor Red
+        return 'fail'
+      }
     }
   }
   $cur = (& git -C $Repo branch --show-current 2>$null).Trim()
