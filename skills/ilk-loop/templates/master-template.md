@@ -43,8 +43,8 @@ that span more than 3 sub-plans>
 
 | # | Order | Slug | Items | Steps (est.) | Status |
 |---|---|---|---|---|---|
-| 1 | 1 | <slug-1> | <list> | <N> | pending |
-| 2 | 2 | <slug-2> | <list> | <N> | pending |
+| 1 | 1 | [YYYY-MM-DD-<slug-1>.md](./YYYY-MM-DD-<slug-1>.md) | <list> | <N> | pending |
+| 2 | 2 | [YYYY-MM-DD-<slug-2>.md](./YYYY-MM-DD-<slug-2>.md) | <list> | <N> | pending |
 
 <!--
 META PROJECTS ONLY — delete this block in single-repo projects.
@@ -56,8 +56,8 @@ commits/CI/ship to the named member.
 
 | # | Order | Slug | Repo | Items | Steps (est.) | Status |
 |---|---|---|---|---|---|---|
-| 1 | 1 | <slug-1> | <member-name> | <list> | <N> | pending |
-| 2 | 2 | <slug-2> | <member-name> | <list> | <N> | pending |
+| 1 | 1 | [YYYY-MM-DD-<slug-1>.md](./YYYY-MM-DD-<slug-1>.md) | <member-name> | <list> | <N> | pending |
+| 2 | 2 | [YYYY-MM-DD-<slug-2>.md](./YYYY-MM-DD-<slug-2>.md) | <member-name> | <list> | <N> | pending |
 -->
 
 ## Repos in scope (META PROJECTS ONLY)
