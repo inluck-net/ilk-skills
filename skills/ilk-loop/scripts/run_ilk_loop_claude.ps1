@@ -1391,8 +1391,23 @@ function Setup-BranchOneRepo {
 
   & git -C $Repo checkout -B $script:BranchName $script:BranchCreateFrom 2>$null | Out-Null
   if ($LASTEXITCODE -ne 0) {
-    Write-Host "Error: git checkout -B failed in $Repo." -ForegroundColor Red
-    return 'fail'
+    # Non-zero exit may be a benign post-checkout hook failure (lefthook/husky).
+    # Verify the actual outcome before aborting: if HEAD is on the target branch
+    # AND HEAD SHA equals the resolved base SHA, the checkout landed despite the
+    # hook noise — warn and continue.
+    $actualBranch = ""
+    $actualSha = ""
+    $targetSha = ""
+    try { $actualBranch = (& git -C $Repo rev-parse --abbrev-ref HEAD 2>$null).Trim() } catch {}
+    try { $actualSha = (& git -C $Repo rev-parse HEAD 2>$null).Trim() } catch {}
+    try { $targetSha = (& git -C $Repo rev-parse $script:BranchCreateFrom 2>$null).Trim() } catch {}
+
+    if ($actualBranch -eq $script:BranchName -and $actualSha -and $actualSha -eq $targetSha) {
+      Write-Host "WARNING: git checkout -B $($script:BranchName) exited non-zero in $Repo, but checkout landed despite post-checkout hook failure (HEAD is on $($script:BranchName) at $($actualSha.Substring(0, [Math]::Min(12, $actualSha.Length)))). Continuing." -ForegroundColor DarkYellow
+    } else {
+      Write-Host "Error: git checkout -B failed in $Repo (HEAD=$actualBranch at $($actualSha.Substring(0, [Math]::Min(12, $actualSha.Length))), expected branch=$($script:BranchName) at $($targetSha.Substring(0, [Math]::Min(12, $targetSha.Length))))." -ForegroundColor Red
+      return 'fail'
+    }
   }
   $cur = (& git -C $Repo branch --show-current 2>$null).Trim()
   Write-Host "[runner] $Repo now on branch: $cur"
