@@ -27,6 +27,11 @@ holds, plan. Otherwise, direct-implement when ANY of these holds:
 
 ## How to announce and proceed
 
+**Hard precondition — before you edit, run, or start any implementation
+tool call, you MUST print the one-line routing announcement below.** This
+is not optional and not a bottom-of-response afterthought. If you have
+not yet announced the routing decision, do not touch the codebase.
+
 When the routing decision is clear:
 
 1. Print ONE line: `Routing to /ilk-plan: <reason>.` or
