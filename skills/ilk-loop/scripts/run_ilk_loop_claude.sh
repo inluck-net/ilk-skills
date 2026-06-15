@@ -537,10 +537,10 @@ _setup_branch_one_repo() {
       # Branch is at-or-ahead of base → reuse it (AC-1: preserve prior-run commits).
       # If already on the branch, even a dirty tree is fine (AC-4: resume-with-dirty).
       if [[ "$_current_branch" != "$BRANCH_NAME" ]]; then
-        # Need to switch branches — dirty tree blocks this.
+        # Need to switch branches — auto-stash dirty tree to unblock.
         if [[ "$_tree_dirty" -eq 1 ]]; then
-          echo "  ! working tree dirty in $repo — cannot switch to $BRANCH_NAME (stash or commit first)" >&2
-          return 2
+          echo "  ! working tree dirty in $repo — auto-stashed dirty tree (branch switch to $BRANCH_NAME)" >&2
+          git -C "$repo" stash push -u -m "ilk auto-stash (branch setup)" >/dev/null 2>&1
         fi
         if ! git -C "$repo" checkout "$BRANCH_NAME" >/dev/null 2>&1; then
           echo "Error: git checkout $BRANCH_NAME failed in $repo." >&2
@@ -554,10 +554,10 @@ _setup_branch_one_repo() {
       # Branch exists but diverged — reuse it (no reset, would lose work).
       # Base reconciliation deferred to PR/merge time.
       if [[ "$_current_branch" != "$BRANCH_NAME" ]]; then
-        # Need to switch branches — dirty tree blocks this.
+        # Need to switch branches — auto-stash dirty tree to unblock.
         if [[ "$_tree_dirty" -eq 1 ]]; then
-          echo "  ! working tree dirty in $repo — cannot switch to $BRANCH_NAME (stash or commit first)" >&2
-          return 2
+          echo "  ! working tree dirty in $repo — auto-stashed dirty tree (branch switch to $BRANCH_NAME)" >&2
+          git -C "$repo" stash push -u -m "ilk auto-stash (branch setup)" >/dev/null 2>&1
         fi
         if ! git -C "$repo" checkout "$BRANCH_NAME" >/dev/null 2>&1; then
           echo "Error: git checkout $BRANCH_NAME failed in $repo." >&2
@@ -570,10 +570,10 @@ _setup_branch_one_repo() {
       echo "WARNING: reusing diverged branch $BRANCH_NAME in $repo (ahead $_ahead_count / behind $_behind_count of $BRANCH_CREATE_FROM). Base reconciliation deferred to PR/merge." >&2
     fi
   else
-    # Branch absent — create from base. Dirty tree blocks this (can't checkout).
+    # Branch absent — create from base. Auto-stash dirty tree to unblock.
     if [[ "$_tree_dirty" -eq 1 ]]; then
-      echo "  ! working tree dirty in $repo — skipping branch setup there" >&2
-      return 2
+      echo "  ! working tree dirty in $repo — auto-stashed dirty tree (branch create $BRANCH_NAME)" >&2
+      git -C "$repo" stash push -u -m "ilk auto-stash (branch setup)" >/dev/null 2>&1
     fi
     if ! git -C "$repo" checkout -B "$BRANCH_NAME" "$BRANCH_CREATE_FROM" >/dev/null 2>&1; then
       # Non-zero exit may be a benign post-checkout hook failure (lefthook/husky).
