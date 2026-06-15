@@ -79,6 +79,18 @@ def extract_master_order(master_text: str) -> list[str]:
     can freely cite supporting documents inside Notes columns without
     polluting the sub-plan registry.
     """
+    # Sub-plan references live in the master BODY (registry table), never in
+    # the YAML frontmatter. Strip a leading `---\n ... \n---` block first so
+    # frontmatter fields like `slug: 2026-06-15-<name>` are not mis-read as a
+    # (phantom) bare-slug sub-plan reference.
+    body = master_text
+    lines = body.split("\n")
+    if lines and lines[0].strip() == "---":
+        for i in range(1, len(lines)):
+            if lines[i].strip() == "---":
+                body = "\n".join(lines[i + 1:])
+                break
+
     # Capture group is the filename. The lookbehind requires the preceding
     # character to be a non-path character (start-of-line, whitespace,
     # bracket, paren, or `./`) — but specifically NOT `/`, which would
@@ -89,7 +101,7 @@ def extract_master_order(master_text: str) -> list[str]:
     )
     seen: set[str] = set()
     ordered: list[str] = []
-    for f in pattern.findall(master_text):
+    for f in pattern.findall(body):
         if f.startswith("MASTER"):
             continue
         # Normalize: ensure every slug ends with .md so downstream

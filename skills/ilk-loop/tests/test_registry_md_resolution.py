@@ -88,6 +88,10 @@ def test_template_linked_md_refs_resolve():
     master_text = master_text.replace("<list>", "test")
     master_text = master_text.replace("<N>", "3")
     master_text = master_text.replace("2026-MM-DD", "2026-06-15")
+    # The template's registry rows use the literal YYYY-MM-DD date placeholder
+    # (filled with a real date by /ilk-plan). Render it the same way here, else
+    # the registry link stays an invalid date and resolves to nothing.
+    master_text = master_text.replace("YYYY-MM-DD", "2026-06-15")
     master_text = master_text.replace("HH:MM:SS", "12:00:00")
     master_text = master_text.replace("<human-readable plan title>",
                                        "Test template-linked")
@@ -135,6 +139,34 @@ def test_template_linked_md_refs_resolve():
     )
     assert sub_fname in result.stdout, (
         f"expected {sub_fname} in output, got:\n{result.stdout}"
+    )
+
+
+# ── Regression: frontmatter `slug:` must NOT be matched as a sub-plan ──
+
+def test_frontmatter_slug_not_matched_as_subplan():
+    """A master whose own `slug:` is a YYYY-MM-DD-* value must not be mis-read
+    as a phantom sub-plan. Regression: after bare-slug matching was added, the
+    extractor matched the frontmatter `slug: 2026-06-15-loop-robustness` line
+    and invented a phantom MISSING sub-plan."""
+    sys.path.insert(0, str(REPO_ROOT / "skills" / "ilk-loop" / "scripts"))
+    from loop_status import extract_master_order  # noqa: E402
+
+    master = (
+        "---\n"
+        "title: Test phantom\n"
+        "slug: 2026-06-15-loop-robustness\n"   # date-prefixed slug — the trap
+        "status: active\n"
+        "---\n"
+        "\n## Sub-plan registry\n\n"
+        "| # | Order | Sub-plan | Items | Steps | Status |\n"
+        "|---|---|---|---|---|---|\n"
+        "| 1 | 1 | [2026-06-15-real-sub.md](./2026-06-15-real-sub.md) | x | 3 | pending |\n"
+    )
+    order = extract_master_order(master)
+    assert "2026-06-15-real-sub.md" in order, order
+    assert "2026-06-15-loop-robustness.md" not in order, (
+        f"frontmatter slug must not be matched as a sub-plan: {order}"
     )
 
 
