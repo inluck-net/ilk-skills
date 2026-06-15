@@ -25,3 +25,8 @@ skills/ilk-launcher/projects.json
 .ilk-data/
 .ilk-watchdog/
 skills/ilk-loop/logs/
+
+# Per-checkout runtime artifact written by the loop runner
+# (run_ilk_loop_claude.{sh,ps1}) — records this clone's remote-type
+# (personal|shared) for commit-trailer policy. Must never be committed.
+.ilk-remote-type
