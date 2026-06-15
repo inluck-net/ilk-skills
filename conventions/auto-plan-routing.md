@@ -26,7 +26,9 @@ reflected here via the installed block.
 The route-to-/ilk-plan conditions above take precedence: if ANY of them
 holds, plan. Otherwise, direct-implement when ANY of these holds:
 
-- The task is single-shot and completable right now in one session.
+- The task is single-shot and completable right now in one session — judged
+  against the **whole Definition of Done** (code → tests → live verification
+  → PR → release), not just the first code edit.
 - The scope is exploratory (spike, prototype, investigation).
 - The deliverable is prose, docs, or config (no code logic changes).
 - The user explicitly says "just do it" or "skip planning".
