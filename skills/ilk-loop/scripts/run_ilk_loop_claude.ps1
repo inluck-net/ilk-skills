@@ -1555,7 +1555,12 @@ function Get-LocalCheckOutcome {
     [Parameter(Mandatory=$false)] $Parsed,
     [Parameter(Mandatory=$false)] [Nullable[int]] $ExitCode
   )
-  # Current logic: exit-code-only (will be replaced in step 1)
+  # Prefer all_passed from helper JSON when available
+  if ($null -ne $Parsed -and $Parsed.PSObject.Properties.Name -contains 'all_passed') {
+    if ($Parsed.all_passed) { return "pass" }
+    return "fail"
+  }
+  # Fallback: exit-code mapping
   if ($ExitCode -eq 0) { return "pass" }
   if ($ExitCode -eq 1) { return "fail" }
   return "error"
