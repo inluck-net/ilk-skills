@@ -102,6 +102,16 @@ if [[ "$DRY_RUN" == "1" ]]; then
   exit 0
 fi
 
+# --- Preflight gate ---
+echo ""
+echo "Running preflight..."
+bash "$SCRIPT_DIR/preflight.sh" "$PROJECT_ROOT"
+if [[ $? -ne 0 ]]; then
+  echo ""
+  echo "Preflight failed. Aborting launch." >&2
+  exit 1
+fi
+
 bash "$LAUNCH_SH" --project-path "$PROJECT_ROOT" \
   --max-iterations "$MAX_ITER" --iteration-timeout-min "$TIMEOUT_MIN"
 
