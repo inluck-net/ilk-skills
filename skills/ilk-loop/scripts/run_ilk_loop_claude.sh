@@ -852,13 +852,19 @@ invoke_local_checks() {
     local check_exit=0
     gtimeout "${remain_sec}s" python3 "$helper_script" --project "$project" --slug "$slug" --step "$step" > "$tmp_out" 2>&1 || check_exit=$?
 
+    local all_passed=""
+    if [[ -s "$tmp_out" ]]; then
+      all_passed=$(python3 -c "
+import json, sys
+try:
+  d = json.load(sys.stdin)
+  print(str(d.get('all_passed', '')).lower())
+except: pass
+" < "$tmp_out" 2>/dev/null || true)
+    fi
+
     local outcome
-    case "$check_exit" in
-      0) outcome="pass" ;;
-      1) outcome="fail" ;;
-      124) outcome="error" ;;
-      *) outcome="error" ;;
-    esac
+    outcome=$(local_check_outcome "$all_passed" "$check_exit")
 
     local tag
     case "$outcome" in
@@ -1020,6 +1026,21 @@ print_banner() {
   echo "Run logs:       $RUN_LOG_DIR"
   echo "JSONL summary:  $JSONL_LOG"
   echo ""
+}
+
+# ----- Local checks outcome mapping ---------------------------------
+# Maps helper result + process exit code to an outcome string.
+# Usage: local_check_outcome <all_passed_or_empty> <exit_code>
+# When first arg is "true"/"false", trust that; otherwise fall back to exit code.
+local_check_outcome() {
+  local all_passed="$1"
+  local exit_code="$2"
+  # Current logic: exit-code-only (will be replaced in step 2)
+  case "$exit_code" in
+    0) echo "pass" ;;
+    1) echo "fail" ;;
+    *) echo "error" ;;
+  esac
 }
 
 # ----- Main ------------------------------------------------------------------

@@ -405,11 +405,7 @@ function Invoke-LocalChecks {
       if (Test-Path $tmpOut) { $jsonText = Get-Content $tmpOut -Raw -ErrorAction SilentlyContinue }
       $parsed = $null
       try { if ($jsonText) { $parsed = $jsonText | ConvertFrom-Json -ErrorAction Stop } } catch { $parsed = $null }
-      $outcome = switch ($exit) {
-        0       { "pass" }
-        1       { "fail" }
-        default { "error" }
-      }
+      $outcome = Get-LocalCheckOutcome -Parsed $parsed -ExitCode $exit
       $out += [PSCustomObject]@{
         slug = $t.slug; step = $t.step; outcome = $outcome; exit_code = $exit; raw = $parsed
       }
@@ -1548,6 +1544,21 @@ function Setup-Branch {
   Write-Host "[runner] === Branch setup complete ===" -ForegroundColor Cyan
   Write-Host ""
   return $true
+}
+
+# ----- Local checks outcome mapping ---------------------------------
+# Maps helper result + process exit code to an outcome string.
+# When $Parsed is non-null and has an all_passed property, trust that;
+# otherwise fall back to the process exit code mapping.
+function Get-LocalCheckOutcome {
+  param(
+    [Parameter(Mandatory=$false)] $Parsed,
+    [Parameter(Mandatory=$false)] [Nullable[int]] $ExitCode
+  )
+  # Current logic: exit-code-only (will be replaced in step 1)
+  if ($ExitCode -eq 0) { return "pass" }
+  if ($ExitCode -eq 1) { return "fail" }
+  return "error"
 }
 
 # ----- Dot-source guard ---------------------------------------------
