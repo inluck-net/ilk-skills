@@ -131,7 +131,7 @@ def read_projects_registry() -> list[dict]:
     if not PROJECTS_JSON.exists():
         return []
     try:
-        data = json.loads(PROJECTS_JSON.read_text(encoding="utf-8"))
+        data = json.loads(PROJECTS_JSON.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError:
         return []
     return data.get("projects", []) or []
@@ -183,7 +183,7 @@ def read_last_launch(project_path: Path) -> dict | None:
     if not f.exists():
         return None
     try:
-        return json.loads(f.read_text(encoding="utf-8"))
+        return json.loads(f.read_text(encoding="utf-8-sig"))
     except (json.JSONDecodeError, OSError):
         return None
 
@@ -201,7 +201,7 @@ def read_sentinel(project_path: Path) -> dict | None:
     if not f.exists():
         return None
     try:
-        return json.loads(f.read_text(encoding="utf-8"))
+        return json.loads(f.read_text(encoding="utf-8-sig"))
     except (json.JSONDecodeError, OSError):
         return None
 
@@ -316,7 +316,7 @@ def read_jsonl_iters(project_path: Path, last_launch: dict | None = None) -> lis
         if not candidate.exists():
             continue
         try:
-            with candidate.open("r", encoding="utf-8", errors="replace") as fh:
+            with candidate.open("r", encoding="utf-8-sig") as fh:
                 for line in fh:
                     line = line.strip()
                     if not line:
@@ -363,7 +363,7 @@ def read_per_iter_jsonl(
             continue
         for jsonl_file in sorted(runs_dir.glob("iter-*.jsonl")):
             try:
-                with jsonl_file.open("r", encoding="utf-8", errors="replace") as fh:
+                with jsonl_file.open("r", encoding="utf-8-sig") as fh:
                     for line in fh:
                         line = line.strip()
                         if not line:
