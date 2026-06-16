@@ -16,7 +16,7 @@
                slots, dispatches stop at the cap.
 #>
 param(
-  [ValidateSet('scan', 'select', 'dispatch', 'promote', 'blacklist', 'unresolved', 'cap', 'fill', 'gates', 'mutex', 'log', 'all')]
+  [ValidateSet('scan', 'select', 'dispatch', 'promote', 'blacklist', 'unresolved', 'cap', 'fill', 'gates', 'mutex', 'log', 'staleexit', 'all')]
   [string]$Subcommand = 'all'
 )
 
@@ -1288,6 +1288,116 @@ function Run-Log {
   Cleanup
 }
 
+function Run-StaleExit {
+  <#
+  .SYNOPSIS
+    RED test: a stale sentinel (from a PRIOR run, started_at < dispatchTime)
+    must NOT be classified as a rapid terminal, regardless of file mtime.
+
+    Asserts AC-1..AC-4 against Test-RapidTerminal (pure function).
+    Modelled on test_scheduler_stateless_blacklist.ps1.
+  #>
+  Write-Host '=== test_scheduler.ps1 staleexit ==='
+
+  $fail = $false
+  function Assert($cond, $msg) {
+    if (-not $cond) { Write-Host "FAIL: $msg" -ForegroundColor Red; $script:fail = $true }
+  }
+
+  # --- dot-source the scheduler (functions only; no mutex, no poll loop) ---
+  $env:ILK_DOTSOURCE_ONLY = '1'
+  try {
+    . $SchedulerScript
+  } finally {
+    Remove-Item Env:\ILK_DOTSOURCE_ONLY -ErrorAction SilentlyContinue
+  }
+
+  # AC-1: Test-RapidTerminal must be defined
+  Assert (Get-Command Test-RapidTerminal -ErrorAction SilentlyContinue) `
+    "AC-1: Test-RapidTerminal must be defined (dot-sourceable pure function)"
+
+  # If AC-1 fails, no point running the rest
+  if ($fail) {
+    Write-Host "RED: Test-RapidTerminal not found — extract the pure classifier first" -ForegroundColor Red
+    exit 1
+  }
+
+  $now = Get-Date
+  $dispatch = $now
+
+  # AC-2: Stale sentinel (started_at BEFORE dispatchTime) -> NOT rapid
+  #       regardless of what file mtime would show
+  $staleSentinel = [PSCustomObject]@{
+    run_id    = 'old-run-999'
+    started_at = $now.AddMinutes(-30).ToString('o')   # 30 min ago
+    ended_at   = $now.AddSeconds(-2).ToString('o')    # ended 2s ago (looks "fast" by mtime)
+    state      = 'completed'
+  }
+  $r2 = Test-RapidTerminal -Sentinel $staleSentinel -DispatchTime $dispatch
+  Assert ($r2 -eq $false) "AC-2: stale sentinel (started_at < dispatch) -> NOT rapid (got '$r2')"
+
+  # AC-3: Current sentinel (started_at >= dispatch), terminal, short duration -> rapid
+  $currentSentinel = [PSCustomObject]@{
+    run_id    = 'current-run-001'
+    started_at = $now.ToString('o')                    # started now
+    ended_at   = $now.AddSeconds(5).ToString('o')      # ended 5s later
+    state      = 'completed'
+  }
+  $r3 = Test-RapidTerminal -Sentinel $currentSentinel -DispatchTime $dispatch
+  Assert ($r3 -eq $true) "AC-3: current sentinel, short duration -> rapid (got '$r3')"
+
+  # AC-4: Current sentinel, normal duration -> NOT rapid
+  $normalSentinel = [PSCustomObject]@{
+    run_id    = 'current-run-002'
+    started_at = $now.ToString('o')
+    ended_at   = $now.AddMinutes(35).ToString('o')     # 35 min run
+    state      = 'completed'
+  }
+  $r4 = Test-RapidTerminal -Sentinel $normalSentinel -DispatchTime $dispatch
+  Assert ($r4 -eq $false) "AC-4: current sentinel, normal duration -> NOT rapid (got '$r4')"
+
+  # Additional edge: null sentinel -> not rapid
+  $rNull = Test-RapidTerminal -Sentinel $null -DispatchTime $dispatch
+  Assert ($rNull -eq $false) "edge: null sentinel -> NOT rapid (got '$rNull')"
+
+  # Additional edge: state=running -> not rapid (not terminal)
+  $runningSentinel = [PSCustomObject]@{
+    run_id    = 'current-run-003'
+    started_at = $now.ToString('o')
+    ended_at   = $null
+    state      = 'running'
+  }
+  $rRun = Test-RapidTerminal -Sentinel $runningSentinel -DispatchTime $dispatch
+  Assert ($rRun -eq $false) "edge: state=running -> NOT rapid (got '$rRun')"
+
+  # Additional edge: missing started_at -> not rapid
+  $noStart = [PSCustomObject]@{
+    run_id    = 'current-run-004'
+    started_at = $null
+    ended_at   = $now.ToString('o')
+    state      = 'completed'
+  }
+  $rNoStart = Test-RapidTerminal -Sentinel $noStart -DispatchTime $dispatch
+  Assert ($rNoStart -eq $false) "edge: missing started_at -> NOT rapid (got '$rNoStart')"
+
+  # Additional edge: zero-duration run (started_at == ended_at) -> rapid
+  $zeroDur = [PSCustomObject]@{
+    run_id    = 'current-run-005'
+    started_at = $now.ToString('o')
+    ended_at   = $now.ToString('o')
+    state      = 'completed'
+  }
+  $rZero = Test-RapidTerminal -Sentinel $zeroDur -DispatchTime $dispatch
+  Assert ($rZero -eq $true) "edge: zero-duration run -> rapid (got '$rZero')"
+
+  if ($fail) {
+    Write-Host "RED: Test-RapidTerminal classification is incorrect" -ForegroundColor Red
+    exit 1
+  }
+  Write-Host "PASS: Test-RapidTerminal — stale-sentinel correlation correct (AC-1..AC-4)" -ForegroundColor Green
+  exit 0
+}
+
 # --- main ---------------------------------------------------------------------
 
 switch ($Subcommand) {
@@ -1302,5 +1412,6 @@ switch ($Subcommand) {
   'gates'      { Run-Gates }
   'mutex'      { Run-Mutex }
   'log'        { Run-Log }
-  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Promote; Run-Blacklist; Run-Unresolved; Run-Cap; Run-Fill; Run-Gates; Run-Mutex; Run-Log; Write-Host 'ALL PASS' }
+  'staleexit'  { Run-StaleExit }
+  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Promote; Run-Blacklist; Run-Unresolved; Run-Cap; Run-Fill; Run-Gates; Run-Mutex; Run-Log; Run-StaleExit; Write-Host 'ALL PASS' }
 }
