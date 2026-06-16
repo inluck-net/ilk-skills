@@ -175,7 +175,7 @@ function Test-AllShipped {
 function Write-JsonlRecord {
   param([hashtable]$Record)
   $json = $Record | ConvertTo-Json -Compress -Depth 10
-  Add-Content -Path $JsonlLog -Value $json -Encoding utf8
+  [System.IO.File]::AppendAllText($JsonlLog, $json + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding($false)))
 }
 
 function Format-AgentJsonLine {
