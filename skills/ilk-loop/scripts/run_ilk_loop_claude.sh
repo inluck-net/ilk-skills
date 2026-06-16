@@ -1035,7 +1035,16 @@ print_banner() {
 local_check_outcome() {
   local all_passed="$1"
   local exit_code="$2"
-  # Current logic: exit-code-only (will be replaced in step 2)
+  # Prefer all_passed from helper JSON when available
+  if [[ "$all_passed" == "true" ]]; then
+    echo "pass"
+    return
+  fi
+  if [[ "$all_passed" == "false" ]]; then
+    echo "fail"
+    return
+  fi
+  # Fallback: exit-code mapping
   case "$exit_code" in
     0) echo "pass" ;;
     1) echo "fail" ;;
