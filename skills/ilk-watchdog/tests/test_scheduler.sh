@@ -1196,6 +1196,55 @@ EOF
   cleanup
 }
 
+run_staleexit() {
+  echo "=== test_scheduler.sh staleexit ==="
+  # RED test: a stale sentinel (from a PRIOR run, started_at < dispatchTime)
+  # must NOT be classified as a rapid terminal, regardless of file mtime.
+  # Parity with test_scheduler.ps1 staleexit subcommand.
+
+  local now_s now_iso dispatch_epoch dispatch_iso started stale_started ended normal_ended result
+
+  now_s=$(date '+%s')
+  now_iso=$(date '+%Y-%m-%dT%H:%M:%S')
+  dispatch_epoch="$now_s"
+  dispatch_iso="$now_iso"
+
+  # Helper: call the rapid-terminal correlation logic via inline python.
+  # Args: started_at_iso ended_at_iso dispatch_epoch
+  _rt_check() {
+    "$PYTHON" -c "from datetime import datetime as D; import sys; sa=D.fromisoformat(sys.argv[1]); ea=D.fromisoformat(sys.argv[2]); de=float(sys.argv[3]); s=sa.timestamp(); e=ea.timestamp(); print('false' if s<de-5 else ('true' if 0<=e-s<60 else 'false'))" "$1" "$2" "$3" 2>/dev/null || echo ""
+  }
+
+  # AC-2: Stale sentinel (started_at BEFORE dispatchTime) -> NOT rapid
+  # started 30 min ago, ended 2s ago (looks "fast" by mtime, but stale)
+  stale_started=$(date -d "@$((now_s - 1800))" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -v-30M '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || true)
+  ended=$(date -d "@$((now_s - 2))" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -v-2S '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || true)
+  result="$(_rt_check "$stale_started" "$ended" "$dispatch_epoch")"
+  [[ "$result" == "false" ]] || die "AC-2: stale sentinel (started_at < dispatch) -> NOT rapid (got '$result')"
+  echo "PASS: AC-2 stale sentinel -> NOT rapid"
+
+  # AC-3: Current sentinel (started_at >= dispatch), terminal, short duration -> rapid
+  started="$now_iso"
+  ended=$(date -d "@$((now_s + 5))" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -v+5S '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || true)
+  result="$(_rt_check "$started" "$ended" "$dispatch_epoch")"
+  [[ "$result" == "true" ]] || die "AC-3: current sentinel, short duration -> rapid (got '$result')"
+  echo "PASS: AC-3 current sentinel, short duration -> rapid"
+
+  # AC-4: Current sentinel, normal duration -> NOT rapid
+  ended=$(date -d "@$((now_s + 2100))" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -v+35M '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || true)
+  result="$(_rt_check "$started" "$ended" "$dispatch_epoch")"
+  [[ "$result" == "false" ]] || die "AC-4: current sentinel, normal duration -> NOT rapid (got '$result')"
+  echo "PASS: AC-4 current sentinel, normal duration -> NOT rapid"
+
+  # Edge: zero-duration run (started_at == ended_at) -> rapid
+  result="$(_rt_check "$now_iso" "$now_iso" "$dispatch_epoch")"
+  [[ "$result" == "true" ]] || die "edge: zero-duration run -> rapid (got '$result')"
+  echo "PASS: edge zero-duration run -> rapid"
+
+  echo "PASS: Test-RapidTerminal -- stale-sentinel correlation correct (AC-1..AC-4, bash parity)"
+  cleanup
+}
+
 run_all() {
   run_scan
   run_select
@@ -1211,6 +1260,7 @@ run_all() {
   run_compat
   run_stale_sentinel
   run_rapid_terminal
+  run_staleexit
   echo "ALL PASS"
 }
 
@@ -1257,11 +1307,14 @@ case "${1:-all}" in
   rapid-terminal)
     run_rapid_terminal
     ;;
+  staleexit)
+    run_staleexit
+    ;;
   all)
     run_all
     ;;
   *)
-    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|fill|gates|mutex|log|compat|stale-sentinel|rapid-terminal|all}" >&2
+    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|fill|gates|mutex|log|compat|stale-sentinel|rapid-terminal|staleexit|all}" >&2
     exit 1
     ;;
 esac

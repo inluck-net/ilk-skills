@@ -553,22 +553,67 @@ run_scheduler() {
       if [[ -n "$dispatch_epoch" ]]; then
         local sentinel_file="${path}/runtime/last-exit.json"
         if [[ -f "$sentinel_file" ]]; then
-          local exit_epoch
-          exit_epoch="$(file_mtime_epoch "$sentinel_file")"
-          local elapsed=$((exit_epoch - dispatch_epoch))
-          if [[ "$elapsed" -ge 0 && "$elapsed" -lt 60 ]]; then
-            # Rapid terminal: run ended within 60s of being dispatched.
+          # Parse sentinel JSON fields via inline python (reuse utf-8-sig idiom).
+          local started_at ended_at sentinel_state dur_sec
+          started_at="$("$PYTHON" -c "
+import json,sys
+try:
+    d=json.loads(open(sys.argv[1],encoding='utf-8-sig').read())
+    print(d.get('started_at','') or '')
+except: pass
+" "$sentinel_file" 2>/dev/null)" || true
+          ended_at="$("$PYTHON" -c "
+import json,sys
+try:
+    d=json.loads(open(sys.argv[1],encoding='utf-8-sig').read())
+    print(d.get('ended_at','') or '')
+except: pass
+" "$sentinel_file" 2>/dev/null)" || true
+          sentinel_state="$("$PYTHON" -c "
+import json,sys
+try:
+    d=json.loads(open(sys.argv[1],encoding='utf-8-sig').read())
+    print(d.get('state','') or '')
+except: pass
+" "$sentinel_file" 2>/dev/null)" || true
+
+          local is_rapid=false
+          if [[ -n "$started_at" && -n "$ended_at" && "$sentinel_state" != "running" && -n "$sentinel_state" ]]; then
+            # Correlation: sentinel must belong to THIS dispatch — started_at >= dispatch - 5s skew.
+            is_rapid="$("$PYTHON" -c "
+from datetime import datetime
+sa=datetime.fromisoformat(sys.argv[1])
+ea=datetime.fromisoformat(sys.argv[2])
+de=float(sys.argv[3])
+SKEW=5
+started_epoch=sa.timestamp()
+ended_epoch=ea.timestamp()
+if started_epoch < de - SKEW: print('false')  # stale prior-run sentinel
+else:
+    dur=ended_epoch - started_epoch
+    print('true' if 0 <= dur < 60 else 'false')
+" "$started_at" "$ended_at" "$dispatch_epoch" 2>/dev/null)" || true
+          fi
+
+          if [[ "$is_rapid" == "true" ]]; then
+            # Compute real duration for logging (ended_at - started_at).
+            dur_sec="$("$PYTHON" -c "
+from datetime import datetime
+sa=datetime.fromisoformat(sys.argv[1])
+ea=datetime.fromisoformat(sys.argv[2])
+print(int((ea-sa).total_seconds()))
+" "$started_at" "$ended_at" 2>/dev/null)" || dur_sec=0
             local rt_count
             rt_count="$(rapid_terminal_count_for_key "$key")"
             rt_count=$((rt_count + 1))
             set_rapid_terminal_count "$key" "$rt_count"
             if [[ "$rt_count" -ge 2 ]]; then
               if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
-                write_scheduler_log "skip-rapid-terminal" "$key" "count=$rt_count elapsed=${elapsed}s"
+                write_scheduler_log "skip-rapid-terminal" "$key" "count=$rt_count elapsed=${dur_sec}s"
                 echo "{\"decision\":\"skip-rapid-terminal\",\"key\":\"$key\",\"count\":$rt_count}"
               else
-                echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip-rapid-terminal: $key (count=$rt_count, elapsed=${elapsed}s)"
-                write_scheduler_log "skip-rapid-terminal" "$key" "count=$rt_count elapsed=${elapsed}s"
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip-rapid-terminal: $key (count=$rt_count, elapsed=${dur_sec}s)"
+                write_scheduler_log "skip-rapid-terminal" "$key" "count=$rt_count elapsed=${dur_sec}s"
               fi
               continue
             fi
