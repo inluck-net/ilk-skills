@@ -257,6 +257,38 @@ function Test-SchedulerSkip {
   return $null
 }
 
+function Test-RapidTerminal {
+  <#
+    Decide whether a terminal sentinel represents a "rapid terminal" — a run
+    that ended in under $ThresholdSeconds. PURE: reads only the sentinel object
+    and dispatch time passed in, no I/O.
+
+    Correlation: the sentinel must belong to THIS dispatch — its started_at
+    must be >= dispatchTime (minus small clock skew). A prior run's sentinel
+    (started_at < dispatch) is stale and is never classified as rapid,
+    regardless of what the file mtime shows.
+
+    Returns $true if rapid, $false otherwise.
+  #>
+  param(
+    $Sentinel,                                          # parsed last-exit.json (PSCustomObject) or $null
+    [Parameter(Mandatory)][datetime]$DispatchTime,
+    [int]$ThresholdSeconds = 60,
+    [int]$SkewSeconds = 5
+  )
+  if (-not $Sentinel) { return $false }
+  if (-not $Sentinel.state -or $Sentinel.state -eq 'running') { return $false }
+  if (-not $Sentinel.started_at -or -not $Sentinel.ended_at)   { return $false }
+  $started = [datetime]::Parse($Sentinel.started_at)
+  $ended   = [datetime]::Parse($Sentinel.ended_at)
+  # Correlation: the sentinel must belong to THIS dispatch — its run
+  # started at/after we dispatched (minus small clock skew). A prior
+  # run's sentinel (started_at < dispatch) is stale → not rapid.
+  if ($started -lt $DispatchTime.AddSeconds(-$SkewSeconds)) { return $false }
+  $dur = ($ended - $started).TotalSeconds
+  return ($dur -ge 0 -and $dur -lt $ThresholdSeconds)
+}
+
 # --- main loop ---------------------------------------------------------------
 
 function Run-Scheduler {
@@ -366,19 +398,28 @@ function Run-Scheduler {
       if ($dispatchTime.ContainsKey($key)) {
         $sentinelFile = Join-Path $proj.path 'runtime\last-exit.json'
         if (Test-Path $sentinelFile) {
-          $lastExitTime = (Get-Item $sentinelFile).LastWriteTime
-          $elapsed = $lastExitTime - $dispatchTime[$key]
-          if ($elapsed.TotalSeconds -ge 0 -and $elapsed.TotalSeconds -lt 60) {
-            # Rapid terminal: run ended within 60s of being dispatched.
+          # Parse the sentinel JSON (guard parse errors → treat as $null).
+          $sentinel = $null
+          try {
+            $sentinel = Get-Content $sentinelFile -Raw -Encoding utf8 | ConvertFrom-Json
+          } catch {}
+
+          $isRapid = Test-RapidTerminal -Sentinel $sentinel -DispatchTime $dispatchTime[$key]
+          if ($isRapid) {
+            # Compute real duration for logging (ended_at - started_at).
+            $durSec = 0
+            if ($sentinel.started_at -and $sentinel.ended_at) {
+              $durSec = [int]([datetime]::Parse($sentinel.ended_at) - [datetime]::Parse($sentinel.started_at)).TotalSeconds
+            }
             $count = if ($rapidTerminalCount.ContainsKey($key)) { $rapidTerminalCount[$key] + 1 } else { 1 }
             $rapidTerminalCount[$key] = $count
             if ($count -ge 2) {
               if ($DryRun -and $Once) {
-                Write-SchedulerLog -Decision 'skip-rapid-terminal' -Key $key -Reason "count=$count elapsed=$([int]$elapsed.TotalSeconds)s"
+                Write-SchedulerLog -Decision 'skip-rapid-terminal' -Key $key -Reason "count=$count elapsed=${durSec}s"
                 @{ decision = 'skip-rapid-terminal'; key = $key; count = $count } | ConvertTo-Json -Compress
               } else {
-                Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] skip-rapid-terminal: $key (count=$count, elapsed=$([int]$elapsed.TotalSeconds)s)"
-                Write-SchedulerLog -Decision 'skip-rapid-terminal' -Key $key -Reason "count=$count elapsed=$([int]$elapsed.TotalSeconds)s"
+                Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] skip-rapid-terminal: $key (count=$count, elapsed=${durSec}s)"
+                Write-SchedulerLog -Decision 'skip-rapid-terminal' -Key $key -Reason "count=$count elapsed=${durSec}s"
               }
               continue
             }
