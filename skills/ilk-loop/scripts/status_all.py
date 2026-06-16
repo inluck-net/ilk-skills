@@ -35,6 +35,15 @@ from scheduler_scan import scan_projects  # noqa: E402
 from loop_status import extract_master_order, find_plans_dir, parse_frontmatter  # noqa: E402
 
 
+# ── sentinel state vocabulary ──────────────────────────────────────────
+# The runner's Finalize-Sentinel treats "running" as the ONLY live state;
+# on any abnormal exit it rewrites state to a terminal value (e.g.
+# local_checks_failed, shipped, interrupted).  A sentinel whose state is
+# not "running" means the run is over, regardless of PID — the PID may
+# have been recycled by the OS.  See master-status-vocab-and-stale-sentinel.
+LIVE_SENTINEL_STATES = {"running"}
+
+
 # ── pid liveness (cross-platform) ───────────────────────────────────
 
 def pid_alive(pid: int) -> bool:
@@ -150,10 +159,18 @@ def resolve_project_status(project_dir: Path) -> dict:
     sentinel_raw = _read_sentinel(runtime_dir)
     if sentinel_raw:
         spid = sentinel_raw.get("pid", 0)
+        state = sentinel_raw.get("state", "unknown")
+        # Only consider PID liveness when the sentinel state is live ("running").
+        # A terminal state (local_checks_failed, shipped, interrupted, …) means
+        # the run is over regardless of PID — the PID may have been recycled.
+        # This is the read-side complement to the runner's Finalize-Sentinel,
+        # which treats "running" as the only live state.
+        is_live = state in LIVE_SENTINEL_STATES
+        alive = is_live and pid_alive(int(spid) if isinstance(spid, (int, float)) else 0)
         sentinel = {
             "pid": spid,
-            "state": sentinel_raw.get("state", "unknown"),
-            "alive": pid_alive(int(spid) if isinstance(spid, (int, float)) else 0),
+            "state": state,
+            "alive": alive,
         }
     else:
         sentinel = {"pid": 0, "state": "none", "alive": False}
