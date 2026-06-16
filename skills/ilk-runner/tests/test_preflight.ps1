@@ -24,7 +24,7 @@ Write-Host "=== Dot-source guard ==="
 $env:ILK_DOTSOURCE_ONLY = '1'
 $preflightPath = Join-Path $repoRoot "skills\ilk-runner\scripts\preflight.ps1"
 try {
-  . $preflightPath -ProjectPath $tempProj
+  . $preflightPath -ProjectRoot $tempProj
 } catch {
   Write-Error "FAIL: Dot-sourcing preflight.ps1 failed: $_"
   exit 1

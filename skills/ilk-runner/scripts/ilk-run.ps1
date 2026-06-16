@@ -294,6 +294,17 @@ if ($DryRun) {
   exit 0
 }
 
+# --- 3b. Preflight gate -------------------------------------------------------
+$PreflightPs1 = Join-Path $PSScriptRoot "preflight.ps1"
+Write-Host ""
+Write-Host "Running preflight..."
+& powershell -NoProfile -ExecutionPolicy Bypass -File $PreflightPs1 -ProjectRoot $ProjectRoot
+if ($LASTEXITCODE -ne 0) {
+  Write-Host ""
+  Write-Host "Preflight failed. Aborting launch." -ForegroundColor Red
+  exit 1
+}
+
 # --- 4. Launch ilk -----------------------------------------------------------
 $launchArgs = @(
   '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $LaunchPs1,
