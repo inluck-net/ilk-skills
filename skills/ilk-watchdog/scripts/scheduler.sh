@@ -215,10 +215,13 @@ test_running_pid() {
 }
 
 blacklist_epoch_for_key() {
-  # Bash 3.2 compatible lookup for blacklist backoff entries.
-  # $blacklist_skip is newline-separated "key epoch"; duplicate keys allowed,
-  # the maximum epoch wins. Echoes the max epoch (empty if not present).
+  # Bash 3.2 compatible lookup for newline-separated "key epoch" lists;
+  # duplicate keys allowed, the maximum epoch wins. Echoes the max epoch
+  # (empty if not present). $2 = haystack list (default: $blacklist_skip, the
+  # transient backoff map). Pass the per-cycle postmortem list explicitly for
+  # the stateless blacklist check.
   local target="$1"
+  local haystack="${2-${blacklist_skip:-}}"
   local max_epoch=""
   local key epoch
   while IFS=' ' read -r key epoch; do
@@ -226,7 +229,7 @@ blacklist_epoch_for_key() {
     if [[ -z "$max_epoch" || "$epoch" -gt "$max_epoch" ]]; then
       max_epoch="$epoch"
     fi
-  done <<<"${blacklist_skip:-}"
+  done <<<"${haystack}"
   echo "$max_epoch"
 }
 
@@ -481,13 +484,18 @@ run_scheduler() {
       continue
     fi
 
-    # --- merge postmortem-based blacklist entries ---
+    # --- recompute postmortem blacklist FRESH each cycle (no accumulator) ---
+    # A project is postmortem-blacklisted iff THIS cycle's on-disk decision
+    # (blacklist_status.py) says so. Deliberately NOT appended to the persistent
+    # $blacklist_skip: that accumulation wedged projects off the queue when a
+    # stale entry outlived a not-blacklisted flip. Mirrors scheduler.ps1.
+    local postmortem_blacklist=""
     while IFS=' ' read -r bl_key bl_epoch; do
       [[ -z "$bl_key" ]] && continue
-      blacklist_skip="${blacklist_skip}"$'\n'"${bl_key} ${bl_epoch}"
+      postmortem_blacklist="${postmortem_blacklist}"$'\n'"${bl_key} ${bl_epoch}"
     done < <(read_blacklist_from_postmortems "$scan_output")
 
-    # --- merge rapid-terminal backoff entries into blacklist_skip ---
+    # --- rapid-terminal backoff: transient, legitimately cross-cycle ---
     local rt_key rt_count rt_expiry
     while IFS=' ' read -r rt_key rt_count; do
       [[ -z "$rt_key" || -z "$rt_count" ]] && continue
@@ -518,16 +526,23 @@ run_scheduler() {
       local path="${paths[$i]}"
       local repo="${repo_paths[$i]}"
 
-      # blacklist skip
-      local blacklist_epoch
-      blacklist_epoch="$(blacklist_epoch_for_key "$key")"
-      if [[ -n "$blacklist_epoch" && "$now_epoch" -lt "$blacklist_epoch" ]]; then
+      # blacklist / backoff skip — postmortem set is FRESH this cycle (never
+      # accumulated); $blacklist_skip holds only transient backoffs.
+      local pm_epoch bo_epoch skip_decision=""
+      pm_epoch="$(blacklist_epoch_for_key "$key" "$postmortem_blacklist")"
+      bo_epoch="$(blacklist_epoch_for_key "$key" "$blacklist_skip")"
+      if [[ -n "$pm_epoch" && "$now_epoch" -lt "$pm_epoch" ]]; then
+        skip_decision="skip-blacklist"
+      elif [[ -n "$bo_epoch" && "$now_epoch" -lt "$bo_epoch" ]]; then
+        skip_decision="skip-backoff"
+      fi
+      if [[ -n "$skip_decision" ]]; then
         if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
-          write_scheduler_log "skip-blacklist" "$key"
-          echo "{\"decision\":\"skip-blacklist\",\"key\":\"$key\"}"
+          write_scheduler_log "$skip_decision" "$key"
+          echo "{\"decision\":\"$skip_decision\",\"key\":\"$key\"}"
         else
-          echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip-blacklist: $key"
-          write_scheduler_log "skip-blacklist" "$key"
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] ${skip_decision}: $key"
+          write_scheduler_log "$skip_decision" "$key"
         fi
         continue
       fi

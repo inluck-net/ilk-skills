@@ -51,12 +51,17 @@ $ErrorActionPreference = 'Stop'
 # --- single-instance mutex (Global\ilk-scheduler) ----------------------------
 $mutexName = "Global\ilk-scheduler"
 $createdNew = $false
-$mutex = New-Object System.Threading.Mutex($true, $mutexName, [ref]$createdNew)
-if (-not $createdNew) {
-  Write-Host "[ilk-scheduler] already running (mutex held). Exiting."
-  exit 0
+$mutexHeld = $false
+# Skip the mutex (and its early-exit) when dot-sourced for testing — the test
+# only needs the function definitions, not a running scheduler instance.
+if ($env:ILK_DOTSOURCE_ONLY -ne '1') {
+  $mutex = New-Object System.Threading.Mutex($true, $mutexName, [ref]$createdNew)
+  if (-not $createdNew) {
+    Write-Host "[ilk-scheduler] already running (mutex held). Exiting."
+    exit 0
+  }
+  $mutexHeld = $true
 }
-$mutexHeld = $true
 function Release-SchedulerMutex {
   if ($mutexHeld) {
     try { $mutex.ReleaseMutex() } catch {}
@@ -221,11 +226,42 @@ function Read-BlacklistFromPostmortems {
   return $result
 }
 
+function Test-SchedulerSkip {
+  <#
+    Decide whether to skip dispatching a project THIS cycle. PURE: depends only
+    on the inputs passed, never on hidden cross-cycle accumulator state — that
+    statelessness is the whole point (the old in-memory $blacklistSkip merge
+    wedged a project off the queue when a stale entry outlived a not-blacklisted
+    on-disk flip). Returns the skip reason ('blacklist' | 'backoff') or $null
+    (dispatchable).
+
+      PostmortemBlacklist : key -> expiry, recomputed FRESH each cycle from
+                            blacklist_status.py (the on-disk source of truth).
+                            NOT persisted across cycles.
+      BackoffSkip         : key -> expiry for transient scheduler-observed
+                            backoffs (rapid-terminal, dispatch-failure) that
+                            legitimately need cross-cycle memory.
+  #>
+  param(
+    [Parameter(Mandatory)][string]$Key,
+    [hashtable]$PostmortemBlacklist,
+    [hashtable]$BackoffSkip,
+    [datetime]$Now = (Get-Date)
+  )
+  if ($PostmortemBlacklist -and $PostmortemBlacklist.ContainsKey($Key) -and $Now -lt $PostmortemBlacklist[$Key]) {
+    return 'blacklist'
+  }
+  if ($BackoffSkip -and $BackoffSkip.ContainsKey($Key) -and $Now -lt $BackoffSkip[$Key]) {
+    return 'backoff'
+  }
+  return $null
+}
+
 # --- main loop ---------------------------------------------------------------
 
 function Run-Scheduler {
   $dispatchCount = 0
-  $blacklistSkip = @{}  # project key -> backoff expiry timestamp
+  $backoffSkip = @{}    # transient cross-cycle backoffs ONLY (rapid-terminal, dispatch-fail). Postmortem blacklist is recomputed fresh each cycle — never accumulated here.
   $dispatchTime = @{}   # project key -> [datetime] of last dispatch
   $rapidTerminalCount = @{}  # project key -> int consecutive rapid-terminal count
 
@@ -278,28 +314,24 @@ function Run-Scheduler {
       continue
     }
 
-    # --- merge postmortem-based blacklist entries ---
+    # --- recompute postmortem blacklist FRESH each cycle (no accumulator) ---
+    # A project is postmortem-blacklisted iff THIS cycle's on-disk decision
+    # (blacklist_status.py — encodes the 60-min expiry + resolve-ack) says so.
+    # Deliberately NOT merged into a cross-cycle map: that merge wedged projects
+    # off the queue when a stale entry outlived a not-blacklisted flip
+    # (resolve-ack / expiry / clean-success). See scheduler-stateless-blacklist.
     $postmortemBlacklist = Read-BlacklistFromPostmortems -QueuedProjects $queued
-    foreach ($key in $postmortemBlacklist.Keys) {
-      if ($blacklistSkip.ContainsKey($key)) {
-        if ($postmortemBlacklist[$key] -gt $blacklistSkip[$key]) {
-          $blacklistSkip[$key] = $postmortemBlacklist[$key]
-        }
-      } else {
-        $blacklistSkip[$key] = $postmortemBlacklist[$key]
-      }
-    }
 
-    # --- merge rapid-terminal backoff entries into blacklistSkip ---
+    # --- rapid-terminal backoff: transient, legitimately cross-cycle ---
     foreach ($key in $rapidTerminalCount.Keys) {
       if ($rapidTerminalCount[$key] -ge 2) {
         $expiry = (Get-Date).AddMinutes(5)
-        if ($blacklistSkip.ContainsKey($key)) {
-          if ($expiry -gt $blacklistSkip[$key]) {
-            $blacklistSkip[$key] = $expiry
+        if ($backoffSkip.ContainsKey($key)) {
+          if ($expiry -gt $backoffSkip[$key]) {
+            $backoffSkip[$key] = $expiry
           }
         } else {
-          $blacklistSkip[$key] = $expiry
+          $backoffSkip[$key] = $expiry
         }
       }
     }
@@ -312,20 +344,22 @@ function Run-Scheduler {
       $key = $proj.key
       $path = $proj.path
 
-      # blacklist skip
-      if ($blacklistSkip.ContainsKey($key)) {
-        if ((Get-Date) -lt $blacklistSkip[$key]) {
-          if ($DryRun -and $Once) {
-            Write-SchedulerLog -Decision 'skip-blacklist' -Key $key
-            @{ decision = 'skip-blacklist'; key = $key } | ConvertTo-Json -Compress
-          } else {
-            Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] skip-blacklist: $key"
-            Write-SchedulerLog -Decision 'skip-blacklist' -Key $key
-          }
-          continue
+      # blacklist / backoff skip — postmortem set is FRESH this cycle (never
+      # accumulated); backoff is the transient cross-cycle map.
+      $skipReason = Test-SchedulerSkip -Key $key -PostmortemBlacklist $postmortemBlacklist -BackoffSkip $backoffSkip
+      if ($skipReason) {
+        $decision = if ($skipReason -eq 'blacklist') { 'skip-blacklist' } else { 'skip-backoff' }
+        if ($DryRun -and $Once) {
+          Write-SchedulerLog -Decision $decision -Key $key
+          @{ decision = $decision; key = $key } | ConvertTo-Json -Compress
         } else {
-          $blacklistSkip.Remove($key)
+          Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] ${decision}: $key"
+          Write-SchedulerLog -Decision $decision -Key $key
         }
+        continue
+      } elseif ($backoffSkip.ContainsKey($key)) {
+        # backoff window elapsed — clean up the transient entry
+        $backoffSkip.Remove($key)
       }
 
       # --- rapid-terminal check: project went terminal within ~60s of dispatch ---
@@ -478,7 +512,7 @@ function Run-Scheduler {
           }
         } catch {
           Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatch failed for $key`: $_"
-          $blacklistSkip[$key] = (Get-Date).AddMinutes(5)
+          $backoffSkip[$key] = (Get-Date).AddMinutes(5)
         }
       }
     }
@@ -490,6 +524,10 @@ function Run-Scheduler {
 }
 
 # --- entry point -------------------------------------------------------------
+
+# Dot-source guard: tests dot-source this file with ILK_DOTSOURCE_ONLY=1 to
+# reach Test-SchedulerSkip (and other functions) without starting the poll loop.
+if ($env:ILK_DOTSOURCE_ONLY -eq '1') { return }
 
 if ($Detach) {
   $self = $PSCommandPath
