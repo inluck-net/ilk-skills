@@ -484,6 +484,11 @@ are upgrades that reduce false blockers further.
 - **Loop-shippable verification** — decide whether browser/MCP steps
   belong in-loop or in a manual section. See
   [references/loop-shippable-verification.md](references/loop-shippable-verification.md).
+- **Detached-component runtime contracts** — the on-disk file contracts
+  between the runner, watchdog, scheduler, collect.py, and status_all.
+  Must-read when adding a new reader or writer for JSONL logs, sentinels,
+  or liveness checks. See
+  [references/detached-component-contracts.md](references/detached-component-contracts.md).
 
 ## Mac-specific notes
 
