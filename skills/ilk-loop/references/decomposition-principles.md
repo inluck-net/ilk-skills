@@ -165,6 +165,17 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   change touches a shared/imported module hides integration +
   test-state-leak bugs (WeChatRelay bugs #1/#2). When the change
   touches a shared module, the LAST step must run the FULL suite.
+- **exact-equality on a growing set** (FM-0002) → a `local_checks`
+  command asserts `== ["area", "perimeter"]` or
+  `deepStrictEqual(result, ['a', 'b'])` against a registry /
+  active-set accessor that is *designed to grow* (one entry per
+  curriculum unit, per feature flag, per label). Adding a member
+  breaks the gate — a brittle assertion, not a real regression.
+  **Fix:** use a **superset / contains** assertion instead:
+  `jq '.types | contains(["area"])'`, `assert set(result) >= {'area'}`,
+  `expect(result).toEqual(expect.arrayContaining(['area']))`.
+  The gate tests that required members are present, not that the
+  set is frozen. `plan_lint.py` warns on this shape automatically.
 
 ## 9. Cold-read self-check
 
