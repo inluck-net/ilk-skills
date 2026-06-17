@@ -306,7 +306,8 @@ def run_one(check: dict, scope: str, project: Path, default_timeout: int = 120) 
         # autonomous-gates-not-enforced-windows.
         cp = subprocess.run(
             [bash, "-c", cmd], cwd=str(project),
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout,
         )
         dur = time.monotonic() - t0
         return CheckResult(
@@ -334,7 +335,13 @@ def run_one(check: dict, scope: str, project: Path, default_timeout: int = 120) 
         )
 
 
-def _tail(s: str, n: int) -> str:
+def _tail(s: str | None, n: int) -> str:
+    # subprocess.run can hand back None for stdout/stderr (observed on Windows);
+    # len(None) would crash and the resulting TypeError gets swallowed by the
+    # caller's `except`, which discards the real return code and reports a
+    # passing check as failed (false local_checks_failed). Guard None/empty.
+    if not s:
+        return ""
     if len(s) <= n:
         return s
     return "...[truncated]...\n" + s[-n:]
