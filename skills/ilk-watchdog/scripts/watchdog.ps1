@@ -657,42 +657,56 @@ Watchdog exiting cleanly. Job done.
         return
       }
 
-      # Terminal success-needs-human: shipped-unverified means all sub-plans
-      # shipped but some need manual verification (compile-only / device-manual).
-      # Do NOT relaunch — exit cleanly with a human-readable banner.
-      if ($klass -eq 'shipped-unverified') {
-        Write-Log "shipped-unverified: all sub-plans shipped, some need human verification. No relaunch."
-        Invoke-IlkNotify -Event 'needs-verification' -Project $ProjName -Detail "classification: shipped-unverified"
-        Write-Banner -Title "SHIPPED — NEEDS VERIFICATION" -Body @"
+      # L2: resolve label→action via the pure mapping function.
+      # Every label collect.py can emit has an explicit action; unknown labels
+      # resolve to 'block' (fail-closed, never silently pass).
+      $action = Resolve-WatchdogAction -Class $klass
+      Write-Log "label '$klass' => action '$action'"
+
+      if ($action -eq 'stop-clean') {
+        Write-Log "clean-success: job done. No relaunch, no red banner."
+        Invoke-IlkNotify -Event 'ship' -Project $ProjName -Detail "classification: $klass"
+        Write-Banner -Title "DONE — $klass" -Body @"
 Project: $ProjName
-Classification: shipped-unverified
+Classification: $klass
 Report: $reportPath
 
-All sub-plans shipped, but some have compile-only or device-manual
-verification tiers. A human + device pass is needed before trusting.
-No auto-relaunch. Read the postmortem for details.
+Job done. Watchdog exiting cleanly. The scheduler will promote the
+next queued master on its next cycle (if any).
+"@ -Color Green
+        return
+      }
+
+      if ($action -eq 'needs-human') {
+        $ev = if ($klass -eq 'shipped-unverified') { 'needs-verification' } else { 'needs-human' }
+        Write-Log "$klass`: needs human review. No relaunch."
+        Invoke-IlkNotify -Event $ev -Project $ProjName -Detail "classification: $klass"
+        Write-Banner -Title "NEEDS HUMAN — $($klass.ToUpper())" -Body @"
+Project: $ProjName
+Classification: $klass
+Report: $reportPath
+
+This outcome requires human review — no auto-relaunch.
+Read the postmortem for details.
 "@ -Color Yellow
         return
       }
 
-      # no-evidence: the run started (sentinel present) but left no usable
-      # JSONL records. Triage — do not relaunch blindly.
-      if ($klass -eq 'no-evidence') {
-        Write-Log "no-evidence: run started but left no usable records. Triage required."
-        Invoke-IlkNotify -Event 'triage' -Project $ProjName -Detail "classification: no-evidence"
-        Write-Banner -Title "NO EVIDENCE — TRIAGE REQUIRED" -Body @"
+      if ($action -eq 'triage') {
+        Write-Log "$klass`: triage required. No relaunch."
+        Invoke-IlkNotify -Event 'triage' -Project $ProjName -Detail "classification: $klass"
+        Write-Banner -Title "TRIAGE — $($klass.ToUpper())" -Body @"
 Project: $ProjName
-Classification: no-evidence
+Classification: $klass
 Report: $reportPath
 
-The run started (sentinel present) but left no usable JSONL records.
-Possibly crashed before iter 1. Check runner logs and sentinel state.
-No auto-relaunch — triage manually.
+This run needs manual triage — no auto-relaunch.
+Check runner logs and sentinel state.
 "@ -Color Yellow
         return
       }
 
-      if ($BlacklistClasses -contains $klass) {
+      if ($action -eq 'block') {
         Invoke-IlkNotify -Event 'blocked' -Project $ProjName -Detail "classification: $klass"
         Write-Banner -Title "BLOCKED — $($klass.ToUpper())" -Body @"
 Project: $ProjName
@@ -707,10 +721,7 @@ ilk-launcher.
         return
       }
 
-      if (-not ($WhitelistClasses -contains $klass)) {
-        Write-Banner -Title "BLOCKED — UNKNOWN STATUS '$klass'" -Body "Project: $ProjName`nReport: $reportPath`nNot in whitelist or blacklist; failing safe." -Color Red
-        return
-      }
+      # action == 'relaunch' — fall through to restart logic below
 
       $restartCount++
       if ($restartCount -gt $MaxRestartsCap) {
@@ -756,10 +767,38 @@ relaunch manually if it still makes sense.
   }
 }
 
+# --- label→action resolution (pure, testable) --------------------------------
+# Translates a collect.py classification label into a watchdog action.
+# The mapping MUST be total — every label collect.py can emit gets an explicit
+# action.  Unknown labels resolve to 'block' (fail-closed).
+# Actions: relaunch | block | stop-clean | needs-human | triage
+#
+# L2 table: see skills/ilk-loop/references/orchestration-collaboration.md
+function Resolve-WatchdogAction {
+  param([string]$Class)
+
+  switch ($Class) {
+    # Whitelist — transient failures; relaunch capped by MaxRestarts
+    { $WhitelistClasses -contains $_ } { return 'relaunch' }
+    # Blacklist — persistent failures; park for human triage
+    { $BlacklistClasses -contains $_ } { return 'block' }
+    # Job done; no relaunch, no red banner; scheduler promotes next cycle
+    'clean-success'       { return 'stop-clean' }
+    # All sub-plans shipped but some need manual verification
+    'shipped-unverified'  { return 'needs-human' }
+    # Toolkit self-edit drift; human review required
+    'self-hosting-drift'  { return 'needs-human' }
+    # Run started but left no usable records
+    'no-evidence'         { return 'triage' }
+    # Fail-closed: unknown label → block (never silently pass)
+    default               { return 'block' }
+  }
+}
+
 # --- dot-source guard --------------------------------------------------------
 # When ILK_DOTSOURCE_ONLY is set, skip the main execution block so tests can
 # dot-source this file to access functions ($WhitelistClasses, Read-PostmortemFrontmatter,
-# etc.) without starting the poller.
+# Resolve-WatchdogAction, etc.) without starting the poller.
 
 if ($env:ILK_DOTSOURCE_ONLY -eq '1') { return }
 
