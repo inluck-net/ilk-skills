@@ -915,6 +915,31 @@ def classify(
     run_id = iters[-1].get("run_id") if iters else None
     sh_facts = collect_self_hosting_facts(project_path, last_launch, run_id)
 
+    # L1: sentinel terminal failure state is authoritative.  When the
+    # sentinel records a failure, honour it regardless of the iter-count
+    # heuristic or the agent narrative.  See
+    # orchestration-collaboration.md §L1 and the 2026-06-16 bug
+    # (state=local_checks_failed laundered into clean-success).
+    sentinel = read_sentinel(project_path)
+    _SENTINEL_FAILURE_MAP: dict[str, str] = {
+        "local_checks_failed": "local-checks-stuck",
+        "budget_exhausted": "budget-exhausted",
+        "max-iterations": "max-iter-bound",
+        "interrupted": "interrupted",
+    }
+    if sentinel is not None:
+        sentinel_state = (sentinel.get("state") or "").strip()
+        if sentinel_state in _SENTINEL_FAILURE_MAP:
+            label = _SENTINEL_FAILURE_MAP[sentinel_state]
+            facts: dict[str, Any] = {
+                "iter_at_stop": sentinel.get("iteration"),
+                "reason": "sentinel terminal state",
+            }
+            # Merge self-hosting facts and return early — the sentinel is
+            # authoritative, no further classification needed.
+            facts.update(sh_facts)
+            return label, facts
+
     label, facts = _classify_core(iters, last_launch, project_path)
 
     # Check for self-hosting drift override
