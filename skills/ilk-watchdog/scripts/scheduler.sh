@@ -308,6 +308,32 @@ set_rapid_terminal_count() {
   rapid_terminal_count="$new_entries"
 }
 
+get_rapid_terminal_backoff() {
+  # Pure helper: given the current rapid-terminal count and whether a fresh
+  # rapid terminal was detected THIS cycle, output "count backoff_epoch" where
+  # backoff_epoch is 0 if no backoff should be armed.  Arm-once-at-detection,
+  # decay-on-expiry: the count resets to 0 when no fresh detection occurs.
+  # Usage: read -r new_count backoff_epoch <<< "$(get_rapid_terminal_backoff ...)"
+  local current_count="$1"
+  local detected="$2"        # "true" or "false"
+  local threshold="${3:-2}"
+  local backoff_minutes="${4:-5}"
+  local now_epoch="${5:-$(date +%s)}"
+
+  if [[ "$detected" == "true" ]]; then
+    local n=$((current_count + 1))
+    if [[ "$n" -ge "$threshold" ]]; then
+      local expiry=$((now_epoch + backoff_minutes * 60))
+      echo "$n $expiry"
+      return
+    fi
+    echo "$n 0"
+    return
+  fi
+  # No fresh detection — decay the counter.
+  echo "0 0"
+}
+
 count_live_sentinels() {
   # Count how many projects in the JSON array currently have a live
   # running.pid sentinel. Outputs the count to stdout.
@@ -495,16 +521,6 @@ run_scheduler() {
       postmortem_blacklist="${postmortem_blacklist}"$'\n'"${bl_key} ${bl_epoch}"
     done < <(read_blacklist_from_postmortems "$scan_output")
 
-    # --- rapid-terminal backoff: transient, legitimately cross-cycle ---
-    local rt_key rt_count rt_expiry
-    while IFS=' ' read -r rt_key rt_count; do
-      [[ -z "$rt_key" || -z "$rt_count" ]] && continue
-      if [[ "$rt_count" -ge 2 ]]; then
-        rt_expiry=$(($(date +%s) + 300))
-        blacklist_skip="${blacklist_skip}"$'\n'"${rt_key} ${rt_expiry}"
-      fi
-    done <<<"${rapid_terminal_count:-}"
-
     # --- iterate projects in FIFO order, fill free slots ---
     local remaining_capacity=$((MAX_CONCURRENT - live_count))
     local now_epoch
@@ -545,6 +561,12 @@ run_scheduler() {
           write_scheduler_log "$skip_decision" "$key"
         fi
         continue
+      fi
+
+      # Backoff window elapsed — decay the rapid-terminal counter so the
+      # project re-enters with a fresh slate (mirrors scheduler.ps1 cleanup).
+      if [[ -n "$bo_epoch" && "$now_epoch" -ge "$bo_epoch" ]]; then
+        set_rapid_terminal_count "$key" 0
       fi
 
       # --- rapid-terminal check: project went terminal within ~60s of dispatch ---
@@ -595,7 +617,15 @@ else:
 " "$started_at" "$ended_at" "$dispatch_epoch" 2>/dev/null)" || true
           fi
 
-          if [[ "$is_rapid" == "true" ]]; then
+          local cur_rt_count
+          cur_rt_count="$(rapid_terminal_count_for_key "$key")"
+          local rt_result
+          rt_result="$(get_rapid_terminal_backoff "$cur_rt_count" "$is_rapid" 2 5 "$now_epoch")"
+          local new_rt_count rt_backoff_epoch
+          read -r new_rt_count rt_backoff_epoch <<<"$rt_result"
+          set_rapid_terminal_count "$key" "$new_rt_count"
+          if [[ "$rt_backoff_epoch" -gt 0 ]]; then
+            # Arm the backoff ONCE at detection (not re-armed every cycle).
             # Compute real duration for logging (ended_at - started_at).
             dur_sec="$("$PYTHON" -c "
 from datetime import datetime
@@ -603,23 +633,15 @@ sa=datetime.fromisoformat(sys.argv[1])
 ea=datetime.fromisoformat(sys.argv[2])
 print(int((ea-sa).total_seconds()))
 " "$started_at" "$ended_at" 2>/dev/null)" || dur_sec=0
-            local rt_count
-            rt_count="$(rapid_terminal_count_for_key "$key")"
-            rt_count=$((rt_count + 1))
-            set_rapid_terminal_count "$key" "$rt_count"
-            if [[ "$rt_count" -ge 2 ]]; then
-              if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
-                write_scheduler_log "skip-rapid-terminal" "$key" "count=$rt_count elapsed=${dur_sec}s"
-                echo "{\"decision\":\"skip-rapid-terminal\",\"key\":\"$key\",\"count\":$rt_count}"
-              else
-                echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip-rapid-terminal: $key (count=$rt_count, elapsed=${dur_sec}s)"
-                write_scheduler_log "skip-rapid-terminal" "$key" "count=$rt_count elapsed=${dur_sec}s"
-              fi
-              continue
+            blacklist_skip="${blacklist_skip}"$'\n'"${key} ${rt_backoff_epoch}"
+            if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+              write_scheduler_log "skip-rapid-terminal" "$key" "count=$new_rt_count elapsed=${dur_sec}s"
+              echo "{\"decision\":\"skip-rapid-terminal\",\"key\":\"$key\",\"count\":$new_rt_count}"
+            else
+              echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip-rapid-terminal: $key (count=$new_rt_count, elapsed=${dur_sec}s)"
+              write_scheduler_log "skip-rapid-terminal" "$key" "count=$new_rt_count elapsed=${dur_sec}s"
             fi
-          else
-            # Normal-duration run — reset the rapid-terminal counter.
-            set_rapid_terminal_count "$key" 0
+            continue
           fi
         fi
       fi

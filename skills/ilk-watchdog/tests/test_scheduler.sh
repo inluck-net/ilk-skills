@@ -1245,6 +1245,101 @@ run_staleexit() {
   cleanup
 }
 
+run_rapiddecay() {
+  echo "=== test_scheduler.sh rapiddecay ==="
+  # RED test: the rapid-terminal counter must DECAY on expiry so a project
+  # can never be permanently wedged. Parity with test_scheduler.ps1 rapiddecay.
+
+  # Source scheduler.sh functions only (don't start the daemon).
+  # We need: get_rapid_terminal_backoff, rapid_terminal_count_for_key,
+  # set_rapid_terminal_count, blacklist_epoch_for_key.
+  # Since scheduler.sh acquires a lock at source time, we extract the
+  # functions by sourcing in a subshell with the lock bypassed.
+  # Instead, test get_rapid_terminal_backoff directly since it's a pure function.
+
+  local now_s
+  now_s=$(date '+%s')
+
+  # Helper: call get_rapid_terminal_backoff by sourcing just the function
+  # definitions from scheduler.sh (extract via sed).
+  _call_rtb() {
+    # Args: current_count detected threshold backoff_minutes now_epoch
+    # Source the function definitions from scheduler.sh (skip the lock/entry).
+    (
+      eval "$(sed -n '/^get_rapid_terminal_backoff()/,/^}/p' "$SCHEDULER_SCRIPT")"
+      get_rapid_terminal_backoff "$1" "$2" "${3:-2}" "${4:-5}" "${5:-$now_s}"
+    )
+  }
+
+  local result new_count backoff_epoch
+
+  # AC-1: get_rapid_terminal_backoff must exist in scheduler.sh
+  local fn_check
+  fn_check=$(grep -c '^get_rapid_terminal_backoff()' "$SCHEDULER_SCRIPT" || true)
+  [[ "$fn_check" -ge 1 ]] || die "AC-1: get_rapid_terminal_backoff must be defined in scheduler.sh"
+  echo "PASS: AC-1 get_rapid_terminal_backoff defined"
+
+  # AC-2: Two consecutive detections (count 1 -> 2) arm a backoff
+  result="$(_call_rtb 0 "true" 2 5 "$now_s")"
+  read -r new_count backoff_epoch <<<"$result"
+  [[ "$new_count" == "1" ]] || die "AC-2a: first detection -> Count=1 (got $new_count)"
+  [[ "$backoff_epoch" == "0" ]] || die "AC-2a: first detection -> BackoffUntil=0 (got $backoff_epoch)"
+  echo "PASS: AC-2a first detection -> count=1, no backoff"
+
+  result="$(_call_rtb 1 "true" 2 5 "$now_s")"
+  read -r new_count backoff_epoch <<<"$result"
+  [[ "$new_count" == "2" ]] || die "AC-2b: second detection -> Count=2 (got $new_count)"
+  [[ "$backoff_epoch" -gt 0 ]] || die "AC-2b: count>=2 -> backoff_epoch must be >0 (got $backoff_epoch)"
+  local expected_expiry=$((now_s + 300))
+  local diff=$((backoff_epoch - expected_expiry))
+  [[ "${diff#-}" -lt 10 ]] || die "AC-2b: backoff_epoch ~5min from now (got diff=$diff)"
+  echo "PASS: AC-2b second detection -> count=2, backoff armed"
+
+  # AC-3: No fresh detection -> count decays to 0, no backoff
+  result="$(_call_rtb 2 "false" 2 5 "$now_s")"
+  read -r new_count backoff_epoch <<<"$result"
+  [[ "$new_count" == "0" ]] || die "AC-3: no detection -> Count=0 (got $new_count)"
+  [[ "$backoff_epoch" == "0" ]] || die "AC-3: no detection -> backoff_epoch=0 (got $backoff_epoch)"
+  echo "PASS: AC-3 no detection -> count=0, no backoff"
+
+  # AC-4: Cross-cycle escape — simulate the wedge scenario
+  # Cycle 1: detect -> count=1
+  result="$(_call_rtb 0 "true" 2 5 "$now_s")"
+  read -r new_count backoff_epoch <<<"$result"
+  [[ "$new_count" == "1" ]] || die "AC-4 cycle1: count=1 (got $new_count)"
+
+  # Cycle 2: detect -> count=2, backoff armed
+  result="$(_call_rtb 1 "true" 2 5 "$now_s")"
+  read -r new_count backoff_epoch <<<"$result"
+  [[ "$new_count" == "2" ]] || die "AC-4 cycle2: count=2 (got $new_count)"
+  [[ "$backoff_epoch" -gt 0 ]] || die "AC-4 cycle2: backoff armed"
+
+  # Cycle 3: now past expiry, no detection -> count=0 (decay)
+  local t3=$((backoff_epoch + 1))
+  result="$(_call_rtb 2 "false" 2 5 "$t3")"
+  read -r new_count backoff_epoch <<<"$result"
+  [[ "$new_count" == "0" ]] || die "AC-4 cycle3: count decayed to 0 (got $new_count)"
+  [[ "$backoff_epoch" == "0" ]] || die "AC-4 cycle3: no backoff after decay"
+  echo "PASS: AC-4 cycle3 counter decayed"
+
+  # Cycle 4: detect again -> count=1 (fresh, NOT re-arming from stale >=2)
+  result="$(_call_rtb 0 "true" 2 5 "$t3")"
+  read -r new_count backoff_epoch <<<"$result"
+  [[ "$new_count" == "1" ]] || die "AC-4 cycle4: fresh detection -> count=1 (got $new_count)"
+  [[ "$backoff_epoch" == "0" ]] || die "AC-4 cycle4: count=1 -> no backoff (got $backoff_epoch)"
+  echo "PASS: AC-4 cycle4 fresh detection after decay"
+
+  # AC-5: Stale >=2 count with no fresh detection must NOT re-arm
+  result="$(_call_rtb 5 "false" 2 5 "$now_s")"
+  read -r new_count backoff_epoch <<<"$result"
+  [[ "$new_count" == "0" ]] || die "AC-5: stale count=5, no detection -> decayed to 0 (got $new_count)"
+  [[ "$backoff_epoch" == "0" ]] || die "AC-5: stale count, no detection -> no backoff (got $backoff_epoch)"
+  echo "PASS: AC-5 stale count does not re-arm"
+
+  echo "PASS: get_rapid_terminal_backoff -- counter decays on expiry, project escapes backoff (AC-1..AC-5, bash parity)"
+  cleanup
+}
+
 run_all() {
   run_scan
   run_select
@@ -1261,6 +1356,7 @@ run_all() {
   run_stale_sentinel
   run_rapid_terminal
   run_staleexit
+  run_rapiddecay
   echo "ALL PASS"
 }
 
@@ -1310,11 +1406,14 @@ case "${1:-all}" in
   staleexit)
     run_staleexit
     ;;
+  rapiddecay)
+    run_rapiddecay
+    ;;
   all)
     run_all
     ;;
   *)
-    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|fill|gates|mutex|log|compat|stale-sentinel|rapid-terminal|staleexit|all}" >&2
+    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|fill|gates|mutex|log|compat|stale-sentinel|rapid-terminal|staleexit|rapiddecay|all}" >&2
     exit 1
     ;;
 esac
