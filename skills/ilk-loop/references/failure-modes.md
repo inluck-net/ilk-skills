@@ -80,11 +80,13 @@ The taxonomy is not exhaustive — add a class when a genuinely new shape appear
   set ⊇ {area, perimeter}, not == ). Confirm the green-making fix was the
   superset form, not "append divisionSharing to the exact list" (which just
   re-breaks next unit).
-- **Guard (PROPOSED):** a test-smell lint — flag an exact-equality / frozen-list
-  assertion against a known registry / active-set accessor (e.g.
-  `listActiveProblemTypes`, label/type registries); require superset/contains.
-  Mechanically lintable → candidate for the `contract-discipline-qc` batch. Not
-  implemented yet.
+- **Guard (IMPLEMENTED):** `plan_lint.py` — `lint_brittle_exact_list_assertion` flags
+  a sub-plan `local_checks` command with an exact-list-equality pattern
+  (`== [...]`, `deepStrictEqual(...)`, `assertEqual(...)`) and recommends
+  superset/contains. Also: `decomposition-principles.md` §8 documents the
+  anti-pattern + the superset convention for project-side tests. Project-test
+  linting (JS/etc.) is out of scope — the guard catches the shape at plan
+  authoring time, language-agnostically.
 - **Reinforces:** the same "test the contract, not tighter than the contract"
   discipline behind [[depends-on-yaml-not-json]] (parser hard-coded one format).
 
