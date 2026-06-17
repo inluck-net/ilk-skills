@@ -207,15 +207,67 @@ class TestStatusAllBlocked:
         assert proj["blocked"] is True
         assert proj["blocked_reason"] == "stale-running"
 
+    def test_resolve_ack_clears_blocked(self, tmp_path):
+        """AC-4: blacklist-class postmortem but ack with cleared_at >= generated_at
+        → blocked=false (resolved-by-ack)."""
+        now = dt.datetime.now()
+        generated = (now - dt.timedelta(minutes=20)).isoformat(timespec="seconds")
+        cleared = (now - dt.timedelta(minutes=5)).isoformat(timespec="seconds")
+
+        _build_project(
+            tmp_path,
+            "proj-acked",
+            subplan_status="pending",
+            postmortem_class="local-checks-stuck",
+            postmortem_time=generated,
+        )
+        # Write the ack sentinel.
+        ack_path = tmp_path / "projects" / "proj-acked" / "runtime" / "launcher" / "blacklist-cleared.json"
+        _write_file(ack_path, json.dumps({"cleared_at": cleared}))
+
+        entries = _run_status_all(tmp_path)
+        by_key = {e["project_key"]: e for e in entries}
+        proj = by_key.get("proj-acked")
+        assert proj is not None
+        assert proj["blocked"] is False
+
+    def test_expiry_clears_blocked(self, tmp_path):
+        """AC-4: blacklist-class postmortem that has expired (now >= expiry)
+        → blocked=false."""
+        # Postmortem generated 120 minutes ago → backoff (60 min) expired.
+        expired_time = (dt.datetime.now() - dt.timedelta(minutes=120)).isoformat(timespec="seconds")
+
+        _build_project(
+            tmp_path,
+            "proj-expired",
+            subplan_status="pending",
+            postmortem_class="local-checks-stuck",
+            postmortem_time=expired_time,
+        )
+
+        entries = _run_status_all(tmp_path)
+        by_key = {e["project_key"]: e for e in entries}
+        proj = by_key.get("proj-expired")
+        assert proj is not None
+        assert proj["blocked"] is False
+
     def test_existing_keys_preserved(self, tmp_path):
         """AC-5: existing --json keys are unchanged (back-compat for render_tray)."""
         _build_fixture(tmp_path)
         entries = _run_status_all(tmp_path)
 
-        required_keys = {"project_key", "sentinel", "next_subplan", "step"}
+        # All keys that the current render_tray / dashboard depend on.
+        required_keys = {
+            "project_key", "path", "active_master", "next_subplan", "step",
+            "sentinel", "last_class",
+        }
         for entry in entries:
             for key in required_keys:
                 assert key in entry, f"Missing key '{key}' in {entry['project_key']}"
+            # sentinel must have the expected sub-keys.
+            s = entry["sentinel"]
+            for sk in ("pid", "state", "alive"):
+                assert sk in s, f"Missing sentinel key '{sk}' in {entry['project_key']}"
 
     def test_json_is_ascii_safe(self, tmp_path):
         """AC-5: JSON output contains no non-ASCII characters (no emoji)."""
