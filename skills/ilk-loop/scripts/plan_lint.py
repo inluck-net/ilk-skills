@@ -176,10 +176,76 @@ def lint_contract_change_review(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── Brittle exact-list-assertion guard (FM-0002) ────────────────────────────
+#
+# A sub-plan's local_checks command that asserts exact equality on a list/set
+# (e.g. `== ["a","b"]`, `deepStrictEqual(x, ['a'])`) against a growing
+# accessor is brittle — adding a member breaks the gate.  Warn and recommend
+# superset/contains instead.  See failure-modes.md FM-0002.
+
+# Patterns that indicate an exact-list-equality assertion.
+_BRITTLE_EXACT_LIST_RE = re.compile(
+    r"""
+    ==\s*\[              #  == [ ... ]
+    |deepStrictEqual\s*\(  #  deepStrictEqual( ... )
+    |deepEqual\s*\(        #  deepEqual( ... )
+    |assertEqual\s*\(      #  assertEqual( ... )
+    |assertEquals\s*\(     #  assertEquals( ... )
+    """,
+    re.VERBOSE,
+)
+
+# Patterns that indicate a containment / superset assertion (correct form).
+_CONTAINMENT_RE = re.compile(
+    r"""
+    contains\s*\(          #  jq contains([ ... ])  or  set >= { ... }
+    |>=\s*\{               #  superset set literal
+    |\bsubset\s*of\b       #  natural-language "subset of"
+    |\bcontains\b          #  generic contains keyword
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+
+def _extract_local_checks_commands(text: str) -> list[str]:
+    """Extract command values from the local_checks list in frontmatter."""
+    m = re.match(r"^---\n.*?\n---\n", text, re.S)
+    if not m:
+        return []
+    fm = text[m.start():m.end()]
+    lc = re.search(r"^local_checks:\s*$", fm, re.MULTILINE)
+    if not lc:
+        return []
+    after = fm[lc.end():]
+    return re.findall(r"command:\s*(.+)", after)
+
+
+def lint_brittle_exact_list_assertion(text: str, slug: str) -> list[str]:
+    """Flag a local_checks command with an exact-list-equality assertion."""
+    findings: list[str] = []
+    commands = _extract_local_checks_commands(text)
+    for cmd in commands:
+        has_exact = bool(_BRITTLE_EXACT_LIST_RE.search(cmd))
+        if not has_exact:
+            continue
+        # If the same command also uses a containment pattern, it's likely
+        # checking containment, not exact equality — skip.
+        if _CONTAINMENT_RE.search(cmd):
+            continue
+        findings.append(
+            f"{slug}: local_checks command '{cmd.strip()[:80]}' appears to assert "
+            f"exact list/set equality against a growing accessor (FM-0002). "
+            f"Use a superset/contains assertion instead (e.g. jq 'contains([...])', "
+            f"assert set(...) >= {{...}}) to avoid brittleness when members are added."
+        )
+    return findings
+
+
 ALL_CHECKS = (
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
     lint_contract_change_review,
+    lint_brittle_exact_list_assertion,
 )
 
 
