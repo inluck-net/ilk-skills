@@ -657,14 +657,14 @@ advancing to step 8.
 ### 7g. Degrade-discipline lints (`plan_lint.py`)
 
 Run the planner degrade-discipline lints over every newly-written sub-plan —
-these are the *enforced* form of two guards that used to be prose (and were
+these are the *enforced* form of guards that used to be prose (and were
 skipped, stalling uccargo twice on 2026-06-13):
 
 ```bash
 python "<skill-root>/ilk-loop/scripts/plan_lint.py" <each new sub-plan .md>
 ```
 
-It emits two finding classes (both warnings — surface counts in the step-9
+It emits three finding classes (all warnings — surface counts in the step-9
 report; fix before launching):
 
 - **env_prereq-vs-fallback contradiction** — a sub-plan that hard-gates on an
@@ -676,9 +676,31 @@ report; fix before launching):
   the sub-plan documents a safe default/fallback. On a headless loop `blocked`
   = stall + human; prefer degrade-to-default (see
   decomposition-principles.md → "Degrade-to-default over block").
+- **contract-change-review** — a sub-plan's `scope_paths` touch a
+  contract-governed file but the body doesn't reference the contract docs.
+  See 7h below.
 
 `plan_lint.py` exits non-zero when it finds anything; treat findings as
 must-fix-before-launch (a contradiction here is what actually stalled the loop).
+
+### 7h. Contract-change review (`plan_lint.py`)
+
+The same `plan_lint.py` invocation from 7g also checks **contract-change
+discipline**: if a sub-plan's `scope_paths` touch a contract-governed file
+(`collect.py`, `watchdog.*`, `scheduler.*`, `run_ilk_loop_claude.*`,
+`loop_status.py`, `promote_next_master.py`, `plan_status.py`, `status_all.py`,
+`render_tray.py`), the sub-plan body MUST reference at least one of:
+
+- `skills/ilk-loop/references/orchestration-collaboration.md`
+- `skills/ilk-loop/references/detached-component-contracts.md`
+
+This enforces the "Adding a new reader or writer" checklist from
+`detached-component-contracts.md` — a new reader/writer of a shared contract
+can't be authored without consulting the contract docs. See
+`orchestration-collaboration.md` L1-L4 for the invariant layer this protects.
+
+A finding here is a warning (surface in the step-9 report; fix before
+launching).
 
 ## 8. Persist (no project-repo commit)
 
