@@ -426,7 +426,44 @@ def confirm_b2_block(
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
+def confirm_b2_main(argv: list[str]) -> int:
+    """CLI entry point for B2 confirm-before-block decision.
+
+    Usage: run_local_checks.py --confirm-b2 --first <json> --rerun <json>
+
+    Each <json> is either a file path or inline JSON.  Outputs the
+    confirm_b2_block result as JSON.  Exit code: 0 = not blocked,
+    1 = blocked.
+    """
+    ap = argparse.ArgumentParser(
+        prog="run_local_checks.py --confirm-b2",
+        description="Decide whether a B2 blocking outcome is real or transient.",
+    )
+    ap.add_argument("--confirm-b2", action="store_true", required=True)
+    ap.add_argument("--first", required=True,
+                    help="JSON file (or inline) with first-pass results")
+    ap.add_argument("--rerun", required=True,
+                    help="JSON file (or inline) with rerun results")
+    args = ap.parse_args(argv)
+
+    def _load_json(s: str) -> list[dict]:
+        p = Path(s)
+        if p.is_file():
+            return json.loads(read_text(p))
+        return json.loads(s)
+
+    first = _load_json(args.first)
+    rerun = _load_json(args.rerun)
+    result = confirm_b2_block(first, rerun)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 1 if result["blocked"] else 0
+
+
 def main(argv: list[str]) -> int:
+    # Dispatch to confirm-b2 subcommand if present
+    if "--confirm-b2" in argv:
+        return confirm_b2_main(argv)
+
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--project", required=True, type=Path)
     ap.add_argument("--slug", required=True)

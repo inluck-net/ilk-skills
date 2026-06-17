@@ -1793,13 +1793,80 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
       # iteration is still recorded to .ilk-loop.log. Otherwise collect.py /
       # ilk-feedback never see a run that ended on a gate -> the classifier
       # goes blind and falls back to a stale run (the misclassification cascade).
+      #
+      # B2 confirm-before-block (2026-06-17): a transient `error` (flaky exit,
+      # missing shell builtin) must be CONFIRMED by re-running the blocking
+      # checks once before committing to local_checks_failed. A check that
+      # errors then passes is NOT a stop.
       $blocking = $localChecksRun | Where-Object { $_.outcome -eq "error" -or $_.outcome -eq "fail" }
       if ($blocking) {
-        $stopReason = "local_checks_failed"
-        $iterStopReason = "local_checks_failed"
-        $localChecksBlocked = $true
-        $why = ($blocking | ForEach-Object { "$($_.slug)#$($_.step):$($_.outcome)" }) -join ", "
-        Write-Host "Loop stopped: local_checks not passing (B2 enforcement) -> $why" -ForegroundColor Red
+        # Build first-pass JSON for the confirm helper (command + outcome)
+        $firstPassJson = @()
+        foreach ($b in $blocking) {
+          $cmd = ""
+          if ($b.raw -and $b.raw.results) {
+            foreach ($cr in $b.raw.results) {
+              if ($cr.command) { $cmd = $cr.command; break }
+            }
+          }
+          $firstPassJson += @{ command = $cmd; outcome = $b.outcome }
+        }
+        $firstJson = ($firstPassJson | ConvertTo-Json -Compress)
+        if ($firstPassJson.Count -eq 1) { $firstJson = "[" + $firstJson + "]" }
+
+        # Re-run the blocking checks once
+        $rerunTargets = @()
+        foreach ($b in $blocking) {
+          $rerunTargets += [PSCustomObject]@{ slug = $b.slug; step = $b.step }
+        }
+        $rerunResults = Invoke-LocalChecks `
+          -Project $ProjectPath `
+          -Targets $rerunTargets `
+          -HelperScript $LocalChecksScript `
+          -OuterTimeoutSec $LocalChecksTimeoutSec
+
+        # Build rerun JSON (command + outcome)
+        $rerunJsonArr = @()
+        foreach ($rr in $rerunResults) {
+          $cmd = ""
+          if ($rr.raw -and $rr.raw.results) {
+            foreach ($cr in $rr.raw.results) {
+              if ($cr.command) { $cmd = $cr.command; break }
+            }
+          }
+          $rerunJsonArr += @{ command = $cmd; outcome = $rr.outcome }
+        }
+        $rerunJson = ($rerunJsonArr | ConvertTo-Json -Compress)
+        if ($rerunJsonArr.Count -eq 1) { $rerunJson = "[" + $rerunJson + "]" }
+
+        # Call the confirm helper
+        $confirmArgs = @($LocalChecksScript, "--confirm-b2", "--first", $firstJson, "--rerun", $rerunJson)
+        $confirmTmp = [IO.Path]::GetTempFileName()
+        try {
+          $confirmProc = Start-Process -FilePath "python" -ArgumentList $confirmArgs `
+            -NoNewWindow -PassThru -RedirectStandardOutput $confirmTmp -RedirectStandardError "$confirmTmp.err"
+          $confirmProc.WaitForExit(30000) | Out-Null
+          $confirmOut = ""
+          if (Test-Path $confirmTmp) { $confirmOut = Get-Content $confirmTmp -Raw -ErrorAction SilentlyContinue }
+          $confirmResult = $null
+          try { if ($confirmOut) { $confirmResult = $confirmOut | ConvertFrom-Json -ErrorAction Stop } } catch { $confirmResult = $null }
+        } finally {
+          Remove-Item $confirmTmp -ErrorAction SilentlyContinue
+          Remove-Item "$confirmTmp.err" -ErrorAction SilentlyContinue
+        }
+
+        if ($confirmResult -and -not $confirmResult.blocked) {
+          # Transient cleared on re-run — NOT a stop
+          $cleared = ($confirmResult.transient_cleared -join ", ")
+          Write-Host "B2 transient cleared on re-run: $cleared" -ForegroundColor Green
+        } else {
+          # Confirmed blocking (or confirm failed — fail-safe to blocked)
+          $stopReason = "local_checks_failed"
+          $iterStopReason = "local_checks_failed"
+          $localChecksBlocked = $true
+          $why = ($blocking | ForEach-Object { "$($_.slug)#$($_.step):$($_.outcome)" }) -join ", "
+          Write-Host "Loop stopped: local_checks not passing (B2 confirmed) -> $why" -ForegroundColor Red
+        }
       }
     }
   }
