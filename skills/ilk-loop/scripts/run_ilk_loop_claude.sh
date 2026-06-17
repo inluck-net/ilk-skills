@@ -1284,8 +1284,64 @@ print('false' if not d.get('blocked', True) else 'true')
           if [[ "$confirmed_blocked" == "false" ]]; then
             echo "B2 transient cleared on re-run" >&2
           else
-            iter_stop_reason="local_checks_failed"
-            echo "Loop stopped: local_checks not passing (B2 confirmed)" >&2
+            # Confirmed blocking — try auto-quarantine before stopping.
+            local quarantine_script="$SKILL_ROOT/ilk-loop/scripts/quarantine_subplan.py"
+            local quarantined="false"
+            if [[ -f "$quarantine_script" ]]; then
+              local q_plans_dir
+              q_plans_dir=$(python3 "$SKILL_ROOT/ilk-loop/scripts/ilk_paths.py" --start "$PROJECT_PATH" --plans-dir 2>/dev/null)
+              if [[ -n "$q_plans_dir" && -d "$q_plans_dir" ]]; then
+                # Extract slugs from blocking results
+                local q_slugs
+                q_slugs=$(grep -E '"outcome":"(error|fail)"' "$local_checks_results" | \
+                  python3 -c "
+import json, sys
+slugs = set()
+for line in sys.stdin:
+    d = json.loads(line.strip())
+    slugs.add(d.get('slug', ''))
+for s in sorted(slugs):
+    if s: print(s)
+" 2>/dev/null)
+                local failing_desc
+                failing_desc=$(grep -E '"outcome":"(error|fail)"' "$local_checks_results" | \
+                  python3 -c "
+import json, sys
+parts = []
+for line in sys.stdin:
+    d = json.loads(line.strip())
+    parts.append(f\"{d.get('slug','')}#{d.get('step',0)}\")
+print(', '.join(parts))
+" 2>/dev/null)
+                while IFS= read -r q_slug; do
+                  [[ -z "$q_slug" ]] && continue
+                  local q_out
+                  q_out=$(python3 "$quarantine_script" --plans-dir "$q_plans_dir" --slug "$q_slug" --failing-check "$failing_desc" 2>/dev/null)
+                  if [[ -n "$q_out" ]]; then
+                    local q_blocked
+                    q_blocked=$(python3 -c "
+import json, sys
+d = json.loads(sys.argv[1])
+print('true' if d.get('blocked') else 'false')
+" "$q_out" 2>/dev/null || echo "false")
+                    if [[ "$q_blocked" == "true" ]]; then
+                      quarantined="true"
+                      local q_fails q_thresh
+                      q_fails=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('fails','?'))" "$q_out" 2>/dev/null || echo "?")
+                      q_thresh=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('threshold','?'))" "$q_out" 2>/dev/null || echo "?")
+                      echo "  [quarantine] sub-plan $q_slug auto-quarantined after $q_fails failures (threshold: $q_thresh)" >&2
+                    fi
+                  fi
+                done <<< "$q_slugs"
+              fi
+            fi
+
+            if [[ "$quarantined" == "true" ]]; then
+              echo "B2 quarantine: continuing to next runnable sub-plan" >&2
+            else
+              iter_stop_reason="local_checks_failed"
+              echo "Loop stopped: local_checks not passing (B2 confirmed)" >&2
+            fi
           fi
         fi
       fi

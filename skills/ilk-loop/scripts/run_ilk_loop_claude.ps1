@@ -1860,12 +1860,50 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
           $cleared = ($confirmResult.transient_cleared -join ", ")
           Write-Host "B2 transient cleared on re-run: $cleared" -ForegroundColor Green
         } else {
-          # Confirmed blocking (or confirm failed — fail-safe to blocked)
-          $stopReason = "local_checks_failed"
-          $iterStopReason = "local_checks_failed"
-          $localChecksBlocked = $true
-          $why = ($blocking | ForEach-Object { "$($_.slug)#$($_.step):$($_.outcome)" }) -join ", "
-          Write-Host "Loop stopped: local_checks not passing (B2 confirmed) -> $why" -ForegroundColor Red
+          # Confirmed blocking — try auto-quarantine before stopping.
+          # After N consecutive failures on the same sub-plan, mark it
+          # blocked and continue to the next runnable sub-plan instead of
+          # stopping the whole loop (L4: bypass, don't wedge).
+          $quarantineScript = Join-Path $SkillRoot "ilk-loop\scripts\quarantine_subplan.py"
+          $quarantined = $false
+          if (Test-Path $quarantineScript) {
+            $qPlansDir = Get-PlansDir -Project $ProjectPath
+            if ($qPlansDir) {
+              foreach ($b in $blocking) {
+                $qArgs = @($quarantineScript, "--plans-dir", $qPlansDir, "--slug", $b.slug, "--failing-check", ($blocking | ForEach-Object { "$($_.slug)#$($_.step)" }) -join ", ")
+                $qTmp = [IO.Path]::GetTempFileName()
+                try {
+                  $qProc = Start-Process -FilePath "python" -ArgumentList $qArgs `
+                    -NoNewWindow -PassThru -RedirectStandardOutput $qTmp -RedirectStandardError "$qTmp.err"
+                  $qProc.WaitForExit(15000) | Out-Null
+                  $qOut = ""
+                  if (Test-Path $qTmp) { $qOut = Get-Content $qTmp -Raw -ErrorAction SilentlyContinue }
+                  $qResult = $null
+                  try { if ($qOut) { $qResult = $qOut | ConvertFrom-Json -ErrorAction Stop } } catch { $qResult = $null }
+                  if ($qResult -and $qResult.blocked) {
+                    $quarantined = $true
+                    Write-Host ("  [quarantine] sub-plan {0} auto-quarantined after {1} failures (threshold: {2})" -f $b.slug, $qResult.fails, $qResult.threshold) -ForegroundColor DarkYellow
+                  }
+                } finally {
+                  Remove-Item $qTmp -ErrorAction SilentlyContinue
+                  Remove-Item "$qTmp.err" -ErrorAction SilentlyContinue
+                }
+              }
+            }
+          }
+
+          if ($quarantined) {
+            # Sub-plan quarantined — continue to next runnable sub-plan
+            # (re-run loop_status to find the next one).
+            Write-Host "B2 quarantine: continuing to next runnable sub-plan" -ForegroundColor Yellow
+          } else {
+            # Not quarantined (below threshold or helper missing) — stop.
+            $stopReason = "local_checks_failed"
+            $iterStopReason = "local_checks_failed"
+            $localChecksBlocked = $true
+            $why = ($blocking | ForEach-Object { "$($_.slug)#$($_.step):$($_.outcome)" }) -join ", "
+            Write-Host "Loop stopped: local_checks not passing (B2 confirmed) -> $why" -ForegroundColor Red
+          }
         }
       }
     }

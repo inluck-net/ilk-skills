@@ -456,3 +456,82 @@ def _parse_fm(path: Path) -> dict[str, str]:
             k, _, v = line.partition(":")
             fm[k.strip()] = v.strip()
     return fm
+
+
+# ── AC-5: quarantine_subplan ─────────────────────────────────────────────────
+
+from quarantine_subplan import quarantine_subplan  # noqa: E402
+
+
+class TestQuarantineSubplan:
+    """AC-5: auto-quarantine after N consecutive local_checks failures."""
+
+    def _make_subplan(self, plans: Path, slug: str = "alpha",
+                      status: str = "pending") -> Path:
+        fname = f"2026-01-01-{slug}.md"
+        _write_plan(plans / fname, f"""\
+            ---
+            status: {status}
+            depends_on: []
+            ---
+        """)
+        return plans / fname
+
+    def test_first_failure_below_threshold(self, tmp_path: Path) -> None:
+        """First failure → counter=1, below threshold=2 → not blocked."""
+        plans = tmp_path / "plans"
+        plans.mkdir()
+        self._make_subplan(plans)
+        result = quarantine_subplan(plans, "alpha", "pytest -q", threshold=2)
+        assert result["blocked"] is False
+        assert result["fails"] == 1
+
+    def test_second_failure_blocks(self, tmp_path: Path) -> None:
+        """Second failure → counter=2, at threshold → blocked."""
+        plans = tmp_path / "plans"
+        plans.mkdir()
+        self._make_subplan(plans)
+        quarantine_subplan(plans, "alpha", "pytest -q", threshold=2)
+        result = quarantine_subplan(plans, "alpha", "pytest -q", threshold=2)
+        assert result["blocked"] is True
+        assert result["fails"] == 2
+
+    def test_blocked_subplan_has_findings_note(self, tmp_path: Path) -> None:
+        """Blocked sub-plan gets a Findings note naming the failing check."""
+        plans = tmp_path / "plans"
+        plans.mkdir()
+        sub_path = self._make_subplan(plans)
+        quarantine_subplan(plans, "alpha", "pytest -q", threshold=2)
+        quarantine_subplan(plans, "alpha", "pytest -q", threshold=2)
+        text = sub_path.read_text(encoding="utf-8-sig")
+        assert "auto-quarantined" in text
+        assert "pytest -q" in text
+
+    def test_already_blocked_returns_immediately(self, tmp_path: Path) -> None:
+        """A sub-plan already blocked → returns blocked=True without error."""
+        plans = tmp_path / "plans"
+        plans.mkdir()
+        self._make_subplan(plans, status="blocked")
+        result = quarantine_subplan(plans, "alpha", "pytest -q", threshold=2)
+        assert result["blocked"] is True
+        assert result.get("already_blocked") is True
+
+    def test_missing_subplan_returns_error(self, tmp_path: Path) -> None:
+        """Missing sub-plan file → returns error, not blocked."""
+        plans = tmp_path / "plans"
+        plans.mkdir()
+        result = quarantine_subplan(plans, "nonexistent", "pytest -q", threshold=2)
+        assert result["blocked"] is False
+        assert "error" in result
+
+    def test_counter_persists_across_calls(self, tmp_path: Path) -> None:
+        """Counter is persisted in frontmatter and survives re-reads."""
+        plans = tmp_path / "plans"
+        plans.mkdir()
+        self._make_subplan(plans)
+        quarantine_subplan(plans, "alpha", "pytest -q", threshold=3)
+        quarantine_subplan(plans, "alpha", "pytest -q", threshold=3)
+        # Third call should block.
+        result = quarantine_subplan(plans, "alpha", "pytest -q", threshold=3)
+        assert result["blocked"] is True
+        assert result["fails"] == 3
