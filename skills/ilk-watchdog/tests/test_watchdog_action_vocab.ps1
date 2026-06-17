@@ -67,30 +67,10 @@ Assert ($rUnver -eq 'needs-human') "AC-4: shipped-unverified => 'needs-human' (g
 $rNoEv = Resolve-WatchdogAction -Class 'no-evidence'
 Assert ($rNoEv -eq 'triage') "AC-4: no-evidence => 'triage' (got '$rNoEv')"
 
-# AC-5 (totality): every label collect.py can emit must resolve to non-unknown.
-# This list is the L2 table's full label set. Update BOTH this list AND the L2
-# table in orchestration-collaboration.md when adding a new label.
-$AllLabels = @(
-  'timeout-bound',
-  'max-iter-bound',
-  'api-flaky',
-  'interrupted',
-  'stuck-no-progress',
-  'api-blocked',
-  'budget-exhausted',
-  'local-checks-stuck',
-  'dependency-unreachable',
-  'clean-success',
-  'shipped-unverified',
-  'self-hosting-drift',
-  'no-evidence'
-)
-
-foreach ($lbl in $AllLabels) {
-  $r = Resolve-WatchdogAction -Class $lbl
-  Assert ($r -ne 'unknown') "AC-5: totality — '$lbl' must not resolve to 'unknown' (got '$r')"
-  Assert ($null -ne $r) "AC-5: totality — '$lbl' must resolve to a non-null action"
-}
+# AC-5 (totality): the hard-coded label list is retired — test_label_action_totality.py
+# reads CLASSIFICATION_LABELS from collect.py (the single source of truth) and
+# asserts every label resolves to a known action. This removes the "update both
+# together" manual coupling.
 
 # Fail-closed: a genuinely unknown label must resolve to 'block' (safe default),
 # never silently pass or return unknown.
