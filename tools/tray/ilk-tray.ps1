@@ -94,6 +94,23 @@ Add-Type -AssemblyName System.Drawing
 $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
 $notifyIcon.Visible = $true
 
+# ── Tray log ───────────────────────────────────────────────────────────
+$trayLogDir = Join-Path $dataDir "logs"
+$trayLogFile = Join-Path $trayLogDir "ilk-tray.log"
+
+function Write-TrayLog {
+  param([string]$Message)
+  try {
+    if (-not (Test-Path $trayLogDir)) { New-Item -ItemType Directory -Path $trayLogDir -Force | Out-Null }
+    $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    $line = "$ts $Message"
+    # BOM-free ASCII-safe append.
+    [System.IO.File]::AppendAllText($trayLogFile, "$line`n", (New-Object System.Text.UTF8Encoding($false)))
+  } catch {
+    # Logging failure must never crash the tray.
+  }
+}
+
 # ── Tick: pipe status_all --json through render_tray, paint ───────────
 function Invoke-Tick {
   try {
@@ -117,6 +134,10 @@ function Invoke-Tick {
     if (-not $viewJson) { return }
 
     $view = ($viewJson -join "`n") | ConvertFrom-Json
+
+    # Log per-tick row count for diagnostics.
+    $rowCount = if ($view.rows) { $view.rows.Count } else { 0 }
+    Write-TrayLog "tick rows=$rowCount icon=$($view.icon_state)"
 
     # ── Icon (colored dot, runtime-drawn) ──
     $state = $view.icon_state
@@ -148,7 +169,7 @@ function Invoke-Tick {
     # ── Tooltip (max 127 chars, enforced by render_tray.py) ──
     $notifyIcon.Text = [string]$view.tooltip
 
-    # ── Context menu ──
+    # ── Context menu (guarded: build fully, then swap, then dispose old) ──
     $menu = New-Object System.Windows.Forms.ContextMenuStrip
 
     # Per-project rows
@@ -199,13 +220,15 @@ function Invoke-Tick {
     })
     [void]$menu.Items.Add($exitItem)
 
-    # Swap menu
+    # Swap menu: assign new, then dispose old.  If anything above threw,
+    # the outer catch keeps the previous menu intact.
     $oldMenu = $notifyIcon.ContextMenuStrip
     $notifyIcon.ContextMenuStrip = $menu
     if ($oldMenu) { $oldMenu.Dispose() }
 
   } catch {
-    # On error, set a failure indicator but don't crash.
+    # On error, log to tray log and keep previous menu (do not clear it).
+    Write-TrayLog "tick error: $_"
     Write-Host "ilk-tray tick error: $_"
   }
 }

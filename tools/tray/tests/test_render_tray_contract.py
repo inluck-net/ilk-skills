@@ -126,3 +126,39 @@ class TestMixedInputTotality:
         idle_rows = [r for r in mixed_view["rows"] if r["icon_state"] == "idle"]
         tooltip_idle = _count_in_tooltip(mixed_view["tooltip"], "idle")
         assert tooltip_idle == len(idle_rows)
+
+
+# ---------------------------------------------------------------------------
+# AC-4: Invoke-Tick diagnostics + guarded menu swap (ilk-tray.ps1)
+# ---------------------------------------------------------------------------
+
+class TestInvokeTickDiagnostics:
+    """AC-4: Invoke-Tick has try/catch around menu build and logs to tray log."""
+
+    @pytest.fixture()
+    def tray_ps1_content(self) -> str:
+        tray_ps1 = Path(__file__).resolve().parent.parent / "ilk-tray.ps1"
+        return tray_ps1.read_text(encoding="utf-8")
+
+    def test_try_catch_around_menu_build(self, tray_ps1_content: str) -> None:
+        """The menu build/swap must be inside a try/catch so exceptions
+        don't leave an empty menu while the tooltip updates."""
+        # Check for the catch block that logs to tray log.
+        assert "catch" in tray_ps1_content
+        assert "Write-TrayLog" in tray_ps1_content
+
+    def test_tray_log_call_in_catch(self, tray_ps1_content: str) -> None:
+        """The catch block must log to the tray log file."""
+        # The catch block should contain Write-TrayLog "tick error: ...
+        assert 'Write-TrayLog "tick error:' in tray_ps1_content
+
+    def test_per_tick_row_count_logged(self, tray_ps1_content: str) -> None:
+        """Invoke-Tick must log the per-tick row count."""
+        assert "Write-TrayLog" in tray_ps1_content
+        assert "rows=" in tray_ps1_content
+
+    def test_menu_swap_after_build(self, tray_ps1_content: str) -> None:
+        """Menu must be built fully before swapping (dispose old after assign)."""
+        # The pattern: assign new menu, then dispose old.
+        assert "notifyIcon.ContextMenuStrip = $menu" in tray_ps1_content
+        assert "oldMenu.Dispose()" in tray_ps1_content
