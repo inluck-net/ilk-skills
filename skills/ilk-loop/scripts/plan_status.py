@@ -229,8 +229,9 @@ def master_is_drainable(master_path: Path, plans_dir: Path) -> bool:
     """Return True iff the master has >= 1 runnable registered sub-plan (L4).
 
     A master with only blocked / dep-on-blocked sub-plans is NOT drainable
-    (it is *stalled*).  A master with zero registered sub-plans has nothing
-    to drain → not drainable.
+    (it is *stalled*).  A master with zero registered sub-plans is
+    considered drainable (nothing blocks it — legacy / empty masters
+    should still be promotable).
 
     Missing sub-plan files count as runnable (their status can't be read,
     so treat as pending — matching ``master_has_nonshipped`` semantics).
@@ -241,7 +242,7 @@ def master_is_drainable(master_path: Path, plans_dir: Path) -> bool:
         return False
     registered = extract_subplan_files(master_text)
     if not registered:
-        return False
+        return True  # empty master — nothing blocks it
 
     # Build slug→status map for all registered sub-plans.
     sibling_statuses: dict[str, str] = {}

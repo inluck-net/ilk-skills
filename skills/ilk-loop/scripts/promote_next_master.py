@@ -40,7 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ilk_paths import find_plans_dir as _resolve_plans_dir  # noqa: E402
-from plan_status import master_has_nonshipped  # noqa: E402
+from plan_status import master_has_nonshipped, master_is_drainable  # noqa: E402
 
 FRONTMATTER_RE = re.compile(r"^(---\s*\n)(.*?)(\n---\s*\n)", re.DOTALL)
 STATUS_LINE_RE = re.compile(r"^(\s*)status\s*:\s*(\S+)\s*$", re.MULTILINE)
@@ -134,10 +134,6 @@ def main(argv: list[str]) -> int:
     actives = [(p, fm) for p, fm in parsed if (fm.get("status") or "").strip() == "active"]
     queued = [(p, fm) for p, fm in parsed if (fm.get("status") or "").strip() in PROMOTABLE]
 
-    # Filter out masters whose registered sub-plans are all shipped.
-    actives = [(p, fm) for p, fm in actives if master_has_nonshipped(p, plans_dir)]
-    queued = [(p, fm) for p, fm in queued if master_has_nonshipped(p, plans_dir)]
-
     # `supervised_only` masters are never auto-promoted or auto-demoted by the
     # watchdog — they edit the loop's own infrastructure (or are otherwise
     # sensitive) and must be driven by a human via manual `/ilk`. The manual
@@ -147,15 +143,34 @@ def main(argv: list[str]) -> int:
     actives = [(p, fm) for p, fm in actives if not _supervised_only(fm)]
     queued = [(p, fm) for p, fm in queued if not _supervised_only(fm)]
 
+    # L4: drainability-aware filtering.
+    # - Active: filter by master_has_nonshipped (all-shipped → no demotion
+    #   needed, reconcile handles them).  A stalled active (non-shipped but
+    #   non-drainable) still enters the actives list — it will be demoted
+    #   to `blocked` below.
+    # - Queued: filter by master_is_drainable — don't promote a queued
+    #   master that is itself stalled (it would immediately stall again).
+    actives = [(p, fm) for p, fm in actives if master_has_nonshipped(p, plans_dir)]
+    queued = [(p, fm) for p, fm in queued if master_is_drainable(p, plans_dir)]
+
     queued.sort(key=lambda it: (-_prio(it[1]), _created(it[1])))
 
     demoted = actives[0][0] if actives else None
     promoted = queued[0][0] if queued else None
 
+    # Determine demotion target: stalled masters are parked `blocked`, not
+    # `shipped`.  A master is stalled iff it has non-shipped sub-plans but
+    # is non-drainable (zero runnable sub-plans).
+    demote_status = "shipped"
+    if demoted is not None:
+        if master_has_nonshipped(demoted, plans_dir):
+            demote_status = "blocked"
+
     plan = {
         "plans_dir": str(plans_dir),
         "plans_source": source,
         "demoted": demoted.name if demoted else None,
+        "demote_status": demote_status,
         "promoted": promoted.name if promoted else None,
         "queue_remaining": max(len(queued) - (1 if promoted else 0), 0),
         "active_count_before": len(actives),
@@ -166,7 +181,7 @@ def main(argv: list[str]) -> int:
     if not args.dry_run:
         if demoted is not None:
             try:
-                write_status(demoted, "shipped")
+                write_status(demoted, demote_status)
             except Exception as e:
                 plan["error"] = f"demote {demoted.name}: {e}"
                 print(json.dumps(plan, ensure_ascii=False))

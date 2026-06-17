@@ -244,8 +244,9 @@ class TestMasterIsDrainable:
         # alpha.md does NOT exist on disk
         assert master_is_drainable(plans / "MASTER.md", plans) is True
 
-    def test_no_registered_subplans_is_not_drainable(self, tmp_path: Path) -> None:
-        """A master with no sub-plan references has nothing to drain."""
+    def test_no_registered_subplans_is_drainable(self, tmp_path: Path) -> None:
+        """A master with no sub-plan references is drainable (nothing blocks
+        it — legacy / empty masters should still be promotable)."""
         plans = tmp_path / "plans"
         plans.mkdir()
         _write_plan(plans / "MASTER.md", """\
@@ -254,7 +255,7 @@ class TestMasterIsDrainable:
             ---
             No sub-plan references here.
         """)
-        assert master_is_drainable(plans / "MASTER.md", plans) is False
+        assert master_is_drainable(plans / "MASTER.md", plans) is True
 
 
 # ── AC-3: loop_status integration (resolve_status) ───────────────────────────
@@ -343,3 +344,115 @@ class TestLoopStatusDrain:
         assert result["next"] is not None
         assert result["next"]["fname"] == "2026-01-01-gamma.md"
         assert result["stalled"] is False
+
+
+# ── AC-4: promote_next_master advances past stalled ──────────────────────────
+
+from promote_next_master import main as promote_main  # noqa: E402
+
+
+class TestPromotePastStalled:
+    """AC-4: stalled active master is parked blocked, not shipped."""
+
+    def _write_master(self, plans: Path, name: str, status: str,
+                      sub_plan_refs: list[str]) -> None:
+        registry = "\n".join(f"  - [r](./{f})" for f in sub_plan_refs)
+        content = f"---\nstatus: {status}\npriority: 1\ncreated: 2026-01-01\n---\n{registry}\n"
+        (plans / name).write_text(content, encoding="utf-8")
+
+    def test_stalled_active_parked_blocked_not_shipped(self, tmp_path: Path, capsys) -> None:
+        """Stalled active → blocked; next queued drainable → active."""
+        plans = tmp_path / "plans"
+        plans.mkdir()
+
+        # Active master: stalled (blocked sub-plan, pending dep-on-blocked)
+        self._write_master(plans, "MASTER-active.md", "active",
+                           ["2026-01-01-alpha.md", "2026-01-01-beta.md"])
+        _write_plan(plans / "2026-01-01-alpha.md", """\
+            ---
+            status: blocked
+            depends_on: []
+            ---
+        """)
+        _write_plan(plans / "2026-01-01-beta.md", """\
+            ---
+            status: pending
+            depends_on: ["alpha"]
+            ---
+        """)
+
+        # Queued master: drainable (has a pending sub-plan with no deps)
+        self._write_master(plans, "MASTER-queued.md", "queued",
+                           ["2026-01-02-gamma.md"])
+        _write_plan(plans / "2026-01-02-gamma.md", """\
+            ---
+            status: pending
+            depends_on: []
+            ---
+        """)
+
+        exit_code = promote_main(["--plans-dir", str(plans)])
+        import json as _json
+        plan = _json.loads(capsys.readouterr().out)
+
+        # The stalled master should be demoted to blocked, not shipped.
+        assert plan["demoted"] == "MASTER-active.md"
+        assert plan["demote_status"] == "blocked"
+        assert plan["promoted"] == "MASTER-queued.md"
+
+        # Verify on disk: active master is blocked, queued master is active.
+        active_fm = _parse_fm(plans / "MASTER-active.md")
+        queued_fm = _parse_fm(plans / "MASTER-queued.md")
+        assert active_fm["status"] == "blocked"
+        assert queued_fm["status"] == "active"
+
+    def test_all_shipped_active_no_demotion_needed(self, tmp_path: Path, capsys) -> None:
+        """An all-shipped active master is already reconciled — no demotion,
+        but the queued master is still promoted to active."""
+        plans = tmp_path / "plans"
+        plans.mkdir()
+
+        self._write_master(plans, "MASTER-active.md", "active",
+                           ["2026-01-01-alpha.md"])
+        _write_plan(plans / "2026-01-01-alpha.md", """\
+            ---
+            status: shipped
+            ---
+        """)
+
+        self._write_master(plans, "MASTER-queued.md", "queued",
+                           ["2026-01-02-beta.md"])
+        _write_plan(plans / "2026-01-02-beta.md", """\
+            ---
+            status: pending
+            depends_on: []
+            ---
+        """)
+
+        exit_code = promote_main(["--plans-dir", str(plans)])
+        import json as _json
+        plan = _json.loads(capsys.readouterr().out)
+
+        # All-shipped active → filtered out by master_has_nonshipped → no demotion.
+        # reconcile_master_status handles the shipped flip.
+        assert plan["demoted"] is None
+        assert plan["promoted"] == "MASTER-queued.md"
+
+
+def _parse_fm(path: Path) -> dict[str, str]:
+    """Minimal frontmatter parser for test verification."""
+    text = path.read_text(encoding="utf-8-sig")
+    if not text.startswith("---"):
+        return {}
+    end = text.find("\n---", 3)
+    if end < 0:
+        return {}
+    fm: dict[str, str] = {}
+    for raw in text[3:end].splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if ":" in line:
+            k, _, v = line.partition(":")
+            fm[k.strip()] = v.strip()
+    return fm
