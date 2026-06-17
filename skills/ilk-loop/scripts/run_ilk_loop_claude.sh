@@ -1215,10 +1215,78 @@ main() {
       # the JSONL write) break. Otherwise a gate-stopped run is never written
       # to .ilk-loop.log and collect.py / ilk-feedback go blind (falling back
       # to a stale run -> the misclassification cascade).
+      #
+      # B2 confirm-before-block (2026-06-17): a transient `error` (flaky exit,
+      # missing shell builtin) must be CONFIRMED by re-running the blocking
+      # checks once before committing to local_checks_failed.
       if [[ -s "$local_checks_results" ]]; then
         if grep -qE '"outcome":"(error|fail)"' "$local_checks_results"; then
-          iter_stop_reason="local_checks_failed"
-          echo "Loop stopped: local_checks not passing (B2 enforcement)" >&2
+          # Extract blocking slug/step pairs and re-run them
+          local blocking_targets
+          blocking_targets=$(mktemp)
+          grep -E '"outcome":"(error|fail)"' "$local_checks_results" | \
+            python3 -c "
+import json, sys
+for line in sys.stdin:
+    d = json.loads(line.strip())
+    print(d['slug'], d.get('step', 0))
+" > "$blocking_targets" 2>/dev/null
+
+          local rerun_results=""
+          if [[ -s "$blocking_targets" ]]; then
+            rerun_results=$(mktemp)
+            invoke_local_checks "$PROJECT_PATH" "$blocking_targets" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$rerun_results"
+          fi
+
+          # Call confirm_b2_block via run_local_checks.py --confirm-b2
+          # Build first-pass and rerun JSON arrays (command-less, match by slug+step)
+          local confirm_out=""
+          if [[ -n "$rerun_results" && -s "$rerun_results" ]]; then
+            confirm_out=$(python3 -c "
+import json, sys
+
+first_file, rerun_file = sys.argv[1], sys.argv[2]
+with open(first_file, encoding='utf-8-sig') as f:
+    first = [json.loads(l) for l in f if l.strip()]
+with open(rerun_file, encoding='utf-8-sig') as f:
+    rerun = [json.loads(l) for l in f if l.strip()]
+
+blocking = [r for r in first if r.get('outcome') in ('fail', 'error')]
+rerun_map = {(r['slug'], r.get('step', 0)): r['outcome'] for r in rerun}
+confirmed = []
+transient = []
+for b in blocking:
+    key = (b['slug'], b.get('step', 0))
+    ro = rerun_map.get(key)
+    if ro in ('fail', 'error'):
+        confirmed.append(b)
+    else:
+        transient.append(key)
+
+result = {'blocked': len(confirmed) > 0, 'transient_cleared': [str(k) for k in transient]}
+print(json.dumps(result))
+" "$local_checks_results" "$rerun_results" 2>/dev/null)
+          fi
+
+          rm -f "$blocking_targets"
+          [[ -n "$rerun_results" ]] && rm -f "$rerun_results"
+
+          # Parse confirm result
+          local confirmed_blocked="true"
+          if [[ -n "$confirm_out" ]]; then
+            confirmed_blocked=$(python3 -c "
+import json, sys
+d = json.loads(sys.argv[1])
+print('false' if not d.get('blocked', True) else 'true')
+" "$confirm_out" 2>/dev/null || echo "true")
+          fi
+
+          if [[ "$confirmed_blocked" == "false" ]]; then
+            echo "B2 transient cleared on re-run" >&2
+          else
+            iter_stop_reason="local_checks_failed"
+            echo "Loop stopped: local_checks not passing (B2 confirmed)" >&2
+          fi
         fi
       fi
     fi
