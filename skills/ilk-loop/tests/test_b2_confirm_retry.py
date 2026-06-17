@@ -134,4 +134,6 @@ def test_result_contains_blocking_checks_detail() -> None:
     rerun = [_r("pytest -q", "pass")]
     result = confirm_b2_block(first, rerun)
     # The result should carry enough detail for the runner to log what happened
-    assert "confirmed_blocking" in result or "details" in result
+    assert "blocking_checks" in result
+    assert "transient_cleared" in result
+    assert "pytest -q" in result["transient_cleared"]

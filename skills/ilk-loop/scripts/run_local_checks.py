@@ -340,6 +340,90 @@ def _tail(s: str, n: int) -> str:
     return "...[truncated]...\n" + s[-n:]
 
 
+# ── B2 confirm-before-block decision ─────────────────────────────────────────
+
+_BLOCKING_OUTCOMES = {"fail", "error"}
+
+
+def confirm_b2_block(
+    first_results: list[dict],
+    rerun_results: list[dict],
+) -> dict:
+    """Decide whether a B2 blocking outcome is real or transient.
+
+    The runner calls this after a first pass of local_checks has at least one
+    blocking outcome (``fail`` or ``error``).  It re-runs *only* the blocking
+    checks and passes both sets of results here.
+
+    Rules:
+      - No blocking outcome on first pass → NOT blocked (no re-run needed).
+      - A blocking check that passes on re-run → transient, NOT blocked.
+      - A blocking check that still fails/errored on re-run → real, blocked.
+      - ``skipped`` is never blocking.
+
+    Parameters
+    ----------
+    first_results : list[dict]
+        Every check result from the first pass.  Each dict must have at least
+        ``command`` (str) and ``outcome`` (str in {pass, fail, error, skipped}).
+    rerun_results : list[dict]
+        Results of re-running the blocking checks only (same schema).  Empty
+        when the first pass had no blocking outcomes.
+
+    Returns
+    -------
+    dict
+        ``blocked`` (bool), ``blocking_checks`` (list of dicts with
+        ``command``, ``first_outcome``, ``rerun_outcome``), and
+        ``transient_cleared`` (list of commands that flipped from blocking to
+        pass on re-run).
+    """
+    # Identify the blocking checks from the first pass
+    blocking = [r for r in first_results if r.get("outcome") in _BLOCKING_OUTCOMES]
+
+    if not blocking:
+        return {
+            "blocked": False,
+            "blocking_checks": [],
+            "transient_cleared": [],
+        }
+
+    # Build a lookup from command → rerun outcome
+    rerun_map: dict[str, str] = {r["command"]: r["outcome"] for r in rerun_results}
+
+    confirmed: list[dict] = []
+    transient_cleared: list[str] = []
+
+    for r in blocking:
+        cmd = r["command"]
+        first_out = r["outcome"]
+        rerun_out = rerun_map.get(cmd)
+
+        if rerun_out is None:
+            # This blocking check was NOT re-run — treat as still blocking.
+            # The caller is responsible for re-running all blocking checks.
+            confirmed.append({
+                "command": cmd,
+                "first_outcome": first_out,
+                "rerun_outcome": None,
+            })
+        elif rerun_out in _BLOCKING_OUTCOMES:
+            confirmed.append({
+                "command": cmd,
+                "first_outcome": first_out,
+                "rerun_outcome": rerun_out,
+            })
+        else:
+            # Transient: blocked on first, passed on re-run
+            transient_cleared.append(cmd)
+
+    return {
+        "blocked": len(confirmed) > 0,
+        "blocking_checks": confirmed,
+        "transient_cleared": transient_cleared,
+    }
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 def main(argv: list[str]) -> int:
