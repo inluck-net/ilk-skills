@@ -181,11 +181,17 @@ function Invoke-Tick {
         $r = $sender.Tag
         if ($r.action.kind -eq "status") {
           $projKey = $r.project_key
-          $projDir = Join-Path $RepoRoot "..\$projKey"
-          # Try to open the project's status or log
-          $logDir = Join-Path $env:USERPROFILE ".ilk-data\projects\$projKey\logs"
-          if (Test-Path $logDir) {
-            Start-Process "explorer.exe" $logDir
+          # If a postmortem report is available, open it so the operator can
+          # read the block reason without pasting logs.  Fall back to the
+          # project log dir when no report path is present.
+          $reportPath = $r.action.report_path
+          if ($reportPath -and (Test-Path $reportPath)) {
+            Start-Process $reportPath
+          } else {
+            $logDir = Join-Path $env:USERPROFILE ".ilk-data\projects\$projKey\logs"
+            if (Test-Path $logDir) {
+              Start-Process "explorer.exe" $logDir
+            }
           }
         }
       }.GetNewClosure())
