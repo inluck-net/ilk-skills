@@ -116,6 +116,7 @@ def test_bomd_jsonl_classifies(scratch_env):
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, (
         f"Expected exit 0, got {result.returncode}.\n"
@@ -178,6 +179,7 @@ def test_bomd_sentinel_parses(scratch_env):
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, (
         f"read_sentinel should parse BOM'd sentinel, got exit {result.returncode}.\n"
@@ -229,6 +231,7 @@ def test_clean_jsonl_still_classifies(scratch_env):
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, (
         f"Expected exit 0, got {result.returncode}.\n"

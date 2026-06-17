@@ -53,10 +53,11 @@ def _make_git_project(name: str) -> Path:
     root = SCRATCH / "projects" / name
     root.mkdir(parents=True, exist_ok=True)
     # init + empty commit so .git exists
-    subprocess.run(["git", "init", str(root)], capture_output=True, check=True)
+    subprocess.run(["git", "init", str(root)], capture_output=True, check=True, encoding="utf-8", errors="replace")
     subprocess.run(
         ["git", "-C", str(root), "commit", "--allow-empty", "-m", "init"],
         capture_output=True, check=True,
+        encoding="utf-8", errors="replace",
     )
     return root
 
@@ -160,6 +161,7 @@ class TestAC1_LoopStatusJson:
             capture_output=True,
             text=True,
             env=env,
+            encoding="utf-8", errors="replace",
         )
         assert result.returncode == 1, f"exit {result.returncode}: {result.stderr}"
         data = json.loads(result.stdout)
@@ -189,6 +191,7 @@ class TestAC1_LoopStatusJson:
             capture_output=True,
             text=True,
             env=env,
+            encoding="utf-8", errors="replace",
         )
         assert result.returncode == 1
         # Should NOT be valid JSON
@@ -214,6 +217,7 @@ class TestAC1_LoopStatusJson:
             capture_output=True,
             text=True,
             env=env,
+            encoding="utf-8", errors="replace",
         )
         assert result.returncode == 0, f"exit {result.returncode}: {result.stderr}"
         data = json.loads(result.stdout)
@@ -235,6 +239,7 @@ class TestAC2_StatusAllJson:
             capture_output=True,
             text=True,
             env=env,
+            encoding="utf-8", errors="replace",
         )
         assert result.returncode == 0, f"exit {result.returncode}: {result.stderr}"
         data = json.loads(result.stdout)
@@ -263,6 +268,7 @@ class TestAC2_StatusAllJson:
             capture_output=True,
             text=True,
             env=env,
+            encoding="utf-8", errors="replace",
         )
         data = json.loads(result.stdout)
         assert len(data) == 1
@@ -283,6 +289,7 @@ class TestAC3_PidLiveness:
             capture_output=True,
             text=True,
             env=env,
+            encoding="utf-8", errors="replace",
         )
         data = json.loads(result.stdout)
         entry = next(e for e in data if e["project_key"].endswith("live-pid"))
@@ -297,6 +304,7 @@ class TestAC3_PidLiveness:
             capture_output=True,
             text=True,
             env=env,
+            encoding="utf-8", errors="replace",
         )
         data = json.loads(result.stdout)
         entry = next(e for e in data if e["project_key"].endswith("dead-pid"))
@@ -320,6 +328,7 @@ class TestAC3_PidLiveness:
         result = subprocess.run(
             [sys.executable, str(STATUS_ALL), "--json"],
             capture_output=True, text=True, env=env,
+            encoding="utf-8", errors="replace",
         )
         data = json.loads(result.stdout)
         entry = next(e for e in data if e["project_key"].endswith("bom-pid"))

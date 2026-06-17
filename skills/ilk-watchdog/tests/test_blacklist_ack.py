@@ -117,6 +117,7 @@ class TestAck:
 class TestCLI:
     def _run(self, *args):
         return subprocess.run([sys.executable, str(SCRIPTS_DIR / "blacklist_status.py"), *args],
+        encoding="utf-8", errors="replace",
                               capture_output=True, text=True)
 
     def test_check_no_postmortem(self, tmp_path):

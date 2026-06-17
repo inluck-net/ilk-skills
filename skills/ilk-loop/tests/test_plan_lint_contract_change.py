@@ -29,6 +29,7 @@ def _run_lint(tmp_path: Path, filename: str, content: str) -> subprocess.Complet
         capture_output=True,
         text=True,
         timeout=30,
+        encoding="utf-8", errors="replace",
     )
 
 

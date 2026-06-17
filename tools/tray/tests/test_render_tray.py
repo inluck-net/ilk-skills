@@ -230,6 +230,7 @@ class TestCLI:
             capture_output=True,
             text=True,
             timeout=10,
+            encoding="utf-8", errors="replace",
         )
 
     def test_json_from_file(self, tmp_path: Path) -> None:

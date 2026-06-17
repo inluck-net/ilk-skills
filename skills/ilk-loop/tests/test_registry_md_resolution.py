@@ -42,10 +42,11 @@ ILK_DATA = SCRATCH / "ilk-data"
 def _make_git_project(name: str) -> Path:
     root = SCRATCH / "projects" / name
     root.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", str(root)], capture_output=True, check=True)
+    subprocess.run(["git", "init", str(root)], capture_output=True, check=True, encoding="utf-8", errors="replace")
     subprocess.run(
         ["git", "-C", str(root), "commit", "--allow-empty", "-m", "init"],
         capture_output=True, check=True,
+        encoding="utf-8", errors="replace",
     )
     return root
 
@@ -132,6 +133,7 @@ def test_template_linked_md_refs_resolve():
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 1, f"expected exit 1, got {result.returncode}: {result.stderr}"
     assert "no sub-plan references" not in result.stderr.lower(), (
@@ -226,6 +228,7 @@ def test_bare_slug_resolves():
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 1, f"expected exit 1, got {result.returncode}: {result.stderr}"
     assert "no sub-plan references" not in result.stderr.lower(), (

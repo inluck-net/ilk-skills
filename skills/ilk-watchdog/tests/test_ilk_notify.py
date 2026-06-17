@@ -38,6 +38,7 @@ def _run_notify(*args: str, env_override: dict | None = None) -> subprocess.Comp
         [sys.executable, str(NOTIFY_PY), *args],
         capture_output=True, text=True, timeout=15,
         env=env,
+        encoding="utf-8", errors="replace",
     )
 
 

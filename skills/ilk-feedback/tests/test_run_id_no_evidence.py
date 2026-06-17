@@ -124,6 +124,7 @@ def test_run_id_no_jsonl_with_sentinel_returns_no_evidence(scratch_env):
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, (
         f"Expected exit 0, got {result.returncode}.\n"
@@ -165,6 +166,7 @@ def test_run_id_no_jsonl_no_sentinel_exits_error(scratch_env):
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     # Should exit non-zero (the run doesn't exist at all).
     assert result.returncode != 0, (
@@ -202,6 +204,7 @@ def test_run_id_with_jsonl_classifies_that_run(scratch_env):
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, (
         f"Expected exit 0, got {result.returncode}.\n"
@@ -244,6 +247,7 @@ def test_no_run_id_flag_uses_newest(scratch_env):
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, (
         f"Expected exit 0, got {result.returncode}.\n"

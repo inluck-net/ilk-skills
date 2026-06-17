@@ -87,6 +87,7 @@ def _pid_alive(pid: int) -> bool:
             cp = subprocess.run(
                 ["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"],
                 capture_output=True, text=True, timeout=5,
+                encoding="utf-8", errors="replace",
             )
             return f'"{pid}"' in cp.stdout
         # POSIX
@@ -106,6 +107,7 @@ def list_tracked(repo: Path, paths: list[Path]) -> set[Path]:
         cp = subprocess.run(
             ["git", "-C", str(repo), "ls-files", "--error-unmatch", "--", *rels],
             capture_output=True, text=True, timeout=30,
+            encoding="utf-8", errors="replace",
         )
     except FileNotFoundError:
         return set()
@@ -114,6 +116,7 @@ def list_tracked(repo: Path, paths: list[Path]) -> set[Path]:
         cp = subprocess.run(
             ["git", "-C", str(repo), "ls-files", "--", *rels],
             capture_output=True, text=True, timeout=30,
+            encoding="utf-8", errors="replace",
         )
     tracked = set()
     for line in cp.stdout.splitlines():
@@ -224,7 +227,7 @@ def main(argv: list[str]) -> int:
     ]
     if tracked_rels:
         cmd = ["git", "-C", str(root), "rm", "--", *tracked_rels]
-        cp = subprocess.run(cmd, capture_output=True, text=True)
+        cp = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
         if cp.returncode != 0:
             print(f"error: git rm failed:\n{cp.stderr}", file=sys.stderr)
             print("destination is populated but tracked sources were NOT removed; "

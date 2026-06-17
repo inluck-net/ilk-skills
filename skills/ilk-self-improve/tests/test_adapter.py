@@ -51,7 +51,7 @@ def _run_build_task(backlog_dir: Path, extra_args: list[str] | None = None) -> s
     """Run build_task.py with the given backlog dir."""
     env = {**os.environ, "ILK_DATA_HOME": str(backlog_dir)}
     cmd = [sys.executable, str(SCRIPT, )] + (extra_args or [])
-    return subprocess.run(cmd, capture_output=True, text=True, env=env)
+    return subprocess.run(cmd, capture_output=True, text=True, env=env, encoding="utf-8", errors="replace")
 
 
 # ---------------------------------------------------------------------------

@@ -189,6 +189,7 @@ def main() -> int:
         env = {**os.environ, "CLAUDE_CONFIG_DIR": str(home)}
         try:
             proc = subprocess.run(["claude", "mcp", "list"], env=env, text=True,
+            encoding="utf-8", errors="replace",
                                   capture_output=True, timeout=60)
             print(proc.stdout.strip() or proc.stderr.strip())
             return proc.returncode

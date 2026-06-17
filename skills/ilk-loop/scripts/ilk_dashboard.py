@@ -33,6 +33,7 @@ def _status_all_json() -> list[dict]:
     result = subprocess.run(
         [sys.executable, str(status_all), "--json"],
         capture_output=True, text=True, timeout=30,
+        encoding="utf-8", errors="replace",
     )
     if result.returncode != 0:
         raise RuntimeError(f"status_all.py failed (exit {result.returncode}): {result.stderr}")

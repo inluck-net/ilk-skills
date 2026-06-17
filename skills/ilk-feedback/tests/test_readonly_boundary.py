@@ -103,6 +103,7 @@ def test_collect_writes_only_under_ilk_data_home(scratch_env):
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, (
         f"collect.py exited {result.returncode}.\n"

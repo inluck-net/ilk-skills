@@ -107,6 +107,7 @@ def _run_promote(plans_dir: Path) -> dict:
         [sys.executable, str(PROMOTE_SCRIPT),
          "--plans-dir", str(plans_dir), "--dry-run"],
         capture_output=True, text=True, timeout=15,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, f"exit {result.returncode}: {result.stderr}"
     return json.loads(result.stdout)

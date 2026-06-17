@@ -36,10 +36,11 @@ def _make_git_project(name: str) -> Path:
     """Create a minimal git repo at SCRATCH/projects/<name>/. Returns root."""
     root = SCRATCH / "projects" / name
     root.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", str(root)], capture_output=True, check=True)
+    subprocess.run(["git", "init", str(root)], capture_output=True, check=True, encoding="utf-8", errors="replace")
     subprocess.run(
         ["git", "-C", str(root), "commit", "--allow-empty", "-m", "init"],
         capture_output=True, check=True,
+        encoding="utf-8", errors="replace",
     )
     return root
 
@@ -127,6 +128,7 @@ def _get_sentinel(project_name: str) -> dict:
     result = subprocess.run(
         [sys.executable, str(STATUS_ALL), "--json"],
         capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, f"exit {result.returncode}: {result.stderr}"
     data = json.loads(result.stdout)

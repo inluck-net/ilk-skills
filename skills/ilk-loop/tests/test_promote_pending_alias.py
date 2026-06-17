@@ -53,7 +53,7 @@ def _write_master(name: str, *, title: str = "Test", status: str = "queued",
 def _run(*extra_args: str) -> dict:
     """Run promote_next_master.py with --plans-dir pointing at PLANS_DIR."""
     cmd = [sys.executable, str(SCRIPT), "--plans-dir", str(PLANS_DIR), *extra_args]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     assert result.returncode == 0, f"exit {result.returncode}: {result.stderr}"
     return json.loads(result.stdout)
 

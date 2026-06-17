@@ -56,6 +56,7 @@ def _resolve_action_ps(label: str) -> str:
         capture_output=True,
         text=True,
         timeout=30,
+        encoding="utf-8", errors="replace",
     )
     if result.returncode != 0:
         raise RuntimeError(

@@ -53,7 +53,7 @@ def _notify_darwin(title: str, body: str, *, dry_run: bool = False) -> str:
     cmd = ["osascript", "-e", script]
     if dry_run:
         return " ".join(cmd)
-    subprocess.run(cmd, capture_output=True, timeout=10)
+    subprocess.run(cmd, capture_output=True, timeout=10, encoding="utf-8", errors="replace")
     return ""
 
 
@@ -69,7 +69,7 @@ def _notify_win32(title: str, body: str, *, dry_run: bool = False) -> str:
     if dry_run:
         return " ".join(cmd)
     try:
-        subprocess.run(cmd, capture_output=True, timeout=15)
+        subprocess.run(cmd, capture_output=True, timeout=15, encoding="utf-8", errors="replace")
     except (subprocess.TimeoutExpired, OSError):
         pass
     return ""
@@ -82,6 +82,7 @@ def _notify_linux(title: str, body: str, *, dry_run: bool = False) -> str:
         return " ".join(cmd)
     try:
         subprocess.run(cmd, capture_output=True, timeout=10,
+        encoding="utf-8", errors="replace",
                        stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
     except FileNotFoundError:
         # notify-send not installed — console fallback

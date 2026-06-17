@@ -97,6 +97,7 @@ def run_loop_status(project_path: Path) -> str:
             capture_output=True,
             text=True,
             timeout=30,
+            encoding="utf-8", errors="replace",
         )
     except subprocess.TimeoutExpired:
         return "<loop_status timed out>"

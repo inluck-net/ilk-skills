@@ -100,6 +100,7 @@ def test_early_death_emits_interrupted(scratch_env):
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, (
         f"Expected exit 0, got {result.returncode}.\n"
@@ -134,6 +135,7 @@ def test_never_ran_exits_1(scratch_env):
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 1, (
         f"Expected exit 1, got {result.returncode}.\n"

@@ -145,6 +145,7 @@ def test_per_iter_fallback_classifies_target_run(scratch_env):
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, (
         f"Expected exit 0, got {result.returncode}.\n"
@@ -197,6 +198,7 @@ def test_no_records_anywhere_returns_no_evidence_for_target(scratch_env):
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     # Should exit 0 with a no-evidence postmortem (not error, not classify Y).
     assert result.returncode == 0, (
@@ -247,6 +249,7 @@ def test_summary_path_still_works(scratch_env):
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, (
         f"Expected exit 0, got {result.returncode}.\n"
@@ -291,6 +294,7 @@ def test_auto_detect_with_no_summary_no_per_iter_returns_error(scratch_env):
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     # Expected: exit 1 (no summary records → can't discover run_id).
     assert result.returncode == 1, (
@@ -329,6 +333,7 @@ def test_per_iter_takes_priority_over_sentinel(scratch_env):
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, (
         f"Expected exit 0, got {result.returncode}.\n"

@@ -152,6 +152,7 @@ def _run_status_all(tmp_path: Path) -> list[dict]:
         text=True,
         timeout=30,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, f"status_all failed: {result.stderr}"
     return json.loads(result.stdout)
@@ -280,6 +281,7 @@ class TestStatusAllBlocked:
             text=True,
             timeout=30,
             env=env,
+            encoding="utf-8", errors="replace",
         )
         raw = result.stdout
         for i, ch in enumerate(raw):

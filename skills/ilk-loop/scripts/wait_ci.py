@@ -54,6 +54,7 @@ def resolve_gitee_token(project: Path) -> str | None:
             capture_output=True,
             text=True,
             check=True,
+            encoding="utf-8", errors="replace",
         ).stdout.strip()
     except subprocess.CalledProcessError:
         return None
@@ -69,6 +70,7 @@ def resolve_gitee_token(project: Path) -> str | None:
             capture_output=True,
             text=True,
             check=True,
+            encoding="utf-8", errors="replace",
         )
         for line in proc.stdout.splitlines():
             if line.startswith("password="):
@@ -94,6 +96,7 @@ def parse_owner_repo(project: Path) -> tuple[str, str] | None:
             capture_output=True,
             text=True,
             check=True,
+            encoding="utf-8", errors="replace",
         ).stdout.strip()
     except subprocess.CalledProcessError:
         return None

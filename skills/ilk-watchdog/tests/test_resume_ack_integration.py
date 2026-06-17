@@ -51,6 +51,7 @@ def test_ack_cli_roundtrip(tmp_path: Path):
 
     def run(*args):
         return subprocess.run([sys.executable, str(BL_PY), *args],
+        encoding="utf-8", errors="replace",
                               capture_output=True, text=True)
 
     # check -> blacklisted

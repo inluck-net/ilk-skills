@@ -61,6 +61,7 @@ def pid_alive(pid: int) -> bool:
             out = subprocess.run(
                 ["tasklist", "/FI", f"PID eq {pid}"],
                 capture_output=True, text=True, timeout=5,
+                encoding="utf-8", errors="replace",
             )
             return str(pid) in out.stdout
         except (subprocess.TimeoutExpired, OSError):

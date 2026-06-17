@@ -90,6 +90,7 @@ def _run_render(fixture_path: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(RENDER_PY), "--json-from", str(fixture_path)],
         capture_output=True, text=True, timeout=15,
+        encoding="utf-8", errors="replace",
     )
 
 
@@ -211,6 +212,7 @@ class TestPluginSymlinkResolution:
         result = subprocess.run(
             ["bash", str(link)],
             capture_output=True, text=True, timeout=60,
+            encoding="utf-8", errors="replace",
         )
         assert result.returncode == 0, f"exit {result.returncode}: {result.stderr}"
         assert "not found" not in result.stdout, (

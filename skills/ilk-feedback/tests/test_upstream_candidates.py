@@ -263,6 +263,7 @@ class TestAC3Emission:
         result = subprocess.run(
             [sys.executable, str(_COLLECT_PY), "-ProjectPath", str(project_path), "--quiet"],
             capture_output=True, text=True, env=env,
+            encoding="utf-8", errors="replace",
         )
         assert result.returncode == 0, f"exit {result.returncode}: {result.stderr}"
 
@@ -301,6 +302,7 @@ class TestAC3Emission:
         result = subprocess.run(
             [sys.executable, str(_COLLECT_PY), "-ProjectPath", str(project_path), "--quiet"],
             capture_output=True, text=True, env=env,
+            encoding="utf-8", errors="replace",
         )
         assert result.returncode == 0
 
@@ -328,6 +330,7 @@ class TestAC4Boundary:
         result = subprocess.run(
             [sys.executable, str(_COLLECT_PY), "-ProjectPath", str(project_path), "--quiet"],
             capture_output=True, text=True, env=env,
+            encoding="utf-8", errors="replace",
         )
         # May exit 1 (no data) — that's fine, we're checking boundary
         for p in skills_dir.rglob("*"):

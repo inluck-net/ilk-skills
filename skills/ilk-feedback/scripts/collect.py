@@ -512,6 +512,7 @@ def loop_status_exit(project_path: Path) -> int:
             capture_output=True,
             text=True,
             timeout=30,
+            encoding="utf-8", errors="replace",
         )
         return proc.returncode
     except (subprocess.TimeoutExpired, OSError):

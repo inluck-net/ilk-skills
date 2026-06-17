@@ -157,6 +157,7 @@ def test_sentinel_run_classifies_local_checks_stuck_not_shipped_unverified(scrat
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, (
         f"Expected exit 0, got {result.returncode}.\n"
@@ -228,6 +229,7 @@ def test_shipped_unverified_no_relaunch(scratch_env):
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0
 
@@ -266,6 +268,7 @@ def test_no_evidence_classified(scratch_env):
         capture_output=True,
         text=True,
         env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0
 
@@ -294,6 +297,7 @@ def test_startup_hang_classified(scratch_env):
         [sys.executable, str(_COLLECT_PY), "-ProjectPath", str(project_path),
          "--run-id", run_id, "--quiet"],
         capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
     text = (_launcher_dir(data_home, key) / "postmortems" / f"{run_id}.md").read_text(encoding="utf-8")
@@ -342,6 +346,7 @@ def test_dependency_unreachable_classified_and_names_dep(scratch_env):
         [sys.executable, str(_COLLECT_PY), "-ProjectPath", str(project_path),
          "--run-id", run_id, "--quiet"],
         capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
     text = (_launcher_dir(data_home, key) / "postmortems" / f"{run_id}.md").read_text(encoding="utf-8")
@@ -374,6 +379,7 @@ def test_plain_no_progress_still_stuck(scratch_env):
         [sys.executable, str(_COLLECT_PY), "-ProjectPath", str(project_path),
          "--run-id", run_id, "--quiet"],
         capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
     text = (_launcher_dir(data_home, key) / "postmortems" / f"{run_id}.md").read_text(encoding="utf-8")
@@ -468,6 +474,7 @@ def test_classify_action_bash_parity(label, expected_action):
         capture_output=True,
         text=True,
         timeout=10,
+        encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, (
         f"bash classify_action exited {result.returncode} for label={label!r}\n"
