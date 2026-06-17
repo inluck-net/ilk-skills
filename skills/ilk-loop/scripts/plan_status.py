@@ -168,25 +168,38 @@ def is_master_all_shipped(master_path: Path, plans_dir: Path) -> bool:
 def _parse_depends_on(raw: str) -> list[str]:
     """Parse the ``depends_on`` front-matter value into a list of slugs.
 
-    The value may be:
-      - a YAML-ish JSON list string: ``["alpha", "beta"]``
-      - a single bare slug: ``alpha``
-      - empty / whitespace: ``[]``
+    Accepts every shape plans actually use:
+      - unquoted YAML flow list:  ``[alpha, beta-gamma]``  (the common form)
+      - JSON-style quoted list:   ``["alpha", "beta"]``
+      - comma-separated bare:     ``alpha, beta``
+      - a single bare slug:       ``alpha``
+      - empty / whitespace:       ``[]`` / ``""``
+
+    Slugs contain hyphens, so an unquoted flow list is valid YAML but NOT valid
+    JSON — ``json.loads('[queue-drain-past-blocked]')`` raises. Relying on a
+    JSON parse therefore collapsed the whole ``[...]`` string into one bogus
+    slug, which never matched a sibling and falsely stalled the queue
+    (2026-06-17, self-hosting). We strip the brackets and split on commas
+    instead, which handles quoted and unquoted items uniformly.
     """
     raw = raw.strip()
     if not raw or raw == "[]":
         return []
-    # Try JSON-ish list parse.
+
+    def _clean(items: list[str]) -> list[str]:
+        out: list[str] = []
+        for s in items:
+            s = s.strip().strip('"').strip("'").strip()
+            if s:
+                out.append(s)
+        return out
+
     if raw.startswith("["):
-        try:
-            import json
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                return [str(s).strip() for s in parsed if str(s).strip()]
-        except (json.JSONDecodeError, ValueError):
-            pass
-    # Fallback: single bare slug.
-    return [raw]
+        inner = raw[1:-1] if raw.endswith("]") else raw[1:]
+        return _clean(inner.split(","))
+    if "," in raw:
+        return _clean(raw.split(","))
+    return _clean([raw])
 
 
 def _slug_from_filename(fname: str) -> str:

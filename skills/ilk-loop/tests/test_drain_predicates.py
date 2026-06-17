@@ -25,7 +25,48 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 # Will be implemented in step 1 — until then, every test here is RED.
-from plan_status import master_is_drainable, subplan_is_runnable  # noqa: E402
+from plan_status import (  # noqa: E402
+    _parse_depends_on,
+    master_is_drainable,
+    subplan_is_runnable,
+)
+
+
+# ── Regression: depends_on must accept the UNQUOTED YAML flow list ───────────
+# Real plans (and the sub-plan template) write `depends_on: [slug-with-hyphens]`,
+# which is valid YAML but invalid JSON. A JSON-only parser collapsed it into one
+# bogus slug and falsely stalled the queue (2026-06-17, self-hosting). Every
+# pre-existing test below used the JSON-QUOTED form, so it shipped green and
+# broke on live input — this class closes that gap.
+
+
+class TestParseDependsOn:
+    def test_unquoted_single_hyphenated_slug(self) -> None:
+        assert _parse_depends_on("[queue-drain-past-blocked]") == ["queue-drain-past-blocked"]
+
+    def test_unquoted_multiple(self) -> None:
+        assert _parse_depends_on("[alpha, beta-gamma]") == ["alpha", "beta-gamma"]
+
+    def test_json_quoted_still_works(self) -> None:
+        assert _parse_depends_on('["alpha", "beta"]') == ["alpha", "beta"]
+
+    def test_comma_separated_bare(self) -> None:
+        assert _parse_depends_on("alpha, beta") == ["alpha", "beta"]
+
+    def test_single_bare_slug(self) -> None:
+        assert _parse_depends_on("alpha") == ["alpha"]
+
+    def test_empty_forms(self) -> None:
+        assert _parse_depends_on("[]") == []
+        assert _parse_depends_on("") == []
+        assert _parse_depends_on("   ") == []
+
+    def test_unquoted_dep_resolves_runnable(self) -> None:
+        # The exact live case: mock-master-drain-harness depends_on
+        # [queue-drain-past-blocked] (unquoted), which is shipped -> runnable.
+        fm = {"status": "pending", "depends_on": "[queue-drain-past-blocked]"}
+        siblings = {"queue-drain-past-blocked": "shipped"}
+        assert subplan_is_runnable(fm, siblings) is True
 
 
 # ── AC-1: subplan_is_runnable ────────────────────────────────────────────────
