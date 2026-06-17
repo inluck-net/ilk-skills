@@ -98,7 +98,89 @@ def lint_block_when_default_exists(text: str, slug: str) -> list[str]:
     return findings
 
 
-ALL_CHECKS = (lint_envprereq_fallback_contradiction, lint_block_when_default_exists)
+# ── Contract-change review (modes A/C/D guard) ────────────────────────────────
+#
+# A sub-plan whose scope_paths touch a contract-governed file must reference
+# the contract docs so a new reader/writer can't be authored blind.  See
+# orchestration-collaboration.md L1-L4 and detached-component-contracts.md.
+
+# Files whose contracts are documented in detached-component-contracts.md.
+# Matching is by filename suffix (the path may be absolute or project-relative).
+_CONTRACT_GOVERNED_FILES = frozenset({
+    "collect.py",
+    "watchdog.ps1",
+    "watchdog.sh",
+    "scheduler.ps1",
+    "scheduler.sh",
+    "run_ilk_loop_claude.ps1",
+    "run_ilk_loop_claude.sh",
+    "loop_status.py",
+    "promote_next_master.py",
+    "plan_status.py",
+    "status_all.py",
+    "render_tray.py",
+})
+
+# Contract documentation filenames — a sub-plan body must mention at least one.
+_CONTRACT_DOC_NAMES = (
+    "orchestration-collaboration.md",
+    "detached-component-contracts.md",
+)
+
+_SCOPE_PATHS_RE = re.compile(r"^scope_paths:\s*$", re.MULTILINE)
+_LIST_ITEM_RE = re.compile(r"^\s+-\s+\"?([^\"]+)\"?\s*$", re.MULTILINE)
+
+
+def _extract_scope_paths(text: str) -> list[str]:
+    """Extract scope_paths list from YAML-like frontmatter."""
+    m = re.match(r"^---\n.*?\n---\n", text, re.S)
+    if not m:
+        return []
+    fm = text[m.start():m.end()]
+    # Find scope_paths: then collect indented list items
+    sm = _SCOPE_PATHS_RE.search(fm)
+    if not sm:
+        return []
+    after = fm[sm.end():]
+    return _LIST_ITEM_RE.findall(after)
+
+
+def _path_is_contract_governed(path: str) -> bool:
+    """True if *path* ends with a contract-governed filename."""
+    p = path.replace("\\", "/")
+    return any(p.endswith("/" + name) or p == name for name in _CONTRACT_GOVERNED_FILES)
+
+
+def _body_references_contract_doc(text: str) -> bool:
+    """True if *text* mentions at least one contract documentation file."""
+    lower = text.lower()
+    return any(doc in lower for doc in _CONTRACT_DOC_NAMES)
+
+
+def lint_contract_change_review(text: str, slug: str) -> list[str]:
+    """Flag a contract-governed sub-plan that doesn't reference the contract docs."""
+    findings: list[str] = []
+    scope_paths = _extract_scope_paths(text)
+    governed = [p for p in scope_paths if _path_is_contract_governed(p)]
+    if not governed:
+        return findings
+    if _body_references_contract_doc(text):
+        return findings
+    findings.append(
+        f"{slug}: scope_paths touch contract-governed file(s) "
+        f"({', '.join(governed)}) but the sub-plan body does not reference "
+        f"{' or '.join(_CONTRACT_DOC_NAMES)}. "
+        f"Consult detached-component-contracts.md 'Adding a new reader or writer' "
+        f"checklist and add a Reference reading entry."
+    )
+    return findings
+
+
+ALL_CHECKS = (
+    lint_envprereq_fallback_contradiction,
+    lint_block_when_default_exists,
+    lint_contract_change_review,
+)
 
 
 def lint_file(path: str | Path) -> list[str]:
