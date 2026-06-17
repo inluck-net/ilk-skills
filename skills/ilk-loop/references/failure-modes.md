@@ -99,6 +99,15 @@ The taxonomy is not exhaustive — add a class when a genuinely new shape appear
 - **Secondary lesson:** the **B2 false-stop guard (re-run-to-confirm) cannot catch a *deterministic* gate-runner crash** — the crash reproduces on re-run and gets "confirmed" as a real fail. B2 filters *transient* flakiness only; a broken check command/runner must be fixed at the source.
 - **Reinforces:** [[gbk-console-ascii-only-stdout]], [[inline-python-open-needs-utf8]] — the zh-CN/GBK default-encoding family (now also in subprocess *capture*, not just stdout/file reads).
 
+### FM-0004 — gate runner mangled a quoted command (YAML `\"` not unescaped → bash syntax error)
+- **Date:** 2026-06-17 · **Project:** ilk-skills (toolkit; bit math-blocks) · **Class:** C (erroneous signal treated as authoritative) — sibling of [[depends-on-yaml-not-json]]
+- **Symptom:** math-blocks `numberline-primitive-ui` gate (`node -e "..."` checks) reported `local_checks_failed` (B2-confirmed) → `local-checks-stuck` block, even though the files exist and the **exact check passes (exit 0) run directly**. Also caused a **false-ship** (the sub-plan was marked `shipped` despite the false gate fail; b4 promoted to b5 — benign here since the component is actually correct, but a real §11 hole).
+- **Root cause:** `run_local_checks.py`'s hand-rolled frontmatter parser (`_coerce`) stripped the outer quotes of a YAML double-quoted command but **did not unescape `\"`** → handed `bash -c` the literal `node -e \"JSON.parse(...)\"` → `bash: syntax error near unexpected token '('` → exit 2. Affects any `local_check` with escaped inner quotes (`node -e "…"`, `python -c "…"`, `jq '… "…"'`).
+- **Fix:** `_coerce` now unescapes YAML double-quoted scalars conservatively (`\"`→`"`, `\\`→`\` via a sentinel two-step; other backslashes left literal).
+- **Guard (IMPLEMENTED):** `skills/ilk-loop/tests/test_run_local_checks_quoting.py` — `_coerce` unescape cases incl. the exact `node -e \"...\"` shape; reproduced math-blocks gate now `all_passed: True`.
+- **Open follow-up (related, NOT fixed here):** the **false-ship ordering** — the agent flips a sub-plan to `shipped` *before* the gate verdict, so a gate failure stops the loop but the stale `shipped` persists and promotion advances. A real (not false) gate failure could slip the same way. Candidate for a future batch (a §11 hardening: only write `shipped` after the gate passes, or revert on gate-fail).
+- **Reinforces:** [[depends-on-yaml-not-json]] (hand-rolled YAML parser mishandling quoting); FM-0003 (gate runner false-fails).
+
 ---
 
 ## Backfill candidates (this week's ilk-skills incidents, not yet entered)

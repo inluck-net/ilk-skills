@@ -140,9 +140,21 @@ def _coerce(s: str) -> Any:
         return s.lower() == "true"
     if s.isdigit():
         return int(s)
-    # Strip surrounding quotes if any
+    # Strip surrounding quotes if any, and unescape per YAML scalar rules.
+    # A double-quoted command like  "node -e \"JSON.parse(...)\""  must yield
+    #   node -e "JSON.parse(...)"
+    # not the literal  node -e \"...\"  — otherwise it reaches `bash -c` with
+    # stray backslashes and dies with a syntax error near `(`, producing a
+    # false local_checks_failed (FM-0004). Conservative: only unescape \" and
+    # \\ (two-step via a sentinel) so other backslashes — Windows paths, \n in
+    # a tool arg — are left untouched.
     if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
-        return s[1:-1]
+        inner = s[1:-1]
+        if s[0] == '"':
+            inner = inner.replace("\\\\", "\x00").replace('\\"', '"').replace("\x00", "\\")
+        else:  # single-quoted YAML: only '' -> ' is an escape
+            inner = inner.replace("''", "'")
+        return inner
     return s
 
 
