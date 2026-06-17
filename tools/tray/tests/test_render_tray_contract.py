@@ -162,3 +162,45 @@ class TestInvokeTickDiagnostics:
         # The pattern: assign new menu, then dispose old.
         assert "notifyIcon.ContextMenuStrip = $menu" in tray_ps1_content
         assert "oldMenu.Dispose()" in tray_ps1_content
+
+
+# ---------------------------------------------------------------------------
+# AC-5: mixed input with blocked — count↔rows totality preserved
+# ---------------------------------------------------------------------------
+
+class TestMixedWithBlockedTotality:
+    """1 blocked + 1 running + 1 idle -> exactly 3 rows and tooltip
+    counts sum to 3 — count↔rows totality holds with the new blocked
+    category."""
+
+    @pytest.fixture()
+    def mixed_blocked_view(self) -> dict:
+        entries = [
+            {
+                "project_key": "blocked-proj",
+                "path": "/fake/blocked-proj",
+                "active_master": "MASTER-2026-06-08-blocked-proj.md",
+                "next_subplan": "",
+                "step": "",
+                "sentinel": {"pid": 0, "state": "none", "alive": False},
+                "last_class": None,
+                "blocked": True,
+                "classification": "local-checks-stuck",
+                "report_path": "/tmp/report.md",
+            },
+            _make_entry("alive-proj", alive=True, state="running"),
+            _make_entry("idle-proj", alive=False, state="none"),
+        ]
+        return render_tray(entries)
+
+    def test_row_count_is_three(self, mixed_blocked_view: dict) -> None:
+        assert len(mixed_blocked_view["rows"]) == 3
+
+    def test_tooltip_counts_sum_to_three(self, mixed_blocked_view: dict) -> None:
+        tooltip = mixed_blocked_view["tooltip"]
+        blocked = _count_in_tooltip(tooltip, "blocked")
+        running = _count_in_tooltip(tooltip, "running")
+        stale = _count_in_tooltip(tooltip, "stale")
+        error = _count_in_tooltip(tooltip, "error")
+        idle = _count_in_tooltip(tooltip, "idle")
+        assert blocked + running + stale + error + idle == 3
