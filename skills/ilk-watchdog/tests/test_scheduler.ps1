@@ -16,7 +16,7 @@
                slots, dispatches stop at the cap.
 #>
 param(
-  [ValidateSet('scan', 'select', 'dispatch', 'promote', 'blacklist', 'unresolved', 'cap', 'fill', 'gates', 'mutex', 'log', 'staleexit', 'all')]
+  [ValidateSet('scan', 'select', 'dispatch', 'promote', 'blacklist', 'unresolved', 'cap', 'fill', 'gates', 'mutex', 'log', 'staleexit', 'rapiddecay', 'all')]
   [string]$Subcommand = 'all'
 )
 
@@ -1398,6 +1398,109 @@ function Run-StaleExit {
   exit 0
 }
 
+function Run-RapidDecay {
+  <#
+  .SYNOPSIS
+    RED test: the rapid-terminal counter must DECAY on expiry so a project
+    can never be permanently wedged by a stale >=2 count that re-arms every
+    cycle.
+
+    Asserts AC-1..AC-5 against Get-RapidTerminalBackoff (pure function) and
+    the cross-cycle escape via Test-SchedulerSkip with an advancing $Now.
+    Modelled on test_scheduler_stateless_blacklist.ps1 and Run-StaleExit.
+  #>
+  Write-Host '=== test_scheduler.ps1 rapiddecay ==='
+
+  $fail = $false
+  function Assert($cond, $msg) {
+    if (-not $cond) { Write-Host "FAIL: $msg" -ForegroundColor Red; $script:fail = $true }
+  }
+
+  # --- dot-source the scheduler (functions only; no mutex, no poll loop) ---
+  $env:ILK_DOTSOURCE_ONLY = '1'
+  try {
+    . $SchedulerScript
+  } finally {
+    Remove-Item Env:\ILK_DOTSOURCE_ONLY -ErrorAction SilentlyContinue
+  }
+
+  # AC-1: Get-RapidTerminalBackoff must be defined
+  Assert (Get-Command Get-RapidTerminalBackoff -ErrorAction SilentlyContinue) `
+    "AC-1: Get-RapidTerminalBackoff must be defined (dot-sourceable pure function)"
+
+  if ($fail) {
+    Write-Host "RED: Get-RapidTerminalBackoff not found" -ForegroundColor Red
+    exit 1
+  }
+
+  $now = Get-Date
+
+  # AC-2: Two consecutive detections (count 1 -> 2) arm a backoff
+  $r1 = Get-RapidTerminalBackoff -CurrentCount 0 -DetectedThisCycle $true -Now $now
+  Assert ($r1.Count -eq 1) "AC-2a: first detection -> Count=1 (got $($r1.Count))"
+  Assert ($null -eq $r1.BackoffUntil) "AC-2a: first detection -> BackoffUntil=null (got $($r1.BackoffUntil))"
+
+  $r2 = Get-RapidTerminalBackoff -CurrentCount 1 -DetectedThisCycle $true -Now $now
+  Assert ($r2.Count -eq 2) "AC-2b: second detection -> Count=2 (got $($r2.Count))"
+  Assert ($null -ne $r2.BackoffUntil) "AC-2b: count>=2 -> BackoffUntil must be non-null"
+  if ($r2.BackoffUntil) {
+    $diff = ($r2.BackoffUntil - $now).TotalMinutes
+    Assert ([math]::Abs($diff - 5) -lt 0.1) "AC-2b: BackoffUntil ~5min from now (got $diff min)"
+  }
+
+  # AC-3: No fresh detection -> count decays to 0, no backoff
+  $r3 = Get-RapidTerminalBackoff -CurrentCount 2 -DetectedThisCycle $false -Now $now
+  Assert ($r3.Count -eq 0) "AC-3: no detection -> Count=0 (got $($r3.Count))"
+  Assert ($null -eq $r3.BackoffUntil) "AC-3: no detection -> BackoffUntil=null (got $($r3.BackoffUntil))"
+
+  # AC-4: Cross-cycle escape — simulate the wedge scenario
+  # Cycle 1: detect -> count=1, no backoff
+  # Cycle 2: detect -> count=2, backoff armed at now+5min
+  # Cycle 3: now before expiry, no detection -> count=0 (decay)
+  # Cycle 4: Test-SchedulerSkip with now past expiry -> dispatchable
+  # Cycle 5: detect again -> count=1 (fresh, NOT re-entering backoff from stale count)
+  $t0 = $now
+  $c1 = Get-RapidTerminalBackoff -CurrentCount 0 -DetectedThisCycle $true -Now $t0
+  Assert ($c1.Count -eq 1) "AC-4 cycle1: count=1 (got $($c1.Count))"
+
+  $c2 = Get-RapidTerminalBackoff -CurrentCount $c1.Count -DetectedThisCycle $true -Now $t0
+  Assert ($c2.Count -eq 2) "AC-4 cycle2: count=2 (got $($c2.Count))"
+  Assert ($null -ne $c2.BackoffUntil) "AC-4 cycle2: backoff armed"
+
+  # After backoff expires, advance $now past the expiry
+  $t3 = $c2.BackoffUntil.AddSeconds(1)
+
+  # Cycle 3: no fresh detection -> counter decays
+  $c3 = Get-RapidTerminalBackoff -CurrentCount $c2.Count -DetectedThisCycle $false -Now $t3
+  Assert ($c3.Count -eq 0) "AC-4 cycle3: count decayed to 0 (got $($c3.Count))"
+  Assert ($null -eq $c3.BackoffUntil) "AC-4 cycle3: no backoff after decay"
+
+  # Cycle 4: Test-SchedulerSkip — project must be dispatchable (backoff expired,
+  # and counter is reset so no re-arm).  Feed a stale BackoffSkip entry that
+  # is in the past to simulate the cleanup branch.
+  $boPast = @{ 'proj-wedge' = $t0.AddMinutes(5) }  # expired (t3 is past this)
+  $skip = Test-SchedulerSkip -Key 'proj-wedge' -PostmortemBlacklist @{} -BackoffSkip $boPast -Now $t3
+  Assert ($null -eq $skip) "AC-4 cycle4: project dispatchable after backoff expiry (got '$skip') [WEDGE]"
+
+  # Cycle 5: detect again — must be count=1, NOT immediately re-arming from
+  # a stale >=2 count (this is the regression that wedged math-blocks).
+  $c5 = Get-RapidTerminalBackoff -CurrentCount 0 -DetectedThisCycle $true -Now $t3
+  Assert ($c5.Count -eq 1) "AC-4 cycle5: fresh detection -> count=1 (got $($c5.Count))"
+  Assert ($null -eq $c5.BackoffUntil) "AC-4 cycle5: count=1 -> no backoff (got $($c5.BackoffUntil))"
+
+  # AC-5: A stale >=2 count with NO fresh detection must NOT re-arm
+  $stale = Get-RapidTerminalBackoff -CurrentCount 5 -DetectedThisCycle $false -Now $now
+  Assert ($stale.Count -eq 0) "AC-5: stale count=5, no detection -> decayed to 0 (got $($stale.Count))"
+  Assert ($null -eq $stale.BackoffUntil) "AC-5: stale count, no detection -> no backoff (got $($stale.BackoffUntil))"
+
+  if ($fail) {
+    Write-Host "RED: rapid-terminal counter does not decay — project stays wedged" -ForegroundColor Red
+    exit 1
+  }
+  Write-Host "PASS: Get-RapidTerminalBackoff — counter decays on expiry, project escapes backoff (AC-1..AC-5)" -ForegroundColor Green
+  exit 0
+}
+
 # --- main ---------------------------------------------------------------------
 
 switch ($Subcommand) {
@@ -1413,5 +1516,6 @@ switch ($Subcommand) {
   'mutex'      { Run-Mutex }
   'log'        { Run-Log }
   'staleexit'  { Run-StaleExit }
-  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Promote; Run-Blacklist; Run-Unresolved; Run-Cap; Run-Fill; Run-Gates; Run-Mutex; Run-Log; Run-StaleExit; Write-Host 'ALL PASS' }
+  'rapiddecay' { Run-RapidDecay }
+  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Promote; Run-Blacklist; Run-Unresolved; Run-Cap; Run-Fill; Run-Gates; Run-Mutex; Run-Log; Run-StaleExit; Run-RapidDecay; Write-Host 'ALL PASS' }
 }
