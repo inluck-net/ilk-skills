@@ -405,6 +405,31 @@ def newest_run_id(by_run: dict[str, list[dict]]) -> str | None:
 
 # ---------- classification ---------------------------------------------------
 
+# Single source of truth for the final classification label vocabulary.
+# Every label that classify() / _classify_core() or the sentinel failure map
+# can emit MUST be listed here. The totality test
+# (test_label_action_totality.py) reads this constant and asserts
+# Resolve-WatchdogAction maps every entry to a known action — so adding a
+# label here without a watchdog branch will fail that gate automatically.
+#
+# Internal labels returned by classify_log_keywords() ("local-check", "api",
+# "unknown") are NOT final classification labels and are intentionally excluded.
+CLASSIFICATION_LABELS: tuple[str, ...] = (
+    "interrupted",
+    "local-checks-stuck",
+    "timeout-bound",
+    "budget-exhausted",
+    "clean-success",
+    "dependency-unreachable",
+    "api-blocked",
+    "stuck-no-progress",
+    "api-flaky",
+    "max-iter-bound",
+    "self-hosting-drift",
+    "shipped-unverified",
+    "no-evidence",
+)
+
 LOCAL_CHECK_RE = re.compile(
     r"tsc\b|typecheck|vitest|pytest|\bruff\b|eslint|bun run|cargo build|\bmake\b|npm test|npm run|mypy\b|pre-push|pre-commit|TS\d{4}|SyntaxError|ImportError",
     re.IGNORECASE,
@@ -938,6 +963,10 @@ def classify(
             # Merge self-hosting facts and return early — the sentinel is
             # authoritative, no further classification needed.
             facts.update(sh_facts)
+            assert label in CLASSIFICATION_LABELS, (
+                f"Sentinel-derived label '{label}' not in CLASSIFICATION_LABELS — "
+                f"add it to the vocabulary constant in collect.py"
+            )
             return label, facts
 
     label, facts = _classify_core(iters, last_launch, project_path)
@@ -958,6 +987,10 @@ def classify(
             label = "shipped-unverified"
             facts["unverified_sub_plans"] = unverified
 
+    assert label in CLASSIFICATION_LABELS, (
+        f"Classification label '{label}' not in CLASSIFICATION_LABELS — "
+        f"add it to the vocabulary constant in collect.py"
+    )
     return label, facts
 
 
