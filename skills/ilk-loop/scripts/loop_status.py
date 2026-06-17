@@ -105,6 +105,23 @@ def extract_master_order(master_text: str) -> list[str]:
         r"(?:^|(?<=[\s(\[|]))(?:\./)?(\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*(?:\.md)?)",
         re.MULTILINE,
     )
+    # Extract the master_plan slug from frontmatter so we can exclude the
+    # master's own bare filename.  The master_plan value is a slug like
+    # "2026-06-01-m1"; the corresponding filename would be
+    # "2026-06-01-m1.md".  If the title line uses that slug verbatim
+    # (e.g. "# MASTER plan: 2026-06-01-m1"), the regex would match it as
+    # a sub-plan reference — exclude it.
+    master_plan_slug = ""
+    if master_text.startswith("---"):
+        fm_end = master_text.find("\n---", 3)
+        if fm_end > 0:
+            for raw in master_text[3:fm_end].splitlines():
+                line = raw.strip()
+                if line.startswith("master_plan:"):
+                    master_plan_slug = line.split(":", 1)[1].strip()
+                    break
+    master_own_fname = f"{master_plan_slug}.md" if master_plan_slug else ""
+
     seen: set[str] = set()
     ordered: list[str] = []
     for f in pattern.findall(body):
@@ -115,6 +132,10 @@ def extract_master_order(master_text: str) -> list[str]:
         if not f.endswith(".md"):
             f = f + ".md"
         if f in seen:
+            continue
+        # Exclude the master's own bare filename (derived from the
+        # master_plan frontmatter value).
+        if master_own_fname and f == master_own_fname:
             continue
         seen.add(f)
         ordered.append(f)
