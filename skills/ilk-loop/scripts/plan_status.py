@@ -163,6 +163,119 @@ def is_master_all_shipped(master_path: Path, plans_dir: Path) -> bool:
     return not master_has_nonshipped(master_path, plans_dir)
 
 
+# ── depends_on-aware drain predicates (L4) ───────────────────────────────────
+
+def _parse_depends_on(raw: str) -> list[str]:
+    """Parse the ``depends_on`` front-matter value into a list of slugs.
+
+    The value may be:
+      - a YAML-ish JSON list string: ``["alpha", "beta"]``
+      - a single bare slug: ``alpha``
+      - empty / whitespace: ``[]``
+    """
+    raw = raw.strip()
+    if not raw or raw == "[]":
+        return []
+    # Try JSON-ish list parse.
+    if raw.startswith("["):
+        try:
+            import json
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [str(s).strip() for s in parsed if str(s).strip()]
+        except (json.JSONDecodeError, ValueError):
+            pass
+    # Fallback: single bare slug.
+    return [raw]
+
+
+def _slug_from_filename(fname: str) -> str:
+    """Extract the slug from a sub-plan filename like ``2026-01-01-alpha.md``."""
+    slug = fname
+    if slug.endswith(".md"):
+        slug = slug[:-3]
+    m = re.match(r"^\d{4}-\d{2}-\d{2}-(.*)$", slug)
+    if m:
+        return m.group(1)
+    return slug
+
+
+def subplan_is_runnable(fm: dict[str, str], sibling_statuses: dict[str, str]) -> bool:
+    """Return True if a sub-plan is runnable (L4).
+
+    A sub-plan is runnable iff:
+      - ``status ∈ {pending, in-progress}``
+      - every slug in ``depends_on`` maps to ``shipped`` in *sibling_statuses*
+
+    Parameters
+    ----------
+    fm:
+        The sub-plan's front-matter dict (keys: ``status``, ``depends_on``, …).
+    sibling_statuses:
+        Mapping of sibling slug → status string for every sibling in the
+        same master.  Missing keys are treated as non-shipped.
+    """
+    status = fm.get("status", "pending").strip()
+    if status not in ("pending", "in-progress"):
+        return False
+    deps = _parse_depends_on(fm.get("depends_on", ""))
+    for dep in deps:
+        if sibling_statuses.get(dep) != "shipped":
+            return False
+    return True
+
+
+def master_is_drainable(master_path: Path, plans_dir: Path) -> bool:
+    """Return True iff the master has >= 1 runnable registered sub-plan (L4).
+
+    A master with only blocked / dep-on-blocked sub-plans is NOT drainable
+    (it is *stalled*).  A master with zero registered sub-plans has nothing
+    to drain → not drainable.
+
+    Missing sub-plan files count as runnable (their status can't be read,
+    so treat as pending — matching ``master_has_nonshipped`` semantics).
+    """
+    try:
+        master_text = master_path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return False
+    registered = extract_subplan_files(master_text)
+    if not registered:
+        return False
+
+    # Build slug→status map for all registered sub-plans.
+    sibling_statuses: dict[str, str] = {}
+    for fname in registered:
+        slug = _slug_from_filename(fname)
+        sub_path = plans_dir / fname
+        if not sub_path.exists():
+            sibling_statuses[slug] = "pending"  # missing → treat as pending
+            continue
+        try:
+            sub_text = sub_path.read_text(encoding="utf-8-sig")
+        except OSError:
+            sibling_statuses[slug] = "pending"
+            continue
+        sub_fm = parse_frontmatter(sub_text)
+        sibling_statuses[slug] = sub_fm.get("status", "pending").strip()
+
+    # Check if any registered sub-plan is runnable.
+    for fname in registered:
+        slug = _slug_from_filename(fname)
+        sub_path = plans_dir / fname
+        if not sub_path.exists():
+            # Missing file → pending → runnable (dep-free assumed).
+            return True
+        try:
+            sub_text = sub_path.read_text(encoding="utf-8-sig")
+        except OSError:
+            return True
+        sub_fm = parse_frontmatter(sub_text)
+        if subplan_is_runnable(sub_fm, sibling_statuses):
+            return True
+    return False
+
+
 def reconcile_master_status(master_path: Path, plans_dir: Path) -> bool:
     """Persist ``status: shipped`` when all registered sub-plans are shipped.
 
