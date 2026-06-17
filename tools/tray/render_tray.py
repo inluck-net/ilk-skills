@@ -39,6 +39,7 @@ def render_tray(entries: list[dict]) -> dict:
         }
 
     alive_count = 0
+    blocked_count = 0
     stale_count = 0
     error_count = 0
     idle_count = 0
@@ -54,7 +55,11 @@ def render_tray(entries: list[dict]) -> dict:
         next_sp = e.get("next_subplan", "")
 
         # Determine per-project icon_state.
-        if is_alive:
+        # Blocked (needs-human) is the highest-priority category.
+        if e.get("blocked"):
+            icon = "attention"
+            blocked_count += 1
+        elif is_alive:
             icon = "running"
             alive_count += 1
         elif state == "running" and not is_alive:
@@ -70,29 +75,47 @@ def render_tray(entries: list[dict]) -> dict:
 
         # Row label: mirror render_xbar's text convention.
         label = key
-        if step:
-            label += f"  {step}"
-        if next_sp:
-            label += f"  {next_sp}"
-        # Run-state suffix, driven by the computed icon (not the raw sentinel
-        # state), so an idle/stale project is unambiguous: its step/next_subplan
-        # is the NEXT pending work, which otherwise reads like a running task
-        # (the tooltip-says-idle vs popup-looks-running mismatch). A 'running'
-        # row needs no suffix — the icon conveys it.
-        if icon == "idle":
-            label += "  (idle)"
-        elif icon == "attention":
-            label += "  (error)" if state in ("error", "errored") else "  (stale)"
+        if e.get("blocked"):
+            classification = e.get("classification") or "unknown"
+            label += f"  BLOCKED: {classification}  -> /ilk-resume"
+            if e.get("blocked_reason") == "within-backoff" and e.get("blocked_expiry"):
+                # Append local expiry time if available.
+                try:
+                    from datetime import datetime, timezone
+                    expiry = datetime.fromisoformat(e["blocked_expiry"])
+                    label += f"  (until {expiry.strftime('%H:%M')})"
+                except Exception:
+                    pass
+        else:
+            if step:
+                label += f"  {step}"
+            if next_sp:
+                label += f"  {next_sp}"
+            # Run-state suffix, driven by the computed icon (not the raw sentinel
+            # state), so an idle/stale project is unambiguous: its step/next_subplan
+            # is the NEXT pending work, which otherwise reads like a running task
+            # (the tooltip-says-idle vs popup-looks-running mismatch). A 'running'
+            # row needs no suffix — the icon conveys it.
+            if icon == "idle":
+                label += "  (idle)"
+            elif icon == "attention":
+                label += "  (error)" if state in ("error", "errored") else "  (stale)"
+
+        action: dict = {"kind": "status", "project_key": key}
+        if e.get("blocked") and e.get("report_path"):
+            action["report_path"] = e["report_path"]
 
         rows.append({
             "label": label,
             "icon_state": icon,
             "project_key": key,
-            "action": {"kind": "status", "project_key": key},
+            "action": action,
         })
 
-    # Global icon_state: running > attention > idle.
-    if alive_count > 0:
+    # Global icon_state: blocked > running > attention > idle.
+    if blocked_count > 0:
+        global_state = "attention"
+    elif alive_count > 0:
         global_state = "running"
     elif stale_count + error_count > 0:
         global_state = "attention"
@@ -101,6 +124,8 @@ def render_tray(entries: list[dict]) -> dict:
 
     # Build tooltip summary, truncate if needed.
     parts: list[str] = []
+    if blocked_count:
+        parts.append(f"{blocked_count} blocked")
     if alive_count:
         parts.append(f"{alive_count} running")
     if stale_count:
