@@ -28,7 +28,13 @@ from ilk_paths import (  # noqa: E402
     read_meta_manifest,
     MetaManifestError,
 )
-from plan_status import master_has_nonshipped, normalize_master_status, reconcile_master_status  # noqa: E402
+from plan_status import (  # noqa: E402
+    _slug_from_filename,
+    master_has_nonshipped,
+    normalize_master_status,
+    reconcile_master_status,
+    subplan_is_runnable,
+)
 
 STATUS_ICONS = {
     "shipped": "[OK]",
@@ -257,9 +263,7 @@ def resolve_status(cwd: Path) -> dict:
 
     rows: list[tuple[str, str, str, str, str]] = []
     tiers: dict[str, str] = {}  # fname -> verification_tier
-    next_actionable = None
-    next_blocked = None
-    next_other = None
+    frontmatters: dict[str, dict] = {}  # fname -> fm (collected in first pass)
 
     for fname in ordered_files:
         path = plans_dir / fname
@@ -273,12 +277,28 @@ def resolve_status(cwd: Path) -> dict:
         est = fm.get("estimated_steps", "?")
         repo = fm.get("repo", "")
         tiers[fname] = fm.get("verification_tier", "").strip() or "loop-verified"
+        frontmatters[fname] = fm
         rows.append((fname, status, cur_step, est, repo))
+
+    # Build slug→status map for depends_on-aware runnability checks.
+    sibling_statuses: dict[str, str] = {}
+    for fname in ordered_files:
+        if fname not in frontmatters:
+            continue
+        slug = _slug_from_filename(fname)
+        sibling_statuses[slug] = frontmatters[fname].get("status", "pending").strip()
+
+    next_actionable = None
+    next_blocked = None
+    next_other = None
+
+    for fname, status, cur_step, est, repo in rows:
         if status == "shipped":
             continue
         row = (fname, status, cur_step, est, repo)
         if status in ("pending", "ready", "in-progress"):
-            if next_actionable is None:
+            # depends_on-aware: only pick if actually runnable.
+            if next_actionable is None and subplan_is_runnable(frontmatters.get(fname, {}), sibling_statuses):
                 next_actionable = row
         elif status == "blocked":
             if next_blocked is None:
@@ -287,7 +307,11 @@ def resolve_status(cwd: Path) -> dict:
             if next_other is None:
                 next_other = row
 
-    next_pending = next_actionable or next_other or next_blocked
+    # Only actionable (runnable) sub-plans are candidates for next_pending.
+    # Blocked and other non-runnable sub-plans are NOT picked — when all
+    # remaining work is blocked/blocked-dependent, the master is *stalled*
+    # and next_pending is None (L4: bypass, don't wedge).
+    next_pending = next_actionable
 
     # Build subplans list
     subplans = []
@@ -322,6 +346,10 @@ def resolve_status(cwd: Path) -> dict:
     if master_status == "draft":
         next_pending = None
 
+    # Stall detection: non-shipped sub-plans exist but none are runnable.
+    non_shipped = [sp for sp in subplans if sp["status"] != "shipped"]
+    stalled = bool(non_shipped) and next_pending is None and master_status not in ("draft", "paused")
+
     # queue_exit: 0 = all shipped / nothing actionable, 1 = pending work, 2 = error
     if next_pending is None:
         queue_exit = 0
@@ -337,6 +365,7 @@ def resolve_status(cwd: Path) -> dict:
         "queued": queued,
         "shipped": shipped,
         "queue_exit": queue_exit,
+        "stalled": stalled,
     }
 
     if next_pending:
@@ -469,6 +498,16 @@ def main() -> int:
                 f"Master is '{mstatus}' (held -- not runnable): "
                 f"{len(non_shipped)} non-shipped sub-plan(s), nothing to run. "
                 f"Set its status to 'queued'/'active' to release it."
+            )
+        elif data.get("stalled"):
+            blocked_names = [sp["fname"] for sp in non_shipped if sp["status"] == "blocked"]
+            dep_blocked = [sp for sp in non_shipped if sp["status"] != "blocked"]
+            print(
+                f"Stalled (blocked work): {len(non_shipped)} non-shipped sub-plan(s), "
+                f"zero runnable. "
+                f"Blocked: {', '.join(blocked_names) if blocked_names else '(none)'}; "
+                f"{len(dep_blocked)} blocked-dependent. "
+                f"Use /ilk-resume or let the scheduler promote past."
             )
         else:
             print(

@@ -255,3 +255,91 @@ class TestMasterIsDrainable:
             No sub-plan references here.
         """)
         assert master_is_drainable(plans / "MASTER.md", plans) is False
+
+
+# ── AC-3: loop_status integration (resolve_status) ───────────────────────────
+
+# resolve_status discovers plans via ilk_paths, which needs cwd to be inside
+# a project with docs/plans/.  We monkeypatch _resolve_plans_dir to point at
+# our tmp dirs.  We also need an .ilk-meta.json or .git marker for
+# find_project_root — but resolve_status only needs _resolve_plans_dir, not
+# find_project_root (that's used for meta-project detection in text mode).
+# Since resolve_status calls _resolve_plans_dir directly, we patch it.
+
+from unittest.mock import patch  # noqa: E402
+
+from loop_status import resolve_status  # noqa: E402
+
+
+class TestLoopStatusDrain:
+    """AC-3: loop_status picks runnable sub-plans and flags stalled masters."""
+
+    def _setup_plans(self, tmp_path: Path, sub_plans: dict[str, str]) -> Path:
+        """Create a plans dir with a master and the given sub-plans.
+
+        sub_plans maps filename → frontmatter body (without --- delimiters).
+        """
+        plans = tmp_path / "plans"
+        plans.mkdir()
+        # Build master registry from sub_plan filenames.
+        registry_lines = "\n".join(
+            f"  - [{fname}](./{fname})" for fname in sub_plans
+        )
+        _write_plan(plans / "MASTER-2026-01-01-test.md", f"""\
+            ---
+            status: active
+            ---
+            {registry_lines}
+        """)
+        for fname, fm_body in sub_plans.items():
+            _write_plan(plans / fname, f"---\n{fm_body}\n---\n")
+        return plans
+
+    def test_picks_pending_not_blocked(self, tmp_path: Path) -> None:
+        """[shipped, blocked, pending-no-deps] → picks the pending one."""
+        plans = self._setup_plans(tmp_path, {
+            "2026-01-01-alpha.md": "status: shipped",
+            "2026-01-01-beta.md": "status: blocked",
+            "2026-01-01-gamma.md": "status: pending\ndepends_on: []",
+        })
+        with patch("loop_status._resolve_plans_dir", return_value=(plans, "test")):
+            result = resolve_status(tmp_path)
+        assert result["next"] is not None
+        assert result["next"]["fname"] == "2026-01-01-gamma.md"
+        assert result["stalled"] is False
+
+    def test_stalled_when_all_blocked_or_dep_blocked(self, tmp_path: Path) -> None:
+        """[blocked, pending-depends-on-blocked] → stalled, next=None."""
+        plans = self._setup_plans(tmp_path, {
+            "2026-01-01-alpha.md": "status: blocked",
+            "2026-01-01-beta.md": "status: pending\ndepends_on: [\"alpha\"]",
+        })
+        with patch("loop_status._resolve_plans_dir", return_value=(plans, "test")):
+            result = resolve_status(tmp_path)
+        assert result["next"] is None
+        assert result["stalled"] is True
+
+    def test_not_stalled_when_all_shipped(self, tmp_path: Path) -> None:
+        """[shipped, shipped] → not stalled, next=None (genuinely done)."""
+        plans = self._setup_plans(tmp_path, {
+            "2026-01-01-alpha.md": "status: shipped",
+            "2026-01-01-beta.md": "status: shipped",
+        })
+        with patch("loop_status._resolve_plans_dir", return_value=(plans, "test")):
+            result = resolve_status(tmp_path)
+        assert result["next"] is None
+        assert result["stalled"] is False
+
+    def test_picks_runnable_skip_unmet_dep(self, tmp_path: Path) -> None:
+        """[shipped, pending-dep-on-shipped, pending-dep-on-blocked] → picks first pending."""
+        plans = self._setup_plans(tmp_path, {
+            "2026-01-01-alpha.md": "status: shipped",
+            "2026-01-01-beta.md": "status: blocked",
+            "2026-01-01-gamma.md": "status: pending\ndepends_on: [\"alpha\"]",
+            "2026-01-01-delta.md": "status: pending\ndepends_on: [\"beta\"]",
+        })
+        with patch("loop_status._resolve_plans_dir", return_value=(plans, "test")):
+            result = resolve_status(tmp_path)
+        assert result["next"] is not None
+        assert result["next"]["fname"] == "2026-01-01-gamma.md"
+        assert result["stalled"] is False
