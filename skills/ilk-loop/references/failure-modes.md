@@ -88,6 +88,15 @@ The taxonomy is not exhaustive — add a class when a genuinely new shape appear
 - **Reinforces:** the same "test the contract, not tighter than the contract"
   discipline behind [[depends-on-yaml-not-json]] (parser hard-coded one format).
 
+### FM-0003 — gate runner false-failed a passing suite (GBK decode → None stdout → swallowed crash)
+- **Date:** 2026-06-17 · **Project:** ilk-skills (toolkit; affects all projects) · **Class:** C (noisy/erroneous signal treated as authoritative)
+- **Symptom:** `cd server && npm test` was **green (210 pass / 0 fail)** when run directly, but the runner's gate reported `local_checks_failed`, **B2-confirmed**, and stalled math-blocks repeatedly. A `shipped` sub-plan (decimals-numberline) appeared to have a failing gate.
+- **Root cause:** `run_local_checks.py` ran `subprocess.run(..., text=True)` **without an explicit encoding** → child output decoded via the locale codec (**cp936/GBK** on zh-CN Windows). For UTF-8 `npm` output, `cp.stdout` came back `None`; `_tail(None)` raised `TypeError`, which the caller's `except` swallowed — **discarding the real exit code (0)** and emitting a false "failed". Intermittent (depends on output), which is why some gates passed and others didn't.
+- **Fix:** `85d0577` — pin `encoding="utf-8", errors="replace"` on capture + guard `_tail` against `None`/empty.
+- **Guard (IMPLEMENTED):** `skills/ilk-loop/tests/test_run_local_checks_capture.py` — `_tail(None)` no-crash, UTF-8 output captured + passes, real non-zero still fails.
+- **Secondary lesson:** the **B2 false-stop guard (re-run-to-confirm) cannot catch a *deterministic* gate-runner crash** — the crash reproduces on re-run and gets "confirmed" as a real fail. B2 filters *transient* flakiness only; a broken check command/runner must be fixed at the source.
+- **Reinforces:** [[gbk-console-ascii-only-stdout]], [[inline-python-open-needs-utf8]] — the zh-CN/GBK default-encoding family (now also in subprocess *capture*, not just stdout/file reads).
+
 ---
 
 ## Backfill candidates (this week's ilk-skills incidents, not yet entered)
