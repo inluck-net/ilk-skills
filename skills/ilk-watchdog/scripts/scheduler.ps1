@@ -257,6 +257,33 @@ function Test-SchedulerSkip {
   return $null
 }
 
+function Get-RapidTerminalBackoff {
+  <#
+    Pure helper: given the current rapid-terminal count and whether a fresh
+    rapid terminal was detected THIS cycle, return the new count and an
+    optional backoff expiry.  Arm-once-at-detection, decay-on-expiry: the
+    count resets to 0 when no fresh detection occurs, so a stale >=2 count
+    can never re-arm the backoff across cycles.
+  #>
+  param(
+    [int]$CurrentCount,
+    [bool]$DetectedThisCycle,
+    [int]$Threshold = 2,
+    [int]$BackoffMinutes = 5,
+    [datetime]$Now = (Get-Date)
+  )
+  if ($DetectedThisCycle) {
+    $n = $CurrentCount + 1
+    if ($n -ge $Threshold) {
+      return [pscustomobject]@{ Count = $n; BackoffUntil = $Now.AddMinutes($BackoffMinutes) }
+    }
+    return [pscustomobject]@{ Count = $n; BackoffUntil = $null }
+  }
+  # No fresh detection — decay the counter so a stale >=2 count cannot
+  # re-arm backoff across cycles (the wedge that locked out math-blocks).
+  return [pscustomobject]@{ Count = 0; BackoffUntil = $null }
+}
+
 function Test-RapidTerminal {
   <#
     Decide whether a terminal sentinel represents a "rapid terminal" — a run
@@ -354,20 +381,6 @@ function Run-Scheduler {
     # (resolve-ack / expiry / clean-success). See scheduler-stateless-blacklist.
     $postmortemBlacklist = Read-BlacklistFromPostmortems -QueuedProjects $queued
 
-    # --- rapid-terminal backoff: transient, legitimately cross-cycle ---
-    foreach ($key in $rapidTerminalCount.Keys) {
-      if ($rapidTerminalCount[$key] -ge 2) {
-        $expiry = (Get-Date).AddMinutes(5)
-        if ($backoffSkip.ContainsKey($key)) {
-          if ($expiry -gt $backoffSkip[$key]) {
-            $backoffSkip[$key] = $expiry
-          }
-        } else {
-          $backoffSkip[$key] = $expiry
-        }
-      }
-    }
-
     # --- iterate projects in FIFO order, fill free slots ---
     $remainingCapacity = $MaxConcurrent - $liveCount
     $toDispatch = @()
@@ -390,8 +403,10 @@ function Run-Scheduler {
         }
         continue
       } elseif ($backoffSkip.ContainsKey($key)) {
-        # backoff window elapsed — clean up the transient entry
+        # backoff window elapsed — clean up the transient entry and decay
+        # the rapid-terminal counter so the project re-enters with a fresh slate.
         $backoffSkip.Remove($key)
+        $rapidTerminalCount[$key] = 0
       }
 
       # --- rapid-terminal check: project went terminal within ~60s of dispatch ---
@@ -405,27 +420,25 @@ function Run-Scheduler {
           } catch {}
 
           $isRapid = Test-RapidTerminal -Sentinel $sentinel -DispatchTime $dispatchTime[$key]
-          if ($isRapid) {
+          $curCount = if ($rapidTerminalCount.ContainsKey($key)) { $rapidTerminalCount[$key] } else { 0 }
+          $rtb = Get-RapidTerminalBackoff -CurrentCount $curCount -DetectedThisCycle $isRapid
+          $rapidTerminalCount[$key] = $rtb.Count
+          if ($rtb.BackoffUntil) {
+            # Arm the backoff ONCE at detection (not re-armed every cycle).
+            $backoffSkip[$key] = $rtb.BackoffUntil
             # Compute real duration for logging (ended_at - started_at).
             $durSec = 0
             if ($sentinel.started_at -and $sentinel.ended_at) {
               $durSec = [int]([datetime]::Parse($sentinel.ended_at) - [datetime]::Parse($sentinel.started_at)).TotalSeconds
             }
-            $count = if ($rapidTerminalCount.ContainsKey($key)) { $rapidTerminalCount[$key] + 1 } else { 1 }
-            $rapidTerminalCount[$key] = $count
-            if ($count -ge 2) {
-              if ($DryRun -and $Once) {
-                Write-SchedulerLog -Decision 'skip-rapid-terminal' -Key $key -Reason "count=$count elapsed=${durSec}s"
-                @{ decision = 'skip-rapid-terminal'; key = $key; count = $count } | ConvertTo-Json -Compress
-              } else {
-                Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] skip-rapid-terminal: $key (count=$count, elapsed=${durSec}s)"
-                Write-SchedulerLog -Decision 'skip-rapid-terminal' -Key $key -Reason "count=$count elapsed=${durSec}s"
-              }
-              continue
+            if ($DryRun -and $Once) {
+              Write-SchedulerLog -Decision 'skip-rapid-terminal' -Key $key -Reason "count=$($rtb.Count) elapsed=${durSec}s"
+              @{ decision = 'skip-rapid-terminal'; key = $key; count = $rtb.Count } | ConvertTo-Json -Compress
+            } else {
+              Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] skip-rapid-terminal: $key (count=$($rtb.Count), elapsed=${durSec}s)"
+              Write-SchedulerLog -Decision 'skip-rapid-terminal' -Key $key -Reason "count=$($rtb.Count) elapsed=${durSec}s"
             }
-          } else {
-            # Normal-duration run — reset the rapid-terminal counter.
-            $rapidTerminalCount[$key] = 0
+            continue
           }
         }
       }
