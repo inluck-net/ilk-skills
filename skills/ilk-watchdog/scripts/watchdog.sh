@@ -268,9 +268,21 @@ classify_action() {
     all-shipped|already-shipped|shipped)
       echo "promote"
       ;;
-    shipped-unverified|no-evidence)
-      # Terminal success-needs-human / triage — do NOT relaunch.
-      echo "terminate"
+    clean-success)
+      # Job done — no relaunch, no red banner; scheduler promotes next cycle.
+      echo "stop-clean"
+      ;;
+    shipped-unverified)
+      # All sub-plans shipped but some need manual verification.
+      echo "needs-human"
+      ;;
+    self-hosting-drift)
+      # Toolkit self-edit drift; human review required.
+      echo "needs-human"
+      ;;
+    no-evidence)
+      # Run started but left no usable records — triage.
+      echo "triage"
       ;;
     timeout-bound|max-iter-bound|api-flaky|interrupted)
       # Whitelist: transient failures safe to retry.
@@ -278,11 +290,11 @@ classify_action() {
       ;;
     stuck-no-progress|api-blocked|budget-exhausted|local-checks-stuck|dependency-unreachable|merge-conflict)
       # Blacklist: structural failures where a restart won't help.
-      echo "blacklist"
+      echo "block"
       ;;
     *)
       # Unknown terminal label — fail-safe BLOCK (matching ps1 behaviour).
-      echo "blacklist"
+      echo "block"
       ;;
   esac
 }
@@ -702,7 +714,45 @@ Watchdog PID: $$" 36
       continue
     fi
 
-    if [[ "$action" == "blacklist" ]]; then
+    if [[ "$action" == "stop-clean" ]]; then
+      write_log "clean-success: job done. No relaunch, no red banner."
+      invoke_ilk_notify "ship" "$proj_name" "classification: $classification"
+      write_banner "DONE — ${classification^^}" \
+"Project: $proj_name
+Classification: $classification
+
+Job done. Watchdog exiting cleanly. The scheduler will promote the
+next queued master on its next cycle (if any)." 32
+      return
+    fi
+
+    if [[ "$action" == "needs-human" ]]; then
+      local ev="needs-human"
+      [[ "$classification" == "shipped-unverified" ]] && ev="needs-verification"
+      write_log "$classification: needs human review. No relaunch."
+      invoke_ilk_notify "$ev" "$proj_name" "classification: $classification"
+      write_banner "NEEDS HUMAN — ${classification^^}" \
+"Project: $proj_name
+Classification: $classification
+
+This outcome requires human review — no auto-relaunch.
+Read the postmortem for details." 33
+      return
+    fi
+
+    if [[ "$action" == "triage" ]]; then
+      write_log "$classification: triage required. No relaunch."
+      invoke_ilk_notify "triage" "$proj_name" "classification: $classification"
+      write_banner "TRIAGE — ${classification^^}" \
+"Project: $proj_name
+Classification: $classification
+
+This run needs manual triage — no auto-relaunch.
+Check runner logs and sentinel state." 33
+      return
+    fi
+
+    if [[ "$action" == "block" ]]; then
       invoke_ilk_notify "blocked" "$proj_name" "classification: $classification"
       write_banner "BLOCKED — ${classification^^}" \
 "Project: $proj_name
@@ -710,26 +760,6 @@ Classification: $classification
 
 Restart will not help this kind of stop. Human triage required.
 Read the report tail and decide what to do, then relaunch ilk manually." 31
-      return
-    fi
-
-    if [[ "$action" == "terminate" ]]; then
-      if [[ "$classification" == "shipped-unverified" ]]; then
-        invoke_ilk_notify "needs-verification" "$proj_name" "classification: shipped-unverified"
-        write_banner "SHIPPED — NEEDS VERIFICATION" \
-"Project: $proj_name
-Classification: shipped-unverified
-
-All sub-plans shipped, but some need human verification.
-No auto-relaunch. Read the postmortem for details." 33
-      else
-        invoke_ilk_notify "triage" "$proj_name" "classification: $classification"
-        write_banner "NO EVIDENCE — TRIAGE REQUIRED" \
-"Project: $proj_name
-Classification: $classification
-
-Run started but left no usable records. Triage manually." 33
-      fi
       return
     fi
 
