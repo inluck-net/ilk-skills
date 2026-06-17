@@ -30,6 +30,7 @@ _WATCHDOG_SCRIPTS = Path(__file__).resolve().parent.parent.parent / "ilk-watchdo
 if str(_WATCHDOG_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_WATCHDOG_SCRIPTS))
 from scheduler_scan import scan_projects  # noqa: E402
+from blacklist_status import is_blacklisted  # noqa: E402
 
 # Reuse loop_status helpers for frontmatter parsing and ordering.
 from loop_status import extract_master_order, find_plans_dir, parse_frontmatter  # noqa: E402
@@ -109,6 +110,81 @@ def _latest_postmortem_class(launcher_dir: Path) -> str | None:
     return fm.get("classification") or fm.get("class") or None
 
 
+def _blocked_info(
+    project_data_dir: Path,
+    sentinel: dict,
+    active_master: str,
+    next_subplan: str,
+) -> dict:
+    """Derive needs-human blocked state for one project.
+
+    Checks (in priority order):
+      1. Blacklist-class postmortem within backoff → blocked (within-backoff).
+      2. Sentinel state=running + dead PID → blocked (stale-running).
+      3. Active master exists but no runnable sub-plan → blocked (stalled).
+      4. Otherwise → not blocked.
+
+    Errors in the blacklist check are swallowed (default to not blocked)
+    so one broken project never takes down the whole status output.
+    """
+    blocked = False
+    classification = None
+    blocked_reason = None
+    blocked_expiry = None
+    report_path = None
+
+    try:
+        # 1. Blacklist check (source of truth: blacklist_status.py).
+        bl = is_blacklisted(str(project_data_dir))
+        if bl.get("blacklisted"):
+            blocked = True
+            classification = bl.get("classification")
+            blocked_reason = bl.get("reason")  # "within-backoff"
+            blocked_expiry = bl.get("expiry")
+        else:
+            classification = bl.get("classification")
+
+        # 2. Stale-running: sentinel says running but PID is dead.
+        if (
+            not blocked
+            and sentinel.get("state") in LIVE_SENTINEL_STATES
+            and not sentinel.get("alive")
+        ):
+            blocked = True
+            blocked_reason = "stale-running"
+
+        # 3. Stalled: active master exists but no runnable sub-plan.
+        if (
+            not blocked
+            and active_master
+            and not next_subplan
+        ):
+            blocked = True
+            blocked_reason = "stalled"
+
+        # Latest postmortem path (for tray click-to-open).
+        pm_dir = project_data_dir / "runtime" / "launcher" / "postmortems"
+        if pm_dir.is_dir():
+            pms = sorted(pm_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if pms:
+                report_path = str(pms[0])
+    except Exception:
+        # Guard: never break the whole status output over a blacklist error.
+        blocked = False
+        classification = None
+        blocked_reason = None
+        blocked_expiry = None
+        report_path = None
+
+    return {
+        "blocked": blocked,
+        "classification": classification,
+        "blocked_reason": blocked_reason,
+        "blocked_expiry": blocked_expiry,
+        "report_path": report_path,
+    }
+
+
 def _resolve_next_subplan(plans_dir: Path, master_text: str) -> tuple[str, str]:
     """Return (next_subplan_slug, step_string) from a master's sub-plans."""
     ordered = extract_master_order(master_text)
@@ -178,6 +254,9 @@ def resolve_project_status(project_dir: Path) -> dict:
     # Latest postmortem classification
     last_class = _latest_postmortem_class(launcher_dir)
 
+    # Needs-human blocked classification (blacklist / stale-running / stalled).
+    blocked = _blocked_info(project_dir, sentinel, active_master, next_subplan)
+
     return {
         "project_key": key,
         "path": str(project_dir),
@@ -186,6 +265,7 @@ def resolve_project_status(project_dir: Path) -> dict:
         "step": step,
         "sentinel": sentinel,
         "last_class": last_class,
+        **blocked,
     }
 
 
