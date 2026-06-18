@@ -90,6 +90,15 @@ if (-not (Test-Path $RenderTray)) {
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+# DestroyIcon: Bitmap.GetHicon() allocates a GDI icon handle that
+# Icon.FromHandle does NOT own — without an explicit DestroyIcon the
+# handle leaks every tick and eventually exhausts the ~10k per-process
+# GDI cap, after which GetHicon throws "A generic error occurred in GDI+".
+Add-Type -Namespace IlkTray -Name Native -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+public static extern bool DestroyIcon(System.IntPtr handle);
+'@
+
 # ── Create the NotifyIcon ─────────────────────────────────────────────
 $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
 $notifyIcon.Visible = $true
@@ -140,30 +149,44 @@ function Invoke-Tick {
     Write-TrayLog "tick rows=$rowCount icon=$($view.icon_state)"
 
     # ── Icon (colored dot, runtime-drawn) ──
-    $state = $view.icon_state
-    $bmp = New-Object System.Drawing.Bitmap(16, 16)
-    $g = [System.Drawing.Graphics]::FromImage($bmp)
-    $g.Clear([System.Drawing.Color]::Transparent)
+    # Guarded independently of the menu build below: an icon-paint failure
+    # (e.g. transient GDI error) must NOT abort the tick before the context
+    # menu is assigned, or right-click shows an empty popup.
+    try {
+      $state = $view.icon_state
+      $bmp = New-Object System.Drawing.Bitmap(16, 16)
+      $g = [System.Drawing.Graphics]::FromImage($bmp)
+      $g.Clear([System.Drawing.Color]::Transparent)
 
-    $color = switch ($state) {
-      "running"  { [System.Drawing.Color]::FromArgb(0, 180, 0) }
-      "attention" { [System.Drawing.Color]::FromArgb(220, 60, 60) }
-      default    { [System.Drawing.Color]::FromArgb(140, 140, 140) }
-    }
-    $brush = New-Object System.Drawing.SolidBrush($color)
-    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-    $g.FillEllipse($brush, 1, 1, 14, 14)
-    $brush.Dispose()
-    $g.Dispose()
+      $color = switch ($state) {
+        "running"  { [System.Drawing.Color]::FromArgb(0, 180, 0) }
+        "attention" { [System.Drawing.Color]::FromArgb(220, 60, 60) }
+        default    { [System.Drawing.Color]::FromArgb(140, 140, 140) }
+      }
+      $brush = New-Object System.Drawing.SolidBrush($color)
+      $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+      $g.FillEllipse($brush, 1, 1, 14, 14)
+      $brush.Dispose()
+      $g.Dispose()
 
-    $icon = [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
-    $notifyIcon.Icon = $icon
-    # Dispose old icon after swap to avoid handle leak.
-    $oldIcon = $notifyIcon.Icon
-    if ($oldIcon -and $oldIcon.Handle -ne $icon.Handle) {
-      # Don't dispose the one we just set; only if it was a previous icon.
-      # Actually we just set it, so $oldIcon is the *previous* icon.
-      try { $oldIcon.Dispose() } catch {}
+      # GetHicon allocates a raw GDI handle. Clone into a managed Icon (which
+      # owns its own data), then immediately destroy the handle and the bitmap
+      # so nothing leaks. The previous NotifyIcon.Icon is disposed after swap.
+      $hicon = $bmp.GetHicon()
+      try {
+        $tmpIcon = [System.Drawing.Icon]::FromHandle($hicon)
+        $newIcon = $tmpIcon.Clone()
+        $tmpIcon.Dispose()
+      } finally {
+        [void][IlkTray.Native]::DestroyIcon($hicon)
+        $bmp.Dispose()
+      }
+
+      $prevIcon = $notifyIcon.Icon
+      $notifyIcon.Icon = $newIcon
+      if ($prevIcon) { try { $prevIcon.Dispose() } catch {} }
+    } catch {
+      Write-TrayLog "icon paint error (menu unaffected): $_"
     }
 
     # ── Tooltip (max 127 chars, enforced by render_tray.py) ──
