@@ -7,7 +7,8 @@ when a postmortem finding is classified as a toolkit/process gap (not
 project-local).  The backlog lives at ``~/.ilk-data/ilk-skills-improvements/``
 (env-overridable via ``$ILK_DATA_HOME``).
 
-Schema: see ``Entry`` dataclass below.
+Schema: see ``Entry`` dataclass below.  Legal kinds are listed in ``KINDS``;
+``"toolkit"`` remains the default for back-compat.
 Dedup: stable key derived from (kind, normalised title+gap).
 """
 
@@ -43,6 +44,11 @@ def _backlog_dir() -> Path:
 # Schema
 # ---------------------------------------------------------------------------
 
+#: Canonical set of legal entry kinds.  ``"toolkit"`` is the historical
+#: default and must always be present for back-compat.
+KINDS: tuple[str, ...] = ("toolkit", "bug", "feature", "gap", "toolchain", "escaped-bug")
+
+
 def _normalise_for_key(text: str) -> str:
     """Lowercase, collapse whitespace, strip non-alphanum (except spaces)."""
     t = text.lower().strip()
@@ -60,11 +66,18 @@ def stable_key(kind: str, title: str, gap: str) -> str:
 
 @dataclass
 class Entry:
-    """One upstream-candidate record in the backlog."""
+    """One upstream-candidate record in the backlog.
+
+    ``kind`` must be one of :data:`KINDS`; ``"toolkit"`` is the back-compat
+    default.  ``source`` records where the entry originated (e.g.
+    ``"feedback"`` for postmortem-emitted entries, ``"supervisor"`` for
+    supervisor-emitted).  ``relations`` holds freeform structured metadata
+    such as ``{"run_id": "...", "commit": "..."}``.
+    """
 
     id: str               # stable dedup key
     title: str            # short human-readable title
-    kind: str             # "toolkit" (only kind for now)
+    kind: str             # one of KINDS (default "toolkit")
     gap: str              # description of the gap
     evidence: dict        # {file, line, run_id, project}
     proposed_fix: str     # suggested fix
@@ -74,6 +87,8 @@ class Entry:
     first_seen: str       # ISO datetime
     last_seen: str        # ISO datetime
     seen_count: int       # how many times this candidate has been observed
+    source: str = ""      # origin (e.g. "feedback", "supervisor", "lark", "github")
+    relations: dict = field(default_factory=dict)  # structured links (run_id, commit, plan, …)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
