@@ -4,7 +4,7 @@ Usage:
   python init_bitable.py --project <name> [--rename-primary]
 
 Prereqs:
-  - The project entry must already exist in ~/.cursor/lark-tickets/config.json
+  - The project entry must already exist in ~/.ilk-data/ilk-lark-tickets/config.json
   - The Feishu app must have edit permission on the bitable.
 
 Behavior:
