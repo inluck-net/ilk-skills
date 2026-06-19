@@ -359,7 +359,16 @@ def lint_frontmatter_path_created_later(text: str, slug: str) -> list[str]:
             if not _looks_like_path(token):
                 continue
             norm = token.rstrip("/\\")
-            if norm not in normalized_scope:
+            # Match if the token IS a scope path, OR is an ancestor directory of
+            # one (the plan creates files UNDER this dir). This is the real
+            # tray-actions shape: command refs `tools/xbar/tests/` while
+            # scope_paths lists `tools/xbar/tests/test_*.py` (esc d400d9e7).
+            nt = norm.replace("\\", "/")
+            covered = any(
+                sp.replace("\\", "/") == nt or sp.replace("\\", "/").startswith(nt + "/")
+                for sp in normalized_scope
+            )
+            if not covered:
                 continue
             # The token is a path this plan creates — check if it exists now.
             try:

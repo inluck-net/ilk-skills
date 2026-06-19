@@ -276,6 +276,38 @@ def test_non_path_tokens_ignored(tmp_path):
     assert "WARN" not in result.stdout
 
 
+# --- Regression (esc d400d9e7): command refs the DIR, scope lists a FILE under it ---
+# This is the REAL tray-actions 20260619-200301 shape that the original exact-
+# membership check missed: frontmatter command runs `pytest <dir>/` while
+# scope_paths lists `<dir>/test_*.py` (a file UNDER the dir), and the dir does
+# not exist yet. Must flag.
+
+_SUBPLAN_FM_DIR_REFS_SCOPE_FILE = """\
+---
+plan: test-fm-dir-scope-file
+scope_paths:
+  - "tools/zzz_nope/tests/test_render_xbar_actions.py"
+local_checks:
+  - command: python -m pytest tools/zzz_nope/tests/ -q
+    timeout: 60
+---
+
+# Sub-plan: command references the dir; scope lists a file under it.
+"""
+
+
+def test_frontmatter_dir_refs_scope_file_under_it(tmp_path):
+    """esc d400d9e7: command refs DIR, scope lists FILE under it, dir absent -> finding."""
+    result = _run_lint(tmp_path, "test-fm-dir.md", _SUBPLAN_FM_DIR_REFS_SCOPE_FILE)
+    assert result.returncode == 1, (
+        f"Expected non-zero exit for dir-refs-scope-file shape (the real bug), "
+        f"got exit {result.returncode}.\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "tools/zzz_nope/tests" in result.stdout and "frontmatter local_check" in result.stdout, (
+        f"Expected a frontmatter-path WARN naming the dir.\nstdout={result.stdout}"
+    )
+
+
 # --- Back-compat: existing plan_lint test files still pass ---
 
 def test_existing_plan_lint_tests_still_pass():
