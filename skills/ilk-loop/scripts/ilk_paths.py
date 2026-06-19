@@ -281,8 +281,18 @@ def project_key(root: Path) -> str:
 
 
 def ilk_data_root() -> Path:
-    """`$ILK_DATA_HOME` if set, else `~/.ilk-data`."""
+    """Resolve the canonical ilk data root directory.
+
+    Precedence (identical in all languages):
+      1. ``$ILK_DATA_HOME`` — primary env var.
+      2. ``$ILK_DATA_DIR`` — back-compat alias (currently honored by
+         the PowerShell/bash side; this makes Python agree).
+      3. ``~/.ilk-data`` — default.
+    """
     env = os.environ.get("ILK_DATA_HOME")
+    if env:
+        return Path(env).expanduser().resolve()
+    env = os.environ.get("ILK_DATA_DIR")
     if env:
         return Path(env).expanduser().resolve()
     return Path.home() / ".ilk-data"
