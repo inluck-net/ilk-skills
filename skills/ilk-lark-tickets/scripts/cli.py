@@ -1,0 +1,370 @@
+"""CLI entry point for the ilk-lark-tickets skill.
+
+Usage:
+  python cli.py list [--status STATUS] [--limit N] [--project NAME]
+  python cli.py show <record_id> [--project NAME]
+  python cli.py pull-new [--project NAME]
+  python cli.py update <record_id> --field NAME=VALUE [--field NAME=VALUE ...] [--project NAME]
+  python cli.py next-id [--project NAME]
+  python cli.py download <record_id> <field_name> --to DIR [--project NAME]
+  python cli.py fields [--project NAME]
+  python cli.py setup-issue-views [--project NAME]
+       [--kanban-name STR] [--form-name STR] [--stack-field NAME]
+
+All commands print JSON to stdout (one object per line, or a single object).
+Errors go to stderr with non-zero exit code.
+
+VALUE parsing for --field:
+  - If looks like JSON (starts with [ { " or is true/false/null/number), parsed as JSON.
+  - Otherwise treated as a plain string (will be wrapped to text-segment list when needed).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+# Force UTF-8 stdout/stderr so Chinese field names render correctly in
+# Windows terminals (which default to GBK / cp936). Python 3.7+.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
+# allow running as `python cli.py ...` regardless of cwd
+sys.path.insert(0, str(Path(__file__).parent))
+
+from lark_client import (  # noqa: E402
+    BitableClient,
+    LarkError,
+    _flatten_text,
+    next_ticket_id,
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _print(obj):
+    print(json.dumps(obj, ensure_ascii=False, indent=2))
+
+
+def _parse_field_value(raw: str):
+    """Parse a CLI --field value. Tries JSON first, falls back to plain string."""
+    s = raw.strip()
+    if s.startswith(("{", "[", '"')) or s in ("true", "false", "null"):
+        try:
+            return json.loads(s)
+        except json.JSONDecodeError:
+            pass
+    if s and (s[0] in "-0123456789"):
+        try:
+            return json.loads(s)
+        except json.JSONDecodeError:
+            pass
+    return s
+
+
+def _normalize_fields_for_write(client: BitableClient, raw_fields: dict) -> dict:
+    """Convert plain CLI values into the shapes Bitable's records API expects.
+
+    Rules per ui_type (Bitable v1 records.update):
+      - Text:        plain string (NOT segment list)
+      - SingleSelect/MultiSelect: option name string / list-of-strings
+      - Number/Phone/Email/DateTime: pass through
+      - Url:         {"link": str, "text": str}
+      - User:        list of {"id": "ou_xxx"}; passed through
+      - Attachment:  list of {"file_token": "..."} (must be uploaded first); passed through
+      - Read-only fields (CreatedTime/ModifiedTime/CreatedUser/ModifiedUser/AutoNumber):
+        rejected with a helpful error.
+    """
+    READONLY = {"CreatedTime", "ModifiedTime", "CreatedUser", "ModifiedUser", "AutoNumber"}
+    fmap = client.list_fields()
+    out: dict = {}
+    for name, value in raw_fields.items():
+        if name not in fmap:
+            raise SystemExit(f"unknown field: {name}")
+        ui = fmap[name].get("ui_type") or ""
+        if ui in READONLY:
+            raise SystemExit(f"field '{name}' is read-only ({ui}); cannot write")
+        if ui == "Url" and isinstance(value, str):
+            out[name] = {"link": value, "text": value}
+        else:
+            out[name] = value
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+def cmd_fields(args):
+    client = BitableClient(project_name=args.project)
+    fmap = client.list_fields()
+    rows = []
+    for name, info in fmap.items():
+        rows.append({
+            "field_id": info.get("field_id"),
+            "field_name": name,
+            "type": info.get("type"),
+            "ui_type": info.get("ui_type"),
+        })
+    _print(rows)
+
+
+def cmd_list(args):
+    client = BitableClient(project_name=args.project)
+    filt = None
+    if args.status:
+        filt = {
+            "conjunction": "and",
+            "conditions": [
+                {"field_name": "状态", "operator": "is", "value": [args.status]}
+            ],
+        }
+    records = client.list_records(filter_expr=filt, max_records=args.limit)
+    out = []
+    for r in records:
+        f = r.get("fields") or {}
+        out.append({
+            "record_id": r.get("record_id"),
+            "ticket_id": _flatten_text(f.get("ticket_id")),
+            "title": _flatten_text(f.get("标题")),
+            "status": f.get("状态"),
+            "type": f.get("类型"),
+            "urgency": f.get("紧急度"),
+            "ai_priority": f.get("AI 优先级建议"),
+            "module": _flatten_text(f.get("涉及模块")),
+            "source": f.get("录入端"),
+        })
+    _print(out)
+
+
+def cmd_show(args):
+    client = BitableClient(project_name=args.project)
+    record = client.get_record(args.record_id)
+    _print(record)
+
+
+def cmd_pull_new(args):
+    """Pull all 状态=新建 tickets, with full field content for AI triage."""
+    client = BitableClient(project_name=args.project)
+    filt = {
+        "conjunction": "and",
+        "conditions": [
+            {"field_name": "状态", "operator": "is", "value": ["新建"]}
+        ],
+    }
+    records = client.list_records(filter_expr=filt)
+    fmap = client.list_fields()
+    out = []
+    for r in records:
+        f = r.get("fields") or {}
+        readable = {}
+        for name, info in fmap.items():
+            v = f.get(name)
+            if v is None:
+                continue
+            if info.get("ui_type") == "Text":
+                readable[name] = _flatten_text(v)
+            else:
+                readable[name] = v
+        out.append({
+            "record_id": r.get("record_id"),
+            "fields": readable,
+        })
+    _print(out)
+
+
+def cmd_update(args):
+    client = BitableClient(project_name=args.project)
+    raw_fields: dict = {}
+    for spec in args.field or []:
+        if "=" not in spec:
+            raise SystemExit(f"--field must be NAME=VALUE, got: {spec}")
+        name, _, value = spec.partition("=")
+        raw_fields[name.strip()] = _parse_field_value(value)
+    fields = _normalize_fields_for_write(client, raw_fields)
+    result = client.update_record(args.record_id, fields)
+    _print(result)
+
+
+def cmd_next_id(args):
+    client = BitableClient(project_name=args.project)
+    _print({"ticket_id": next_ticket_id(client)})
+
+
+def cmd_download(args):
+    client = BitableClient(project_name=args.project)
+    record = client.get_record(args.record_id)
+    f = (record.get("record") or record).get("fields", {})
+    if args.field_name not in f:
+        raise SystemExit(f"field '{args.field_name}' empty or missing on record")
+    attachments = f[args.field_name]
+    if not isinstance(attachments, list):
+        raise SystemExit(f"field '{args.field_name}' is not an attachment field")
+    out_dir = Path(args.to)
+    saved = []
+    for i, att in enumerate(attachments):
+        token = att.get("file_token") if isinstance(att, dict) else None
+        name = att.get("name") if isinstance(att, dict) else f"att-{i}"
+        if not token:
+            continue
+        dest = out_dir / f"{args.record_id}__{i:02d}__{name}"
+        client.download_attachment(token, dest)
+        saved.append(str(dest))
+    _print({"saved": saved})
+
+
+def _find_view(views: list[dict], name: str, view_type: str) -> dict | None:
+    for v in views:
+        if v.get("view_name") == name and v.get("view_type") == view_type:
+            return v
+    return None
+
+
+def cmd_setup_issue_views(args):
+    """Create Kanban + Form views for the ticket table; enable form sharing."""
+    import time
+
+    client = BitableClient(project_name=args.project)
+    wait = max(1, int(args.delay_s))
+    steps: list[dict] = []
+
+    group_fid = client.field_id(args.stack_field)
+
+    views = client.list_views()
+    kb = _find_view(views, args.kanban_name, "kanban")
+    if kb:
+        kanban_id = kb["view_id"]
+        steps.append({"kanban": "exists", "view_id": kanban_id})
+    else:
+        data = client.create_view(view_name=args.kanban_name, view_type="kanban")
+        kanban_id = data["view"]["view_id"]
+        steps.append({"kanban": "created", "view_id": kanban_id})
+        time.sleep(wait)
+
+    client.patch_view(kanban_id, {"property": {"group_field_id": group_fid}})
+    steps.append({"kanban": "group_field_set", "field": args.stack_field})
+    time.sleep(wait)
+
+    views = client.list_views()
+    fm = _find_view(views, args.form_name, "form")
+    if fm:
+        form_id = fm["view_id"]
+        steps.append({"form": "exists", "view_id": form_id})
+    else:
+        data = client.create_view(view_name=args.form_name, view_type="form")
+        form_id = data["view"]["view_id"]
+        steps.append({"form": "created", "view_id": form_id})
+        time.sleep(wait)
+
+    meta = client.patch_form_meta(
+        form_id,
+        {
+            "name": args.form_name,
+            "description": args.form_description,
+            "shared": True,
+            "shared_limit": args.shared_limit,
+            "submit_limit_once": False,
+        },
+    )
+    form_info = meta.get("form") or {}
+    steps.append(
+        {
+            "form": "meta_updated",
+            "shared_url": form_info.get("shared_url"),
+            "shared_limit": form_info.get("shared_limit"),
+        }
+    )
+
+    _print({"ok": True, "steps": steps})
+
+
+# ---------------------------------------------------------------------------
+# Argparse
+# ---------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="lark-tickets")
+    p.add_argument("--project", help="Project name (overrides .lark-project marker)")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sp = sub.add_parser("fields", help="List all fields in the bitable")
+    sp.set_defaults(func=cmd_fields)
+
+    sp = sub.add_parser("list", help="List tickets (summary)")
+    sp.add_argument("--status", help="Filter by status (e.g. 新建/可执行/进行中)")
+    sp.add_argument("--limit", type=int, default=50)
+    sp.set_defaults(func=cmd_list)
+
+    sp = sub.add_parser("show", help="Show one ticket (full fields)")
+    sp.add_argument("record_id")
+    sp.set_defaults(func=cmd_show)
+
+    sp = sub.add_parser("pull-new", help="Pull all 状态=新建 tickets for triage")
+    sp.set_defaults(func=cmd_pull_new)
+
+    sp = sub.add_parser("update", help="Update fields on a ticket")
+    sp.add_argument("record_id")
+    sp.add_argument("--field", action="append", help="NAME=VALUE (repeatable)")
+    sp.set_defaults(func=cmd_update)
+
+    sp = sub.add_parser("next-id", help="Generate next ticket id (T-YYYY-NNNN)")
+    sp.set_defaults(func=cmd_next_id)
+
+    sp = sub.add_parser("download", help="Download attachments from a ticket field")
+    sp.add_argument("record_id")
+    sp.add_argument("field_name")
+    sp.add_argument("--to", required=True, help="Destination directory")
+    sp.set_defaults(func=cmd_download)
+
+    sp = sub.add_parser(
+        "setup-issue-views",
+        help="Create Kanban (by status) + shared Form views for ticket workflow",
+    )
+    sp.add_argument("--kanban-name", default="工单看板", help="Name of the Kanban view")
+    sp.add_argument("--form-name", default="提交新工单", help="Name of the Form view")
+    sp.add_argument(
+        "--stack-field",
+        default="状态",
+        help="Single-select field to group Kanban columns (default: 状态)",
+    )
+    sp.add_argument(
+        "--form-description",
+        default="请描述问题：现象、页面链接、期望与实际结果。可选上传截图。提交后运维/研发会分拣到看板列。",
+        help="Subtitle text on the Feishu form",
+    )
+    sp.add_argument(
+        "--shared-limit",
+        default="tenant_editable",
+        choices=["off", "tenant_editable", "anyone_editable"],
+        help="Who may fill the form when shared",
+    )
+    sp.add_argument(
+        "--delay-s",
+        type=int,
+        default=3,
+        help="Seconds between write API calls (avoids Feishu write conflicts)",
+    )
+    sp.set_defaults(func=cmd_setup_issue_views)
+
+    return p
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        args.func(args)
+    except LarkError as e:
+        sys.stderr.write(f"Lark API error: {e}\nbody: {e.body[:500]}\n")
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

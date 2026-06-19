@@ -160,7 +160,7 @@ Stop and hand back to the human when ANY of these is true:
   1. Set `status: shipped` and update `last_updated` in front-matter.
   2. For every Lark ticket in the sub-plan's `tickets:` list, transition
      to `待验证` and write the relevant commit short-hashes into the
-     `关联 commit` field — use the lark-tickets skill.
+     `关联 commit` field — use the ilk-lark-tickets skill.
   3. Commit: `chore(plans): <slug> shipped [plan:<slug>#ship]`.
   4. **NEEDS HUMAN VERIFICATION check**: run `loop_status.py --json` and
      inspect each shipped sub-plan's `verification_tier`. If any shipped

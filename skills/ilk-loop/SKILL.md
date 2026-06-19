@@ -172,7 +172,7 @@ helper is idempotent — running it twice does not duplicate files.
      - set sub-plan status to `shipped`
      - update last_updated date
      - transition every listed ticket in the tracker to the next state
-       (use the lark-tickets skill if it's a Lark Bitable)
+       (use the ilk-lark-tickets skill if it's a Lark Bitable)
      - commit
 7. Print loop_status.py output again so the human sees updated state.
 8. Exit (let the human start a fresh chat for the next iteration).
@@ -279,7 +279,7 @@ Heuristics for ordering:
 
 ### 6. Generate plans from Lark tickets (`/ilk-lark-tickets`)
 
-Lark-specific input adapter. Uses the `lark-tickets` skill to fetch
+Lark-specific input adapter. Uses the `ilk-lark-tickets` skill to fetch
 triaged-but-unplanned tickets, then delegates to workflow #5 with those
 tickets as the task description.
 
@@ -318,10 +318,10 @@ Tip: for batches of 10+ tickets, write a one-off helper script in
 `docs/plans/_update_tickets.py` (delete after use) rather than calling
 `cli.py update` 10 times manually. Pattern in `/ilk-lark-tickets.md`.
 
-## Integration with lark-tickets skill
+## Integration with ilk-lark-tickets skill
 
 When a sub-plan lists `tickets:` whose ids match the `T-YYYY-NNNN` pattern,
-they live in the Lark Bitable served by the `lark-tickets` skill. On
+they live in the Lark Bitable served by the `ilk-lark-tickets` skill. On
 sub-plan ship:
 
 1. For each `ticket_id` in `tickets:`:
@@ -504,7 +504,7 @@ Linux distributions usually ship `timeout` from `coreutils` by default.
 
 ## See also
 
-- `<skill-root>/lark-tickets/SKILL.md` — ticket-tracker integration.
+- `<skill-root>/ilk-lark-tickets/SKILL.md` — ticket-tracker integration.
 - `<skill-root>/../commands/ilk.md` — the slash command body that drives the loop.
 - `<skill-root>/ilk-loop/scripts/run_ilk_loop_claude.sh` — bash
   runner (macOS / Linux equivalent of `run_ilk_loop_claude.ps1`).

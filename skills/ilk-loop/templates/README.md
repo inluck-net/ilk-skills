@@ -66,5 +66,5 @@ Or in a fresh Cursor chat, type `/ilk` — that will:
    do not silently expand the plan.
 
 See `<skill-root>/ilk-loop/SKILL.md` for full details, the state
-machine, integration with the lark-tickets skill, and commit-message
+machine, integration with the ilk-lark-tickets skill, and commit-message
 conventions.
