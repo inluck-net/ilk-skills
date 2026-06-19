@@ -7,6 +7,7 @@ Covers:
   AC-4  collect.py writes ONLY under ~/.ilk-data (never skills/**)
   AC-5  SKILL.md documents the backlog (grep-checked in step 4 local_checks)
   AC-6  All tests pass
+  Back-compat: old-schema candidates.json (no source/relations) loads cleanly
 
 Uses ILK_DATA_HOME isolation so tests never touch real ~/.ilk-data.
 """
@@ -218,6 +219,62 @@ class TestAC2Dedup:
 
         e2 = mod.add_candidate(title="T", gap="G", backlog_dir=backlog_env)
         assert e2.first_seen == first
+
+
+# ── Back-compat: old-schema load ─────────────────────────────────────────────
+
+
+class TestBackCompat:
+    """Old-schema candidates.json (no source/relations fields) loads cleanly."""
+
+    def test_old_schema_load_with_defaults(self, backlog_env):
+        """A candidates.json written in the old schema (no source, no relations)
+        loads via load() without error; the resulting Entry has defaulted
+        source/relations and the original fields intact.
+        """
+        import importlib
+        import improvement_backlog as mod
+        importlib.reload(mod)
+
+        # Write a hand-rolled old-schema record directly to disk
+        old_record = {
+            "id": "old-schema-test-key",
+            "title": "Old Gap",
+            "kind": "toolkit",
+            "gap": "Missing feature Y",
+            "evidence": {"project": "old-proj"},
+            "proposed_fix": "add it",
+            "leverage": "medium",
+            "severity": "low",
+            "status": "open",
+            "first_seen": "2026-01-01T00:00:00+00:00",
+            "last_seen": "2026-01-01T00:00:00+00:00",
+            "seen_count": 1,
+            # NOTE: no "source" or "relations" keys
+        }
+        backlog_dir = backlog_env / "ilk-skills-improvements"
+        backlog_dir.mkdir(parents=True, exist_ok=True)
+        candidates_path = backlog_dir / "candidates.json"
+        candidates_path.write_text(
+            json.dumps([old_record], indent=2),
+            encoding="utf-8",
+        )
+
+        entries = mod.load(backlog_dir=backlog_dir)
+        assert len(entries) == 1
+
+        e = entries[0]
+        # Original fields intact
+        assert e.id == "old-schema-test-key"
+        assert e.title == "Old Gap"
+        assert e.kind == "toolkit"
+        assert e.gap == "Missing feature Y"
+        assert e.evidence == {"project": "old-proj"}
+        assert e.seen_count == 1
+
+        # New fields defaulted
+        assert e.source == ""
+        assert e.relations == {}
 
 
 # ── AC-3: emit candidates from collect.py ────────────────────────────────────
