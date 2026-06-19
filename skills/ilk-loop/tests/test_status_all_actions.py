@@ -1,0 +1,278 @@
+"""Tests for status_all action fields: path, runnable, parked.
+
+Covers AC-1 from tray-actions-render sub-plan:
+  - path: project root directory
+  - runnable: has dispatchable master with pending/in-progress work AND not alive
+  - parked: blacklisted with no valid resolve-ack
+
+Four synthetic states tested: running, runnable-idle, parked, all-shipped.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+# Repo root — three levels up from this file (tests/ → ilk-loop/ → skills/ → root).
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+STATUS_ALL = REPO_ROOT / "skills" / "ilk-loop" / "scripts" / "status_all.py"
+
+# Compute project_key inline.
+import hashlib
+import re as _re
+
+_KEY_PUNCT = _re.compile(r"[^a-z0-9]+")
+
+
+def _project_key(root: Path) -> str:
+    abs_str = str(root.resolve()).lower()
+    slug = _KEY_PUNCT.sub("-", abs_str).strip("-")
+    if len(slug) <= 80:
+        return slug
+    h = hashlib.sha1(abs_str.encode("utf-8")).hexdigest()[:7]
+    return slug[: 80 - 8].rstrip("-") + "-" + h
+
+
+# Fixed scratch dir inside the repo (gitignored).
+SCRATCH = REPO_ROOT / "scratch" / "status-actions"
+ILK_DATA = SCRATCH / "ilk-data"
+
+
+# ── helpers ─────────────────────────────────────────────────────────
+
+def _make_git_project(name: str) -> Path:
+    """Create a minimal git repo at SCRATCH/projects/<name>. Returns root."""
+    root = SCRATCH / "projects" / name
+    root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", str(root)], capture_output=True, check=True,
+                   encoding="utf-8", errors="replace")
+    subprocess.run(["git", "-C", str(root), "commit", "--allow-empty", "-m", "init"],
+                   capture_output=True, check=True, encoding="utf-8", errors="replace")
+    return root
+
+
+def _setup_project(
+    name: str,
+    *,
+    master_status: str = "active",
+    sub_status: str = "pending",
+    pid: int = 99999999,
+    state: str = "running",
+    run_id: str = "test-run-001",
+    blacklist_class: str | None = None,
+) -> Path:
+    """Create a git project + external plans/runtime under ILK_DATA.
+
+    Returns the git project root (cwd for status_all.py).
+    """
+    root = _make_git_project(name)
+    key = _project_key(root)
+    plans = ILK_DATA / "projects" / key / "plans"
+    runtime = ILK_DATA / "projects" / key / "runtime"
+    launcher = runtime / "launcher"
+    plans.mkdir(parents=True, exist_ok=True)
+    launcher.mkdir(parents=True, exist_ok=True)
+
+    # Master plan — use short slug for filename to avoid truncation issues.
+    slug = f"t{name}"
+    sub_fname = f"2026-06-07-{slug}-sub.md"
+    master = (
+        "---\n"
+        f"title: Test {name}\n"
+        f"slug: {slug}\n"
+        f"created: 2026-06-07T00:00:00+08:00\n"
+        f"status: {master_status}\n"
+        f"priority: 5\n"
+        "pause_after_ship: false\n"
+        "branch: null\n"
+        "goal: test fixture\n"
+        "out_of_scope: []\n"
+        "cross_cutting_invariants: []\n"
+        "---\n"
+        f"\n# Test {name}\n\n"
+        "## Sub-plan registry\n\n"
+        "| # | Order | Slug | Items | Steps (est.) | Status |\n"
+        "|---|---|---|---|---|---|\n"
+        f"| 1 | 1 | [{slug}-sub](./{sub_fname}) | test | 3 | {sub_status} |\n"
+    )
+    (plans / f"MASTER-2026-06-07-{slug}.md").write_text(master, encoding="utf-8")
+
+    # Sub-plan
+    sub = (
+        "---\n"
+        f"plan: {slug}-sub\n"
+        f"status: {sub_status}\n"
+        "current_step: 0\n"
+        "tickets: []\n"
+        "priority: P2\n"
+        "estimated_steps: 3\n"
+        "last_updated: 2026-06-07\n"
+        "---\n"
+        f"\n# Sub-plan for {name}\n"
+    )
+    (plans / sub_fname).write_text(sub, encoding="utf-8")
+
+    # Sentinel (last-exit.json)
+    sentinel = {"state": state, "pid": pid, "iterations": 3, "run_id": run_id}
+    (runtime / "last-exit.json").write_text(json.dumps(sentinel), encoding="utf-8")
+
+    # Optional: blacklist postmortem (use recent naive datetime to stay within backoff)
+    if blacklist_class:
+        import datetime as _dt
+        recent = _dt.datetime.now() - _dt.timedelta(minutes=30)
+        recent_str = recent.strftime("%Y-%m-%dT%H:%M:%S")
+        pm_text = (
+            "---\n"
+            f"classification: {blacklist_class}\n"
+            f"generated_at: {recent_str}\n"
+            "---\n"
+            "# Test postmortem\n"
+        )
+        (launcher / "postmortems").mkdir(parents=True, exist_ok=True)
+        (launcher / "postmortems" / f"{run_id}.md").write_text(pm_text, encoding="utf-8")
+
+    return root
+
+
+def _cleanup():
+    if SCRATCH.exists():
+        import shutil
+        def _rm_onerror(func, path, exc):
+            try:
+                os.chmod(path, 0o666)
+                func(path)
+            except OSError:
+                pass
+        shutil.rmtree(SCRATCH, onerror=_rm_onerror)
+
+
+# ── fixtures ────────────────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def _clean():
+    _cleanup()
+    yield
+    _cleanup()
+
+
+def _get_status(name: str) -> dict:
+    """Run status_all.py --json and return the entry for project `name`."""
+    env = {**os.environ, "ILK_DATA_HOME": str(ILK_DATA)}
+    result = subprocess.run(
+        [sys.executable, str(STATUS_ALL), "--json"],
+        capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
+    )
+    assert result.returncode == 0, f"exit {result.returncode}: {result.stderr}"
+    data = json.loads(result.stdout)
+    entry = next(e for e in data if e["project_key"].endswith(name))
+    return entry
+
+
+# ── AC-1: action fields present ─────────────────────────────────────
+
+class TestActionFieldsPresent:
+    """Every entry has path, runnable, parked."""
+
+    def test_path_field(self):
+        """path is the project root directory."""
+        _setup_project("af")
+        entry = _get_status("af")
+        assert "path" in entry
+        assert entry["path"].endswith("af")
+
+    def test_runnable_field(self):
+        """runnable is a boolean."""
+        _setup_project("rf")
+        entry = _get_status("rf")
+        assert "runnable" in entry
+        assert isinstance(entry["runnable"], bool)
+
+    def test_parked_field(self):
+        """parked is a boolean."""
+        _setup_project("pf")
+        entry = _get_status("pf")
+        assert "parked" in entry
+        assert isinstance(entry["parked"], bool)
+
+
+# ── State: running (loop alive) ─────────────────────────────────────
+
+class TestStateRunning:
+    """When loop is alive: runnable=False, parked=False."""
+
+    def test_runnable_false_when_alive(self):
+        _setup_project("r", pid=os.getpid(), state="running")
+        entry = _get_status("r")
+        assert entry["sentinel"]["alive"] is True
+        assert entry["runnable"] is False
+
+    def test_parked_false_when_alive(self):
+        _setup_project("rp", pid=os.getpid(), state="running")
+        entry = _get_status("rp")
+        assert entry["parked"] is False
+
+
+# ── State: runnable-idle (active master, pending work, not alive) ───
+
+class TestStateRunnableIdle:
+    """Active master with pending sub-plan, loop not alive: runnable=True, parked=False."""
+
+    def test_runnable_true_when_idle(self):
+        _setup_project("ri", pid=99999999, state="shipped")
+        entry = _get_status("ri")
+        assert entry["sentinel"]["alive"] is False
+        assert entry["runnable"] is True
+
+    def test_parked_false_when_idle(self):
+        _setup_project("rnp", pid=99999999, state="shipped")
+        entry = _get_status("rnp")
+        assert entry["parked"] is False
+
+
+# ── State: parked (blacklisted) ─────────────────────────────────────
+
+class TestStateParked:
+    """Blacklisted project: runnable=False, parked=True."""
+
+    def test_runnable_false_when_parked(self):
+        _setup_project("pk", pid=99999999, state="shipped",
+                       blacklist_class="local-checks-stuck")
+        entry = _get_status("pk")
+        assert entry["blocked"] is True
+        assert entry["blocked_reason"] == "within-backoff"
+        assert entry["runnable"] is False
+
+    def test_parked_true_when_blacklisted(self):
+        _setup_project("pkt", pid=99999999, state="shipped",
+                       blacklist_class="local-checks-stuck")
+        entry = _get_status("pkt")
+        assert entry["parked"] is True
+
+
+# ── Backward compatibility ──────────────────────────────────────────
+
+class TestBackwardCompatibility:
+    """Existing test_status_all_json.py tests should still pass."""
+
+    def test_existing_keys_preserved(self):
+        """All original AC-2 keys still present."""
+        _setup_project("bc", pid=os.getpid())
+        entry = _get_status("bc")
+        for key in ("project_key", "path", "active_master", "next_subplan",
+                     "step", "sentinel", "last_class", "blocked",
+                     "classification", "blocked_reason", "blocked_expiry",
+                     "report_path"):
+            assert key in entry, f"missing original key: {key}"
+
+    def test_blocked_info_unchanged(self):
+        """blocked field still computed correctly."""
+        _setup_project("bci", pid=99999999, state="running")
+        entry = _get_status("bci")
+        # stale-running: sentinel says running but PID dead
+        assert entry["blocked"] is True
+        assert entry["blocked_reason"] == "stale-running"

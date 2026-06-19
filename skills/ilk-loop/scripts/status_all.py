@@ -258,6 +258,12 @@ def resolve_project_status(project_dir: Path) -> dict:
     # Needs-human blocked classification (blacklist / stale-running / stalled).
     blocked = _blocked_info(project_dir, sentinel, active_master, next_subplan)
 
+    # Action flags for tray/xbar (SP1: tray-actions-render).
+    # runnable: has a dispatchable master with pending/in-progress work AND not currently running AND not blocked.
+    # parked: blacklisted with no valid resolve-ack (project needs /ilk-resume).
+    runnable = bool(active_master and next_subplan and not sentinel.get("alive") and not blocked.get("blocked"))
+    parked = blocked.get("blocked") and blocked.get("blocked_reason") == "within-backoff"
+
     return {
         "project_key": key,
         "path": str(project_dir),
@@ -266,6 +272,8 @@ def resolve_project_status(project_dir: Path) -> dict:
         "step": step,
         "sentinel": sentinel,
         "last_class": last_class,
+        "runnable": runnable,
+        "parked": parked,
         **blocked,
     }
 
