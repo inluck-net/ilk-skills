@@ -221,6 +221,152 @@ class TestAC2Dedup:
         assert e2.first_seen == first
 
 
+# ── Multi-kind + source/relations (step 2) ───────────────────────────────────
+
+
+class TestMultiKindAndNewFields:
+    """Step 2: add_candidate generalised for kind + source + relations."""
+
+    def test_bug_kind_round_trips(self, backlog_env):
+        """AC-1: bug kind is accepted and round-trips through load()."""
+        import importlib
+        import improvement_backlog as mod
+        importlib.reload(mod)
+
+        e = mod.add_candidate(
+            title="Crash on startup",
+            kind="bug",
+            gap="App crashes when config missing",
+            backlog_dir=backlog_env,
+        )
+        assert e.kind == "bug"
+
+        entries = mod.load(backlog_dir=backlog_env)
+        assert len(entries) == 1
+        assert entries[0].kind == "bug"
+
+    def test_gap_kind_round_trips(self, backlog_env):
+        """AC-1: gap kind is accepted and round-trips through load()."""
+        import importlib
+        import improvement_backlog as mod
+        importlib.reload(mod)
+
+        e = mod.add_candidate(
+            title="Missing validation",
+            kind="gap",
+            gap="No input validation on form",
+            backlog_dir=backlog_env,
+        )
+        assert e.kind == "gap"
+
+        entries = mod.load(backlog_dir=backlog_env)
+        assert len(entries) == 1
+        assert entries[0].kind == "gap"
+
+    def test_source_and_relations_persist(self, backlog_env):
+        """AC-3: source + relations persist and survive load()."""
+        import importlib
+        import improvement_backlog as mod
+        importlib.reload(mod)
+
+        e = mod.add_candidate(
+            title="Test entry",
+            kind="toolkit",
+            gap="test gap",
+            source="supervisor",
+            relations={"run_id": "r1", "commit": "abc123"},
+            backlog_dir=backlog_env,
+        )
+        assert e.source == "supervisor"
+        assert e.relations == {"run_id": "r1", "commit": "abc123"}
+
+        entries = mod.load(backlog_dir=backlog_env)
+        assert len(entries) == 1
+        assert entries[0].source == "supervisor"
+        assert entries[0].relations == {"run_id": "r1", "commit": "abc123"}
+
+    def test_dedup_across_new_kinds(self, backlog_env):
+        """AC-4: same (kind, title, gap) bumps seen_count across new kinds."""
+        import importlib
+        import improvement_backlog as mod
+        importlib.reload(mod)
+
+        e1 = mod.add_candidate(
+            title="Crash", kind="bug", gap="config missing",
+            backlog_dir=backlog_env,
+        )
+        assert e1.seen_count == 1
+
+        e2 = mod.add_candidate(
+            title="Crash", kind="bug", gap="config missing",
+            backlog_dir=backlog_env,
+        )
+        assert e2.seen_count == 2
+        assert e2.id == e1.id
+
+        entries = mod.load(backlog_dir=backlog_env)
+        assert len(entries) == 1
+
+    def test_unknown_kind_rejected(self, backlog_env):
+        """Unknown kind raises ValueError."""
+        import importlib
+        import improvement_backlog as mod
+        importlib.reload(mod)
+
+        with pytest.raises(ValueError, match="unknown kind"):
+            mod.add_candidate(
+                title="Bad", kind="nonexistent", gap="x",
+                backlog_dir=backlog_env,
+            )
+
+    def test_relations_merged_on_update(self, backlog_env):
+        """Relations are merged (like evidence) on dedup hit."""
+        import importlib
+        import improvement_backlog as mod
+        importlib.reload(mod)
+
+        e1 = mod.add_candidate(
+            title="Merge test", kind="toolkit", gap="g",
+            relations={"run_id": "r1"},
+            backlog_dir=backlog_env,
+        )
+        e2 = mod.add_candidate(
+            title="Merge test", kind="toolkit", gap="g",
+            relations={"commit": "abc"},
+            backlog_dir=backlog_env,
+        )
+        assert e2.seen_count == 2
+        assert e2.relations == {"run_id": "r1", "commit": "abc"}
+
+    def test_source_refreshed_on_nonempty(self, backlog_env):
+        """Source is refreshed only if a non-empty one is passed."""
+        import importlib
+        import improvement_backlog as mod
+        importlib.reload(mod)
+
+        e1 = mod.add_candidate(
+            title="Src test", kind="toolkit", gap="g",
+            source="feedback",
+            backlog_dir=backlog_env,
+        )
+        assert e1.source == "feedback"
+
+        # Empty source → keeps old value
+        e2 = mod.add_candidate(
+            title="Src test", kind="toolkit", gap="g",
+            backlog_dir=backlog_env,
+        )
+        assert e2.source == "feedback"
+
+        # Non-empty source → refreshes
+        e3 = mod.add_candidate(
+            title="Src test", kind="toolkit", gap="g",
+            source="supervisor",
+            backlog_dir=backlog_env,
+        )
+        assert e3.source == "supervisor"
+
+
 # ── Back-compat: old-schema load ─────────────────────────────────────────────
 
 

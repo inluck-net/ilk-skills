@@ -153,6 +153,8 @@ def add_candidate(
     proposed_fix: str = "",
     leverage: str = "medium",
     severity: str = "medium",
+    source: str = "",
+    relations: dict | None = None,
     backlog_dir: Path | str | None = None,
 ) -> Entry:
     """Add or update an upstream-candidate entry (idempotent).
@@ -160,8 +162,19 @@ def add_candidate(
     If a candidate with the same stable key already exists, bumps
     ``seen_count``/``last_seen`` and preserves ``first_seen``.
 
+    ``kind`` must be one of :data:`KINDS`; unknown values are rejected
+    with ``ValueError``.  ``source`` records where the entry originated
+    (e.g. ``"feedback"``, ``"supervisor"``).  ``relations`` holds
+    freeform structured links (``run_id``, ``commit``, ``plan``, …).
+
+    On update (dedup hit), ``relations`` is merged like ``evidence`` and
+    ``source`` is refreshed only if a non-empty one is passed.
+
     Returns the (possibly updated) ``Entry``.
     """
+    if kind not in KINDS:
+        raise ValueError(f"unknown kind {kind!r}; legal kinds: {KINDS}")
+
     if backlog_dir is None:
         backlog_dir = _backlog_dir()
     else:
@@ -187,6 +200,14 @@ def add_candidate(
             old_ev = entry_dict.get("evidence", {})
             old_ev.update(evidence)
             entry_dict["evidence"] = old_ev
+        # Merge relations if new relations provided
+        if relations:
+            old_rel = entry_dict.get("relations", {})
+            old_rel.update(relations)
+            entry_dict["relations"] = old_rel
+        # Refresh source only if a non-empty one is passed
+        if source:
+            entry_dict["source"] = source
         entry = Entry.from_dict(entry_dict)
         entries_raw[existing_idx] = entry.to_dict()
     else:
@@ -204,6 +225,8 @@ def add_candidate(
             first_seen=now,
             last_seen=now,
             seen_count=1,
+            source=source,
+            relations=relations or {},
         )
         entries_raw.append(entry.to_dict())
 
