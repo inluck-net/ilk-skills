@@ -11,7 +11,7 @@ support multiple projects via per-repo `.lark-project` markers.
 ## Layout
 
 ```
-~/.cursor/lark-tickets/
+~/.ilk-data/ilk-lark-tickets/
   config.json            # credentials + project mapping (DO NOT COMMIT)
   .token_cache.json      # auto-generated, ~2h lifetime
 
@@ -42,7 +42,7 @@ support multiple projects via per-repo `.lark-project` markers.
 2. **Grant the app document-level access.** Open the bitable → 更多 → ... → 添加文档应用 →
    search by app name → set permission to "可管理" or "可编辑".
 
-3. **Append to `~/.cursor/lark-tickets/config.json`:**
+3. **Append to `~/.ilk-data/ilk-lark-tickets/config.json`:**
    ```json
    "projects": {
      "<project_name>": {
@@ -86,7 +86,7 @@ $cli = "python C:\Users\chad\.cursor\skills\lark-tickets\scripts\cli.py"
 ## Security
 
 - `config.json` contains app secret. Do **not** commit it. The folder
-  `~/.cursor/lark-tickets/` is outside any repo so this is safe by default.
+  `~/.ilk-data/ilk-lark-tickets/` is outside any repo so this is safe by default.
 - Token cache is rewritten on every refresh; safe to delete anytime.
 - Never check `.lark-project` markers into a repo if you don't want others using
   this skill against your bitable. (For solo dev: it's fine to commit, since the
@@ -99,7 +99,7 @@ $cli = "python C:\Users\chad\.cursor\skills\lark-tickets\scripts\cli.py"
 | `[91403] Forbidden` | App lacks document-level permission | Add app as 文档应用 on the bitable with edit rights |
 | `[99991672] Access denied` | App scope missing | Apply scope in dev console, publish a new app version |
 | `[1254005] FieldNameNotFound` | Schema drifted | Run `cli.py fields` to see actual names |
-| All requests fail with 401 | Token cache stale across app changes | Delete `~/.cursor/lark-tickets/.token_cache.json` |
+| All requests fail with 401 | Token cache stale across app changes | Delete `~/.ilk-data/ilk-lark-tickets/.token_cache.json` |
 
 ## Currently configured
 

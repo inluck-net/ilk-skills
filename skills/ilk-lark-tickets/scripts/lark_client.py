@@ -1,6 +1,9 @@
 """Minimal Feishu (Lark) Bitable client. Stdlib only, no extra dependencies.
 
-Reads credentials from ~/.cursor/lark-tickets/config.json:
+Reads credentials from ``$ILK_DATA_HOME/ilk-lark-tickets/config.json`` (default
+``~/.ilk-data/ilk-lark-tickets/config.json``). The legacy
+``~/.cursor/lark-tickets/config.json`` location is still honored as a
+fallback for installs that predate the move under ~/.ilk-data:
 {
   "app_id": "cli_xxx",
   "app_secret": "xxx",
@@ -26,8 +29,31 @@ from pathlib import Path
 from typing import Any
 
 LARK_BASE = "https://open.feishu.cn"
-CONFIG_PATH = Path.home() / ".cursor" / "lark-tickets" / "config.json"
-TOKEN_CACHE = Path.home() / ".cursor" / "lark-tickets" / ".token_cache.json"
+
+# Credentials/cache live under the ilk data home, like the rest of the
+# toolkit (cf. improvement_backlog.py). The legacy ~/.cursor location is
+# kept as a read fallback so existing installs keep working pre-migration.
+_LEGACY_DIR = Path.home() / ".cursor" / "lark-tickets"
+
+
+def _resolve_data_dir() -> Path:
+    override = os.environ.get("ILK_DATA_HOME")
+    base = Path(override) if override else (Path.home() / ".ilk-data")
+    return base / "ilk-lark-tickets"
+
+
+def _resolve_config_path() -> Path:
+    primary = _resolve_data_dir() / "config.json"
+    if primary.exists():
+        return primary
+    legacy = _LEGACY_DIR / "config.json"
+    if legacy.exists():
+        return legacy
+    return primary  # not found anywhere → report the canonical (new) path
+
+
+CONFIG_PATH = _resolve_config_path()
+TOKEN_CACHE = CONFIG_PATH.parent / ".token_cache.json"
 
 
 # ---------------------------------------------------------------------------

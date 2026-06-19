@@ -26,7 +26,7 @@ Trigger this skill when the user says any of:
 ## Architecture
 
 ```
-~/.cursor/lark-tickets/
+~/.ilk-data/ilk-lark-tickets/
   config.json            # app credentials + per-project bitable mapping (gitignored)
   .token_cache.json      # auto-generated, expires every 2h
 
@@ -211,12 +211,12 @@ then summarize counts and any P0/P1 items.
   app as a document collaborator on the bitable.
 - `Lark API error: [99991672]` → app lacks the required scope. Tell the user which scope
   (the body lists e.g. `bitable:app`).
-- Token cache lives at `~/.cursor/lark-tickets/.token_cache.json`. Delete it to force refresh.
+- Token cache lives at `~/.ilk-data/ilk-lark-tickets/.token_cache.json`. Delete it to force refresh.
 
 ## Adding a new project
 
 1. Create the bitable in Feishu, add the app as a "文档应用" with edit rights.
-2. Append to `~/.cursor/lark-tickets/config.json`:
+2. Append to `~/.ilk-data/ilk-lark-tickets/config.json`:
    ```json
    "projects": {
      "myproj": {
