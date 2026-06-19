@@ -112,6 +112,26 @@ def render_tray(entries: list[dict]) -> dict:
             "action": action,
         })
 
+        # ── Action rows: Start now / Resume ──────────────────────────
+        # Start now (kind:"run"): runnable & not running — dispatchable work exists.
+        # Resume (kind:"resume"): parked/blacklisted — needs /ilk-resume.
+        # Each action row carries `path` so the click dispatcher can target the project.
+        project_path = e.get("path", "")
+        if e.get("runnable"):
+            rows.append({
+                "label": "Start now",
+                "icon_state": icon,
+                "project_key": key,
+                "action": {"kind": "run", "project_key": key, "path": project_path},
+            })
+        if e.get("parked"):
+            rows.append({
+                "label": "Resume",
+                "icon_state": icon,
+                "project_key": key,
+                "action": {"kind": "resume", "project_key": key, "path": project_path},
+            })
+
     # Global icon_state: blocked > running > attention > idle.
     if blocked_count > 0:
         global_state = "attention"
