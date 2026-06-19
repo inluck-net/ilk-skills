@@ -16,6 +16,13 @@ last_updated: YYYY-MM-DD
 #   device-manual  — correctness needs a physical device / GUI / external app.
 # Absent ⇒ loop-verified (back-compat with plans that predate tiers).
 verification_tier: loop-verified
+# --- Escaped-bug regression gate (see decomposition-principles.md §18) ---
+# Set this field (to the escaped-bug tracker id, e.g. "T-2026-0042") ONLY
+# when this sub-plan fixes a human-found bug that a gate should have caught.
+# Doing so requires at least one reproducing local_check (frontmatter or
+# per-step) — plan_lint.py enforces structural presence automatically.
+# Leave unset (or empty) for normal sub-plans that don't fix escaped bugs.
+regression_for:
 # --- Meta-project routing (REQUIRED in meta projects, ignored otherwise) ---
 # In a meta project (the parent dir has .ilk-meta.json), every sub-plan must
 # declare exactly one member repo. The ilk-loop driver `cd`s into that

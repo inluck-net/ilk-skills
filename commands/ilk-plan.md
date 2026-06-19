@@ -679,6 +679,11 @@ report; fix before launching):
 - **contract-change-review** — a sub-plan's `scope_paths` touch a
   contract-governed file but the body doesn't reference the contract docs.
   See 7h below.
+- **escaped-bug-regression-gate** — a sub-plan has `regression_for:` set
+  (declares it fixes a human-found escaped bug) but carries zero
+  `local_checks` (neither frontmatter nor per-step). An escaped-bug fix
+  must have a reproducing local_check to prevent the same class of bug
+  from escaping a gate twice. See decomposition-principles.md §18.
 
 `plan_lint.py` exits non-zero when it finds anything; treat findings as
 must-fix-before-launch (a contradiction here is what actually stalled the loop).
