@@ -241,11 +241,74 @@ def lint_brittle_exact_list_assertion(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── Escaped-bug regression gate ────────────────────────────────────────────────
+#
+# A sub-plan that fixes a human-found escaped bug (declared via
+# ``regression_for:`` frontmatter field) must carry at least one reproducing
+# ``local_check`` — either in frontmatter ``local_checks:`` or in a per-step
+# ``local_checks:`` yaml block.  The linter cannot verify a check truly
+# reproduces the bug, so the enforceable contract is structural presence.
+# See decomposition-principles.md §escaped-bug-regression-gate.
+
+# Frontmatter field: regression_for: <escaped-bug-tracker-id>
+_REGRESSION_FOR_RE = re.compile(r"^regression_for:\s*(.+)$", re.MULTILINE)
+
+# Per-step local_checks block: ```yaml ... local_checks: ... command: ... ```
+_STEP_LOCAL_CHECKS_BLOCK_RE = re.compile(
+    r"```yaml\n.*?local_checks:\s*\n(.*?)(?:```|\Z)", re.S
+)
+
+
+def _extract_regression_for(text: str) -> str | None:
+    """Return the regression_for value from frontmatter, or None if absent/empty."""
+    m = re.match(r"^---\n.*?\n---\n", text, re.S)
+    if not m:
+        return None
+    fm = text[m.start():m.end()]
+    match = _REGRESSION_FOR_RE.search(fm)
+    if not match:
+        return None
+    value = match.group(1).strip()
+    return value if value else None
+
+
+def _has_any_local_check(text: str) -> bool:
+    """True if the sub-plan declares at least one local_check anywhere."""
+    # Frontmatter local_checks
+    cmds = _extract_local_checks_commands(text)
+    if cmds:
+        return True
+    # Per-step local_checks blocks containing at least one command:
+    body = _strip_frontmatter(text)
+    for block_match in _STEP_LOCAL_CHECKS_BLOCK_RE.finditer(body):
+        block = block_match.group(1)
+        if re.search(r"^\s+-\s+command:", block, re.MULTILINE):
+            return True
+    return False
+
+
+def lint_escaped_bug_regression_gate(text: str, slug: str) -> list[str]:
+    """Flag an escaped-bug fix sub-plan that has no reproducing local_check."""
+    findings: list[str] = []
+    if _extract_regression_for(text) is None:
+        return findings
+    if _has_any_local_check(text):
+        return findings
+    findings.append(
+        f"{slug}: regression_for is set but the sub-plan declares no local_check "
+        f"(neither frontmatter local_checks nor per-step local_checks block). "
+        f"An escaped-bug fix must carry a reproducing local_check to prevent "
+        f"the same class of bug from escaping a gate twice."
+    )
+    return findings
+
+
 ALL_CHECKS = (
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
     lint_contract_change_review,
     lint_brittle_exact_list_assertion,
+    lint_escaped_bug_regression_gate,
 )
 
 
