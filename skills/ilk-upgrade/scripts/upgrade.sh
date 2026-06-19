@@ -62,6 +62,9 @@ done
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
 REPO_ROOT="$(cd "$SELF/../../.." && pwd -P)"
 
+# Shared data-dir resolver (ILK_DATA_HOME → ILK_DATA_DIR → ~/.ilk-data)
+source "$REPO_ROOT/skills/ilk-loop/scripts/_ilk_data_dir.sh"
+
 if [[ ! -d "$REPO_ROOT/.git" ]]; then
   echo "error: not an ilk-skills clone (no .git): $REPO_ROOT" >&2
   exit 2
@@ -120,7 +123,7 @@ do_check() {
 # --- live-loop guard ---------------------------------------------------------
 
 check_live_pids() {
-  local data_dir="${ILK_DATA_DIR:-$HOME/.ilk-data}"
+  local data_dir; data_dir="$(ilk_data_dir)"
   local projects_dir="$data_dir/projects"
   local active_pids=()
 
