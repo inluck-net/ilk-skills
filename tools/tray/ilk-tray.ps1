@@ -123,6 +123,17 @@ function Write-TrayLog {
   }
 }
 
+# ── Balloon notification (AC-3: click observability) ──────────────────
+function Show-Balloon {
+  param([string]$TipTitle, [string]$TipText, [System.Windows.Forms.ToolTipIcon]$TipIcon = "Info")
+  try {
+    $notifyIcon.BalloonTipTitle = $TipTitle
+    $notifyIcon.BalloonTipText  = $TipText
+    $notifyIcon.BalloonTipIcon  = $TipIcon
+    $notifyIcon.ShowBalloonTip(4000)
+  } catch {}
+}
+
 # ── Tick: pipe status_all --json through render_tray, paint ───────────
 function Invoke-Tick {
   try {
@@ -205,20 +216,43 @@ function Invoke-Tick {
       $item.Add_Click({
         param($sender, $e)
         $r = $sender.Tag
-        if ($r.action.kind -eq "status") {
-          $projKey = $r.project_key
-          # If a postmortem report is available, open it so the operator can
-          # read the block reason without pasting logs.  Fall back to the
-          # project log dir when no report path is present.
-          $reportPath = $r.action.report_path
-          if ($reportPath -and (Test-Path $reportPath)) {
-            Start-Process $reportPath
-          } else {
-            $logDir = Join-Path $env:USERPROFILE ".ilk-data\projects\$projKey\logs"
-            if (Test-Path $logDir) {
-              Start-Process "explorer.exe" $logDir
+        # Dispatch on action.kind (AC-1/AC-2/AC-4: run/resume/status handlers)
+        try {
+          if ($r.action.kind -eq "run") {
+            # AC-1: Start now → launch ilk-run.ps1 detached, hidden (no UI block).
+            $ilkRun = Join-Path $RepoRoot "skills\ilk-runner\scripts\ilk-run.ps1"
+            Start-Process powershell -WindowStyle Hidden -ArgumentList @(
+              '-NoProfile', '-ExecutionPolicy', 'Bypass',
+              '-File', $ilkRun, '-Start', $r.action.path
+            )
+            Write-TrayLog "action=run project=$($r.project_key) path=$($r.action.path)"
+            Show-Balloon "ilk: Started loop" "Started loop: $($r.project_key)"
+          } elseif ($r.action.kind -eq "resume") {
+            # AC-2: Resume → write resolve-ack so the scheduler un-parks the project.
+            $blacklistPy = Join-Path $RepoRoot "skills\ilk-watchdog\scripts\blacklist_status.py"
+            $projDataDir = Join-Path $dataDir "projects\$($r.project_key)"
+            $ackResult = & $PYTHON $blacklistPy ack --project $projDataDir 2>&1
+            Write-TrayLog "action=resume project=$($r.project_key) ack=$ackResult"
+            Show-Balloon "ilk: Resumed" "Resumed (resolve-ack): $($r.project_key)"
+          } elseif ($r.action.kind -eq "status") {
+            $projKey = $r.project_key
+            # If a postmortem report is available, open it so the operator can
+            # read the block reason without pasting logs.  Fall back to the
+            # project log dir when no report path is present.
+            $reportPath = $r.action.report_path
+            if ($reportPath -and (Test-Path $reportPath)) {
+              Start-Process $reportPath
+            } else {
+              $logDir = Join-Path $env:USERPROFILE ".ilk-data\projects\$projKey\logs"
+              if (Test-Path $logDir) {
+                Start-Process "explorer.exe" $logDir
+              }
             }
           }
+        } catch {
+          # AC-4: Surface errors via balloon tip, never crash the tray.
+          Write-TrayLog "click error ($($r.action.kind)) project=$($r.project_key): $_"
+          Show-Balloon "ilk: Action error" "$($r.action.kind) failed: $_" "Error"
         }
       }.GetNewClosure())
       [void]$menu.Items.Add($item)
