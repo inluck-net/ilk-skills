@@ -1052,6 +1052,8 @@ def maybe_emit_upstream_candidate(
     )
 
     try:
+        # candidates.json is the contract /ilk-self-improve reads;
+        # source="feedback" distinguishes postmortem-emitted entries.
         _improvement_backlog.add_candidate(
             title=f"local-checks-stuck: {project_path.name}",
             kind="toolkit",
@@ -1060,6 +1062,7 @@ def maybe_emit_upstream_candidate(
             proposed_fix="Review the sub-plan's local_checks AC for achievability; consider splitting the step or adjusting the check.",
             leverage="medium",
             severity="high",
+            source="feedback",
         )
     except Exception:
         # Non-fatal — don't break postmortem generation
