@@ -417,6 +417,7 @@ def newest_run_id(by_run: dict[str, list[dict]]) -> str | None:
 CLASSIFICATION_LABELS: tuple[str, ...] = (
     "interrupted",
     "local-checks-stuck",
+    "local-checks-broken",
     "timeout-bound",
     "budget-exhausted",
     "clean-success",
@@ -442,6 +443,28 @@ API_RE = re.compile(
     r"connection reset|timeout exceeded",
     re.IGNORECASE,
 )
+
+# Signals that the gate COMMAND could not execute (not that the code failed).
+# Exit 4/5 = pytest collection/config errors; exit 127 = command not found.
+BROKEN_GATE_STDERR_RE = re.compile(
+    r"no such file|file or directory not found|command not found|"
+    r"not recognized|No module named|SyntaxError",
+    re.IGNORECASE,
+)
+
+
+def _is_broken_gate_result(check: dict) -> bool:
+    """Return True if a failing local_checks result indicates the gate
+    COMMAND could not execute (exit_code in {4,5,127} or stderr matches
+    a 'couldn't execute' pattern).  The product code is NOT implicated;
+    a blind resume re-fails identically."""
+    ec = check.get("exit_code")
+    if ec in (4, 5, 127):
+        return True
+    stderr = check.get("stderr_tail") or ""
+    if stderr and BROKEN_GATE_STDERR_RE.search(stderr):
+        return True
+    return False
 
 
 def classify_log_keywords(lines: list[str]) -> str:
@@ -753,7 +776,16 @@ def _classify_core(
             and all(c.get("outcome") == "pass" for c in _items(r))
         )
         if fail_iters >= 3 and fail_iters > pass_iters:
-            return "local-checks-stuck", {
+            # Distinguish broken gate (command couldn't execute) from
+            # stuck gate (command ran and code failed it).
+            broken = any(
+                _is_broken_gate_result(c)
+                for r in recent
+                for c in _items(r)
+                if c.get("outcome") in ("fail", "error")
+            )
+            label = "local-checks-broken" if broken else "local-checks-stuck"
+            return label, {
                 "iter_at_stop": last.get("iteration"),
                 "fail_iters_in_window": fail_iters,
                 "pass_iters_in_window": pass_iters,
@@ -834,7 +866,16 @@ def _classify_core(
                 pass_iters = sum(
                     1 for r in last3 if r.get("exit_code") in (0, None)
                 )
-                return "local-checks-stuck", {
+                # Distinguish broken gate from stuck gate via local_checks
+                # exit_code / stderr_tail when available.
+                broken = any(
+                    _is_broken_gate_result(c)
+                    for r in last3
+                    for c in _items(r)
+                    if c.get("outcome") in ("fail", "error")
+                )
+                label = "local-checks-broken" if broken else "local-checks-stuck"
+                return label, {
                     "iter_at_stop": last.get("iteration"),
                     "fail_iters_in_window": fail_iters,
                     "pass_iters_in_window": pass_iters,
@@ -1001,7 +1042,8 @@ def classify(
 # Conservative list — only clear toolkit signals where the sub-plan's
 # local_checks or the loop machinery itself is the likely root cause.
 _TOOLKIT_SIGNAL_LABELS = frozenset({
-    "local-checks-stuck",  # sub-plan AC may be wrong/over-specified
+    "local-checks-stuck",   # sub-plan AC may be wrong/over-specified
+    "local-checks-broken",  # gate COMMAND couldn't execute — fix the gate config
 })
 
 
@@ -1028,8 +1070,9 @@ def maybe_emit_upstream_candidate(
         "run_id": run_id,
         "iter_at_stop": last.get("iteration"),
     }
-    # Include failing check commands if available
+    # Include failing check commands + exit codes if available
     fail_checks = []
+    fail_exit_codes: list[int | None] = []
     for r in iters[-3:]:
         lc = r.get("local_checks")
         if isinstance(lc, dict):
@@ -1040,26 +1083,46 @@ def maybe_emit_upstream_candidate(
                     cmd = c.get("command", "")
                     if cmd and cmd not in fail_checks:
                         fail_checks.append(cmd)
+                        fail_exit_codes.append(c.get("exit_code"))
     if fail_checks:
         evidence["failing_checks"] = fail_checks
+        if label == "local-checks-broken":
+            evidence["exit_codes"] = fail_exit_codes
 
-    gap_desc = (
-        f"Loop classified as '{label}': agent kept committing but "
-        f"local_checks kept failing (fail_iters_in_window="
-        f"{facts.get('fail_iters_in_window')}, "
-        f"pass_iters_in_window={facts.get('pass_iters_in_window')}). "
-        f"Sub-plan AC may be wrong/over-specified or there's a real bug."
-    )
+    if label == "local-checks-broken":
+        gap_desc = (
+            f"Loop classified as '{label}': gate COMMAND could not execute "
+            f"(exit_code in {{4,5,127}} or 'not found' in stderr). "
+            f"Product code is NOT implicated; a blind resume re-fails. "
+            f"Fix the gate config (often a path a later step creates)."
+        )
+        proposed_fix = (
+            "Fix the gate config: check if the command references a path "
+            "that doesn't exist yet (see plan_lint frontmatter-path rule), "
+            "install the missing dependency in the worker, or correct the "
+            "command syntax."
+        )
+        candidate_kind = "toolchain"
+    else:
+        gap_desc = (
+            f"Loop classified as '{label}': agent kept committing but "
+            f"local_checks kept failing (fail_iters_in_window="
+            f"{facts.get('fail_iters_in_window')}, "
+            f"pass_iters_in_window={facts.get('pass_iters_in_window')}). "
+            f"Sub-plan AC may be wrong/over-specified or there's a real bug."
+        )
+        proposed_fix = "Review the sub-plan's local_checks AC for achievability; consider splitting the step or adjusting the check."
+        candidate_kind = "toolkit"
 
     try:
         # candidates.json is the contract /ilk-self-improve reads;
         # source="feedback" distinguishes postmortem-emitted entries.
         _improvement_backlog.add_candidate(
-            title=f"local-checks-stuck: {project_path.name}",
-            kind="toolkit",
+            title=f"{label}: {project_path.name}",
+            kind=candidate_kind,
             gap=gap_desc,
             evidence=evidence,
-            proposed_fix="Review the sub-plan's local_checks AC for achievability; consider splitting the step or adjusting the check.",
+            proposed_fix=proposed_fix,
             leverage="medium",
             severity="high",
             source="feedback",
@@ -1161,6 +1224,16 @@ def recommend_params(
             "may be wrong/unachievable, or a real bug. Params unchanged. **Do "
             "not auto-relaunch**: read the failing check output and decide "
             "whether to fix the AC, split the step, or file out-of-scope."
+        )
+
+    if label == "local-checks-broken":
+        return cur_max, cur_to, (
+            "gate COMMAND could not execute (exit 4/5/127 or 'not found' in "
+            "stderr) — product code is NOT the issue. Params unchanged. **Do "
+            "not auto-relaunch**: a blind resume re-fails identically. Fix the "
+            "gate config (often a path a later step creates; see plan_lint "
+            "frontmatter-path rule) or install the missing dependency, then "
+            "relaunch."
         )
 
     if label == "budget-exhausted":
@@ -1481,6 +1554,17 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
             "specified, the step is too coarse for the agent to land in one go, "
             "or there's a real bug it can't fix. **Read the failing check output "
             "in the iteration log before deciding what to do.**"
+        )
+    if label == "local-checks-broken":
+        return (
+            f"The gate COMMAND could not execute in {facts.get('fail_iters_in_window')} "
+            f"of the last {facts.get('window_size')} iterations (passed in "
+            f"{facts.get('pass_iters_in_window')}). The product code is NOT "
+            "implicated — a blind resume re-fails identically. The fix is the "
+            "gate config itself: often a path a later plan step creates, a missing "
+            "dependency, or a command not installed in the worker environment. "
+            "See also the plan_lint frontmatter-path rule for prevention. "
+            "**Do not auto-relaunch until the gate is fixed.**"
         )
     if label == "budget-exhausted":
         return (
