@@ -41,7 +41,12 @@ from lark_client import (  # noqa: E402
     BitableClient,
     LarkError,
     _flatten_text,
+    _request,
+    create_bitable,
+    get_tenant_access_token,
+    load_config,
     next_ticket_id,
+    upsert_project_config,
 )
 
 
@@ -286,6 +291,95 @@ def cmd_setup_issue_views(args):
 
 
 # ---------------------------------------------------------------------------
+# init-project (idempotent bootstrap)
+# ---------------------------------------------------------------------------
+
+def _probe_tables(app_token: str, token: str) -> bool:
+    """Return True if the base is reachable (GET tables succeeds)."""
+    try:
+        _request("GET", f"/open-apis/bitable/v1/apps/{app_token}/tables", token=token)
+        return True
+    except Exception:
+        return False
+
+
+def cmd_init_project(args):
+    """Idempotent one-command Lark bitable bootstrap.
+
+    Idempotency contract:
+      - entry + reachable  → reuse (skip create, re-seed schema, ensure marker)
+      - no entry           → create (create_bitable, upsert config, write marker, seed)
+      - entry + unreachable → refuse unless --force-recreate
+    """
+    import time as _time
+
+    cfg = load_config()
+    token = get_tenant_access_token(cfg)
+    projects = cfg.get("projects") or {}
+    name = args.project
+    entry = projects.get(name)
+    has_entry = entry is not None and entry.get("bitable_app_token")
+
+    if has_entry:
+        # Entry exists — check reachability
+        app_token = entry["bitable_app_token"]
+        reachable = _probe_tables(app_token, token)
+        if reachable:
+            # Reuse path
+            table_id = entry.get("table_id", "")
+            url = entry.get("url", "")
+            print(f"reused  app_token={app_token}  table={table_id}  url={url}")
+            _ensure_marker(args.repo, name)
+            from init_bitable import seed_schema
+            seed_schema(project_name=name, rename_primary=True)
+            return
+        else:
+            # Unreachable
+            if not args.force_recreate:
+                print(
+                    f"ERROR: project '{name}' exists in config but its base "
+                    f"({app_token}) is unreachable. Use --force-recreate to "
+                    f"replace it (the old base will NOT be deleted).",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            # Force-recreate: fall through to create path
+            print(f"WARNING: replacing unreachable base {app_token} (--force-recreate)")
+
+    # Create path
+    result = create_bitable(name, folder_token=args.folder, token=token)
+    app_token = result["app_token"]
+    table_id = result.get("table_id", "")
+    url = result.get("url", "")
+
+    new_entry = {
+        "bitable_app_token": app_token,
+        "table_id": table_id,
+        "url": url,
+        "ticket_id_prefix": args.prefix,
+    }
+    upsert_project_config(name, new_entry)
+    print(f"created  app_token={app_token}  table={table_id}  url={url}")
+
+    _ensure_marker(args.repo, name)
+
+    from init_bitable import seed_schema
+    seed_schema(project_name=name, rename_primary=True)
+
+
+def _ensure_marker(repo_dir: str, project_name: str) -> Path:
+    """Write ``.lark-project`` marker if missing or different. Return path."""
+    marker = Path(repo_dir) / ".lark-project"
+    if marker.exists():
+        existing = marker.read_text(encoding="utf-8").strip().splitlines()
+        if existing and existing[0].strip() == project_name:
+            return marker  # already correct
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(project_name + "\n", encoding="utf-8")
+    return marker
+
+
+# ---------------------------------------------------------------------------
 # Argparse
 # ---------------------------------------------------------------------------
 
@@ -352,6 +446,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Seconds between write API calls (avoids Feishu write conflicts)",
     )
     sp.set_defaults(func=cmd_setup_issue_views)
+
+    sp = sub.add_parser(
+        "init-project",
+        help="Idempotent one-command Lark bitable bootstrap (create + config + marker + schema)",
+    )
+    sp.add_argument("--project", required=True, help="Project name (config key)")
+    sp.add_argument("--folder", default=None, help="Drive folder token for visibility")
+    sp.add_argument("--prefix", default="T", help="Ticket id prefix (default: T)")
+    sp.add_argument("--repo", default=".", help="Repo root for .lark-project marker (default: cwd)")
+    sp.add_argument(
+        "--force-recreate",
+        action="store_true",
+        help="Replace an unreachable base instead of refusing",
+    )
+    sp.set_defaults(func=cmd_init_project)
 
     return p
 
