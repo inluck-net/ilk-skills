@@ -231,8 +231,11 @@ shared cross-project backlog at `~/.ilk-data/ilk-skills-improvements/candidates.
 
 Each candidate records:
 - **id** — stable dedup key (sha256 of kind + normalised title + gap)
+- **kind** — one of `("toolkit", "bug", "feature", "gap", "toolchain", "escaped-bug")`; `"toolkit"` is the default and back-compat value
 - **title / gap** — human-readable description of the toolkit/process issue
 - **evidence** — project path, run_id, failing check commands
+- **source** — origin of the entry (e.g. `"feedback"` for postmortem-emitted, `"supervisor"`, `"lark"`, `"github"`)
+- **relations** — structured links dict (`run_id`, `commit`, `plan`, …)
 - **leverage / severity** — triage hints for the `/ilk-self-improve` adapter
 - **status** — `open` (default) / `planned` / `shipped` / `wontfix`
 - **seen_count / first_seen / last_seen** — dedup + frequency tracking
