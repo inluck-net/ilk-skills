@@ -251,7 +251,7 @@ def lint_brittle_exact_list_assertion(text: str, slug: str) -> list[str]:
 # See decomposition-principles.md §escaped-bug-regression-gate.
 
 # Frontmatter field: regression_for: <escaped-bug-tracker-id>
-_REGRESSION_FOR_RE = re.compile(r"^regression_for:\s*(.+)$", re.MULTILINE)
+_REGRESSION_FOR_RE = re.compile(r"^regression_for: *([^\r\n]*)$", re.MULTILINE)
 
 # Per-step local_checks block: ```yaml ... local_checks: ... command: ... ```
 _STEP_LOCAL_CHECKS_BLOCK_RE = re.compile(
