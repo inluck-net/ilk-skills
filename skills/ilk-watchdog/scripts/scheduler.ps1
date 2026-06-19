@@ -74,6 +74,9 @@ function Release-SchedulerMutex {
 . (Join-Path $PSScriptRoot "..\..\ilk-loop\scripts\_ilk_skill_root.ps1")
 $SkillRoot = Get-IlkSkillRoot
 
+# --- data-home resolver (ILK_DATA_HOME → ILK_DATA_DIR → ~/.ilk-data) --------
+. (Join-Path $PSScriptRoot "..\..\ilk-loop\scripts\_ilk_data_dir.ps1")
+
 # --- constants ---------------------------------------------------------------
 $ScanScript       = Join-Path $PSScriptRoot 'scheduler_scan.py'
 $PromoteScript    = Join-Path $SkillRoot 'ilk-loop\scripts\promote_next_master.py'
@@ -81,12 +84,12 @@ $LaunchScript     = Join-Path $SkillRoot 'ilk-launcher\scripts\launch.ps1'
 $BootstrapScript  = Join-Path $SkillRoot '..\tools\claude-worker\bootstrap.ps1'
 $NotifyPy         = Join-Path $SkillRoot 'ilk-watchdog\scripts\ilk_notify.py'
 $WatchdogPs1      = Join-Path $PSScriptRoot 'watchdog.ps1'
-$SchedulerLogDir  = Join-Path $HOME '.ilk-data\logs'
+$SchedulerLogDir  = Join-Path (Get-IlkDataDir) 'logs'
 $SchedulerLogFile = Join-Path $SchedulerLogDir 'scheduler.log'
 # PID file — published by the long-running daemon so /ilk-upgrade can detect
 # and bounce the scheduler (mirrors scheduler.sh's ${HOME}/.ilk-data/scheduler.pid;
 # honors ILK_DATA_DIR like the upgrade guard does).
-$SchedulerDataDir = if ($env:ILK_DATA_DIR) { $env:ILK_DATA_DIR } else { Join-Path $HOME '.ilk-data' }
+$SchedulerDataDir = Get-IlkDataDir
 $SchedulerPidFile = Join-Path $SchedulerDataDir 'scheduler.pid'
 
 # --- helpers -----------------------------------------------------------------

@@ -1252,8 +1252,9 @@ function Run-Log {
   Write-Host '=== test_scheduler.ps1 log ==='
   Setup-TwoQueuedProjects
 
-  # Remove any pre-existing scheduler.log.
-  $logDir = Join-Path $HOME '.ilk-data\logs'
+  # The scheduler logs under Get-IlkDataDir, which respects ILK_DATA_HOME.
+  # With ILK_DATA_HOME=$FakeData, the log lands at $FakeData\logs\scheduler.log.
+  $logDir = Join-Path $FakeData 'logs'
   $logFile = Join-Path $logDir 'scheduler.log'
   if (Test-Path $logFile) {
     Remove-Item $logFile -Force -ErrorAction SilentlyContinue
