@@ -176,6 +176,15 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   `expect(result).toEqual(expect.arrayContaining(['area']))`.
   The gate tests that required members are present, not that the
   set is frozen. `plan_lint.py` warns on this shape automatically.
+- **frontmatter `local_checks` referencing a later-created path** →
+  subplan-scope (frontmatter) `local_checks` run at **every** step. If a
+  command references a path that the plan's own later steps create (e.g.
+  `pytest tools/xbar/tests/` before step 2 creates that directory), the
+  check fails on every earlier step (pytest exit 4 "file or directory not
+  found") and stalls the loop. **Fix:** move the check to that step's
+  per-step `local_checks` block so it runs only after the path exists.
+  `plan_lint.py` (`lint_frontmatter_path_created_later`) warns on this
+  shape automatically at `/ilk-plan` step 7g.
 
 ## 9. Cold-read self-check
 
