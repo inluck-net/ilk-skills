@@ -132,6 +132,27 @@ To discover the exact paths for the project in the current directory:
 python3 <skill-root>/ilk-loop/scripts/ilk_paths.py --start . --where
 ```
 
+### Data-home location & override (one convention, all languages)
+
+The data home defaults to `~/.ilk-data` but is overridable, with a **single
+precedence honored identically across Python, PowerShell, and bash**:
+
+```
+$ILK_DATA_HOME   →   $ILK_DATA_DIR (alias)   →   ~/.ilk-data
+```
+
+`ILK_DATA_HOME` is the primary variable; `ILK_DATA_DIR` is an accepted
+back-compat alias (older PowerShell/bash entrypoints used it). Setting either
+relocates **everything** — Python tools, the scheduler, the tray, and upgrade
+move together (no split-brain). Never re-implement this inline; call the
+canonical resolver for your language:
+
+- **Python** — `ilk_paths.ilk_data_root()` (import from `ilk-loop/scripts`;
+  `improvement_backlog.py` / `lark_client.py` defer to it with a graceful
+  stdlib fallback).
+- **PowerShell** — `Get-IlkDataDir` (dot-source `ilk-loop/scripts/_ilk_data_dir.ps1`).
+- **bash** — `ilk_data_dir` (source `ilk-loop/scripts/_ilk_data_dir.sh`).
+
 If you have legacy in-project `.ilk-launcher/` or `.ilk-watchdog/` directories
 from an earlier version, migrate them once with:
 
