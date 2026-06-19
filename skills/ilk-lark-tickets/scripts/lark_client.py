@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -212,6 +213,68 @@ def get_tenant_access_token(cfg: dict) -> str:
         encoding="utf-8",
     )
     return token
+
+
+# ---------------------------------------------------------------------------
+# Bitable: create + config helpers
+# ---------------------------------------------------------------------------
+
+def create_bitable(
+    name: str,
+    folder_token: str | None = None,
+    token: str | None = None,
+) -> dict:
+    """Create a new Lark Bitable base and return ``{app_token, table_id, url}``.
+
+    If *token* is ``None`` a tenant access token is acquired automatically.
+    """
+    cfg = load_config()
+    if token is None:
+        token = get_tenant_access_token(cfg)
+    body: dict = {"name": name}
+    if folder_token:
+        body["folder_token"] = folder_token
+    data = _request("POST", "/open-apis/bitable/v1/apps", token=token, body=body)
+    app = data.get("app", data)
+    return {
+        "app_token": app.get("app_token"),
+        "table_id": app.get("default_table_id"),
+        "url": app.get("url"),
+    }
+
+
+def upsert_project_config(
+    name: str,
+    entry: dict,
+    config_path: str | Path | None = None,
+) -> None:
+    """Atomically upsert ``projects.<name>`` in the Lark config file.
+
+    Preserves every existing key (``app_id``, ``app_secret``, other projects).
+    Write is atomic (tmp + ``os.replace``), utf-8, no BOM.
+    """
+    cfg_path = Path(config_path) if config_path else _resolve_config_path()
+    if cfg_path.exists():
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    else:
+        cfg = {}
+    projects = cfg.setdefault("projects", {})
+    projects[name] = entry
+    # Atomic write: tmp in same dir, then os.replace
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(cfg_path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=2, ensure_ascii=False)
+            fh.write("\n")
+        os.replace(tmp, str(cfg_path))
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 # ---------------------------------------------------------------------------
