@@ -215,6 +215,34 @@ then summarize counts and any P0/P1 items.
 
 ## Adding a new project
 
+### One-command bootstrap (recommended)
+
+```powershell
+python <skill-root>/ilk-lark-tickets/scripts/cli.py init-project --project <name>
+```
+
+This single command:
+- Creates a new Bitable base (the app owns it — no manual "添加文档应用" grant needed).
+- Upserts the project entry in `config.json` (preserves `app_id`, `app_secret`, other projects).
+- Writes a `.lark-project` marker in the repo root.
+- Seeds the standard 24-field ticket schema (idempotent — skips fields that exist).
+
+The command is **idempotent**: re-running for the same project reuses the existing base
+(never creates a duplicate). If the base is unreachable (e.g. deleted), it refuses
+with a clear message unless `--force-recreate` is passed.
+
+Options:
+- `--project <name>` (required) — project key in config.
+- `--folder <token>` — Drive folder token for visibility (organises bases in Feishu Drive).
+- `--prefix <str>` — ticket id prefix (default `T`).
+- `--repo <path>` — repo root for the `.lark-project` marker (default: cwd).
+- `--force-recreate` — replace an unreachable base instead of refusing.
+
+### Manual fallback
+
+If you need to set up a base manually (e.g. Bitable already exists, or you need
+a Wiki-embedded base):
+
 1. Create the bitable in Feishu, add the app as a "文档应用" with edit rights.
 2. Append to `~/.ilk-data/ilk-lark-tickets/config.json`:
    ```json
@@ -227,7 +255,7 @@ then summarize counts and any P0/P1 items.
    }
    ```
 3. In the new repo's root, write `.lark-project` containing `myproj`.
-4. Optionally run `scripts/init_bitable.py` (see README) to seed the standard 24-field schema.
+4. Optionally run `scripts/init_bitable.py --project <name>` to seed the schema.
 
 ## See also
 

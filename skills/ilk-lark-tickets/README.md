@@ -36,6 +36,33 @@ support multiple projects via per-repo `.lark-project` markers.
 
 ## Adding a new project
 
+### One-command bootstrap (recommended)
+
+```powershell
+python <skill-root>/ilk-lark-tickets/scripts/cli.py init-project --project <name>
+```
+
+This single command does everything: creates a new Bitable base (the app owns it —
+no manual "添加文档应用" grant needed), writes the config entry, drops the
+`.lark-project` marker, and seeds the 24-field schema. It's **idempotent** —
+re-running never creates a duplicate base.
+
+Options:
+- `--project <name>` (required) — project key in config.
+- `--folder <token>` — Drive folder token for visibility.
+- `--prefix <str>` — ticket id prefix (default `T`).
+- `--repo <path>` — repo root for the `.lark-project` marker (default: cwd).
+- `--force-recreate` — replace an unreachable base instead of refusing.
+
+Verify after:
+```powershell
+python <skill-root>/ilk-lark-tickets/scripts/cli.py fields --project <name>
+```
+
+### Manual fallback
+
+If the Bitable already exists or you need a Wiki-embedded base:
+
 1. **Create the bitable in Feishu.** Use a standalone bitable (`/base/...`), not Wiki-embedded,
    to avoid extra Wiki permission scopes.
 
@@ -60,12 +87,12 @@ support multiple projects via per-repo `.lark-project` markers.
 
 5. **Seed the schema** (optional — only if the bitable is empty):
    ```powershell
-   python C:\Users\chad\.cursor\skills\lark-tickets\scripts\init_bitable.py --project <name>
+   python <skill-root>/ilk-lark-tickets/scripts/init_bitable.py --project <name>
    ```
 
 6. **Verify:**
    ```powershell
-   python C:\Users\chad\.cursor\skills\lark-tickets\scripts\cli.py fields --project <name>
+   python <skill-root>/ilk-lark-tickets/scripts/cli.py fields --project <name>
    ```
 
 ## CLI cheat sheet
