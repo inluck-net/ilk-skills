@@ -13,10 +13,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from pathlib import Path
+
+# Default script paths — resolved once relative to this file's location.
+_HERE = Path(__file__).resolve().parent
+_REPO_ROOT = _HERE.parent.parent
+_DEFAULT_RUN_SCRIPT = str(_REPO_ROOT / "skills" / "ilk-runner" / "scripts" / "ilk-run.sh")
+_DEFAULT_RESUME_SCRIPT = str(_REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "blacklist_status.py")
 
 
-def render_xbar(entries: list[dict]) -> str:
+def render_xbar(
+    entries: list[dict],
+    *,
+    run_script: str = _DEFAULT_RUN_SCRIPT,
+    resume_script: str = _DEFAULT_RESUME_SCRIPT,
+) -> str:
     """Convert a status_all JSON array into xbar text.
 
     Parameters
@@ -70,6 +83,24 @@ def render_xbar(entries: list[dict]) -> str:
             row += f"  ({state})"
 
         lines.append(row)
+
+        # ── Action sub-items: Start now / Resume ─────────────────────
+        # Start now: runnable & not running — dispatchable work exists.
+        # Resume: parked/blacklisted — needs resolve-ack.
+        project_path = e.get("path", "")
+        if e.get("runnable"):
+            lines.append(
+                f"--Start now | bash={run_script!r}"
+                f" param1={project_path!r} terminal=false refresh=true"
+            )
+        if e.get("parked"):
+            lines.append(
+                f"--Resume | bash=python3"
+                f" param1={resume_script!r}"
+                " param2=ack"
+                " param3=--project"
+                f" param4={project_path!r} terminal=false refresh=true"
+            )
 
     # Separator + actions
     lines.append("---")
