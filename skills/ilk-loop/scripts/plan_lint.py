@@ -396,6 +396,9 @@ def lint_frontmatter_path_created_later(text: str, slug: str) -> list[str]:
 # when the dependency is unreachable.  Warn so the planner adds an
 # ``env_prereqs`` entry.  See decomposition-principles.md section 10.
 
+# Reachability probes — commands that ARE env_prereq-style checks, not test gates.
+_REACHABILITY_CMD_RE = re.compile(r"^\s*(curl|wget)\s", re.IGNORECASE)
+
 # E2e / browser-automation / service-poll markers in a local_check command.
 _E2E_DEVICE_POLL_RE = re.compile(
     r"e2e/"
@@ -403,9 +406,6 @@ _E2E_DEVICE_POLL_RE = re.compile(
     r"|cypress"
     r"|\.mjs"
     r"|\.spec\."
-    r"|localhost[:/\s]"
-    r"|127\.0\.0\.1[:/\s]"
-    r"|:\d{2,5}"
     r"|devtools"
     r"|chrome-devtools"
     r"|--browserUrl"
@@ -457,6 +457,9 @@ def lint_e2e_check_without_env_prereq(text: str, slug: str) -> list[str]:
     if _has_preflight_ref(text):
         return findings
     for cmd in all_cmds:
+        # Skip reachability probes (curl/wget) — those are env_prereq-style checks, not test gates.
+        if _REACHABILITY_CMD_RE.search(cmd):
+            continue
         if _E2E_DEVICE_POLL_RE.search(cmd):
             findings.append(
                 f"{slug}: local_check '{cmd.strip()[:80]}' looks like an "
