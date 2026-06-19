@@ -542,3 +542,47 @@ class TestAC4Boundary:
                 pre = pre_files.get(p)
                 if pre is not None and post > pre:
                     pytest.fail(f"collect.py modified skills/: {p}")
+
+
+# ── AC-5: CLI (add/list) ─────────────────────────────────────────────────────
+
+
+_SCRIPT = _SCRIPTS_DIR / "improvement_backlog.py"
+
+
+class TestCLINewFields:
+    """AC-5: CLI add/list supports --kind choices, --source, --relation."""
+
+    def test_add_bug_with_source_and_relation(self, backlog_env):
+        """add --kind bug --source supervisor --relation commit=abc → list --source finds it."""
+        env = {**os.environ, "ILK_DATA_HOME": str(backlog_env)}
+
+        # Add entry via CLI
+        result = subprocess.run(
+            [sys.executable, str(_SCRIPT), "add",
+             "--title", "CLI test bug",
+             "--gap", "CLI gap",
+             "--kind", "bug",
+             "--source", "supervisor",
+             "--relation", "commit=abc123",
+             "--relation", "run_id=r42"],
+            capture_output=True, text=True, env=env,
+        )
+        assert result.returncode == 0, f"add failed: {result.stderr}"
+        added = json.loads(result.stdout)
+        assert added["kind"] == "bug"
+        assert added["source"] == "supervisor"
+        assert added["relations"]["commit"] == "abc123"
+        assert added["relations"]["run_id"] == "r42"
+
+        # List filtered by source
+        result2 = subprocess.run(
+            [sys.executable, str(_SCRIPT), "list",
+             "--source", "supervisor", "--json"],
+            capture_output=True, text=True, env=env,
+        )
+        assert result2.returncode == 0, f"list failed: {result2.stderr}"
+        entries = json.loads(result2.stdout)
+        assert len(entries) == 1
+        assert entries[0]["source"] == "supervisor"
+        assert entries[0]["kind"] == "bug"

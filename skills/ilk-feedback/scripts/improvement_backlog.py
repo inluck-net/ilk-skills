@@ -248,14 +248,17 @@ def list_entries(
     *,
     status: str | None = None,
     kind: str | None = None,
+    source: str | None = None,
     backlog_dir: Path | str | None = None,
 ) -> list[Entry]:
-    """List entries, optionally filtered by status/kind."""
+    """List entries, optionally filtered by status/kind/source."""
     entries = load(backlog_dir)
     if status:
         entries = [e for e in entries if e.status == status]
     if kind:
         entries = [e for e in entries if e.kind == kind]
+    if source:
+        entries = [e for e in entries if e.source == source]
     return entries
 
 
@@ -272,10 +275,13 @@ def main() -> int:
     sub_add = sub.add_parser("add", help="Add a candidate")
     sub_add.add_argument("--title", required=True)
     sub_add.add_argument("--gap", required=True)
-    sub_add.add_argument("--kind", default="toolkit")
+    sub_add.add_argument("--kind", default="toolkit", choices=KINDS)
     sub_add.add_argument("--proposed-fix", default="")
     sub_add.add_argument("--leverage", default="medium")
     sub_add.add_argument("--severity", default="medium")
+    sub_add.add_argument("--source", default="", help="Origin (e.g. feedback, supervisor, lark)")
+    sub_add.add_argument("--relation", action="append", default=[],
+                         metavar="KEY=VALUE", help="Repeatable; stored in relations dict")
     sub_add.add_argument("--project", default="")
     sub_add.add_argument("--run-id", default="")
     sub_add.add_argument("--file", default="")
@@ -284,6 +290,7 @@ def main() -> int:
     sub_list = sub.add_parser("list", help="List candidates")
     sub_list.add_argument("--status", default=None)
     sub_list.add_argument("--kind", default=None)
+    sub_list.add_argument("--source", default=None, help="Filter by source")
     sub_list.add_argument("--json", action="store_true")
 
     args = parser.parse_args()
@@ -298,6 +305,12 @@ def main() -> int:
             evidence["file"] = args.file
         if args.line:
             evidence["line"] = args.line
+        # Parse --relation KEY=VALUE into relations dict
+        relations: dict[str, Any] = {}
+        for rel in args.relation:
+            if "=" in rel:
+                k, v = rel.split("=", 1)
+                relations[k] = v
         entry = add_candidate(
             title=args.title,
             kind=args.kind,
@@ -306,22 +319,24 @@ def main() -> int:
             proposed_fix=args.proposed_fix,
             leverage=args.leverage,
             severity=args.severity,
+            source=args.source,
+            relations=relations or None,
         )
         print(json.dumps(entry.to_dict(), indent=2, ensure_ascii=False))
         return 0
 
     if args.cmd == "list":
-        entries = list_entries(status=args.status, kind=args.kind)
+        entries = list_entries(status=args.status, kind=args.kind, source=args.source)
         if args.json:
             print(json.dumps([e.to_dict() for e in entries], indent=2, ensure_ascii=False))
         else:
             if not entries:
                 print("no candidates")
                 return 0
-            print(f"| {'id':<16} | {'status':<8} | {'seen':<4} | {'title':<40} |")
-            print(f"|{'-'*18}|{'-'*10}|{'-'*6}|{'-'*42}|")
+            print(f"| {'id':<16} | {'status':<8} | {'kind':<12} | {'source':<12} | {'seen':<4} | {'title':<40} |")
+            print(f"|{'-'*18}|{'-'*10}|{'-'*14}|{'-'*14}|{'-'*6}|{'-'*42}|")
             for e in entries:
-                print(f"| {e.id:<16} | {e.status:<8} | {e.seen_count:<4} | {e.title:<40} |")
+                print(f"| {e.id:<16} | {e.status:<8} | {e.kind:<12} | {e.source:<12} | {e.seen_count:<4} | {e.title:<40} |")
         return 0
 
     parser.print_help()
