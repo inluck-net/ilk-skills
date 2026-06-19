@@ -639,3 +639,56 @@ proposed exactly that, but the hard guard pre-empted it.
   fallback; a degradable capability does not belong there.
 - **§13 (Bias toward autonomy)** — remove human bottlenecks; fix the gap with a
   default, don't insert a stall.
+
+---
+
+## 18. Escaped-bug → regression gate
+
+When a human finds a bug that a gate *should* have caught — a test gap, a
+missing smoke, an unhandled edge case — the fix must **close the gate** so
+the same class of bug cannot escape twice. This is the "escaped bug"
+pattern: a `kind=escaped-bug` entry in the improvement tracker
+(`improvement_backlog.py`) whose fix sub-plan carries a reproducing
+`local_check`.
+
+### The contract
+
+1. **Declare the signal.** The fix sub-plan sets `regression_for:
+   <escaped-bug-tracker-id>` in its frontmatter. This field tells the
+   planner and the linter that this sub-plan fixes a human-found bug.
+2. **Add a reproducing `local_check`.** The sub-plan must declare at least
+   one `local_check` — either in frontmatter `local_checks:` or in a
+   per-step `local_checks:` yaml block — that exercises the code path the
+   bug exposed. The linter cannot verify the check truly *reproduces* the
+   bug, so the enforceable contract is structural presence: an escaped-bug
+   fix with zero `local_checks` is a finding.
+3. **`plan_lint.py` enforces it.** The `lint_escaped_bug_regression_gate`
+   check in `plan_lint.py` fires automatically during `/ilk-plan` step 7g.
+   A sub-plan whose `regression_for` is set but has no `local_check`
+   yields a `WARN` finding.
+
+### Why structural presence, not semantic verification
+
+The linter reads only the sub-plan's frontmatter — it cannot reason about
+whether a `local_check` command actually exercises the bug's code path.
+That semantic verification is the human's job during the post-ship pass
+(§11). The structural gate catches the obvious gap (no check at all)
+without false-flagging legitimate checks that don't mention the bug id.
+
+### Upstream tie-in
+
+Escaped bugs are filed as `kind=escaped-bug` in the improvement tracker.
+When the planner sources a fix from such an entry, it sets `regression_for`
+on the resulting sub-plan. The tracker entry and the sub-plan are linked
+but independent — the linter reads only the sub-plan's frontmatter and
+never touches the tracker.
+
+### Cross-references
+
+- **§8 (local_checks anti-patterns)** — the reproducing check must still
+  follow the anti-pattern rules (no `| head`, no compile-only, etc.).
+- **§11 (shipped ≠ verified)** — the gate proves structural presence;
+  semantic verification (does the check actually reproduce the bug?) is
+  the human's post-ship pass.
+- **§12 (Verification tier)** — an escaped-bug fix sub-plan should be
+  `loop-verified` (the reproducing check is a runtime smoke).
