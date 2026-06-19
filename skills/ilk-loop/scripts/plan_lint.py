@@ -386,6 +386,88 @@ def lint_frontmatter_path_created_later(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── E2e/device-poll local_check without env_prereq ───────────────────────────
+#
+# A sub-plan that declares an e2e, browser-automation, or service-poll
+# local_check (e.g. ``node e2e/*.mjs``, ``playwright test``, a localhost URL,
+# ``devtools``/``chrome-devtools``, or poll phrasing) but has no ``env_prereqs``
+# reachability probe and no ``docs/loop/preflight.sh`` reference is a
+# reachability gap: the gate will burn its timeout into ``local-checks-stuck``
+# when the dependency is unreachable.  Warn so the planner adds an
+# ``env_prereqs`` entry.  See decomposition-principles.md section 10.
+
+# E2e / browser-automation / service-poll markers in a local_check command.
+_E2E_DEVICE_POLL_RE = re.compile(
+    r"e2e/"
+    r"|playwright"
+    r"|cypress"
+    r"|\.mjs"
+    r"|\.spec\."
+    r"|localhost[:/\s]"
+    r"|127\.0\.0\.1[:/\s]"
+    r"|:\d{2,5}"
+    r"|devtools"
+    r"|chrome-devtools"
+    r"|--browserUrl"
+    r"|poll"
+    r"|wait\s+for"
+    r"|App\s+not\s+ready",
+    re.IGNORECASE,
+)
+
+# Env_prereqs frontmatter field with at least one entry (non-empty list).
+_ENV_PREREQS_PRESENT_RE = re.compile(
+    r"^env_prereqs:\s*\n\s+-\s+\S", re.MULTILINE
+)
+
+_PREFLIGHT_REF_RE = re.compile(r"docs/loop/preflight\.sh")
+
+
+def _extract_env_prereqs(text: str) -> bool:
+    """True if the frontmatter declares a non-empty env_prereqs list."""
+    m = re.match(r"^---\n.*?\n---\n", text, re.S)
+    if not m:
+        return False
+    fm = text[m.start():m.end()]
+    return bool(_ENV_PREREQS_PRESENT_RE.search(fm))
+
+
+def _has_preflight_ref(text: str) -> bool:
+    """True if the body references docs/loop/preflight.sh."""
+    body = _strip_frontmatter(text)
+    return bool(_PREFLIGHT_REF_RE.search(body))
+
+
+def lint_e2e_check_without_env_prereq(text: str, slug: str) -> list[str]:
+    """Flag an e2e/device-poll local_check with no env_prereq reachability probe."""
+    findings: list[str] = []
+    # Collect commands from both frontmatter and per-step blocks.
+    fm_cmds = _extract_local_checks_commands(text)
+    body = _strip_frontmatter(text)
+    step_cmds: list[str] = []
+    for block_match in _STEP_LOCAL_CHECKS_BLOCK_RE.finditer(body):
+        block = block_match.group(1)
+        step_cmds.extend(re.findall(r"command:\s*(.+)", block))
+    all_cmds = fm_cmds + step_cmds
+    if not all_cmds:
+        return findings
+    # Fast-exit: env_prereqs present or preflight referenced -> no finding.
+    if _extract_env_prereqs(text):
+        return findings
+    if _has_preflight_ref(text):
+        return findings
+    for cmd in all_cmds:
+        if _E2E_DEVICE_POLL_RE.search(cmd):
+            findings.append(
+                f"{slug}: local_check '{cmd.strip()[:80]}' looks like an "
+                f"e2e/device-poll command but the sub-plan declares no "
+                f"env_prereqs reachability probe. Add an env_prereqs entry "
+                f"with a fast-fail verify_cmd (see decomposition-principles "
+                f"section 10) to avoid local-checks-stuck timeouts."
+            )
+    return findings
+
+
 ALL_CHECKS = (
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
@@ -393,6 +475,7 @@ ALL_CHECKS = (
     lint_brittle_exact_list_assertion,
     lint_escaped_bug_regression_gate,
     lint_frontmatter_path_created_later,
+    lint_e2e_check_without_env_prereq,
 )
 
 
