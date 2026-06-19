@@ -5,6 +5,9 @@ description: >-
   Use when the user asks to triage new tickets, list/update tickets, generate
   an execution plan from a ticket, link a commit/PR to a ticket, or anything
   that mentions 飞书工单 / 多维表格 / 工单池 / Feishu tickets.
+  Also: set up / initialize / bootstrap a project's Lark tracker
+  (新建工单池 / 初始化飞书工单) via /ilk-lark-init or natural-language
+  "set up lark tickets here".
 ---
 
 # Lark Tickets — Issue triage via Feishu Bitable
@@ -22,6 +25,8 @@ Trigger this skill when the user says any of:
 - "为 T-xxxx 生成执行计划" / "把这条工单变成 plan"
 - "把刚才的 commit 关联到 T-xxxx"
 - Any time the user references a ticket id (e.g. `T-2026-0007`).
+- "set up lark tickets for this project" / "初始化飞书工单" / "新建工单池"
+- "/ilk-lark-init" → run the init-project bootstrap (see [Adding a new project](#adding-a-new-project)).
 
 ## Architecture
 
