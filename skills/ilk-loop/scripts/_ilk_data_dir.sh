@@ -8,9 +8,9 @@
 #   $ILK_DATA_HOME  →  $ILK_DATA_DIR (alias)  →  ~/.ilk-data
 
 ilk_data_dir() {
-  if [ -n "$ILK_DATA_HOME" ]; then
+  if [ -n "${ILK_DATA_HOME:-}" ]; then
     printf '%s' "$ILK_DATA_HOME"
-  elif [ -n "$ILK_DATA_DIR" ]; then
+  elif [ -n "${ILK_DATA_DIR:-}" ]; then
     printf '%s' "$ILK_DATA_DIR"
   else
     printf '%s' "$HOME/.ilk-data"
