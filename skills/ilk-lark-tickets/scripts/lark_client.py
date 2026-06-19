@@ -36,10 +36,38 @@ LARK_BASE = "https://open.feishu.cn"
 _LEGACY_DIR = Path.home() / ".cursor" / "lark-tickets"
 
 
+def _resolve_data_root() -> Path:
+    """Resolve the canonical data root via ``ilk_paths.ilk_data_root()``.
+
+    Tries a relative ``sys.path`` insert to import ``ilk_paths`` from the
+    sibling ``ilk-loop/scripts`` directory.  Falls back to the legacy
+    inline resolver if ``ilk_paths`` is not importable (this module must
+    remain stdlib-only / standalone).
+    """
+    try:
+        here = Path(__file__).resolve()
+        loop_scripts = here.parent.parent.parent / "ilk-loop" / "scripts"
+        if loop_scripts.is_dir():
+            if str(loop_scripts) not in sys.path:
+                sys.path.insert(0, str(loop_scripts))
+            import importlib
+            import ilk_paths
+            importlib.reload(ilk_paths)  # pick up env changes between calls
+            return ilk_paths.ilk_data_root()
+    except Exception:
+        pass
+    # Fallback: inline resolver (same precedence, kept in sync).
+    env = os.environ.get("ILK_DATA_HOME")
+    if env:
+        return Path(env).expanduser().resolve()
+    env = os.environ.get("ILK_DATA_DIR")
+    if env:
+        return Path(env).expanduser().resolve()
+    return Path.home() / ".ilk-data"
+
+
 def _resolve_data_dir() -> Path:
-    override = os.environ.get("ILK_DATA_HOME")
-    base = Path(override) if override else (Path.home() / ".ilk-data")
-    return base / "ilk-lark-tickets"
+    return _resolve_data_root() / "ilk-lark-tickets"
 
 
 def _resolve_config_path() -> Path:
