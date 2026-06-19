@@ -70,6 +70,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# --- data-home resolver (ILK_DATA_HOME → ILK_DATA_DIR → ~/.ilk-data) ---
+. (Join-Path $PSScriptRoot "..\..\ilk-loop\scripts\_ilk_data_dir.ps1")
+
 # --- help ----------------------------------------------------------------------
 if ($Help) {
   Get-Help $MyInvocation.MyCommand.Path -Full
@@ -182,7 +185,7 @@ function Invoke-Check {
 # cross-project scheduler is NOT checked here: it is a "bounceable" daemon
 # (stopped before the pull and restarted after — see Stop/Restart-BounceableDaemons).
 function Test-LivePids {
-  $dataDir = if ($env:ILK_DATA_DIR) { $env:ILK_DATA_DIR } else { Join-Path $HOME ".ilk-data" }
+  $dataDir = Get-IlkDataDir
   $projectsDir = Join-Path $dataDir "projects"
   $activePids = @()
 
@@ -248,10 +251,7 @@ function Test-LivePids {
 # BLOCK the upgrade), these are idempotent and safe to bounce: stop before the
 # pull, restart the same ones after, so their driver re-syncs with new code.
 
-function Get-IlkDataDir {
-  if ($env:ILK_DATA_DIR) { return $env:ILK_DATA_DIR }
-  return (Join-Path $HOME ".ilk-data")
-}
+# Get-IlkDataDir provided by _ilk_data_dir.ps1 (dot-sourced above)
 
 # Returns @{ Running = $bool; Pid = <int|null> } for a pid-file-backed daemon.
 function Get-DaemonState {

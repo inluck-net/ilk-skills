@@ -24,6 +24,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# ── Data-home resolver (ILK_DATA_HOME → ILK_DATA_DIR → ~/.ilk-data) ──
+. (Join-Path $PSScriptRoot "..\..\skills\ilk-loop\scripts\_ilk_data_dir.ps1")
+
 # ── Single-instance mutex ──────────────────────────────────────────────
 $mutexName = "Global\ilk-tray-monitor"
 $createdNew = $false
@@ -36,7 +39,7 @@ if (-not $createdNew) {
 # ── PID file ───────────────────────────────────────────────────────────
 # Publish our PID so /ilk-upgrade can find and bounce the tray cleanly
 # (the mutex alone can't be signalled). Symmetric with scheduler.pid.
-$dataDir = if ($env:ILK_DATA_DIR) { $env:ILK_DATA_DIR } else { Join-Path $HOME ".ilk-data" }
+$dataDir = Get-IlkDataDir
 $trayPidFile = Join-Path $dataDir "tray.pid"
 try {
   if (-not (Test-Path $dataDir)) { New-Item -ItemType Directory -Path $dataDir -Force | Out-Null }
