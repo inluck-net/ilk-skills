@@ -288,7 +288,7 @@ classify_action() {
       # Whitelist: transient failures safe to retry.
       echo "relaunch"
       ;;
-    stuck-no-progress|api-blocked|budget-exhausted|local-checks-stuck|dependency-unreachable|merge-conflict)
+    stuck-no-progress|api-blocked|budget-exhausted|local-checks-stuck|local-checks-broken|dependency-unreachable|merge-conflict)
       # Blacklist: structural failures where a restart won't help.
       echo "block"
       ;;

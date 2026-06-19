@@ -71,7 +71,7 @@ $CollectPy     = Join-Path $SkillRoot 'ilk-feedback\scripts\collect.py'
 $NotifyPy      = Join-Path $SkillRoot 'ilk-watchdog\scripts\ilk_notify.py'
 
 $WhitelistClasses = @('timeout-bound', 'max-iter-bound', 'api-flaky', 'interrupted')
-$BlacklistClasses = @('stuck-no-progress', 'api-blocked', 'budget-exhausted', 'local-checks-stuck', 'dependency-unreachable')
+$BlacklistClasses = @('stuck-no-progress', 'api-blocked', 'budget-exhausted', 'local-checks-stuck', 'local-checks-broken', 'dependency-unreachable')
 
 # Grace period after a relaunch before we trust the next "PID dead" signal,
 # in case the new ilk hasn't fully started yet.
