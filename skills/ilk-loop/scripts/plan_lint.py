@@ -303,12 +303,87 @@ def lint_escaped_bug_regression_gate(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── Frontmatter local_check path-created-later guard ────────────────────────
+#
+# A sub-plan's frontmatter ``local_checks`` run at EVERY step.  If a command
+# references a path that the plan's own later steps create, the check fails
+# on earlier steps (e.g. pytest exit 4 "file or directory not found").  This
+# lint flags such references so the planner can move the check to that step's
+# per-step block.
+#
+# See decomposition-principles.md §8 local_checks anti-patterns.
+
+# Common CLI tokens that look like paths but aren't.
+_NON_PATH_TOKENS = frozenset({
+    "python", "python3", "node", "npm", "npx", "bash", "sh", "powershell",
+    "pytest", "jest", "mocha", "cargo", "go", "make", "cmake",
+    "-m", "-c", "-q", "-v", "-x", "-s", "-k", "-n",
+    "--timeout", "--timeout-method", "--keepdb", "--verbosity", "--noinput",
+    "--tb", "--co", "--collect-only", "-rx", "-rxs",
+    "test", "tests", "src", "lib", "bin", "dist", "build",
+})
+
+
+def _looks_like_path(token: str) -> bool:
+    """True if *token* is plausibly a filesystem path (not a flag or program name)."""
+    if not token or token.startswith("-"):
+        return False
+    if token in _NON_PATH_TOKENS:
+        return False
+    # Skip version-like strings (e.g. "3.12", "2.7")
+    if re.match(r"^\d+\.\d+", token):
+        return False
+    # Contains a path separator → likely a path
+    if "/" in token or "\\" in token:
+        return True
+    # Has a file extension → likely a path
+    if re.search(r"\.[a-zA-Z0-9]{1,10}$", token):
+        return True
+    return False
+
+
+def lint_frontmatter_path_created_later(text: str, slug: str) -> list[str]:
+    """Flag a frontmatter local_check that references a path the plan creates later."""
+    findings: list[str] = []
+    scope_paths = _extract_scope_paths(text)
+    if not scope_paths:
+        return findings
+    commands = _extract_local_checks_commands(text)
+    if not commands:
+        return findings
+    # Normalize scope_paths: strip trailing slashes for comparison
+    normalized_scope = {p.rstrip("/\\") for p in scope_paths}
+    for cmd in commands:
+        tokens = cmd.split()
+        for token in tokens:
+            if not _looks_like_path(token):
+                continue
+            norm = token.rstrip("/\\")
+            if norm not in normalized_scope:
+                continue
+            # The token is a path this plan creates — check if it exists now.
+            try:
+                exists = Path(token).exists()
+            except (OSError, ValueError):
+                continue  # Skip on weird input
+            if not exists:
+                findings.append(
+                    f"{slug}: frontmatter local_check references '{token}' which "
+                    f"this sub-plan's steps create -- subplan-scope checks run at "
+                    f"EVERY step and will fail before the step that creates it; "
+                    f"move it to that step's per-step local_checks or drop it "
+                    f"from frontmatter."
+                )
+    return findings
+
+
 ALL_CHECKS = (
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
     lint_contract_change_review,
     lint_brittle_exact_list_assertion,
     lint_escaped_bug_regression_gate,
+    lint_frontmatter_path_created_later,
 )
 
 
