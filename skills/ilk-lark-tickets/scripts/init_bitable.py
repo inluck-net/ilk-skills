@@ -150,6 +150,25 @@ def create_missing(client: BitableClient) -> None:
     print(f"\nDone. created={created} skipped={skipped} failed={failed}")
 
 
+def seed_schema(project_name: str | None = None, rename_primary: bool = False) -> None:
+    """Seed the standard 24-field ticket schema for *project_name*.
+
+    Builds a :class:`BitableClient`, optionally renames the primary field,
+    then runs :func:`create_missing` (which skips fields that already exist).
+    This function is the importable entry point used by the ``init-project``
+    CLI verb; ``main()`` delegates here after parsing CLI args.
+    """
+    client = BitableClient(project_name=project_name)
+    print(f"Project: {client.project_name}")
+    print(f"Bitable: {client.app_token}  table={client.table_id}\n")
+
+    if rename_primary:
+        rename_primary_to_title(client)
+        print()
+
+    create_missing(client)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--project", help="Project name (overrides .lark-project marker)")
@@ -157,15 +176,7 @@ def main():
                    help="Rename the primary field to '标题' if needed")
     args = p.parse_args()
 
-    client = BitableClient(project_name=args.project)
-    print(f"Project: {client.project_name}")
-    print(f"Bitable: {client.app_token}  table={client.table_id}\n")
-
-    if args.rename_primary:
-        rename_primary_to_title(client)
-        print()
-
-    create_missing(client)
+    seed_schema(project_name=args.project, rename_primary=args.rename_primary)
 
 
 if __name__ == "__main__":
