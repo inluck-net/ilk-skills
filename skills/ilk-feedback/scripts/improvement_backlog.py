@@ -32,12 +32,40 @@ from typing import Any
 _DEFAULT_BACKLOG_DIR = Path.home() / ".ilk-data" / "ilk-skills-improvements"
 
 
+def _resolve_data_root() -> Path:
+    """Resolve the canonical data root via ``ilk_paths.ilk_data_root()``.
+
+    Tries a relative ``sys.path`` insert to import ``ilk_paths`` from the
+    sibling ``ilk-loop/scripts`` directory.  Falls back to the legacy
+    inline resolver if ``ilk_paths`` is not importable (e.g. when this
+    module is used in a standalone / stdlib-only context).
+    """
+    try:
+        here = Path(__file__).resolve()
+        loop_scripts = here.parent.parent.parent / "ilk-loop" / "scripts"
+        if loop_scripts.is_dir():
+            import sys as _sys
+            if str(loop_scripts) not in _sys.path:
+                _sys.path.insert(0, str(loop_scripts))
+            import importlib as _il
+            import ilk_paths as _ip
+            _il.reload(_ip)  # pick up env changes between calls
+            return _ip.ilk_data_root()
+    except Exception:
+        pass
+    # Fallback: inline resolver (same precedence, kept in sync).
+    env = os.environ.get("ILK_DATA_HOME")
+    if env:
+        return Path(env).expanduser().resolve()
+    env = os.environ.get("ILK_DATA_DIR")
+    if env:
+        return Path(env).expanduser().resolve()
+    return Path.home() / ".ilk-data"
+
+
 def _backlog_dir() -> Path:
-    """Return the backlog directory, respecting ``$ILK_DATA_HOME``."""
-    override = os.environ.get("ILK_DATA_HOME")
-    if override:
-        return Path(override) / "ilk-skills-improvements"
-    return _DEFAULT_BACKLOG_DIR
+    """Return the backlog directory under the canonical data root."""
+    return _resolve_data_root() / "ilk-skills-improvements"
 
 
 # ---------------------------------------------------------------------------
