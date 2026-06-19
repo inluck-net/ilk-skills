@@ -395,19 +395,19 @@ def test_plain_no_progress_still_stuck(scratch_env):
     ("all-shipped", "promote"),
     ("already-shipped", "promote"),
     ("shipped", "promote"),
-    ("shipped-unverified", "terminate"),
-    ("no-evidence", "terminate"),
+    ("shipped-unverified", "needs-human"),
+    ("no-evidence", "triage"),
     ("timeout-bound", "relaunch"),
     ("max-iter-bound", "relaunch"),
     ("api-flaky", "relaunch"),
     ("interrupted", "relaunch"),
-    ("stuck-no-progress", "blacklist"),
-    ("api-blocked", "blacklist"),
-    ("budget-exhausted", "blacklist"),
-    ("local-checks-stuck", "blacklist"),
-    ("dependency-unreachable", "blacklist"),
-    ("merge-conflict", "blacklist"),
-    ("unknown-label", "blacklist"),  # fail-safe: unknown -> blacklist
+    ("stuck-no-progress", "block"),
+    ("api-blocked", "block"),
+    ("budget-exhausted", "block"),
+    ("local-checks-stuck", "block"),
+    ("dependency-unreachable", "block"),
+    ("merge-conflict", "block"),
+    ("unknown-label", "block"),  # fail-safe: unknown -> block
 ])
 def test_classify_action(label, expected_action):
     """watchdog.sh classify_action routes classification labels to the correct action.
@@ -420,14 +420,16 @@ def test_classify_action(label, expected_action):
             return "sleep"
         if s in ("all-shipped", "already-shipped", "shipped"):
             return "promote"
-        if s in ("shipped-unverified", "no-evidence"):
-            return "terminate"
+        if s in ("shipped-unverified",):
+            return "needs-human"
+        if s in ("no-evidence",):
+            return "triage"
         if s in ("timeout-bound", "max-iter-bound", "api-flaky", "interrupted"):
             return "relaunch"
         if s in ("stuck-no-progress", "api-blocked", "budget-exhausted",
                  "local-checks-stuck", "dependency-unreachable", "merge-conflict"):
-            return "blacklist"
-        return "blacklist"  # fail-safe: unknown terminal label -> blacklist
+            return "block"
+        return "block"  # fail-safe: unknown terminal label -> block
 
     assert classify_action(label) == expected_action
 
@@ -441,19 +443,19 @@ def test_classify_action(label, expected_action):
     ("all-shipped", "promote"),
     ("already-shipped", "promote"),
     ("shipped", "promote"),
-    ("shipped-unverified", "terminate"),
-    ("no-evidence", "terminate"),
+    ("shipped-unverified", "needs-human"),
+    ("no-evidence", "triage"),
     ("timeout-bound", "relaunch"),
     ("max-iter-bound", "relaunch"),
     ("api-flaky", "relaunch"),
     ("interrupted", "relaunch"),
-    ("stuck-no-progress", "blacklist"),
-    ("api-blocked", "blacklist"),
-    ("budget-exhausted", "blacklist"),
-    ("local-checks-stuck", "blacklist"),
-    ("dependency-unreachable", "blacklist"),
-    ("merge-conflict", "blacklist"),
-    ("unknown-label", "blacklist"),  # fail-safe: unknown -> blacklist
+    ("stuck-no-progress", "block"),
+    ("api-blocked", "block"),
+    ("budget-exhausted", "block"),
+    ("local-checks-stuck", "block"),
+    ("dependency-unreachable", "block"),
+    ("merge-conflict", "block"),
+    ("unknown-label", "block"),  # fail-safe: unknown -> block
 ])
 def test_classify_action_bash_parity(label, expected_action):
     """Bash-backed parity test: invoke the REAL classify_action from watchdog.sh.
