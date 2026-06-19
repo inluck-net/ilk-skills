@@ -263,6 +263,13 @@ needs the queue worker running). When a project has a `preflight.sh`
 wired as a cross-cutting invariant, prefer extending it; otherwise
 declare `env_prereqs` per sub-plan.
 
+**Enforced by `plan_lint`.** The `lint_e2e_check_without_env_prereq` check
+in `plan_lint.py` (see §8 local_checks anti-patterns) flags sub-plans that
+declare an e2e, browser-automation, or service-poll `local_check` without a
+corresponding `env_prereqs` reachability probe or `docs/loop/preflight.sh`
+reference. This is the deterministic floor; the `/ilk-plan` step-7d-env
+agent-prose pass stays as the richer advisory surface.
+
 **Restart affected long-running services after the loop changes their
 code.** A dev server started before the loop keeps serving stale code,
 so manual verification hits removed/renamed endpoints (HTTP 405/410).

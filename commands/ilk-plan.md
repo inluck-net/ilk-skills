@@ -684,6 +684,13 @@ report; fix before launching):
   `local_checks` (neither frontmatter nor per-step). An escaped-bug fix
   must have a reproducing local_check to prevent the same class of bug
   from escaping a gate twice. See decomposition-principles.md §18.
+- **e2e/device-polling local_check lacks env_prereq** — a sub-plan declares an
+  e2e, browser-automation, or service-poll `local_check` (e.g. `node e2e/*.mjs`,
+  `playwright test`, devtools, poll phrasing) but has no `env_prereqs`
+  reachability probe and no `docs/loop/preflight.sh` reference. The gate will
+  burn its timeout into `local-checks-stuck` when the dependency is unreachable.
+  Add an `env_prereqs` entry with a fast-fail `verify_cmd` (see
+  decomposition-principles.md §10).
 
 `plan_lint.py` exits non-zero when it finds anything; treat findings as
 must-fix-before-launch (a contradiction here is what actually stalled the loop).
