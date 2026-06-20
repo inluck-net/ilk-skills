@@ -441,12 +441,15 @@ def cmd_init_project(args):
     has_entry = entry is not None and entry.get("bitable_app_token")
 
     # Resolve folder: --folder arg -> config.default_folder_token -> none
+    # (organization only — NOT the editability mechanism)
     folder = args.folder or cfg.get("default_folder_token")
-    if not folder:
+
+    # Editability warning: keyed on operator_openid
+    if not cfg.get("operator_openid"):
         print(
             "WARNING: base will be app-owned and NOT editable in the web UI. "
-            "To fix: run `set-default-folder <token>` with a Drive folder you own "
-            "(shared with the app), or pass `--folder` per-call.",
+            "To fix: run `set-operator <open_id>` — find your open_id with "
+            "`show-members --project <an-existing-editable-project>`.",
             file=sys.stderr,
         )
 
@@ -462,6 +465,8 @@ def cmd_init_project(args):
             _ensure_marker(args.repo, name)
             from init_bitable import seed_schema
             seed_schema(project_name=name, rename_primary=True)
+            # Best-effort openid member-grant (idempotent, non-fatal)
+            _try_grant_operator_access(app_token, cfg, token)
             # Ensure kanban + shared form views (idempotent)
             client = BitableClient(project_name=name)
             steps = ensure_issue_views(
@@ -504,11 +509,8 @@ def cmd_init_project(args):
     from init_bitable import seed_schema
     seed_schema(project_name=name, rename_primary=True)
 
-    # Best-effort openid member-grant (bonus, non-fatal)
-    try:
-        _try_grant_operator_access(app_token, cfg, token)
-    except Exception as e:
-        print(f"NOTE: best-effort member-grant skipped ({e})", file=sys.stderr)
+    # Best-effort openid member-grant (idempotent, non-fatal)
+    _try_grant_operator_access(app_token, cfg, token)
 
     # Ensure kanban + shared form views (idempotent)
     client = BitableClient(project_name=name)
