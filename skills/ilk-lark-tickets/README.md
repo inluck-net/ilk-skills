@@ -60,19 +60,25 @@ Options:
 ### Editable base (one-time setup)
 
 A base the app creates in its own space is **not editable** by you in the Feishu
-web UI (only reachable by URL/API), so `init-project` prints a `WARNING` when no
-folder is resolved. To get an editable base, create the base inside a Drive
-folder **you own**:
+web UI (only reachable by URL/API), so `init-project` prints a `WARNING` when
+`operator_openid` is not configured. To make it editable:
 
-1. In Feishu Drive, create a folder you own and **share it with the app** (edit).
-2. Copy its folder token from the URL (`…/drive/folder/<FOLDER_TOKEN>`).
-3. Run once: `python <skill-root>/ilk-lark-tickets/scripts/cli.py set-default-folder <FOLDER_TOKEN>`
-4. All future `init-project` runs land in that folder (editable) with no flag —
-   or pass `--folder <token>` per call.
+1. Find your `open_id` — run `show-members` on an existing editable project:
+   ```powershell
+   python <skill-root>/ilk-lark-tickets/scripts/cli.py show-members --project <an-editable-project>
+   ```
+   Copy the `member_id` (e.g. `ou_233c253c...`) that has `full_access`.
+2. Set it once:
+   ```powershell
+   python <skill-root>/ilk-lark-tickets/scripts/cli.py set-operator <open_id>
+   ```
+3. All future `init-project` runs will grant that `open_id` `full_access`
+   automatically (idempotent, non-fatal).
 
-(`init-project` also makes a best-effort attempt to grant your account
-`full_access` by open_id, but the `--folder`/`default_folder_token` path is the
-reliable contract.)
+**`--folder` / `default_folder_token`** are for **organization only** (placing
+bases in a Drive folder for visibility). They do NOT confer editability.
+Note: the app needs write permission on the folder or creation fails with
+`1062535`.
 
 Verify after:
 ```powershell

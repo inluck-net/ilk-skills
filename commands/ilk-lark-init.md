@@ -31,23 +31,39 @@ $projectName = (Get-Item (git rev-parse --show-toplevel)).Name
 Ask the user: "Use project name `$projectName`?" — allow override.
 Store the chosen name for step 3.
 
-## 3. Surface the `--folder` decision
+## 3. Surface the editability + folder decisions
 
-Explain to the user:
+**Editable base (recommended one-time setup)**:
+
+By default, the base is app-owned and NOT editable in the Feishu web UI.
+To make it editable, the operator's `open_id` is granted `full_access` on
+every created base. This is stored in config via `set-operator`:
+
+1. Find your `open_id` by running `show-members` on an existing editable project:
+   ```powershell
+   python <skill-root>/ilk-lark-tickets/scripts/cli.py show-members --project <an-editable-project>
+   ```
+   Copy the `member_id` (e.g. `ou_233c253c...`) that has `full_access`.
+2. Set it once:
+   ```powershell
+   python <skill-root>/ilk-lark-tickets/scripts/cli.py set-operator <open_id>
+   ```
+3. All future `init-project` runs will grant that `open_id` `full_access`
+   automatically (idempotent, non-fatal).
+
+If `operator_openid` is not set, `init-project` prints a `WARNING` pointing
+at `set-operator`.
+
+**`--folder` (optional, organization only)**:
 
 - **No `--folder`**: the Bitable is created in the app's own space. It's
   accessible via URL and API, but not visible in the user's Feishu Drive.
   Good for fully automated / CI-driven setups.
 - **`--folder <token>`**: the Bitable is created inside a Drive folder the
-  user specifies. It appears in their Feishu Drive, supports form-view
-  (so clients can submit tickets via a Feishu form), and is easier to
-  find manually.
-
-**Editable base (one-time setup)**:
-- Create a Drive folder you OWN in Feishu
-- Share it with the app (the tenant app whose creds are in config.json)
-- Run: `python <skill-root>/ilk-lark-tickets/scripts/cli.py set-default-folder <folder_token>`
-- All future inits will land there editable (or pass `--folder` per-call)
+  user specifies. It appears in their Feishu Drive and is easier to find
+  manually. Note: the app needs write permission on the folder or creation
+  fails with `1062535`. `--folder` does NOT confer editability — use
+  `set-operator` for that.
 
 Ask: "Do you want the base in a Drive folder? If yes, paste the folder
 token (the `fldcn...` part from the folder URL). Otherwise, skip."

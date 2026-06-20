@@ -248,12 +248,28 @@ Options:
 ### Editable base (one-time setup)
 
 By default, the base is app-owned and NOT editable in the Feishu web UI.
-To make it editable:
+To make it editable, the operator's `open_id` is granted `full_access` on
+every created base:
 
-1. Create a Drive folder you OWN in Feishu
-2. Share it with the app (the tenant app whose creds are in config.json)
-3. Run: `python <skill-root>/ilk-lark-tickets/scripts/cli.py set-default-folder <folder_token>`
-4. All future inits will land there editable (or pass `--folder` per-call)
+1. Find your `open_id` — run `show-members` on an existing editable project:
+   ```powershell
+   python <skill-root>/ilk-lark-tickets/scripts/cli.py show-members --project <an-editable-project>
+   ```
+   Copy the `member_id` (e.g. `ou_233c253c...`) that has `full_access`.
+2. Set it once:
+   ```powershell
+   python <skill-root>/ilk-lark-tickets/scripts/cli.py set-operator <open_id>
+   ```
+3. All future `init-project` runs will grant that `open_id` `full_access`
+   automatically (idempotent, non-fatal).
+
+If `operator_openid` is not set, `init-project` prints a `WARNING` pointing
+at `set-operator`.
+
+**`--folder` / `default_folder_token`** are for **organization only** (placing
+bases in a Drive folder for visibility). They do NOT confer editability.
+Note: the app needs write permission on the folder or creation fails with
+`1062535`.
 
 ### Manual fallback
 
