@@ -37,6 +37,7 @@ for _stream in (sys.stdout, sys.stderr):
 # allow running as `python cli.py ...` regardless of cwd
 sys.path.insert(0, str(Path(__file__).parent))
 
+import lark_client  # noqa: E402
 from lark_client import (  # noqa: E402
     BitableClient,
     LarkError,
