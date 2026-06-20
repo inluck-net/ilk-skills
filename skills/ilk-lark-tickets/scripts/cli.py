@@ -396,45 +396,31 @@ def _probe_tables(app_token: str, token: str) -> bool:
 
 
 def _try_grant_operator_access(app_token: str, cfg: dict, token: str) -> None:
-    """Best-effort: grant the operator openid full_access to the base.
+    """Best-effort: grant the configured operator_openid full_access on the base.
 
-    This is a bonus — the real contract is --folder / default_folder_token.
-    On ANY failure (lookup miss, API error), we simply return without raising.
+    Editability mechanism: the operator's open_id is stored in config via
+    ``set-operator``.  On ANY failure (missing config, API error), we print
+    a one-line NOTE and return without raising.
     """
+    oid = cfg.get("operator_openid")
+    if not oid:
+        return  # No operator configured, skip silently
+
     try:
-        # Try to resolve operator's email from config
-        email = cfg.get("operator_email")
-        if not email:
-            return  # No email configured, skip silently
-
-        # Try to get open_id via batch_get_id
-        resp = _request(
-            "POST",
-            "/open-apis/contact/v3/users/batch_get_id",
-            token=token,
-            body={"emails": [email]},
-        )
-        user_list = resp.get("user_list") or []
-        if not user_list or not user_list[0].get("user_id"):
-            return  # User not found
-
-        open_id = user_list[0]["user_id"]
-
-        # Grant full_access to the base
         _request(
             "POST",
-            f"/open-apis/drive/v1/permissions/{app_token}/members?type=bitable",
+            f"/open-apis/drive/v1/permissions/{app_token}/members",
             token=token,
+            params={"type": "bitable", "need_notification": "false"},
             body={
                 "member_type": "openid",
-                "member_id": open_id,
+                "member_id": oid,
                 "perm": "full_access",
             },
         )
-        print(f"granted  openid={open_id}  perm=full_access")
-    except Exception:
-        # Silently ignore any failure — this is best-effort only
-        pass
+        print(f"granted  openid={oid}  perm=full_access")
+    except Exception as e:
+        print(f"NOTE: operator grant skipped ({e})", file=sys.stderr)
 
 
 def cmd_init_project(args):
