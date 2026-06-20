@@ -1,8 +1,9 @@
 """Tests for the idempotent ``init-project`` CLI verb.
 
-All Lark HTTP is mocked — zero network calls, zero real bases (AC-8).
+All Lark HTTP is mocked — zero network calls, zero real bases (AC-9).
 Covers AC-4 (reuse), AC-5 (create), AC-6 (refuse unreachable),
-AC-7 (marker idempotent), and config preservation.
+AC-7 (marker idempotent), config preservation, and operator_openid
+grant + set-operator + show-members (AC-1 through AC-9).
 """
 
 from __future__ import annotations
@@ -691,8 +692,8 @@ class TestFolderResolution:
 # ---------------------------------------------------------------------------
 
 class TestEditableWarning:
-    def test_warning_when_no_folder(self, env, monkeypatch, tmp_path, capsys):
-        """AC-5: no --folder and no default_folder_token → WARNING printed."""
+    def test_warning_when_no_operator_openid(self, env, monkeypatch, tmp_path, capsys):
+        """AC-5: no operator_openid → WARNING printed."""
         cfg = {"app_id": "a", "app_secret": "s", "projects": {}}
         _write_config(env["config_path"], cfg)
 
@@ -735,9 +736,9 @@ class TestEditableWarning:
         assert "WARNING" in captured.err
         assert "NOT editable" in captured.err
 
-    def test_no_warning_when_folder_set(self, env, monkeypatch, tmp_path, capsys):
-        """AC-5: --folder set → no WARNING."""
-        cfg = {"app_id": "a", "app_secret": "s", "projects": {}}
+    def test_no_warning_when_operator_openid_set(self, env, monkeypatch, tmp_path, capsys):
+        """AC-5: operator_openid set → no WARNING."""
+        cfg = {"app_id": "a", "app_secret": "s", "projects": {}, "operator_openid": "ou_TEST"}
         _write_config(env["config_path"], cfg)
 
         created_result = {
@@ -829,13 +830,13 @@ class TestSetDefaultFolder:
 # ---------------------------------------------------------------------------
 
 class TestGrantNonFatal:
-    def test_grant_failure_does_not_block_init(self, env, monkeypatch, tmp_path):
-        """AC-7: member-grant failure → init still completes successfully."""
+    def test_grant_failure_does_not_block_init(self, env, monkeypatch, tmp_path, capsys):
+        """AC-4: member-grant failure → init still completes successfully."""
         cfg = {
             "app_id": "a",
             "app_secret": "s",
             "projects": {},
-            "operator_email": "test@example.com",
+            "operator_openid": "ou_TEST",
         }
         _write_config(env["config_path"], cfg)
 
@@ -847,9 +848,11 @@ class TestGrantNonFatal:
         repo_dir = tmp_path / "repo"
         repo_dir.mkdir()
 
-        # Mock _try_grant_operator_access to raise
-        def mock_grant(*args, **kwargs):
-            raise Exception("API error")
+        # Mock _request to fail on the grant call
+        def mock_request(method, path, *, token=None, params=None, body=None, **kw):
+            if "permissions" in path and "members" in path:
+                raise Exception("API error")
+            return {}
 
         # Mock BitableClient to return real values
         class MockClient:
@@ -872,13 +875,17 @@ class TestGrantNonFatal:
             mock.patch("cli.load_config", return_value=cfg),
             mock.patch("init_bitable.seed_schema"),
             mock.patch("cli.BitableClient", return_value=MockClient()),
-            mock.patch("cli._try_grant_operator_access", side_effect=mock_grant),
+            mock.patch("cli._request", side_effect=mock_request),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj", "--repo", str(repo_dir),
             ])
             # Should not raise
             cli.cmd_init_project(args)
+
+        captured = capsys.readouterr()
+        assert "NOTE" in captured.err
+        assert "operator grant skipped" in captured.err
 
 
 # ---------------------------------------------------------------------------
@@ -895,3 +902,375 @@ class TestNoLiveApiExtended:
     def test_set_default_folder_mockable(self):
         """Sanity: cmd_set_default_folder is callable and mockable."""
         assert callable(cli.cmd_set_default_folder)
+
+
+# ---------------------------------------------------------------------------
+# AC-1: set-operator persists + preserves keys
+# ---------------------------------------------------------------------------
+
+class TestSetOperator:
+    def test_persists_and_preserves_keys(self, env):
+        """AC-1: set-operator <open_id> persists operator_openid, preserves other keys."""
+        cfg = {
+            "app_id": "a",
+            "app_secret": "s",
+            "projects": {"p": {"bitable_app_token": "tok"}},
+            "default_folder_token": "FOLD",
+        }
+        _write_config(env["config_path"], cfg)
+
+        with mock.patch("lark_client._resolve_config_path", return_value=env["config_path"]):
+            args = cli.build_parser().parse_args(["set-operator", "ou_TEST_123"])
+            cli.cmd_set_operator(args)
+
+        saved = _read_config(env["config_path"])
+        assert saved["operator_openid"] == "ou_TEST_123"
+        assert saved["app_id"] == "a"
+        assert saved["app_secret"] == "s"
+        assert saved["default_folder_token"] == "FOLD"
+        assert saved["projects"]["p"]["bitable_app_token"] == "tok"
+
+    def test_overwrites_existing_operator(self, env):
+        """AC-1: re-running with new open_id overwrites only that key."""
+        cfg = {
+            "app_id": "a",
+            "app_secret": "s",
+            "projects": {},
+            "operator_openid": "ou_OLD",
+        }
+        _write_config(env["config_path"], cfg)
+
+        with mock.patch("lark_client._resolve_config_path", return_value=env["config_path"]):
+            args = cli.build_parser().parse_args(["set-operator", "ou_NEW"])
+            cli.cmd_set_operator(args)
+
+        saved = _read_config(env["config_path"])
+        assert saved["operator_openid"] == "ou_NEW"
+
+
+# ---------------------------------------------------------------------------
+# AC-2/AC-3/AC-4: operator_openid grant behavior
+# ---------------------------------------------------------------------------
+
+class TestOperatorGrant:
+    def test_grant_issued_when_operator_set(self, env, monkeypatch, tmp_path):
+        """AC-2: with operator_openid set, init-project issues exactly one
+        members-add call with the correct path/params/body."""
+        cfg = {
+            "app_id": "a",
+            "app_secret": "s",
+            "projects": {},
+            "operator_openid": "ou_OPERATOR",
+        }
+        _write_config(env["config_path"], cfg)
+
+        created_result = {
+            "app_token": "new_token",
+            "table_id": "tbl_new",
+            "url": "https://feishu.cn/base/new",
+        }
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+
+        # Record _request calls
+        request_calls = []
+
+        def mock_request(method, path, *, token=None, params=None, body=None, **kw):
+            request_calls.append({"method": method, "path": path, "params": params, "body": body})
+            return {}
+
+        class MockClient:
+            def __init__(self, **kwargs):
+                pass
+            def field_id(self, name):
+                return "fld_status"
+            def list_views(self):
+                return []
+            def create_view(self, **kwargs):
+                return {"view": {"view_id": "view_1"}}
+            def patch_view(self, *args, **kwargs):
+                return {}
+            def patch_form_meta(self, *args, **kwargs):
+                return {"form": {"shared_url": "https://form.url"}}
+
+        with (
+            mock.patch("cli.create_bitable", return_value=created_result),
+            mock.patch("cli.get_tenant_access_token", return_value="tok"),
+            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch("init_bitable.seed_schema"),
+            mock.patch("cli.BitableClient", return_value=MockClient()),
+            mock.patch("cli._request", side_effect=mock_request),
+        ):
+            args = cli.build_parser().parse_args([
+                "init-project", "--project", "myproj", "--repo", str(repo_dir),
+            ])
+            cli.cmd_init_project(args)
+
+        # Find the grant call (POST to permissions members)
+        grant_calls = [
+            c for c in request_calls
+            if c["method"] == "POST" and "permissions" in c["path"] and "members" in c["path"]
+        ]
+        assert len(grant_calls) == 1
+        gc = grant_calls[0]
+        assert gc["params"]["type"] == "bitable"
+        assert gc["params"]["need_notification"] == "false"
+        assert gc["body"]["member_type"] == "openid"
+        assert gc["body"]["member_id"] == "ou_OPERATOR"
+        assert gc["body"]["perm"] == "full_access"
+
+    def test_no_grant_when_operator_unset(self, env, monkeypatch, tmp_path):
+        """AC-3: no operator_openid → no members-add call."""
+        cfg = {"app_id": "a", "app_secret": "s", "projects": {}}
+        _write_config(env["config_path"], cfg)
+
+        created_result = {
+            "app_token": "new_token",
+            "table_id": "tbl_new",
+            "url": "https://feishu.cn/base/new",
+        }
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+
+        request_calls = []
+
+        def mock_request(method, path, *, token=None, params=None, body=None, **kw):
+            request_calls.append({"method": method, "path": path, "params": params, "body": body})
+            return {}
+
+        class MockClient:
+            def __init__(self, **kwargs):
+                pass
+            def field_id(self, name):
+                return "fld_status"
+            def list_views(self):
+                return []
+            def create_view(self, **kwargs):
+                return {"view": {"view_id": "view_1"}}
+            def patch_view(self, *args, **kwargs):
+                return {}
+            def patch_form_meta(self, *args, **kwargs):
+                return {"form": {"shared_url": "https://form.url"}}
+
+        with (
+            mock.patch("cli.create_bitable", return_value=created_result),
+            mock.patch("cli.get_tenant_access_token", return_value="tok"),
+            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch("init_bitable.seed_schema"),
+            mock.patch("cli.BitableClient", return_value=MockClient()),
+            mock.patch("cli._request", side_effect=mock_request),
+        ):
+            args = cli.build_parser().parse_args([
+                "init-project", "--project", "myproj", "--repo", str(repo_dir),
+            ])
+            cli.cmd_init_project(args)
+
+        # No grant calls
+        grant_calls = [
+            c for c in request_calls
+            if c["method"] == "POST" and "permissions" in c["path"] and "members" in c["path"]
+        ]
+        assert len(grant_calls) == 0
+
+    def test_grant_non_fatal_on_exception(self, env, monkeypatch, tmp_path, capsys):
+        """AC-4: grant raises → init still completes, NOTE printed."""
+        cfg = {
+            "app_id": "a",
+            "app_secret": "s",
+            "projects": {},
+            "operator_openid": "ou_OPERATOR",
+        }
+        _write_config(env["config_path"], cfg)
+
+        created_result = {
+            "app_token": "new_token",
+            "table_id": "tbl_new",
+            "url": "https://feishu.cn/base/new",
+        }
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+
+        call_count = 0
+
+        def mock_request(method, path, *, token=None, params=None, body=None, **kw):
+            nonlocal call_count
+            call_count += 1
+            # Fail on the grant call (permissions/members)
+            if "permissions" in path and "members" in path:
+                raise Exception("API denied")
+            return {}
+
+        class MockClient:
+            def __init__(self, **kwargs):
+                pass
+            def field_id(self, name):
+                return "fld_status"
+            def list_views(self):
+                return []
+            def create_view(self, **kwargs):
+                return {"view": {"view_id": "view_1"}}
+            def patch_view(self, *args, **kwargs):
+                return {}
+            def patch_form_meta(self, *args, **kwargs):
+                return {"form": {"shared_url": "https://form.url"}}
+
+        with (
+            mock.patch("cli.create_bitable", return_value=created_result),
+            mock.patch("cli.get_tenant_access_token", return_value="tok"),
+            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch("init_bitable.seed_schema"),
+            mock.patch("cli.BitableClient", return_value=MockClient()),
+            mock.patch("cli._request", side_effect=mock_request),
+        ):
+            args = cli.build_parser().parse_args([
+                "init-project", "--project", "myproj", "--repo", str(repo_dir),
+            ])
+            # Should NOT raise
+            cli.cmd_init_project(args)
+
+        captured = capsys.readouterr()
+        assert "NOTE" in captured.err
+        assert "operator grant skipped" in captured.err
+
+    def test_grant_on_reuse_path(self, env, monkeypatch, tmp_path):
+        """AC-2: grant also runs on the reuse path."""
+        cfg = {
+            "app_id": "a",
+            "app_secret": "s",
+            "projects": {
+                "myproj": {
+                    "bitable_app_token": "existing_tok",
+                    "table_id": "tbl_existing",
+                    "url": "https://feishu.cn/base/existing",
+                    "ticket_id_prefix": "T",
+                },
+            },
+            "operator_openid": "ou_REUSE",
+        }
+        _write_config(env["config_path"], cfg)
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        marker = repo_dir / ".lark-project"
+        marker.write_text("myproj\n", encoding="utf-8")
+
+        request_calls = []
+
+        def mock_request(method, path, *, token=None, params=None, body=None, **kw):
+            request_calls.append({"method": method, "path": path, "params": params, "body": body})
+            return {}
+
+        class MockClient:
+            def __init__(self, **kwargs):
+                pass
+            def field_id(self, name):
+                return "fld_status"
+            def list_views(self):
+                return []
+            def create_view(self, **kwargs):
+                return {"view": {"view_id": "view_1"}}
+            def patch_view(self, *args, **kwargs):
+                return {}
+            def patch_form_meta(self, *args, **kwargs):
+                return {"form": {"shared_url": "https://form.url"}}
+
+        with (
+            mock.patch("cli.create_bitable") as m_create,
+            mock.patch("cli._probe_tables", return_value=True),
+            mock.patch("cli.get_tenant_access_token", return_value="tok"),
+            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch("init_bitable.seed_schema"),
+            mock.patch("cli.BitableClient", return_value=MockClient()),
+            mock.patch("cli._request", side_effect=mock_request),
+        ):
+            args = cli.build_parser().parse_args([
+                "init-project", "--project", "myproj", "--repo", str(repo_dir),
+            ])
+            cli.cmd_init_project(args)
+
+        # create_bitable NOT called (reuse path)
+        m_create.assert_not_called()
+
+        # Grant call issued
+        grant_calls = [
+            c for c in request_calls
+            if c["method"] == "POST" and "permissions" in c["path"] and "members" in c["path"]
+        ]
+        assert len(grant_calls) == 1
+        assert grant_calls[0]["body"]["member_id"] == "ou_REUSE"
+
+
+# ---------------------------------------------------------------------------
+# AC-7: show-members verb
+# ---------------------------------------------------------------------------
+
+class TestShowMembers:
+    def test_show_members_lists_members(self, env, monkeypatch, capsys):
+        """AC-7: show-members calls members-list endpoint and prints each member."""
+        cfg = {
+            "app_id": "a",
+            "app_secret": "s",
+            "projects": {
+                "myproj": {"bitable_app_token": "tok123", "table_id": "tbl1"},
+            },
+        }
+        _write_config(env["config_path"], cfg)
+
+        fake_members = {
+            "items": [
+                {"member_id": "ou_A", "member_type": "openid", "perm": "full_access"},
+                {"member_id": "ou_B", "member_type": "openid", "perm": "read"},
+            ]
+        }
+
+        def mock_request(method, path, *, token=None, params=None, body=None, **kw):
+            assert method == "GET"
+            assert "permissions" in path
+            assert params == {"type": "bitable"}
+            return fake_members
+
+        with (
+            mock.patch("cli.get_tenant_access_token", return_value="tok"),
+            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch("cli._request", side_effect=mock_request),
+        ):
+            args = cli.build_parser().parse_args([
+                "show-members", "--project", "myproj",
+            ])
+            cli.cmd_show_members(args)
+
+        captured = capsys.readouterr()
+        assert "ou_A" in captured.out
+        assert "full_access" in captured.out
+        assert "ou_B" in captured.out
+        assert "read" in captured.out
+
+    def test_show_members_exits_on_missing_project(self, env, monkeypatch):
+        """AC-7: show-members with unknown project → SystemExit."""
+        cfg = {"app_id": "a", "app_secret": "s", "projects": {}}
+        _write_config(env["config_path"], cfg)
+
+        with (
+            mock.patch("cli.get_tenant_access_token", return_value="tok"),
+            mock.patch("cli.load_config", return_value=cfg),
+        ):
+            args = cli.build_parser().parse_args([
+                "show-members", "--project", "no_such_proj",
+            ])
+            with pytest.raises(SystemExit):
+                cli.cmd_show_members(args)
+
+
+# ---------------------------------------------------------------------------
+# AC-9: no real network — verify _request is mocked in grant tests
+# ---------------------------------------------------------------------------
+
+class TestNoLiveApiGrant:
+    """All grant tests above mock cli._request — zero real HTTP calls."""
+
+    def test_try_grant_operator_access_callable(self):
+        """Sanity: _try_grant_operator_access is callable."""
+        assert callable(cli._try_grant_operator_access)
+
+    def test_cmd_show_members_callable(self):
+        """Sanity: cmd_show_members is callable."""
+        assert callable(cli.cmd_show_members)
