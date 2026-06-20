@@ -366,6 +366,38 @@ class BitableClient:
         path = f"/open-apis/bitable/v1/apps/{self.app_token}/tables/{self.table_id}/forms/{form_id}"
         return _request("PATCH", path, token=self.token, body=body)
 
+    def list_form_fields(self, form_id: str) -> list[dict]:
+        """List fields configured on a form view (paginated).
+
+        Returns ``[{field_id, title, required, visible, ...}, ...]``.
+        ``form_id`` is the form view_id.
+        """
+        base = f"/open-apis/bitable/v1/apps/{self.app_token}/tables/{self.table_id}/forms/{form_id}/fields"
+        out: list[dict] = []
+        page_token: str | None = None
+        while True:
+            params: dict = {"page_size": 100}
+            if page_token:
+                params["page_token"] = page_token
+            data = _request("GET", base, token=self.token, params=params)
+            out.extend(data.get("items") or [])
+            if not data.get("has_more"):
+                break
+            page_token = data.get("page_token")
+        return out
+
+    def patch_form_field(self, form_id: str, field_id: str, body: dict) -> dict:
+        """Update a single field on a form view (visible / required).
+
+        ``form_id`` is the form view_id.  ``body`` is e.g.
+        ``{"visible": True, "required": False}``.
+        """
+        path = (
+            f"/open-apis/bitable/v1/apps/{self.app_token}"
+            f"/tables/{self.table_id}/forms/{form_id}/fields/{field_id}"
+        )
+        return _request("PATCH", path, token=self.token, body=body)
+
     # -- records ---------------------------------------------------------------
 
     def list_records(
