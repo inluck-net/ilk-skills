@@ -350,6 +350,38 @@ def cmd_set_default_folder(args):
     _print({"ok": True, "default_folder_token": args.token})
 
 
+def cmd_set_operator(args):
+    """Set the operator open_id for editability grants on future init-project calls."""
+    import tempfile
+    import os
+
+    cfg_path = lark_client._resolve_config_path()
+    if cfg_path.exists():
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    else:
+        cfg = {}
+
+    cfg["operator_openid"] = args.open_id
+
+    # Atomic write: tmp in same dir, then os.replace
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(cfg_path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=2, ensure_ascii=False)
+            fh.write("\n")
+        os.replace(tmp, str(cfg_path))
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+    _print({"ok": True, "operator_openid": args.open_id})
+
+
 # ---------------------------------------------------------------------------
 # init-project (idempotent bootstrap)
 # ---------------------------------------------------------------------------
@@ -588,6 +620,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp.add_argument("token", help="Drive folder token (from URL: .../drive/folder/<TOKEN>)")
     sp.set_defaults(func=cmd_set_default_folder)
+
+    sp = sub.add_parser(
+        "set-operator",
+        help="Set the operator open_id for editability grants on future init-project calls",
+    )
+    sp.add_argument("open_id", help="Operator open_id (ou_...) from show-members or Lark admin")
+    sp.set_defaults(func=cmd_set_operator)
 
     sp = sub.add_parser(
         "init-project",
