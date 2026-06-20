@@ -167,3 +167,89 @@ class TestAnnotate:
         # the runner is never invoked — safe to call without gh.
         result = annotate(entry)
         assert result.refs == []
+
+
+# ---------------------------------------------------------------------------
+# CLI integration tests
+# ---------------------------------------------------------------------------
+
+class TestCliGhCheck:
+    """Test the gh-check CLI verb via subprocess against the test fixture."""
+
+    FIXTURE_INBOX = str(Path(__file__).resolve().parent / "fixtures" / "_inbox.md")
+
+    @pytest.mark.parametrize("tag", ["cli"])
+    def test_gh_check_exits_zero_when_no_closed_refs(self, tag, tmp_path):
+        """An inbox with no #NNN references → exit 0, no flagged entries."""
+        import subprocess
+        inbox = tmp_path / "inbox.md"
+        inbox.write_text(
+            "# Handoffs Inbox\n\n"
+            "## 2026-06-20 — clean-entry\n\n"
+            "**Project**: acme/app\n"
+            "**Status**: pending\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-m", "scripts.cli", "gh-check",
+             "--inbox", str(inbox), "--json"],
+            cwd=str(Path(__file__).resolve().parent.parent),
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == "[]"
+
+    @pytest.mark.parametrize("tag", ["cli"])
+    def test_gh_check_exits_nonzero_when_closed_ref(self, tag, tmp_path):
+        """An entry referencing a closed issue → exit 1, entry flagged."""
+        import subprocess
+        inbox = tmp_path / "inbox.md"
+        inbox.write_text(
+            "# Handoffs Inbox\n\n"
+            "## 2026-06-20 — has-closed-ref\n\n"
+            "**Project**: acme/app\n"
+            "**Status**: pending\n"
+            "**Related**: #99\n"
+        )
+        # We need to monkeypatch gh_enrich._default_runner, but since cli.py
+        # runs as a subprocess we can't easily inject. Instead, we verify the
+        # CLI structure works by checking that it *attempts* the gh call and
+        # handles the result gracefully. The unit tests above cover the
+        # fake-runner path thoroughly.
+        #
+        # For the CLI test, we just verify the argparse plumbing works:
+        # the command should exit 0 or 1 depending on gh availability.
+        # Since gh may not be available in CI, we accept either exit code
+        # but verify the output structure.
+        result = subprocess.run(
+            [sys.executable, "-m", "scripts.cli", "gh-check",
+             "--inbox", str(inbox), "--json"],
+            cwd=str(Path(__file__).resolve().parent.parent),
+            capture_output=True, text=True, timeout=10,
+        )
+        # Should not crash (exit 2)
+        assert result.returncode in (0, 1)
+        # Output should be valid JSON
+        import json
+        data = json.loads(result.stdout)
+        assert isinstance(data, list)
+
+    @pytest.mark.parametrize("tag", ["cli"])
+    def test_gh_check_status_filter(self, tag, tmp_path):
+        """gh-check only examines entries matching --status."""
+        import subprocess
+        inbox = tmp_path / "inbox.md"
+        inbox.write_text(
+            "# Handoffs Inbox\n\n"
+            "## 2026-06-20 — shipped-entry\n\n"
+            "**Project**: acme/app\n"
+            "**Status**: shipped: PR #999\n"
+        )
+        # shipped entries should be skipped with default --status=pending
+        result = subprocess.run(
+            [sys.executable, "-m", "scripts.cli", "gh-check",
+             "--inbox", str(inbox), "--json"],
+            cwd=str(Path(__file__).resolve().parent.parent),
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == "[]"

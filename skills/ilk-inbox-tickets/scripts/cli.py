@@ -7,13 +7,14 @@ Usage:
   python3 cli.py update <slug> --status STATUS [--plan PATH] [--inbox PATH]
   python3 cli.py archive <slug> [--archive PATH] [--inbox PATH]
   python3 cli.py resolve [--inbox PATH] [--registry PATH]
+  python3 cli.py gh-check [--status STATUS] [--json] [--inbox PATH]
 
 Per-subcommand flags for hermetic testing:
   --inbox PATH       Path to inbox file (default: ~/Documents/handoffs/_inbox.md)
   --registry PATH    Path to project registry (default: ~/.ilk-data/inbox-projects.json)
 
 All commands print human-readable output to stdout by default.
-Use --json on `list` or `resolve` for machine-readable output.
+Use --json on `list`, `resolve`, or `gh-check` for machine-readable output.
 Errors go to stderr with non-zero exit code.
 """
 
@@ -34,6 +35,7 @@ for _stream in (sys.stdout, sys.stderr):
 # allow running as `python3 cli.py ...` regardless of cwd
 sys.path.insert(0, str(Path(__file__).parent))
 
+import gh_enrich  # noqa: E402
 import inbox_parser  # noqa: E402
 import project_registry  # noqa: E402
 from inbox_parser import Entry, parse_inbox, group_by_project, is_ilk_eligible  # noqa: E402
@@ -370,6 +372,52 @@ def cmd_resolve(args):
     sys.exit(1 if unmapped else 0)
 
 
+def cmd_gh_check(args):
+    """Check inbox entries for references to closed GitHub issues/PRs."""
+    inbox_path = _resolve_inbox_path(args)
+
+    if not inbox_path.exists():
+        print(f"ERROR: inbox file not found: {inbox_path}", file=sys.stderr)
+        sys.exit(1)
+
+    entries = parse_inbox(inbox_path)
+    status_filter = args.status or "pending"
+
+    # Only check entries matching the status filter
+    filtered = [
+        e for e in entries
+        if e.status.get("state") == status_filter
+    ]
+
+    results = []
+    for entry in filtered:
+        enriched = gh_enrich.annotate(entry)
+        if enriched.has_closed_ref:
+            results.append(enriched)
+
+    if args.json:
+        _print([
+            {
+                "slug": r.slug,
+                "refs": [
+                    {"number": ref.number, "state": ref.state, "is_closed": ref.is_closed}
+                    for ref in r.refs
+                ],
+            }
+            for r in results
+        ])
+    else:
+        if not results:
+            print(f"No {status_filter} entries reference closed GitHub issues.")
+            return
+        print(f"Entries referencing closed GitHub issues ({len(results)}):")
+        for r in results:
+            closed_nums = [ref.number for ref in r.refs if ref.is_closed]
+            print(f"  {r.slug}  →  closed: {', '.join('#' + str(n) for n in closed_nums)}")
+
+    sys.exit(1 if results else 0)
+
+
 # ---------------------------------------------------------------------------
 # Argparse
 # ---------------------------------------------------------------------------
@@ -420,6 +468,13 @@ def build_parser() -> argparse.ArgumentParser:
     _add_testing_flags(sp)
     sp.add_argument("--json", action="store_true", help="Output as JSON")
     sp.set_defaults(func=cmd_resolve)
+
+    # gh-check
+    sp = sub.add_parser("gh-check", help="Check entries for references to closed GitHub issues")
+    _add_testing_flags(sp)
+    sp.add_argument("--status", default="pending", help="Filter by status (default: pending)")
+    sp.add_argument("--json", action="store_true", help="Output as JSON")
+    sp.set_defaults(func=cmd_gh_check)
 
     return p
 
