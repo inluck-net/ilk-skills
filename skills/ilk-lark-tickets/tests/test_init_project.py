@@ -87,6 +87,14 @@ class TestCreatePath:
                 return {"view": {"view_id": "view_1"}}
             def patch_view(self, *args, **kwargs):
                 return {}
+            def list_form_fields(self, form_id):
+                return []
+            def patch_form_field(self, form_id, field_id, body):
+                return {}
+            def list_form_fields(self, form_id):
+                return []
+            def patch_form_field(self, form_id, field_id, body):
+                return {}
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
 
@@ -159,6 +167,14 @@ class TestReusePath:
             def create_view(self, **kwargs):
                 return {"view": {"view_id": "view_1"}}
             def patch_view(self, *args, **kwargs):
+                return {}
+            def list_form_fields(self, form_id):
+                return []
+            def patch_form_field(self, form_id, field_id, body):
+                return {}
+            def list_form_fields(self, form_id):
+                return []
+            def patch_form_field(self, form_id, field_id, body):
                 return {}
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
@@ -255,6 +271,14 @@ class TestRefuseUnreachable:
             def create_view(self, **kwargs):
                 return {"view": {"view_id": "view_1"}}
             def patch_view(self, *args, **kwargs):
+                return {}
+            def list_form_fields(self, form_id):
+                return []
+            def patch_form_field(self, form_id, field_id, body):
+                return {}
+            def list_form_fields(self, form_id):
+                return []
+            def patch_form_field(self, form_id, field_id, body):
                 return {}
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
@@ -417,6 +441,12 @@ class TestKanbanCreated:
                 self.calls.append(("patch_view", view_id, body))
                 return {}
 
+            def list_form_fields(self, form_id):
+                return [{"field_id": "f1", "title": "标题"}]
+
+            def patch_form_field(self, form_id, field_id, body):
+                return {}
+
             def patch_form_meta(self, form_id, body):
                 self.calls.append(("patch_form_meta", form_id, body))
                 return {"form": {"shared_url": "https://form.url"}}
@@ -484,6 +514,12 @@ class TestFormCreated:
 
             def patch_view(self, view_id, body):
                 self.calls.append(("patch_view", view_id, body))
+                return {}
+
+            def list_form_fields(self, form_id):
+                return [{"field_id": "f1", "title": "标题"}]
+
+            def patch_form_field(self, form_id, field_id, body):
                 return {}
 
             def patch_form_meta(self, form_id, body):
@@ -560,6 +596,12 @@ class TestIdempotentSkip:
                 self.calls.append(("patch_view", view_id, body))
                 return {}
 
+            def list_form_fields(self, form_id):
+                return [{"field_id": "f1", "title": "标题"}]
+
+            def patch_form_field(self, form_id, field_id, body):
+                return {}
+
             def patch_form_meta(self, form_id, body):
                 self.calls.append(("patch_form_meta", form_id, body))
                 return {"form": {"shared_url": "https://form.url"}}
@@ -621,6 +663,10 @@ class TestFolderResolution:
                 return {"view": {"view_id": "view_1"}}
             def patch_view(self, *args, **kwargs):
                 return {}
+            def list_form_fields(self, form_id):
+                return []
+            def patch_form_field(self, form_id, field_id, body):
+                return {}
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
 
@@ -668,6 +714,10 @@ class TestFolderResolution:
             def create_view(self, **kwargs):
                 return {"view": {"view_id": "view_1"}}
             def patch_view(self, *args, **kwargs):
+                return {}
+            def list_form_fields(self, form_id):
+                return []
+            def patch_form_field(self, form_id, field_id, body):
                 return {}
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
@@ -717,6 +767,10 @@ class TestEditableWarning:
                 return {"view": {"view_id": "view_1"}}
             def patch_view(self, *args, **kwargs):
                 return {}
+            def list_form_fields(self, form_id):
+                return []
+            def patch_form_field(self, form_id, field_id, body):
+                return {}
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
 
@@ -760,6 +814,10 @@ class TestEditableWarning:
             def create_view(self, **kwargs):
                 return {"view": {"view_id": "view_1"}}
             def patch_view(self, *args, **kwargs):
+                return {}
+            def list_form_fields(self, form_id):
+                return []
+            def patch_form_field(self, form_id, field_id, body):
                 return {}
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
@@ -865,6 +923,10 @@ class TestGrantNonFatal:
             def create_view(self, **kwargs):
                 return {"view": {"view_id": "view_1"}}
             def patch_view(self, *args, **kwargs):
+                return {}
+            def list_form_fields(self, form_id):
+                return []
+            def patch_form_field(self, form_id, field_id, body):
                 return {}
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
@@ -990,6 +1052,10 @@ class TestOperatorGrant:
                 return {"view": {"view_id": "view_1"}}
             def patch_view(self, *args, **kwargs):
                 return {}
+            def list_form_fields(self, form_id):
+                return []
+            def patch_form_field(self, form_id, field_id, body):
+                return {}
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
 
@@ -1048,6 +1114,10 @@ class TestOperatorGrant:
             def create_view(self, **kwargs):
                 return {"view": {"view_id": "view_1"}}
             def patch_view(self, *args, **kwargs):
+                return {}
+            def list_form_fields(self, form_id):
+                return []
+            def patch_form_field(self, form_id, field_id, body):
                 return {}
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
@@ -1111,6 +1181,10 @@ class TestOperatorGrant:
                 return {"view": {"view_id": "view_1"}}
             def patch_view(self, *args, **kwargs):
                 return {}
+            def list_form_fields(self, form_id):
+                return []
+            def patch_form_field(self, form_id, field_id, body):
+                return {}
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
 
@@ -1169,6 +1243,10 @@ class TestOperatorGrant:
             def create_view(self, **kwargs):
                 return {"view": {"view_id": "view_1"}}
             def patch_view(self, *args, **kwargs):
+                return {}
+            def list_form_fields(self, form_id):
+                return []
+            def patch_form_field(self, form_id, field_id, body):
                 return {}
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
@@ -1274,3 +1352,447 @@ class TestNoLiveApiGrant:
     def test_cmd_show_members_callable(self):
         """Sanity: cmd_show_members is callable."""
         assert callable(cli.cmd_show_members)
+
+
+# ---------------------------------------------------------------------------
+# AC-1: ensure_form_fields PATCHes each field per FORM_SPEC
+# ---------------------------------------------------------------------------
+
+class TestEnsureFormFields:
+    """ensure_form_fields resolves title→field_id and PATCHes per FORM_SPEC."""
+
+    def _make_mock_client(self, form_fields):
+        """Return a MockClient with list_form_fields / patch_form_field."""
+        class MockClient:
+            def __init__(self):
+                self.patch_calls = []
+
+            def list_form_fields(self, form_id):
+                return form_fields
+
+            def patch_form_field(self, form_id, field_id, body):
+                self.patch_calls.append((form_id, field_id, body))
+                return {}
+
+        return MockClient()
+
+    def test_per_field_patch_matches_spec(self):
+        """AC-1: 标题 → visible+required, 原文描述 → visible=false, etc."""
+        form_fields = [
+            {"field_id": "f1", "title": "标题"},
+            {"field_id": "f2", "title": "原文描述"},
+            {"field_id": "f3", "title": "AI 理解"},
+            {"field_id": "f4", "title": "状态"},
+            {"field_id": "f5", "title": "操作步骤"},
+            {"field_id": "f6", "title": "截图"},
+        ]
+        client = self._make_mock_client(form_fields)
+        results = cli.ensure_form_fields(client, "form_123")
+
+        # Build a lookup by field_id
+        by_fid = {r["field_id"]: r for r in results}
+
+        assert by_fid["f1"]["visible"] is True
+        assert by_fid["f1"]["required"] is True
+
+        assert by_fid["f5"]["visible"] is True
+        assert by_fid["f5"]["required"] is False
+
+        assert by_fid["f6"]["visible"] is True
+        assert by_fid["f6"]["required"] is False
+
+        # Hidden fields
+        for fid in ("f2", "f3", "f4"):
+            assert by_fid[fid]["visible"] is False
+            assert by_fid[fid]["required"] is False
+
+    def test_default_hidden_for_unknown_title(self):
+        """AC-1: a field not in FORM_SPEC → visible:false, required:false."""
+        form_fields = [{"field_id": "fx", "title": "Some Unknown Field"}]
+        client = self._make_mock_client(form_fields)
+        results = cli.ensure_form_fields(client, "form_123")
+
+        assert len(results) == 1
+        assert results[0]["visible"] is False
+        assert results[0]["required"] is False
+
+    def test_non_fatal_on_patch_error(self):
+        """AC-2: patch_form_field raises → logs error, continues, init completes."""
+        class ErrorClient:
+            def list_form_fields(self, form_id):
+                return [
+                    {"field_id": "f_ok", "title": "标题"},
+                    {"field_id": "f_bad", "title": "截图"},
+                ]
+
+            def patch_form_field(self, form_id, field_id, body):
+                if field_id == "f_bad":
+                    raise Exception("API boom")
+                return {}
+
+        client = ErrorClient()
+        results = cli.ensure_form_fields(client, "form_123")
+
+        # Both fields returned; f_bad has error
+        assert len(results) == 2
+        by_fid = {r["field_id"]: r for r in results}
+        assert by_fid["f_ok"]["visible"] is True
+        assert "error" in by_fid["f_bad"]
+        assert "API boom" in by_fid["f_bad"]["error"]
+
+
+# ---------------------------------------------------------------------------
+# AC-4: sharing-on-create (created → shared_limit; existing → no shared_limit)
+# ---------------------------------------------------------------------------
+
+class TestSharingOnCreate:
+    """patch_form_meta includes shared_limit only when the form was just created."""
+
+    def test_created_form_gets_shared_limit(self, env, monkeypatch, tmp_path):
+        """AC-4: form just created → patch_form_meta called with shared_limit."""
+        cfg = {"app_id": "a", "app_secret": "s", "projects": {}}
+        _write_config(env["config_path"], cfg)
+
+        created_result = {
+            "app_token": "new_token",
+            "table_id": "tbl_new",
+            "url": "https://feishu.cn/base/new",
+        }
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+
+        class MockClient:
+            def __init__(self, **kwargs):
+                self.calls = []
+                self._views = []  # No existing views → form will be created
+
+            def field_id(self, name):
+                return "fld_status"
+
+            def list_views(self):
+                return self._views
+
+            def create_view(self, *, view_name, view_type):
+                self.calls.append(("create_view", view_name, view_type))
+                return {"view": {"view_id": f"view_{view_type}"}}
+
+            def patch_view(self, view_id, body):
+                self.calls.append(("patch_view", view_id, body))
+                return {}
+
+            def list_form_fields(self, form_id):
+                return [{"field_id": "f1", "title": "标题"}]
+
+            def patch_form_field(self, form_id, field_id, body):
+                return {}
+
+            def patch_form_meta(self, form_id, body):
+                self.calls.append(("patch_form_meta", form_id, body))
+                return {"form": {"shared_url": "https://form.url", "shared_limit": body.get("shared_limit")}}
+
+        mock_client = MockClient()
+
+        with (
+            mock.patch("cli.create_bitable", return_value=created_result),
+            mock.patch("cli.get_tenant_access_token", return_value="tok"),
+            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch("init_bitable.seed_schema"),
+            mock.patch("cli.BitableClient", return_value=mock_client),
+        ):
+            args = cli.build_parser().parse_args([
+                "init-project", "--project", "myproj", "--repo", str(repo_dir),
+            ])
+            cli.cmd_init_project(args)
+
+        meta_calls = [c for c in mock_client.calls if c[0] == "patch_form_meta"]
+        assert len(meta_calls) == 1
+        body = meta_calls[0][2]
+        assert body["shared"] is True
+        assert body["shared_limit"] == "tenant_editable"
+        assert body["submit_limit_once"] is False
+
+    def test_existing_form_omits_shared_limit(self, env, monkeypatch, tmp_path):
+        """AC-4: form already exists → patch_form_meta without shared_limit."""
+        cfg = {"app_id": "a", "app_secret": "s", "projects": {}}
+        _write_config(env["config_path"], cfg)
+
+        created_result = {
+            "app_token": "new_token",
+            "table_id": "tbl_new",
+            "url": "https://feishu.cn/base/new",
+        }
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+
+        class MockClient:
+            def __init__(self, **kwargs):
+                self.calls = []
+                self._views = [
+                    {"view_name": "工单看板", "view_type": "kanban", "view_id": "kb1"},
+                    {"view_name": "myproj-提交新工单", "view_type": "form", "view_id": "fm1"},
+                ]
+
+            def field_id(self, name):
+                return "fld_status"
+
+            def list_views(self):
+                return self._views
+
+            def create_view(self, *, view_name, view_type):
+                self.calls.append(("create_view", view_name, view_type))
+                return {"view": {"view_id": f"view_{view_type}"}}
+
+            def patch_view(self, view_id, body):
+                self.calls.append(("patch_view", view_id, body))
+                return {}
+
+            def list_form_fields(self, form_id):
+                return [{"field_id": "f1", "title": "标题"}]
+
+            def patch_form_field(self, form_id, field_id, body):
+                return {}
+
+            def patch_form_meta(self, form_id, body):
+                self.calls.append(("patch_form_meta", form_id, body))
+                return {"form": {"shared_url": "https://form.url"}}
+
+        mock_client = MockClient()
+
+        with (
+            mock.patch("cli.create_bitable", return_value=created_result),
+            mock.patch("cli.get_tenant_access_token", return_value="tok"),
+            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch("init_bitable.seed_schema"),
+            mock.patch("cli.BitableClient", return_value=mock_client),
+        ):
+            args = cli.build_parser().parse_args([
+                "init-project", "--project", "myproj", "--repo", str(repo_dir),
+            ])
+            cli.cmd_init_project(args)
+
+        meta_calls = [c for c in mock_client.calls if c[0] == "patch_form_meta"]
+        assert len(meta_calls) == 1
+        body = meta_calls[0][2]
+        assert body["shared"] is True
+        assert "shared_limit" not in body  # Preserved from manual upgrade
+
+
+# ---------------------------------------------------------------------------
+# AC-5: pull-new filter shape (or / isEmpty)
+# ---------------------------------------------------------------------------
+
+class TestPullNewFilter:
+    """cmd_pull_new uses OR filter with isEmpty for blank-状态 records."""
+
+    def test_filter_shape_is_or_with_isEmpty(self, env, monkeypatch, capsys):
+        """AC-5: filter is conjunction=or, conditions include isEmpty."""
+        cfg = {
+            "app_id": "a",
+            "app_secret": "s",
+            "projects": {
+                "myproj": {"bitable_app_token": "tok123", "table_id": "tbl1"},
+            },
+        }
+        _write_config(env["config_path"], cfg)
+
+        captured_filter = {}
+
+        def mock_request(method, path, *, token=None, params=None, body=None, **kw):
+            if "records" in path and "search" in path:
+                captured_filter["body"] = body
+                # Return one record with 状态=新建
+                return {
+                    "items": [
+                        {
+                            "record_id": "rec1",
+                            "fields": {"状态": "新建", "标题": [{"text": "Test"}]},
+                        }
+                    ],
+                    "has_more": False,
+                }
+            if path.endswith("/fields") or "/fields?" in path:
+                return {
+                    "items": [
+                        {"field_id": "f1", "field_name": "标题", "ui_type": "Text"},
+                        {"field_id": "f2", "field_name": "状态", "ui_type": "SingleSelect"},
+                    ],
+                    "has_more": False,
+                }
+            return {}
+
+        with (
+            mock.patch("cli.get_tenant_access_token", return_value="tok"),
+            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch("cli._request", side_effect=mock_request),
+            mock.patch("lark_client._request", side_effect=mock_request),
+            mock.patch("lark_client.get_tenant_access_token", return_value="tok"),
+        ):
+            args = cli.build_parser().parse_args([
+                "--project", "myproj", "pull-new",
+            ])
+            cli.cmd_pull_new(args)
+
+        filt = captured_filter["body"]["filter"]
+        assert filt["conjunction"] == "or"
+        conditions = filt["conditions"]
+        assert len(conditions) == 2
+
+        is_cond = [c for c in conditions if c["operator"] == "is"]
+        assert len(is_cond) == 1
+        assert is_cond[0]["field_name"] == "状态"
+        assert is_cond[0]["value"] == ["新建"]
+
+        empty_cond = [c for c in conditions if c["operator"] == "isEmpty"]
+        assert len(empty_cond) == 1
+        assert empty_cond[0]["field_name"] == "状态"
+
+
+# ---------------------------------------------------------------------------
+# AC-6: pull-new backfills blank-状态 → 新建
+# ---------------------------------------------------------------------------
+
+class TestPullNewBackfill:
+    """cmd_pull_new backfills blank-状态 records to 新建."""
+
+    def test_blank_status_backfilled_to_new(self, env, monkeypatch, capsys):
+        """AC-6: record with blank 状态 → update_record(状态=新建)."""
+        cfg = {
+            "app_id": "a",
+            "app_secret": "s",
+            "projects": {
+                "myproj": {"bitable_app_token": "tok123", "table_id": "tbl1"},
+            },
+        }
+        _write_config(env["config_path"], cfg)
+
+        update_calls = []
+
+        def mock_request(method, path, *, token=None, params=None, body=None, **kw):
+            if "records" in path and "search" in path:
+                return {
+                    "items": [
+                        {
+                            "record_id": "rec_blank",
+                            "fields": {"状态": None, "标题": [{"text": "Blank ticket"}]},
+                        },
+                        {
+                            "record_id": "rec_new",
+                            "fields": {"状态": "新建", "标题": [{"text": "New ticket"}]},
+                        },
+                    ],
+                    "has_more": False,
+                }
+            if "records" in path and method == "PUT":
+                update_calls.append({"record_id": path.split("/")[-1], "fields": body["fields"]})
+                return {}
+            if path.endswith("/fields") or "/fields?" in path:
+                return {
+                    "items": [
+                        {"field_id": "f1", "field_name": "标题", "ui_type": "Text"},
+                        {"field_id": "f2", "field_name": "状态", "ui_type": "SingleSelect"},
+                    ],
+                    "has_more": False,
+                }
+            return {}
+
+        with (
+            mock.patch("cli.get_tenant_access_token", return_value="tok"),
+            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch("cli._request", side_effect=mock_request),
+            mock.patch("lark_client._request", side_effect=mock_request),
+            mock.patch("lark_client.get_tenant_access_token", return_value="tok"),
+        ):
+            args = cli.build_parser().parse_args([
+                "--project", "myproj", "pull-new",
+            ])
+            cli.cmd_pull_new(args)
+
+        # Only rec_blank should be updated (blank 状态 → 新建)
+        assert len(update_calls) == 1
+        assert update_calls[0]["record_id"] == "rec_blank"
+        assert update_calls[0]["fields"]["状态"] == "新建"
+
+        # Output includes both records
+        captured = capsys.readouterr()
+        assert "rec_blank" in captured.out
+        assert "rec_new" in captured.out
+
+    def test_new_status_not_rewritten(self, env, monkeypatch, capsys):
+        """AC-6: record already 新建 → no update_record call."""
+        cfg = {
+            "app_id": "a",
+            "app_secret": "s",
+            "projects": {
+                "myproj": {"bitable_app_token": "tok123", "table_id": "tbl1"},
+            },
+        }
+        _write_config(env["config_path"], cfg)
+
+        update_calls = []
+
+        def mock_request(method, path, *, token=None, params=None, body=None, **kw):
+            if "records" in path and "search" in path:
+                return {
+                    "items": [
+                        {
+                            "record_id": "rec_new",
+                            "fields": {"状态": "新建", "标题": [{"text": "Already new"}]},
+                        },
+                    ],
+                    "has_more": False,
+                }
+            if "records" in path and method == "PUT":
+                update_calls.append(path)
+                return {}
+            if path.endswith("/fields") or "/fields?" in path:
+                return {
+                    "items": [
+                        {"field_id": "f1", "field_name": "标题", "ui_type": "Text"},
+                        {"field_id": "f2", "field_name": "状态", "ui_type": "SingleSelect"},
+                    ],
+                    "has_more": False,
+                }
+            return {}
+
+        with (
+            mock.patch("cli.get_tenant_access_token", return_value="tok"),
+            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch("cli._request", side_effect=mock_request),
+            mock.patch("lark_client._request", side_effect=mock_request),
+            mock.patch("lark_client.get_tenant_access_token", return_value="tok"),
+        ):
+            args = cli.build_parser().parse_args([
+                "--project", "myproj", "pull-new",
+            ])
+            cli.cmd_pull_new(args)
+
+        # No update calls for 新建 records
+        assert len(update_calls) == 0
+
+
+# ---------------------------------------------------------------------------
+# AC-7: no kanban property assertion in tests
+# ---------------------------------------------------------------------------
+
+class TestNoKanbanProperty:
+    """Verify ensure_form_fields does not inspect kanban property (API returns null)."""
+
+    def test_ensure_form_fields_does_not_touch_kanban(self):
+        """AC-7: ensure_form_fields only calls list_form_fields / patch_form_field."""
+        calls = []
+
+        class RecordingClient:
+            def list_form_fields(self, form_id):
+                calls.append(("list_form_fields", form_id))
+                return [{"field_id": "f1", "title": "标题"}]
+
+            def patch_form_field(self, form_id, field_id, body):
+                calls.append(("patch_form_field", form_id, field_id, body))
+                return {}
+
+        client = RecordingClient()
+        cli.ensure_form_fields(client, "form_123")
+
+        # Only form-field calls, no kanban/view calls
+        for c in calls:
+            assert c[0] in ("list_form_fields", "patch_form_field")
