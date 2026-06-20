@@ -232,38 +232,50 @@ def _find_view(views: list[dict], name: str, view_type: str) -> dict | None:
     return None
 
 
-def cmd_setup_issue_views(args):
-    """Create Kanban + Form views for the ticket table; enable form sharing."""
+def ensure_issue_views(
+    client: BitableClient,
+    *,
+    kanban_name: str = "工单看板",
+    form_name: str = "提交新工单",
+    stack_field: str = "状态",
+    form_description: str = "请描述问题：现象、页面链接、期望与实际结果。可选上传截图。提交后运维/研发会分拣到看板列。",
+    shared_limit: str = "tenant_editable",
+    delay_s: int = 3,
+) -> list[dict]:
+    """Create Kanban + Form views for the ticket table; enable form sharing.
+
+    Idempotent: finds existing views by name+type before creating.
+    Returns a list of step dicts (kanban created/exists, form created/exists, etc.)
+    """
     import time
 
-    client = BitableClient(project_name=args.project)
-    wait = max(1, int(args.delay_s))
+    wait = max(1, int(delay_s))
     steps: list[dict] = []
 
-    group_fid = client.field_id(args.stack_field)
+    group_fid = client.field_id(stack_field)
 
     views = client.list_views()
-    kb = _find_view(views, args.kanban_name, "kanban")
+    kb = _find_view(views, kanban_name, "kanban")
     if kb:
         kanban_id = kb["view_id"]
         steps.append({"kanban": "exists", "view_id": kanban_id})
     else:
-        data = client.create_view(view_name=args.kanban_name, view_type="kanban")
+        data = client.create_view(view_name=kanban_name, view_type="kanban")
         kanban_id = data["view"]["view_id"]
         steps.append({"kanban": "created", "view_id": kanban_id})
         time.sleep(wait)
 
     client.patch_view(kanban_id, {"property": {"group_field_id": group_fid}})
-    steps.append({"kanban": "group_field_set", "field": args.stack_field})
+    steps.append({"kanban": "group_field_set", "field": stack_field})
     time.sleep(wait)
 
     views = client.list_views()
-    fm = _find_view(views, args.form_name, "form")
+    fm = _find_view(views, form_name, "form")
     if fm:
         form_id = fm["view_id"]
         steps.append({"form": "exists", "view_id": form_id})
     else:
-        data = client.create_view(view_name=args.form_name, view_type="form")
+        data = client.create_view(view_name=form_name, view_type="form")
         form_id = data["view"]["view_id"]
         steps.append({"form": "created", "view_id": form_id})
         time.sleep(wait)
@@ -271,10 +283,10 @@ def cmd_setup_issue_views(args):
     meta = client.patch_form_meta(
         form_id,
         {
-            "name": args.form_name,
-            "description": args.form_description,
+            "name": form_name,
+            "description": form_description,
             "shared": True,
-            "shared_limit": args.shared_limit,
+            "shared_limit": shared_limit,
             "submit_limit_once": False,
         },
     )
@@ -287,6 +299,21 @@ def cmd_setup_issue_views(args):
         }
     )
 
+    return steps
+
+
+def cmd_setup_issue_views(args):
+    """Create Kanban + Form views for the ticket table; enable form sharing."""
+    client = BitableClient(project_name=args.project)
+    steps = ensure_issue_views(
+        client,
+        kanban_name=args.kanban_name,
+        form_name=args.form_name,
+        stack_field=args.stack_field,
+        form_description=args.form_description,
+        shared_limit=args.shared_limit,
+        delay_s=args.delay_s,
+    )
     _print({"ok": True, "steps": steps})
 
 
