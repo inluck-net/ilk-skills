@@ -353,8 +353,11 @@ def ensure_form_fields(client: BitableClient, form_id: str) -> list[dict]:
         title = item.get("title") or ""
         spec = FORM_SPEC.get(title, {"visible": False, "required": False})
         fid = item["field_id"]
+        # Feishu rejects `required` paired with `visible:False` (WrongRequestBody);
+        # only send `required` when the field is actually shown on the form.
+        body = {"visible": True, "required": spec["required"]} if spec["visible"] else {"visible": False}
         try:
-            client.patch_form_field(form_id, fid, spec)
+            client.patch_form_field(form_id, fid, body)
             results.append({"field": title, "field_id": fid, **spec})
         except Exception as exc:
             results.append({"field": title, "field_id": fid, "error": str(exc)})

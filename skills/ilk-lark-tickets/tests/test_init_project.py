@@ -1440,6 +1440,45 @@ class TestEnsureFormFields:
         assert "error" in by_fid["f_bad"]
         assert "API boom" in by_fid["f_bad"]["error"]
 
+    def test_hidden_field_omits_required_regression(self):
+        """Regression (escaped bug FM-xxxx): Feishu rejects `required` paired
+        with `visible:False` ([1254001] WrongRequestBody). ensure_form_fields
+        must send ONLY {"visible": False} when hiding a field. A permissive
+        mock hid this — this mock faithfully rejects the bad body, so the
+        pre-fix code (which sent {"visible": False, "required": False}) would
+        error on every hidden field and leave the form showing all fields."""
+        class FeishuFaithfulClient:
+            def __init__(self):
+                self.patch_calls = []
+
+            def list_form_fields(self, form_id):
+                return [
+                    {"field_id": "f_show", "title": "标题"},        # visible+required
+                    {"field_id": "f_hide", "title": "AI 理解"},     # hidden
+                    {"field_id": "f_hide2", "title": "状态"},        # hidden
+                ]
+
+            def patch_form_field(self, form_id, field_id, body):
+                # Mirror the real API contract discovered live: `required`
+                # cannot accompany `visible: False`.
+                if body.get("visible") is False and "required" in body:
+                    raise Exception("[1254001] WrongRequestBody")
+                self.patch_calls.append((field_id, dict(body)))
+                return {}
+
+        client = FeishuFaithfulClient()
+        results = cli.ensure_form_fields(client, "form_123")
+
+        # No field errored — the fix sends {"visible": False} for hidden fields.
+        assert all("error" not in r for r in results), results
+
+        sent = dict(client.patch_calls)
+        # Hidden fields: body is exactly {"visible": False} (no `required`).
+        assert sent["f_hide"] == {"visible": False}
+        assert sent["f_hide2"] == {"visible": False}
+        # Visible field still carries required.
+        assert sent["f_show"] == {"visible": True, "required": True}
+
 
 # ---------------------------------------------------------------------------
 # AC-4: sharing-on-create (created → shared_limit; existing → no shared_limit)
