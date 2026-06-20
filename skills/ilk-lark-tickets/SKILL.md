@@ -233,6 +233,15 @@ This single command:
 - Seeds the standard 24-field ticket schema (idempotent — skips fields that exist).
 - Creates a Kanban view grouped by `状态` (idempotent — skips if exists).
 - Creates a shared Form view for ticket submission (idempotent — skips if exists).
+- **Form field config**: the form shows only the 8 client-facing fields (matching
+  the uccargo reference): **标题, 在哪个页面, 期望看到, 实际看到** (required);
+  **操作步骤, 截图, 紧急度, 类型** (optional). All other fields are hidden.
+- **Sharing**: defaults to `tenant_editable` on form creation. If you manually
+  upgrade to `anyone_editable` in the Feishu UI, re-running `init-project`
+  preserves that upgrade (sharing is set only on creation).
+- **Pull-new safeguard**: form submissions land with blank `状态` (the form hides
+  it). `cli.py pull-new` automatically picks up and backfills these records to
+  `状态=新建` so they appear in the kanban's 新建 column.
 
 The command is **idempotent**: re-running for the same project reuses the existing base
 (never creates a duplicate). If the base is unreachable (e.g. deleted), it refuses

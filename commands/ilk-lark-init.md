@@ -90,6 +90,9 @@ supported way to **update** that tracker — the reuse path is not a no-op. It:
 
 - re-seeds the schema, adding any **new fields** introduced since the base was created;
 - ensures the **Kanban + shared Form views** exist (creates whichever is missing, skips existing);
+- applies **form field config** — the form shows only the 8 client-facing fields
+  (标题, 在哪个页面, 期望看到, 实际看到 required; 操作步骤, 截图, 紧急度, 类型
+  optional; all others hidden), matching the uccargo reference;
 - grants the configured **`operator_openid`** `full_access` so the base is editable in the web UI (idempotent — safe to repeat).
 
 So from a project session (e.g. inside the `math-blocks` repo, which already has

@@ -49,6 +49,23 @@ view** — so a fresh base matches the reference uccargo tracker. It's
 **idempotent** — re-running never duplicates the base or the views (existing
 views are skipped).
 
+**Form field config**: the form shows only the 8 client-facing fields (matching
+uccargo): **标题, 在哪个页面, 期望看到, 实际看到** (required); **操作步骤,
+截图, 紧急度, 类型** (optional). All other fields are hidden.
+
+**Sharing**: defaults to `tenant_editable` on form creation. If you manually
+upgrade to `anyone_editable` in the Feishu UI, re-running `init-project`
+preserves that upgrade (sharing is set only on creation, not on re-runs).
+
+**Pull-new safeguard**: form submissions land with blank `状态` (the form hides
+it). `cli.py pull-new` automatically picks up and backfills these records to
+`状态=新建` so they appear in the kanban's 新建 column.
+
+**Field defaults**: the Bitable API rejects setting field default values
+(`[1254082] SingleSelectFieldPropertyError`). To set 状态 default → 新建, do it
+manually in the Feishu field editor (one-time UI-only step). The pull-new
+safeguard already covers triage regardless.
+
 Options:
 - `--project <name>` (required) — project key in config.
 - `--folder <token>` — Drive folder token to create the base inside (see
