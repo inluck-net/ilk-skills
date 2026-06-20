@@ -42,17 +42,37 @@ support multiple projects via per-repo `.lark-project` markers.
 python <skill-root>/ilk-lark-tickets/scripts/cli.py init-project --project <name>
 ```
 
-This single command does everything: creates a new Bitable base (the app owns it —
-no manual "添加文档应用" grant needed), writes the config entry, drops the
-`.lark-project` marker, and seeds the 24-field schema. It's **idempotent** —
-re-running never creates a duplicate base.
+This single command does everything: creates a new Bitable base, writes the
+config entry, drops the `.lark-project` marker, seeds the 24-field schema, and
+creates a **Kanban view** (grouped by `状态`) plus a **shared ticket-submit Form
+view** — so a fresh base matches the reference uccargo tracker. It's
+**idempotent** — re-running never duplicates the base or the views (existing
+views are skipped).
 
 Options:
 - `--project <name>` (required) — project key in config.
-- `--folder <token>` — Drive folder token for visibility.
+- `--folder <token>` — Drive folder token to create the base inside (see
+  "Editable base" below); falls back to the configured `default_folder_token`.
 - `--prefix <str>` — ticket id prefix (default `T`).
 - `--repo <path>` — repo root for the `.lark-project` marker (default: cwd).
 - `--force-recreate` — replace an unreachable base instead of refusing.
+
+### Editable base (one-time setup)
+
+A base the app creates in its own space is **not editable** by you in the Feishu
+web UI (only reachable by URL/API), so `init-project` prints a `WARNING` when no
+folder is resolved. To get an editable base, create the base inside a Drive
+folder **you own**:
+
+1. In Feishu Drive, create a folder you own and **share it with the app** (edit).
+2. Copy its folder token from the URL (`…/drive/folder/<FOLDER_TOKEN>`).
+3. Run once: `python <skill-root>/ilk-lark-tickets/scripts/cli.py set-default-folder <FOLDER_TOKEN>`
+4. All future `init-project` runs land in that folder (editable) with no flag —
+   or pass `--folder <token>` per call.
+
+(`init-project` also makes a best-effort attempt to grant your account
+`full_access` by open_id, but the `--folder`/`default_folder_token` path is the
+reliable contract.)
 
 Verify after:
 ```powershell
