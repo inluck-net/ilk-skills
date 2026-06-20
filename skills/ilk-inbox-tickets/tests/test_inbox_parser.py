@@ -13,8 +13,17 @@ if _SCRIPTS not in sys.path:
     sys.path.insert(0, _SCRIPTS)
 
 import inbox_parser as p
+import project_registry as r
 
 FIXTURE = Path(__file__).parent / "fixtures" / "_inbox.md"
+
+# A test registry matching the fixture entries
+_TEST_REGISTRY = {
+    "projects": {
+        "acme/example-app": {"path": "/tmp/acme-example"},
+        "~/.ilk-data templates": {"not_plannable": True},
+    }
+}
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
@@ -98,3 +107,34 @@ class TestProseStatus:
         e = _entries()["mid-flight-entry"]
         assert e.status["state"] == "shipped"
         assert "P1" in e.status["remaining"]
+
+
+# ── AC-4: project registry resolution ───────────────────────────────────
+
+
+class TestProjectRegistry:
+    def test_resolve_registered_returns_path(self):
+        result = r.resolve("acme/example-app", _TEST_REGISTRY)
+        assert result == "/tmp/acme-example"
+
+    def test_resolve_not_plannable(self):
+        result = r.resolve("~/.ilk-data templates", _TEST_REGISTRY)
+        assert result is r.NOT_PLANNABLE
+
+    def test_resolve_unmapped(self):
+        result = r.resolve("unknown-org/new-repo", _TEST_REGISTRY)
+        assert result is r.UNRESOLVED
+
+    def test_resolve_slug_with_path_suffix(self):
+        """Strings like 'slug (path)' try the leading slug token."""
+        reg = {"projects": {"my-org/repo": {"path": "/tmp/repo"}}}
+        assert r.resolve("my-org/repo (/extra/path)", reg) == "/tmp/repo"
+
+    def test_needs_mapping_returns_unresolved(self):
+        es = list(_entries().values())
+        unmapped = r.needs_mapping(es, _TEST_REGISTRY)
+        slugs = [e.slug for e in unmapped]
+        assert "unmapped-project-entry" in slugs
+        # registered and not-plannable entries should NOT appear
+        assert "plain-pending-entry" not in slugs
+        assert "not-plannable-entry" not in slugs
