@@ -303,6 +303,44 @@ def ensure_issue_views(
     return steps
 
 
+# ---------------------------------------------------------------------------
+# Form-field spec (mirrors uccargo: 8 client-visible fields, 4 required)
+# ---------------------------------------------------------------------------
+
+FORM_SPEC: dict[str, dict] = {
+    "标题":     {"visible": True, "required": True},
+    "在哪个页面": {"visible": True, "required": True},
+    "期望看到":  {"visible": True, "required": True},
+    "实际看到":  {"visible": True, "required": True},
+    "操作步骤":  {"visible": True, "required": False},
+    "截图":     {"visible": True, "required": False},
+    "紧急度":   {"visible": True, "required": False},
+    "类型":     {"visible": True, "required": False},
+    # All other fields default to {visible: False, required: False} at runtime.
+}
+
+
+def ensure_form_fields(client: BitableClient, form_id: str) -> list[dict]:
+    """Apply ``FORM_SPEC`` to a form view — hide non-client fields, set required.
+
+    Resolves field title → field_id via ``list_form_fields``.  Each PATCH is
+    wrapped in try/except so a single field failure does not abort init.
+    Returns a list of per-field result dicts.
+    """
+    items = client.list_form_fields(form_id)
+    results: list[dict] = []
+    for item in items:
+        title = item.get("title") or ""
+        spec = FORM_SPEC.get(title, {"visible": False, "required": False})
+        fid = item["field_id"]
+        try:
+            client.patch_form_field(form_id, fid, spec)
+            results.append({"field": title, "field_id": fid, **spec})
+        except Exception as exc:
+            results.append({"field": title, "field_id": fid, "error": str(exc)})
+    return results
+
+
 def cmd_setup_issue_views(args):
     """Create Kanban + Form views for the ticket table; enable form sharing."""
     client = BitableClient(project_name=args.project)
