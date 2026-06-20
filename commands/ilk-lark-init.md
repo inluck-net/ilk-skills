@@ -83,6 +83,26 @@ The command is **idempotent**: re-running for the same project reuses the
 existing base (never creates a duplicate). If the base is unreachable
 (e.g. deleted), it refuses unless `--force-recreate` is passed.
 
+### Updating an existing tracker (re-run to bring it up to spec)
+
+Re-running `init-project` for a project that **already has a base** is the
+supported way to **update** that tracker — the reuse path is not a no-op. It:
+
+- re-seeds the schema, adding any **new fields** introduced since the base was created;
+- ensures the **Kanban + shared Form views** exist (creates whichever is missing, skips existing);
+- grants the configured **`operator_openid`** `full_access` so the base is editable in the web UI (idempotent — safe to repeat).
+
+So from a project session (e.g. inside the `math-blocks` repo, which already has
+a `.lark-project` marker), just run `/ilk-lark-init` again — or directly
+`init-project --project <name>` — to pull in the latest tracker features. Nothing
+is recreated; the existing base, records, and shared form URL are preserved.
+
+> Prerequisite for the editability grant: `operator_openid` must be set once in
+> the shared config (`set-operator <open_id>`). It is global across all projects,
+> so setting it once benefits every project's re-run. Without it, the base is
+> still updated (schema + views) but stays app-owned/not-editable until you set it
+> and re-run.
+
 Note: the command upserts the project entry in `~/.ilk-data/ilk-lark-tickets/config.json`,
 preserving `app_id`, `app_secret`, and other projects' entries.
 
