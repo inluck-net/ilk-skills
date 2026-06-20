@@ -173,3 +173,56 @@ class TestEligibility:
         """Tier-2 entries with a handoff doc are eligible if project resolves."""
         e = _entries()["tier-two-entry"]
         assert p.is_ilk_eligible(e, _TEST_REGISTRY) is True
+
+
+# ── AC-6: cross-project grouping ─────────────────────────────────────────
+
+
+class TestGrouping:
+    def test_groups_by_resolved_project(self):
+        es = list(_entries().values())
+        grouped = p.group_by_project(es, _TEST_REGISTRY)
+        assert "/tmp/acme-example" in grouped
+
+    def test_includes_only_pending_by_default(self):
+        es = list(_entries().values())
+        grouped = p.group_by_project(es, _TEST_REGISTRY)
+        for proj, entries in grouped.items():
+            for e in entries:
+                assert e.status.get("state") == "pending"
+
+    def test_excludes_proposal(self):
+        es = list(_entries().values())
+        grouped = p.group_by_project(es, _TEST_REGISTRY)
+        for entries in grouped.values():
+            slugs = [e.slug for e in entries]
+            assert "proposal-entry" not in slugs
+
+    def test_excludes_research(self):
+        es = list(_entries().values())
+        grouped = p.group_by_project(es, _TEST_REGISTRY)
+        for entries in grouped.values():
+            slugs = [e.slug for e in entries]
+            assert "research-entry" not in slugs
+
+    def test_excludes_unmapped(self):
+        es = list(_entries().values())
+        grouped = p.group_by_project(es, _TEST_REGISTRY)
+        for entries in grouped.values():
+            slugs = [e.slug for e in entries]
+            assert "unmapped-project-entry" not in slugs
+
+    def test_excludes_not_plannable(self):
+        es = list(_entries().values())
+        grouped = p.group_by_project(es, _TEST_REGISTRY)
+        for entries in grouped.values():
+            slugs = [e.slug for e in entries]
+            assert "not-plannable-entry" not in slugs
+
+    def test_status_none_includes_all_states(self):
+        es = list(_entries().values())
+        grouped = p.group_by_project(es, _TEST_REGISTRY, status=None)
+        all_slugs = [e.slug for entries in grouped.values() for e in entries]
+        # mid-flight and tier-2 are now included
+        assert "mid-flight-entry" in all_slugs
+        assert "tier-two-entry" in all_slugs

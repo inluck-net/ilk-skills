@@ -166,3 +166,53 @@ def is_ilk_eligible(
         return False
 
     return True
+
+
+# ---------------------------------------------------------------------------
+# Cross-project grouping
+# ---------------------------------------------------------------------------
+
+
+def group_by_project(
+    entries: list[Entry],
+    registry: dict[str, Any] | None = None,
+    status: str = "pending",
+) -> dict[str, list[Entry]]:
+    """Group eligible entries by their resolved project repo root.
+
+    Args:
+        entries: List of :class:`Entry` objects (e.g. from :func:`parse_inbox`).
+        registry: Pre-loaded project registry dict.  When ``None`` the
+            canonical ``inbox-projects.json`` is loaded on each call.
+        status: Only include entries whose parsed lifecycle state matches
+            this value (default ``"pending"``).  Pass ``None`` to include
+            entries regardless of status.
+
+    Returns:
+        Dict mapping resolved repo-root paths to lists of eligible entries.
+        Not-plannable, unresolved, and ineligible entries are excluded.
+    """
+    if registry is None:
+        registry = _importlib.import_module("project_registry").load_registry()
+
+    project_registry = _importlib.import_module("project_registry")
+
+    grouped: dict[str, list[Entry]] = {}
+    for entry in entries:
+        # Filter by status
+        if status is not None and entry.status.get("state") != status:
+            continue
+        # Filter by eligibility
+        if not is_ilk_eligible(entry, registry):
+            continue
+
+        project_str = entry.fields.get("Project", "")
+        resolved = project_registry.resolve(project_str, registry)
+        # Should never be UNRESOLVED/NOT_PLANNABLE here (eligibility checks),
+        # but guard defensively.
+        if resolved is project_registry.UNRESOLVED or resolved is project_registry.NOT_PLANNABLE:
+            continue
+
+        grouped.setdefault(resolved, []).append(entry)
+
+    return grouped
