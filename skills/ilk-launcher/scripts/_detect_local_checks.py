@@ -32,17 +32,25 @@ from plan_status import (  # noqa: E402
 def _has_local_checks(text: str) -> bool:
     """Return True if *text* contains a non-empty ``local_checks`` declaration.
 
-    Detects both frontmatter-level and per-step declarations.  The flat
-    ``parse_frontmatter`` only sees top-level keys, so we also scan for
-    ``local_checks`` under indented ``steps:`` blocks.
+    Detects both frontmatter-level declarations AND per-step declarations in
+    the body. The canonical subplan-template style puts each step's gate in a
+    fenced ``yaml`` block (``local_checks:`` + ``- command:`` items) under a
+    ``### Step N`` heading, with frontmatter ``local_checks: []``. Scanning
+    only the frontmatter (the prior behavior) silently reported gates OFF for
+    every plan authored in that canonical style.
     """
     if not text.startswith("---"):
-        return False
+        # No frontmatter — scan the whole document for per-step blocks.
+        return _block_has_local_checks(text)
     end = text.find("\n---", 3)
     if end < 0:
-        return False
+        return _block_has_local_checks(text)
     fm_block = text[3:end]
-    return _block_has_local_checks(fm_block)
+    if _block_has_local_checks(fm_block):
+        return True
+    # Per-step gates live in fenced yaml blocks in the body, below the
+    # frontmatter — scan there too.
+    return _block_has_local_checks(text[end + 4:])
 
 
 def _block_has_local_checks(block: str) -> bool:
