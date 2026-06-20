@@ -138,3 +138,38 @@ class TestProjectRegistry:
         # registered and not-plannable entries should NOT appear
         assert "plain-pending-entry" not in slugs
         assert "not-plannable-entry" not in slugs
+
+
+# ── AC-5: eligibility predicate ──────────────────────────────────────────
+
+
+class TestEligibility:
+    def test_plain_entry_is_eligible(self):
+        e = _entries()["plain-pending-entry"]
+        assert p.is_ilk_eligible(e, _TEST_REGISTRY) is True
+
+    def test_proposal_entry_is_ineligible(self):
+        e = _entries()["proposal-entry"]
+        assert p.is_ilk_eligible(e, _TEST_REGISTRY) is False
+
+    def test_research_entry_is_ineligible(self):
+        e = _entries()["research-entry"]
+        assert p.is_ilk_eligible(e, _TEST_REGISTRY) is False
+
+    def test_unmapped_project_is_ineligible(self):
+        e = _entries()["unmapped-project-entry"]
+        assert p.is_ilk_eligible(e, _TEST_REGISTRY) is False
+
+    def test_not_plannable_project_is_ineligible(self):
+        e = _entries()["not-plannable-entry"]
+        assert p.is_ilk_eligible(e, _TEST_REGISTRY) is False
+
+    def test_mid_flight_entry_is_eligible(self):
+        """Mid-flight entries with remaining scope are still eligible."""
+        e = _entries()["mid-flight-entry"]
+        assert p.is_ilk_eligible(e, _TEST_REGISTRY) is True
+
+    def test_tier2_entry_is_eligible(self):
+        """Tier-2 entries with a handoff doc are eligible if project resolves."""
+        e = _entries()["tier-two-entry"]
+        assert p.is_ilk_eligible(e, _TEST_REGISTRY) is True

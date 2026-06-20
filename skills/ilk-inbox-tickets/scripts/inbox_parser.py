@@ -11,6 +11,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+# Lazy import — resolved at call time so inbox_parser remains importable
+# without project_registry on sys.path (e.g. standalone tests).
+import importlib as _importlib
+
 _DEFAULT_INBOX = Path.home() / "Documents" / "handoffs" / "_inbox.md"
 
 # Split on H2 date headings: ## YYYY-MM-DD — <slug>
@@ -115,3 +119,50 @@ def parse_inbox(path: str | Path | None = None) -> list[Entry]:
         entries.append(_parse_entry_block(date, slug, block, inbox_dir))
 
     return entries
+
+
+# ---------------------------------------------------------------------------
+# Eligibility predicate
+# ---------------------------------------------------------------------------
+
+# Case-insensitive markers in **Type** that disqualify an entry from /ilk-plan
+_INELIGIBLE_MARKERS = [
+    "not /ilk-plan",
+    "proposal",
+    "research",
+    "design-first",
+    "docs",
+]
+
+
+def is_ilk_eligible(
+    entry: Entry,
+    registry: dict[str, Any] | None = None,
+) -> bool:
+    """Return True when *entry* is eligible for /ilk-plan ingestion.
+
+    An entry is ineligible when:
+    - Its ``**Type**:`` field contains any marker from :data:`_INELIGIBLE_MARKERS`
+      (case-insensitive), OR
+    - Its ``**Project**:`` field does not resolve to a repo root in *registry*.
+
+    Args:
+        entry: An :class:`Entry` from :func:`parse_inbox`.
+        registry: Pre-loaded project registry dict.  When ``None`` the
+            canonical ``inbox-projects.json`` is loaded on each call.
+    """
+    type_text = entry.fields.get("Type", "").lower()
+    for marker in _INELIGIBLE_MARKERS:
+        if marker in type_text:
+            return False
+
+    # Lazy-import to avoid circular dependency at module load time
+    project_registry = _importlib.import_module("project_registry")
+    project_str = entry.fields.get("Project", "")
+    if not project_str:
+        return False
+    result = project_registry.resolve(project_str, registry)
+    if result is project_registry.UNRESOLVED or result is project_registry.NOT_PLANNABLE:
+        return False
+
+    return True
