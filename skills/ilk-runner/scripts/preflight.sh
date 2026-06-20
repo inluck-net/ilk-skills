@@ -93,7 +93,7 @@ set -e
 # Parse master status
 master_status="unknown"
 has_active="false"
-if echo "$status_out" | grep -qP 'status:\s*active'; then
+if echo "$status_out" | grep -qE 'status:[[:space:]]*active'; then
   has_active="true"
 fi
 if [[ "$status_code" -eq 1 ]]; then
@@ -101,10 +101,17 @@ if [[ "$status_code" -eq 1 ]]; then
 fi
 
 # Check supervised_only
+# Resolve the project's plans dir from loop_status output ("Plans dir: <path>")
+# rather than basename("$PROJECT_ROOT") — the external-plan key is the
+# slugified full path, not the dir name (macOS abort fix).
 supervised="false"
-plans_dir="$HOME/.ilk-data/projects/$(basename "$PROJECT_ROOT")/plans"
-master_file="$(find "$plans_dir" -maxdepth 1 -name 'MASTER-*.md' 2>/dev/null | head -1)"
-if [[ -n "$master_file" ]] && grep -q 'supervised_only:\s*true' "$master_file" 2>/dev/null; then
+plans_dir="$(echo "$status_out" | sed -n 's/^Plans dir: //p' | head -1)"
+master_file=""
+if [[ -n "$plans_dir" && -d "$plans_dir" ]]; then
+  master_file="$(find "$plans_dir" -maxdepth 1 -name 'MASTER-*.md' 2>/dev/null | head -1 || true)"
+fi
+# grep -E + POSIX class: BSD/macOS grep has no -P and treats \s literally.
+if [[ -n "$master_file" ]] && grep -qE 'supervised_only:[[:space:]]*true' "$master_file" 2>/dev/null; then
   supervised="true"
 fi
 
@@ -126,7 +133,9 @@ fi
 
 # (c-ii) Terminal sentinel with live PID
 il_data="$HOME/.ilk-data"
-project_key="$(basename "$PROJECT_ROOT")"
+# Derive the project key from the resolved plans dir (.../projects/<key>/plans),
+# not basename("$PROJECT_ROOT") which is the wrong key for external plans.
+project_key="$([[ -n "$plans_dir" ]] && basename "$(dirname "$plans_dir")" || basename "$PROJECT_ROOT")"
 sentinel_file="$il_data/projects/$project_key/runtime/last-exit.json"
 if [[ -f "$sentinel_file" ]]; then
   sentinel_state="$(ilk_invoke_python -c "import json; d=json.load(open('$sentinel_file')); print(d.get('state',''))" 2>/dev/null || true)"
