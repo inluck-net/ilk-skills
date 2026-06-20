@@ -1,0 +1,10 @@
+{
+  "projects": {
+    "acme/example-app": {
+      "path": "/tmp/acme-example-app"
+    },
+    "~/.ilk-data templates": {
+      "not_plannable": true
+    }
+  }
+}
