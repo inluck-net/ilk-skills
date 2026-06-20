@@ -359,6 +359,14 @@ def cmd_init_project(args):
             _ensure_marker(args.repo, name)
             from init_bitable import seed_schema
             seed_schema(project_name=name, rename_primary=True)
+            # Ensure kanban + shared form views (idempotent)
+            client = BitableClient(project_name=name)
+            steps = ensure_issue_views(
+                client,
+                stack_field="状态",
+                form_name=f"{name}-提交新工单",
+            )
+            _print({"ok": True, "steps": steps})
             return
         else:
             # Unreachable
@@ -392,6 +400,15 @@ def cmd_init_project(args):
 
     from init_bitable import seed_schema
     seed_schema(project_name=name, rename_primary=True)
+
+    # Ensure kanban + shared form views (idempotent)
+    client = BitableClient(project_name=name)
+    steps = ensure_issue_views(
+        client,
+        stack_field="状态",
+        form_name=f"{name}-提交新工单",
+    )
+    _print({"ok": True, "steps": steps})
 
 
 def _ensure_marker(repo_dir: str, project_name: str) -> Path:
