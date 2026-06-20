@@ -382,6 +382,36 @@ def cmd_set_operator(args):
     _print({"ok": True, "operator_openid": args.open_id})
 
 
+def cmd_show_members(args):
+    """List members of a project's bitable base (read-only discovery)."""
+    cfg = load_config()
+    token = get_tenant_access_token(cfg)
+    projects = cfg.get("projects") or {}
+    name = args.project
+    entry = projects.get(name)
+    if not entry or not entry.get("bitable_app_token"):
+        raise SystemExit(f"Project '{name}' not in config or missing bitable_app_token.")
+    app_token = entry["bitable_app_token"]
+
+    try:
+        data = _request(
+            "GET",
+            f"/open-apis/drive/v1/permissions/{app_token}/members",
+            token=token,
+            params={"type": "bitable"},
+        )
+        items = data.get("items") or []
+        for item in items:
+            _print({
+                "member_id": item.get("member_id"),
+                "member_type": item.get("member_type"),
+                "perm": item.get("perm"),
+            })
+    except Exception as e:
+        print(f"ERROR: failed to list members ({e})", file=sys.stderr)
+        sys.exit(1)
+
+
 # ---------------------------------------------------------------------------
 # init-project (idempotent bootstrap)
 # ---------------------------------------------------------------------------
@@ -615,6 +645,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp.add_argument("open_id", help="Operator open_id (ou_...) from show-members or Lark admin")
     sp.set_defaults(func=cmd_set_operator)
+
+    sp = sub.add_parser(
+        "show-members",
+        help="List members of a project's bitable base (discover your open_id)",
+    )
+    sp.add_argument("--project", required=True, help="Project name (config key)")
+    sp.set_defaults(func=cmd_show_members)
 
     sp = sub.add_parser(
         "init-project",
