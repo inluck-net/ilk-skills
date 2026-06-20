@@ -225,6 +225,53 @@ project's entries:
 2. Run `cli.py archive <slug>` — moves the entry block from `_inbox.md`
    to `_inbox-archive.md`.
 
+## gh-triage enrichment
+
+The `gh-check` verb reconciles inbox entries with live GitHub state by
+extracting `#NNN` issue/PR references from `**Related**:` and `**Status**:`
+fields and looking up their current state via `gh`.
+
+### Usage
+
+```bash
+# Check pending entries for references to closed issues
+python3 <skill-root>/ilk-inbox-tickets/scripts/cli.py gh-check
+
+# Machine-readable output
+python3 <skill-root>/ilk-inbox-tickets/scripts/cli.py gh-check --json
+
+# Check a different status filter
+python3 <skill-root>/ilk-inbox-tickets/scripts/cli.py gh-check --status in-progress
+```
+
+### What it does
+
+1. **Pre-plan validation** — before planning an entry that references `#NNN`,
+   run `gh-check` to see if that issue is already closed. Skip or annotate
+   accordingly.
+2. **Post-ship close-out** — after shipping, `gh-check` surfaces which
+   referenced issues are now closed, helping confirm the inbox entry can be
+   archived.
+
+### Architecture
+
+`gh_enrich.py` provides two core functions:
+
+- `extract_refs(entry)` — returns the set of `#NNN` numbers found in the
+  entry's `**Related**:` and `**Status**:` fields.
+- `annotate(entry, runner=...)` — calls an injectable runner per ref to get
+  live GitHub state. The default runner shells `gh issue view`; tests inject
+  a fake.
+
+The runner is injectable so all tests run fully offline (no network, no real
+`gh` required).
+
+### What this is NOT
+
+**gh-native intake** — pulling `gh-triage 🔴-on-me` items that have NO
+inbox entry — is explicitly deferred to v2. This enrichment layer only
+reconciles entries that already exist in the inbox.
+
 ## Error handling
 
 - **Inbox not found**: tell the user the expected path and ask them to
