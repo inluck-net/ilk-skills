@@ -317,6 +317,38 @@ def cmd_setup_issue_views(args):
     _print({"ok": True, "steps": steps})
 
 
+def cmd_set_default_folder(args):
+    """Set the default Drive folder token for future init-project calls."""
+    import tempfile
+    import os
+
+    cfg_path = lark_client._resolve_config_path()
+    if cfg_path.exists():
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    else:
+        cfg = {}
+
+    cfg["default_folder_token"] = args.token
+
+    # Atomic write: tmp in same dir, then os.replace
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(cfg_path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=2, ensure_ascii=False)
+            fh.write("\n")
+        os.replace(tmp, str(cfg_path))
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+    _print({"ok": True, "default_folder_token": args.token})
+
+
 # ---------------------------------------------------------------------------
 # init-project (idempotent bootstrap)
 # ---------------------------------------------------------------------------
@@ -346,6 +378,16 @@ def cmd_init_project(args):
     name = args.project
     entry = projects.get(name)
     has_entry = entry is not None and entry.get("bitable_app_token")
+
+    # Resolve folder: --folder arg -> config.default_folder_token -> none
+    folder = args.folder or cfg.get("default_folder_token")
+    if not folder:
+        print(
+            "WARNING: base will be app-owned and NOT editable in the web UI. "
+            "To fix: run `set-default-folder <token>` with a Drive folder you own "
+            "(shared with the app), or pass `--folder` per-call.",
+            file=sys.stderr,
+        )
 
     if has_entry:
         # Entry exists — check reachability
@@ -382,7 +424,7 @@ def cmd_init_project(args):
             print(f"WARNING: replacing unreachable base {app_token} (--force-recreate)")
 
     # Create path
-    result = create_bitable(name, folder_token=args.folder, token=token)
+    result = create_bitable(name, folder_token=folder, token=token)
     app_token = result["app_token"]
     table_id = result.get("table_id", "")
     url = result.get("url", "")
@@ -490,6 +532,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Seconds between write API calls (avoids Feishu write conflicts)",
     )
     sp.set_defaults(func=cmd_setup_issue_views)
+
+    sp = sub.add_parser(
+        "set-default-folder",
+        help="Set the default Drive folder token for future init-project calls",
+    )
+    sp.add_argument("token", help="Drive folder token (from URL: .../drive/folder/<TOKEN>)")
+    sp.set_defaults(func=cmd_set_default_folder)
 
     sp = sub.add_parser(
         "init-project",
