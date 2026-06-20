@@ -362,6 +362,48 @@ def _probe_tables(app_token: str, token: str) -> bool:
         return False
 
 
+def _try_grant_operator_access(app_token: str, cfg: dict, token: str) -> None:
+    """Best-effort: grant the operator openid full_access to the base.
+
+    This is a bonus — the real contract is --folder / default_folder_token.
+    On ANY failure (lookup miss, API error), we simply return without raising.
+    """
+    try:
+        # Try to resolve operator's email from config
+        email = cfg.get("operator_email")
+        if not email:
+            return  # No email configured, skip silently
+
+        # Try to get open_id via batch_get_id
+        resp = _request(
+            "POST",
+            "/open-apis/contact/v3/users/batch_get_id",
+            token=token,
+            body={"emails": [email]},
+        )
+        user_list = resp.get("user_list") or []
+        if not user_list or not user_list[0].get("user_id"):
+            return  # User not found
+
+        open_id = user_list[0]["user_id"]
+
+        # Grant full_access to the base
+        _request(
+            "POST",
+            f"/open-apis/drive/v1/permissions/{app_token}/members?type=bitable",
+            token=token,
+            body={
+                "member_type": "openid",
+                "member_id": open_id,
+                "perm": "full_access",
+            },
+        )
+        print(f"granted  openid={open_id}  perm=full_access")
+    except Exception:
+        # Silently ignore any failure — this is best-effort only
+        pass
+
+
 def cmd_init_project(args):
     """Idempotent one-command Lark bitable bootstrap.
 
@@ -442,6 +484,12 @@ def cmd_init_project(args):
 
     from init_bitable import seed_schema
     seed_schema(project_name=name, rename_primary=True)
+
+    # Best-effort openid member-grant (bonus, non-fatal)
+    try:
+        _try_grant_operator_access(app_token, cfg, token)
+    except Exception as e:
+        print(f"NOTE: best-effort member-grant skipped ({e})", file=sys.stderr)
 
     # Ensure kanban + shared form views (idempotent)
     client = BitableClient(project_name=name)
