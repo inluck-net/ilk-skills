@@ -272,6 +272,7 @@ def ensure_issue_views(
 
     views = client.list_views()
     fm = _find_view(views, form_name, "form")
+    form_created = False
     if fm:
         form_id = fm["view_id"]
         steps.append({"form": "exists", "view_id": form_id})
@@ -279,24 +280,32 @@ def ensure_issue_views(
         data = client.create_view(view_name=form_name, view_type="form")
         form_id = data["view"]["view_id"]
         steps.append({"form": "created", "view_id": form_id})
+        form_created = True
         time.sleep(wait)
 
-    meta = client.patch_form_meta(
-        form_id,
-        {
-            "name": form_name,
-            "description": form_description,
-            "shared": True,
-            "shared_limit": shared_limit,
-            "submit_limit_once": False,
-        },
-    )
+    # Apply form-field spec (show 8 client fields, hide the rest)
+    field_results = ensure_form_fields(client, form_id)
+    steps.append({"form": "fields_configured", "count": len(field_results)})
+
+    # Sharing: set shared_limit ONLY on creation so a manual upgrade to
+    # anyone_editable survives re-runs of init-project.
+    meta_body: dict = {
+        "name": form_name,
+        "description": form_description,
+        "shared": True,
+        "submit_limit_once": False,
+    }
+    if form_created:
+        meta_body["shared_limit"] = shared_limit
+
+    meta = client.patch_form_meta(form_id, meta_body)
     form_info = meta.get("form") or {}
     steps.append(
         {
             "form": "meta_updated",
             "shared_url": form_info.get("shared_url"),
             "shared_limit": form_info.get("shared_limit"),
+            "sharing_on_create_only": not form_created,
         }
     )
 
