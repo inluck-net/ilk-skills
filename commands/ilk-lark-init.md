@@ -43,6 +43,12 @@ Explain to the user:
   (so clients can submit tickets via a Feishu form), and is easier to
   find manually.
 
+**Editable base (one-time setup)**:
+- Create a Drive folder you OWN in Feishu
+- Share it with the app (the tenant app whose creds are in config.json)
+- Run: `python <skill-root>/ilk-lark-tickets/scripts/cli.py set-default-folder <folder_token>`
+- All future inits will land there editable (or pass `--folder` per-call)
+
 Ask: "Do you want the base in a Drive folder? If yes, paste the folder
 token (the `fldcn...` part from the folder URL). Otherwise, skip."
 

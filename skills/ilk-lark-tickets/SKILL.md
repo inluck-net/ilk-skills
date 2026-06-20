@@ -231,6 +231,8 @@ This single command:
 - Upserts the project entry in `config.json` (preserves `app_id`, `app_secret`, other projects).
 - Writes a `.lark-project` marker in the repo root.
 - Seeds the standard 24-field ticket schema (idempotent — skips fields that exist).
+- Creates a Kanban view grouped by `状态` (idempotent — skips if exists).
+- Creates a shared Form view for ticket submission (idempotent — skips if exists).
 
 The command is **idempotent**: re-running for the same project reuses the existing base
 (never creates a duplicate). If the base is unreachable (e.g. deleted), it refuses
@@ -242,6 +244,16 @@ Options:
 - `--prefix <str>` — ticket id prefix (default `T`).
 - `--repo <path>` — repo root for the `.lark-project` marker (default: cwd).
 - `--force-recreate` — replace an unreachable base instead of refusing.
+
+### Editable base (one-time setup)
+
+By default, the base is app-owned and NOT editable in the Feishu web UI.
+To make it editable:
+
+1. Create a Drive folder you OWN in Feishu
+2. Share it with the app (the tenant app whose creds are in config.json)
+3. Run: `python <skill-root>/ilk-lark-tickets/scripts/cli.py set-default-folder <folder_token>`
+4. All future inits will land there editable (or pass `--folder` per-call)
 
 ### Manual fallback
 
