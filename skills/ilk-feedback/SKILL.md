@@ -248,6 +248,15 @@ which routes candidates through `/ilk-plan` for human approval. ilk-feedback
 itself stays read-only w.r.t. the toolkit — it only *writes* candidate records,
 never edits `skills/**`.
 
+### Supervisor emit (`source=supervisor`)
+
+Supervisors emit structured findings into the backlog via `supervisor_emit.py`
+(a thin CLI wrapper around `add_candidate`). This replaces hand-written
+`scheduler-findings-*.md` files that nothing ingests. The contract:
+backlog entries, not prose. See
+[references/supervisor-emit.md](references/supervisor-emit.md) for the full
+spec (emit path, dedup semantics, graduation rules).
+
 ### Overriding the backlog directory
 
 Set `$ILK_DATA_HOME` to redirect the backlog for testing:
@@ -305,3 +314,5 @@ Invocation on each platform:
   equivalent is `run_ilk_loop_claude.sh`).
 - `<vault>/ai-coding-workflow/tool-evaluations/ilk-launcher.md` —
   design rationale (incl. why "auto-improvement" is not in v0).
+- [references/supervisor-emit.md](references/supervisor-emit.md) —
+  supervisor emit contract (decision #12).
