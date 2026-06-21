@@ -13,6 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import hashlib as _hashlib
+
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -358,3 +360,70 @@ def test_honest_null_kpis_present(scratch_env):
     assert data["escaped_bug_rate"] is None
     assert data["needs_instrumentation"]["human_touch_count"] is True
     assert data["needs_instrumentation"]["escaped_bug_rate"] is True
+
+
+# ── AC-5: Read-only boundary — input log file unchanged after run ─────────────
+
+
+def test_readonly_boundary_input_log_unchanged(scratch_env):
+    """The input JSONL file must be byte-identical after metrics.py runs.
+
+    This mirrors test_readonly_boundary.py's pattern: metrics.py is pure
+    read-only and must never mutate the log/postmortem trees.
+    """
+    project_path, env, key, data_home = scratch_env
+
+    logs_dir = data_home / "projects" / key / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = logs_dir / ".ilk-loop.log"
+
+    records = [
+        {"run_id": "run-1", "iteration": 1, "project": str(project_path),
+         "exit_code": 0, "classification": "clean-success"},
+        {"run_id": "run-1", "iteration": 2, "project": str(project_path),
+         "exit_code": 0, "classification": "clean-success"},
+        {"run_id": "run-2", "iteration": 1, "project": str(project_path),
+         "exit_code": 1, "classification": "timeout-bound"},
+    ]
+    _write_jsonl(jsonl_path, records)
+
+    # Snapshot hash before running metrics.py
+    pre_hash = _hashlib.sha256(jsonl_path.read_bytes()).hexdigest()
+
+    # Also snapshot all files under the data home
+    pre_hashes: dict[Path, str] = {}
+    for p in data_home.rglob("*"):
+        if p.is_file():
+            try:
+                pre_hashes[p] = _hashlib.sha256(p.read_bytes()).hexdigest()
+            except OSError:
+                pass
+
+    result = subprocess.run(
+        [sys.executable, str(_METRICS_PY), "--project", str(project_path), "--json"],
+        capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
+    )
+    assert result.returncode == 0, (
+        f"metrics.py exited {result.returncode}.\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+    # Verify JSONL file is byte-identical
+    post_hash = _hashlib.sha256(jsonl_path.read_bytes()).hexdigest()
+    assert post_hash == pre_hash, (
+        "metrics.py mutated the input JSONL file — read-only boundary violated"
+    )
+
+    # Verify no files under data home were modified
+    for p in data_home.rglob("*"):
+        if p.is_file():
+            try:
+                post_hash_f = _hashlib.sha256(p.read_bytes()).hexdigest()
+            except OSError:
+                continue
+            pre = pre_hashes.get(p)
+            if pre is not None and post_hash_f != pre:
+                pytest.fail(
+                    f"metrics.py modified a file under ILK_DATA_HOME: {p}"
+                )
