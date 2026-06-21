@@ -117,3 +117,136 @@ class TestTrackerDir:
         bogus.mkdir()
         with pytest.raises(ValueError, match="cannot resolve"):
             mod.tracker_dir(project=bogus)
+
+
+# ── AC-2: add writes to per-project dir, (source, source_id) upserts ─────────
+
+
+class TestAdd:
+    """AC-2: add() delegates to improvement_backlog with per-project backlog_dir."""
+
+    def test_add_writes_to_project_tracker_dir(self, data_env, fake_git_project):
+        """add(title=..., project=P) writes to <data_root>/projects/<key>/."""
+        import importlib
+        import project_tracker as mod
+
+        importlib.reload(mod)
+
+        entry = mod.add(
+            title="test gap",
+            gap="missing feature X",
+            source="lark",
+            source_id="rec1",
+            project=fake_git_project,
+        )
+        td = mod.tracker_dir(project=fake_git_project)
+        # The tracker dir should now exist with candidates.json
+        tracker_file = td / "candidates.json"
+        assert tracker_file.exists(), f"tracker file should exist at {tracker_file}"
+
+    def test_add_upserts_on_source_source_id(self, data_env, fake_git_project):
+        """Two adds with same (source, source_id) upsert (seen_count bumps)."""
+        import importlib
+        import project_tracker as mod
+
+        importlib.reload(mod)
+
+        e1 = mod.add(
+            title="first title",
+            gap="first gap",
+            source="lark",
+            source_id="rec-upsert",
+            project=fake_git_project,
+        )
+        e2 = mod.add(
+            title="updated title",
+            gap="updated gap",
+            source="lark",
+            source_id="rec-upsert",
+            project=fake_git_project,
+        )
+        # Should be the same entry (upserted), seen_count bumped
+        assert e2.seen_count == 2
+        # Title should be refreshed from the latest add
+        assert e2.title == "updated title"
+
+
+# ── AC-3: two projects' trackers are fully isolated ──────────────────────────
+
+
+class TestIsolation:
+    """AC-3: Two different projects' trackers are fully isolated."""
+
+    def test_two_projects_isolated(self, data_env, tmp_path):
+        """Entries from project A don't appear in project B's list."""
+        import importlib
+        import project_tracker as mod
+
+        importlib.reload(mod)
+
+        proj_a = tmp_path / "project-a"
+        proj_a.mkdir()
+        (proj_a / ".git").mkdir()
+        proj_b = tmp_path / "project-b"
+        proj_b.mkdir()
+        (proj_b / ".git").mkdir()
+
+        mod.add(
+            title="gap in A",
+            gap="only in project A",
+            source="lark",
+            source_id="rec-a1",
+            project=proj_a,
+        )
+        mod.add(
+            title="gap in B",
+            gap="only in project B",
+            source="lark",
+            source_id="rec-b1",
+            project=proj_b,
+        )
+
+        # Load entries from each project's tracker
+        import improvement_backlog
+
+        entries_a = improvement_backlog.load(
+            backlog_dir=mod.tracker_dir(project=proj_a)
+        )
+        entries_b = improvement_backlog.load(
+            backlog_dir=mod.tracker_dir(project=proj_b)
+        )
+
+        assert len(entries_a) == 1
+        assert entries_a[0].source_id == "rec-a1"
+        assert len(entries_b) == 1
+        assert entries_b[0].source_id == "rec-b1"
+
+
+# ── AC-5: global backlog untouched by per-project writes ─────────────────────
+
+
+class TestGlobalBacklogUntouched:
+    """AC-5: per-project add() does NOT appear in the global backlog."""
+
+    def test_global_backlog_not_polluted(self, data_env, fake_git_project):
+        """A project_tracker.add does not touch the global improvement_backlog."""
+        import importlib
+        import improvement_backlog
+        import project_tracker as mod
+
+        importlib.reload(mod)
+
+        mod.add(
+            title="project-only gap",
+            gap="should not leak",
+            source="lark",
+            source_id="rec-global-test",
+            project=fake_git_project,
+        )
+
+        # The global backlog dir is <data_env>/ilk-skills-improvements/
+        global_entries = improvement_backlog.load(
+            backlog_dir=data_env / "ilk-skills-improvements"
+        )
+        # Should be empty — nothing was added to the global backlog
+        assert len(global_entries) == 0

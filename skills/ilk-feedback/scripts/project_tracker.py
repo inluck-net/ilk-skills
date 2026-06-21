@@ -24,6 +24,7 @@ if str(_LOOP_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_LOOP_SCRIPTS))
 
 import ilk_paths  # noqa: E402
+import improvement_backlog  # noqa: E402
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -57,3 +58,34 @@ def tracker_dir(
         key = resolved
 
     return ilk_paths.ilk_data_root() / "projects" / key
+
+
+def add(
+    *,
+    title: str,
+    source: str = "",
+    source_id: str = "",
+    kind: str = "toolkit",
+    gap: str = "",
+    project: str | Path | None = None,
+    key: str | None = None,
+    **kwargs,
+) -> improvement_backlog.Entry:
+    """Add or update an entry in the per-project tracker.
+
+    Delegates to ``improvement_backlog.add_candidate`` with ``backlog_dir``
+    resolved via :func:`tracker_dir`.  The ``(source, source_id)`` upsert
+    path from batch 1 is inherited automatically.
+
+    Returns the (possibly updated) ``Entry``.
+    """
+    td = tracker_dir(project=project, key=key)
+    return improvement_backlog.add_candidate(
+        title=title,
+        kind=kind,
+        gap=gap or title,
+        source=source,
+        source_id=source_id,
+        backlog_dir=td,
+        **kwargs,
+    )
