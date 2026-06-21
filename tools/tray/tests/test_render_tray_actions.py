@@ -280,8 +280,15 @@ class TestModelLabel:
         assert "running on" not in status["label"]
 
     def test_idle_row_with_model_no_suffix(self) -> None:
-        """Non-running rows don't show model suffix."""
+        """An idle entry is hidden entirely (no row to show model suffix on)."""
         entries = [_make_entry("proj", alive=False, state="none",
+                               model="claude-sonnet-4-20250514")]
+        view = render_tray(entries)
+        assert view["rows"] == []
+
+    def test_blocked_row_with_model_no_suffix(self) -> None:
+        """Non-running rows (e.g. blocked) don't show model suffix."""
+        entries = [_make_entry("proj", blocked=True,
                                model="claude-sonnet-4-20250514")]
         view = render_tray(entries)
         status = _status_rows(view["rows"])[0]

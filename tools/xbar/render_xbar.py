@@ -66,10 +66,22 @@ def render_xbar(
         next_sp = e.get("next_subplan", "")
 
         # Status icon
-        if is_alive:
+        if e.get("blocked"):
+            icon = "!"
+        elif is_alive:
             icon = "*"
+        elif state == "running" and not is_alive:
+            icon = "!"
+        elif state in ("error", "errored"):
+            icon = "!"
         else:
             icon = "-"
+
+        # ── Idle filter: skip pure-idle entries ──────────────────────
+        # Hide iff idle AND not manually_runnable AND not blocked.
+        # Mirrors render_tray.py's idle filter.
+        if icon == "-" and not e.get("manually_runnable") and not e.get("blocked"):
+            continue
 
         # Row text: key + icon + step info
         model = e.get("model") or ""

@@ -288,10 +288,51 @@ class TestModelLabel:
         assert "running on" not in project_line
 
     def test_idle_row_with_model_no_suffix(self) -> None:
-        """Non-running rows don't show model suffix."""
+        """An idle entry is hidden entirely (no row to show model suffix on)."""
         entry = _make_entry("proj", alive=False, state="none",
                             model="claude-sonnet-4-20250514")
         text = _render(entry)
+        assert "proj" not in text
+
+    def test_blocked_row_with_model_no_suffix(self) -> None:
+        """Non-running rows (e.g. blocked) don't show model suffix."""
+        entry = _make_entry("proj", blocked=True,
+                            model="claude-sonnet-4-20250514")
+        text = _render(entry)
         lines = text.splitlines()
-        project_line = [l for l in lines if l.startswith("- proj")][0]
+        project_line = [l for l in lines if "proj" in l and not l.startswith("--")][0]
         assert "running on" not in project_line
+
+
+# ---------------------------------------------------------------------------
+# Idle-filter: hide pure-idle projects (AC-5 parity)
+# ---------------------------------------------------------------------------
+
+class TestIdleFilter:
+    """AC-5: render_xbar applies the same idle-filter as render_tray."""
+
+    def test_idle_entry_yields_no_project_line(self) -> None:
+        """An idle, not-manually_runnable, not-blocked entry produces
+        no project row and no action lines."""
+        entry = _make_entry("idle-proj")
+        text = _render(entry)
+        lines = text.splitlines()
+        # No line should reference idle-proj
+        assert not any("idle-proj" in l for l in lines), (
+            f"idle-proj should be hidden; got: {[l for l in lines if 'idle-proj' in l]}"
+        )
+
+    def test_mixed_list_hides_only_idle(self) -> None:
+        """Given 1 idle + 1 running + 1 blocked + 1 manually_runnable,
+        the idle one is hidden from xbar output."""
+        entries = [
+            _make_entry("idle-proj"),
+            _make_entry("running-proj", alive=True, state="running"),
+            _make_entry("blocked-proj", blocked=True),
+            _make_entry("runnable-proj", manually_runnable=True, step="1/4"),
+        ]
+        text = _render(*entries)
+        assert "idle-proj" not in text
+        assert "running-proj" in text
+        assert "blocked-proj" in text
+        assert "runnable-proj" in text

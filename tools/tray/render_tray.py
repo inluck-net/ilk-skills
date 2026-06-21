@@ -104,6 +104,12 @@ def render_tray(entries: list[dict]) -> dict:
             elif icon == "attention":
                 label += "  (error)" if state in ("error", "errored") else "  (stale)"
 
+        # ── Idle filter: skip pure-idle entries (no row, no action) ──
+        # Hide iff idle AND not manually_runnable AND not blocked.
+        # Idle entries are still counted above for the tooltip summary.
+        if icon == "idle" and not e.get("manually_runnable") and not e.get("blocked"):
+            continue
+
         action: dict = {"kind": "status", "project_key": key}
         if e.get("blocked") and e.get("report_path"):
             action["report_path"] = e["report_path"]
