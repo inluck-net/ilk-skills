@@ -159,6 +159,20 @@ def cmd_show(args):
     _print(record)
 
 
+def build_pull_new_filter():
+    """Return the Feishu Bitable filter dict for ``pull-new``.
+
+    Extracted so the filter shape is unit-testable without a live/mocked client.
+    """
+    return {
+        "conjunction": "or",
+        "conditions": [
+            {"field_name": "状态", "operator": "is", "value": ["新建"]},
+            {"field_name": "状态", "operator": "isEmpty"},
+        ],
+    }
+
+
 def cmd_pull_new(args):
     """Pull all 状态=新建 or blank-状态 tickets, with full field content for AI triage.
 
@@ -167,13 +181,7 @@ def cmd_pull_new(args):
     新建 so they appear in the kanban's 新建 column.
     """
     client = BitableClient(project_name=args.project)
-    filt = {
-        "conjunction": "or",
-        "conditions": [
-            {"field_name": "状态", "operator": "is", "value": ["新建"]},
-            {"field_name": "状态", "operator": "isEmpty"},
-        ],
-    }
+    filt = build_pull_new_filter()
     records = client.list_records(filter_expr=filt)
     fmap = client.list_fields()
     out = []
