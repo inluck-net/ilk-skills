@@ -286,3 +286,47 @@ class TestModelLabel:
         view = render_tray(entries)
         status = _status_rows(view["rows"])[0]
         assert "running on" not in status["label"]
+
+
+# ---------------------------------------------------------------------------
+# Idle-filter: hide pure-idle projects (AC-1, AC-4)
+# ---------------------------------------------------------------------------
+
+class TestIdleFilter:
+    """AC-1 / AC-4: idle entries with nothing to do produce no rows at all."""
+
+    def test_idle_entry_yields_no_rows(self) -> None:
+        """AC-1: an idle, not-manually_runnable, not-blocked entry produces
+        zero rows (no status row, no action row)."""
+        entries = [_make_entry("idle-proj")]  # defaults: idle, not runnable
+        view = render_tray(entries)
+        assert view["rows"] == [], (
+            f"Expected no rows for idle entry, got {len(view['rows'])}"
+        )
+
+    def test_mixed_list_hides_only_idle(self) -> None:
+        """AC-4: given 1 idle + 1 running + 1 blocked + 1 manually_runnable,
+        exactly 3 projects produce rows (the idle one is hidden)."""
+        entries = [
+            _make_entry("idle-proj"),                                      # pure idle → hidden
+            _make_entry("running-proj", alive=True, state="running"),      # running → shown
+            _make_entry("blocked-proj", blocked=True),                     # blocked → shown
+            _make_entry("runnable-proj", manually_runnable=True, step="1/4"),  # runnable → shown
+        ]
+        view = render_tray(entries)
+        # Collect unique project_keys that appear in any row
+        keys_in_rows = {r["project_key"] for r in view["rows"]}
+        assert keys_in_rows == {"running-proj", "blocked-proj", "runnable-proj"}, (
+            f"idle-proj should be hidden; got keys: {keys_in_rows}"
+        )
+
+    def test_tooltip_still_counts_idle(self) -> None:
+        """Idle entries are still counted in the tooltip summary even when
+        hidden from the row list."""
+        entries = [
+            _make_entry("idle-proj"),
+            _make_entry("running-proj", alive=True, state="running"),
+        ]
+        view = render_tray(entries)
+        assert "1 idle" in view["tooltip"]
+        assert "1 running" in view["tooltip"]
