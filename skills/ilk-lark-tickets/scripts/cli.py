@@ -38,6 +38,7 @@ for _stream in (sys.stdout, sys.stderr):
 sys.path.insert(0, str(Path(__file__).parent))
 
 import lark_client  # noqa: E402
+import lark_to_tracker  # noqa: E402
 from lark_client import (  # noqa: E402
     BitableClient,
     LarkError,
@@ -626,6 +627,21 @@ def _ensure_marker(repo_dir: str, project_name: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# pull-to-tracker (dual-path ingest)
+# ---------------------------------------------------------------------------
+
+def cmd_pull_to_tracker(args):
+    """Pull 可执行 tickets from Lark into the per-project tracker."""
+    client = BitableClient(project_name=args.project)
+    count = lark_to_tracker.sync(
+        client,
+        key=args.tracker_key,
+        status=args.status,
+    )
+    _print({"ok": True, "synced": count})
+
+
+# ---------------------------------------------------------------------------
 # Argparse
 # ---------------------------------------------------------------------------
 
@@ -648,6 +664,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("pull-new", help="Pull all 状态=新建 tickets for triage")
     sp.set_defaults(func=cmd_pull_new)
+
+    sp = sub.add_parser(
+        "pull-to-tracker",
+        help="Pull 可执行 tickets into the per-project tracker (dual-path ingest)",
+    )
+    sp.add_argument(
+        "--tracker-key",
+        required=True,
+        help="Project key for the per-project tracker (e.g. uccargo)",
+    )
+    sp.add_argument(
+        "--status",
+        default="可执行",
+        help="Lark status to filter on (default: 可执行)",
+    )
+    sp.set_defaults(func=cmd_pull_to_tracker)
 
     sp = sub.add_parser("update", help="Update fields on a ticket")
     sp.add_argument("record_id")
