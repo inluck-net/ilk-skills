@@ -52,3 +52,16 @@ def resolve_model(
         pass
 
     return ("", "unknown")
+
+
+# --- CLI entry point ---
+# Usage: python resolve_worker_model.py <model_flag> <env_model> <config_dir>
+# Prints: <model>|<source>
+if __name__ == "__main__":
+    import sys
+
+    flag = sys.argv[1] if len(sys.argv) > 1 else ""
+    env = sys.argv[2] if len(sys.argv) > 2 else ""
+    cfg = sys.argv[3] if len(sys.argv) > 3 else ""
+    model, source = resolve_model(flag, env, cfg)
+    print(f"{model}|{source}")

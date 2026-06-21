@@ -1007,10 +1007,10 @@ print_banner() {
   done
   echo "Max iterations: $MAX_ITERATIONS"
   echo "Iter timeout:   $ITERATION_TIMEOUT_MIN min"
-  if [[ -n "$MODEL" ]]; then
-    echo "Model:          $MODEL"
+  if [[ -n "$RESOLVED_MODEL" ]]; then
+    echo "Model:          $RESOLVED_MODEL (from $RESOLVED_MODEL_SOURCE)"
   else
-    echo "Model:          ${ANTHROPIC_MODEL:-} (from env)"
+    echo "Model:          (unresolved)"
   fi
   echo "API base:       ${ANTHROPIC_BASE_URL:-}"
   if [[ "$MAX_BUDGET_USD" -gt 0 ]]; then
@@ -1062,6 +1062,19 @@ main() {
   preflight
   discover_git_repos
   parse_master_branch_block
+  # Resolve the actual worker model for display + JSONL telemetry.
+  # Uses resolve_worker_model.py: flag > env > settings.json env block > unknown.
+  local _cfg_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  local _resolver="${_SKILL_ROOT}/ilk-loop/scripts/resolve_worker_model.py"
+  if [[ -f "$_resolver" ]]; then
+    local _resolved
+    _resolved=$(python3 "$_resolver" "${MODEL:-}" "${ANTHROPIC_MODEL:-}" "$_cfg_dir" 2>/dev/null) || _resolved="|unknown"
+    RESOLVED_MODEL="${_resolved%%|*}"
+    RESOLVED_MODEL_SOURCE="${_resolved##*|}"
+  else
+    RESOLVED_MODEL="${MODEL:-}"
+    RESOLVED_MODEL_SOURCE="unknown"
+  fi
   print_banner
   setup_branch || exit 1
 
@@ -1381,6 +1394,7 @@ print(json.dumps([json.loads(l) for l in sys.stdin]))
 
     PROJECT_PATH="$PROJECT_PATH" \
     MODEL="$MODEL" \
+    _RESOLVED_MODEL="${RESOLVED_MODEL:-}" \
     MAX_BUDGET_USD="$MAX_BUDGET_USD" \
     RUN_ID="$RUN_ID" \
     _ITER="$i" \
@@ -1399,7 +1413,7 @@ d = {
   'iteration': int(os.environ['_ITER']),
   'timestamp': os.environ['_TS'],
   'project': os.environ['PROJECT_PATH'],
-  'model': os.environ.get('MODEL', '') or os.environ.get('ANTHROPIC_MODEL', ''),
+  'model': os.environ.get('_RESOLVED_MODEL', '') or os.environ.get('MODEL', '') or os.environ.get('ANTHROPIC_MODEL', ''),
   'base_url': os.environ.get('ANTHROPIC_BASE_URL', ''),
   'max_budget_usd': float(os.environ.get('MAX_BUDGET_USD', 0)),
   'duration_sec': int(os.environ['_DUR']),
