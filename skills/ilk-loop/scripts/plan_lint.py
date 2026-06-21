@@ -482,25 +482,69 @@ ALL_CHECKS = (
 )
 
 
-def lint_file(path: str | Path) -> list[str]:
-    """Run all checks against one sub-plan file. Returns finding messages."""
+# ── Sub-plan slug == master_plan slug collision ──────────────────────────────
+#
+# A sub-plan whose slug equals the master's ``master_plan`` value creates
+# a naming collision: ``extract_master_order`` must exclude the master_plan
+# slug (to suppress phantom title-line references), which means the
+# sub-plan would also be excluded unless it exists on disk.  This is an
+# authoring footgun — warn at plan-lint time so the planner renames the
+# sub-plan before files land.  See 2026-06-22 slug-collision incident.
+
+_MASTER_PLAN_RE = re.compile(r"^master_plan:\s*(.+)$", re.MULTILINE)
+
+
+def lint_slug_collision(text: str, slug: str, master_plan_slug: str) -> list[str]:
+    """Warn when a sub-plan slug equals the master's master_plan value."""
+    findings: list[str] = []
+    if not master_plan_slug:
+        return findings
+    # slug is the filename stem (e.g. "2026-06-22-tray-idle-filter").
+    # master_plan_slug is the frontmatter value (e.g. "2026-06-22-tray-idle-filter").
+    if slug == master_plan_slug:
+        findings.append(
+            f"{slug}: sub-plan slug equals the master's master_plan value "
+            f"('{master_plan_slug}').  This collides with extract_master_order's "
+            f"phantom-suppression logic — the sub-plan may be dropped from the "
+            f"registry.  Rename the sub-plan to a distinct slug."
+        )
+    return findings
+
+
+def lint_file(path: str | Path, master_text: str = "") -> list[str]:
+    """Run all checks against one sub-plan file. Returns finding messages.
+
+    When *master_text* is provided, the slug-collision check is also run.
+    """
     p = Path(path)
     slug = p.stem
     text = p.read_text(encoding="utf-8-sig")
     findings: list[str] = []
     for check in ALL_CHECKS:
         findings.extend(check(text, slug))
+    # Slug-collision check requires master_text context.
+    if master_text:
+        master_plan_slug = ""
+        m = _MASTER_PLAN_RE.search(master_text)
+        if m:
+            master_plan_slug = m.group(1).strip()
+        findings.extend(lint_slug_collision(text, slug, master_plan_slug))
     return findings
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Planner degrade-discipline lints.")
     parser.add_argument("paths", nargs="+", help="Sub-plan .md file(s) to lint.")
+    parser.add_argument("--master", help="MASTER plan file (enables slug-collision check).")
     args = parser.parse_args()
+
+    master_text = ""
+    if args.master:
+        master_text = Path(args.master).read_text(encoding="utf-8-sig")
 
     total = 0
     for path in args.paths:
-        for msg in lint_file(path):
+        for msg in lint_file(path, master_text=master_text):
             print(f"WARN: {msg}")
             total += 1
     if total == 0:

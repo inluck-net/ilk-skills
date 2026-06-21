@@ -19,6 +19,7 @@ from plan_lint import (  # noqa: E402
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
     lint_file,
+    lint_slug_collision,
 )
 
 # ── fixtures ────────────────────────────────────────────────────────
@@ -134,3 +135,58 @@ def test_lint_file_bom(tmp_path: Path):
     p = tmp_path / "sp.md"
     p.write_text(HARD_NO_FALLBACK, encoding="utf-8-sig")
     assert lint_file(p) == []
+
+
+# ── slug-collision check ──────────────────────────────────────────────
+
+COLLIDING_SUBPLAN = """\
+---
+plan: tray-idle-filter
+status: pending
+---
+
+# Sub-plan: tray idle filter
+"""
+
+CLEAN_SUBPLAN = """\
+---
+plan: fix-nits
+status: pending
+---
+
+# Sub-plan: fix nits
+"""
+
+
+class TestSlugCollision:
+    def test_collision_flagged(self):
+        f = lint_slug_collision(COLLIDING_SUBPLAN, "2026-06-22-tray-idle-filter",
+                                "2026-06-22-tray-idle-filter")
+        assert len(f) == 1, f
+        assert "collision" in f[0].lower() or "collides" in f[0].lower()
+
+    def test_no_collision_clean(self):
+        f = lint_slug_collision(CLEAN_SUBPLAN, "2026-06-22-fix-nits",
+                                "2026-06-22-tray-idle-filter")
+        assert f == []
+
+    def test_empty_master_slug_clean(self):
+        f = lint_slug_collision(COLLIDING_SUBPLAN, "2026-06-22-tray-idle-filter", "")
+        assert f == []
+
+
+def test_lint_file_with_master_text(tmp_path: Path):
+    """lint_file with master_text triggers the slug-collision check."""
+    master = "---\nmaster_plan: 2026-06-22-tray-idle-filter\n---\n"
+    p = tmp_path / "2026-06-22-tray-idle-filter.md"
+    p.write_text(COLLIDING_SUBPLAN, encoding="utf-8")
+    findings = lint_file(p, master_text=master)
+    assert any("collision" in m.lower() or "collides" in m.lower() for m in findings), findings
+
+
+def test_lint_file_without_master_text_no_collision(tmp_path: Path):
+    """lint_file without master_text skips the slug-collision check."""
+    p = tmp_path / "2026-06-22-tray-idle-filter.md"
+    p.write_text(COLLIDING_SUBPLAN, encoding="utf-8")
+    findings = lint_file(p)
+    assert not any("collision" in m.lower() or "collides" in m.lower() for m in findings)
