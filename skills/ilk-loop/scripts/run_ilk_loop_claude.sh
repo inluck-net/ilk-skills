@@ -1127,6 +1127,7 @@ main() {
   # Initial check: already shipped?
   if test_all_shipped; then
     echo "All sub-plans already shipped. Nothing to do."
+    echo "[ilk] ALL SHIPPED — nothing to run. Do NOT relaunch."
     local ts
     ts=$(date +%Y-%m-%dT%H:%M:%S%z)
     write_jsonl_record "{\"run_id\":\"$RUN_ID\",\"cli\":\"claude\",\"iteration\":0,\"timestamp\":\"$ts\",\"project\":\"$PROJECT_PATH\",\"stop_reason\":\"already-shipped\"}"
@@ -1458,6 +1459,10 @@ print(json.dumps(d))
   echo ""
   echo "Final loop_status:"
   python3 "$LOOP_STATUS_SCRIPT" 2>&1 || true
+
+  if [[ "$stop_reason" == "all-shipped" ]]; then
+    echo "[ilk] ALL SHIPPED — nothing to run. Do NOT relaunch."
+  fi
 
   # Sentinel teardown (state=<stop_reason>)
   if [[ -n "$runtime_dir" ]]; then
