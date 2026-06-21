@@ -1,7 +1,8 @@
 """Tests for lark_to_tracker.writeback_status — tracker → Lark 状态 write-back.
 
 All Lark HTTP is mocked — zero network calls, zero real bases.
-Covers AC-1 (basic writeback), AC-2 (skip non-lark entries).
+Covers AC-1 (basic writeback), AC-2 (skip non-lark entries),
+AC-3 (status-only payload), AC-4 (idempotent).
 """
 
 from __future__ import annotations
@@ -177,6 +178,92 @@ class TestWritebackSkipNonLark:
         assert count == 1
         assert len(client.update_calls) == 1
         assert client.update_calls[0][0] == "rec_001"
+
+
+# ---------------------------------------------------------------------------
+# AC-3: status-only payload — NO content fields (title/description)
+# ---------------------------------------------------------------------------
+
+class TestWritebackStatusOnly:
+    def test_update_payload_contains_only_status(self, isolated_env):
+        """AC-3: the update payload must contain ONLY 状态, no content fields."""
+        _seed_tracker(isolated_env["key"], [
+            _make_entry_dict("rec_001", status="shipped", title="My Title"),
+        ])
+
+        client = FakeLarkClient({
+            "rec_001": {"fields": {"状态": "可执行", "标题": "Original"}},
+        })
+
+        lark_to_tracker.writeback_status(
+            client,
+            key=isolated_env["key"],
+        )
+
+        assert len(client.update_calls) == 1
+        _, fields = client.update_calls[0]
+        # Must contain 状态
+        assert "状态" in fields
+        # Must NOT contain content fields
+        assert "标题" not in fields
+        assert "描述" not in fields
+        assert "原文描述" not in fields
+        # Payload must be exactly one key
+        assert set(fields.keys()) == {"状态"}
+
+
+# ---------------------------------------------------------------------------
+# AC-4: idempotent — no-op when Lark status already matches
+# ---------------------------------------------------------------------------
+
+class TestWritebackIdempotent:
+    def test_no_update_when_already_matching(self, isolated_env):
+        """AC-4: if Lark 状态 already equals the mapped value, no update call."""
+        _seed_tracker(isolated_env["key"], [
+            _make_entry_dict("rec_001", status="shipped"),
+        ])
+
+        # Lark already at 待验证 — the mapped value for shipped
+        client = FakeLarkClient({
+            "rec_001": {"fields": {"状态": "待验证"}},
+        })
+
+        count = lark_to_tracker.writeback_status(
+            client,
+            key=isolated_env["key"],
+        )
+
+        assert count == 0
+        assert len(client.update_calls) == 0
+
+    def test_second_run_is_noop(self, isolated_env):
+        """AC-4: running writeback twice → second run makes zero updates."""
+        _seed_tracker(isolated_env["key"], [
+            _make_entry_dict("rec_001", status="shipped"),
+        ])
+
+        client = FakeLarkClient({
+            "rec_001": {"fields": {"状态": "可执行"}},
+        })
+
+        # First run: updates
+        count1 = lark_to_tracker.writeback_status(
+            client,
+            key=isolated_env["key"],
+        )
+        assert count1 == 1
+
+        # Simulate Lark now having the updated status
+        client._records["rec_001"]["fields"]["状态"] = "待验证"
+        client.update_calls.clear()
+
+        # Second run: no-op
+        count2 = lark_to_tracker.writeback_status(
+            client,
+            key=isolated_env["key"],
+        )
+        assert count2 == 0
+        assert len(client.update_calls) == 0
 
 
 # ---------------------------------------------------------------------------
