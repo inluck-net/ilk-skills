@@ -1068,7 +1068,7 @@ main() {
   local _resolver="${_SKILL_ROOT}/ilk-loop/scripts/resolve_worker_model.py"
   if [[ -f "$_resolver" ]]; then
     local _resolved
-    _resolved=$(python3 "$_resolver" "${MODEL:-}" "${ANTHROPIC_MODEL:-}" "$_cfg_dir" 2>/dev/null) || _resolved="|unknown"
+    _resolved=$(python3 "$_resolver" --model "${MODEL:-}" --env-model "${ANTHROPIC_MODEL:-}" --config-dir "$_cfg_dir" 2>/dev/null) || _resolved="|unknown"
     RESOLVED_MODEL="${_resolved%%|*}"
     RESOLVED_MODEL_SOURCE="${_resolved##*|}"
   else

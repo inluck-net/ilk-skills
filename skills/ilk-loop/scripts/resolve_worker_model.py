@@ -55,13 +55,22 @@ def resolve_model(
 
 
 # --- CLI entry point ---
-# Usage: python resolve_worker_model.py <model_flag> <env_model> <config_dir>
+# Usage: python resolve_worker_model.py [--model M] [--env-model E] [--config-dir D]
 # Prints: <model>|<source>
+#
+# NAMED args (not positional): callers must never rely on passing empty
+# positional args, because Windows PowerShell 5.1 DROPS empty-string arguments
+# to native executables, which silently shifts positionals (a config-dir would
+# land in the model_flag slot — bug 1c43749f). With named args the .ps1 caller
+# does flag/env precedence itself and passes only a single non-empty
+# `--config-dir`; the .sh caller may pass all three (bash keeps empty values).
 if __name__ == "__main__":
-    import sys
+    import argparse
 
-    flag = sys.argv[1] if len(sys.argv) > 1 else ""
-    env = sys.argv[2] if len(sys.argv) > 2 else ""
-    cfg = sys.argv[3] if len(sys.argv) > 3 else ""
-    model, source = resolve_model(flag, env, cfg)
+    p = argparse.ArgumentParser(description="Resolve the worker model: flag > env > settings.json.")
+    p.add_argument("--model", default="", help="explicit -Model/--model flag value")
+    p.add_argument("--env-model", default="", help="ANTHROPIC_MODEL already in the shell env")
+    p.add_argument("--config-dir", default="", help="Claude config dir containing settings.json")
+    a = p.parse_args()
+    model, source = resolve_model(a.model, a.env_model, a.config_dir)
     print(f"{model}|{source}")

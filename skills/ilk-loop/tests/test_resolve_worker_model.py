@@ -112,3 +112,40 @@ class TestMalformedSettings:
 
     def test_directory_does_not_exist(self) -> None:
         assert resolve_model("", "", "/nonexistent/path") == ("", "unknown")
+
+
+# ---------------------------------------------------------------------------
+# CLI contract (regression for 1c43749f): the runners invoke the resolver as a
+# subprocess with NAMED args. A grep-only gate let a broken invocation ship; this
+# actually RUNS the CLI in the exact forms the .ps1 / .sh use.
+# ---------------------------------------------------------------------------
+
+import subprocess  # noqa: E402
+
+_SCRIPT = str(Path(__file__).resolve().parent.parent / "scripts" / "resolve_worker_model.py")
+
+
+def _cli(*args: str) -> str:
+    out = subprocess.run([sys.executable, _SCRIPT, *args],
+                         capture_output=True, text=True, encoding="utf-8")
+    return out.stdout.strip()
+
+
+class TestCli:
+    def test_config_dir_only_settings(self, tmp_path: Path) -> None:
+        """.ps1 else-branch form: only --config-dir passed (no empty positionals)."""
+        (tmp_path / "settings.json").write_text(
+            json.dumps({"env": {"ANTHROPIC_MODEL": "mimo-v2.5-pro"}}), encoding="utf-8")
+        assert _cli("--config-dir", str(tmp_path)) == "mimo-v2.5-pro|settings"
+
+    def test_sh_form_empty_named_values(self, tmp_path: Path) -> None:
+        """.sh form: empty --model/--env-model values must NOT misalign (1c43749f)."""
+        (tmp_path / "settings.json").write_text(
+            json.dumps({"env": {"ANTHROPIC_MODEL": "mimo-v2.5-pro"}}), encoding="utf-8")
+        assert _cli("--model", "", "--env-model", "", "--config-dir", str(tmp_path)) == "mimo-v2.5-pro|settings"
+
+    def test_model_flag_wins(self, tmp_path: Path) -> None:
+        assert _cli("--model", "claude-x", "--config-dir", str(tmp_path)) == "claude-x|flag"
+
+    def test_no_args_unknown(self) -> None:
+        assert _cli() == "|unknown"

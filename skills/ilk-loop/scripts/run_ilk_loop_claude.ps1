@@ -1591,20 +1591,29 @@ if ($repos.Count -eq 0) {
 Parse-MasterBranchBlock -Project $ProjectPath
 
 # Resolve the actual worker model for display + JSONL telemetry.
-# Uses resolve_worker_model.py: flag > env > settings.json env block > unknown.
+# flag > env > settings.json env block > unknown. Precedence is done HERE in
+# PowerShell — we do NOT pass empty positional args to python, because Windows
+# PowerShell 5.1 DROPS empty-string args to native exes, which would shift a
+# config-dir into the model_flag slot (bug 1c43749f). So the resolver is only
+# invoked (with a single non-empty --config-dir) when both flag and env are empty.
 $ResolvedModel = ""
 $ResolvedModelSource = "unknown"
-$resolverScript = Join-Path (Get-IlkSkillRoot) "ilk-loop\scripts\resolve_worker_model.py"
-if (Test-Path $resolverScript) {
-  try {
-    $resolverOutput = & python $resolverScript $Model $env:ANTHROPIC_MODEL $cfgDir 2>$null
-    if ($resolverOutput -and $resolverOutput.Contains("|")) {
-      $ResolvedModel = $resolverOutput.Substring(0, $resolverOutput.IndexOf("|"))
-      $ResolvedModelSource = $resolverOutput.Substring($resolverOutput.IndexOf("|") + 1)
+if ($Model) {
+  $ResolvedModel = $Model; $ResolvedModelSource = "flag"
+} elseif ($env:ANTHROPIC_MODEL) {
+  $ResolvedModel = $env:ANTHROPIC_MODEL; $ResolvedModelSource = "env"
+} else {
+  $resolverScript = Join-Path (Get-IlkSkillRoot) "ilk-loop\scripts\resolve_worker_model.py"
+  if (Test-Path $resolverScript) {
+    try {
+      $resolverOutput = & python $resolverScript "--config-dir" $cfgDir 2>$null
+      if ($resolverOutput -and $resolverOutput.Contains("|")) {
+        $ResolvedModel = $resolverOutput.Substring(0, $resolverOutput.IndexOf("|"))
+        $ResolvedModelSource = $resolverOutput.Substring($resolverOutput.IndexOf("|") + 1)
+      }
+    } catch {
+      $ResolvedModel = ""; $ResolvedModelSource = "unknown"
     }
-  } catch {
-    $ResolvedModel = if ($Model) { $Model } else { "" }
-    $ResolvedModelSource = "unknown"
   }
 }
 
