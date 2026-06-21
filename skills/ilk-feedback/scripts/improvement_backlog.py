@@ -116,6 +116,7 @@ class Entry:
     last_seen: str        # ISO datetime
     seen_count: int       # how many times this candidate has been observed
     source: str = ""      # origin (e.g. "feedback", "supervisor", "lark", "github")
+    source_id: str = ""   # per-source stable key for PULL-upsert dedup (e.g. lark record_id)
     relations: dict = field(default_factory=dict)  # structured links (run_id, commit, plan, …)
 
     def to_dict(self) -> dict[str, Any]:
@@ -182,6 +183,7 @@ def add_candidate(
     leverage: str = "medium",
     severity: str = "medium",
     source: str = "",
+    source_id: str = "",
     relations: dict | None = None,
     backlog_dir: Path | str | None = None,
 ) -> Entry:
@@ -192,11 +194,14 @@ def add_candidate(
 
     ``kind`` must be one of :data:`KINDS`; unknown values are rejected
     with ``ValueError``.  ``source`` records where the entry originated
-    (e.g. ``"feedback"``, ``"supervisor"``).  ``relations`` holds
-    freeform structured links (``run_id``, ``commit``, ``plan``, …).
+    (e.g. ``"feedback"``, ``"supervisor"``).  ``source_id`` is a
+    per-source stable key for PULL-upsert dedup (e.g. a Lark record id).
+    ``relations`` holds freeform structured links (``run_id``, ``commit``,
+    ``plan``, …).
 
     On update (dedup hit), ``relations`` is merged like ``evidence`` and
-    ``source`` is refreshed only if a non-empty one is passed.
+    ``source``/``source_id`` are refreshed only if non-empty values are
+    passed.
 
     Returns the (possibly updated) ``Entry``.
     """
@@ -236,6 +241,9 @@ def add_candidate(
         # Refresh source only if a non-empty one is passed
         if source:
             entry_dict["source"] = source
+        # Refresh source_id only if a non-empty one is passed
+        if source_id:
+            entry_dict["source_id"] = source_id
         entry = Entry.from_dict(entry_dict)
         entries_raw[existing_idx] = entry.to_dict()
     else:
@@ -254,6 +262,7 @@ def add_candidate(
             last_seen=now,
             seen_count=1,
             source=source,
+            source_id=source_id,
             relations=relations or {},
         )
         entries_raw.append(entry.to_dict())
