@@ -64,6 +64,7 @@ def _setup_project(
     state: str = "running",
     run_id: str = "test-run-001",
     blacklist_class: str | None = None,
+    supervised_only: bool = False,
 ) -> Path:
     """Create a git project + external plans/runtime under ILK_DATA.
 
@@ -80,6 +81,7 @@ def _setup_project(
     # Master plan — use short slug for filename to avoid truncation issues.
     slug = f"t{name}"
     sub_fname = f"2026-06-07-{slug}-sub.md"
+    supervised_line = "supervised_only: true\n" if supervised_only else ""
     master = (
         "---\n"
         f"title: Test {name}\n"
@@ -87,6 +89,7 @@ def _setup_project(
         f"created: 2026-06-07T00:00:00+08:00\n"
         f"status: {master_status}\n"
         f"priority: 5\n"
+        f"{supervised_line}"
         "pause_after_ship: false\n"
         "branch: null\n"
         "goal: test fixture\n"
@@ -252,6 +255,47 @@ class TestStateParked:
                        blacklist_class="local-checks-stuck")
         entry = _get_status("pkt")
         assert entry["parked"] is True
+
+
+# ── AC-1: supervised_only queued master yields manually_runnable ──────
+
+class TestManuallyRunnableSupervised:
+    """AC-1: supervised_only + queued with pending sub-plan → manually_runnable=True."""
+
+    def test_supervised_queued_manually_runnable(self):
+        """A project whose only master is supervised_only + queued with a
+        pending sub-plan yields manually_runnable == True."""
+        _setup_project("mr1", master_status="queued", supervised_only=True,
+                       pid=99999999, state="shipped")
+        entry = _get_status("mr1")
+        assert entry["manually_runnable"] is True
+        # Should NOT be scheduler-runnable (supervised_only is skipped by scan_projects).
+        assert entry["runnable"] is False
+
+
+# ── AC-3: running project yields manually_runnable=False ─────────────
+
+class TestManuallyRunnableRunning:
+    """AC-3: running project (sentinel alive) → manually_runnable=False."""
+
+    def test_running_not_manually_runnable(self):
+        _setup_project("mrr", pid=os.getpid(), state="running")
+        entry = _get_status("mrr")
+        assert entry["sentinel"]["alive"] is True
+        assert entry["manually_runnable"] is False
+
+
+# ── AC-4: all-shipped/idle project appears with manually_runnable=False ─
+
+class TestManuallyRunnableAllShipped:
+    """AC-4: all-shipped/idle project appears in output with manually_runnable=False."""
+
+    def test_all_shipped_in_output(self):
+        _setup_project("mrs", sub_status="shipped", pid=99999999, state="shipped")
+        entry = _get_status("mrs")
+        # Project should still appear in the list.
+        assert entry["project_key"].endswith("mrs")
+        assert entry["manually_runnable"] is False
 
 
 # ── Backward compatibility ──────────────────────────────────────────

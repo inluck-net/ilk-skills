@@ -25,11 +25,10 @@ from ilk_paths import (  # noqa: E402
     project_key,
 )
 
-# Import scan_projects from ilk-watchdog (sibling skill).
+# Import blacklist_status from ilk-watchdog (sibling skill).
 _WATCHDOG_SCRIPTS = Path(__file__).resolve().parent.parent.parent / "ilk-watchdog" / "scripts"
 if str(_WATCHDOG_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_WATCHDOG_SCRIPTS))
-from scheduler_scan import scan_projects  # noqa: E402
 from blacklist_status import is_blacklisted  # noqa: E402
 
 # Reuse loop_status helpers for frontmatter parsing and ordering.
@@ -215,10 +214,11 @@ def resolve_project_status(project_dir: Path) -> dict:
     runtime_dir = external_runtime_dir(key)
     launcher_dir = external_launcher_dir(key)
 
-    # Active master + next subplan
+    # Active master + next subplan (also track queued for manually_runnable).
     active_master = ""
     next_subplan = ""
     step = ""
+    queued_has_work = False
     if plans_dir.is_dir():
         masters = sorted(plans_dir.glob("MASTER-*.md"))
         for mp in masters:
@@ -227,10 +227,16 @@ def resolve_project_status(project_dir: Path) -> dict:
             except OSError:
                 continue
             mfm = parse_frontmatter(mtext)
-            if (mfm.get("status") or "").strip() == "active":
+            m_status = (mfm.get("status") or "").strip()
+            if m_status == "active":
                 active_master = mp.name
                 next_subplan, step = _resolve_next_subplan(plans_dir, mtext)
                 break
+            # Track queued masters with non-shipped sub-plans for manually_runnable.
+            if m_status == "queued":
+                q_slug, _ = _resolve_next_subplan(plans_dir, mtext)
+                if q_slug:
+                    queued_has_work = True
 
     # Sentinel
     sentinel_raw = _read_sentinel(runtime_dir)
@@ -261,8 +267,15 @@ def resolve_project_status(project_dir: Path) -> dict:
     # Action flags for tray/xbar (SP1: tray-actions-render).
     # runnable: has a dispatchable master with pending/in-progress work AND not currently running AND not blocked.
     # parked: blacklisted with no valid resolve-ack (project needs /ilk-resume).
+    # manually_runnable: has a queued/active master with work AND not alive AND not blocked.
+    #   Includes supervised_only masters (which scan_projects() filters out).
     runnable = bool(active_master and next_subplan and not sentinel.get("alive") and not blocked.get("blocked"))
     parked = blocked.get("blocked") and blocked.get("blocked_reason") == "within-backoff"
+    manually_runnable = bool(
+        (active_master and next_subplan or queued_has_work)
+        and not sentinel.get("alive")
+        and not blocked.get("blocked")
+    )
 
     return {
         "project_key": key,
@@ -274,6 +287,7 @@ def resolve_project_status(project_dir: Path) -> dict:
         "last_class": last_class,
         "runnable": runnable,
         "parked": parked,
+        "manually_runnable": manually_runnable,
         **blocked,
     }
 
@@ -296,20 +310,13 @@ def main() -> int:
             print("No projects found.")
         return 0
 
-    # Use scan_projects() for the project list (FIFO-sorted).
-    try:
-        scanned = scan_projects()
-    except Exception:
-        # Fallback: list project dirs directly.
-        scanned = [{"key": d.name, "path": str(d)}
-                   for d in sorted(data_root.iterdir()) if d.is_dir()]
-
+    # Enumerate ALL project dirs (not scan_projects(), which skips
+    # supervised_only masters).  This ensures every project — including
+    # supervised/idle ones — appears in the tray status feed.
     entries = []
-    for proj in scanned:
-        proj_path = Path(proj["path"])
-        if not proj_path.is_dir():
-            continue
-        entries.append(resolve_project_status(proj_path))
+    for d in sorted(data_root.iterdir()):
+        if d.is_dir():
+            entries.append(resolve_project_status(d))
 
     if args.json:
         print(json.dumps(entries, indent=2, ensure_ascii=False))
