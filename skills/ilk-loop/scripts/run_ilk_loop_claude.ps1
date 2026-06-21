@@ -1590,6 +1590,24 @@ if ($repos.Count -eq 0) {
 # Parse MASTER branch: block (sets $script:BranchName etc.)
 Parse-MasterBranchBlock -Project $ProjectPath
 
+# Resolve the actual worker model for display + JSONL telemetry.
+# Uses resolve_worker_model.py: flag > env > settings.json env block > unknown.
+$ResolvedModel = ""
+$ResolvedModelSource = "unknown"
+$resolverScript = Join-Path (Get-IlkSkillRoot) "ilk-loop" "scripts" "resolve_worker_model.py"
+if (Test-Path $resolverScript) {
+  try {
+    $resolverOutput = & python $resolverScript $Model $env:ANTHROPIC_MODEL $cfgDir 2>$null
+    if ($resolverOutput -and $resolverOutput.Contains("|")) {
+      $ResolvedModel = $resolverOutput.Substring(0, $resolverOutput.IndexOf("|"))
+      $ResolvedModelSource = $resolverOutput.Substring($resolverOutput.IndexOf("|") + 1)
+    }
+  } catch {
+    $ResolvedModel = if ($Model) { $Model } else { "" }
+    $ResolvedModelSource = "unknown"
+  }
+}
+
 Write-Host ""
 Write-Host "=== ilk-loop runner (Claude Code) ===" -ForegroundColor Cyan
 Write-Host "Project:        $ProjectPath"
@@ -1597,7 +1615,11 @@ Write-Host "Repos found:    $($repos.Count)"
 $repos | ForEach-Object { Write-Host "  - $_" }
 Write-Host "Max iterations: $MaxIterations"
 Write-Host "Iter timeout:   $IterationTimeoutMin min"
-Write-Host "Model:          $(if ($Model) { $Model } else { $env:ANTHROPIC_MODEL + ' (from env)' })"
+if ($ResolvedModel) {
+  Write-Host "Model:          $ResolvedModel (from $ResolvedModelSource)"
+} else {
+  Write-Host "Model:          (unresolved)"
+}
 Write-Host "API base:       $($env:ANTHROPIC_BASE_URL)"
 Write-Host "Per-iter budget: $(if ($MaxBudgetUsd -gt 0) { '$' + $MaxBudgetUsd } else { 'unlimited' })"
 if ($McpConfigPath) {
@@ -1915,7 +1937,7 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     iteration         = $i
     timestamp         = (Get-Date).ToString("o")
     project           = $ProjectPath
-    model             = if ($Model) { $Model } else { $env:ANTHROPIC_MODEL }
+    model             = if ($ResolvedModel) { $ResolvedModel } elseif ($Model) { $Model } else { $env:ANTHROPIC_MODEL }
     base_url          = $env:ANTHROPIC_BASE_URL
     max_budget_usd    = $MaxBudgetUsd
     duration_sec      = $iterDurSec
