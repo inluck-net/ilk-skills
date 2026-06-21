@@ -3,6 +3,8 @@
 Covers:
   AC-1  Two open entries → markdown containing both titles + kinds + gaps
   AC-2  shipped/wontfix entries excluded (only open)
+  AC-3  Empty/absent tracker → "nothing to plan", exit 0
+  AC-4  Output format consistent with build_task.format_task_description
 
 Uses ILK_DATA_HOME isolation so tests never touch real ~/.ilk-data.
 """
@@ -158,3 +160,63 @@ class TestBuildForProject:
 
         result = mod.build_for_project(fake_project)
         assert result == ""
+
+
+# ── AC-3: CLI empty-tracker guard ────────────────────────────────────────────
+
+
+class TestCLIEmptyTracker:
+    """AC-3: CLI prints 'nothing to plan' and exits 0 on empty tracker."""
+
+    def test_cli_empty_tracker_exits_zero(self, data_env, fake_project):
+        """main(['--project', ...]) with empty tracker exits 0 and prints message."""
+        import importlib
+        import tracker_to_task as mod
+
+        importlib.reload(mod)
+
+        exit_code = mod.main(["--project", str(fake_project)])
+        assert exit_code == 0
+
+    def test_cli_empty_tracker_message(self, data_env, fake_project, capsys):
+        """CLI prints 'Nothing to plan' when tracker is empty."""
+        import importlib
+        import tracker_to_task as mod
+
+        importlib.reload(mod)
+
+        mod.main(["--project", str(fake_project)])
+        captured = capsys.readouterr()
+        assert "Nothing to plan" in captured.out
+
+
+# ── AC-4: format consistency with build_task ─────────────────────────────────
+
+
+class TestFormatConsistency:
+    """AC-4: build_for_project output shape matches build_task.format_task_description."""
+
+    def test_output_uses_same_formatter(self, data_env, fake_project):
+        """build_for_project delegates to build_task.format_task_description."""
+        import importlib
+        import project_tracker as pt
+        import tracker_to_task as mod
+        import build_task
+
+        importlib.reload(pt)
+        importlib.reload(mod)
+
+        pt.add(
+            title="Consistency check",
+            gap="format must match",
+            kind="toolkit",
+            source="lark",
+            source_id="rec-ac4-1",
+            project=fake_project,
+        )
+
+        entries = pt.list_open(project=fake_project)
+        expected = build_task.format_task_description(entries)
+        actual = mod.build_for_project(fake_project)
+
+        assert actual == expected

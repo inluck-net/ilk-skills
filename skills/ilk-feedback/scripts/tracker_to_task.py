@@ -11,6 +11,7 @@ the global improvement-backlog feed.
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -35,3 +36,34 @@ def build_for_project(project: str | Path) -> str:
     """
     entries = project_tracker.list_open(project=Path(project))
     return build_task.format_task_description(entries)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point."""
+    parser = argparse.ArgumentParser(
+        description="Format open tracker entries as a task for /ilk-plan",
+    )
+    parser.add_argument(
+        "--project",
+        required=True,
+        help="Path to the project root",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the task description without invoking /ilk-plan",
+    )
+    args = parser.parse_args(argv)
+
+    task = build_for_project(args.project)
+
+    if not task:
+        print("Nothing to plan — tracker has no open entries.")
+        return 0
+
+    print(task)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
