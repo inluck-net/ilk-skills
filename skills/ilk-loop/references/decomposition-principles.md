@@ -708,3 +708,45 @@ never touches the tracker.
   the human's post-ship pass.
 - **§12 (Verification tier)** — an escaped-bug fix sub-plan should be
   `loop-verified` (the reproducing check is a runtime smoke).
+
+---
+
+## 19. Comprehension debt — the loop is leverage on work you understand
+
+`shipped` ≠ verified (§11), and verified ≠ *understood*. As the loop ships more
+code per human-hour, a second debt accrues alongside correctness risk:
+**comprehension debt** — the gap between what the loop has merged and what the
+human actually understands. Even when every gate is green, code piles up faster
+than anyone reads it, and every un-reviewed merge widens the gap.
+
+> External framing (Addy Osmani, "loop engineering", 2026): the loop reporting
+> "done" is its *claim*, not proof; the most dangerous use is running the loop
+> to **avoid** understanding rather than to **leverage** understanding you
+> already have — that accelerates decline instead of compounding skill.
+
+### The principle
+
+The loop is a lever on work you understand, not a substitute for understanding
+it. Two operational consequences for the planner:
+
+1. **Keep a human read in the trust chain for non-trivial batches.** §11's
+   "verify → push → cloud-re-run" already mandates a human pass; comprehension
+   debt is why that pass must include *reading the diff*, not just confirming
+   the gate is green. A batch whose every sub-plan is `loop-verified` can still
+   accrue comprehension debt if the human only watches the `shipped` banner.
+
+2. **Surface the debt as a diagnostic metric, don't just hope.** A proxy the
+   `metrics.py` aggregator can compute: **un-reviewed-merge ratio** (commits
+   shipped by the loop with no recorded human review / total shipped). It is the
+   *complement* of the correctness KPIs — §11/§2 track whether shipped work is
+   *right*; this tracks whether it is *understood*. The north star stays
+   "human-touch ↓ AND escaped-bug ↓", but **comprehension-debt ↑ is a reverse
+   alarm**: if human-touch falls fast while comprehension debt climbs, the loop
+   is borrowing against the future, not getting better.
+
+### Cross-references
+
+- **§11 (shipped ≠ verified)** — correctness enforcement; this principle is its
+  comprehension-side complement.
+- **§13 (bias toward autonomy)** — autonomy removes human *bottlenecks*, not
+  human *understanding*; the two are different and only the first should shrink.

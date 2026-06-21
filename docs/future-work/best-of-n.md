@@ -138,6 +138,26 @@ default — most sub-plans in a normal batch should remain single-shot.
 
 ---
 
+## External validation (2026-06-21) — "loop engineering" makes maker/checker standard
+
+Industry framing of autonomous dev loops ("loop engineering" — Addy Osmani;
+Boris Cherny; New Stack) lists **sub-agents with write/review separation,
+ideally a *different model*** as one of the six core loop components — and names
+the "code-writer must not grade its own work" rule as a primary defense against
+the three loop failure modes (laziness / self-flattery / drift). That is exactly
+the **model-diverse** flavor of best-of-N (and the framework doc's decision #15,
+cross-model verify on weak tiers).
+
+Implication for sequencing: model-diverse maker/checker is no longer a
+"nice-to-have V2" — it is the recommended floor for `compile-only` /
+`device-manual` tiers where deterministic `local_checks` can't reach. Keep it
+**opt-in per sub-plan** (§ "When to use") and cost-gated (#13), but raise its
+priority over run-diverse best-of-N. Field note: the 2026-06-21 self-hosting
+batches ran the worker on a cheap provider (`mimo-v2.5-pro`) with a stronger
+model (Opus) as the independent checker — an ad-hoc human-driven instance of
+exactly this pattern, which worked. Productizing it = the V2b selection stage
+below, with the strong model as the judge/oracle for un-gateable tiers.
+
 ## See also
 - `docs/future-work/cross-project-supervisor.md` — V1 (shipped) / V2 lineage.
 - `~/.ilk-data/.../plans/MASTER-2026-06-06-scheduler-v1-1-execution-plan.md` —
