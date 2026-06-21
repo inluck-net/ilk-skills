@@ -218,10 +218,27 @@ def add_candidate(
 
     entries_raw = _load_raw(backlog_dir)
     existing_idx: int | None = None
-    for i, e in enumerate(entries_raw):
-        if e.get("id") == key:
-            existing_idx = i
-            break
+    matched_by_source_id = False
+
+    # When source_id is non-empty, upsert on (source, source_id) first.
+    # This is the PULL-upsert path: pull-type adapters (Lark, inbox) use a
+    # stable per-source key so the same remote record always maps to one
+    # backlog entry, even if the title/gap text changes between syncs.
+    if source_id:
+        for i, e in enumerate(entries_raw):
+            if e.get("source") == source and e.get("source_id") == source_id:
+                existing_idx = i
+                matched_by_source_id = True
+                break
+
+    # Fallback: content-based dedup on stable_key (kind + normalised title+gap).
+    # This is the original path for postmortem-emitted / supervisor-emitted
+    # entries that have no per-source stable key.
+    if existing_idx is None:
+        for i, e in enumerate(entries_raw):
+            if e.get("id") == key:
+                existing_idx = i
+                break
 
     if existing_idx is not None:
         # Update existing entry
@@ -244,6 +261,17 @@ def add_candidate(
         # Refresh source_id only if a non-empty one is passed
         if source_id:
             entry_dict["source_id"] = source_id
+        # When matched via (source, source_id), refresh content fields so
+        # the latest title/gap/severity from the remote source wins.  The
+        # entry's id (content stable_key) is kept unchanged.
+        if matched_by_source_id:
+            entry_dict["title"] = title
+            entry_dict["gap"] = gap
+            entry_dict["severity"] = severity
+            if proposed_fix:
+                entry_dict["proposed_fix"] = proposed_fix
+            if leverage:
+                entry_dict["leverage"] = leverage
         entry = Entry.from_dict(entry_dict)
         entries_raw[existing_idx] = entry.to_dict()
     else:

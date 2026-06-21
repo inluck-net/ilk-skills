@@ -138,3 +138,150 @@ class TestSourceIdRoundTrip:
         entries = mod.load(backlog_dir=backlog_env)
         assert len(entries) == 1
         assert entries[0].source_id == "recXYZ789"
+
+
+# ── AC-2: upsert on (source, source_id) ─────────────────────────────────────
+
+
+class TestSourceIdUpsert:
+    """AC-2: add_candidate upserts on (source, source_id) when source_id is non-empty."""
+
+    def test_upsert_by_source_id_despite_different_title(self, backlog_env):
+        """Two calls with same (source, source_id) but different title → ONE entry.
+
+        The second call should bump seen_count and refresh the title, not
+        create a second entry.  This proves (source, source_id) is the
+        dedup axis when source_id is non-empty.
+        """
+        import importlib
+        import improvement_backlog as mod
+        importlib.reload(mod)
+
+        mod.add_candidate(
+            title="Original Title",
+            gap="gap A",
+            source="lark",
+            source_id="rec123",
+            backlog_dir=backlog_env,
+        )
+        mod.add_candidate(
+            title="Updated Title",
+            gap="gap A refreshed",
+            source="lark",
+            source_id="rec123",
+            backlog_dir=backlog_env,
+        )
+
+        entries = mod.load(backlog_dir=backlog_env)
+        assert len(entries) == 1, f"expected 1 entry, got {len(entries)}"
+        e = entries[0]
+        assert e.source_id == "rec123"
+        assert e.seen_count == 2
+        # Title refreshed from second call
+        assert e.title == "Updated Title"
+        assert e.gap == "gap A refreshed"
+
+    def test_upsert_by_source_id_preserves_original_id(self, backlog_env):
+        """Upsert via source_id keeps the entry's content-based id unchanged."""
+        import importlib
+        import improvement_backlog as mod
+        importlib.reload(mod)
+
+        e1 = mod.add_candidate(
+            title="First Title",
+            gap="gap X",
+            source="lark",
+            source_id="recABC",
+            backlog_dir=backlog_env,
+        )
+        original_id = e1.id
+
+        mod.add_candidate(
+            title="Changed Title",
+            gap="gap X changed",
+            source="lark",
+            source_id="recABC",
+            backlog_dir=backlog_env,
+        )
+
+        entries = mod.load(backlog_dir=backlog_env)
+        assert len(entries) == 1
+        assert entries[0].id == original_id
+
+    def test_different_source_ids_create_separate_entries(self, backlog_env):
+        """Two calls with same source but different source_id → two entries."""
+        import importlib
+        import improvement_backlog as mod
+        importlib.reload(mod)
+
+        mod.add_candidate(
+            title="Entry A",
+            gap="gap A",
+            source="lark",
+            source_id="recAAA",
+            backlog_dir=backlog_env,
+        )
+        mod.add_candidate(
+            title="Entry B",
+            gap="gap B",
+            source="lark",
+            source_id="recBBB",
+            backlog_dir=backlog_env,
+        )
+
+        entries = mod.load(backlog_dir=backlog_env)
+        assert len(entries) == 2
+        ids_by_source_id = {e.source_id: e for e in entries}
+        assert "recAAA" in ids_by_source_id
+        assert "recBBB" in ids_by_source_id
+
+
+# ── AC-3: empty source_id → content dedup unchanged ─────────────────────────
+
+
+class TestEmptySourceIdContentDedup:
+    """AC-3: add_candidate with empty source_id still deduplicates via stable_key."""
+
+    def test_empty_source_id_dedup_via_stable_key(self, backlog_env):
+        """Two calls with empty source_id and identical (kind, title, gap) → ONE entry."""
+        import importlib
+        import improvement_backlog as mod
+        importlib.reload(mod)
+
+        mod.add_candidate(
+            title="Same Title",
+            gap="Same Gap",
+            kind="toolkit",
+            backlog_dir=backlog_env,
+        )
+        mod.add_candidate(
+            title="Same Title",
+            gap="Same Gap",
+            kind="toolkit",
+            backlog_dir=backlog_env,
+        )
+
+        entries = mod.load(backlog_dir=backlog_env)
+        assert len(entries) == 1
+        assert entries[0].seen_count == 2
+        assert entries[0].source_id == ""
+
+    def test_empty_source_id_different_title_creates_separate(self, backlog_env):
+        """Two calls with empty source_id but different title → two entries."""
+        import importlib
+        import improvement_backlog as mod
+        importlib.reload(mod)
+
+        mod.add_candidate(
+            title="Title A",
+            gap="gap",
+            backlog_dir=backlog_env,
+        )
+        mod.add_candidate(
+            title="Title B",
+            gap="gap",
+            backlog_dir=backlog_env,
+        )
+
+        entries = mod.load(backlog_dir=backlog_env)
+        assert len(entries) == 2
