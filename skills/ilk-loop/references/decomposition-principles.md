@@ -785,3 +785,47 @@ This is the operational edge of cost-effectiveness (the framework doc's decision
   applied to *which tier runs orchestration*.
 - **§19 (comprehension debt)** — the human read this preserves is judgment, not clerical.
 - **§15 (verification tier)** — when a checker model IS worth it (weak tiers only).
+
+---
+
+## 21. Never launch or relaunch the loop from a model session
+
+A model session (Claude Code, Codex, etc.) should **never** relaunch the
+ilk loop.  Relaunch is the **watchdog's** job — it classifies the exit
+state, applies whitelist/blacklist policy, and decides whether a retry
+is warranted.  A model session that relaunches bypasses all of that:
+it can't see the blacklist, doesn't know the backoff window, and can't
+distinguish "drained exit (success)" from "crash (needs restart)".
+
+### The 2026-06-22 incident
+
+A cheap-model worker hand-authored Monitor scripts, picked the **wrong
+log** among three (timestamped launcher log / `.ilk-loop.log` JSONL /
+per-iteration logs), and misread an **all-shipped fast-exit as a crash**
+→ relaunched in a loop, spawning duplicate loops.  Root cause: the model
+session had no canonical way to distinguish "exited because queue drained
+(success)" from "died (restart)".
+
+### Rules
+
+1. **A model session launches the loop once and stops.** It does not
+   watch, babysit, or relaunch.  Use the scheduler or tray "Start now"
+   for autonomous runs.
+2. **Use `ilk_watch.py` for state queries.** Any session that needs to
+   know the loop's state (running / all-shipped / blocked / idle) must
+   call `skills/ilk-launcher/scripts/ilk_watch.py --project <p>`.  This
+   helper resolves the **correct** sentinel and log — it never guesses.
+3. **The runner prints an explicit drained-exit signal.** On all-shipped
+   exit, both `run_ilk_loop_claude.sh` and `.ps1` print:
+   `[ilk] ALL SHIPPED — nothing to run. Do NOT relaunch.`
+   Any monitoring tool must recognise this line as a terminal success
+   signal, not a crash.  The canonical form is "Do NOT relaunch" (title
+   case); matching should be case-insensitive (`do NOT relaunch` also
+   appears in tool output).
+
+### Cross-references
+
+- **§20 (cheap orchestration)** — relaunching from a planner session is
+  the most expensive way to get it wrong.
+- **`ilk_watch.py`** — the canonical state-query helper (AC-1/AC-2/AC-3
+  in the loop-watch-helper sub-plan).
