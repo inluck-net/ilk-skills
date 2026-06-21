@@ -298,6 +298,54 @@ class TestManuallyRunnableAllShipped:
         assert entry["manually_runnable"] is False
 
 
+# ── AC-6: runnable regression guard ────────────────────────────────────
+
+class TestRunnableRegression:
+    """AC-6: scheduler-facing `runnable` is unchanged across all states.
+
+    The `runnable` flag is consumed by scheduler_scan.py for autonomous
+    dispatch.  Adding `manually_runnable` must NOT alter its semantics.
+    """
+
+    def test_runnable_false_when_alive(self):
+        """Running loop → runnable=False (scheduler must not re-dispatch)."""
+        _setup_project("rr1", pid=os.getpid(), state="running")
+        entry = _get_status("rr1")
+        assert entry["runnable"] is False
+        # Also verify manually_runnable is consistent.
+        assert entry["manually_runnable"] is False
+
+    def test_runnable_true_when_active_idle(self):
+        """Active master + pending work + not alive → runnable=True."""
+        _setup_project("rr2", pid=99999999, state="shipped")
+        entry = _get_status("rr2")
+        assert entry["runnable"] is True
+        assert entry["manually_runnable"] is True
+
+    def test_runnable_false_when_supervised_queued(self):
+        """supervised_only + queued → runnable=False (scheduler skips)."""
+        _setup_project("rr3", master_status="queued", supervised_only=True,
+                       pid=99999999, state="shipped")
+        entry = _get_status("rr3")
+        assert entry["runnable"] is False
+        # But manually_runnable is True (human can /ilk it).
+        assert entry["manually_runnable"] is True
+
+    def test_runnable_false_when_blocked(self):
+        """Blacklisted project → runnable=False."""
+        _setup_project("rr4", pid=99999999, state="shipped",
+                       blacklist_class="local-checks-stuck")
+        entry = _get_status("rr4")
+        assert entry["runnable"] is False
+
+    def test_runnable_false_when_all_shipped(self):
+        """All sub-plans shipped → runnable=False."""
+        _setup_project("rr5", sub_status="shipped", pid=99999999, state="shipped")
+        entry = _get_status("rr5")
+        assert entry["runnable"] is False
+        assert entry["manually_runnable"] is False
+
+
 # ── AC-5: model from JSONL ────────────────────────────────────────────
 
 class TestModelFromJsonl:
