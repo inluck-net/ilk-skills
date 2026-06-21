@@ -215,9 +215,65 @@ has_drift() {
     done
   done
 
+  # Check for missing links: an in-repo command/skill with no corresponding
+  # link in any host commands/ or skills/ dir.
+  local repo_commands="$REPO_ROOT/commands"
+  if [[ -d "$repo_commands" ]]; then
+    for repo_cmd in "$repo_commands"/ilk*; do
+      [[ -f "$repo_cmd" ]] || continue
+      local cmd_basename
+      cmd_basename="$(basename "$repo_cmd")"
+      local found_link=0
+      for home in "${homes[@]+"${homes[@]}"}"; do
+        if [[ -L "$home/commands/$cmd_basename" || -f "$home/commands/$cmd_basename" ]]; then
+          found_link=1
+          break
+        fi
+      done
+      if [[ $found_link -eq 0 ]]; then
+        return 0  # drift found: missing link for in-repo command
+      fi
+    done
+  fi
+
   # Check for added/removed skills or commands between old and new rev
   # (called after pull, so we compare the pulled changes)
   return 1  # no drift
+}
+
+# --- reconcile links + auto-plan (idempotent, always safe to call) -----------
+
+reconcile_links() {
+  local diff_status="${1:-}"
+
+  # Drift detection + conditional re-install
+  local need_reinstall=0
+
+  # Check for copy-installed command files or missing links
+  if has_drift; then
+    need_reinstall=1
+  fi
+
+  # Check if skills or commands were added/removed
+  if [[ -n "$diff_status" ]]; then
+    if echo "$diff_status" | grep -qE '^[AD]'; then
+      need_reinstall=1
+    fi
+  fi
+
+  if [[ $need_reinstall -eq 1 ]]; then
+    echo ""
+    echo "Drift detected — re-running installer..."
+    bash "$REPO_ROOT/install.sh" --apply
+    echo "Re-install complete. New code is effective next invocation."
+  else
+    echo ""
+    echo "Links current, no re-install needed. New code is effective next invocation."
+  fi
+
+  # Reconcile auto-plan managed block (unconditional)
+  bash "$REPO_ROOT/install.sh" --only-auto-plan --apply
+  echo "Auto-plan block reconciled."
 }
 
 # --- --apply: ff-only pull + changelog + conditional re-install --------------
@@ -253,6 +309,7 @@ do_apply() {
   behind="$(git -C "$REPO_ROOT" rev-list --count HEAD.."$upstream" 2>/dev/null || echo "0")"
   if [[ "$behind" -eq 0 ]]; then
     echo "already current"
+    reconcile_links ""
     return 0
   fi
 
@@ -286,34 +343,7 @@ do_apply() {
     done
   fi
 
-  # Drift detection + conditional re-install
-  local need_reinstall=0
-
-  # Check for copy-installed command files
-  if has_drift; then
-    need_reinstall=1
-  fi
-
-  # Check if skills or commands were added/removed
-  if [[ -n "$diff_status" ]]; then
-    if echo "$diff_status" | grep -qE '^[AD]'; then
-      need_reinstall=1
-    fi
-  fi
-
-  if [[ $need_reinstall -eq 1 ]]; then
-    echo ""
-    echo "Drift detected — re-running installer..."
-    bash "$REPO_ROOT/install.sh" --apply
-    echo "Re-install complete. New code is effective next invocation."
-  else
-    echo ""
-    echo "Links current, no re-install needed. New code is effective next invocation."
-  fi
-
-  # Reconcile auto-plan managed block (unconditional on every successful pull)
-  bash "$REPO_ROOT/install.sh" --only-auto-plan --apply
-  echo "Auto-plan block reconciled."
+  reconcile_links "$diff_status"
 }
 
 # --- mode dispatch -----------------------------------------------------------
