@@ -198,6 +198,54 @@ class TestKindMapping:
         assert len(entries) == 1
         assert entries[0].kind == "feature"
 
+    def test_bug_type_maps_to_bug(self, isolated_env):
+        """AC-3: 类型=bug → kind='bug'."""
+        records = [
+            {
+                "record_id": "rec_bug",
+                "fields": {"标题": [{"text": "A bug"}], "类型": "bug"},
+            },
+        ]
+        client = FakeLarkClient(records)
+
+        lark_to_tracker.sync(client, key=isolated_env["key"])
+
+        from project_tracker import load
+        entries = load(key=isolated_env["key"])
+        assert entries[0].kind == "bug"
+
+    def test_requirement_type_maps_to_feature(self, isolated_env):
+        """AC-3: 类型=需求 → kind='feature'."""
+        records = [
+            {
+                "record_id": "rec_req",
+                "fields": {"标题": [{"text": "A requirement"}], "类型": "需求"},
+            },
+        ]
+        client = FakeLarkClient(records)
+
+        lark_to_tracker.sync(client, key=isolated_env["key"])
+
+        from project_tracker import load
+        entries = load(key=isolated_env["key"])
+        assert entries[0].kind == "feature"
+
+    def test_unknown_type_defaults_to_feature(self, isolated_env):
+        """AC-3: unknown 类型 → kind='feature'."""
+        records = [
+            {
+                "record_id": "rec_unknown",
+                "fields": {"标题": [{"text": "Unknown type"}], "类型": "???"},
+            },
+        ]
+        client = FakeLarkClient(records)
+
+        lark_to_tracker.sync(client, key=isolated_env["key"])
+
+        from project_tracker import load
+        entries = load(key=isolated_env["key"])
+        assert entries[0].kind == "feature"
+
 
 # ---------------------------------------------------------------------------
 # AC-5: no live network — injectable client, no real BitableClient

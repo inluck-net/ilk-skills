@@ -99,11 +99,13 @@ def sync(
         description = _flatten_text(fields.get("原文描述") or fields.get("描述") or "")
         priority = fields.get("紧急度") or fields.get("AI 优先级建议") or ""
 
+        lark_type = fields.get("类型") or ""
+
         project_tracker.add(
             title=title or f"lark:{record_id}",
             source="lark",
             source_id=record_id,
-            kind="feature",
+            kind=_map_kind(str(lark_type)),
             gap=description or title,
             project=project,
             key=key,
@@ -125,3 +127,21 @@ def _map_priority(lark_priority: str) -> str:
     if p in ("低", "p3", "low"):
         return "low"
     return "medium"
+
+
+def _map_kind(lark_type: str) -> str:
+    """Map Lark 类型 to tracker kind (default ``feature``).
+
+    Known mappings: bug→bug, 需求/feature→feature, toolkit→toolkit.
+    Unknown types default to ``feature``.
+    """
+    t = lark_type.strip().lower()
+    if t in ("bug", "缺陷", "问题"):
+        return "bug"
+    if t in ("需求", "feature", "功能"):
+        return "feature"
+    if t in ("toolkit", "工具"):
+        return "toolkit"
+    if t in ("gap", "差距"):
+        return "gap"
+    return "feature"
