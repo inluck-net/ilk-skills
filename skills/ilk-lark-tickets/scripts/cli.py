@@ -4,6 +4,8 @@ Usage:
   python cli.py list [--status STATUS] [--limit N] [--project NAME]
   python cli.py show <record_id> [--project NAME]
   python cli.py pull-new [--project NAME]
+  python cli.py pull-to-tracker --tracker-key KEY [--status STATUS] [--project NAME]
+  python cli.py writeback-status --tracker-key KEY [--project NAME]
   python cli.py update <record_id> --field NAME=VALUE [--field NAME=VALUE ...] [--project NAME]
   python cli.py next-id [--project NAME]
   python cli.py download <record_id> <field_name> --to DIR [--project NAME]
@@ -642,6 +644,20 @@ def cmd_pull_to_tracker(args):
 
 
 # ---------------------------------------------------------------------------
+# writeback-status (tracker → Lark 状态)
+# ---------------------------------------------------------------------------
+
+def cmd_writeback_status(args):
+    """Push tracker statuses back to Lark for source='lark' entries."""
+    client = BitableClient(project_name=args.project)
+    count = lark_to_tracker.writeback_status(
+        client,
+        key=args.tracker_key,
+    )
+    _print({"ok": True, "updated": count})
+
+
+# ---------------------------------------------------------------------------
 # Argparse
 # ---------------------------------------------------------------------------
 
@@ -680,6 +696,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Lark status to filter on (default: 可执行)",
     )
     sp.set_defaults(func=cmd_pull_to_tracker)
+
+    sp = sub.add_parser(
+        "writeback-status",
+        help="Push tracker statuses back to Lark for source='lark' entries",
+    )
+    sp.add_argument(
+        "--tracker-key",
+        required=True,
+        help="Project key for the per-project tracker (e.g. uccargo)",
+    )
+    sp.set_defaults(func=cmd_writeback_status)
 
     sp = sub.add_parser("update", help="Update fields on a ticket")
     sp.add_argument("record_id")
