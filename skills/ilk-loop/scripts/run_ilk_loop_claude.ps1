@@ -1594,7 +1594,7 @@ Parse-MasterBranchBlock -Project $ProjectPath
 # Uses resolve_worker_model.py: flag > env > settings.json env block > unknown.
 $ResolvedModel = ""
 $ResolvedModelSource = "unknown"
-$resolverScript = Join-Path (Get-IlkSkillRoot) "ilk-loop" "scripts" "resolve_worker_model.py"
+$resolverScript = Join-Path (Get-IlkSkillRoot) "ilk-loop\scripts\resolve_worker_model.py"
 if (Test-Path $resolverScript) {
   try {
     $resolverOutput = & python $resolverScript $Model $env:ANTHROPIC_MODEL $cfgDir 2>$null
