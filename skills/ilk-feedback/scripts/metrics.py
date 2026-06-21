@@ -133,22 +133,117 @@ def compute_classification_distribution(records: list[dict[str, Any]]) -> dict[s
     return dist
 
 
-def _compute_all_kpis(records: list[dict[str, Any]]) -> dict[str, Any]:
+def compute_time_to_ship_by_tier(
+    records: list[dict[str, Any]],
+    project_path: Path | None = None,
+) -> dict[str, Any] | None:
+    """Compute time-to-ship grouped by verification_tier.
+
+    Returns a dict keyed by tier with avg/min/max seconds, or None when
+    the needed fields (started_at, shipped_at, verification_tier) are
+    absent from the records.  Never crashes on missing data.
+    """
+    # Group by run_id, collect per-run aggregates
+    by_run: dict[str, list[dict[str, Any]]] = {}
+    for rec in records:
+        rid = rec.get("run_id", "")
+        by_run.setdefault(rid, []).append(rec)
+
+    # We need records that carry started_at + duration_sec + verification_tier.
+    # Current JSONL doesn't have these — check and return None if absent.
+    has_needed = False
+    for rid, iters in by_run.items():
+        iters.sort(key=lambda r: r.get("iteration", 0))
+        last = iters[-1]
+        if last.get("verification_tier") and (last.get("started_at") or last.get("duration_sec")):
+            has_needed = True
+            break
+
+    if not has_needed:
+        return None
+
+    # Compute per-tier stats
+    tier_data: dict[str, list[float]] = {}
+    for rid, iters in by_run.items():
+        iters.sort(key=lambda r: r.get("iteration", 0))
+        last = iters[-1]
+        tier = last.get("verification_tier")
+        if not tier:
+            continue
+        # Sum duration_sec across iterations (total wall-clock proxy)
+        total_dur = sum(r.get("duration_sec", 0) for r in iters if r.get("duration_sec"))
+        if total_dur <= 0:
+            continue
+        tier_data.setdefault(tier, []).append(total_dur)
+
+    if not tier_data:
+        return None
+
+    result: dict[str, Any] = {}
+    for tier, durations in tier_data.items():
+        result[tier] = {
+            "avg_sec": round(sum(durations) / len(durations), 1),
+            "min_sec": round(min(durations), 1),
+            "max_sec": round(max(durations), 1),
+            "count": len(durations),
+        }
+    return result
+
+
+def compute_blacklist_thrash_count(
+    records: list[dict[str, Any]],
+    project_path: Path | None = None,
+) -> int | None:
+    """Count blacklist-thrash events from scheduler log (best-effort).
+
+    Returns the count, or None when the scheduler log is unreachable.
+    """
+    # Look for scheduler log in the project's runtime dir
+    if project_path is None:
+        return None
+
+    if external_logs_dir is not None and project_key is not None:
+        try:
+            key = project_key(project_path)
+            runtime_dir = external_logs_dir(key).parent / "runtime"
+            scheduler_log = runtime_dir / "watchdog" / "scheduler.log"
+            if scheduler_log.exists():
+                count = 0
+                try:
+                    with scheduler_log.open("r", encoding="utf-8-sig") as fh:
+                        for line in fh:
+                            if "blacklist" in line.lower() and "thrash" in line.lower():
+                                count += 1
+                except OSError:
+                    return None
+                return count
+        except Exception:
+            pass
+    return None
+
+
+def _compute_all_kpis(
+    records: list[dict[str, Any]],
+    project_path: Path | None = None,
+) -> dict[str, Any]:
     """Compute all KPIs from the JSONL records. Returns a metrics dict."""
     dist = compute_classification_distribution(records)
+    time_to_ship = compute_time_to_ship_by_tier(records, project_path)
+    thrash_count = compute_blacklist_thrash_count(records, project_path)
 
     result: dict[str, Any] = {
         "classification_distribution": dist,
         "total_runs": len(set(r.get("run_id", "") for r in records)),
         "total_iterations": len(records),
+        # Now-computable KPIs (null when needed fields absent)
+        "time_to_ship_by_tier": time_to_ship,
+        "blacklist_thrash_count": thrash_count,
         # KPIs that need instrumentation — honest nulls
-        "time_to_ship_by_tier": None,
-        "blacklist_thrash_count": None,
         "human_touch_count": None,
         "escaped_bug_rate": None,
         "needs_instrumentation": {
-            "time_to_ship_by_tier": True,
-            "blacklist_thrash_count": True,
+            "time_to_ship_by_tier": time_to_ship is None,
+            "blacklist_thrash_count": thrash_count is None,
             "human_touch_count": True,
             "escaped_bug_rate": True,
         },
@@ -178,11 +273,32 @@ def _render_text(metrics: dict[str, Any]) -> str:
     lines.append(f"Total iterations: {metrics.get('total_iterations', '?')}")
     lines.append("")
 
+    # Now-computable KPIs
+    tts = metrics.get("time_to_ship_by_tier")
+    if tts:
+        lines.append("Time-to-ship by tier:")
+        for tier, stats in sorted(tts.items()):
+            lines.append(
+                f"  {tier}: avg={stats['avg_sec']}s "
+                f"min={stats['min_sec']}s max={stats['max_sec']}s "
+                f"(n={stats['count']})"
+            )
+    else:
+        lines.append("Time-to-ship by tier: null (needs_instrumentation)")
+
+    thrash = metrics.get("blacklist_thrash_count")
+    if thrash is not None:
+        lines.append(f"Blacklist thrash count: {thrash}")
+    else:
+        lines.append("Blacklist thrash count: null (needs_instrumentation)")
+
+    lines.append("")
+
     # Honest null KPIs
     lines.append("Not yet instrumented:")
     needs = metrics.get("needs_instrumentation", {})
     for kpi, needed in needs.items():
-        if needed:
+        if needed and kpi not in ("time_to_ship_by_tier", "blacklist_thrash_count"):
             lines.append(f"  {kpi}: null (needs_instrumentation)")
 
     return "\n".join(lines)
@@ -242,6 +358,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         records = _read_jsonl(jsonl_path)
+        metrics = _compute_all_kpis(records, project_path)
     else:
         # --all mode
         data_root = _resolve_data_root(args.data_root)
@@ -250,8 +367,7 @@ def main(argv: list[str] | None = None) -> int:
             jsonl_path = jsonl_summary_path(project_key(proj_dir)) if (jsonl_summary_path and project_key) else None
             if jsonl_path and jsonl_path.exists():
                 records.extend(_read_jsonl(jsonl_path))
-
-    metrics = _compute_all_kpis(records)
+        metrics = _compute_all_kpis(records)
 
     if args.json:
         print(json.dumps(metrics, indent=2, ensure_ascii=False))

@@ -259,3 +259,102 @@ def test_no_classification_counts_as_no_evidence(scratch_env):
     assert data["classification_distribution"]["no-evidence"] == 1, (
         f"Expected 1 no-evidence, got {data['classification_distribution']['no-evidence']}"
     )
+
+
+# ── AC-3: time_to_ship_by_tier — null on missing data ────────────────────────
+
+
+def test_time_to_ship_by_tier_null_on_missing_data(scratch_env):
+    """time_to_ship_by_tier must be null when JSONL lacks verification_tier."""
+    project_path, env, key, data_home = scratch_env
+
+    logs_dir = data_home / "projects" / key / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = logs_dir / ".ilk-loop.log"
+
+    # Records without verification_tier or started_at
+    records = [
+        {"run_id": "run-1", "iteration": 1, "project": str(project_path),
+         "exit_code": 0, "duration_sec": 120, "classification": "clean-success"},
+        {"run_id": "run-1", "iteration": 2, "project": str(project_path),
+         "exit_code": 0, "duration_sec": 90, "classification": "clean-success"},
+    ]
+    _write_jsonl(jsonl_path, records)
+
+    result = subprocess.run(
+        [sys.executable, str(_METRICS_PY), "--project", str(project_path), "--json"],
+        capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
+    )
+    assert result.returncode == 0, (
+        f"metrics.py exited {result.returncode}.\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+    data = json.loads(result.stdout)
+    assert data["time_to_ship_by_tier"] is None, (
+        f"Expected null, got {data['time_to_ship_by_tier']}"
+    )
+    assert data["needs_instrumentation"]["time_to_ship_by_tier"] is True
+
+
+# ── AC-3: blacklist_thrash_count — null on missing scheduler log ─────────────
+
+
+def test_blacklist_thrash_count_null_on_missing_log(scratch_env):
+    """blacklist_thrash_count must be null when no scheduler log exists."""
+    project_path, env, key, data_home = scratch_env
+
+    logs_dir = data_home / "projects" / key / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = logs_dir / ".ilk-loop.log"
+
+    records = [
+        {"run_id": "run-1", "iteration": 1, "project": str(project_path),
+         "exit_code": 0, "classification": "clean-success"},
+    ]
+    _write_jsonl(jsonl_path, records)
+
+    result = subprocess.run(
+        [sys.executable, str(_METRICS_PY), "--project", str(project_path), "--json"],
+        capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
+    )
+    assert result.returncode == 0
+
+    data = json.loads(result.stdout)
+    assert data["blacklist_thrash_count"] is None, (
+        f"Expected null, got {data['blacklist_thrash_count']}"
+    )
+    assert data["needs_instrumentation"]["blacklist_thrash_count"] is True
+
+
+# ── AC-3: needs_instrumentation for human_touch_count + escaped_bug_rate ─────
+
+
+def test_honest_null_kpis_present(scratch_env):
+    """human_touch_count and escaped_bug_rate must be null with needs_instrumentation."""
+    project_path, env, key, data_home = scratch_env
+
+    logs_dir = data_home / "projects" / key / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = logs_dir / ".ilk-loop.log"
+
+    records = [
+        {"run_id": "run-1", "iteration": 1, "project": str(project_path),
+         "exit_code": 0, "classification": "clean-success"},
+    ]
+    _write_jsonl(jsonl_path, records)
+
+    result = subprocess.run(
+        [sys.executable, str(_METRICS_PY), "--project", str(project_path), "--json"],
+        capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
+    )
+    assert result.returncode == 0
+
+    data = json.loads(result.stdout)
+    assert data["human_touch_count"] is None
+    assert data["escaped_bug_rate"] is None
+    assert data["needs_instrumentation"]["human_touch_count"] is True
+    assert data["needs_instrumentation"]["escaped_bug_rate"] is True
