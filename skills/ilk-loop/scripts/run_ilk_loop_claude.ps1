@@ -1708,6 +1708,7 @@ try {
 
 if (Test-AllShipped -Project $ProjectPath) {
   Write-Host "All sub-plans already shipped. Nothing to do." -ForegroundColor Green
+  Write-Host "[ilk] ALL SHIPPED — nothing to run. Do NOT relaunch."
   Write-JsonlRecord -Record @{
     run_id      = $RunId
     cli         = "claude"
@@ -2010,6 +2011,10 @@ try {
   & cmd /c "python `"$LoopStatusScript`" 2>&1"
 } finally {
   Pop-Location
+}
+
+if ($stopReason -eq "all-shipped") {
+  Write-Host "[ilk] ALL SHIPPED — nothing to run. Do NOT relaunch."
 }
 
 } finally {

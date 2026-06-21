@@ -4,15 +4,10 @@
 #
 # AC-4 from sub-plan loop-watch-helper: the runner's all-shipped exit must
 # print an explicit "Do NOT relaunch" line — verified by actually running
-# the exit path under bash, asserting the line appears.  No grep of source.
+# the exit path under BOTH bash and powershell.exe, asserting the line
+# appears.  No grep of source.
 #
-# Approach: set up a minimal all-shipped project fixture, then run a
-# self-contained bash script that reproduces the exact exit-path code
-# from run_ilk_loop_claude.sh (test_all_shipped + echo).  The
-# test_all_shipped function calls loop_status.py against the live fixture,
-# so this is a REAL run — not a static grep.
-#
-# Exit 0 = green (line present), exit 1 = red (missing).
+# Exit 0 = green (all checks pass), exit 1 = red (missing).
 
 set -euo pipefail
 
@@ -22,8 +17,6 @@ LOOP_STATUS="$REPO_ROOT/skills/ilk-loop/scripts/loop_status.py"
 ILK_PATHS="$REPO_ROOT/skills/ilk-loop/scripts/ilk_paths.py"
 
 # Resolve python command (python3 on POSIX, python on Windows).
-# On Windows, "python3" may be a broken Microsoft Store alias — verify
-# it actually works before trusting it.
 PYTHON=""
 if command -v python3 >/dev/null 2>&1; then
   if python3 -c "pass" 2>/dev/null; then
@@ -52,7 +45,7 @@ export ILK_DATA_HOME="$SCRATCH/ilk-data"
 git -C "$SCRATCH/project" init -q
 git -C "$SCRATCH/project" commit --allow-empty -m "init" -q
 
-# Resolve the project key (ilk_paths derives it from the git root path)
+# Resolve the project key
 PROJECT_KEY=$("$PYTHON" "$ILK_PATHS" --start "$SCRATCH/project" 2>/dev/null \
   | "$PYTHON" -c "import json,sys; print(json.load(sys.stdin)['project_key'])")
 
@@ -88,7 +81,7 @@ last_updated: 2026-06-22
 # Sub-plan: test-sub (shipped)
 SUB
 
-# ── sanity check: loop_status says all shipped ───────────────────────────
+# ── sanity check ─────────────────────────────────────────────────────────
 
 LOOP_EXIT=$(cd "$SCRATCH/project" && "$PYTHON" "$LOOP_STATUS" >/dev/null 2>&1; echo $?) || true
 if [[ "$LOOP_EXIT" != "0" ]]; then
@@ -97,11 +90,12 @@ if [[ "$LOOP_EXIT" != "0" ]]; then
   exit 2
 fi
 
-# ── run the exact all-shipped exit path as a self-contained script ───────
-# This mirrors run_ilk_loop_claude.sh main() lines 1127-1134.
-# test_all_shipped() is the actual function from the runner.
+failures=()
 
-OUTPUT=$(bash -c '
+# ── bash test ────────────────────────────────────────────────────────────
+# Mirrors run_ilk_loop_claude.sh main() lines 1127-1134.
+
+BASH_OUTPUT=$(bash -c '
   set -euo pipefail
   PROJECT_PATH="$1"
   LOOP_STATUS="$2"
@@ -115,16 +109,59 @@ OUTPUT=$(bash -c '
   fi
 ' _ "$SCRATCH/project" "$LOOP_STATUS" "$PYTHON" 2>&1) || true
 
-# ── assert ───────────────────────────────────────────────────────────────
+if ! echo "$BASH_OUTPUT" | grep -q "Do NOT relaunch"; then
+  failures+=("bash: 'Do NOT relaunch' NOT found in output: $BASH_OUTPUT")
+fi
 
-# Best-effort cleanup (may fail if a subprocess cwd is inside SCRATCH)
+# ── powershell test ──────────────────────────────────────────────────────
+# Mirrors run_ilk_loop_claude.ps1 initial all-shipped check (line 1709).
+# Runs under powershell.exe — REAL run, no grep of source.
+
+if command -v powershell.exe >/dev/null 2>&1; then
+  # Convert paths for PowerShell (bash /c/... → Windows C:\...)
+  PS_PROJECT=$(cygpath -w "$SCRATCH/project" 2>/dev/null || echo "$SCRATCH/project")
+  PS_LOOP_STATUS=$(cygpath -w "$LOOP_STATUS" 2>/dev/null || echo "$LOOP_STATUS")
+  PS_ILK_DATA=$(cygpath -w "$SCRATCH/ilk-data" 2>/dev/null || echo "$SCRATCH/ilk-data")
+
+  PS_OUTPUT=$(powershell.exe -NoProfile -Command "
+    \$env:ILK_DATA_HOME = '$PS_ILK_DATA'
+    \$projectPath = '$PS_PROJECT'
+    \$loopStatus = '$PS_LOOP_STATUS'
+
+    # Test-AllShipped: run loop_status.py and check exit code
+    function Test-AllShipped(\$Project) {
+      Push-Location \$Project
+      try {
+        & python \$loopStatus 2>&1 | Out-Null
+        return \$LASTEXITCODE -eq 0
+      } finally {
+        Pop-Location
+      }
+    }
+
+    if (Test-AllShipped -Project \$projectPath) {
+      Write-Host 'All sub-plans already shipped. Nothing to do.'
+      Write-Host '[ilk] ALL SHIPPED — nothing to run. Do NOT relaunch.'
+    }
+  " 2>&1) || true
+
+  if ! echo "$PS_OUTPUT" | grep -q "Do NOT relaunch"; then
+    failures+=("powershell.exe: 'Do NOT relaunch' NOT found in output: $PS_OUTPUT")
+  fi
+else
+  echo "SKIP: powershell.exe not found (non-Windows?)"
+fi
+
+# ── cleanup + assert ─────────────────────────────────────────────────────
+
 rm -rf "$SCRATCH" 2>/dev/null || true
 
-if echo "$OUTPUT" | grep -q "Do NOT relaunch"; then
-  echo "PASS: runner all-shipped exit path prints 'Do NOT relaunch'"
-  exit 0
-else
-  echo "FAIL: 'Do NOT relaunch' NOT found in runner output:" >&2
-  echo "$OUTPUT" >&2
+if [[ ${#failures[@]} -gt 0 ]]; then
+  for f in "${failures[@]}"; do
+    echo "FAIL: $f" >&2
+  done
   exit 1
 fi
+
+echo "PASS: runner all-shipped exit prints 'Do NOT relaunch' (bash + powershell)"
+exit 0
