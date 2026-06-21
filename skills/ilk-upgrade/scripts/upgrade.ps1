@@ -361,7 +361,64 @@ function Test-Drift {
     }
   }
 
+  # Check for missing links: an in-repo command/skill with no corresponding
+  # link in any host commands/ or skills/ dir.
+  $repoCommands = Join-Path $RepoRoot "commands"
+  if (Test-Path $repoCommands) {
+    $repoCmds = Get-ChildItem -Path $repoCommands -Filter "ilk*" -File -ErrorAction SilentlyContinue
+    foreach ($repoCmd in $repoCmds) {
+      $foundLink = $false
+      foreach ($agentHome in $homes) {
+        $cmdDir = Join-Path $agentHome "commands"
+        $target = Join-Path $cmdDir $repoCmd.Name
+        if ((Test-Path $target) -or (Test-Path -LiteralPath $target -PathType Leaf)) {
+          $foundLink = $true
+          break
+        }
+      }
+      if (-not $foundLink) {
+        return $true  # drift found: missing link for in-repo command
+      }
+    }
+  }
+
   return $false  # no drift
+}
+
+# --- reconcile links + auto-plan (idempotent, always safe to call) -----------
+function Invoke-ReconcileLinks {
+  param([string]$DiffStatus = "")
+
+  # Drift detection + conditional re-install
+  $needReinstall = $false
+
+  # Check for copy-installed command files or missing links
+  if (Test-Drift) {
+    $needReinstall = $true
+  }
+
+  # Check if skills or commands were added/removed
+  if ($DiffStatus) {
+    if ($DiffStatus -match '^[AD]') {
+      $needReinstall = $true
+    }
+  }
+
+  if ($needReinstall) {
+    Write-Host ""
+    Write-Host "Drift detected — re-running installer..."
+    $installPs1 = Join-Path $RepoRoot "install.ps1"
+    & $InstallerPsExe -NoProfile -ExecutionPolicy Bypass -File $installPs1 -Apply
+    Write-Host "Re-install complete. New code is effective next invocation."
+  } else {
+    Write-Host ""
+    Write-Host "Links current, no re-install needed. New code is effective next invocation."
+  }
+
+  # Reconcile auto-plan managed block (unconditional)
+  $installPs1AutoPlan = Join-Path $RepoRoot "install.ps1"
+  & $InstallerPsExe -NoProfile -ExecutionPolicy Bypass -File $installPs1AutoPlan -OnlyAutoPlan -Apply
+  Write-Host "Auto-plan block reconciled."
 }
 
 # --- --apply: ff-only pull + changelog + conditional re-install ----------------
@@ -399,6 +456,7 @@ function Invoke-Apply {
   if ($LASTEXITCODE -ne 0) { $behind = 0 }
   if ([int]$behind -eq 0) {
     Write-Host "already current"
+    Invoke-ReconcileLinks
     return
   }
 
@@ -460,36 +518,7 @@ function Invoke-Apply {
     }
   }
 
-  # Drift detection + conditional re-install
-  $needReinstall = $false
-
-  # Check for copy-installed command files
-  if (Test-Drift) {
-    $needReinstall = $true
-  }
-
-  # Check if skills or commands were added/removed
-  if ($diffStatus) {
-    if ($diffStatus -match '^[AD]') {
-      $needReinstall = $true
-    }
-  }
-
-  if ($needReinstall) {
-    Write-Host ""
-    Write-Host "Drift detected — re-running installer..."
-    $installPs1 = Join-Path $RepoRoot "install.ps1"
-    & $InstallerPsExe -NoProfile -ExecutionPolicy Bypass -File $installPs1 -Apply
-    Write-Host "Re-install complete. New code is effective next invocation."
-  } else {
-    Write-Host ""
-    Write-Host "Links current, no re-install needed. New code is effective next invocation."
-  }
-
-  # Reconcile auto-plan managed block (unconditional on every successful pull)
-  $installPs1AutoPlan = Join-Path $RepoRoot "install.ps1"
-  & $InstallerPsExe -NoProfile -ExecutionPolicy Bypass -File $installPs1AutoPlan -OnlyAutoPlan -Apply
-  Write-Host "Auto-plan block reconciled."
+  Invoke-ReconcileLinks -DiffStatus $diffStatus
 
   # Restart the bounceable daemons we stopped — now running the fresh code.
   if (-not $NoRestart -and $stoppedDaemons.Count -gt 0) {

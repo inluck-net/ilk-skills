@@ -24,6 +24,7 @@ EXIT_CODE=0
 
 # Capture real paths BEFORE any cd
 REAL_UPGRADE_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/scripts/upgrade.sh"
+REAL_UPGRADE_PS1="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/scripts/upgrade.ps1"
 REAL_ILK_DATA_DIR_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop" && pwd -P)/scripts/_ilk_data_dir.sh"
 
 # --- temp workspace -----------------------------------------------------------
@@ -166,6 +167,23 @@ if [[ $RC2 -eq 0 ]]; then
   pass "AC-3: exit 0 when already-current and links present"
 else
   fail "AC-3: exit $RC2 (expected 0)"
+fi
+
+# --- AC-4: upgrade.ps1 already-current branch reaches reconcile (static) ----
+
+echo ""
+echo "=== Test: upgrade.ps1 already-current branch reaches reconcile ==="
+
+# The already-current block in upgrade.ps1 must be followed by an
+# Invoke-ReconcileLinks call, not a bare `return`.  We check that the
+# line immediately after "already current" is Invoke-ReconcileLinks.
+PS1_AFTER_CURRENT="$(sed -n '/already current/,/^}/p' "$REAL_UPGRADE_PS1" 2>/dev/null | head -5)"
+
+if echo "$PS1_AFTER_CURRENT" | grep -q "Invoke-ReconcileLinks"; then
+  pass "AC-4: upgrade.ps1 already-current branch calls Invoke-ReconcileLinks"
+else
+  fail "AC-4: upgrade.ps1 already-current branch does NOT call Invoke-ReconcileLinks"
+  echo "  context: $(echo "$PS1_AFTER_CURRENT" | tr '\n' ' ')"
 fi
 
 # --- summary ------------------------------------------------------------------
