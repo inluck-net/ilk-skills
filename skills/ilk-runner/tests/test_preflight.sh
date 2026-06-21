@@ -92,6 +92,32 @@ if [[ "$block" != "false" ]]; then
   failures+=("queued+has-active: expected block=false, got block=$block")
 fi
 
+# --- macOS portability regression (escaped bug 086a533f) ---
+# These assertions lock the three macOS fixes from commit 3f016d6:
+#   1. No grep -P (BSD grep rejects it)
+#   2. No basename-built plans_dir (wrong key for external plans)
+#   3. No literal \s in grep (BSD treats it literally; use [[:space:]])
+
+# Portability-1: no grep -P usage
+if grep -nE 'grep +-[a-zA-Z]*P' "$PREFLIGHT" >/dev/null 2>&1; then
+  failures+=("portability: grep -P found in preflight.sh — BSD/macOS grep rejects -P")
+fi
+
+# Portability-2: plans_dir must NOT be built from basename
+if grep -nE 'plans_dir=.*basename' "$PREFLIGHT" >/dev/null 2>&1; then
+  failures+=("portability: plans_dir derived from basename — wrong key for external plans")
+fi
+
+# Portability-2b: plans_dir MUST be derived from loop_status "Plans dir:" output
+if ! grep -q 'Plans dir:' "$PREFLIGHT"; then
+  failures+=("portability: preflight.sh does not derive plans_dir from loop_status 'Plans dir:' output")
+fi
+
+# Portability-3: no literal \s in supervised-detection grep patterns
+if grep -nE 'supervised_only:\\s|status:\\s' "$PREFLIGHT" >/dev/null 2>&1; then
+  failures+=("portability: literal \\s in grep pattern — BSD treats it literally; use [[:space:]]")
+fi
+
 # --- Verdict ---
 if [[ ${#failures[@]} -gt 0 ]]; then
   for f in "${failures[@]}"; do
