@@ -1,8 +1,10 @@
-"""Tests for supervisor_emit.py (AC-1 + AC-3).
+"""Tests for supervisor_emit.py (AC-1 + AC-2 + AC-3).
 
 Covers:
   AC-1  supervisor_emit.py adds exactly one open entry with source=="supervisor"
         and the given relations (title, gap, severity, project, run_id).
+  AC-2  That entry appears in build_task.load_open_candidates() output —
+        /ilk-self-improve would pick it up (end-to-end loop closure).
   AC-3  Re-running the same emit upserts (no duplicate) via content dedup.
 
 Uses ILK_DATA_HOME isolation so tests never touch real ~/.ilk-data.
@@ -129,6 +131,73 @@ class TestAC1SupervisorEmit:
         )
 
         assert entry.source_id == "ext-123"
+
+
+# ── AC-2: surfaced to /ilk-plan via build_task ──────────────────────────────
+
+
+_BUILD_TASK_SCRIPTS = _REPO_ROOT / "skills" / "ilk-self-improve" / "scripts"
+
+
+class TestAC2SurfacedToIlkPlan:
+    """AC-2: Supervisor entry appears in build_task.load_open_candidates()."""
+
+    def test_emit_visible_in_build_task(self, backlog_env):
+        """A supervisor-emitted entry is surfaced to /ilk-plan via build_task."""
+        import improvement_backlog as backlog_mod
+        importlib.reload(backlog_mod)
+        import supervisor_emit as emit_mod
+        importlib.reload(emit_mod)
+
+        emit_mod.emit(
+            title="Supervisor finding for ilk-plan",
+            gap="build_task should see this entry",
+            severity="high",
+            project="test-proj",
+            backlog_dir=backlog_env,
+        )
+
+        # Import build_task and verify the entry is surfaced
+        if str(_BUILD_TASK_SCRIPTS) not in sys.path:
+            sys.path.insert(0, str(_BUILD_TASK_SCRIPTS))
+        import build_task
+        importlib.reload(build_task)
+
+        candidates = build_task.load_open_candidates(backlog_dir=backlog_env)
+        titles = [c.title for c in candidates]
+        assert "Supervisor finding for ilk-plan" in titles
+
+        # Verify source is preserved through the pipeline
+        matching = [c for c in candidates if c.title == "Supervisor finding for ilk-plan"]
+        assert len(matching) == 1
+        assert matching[0].source == "supervisor"
+
+    def test_non_open_entries_not_surfaced(self, backlog_env):
+        """Entries with status != 'open' are NOT surfaced to /ilk-plan."""
+        import improvement_backlog as backlog_mod
+        importlib.reload(backlog_mod)
+        import supervisor_emit as emit_mod
+        importlib.reload(emit_mod)
+
+        emit_mod.emit(
+            title="Shipped finding",
+            gap="already done",
+            backlog_dir=backlog_env,
+        )
+
+        # Manually set status to shipped
+        raw = backlog_mod._load_raw(backlog_env)
+        raw[0]["status"] = "shipped"
+        backlog_mod._save_raw(backlog_env, raw)
+
+        if str(_BUILD_TASK_SCRIPTS) not in sys.path:
+            sys.path.insert(0, str(_BUILD_TASK_SCRIPTS))
+        import build_task
+        importlib.reload(build_task)
+
+        candidates = build_task.load_open_candidates(backlog_dir=backlog_env)
+        titles = [c.title for c in candidates]
+        assert "Shipped finding" not in titles
 
 
 # ── AC-3: upsert (no duplicate on re-emit) ──────────────────────────────────
