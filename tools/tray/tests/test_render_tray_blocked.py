@@ -164,15 +164,18 @@ class TestTooltipAndGlobalIcon:
 # ---------------------------------------------------------------------------
 
 class TestNonBlockedUnchanged:
-    """An entry with blocked=false renders as idle, no BLOCKED in label."""
+    """A non-blocked entry renders as before — except pure-idle entries are
+    now hidden by the idle filter."""
 
-    def test_idle_icon(self) -> None:
+    def test_idle_entry_hidden(self) -> None:
+        """Pure-idle entry produces no rows (idle filter)."""
         entry = _make_entry("idle-proj", alive=False, state="none")
         view = render_tray([entry])
-        assert view["rows"][0]["icon_state"] == "idle"
+        assert view["rows"] == []
 
-    def test_no_blocked_in_label(self) -> None:
-        entry = _make_entry("idle-proj", alive=False, state="none")
+    def test_running_entry_no_blocked_label(self) -> None:
+        """A running non-blocked entry has no BLOCKED in label."""
+        entry = _make_entry("run-proj", alive=True, state="running")
         view = render_tray([entry])
         assert "BLOCKED" not in view["rows"][0]["label"]
 
@@ -182,7 +185,7 @@ class TestNonBlockedUnchanged:
 # ---------------------------------------------------------------------------
 
 class TestMixedBlockedTotality:
-    """1 blocked + 1 running + 1 idle -> exactly 3 rows, counts sum to 3."""
+    """1 blocked + 1 running + 1 idle -> 2 rows (idle hidden), tooltip sums to 3."""
 
     @pytest.fixture()
     def mixed_view(self) -> dict:
@@ -195,10 +198,12 @@ class TestMixedBlockedTotality:
         ]
         return render_tray(entries)
 
-    def test_row_count_is_three(self, mixed_view: dict) -> None:
-        assert len(mixed_view["rows"]) == 3
+    def test_row_count_is_two_idle_hidden(self, mixed_view: dict) -> None:
+        """Idle entry is hidden; only blocked + running produce rows."""
+        assert len(mixed_view["rows"]) == 2
 
     def test_tooltip_counts_sum_to_three(self, mixed_view: dict) -> None:
+        """Tooltip still counts all entries including idle."""
         tooltip = mixed_view["tooltip"]
         blocked = _count_in_tooltip(tooltip, "blocked")
         running = _count_in_tooltip(tooltip, "running")

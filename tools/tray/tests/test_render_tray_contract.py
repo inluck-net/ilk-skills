@@ -100,8 +100,9 @@ class TestMixedInputTotality:
         ]
         return render_tray(entries)
 
-    def test_row_count_equals_three(self, mixed_view: dict) -> None:
-        assert len(mixed_view["rows"]) == 3
+    def test_row_count_equals_two(self, mixed_view: dict) -> None:
+        """Idle entry is hidden by the idle filter; only alive + stale emit rows."""
+        assert len(mixed_view["rows"]) == 2
 
     def test_tooltip_counts_sum_to_three(self, mixed_view: dict) -> None:
         tooltip = mixed_view["tooltip"]
@@ -122,10 +123,12 @@ class TestMixedInputTotality:
         tooltip_error = _count_in_tooltip(mixed_view["tooltip"], "error")
         assert tooltip_stale + tooltip_error == len(attention_rows)
 
-    def test_idle_count_matches_idle_rows(self, mixed_view: dict) -> None:
+    def test_idle_count_hidden_from_rows(self, mixed_view: dict) -> None:
+        """Idle entries are counted in the tooltip but hidden from rows (idle filter)."""
         idle_rows = [r for r in mixed_view["rows"] if r["icon_state"] == "idle"]
         tooltip_idle = _count_in_tooltip(mixed_view["tooltip"], "idle")
-        assert tooltip_idle == len(idle_rows)
+        assert tooltip_idle == 1  # tooltip still counts idle
+        assert len(idle_rows) == 0  # but no idle rows emitted
 
 
 # ---------------------------------------------------------------------------
@@ -193,8 +196,9 @@ class TestMixedWithBlockedTotality:
         ]
         return render_tray(entries)
 
-    def test_row_count_is_three(self, mixed_blocked_view: dict) -> None:
-        assert len(mixed_blocked_view["rows"]) == 3
+    def test_row_count_is_two(self, mixed_blocked_view: dict) -> None:
+        """Idle entry is hidden by the idle filter; only blocked + alive emit rows."""
+        assert len(mixed_blocked_view["rows"]) == 2
 
     def test_tooltip_counts_sum_to_three(self, mixed_blocked_view: dict) -> None:
         tooltip = mixed_blocked_view["tooltip"]

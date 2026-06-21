@@ -77,15 +77,16 @@ class TestAllIdle:
         view = render_tray(entries)
         assert "2 idle" in view["tooltip"]
 
-    def test_rows_count(self) -> None:
+    def test_rows_count_zero_for_idle(self) -> None:
+        """Pure-idle entries are hidden from the row list (idle filter)."""
         entries = [_make_entry("a"), _make_entry("b")]
         view = render_tray(entries)
-        assert len(view["rows"]) == 2
+        assert len(view["rows"]) == 0
 
-    def test_row_icon_state_idle(self) -> None:
+    def test_no_rows_for_idle_entry(self) -> None:
         entries = [_make_entry("a")]
         view = render_tray(entries)
-        assert view["rows"][0]["icon_state"] == "idle"
+        assert view["rows"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -104,15 +105,15 @@ class TestRunning:
         assert "1 running" in view["tooltip"]
 
     def test_mixed_running_and_idle(self) -> None:
+        """Running entry shows; idle entry is hidden by the idle filter."""
         entries = [
             _make_entry("a", alive=True, state="running", step="2/5", next_subplan="auth"),
             _make_entry("b"),
         ]
         view = render_tray(entries)
         assert view["icon_state"] == "running"
-        assert len(view["rows"]) == 2
+        assert len(view["rows"]) == 1
         assert view["rows"][0]["icon_state"] == "running"
-        assert view["rows"][1]["icon_state"] == "idle"
 
     def test_row_label_includes_step_and_subplan(self) -> None:
         entries = [_make_entry("my-app", alive=True, state="running", step="2/5", next_subplan="auth-module")]
@@ -128,14 +129,12 @@ class TestRunning:
         label = render_tray(entries)["rows"][0]["label"]
         assert "(idle)" not in label and "(stale)" not in label
 
-    def test_idle_row_label_marked_idle(self) -> None:
-        # An idle project with pending work shows its NEXT step; tag it (idle)
-        # so the popup row isn't misread as a running task while the tooltip
-        # (correctly) says idle.
+    def test_idle_entry_hidden_by_filter(self) -> None:
+        """An idle entry (even with step info) is hidden by the idle filter."""
         entries = [_make_entry("my-app", step="1/4", next_subplan="server-wake")]
-        label = render_tray(entries)["rows"][0]["label"]
-        assert "1/4" in label
-        assert "(idle)" in label
+        view = render_tray(entries)
+        # Pure idle (not manually_runnable, not blocked) → no rows
+        assert view["rows"] == []
 
     def test_row_action_structure(self) -> None:
         entries = [_make_entry("proj-x", alive=True, state="running")]
