@@ -750,3 +750,38 @@ it. Two operational consequences for the planner:
   comprehension-side complement.
 - **§13 (bias toward autonomy)** — autonomy removes human *bottlenecks*, not
   human *understanding*; the two are different and only the first should shrink.
+
+---
+
+## 20. Orchestration runs on the cheap/free tier, not the planner
+
+Launching a loop, watching it, and re-running deterministic gates are **mechanical**
+acts — they need no planner-tier model. Doing them from an expensive planner session
+(e.g. driving `/ilk-run` + a Monitor babysit loop from Opus) pays planner rates for
+clerical work; the *watching* is the worst offender, because every step/ship event
+re-invokes the planner and each notification can drag the full sub-plan into context.
+This is the operational edge of cost-effectiveness (the framework doc's decision #13).
+
+### Rules
+
+1. **Don't launch+watch from the planner.** Free launch paths exist: the **scheduler**
+   (autonomous, for non-`supervised_only` masters) and the **tray "Start now"** button
+   (a detached PowerShell process — zero model tokens). If a model session must launch,
+   use a **cheap worker session**, not the planner.
+2. **Don't babysit.** The watchdog already supervises (restart on whitelist / block on
+   blacklist) and `collect.py` auto-emits the postmortem on stop. Check `status` once at
+   the end; do not react to every event on a model.
+3. **Deterministic verification needs no planner.** `loop-verified` gates already ran
+   in-loop with `-RunLocalChecks`; re-running them is redundant. A cheap session can
+   re-run them if independent confirmation is wanted. The strong/planner model as an
+   independent checker only earns its cost on **un-gateable tiers** (`compile-only` /
+   `device-manual`) — see §15 / the framework's cross-model-verify decision.
+4. **Reserve the planner tier for planning + judgment**: decomposition, design calls,
+   reading the diff for intent + comprehension debt (§19), and outward actions (push).
+
+### Cross-references
+
+- **§13 (bias toward autonomy)** / framework decision #13 + corollary #13a — this is #13
+  applied to *which tier runs orchestration*.
+- **§19 (comprehension debt)** — the human read this preserves is judgment, not clerical.
+- **§15 (verification tier)** — when a checker model IS worth it (weak tiers only).
