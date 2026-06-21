@@ -37,6 +37,7 @@ def _make_entry(
     blocked: bool = False,
     blocked_reason: str | None = None,
     runnable: bool = False,
+    manually_runnable: bool = False,
     parked: bool = False,
     path: str = "",
 ) -> dict:
@@ -55,6 +56,7 @@ def _make_entry(
         "blocked_expiry": None,
         "report_path": None,
         "runnable": runnable,
+        "manually_runnable": manually_runnable,
         "parked": parked,
     }
 
@@ -101,14 +103,14 @@ class TestRunning:
 
 class TestRunnableIdle:
     def test_start_now_line_present(self) -> None:
-        entry = _make_entry("proj", runnable=True, step="1/4", next_subplan="auth")
+        entry = _make_entry("proj", manually_runnable=True, step="1/4", next_subplan="auth")
         text = _render(entry)
         starts = _start_now_lines(text)
         assert len(starts) == 1
         assert "Start now" in starts[0]
 
     def test_start_now_has_bash_and_param1(self) -> None:
-        entry = _make_entry("proj", runnable=True, path="/home/user/proj")
+        entry = _make_entry("proj", manually_runnable=True, path="/home/user/proj")
         text = _render(entry)
         starts = _start_now_lines(text)
         # !r adds quotes: bash='<script>' param1='<path>'
@@ -116,33 +118,41 @@ class TestRunnableIdle:
         assert "param1='/home/user/proj'" in starts[0]
 
     def test_start_now_path_in_line(self) -> None:
-        entry = _make_entry("proj", runnable=True, path="/home/user/proj")
+        entry = _make_entry("proj", manually_runnable=True, path="/home/user/proj")
         text = _render(entry)
         starts = _start_now_lines(text)
         assert "/home/user/proj" in starts[0]
 
     def test_start_now_has_terminal_false(self) -> None:
-        entry = _make_entry("proj", runnable=True)
+        entry = _make_entry("proj", manually_runnable=True)
         text = _render(entry)
         starts = _start_now_lines(text)
         assert "terminal=false" in starts[0]
 
     def test_start_now_has_refresh_true(self) -> None:
-        entry = _make_entry("proj", runnable=True)
+        entry = _make_entry("proj", manually_runnable=True)
         text = _render(entry)
         starts = _start_now_lines(text)
         assert "refresh=true" in starts[0]
 
     def test_no_resume_when_runnable(self) -> None:
-        entry = _make_entry("proj", runnable=True)
+        entry = _make_entry("proj", manually_runnable=True)
         text = _render(entry)
         assert not _resume_lines(text)
 
     def test_start_now_is_sub_item(self) -> None:
-        entry = _make_entry("proj", runnable=True)
+        entry = _make_entry("proj", manually_runnable=True)
         text = _render(entry)
         starts = _start_now_lines(text)
         assert starts[0].startswith("--")
+
+    def test_start_now_when_manually_runnable_but_not_runnable(self) -> None:
+        """AC-2: manually_runnable=True shows Start now even when runnable=False."""
+        entry = _make_entry("proj", manually_runnable=True, runnable=False, step="1/4")
+        text = _render(entry)
+        starts = _start_now_lines(text)
+        assert len(starts) == 1
+        assert "Start now" in starts[0]
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +230,7 @@ class TestAllShipped:
 class TestMixedStates:
     def test_runnable_and_parked_both_render(self) -> None:
         entries = [
-            _make_entry("runnable-proj", runnable=True),
+            _make_entry("runnable-proj", manually_runnable=True),
             _make_entry("parked-proj", parked=True, blocked=True),
         ]
         text = _render(*entries)
@@ -238,7 +248,7 @@ class TestMixedStates:
 
 class TestActionPath:
     def test_start_now_uses_entry_path(self) -> None:
-        entry = _make_entry("proj", runnable=True, path="C:\\Users\\me\\proj")
+        entry = _make_entry("proj", manually_runnable=True, path="C:\\Users\\me\\proj")
         text = _render(entry)
         starts = _start_now_lines(text)
         # !r repr doubles backslashes: param1='C:\\Users\\me\\proj'

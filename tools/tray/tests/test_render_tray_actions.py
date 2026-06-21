@@ -35,6 +35,7 @@ def _make_entry(
     blocked: bool = False,
     blocked_reason: str | None = None,
     runnable: bool = False,
+    manually_runnable: bool = False,
     parked: bool = False,
     path: str | None = None,
 ) -> dict:
@@ -53,6 +54,7 @@ def _make_entry(
         "blocked_expiry": None,
         "report_path": None,
         "runnable": runnable,
+        "manually_runnable": manually_runnable,
         "parked": parked,
     }
 
@@ -98,7 +100,7 @@ class TestRunning:
 
 class TestRunnableIdle:
     def test_start_now_row_present(self) -> None:
-        entries = [_make_entry("proj", runnable=True, step="1/4", next_subplan="auth")]
+        entries = [_make_entry("proj", manually_runnable=True, step="1/4", next_subplan="auth")]
         view = render_tray(entries)
         actions = _action_rows(view["rows"])
         run_rows = [r for r in actions if r["action"]["kind"] == "run"]
@@ -106,7 +108,7 @@ class TestRunnableIdle:
         assert run_rows[0]["label"] == "Start now"
 
     def test_start_now_action_shape(self) -> None:
-        entries = [_make_entry("proj", runnable=True, path="/home/user/proj")]
+        entries = [_make_entry("proj", manually_runnable=True, path="/home/user/proj")]
         view = render_tray(entries)
         run_rows = [r for r in _action_rows(view["rows"]) if r["action"]["kind"] == "run"]
         action = run_rows[0]["action"]
@@ -115,16 +117,25 @@ class TestRunnableIdle:
         assert action["path"] == "/home/user/proj"
 
     def test_no_resume_when_runnable(self) -> None:
-        entries = [_make_entry("proj", runnable=True)]
+        entries = [_make_entry("proj", manually_runnable=True)]
         view = render_tray(entries)
         actions = _action_rows(view["rows"])
         assert not any(r["action"]["kind"] == "resume" for r in actions)
 
     def test_status_row_preserved_when_runnable(self) -> None:
-        entries = [_make_entry("proj", runnable=True, step="1/4")]
+        entries = [_make_entry("proj", manually_runnable=True, step="1/4")]
         view = render_tray(entries)
         statuses = _status_rows(view["rows"])
         assert len(statuses) == 1
+
+    def test_start_now_when_manually_runnable_but_not_runnable(self) -> None:
+        """AC-2: manually_runnable=True shows Start now even when runnable=False."""
+        entries = [_make_entry("proj", manually_runnable=True, runnable=False, step="1/4")]
+        view = render_tray(entries)
+        actions = _action_rows(view["rows"])
+        run_rows = [r for r in actions if r["action"]["kind"] == "run"]
+        assert len(run_rows) == 1
+        assert run_rows[0]["label"] == "Start now"
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +201,7 @@ class TestMixedStates:
     def test_running_and_runnable_both_render(self) -> None:
         entries = [
             _make_entry("running-proj", alive=True, state="running"),
-            _make_entry("idle-proj", runnable=True, step="1/4"),
+            _make_entry("idle-proj", manually_runnable=True, step="1/4"),
         ]
         view = render_tray(entries)
         rows = view["rows"]
@@ -204,7 +215,7 @@ class TestMixedStates:
     def test_parked_and_runnable_coexist(self) -> None:
         entries = [
             _make_entry("parked-proj", parked=True, blocked=True),
-            _make_entry("runnable-proj", runnable=True),
+            _make_entry("runnable-proj", manually_runnable=True),
         ]
         view = render_tray(entries)
         rows = view["rows"]
@@ -222,7 +233,7 @@ class TestMixedStates:
 
 class TestActionPath:
     def test_start_now_uses_entry_path(self) -> None:
-        entries = [_make_entry("proj", runnable=True, path="C:\\Users\\me\\proj")]
+        entries = [_make_entry("proj", manually_runnable=True, path="C:\\Users\\me\\proj")]
         view = render_tray(entries)
         run_rows = [r for r in view["rows"] if r["action"]["kind"] == "run"]
         assert run_rows[0]["action"]["path"] == "C:\\Users\\me\\proj"
@@ -234,7 +245,7 @@ class TestActionPath:
         assert resume_rows[0]["action"]["path"] == "/home/me/proj"
 
     def test_empty_path_when_missing(self) -> None:
-        entries = [_make_entry("proj", runnable=True, path="")]
+        entries = [_make_entry("proj", manually_runnable=True, path="")]
         view = render_tray(entries)
         run_rows = [r for r in view["rows"] if r["action"]["kind"] == "run"]
         assert run_rows[0]["action"]["path"] == ""

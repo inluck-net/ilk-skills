@@ -85,10 +85,10 @@ def render_xbar(
         lines.append(row)
 
         # ── Action sub-items: Start now / Resume ─────────────────────
-        # Start now: runnable & not running — dispatchable work exists.
+        # Start now: manually_runnable & not running — dispatchable work exists.
         # Resume: parked/blacklisted — needs resolve-ack.
         project_path = e.get("path", "")
-        if e.get("runnable"):
+        if e.get("manually_runnable"):
             lines.append(
                 f"--Start now | bash={run_script!r}"
                 f" param1={project_path!r} terminal=false refresh=true"

@@ -113,11 +113,11 @@ def render_tray(entries: list[dict]) -> dict:
         })
 
         # ── Action rows: Start now / Resume ──────────────────────────
-        # Start now (kind:"run"): runnable & not running — dispatchable work exists.
+        # Start now (kind:"run"): manually_runnable & not running — dispatchable work exists.
         # Resume (kind:"resume"): parked/blacklisted — needs /ilk-resume.
         # Each action row carries `path` so the click dispatcher can target the project.
         project_path = e.get("path", "")
-        if e.get("runnable"):
+        if e.get("manually_runnable"):
             rows.append({
                 "label": "Start now",
                 "icon_state": icon,
