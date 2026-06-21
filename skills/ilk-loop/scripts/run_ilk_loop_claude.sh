@@ -790,7 +790,10 @@ finalize_sentinel() {
   # On EXIT (signal, error, or normal), if the sentinel is still state=running,
   # rewrite it to a terminal state so stale-running sentinels never survive.
   # Safe to call multiple times — idempotent (no-op when state != running).
-  [[ -z "$runtime_dir" ]] && return 0
+  # `runtime_dir` is local to main(); when this EXIT trap fires after main
+  # returns it is out of scope, so default-expand to stay safe under `set -u`
+  # (otherwise the quick all-shipped exit path errors: "runtime_dir: unbound").
+  [[ -z "${runtime_dir:-}" ]] && return 0
   local target="${runtime_dir}/last-exit.json"
   [[ -f "$target" ]] || return 0
 
