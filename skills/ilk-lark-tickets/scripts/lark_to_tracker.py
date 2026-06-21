@@ -1,0 +1,127 @@
+"""Lark → per-project tracker PULL adapter (dual-path).
+
+Pulls triaged (可执行) records from a Lark Bitable via an injectable client
+and upserts each into the project tracker with ``source="lark"`` and
+``source_id=<record_id>``.
+
+Design decisions (batch 2 convergence):
+  - **Additive / dual-path.** Does NOT touch existing ``list``/``pull-new``
+    verbs or the direct Lark→/ilk-plan flow.
+  - **Field ownership: Lark owns content.** On pull, the Lark record's
+    title/description/priority OVERWRITE the tracker entry's content fields.
+  - ``source_id`` = Lark ``record_id`` so re-syncs upsert one entry per
+    record (relies on batch-1's ``(source, source_id)`` upsert).
+
+Usage (programmatic — the CLI verb lives in ``cli.py``)::
+
+    from lark_to_tracker import sync
+    sync(client, project="/path/to/project")
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import Any, Protocol
+
+
+# ── Import project_tracker from sibling skill ────────────────────────────────
+
+_HERE = Path(__file__).resolve()
+_FEEDBACK_SCRIPTS = _HERE.parent.parent.parent / "ilk-feedback" / "scripts"
+if str(_FEEDBACK_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_FEEDBACK_SCRIPTS))
+
+import project_tracker  # noqa: E402
+
+
+# ── Injectable client protocol ───────────────────────────────────────────────
+
+class LarkClient(Protocol):
+    """Minimal interface the sync function needs from a Lark client."""
+
+    def list_records(
+        self,
+        *,
+        filter_expr: dict | None = None,
+        max_records: int | None = None,
+    ) -> list[dict]:
+        """Return records matching *filter_expr*."""
+        ...
+
+
+# ── Field mapping helpers ────────────────────────────────────────────────────
+
+def _flatten_text(value: Any) -> str:
+    """Bitable text fields come back as list of segment dicts; flatten."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = []
+        for seg in value:
+            if isinstance(seg, dict):
+                parts.append(seg.get("text") or seg.get("name") or "")
+            else:
+                parts.append(str(seg))
+        return "".join(parts)
+    if isinstance(value, dict):
+        return value.get("text") or value.get("name") or ""
+    return str(value)
+
+
+# ── Core sync function ───────────────────────────────────────────────────────
+
+def sync(
+    client: LarkClient,
+    *,
+    project: str | Path | None = None,
+    key: str | None = None,
+    status: str = "可执行",
+) -> int:
+    """Pull *status* records from *client* and upsert into the project tracker.
+
+    Returns the number of records processed.
+    """
+    filter_expr = {
+        "conjunction": "and",
+        "conditions": [
+            {"field_name": "状态", "operator": "is", "value": [status]},
+        ],
+    }
+    records = client.list_records(filter_expr=filter_expr)
+
+    for rec in records:
+        fields = rec.get("fields") or {}
+        record_id = rec.get("record_id", "")
+        title = _flatten_text(fields.get("标题"))
+        description = _flatten_text(fields.get("原文描述") or fields.get("描述") or "")
+        priority = fields.get("紧急度") or fields.get("AI 优先级建议") or ""
+
+        project_tracker.add(
+            title=title or f"lark:{record_id}",
+            source="lark",
+            source_id=record_id,
+            kind="feature",
+            gap=description or title,
+            project=project,
+            key=key,
+            severity=_map_priority(str(priority)),
+        )
+
+    return len(records)
+
+
+def _map_priority(lark_priority: str) -> str:
+    """Map Lark 优先级/severity to tracker severity (default ``medium``)."""
+    p = lark_priority.strip().lower()
+    if p in ("紧急", "p0", "critical", "high"):
+        return "high"
+    if p in ("高", "p1", "medium-high"):
+        return "high"
+    if p in ("中", "p2", "medium"):
+        return "medium"
+    if p in ("低", "p3", "low"):
+        return "low"
+    return "medium"
