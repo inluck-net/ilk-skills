@@ -507,3 +507,198 @@ def test_text_output_contains_labels(scratch_env):
     assert "clean-success" in output, f"--text missing clean-success:\n{output}"
     assert "needs_instrumentation" in output, f"--text missing needs_instrumentation:\n{output}"
     assert "=== ilk feedback metrics ===" in output, f"--text missing header:\n{output}"
+
+
+# ── Comprehension debt proxy ─────────────────────────────────────────────────
+
+
+def _make_git_log_runner(messages: list[str]):
+    """Return an injectable git-log runner that yields *messages* verbatim."""
+    def _runner(cwd: str, n: int = 100) -> list[str]:
+        return messages[:n]
+    return _runner
+
+
+# ── AC-1: 7 loop-signed + 3 plain → ratio 0.7 ──────────────────────────────
+
+
+def test_comprehension_debt_ac1_ratio(scratch_env):
+    """7 loop-signed + 3 plain commits → loop_authored_ratio == 0.7."""
+    project_path, env, key, data_home = scratch_env
+
+    logs_dir = data_home / "projects" / key / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = logs_dir / ".ilk-loop.log"
+
+    records = [
+        {"run_id": "run-1", "iteration": 1, "project": str(project_path),
+         "exit_code": 0, "classification": "clean-success"},
+    ]
+    _write_jsonl(jsonl_path, records)
+
+    # Build synthetic commit messages: 7 with [plan: trailer, 3 plain
+    loop_msgs = [
+        f"feat(module): change {i}\n\n[plan:my-slug#step-{i}]"
+        for i in range(7)
+    ]
+    plain_msgs = [
+        f"fix(module): fix {i}"
+        for i in range(3)
+    ]
+    all_msgs = loop_msgs + plain_msgs
+
+    git_log_runner = _make_git_log_runner(all_msgs)
+
+    # Call _compute_all_kpis directly with the injectable runner
+    from importlib.util import spec_from_file_location, module_from_spec
+    spec = spec_from_file_location("_metrics", str(_METRICS_PY))
+    metrics_mod = module_from_spec(spec)
+    spec.loader.exec_module(metrics_mod)
+
+    cd = metrics_mod.compute_comprehension_debt(project_path, git_log_runner)
+    assert cd is not None, "comprehension_debt should not be None"
+    assert cd["loop_authored_ratio"] == 0.7, (
+        f"Expected 0.7, got {cd['loop_authored_ratio']}"
+    )
+    assert cd["loop_commits"] == 7, f"Expected 7 loop_commits, got {cd['loop_commits']}"
+    assert cd["total_commits"] == 10, f"Expected 10 total_commits, got {cd['total_commits']}"
+
+
+# ── AC-2: is_proxy + needs_signal present ────────────────────────────────────
+
+
+def test_comprehension_debt_ac2_honest_proxy_labels(scratch_env):
+    """Output must carry is_proxy: true and needs_signal note."""
+    project_path, env, key, data_home = scratch_env
+
+    logs_dir = data_home / "projects" / key / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = logs_dir / ".ilk-loop.log"
+
+    records = [
+        {"run_id": "run-1", "iteration": 1, "project": str(project_path),
+         "exit_code": 0, "classification": "clean-success"},
+    ]
+    _write_jsonl(jsonl_path, records)
+
+    git_log_runner = _make_git_log_runner([
+        "feat(x): y\n\n[plan:a#step-0]",
+        "fix(z): w",
+    ])
+
+    from importlib.util import spec_from_file_location, module_from_spec
+    spec = spec_from_file_location("_metrics", str(_METRICS_PY))
+    metrics_mod = module_from_spec(spec)
+    spec.loader.exec_module(metrics_mod)
+
+    cd = metrics_mod.compute_comprehension_debt(project_path, git_log_runner)
+    assert cd is not None
+    assert cd["is_proxy"] is True, f"Expected is_proxy=True, got {cd['is_proxy']}"
+    assert cd["needs_signal"] == "explicit human-review record", (
+        f"Expected needs_signal note, got {cd['needs_signal']}"
+    )
+
+
+# ── AC-3: empty/zero commits → ratio null, no divide-by-zero ────────────────
+
+
+def test_comprehension_debt_ac3_empty_commits(scratch_env):
+    """Zero commits → ratio null, total_commits 0, no crash."""
+    project_path, env, key, data_home = scratch_env
+
+    logs_dir = data_home / "projects" / key / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = logs_dir / ".ilk-loop.log"
+
+    records = [
+        {"run_id": "run-1", "iteration": 1, "project": str(project_path),
+         "exit_code": 0, "classification": "clean-success"},
+    ]
+    _write_jsonl(jsonl_path, records)
+
+    git_log_runner = _make_git_log_runner([])
+
+    from importlib.util import spec_from_file_location, module_from_spec
+    spec = spec_from_file_location("_metrics", str(_METRICS_PY))
+    metrics_mod = module_from_spec(spec)
+    spec.loader.exec_module(metrics_mod)
+
+    cd = metrics_mod.compute_comprehension_debt(project_path, git_log_runner)
+    assert cd is not None
+    assert cd["loop_authored_ratio"] is None, (
+        f"Expected None ratio for zero commits, got {cd['loop_authored_ratio']}"
+    )
+    assert cd["total_commits"] == 0, f"Expected 0 total, got {cd['total_commits']}"
+    assert cd["loop_commits"] == 0, f"Expected 0 loop, got {cd['loop_commits']}"
+
+
+# ── Comprehension debt in full JSON output ───────────────────────────────────
+
+
+def test_comprehension_debt_in_json_output(scratch_env):
+    """comprehension_debt block must appear in --json output."""
+    project_path, env, key, data_home = scratch_env
+
+    logs_dir = data_home / "projects" / key / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = logs_dir / ".ilk-loop.log"
+
+    records = [
+        {"run_id": "run-1", "iteration": 1, "project": str(project_path),
+         "exit_code": 0, "classification": "clean-success"},
+    ]
+    _write_jsonl(jsonl_path, records)
+
+    result = subprocess.run(
+        [sys.executable, str(_METRICS_PY), "--project", str(project_path), "--json"],
+        capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
+    )
+    assert result.returncode == 0, (
+        f"metrics.py exited {result.returncode}.\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+    data = json.loads(result.stdout)
+    assert "comprehension_debt" in data, (
+        f"Missing comprehension_debt in output: {data.keys()}"
+    )
+    cd = data["comprehension_debt"]
+    # With no real git history in the temp project, it may return None or
+    # a dict with is_proxy. Either is acceptable for the integration check.
+    if cd is not None:
+        assert cd["is_proxy"] is True
+        assert cd["needs_signal"] == "explicit human-review record"
+
+
+# ── Comprehension debt in --text output ──────────────────────────────────────
+
+
+def test_comprehension_debt_in_text_output(scratch_env):
+    """--text output must mention comprehension debt."""
+    project_path, env, key, data_home = scratch_env
+
+    logs_dir = data_home / "projects" / key / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = logs_dir / ".ilk-loop.log"
+
+    records = [
+        {"run_id": "run-1", "iteration": 1, "project": str(project_path),
+         "exit_code": 0, "classification": "clean-success"},
+    ]
+    _write_jsonl(jsonl_path, records)
+
+    result = subprocess.run(
+        [sys.executable, str(_METRICS_PY), "--project", str(project_path), "--text"],
+        capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
+    )
+    assert result.returncode == 0, (
+        f"metrics.py exited {result.returncode}.\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+    output = result.stdout
+    assert "Comprehension debt" in output, (
+        f"--text missing comprehension debt:\n{output}"
+    )

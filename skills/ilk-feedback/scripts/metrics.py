@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -222,14 +223,120 @@ def compute_blacklist_thrash_count(
     return None
 
 
+def compute_comprehension_debt(
+    project_path: Path | None = None,
+    git_log_runner: Any | None = None,
+) -> dict[str, Any] | None:
+    """Compute comprehension-debt proxy: loop-authored commit ratio.
+
+    Honest-proxy constraint: ilk records no explicit "human reviewed this
+    merge" signal yet, so a *true* un-reviewed-merge ratio isn't computable.
+    The defensible proxy is **loop-authored-commit ratio**: commits bearing
+    a loop signature (`[plan:<slug>#step-N]` trailer, or the worker
+    `Co-Authored-By`) over total commits in a window — high ratio = code
+    merged with little human authorship, the comprehension-debt direction.
+
+    Args:
+        project_path: Project directory to run git log in.
+        git_log_runner: Injectable callable ``(cwd, n) -> list[str]`` where
+            each string is a raw commit message body.  Defaults to
+            ``_default_git_log_runner`` which calls ``git log``.
+
+    Returns:
+        Dict with loop_authored_ratio, total_commits, loop_commits,
+        is_proxy, needs_signal — or None when project_path is None.
+    """
+    if project_path is None:
+        return None
+
+    if git_log_runner is None:
+        git_log_runner = _default_git_log_runner
+
+    try:
+        messages = git_log_runner(str(project_path), 100)
+    except Exception:
+        return None
+
+    total = len(messages)
+    if total == 0:
+        return {
+            "loop_authored_ratio": None,
+            "total_commits": 0,
+            "loop_commits": 0,
+            "is_proxy": True,
+            "needs_signal": "explicit human-review record",
+        }
+
+    loop_count = 0
+    for msg in messages:
+        if _is_loop_signed(msg):
+            loop_count += 1
+
+    return {
+        "loop_authored_ratio": round(loop_count / total, 4),
+        "total_commits": total,
+        "loop_commits": loop_count,
+        "is_proxy": True,
+        "needs_signal": "explicit human-review record",
+    }
+
+
+def _default_git_log_runner(cwd: str, n: int = 100) -> list[str]:
+    """Default git-log runner: returns the last *n* commit message bodies."""
+    import subprocess as _sp
+
+    result = _sp.run(
+        ["git", "log", f"--max-count={n}", "--format=%B"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        return []
+    # Split on blank lines — each commit body is separated by a blank line
+    raw = result.stdout.strip()
+    if not raw:
+        return []
+    # git log --format=%B separates commits with blank lines
+    bodies: list[str] = []
+    current: list[str] = []
+    for line in raw.split("\n"):
+        if line.strip() == "" and current:
+            bodies.append("\n".join(current))
+            current = []
+        else:
+            current.append(line)
+    if current:
+        bodies.append("\n".join(current))
+    return bodies
+
+
+# Signature patterns for loop-authored commits
+_LOOP_SIGNATURE_PATTERNS = [
+    re.compile(r"^\[plan:", re.MULTILINE),                     # [plan:slug#step-N] trailer
+    re.compile(r"Co-Authored-By:.*worker", re.IGNORECASE),     # worker co-author
+]
+
+
+def _is_loop_signed(commit_message: str) -> bool:
+    """Return True if the commit message carries a loop signature."""
+    for pat in _LOOP_SIGNATURE_PATTERNS:
+        if pat.search(commit_message):
+            return True
+    return False
+
+
 def _compute_all_kpis(
     records: list[dict[str, Any]],
     project_path: Path | None = None,
+    git_log_runner: Any | None = None,
 ) -> dict[str, Any]:
     """Compute all KPIs from the JSONL records. Returns a metrics dict."""
     dist = compute_classification_distribution(records)
     time_to_ship = compute_time_to_ship_by_tier(records, project_path)
     thrash_count = compute_blacklist_thrash_count(records, project_path)
+    comprehension_debt = compute_comprehension_debt(project_path, git_log_runner)
 
     result: dict[str, Any] = {
         "classification_distribution": dist,
@@ -238,6 +345,7 @@ def _compute_all_kpis(
         # Now-computable KPIs (null when needed fields absent)
         "time_to_ship_by_tier": time_to_ship,
         "blacklist_thrash_count": thrash_count,
+        "comprehension_debt": comprehension_debt,
         # KPIs that need instrumentation — honest nulls
         "human_touch_count": None,
         "escaped_bug_rate": None,
@@ -246,6 +354,7 @@ def _compute_all_kpis(
             "blacklist_thrash_count": thrash_count is None,
             "human_touch_count": True,
             "escaped_bug_rate": True,
+            "comprehension_debt": comprehension_debt is None,
         },
     }
 
@@ -291,6 +400,18 @@ def _render_text(metrics: dict[str, Any]) -> str:
         lines.append(f"Blacklist thrash count: {thrash}")
     else:
         lines.append("Blacklist thrash count: null (needs_instrumentation)")
+
+    # Comprehension debt (proxy)
+    cd = metrics.get("comprehension_debt")
+    if cd is not None:
+        ratio = cd.get("loop_authored_ratio")
+        ratio_str = f"{ratio:.2%}" if ratio is not None else "null"
+        lines.append(
+            f"Comprehension debt: {ratio_str} loop-authored "
+            f"({cd['loop_commits']}/{cd['total_commits']}) [proxy]"
+        )
+    else:
+        lines.append("Comprehension debt: null (needs_instrumentation)")
 
     lines.append("")
 
