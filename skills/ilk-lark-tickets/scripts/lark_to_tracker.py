@@ -38,7 +38,7 @@ import project_tracker  # noqa: E402
 # ── Injectable client protocol ───────────────────────────────────────────────
 
 class LarkClient(Protocol):
-    """Minimal interface the sync function needs from a Lark client."""
+    """Minimal interface the sync and writeback functions need from a Lark client."""
 
     def list_records(
         self,
@@ -47,6 +47,14 @@ class LarkClient(Protocol):
         max_records: int | None = None,
     ) -> list[dict]:
         """Return records matching *filter_expr*."""
+        ...
+
+    def get_record(self, record_id: str) -> dict:
+        """Return a single record by *record_id*."""
+        ...
+
+    def update_record(self, record_id: str, fields: dict) -> dict:
+        """Update *fields* on the record identified by *record_id*."""
         ...
 
 
@@ -145,3 +153,57 @@ def _map_kind(lark_type: str) -> str:
     if t in ("gap", "差距"):
         return "gap"
     return "feature"
+
+
+# ── Status mapping (tracker → Lark) ──────────────────────────────────────────
+
+#: Maps tracker ``status`` values to Lark ``状态`` column values.
+#: ``"shipped"`` → ``"待验证"`` (the next workflow state the loop already uses
+#: on ship).  Unmapped statuses are passed through as-is.
+_STATUS_MAP: dict[str, str] = {
+    "shipped": "待验证",
+}
+
+
+# ── Write-back function (tracker → Lark) ─────────────────────────────────────
+
+def writeback_status(
+    client: LarkClient,
+    *,
+    project: str | Path | None = None,
+    key: str | None = None,
+    status_map: dict[str, str] | None = None,
+) -> int:
+    """Push tracker statuses back to Lark for ``source="lark"`` entries.
+
+    For each tracker entry whose ``source == "lark"`` and whose status
+    differs from the Lark record's current ``状态``, calls the client's
+    ``update_record`` with the mapped ``状态`` value.
+
+    Returns the number of records updated.
+    """
+    if status_map is None:
+        status_map = _STATUS_MAP
+
+    entries = project_tracker.load(project=project, key=key)
+    updated = 0
+
+    for entry in entries:
+        if entry.source != "lark":
+            continue
+        if not entry.source_id:
+            continue
+
+        record = client.get_record(entry.source_id)
+        record_fields = (record.get("record") or record).get("fields") or {}
+        current_lark_status = record_fields.get("状态") or ""
+
+        mapped_status = status_map.get(entry.status, entry.status)
+
+        if current_lark_status == mapped_status:
+            continue
+
+        client.update_record(entry.source_id, {"状态": mapped_status})
+        updated += 1
+
+    return updated
