@@ -427,3 +427,83 @@ def test_readonly_boundary_input_log_unchanged(scratch_env):
                 pytest.fail(
                     f"metrics.py modified a file under ILK_DATA_HOME: {p}"
                 )
+
+
+# ── AC-6: --all aggregates across multiple projects ──────────────────────────
+
+
+def test_all_aggregates_two_projects(tmp_path):
+    """--all must aggregate records from multiple projects."""
+    data_home = tmp_path / "ilk-data"
+    data_home.mkdir()
+
+    env = {
+        **os.environ,
+        "ILK_DATA_HOME": str(data_home),
+        "PYTHONIOENCODING": "utf-8",
+    }
+
+    # Create two fake projects with different classifications
+    for i, (proj_name, label) in enumerate([("proj-a", "clean-success"), ("proj-b", "timeout-bound")]):
+        proj_path = tmp_path / proj_name
+        proj_path.mkdir()
+        key = _project_key(proj_path)
+        logs_dir = data_home / "projects" / key / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        jsonl_path = logs_dir / ".ilk-loop.log"
+        records = [
+            {"run_id": f"run-{i}", "iteration": 1, "project": str(proj_path),
+             "exit_code": 0, "classification": label},
+        ]
+        _write_jsonl(jsonl_path, records)
+
+    result = subprocess.run(
+        [sys.executable, str(_METRICS_PY), "--all", "--json",
+         "--data-root", str(data_home)],
+        capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
+    )
+    assert result.returncode == 0, (
+        f"metrics.py exited {result.returncode}.\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+    data = json.loads(result.stdout)
+    dist = data["classification_distribution"]
+    assert dist["clean-success"] == 1, f"Expected 1 clean-success, got {dist['clean-success']}"
+    assert dist["timeout-bound"] == 1, f"Expected 1 timeout-bound, got {dist['timeout-bound']}"
+    assert data["total_runs"] == 2, f"Expected 2 total_runs, got {data['total_runs']}"
+    assert data["total_iterations"] == 2, f"Expected 2 total_iterations, got {data['total_iterations']}"
+
+
+# ── --text output ────────────────────────────────────────────────────────────
+
+
+def test_text_output_contains_labels(scratch_env):
+    """--text output must contain classification labels and KPI markers."""
+    project_path, env, key, data_home = scratch_env
+
+    logs_dir = data_home / "projects" / key / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = logs_dir / ".ilk-loop.log"
+
+    records = [
+        {"run_id": "run-1", "iteration": 1, "project": str(project_path),
+         "exit_code": 0, "classification": "clean-success"},
+    ]
+    _write_jsonl(jsonl_path, records)
+
+    result = subprocess.run(
+        [sys.executable, str(_METRICS_PY), "--project", str(project_path), "--text"],
+        capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
+    )
+    assert result.returncode == 0, (
+        f"metrics.py exited {result.returncode}.\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+    output = result.stdout
+    assert "clean-success" in output, f"--text missing clean-success:\n{output}"
+    assert "needs_instrumentation" in output, f"--text missing needs_instrumentation:\n{output}"
+    assert "=== ilk feedback metrics ===" in output, f"--text missing header:\n{output}"

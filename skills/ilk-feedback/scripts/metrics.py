@@ -360,12 +360,12 @@ def main(argv: list[str] | None = None) -> int:
         records = _read_jsonl(jsonl_path)
         metrics = _compute_all_kpis(records, project_path)
     else:
-        # --all mode
+        # --all mode: read JSONL from each project's logs/ dir directly
         data_root = _resolve_data_root(args.data_root)
         records = []
         for proj_dir in _discover_projects(data_root):
-            jsonl_path = jsonl_summary_path(project_key(proj_dir)) if (jsonl_summary_path and project_key) else None
-            if jsonl_path and jsonl_path.exists():
+            jsonl_path = proj_dir / "logs" / ".ilk-loop.log"
+            if jsonl_path.exists():
                 records.extend(_read_jsonl(jsonl_path))
         metrics = _compute_all_kpis(records)
 
