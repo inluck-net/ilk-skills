@@ -75,6 +75,7 @@ def render_tray(entries: list[dict]) -> dict:
 
         # Row label: mirror render_xbar's text convention.
         label = key
+        model = e.get("model") or ""
         if e.get("blocked"):
             classification = e.get("classification") or "unknown"
             label += f"  BLOCKED: {classification}  -> /ilk-resume"
@@ -96,7 +97,9 @@ def render_tray(entries: list[dict]) -> dict:
             # is the NEXT pending work, which otherwise reads like a running task
             # (the tooltip-says-idle vs popup-looks-running mismatch). A 'running'
             # row needs no suffix — the icon conveys it.
-            if icon == "idle":
+            if icon == "running" and model:
+                label += f"  running on {model}"
+            elif icon == "idle":
                 label += "  (idle)"
             elif icon == "attention":
                 label += "  (error)" if state in ("error", "errored") else "  (stale)"

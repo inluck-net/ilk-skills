@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ilk_paths import (  # noqa: E402
     external_launcher_dir,
+    external_logs_dir,
     external_runtime_dir,
     ilk_data_root,
     project_key,
@@ -108,6 +109,36 @@ def _latest_postmortem_class(launcher_dir: Path) -> str | None:
         return None
     fm = parse_frontmatter(text)
     return fm.get("classification") or fm.get("class") or None
+
+
+def _latest_jsonl_model(logs_dir: Path) -> str:
+    """Return the ``model`` from the most recent JSONL summary record, or ``""``.
+
+    The runner appends one JSON object per iteration to
+    ``<logs_dir>/.ilk-loop.log``.  Each record carries a ``model`` field
+    populated by ``resolve_worker_model.py``.  We read only the last
+    non-empty line to keep this O(seek) rather than O(n).
+    """
+    jsonl_path = logs_dir / ".ilk-loop.log"
+    if not jsonl_path.is_file():
+        return ""
+    try:
+        # Seek from end: read last ~4 KiB to find the final JSONL line.
+        size = jsonl_path.stat().st_size
+        if size == 0:
+            return ""
+        read_start = max(0, size - 4096)
+        with jsonl_path.open("rb") as fh:
+            fh.seek(read_start)
+            tail = fh.read().decode("utf-8", errors="replace")
+        # Last non-empty line is the most recent record.
+        lines = [l for l in tail.splitlines() if l.strip()]
+        if not lines:
+            return ""
+        rec = json.loads(lines[-1])
+        return rec.get("model") or ""
+    except (json.JSONDecodeError, OSError):
+        return ""
 
 
 def _blocked_info(
@@ -261,6 +292,10 @@ def resolve_project_status(project_dir: Path) -> dict:
     # Latest postmortem classification
     last_class = _latest_postmortem_class(launcher_dir)
 
+    # Model from latest JSONL summary record (populated by runner).
+    logs_dir = external_logs_dir(key)
+    model = _latest_jsonl_model(logs_dir)
+
     # Needs-human blocked classification (blacklist / stale-running / stalled).
     blocked = _blocked_info(project_dir, sentinel, active_master, next_subplan)
 
@@ -285,6 +320,7 @@ def resolve_project_status(project_dir: Path) -> dict:
         "step": step,
         "sentinel": sentinel,
         "last_class": last_class,
+        "model": model,
         "runnable": runnable,
         "parked": parked,
         "manually_runnable": manually_runnable,

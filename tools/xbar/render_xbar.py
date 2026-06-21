@@ -72,6 +72,7 @@ def render_xbar(
             icon = "-"
 
         # Row text: key + icon + step info
+        model = e.get("model") or ""
         row = f"{icon} {key}"
         if step:
             row += f"  {step}"
@@ -79,7 +80,9 @@ def render_xbar(
             row += f"  {next_sp}"
 
         # Add state suffix for non-obvious states
-        if state not in ("running", "none"):
+        if is_alive and model:
+            row += f"  running on {model}"
+        elif state not in ("running", "none"):
             row += f"  ({state})"
 
         lines.append(row)

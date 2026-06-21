@@ -38,6 +38,7 @@ def _make_entry(
     manually_runnable: bool = False,
     parked: bool = False,
     path: str | None = None,
+    model: str = "",
 ) -> dict:
     """Build a single status_all entry dict with action flags."""
     return {
@@ -48,6 +49,7 @@ def _make_entry(
         "step": step,
         "sentinel": {"pid": 123 if alive else 0, "state": state, "alive": alive},
         "last_class": None,
+        "model": model,
         "blocked": blocked,
         "blocked_reason": blocked_reason,
         "classification": None,
@@ -249,3 +251,38 @@ class TestActionPath:
         view = render_tray(entries)
         run_rows = [r for r in view["rows"] if r["action"]["kind"] == "run"]
         assert run_rows[0]["action"]["path"] == ""
+
+
+# ---------------------------------------------------------------------------
+# AC-5: model label suffix
+# ---------------------------------------------------------------------------
+
+class TestModelLabel:
+    """AC-5: running row includes 'running on <model>' when model is present."""
+
+    def test_running_row_with_model(self) -> None:
+        entries = [_make_entry("proj", alive=True, state="running",
+                               model="claude-sonnet-4-20250514")]
+        view = render_tray(entries)
+        status = _status_rows(view["rows"])[0]
+        assert "running on claude-sonnet-4-20250514" in status["label"]
+
+    def test_running_row_without_model(self) -> None:
+        entries = [_make_entry("proj", alive=True, state="running")]
+        view = render_tray(entries)
+        status = _status_rows(view["rows"])[0]
+        assert "running on" not in status["label"]
+
+    def test_running_row_empty_model(self) -> None:
+        entries = [_make_entry("proj", alive=True, state="running", model="")]
+        view = render_tray(entries)
+        status = _status_rows(view["rows"])[0]
+        assert "running on" not in status["label"]
+
+    def test_idle_row_with_model_no_suffix(self) -> None:
+        """Non-running rows don't show model suffix."""
+        entries = [_make_entry("proj", alive=False, state="none",
+                               model="claude-sonnet-4-20250514")]
+        view = render_tray(entries)
+        status = _status_rows(view["rows"])[0]
+        assert "running on" not in status["label"]

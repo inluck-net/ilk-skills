@@ -40,6 +40,7 @@ def _make_entry(
     manually_runnable: bool = False,
     parked: bool = False,
     path: str = "",
+    model: str = "",
 ) -> dict:
     """Build a single status_all entry dict with action flags."""
     return {
@@ -50,6 +51,7 @@ def _make_entry(
         "step": step,
         "sentinel": {"pid": 123 if alive else 0, "state": state, "alive": alive},
         "last_class": None,
+        "model": model,
         "blocked": blocked,
         "blocked_reason": blocked_reason,
         "classification": None,
@@ -260,3 +262,36 @@ class TestActionPath:
         resumes = _resume_lines(text)
         # !r repr: param4='/home/me/proj'
         assert "param4='/home/me/proj'" in resumes[0]
+
+
+# ---------------------------------------------------------------------------
+# AC-5: model label suffix
+# ---------------------------------------------------------------------------
+
+class TestModelLabel:
+    """AC-5: running row includes 'running on <model>' when model is present."""
+
+    def test_running_row_with_model(self) -> None:
+        entry = _make_entry("proj", alive=True, state="running",
+                            model="claude-sonnet-4-20250514")
+        text = _render(entry)
+        # First non-separator line after "---" is the project row.
+        lines = text.splitlines()
+        project_line = [l for l in lines if l.startswith("* proj")][0]
+        assert "running on claude-sonnet-4-20250514" in project_line
+
+    def test_running_row_without_model(self) -> None:
+        entry = _make_entry("proj", alive=True, state="running")
+        text = _render(entry)
+        lines = text.splitlines()
+        project_line = [l for l in lines if l.startswith("* proj")][0]
+        assert "running on" not in project_line
+
+    def test_idle_row_with_model_no_suffix(self) -> None:
+        """Non-running rows don't show model suffix."""
+        entry = _make_entry("proj", alive=False, state="none",
+                            model="claude-sonnet-4-20250514")
+        text = _render(entry)
+        lines = text.splitlines()
+        project_line = [l for l in lines if l.startswith("- proj")][0]
+        assert "running on" not in project_line

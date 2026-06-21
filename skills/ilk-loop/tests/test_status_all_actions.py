@@ -298,6 +298,64 @@ class TestManuallyRunnableAllShipped:
         assert entry["manually_runnable"] is False
 
 
+# ── AC-5: model from JSONL ────────────────────────────────────────────
+
+class TestModelFromJsonl:
+    """AC-5: model field from latest JSONL record."""
+
+    def _write_jsonl(self, key: str, records: list[dict]) -> None:
+        """Write JSONL records to the project's logs dir."""
+        import hashlib, re as _re
+        _KEY_PUNCT = _re.compile(r"[^a-z0-9]+")
+        abs_str = str((SCRATCH / "projects" / key).resolve()).lower()
+        slug = _KEY_PUNCT.sub("-", abs_str).strip("-")
+        if len(slug) <= 80:
+            proj_key = slug
+        else:
+            h = hashlib.sha1(abs_str.encode("utf-8")).hexdigest()[:7]
+            proj_key = slug[: 80 - 8].rstrip("-") + "-" + h
+        logs_dir = ILK_DATA / "projects" / proj_key / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        jsonl_path = logs_dir / ".ilk-loop.log"
+        with jsonl_path.open("w", encoding="utf-8") as fh:
+            for rec in records:
+                fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+    def test_model_present_in_entry(self):
+        """When JSONL has model, entry reflects it."""
+        _setup_project("mp1", pid=os.getpid(), state="running")
+        self._write_jsonl("mp1", [
+            {"run_id": "r1", "iteration": 1, "model": "claude-sonnet-4-20250514"},
+        ])
+        entry = _get_status("mp1")
+        assert entry["model"] == "claude-sonnet-4-20250514"
+
+    def test_model_empty_when_no_jsonl(self):
+        """When JSONL file is absent, model is empty string."""
+        _setup_project("mp2", pid=99999999, state="shipped")
+        entry = _get_status("mp2")
+        assert entry["model"] == ""
+
+    def test_model_empty_when_field_missing(self):
+        """When JSONL records have no model key, model is empty string."""
+        _setup_project("mp3", pid=99999999, state="shipped")
+        self._write_jsonl("mp3", [
+            {"run_id": "r1", "iteration": 1},
+        ])
+        entry = _get_status("mp3")
+        assert entry["model"] == ""
+
+    def test_model_from_latest_record(self):
+        """model comes from the LAST JSONL record."""
+        _setup_project("mp4", pid=os.getpid(), state="running")
+        self._write_jsonl("mp4", [
+            {"run_id": "r1", "iteration": 1, "model": "claude-haiku-4-5-20251001"},
+            {"run_id": "r1", "iteration": 2, "model": "claude-sonnet-4-20250514"},
+        ])
+        entry = _get_status("mp4")
+        assert entry["model"] == "claude-sonnet-4-20250514"
+
+
 # ── Backward compatibility ──────────────────────────────────────────
 
 class TestBackwardCompatibility:
