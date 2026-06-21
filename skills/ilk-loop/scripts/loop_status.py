@@ -75,7 +75,7 @@ def parse_frontmatter(text: str) -> dict[str, str]:
     return fm
 
 
-def extract_master_order(master_text: str) -> list[str]:
+def extract_master_order(master_text: str, plans_dir: Path | None = None) -> list[str]:
     """Return ordered, deduped list of sub-plan filenames as they appear in
     the master plan body (registry table). Excludes the master itself.
 
@@ -84,6 +84,12 @@ def extract_master_order(master_text: str) -> list[str]:
     `legacy/...`, `archive/...`) are intentionally excluded so the master
     can freely cite supporting documents inside Notes columns without
     polluting the sub-plan registry.
+
+    When *plans_dir* is provided, references that match the master_plan
+    slug but do NOT exist on disk are excluded as phantoms (the title
+    line "# MASTER plan: 2026-06-20-batch" causes the regex to match
+    "2026-06-20-batch" as a sub-plan).  A sub-plan that DOES exist on
+    disk is kept even if its slug collides with master_plan (AC-1).
     """
     # Sub-plan references live in the master BODY (registry table), never in
     # the YAML frontmatter. Strip a leading `---\n ... \n---` block first so
@@ -105,12 +111,17 @@ def extract_master_order(master_text: str) -> list[str]:
         r"(?:^|(?<=[\s(\[|]))(?:\./)?(\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*(?:\.md)?)",
         re.MULTILINE,
     )
-    # Extract the master_plan slug from frontmatter so we can exclude the
-    # master's own bare filename.  The master_plan value is a slug like
-    # "2026-06-01-m1"; the corresponding filename would be
-    # "2026-06-01-m1.md".  If the title line uses that slug verbatim
-    # (e.g. "# MASTER plan: 2026-06-01-m1"), the regex would match it as
-    # a sub-plan reference — exclude it.
+    # Extract the master_plan slug from frontmatter so we can exclude
+    # phantom references.  The title line often says
+    # "# MASTER plan: 2026-06-20-batch" and the regex matches
+    # "2026-06-20-batch" as a sub-plan filename.  This phantom would
+    # show as MISSING and block master-has-nonshipped from ever
+    # returning False.
+    #
+    # When plans_dir is provided, we check on disk: if the file exists
+    # it's a legitimate sub-plan (even if its slug == master_plan);
+    # if it doesn't exist, it's a phantom from the title line.
+    # When plans_dir is None, we always exclude the slug (back-compat).
     master_plan_slug = ""
     if master_text.startswith("---"):
         fm_end = master_text.find("\n---", 3)
@@ -125,6 +136,7 @@ def extract_master_order(master_text: str) -> list[str]:
     seen: set[str] = set()
     ordered: list[str] = []
     for f in pattern.findall(body):
+        # Exclude actual MASTER-*.md files (the master's own filename).
         if f.startswith("MASTER"):
             continue
         # Normalize: ensure every slug ends with .md so downstream
@@ -133,10 +145,17 @@ def extract_master_order(master_text: str) -> list[str]:
             f = f + ".md"
         if f in seen:
             continue
-        # Exclude the master's own bare filename (derived from the
-        # master_plan frontmatter value).
+        # Exclude phantom references matching the master_plan slug.
         if master_own_fname and f == master_own_fname:
-            continue
+            if plans_dir is not None:
+                # Check on disk: keep if the file exists (real sub-plan),
+                # skip if it's a phantom from the title line.
+                if not (plans_dir / f).exists():
+                    continue
+                # else: file exists — it's a legitimate sub-plan, keep it.
+            else:
+                # No plans_dir available — always exclude (back-compat).
+                continue
         seen.add(f)
         ordered.append(f)
     return ordered
@@ -280,7 +299,7 @@ def resolve_status(cwd: Path) -> dict:
 
     master, queue_view = pick_active_master(masters)
     master_text = master.read_text(encoding="utf-8-sig")
-    ordered_files = extract_master_order(master_text)
+    ordered_files = extract_master_order(master_text, plans_dir=plans_dir)
 
     rows: list[tuple[str, str, str, str, str]] = []
     tiers: dict[str, str] = {}  # fname -> verification_tier
