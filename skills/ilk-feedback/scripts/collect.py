@@ -123,6 +123,33 @@ try:
 except ImportError:
     _improvement_backlog = None  # type: ignore
 
+try:
+    import autoclose_tracker as _autoclose_tracker
+except ImportError:
+    _autoclose_tracker = None  # type: ignore
+
+
+# ---------- autoclose helper --------------------------------------------------
+
+
+def _maybe_autoclose(project_path: Path, quiet: bool) -> None:
+    """Best-effort auto-close tracker/backlog entries resolved by shipped sub-plans.
+
+    Called after each postmortem write.  Never raises — a failure here must
+    not break the postmortem pipeline (AC-4).
+    """
+    if _autoclose_tracker is None or _find_plans_dir is None:
+        return
+    try:
+        plans_dir, _src = _find_plans_dir(project_path)
+        if plans_dir is None:
+            return
+        closed = _autoclose_tracker.autoclose(plans_dir, project=project_path)
+        if closed and not quiet:
+            print(f"[ilk-feedback] autoclose: {closed} tracker/backlog entries closed")
+    except Exception:
+        pass
+
 
 # ---------- project resolution (mirror launcher logic) -----------------------
 
@@ -1926,6 +1953,8 @@ def main() -> int:
                 out_dir.mkdir(parents=True, exist_ok=True)
                 out_path = out_dir / f"{target_run}.md"
                 out_path.write_text(report, encoding="utf-8")
+                # Best-effort auto-close tracker entries resolved by shipped sub-plans.
+                _maybe_autoclose(project_path, args.quiet)
                 if not args.quiet:
                     print(f"[ilk-feedback] project: {project_name}  run: {target_run}")
                     print(f"[ilk-feedback] classification: {label}")
@@ -1985,6 +2014,8 @@ def main() -> int:
                     out_dir.mkdir(parents=True, exist_ok=True)
                     out_path = out_dir / f"{target_run}.md"
                     out_path.write_text(report, encoding="utf-8")
+                    # Best-effort auto-close tracker entries resolved by shipped sub-plans.
+                    _maybe_autoclose(project_path, args.quiet)
                     if not args.quiet:
                         print(f"[ilk-feedback] project: {project_name}  run: {target_run}")
                         print(f"[ilk-feedback] classification: {label}")
@@ -2023,6 +2054,8 @@ def main() -> int:
                 out_dir.mkdir(parents=True, exist_ok=True)
                 out_path = out_dir / f"{target_run}.md"
                 out_path.write_text(report, encoding="utf-8")
+                # Best-effort auto-close tracker entries resolved by shipped sub-plans.
+                _maybe_autoclose(project_path, args.quiet)
                 if not args.quiet:
                     print(f"[ilk-feedback] project: {project_name}  run: {target_run}")
                     print(f"[ilk-feedback] classification: {label}")
@@ -2077,6 +2110,9 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{target_run}.md"
     out_path.write_text(report, encoding="utf-8")
+
+    # Best-effort auto-close tracker entries resolved by shipped sub-plans.
+    _maybe_autoclose(project_path, args.quiet)
 
     # stdout summary for the calling agent
     if not args.quiet:
