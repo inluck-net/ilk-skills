@@ -250,3 +250,97 @@ class TestGlobalBacklogUntouched:
         )
         # Should be empty — nothing was added to the global backlog
         assert len(global_entries) == 0
+
+
+# ── AC-4: list_open / load / set_status ───────────────────────────────────────
+
+
+class TestListOpenLoadSetStatus:
+    """AC-4: list_open, load, and set_status work on the per-project tracker."""
+
+    def test_load_returns_all_entries(self, data_env, fake_git_project):
+        """load(project=P) returns all entries from that project's tracker."""
+        import importlib
+        import project_tracker as mod
+
+        importlib.reload(mod)
+
+        mod.add(
+            title="gap one",
+            gap="first",
+            source="lark",
+            source_id="rec-load-1",
+            project=fake_git_project,
+        )
+        mod.add(
+            title="gap two",
+            gap="second",
+            source="lark",
+            source_id="rec-load-2",
+            project=fake_git_project,
+        )
+
+        entries = mod.load(project=fake_git_project)
+        assert len(entries) == 2
+
+    def test_list_open_returns_only_open(self, data_env, fake_git_project):
+        """list_open(project=P) returns only entries with status='open'."""
+        import importlib
+        import project_tracker as mod
+
+        importlib.reload(mod)
+
+        e1 = mod.add(
+            title="open gap",
+            gap="still open",
+            source="lark",
+            source_id="rec-open-1",
+            project=fake_git_project,
+        )
+        e2 = mod.add(
+            title="will close",
+            gap="to be shipped",
+            source="lark",
+            source_id="rec-open-2",
+            project=fake_git_project,
+        )
+        # Ship the second entry
+        mod.set_status(e2.id, "shipped", project=fake_git_project)
+
+        open_entries = mod.list_open(project=fake_git_project)
+        assert len(open_entries) == 1
+        assert open_entries[0].id == e1.id
+
+    def test_set_status_flips_and_persists(self, data_env, fake_git_project):
+        """set_status(id, 'shipped', project=P) flips status and persists."""
+        import importlib
+        import project_tracker as mod
+
+        importlib.reload(mod)
+
+        entry = mod.add(
+            title="to ship",
+            gap="will be shipped",
+            source="lark",
+            source_id="rec-ship-1",
+            project=fake_git_project,
+        )
+        assert entry.status == "open"
+
+        mod.set_status(entry.id, "shipped", project=fake_git_project)
+
+        # Reload from disk and verify
+        reloaded = mod.load(project=fake_git_project)
+        matching = [e for e in reloaded if e.id == entry.id]
+        assert len(matching) == 1
+        assert matching[0].status == "shipped"
+
+    def test_set_status_raises_for_missing_id(self, data_env, fake_git_project):
+        """set_status with unknown id raises KeyError."""
+        import importlib
+        import project_tracker as mod
+
+        importlib.reload(mod)
+
+        with pytest.raises(KeyError, match="no entry with id"):
+            mod.set_status("nonexistent-id", "shipped", project=fake_git_project)

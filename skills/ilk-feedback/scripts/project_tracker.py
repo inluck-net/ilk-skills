@@ -89,3 +89,48 @@ def add(
         backlog_dir=td,
         **kwargs,
     )
+
+
+def load(
+    *,
+    project: str | Path | None = None,
+    key: str | None = None,
+) -> list[improvement_backlog.Entry]:
+    """Load all entries from the per-project tracker."""
+    td = tracker_dir(project=project, key=key)
+    return improvement_backlog.load(backlog_dir=td)
+
+
+def list_open(
+    *,
+    project: str | Path | None = None,
+    key: str | None = None,
+) -> list[improvement_backlog.Entry]:
+    """List open entries from the per-project tracker."""
+    td = tracker_dir(project=project, key=key)
+    return improvement_backlog.list_entries(status="open", backlog_dir=td)
+
+
+def set_status(
+    entry_id: str,
+    status: str,
+    *,
+    project: str | Path | None = None,
+    key: str | None = None,
+) -> None:
+    """Flip an entry's status in the per-project tracker.
+
+    Loads all entries, finds the one matching *entry_id*, updates its
+    ``status`` field, and atomically saves back.  Raises ``KeyError``
+    if no entry with that id exists.
+    """
+    td = tracker_dir(project=project, key=key)
+    entries = improvement_backlog.load(backlog_dir=td)
+    for entry in entries:
+        if entry.id == entry_id:
+            entry.status = status
+            improvement_backlog._save_raw(
+                td, [e.to_dict() for e in entries]
+            )
+            return
+    raise KeyError(f"no entry with id {entry_id!r} in tracker")
