@@ -119,7 +119,8 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   # Check each deny token.
   for token in "${DENY_TOKENS[@]}"; do
     pattern=$(build_pattern "$token")
-    # Use grep -oP to extract the matched word; then check skip list.
+    # Extract the matched word with grep -oiE (BSD/macOS-safe — NOT -P, which
+    # macOS grep rejects); then check the skip list.
     if matched=$(echo "$line" | grep -oiE "$pattern" 2>/dev/null | head -1); then
       if ! should_skip "$matched"; then
         VIOLATION_LINES+=("${INPUT_FILE:-stdin}:${lineno}: ${token}")
