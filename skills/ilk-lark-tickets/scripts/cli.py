@@ -168,7 +168,7 @@ def build_pull_new_filter():
         "conjunction": "or",
         "conditions": [
             {"field_name": "状态", "operator": "is", "value": ["新建"]},
-            {"field_name": "状态", "operator": "isEmpty"},
+            {"field_name": "状态", "operator": "isEmpty", "value": []},
         ],
     }
 
