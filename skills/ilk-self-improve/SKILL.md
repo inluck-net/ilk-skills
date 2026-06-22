@@ -10,7 +10,7 @@ description: >-
 
 # ilk-self-improve — backlog → plan adapter
 
-A source adapter for the ilk loop, analogous to `/ilk-lark-tickets`. It
+A source adapter for the ilk loop, analogous to `/ilk-lark`. It
 pulls from the **improvement backlog** (populated by `/ilk-feedback` when a
 postmortem finding is a toolkit/process gap) and hands a formatted task
 description to `/ilk-plan`.

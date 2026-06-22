@@ -2,7 +2,7 @@ Bootstrap a Lark Bitable tracker for the current project — create the
 base, seed the ticket schema, and write the `.lark-project` marker.
 
 This is the **setup** command. For ongoing triage and planning, use
-`/ilk-lark-tickets` instead.
+`/ilk-lark` instead.
 
 > **Prerequisite**: this command depends on the `ilk-lark-tickets` skill
 > being installed at `<skill-root>/ilk-lark-tickets/`. That skill is **not**
@@ -132,7 +132,7 @@ Print a summary:
    Status:    created | reused (existing base found)
 
    Next steps:
-   - Use /ilk-lark-tickets to triage and plan tickets from this Bitable.
+   - Use /ilk-lark to triage and plan tickets from this Bitable.
    - Share the form link with clients to collect bug reports.
 ```
 
@@ -143,5 +143,5 @@ or reused — pass that through.
 
 This command is the **setup** entry point. For ongoing operations:
 
-- `/ilk-lark-tickets` — triage, plan, and link commits to tickets.
+- `/ilk-lark` — triage, plan, and link commits to tickets.
 - `cli.py list` / `cli.py show` / `cli.py update` — direct CLI access.

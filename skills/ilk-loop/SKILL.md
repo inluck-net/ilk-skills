@@ -18,7 +18,7 @@ the agent never grows past its context window.
 ## When to use
 
 - The user invokes any of the slash commands `/ilk`, `/ilk-plan`, or
-  `/ilk-lark-tickets` (Cursor, Claude Code, or Codex).
+  `/ilk-lark` (Cursor, Claude Code, or Codex).
 - The user says: "resume the loop", "continue the plan", "next step",
   "ship the next sub-plan", "where are we", "loop status".
 - The user asks to **plan** something (turn a task description or batch of
@@ -47,7 +47,7 @@ the agent never grows past its context window.
 <skill-root>/../commands/
   ilk.md                            ← /ilk              -- execute next step
   ilk-plan.md                       ← /ilk-plan         -- plan from a task description
-  ilk-lark-tickets.md               ← /ilk-lark-tickets -- plan from Lark 可执行 tickets
+  ilk-lark.md                       ← /ilk-lark         -- plan from Lark 可执行 tickets
 
 <project>/docs/plans/
   README.md                           ← convention reference (copied from template)
@@ -253,7 +253,7 @@ Just run `loop_status.py` and report. Don't load any sub-plan or do work.
 
 Universal planning entrypoint. Source-agnostic — caller supplies a free-text
 task description. Used directly by humans, and indirectly by source adapters
-like `/ilk-lark-tickets`.
+like `/ilk-lark`.
 
 The agent's job:
 
@@ -298,7 +298,7 @@ Heuristics for ordering:
 - High priority (P0/P1) before low (P2/P3).
 - Independent items last.
 
-### 6. Generate plans from Lark tickets (`/ilk-lark-tickets`)
+### 6. Generate plans from Lark tickets (`/ilk-lark`)
 
 Lark-specific input adapter. Uses the `ilk-lark-tickets` skill to fetch
 triaged-but-unplanned tickets, then delegates to workflow #5 with those
@@ -337,7 +337,7 @@ The agent's job:
 
 Tip: for batches of 10+ tickets, write a one-off helper script in
 `docs/plans/_update_tickets.py` (delete after use) rather than calling
-`cli.py update` 10 times manually. Pattern in `/ilk-lark-tickets.md`.
+`cli.py update` 10 times manually. Pattern in `/ilk-lark.md`.
 
 ## Integration with ilk-lark-tickets skill
 

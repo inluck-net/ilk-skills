@@ -846,4 +846,4 @@ End your turn with:
   project tree. Any sub-plan mutations from step 7b (invariant
   weaving) are written directly to the external files in step 6/7.
 - **Don't auto-update any external trackers** (Lark, GitHub, etc.) — that
-  is the source-adapter's job (e.g., `/ilk-lark-tickets`).
+  is the source-adapter's job (e.g., `/ilk-lark`).
