@@ -6,6 +6,10 @@ tickets, formats them as a task description, and delegates to the
 `/ilk-plan` core workflow. Then it does a Lark-specific post-step:
 update each ticket with its `关联 plan` URL and transition to `计划中`.
 
+> **Renamed** from `/ilk-lark-tickets` to avoid the Claude Code
+> skill/command slash-name clash; the Bitable skill is still
+> `ilk-lark-tickets`.
+
 > **Prerequisite**: this command depends on a separate `ilk-lark-tickets`
 > skill (the Bitable adapter) being installed at
 > `<skill-root>/ilk-lark-tickets/`. That skill is **not** part of
