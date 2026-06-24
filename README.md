@@ -255,6 +255,26 @@ git pull --ff-only
 ./install.ps1 -Apply
 ```
 
+## ilk vs. built-in agent fan-out
+
+Host agents already ship a way to spawn helper agents in-session (Claude
+Code's `Agent` / `Workflow` tooling, sub-agents). ilk is a *different
+layer* of orchestration — and the two compose rather than compete:
+
+> **Built-in fan-out** = parallel *breadth* inside one session —
+> RAM-bound, ephemeral, autonomous-to-completion. Best for search /
+> review / research that fits in one sitting.
+>
+> **ilk plan-loop** = durable *depth* across sessions — disk-bound,
+> resumable, gated and optionally supervised. Best for multi-step,
+> unattended, or interruption-surviving work.
+
+Rule of thumb: work that **finishes now in one session** → built-in
+agents; work that **won't finish, runs unattended, or needs gated
+checkpoints** → `/ilk-plan`. (You can also use built-in fan-out *inside*
+an ilk step.) Full breakdown with a side-by-side table:
+[`docs/builtin-fanout-vs-ilk.md`](docs/builtin-fanout-vs-ilk.md).
+
 ## Auto-use-ilk-plan routing
 
 The `--auto-use-ilk-plan` / `-AutoUseIlkPlan` flag installs a routing rule
