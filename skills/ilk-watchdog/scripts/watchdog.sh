@@ -292,6 +292,12 @@ classify_action() {
       # Blacklist: structural failures where a restart won't help.
       echo "block"
       ;;
+    "")
+      # No classification AND no sentinel state — fail-safe block.
+      # The relaunch path is reached earlier via raw-state fallback at ~696;
+      # this explicit case ensures empty can never silently fall through.
+      echo "block"
+      ;;
     *)
       # Unknown terminal label — fail-safe BLOCK (matching ps1 behaviour).
       echo "block"
