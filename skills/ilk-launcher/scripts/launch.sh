@@ -683,23 +683,16 @@ start_ilk_window() {
     echo "[ilk] tip: a worker home is bootstrapped but this run uses the planner (official) provider. Set ILK_DEFAULT_ENGINE=claude-worker (or worker_engine in .ilk-launch.json) to use the cheaper worker." >&2
   fi
 
-  # Spawn detached process as its own process-group leader so stop.sh
-  # can `kill -- -$pid` and reap the whole tree (runner + claude + git).
-  # `set -m` inside a subshell enables job control, which is what causes
-  # bash to put the backgrounded child into a new pgrp — without it,
-  # non-interactive bash leaves the child in the launcher's pgrp, and
-  # the launcher exits seconds later, leaving the child group-less.
-  local pgid
-  pgid=$(
-    set -m
-    nohup bash -c "$runner_cmd" > "$log_file" 2>&1 < /dev/null &
-    echo "$!"
-  )
+  # Spawn the runner in its own session (new process group + no controlling
+  # terminal) so a parent-group SIGTERM from launchd/scheduler teardown
+  # cannot reach it.  stop.sh can still `kill -- -$pid` to reap the tree.
+  local leader_pid
+  leader_pid=$(start_detached_session "$runner_cmd" "$log_file")
 
   # Write PID file
   local pid_file
   pid_file=$(get_pid_file_path "$project_path")
-  echo "$pgid" > "$pid_file"
+  echo "$leader_pid" > "$pid_file"
 
   # Write last-launch.json
   local meta_path
@@ -709,7 +702,7 @@ import json
 d = {
     'project_path': '$project_path',
     'project_name': '$project_name',
-    'pid': $pgid,
+    'pid': $leader_pid,
     'started_at': '$(date +%Y-%m-%dT%H:%M:%S%z)',
     'max_iterations': $max_iterations,
     'iteration_timeout_min': $timeout_min,
@@ -724,7 +717,7 @@ d = {
 print(json.dumps(d, indent=2))
 " > "$meta_path"
 
-  echo "[$project_name] launched. PID $pgid."
+  echo "[$project_name] launched. PID $leader_pid."
   echo "[$project_name] PID file: $pid_file"
   echo "[$project_name] Log file: $log_file"
   echo "[$project_name] JSONL log: $jsonl_log"
