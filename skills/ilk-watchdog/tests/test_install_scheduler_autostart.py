@@ -46,7 +46,10 @@ def test_install_writes_valid_plist(tmp_path):
 
     assert data["Label"] == LABEL
     assert data["RunAtLoad"] is True
-    assert data["KeepAlive"] is True
+    # KeepAlive must be {SuccessfulExit: false} — restart on crash only,
+    # not on clean exit-0 (lock contention). See sub-plan
+    # 2026-06-26-scheduler-autostart-durability for the root-cause.
+    assert data["KeepAlive"] == {"SuccessfulExit": False}
     # Runs scheduler.sh as the daemon (NOT --detach: launchd owns the process).
     argv = data["ProgramArguments"]
     assert argv[0] == "/bin/bash"
