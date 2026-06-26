@@ -471,6 +471,13 @@ parse_args() {
 WATCHDOG_STATE_DIR=""
 ACTIVITY_LOG=""
 
+# Uppercase a string. Portable across bash 3.2 (macOS /bin/bash), which has
+# no `${var^^}` parameter expansion — that raises "bad substitution" and, in
+# a banner path, crashes the watchdog before it can relaunch/block.
+to_upper() {
+  printf '%s' "$1" | tr '[:lower:]' '[:upper:]'
+}
+
 write_log() {
   local msg="$1"
   local ts
@@ -717,7 +724,7 @@ Watchdog PID: $$" 36
     if [[ "$action" == "stop-clean" ]]; then
       write_log "clean-success: job done. No relaunch, no red banner."
       invoke_ilk_notify "ship" "$proj_name" "classification: $classification"
-      write_banner "DONE — ${classification^^}" \
+      write_banner "DONE — $(to_upper "$classification")" \
 "Project: $proj_name
 Classification: $classification
 
@@ -731,7 +738,7 @@ next queued master on its next cycle (if any)." 32
       [[ "$classification" == "shipped-unverified" ]] && ev="needs-verification"
       write_log "$classification: needs human review. No relaunch."
       invoke_ilk_notify "$ev" "$proj_name" "classification: $classification"
-      write_banner "NEEDS HUMAN — ${classification^^}" \
+      write_banner "NEEDS HUMAN — $(to_upper "$classification")" \
 "Project: $proj_name
 Classification: $classification
 
@@ -743,7 +750,7 @@ Read the postmortem for details." 33
     if [[ "$action" == "triage" ]]; then
       write_log "$classification: triage required. No relaunch."
       invoke_ilk_notify "triage" "$proj_name" "classification: $classification"
-      write_banner "TRIAGE — ${classification^^}" \
+      write_banner "TRIAGE — $(to_upper "$classification")" \
 "Project: $proj_name
 Classification: $classification
 
@@ -754,7 +761,7 @@ Check runner logs and sentinel state." 33
 
     if [[ "$action" == "block" ]]; then
       invoke_ilk_notify "blocked" "$proj_name" "classification: $classification"
-      write_banner "BLOCKED — ${classification^^}" \
+      write_banner "BLOCKED — $(to_upper "$classification")" \
 "Project: $proj_name
 Classification: $classification
 
