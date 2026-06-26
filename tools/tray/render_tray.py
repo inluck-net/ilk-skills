@@ -124,21 +124,25 @@ def render_tray(entries: list[dict]) -> dict:
         # ── Action rows: Start now / Resume ──────────────────────────
         # Start now (kind:"run"): manually_runnable & not running — dispatchable work exists.
         # Resume (kind:"resume"): parked/blacklisted — needs /ilk-resume.
-        # Each action row carries `path` so the click dispatcher can target the project.
-        project_path = e.get("path", "")
+        # The two carry DIFFERENT paths (see render_xbar for the rationale):
+        #  - run → ilk-run.ps1 -Start, which resolves a project root from the
+        #    SOURCE repo path (repo_path); data dir is only a fallback.
+        #  - resume → blacklist_status.py --project, which expects the data dir.
+        data_path = e.get("path", "")
+        run_path = e.get("repo_path") or data_path
         if e.get("manually_runnable"):
             rows.append({
                 "label": "Start now",
                 "icon_state": icon,
                 "project_key": key,
-                "action": {"kind": "run", "project_key": key, "path": project_path},
+                "action": {"kind": "run", "project_key": key, "path": run_path},
             })
         if e.get("parked"):
             rows.append({
                 "label": "Resume",
                 "icon_state": icon,
                 "project_key": key,
-                "action": {"kind": "resume", "project_key": key, "path": project_path},
+                "action": {"kind": "resume", "project_key": key, "path": data_path},
             })
 
     # Global icon_state: blocked > running > attention > idle.

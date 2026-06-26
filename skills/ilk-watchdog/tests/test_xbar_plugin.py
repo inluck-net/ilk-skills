@@ -223,3 +223,73 @@ class TestPluginSymlinkResolution:
         assert lines[1].strip() == "---", (
             f"line 2 expected '---', got {lines[1]!r}"
         )
+
+
+# ── Action-row path routing: Start now → repo_path; Resume → data dir ──
+
+# `path` is the ~/.ilk-data data dir; `repo_path` is the SOURCE repo.
+# ilk-run.sh resolves a project root only from the repo path, while
+# blacklist_status.py --project (Resume) needs the data dir. The two
+# action rows must therefore NOT share one path. Regression for the
+# "Start now silently no-ops" bug (ilk-run.sh got the data dir).
+_DATA = "/home/me/.ilk-data/projects/users-me-proj"
+_REPO = "/home/me/Projects/proj"
+
+
+def _runnable_entry(*, repo_path):
+    return {
+        "project_key": "proj",
+        "path": _DATA,
+        "repo_path": repo_path,
+        "active_master": "MASTER-2026-06-26-x.md",
+        "next_subplan": "2026-06-26-x",
+        "step": "1/3",
+        "sentinel": {"pid": 0, "state": "none", "alive": False},
+        "last_class": None,
+        "manually_runnable": True,
+        "parked": False,
+    }
+
+
+def _parked_entry(*, repo_path):
+    return {
+        "project_key": "proj",
+        "path": _DATA,
+        "repo_path": repo_path,
+        "active_master": "MASTER-2026-06-26-x.md",
+        "next_subplan": "2026-06-26-x",
+        "step": "1/3",
+        "sentinel": {"pid": 0, "state": "none", "alive": False},
+        "last_class": None,
+        "blocked": True,
+        "manually_runnable": False,
+        "parked": True,
+    }
+
+
+def _line_with(out: str, needle: str) -> str:
+    matches = [ln for ln in out.splitlines() if needle in ln]
+    assert matches, f"no line containing {needle!r} in:\n{out}"
+    return matches[0]
+
+
+class TestActionPathRouting:
+    def test_start_now_uses_repo_path(self):
+        fxt = _write_fixture([_runnable_entry(repo_path=_REPO)], "run_repo")
+        out = _run_render(fxt).stdout
+        line = _line_with(out, "Start now")
+        assert _REPO in line, line
+        assert f"param1={_DATA!r}" not in line, "Start now leaked the data dir"
+
+    def test_start_now_falls_back_to_data_dir(self):
+        fxt = _write_fixture([_runnable_entry(repo_path=None)], "run_fallback")
+        out = _run_render(fxt).stdout
+        line = _line_with(out, "Start now")
+        assert _DATA in line, line
+
+    def test_resume_uses_data_dir_even_with_repo_path(self):
+        fxt = _write_fixture([_parked_entry(repo_path=_REPO)], "resume_repo")
+        out = _run_render(fxt).stdout
+        line = _line_with(out, "Resume")
+        assert _DATA in line, line
+        assert _REPO not in line, "Resume must target the data dir, not the repo"

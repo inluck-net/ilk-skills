@@ -235,6 +235,57 @@ def _resolve_next_subplan(plans_dir: Path, master_text: str) -> tuple[str, str]:
     return "", ""
 
 
+def _resolve_repo_path(project_dir: Path, key: str) -> str | None:
+    """Resolve the SOURCE repo path for a project data dir.
+
+    Mirrors ``scheduler_scan.resolve_repo_path`` so the xbar/tray "Start now"
+    action dispatches the *same* repo the scheduler would (``path`` is the
+    data dir under ~/.ilk-data, which ``ilk-run.sh`` cannot resolve a project
+    root from). Resolution order:
+
+    1. ``<data>/runtime/launcher/last-launch.json`` → ``project_path``
+       (written by every launch — the reliable primary source).
+    2. ``<skill-root>/ilk-launcher/projects.json`` registry — match an entry
+       whose path hashes to the same key (registered but never-launched).
+
+    Returns ``None`` if neither resolves (manual "Start now" then can't run —
+    the project must be launched once or added to projects.json). Kept inline
+    (not imported from scheduler_scan) so a missing host skill root never
+    crashes status aggregation at import time.
+    """
+    last_launch = project_dir / "runtime" / "launcher" / "last-launch.json"
+    if last_launch.is_file():
+        try:
+            data = json.loads(last_launch.read_text(encoding="utf-8-sig"))
+            p = data.get("project_path")
+            if p:
+                return str(p)
+        except (OSError, ValueError):
+            pass
+
+    registry = (
+        Path(__file__).resolve().parent.parent.parent
+        / "ilk-launcher"
+        / "projects.json"
+    )
+    if registry.is_file():
+        try:
+            data = json.loads(registry.read_text(encoding="utf-8-sig"))
+            for entry in data.get("projects", []):
+                ep = entry.get("path")
+                if not ep:
+                    continue
+                try:
+                    if project_key(Path(ep)) == key:
+                        return str(ep)
+                except (OSError, ValueError):
+                    continue
+        except (OSError, ValueError):
+            pass
+
+    return None
+
+
 def resolve_project_status(project_dir: Path) -> dict:
     """Build a status dict for one project directory.
 
@@ -315,6 +366,7 @@ def resolve_project_status(project_dir: Path) -> dict:
     return {
         "project_key": key,
         "path": str(project_dir),
+        "repo_path": _resolve_repo_path(project_dir, key),
         "active_master": active_master,
         "next_subplan": next_subplan,
         "step": step,
