@@ -85,3 +85,111 @@ def test_plist_passes_plutil_lint(tmp_path):
     plist = tmp_path / "Library" / "LaunchAgents" / f"{LABEL}.plist"
     res = subprocess.run(["plutil", "-lint", str(plist)], capture_output=True, text=True)
     assert res.returncode == 0, res.stdout + res.stderr
+
+
+def _run_real(args, home: Path, timeout: int = 120):
+    """Run the installer WITHOUT ILK_AUTOSTART_NO_LOAD (touches real launchd)."""
+    env = {**os.environ, "HOME": str(home)}
+    env.pop("ILK_AUTOSTART_NO_LOAD", None)
+    return subprocess.run(
+        ["bash", str(INSTALLER), *args],
+        capture_output=True, text=True, timeout=timeout, env=env,
+    )
+
+
+def _kill_scheduler_daemon():
+    """Best-effort kill of any lingering scheduler daemon started by launchd."""
+    pidfile = Path.home() / ".ilk-data" / "scheduler.pid"
+    if pidfile.exists():
+        try:
+            pid = int(pidfile.read_text().strip())
+            os.kill(pid, 9)
+        except (ValueError, OSError):
+            pass
+
+
+def _read_scheduler_pid(home: Path) -> int | None:
+    """Read the PID from the scheduler pidfile under the given HOME."""
+    pidfile = home / ".ilk-data" / "scheduler.pid"
+    if not pidfile.exists():
+        return None
+    try:
+        return int(pidfile.read_text().strip())
+    except (ValueError, OSError):
+        return None
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS launchctl required")
+def test_restart_durability_keeps_agent_loaded(tmp_path):
+    """AC-4: crash-kill → launchd restarts → agent still loaded.
+
+    Exercises KeepAlive={SuccessfulExit:false}: after a SIGKILL crash,
+    launchd must restart the daemon (crash = non-zero exit).  Verifies
+    the label remains loaded and a new PID appears.  Skips on CI boxes
+    that lack a GUI login domain.
+    """
+    uid = os.getuid()
+    domain = f"gui/{uid}"
+
+    # Pre-flight: can we reach the gui domain at all?  Skip if not.
+    try:
+        probe = subprocess.run(
+            ["launchctl", "print", f"{domain}/{LABEL}"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except FileNotFoundError:
+        pytest.skip("launchctl not available")
+    # If the label is somehow already loaded, bail to avoid clobbering.
+    if probe.returncode == 0:
+        pytest.skip(f"{LABEL} already loaded — skipping to avoid disruption")
+
+    # Install for real (no ILK_AUTOSTART_NO_LOAD).
+    res = _run_real([], tmp_path)
+    assert res.returncode == 0, f"install failed: {res.stdout}\n{res.stderr}"
+
+    try:
+        # Wait for the daemon to start and write its pidfile.
+        pid1 = None
+        for _ in range(30):
+            pid1 = _read_scheduler_pid(tmp_path)
+            if pid1 is not None:
+                break
+            import time
+            time.sleep(1)
+        assert pid1 is not None, "daemon did not write pidfile within 30s"
+
+        # Verify the daemon is alive.
+        assert os.kill(pid1, 0) is None, f"daemon PID {pid1} not alive"
+
+        # SIGKILL the daemon — simulates a crash (non-zero exit).
+        os.kill(pid1, 9)
+
+        # Wait for launchd to restart the daemon (KeepAlive restarts on crash).
+        # The new daemon should write a new pidfile with a different PID.
+        pid2 = None
+        for _ in range(15):
+            import time
+            time.sleep(2)
+            pid2 = _read_scheduler_pid(tmp_path)
+            if pid2 is not None and pid2 != pid1:
+                break
+            # pidfile might still be the dead PID; wait for it to change.
+            pid2 = None
+
+        assert pid2 is not None, (
+            f"launchd did not restart daemon after SIGKILL — "
+            f"KeepAlive={{SuccessfulExit:false}} not working. "
+            f"Old PID was {pid1}."
+        )
+
+        # Assert label is still present in launchd.
+        info = subprocess.run(
+            ["launchctl", "print", f"{domain}/{LABEL}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert info.returncode == 0, f"label disappeared after crash: {info.stderr}"
+
+    finally:
+        # Always uninstall to clean up, then kill any lingering daemon.
+        _run_real(["--uninstall"], tmp_path)
+        _kill_scheduler_daemon()
