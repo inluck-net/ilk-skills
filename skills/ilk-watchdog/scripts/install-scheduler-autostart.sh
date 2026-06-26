@@ -97,8 +97,12 @@ cat > "$PLIST" <<PLIST_EOF
     </dict>
     <key>RunAtLoad</key>
     <true/>
+    <!-- Restart on crash (non-zero exit) only. A clean exit-0 means lock
+         contention (another scheduler instance is already running) and must
+         NOT trigger a relaunch — otherwise the managed instance rapid-fire
+         exit-0s until launchd throttles the agent out of existence. -->
     <key>KeepAlive</key>
-    <true/>
+    <dict><key>SuccessfulExit</key><false/></dict>
     <key>ThrottleInterval</key>
     <integer>30</integer>
     <key>StandardOutPath</key>
