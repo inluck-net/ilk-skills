@@ -38,12 +38,14 @@ def _make_entry(
     manually_runnable: bool = False,
     parked: bool = False,
     path: str | None = None,
+    repo_path: str | None = None,
     model: str = "",
 ) -> dict:
     """Build a single status_all entry dict with action flags."""
     return {
         "project_key": key,
         "path": path if path is not None else f"/fake/{key}",
+        "repo_path": repo_path,
         "active_master": f"MASTER-2026-06-19-{key}.md" if next_subplan or step else "",
         "next_subplan": next_subplan,
         "step": step,
@@ -251,6 +253,42 @@ class TestActionPath:
         view = render_tray(entries)
         run_rows = [r for r in view["rows"] if r["action"]["kind"] == "run"]
         assert run_rows[0]["action"]["path"] == ""
+
+
+class TestRepoPathRouting:
+    """run → repo_path (SOURCE repo); resume → data dir (`path`).
+
+    Regression: `path` is the ~/.ilk-data data dir, which ilk-run.* cannot
+    resolve a project root from, while blacklist_status.py --project needs
+    exactly that data dir. The two actions must NOT share one path.
+    """
+
+    DATA = "/home/me/.ilk-data/projects/users-me-proj"
+    REPO = "/home/me/Projects/proj"
+
+    def test_run_uses_repo_path_not_data_dir(self) -> None:
+        entries = [_make_entry(
+            "proj", manually_runnable=True, path=self.DATA, repo_path=self.REPO)]
+        run = [r for r in render_tray(entries)["rows"]
+               if r["action"]["kind"] == "run"][0]
+        assert run["action"]["path"] == self.REPO
+
+    def test_run_falls_back_to_data_dir_when_repo_unresolved(self) -> None:
+        entries = [_make_entry(
+            "proj", manually_runnable=True, path=self.DATA, repo_path=None)]
+        run = [r for r in render_tray(entries)["rows"]
+               if r["action"]["kind"] == "run"][0]
+        assert run["action"]["path"] == self.DATA
+
+    def test_resume_uses_data_dir_even_when_repo_path_present(self) -> None:
+        # The subtle one: a parked project may also have a resolved repo_path,
+        # but Resume must still target the data dir.
+        entries = [_make_entry(
+            "proj", parked=True, blocked=True,
+            path=self.DATA, repo_path=self.REPO)]
+        resume = [r for r in render_tray(entries)["rows"]
+                  if r["action"]["kind"] == "resume"][0]
+        assert resume["action"]["path"] == self.DATA
 
 
 # ---------------------------------------------------------------------------

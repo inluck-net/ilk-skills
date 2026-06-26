@@ -33,6 +33,20 @@ holds, plan. Otherwise, direct-implement when ANY of these holds:
 - The deliverable is prose, docs, or config (no code logic changes).
 - The user explicitly says "just do it" or "skip planning".
 
+### Direct-implement still closes the loop
+
+Choosing direct-implement skips the *plan file*, NOT verification. For any
+direct-implement that changes **code logic**:
+
+1. State the expected outcome up front — a one-line acceptance criterion
+   ("X should now do Y") *before* you edit, so "done" is checkable.
+2. Before claiming done, confirm it with at least ONE of: a test that would
+   fail without the change, or a live run exercising the new behavior. Report
+   the actual result (output), not just "verified".
+
+Exempt (no AC/verification expected): exploratory spikes, and prose/docs/
+config with no code logic.
+
 ## How to announce and proceed
 
 **Hard precondition — before you edit, run, or start any implementation

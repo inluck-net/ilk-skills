@@ -102,11 +102,17 @@ def render_xbar(
         # ── Action sub-items: Start now / Resume ─────────────────────
         # Start now: manually_runnable & not running — dispatchable work exists.
         # Resume: parked/blacklisted — needs resolve-ack.
-        project_path = e.get("path", "")
+        # NOTE: the two actions take DIFFERENT paths.
+        #  - Start now → ilk-run.sh, which resolves a project root from the
+        #    SOURCE repo path (repo_path). The `path` field is the ~/.ilk-data
+        #    data dir, which ilk-run.sh cannot resolve — used only as fallback.
+        #  - Resume → blacklist_status.py --project, which expects the data dir.
+        data_path = e.get("path", "")
+        run_path = e.get("repo_path") or data_path
         if e.get("manually_runnable"):
             lines.append(
                 f"--Start now | bash={run_script!r}"
-                f" param1={project_path!r} terminal=false refresh=true"
+                f" param1={run_path!r} terminal=false refresh=true"
             )
         if e.get("parked"):
             lines.append(
@@ -114,7 +120,7 @@ def render_xbar(
                 f" param1={resume_script!r}"
                 " param2=ack"
                 " param3=--project"
-                f" param4={project_path!r} terminal=false refresh=true"
+                f" param4={data_path!r} terminal=false refresh=true"
             )
 
     # Separator + actions
