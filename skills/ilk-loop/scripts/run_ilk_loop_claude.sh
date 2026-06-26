@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 # =============================================================================
 # ilk-loop runner (Claude Code) — bash port of run_ilk_loop_claude.ps1
@@ -1136,6 +1136,7 @@ main() {
     # Ensure the sentinel is never left as "running" on abnormal exit.
     # finalize_sentinel is idempotent — no-op when a clean path already set
     # a terminal state (all-shipped, error, max-iterations, etc.).
+    trap 'record_err_context "$LINENO" "$BASH_COMMAND"' ERR
     trap finalize_sentinel EXIT INT TERM
   else
     echo "Sentinel: skipped (no runtime dir resolved)"
