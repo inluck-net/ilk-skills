@@ -1183,6 +1183,13 @@ main() {
     iter_end=$(date +%s)
     iter_dur_sec=$((iter_end - iter_start))
 
+    # Non-essential bookkeeping: wrap in set +e so a stray non-zero
+    # (grep no match, python3 parse failure, etc.) cannot abort the batch
+    # before an explicit terminal classification is written.
+    # Intended terminal signals (iter_stop_reason, test_all_shipped) are
+    # checked below via explicit conditionals, not set -e.
+    set +e
+
     get_repo_heads "$heads_after_file"
 
     # Compute new commits per repo
@@ -1450,6 +1457,9 @@ if lc and lc != '[]':
   d['local_checks'] = json.loads(lc)
 print(json.dumps(d))
 " >> "$JSONL_LOG"
+
+    # Restore set -e: terminal decision logic below must be fatal.
+    set -e
 
     # Quality gates
     # TODO: step 6+ (invoke_quality_gates_if_needed)
