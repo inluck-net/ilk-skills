@@ -92,6 +92,7 @@ DRY_RUN=false
 ONCE=false
 DETACH=false
 NO_LOCAL_CHECKS=false
+DISPATCH_COOLDOWN_SEC=120
 
 # --- argument parsing --------------------------------------------------------
 
@@ -332,6 +333,29 @@ get_rapid_terminal_backoff() {
   fi
   # No fresh detection — decay the counter.
   echo "0 0"
+}
+
+within_dispatch_cooldown() {
+  # Pure helper: check whether a project was dispatched recently enough to
+  # skip re-dispatch (guards the window before running.pid appears).
+  # Usage: within_dispatch_cooldown <last_dispatch_epoch> <now_epoch> <cooldown_sec>
+  # Echoes "true" when now - last < cooldown (skip) and "false" otherwise.
+  # Empty/absent last_dispatch_epoch → "false" (never block a first dispatch).
+  local last_epoch="$1"
+  local now_epoch="$2"
+  local cooldown_sec="$3"
+
+  if [[ -z "$last_epoch" ]]; then
+    echo "false"
+    return
+  fi
+
+  local elapsed=$(( now_epoch - last_epoch ))
+  if [[ "$elapsed" -lt "$cooldown_sec" ]]; then
+    echo "true"
+  else
+    echo "false"
+  fi
 }
 
 count_live_sentinels() {
