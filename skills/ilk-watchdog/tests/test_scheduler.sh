@@ -1340,6 +1340,99 @@ run_rapiddecay() {
   cleanup
 }
 
+run_cooldown() {
+  echo "=== test_scheduler.sh cooldown ==="
+  # Unit tests for within_dispatch_cooldown pure helper.
+
+  # Extract the function from scheduler.sh (same pattern as rapiddecay).
+  _call_cooldown() {
+    (
+      eval "$(sed -n '/^within_dispatch_cooldown()/,/^}/p' "$SCHEDULER_SCRIPT")"
+      within_dispatch_cooldown "$1" "$2" "$3"
+    )
+  }
+
+  # AC-1: within_dispatch_cooldown must exist in scheduler.sh
+  local fn_check
+  fn_check=$(grep -c '^within_dispatch_cooldown()' "$SCHEDULER_SCRIPT" || true)
+  [[ "$fn_check" -ge 1 ]] || die "AC-1: within_dispatch_cooldown must be defined in scheduler.sh"
+  echo "PASS: AC-1 within_dispatch_cooldown defined"
+
+  # AC-1a: within cooldown window → true (skip)
+  local result
+  result="$(_call_cooldown 1000 1050 120)"
+  [[ "$result" == "true" ]] || die "AC-1a: 1000→1050 with 120s cooldown -> true (got '$result')"
+  echo "PASS: AC-1a within cooldown -> true"
+
+  # AC-1b: past cooldown window → false (allow)
+  result="$(_call_cooldown 1000 1200 120)"
+  [[ "$result" == "false" ]] || die "AC-1b: 1000→1200 with 120s cooldown -> false (got '$result')"
+  echo "PASS: AC-1b past cooldown -> false"
+
+  # AC-1c: empty last_epoch → false (never block first dispatch)
+  result="$(_call_cooldown "" 1200 120)"
+  [[ "$result" == "false" ]] || die "AC-1c: empty last_epoch -> false (got '$result')"
+  echo "PASS: AC-1c empty last_epoch -> false"
+
+  # AC-3: boundary+1 → false (cooldown exactly elapsed)
+  result="$(_call_cooldown 1000 1120 120)"
+  [[ "$result" == "false" ]] || die "AC-3: 1000→1120 with 120s cooldown -> false (boundary, got '$result')"
+  echo "PASS: AC-3 boundary (exactly elapsed) -> false"
+
+  # AC-3b: boundary-1 → true (one second before expiry)
+  result="$(_call_cooldown 1000 1119 120)"
+  [[ "$result" == "true" ]] || die "AC-3b: 1000→1119 with 120s cooldown -> true (got '$result')"
+  echo "PASS: AC-3b one second before expiry -> true"
+
+  echo "PASS: within_dispatch_cooldown -- pure helper correct (AC-1..AC-3)"
+  cleanup
+}
+
+run_cooldown_dispatch() {
+  echo "=== test_scheduler.sh cooldown-dispatch ==="
+  # Integration test: dispatch a project, then re-scan within cooldown
+  # window — must see skip-cooldown (not a double-dispatch).
+
+  setup_two_queued_projects
+
+  # First dispatch: proj-a dispatched, records dispatch_time in-memory.
+  # Since --once exits after one cycle, we can't test multi-cycle cooldown
+  # with the in-memory state.  Instead, test the dry-run JSON output for
+  # the skip-cooldown decision by simulating the scenario:
+  # - Project has a dispatch_time entry (from a prior dispatch)
+  # - No running.pid (sentinel not yet written)
+  # - Within cooldown window
+  #
+  # We can't inject in-memory state into --once, so we verify the helper
+  # is consulted by checking the code path doesn't crash and that the
+  # existing tests still pass (the pure helper unit tests above cover
+  # correctness).  The real integration proof is multi-cycle, which
+  # requires the daemon.
+  #
+  # What we CAN verify: the dispatch path still works when cooldown is
+  # configured (no regression on the happy path).
+  local output
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 1 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  local decision key
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$output")
+  key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$output")
+  [[ "$decision" == "dispatch" ]] || die "expected 'dispatch' on first cycle, got '$decision'. Output: $output"
+  [[ "$key" == "proj-a" ]] || die "expected proj-a dispatched, got '$key'. Output: $output"
+
+  echo "PASS: first-cycle dispatch unaffected by cooldown (no false positive)"
+
+  # Verify DISPATCH_COOLDOWN_SEC default is 120
+  local default_val
+  default_val=$(grep '^DISPATCH_COOLDOWN_SEC=' "$SCHEDULER_SCRIPT" | head -1)
+  [[ "$default_val" == "DISPATCH_COOLDOWN_SEC=120" ]] || die "expected DISPATCH_COOLDOWN_SEC=120 default, got: $default_val"
+  echo "PASS: DISPATCH_COOLDOWN_SEC defaults to 120"
+
+  echo "PASS: cooldown-dispatch integration (first-cycle unaffected, default correct)"
+  cleanup
+}
+
 run_all() {
   run_scan
   run_select
@@ -1357,6 +1450,8 @@ run_all() {
   run_rapid_terminal
   run_staleexit
   run_rapiddecay
+  run_cooldown
+  run_cooldown_dispatch
   echo "ALL PASS"
 }
 
@@ -1409,11 +1504,17 @@ case "${1:-all}" in
   rapiddecay)
     run_rapiddecay
     ;;
+  cooldown)
+    run_cooldown
+    ;;
+  cooldown-dispatch)
+    run_cooldown_dispatch
+    ;;
   all)
     run_all
     ;;
   *)
-    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|fill|gates|mutex|log|compat|stale-sentinel|rapid-terminal|staleexit|rapiddecay|all}" >&2
+    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|fill|gates|mutex|log|compat|stale-sentinel|rapid-terminal|staleexit|rapiddecay|cooldown|cooldown-dispatch|all}" >&2
     exit 1
     ;;
 esac
