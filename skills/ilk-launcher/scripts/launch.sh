@@ -58,6 +58,26 @@ MCP_FILTER_NAMES=""
 
 # ----- Helpers ---------------------------------------------------------------
 
+start_detached_session() {
+  # Run $cmd in a new session (new process group + no controlling terminal)
+  # so a parent-group SIGTERM cannot reach the child.  Echoes the leader PID.
+  # Uses setsid when available (Linux/CI); falls back to a python3 shim
+  # (python3 is already a hard runner dependency) with os.setsid() + execvp.
+  local cmd="$1"
+  local log="$2"
+  local leader_pid
+
+  if command -v setsid >/dev/null 2>&1; then
+    nohup setsid bash -c "$cmd" >"$log" 2>&1 </dev/null &
+    leader_pid=$!
+  else
+    nohup python3 -c 'import os,sys; os.setsid(); os.execvp("/bin/bash", ["bash","-c",sys.argv[1]])' "$cmd" >"$log" 2>&1 </dev/null &
+    leader_pid=$!
+  fi
+
+  echo "$leader_pid"
+}
+
 read_projects_registry() {
   if [[ ! -f "$PROJECTS_JSON" ]]; then
     echo '[]'
