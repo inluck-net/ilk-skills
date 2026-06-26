@@ -28,6 +28,10 @@ JSONL_LOG_PATH=""
 PROMPT="/ilk please continue the active plan"
 MAX_BUDGET_USD=0
 MODEL=""
+
+# ERR-trap context: set by record_err_context on any set -e exit; included
+# in finalize_sentinel's stopped_reason so interrupted sentinels self-identify.
+_LAST_ERR_CONTEXT=""
 RUN_LOCAL_CHECKS=false
 LOCAL_CHECKS_TIMEOUT_SEC=180
 LOCAL_CHECKS_SCRIPT="${_SKILL_ROOT}/ilk-loop/scripts/run_local_checks.py"
@@ -786,6 +790,12 @@ write_ilk_sentinel() {
   }
 }
 
+record_err_context() {
+  # Called by the ERR trap: captures the failing line number and command
+  # so finalize_sentinel can include them in stopped_reason.
+  _LAST_ERR_CONTEXT="line $1: $2"
+}
+
 finalize_sentinel() {
   # On EXIT (signal, error, or normal), if the sentinel is still state=running,
   # rewrite it to a terminal state so stale-running sentinels never survive.
@@ -803,7 +813,13 @@ finalize_sentinel() {
 
   local ended_at
   ended_at=$(date +%Y-%m-%dT%H:%M:%S%z)
-  python3 -c "import json; print(json.dumps({
+  local stopped_reason="runner exited without a terminal state"
+  if [[ -n "${_LAST_ERR_CONTEXT:-}" ]]; then
+    stopped_reason="runner exited without a terminal state (${_LAST_ERR_CONTEXT})"
+  fi
+  ILK_STOPPED_REASON="$stopped_reason" python3 -c "
+import json, os
+print(json.dumps({
     'state': 'interrupted',
     'pid': None,
     'run_id': '$RUN_ID',
@@ -811,8 +827,9 @@ finalize_sentinel() {
     'ended_at': '$ended_at',
     'project_path': '$PROJECT_PATH',
     'cli': 'claude',
-    'stopped_reason': 'runner exited without a terminal state'
-  }))" > "${target}.tmp" && mv -f "${target}.tmp" "$target" || true
+    'stopped_reason': os.environ['ILK_STOPPED_REASON']
+}))
+" > "${target}.tmp" && mv -f "${target}.tmp" "$target" || true
   echo "[runner] finalize_sentinel: wrote terminal state (interrupted)" >&2
 }
 
