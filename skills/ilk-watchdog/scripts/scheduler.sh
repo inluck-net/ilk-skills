@@ -670,6 +670,23 @@ print(int((ea-sa).total_seconds()))
         fi
       fi
 
+      # Dispatch cooldown: skip re-dispatch within DISPATCH_COOLDOWN_SEC of a
+      # prior dispatch when no running.pid sentinel has appeared yet.  Guards
+      # the window between launch and sentinel write.  If a sentinel IS live,
+      # the skip-busy check below already covers it.
+      local last_dispatch
+      last_dispatch="$(dispatch_time_epoch_for_key "$key")"
+      if [[ "$(within_dispatch_cooldown "$last_dispatch" "$now_epoch" "$DISPATCH_COOLDOWN_SEC")" == "true" ]] && ! test_running_pid "$path"; then
+        if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+          write_scheduler_log "skip-cooldown" "$key"
+          echo "{\"decision\":\"skip-cooldown\",\"key\":\"$key\"}"
+        else
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip-cooldown: $key"
+          write_scheduler_log "skip-cooldown" "$key"
+        fi
+        continue
+      fi
+
       # Check if project is busy
       if test_running_pid "$path"; then
         if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
