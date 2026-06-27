@@ -422,10 +422,14 @@ function Run-WatchdogLoop {
   $script:ActivityLog = Join-Path $script:WatchdogStateDir 'activity.log'
   $watchdogPidFile   = Join-Path $script:WatchdogStateDir 'watchdog.pid'
 
-  # refuse to double-run
+  # refuse to double-run — but only when the recorded PID is a watchdog
+  # still actively watching for this project. A lingering -NoExit host of a
+  # finished watchdog (or any other process that grabbed the same PID) must
+  # NOT block a fresh watchdog.
   if (Test-Path $watchdogPidFile) {
     $existingPid = (Get-Content $watchdogPidFile -Raw).Trim()
-    if ($existingPid -and (Test-ProcessAlive -ProcessId ([int]$existingPid))) {
+    if ($existingPid -and (Test-ProcessAlive -ProcessId ([int]$existingPid)) -and
+        (Test-ProcessCommandAlive -ProcessId ([int]$existingPid) -ExpectedCommand 'watchdog')) {
       Write-Banner -Title "WATCHDOG ALREADY RUNNING" -Body "Project: $ProjName`nExisting watchdog PID: $existingPid`nRefusing to start a second one." -Color Red
       return
     } else {

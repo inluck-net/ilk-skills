@@ -97,20 +97,16 @@ $ac2PidFile = Join-Path $ac2StateDir 'watchdog.pid'
 # Use current PID (this test process) — it is alive but NOT a watchdog
 Set-Content $ac2PidFile -Value "$PID" -Encoding ascii -NoNewline
 
-# What the guard actually does (lines 426-434):
+# What the guard does (lines 426-434, after fix):
 $existingPid = (Get-Content $ac2PidFile -Raw).Trim()
 $pidAlive = Test-ProcessAlive -ProcessId ([int]$existingPid)
-
-# The guard currently only checks aliveness. If the PID is alive, it refuses.
-# The CORRECT behavior: also check Test-ProcessCommandAlive.
 $isWatchdog = Test-ProcessCommandAlive -ProcessId ([int]$existingPid) -ExpectedCommand 'watchdog'
 
-# Guard SHOULD refuse only when PID is alive AND is a watching watchdog
-$guardRefuses = $pidAlive   # Current guard: only checks aliveness (BUG)
-# $guardRefuses = $pidAlive -and $isWatchdog  # Correct guard (after fix)
+# Guard refuses ONLY when PID is alive AND is a watching watchdog
+$guardRefuses = $pidAlive -and $isWatchdog
 
 if ($guardRefuses) {
-  $failures += "AC-2: guard should NOT refuse for a live non-watchdog PID ($PID), but the current guard only checks aliveness (Test-ProcessAlive). Fix: also check Test-ProcessCommandAlive."
+  $failures += "AC-2: guard should NOT refuse for a live non-watchdog PID ($PID), but it did"
 }
 
 # ============================================================================
