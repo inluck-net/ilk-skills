@@ -498,7 +498,7 @@ function Invoke-LocalChecks {
       }
       $exit = $proc.ExitCode
       $jsonText = ""
-      if (Test-Path $tmpOut) { $jsonText = Get-Content $tmpOut -Raw -ErrorAction SilentlyContinue }
+      if (Test-Path $tmpOut) { $jsonText = Get-Content $tmpOut -Raw -Encoding utf8 -ErrorAction SilentlyContinue }
       $parsed = $null
       try { if ($jsonText) { $parsed = $jsonText | ConvertFrom-Json -ErrorAction Stop } } catch { $parsed = $null }
       $outcome = Get-LocalCheckOutcome -Parsed $parsed -ExitCode $exit
@@ -1975,7 +1975,7 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
             -NoNewWindow -PassThru -RedirectStandardOutput $confirmTmp -RedirectStandardError "$confirmTmp.err"
           $confirmProc.WaitForExit(30000) | Out-Null
           $confirmOut = ""
-          if (Test-Path $confirmTmp) { $confirmOut = Get-Content $confirmTmp -Raw -ErrorAction SilentlyContinue }
+          if (Test-Path $confirmTmp) { $confirmOut = Get-Content $confirmTmp -Raw -Encoding utf8 -ErrorAction SilentlyContinue }
           $confirmResult = $null
           try { if ($confirmOut) { $confirmResult = $confirmOut | ConvertFrom-Json -ErrorAction Stop } } catch { $confirmResult = $null }
         } finally {

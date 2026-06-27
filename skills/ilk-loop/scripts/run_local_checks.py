@@ -479,6 +479,19 @@ def confirm_b2_main(argv: list[str]) -> int:
 
 
 def main(argv: list[str]) -> int:
+    # Force UTF-8 on stdout/stderr. The JSON we print carries gate output in
+    # `stdout_tail` (e.g. eslint/vitest emit U+2713 '✓'); on a zh-CN console
+    # Python defaults stdout to GBK (cp936), and `print(json.dumps(...))` then
+    # dies with UnicodeEncodeError → empty stdout → the runner records
+    # outcome=error/exit_code=null/raw=null → a FALSE local_checks_failed even
+    # though the gate passed. Reconfiguring to UTF-8 (the runner reads the temp
+    # file as UTF-8) makes the JSON survive any non-ASCII gate output.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     # Dispatch to confirm-b2 subcommand if present
     if "--confirm-b2" in argv:
         return confirm_b2_main(argv)
