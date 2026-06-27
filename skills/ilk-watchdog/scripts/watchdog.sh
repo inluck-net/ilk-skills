@@ -533,11 +533,15 @@ run_watchdog_loop() {
   ACTIVITY_LOG="${WATCHDOG_STATE_DIR}/activity.log"
   watchdog_pid_file="${WATCHDOG_STATE_DIR}/watchdog.pid"
 
-  # Refuse to double-run
+  # Refuse to double-run — but only when the recorded PID is a watchdog
+  # still actively watching for this project. A lingering -NoExit host of a
+  # finished watchdog (or any other process that grabbed the same PID) must
+  # NOT block a fresh watchdog.
   if [[ -f "$watchdog_pid_file" ]]; then
     local existing_pid
     existing_pid=$(tr -d '[:space:]' < "$watchdog_pid_file")
-    if [[ -n "$existing_pid" ]] && test_process_alive "$existing_pid"; then
+    if [[ -n "$existing_pid" ]] && test_process_alive "$existing_pid" && \
+       test_process_command_alive "$existing_pid" "watchdog"; then
       write_banner "WATCHDOG ALREADY RUNNING" \
         "Project: $proj_name\nExisting watchdog PID: $existing_pid\nRefusing to start a second one." 31
       return
