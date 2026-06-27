@@ -44,7 +44,10 @@ if (-not (Get-Command Get-LocalCheckOutcome -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
-# ── Fixture: temp project with sub-plan ──────────────────────────────
+# ── Fixture: temp project with external plans dir ────────────────────
+# find_project_root walks up from the scratch dir to the real git root,
+# so the project key is the real repo's key. We set ILK_DATA_HOME to
+# redirect the external plans dir to our scratch area.
 $helper = Join-Path $repoRoot "skills\ilk-loop\scripts\run_local_checks.py"
 if (-not (Test-Path $helper)) {
   Write-Error "FAIL: helper not found at $helper"
@@ -52,24 +55,45 @@ if (-not (Test-Path $helper)) {
 }
 
 $tempProj = Join-Path $scratch "tempproj"
-$plansDir = Join-Path $tempProj "docs\plans"
-New-Item -ItemType Directory -Force -Path $plansDir | Out-Null
+New-Item -ItemType Directory -Force -Path $tempProj | Out-Null
 
-# Minimal MASTER so find_plans_dir resolves the in-tree plans dir
-@"
+# Redirect ILK_DATA_HOME so ilk_paths.py resolves plans under our scratch
+$savedDataHome = $env:ILK_DATA_HOME
+$env:ILK_DATA_HOME = Join-Path $scratch "ilk-data"
+
+# Resolve the external plans dir that ilk_paths.py will use for this project
+$resolver = Join-Path $repoRoot "skills\ilk-loop\scripts\ilk_paths.py"
+try {
+  $plansJson = & python $resolver --start $tempProj 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not $plansJson) {
+    Write-Error "FAIL: ilk_paths.py could not resolve plans dir for $tempProj"
+    exit 1
+  }
+  $plansObj = $plansJson | ConvertFrom-Json
+  $extPlansDir = $plansObj.external_plans_dir
+} catch {
+  Write-Error "FAIL: ilk_paths.py failed: $_"
+  exit 1
+}
+# Create the external plans dir and populate it
+New-Item -ItemType Directory -Force -Path $extPlansDir | Out-Null
+
+# Minimal MASTER so find_plans_dir returns this dir
+@'
 ---
 master_plan: test-b2-outer-timeout
 batch_date: 2026-06-28
 status: active
 ---
 # Test MASTER
-"@ | Set-Content -Path (Join-Path $plansDir "MASTER-test.md") -Encoding utf8
+'@ | Set-Content -Path (Join-Path $extPlansDir "MASTER-test.md") -Encoding utf8
 
-# Sub-plan with three steps exercising different timeout scenarios
+# Sub-plan with three steps exercising different timeout scenarios.
+# Uses single-quoted here-string (literal backticks) + __SLUG__ placeholder.
 $slug = "test-b2-outer-timeout"
-$fixtureContent = @"
+(@'
 ---
-plan: $slug
+plan: __SLUG__
 status: in-progress
 current_step: 0
 estimated_steps: 3
@@ -80,27 +104,26 @@ estimated_steps: 3
 ## Steps
 
 ### Step 0 — slow check within declared timeout
-``````yaml
+```yaml
 local_checks:
   - command: "python -c \"import time; time.sleep(2)\""
     timeout: 30
-``````
+```
 
 ### Step 1 — check exceeds its own declared timeout
-``````yaml
+```yaml
 local_checks:
   - command: "python -c \"import time; time.sleep(15)\""
     timeout: 10
-``````
+```
 
 ### Step 2 — outer cap kills the helper
-``````yaml
+```yaml
 local_checks:
   - command: "python -c \"import time; time.sleep(10)\""
     timeout: 30
-``````
-"@
-$fixtureContent | Set-Content -Path (Join-Path $plansDir "$slug.md") -Encoding utf8
+```
+'@).Replace('__SLUG__', $slug) | Set-Content -Path (Join-Path $extPlansDir "$slug.md") -Encoding utf8
 
 # ── AC matrix ────────────────────────────────────────────────────────
 $failures = @()
@@ -135,15 +158,38 @@ if ($r.outcome -ne 'fail') {
 }
 
 # --- AC-3: self-inflicted kill is inconclusive ---
-# Use a generous declared timeout (120s) so the helper won't timeout, but set
-# OuterTimeoutSec=5 to force the outer cap to fire. The helper is killed,
-# exit_code=null, raw=null. The outcome must be 'inconclusive' (not 'error').
+# Declared timeout=10, so per-target cap = max(10+60, 5) = 70s. The command
+# sleeps 75s (>70s per-target cap). The helper's own timeout is 120s (won't
+# fire). The outer cap fires at ~70s, killing the helper. Outcome must be
+# 'inconclusive' (not 'error' or 'fail').
+$ac3_slug = "test-b2-outer-timeout-kill"
+(@'
+---
+plan: __SLUG__
+status: in-progress
+current_step: 0
+estimated_steps: 1
+---
+
+# Test sub-plan for AC-3 kill path
+
+## Steps
+
+### Step 0 — command exceeds outer cap but not helper timeout
+```yaml
+local_checks:
+  - command: "python -c \"import time; time.sleep(75)\""
+    timeout: 10
+```
+'@).Replace('__SLUG__', $ac3_slug) | Set-Content -Path (Join-Path $extPlansDir "$ac3_slug.md") -Encoding utf8
+
 $ac3_targets = @(
-  [PSCustomObject]@{ slug = $slug; step = 2 }
+  [PSCustomObject]@{ slug = $ac3_slug; step = 0 }
 )
 $ac3_results = Invoke-LocalChecks -Project $tempProj -Targets $ac3_targets `
   -HelperScript $helper -OuterTimeoutSec 5
 $r = $ac3_results[0]
+# When the outer cap kills the helper, exit_code and raw must be null
 if ($null -ne $r.exit_code) {
   $failures += "AC-3: outer-cap kill must produce null exit_code; got $($r.exit_code)"
 }
@@ -156,6 +202,7 @@ if ($r.outcome -ne 'inconclusive') {
 }
 
 # ── Teardown ─────────────────────────────────────────────────────────
+$env:ILK_DATA_HOME = $savedDataHome
 try { Remove-Item -Recurse -Force $scratch -ErrorAction SilentlyContinue } catch {}
 
 if ($failures.Count -gt 0) {

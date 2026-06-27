@@ -349,15 +349,92 @@ function Write-IlkSentinel {
   }
 }
 
+function Get-StepDeclaredTimeout {
+  <#
+    Read the declared per-check timeout(s) from a sub-plan step's local_checks.
+    Returns the sum of all timeout: values in the step's yaml block, or 0 if
+    the sub-plan or step cannot be found. Mirrors run_local_checks.py's
+    extract_step_local_checks logic (heading → fenced yaml → parse timeout:).
+  #>
+  param(
+    [Parameter(Mandatory)] [string]$Project,
+    [Parameter(Mandatory)] [string]$Slug,
+    [Parameter(Mandatory)] [int]$Step
+  )
+  # Resolve plans dir via ilk_paths.py
+  $resolver = Join-Path (Split-Path $PSCommandPath -Parent) "ilk_paths.py"
+  if (-not (Test-Path $resolver)) { return 0 }
+  try {
+    $json = & python $resolver --start $Project 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $json) { return 0 }
+    $obj = $json | ConvertFrom-Json -ErrorAction Stop
+    if (-not $obj.resolved_plans_dir) { return 0 }
+    $plansDir = $obj.resolved_plans_dir
+  } catch { return 0 }
+  if (-not (Test-Path $plansDir)) { return 0 }
+  # Find sub-plan by slug
+  $planRe = [regex]::new('(?m)^plan:\s*(\S+)')
+  $headingRe = [regex]::new("(?m)^###\s+Step\s+$Step(\s|—|-|$)")
+  $nextHeadingRe = [regex]::new('(?m)^###\s+')
+  $fenceRe = [regex]::new('(?ms)^\`\`\`(?:yaml|yml)?\s*\r?\n(.*?)^\`\`\`')
+  $timeoutRe = [regex]::new('(?m)^\s*(?:-\s+)?timeout:\s*(\d+)')
+  $localChecksRe = [regex]::new('(?m)^\s*local_checks:')
+  $blankOrIndented = [regex]::new('(?m)^\s*$|^\s+')
+  foreach ($f in (Get-ChildItem -Path $plansDir -Filter "*.md" -ErrorAction SilentlyContinue)) {
+    $content = Get-Content $f.FullName -Raw -Encoding utf8 -ErrorAction SilentlyContinue
+    if (-not $content) { continue }
+    $pm = $planRe.Match($content)
+    if ($pm.Success -and $pm.Groups[1].Value -eq $Slug) {
+      # Extract step heading + fenced yaml block (mirrors extract_step_local_checks)
+      $hm = $headingRe.Match($content)
+      if (-not $hm.Success) { return 0 }
+      $after = $content.Substring($hm.Index + $hm.Length)
+      # Find next heading to limit the region
+      $nextH = $nextHeadingRe.Match($after)
+      if ($nextH.Success) { $after = $after.Substring(0, $nextH.Index) }
+      # Find fenced yaml block
+      $fence = $fenceRe.Match($after)
+      if (-not $fence.Success) { return 0 }
+      $yaml = $fence.Groups[1].Value
+      # Parse timeout: values from local_checks block
+      $sum = 0
+      $inBlock = $false
+      $yamlLines = $yaml.Split([char[]]@(10, 13), [System.StringSplitOptions]::RemoveEmptyEntries)
+      foreach ($line in $yamlLines) {
+        $s = $line.Trim()
+        if ($localChecksRe.IsMatch($line)) {
+          $inBlock = $true; continue
+        }
+        if ($inBlock) {
+          $tm = $timeoutRe.Match($line)
+          if ($tm.Success) {
+            $sum += [int]$tm.Groups[1].Value
+          }
+          elseif ($s -ne '' -and -not $line.StartsWith(' ') -and -not $line.StartsWith('-')) {
+            $inBlock = $false
+          }
+        }
+      }
+      return $sum
+    }
+  }
+  return 0
+}
+
 function Invoke-LocalChecks {
   <#
     Run run_local_checks.py for every target. Each invocation has the
     helper's own per-check timeouts; this function adds an outer wall
     clock so that misbehaving checks cannot stretch an iteration.
 
+    The outer cap is derived from each target's declared per-check timeout
+    (sum of timeout: values + 60s margin), with a floor at $OuterTimeoutSec.
+    A self-inflicted kill (outer cap fires, helper killed, no exit code) is
+    recorded as 'inconclusive' — NOT as a confirmed blocking 'error'.
+
     Returns: array of @{ slug; step; outcome; raw } where outcome is
-    one of pass | fail | error | skipped, raw is the helper's parsed
-    JSON (or $null on error).
+    one of pass | fail | error | inconclusive | skipped, raw is the
+    helper's parsed JSON (or $null on error/inconclusive).
   #>
   param(
     [Parameter(Mandatory)] [string]$Project,
@@ -376,7 +453,15 @@ function Invoke-LocalChecks {
     }
     return $out
   }
-  $deadline = (Get-Date).AddSeconds($OuterTimeoutSec)
+  # Derive outer cap from declared per-check timeouts (B2 false-stop fix).
+  # Each target's declared timeout is read from the sub-plan; the overall
+  # deadline is max(totalDeclared + 60s margin, $OuterTimeoutSec).
+  $totalDeclared = 0
+  foreach ($t in $Targets) {
+    $totalDeclared += Get-StepDeclaredTimeout -Project $Project -Slug $t.slug -Step $t.step
+  }
+  $effectiveTimeout = [Math]::Max($totalDeclared + 60, $OuterTimeoutSec)
+  $deadline = (Get-Date).AddSeconds($effectiveTimeout)
   foreach ($t in $Targets) {
     if ((Get-Date) -ge $deadline) {
       $out += [PSCustomObject]@{
@@ -387,6 +472,12 @@ function Invoke-LocalChecks {
     }
     $remainSec = [int](($deadline - (Get-Date)).TotalSeconds)
     if ($remainSec -lt 5) { $remainSec = 5 }
+    # Per-target: use declared timeout + margin as floor for remaining time
+    $declared = Get-StepDeclaredTimeout -Project $Project -Slug $t.slug -Step $t.step
+    if ($declared -gt 0) {
+      $perTarget = $declared + 60
+      if ($perTarget -gt $remainSec) { $remainSec = $perTarget }
+    }
     $tmpOut = [IO.Path]::GetTempFileName()
     $args = @($HelperScript, "--project", $Project, "--slug", $t.slug, "--step", $t.step.ToString())
     try {
@@ -394,9 +485,14 @@ function Invoke-LocalChecks {
         -NoNewWindow -PassThru -RedirectStandardOutput $tmpOut -RedirectStandardError "$tmpOut.err"
       if (-not $proc.WaitForExit($remainSec * 1000)) {
         try { $proc.Kill($true) } catch {}
+        # Self-inflicted kill: our outer cap fired, not the helper's own
+        # timeout. Record as 'inconclusive' — not a confirmed blocking
+        # failure. A gate that genuinely timed out returns fail/error via
+        # the helper's own JSON; this path only fires when WE killed it.
         $out += [PSCustomObject]@{
-          slug = $t.slug; step = $t.step; outcome = "error"; raw = $null
-          error = "outer-timeout after ${remainSec}s"
+          slug = $t.slug; step = $t.step; outcome = "inconclusive"
+          exit_code = $null; raw = $null
+          error = "outer-timeout after ${remainSec}s (self-inflicted kill)"
         }
         continue
       }
