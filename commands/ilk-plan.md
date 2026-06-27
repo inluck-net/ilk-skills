@@ -114,6 +114,13 @@ description. If empty:
 If the task description is short and ambiguous, ask 1-3 clarifying
 questions before proposing groupings. Don't guess.
 
+If the task is thin AND the missing detail is **domain/industry knowledge
+nobody can supply off the top of their head** (not facts in the user's head —
+e.g. "build a tower-defense game" without the systems such a game needs),
+clarifying questions won't help. Recommend the user run `/ilk-spec` first to
+research conventions and elaborate a tier-tagged spec, then return here to plan
+from it.
+
 ## 4. Read existing plans (collision avoidance)
 
 If the resolved plans dir has any unfinished sub-plans, list them briefly
