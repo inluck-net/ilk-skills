@@ -833,6 +833,45 @@ print(json.dumps({
   echo "[runner] finalize_sentinel: wrote terminal state (interrupted)" >&2
 }
 
+# Read declared per-check timeout(s) from a sub-plan step's local_checks.
+# Mirrors the PowerShell Get-StepDeclaredTimeout; returns sum of timeout:
+# values or 0 if not found.
+get_step_declared_timeout() {
+  local project="$1" slug="$2" step="$3"
+  local resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
+  if [[ ! -f "$resolver" ]]; then echo 0; return; fi
+  local plans_dir
+  plans_dir=$(python3 "$resolver" --start "$project" 2>/dev/null | \
+    python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('resolved_plans_dir') or '')" 2>/dev/null)
+  if [[ -z "$plans_dir" || ! -d "$plans_dir" ]]; then echo 0; return; fi
+  # Find sub-plan file by slug
+  local f
+  for f in "$plans_dir"/*.md; do
+    [[ -f "$f" ]] || continue
+    local plan_slug
+    plan_slug=$(grep -m1 '^plan:' "$f" 2>/dev/null | sed 's/^plan:\s*//')
+    if [[ "$plan_slug" == "$slug" ]]; then
+      # Extract step heading → fenced yaml → timeout: values
+      local sum
+      sum=$(awk -v step="$step" '
+        BEGIN { in_step=0; in_fence=0; in_lc=0; sum=0 }
+        /^### Step / && $3 == step { in_step=1; next }
+        /^### Step / && in_step { in_step=0 }
+        in_step && /^```/ { in_fence=!in_fence; next }
+        in_fence && /^local_checks:/ { in_lc=1; next }
+        in_fence && in_lc && /^\s*( - )?timeout:\s*[0-9]+/ {
+          match($0, /timeout:\s*([0-9]+)/, a); sum += a[1]
+        }
+        in_fence && in_lc && /^[^ ]/ && !/^\s/ { in_lc=0 }
+        END { print sum+0 }
+      ' "$f" 2>/dev/null)
+      echo "$sum"
+      return
+    fi
+  done
+  echo 0
+}
+
 invoke_local_checks() {
   local project="$1"
   local targets_file="$2"
@@ -849,8 +888,22 @@ invoke_local_checks() {
     return
   fi
 
+  # Derive outer cap from declared per-check timeouts (B2 false-stop fix).
+  # Each target's declared timeout is read from the sub-plan; the overall
+  # deadline is max(totalDeclared + 60s margin, outer_timeout_sec).
+  local total_declared=0
+  local s s_step d
+  while read -r s s_step; do
+    d=$(get_step_declared_timeout "$project" "$s" "$s_step")
+    total_declared=$((total_declared + d))
+  done < "$targets_file"
+  local effective_timeout=$((total_declared + 60))
+  if [[ "$effective_timeout" -lt "$outer_timeout_sec" ]]; then
+    effective_timeout=$outer_timeout_sec
+  fi
+
   local deadline
-  deadline=$(($(date +%s) + outer_timeout_sec))
+  deadline=$(($(date +%s) + effective_timeout))
 
   local slug step
   while read -r slug step; do
@@ -865,6 +918,15 @@ invoke_local_checks() {
     if [[ "$remain_sec" -lt 5 ]]; then
       remain_sec=5
     fi
+    # Per-target: use declared timeout + margin as floor for remaining time
+    local declared
+    declared=$(get_step_declared_timeout "$project" "$slug" "$step")
+    if [[ "$declared" -gt 0 ]]; then
+      local per_target=$((declared + 60))
+      if [[ "$per_target" -gt "$remain_sec" ]]; then
+        remain_sec=$per_target
+      fi
+    fi
 
     local tmp_out
     tmp_out=$(mktemp)
@@ -872,24 +934,30 @@ invoke_local_checks() {
     local check_exit=0
     gtimeout "${remain_sec}s" python3 "$helper_script" --project "$project" --slug "$slug" --step "$step" > "$tmp_out" 2>&1 || check_exit=$?
 
-    local all_passed=""
-    if [[ -s "$tmp_out" ]]; then
-      all_passed=$(python3 -c "
+    local outcome=""
+    # gtimeout exits 124 when it kills the process (outer timeout fired).
+    # This is a self-inflicted kill, NOT a confirmed blocking failure.
+    if [[ "$check_exit" -eq 124 ]]; then
+      outcome="inconclusive"
+    else
+      local all_passed=""
+      if [[ -s "$tmp_out" ]]; then
+        all_passed=$(python3 -c "
 import json, sys
 try:
   d = json.load(sys.stdin)
   print(str(d.get('all_passed', '')).lower())
 except: pass
 " < "$tmp_out" 2>/dev/null || true)
+      fi
+      outcome=$(local_check_outcome "$all_passed" "$check_exit")
     fi
-
-    local outcome
-    outcome=$(local_check_outcome "$all_passed" "$check_exit")
 
     local tag
     case "$outcome" in
       pass) tag="OK" ;;
       fail) tag="FAIL" ;;
+      inconclusive) tag="INCONCLUSIVE" ;;
       *) tag="ERR" ;;
     esac
     echo "  [local_checks $tag] $slug step $step -> $outcome"
