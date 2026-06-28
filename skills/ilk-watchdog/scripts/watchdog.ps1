@@ -381,7 +381,14 @@ function Write-Log {
   $line = "[$ts] $Msg"
   Write-Host $line
   if ($script:ActivityLog) {
-    try { Add-Content -LiteralPath $script:ActivityLog -Value $line -Encoding utf8 } catch {}
+    try {
+      # BOM-free UTF-8 — PS 5.1's Add-Content -Encoding utf8 writes a BOM,
+      # which causes mojibake for non-ASCII (em-dash, arrow) on zh-CN Windows.
+      # [IO.StreamWriter]::new($path, $true, $enc) appends with explicit encoding.
+      $enc = New-Object System.Text.UTF8Encoding($false)
+      $sw = [IO.StreamWriter]::new($script:ActivityLog, $true, $enc)
+      try { $sw.WriteLine($line) } finally { $sw.Close() }
+    } catch {}
   }
 }
 
