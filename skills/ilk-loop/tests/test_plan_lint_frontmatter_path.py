@@ -263,6 +263,7 @@ local_checks:
 # Sub-plan: non-path tokens
 
 Common CLI tokens like 'python' and '-q' should never be flagged as paths.
+Baseline-green on all platforms 2026-06-28.
 """
 
 
