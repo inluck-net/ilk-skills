@@ -177,6 +177,15 @@ def scan_references(root: str, symbol: str) -> dict[str, list[tuple[int, str]]]:
 
 # ── Orphan detection ────────────────────────────────────────────────────────
 
+def _is_definition_line(line: str, symbol: str) -> bool:
+    """True if *line* looks like a definition of *symbol* (not a call site)."""
+    s = re.escape(symbol)
+    return bool(re.search(
+        rf"\b(?:def|class|function|const|let|var|export\s+(?:function|const|class))\s+{s}\b",
+        line,
+    ))
+
+
 def check_symbol(root: str, symbol: str) -> dict:
     """Check whether *symbol* is orphaned (only test call sites).
 
@@ -194,9 +203,13 @@ def check_symbol(root: str, symbol: str) -> dict:
     prod_files: list[str] = []
     total = 0
     for filepath, hits in refs.items():
-        count = len(hits)
-        total += count
         relpath = os.path.relpath(filepath, root)
+        # Filter out definition lines — only count actual usage/call sites.
+        usage_hits = [(ln, text) for ln, text in hits
+                      if not _is_definition_line(text, symbol)]
+        if not usage_hits:
+            continue
+        total += len(usage_hits)
         if is_test_file(relpath):
             test_files.append(relpath)
         else:
@@ -205,8 +218,18 @@ def check_symbol(root: str, symbol: str) -> dict:
         "symbol": symbol,
         "orphaned": len(prod_files) == 0 and len(test_files) > 0,
         "total_refs": total,
-        "test_refs": sum(len(refs[f]) for f in refs if is_test_file(os.path.relpath(f, root))),
-        "prod_refs": sum(len(refs[f]) for f in refs if not is_test_file(os.path.relpath(f, root))),
+        "test_refs": sum(
+            len([(ln, t) for ln, t in refs[f]
+                 if not _is_definition_line(t, symbol)])
+            for f in refs
+            if is_test_file(os.path.relpath(f, root))
+        ),
+        "prod_refs": sum(
+            len([(ln, t) for ln, t in refs[f]
+                 if not _is_definition_line(t, symbol)])
+            for f in refs
+            if not is_test_file(os.path.relpath(f, root))
+        ),
         "test_files": sorted(test_files),
         "prod_files": sorted(prod_files),
     }
