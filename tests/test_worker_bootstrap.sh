@@ -67,7 +67,9 @@ check "dry-run shows masked marker"    "$dry" contains "***set"
 echo ""
 echo "=== fail-closed: incomplete provider env ==="
 set +e
-HOME="$FAKE_HOME" bash "$BOOT_SH" --apply --home "$TMP/wk-fc" \
+# Unset ANTHROPIC_AUTH_TOKEN so the test is hermetic (no env leak).
+HOME="$FAKE_HOME" ANTHROPIC_AUTH_TOKEN="" \
+  bash "$BOOT_SH" --apply --home "$TMP/wk-fc" \
   --base-url https://p.example/anthropic --model m1 >/dev/null 2>&1
 fc_rc=$?
 set -e
@@ -122,6 +124,24 @@ else
   DRAW_PY="$DRAW_HOME"
 fi
 $PY -c "import json,sys; json.load(open(r'$DRAW_PY/settings.json'))"; ok "draw-home: valid JSON" $?
+
+echo ""
+echo "=== named-home fail-closed: missing required field ==="
+set +e
+HOME="$FAKE_HOME" ANTHROPIC_AUTH_TOKEN="" \
+  bash "$BOOT_SH" --apply --home "$TMP/wk-fc-named" \
+  --base-url https://api.minimaxi.com/anthropic --model MiniMax-M3 2>&1
+fc_named_rc=$?
+set -e
+ok "named-home fail-closed: exit 3" "$([[ $fc_named_rc -eq 3 ]] && echo 0 || echo 1)"
+ok "named-home fail-closed: wrote nothing" "$([[ ! -e "$TMP/wk-fc-named" ]] && echo 0 || echo 1)"
+
+echo ""
+echo "=== named-home redaction: token never printed ==="
+apply_output="$(HOME="$FAKE_HOME" bash "$BOOT_SH" --apply --home "$TMP/wk-redact" \
+  --base-url https://api.minimaxi.com/anthropic --auth-token "$TOKEN" --model MiniMax-M3 2>&1)"
+check "apply never prints raw token" "$apply_output" absent "$TOKEN"
+check "apply shows masked marker"    "$apply_output" contains "***set"
 
 echo ""
 echo "=== bootstrap.ps1 parity (static) ==="
