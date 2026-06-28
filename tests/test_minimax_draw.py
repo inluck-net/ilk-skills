@@ -510,3 +510,45 @@ class TestCmdCurate:
             assert call_log[0][0] == "post"
         finally:
             img_path.unlink(missing_ok=True)
+
+
+# ── Regression: escaped-bug — live cred + save paths (shipped broken, verified
+# only after a live smoke; pure-core tests with an injected _post never exercised
+# these). See improvement-backlog escaped-bug + memory baseline-red... episode. ──
+
+class TestLiveCredAndSaveRegression:
+    def test_ccswitch_import_resolves(self):
+        """_load_minimax_token must import the sibling module from the hyphenated
+        `tools/claude-worker` dir and use its REAL API. Shipped broken as
+        `from claude_worker.ccswitch_import import list_providers, export_provider`
+        (wrong package path + non-existent names) -> ModuleNotFoundError live."""
+        from minimax import draw as _draw
+        cw_dir = Path(_draw.__file__).resolve().parent.parent / "claude-worker"
+        assert cw_dir.is_dir(), f"expected sibling dir {cw_dir}"
+        sys.path.insert(0, str(cw_dir))
+        try:
+            import ccswitch_import as cc
+            assert hasattr(cc, "parse_providers_from_db")
+            assert hasattr(cc, "normalize_for_worker")
+            assert hasattr(cc, "CCSWITCH_DB")
+        finally:
+            try:
+                sys.path.remove(str(cw_dir))
+            except ValueError:
+                pass
+
+    def test_save_under_cwd_outside_toolroot(self, tmp_path, monkeypatch):
+        """A consumer (e.g. GRIDLOCK) runs the tool from its OWN repo and writes
+        into it. save_image must allow paths under the caller's CWD, not only the
+        tool's install dir. Shipped guarding the tool's repo root only."""
+        monkeypatch.chdir(tmp_path)
+        out = tmp_path / "src" / "assets" / "keyart.jpg"
+        result = save_image(_MINIMAL_JPEG, out)
+        assert result.exists()
+        assert result.read_bytes()[:2] == b"\xff\xd8"
+
+    def test_save_still_rejects_outside_both_roots(self, tmp_path):
+        """Escapes (under neither CWD nor tool root) are still refused."""
+        # cwd here is the repo root (pytest); tmp_path is outside it.
+        with pytest.raises(ValueError, match="outside project root"):
+            save_image(_MINIMAL_JPEG, tmp_path / "escape.jpg")

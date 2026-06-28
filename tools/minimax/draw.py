@@ -180,21 +180,30 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent
 
 
+def _within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def save_image(b: bytes, out_path: str | Path) -> Path:
     """Save image bytes to *out_path*, rejecting paths outside the project root.
 
-    Returns the resolved Path of the written file.
-    Raises ValueError if the resolved path escapes the project root.
-    """
-    root = _project_root()
-    resolved = Path(out_path).resolve()
+    "Project root" is the caller's CWD (so a consumer like GRIDLOCK can write into
+    its own repo, e.g. `--out src/assets/x.jpg`) OR this tool's own repo root (for
+    in-tree tests). Anything outside both is refused.
 
-    # Ensure the resolved path is under the project root
-    try:
-        resolved.relative_to(root)
-    except ValueError:
+    Returns the resolved Path of the written file.
+    Raises ValueError if the resolved path escapes both roots.
+    """
+    resolved = Path(out_path).resolve()
+    allowed = [Path.cwd().resolve(), _project_root()]
+
+    if not any(_within(resolved, root) for root in allowed):
         raise ValueError(
-            f"Path {resolved} is outside project root {root}. "
+            f"Path {resolved} is outside project root {allowed[0]}. "
             "Refusing to write."
         )
 
@@ -227,27 +236,29 @@ def _load_minimax_token(provider: str = "MiniMax") -> str:
     Never prints, logs, or returns the token for human display.
     Raises RuntimeError if the provider is not found or has no token.
     """
-    # Import the sibling ccswitch_import module
-    tools_dir = Path(__file__).resolve().parent.parent
-    sys.path.insert(0, str(tools_dir))
+    # Import the sibling ccswitch_import module. Its dir is `tools/claude-worker`
+    # (hyphen) — not an importable package name — so add that dir to sys.path and
+    # import the module by its (non-hyphenated) module name.
+    cw_dir = Path(__file__).resolve().parent.parent / "claude-worker"
+    sys.path.insert(0, str(cw_dir))
     try:
-        from claude_worker.ccswitch_import import list_providers, export_provider
+        import ccswitch_import as cc
     finally:
-        sys.path.pop(0)
+        try:
+            sys.path.remove(str(cw_dir))
+        except ValueError:
+            pass
 
-    providers = list_providers()
+    providers = [p for p in cc.parse_providers_from_db(cc.CCSWITCH_DB) if p.is_claude]
     match = next((p for p in providers if p.id == provider or p.name == provider), None)
     if match is None:
         raise RuntimeError(
             f"Provider '{provider}' not found in CCSwitch. "
-            f"Available: {[p.id for p in providers]}"
+            f"Available: {[p.name for p in providers]}"
         )
-
-    exported = export_provider(match, machine=True)
-    token = exported.get("ANTHROPIC_AUTH_TOKEN") or exported.get("auth_token", "")
-    if not token:
+    if not match.auth_token:
         raise RuntimeError(f"Provider '{provider}' has no auth token configured.")
-    return token
+    return match.auth_token
 
 
 # ── Subcommand: gen ─────────────────────────────────────────────────────────
