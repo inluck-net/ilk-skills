@@ -219,6 +219,76 @@ but PID 48268 was recycled to another process. `pid_alive` returned `True`
 
 ---
 
+## Contract 4: Human-verify marker (compile-only / device-manual)
+
+### Purpose
+
+A shipped `compile-only` or `device-manual` sub-plan has not been runtime-verified
+in-loop. Before later work can build on it, a human must confirm it actually works.
+This contract defines the on-disk marker that records that confirmation, so
+`promote_next_master.py` can block promotion of dependent masters until verification
+occurs.
+
+### Format
+
+A `verified:` field in the sub-plan's YAML front-matter:
+
+```yaml
+---
+plan: my-subplan
+status: shipped
+verification_tier: compile-only
+verified: true          # <-- human-verify marker
+---
+```
+
+### Accepted values
+
+| Value | Meaning |
+|---|---|
+| `true` / `yes` / `1` | Human has verified — promotion may proceed |
+| *(absent)* | **Not verified** — back-compat default; treat as unverified |
+| `false` / `no` / `0` | Explicitly unverified (same as absent, but intentional) |
+| Any other string | Treat as unverified (degrade-safe — see below) |
+
+### Who writes
+
+- **A human** editing the sub-plan file directly (after a device or manual pass).
+- **`/ilk-feedback`** — when the feedback flow records a human verification result.
+- Never written by the autonomous loop, the runner, or the scheduler.
+
+### Who reads
+
+- **`promote_next_master.py`** — before promoting a master that declares a
+  `builds_on` dependency on a compile-only/device-manual sub-plan, checks that
+  the dependency's sub-plan has `verified: true`. If absent or falsy, promotion
+  is skipped with a logged reason.
+- **`loop_status.py`** — already surfaces `needs-verify:<tier>` per shipped row;
+  the marker is informational here (the banner fires on tier, not on marker).
+
+### Invariants
+
+1. **Absent ⇒ unverified.** A sub-plan that predates this contract (no `verified:`
+   field) is treated as unverified. This is the safe back-compat default — old
+   shipped sub-plans must not silently become "verified" just because the field
+   didn't exist.
+2. **Degrade-safe on malformed input.** A `verified:` value that is not a
+   recognized truthy string (e.g. `"maybe"`, `"pending"`, garbage) is treated
+   as unverified. Readers must never raise on an unexpected value — degrade to
+   skip-with-reason.
+3. **Marker is independent of `status: shipped`.** A sub-plan must be `shipped`
+   before the marker is meaningful. A `verified: true` on a `pending` sub-plan
+   is a no-op (and should be flagged as an anomaly if detected).
+
+### Bug reference (GRIDLOCK v0.2, Gap C)
+
+`combat-vfx` and `visual-overhaul` shipped `compile-only` and the loop advanced
+to later masters that built on them — no marker, no block, no human pass. The
+unverified work compounded: later sub-plans silently accommodated bugs in the
+earlier layers. This contract closes that gap mechanically.
+
+---
+
 ## Adding a new reader or writer
 
 When adding a component that reads or writes any of the three artifact
@@ -250,6 +320,16 @@ types above, follow this checklist:
 - [ ] **Finalize on exit** — if you're a runner, rewrite the sentinel to a
       terminal state on every exit path. A `state: "running"` sentinel
       with a dead PID is a crash artifact the watchdog must catch.
+
+### For human-verify marker (sub-plan front-matter `verified:`)
+
+- [ ] **Absent ⇒ unverified.** Never treat a missing `verified:` field as
+      confirmed. The safe default is always "not verified".
+- [ ] **Degrade on malformed input.** An unrecognized value (not `true`/`yes`/`1`
+      or `false`/`no`/`0`) must be treated as unverified — skip with a reason,
+      never raise.
+- [ ] **Check `status: shipped` first.** The marker is only meaningful on a
+      shipped sub-plan. Ignore it on pending/in-progress sub-plans.
 
 ### General
 
