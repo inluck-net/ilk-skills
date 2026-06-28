@@ -121,6 +121,20 @@ clarifying questions won't help. Recommend the user run `/ilk-spec` first to
 research conventions and elaborate a tier-tagged spec, then return here to plan
 from it.
 
+### Spec-input validation (when task comes from `/ilk-spec`)
+
+If the task description contains spec pillar blocks (bold headings like
+`**Pillar: X**`), run `plan_lint.py --spec` against the spec text before
+proceeding to grouping. A pillar is NOT "done" when only its model layer is
+gated — each pillar must carry:
+
+1. A `verification_tier` tag (`loop-verified` / `compile-only` / `device-manual`).
+2. At least one outcome-level AC (player/user-facing verb, not just
+   "compiles" / "unit test passes").
+
+If the linter finds issues, surface them and ask the user to fix the spec
+before planning. This prevents under-gated pillars from reaching the loop.
+
 ## 4. Read existing plans (collision avoidance)
 
 If the resolved plans dir has any unfinished sub-plans, list them briefly

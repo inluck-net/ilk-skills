@@ -63,6 +63,22 @@ Once the user approves, emit the elaborated spec as the task description for
 tiers. Then tell the user they can run `/ilk-plan` with that description (or
 offer to do it in the same turn).
 
+### Pillar → outcome-AC traceability (enforced by `plan_lint.py --spec`)
+
+Every pillar block in the spec MUST carry:
+
+1. A **`verification_tier`** tag (or `tier:` shorthand) — one of
+   `loop-verified`, `compile-only`, `device-manual`.
+2. At least one **outcome-level AC** — a line starting with `- **AC` that
+   asserts the player/user-facing outcome (e.g. "player can upgrade a tower
+   through the inspector"), not just that the artifact compiles or unit-tests
+   pass.
+
+A pillar is NOT "done" when only its model layer is gated. The linter
+(`plan_lint.py --spec <spec-file>`) enforces this structurally: it warns on
+pillars missing a tier tag or having only compile-level ACs. Run it before
+handing off to `/ilk-plan`.
+
 ## Boundary rules
 
 - **Never skip step 4 (human approval).**
