@@ -696,7 +696,7 @@ function Test-ShipIntegrity {
   }
 
   $shipIntegrityScript = Join-Path $SkillRoot "ilk-loop\scripts\ship_integrity.py"
-  $violations = @()
+  $violations = [System.Collections.ArrayList]::new()
 
   Get-ChildItem $plansDir -Filter "*.md" -File | Where-Object { $_.Name -notlike "MASTER*" } | ForEach-Object {
     $lines = Get-Content $_.FullName -TotalCount 20 -ErrorAction SilentlyContinue
@@ -731,11 +731,11 @@ function Test-ShipIntegrity {
       if ($siExit -ne 0) {
         $reason = ($siOut | Where-Object { $_ -match "VIOLATION" }) -join "; "
         if (-not $reason) { $reason = ($siOut | Select-Object -Last 1) }
-        $violations += [PSCustomObject]@{
+        [void]$violations.Add([PSCustomObject]@{
           Path   = $_.FullName
           Slug   = $slug
           Reason = $reason
-        }
+        })
       }
     }
   }
