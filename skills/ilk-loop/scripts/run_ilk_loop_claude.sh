@@ -973,7 +973,33 @@ test_all_shipped() {
 }
 
 get_plans_dir() {
-  : # TODO: step 3 — resolve active plans dir via ilk_paths.py or walk-up
+  # Resolve active plans dir via ilk_paths.py, with legacy walk-up fallback.
+  local resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
+  if [[ -f "$resolver" ]]; then
+    local json
+    json=$(python3 "$resolver" --start "$PROJECT_PATH" 2>/dev/null) || true
+    if [[ -n "$json" ]]; then
+      local resolved
+      resolved=$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('resolved_plans_dir',''))" <<<"$json")
+      if [[ -n "$resolved" && -d "$resolved" ]]; then
+        echo "$resolved"
+        return 0
+      fi
+    fi
+  fi
+  # Legacy walk-up
+  local cur="$PROJECT_PATH"
+  while true; do
+    local candidate="$cur/docs/plans"
+    if [[ -d "$candidate" && -n "$(ls "$candidate"/MASTER-*.md 2>/dev/null | head -1)" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+    local parent
+    parent=$(dirname "$cur")
+    [[ "$parent" == "$cur" ]] && return 1
+    cur="$parent"
+  done
 }
 
 get_subplan_slug() {
@@ -998,6 +1024,66 @@ get_subplan_ci_timeout() {
 
 find_shipped_subplans_pending_gates() {
   : # TODO: step 6+ — scan plans dir for shipped plans without ship-reports
+}
+
+test_ship_integrity() {
+  # Ship-integrity enforcement: a sub-plan must not be "shipped" while its
+  # declared local_checks gate is red.
+  # Args: $1 = local_checks_results_file (JSONL, one line per check)
+  # Returns 0 if all clean, 1 if violations found (and prints them to stderr).
+  local lc_file="${1:-}"
+  local plans_dir
+  plans_dir=$(get_plans_dir) || return 0
+  [[ -z "$plans_dir" || ! -d "$plans_dir" ]] && return 0
+
+  local ship_integrity_script="${_SKILL_ROOT}/ilk-loop/scripts/ship_integrity.py"
+  [[ ! -f "$ship_integrity_script" ]] && return 0
+
+  local violations=0
+  for f in "$plans_dir"/*.md; do
+    [[ "$(basename "$f")" == MASTER* ]] && continue
+    # Check if shipped
+    if ! head -20 "$f" | grep -qE '^status:\s*shipped'; then
+      continue
+    fi
+    # Check if has declared local_checks
+    if ! head -20 "$f" | grep -qE '^\s*local_checks:\s*$'; then
+      continue
+    fi
+
+    # Get slug
+    local slug
+    slug=$(head -20 "$f" | grep -oP '^plan:\s*\K.+' | tr -d '[:space:]')
+
+    # Look up gate result from this iteration's local_checks
+    local gate_json="null"
+    if [[ -n "$lc_file" && -s "$lc_file" && -n "$slug" ]]; then
+      local lc_line
+      lc_line=$(grep "\"slug\":\"$slug\"" "$lc_file" | head -1) || true
+      if [[ -n "$lc_line" ]]; then
+        local outcome
+        outcome=$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('outcome',''))" <<<"$lc_line")
+        if [[ "$outcome" == "fail" || "$outcome" == "error" ]]; then
+          gate_json='{"all_passed":false,"results":[]}'
+        elif [[ "$outcome" == "pass" ]]; then
+          gate_json='{"all_passed":true,"results":[]}'
+        fi
+      fi
+    fi
+
+    # Call ship_integrity.py
+    local si_out si_exit
+    si_out=$(python3 "$ship_integrity_script" --subplan "$f" --gate-json "$gate_json" 2>&1) || true
+    si_exit=$?
+    if [[ $si_exit -ne 0 ]]; then
+      echo "  [ship-integrity VIOLATION] $slug: $si_out" >&2
+      # Revert status to in-progress
+      sed -i 's/^status:\s*shipped/status: in-progress/' "$f"
+      echo "  [ship-integrity] reverted $slug to in-progress" >&2
+      violations=1
+    fi
+  done
+  return $violations
 }
 
 invoke_quality_gates_for_subplan() {
@@ -1534,6 +1620,14 @@ print(json.dumps(d))
 
     if [[ -n "$iter_stop_reason" ]]; then
       stop_reason="$iter_stop_reason"
+      break
+    fi
+
+    # Ship-integrity enforcement: a sub-plan must not be "shipped" while its
+    # declared local_checks gate is red.
+    if ! test_ship_integrity "$local_checks_results"; then
+      stop_reason="ship_integrity_violation"
+      iter_stop_reason="ship_integrity_violation"
       break
     fi
 

@@ -670,6 +670,78 @@ function Find-ShippedSubPlansPendingGates {
   return ,$pending.ToArray()
 }
 
+function Test-ShipIntegrity {
+  <#
+    Ship-integrity enforcement: a sub-plan must not be "shipped" while its
+    declared local_checks gate is red.
+
+    Scans all sub-plans in the plans dir. For each shipped sub-plan that has
+    declared local_checks, looks up the gate result in $LocalChecksRun (the
+    current iteration's results). If the gate result is red (outcome=fail or
+    outcome=error), returns a violation.
+
+    Returns: array of @{ Path; Slug; Reason } for each violation.
+  #>
+  param(
+    [string]$ProjectPath,
+    [object[]]$LocalChecksRun
+  )
+  $plansDir = Get-PlansDir -Project $ProjectPath
+  if (-not $plansDir -or -not (Test-Path $plansDir)) { return @() }
+
+  # Build slug → gate-result lookup from this iteration's local_checks.
+  $gateMap = @{}
+  foreach ($r in $LocalChecksRun) {
+    if ($r.slug) { $gateMap[$r.slug] = $r }
+  }
+
+  $shipIntegrityScript = Join-Path $SkillRoot "ilk-loop\scripts\ship_integrity.py"
+  $violations = @()
+
+  Get-ChildItem $plansDir -Filter "*.md" -File | Where-Object { $_.Name -notlike "MASTER*" } | ForEach-Object {
+    $lines = Get-Content $_.FullName -TotalCount 20 -ErrorAction SilentlyContinue
+    if ($lines -notmatch "status:\s*shipped") { return }
+
+    $slug = ""
+    $hasChecks = $false
+    foreach ($line in $lines) {
+      if ($line -match "^plan:\s*(.+)$") { $slug = $Matches[1].Trim() }
+      if ($line -match "^\s*local_checks:\s*$") { $hasChecks = $true }
+    }
+    if (-not $hasChecks) { return }
+
+    # Shipped + declared checks → look up gate result.
+    $gateResult = $null
+    if ($slug -and $gateMap.ContainsKey($slug)) {
+      $lc = $gateMap[$slug]
+      $gateResult = @{
+        all_passed = ($lc.outcome -eq "pass")
+        results    = @()
+      }
+      if ($lc.raw -and $lc.raw.results) {
+        $gateResult.results = $lc.raw.results
+      }
+    }
+
+    # Call ship_integrity.py for a precise verdict.
+    if (Test-Path $shipIntegrityScript) {
+      $gateJson = if ($gateResult) { $gateResult | ConvertTo-Json -Compress } else { "null" }
+      $siOut = & python $shipIntegrityScript --subplan $_.FullName --gate-json $gateJson 2>&1
+      $siExit = $LASTEXITCODE
+      if ($siExit -ne 0) {
+        $reason = ($siOut | Where-Object { $_ -match "VIOLATION" }) -join "; "
+        if (-not $reason) { $reason = ($siOut | Select-Object -Last 1) }
+        $violations += [PSCustomObject]@{
+          Path   = $_.FullName
+          Slug   = $slug
+          Reason = $reason
+        }
+      }
+    }
+  }
+  return ,$violations.ToArray()
+}
+
 function Invoke-QualityGatesForSubPlan {
   param(
     [string]$ProjectPath,
@@ -2081,6 +2153,26 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
 
   if ($iterStopReason) {
     $stopReason = $iterStopReason
+    break
+  }
+
+  # Ship-integrity enforcement: a sub-plan must not be "shipped" while its
+  # declared local_checks gate is red.  If the agent set status=shipped but
+  # the gate failed, revert and stop.
+  $shipViolations = Test-ShipIntegrity -ProjectPath $ProjectPath -LocalChecksRun $localChecksRun
+  if ($shipViolations.Count -gt 0) {
+    foreach ($v in $shipViolations) {
+      Write-Host "  [ship-integrity VIOLATION] $($v.Slug): $($v.Reason)" -ForegroundColor Red
+      # Revert the sub-plan status to in-progress.
+      $content = Get-Content $v.Path -Raw -Encoding utf8 -ErrorAction SilentlyContinue
+      if ($content) {
+        $content = $content -replace '(?m)^status:\s*shipped', 'status: in-progress'
+        Set-Content -Path $v.Path -Value $content -Encoding utf8
+        Write-Host "  [ship-integrity] reverted $($v.Slug) to in-progress" -ForegroundColor Yellow
+      }
+    }
+    $stopReason = "ship_integrity_violation"
+    $iterStopReason = "ship_integrity_violation"
     break
   }
 
