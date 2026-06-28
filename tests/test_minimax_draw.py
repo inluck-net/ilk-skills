@@ -32,6 +32,7 @@ from minimax.draw import (
     is_png,
     save_image,
     cmd_gen,
+    cmd_curate,
     SUBCOMMANDS,
     IMAGE_MODEL,
     CURATE_MODEL,
@@ -374,3 +375,121 @@ class TestCmdGen:
             assert call_log[0][0] == "post"
         finally:
             out.unlink(missing_ok=True)
+
+
+# ── cmd_curate (injected _post) ─────────────────────────────────────────────
+
+class TestCmdCurate:
+    """Test cmd_curate by injecting fake _post and _load_minimax_token."""
+
+    def _make_args(self, image_path, **overrides):
+        import argparse
+        defaults = {
+            "image": str(image_path),
+            "criteria": "Is this image well-composed and usable as game art?",
+            "provider": "MiniMax",
+        }
+        defaults.update(overrides)
+        return argparse.Namespace(**defaults)
+
+    def test_posts_to_curate_url(self):
+        """cmd_curate should POST to the M3-VL endpoint."""
+        posted = {}
+        fake_verdict = {"verdict": "approve", "score": 8, "notes": "good"}
+
+        def fake_post(url, headers, payload, timeout=120):
+            posted["url"] = url
+            posted["headers"] = headers
+            posted["payload"] = payload
+            return {"content": [{"type": "text", "text": json.dumps(fake_verdict)}]}
+
+        project_root = Path(__file__).resolve().parent.parent
+        img_path = project_root / "scratch" / "test_curate_input.jpg"
+        img_path.parent.mkdir(parents=True, exist_ok=True)
+        img_path.write_bytes(_MINIMAL_JPEG)
+        try:
+            args = self._make_args(img_path)
+            with patch("minimax.draw._post", side_effect=fake_post), \
+                 patch("minimax.draw._load_minimax_token", return_value="fake-token"):
+                cmd_curate(args)
+
+            assert posted["url"] == CURATE_URL
+            assert posted["headers"]["Authorization"] == "Bearer fake-token"
+        finally:
+            img_path.unlink(missing_ok=True)
+
+    def test_includes_image_bytes(self):
+        """The curate payload should contain the image as base64."""
+        posted = {}
+        fake_verdict = {"verdict": "approve", "score": 8, "notes": "good"}
+
+        def fake_post(url, headers, payload, timeout=120):
+            posted["payload"] = payload
+            return {"content": [{"type": "text", "text": json.dumps(fake_verdict)}]}
+
+        project_root = Path(__file__).resolve().parent.parent
+        img_path = project_root / "scratch" / "test_curate_img.jpg"
+        img_path.parent.mkdir(parents=True, exist_ok=True)
+        img_path.write_bytes(_MINIMAL_JPEG)
+        try:
+            args = self._make_args(img_path)
+            with patch("minimax.draw._post", side_effect=fake_post), \
+                 patch("minimax.draw._load_minimax_token", return_value="fake-token"):
+                cmd_curate(args)
+
+            # Verify the image block contains our JPEG data
+            msg = posted["payload"]["messages"][0]
+            img_block = msg["content"][0]
+            assert img_block["type"] == "image"
+            decoded = base64.b64decode(img_block["source"]["data"])
+            assert decoded == _MINIMAL_JPEG
+        finally:
+            img_path.unlink(missing_ok=True)
+
+    def test_custom_criteria(self):
+        """Custom criteria should appear in the text block."""
+        posted = {}
+        fake_verdict = {"verdict": "reject", "score": 2, "notes": "bad"}
+
+        def fake_post(url, headers, payload, timeout=120):
+            posted["payload"] = payload
+            return {"content": [{"type": "text", "text": json.dumps(fake_verdict)}]}
+
+        project_root = Path(__file__).resolve().parent.parent
+        img_path = project_root / "scratch" / "test_curate_criteria.jpg"
+        img_path.parent.mkdir(parents=True, exist_ok=True)
+        img_path.write_bytes(_MINIMAL_JPEG)
+        try:
+            args = self._make_args(img_path, criteria="Is it blue?")
+            with patch("minimax.draw._post", side_effect=fake_post), \
+                 patch("minimax.draw._load_minimax_token", return_value="fake-token"):
+                cmd_curate(args)
+
+            text_block = posted["payload"]["messages"][0]["content"][1]
+            assert "Is it blue?" in text_block["text"]
+        finally:
+            img_path.unlink(missing_ok=True)
+
+    def test_no_live_network_call(self):
+        """cmd_curate must never call _post live — tests inject a fake."""
+        call_log = []
+        fake_verdict = {"verdict": "approve", "score": 7, "notes": "ok"}
+
+        def tracking_post(url, headers, payload, timeout=120):
+            call_log.append(("post", url))
+            return {"content": [{"type": "text", "text": json.dumps(fake_verdict)}]}
+
+        project_root = Path(__file__).resolve().parent.parent
+        img_path = project_root / "scratch" / "test_curate_no_live.jpg"
+        img_path.parent.mkdir(parents=True, exist_ok=True)
+        img_path.write_bytes(_MINIMAL_JPEG)
+        try:
+            args = self._make_args(img_path)
+            with patch("minimax.draw._post", side_effect=tracking_post), \
+                 patch("minimax.draw._load_minimax_token", return_value="fake-token"):
+                cmd_curate(args)
+
+            assert len(call_log) == 1
+            assert call_log[0][0] == "post"
+        finally:
+            img_path.unlink(missing_ok=True)
