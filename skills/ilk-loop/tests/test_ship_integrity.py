@@ -253,3 +253,48 @@ class TestCLISubplanFile:
         )
         assert result.returncode == 2
         assert "not found" in result.stderr.lower()
+
+
+# ── --gate-passed scalar interface (robust PS->python arg, no JSON quoting) ───
+
+class TestGatePassedScalar:
+    """The runner passes the gate outcome as a scalar --gate-passed instead of
+    JSON, because PS 5.1 mangles embedded quotes when passing JSON to a native
+    exe. These cover the scalar interface + its precedence over --gate-json."""
+
+    def test_gate_passed_false_on_shipped_with_checks_is_violation(self):
+        r = _run_cli(
+            "--status", "shipped",
+            "--checks-json", json.dumps([{"command": "pytest -q"}]),
+            "--gate-passed", "false",
+        )
+        assert r.returncode == 1
+        assert "VIOLATION" in (r.stdout + r.stderr)
+
+    def test_gate_passed_true_on_shipped_with_checks_is_ok(self):
+        r = _run_cli(
+            "--status", "shipped",
+            "--checks-json", json.dumps([{"command": "pytest -q"}]),
+            "--gate-passed", "true",
+        )
+        assert r.returncode == 0
+
+    def test_gate_passed_unknown_is_violation_when_checks_declared(self):
+        # 'unknown' == no gate result recorded; a shipped sub-plan with declared
+        # checks but no recorded gate is dishonest.
+        r = _run_cli(
+            "--status", "shipped",
+            "--checks-json", json.dumps([{"command": "pytest -q"}]),
+            "--gate-passed", "unknown",
+        )
+        assert r.returncode == 1
+
+    def test_gate_passed_takes_precedence_over_gate_json(self):
+        # --gate-passed true should win even if --gate-json says red.
+        r = _run_cli(
+            "--status", "shipped",
+            "--checks-json", json.dumps([{"command": "pytest -q"}]),
+            "--gate-json", json.dumps({"all_passed": False}),
+            "--gate-passed", "true",
+        )
+        assert r.returncode == 0

@@ -153,6 +153,14 @@ def _cli(argv: list[str]) -> int:
         default="null",
         help="JSON object of last gate result (null if none)",
     )
+    ap.add_argument(
+        "--gate-passed",
+        choices=["true", "false", "unknown"],
+        default=None,
+        help="scalar gate outcome — robust alternative to --gate-json that avoids "
+             "shell quote-mangling. 'unknown' means no gate result recorded. "
+             "Takes precedence over --gate-json when given.",
+    )
     args = ap.parse_args(argv)
 
     # Resolve status + checks from file or explicit args.
@@ -173,19 +181,24 @@ def _cli(argv: list[str]) -> int:
             print(f"error: invalid --checks-json: {exc}", file=sys.stderr)
             return 2
 
-    # Parse gate result.
-    try:
-        gate = json.loads(args.gate_json)
-        if gate is None:
-            gate_result: dict[str, Any] | None = None
-        elif isinstance(gate, dict):
-            gate_result = gate
-        else:
-            print(f"error: --gate-json must be a JSON object or null, got {type(gate).__name__}", file=sys.stderr)
+    # Resolve gate result. --gate-passed (scalar) takes precedence — it avoids
+    # the shell quote-mangling that breaks JSON args passed PS->python.exe.
+    gate_result: dict[str, Any] | None
+    if args.gate_passed is not None:
+        gate_result = None if args.gate_passed == "unknown" else {"all_passed": args.gate_passed == "true"}
+    else:
+        try:
+            gate = json.loads(args.gate_json)
+            if gate is None:
+                gate_result = None
+            elif isinstance(gate, dict):
+                gate_result = gate
+            else:
+                print(f"error: --gate-json must be a JSON object or null, got {type(gate).__name__}", file=sys.stderr)
+                return 2
+        except json.JSONDecodeError as exc:
+            print(f"error: invalid --gate-json: {exc}", file=sys.stderr)
             return 2
-    except json.JSONDecodeError as exc:
-        print(f"error: invalid --gate-json: {exc}", file=sys.stderr)
-        return 2
 
     verdict = evaluate_ship(status, checks, gate_result)
     if verdict.ok:

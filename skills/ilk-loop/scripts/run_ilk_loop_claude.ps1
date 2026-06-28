@@ -689,6 +689,13 @@ function Test-ShipIntegrity {
   $plansDir = Get-PlansDir -Project $ProjectPath
   if (-not $plansDir -or -not (Test-Path $plansDir)) { return @() }
 
+  # The native `python` call below must NOT terminate under the script's
+  # top-level $ErrorActionPreference='Stop': PS 5.1 wraps a native command's
+  # stderr (ship_integrity.py prints the VIOLATION reason to stderr on exit 1)
+  # as a terminating NativeCommandError, which would crash the runner exactly
+  # when a real violation is detected. Function-local Continue auto-restores.
+  $ErrorActionPreference = 'Continue'
+
   # Build slug → gate-result lookup from this iteration's local_checks.
   $gateMap = @{}
   foreach ($r in $LocalChecksRun) {
@@ -700,7 +707,10 @@ function Test-ShipIntegrity {
 
   Get-ChildItem $plansDir -Filter "*.md" -File | Where-Object { $_.Name -notlike "MASTER*" } | ForEach-Object {
     $lines = Get-Content $_.FullName -TotalCount 20 -ErrorAction SilentlyContinue
-    if ($lines -notmatch "status:\s*shipped") { return }
+    # NOTE: `$lines -notmatch X` on an ARRAY returns the non-matching elements
+    # (almost always non-empty → truthy), which would skip EVERY file. Test
+    # "no line matches" explicitly instead.
+    if (-not ($lines -match "status:\s*shipped")) { return }
 
     $slug = ""
     $hasChecks = $false
@@ -710,25 +720,31 @@ function Test-ShipIntegrity {
     }
     if (-not $hasChecks) { return }
 
-    # Shipped + declared checks → look up gate result.
-    $gateResult = $null
-    if ($slug -and $gateMap.ContainsKey($slug)) {
-      $lc = $gateMap[$slug]
-      $gateResult = @{
-        all_passed = ($lc.outcome -eq "pass")
-        results    = @()
-      }
-      if ($lc.raw -and $lc.raw.results) {
-        $gateResult.results = $lc.raw.results
-      }
+    # Scope to THIS iteration's ships only: enforce on sub-plans whose gate
+    # actually ran this iteration (present in $gateMap). A sub-plan shipped in a
+    # PRIOR run has no current-iteration gate result — re-litigating it would
+    # falsely flag (and revert) already-shipped work on every iteration.
+    if (-not ($slug -and $gateMap.ContainsKey($slug))) { return }
+
+    # Build the gate result from this iteration's run.
+    $lc = $gateMap[$slug]
+    $gateResult = @{
+      all_passed = ($lc.outcome -eq "pass")
+      results    = @()
+    }
+    if ($lc.raw -and $lc.raw.results) {
+      $gateResult.results = $lc.raw.results
     }
 
-    # Call ship_integrity.py for a precise verdict.
+    # Call ship_integrity.py for a precise verdict. Pass the gate outcome as a
+    # SCALAR (--gate-passed), never JSON: PS 5.1 mangles embedded quotes passing
+    # JSON to a native exe, which made python exit 2 (bad input) and get misread
+    # as a violation. Only exit 1 == real violation; exit >=2 == tool error.
     if (Test-Path $shipIntegrityScript) {
-      $gateJson = if ($gateResult) { $gateResult | ConvertTo-Json -Compress } else { "null" }
-      $siOut = & python $shipIntegrityScript --subplan $_.FullName --gate-json $gateJson 2>&1
+      $gatePassedArg = if ($gateResult.all_passed) { 'true' } else { 'false' }
+      $siOut = & python $shipIntegrityScript --subplan $_.FullName --gate-passed $gatePassedArg 2>&1
       $siExit = $LASTEXITCODE
-      if ($siExit -ne 0) {
+      if ($siExit -eq 1) {
         $reason = ($siOut | Where-Object { $_ -match "VIOLATION" }) -join "; "
         if (-not $reason) { $reason = ($siOut | Select-Object -Last 1) }
         [void]$violations.Add([PSCustomObject]@{
@@ -736,10 +752,16 @@ function Test-ShipIntegrity {
           Slug   = $slug
           Reason = $reason
         })
+      } elseif ($siExit -ne 0) {
+        # exit >=2 == validator/input error: log and SKIP — never false-revert
+        # shipped work because the validator itself errored.
+        Write-Host "  [ship-integrity] WARN: validator exit $siExit for $slug — skipping ($($siOut | Select-Object -Last 1))" -ForegroundColor DarkYellow
       }
     }
   }
-  return ,$violations.ToArray()
+  # Return the array WITHOUT a leading comma: `,$x.ToArray()` wraps an EMPTY
+  # result as a 1-element array (phantom Count=1). Caller wraps with @() instead.
+  return $violations.ToArray()
 }
 
 function Invoke-QualityGatesForSubPlan {
@@ -2159,7 +2181,7 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
   # Ship-integrity enforcement: a sub-plan must not be "shipped" while its
   # declared local_checks gate is red.  If the agent set status=shipped but
   # the gate failed, revert and stop.
-  $shipViolations = Test-ShipIntegrity -ProjectPath $ProjectPath -LocalChecksRun $localChecksRun
+  $shipViolations = @(Test-ShipIntegrity -ProjectPath $ProjectPath -LocalChecksRun $localChecksRun)
   if ($shipViolations.Count -gt 0) {
     foreach ($v in $shipViolations) {
       Write-Host "  [ship-integrity VIOLATION] $($v.Slug): $($v.Reason)" -ForegroundColor Red
