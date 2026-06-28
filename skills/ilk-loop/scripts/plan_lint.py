@@ -865,6 +865,101 @@ ALL_CHECKS = (
 )
 
 
+# ── Spec pillar → outcome-AC traceability (--spec mode) ─────────────────────
+#
+# A spec document's pillar blocks must each carry a ``verification_tier`` tag
+# AND at least one outcome-level AC line (player/user-facing verb, not just
+# "compiles" / "unit test passes").  This enforces the spec→plan handoff
+# discipline: a pillar is not "done" when only its model layer is gated.
+#
+# See: commands/ilk-spec.md, commands/ilk-plan.md
+# See: ../gridlock/docs/analysis/2026-06-28-spec-vs-implementation-gap.md §2 #5
+# Part of sub-plan 2026-06-28-spec-ac-traceability.
+
+# A pillar heading: a markdown heading line containing bold text, e.g.
+# ``## **Pillar: Tower Upgrades**``.  The ``#`` prefix distinguishes headings
+# from AC list items (``- **AC-1**: ...``) which also contain ``**``.
+_PILLAR_HEADING_RE = re.compile(r"^#+\s.*\*\*[^*]+\*\*.*$", re.MULTILINE)
+
+# Verification tier tag: ``verification_tier: <value>`` or ``tier: <value>``.
+_VERIFICATION_TIER_RE = re.compile(
+    r"verification_tier:\s*\S+|tier:\s*\S+", re.IGNORECASE
+)
+
+# An AC line marker: lines starting with `- **AC`, `- AC:`, or similar.
+# Use [ \t]* (not \s*) to avoid consuming the preceding newline with MULTILINE,
+# which would push match.start() back and break the line-slice extraction.
+_AC_LINE_RE = re.compile(r"^[ \t]*-[ \t]+\*?\*?AC\b", re.IGNORECASE | re.MULTILINE)
+
+# Compile-only / unit-test-only markers — these are NOT outcome-level ACs.
+# No trailing \b: "unit test" must match in "unit tests", "compile" in "compiles".
+_COMPILE_ONLY_AC_RE = re.compile(
+    r"\b(compil|unit\s*test|mypy|tsc|cargo\s+build|"
+    r"npm\s+run\s+build|typecheck|lint|green)",
+    re.IGNORECASE,
+)
+
+
+def lint_spec_pillar_traceability(text: str, slug: str) -> list[str]:
+    """Flag spec pillars that lack a verification_tier tag or outcome-level AC."""
+    findings: list[str] = []
+    body = _strip_frontmatter(text)
+
+    # Find all pillar headings and their positions.
+    pillars = list(_PILLAR_HEADING_RE.finditer(body))
+    if not pillars:
+        return findings  # No pillars — not a spec doc, or empty.
+
+    for i, pillar_match in enumerate(pillars):
+        heading = pillar_match.group(0).strip()
+        start = pillar_match.start()
+        end = pillars[i + 1].start() if i + 1 < len(pillars) else len(body)
+        block = body[start:end]
+
+        # Check for verification_tier tag.
+        has_tier = bool(_VERIFICATION_TIER_RE.search(block))
+
+        # Check for at least one AC line.
+        ac_lines = list(_AC_LINE_RE.finditer(block))
+        has_ac = len(ac_lines) > 0
+
+        # Check if any AC line is outcome-level (not compile-only).
+        has_outcome_ac = False
+        for ac_match in ac_lines:
+            # Grab the rest of the line after the AC marker.
+            line_start = ac_match.start()
+            line_end = block.find("\n", line_start)
+            if line_end == -1:
+                line_end = len(block)
+            ac_line_text = block[line_start:line_end]
+            if not _COMPILE_ONLY_AC_RE.search(ac_line_text):
+                has_outcome_ac = True
+                break
+
+        if not has_tier:
+            findings.append(
+                f"{slug}: pillar '{heading}' has no verification_tier tag. "
+                f"Each spec pillar must declare its verification tier "
+                f"(loop-verified / compile-only / device-manual)."
+            )
+        if not has_outcome_ac:
+            if not has_ac:
+                findings.append(
+                    f"{slug}: pillar '{heading}' has no AC lines. "
+                    f"Each spec pillar must map to at least one outcome-level AC "
+                    f"that asserts the player/user-facing outcome."
+                )
+            else:
+                findings.append(
+                    f"{slug}: pillar '{heading}' has AC lines but none are "
+                    f"outcome-level (all are compile/unit-test only). A pillar's "
+                    f"AC must assert the player/user-facing outcome, not just "
+                    f"that the artifact compiles."
+                )
+
+    return findings
+
+
 # ── Sub-plan slug == master_plan slug collision ──────────────────────────────
 #
 # A sub-plan whose slug equals the master's ``master_plan`` value creates
@@ -919,7 +1014,25 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Planner degrade-discipline lints.")
     parser.add_argument("paths", nargs="+", help="Sub-plan .md file(s) to lint.")
     parser.add_argument("--master", help="MASTER plan file (enables slug-collision check).")
+    parser.add_argument(
+        "--spec", action="store_true",
+        help="Run spec pillar traceability check instead of per-sub-plan checks.",
+    )
     args = parser.parse_args()
+
+    if args.spec:
+        # Spec mode: run lint_spec_pillar_traceability on each file.
+        total = 0
+        for path in args.paths:
+            p = Path(path)
+            slug = p.stem
+            text = p.read_text(encoding="utf-8-sig")
+            for msg in lint_spec_pillar_traceability(text, slug):
+                print(f"WARN: {msg}")
+                total += 1
+        if total == 0:
+            print("OK: plan_lint spec clean")
+        return 1 if total else 0
 
     master_text = ""
     if args.master:
