@@ -689,6 +689,90 @@ def lint_network_tool_mock_only_gate(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── Vertical-slice AC guard (model-only, no consumer AC) ─────────────────────
+#
+# A sub-plan that adds a model/logic capability (new exported function, class,
+# or export symbol) in a non-UI module whose EVERY local_check is a pure-unit
+# test (pytest/vitest) with no consumer entry-point keyword (UI hit-test, CLI
+# verb, HTTP route, e2e sim) is the GRIDLOCK Gap-A "orphaned model" shape:
+# the model compiles and unit-tests pass, but nothing proves a player/user can
+# actually reach it.  Warn so the planner adds a consumer-level AC.
+#
+# See: ../gridlock/docs/analysis/2026-06-28-spec-vs-implementation-gap.md Gap A.
+# See: decomposition-principles.md §8, §12.
+
+# New model symbol: a def/class/export that signals new capability.
+# Matches both literal code (def upgrade, class Enemy, export function)
+# and prose descriptions ("Adds upgrade()", "new function computePath").
+_NEW_SYMBOL_RE = re.compile(
+    r"""
+    (?:^|\s)def\s+\w+                             #  Python def
+    |(?:^|\s)class\s+\w+                          #  Python class
+    |export\s+(?:function|const|class)\s+\w+      #  JS/TS export
+    |(?:adds?|new|implement|create|introduce)\s+  #  prose: introduces
+      (?:\w+\s+)?(?:\w+\.)?\w+\(                  #  "upgrade(" or "foo.bar("
+    |(?:adds?|new|implement|create|introduce)\s+  #  prose: introduces
+      (?:exported?\s+)?(?:function|class|method|api)\b  #  "new function"
+    """,
+    re.VERBOSE | re.MULTILINE | re.IGNORECASE,
+)
+
+# UI / presentation-layer path markers — a scope_path containing one of these
+# is a UI file, not a model/logic module.
+_UI_PATH_RE = re.compile(
+    r"ui|frontend|components?|pages?|views?|screens?|hud|renderer",
+    re.IGNORECASE,
+)
+
+# Consumer entry-point keywords — presence in a local_check or AC means the
+# check exercises the symbol through a real entry point, not only unit tests.
+_CONSUMER_ENTRY_RE = re.compile(
+    r"""
+    click|take_snapshot|press_key|fill\(|hover\(|        # chrome-devtools
+    fetch\(|curl\b|requests\.\w+|httpx|aiohttp|          # HTTP
+    playwright|cypress|selenium|                          # browser e2e
+    e2e/|/e2e\b|                                          # e2e directory
+    subprocess|run_command|cli\b|invoke\b|                # CLI verbs
+    integration|live\s*smoke|                             # integration
+    navigate|goto|open_page|new_page|                     # page navigation
+    socket|websocket                                      # real-time
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+
+def lint_vertical_slice_ac(text: str, slug: str) -> list[str]:
+    """Flag a sub-plan that adds a model symbol with only pure-unit gates."""
+    findings: list[str] = []
+    body = _strip_frontmatter(text)
+    scope_paths = _extract_scope_paths(text)
+    commands = _extract_local_checks_commands(text)
+    # Need at least one scope_path in a non-UI module and one command.
+    if not scope_paths or not commands:
+        return findings
+    # At least one scope_path must be a non-UI module (model/logic layer).
+    has_non_ui = any(not _UI_PATH_RE.search(p) for p in scope_paths)
+    if not has_non_ui:
+        return findings
+    # The body must introduce a new model symbol.
+    if not _NEW_SYMBOL_RE.search(body):
+        return findings
+    # Check if ALL local_checks are pure-unit (no consumer entry-point keyword).
+    all_cmds_text = " ".join(commands)
+    combined = all_cmds_text + " " + body
+    if _CONSUMER_ENTRY_RE.search(combined):
+        return findings
+    findings.append(
+        f"{slug}: sub-plan adds a model/logic symbol (def/class/export) but "
+        f"every local_check is a pure-unit test with no consumer entry-point "
+        f"keyword (UI hit-test, CLI verb, HTTP route, e2e sim). This is the "
+        f"GRIDLOCK Gap-A 'orphaned model' shape — the model compiles and "
+        f"unit-tests pass but nothing proves a player/user can reach it. "
+        f"Add an AC that exercises the symbol through its real entry point."
+    )
+    return findings
+
+
 ALL_CHECKS = (
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
@@ -700,6 +784,7 @@ ALL_CHECKS = (
     lint_wholesuite_gate_baseline,
     lint_posix_only_test_assertion,
     lint_network_tool_mock_only_gate,
+    lint_vertical_slice_ac,
 )
 
 
