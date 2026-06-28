@@ -144,6 +144,140 @@ def _as_list(value) -> list[str]:
     return []
 
 
+# ── Definition-of-Done (DoD) outcome banner ──────────────────────────────────
+#
+# Detects user-facing outcomes from ticket types and body text, then finds
+# which AC verifies the outcome at the entry-point level. Uses the same
+# consumer-entry keyword set as plan_lint.py's vertical-slice lint for
+# consistency (see plan_lint._CONSUMER_ENTRY_RE).
+
+_CONSUMER_ENTRY_RE = re.compile(
+    r"""
+    click|take_snapshot|press_key|fill\(|hover\(|        # chrome-devtools
+    fetch\(|curl\b|requests\.\w+|httpx|aiohttp|          # HTTP
+    playwright|cypress|selenium|                          # browser e2e
+    e2e/|/e2e\b|                                          # e2e directory
+    subprocess|run_command|cli\b|invoke\b|                # CLI verbs
+    integration|live\s*smoke|                             # integration
+    navigate|goto|open_page|new_page|                     # page navigation
+    socket|websocket                                      # real-time
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+_USER_FACING_TYPE_RE = re.compile(r"新功能|体验优化|feature|enhancement|ux", re.IGNORECASE)
+
+_USER_FACING_VERB_RE = re.compile(
+    r"render|display|show|add|enable|create|launch|open|play|start|use|click|"
+    r"upgrade|sell|build|move|attack|spawn|select|drag|drop|drag.and.drop",
+    re.IGNORECASE,
+)
+
+
+def _detect_user_facing_outcome(sub_plan_text: str) -> tuple[str, str] | None:
+    """Detect a user-facing outcome from the sub-plan.
+
+    Returns (outcome_text, ticket_type) or None.
+    Checks the tickets table for user-facing types first, then body text.
+    """
+    fm = parse_frontmatter(sub_plan_text)
+    body = sub_plan_text
+
+    # 1. Check tickets table for user-facing types.
+    ticket_type = ""
+    table_re = re.compile(
+        r"\|.*?(?:Ticket|Type|Pri).*?\|(.*?\|)*", re.IGNORECASE | re.DOTALL
+    )
+    table_match = table_re.search(body)
+    if table_match:
+        table_block = table_match.group(0)
+        if _USER_FACING_TYPE_RE.search(table_block):
+            m = _USER_FACING_TYPE_RE.search(table_block)
+            if m:
+                ticket_type = m.group(0)
+
+    # 2. Check Objectives / outcome section for a user-facing verb.
+    outcome = None
+    obj_match = re.search(
+        r"##\s*(?:Objectives?|Goals?|outcome).*?\n(.*?)(?:\n##|\Z)",
+        body,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if obj_match:
+        for line in obj_match.group(1).splitlines():
+            stripped = line.strip()
+            if stripped.startswith(("#", "|", "---")):
+                continue
+            if _USER_FACING_VERB_RE.search(stripped):
+                outcome = re.sub(r"^[\s\-\*\d\.]+", "", stripped).strip()
+                break
+
+    # 3. Fallback: any AC line mentioning a user-facing verb.
+    if not outcome:
+        for line in body.splitlines():
+            if not re.match(r"^\s*[-*]\s*\*?\*?AC", line, re.IGNORECASE):
+                continue
+            if _USER_FACING_VERB_RE.search(line):
+                outcome = re.sub(r"^[\s\-\*\d\.]+", "", line).strip()
+                break
+
+    # 4. If we have a user-facing type but no explicit outcome, use the title.
+    if not outcome and ticket_type:
+        title_m = re.search(r"^#\s+(.+)", body, re.MULTILINE)
+        if title_m:
+            outcome = title_m.group(1).strip()
+
+    if not outcome:
+        return None
+    return (outcome, ticket_type)
+
+
+def _find_outcome_ac(sub_plan_text: str) -> str | None:
+    """Find the AC that verifies the outcome at the entry-point level.
+
+    Returns the matched AC line text, or None if no outcome-level AC exists.
+    """
+    ac_line_re = re.compile(r"^\s*[-*]\s*\*?\*?AC-?\d+", re.IGNORECASE)
+    for line in sub_plan_text.splitlines():
+        if not ac_line_re.match(line):
+            continue
+        if _CONSUMER_ENTRY_RE.search(line):
+            return line.strip()
+    return None
+
+
+def dod_section(sub_plan_text: str) -> str:
+    """Render the Definition-of-Done block.
+
+    If the sub-plan describes a user-facing outcome, renders:
+    - The restated outcome + matched AC (if outcome-level AC found), or
+    - A [WARN] line for orphaned-model ships.
+    Returns empty string for non-user-facing sub-plans.
+    """
+    result = _detect_user_facing_outcome(sub_plan_text)
+    if result is None:
+        return ""
+
+    outcome_text, ticket_type = result
+    matched_ac = _find_outcome_ac(sub_plan_text)
+
+    lines = ["## Definition of Done", ""]
+    if matched_ac:
+        lines.append(f"**Outcome:** {outcome_text}")
+        lines.append("")
+        lines.append(f"**Verified by:** {matched_ac}")
+    else:
+        lines.append(f"**Outcome:** {outcome_text}")
+        lines.append("")
+        lines.append(
+            "[WARN] outcome not verified at outcome level -- "
+            "no AC references a real entry point (UI/CLI/HTTP/e2e). "
+            "This is the GRIDLOCK Gap-A 'orphaned model' shape."
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _glob_match(path: str, pattern: str) -> bool:
     """fnmatch with two pragmatic Tailwind-grade tweaks:
     - '**' is treated like fnmatch's '*' but allowed to span '/'
@@ -591,6 +725,8 @@ def build_report(
         ]
     )
 
+    dod_block = dod_section(sub_plan_text)
+
     sections = [
         frontmatter,
         "",
@@ -608,16 +744,36 @@ def build_report(
         "## 4. AC CHECKLIST",
         extract_ac_checklist(reviewer_text),
         "",
-        "## 5. TEST DELTA",
-        test_delta_section(test_results_path),
-        "",
-        "## 6. ROLLBACK",
-        rollback_section(project, base, head),
-        "",
-        "## 7. LINKS",
-        links_section(project, base, head, reviewer_report_path, ci_url),
-        "",
     ]
+    if dod_block:
+        sections.extend([
+            "## 5. DEFINITION OF DONE",
+            "",
+            dod_block,
+            "## 6. TEST DELTA",
+            "",
+            test_delta_section(test_results_path),
+            "",
+            "## 7. ROLLBACK",
+            rollback_section(project, base, head),
+            "",
+            "## 8. LINKS",
+            links_section(project, base, head, reviewer_report_path, ci_url),
+            "",
+        ])
+    else:
+        sections.extend([
+            "## 5. TEST DELTA",
+            "",
+            test_delta_section(test_results_path),
+            "",
+            "## 6. ROLLBACK",
+            rollback_section(project, base, head),
+            "",
+            "## 7. LINKS",
+            links_section(project, base, head, reviewer_report_path, ci_url),
+            "",
+        ])
     return "\n".join(sections)
 
 
