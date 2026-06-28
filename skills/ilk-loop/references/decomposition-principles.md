@@ -219,6 +219,30 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   verifies the consumer reads from the new data source.
   `plan_lint.py` (`lint_anti_hardcode_integration`) warns automatically.
 
+### Orphaned-capability detector (post-ship QC tool)
+
+`plan_lint.py` checks run at **planning** time (before the loop starts).  The
+orphaned-capability detector (`orphan_check.py`) runs at **post-ship** time:
+given a repo root and a list of newly-exported symbol names, it reports each
+symbol whose only call sites are test files as "built but unwired."  This
+catches the GRIDLOCK Gap-A shape that planning-time lints can only warn about
+(the lint says "add a consumer AC"; the detector confirms the consumer was
+actually wired after the code ships).
+
+```bash
+python <skill-root>/ilk-loop/scripts/orphan_check.py --root <repo> --symbol foo --symbol bar
+```
+
+Uses `rg` when available for speed, with a pure-Python `os.walk` fallback for
+hermetic testing and boxes without ripgrep.  A symbol is "unwired" iff every
+non-definition reference is in a test file (`tests/`, `test_*.py`, `*.spec.ts`,
+etc.).
+
+**Known limitation:** this is a textual scan, not a type-aware analyzer.  It
+cannot resolve re-exports, dynamic imports, or indirect references through
+string keys.  Document false-negative expectations when using on a codebase
+with heavy metaprogramming.
+
 ## 9. Cold-read self-check
 
 Before declaring the plan ready, re-read every sub-plan under this
