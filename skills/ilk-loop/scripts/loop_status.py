@@ -406,6 +406,7 @@ def resolve_status(cwd: Path) -> dict:
         "shipped": shipped,
         "queue_exit": queue_exit,
         "stalled": stalled,
+        "compile_only_summary": _compile_only_summary(subplans),
     }
 
     if next_pending:
@@ -421,6 +422,31 @@ def resolve_status(cwd: Path) -> dict:
         result["next"] = None
 
     return result
+
+
+def _compile_only_summary(subplans: list[dict]) -> str | None:
+    """Render a loud banner when shipped sub-plans need human verification.
+
+    Aggregates shipped sub-plans whose verification_tier is compile-only or
+    device-manual and returns an ASCII-only banner string listing the count
+    and offending slugs.  Returns None when all shipped sub-plans are
+    loop-verified (no banner needed).
+    """
+    _VERIFY_TIERS = {"compile-only", "device-manual"}
+    offenders = [
+        sp for sp in subplans
+        if sp["status"] == "shipped"
+        and sp.get("verification_tier", "loop-verified") in _VERIFY_TIERS
+    ]
+    if not offenders:
+        return None
+    slugs = ", ".join(sp["slug"] for sp in offenders)
+    n = len(offenders)
+    plural = "s" if n != 1 else ""
+    return (
+        f"HUMAN VERIFY REQUIRED: {n} compile-only/device-manual sub-plan{plural}\n"
+        f"  slugs: {slugs}"
+    )
 
 
 def main() -> int:
@@ -554,6 +580,11 @@ def main() -> int:
                 f"Nothing runnable: {len(non_shipped)} non-shipped sub-plan(s), "
                 f"but no actionable next (master status '{mstatus}')."
             )
+        # Loud summary for shipped compile-only/device-manual sub-plans.
+        summary = _compile_only_summary(data["subplans"])
+        if summary:
+            print()
+            print(summary)
         return 0
 
     nxt = data["next"]
@@ -567,6 +598,11 @@ def main() -> int:
             print(f"Repo: {repo}  (UNKNOWN — not in .ilk-meta.json)")
         else:
             print(f"Repo: {repo}  ({meta_members[repo]})")
+    # Loud summary for shipped compile-only/device-manual sub-plans.
+    summary = _compile_only_summary(data["subplans"])
+    if summary:
+        print()
+        print(summary)
     return 1
 
 
