@@ -407,6 +407,27 @@ Example: queuing capture-dependent work behind a `device-manual`
 unverified. Server batches (gated by full pytest) were correctly kept
 independent of the capture.
 
+### Mechanical enforcement
+
+This dependency rule is now **mechanically enforced** at two levels:
+
+1. **Promotion gate (`promote_next_master.py`).** A master that declares a
+   `builds_on` front-matter field listing sub-plan slugs is checked at
+   promotion time. If any dependency is shipped with `verification_tier` ∈
+   {`compile-only`, `device-manual`} and lacks a `verified: true` marker,
+   promotion is skipped with a logged reason. See
+   `detached-component-contracts.md` Contract 4 for the marker spec.
+
+2. **Batch-end summary (`loop_status.py`).** At the end of a batch,
+   `loop_status.py` renders a `HUMAN VERIFY REQUIRED` banner listing
+   shipped `compile-only`/`device-manual` sub-plans and their slugs. This
+   ensures the signal is loud even when the loop runs without the promotion
+   gate (e.g. manual `/ilk` sessions).
+
+The `verified:` marker is set by a human after a manual or device pass (see
+Contract 4 in `detached-component-contracts.md`). Absent ⇒ unverified
+(back-compat). Malformed values degrade to unverified (never crash).
+
 ### Shared-module full-suite rule
 
 When a sub-plan's changes touch a shared/imported module (not just a
