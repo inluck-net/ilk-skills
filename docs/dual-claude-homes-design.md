@@ -1,5 +1,8 @@
 # Dual Claude Homes Design
 
+> **See also:** [`model-worker-framework.md`](model-worker-framework.md) extends
+> this design from two roles to N roles + capability services (image gen, curation).
+
 ## Status
 
 Implemented. This document turns the diagnostic findings in

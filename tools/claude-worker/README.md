@@ -9,6 +9,57 @@ These scripts only ever touch the worker home you name. They never read,
 write, or mutate `~/.claude`, CCSwitch state, or any `cc-switch.db`, and they
 never extract or print a provider token.
 
+## Capability services
+
+The toolkit also exposes **capability services** — plain HTTP endpoints wrapped
+as CLI/MCP tools, distinct from agentic worker homes. See
+[`docs/model-worker-framework.md`](../../docs/model-worker-framework.md) for the
+full architecture.
+
+| Capability | Tool | Endpoint | Status |
+|---|---|---|---|
+| Image gen (image-01) | `tools/minimax/draw.py gen` | `POST api.minimaxi.com/v1/image_generation` | shipped |
+| Image curation (M3-VL) | `tools/minimax/draw.py curate` | `POST api.minimaxi.com/anthropic/v1/messages` | shipped |
+
+## Drawing-worker (M3) role
+
+A named-role worker home for `MiniMax-M3` (vision-input capable), used for
+art code-gen and VL curation. Provision and launch:
+
+```bash
+# Provision the drawing-worker home (import MiniMax provider from ccswitch):
+bash tools/claude-worker/bootstrap.sh --apply --home ~/.claude-worker-draw \
+  --from-ccswitch --provider MiniMax --link-skills
+
+# Or with explicit values:
+bash tools/claude-worker/bootstrap.sh --apply --home ~/.claude-worker-draw \
+  --base-url https://api.minimaxi.com/anthropic \
+  --auth-token "$MINIMAX_TOKEN" \
+  --model MiniMax-M3 \
+  --link-skills
+```
+
+```powershell
+# PowerShell equivalent:
+.\tools\claude-worker\bootstrap.ps1 -Apply -Home ~/.claude-worker-draw `
+  -FromCcswitch -Provider MiniMax -LinkSkills
+```
+
+Launch with the drawing-worker home:
+
+```bash
+bash tools/claude-worker/claude-worker.sh  # uses CLAUDE_WORKER_HOME or -WorkerHome
+```
+
+Or via the launcher:
+
+```powershell
+& launch.ps1 -Engine claude-worker -WorkerHome "~/.claude-worker-draw"
+```
+
+The `draw` tool (`tools/minimax/draw.py`) is a capability service, not a worker
+home — it calls `image-01` directly and can be used from any Claude role.
+
 ## Files
 
 | File | Purpose |
