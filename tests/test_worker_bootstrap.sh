@@ -21,6 +21,16 @@ BOOT_PS1="${REPO_ROOT}/tools/claude-worker/bootstrap.ps1"
 PASS=0
 FAIL=0
 
+# Resolve Python: prefer python3 (POSIX), fall back to python (Windows).
+# On Windows, python3 may be a Microsoft Store stub — verify it actually works.
+if command -v python3 >/dev/null 2>&1 && python3 -c "import sys" 2>/dev/null; then
+  PY=python3
+elif command -v python >/dev/null 2>&1 && python -c "import sys" 2>/dev/null; then
+  PY=python
+else
+  echo "SKIP: no working python found on PATH" >&2; exit 0
+fi
+
 check() {
   # check "<description>" "<haystack>" contains|absent "<needle>"
   local desc="$1" hay="$2" mode="$3" needle="$4"
@@ -86,9 +96,32 @@ settings="$(cat "$WK/settings.json")"
 check "settings has base url"  "$settings" contains "https://p.example/anthropic"
 check "settings has token"     "$settings" contains "$TOKEN"
 check "settings has model"     "$settings" contains "worker-m1"
-python3 -c "import json,sys; json.load(open('$WK/settings.json'))"; ok "settings.json is valid JSON" $?
+# Convert POSIX tmp path for Python on Windows (Git Bash /tmp -> real path).
+if command -v cygpath >/dev/null 2>&1; then
+  WK_PY="$(cygpath -w "$WK")"
+else
+  WK_PY="$WK"
+fi
+$PY -c "import json,sys; json.load(open(r'$WK_PY/settings.json'))"; ok "settings.json is valid JSON" $?
 claude_json="$(cat "$WK/.claude.json")"
 check ".claude.json has empty mcpServers" "$claude_json" contains '"mcpServers": {}'
+
+echo ""
+echo "=== --home with MiniMax-like values (drawing worker) ==="
+DRAW_HOME="$TMP/draw-home-test"
+HOME="$FAKE_HOME" bash "$BOOT_SH" --apply --home "$DRAW_HOME" \
+  --base-url https://api.minimaxi.com/anthropic --auth-token "$TOKEN" --model MiniMax-M3 >/dev/null 2>&1
+ok "draw-home: settings.json created" "$([[ -f "$DRAW_HOME/settings.json" ]] && echo 0 || echo 1)"
+draw_settings="$(cat "$DRAW_HOME/settings.json")"
+check "draw-home: ANTHROPIC_MODEL=MiniMax-M3"      "$draw_settings" contains "MiniMax-M3"
+check "draw-home: ANTHROPIC_BASE_URL=minimaxi"      "$draw_settings" contains "https://api.minimaxi.com/anthropic"
+check "draw-home: has token"                         "$draw_settings" contains "$TOKEN"
+if command -v cygpath >/dev/null 2>&1; then
+  DRAW_PY="$(cygpath -w "$DRAW_HOME")"
+else
+  DRAW_PY="$DRAW_HOME"
+fi
+$PY -c "import json,sys; json.load(open(r'$DRAW_PY/settings.json'))"; ok "draw-home: valid JSON" $?
 
 echo ""
 echo "=== bootstrap.ps1 parity (static) ==="
