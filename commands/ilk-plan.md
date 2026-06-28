@@ -671,7 +671,7 @@ skipped, stalling uccargo twice on 2026-06-13):
 python "<skill-root>/ilk-loop/scripts/plan_lint.py" <each new sub-plan .md>
 ```
 
-It emits three finding classes (all warnings — surface counts in the step-9
+It emits finding classes (all warnings — surface counts in the step-9
 report; fix before launching):
 
 - **env_prereq-vs-fallback contradiction** — a sub-plan that hard-gates on an
@@ -698,6 +698,22 @@ report; fix before launching):
   burn its timeout into `local-checks-stuck` when the dependency is unreachable.
   Add an `env_prereqs` entry with a fast-fail `verify_cmd` (see
   decomposition-principles.md §10).
+- **whole-suite gate baseline** — a `local_checks` command runs a pre-existing
+  whole test suite (bare `pytest`/`vitest` with no file arg, `bash tests/*.sh`,
+  `npm test`) with no "baseline-green on \<platform\>" note in the sub-plan
+  body. If that suite is baseline-red on the run platform (e.g. POSIX-only
+  perms check on Windows), every step will false-block. See
+  decomposition-principles.md §16.
+- **POSIX-only test assertion** — a `local_check` shell command (or referenced
+  `.sh` test) asserts a POSIX file mode (`rw-------`, `stat -c %A`, `chmod`
+  perm check) without a `uname`/`OSTYPE` platform guard. Cannot pass on
+  Windows Git Bash. See decomposition-principles.md §8.
+- **network-tool mock-only gate** — a sub-plan ships a new HTTP/network tool
+  (body mentions `urllib`/`requests`/`_post`/`api.`) whose only gate mocks the
+  network boundary (`patch(... _post)`, injected fake) with no
+  integration/import-resolve/live smoke and no `env_prereqs`. The live path can
+  ship broken (cf. draw.py `ModuleNotFoundError`). See
+  decomposition-principles.md §8.
 
 `plan_lint.py` exits non-zero when it finds anything; treat findings as
 must-fix-before-launch (a contradiction here is what actually stalled the loop).

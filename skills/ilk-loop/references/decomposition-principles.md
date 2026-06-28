@@ -185,6 +185,21 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   per-step `local_checks` block so it runs only after the path exists.
   `plan_lint.py` (`lint_frontmatter_path_created_later`) warns on this
   shape automatically at `/ilk-plan` step 7g.
+- **POSIX-only test assertions without platform guard** → a `.sh` test
+  (or a `local_check` shell command) that asserts `rw-------`,
+  `stat -c %A`, or `chmod` perm checks without a `uname`/`OSTYPE`
+  guard cannot pass on Windows Git Bash. Real case: the 2026-06-28
+  drawing-worker run's `test_worker_bootstrap.sh` false-blocked on
+  Windows. **Fix:** add a `uname` guard or skip on non-POSIX platforms.
+  `plan_lint.py` (`lint_posix_only_test_assertion`) warns automatically.
+- **mock-only gate for a network tool** → a sub-plan that ships a new
+  HTTP/network tool (urllib/requests/`_post`/`api.`) whose only gate
+  mocks the network boundary (`patch(... _post)`, injected fake) with
+  no integration/import-resolve/live smoke and no `env_prereqs`. The
+  live path can ship broken. Real case: draw.py `_load_minimax_token`
+  `ModuleNotFoundError` (2026-06-28). **Fix:** add an import-resolve or
+  live smoke check alongside the mock-based unit tests.
+  `plan_lint.py` (`lint_network_tool_mock_only_gate`) warns automatically.
 
 ## 9. Cold-read self-check
 
@@ -587,8 +602,15 @@ but it also:
      sub-plan branches from). If it fails on the base, it's a
      pre-existing failure, not a regression — running it as a
      `local_check` would false-block every step.
+   - Confirm the gate is **green on the RUN platform** (not just the
+     planner's dev box). A suite that passes on Linux may fail on
+     Windows (e.g. POSIX-only file permission checks). If the loop
+     runs on a different OS than where the planner verified, the gate
+     will false-block every step.
    - Note in the sub-plan body that the whole-project gate was
-     baseline-verified and the date of that check.
+     baseline-green on the run platform and the date of that check.
+     `plan_lint.py` (`lint_wholesuite_gate_baseline`) warns when this
+     note is missing.
 
 3. **A sub-plan whose ONLY `local_check` is a whole-project compile
    command** (`tsc`, `mypy`, `cargo build`, `npm run build`, `bun run
