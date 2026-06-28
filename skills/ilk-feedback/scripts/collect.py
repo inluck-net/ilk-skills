@@ -1524,8 +1524,10 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
         cfg_to = facts.get("configured_timeout_min")
         cfg_disp = f"{cfg_to} min" if cfg_to else "unknown (no last-launch.json — likely a manual launch before ilk-launcher existed; the loop infers timeout from script defaults)"
         actual_min = (facts.get("duration_sec") or 0) / 60
+        iter_stop = facts.get('iter_at_stop')
+        iter_clause = f"Iteration {iter_stop} " if iter_stop is not None else "An iteration "
         return (
-            f"Iteration {facts.get('iter_at_stop')} hit the configured "
+            f"{iter_clause}hit the configured "
             f"`IterationTimeoutMin` ({cfg_disp}). Observed duration: "
             f"{actual_min:.1f} min. The agent was killed mid-iter; partial "
             "work in that iter is lost (anything committed earlier in the "
@@ -1533,19 +1535,23 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
         )
     if label == "max-iter-bound":
         return (
-            f"Loop ran out of iterations ({facts.get('iters')} / "
-            f"{facts.get('max_iter_configured')}) without shipping all sub-plans. "
+            f"Loop ran out of iterations ({facts.get('iters') or '?'} / "
+            f"{facts.get('max_iter_configured') or '?'}) without shipping all sub-plans. "
             "Either bump MaxIterations or break sub-plans into smaller, faster steps."
         )
     if label == "api-flaky":
+        err_count = facts.get('error_count') or 0
+        err_rate = facts.get('error_rate') or 0
         return (
-            f"Endpoint instability: {facts.get('error_count')} transient errors "
-            f"(rate {facts.get('error_rate'):.0%}). Loop survived because at least "
+            f"Endpoint instability: {err_count} transient errors "
+            f"(rate {err_rate:.0%}). Loop survived because at least "
             "some iters made commits despite errors."
         )
     if label == "api-blocked":
+        iter_stop = facts.get('iter_at_stop')
+        iter_clause = f"Iter {iter_stop} " if iter_stop is not None else "The loop "
         return (
-            f"API errors stalled the loop. Iter {facts.get('iter_at_stop')} was the "
+            f"API errors stalled the loop. {iter_clause}was the "
             "third zero-progress iter, with API errors in 2+ of the last 3 iters. "
             "Triage endpoint, credentials, or model before relaunching."
         )
@@ -1557,36 +1563,59 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
             if dep and "dependency" not in dep
             else "restore the missing MCP / dev server / remote source"
         )
+        iter_stop = facts.get('iter_at_stop')
+        iter_clause = f"at iter {iter_stop} " if iter_stop is not None else ""
         return (
-            f"The loop stalled at iter {facts.get('iter_at_stop')} because a "
+            f"The loop stalled {iter_clause}because a "
             f"required runtime dependency was unreachable: **{dep}**. A restart "
             f"will NOT help — this is a config/reachability gap, not a stuck "
             f"agent. Fix: {fix}. Then relaunch."
         )
 
     if label == "stuck-no-progress":
+        iter_stop = facts.get('iter_at_stop')
+        iter_clause = f" at iter {iter_stop}" if iter_stop is not None else ""
         return (
-            f"Agent stalled: 3 consecutive zero-progress iters at "
-            f"iter {facts.get('iter_at_stop')}, but exit codes were mostly clean. "
+            f"Agent stalled: 3 consecutive zero-progress iters{iter_clause}, "
+            "but exit codes were mostly clean. "
             "Likely sub-plan ambiguity, prompt confusion, or a real bug it can't "
             "solve. **Read the tail below.**"
         )
     if label == "local-checks-stuck":
+        fail_w = facts.get('fail_iters_in_window')
+        pass_w = facts.get('pass_iters_in_window')
+        win = facts.get('window_size')
+        iter_stop = facts.get('iter_at_stop')
+        if fail_w is not None and pass_w is not None and win is not None:
+            counts_clause = (
+                f"failed in {fail_w} of the last {win} iterations "
+                f"(passed in {pass_w}). "
+            )
+        else:
+            counts_clause = ""
+        iter_clause = f" through iter {iter_stop}" if iter_stop is not None else ""
         return (
-            f"Sub-plan `local_checks` failed in {facts.get('fail_iters_in_window')} "
-            f"of the last {facts.get('window_size')} iterations (passed in "
-            f"{facts.get('pass_iters_in_window')}). The agent kept making commits "
-            f"through iter {facts.get('iter_at_stop')}, but the machine-checkable "
+            f"Sub-plan `local_checks` {counts_clause}"
+            f"The agent kept making commits{iter_clause}, but the machine-checkable "
             "acceptance criteria did not converge. Either the AC is wrong/over-"
             "specified, the step is too coarse for the agent to land in one go, "
             "or there's a real bug it can't fix. **Read the failing check output "
             "in the iteration log before deciding what to do.**"
         )
     if label == "local-checks-broken":
+        fail_w = facts.get('fail_iters_in_window')
+        pass_w = facts.get('pass_iters_in_window')
+        win = facts.get('window_size')
+        if fail_w is not None and pass_w is not None and win is not None:
+            counts_clause = (
+                f" in {fail_w} of the last {win} iterations "
+                f"(passed in {pass_w}). "
+            )
+        else:
+            counts_clause = ". "
         return (
-            f"The gate COMMAND could not execute in {facts.get('fail_iters_in_window')} "
-            f"of the last {facts.get('window_size')} iterations (passed in "
-            f"{facts.get('pass_iters_in_window')}). The product code is NOT "
+            f"The gate COMMAND could not execute{counts_clause}"
+            "The product code is NOT "
             "implicated — a blind resume re-fails identically. The fix is the "
             "gate config itself: often a path a later plan step creates, a missing "
             "dependency, or a command not installed in the worker environment. "
@@ -1594,19 +1623,24 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
             "**Do not auto-relaunch until the gate is fixed.**"
         )
     if label == "budget-exhausted":
+        budget = facts.get('max_budget_usd')
+        budget_clause = f" ({budget})" if budget is not None else ""
         return (
-            f"Hit `--max-budget-usd` ({facts.get('max_budget_usd')}). Loop stopped "
+            f"Hit `--max-budget-usd`{budget_clause}. Loop stopped "
             "to protect spend."
         )
     if label == "self-hosting-drift":
         orig = facts.get("original_label", "unknown")
+        launch = facts.get('launch_log_exists')
+        archive = facts.get('preserved_archive_exists')
+        drifted = facts.get('log_path_drifted')
         return (
             f"This project is the skill source (self-hosting) and runtime "
             f"paths drifted during the run. The original classification was "
             f"`{orig}`, but log evidence is incomplete: "
-            f"launch_log_exists={facts.get('launch_log_exists')}, "
-            f"preserved_archive_exists={facts.get('preserved_archive_exists')}, "
-            f"log_path_drifted={facts.get('log_path_drifted')}. "
+            f"launch_log_exists={launch if launch is not None else 'unknown'}, "
+            f"preserved_archive_exists={archive if archive is not None else 'unknown'}, "
+            f"log_path_drifted={drifted if drifted is not None else 'unknown'}. "
             "Preserve evidence, clean the stale sentinel, and relaunch from "
             "a stable/snapshot runner when available."
         )
