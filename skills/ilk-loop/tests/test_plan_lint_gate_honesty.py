@@ -221,3 +221,32 @@ class TestNetworkToolMockOnlyGate:
 
     def test_non_network_tool_not_flagged(self):
         assert lint_network_tool_mock_only_gate(_NON_NETWORK_TOOL, "test-non-net") == []
+
+
+# ── main() surfaces all three findings ───────────────────────────────
+
+class TestMainEntrypoint:
+    """Verify main() emits the three new finding classes via the CLI."""
+
+    def test_main_surfaces_wholesuite_baseline(self, tmp_path):
+        result = _run_lint(tmp_path, "a.md", _WHOLE_SUITE_BARE_PYTEST)
+        assert result.returncode == 1
+        assert "WARN" in result.stdout
+        assert "baseline-green" in result.stdout
+
+    def test_main_surfaces_posix_assertion(self, tmp_path):
+        result = _run_lint(tmp_path, "b.md", _POSIX_ONLY_NO_GUARD)
+        assert result.returncode == 1
+        assert "WARN" in result.stdout
+        assert "POSIX" in result.stdout or "posix" in result.stdout.lower()
+
+    def test_main_surfaces_mock_only_gate(self, tmp_path):
+        result = _run_lint(tmp_path, "c.md", _MOCK_ONLY_GATE)
+        assert result.returncode == 1
+        assert "WARN" in result.stdout
+        assert "mock" in result.stdout.lower()
+
+    def test_main_clean_on_good_subplan(self, tmp_path):
+        result = _run_lint(tmp_path, "good.md", _SCOPED_PYTEST)
+        assert result.returncode == 0
+        assert "OK: plan_lint clean" in result.stdout
