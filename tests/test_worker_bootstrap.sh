@@ -92,8 +92,16 @@ HOME="$FAKE_HOME" bash "$BOOT_SH" --apply --home "$WK" \
 ok "settings.json created"  "$([[ -f "$WK/settings.json" ]] && echo 0 || echo 1)"
 ok ".claude.json created"   "$([[ -f "$WK/.claude.json" ]] && echo 0 || echo 1)"
 ok "did not create real ~/.claude" "$([[ ! -e "$FAKE_HOME/.claude" ]] && echo 0 || echo 1)"
-perms="$(ls -l "$WK/settings.json" | awk '{print $1}')"
-check "settings.json is owner-only (rw-------)" "$perms" contains "rw-------"
+# settings.json owner-only perms (chmod 600) are a POSIX concept. Git Bash on
+# Windows (NTFS) cannot represent them, so `ls -l` never reports rw------- there.
+# Skip the assertion off POSIX rather than false-fail the whole suite.
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) echo "  SKIP: settings.json owner-only perms (non-POSIX host)" ;;
+  *)
+    perms="$(ls -l "$WK/settings.json" | awk '{print $1}')"
+    check "settings.json is owner-only (rw-------)" "$perms" contains "rw-------"
+    ;;
+esac
 settings="$(cat "$WK/settings.json")"
 check "settings has base url"  "$settings" contains "https://p.example/anthropic"
 check "settings has token"     "$settings" contains "$TOKEN"
