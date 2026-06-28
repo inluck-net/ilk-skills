@@ -31,6 +31,7 @@ from minimax.draw import (
     is_jpeg,
     is_png,
     save_image,
+    cmd_gen,
     SUBCOMMANDS,
     IMAGE_MODEL,
     CURATE_MODEL,
@@ -260,3 +261,116 @@ class TestSubcommandRegistry:
         """Unknown subcommand should exit non-zero with a clear message."""
         # This tests the main() dispatch path indirectly
         assert "nonexistent" not in SUBCOMMANDS
+
+
+# ── cmd_gen (injected _post) ────────────────────────────────────────────────
+
+class TestCmdGen:
+    """Test cmd_gen by injecting fake _post and _load_minimax_token."""
+
+    def _make_args(self, **overrides):
+        import argparse
+        defaults = {
+            "prompt": "a red circle",
+            "aspect_ratio": "1:1",
+            "style_prefix": "",
+            "out": "scratch/test_gen.jpg",
+            "provider": "MiniMax",
+        }
+        defaults.update(overrides)
+        return argparse.Namespace(**defaults)
+
+    def test_posts_to_image_gen_url(self):
+        """cmd_gen should POST to the image-01 endpoint."""
+        posted = {}
+        fake_response = {"data": {"image_base64": _MINIMAL_JPEG_B64}}
+
+        def fake_post(url, headers, payload, timeout=120):
+            posted["url"] = url
+            posted["headers"] = headers
+            posted["payload"] = payload
+            return fake_response
+
+        args = self._make_args()
+        with patch("minimax.draw._post", side_effect=fake_post), \
+             patch("minimax.draw._load_minimax_token", return_value="fake-token"):
+            cmd_gen(args)
+
+        assert posted["url"] == IMAGE_GEN_URL
+        assert posted["headers"]["Authorization"] == "Bearer fake-token"
+
+    def test_model_is_image_01(self):
+        """The payload model must be image-01."""
+        posted = {}
+        fake_response = {"data": {"image_base64": _MINIMAL_JPEG_B64}}
+
+        def fake_post(url, headers, payload, timeout=120):
+            posted["payload"] = payload
+            return fake_response
+
+        args = self._make_args()
+        with patch("minimax.draw._post", side_effect=fake_post), \
+             patch("minimax.draw._load_minimax_token", return_value="fake-token"):
+            cmd_gen(args)
+
+        assert posted["payload"]["model"] == IMAGE_MODEL
+
+    def test_prompt_includes_style_prefix(self):
+        """When style_prefix is set, the prompt should include it."""
+        posted = {}
+        fake_response = {"data": {"image_base64": _MINIMAL_JPEG_B64}}
+
+        def fake_post(url, headers, payload, timeout=120):
+            posted["payload"] = payload
+            return fake_response
+
+        args = self._make_args(prompt="a castle", style_prefix="pixel art")
+        with patch("minimax.draw._post", side_effect=fake_post), \
+             patch("minimax.draw._load_minimax_token", return_value="fake-token"):
+            cmd_gen(args)
+
+        assert posted["payload"]["prompt"] == "pixel art a castle"
+
+    def test_saves_decoded_image(self):
+        """cmd_gen should decode the response and save to --out."""
+        fake_response = {"data": {"image_base64": _MINIMAL_JPEG_B64}}
+        project_root = Path(__file__).resolve().parent.parent
+        out = project_root / "scratch" / "test_gen_cmd.jpg"
+
+        def fake_post(url, headers, payload, timeout=120):
+            return fake_response
+
+        args = self._make_args(out=str(out))
+        try:
+            with patch("minimax.draw._post", side_effect=fake_post), \
+                 patch("minimax.draw._load_minimax_token", return_value="fake-token"):
+                cmd_gen(args)
+
+            assert out.exists()
+            assert out.read_bytes() == _MINIMAL_JPEG
+        finally:
+            out.unlink(missing_ok=True)
+
+    def test_no_live_network_call(self):
+        """cmd_gen must never call _post live — tests inject a fake."""
+        call_log = []
+        fake_response = {"data": {"image_base64": _MINIMAL_JPEG_B64}}
+
+        def tracking_post(url, headers, payload, timeout=120):
+            call_log.append(("post", url))
+            return fake_response
+
+        args = self._make_args()
+        project_root = Path(__file__).resolve().parent.parent
+        out = project_root / "scratch" / "test_gen_no_live.jpg"
+        args = self._make_args(out=str(out))
+        try:
+            with patch("minimax.draw._post", side_effect=tracking_post), \
+                 patch("minimax.draw._load_minimax_token", return_value="fake-token"):
+                cmd_gen(args)
+
+            # _post was called exactly once (our fake), not urllib directly
+            assert len(call_log) == 1
+            assert call_log[0][0] == "post"
+        finally:
+            out.unlink(missing_ok=True)
