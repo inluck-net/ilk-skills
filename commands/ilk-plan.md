@@ -714,6 +714,17 @@ report; fix before launching):
   integration/import-resolve/live smoke and no `env_prereqs`. The live path can
   ship broken (cf. draw.py `ModuleNotFoundError`). See
   decomposition-principles.md §8.
+- **vertical-slice AC (orphaned model)** — a sub-plan adds a model/logic symbol
+  (`def`/`class`/`export function`) in a non-UI module whose every `local_check`
+  is a pure-unit test with no consumer entry-point keyword (UI hit-test, CLI
+  verb, HTTP route, e2e sim). The model compiles and unit-tests pass but nothing
+  proves a player/user can reach it (GRIDLOCK Gap-A). See
+  decomposition-principles.md §8.
+- **anti-hardcode integration gate** — a sub-plan introduces per-instance data
+  (per-stage path, per-tenant config, per-level theme) and says an existing
+  module should consume it, but no `local_check` asserts the consumer reads the
+  new data vs a hardcoded constant. Data exists but consumer is still hardcoded
+  (GRIDLOCK Gap-B). See decomposition-principles.md §8.
 
 `plan_lint.py` exits non-zero when it finds anything; treat findings as
 must-fix-before-launch (a contradiction here is what actually stalled the loop).

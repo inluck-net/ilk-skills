@@ -200,6 +200,24 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   `ModuleNotFoundError` (2026-06-28). **Fix:** add an import-resolve or
   live smoke check alongside the mock-based unit tests.
   `plan_lint.py` (`lint_network_tool_mock_only_gate`) warns automatically.
+- **model-only gate, no consumer AC (vertical-slice gap)** → a sub-plan adds
+  a model/logic capability (new exported function or class in a non-UI module)
+  whose every `local_check` is a pure-unit test (pytest/vitest) with no
+  consumer entry-point keyword (UI hit-test, CLI verb, HTTP route, e2e sim).
+  The model compiles and unit-tests pass but nothing proves a player/user can
+  actually reach it. Real case: GRIDLOCK v0.2 Gap-A — `upgrade(econ)` fully
+  implemented and unit-tested, but no UI affordance to trigger it. **Fix:** add
+  an AC that exercises the symbol through its real entry point.
+  `plan_lint.py` (`lint_vertical_slice_ac`) warns automatically.
+- **hardcoded consumer, data not wired (anti-hardcode gap)** → a sub-plan
+  introduces per-instance data (per-stage path, per-tenant config, per-level
+  theme) that an existing module should consume, but no `local_check` asserts
+  the consumer actually reads the new data vs a hardcoded constant. The data
+  exists but the consumer is still hardcoded to a different source. Real case:
+  GRIDLOCK v0.2 Gap-B — enemy movement hardcoded to Stage-1 `WAYPOINTS` while
+  per-stage path arrays exist in the registry. **Fix:** add a local_check that
+  verifies the consumer reads from the new data source.
+  `plan_lint.py` (`lint_anti_hardcode_integration`) warns automatically.
 
 ## 9. Cold-read self-check
 
