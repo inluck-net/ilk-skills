@@ -12,6 +12,7 @@ Part of sub-plan 2026-06-28-orphaned-capability-detector.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import textwrap
@@ -233,3 +234,48 @@ def _run_check_json(tmp_path: Path, *symbols: str) -> subprocess.CompletedProces
         timeout=30,
         encoding="utf-8", errors="replace",
     )
+
+
+# ── Ripgrep-absent fallback (AC-4) ─────────────────────────────────────
+
+class TestRipgrepAbsentFallback:
+    """Verify the Python fallback produces identical findings when rg is absent."""
+
+    def test_fallback_finds_unwired(self, tmp_path, monkeypatch):
+        """Python fallback detects an unwired symbol (same as rg path)."""
+        from orphan_check import check_symbol, _scan_with_rg
+        _create_fixture_tree(tmp_path, {
+            "src/tower.py": "def upgrade(): pass\n",
+            "tests/test_tower.py": "import tower; tower.upgrade()\n",
+        })
+        # Force the rg path to return empty (simulating rg absent).
+        monkeypatch.setattr("orphan_check._scan_with_rg", lambda root, sym: {})
+        result = check_symbol(str(tmp_path), "upgrade")
+        assert result["orphaned"] is True
+        assert result["test_refs"] > 0
+        assert result["prod_refs"] == 0
+
+    def test_fallback_finds_wired(self, tmp_path, monkeypatch):
+        """Python fallback correctly identifies a wired symbol."""
+        _create_fixture_tree(tmp_path, {
+            "src/tower.py": "def upgrade(): pass\n",
+            "src/game.py": "import tower; tower.upgrade()\n",
+            "tests/test_tower.py": "import tower; tower.upgrade()\n",
+        })
+        monkeypatch.setattr("orphan_check._scan_with_rg", lambda root, sym: {})
+        result = check_symbol(str(tmp_path), "upgrade")
+        assert result["orphaned"] is False
+        assert result["prod_refs"] > 0
+
+    def test_fallback_is_complete(self, tmp_path):
+        """Python fallback finds all expected references."""
+        from orphan_check import _scan_with_python
+        _create_fixture_tree(tmp_path, {
+            "src/tower.py": "def upgrade(): pass\n",
+            "src/game.py": "import tower; tower.upgrade()\n",
+            "tests/test_tower.py": "import tower; tower.upgrade()\n",
+        })
+        py_refs = _scan_with_python(str(tmp_path), "upgrade")
+        # Normalize path separators for cross-platform comparison.
+        py_files = {os.path.relpath(f, str(tmp_path)).replace("\\", "/") for f in py_refs}
+        assert py_files == {"src/tower.py", "src/game.py", "tests/test_tower.py"}
