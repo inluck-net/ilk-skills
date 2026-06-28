@@ -773,6 +773,82 @@ def lint_vertical_slice_ac(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── Anti-hardcode integration gate (config/data wiring) ──────────────────────
+#
+# A sub-plan that introduces per-instance data (per-stage path, per-tenant
+# config, per-level theme) that an existing module SHOULD consume, but whose
+# local_checks don't assert the consumer actually reads the new data (vs a
+# hardcoded constant), is the GRIDLOCK Gap-B shape: the data exists but the
+# consumer is still hardcoded to a different source.  Warn so the planner
+# adds a check that binds the consumer to the data.
+#
+# Conservative: only fires when BOTH the data-introduction AND
+# consumer-should-read signals are present AND no read-assertion exists.
+#
+# See: ../gridlock/docs/analysis/2026-06-28-spec-vs-implementation-gap.md Gap B.
+
+# Per-instance data: body describes data that varies by stage/tenant/level/etc.
+_PER_INSTANCE_DATA_RE = re.compile(
+    r"""
+    per[-_ ]?(?:stage|tenant|level|feature|config|instance|user|team|env)
+    |(?:path|paths)\s+(?:array|list|data)
+    |(?:config|registry|theme)\s+(?:array|list|data|file)
+    |distinct\s+(?:path|config|registry|theme)
+    |different\s+(?:path|config|registry|theme|rails?)
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+# Consumer-should-read: body says an existing module should use the new data.
+_CONSUMER_SHOULD_READ_RE = re.compile(
+    r"""
+    should\s+(?:consume|read|use|import|load|follow|reference)
+    |(?:consumes?|reads?|imports?|loads?|follows?)\s+(?:the|this|its|active|new)
+    |existing\s+\w+\s+(?:should|must|needs?\s+to)
+    |hardcoded?\s+(?:to|constant|value)
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+# Read-assertion: a local_check command that actually verifies the consumer
+# reads the new data (not just prose describing the gap).
+# Requires an assertion/test/verify keyword (not just "should consume").
+_READ_ASSERTION_RE = re.compile(
+    r"""
+    (?:assert|check|test|verify)\b.*\b(?:reads?|consumes?|uses?|imports?|loads?|follows?)\b
+    |\b(?:reads?|consumes?|uses?|imports?|loads?|follows?)\b.*\b(?:assert|check|test|verify)\b
+    |integration\s+test.*\b(?:read|consume|use|follow)\b
+    |\b(?:read|consume|use|follow)\b.*integration\s+test
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+
+def lint_anti_hardcode_integration(text: str, slug: str) -> list[str]:
+    """Flag per-instance data introduction without consumer read-assertion."""
+    findings: list[str] = []
+    body = _strip_frontmatter(text)
+    commands = _extract_local_checks_commands(text)
+    # Need both signals in the body to fire.
+    if not _PER_INSTANCE_DATA_RE.search(body):
+        return findings
+    if not _CONSUMER_SHOULD_READ_RE.search(body):
+        return findings
+    # Check if any local_check asserts the consumer reads the new data.
+    all_cmds_text = " ".join(commands)
+    combined = all_cmds_text + " " + body
+    if _READ_ASSERTION_RE.search(combined):
+        return findings
+    findings.append(
+        f"{slug}: sub-plan introduces per-instance data and says an existing "
+        f"module should consume it, but no local_check asserts the consumer "
+        f"actually reads the new data (vs a hardcoded constant). This is the "
+        f"GRIDLOCK Gap-B 'data-present but runtime-broken' shape. Add a "
+        f"local_check that verifies the consumer reads from the new data source."
+    )
+    return findings
+
+
 ALL_CHECKS = (
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
@@ -785,6 +861,7 @@ ALL_CHECKS = (
     lint_posix_only_test_assertion,
     lint_network_tool_mock_only_gate,
     lint_vertical_slice_ac,
+    lint_anti_hardcode_integration,
 )
 
 
