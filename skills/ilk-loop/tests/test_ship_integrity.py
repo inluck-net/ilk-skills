@@ -147,3 +147,109 @@ class TestCLI:
         )
         assert result.returncode == 2
         assert "error" in result.stderr.lower()
+
+
+# ── CLI --subplan file mode ──────────────────────────────────────────────────
+
+_SUBPLAN_WITH_GATE = """\
+---
+plan: test-slug
+status: shipped
+current_step: 5
+estimated_steps: 5
+local_checks:
+  - command: pytest -q
+    timeout: 120
+---
+
+# Test sub-plan
+
+## Steps
+
+### Step 0
+"""
+
+_SUBPLAN_NO_GATE = """\
+---
+plan: test-no-gate
+status: shipped
+current_step: 3
+estimated_steps: 3
+local_checks: []
+---
+
+# Test sub-plan — no gate
+"""
+
+_SUBPLAN_PENDING = """\
+---
+plan: test-pending
+status: pending
+current_step: 0
+estimated_steps: 5
+---
+
+# Test sub-plan — pending
+"""
+
+
+class TestCLISubplanFile:
+    """CLI --subplan reads the sub-plan file and extracts status + checks."""
+
+    def test_subplan_shipped_green_gate(self, tmp_path):
+        """Exit 0 for a shipped sub-plan file with green gate."""
+        sp = tmp_path / "subplan.md"
+        sp.write_text(_SUBPLAN_WITH_GATE, encoding="utf-8")
+        gate = {"all_passed": True, "results": []}
+        result = _run_cli(
+            "--subplan", str(sp),
+            "--gate-json", json.dumps(gate),
+        )
+        assert result.returncode == 0
+        assert "OK" in result.stdout
+
+    def test_subplan_shipped_red_gate(self, tmp_path):
+        """Exit 1 for a shipped sub-plan file with red gate."""
+        sp = tmp_path / "subplan.md"
+        sp.write_text(_SUBPLAN_WITH_GATE, encoding="utf-8")
+        gate = {
+            "all_passed": False,
+            "results": [{"command": "pytest -q", "passed": False, "exit_code": 1}],
+        }
+        result = _run_cli(
+            "--subplan", str(sp),
+            "--gate-json", json.dumps(gate),
+        )
+        assert result.returncode == 1
+        assert "VIOLATION" in result.stderr
+
+    def test_subplan_no_gate(self, tmp_path):
+        """Exit 0 for a no-gate sub-plan file."""
+        sp = tmp_path / "subplan.md"
+        sp.write_text(_SUBPLAN_NO_GATE, encoding="utf-8")
+        result = _run_cli(
+            "--subplan", str(sp),
+            "--gate-json", "null",
+        )
+        assert result.returncode == 0
+        assert "OK" in result.stdout
+
+    def test_subplan_pending_ignores_gate(self, tmp_path):
+        """Exit 0 for a pending sub-plan even with red gate."""
+        sp = tmp_path / "subplan.md"
+        sp.write_text(_SUBPLAN_PENDING, encoding="utf-8")
+        gate = {"all_passed": False, "results": []}
+        result = _run_cli(
+            "--subplan", str(sp),
+            "--gate-json", json.dumps(gate),
+        )
+        assert result.returncode == 0
+
+    def test_subplan_missing_file_exits_2(self):
+        """Exit 2 when the sub-plan file doesn't exist."""
+        result = _run_cli(
+            "--subplan", "nonexistent.md",
+            "--gate-json", "null",
+        )
+        assert result.returncode == 2
+        assert "not found" in result.stderr.lower()

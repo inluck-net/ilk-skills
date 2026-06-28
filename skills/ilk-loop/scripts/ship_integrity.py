@@ -6,10 +6,14 @@ Given a sub-plan's status, its declared local_checks, and the last gate
 outcome, decide whether a `shipped` status is honest (gate green) or a
 violation (gate red).
 
-Pure — no side effects, no file I/O.  The runner and CLI call into this;
-tests exercise it directly.
+Pure logic — ``evaluate_ship`` has no side effects.  The CLI reads a
+sub-plan file on disk; the runner calls ``evaluate_ship`` directly.
 
-Usage (CLI):
+Usage (CLI, file mode):
+  python ship_integrity.py --subplan path/to/subplan.md \
+      --gate-json '{"all_passed":true}'
+
+Usage (CLI, arg mode):
   python ship_integrity.py --status shipped \
       --checks-json '[{"command":"pytest -q","timeout":120}]' \
       --gate-json '{"all_passed":true}'
@@ -22,6 +26,7 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -88,13 +93,56 @@ def evaluate_ship(
     return ShipVerdict(ok=True, reason="gate green — ship is honest")
 
 
+# ── sub-plan file reader ─────────────────────────────────────────────────────
+
+_FRONTMATTER_RE = __import__("re").compile(r"^---\s*\n(.*?)\n---\s*\n", __import__("re").DOTALL)
+
+
+def read_subplan_status_and_checks(path: Path) -> tuple[str, list[dict[str, Any]]]:
+    """Extract ``status`` and top-level ``local_checks`` from a sub-plan file.
+
+    Returns ``(status, declared_checks)``.  Uses the same frontmatter parser
+    as ``run_local_checks.py``.
+    """
+    # Import the heavyweight parser only when reading files (CLI --subplan).
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from run_local_checks import (
+        split_frontmatter as _split_fm,
+        parse_local_checks_block as _parse_checks,
+        read_text as _read_text,
+    )
+
+    body = _read_text(path)
+    fm_text, _ = _split_fm(body)
+
+    # Extract status from frontmatter.
+    status = ""
+    for line in fm_text.splitlines():
+        s = line.strip()
+        if s.startswith("status:"):
+            status = s[len("status:"):].strip().strip("'\"")
+            break
+
+    checks = _parse_checks(fm_text)
+    return status, checks
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 def _cli(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
         description="Validate ship-integrity: shipped sub-plan must have green gate.",
     )
-    ap.add_argument("--status", required=True, help="sub-plan status field")
+    group = ap.add_mutually_exclusive_group()
+    group.add_argument(
+        "--subplan",
+        type=Path,
+        help="path to the sub-plan .md file (reads status + local_checks from it)",
+    )
+    group.add_argument(
+        "--status",
+        help="sub-plan status field (use with --checks-json)",
+    )
     ap.add_argument(
         "--checks-json",
         default="[]",
@@ -107,8 +155,26 @@ def _cli(argv: list[str]) -> int:
     )
     args = ap.parse_args(argv)
 
+    # Resolve status + checks from file or explicit args.
+    if args.subplan:
+        try:
+            status, checks = read_subplan_status_and_checks(args.subplan)
+        except FileNotFoundError:
+            print(f"error: sub-plan file not found: {args.subplan}", file=sys.stderr)
+            return 2
+        except Exception as exc:
+            print(f"error: failed to read sub-plan: {exc}", file=sys.stderr)
+            return 2
+    else:
+        status = args.status or ""
+        try:
+            checks = json.loads(args.checks_json)
+        except json.JSONDecodeError as exc:
+            print(f"error: invalid --checks-json: {exc}", file=sys.stderr)
+            return 2
+
+    # Parse gate result.
     try:
-        checks = json.loads(args.checks_json)
         gate = json.loads(args.gate_json)
         if gate is None:
             gate_result: dict[str, Any] | None = None
@@ -118,10 +184,10 @@ def _cli(argv: list[str]) -> int:
             print(f"error: --gate-json must be a JSON object or null, got {type(gate).__name__}", file=sys.stderr)
             return 2
     except json.JSONDecodeError as exc:
-        print(f"error: invalid JSON: {exc}", file=sys.stderr)
+        print(f"error: invalid --gate-json: {exc}", file=sys.stderr)
         return 2
 
-    verdict = evaluate_ship(args.status, checks, gate_result)
+    verdict = evaluate_ship(status, checks, gate_result)
     if verdict.ok:
         print(f"OK: {verdict.reason}")
         return 0
