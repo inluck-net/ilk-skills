@@ -33,6 +33,7 @@ from minimax.draw import (
     save_image,
     cmd_gen,
     cmd_curate,
+    main,
     SUBCOMMANDS,
     IMAGE_MODEL,
     CURATE_MODEL,
@@ -258,10 +259,26 @@ class TestSubcommandRegistry:
     def test_curate_registered(self):
         assert "curate" in SUBCOMMANDS
 
-    def test_unknown_subcommand_exits(self):
-        """Unknown subcommand should exit non-zero with a clear message."""
-        # This tests the main() dispatch path indirectly
-        assert "nonexistent" not in SUBCOMMANDS
+    def test_tts_stt_seam_documented(self):
+        """SUBCOMMANDS dict is the documented seam for future tts/stt."""
+        # The dict exists and is extensible — this is the seam.
+        assert isinstance(SUBCOMMANDS, dict)
+        assert len(SUBCOMMANDS) >= 2
+
+    def test_unknown_subcommand_exits_nonzero(self):
+        """Unknown subcommand should exit non-zero (argparse rejects it)."""
+        with patch("sys.argv", ["draw", "nonexistent"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            # argparse exits 2 for invalid choice; our fallback also exits 1
+            assert exc_info.value.code != 0
+
+    def test_no_subcommand_shows_help_and_exits(self):
+        """Running with no subcommand should show help and exit 0."""
+        with patch("sys.argv", ["draw"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 0
 
 
 # ── cmd_gen (injected _post) ────────────────────────────────────────────────
