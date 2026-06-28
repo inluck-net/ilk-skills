@@ -283,3 +283,200 @@ class TestCompileOnlySummaryTextMode:
         # Must round-trip through GBK (zh-CN console) without raising.
         out.encode("gbk")
         out.encode("ascii")
+
+
+# ---------------------------------------------------------------------------
+# Promote-next-master: compile-only carry-forward blocking
+# ---------------------------------------------------------------------------
+
+MASTER_UPSTREAM_SHIPPED = textwrap.dedent("""\
+    ---
+    master_plan: 2026-06-28-upstream
+    batch_date: 2026-06-28
+    status: active
+    total_tickets: 1
+    ---
+
+    ## Sub-plan registry
+
+    | # | Slug | Status |
+    |---|---|---|
+    | 1 | 2026-06-28-alpha.md | shipped |
+""")
+
+MASTER_WITH_BUILDS_ON = textwrap.dedent("""\
+    ---
+    master_plan: 2026-06-28-downstream
+    batch_date: 2026-06-28
+    status: queued
+    priority: 5
+    builds_on: alpha
+    ---
+
+    ## Sub-plan registry
+
+    | # | Slug | Status |
+    |---|---|---|
+    | 1 | 2026-06-28-downstream-task.md | pending |
+""")
+
+SUB_DOWNSTREAM_PENDING = textwrap.dedent("""\
+    ---
+    plan: downstream-task
+    status: pending
+    current_step: 0
+    estimated_steps: 2
+    ---
+
+    # Downstream task
+""")
+
+SUB_ALPHA_VERIFIED = textwrap.dedent("""\
+    ---
+    plan: alpha
+    status: shipped
+    current_step: 3
+    estimated_steps: 3
+    verification_tier: compile-only
+    verified: true
+    ---
+
+    # Alpha (verified)
+""")
+
+SUB_ALPHA_UNVERIFIED = textwrap.dedent("""\
+    ---
+    plan: alpha
+    status: shipped
+    current_step: 3
+    estimated_steps: 3
+    verification_tier: compile-only
+    ---
+
+    # Alpha (unverified — no marker)
+""")
+
+SUB_ALPHA_MALFORMED = textwrap.dedent("""\
+    ---
+    plan: alpha
+    status: shipped
+    current_step: 3
+    estimated_steps: 3
+    verification_tier: compile-only
+    verified: maybe
+    ---
+
+    # Alpha (malformed marker)
+""")
+
+SUB_ALPHA_LOOP_VERIFIED = textwrap.dedent("""\
+    ---
+    plan: alpha
+    status: shipped
+    current_step: 3
+    estimated_steps: 3
+    verification_tier: loop-verified
+    ---
+
+    # Alpha (loop-verified — no block)
+""")
+
+
+@pytest.fixture()
+def plans_dir_builds_on_unverified(tmp_path: Path) -> Path:
+    """Upstream shipped; downstream builds on an unverified compile-only sub-plan."""
+    d = tmp_path / "docs" / "plans"
+    d.mkdir(parents=True)
+    (d / "MASTER-2026-06-28-upstream.md").write_text(MASTER_UPSTREAM_SHIPPED, encoding="utf-8")
+    (d / "2026-06-28-alpha.md").write_text(SUB_ALPHA_UNVERIFIED, encoding="utf-8")
+    (d / "MASTER-2026-06-28-downstream.md").write_text(MASTER_WITH_BUILDS_ON, encoding="utf-8")
+    (d / "2026-06-28-downstream-task.md").write_text(SUB_DOWNSTREAM_PENDING, encoding="utf-8")
+    return d
+
+
+@pytest.fixture()
+def plans_dir_builds_on_verified(tmp_path: Path) -> Path:
+    """Upstream shipped; downstream builds on a verified compile-only sub-plan."""
+    d = tmp_path / "docs" / "plans"
+    d.mkdir(parents=True)
+    (d / "MASTER-2026-06-28-upstream.md").write_text(MASTER_UPSTREAM_SHIPPED, encoding="utf-8")
+    (d / "2026-06-28-alpha.md").write_text(SUB_ALPHA_VERIFIED, encoding="utf-8")
+    (d / "MASTER-2026-06-28-downstream.md").write_text(MASTER_WITH_BUILDS_ON, encoding="utf-8")
+    (d / "2026-06-28-downstream-task.md").write_text(SUB_DOWNSTREAM_PENDING, encoding="utf-8")
+    return d
+
+
+@pytest.fixture()
+def plans_dir_builds_on_malformed(tmp_path: Path) -> Path:
+    """Upstream shipped; downstream builds on a compile-only sub-plan with malformed marker."""
+    d = tmp_path / "docs" / "plans"
+    d.mkdir(parents=True)
+    (d / "MASTER-2026-06-28-upstream.md").write_text(MASTER_UPSTREAM_SHIPPED, encoding="utf-8")
+    (d / "2026-06-28-alpha.md").write_text(SUB_ALPHA_MALFORMED, encoding="utf-8")
+    (d / "MASTER-2026-06-28-downstream.md").write_text(MASTER_WITH_BUILDS_ON, encoding="utf-8")
+    (d / "2026-06-28-downstream-task.md").write_text(SUB_DOWNSTREAM_PENDING, encoding="utf-8")
+    return d
+
+
+@pytest.fixture()
+def plans_dir_builds_on_loop_verified(tmp_path: Path) -> Path:
+    """Upstream shipped; downstream builds on a loop-verified sub-plan (no block)."""
+    d = tmp_path / "docs" / "plans"
+    d.mkdir(parents=True)
+    (d / "MASTER-2026-06-28-upstream.md").write_text(MASTER_UPSTREAM_SHIPPED, encoding="utf-8")
+    (d / "2026-06-28-alpha.md").write_text(SUB_ALPHA_LOOP_VERIFIED, encoding="utf-8")
+    (d / "MASTER-2026-06-28-downstream.md").write_text(MASTER_WITH_BUILDS_ON, encoding="utf-8")
+    (d / "2026-06-28-downstream-task.md").write_text(SUB_DOWNSTREAM_PENDING, encoding="utf-8")
+    return d
+
+
+class TestPromoteCarryForward:
+    """AC-3 / AC-4: promote_next_master blocks on unverified compile-only."""
+
+    def _run_promote(self, plans_dir: Path) -> dict:
+        """Run promote_next_master --dry-run and return the JSON output."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+        from promote_next_master import main as promote_main
+        import io
+        from contextlib import redirect_stdout
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            promote_main(["--plans-dir", str(plans_dir), "--dry-run"])
+        return json.loads(buf.getvalue())
+
+    def test_blocks_on_unverified_compile_only(self, plans_dir_builds_on_unverified: Path) -> None:
+        """AC-3: unverified compile-only dependency blocks promotion."""
+        result = self._run_promote(plans_dir_builds_on_unverified)
+        # The downstream master should NOT be promoted.
+        assert result["promoted"] != "MASTER-2026-06-28-downstream.md"
+        # Skip reasons should be present.
+        skipped = result.get("skipped_unverified", [])
+        assert any("downstream" in s["master"] for s in skipped)
+        assert any("alpha" in s["blockers"] for s in skipped)
+
+    def test_promotes_when_verified(self, plans_dir_builds_on_verified: Path) -> None:
+        """AC-3: verified dependency allows promotion."""
+        result = self._run_promote(plans_dir_builds_on_verified)
+        # The downstream master should be promoted (or at least not skipped
+        # for unverified reasons).
+        skipped = result.get("skipped_unverified", [])
+        assert not any("downstream" in s["master"] for s in skipped)
+
+    def test_degrades_on_malformed_marker(self, plans_dir_builds_on_malformed: Path) -> None:
+        """AC-4: malformed marker ⇒ treated as unverified ⇒ skip with reason."""
+        result = self._run_promote(plans_dir_builds_on_malformed)
+        skipped = result.get("skipped_unverified", [])
+        assert any("downstream" in s["master"] for s in skipped)
+        assert any("alpha" in s["blockers"] for s in skipped)
+
+    def test_no_block_on_loop_verified(self, plans_dir_builds_on_loop_verified: Path) -> None:
+        """Loop-verified dependency does not block."""
+        result = self._run_promote(plans_dir_builds_on_loop_verified)
+        skipped = result.get("skipped_unverified", [])
+        assert not any("downstream" in s["master"] for s in skipped)
+
+    def test_no_builds_on_is_noop(self, plans_dir_all_loop: Path) -> None:
+        """Master without builds_on field is unaffected."""
+        result = self._run_promote(plans_dir_all_loop)
+        assert "skipped_unverified" not in result

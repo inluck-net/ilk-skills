@@ -45,6 +45,100 @@ from plan_status import master_has_nonshipped, master_is_drainable  # noqa: E402
 FRONTMATTER_RE = re.compile(r"^(---\s*\n)(.*?)(\n---\s*\n)", re.DOTALL)
 STATUS_LINE_RE = re.compile(r"^(\s*)status\s*:\s*(\S+)\s*$", re.MULTILINE)
 
+# Verification tiers that require a human-verify marker before downstream
+# masters may build on them (decomposition-principles §12).
+_VERIFY_TIERS = {"compile-only", "device-manual"}
+_TRUTHY_VALUES = {"true", "yes", "1"}
+
+
+def _slug_from_filename(fname: str) -> str:
+    """Strip YYYY-MM-DD- prefix and .md suffix from a sub-plan filename."""
+    slug = fname
+    if slug.endswith(".md"):
+        slug = slug[:-3]
+    m = re.match(r"^\d{4}-\d{2}-\d{2}-(.*)$", slug)
+    return m.group(1) if m else slug
+
+
+def _subplan_file_for_slug(slug: str, plans_dir: Path) -> Path | None:
+    """Resolve a slug to a sub-plan file on disk.
+
+    Accepts both bare slugs (``combat-vfx``) and dated filenames
+    (``2026-06-28-combat-vfx.md``).  Returns None when no matching file
+    exists.
+    """
+    # If it already looks like a dated filename, try directly.
+    if re.match(r"^\d{4}-\d{2}-\d{2}-", slug):
+        p = plans_dir / slug
+        if p.exists():
+            return p
+    # Try the YYYY-MM-DD-<slug>.md pattern (most common).
+    for p in plans_dir.glob(f"*-{slug}.md"):
+        if not p.name.startswith("MASTER"):
+            return p
+    # Bare filename fallback.
+    p = plans_dir / slug
+    return p if p.exists() else None
+
+
+def _check_unverified_builds_on(
+    master_fm: dict, plans_dir: Path
+) -> list[str]:
+    """Return slugs of unverified compile-only/device-manual dependencies.
+
+    Reads the master's ``builds_on`` front-matter field (comma-separated
+    sub-plan slugs) and checks each dependency.  A dependency is blocking
+    iff:
+      - its ``verification_tier`` is ``compile-only`` or ``device-manual``
+      - its ``verified`` field is not truthy (absent ⇒ unverified)
+
+    Returns an empty list when all dependencies are clear.  Degrades
+    safely on missing files or malformed markers (treats them as
+    unverified).
+    """
+    builds_on_raw = (master_fm.get("builds_on") or "").strip()
+    if not builds_on_raw:
+        return []
+
+    blockers: list[str] = []
+    for raw_slug in builds_on_raw.split(","):
+        slug = raw_slug.strip()
+        if not slug:
+            continue
+        sub_path = _subplan_file_for_slug(slug, plans_dir)
+        if sub_path is None:
+            # Missing file ⇒ can't verify ⇒ treat as blocking.
+            blockers.append(slug)
+            continue
+        try:
+            text = sub_path.read_text(encoding="utf-8-sig")
+        except OSError:
+            blockers.append(slug)
+            continue
+        # Parse front-matter (same minimal parser used elsewhere).
+        sub_fm: dict[str, str] = {}
+        if text.startswith("---"):
+            end = text.find("\n---", 3)
+            if end > 0:
+                for raw_line in text[3:end].splitlines():
+                    line = raw_line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if ":" in line:
+                        k, _, v = line.partition(":")
+                        sub_fm[k.strip()] = v.strip()
+
+        tier = (sub_fm.get("verification_tier") or "").strip()
+        if tier not in _VERIFY_TIERS:
+            # loop-verified (or absent ⇒ loop-verified) — no block.
+            continue
+        verified_raw = (sub_fm.get("verified") or "").strip().lower()
+        if verified_raw in _TRUTHY_VALUES:
+            continue
+        # Unverified compile-only/device-manual — block.
+        blockers.append(slug)
+    return blockers
+
 
 def parse_frontmatter(text: str) -> dict[str, str]:
     m = FRONTMATTER_RE.match(text)
@@ -153,6 +247,24 @@ def main(argv: list[str]) -> int:
     actives = [(p, fm) for p, fm in actives if master_has_nonshipped(p, plans_dir)]
     queued = [(p, fm) for p, fm in queued if master_is_drainable(p, plans_dir)]
 
+    # Compile-only carry-forward enforcement (decomposition-principles §12):
+    # Don't promote a master that builds on an unverified compile-only or
+    # device-manual sub-plan.  The human-verify marker (detached-component-
+    # contracts.md, Contract 4) must be present on the dependency.
+    filtered_queued: list[tuple[Path, dict]] = []
+    skip_reasons: list[dict] = []
+    for p, fm in queued:
+        blockers = _check_unverified_builds_on(fm, plans_dir)
+        if blockers:
+            skip_reasons.append({
+                "master": p.name,
+                "reason": "unverified compile-only/device-manual dependency",
+                "blockers": blockers,
+            })
+        else:
+            filtered_queued.append((p, fm))
+    queued = filtered_queued
+
     queued.sort(key=lambda it: (-_prio(it[1]), _created(it[1])))
 
     demoted = actives[0][0] if actives else None
@@ -177,6 +289,8 @@ def main(argv: list[str]) -> int:
         "queued_count_before": len(queued),
         "dry_run": args.dry_run,
     }
+    if skip_reasons:
+        plan["skipped_unverified"] = skip_reasons
 
     if not args.dry_run:
         if demoted is not None:
