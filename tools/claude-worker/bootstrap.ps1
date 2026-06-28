@@ -84,6 +84,7 @@
 #>
 [CmdletBinding()]
 param(
+  [Alias('Home')]
   [string]$WorkerHome,
   [string]$BaseUrl,
   [string]$AuthToken,
