@@ -158,6 +158,11 @@ Stop and hand back to the human when ANY of these is true:
 
 - The sub-plan's `current_step` reaches `estimated_steps`. Then:
   1. Set `status: shipped` and update `last_updated` in front-matter.
+     never set `shipped` while the declared gate is red — if gate
+     failures are genuinely pre-existing and unrelated, re-scope the gate
+     (fix its `local_checks` to exclude the unrelated failures) — do NOT
+     override or rationalize a red gate as acceptable. A sub-plan with a
+     red declared gate must stay `in-progress` until the gate is green.
   2. For every Lark ticket in the sub-plan's `tickets:` list, transition
      to `待验证` and write the relevant commit short-hashes into the
      `关联 commit` field — use the ilk-lark-tickets skill.
