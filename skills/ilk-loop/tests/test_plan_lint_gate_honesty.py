@@ -21,7 +21,11 @@ SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from plan_lint import lint_wholesuite_gate_baseline  # noqa: E402
+from plan_lint import (  # noqa: E402
+    lint_wholesuite_gate_baseline,
+    lint_posix_only_test_assertion,
+    lint_network_tool_mock_only_gate,
+)
 
 _PLAN_LINT = SCRIPTS_DIR / "plan_lint.py"
 
@@ -113,3 +117,107 @@ class TestWholeSuiteGateBaseline:
 
     def test_scoped_pytest_not_flagged(self):
         assert lint_wholesuite_gate_baseline(_SCOPED_PYTEST, "test-scoped") == []
+
+
+# ── Lint B: POSIX-only test assertions ───────────────────────────────
+
+# BAD: chmod/perm check with no uname guard.
+_POSIX_ONLY_NO_GUARD = """\
+---
+plan: test-posix-no-guard
+local_checks:
+  - command: bash tests/test_perms.sh
+    timeout: 30
+---
+
+# Sub-plan: test
+
+Tests file permissions via stat -c %A and chmod 600.
+"""
+
+# GOOD: same check but guarded by uname.
+_POSIX_ONLY_WITH_GUARD = """\
+---
+plan: test-posix-guarded
+local_checks:
+  - command: bash tests/test_perms.sh
+    timeout: 30
+---
+
+# Sub-plan: test
+
+On Linux: tests file permissions via stat -c %A.
+uname guards the POSIX-only assertions.
+"""
+
+
+class TestPosixOnlyAssertion:
+    def test_posix_no_guard_flagged(self):
+        f = lint_posix_only_test_assertion(_POSIX_ONLY_NO_GUARD, "test-posix")
+        assert len(f) == 1, f
+        assert "POSIX" in f[0] or "posix" in f[0].lower()
+
+    def test_posix_with_guard_not_flagged(self):
+        assert lint_posix_only_test_assertion(_POSIX_ONLY_WITH_GUARD, "test-guarded") == []
+
+
+# ── Lint C: network-tool mock-only gate ──────────────────────────────
+
+# BAD: sub-plan mentions urllib/requests/_post, only gate mocks the network.
+_MOCK_ONLY_GATE = """\
+---
+plan: test-mock-only
+local_checks:
+  - command: python -m pytest tests/test_draw.py -q
+    timeout: 60
+---
+
+# Sub-plan: draw.py _load_minimax_token
+
+Adds a new HTTP tool using urllib to post to api.minimax.chat.
+Tests mock the _post function with injected fakes.
+"""
+
+# GOOD: has an integration/import-resolve check alongside mocks.
+_INTEGRATION_GATE = """\
+---
+plan: test-integration-gate
+local_checks:
+  - command: python -c "from draw import _load_minimax_token; _load_minimax_token()"
+    timeout: 30
+  - command: python -m pytest tests/test_draw.py -q
+    timeout: 60
+---
+
+# Sub-plan: draw.py _load_minimax_token
+
+Adds a new HTTP tool using urllib to post to api.minimax.chat.
+Import-resolve smoke + unit tests with mocks.
+"""
+
+# GOOD: not a network tool at all.
+_NON_NETWORK_TOOL = """\
+---
+plan: test-non-network
+local_checks:
+  - command: python -m pytest tests/test_parser.py -q
+    timeout: 60
+---
+
+# Sub-plan: parser refactor
+
+Refactors the CSV parser. No network involvement.
+"""
+
+
+class TestNetworkToolMockOnlyGate:
+    def test_mock_only_flagged(self):
+        f = lint_network_tool_mock_only_gate(_MOCK_ONLY_GATE, "test-mock")
+        assert len(f) == 1, f
+        assert "mock" in f[0].lower()
+
+    def test_with_integration_gate_not_flagged(self):
+        assert lint_network_tool_mock_only_gate(_INTEGRATION_GATE, "test-integ") == []
+
+    def test_non_network_tool_not_flagged(self):
+        assert lint_network_tool_mock_only_gate(_NON_NETWORK_TOOL, "test-non-net") == []

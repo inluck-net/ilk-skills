@@ -555,6 +555,140 @@ def lint_wholesuite_gate_baseline(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── POSIX-only test assertion guard ──────────────────────────────────────────
+#
+# A ``.sh`` test (or a ``local_check`` shell command) that asserts a POSIX file
+# mode (``rw-------``, ``stat -c %A``, ``chmod 600`` check) without a
+# ``uname``/``OSTYPE`` guard cannot pass on Windows Git Bash.  Real case:
+# ``test_worker_bootstrap.sh`` rw------- check (2026-06-28 drawing-worker run,
+# backlog 602e2039).
+
+_POSIX_MODE_ASSERTION_RE = re.compile(
+    r"""
+    rw-------                          # permission string literal
+    |stat\s+-c\s+%(?:A|a)             # stat -c %A or %a (Linux-only format)
+    |chmod\s+[0-7]{3,4}\b             # chmod 600 / chmod 755 / etc.
+    |ls\s+-l[^\n]*rw-------           # ls -l ... rw-------
+    """,
+    re.VERBOSE,
+)
+
+_PLATFORM_GUARD_RE = re.compile(
+    r"""
+    uname                              # uname check
+    |\$OSTYPE                          # $OSTYPE variable
+    |\bOSTYPE\b.*(?:==|!=|~=)          # OSTYPE comparison
+    |if\s*\[\[.*OSTYPE                 # if [[ "$OSTYPE" == ...
+    |platform|operating.system         # generic platform check
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+
+def lint_posix_only_test_assertion(text: str, slug: str) -> list[str]:
+    """Flag a local_check with POSIX-only perm assertions and no platform guard."""
+    findings: list[str] = []
+    commands = _extract_local_checks_commands(text)
+    body = _strip_frontmatter(text)
+    full_text = text  # guards may appear anywhere
+    # Check commands first — inline POSIX assertions.
+    for cmd in commands:
+        if not _POSIX_MODE_ASSERTION_RE.search(cmd):
+            continue
+        if _PLATFORM_GUARD_RE.search(full_text):
+            continue
+        findings.append(
+            f"{slug}: local_check '{cmd.strip()[:80]}' asserts a POSIX file "
+            f"mode (rw-------, stat -c %A, chmod) without a uname/OSTYPE "
+            f"platform guard. This check cannot pass on Windows Git Bash. "
+            f"Add a uname guard or skip on non-POSIX platforms."
+        )
+    # Also check the body — a referenced .sh test may contain the assertions.
+    if not findings and _POSIX_MODE_ASSERTION_RE.search(body):
+        if not _PLATFORM_GUARD_RE.search(full_text):
+            findings.append(
+                f"{slug}: sub-plan body references POSIX file mode assertions "
+                f"(stat -c %A, chmod, rw-------) but no uname/OSTYPE platform "
+                f"guard is present. The referenced test cannot pass on Windows "
+                f"Git Bash. Add a uname guard or skip on non-POSIX platforms."
+            )
+    return findings
+
+
+# ── Network-tool mock-only gate guard ──────────────────────────────────────
+#
+# A sub-plan that ships a new HTTP/network tool (body mentions
+# urllib/requests/``api.``/endpoint/``_post``) whose ONLY gate is a unit test
+# that mocks the network boundary (``patch(... _post)``, injected fake) with
+# no integration/import-resolve/live smoke → the live path can ship broken.
+# Real case: draw.py ``_load_minimax_token`` ModuleNotFoundError (2026-06-28).
+
+_NETWORK_TOOL_SIGNAL_RE = re.compile(
+    r"""
+    urllib
+    |requests\.|requests\.get|requests\.post
+    |api\.\w+                          # api.minimax, api.openai, etc.
+    |_post\b
+    |_get\b
+    |endpoint
+    |http\.client
+    |aiohttp
+    |httpx
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+_MOCK_PATTERN_RE = re.compile(
+    r"""
+    patch\s*\(                         # mock.patch(...)
+    |@patch                            # @patch decorator
+    |inject.*fake                      # injected fake
+    |mock.*network                     # mock the network
+    |fake.*response                    # fake response
+    |_post.*mock|mock.*_post           # mock the _post function
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+_INTEGRATION_SMOKE_RE = re.compile(
+    r"""
+    import.*resolve                    # import-resolve check
+    |import\s+\w+.*\bfrom\b           # import check
+    |python\s+-c\s+.*import           # python -c "import ..."
+    |live\s+smoke                      # live smoke test
+    |integration                       # integration test
+    |env_prereqs                       # has env prereqs (live dependency)
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+
+def lint_network_tool_mock_only_gate(text: str, slug: str) -> list[str]:
+    """Flag a network-tool sub-plan whose only gates mock the network."""
+    findings: list[str] = []
+    body = _strip_frontmatter(text)
+    full_text = text
+    # Only flag if the body signals a network tool.
+    if not _NETWORK_TOOL_SIGNAL_RE.search(body):
+        return findings
+    commands = _extract_local_checks_commands(text)
+    if not commands:
+        return findings
+    # Check if ALL commands are mock-only (no integration smoke).
+    all_cmds_text = " ".join(commands)
+    has_mock = bool(_MOCK_PATTERN_RE.search(all_cmds_text) or _MOCK_PATTERN_RE.search(body))
+    has_integration = bool(_INTEGRATION_SMOKE_RE.search(all_cmds_text) or _extract_env_prereqs(full_text))
+    if has_mock and not has_integration:
+        findings.append(
+            f"{slug}: sub-plan signals a network tool (urllib/requests/_post) "
+            f"but every local_check mocks the network boundary with no "
+            f"integration/import-resolve/live smoke and no env_prereqs. "
+            f"The live path can ship broken (cf. draw.py ModuleNotFoundError). "
+            f"Add an import-resolve or live smoke check."
+        )
+    return findings
+
+
 ALL_CHECKS = (
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
@@ -564,6 +698,8 @@ ALL_CHECKS = (
     lint_frontmatter_path_created_later,
     lint_e2e_check_without_env_prereq,
     lint_wholesuite_gate_baseline,
+    lint_posix_only_test_assertion,
+    lint_network_tool_mock_only_gate,
 )
 
 
