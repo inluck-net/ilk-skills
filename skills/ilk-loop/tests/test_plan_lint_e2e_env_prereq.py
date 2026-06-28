@@ -237,6 +237,8 @@ local_checks:
 ---
 
 # Sub-plan: vitest run
+
+Baseline-green on all platforms 2026-06-28. Full vitest suite as gate.
 """
 
 

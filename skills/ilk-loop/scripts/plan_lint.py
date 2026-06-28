@@ -321,6 +321,7 @@ _NON_PATH_TOKENS = frozenset({
     "--timeout", "--timeout-method", "--keepdb", "--verbosity", "--noinput",
     "--tb", "--co", "--collect-only", "-rx", "-rxs",
     "test", "tests", "src", "lib", "bin", "dist", "build",
+    "run",  # vitest/jest subcommand
 })
 
 
@@ -471,6 +472,89 @@ def lint_e2e_check_without_env_prereq(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── Whole-suite-gate baseline guard ──────────────────────────────────────────
+#
+# A sub-plan whose ``local_checks`` run a pre-existing whole suite
+# (``bash tests/<existing>.sh``, full ``pytest``/``vitest`` with no path
+# scope, ``npm test``) with no baseline-green note risks false-blocking
+# when that suite is baseline-red on the run platform.  Real case:
+# ``test_worker_bootstrap.sh`` rw------- check on Windows (2026-06-28
+# drawing-worker run, backlog 5a5092ff).
+#
+# Heuristics for "whole suite":
+#   - ``pytest`` / ``py.test`` / ``vitest`` / ``jest`` with no positional
+#     arg that looks like a specific file or directory
+#   - ``bash tests/*.sh`` or ``sh tests/*.sh`` (shell glob on test dir)
+#   - ``npm test`` / ``yarn test`` / ``bun test`` with no specific file arg
+#
+# The body must contain a "baseline-green" note referencing the platform
+# (e.g. "baseline-green on Windows 2026-06-28").
+
+_WHOLE_SUITE_CMD_RE = re.compile(
+    r"""
+    \b(?:pytest|py\.test|vitest|jest)\b
+    |\bbash\s+tests/\*\.sh\b
+    |\bsh\s+tests/\*\.sh\b
+    |\bnpm\s+(?:run\s+)?test\b
+    |\byarn\s+test\b
+    |\bbun\s+test\b
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+# A path-like positional arg to pytest/vitest/jest (not a flag).
+# Matches: tests/test_foo.py, apps/orders/, src/foo.spec.ts, etc.
+_PATH_ARG_RE = re.compile(
+    r"(?<!\S)(?:[A-Za-z]:)?(?:[^\s-][\w./\\-]*\.(?:py|ts|js|tsx|jsx|mjs)"
+    r"|[^\s-][\w./\\-]*/)"
+)
+
+_BASELINE_GREEN_RE = re.compile(
+    r"baseline[- ]green\s+(?:on|for)\s+\S", re.IGNORECASE
+)
+
+
+def _is_whole_suite_command(cmd: str) -> bool:
+    """True if *cmd* runs a pre-existing whole test suite (no file scope)."""
+    cmd_stripped = cmd.strip()
+    if not _WHOLE_SUITE_CMD_RE.search(cmd_stripped):
+        return False
+    # For pytest/vitest/jest: any non-flag positional arg scopes the run
+    # (a file path, a directory, a node id).  Only truly bare invocations
+    # (nothing but flags after the runner) count as whole-suite.
+    if re.search(r"\b(?:pytest|py\.test|vitest|jest)\b", cmd_stripped, re.IGNORECASE):
+        tokens = cmd_stripped.split()
+        positional = [
+            t for t in tokens[1:]  # skip the runner itself
+            if not t.startswith("-") and t not in _NON_PATH_TOKENS
+        ]
+        if positional:
+            return False  # has a positional arg → scoped
+    return True
+
+
+def lint_wholesuite_gate_baseline(text: str, slug: str) -> list[str]:
+    """Flag a whole-suite local_check that lacks a baseline-green note."""
+    findings: list[str] = []
+    commands = _extract_local_checks_commands(text)
+    body = _strip_frontmatter(text)
+    full_text = text  # markers may appear in frontmatter comments
+    for cmd in commands:
+        if not _is_whole_suite_command(cmd):
+            continue
+        if _BASELINE_GREEN_RE.search(full_text):
+            continue
+        findings.append(
+            f"{slug}: local_check '{cmd.strip()[:80]}' runs a pre-existing "
+            f"whole suite with no 'baseline-green on <platform>' note in the "
+            f"sub-plan body. If this suite is baseline-red on the run platform "
+            f"(e.g. POSIX-only perms check on Windows), every step will "
+            f"false-block. Add a baseline-green note or scope the gate to "
+            f"the changed module."
+        )
+    return findings
+
+
 ALL_CHECKS = (
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
@@ -479,6 +563,7 @@ ALL_CHECKS = (
     lint_escaped_bug_regression_gate,
     lint_frontmatter_path_created_later,
     lint_e2e_check_without_env_prereq,
+    lint_wholesuite_gate_baseline,
 )
 
 
