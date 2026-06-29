@@ -25,13 +25,33 @@ Read in parallel:
   from Lark tickets")
 - `<skill-root>/ilk-lark-tickets/SKILL.md` (CLI usage, ticket fields)
 
-## 2. Verify project context
+## 2. Verify project context and resolve the plans dir
 
 - Walk up from cwd to find `.lark-project` (this resolves which Bitable
   to query). If not found, tell the user to either `cd` into a Lark-aware
   project or run `/ilk-plan` directly with a free-text description.
-- Walk up from cwd to find a project root (`.git` or `docs/`).
-- If `docs/plans/` doesn't exist, scaffold it (see SKILL workflow #2).
+- **Resolve where this project's plans actually live** — exactly as
+  `/ilk-plan` step 2 does. Plans live OUTSIDE the project repo (under
+  `~/.ilk-data/`) so the project's git history stays clean of skill
+  artifacts; do NOT scaffold or write an in-tree `docs/plans/`.
+
+  ```powershell
+  python "<skill-root>/ilk-loop/scripts/ilk_paths.py" --start .
+  ```
+
+  Capture `project_root`, `project_key`, and `external_plans_dir` from the
+  JSON. **All plan files in step 6 are written to `external_plans_dir`**
+  (`~/.ilk-data/projects/<key>/plans/`), and `web_base` for the Lark
+  link-back (step 7) is derived from `git remote get-url origin`. Bootstrap
+  `external_plans_dir` (copy `ilk-loop/templates/README.md` into it) if it
+  doesn't exist yet.
+
+> **Why this matters** — `/ilk-lark` delegates planning to `/ilk-plan`,
+> which writes to the external dir and does NOT commit to the project repo.
+> An older version of this command scaffolded an in-tree `docs/plans/` and
+> committed plans there; the loop never reads that path, so it produced a
+> divergent double-write (in-tree copy + external copy in different schemas)
+> and polluted the project's git history. Always resolve via `ilk_paths.py`.
 
 ## 3. Pull the ticket batch
 
@@ -53,7 +73,7 @@ For each ticket in the batch, fetch full content. For batches of >5
 tickets, write a one-off helper script to parallelise:
 
 ```python
-# Save to docs/plans/_fetch_tickets.py (delete after use)
+# Save to a scratch/tmp dir (NOT the repo, NOT docs/plans/) and delete after use
 import json, subprocess, sys
 from pathlib import Path
 
@@ -92,53 +112,66 @@ This becomes the input to step 6 below.
 
 ## 6. Delegate to /ilk-plan core workflow
 
-Now follow `/ilk-plan` workflow steps 4-7 (the universal planning
+Now follow `/ilk-plan` workflow steps 4-8 (the universal planning
 workflow):
 
 - Step 4: Read existing plans (collision avoidance).
 - Step 5: **Propose grouping (USER APPROVAL REQUIRED)**.
-- Step 6: Write the plan files. The `tickets:` field of each sub-plan's
-  front-matter MUST contain the `T-YYYY-NNNN` ids that landed in it.
-- Step 7: Commit and push.
+- Step 6: Write the plan files **to `external_plans_dir`** (resolved in
+  step 2) — NOT to an in-tree `docs/plans/`. The `tickets:` field of each
+  sub-plan's front-matter MUST contain the `T-YYYY-NNNN` ids that landed in
+  it. Match the on-disk master/sub-plan schema already present in
+  `external_plans_dir` (read an existing file there first).
+- Step 7: Run the `/ilk-plan` QC passes.
+- Step 8: Persist — there is **no project-repo commit** (plans live
+  external). Register the project and release the master `draft → queued`.
 
 Do not skip user approval. Iterate on grouping until the user confirms.
 
 ## 7. Lark post-step: update tickets
 
-After the plan files are committed AND pushed, update every ticket in
-the batch:
+After the plans are persisted (step 6 / `/ilk-plan` step 8 — external dir,
+master released to `queued`), update every ticket in the batch.
+
+Plans now live OUTSIDE the repo, so there is **no in-repo blob URL** to link
+to. Instead, link `关联 plan` to a **commit-search URL keyed on the sub-plan's
+`[plan:<slug>]` commit trailer** — deterministic from the slug, browsable, and
+it resolves to the real commits as the loop lands them (empty until then). No
+in-tree file required.
 
 For each `(ticket_id, record_id)`:
-1. Determine which sub-plan file the ticket landed in by reading each
-   sub-plan's `tickets:` front-matter list.
-2. Compute the Gitee blob URL:
-   ```
-   <gitee_blob_base>/docs/plans/<sub-plan-filename>
-   ```
-   Where `<gitee_blob_base>` is derived from `git remote get-url origin`
-   (strip trailing `.git`, append `/blob/<branch>`).
-3. Update the ticket via `cli.py`.
+1. Determine which sub-plan the ticket landed in by reading each sub-plan's
+   `tickets:` front-matter list; note its `plan:` slug.
+2. Derive `web_base` from `git remote get-url origin` (strip trailing `.git`;
+   normalize `git@host:org/repo` → `https://host/org/repo`).
+3. Compute the commit-search URL by host:
+   - GitHub: `<web_base>/search?q=%5Bplan%3A<slug>%5D&type=commits`
+   - Gitee:  `<web_base>/commits/<branch>` (Gitee lacks reliable message
+     search — link the branch commits page and rely on the `[plan:<slug>]`
+     trailer being greppable).
+4. Update the ticket via `cli.py`: set `关联 plan=<url>` and `状态=计划中`.
 
-For batches of 10+ tickets, write a one-off helper:
+For batches of 10+ tickets, write a one-off helper **in a scratch/tmp dir
+(never the repo)**, using `--fields-json` so non-ASCII values bypass argv:
 
 ```python
-# Save to docs/plans/_update_tickets.py (delete after use)
-import subprocess, sys
+# scratch dir only — delete after use
+import json, subprocess, sys, tempfile, os
 CLI = os.path.expanduser(r"<skill-root>/ilk-lark-tickets/scripts/cli.py")
-GITEE_BASE = "https://gitee.com/<org>/<repo>/blob/<branch>/docs/plans"
 
 ROUTING = [
-    # (ticket_id, record_id, sub-plan-filename) tuples
+    # (ticket_id, record_id, plan_url) tuples
 ]
 
 failures = []
-for tid, rid, plan in ROUTING:
-    url = f"{GITEE_BASE}/{plan}"
+for tid, rid, url in ROUTING:
+    fj = os.path.join(tempfile.gettempdir(), f"_lark_{tid}.json")
+    with open(fj, "w", encoding="utf-8") as f:
+        json.dump({"关联 plan": url, "状态": "计划中"}, f, ensure_ascii=False)
     p = subprocess.run(
-        [sys.executable, CLI, "update", rid,
-         "--field", f"关联 plan={url}",
-         "--field", "状态=计划中"],
+        [sys.executable, CLI, "update", rid, "--fields-json", fj],
         capture_output=True, text=True, encoding="utf-8")
+    os.remove(fj)
     if p.returncode != 0:
         failures.append((tid, p.stderr.strip()))
     print(f"{'ok ' if p.returncode == 0 else 'FAIL'}: {tid}")
@@ -154,9 +187,8 @@ sys.exit(1 if failures else 0)
 
 - Run `cli.py list --status 计划中 --limit 100` and confirm the count
   matches the batch size.
-- Delete the temporary helper scripts (`_fetch_tickets.py`,
-  `_tickets_dump.json`, `_update_tickets.py`) — they should not be
-  committed.
+- Delete any temporary helper scripts from the scratch/tmp dir — they must
+  not land in the repo or `external_plans_dir`.
 
 ## 9. Final report
 
@@ -171,7 +203,11 @@ End your turn with:
 ## Boundary rules
 
 - **Never skip the user-approval gate** in step 6 (grouping is subjective).
-- **Never update Lark tickets before plans are pushed** — the Gitee URLs
-  must resolve when the user clicks them from Lark.
-- **Always clean up helper scripts** in step 8.
-- **If push fails**: do NOT update Lark; tell the user, stop.
+- **Plans live external — never commit them to the project repo.** Resolve
+  `external_plans_dir` via `ilk_paths.py` (step 2) and write there. Do not
+  scaffold or commit an in-tree `docs/plans/`.
+- **Never update Lark tickets before the plans are persisted** (step 6 /
+  `/ilk-plan` step 8 complete, master `queued`).
+- **The `关联 plan` link is a `[plan:<slug>]` commit-search URL**, not an
+  in-repo file URL — it resolves as the loop lands commits.
+- **Always clean up helper scripts** (scratch/tmp only) in step 8.
