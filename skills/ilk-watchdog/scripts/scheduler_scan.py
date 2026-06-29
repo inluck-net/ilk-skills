@@ -148,110 +148,145 @@ def scan_projects() -> list[dict]:
     results: list[dict] = []
 
     for project_dir in sorted(root.iterdir()):
-        if not project_dir.is_dir():
+        try:
+            entry = _scan_one_project(project_dir)
+        except Exception:
+            # Resilience: this scanner runs unattended while other ilk loops
+            # concurrently WRITE plan files in these same dirs. A read that
+            # races a half-written master/sub-plan (or any other per-project
+            # surprise) must skip just that project, never abort the whole
+            # scan — an aborted scan emits a traceback that, under the
+            # scheduler's `$ErrorActionPreference='Stop'` + `2>&1` merge,
+            # killed the daemon outright (the 2026-06-30 three-project crash).
             continue
-        plans_dir = project_dir / "plans"
-        if not plans_dir.is_dir():
-            continue
-
-        masters = sorted(plans_dir.glob("MASTER-*.md"))
-        if not masters:
-            continue
-
-        # Reconcile pass: auto-flip any all-shipped master to status: shipped.
-        # Idempotent + best-effort (tolerates concurrent writes).
-        for m in masters:
-            try:
-                reconcile_master_status(m, plans_dir)
-            except OSError:
-                pass
-
-        # --- pass 1: classify masters by status + runnable check ---
-        active_ts: list[datetime] = []
-        queued_ts: list[datetime] = []
-
-        for master_path in masters:
-            try:
-                master_text = master_path.read_text(encoding="utf-8-sig")
-            except OSError:
-                continue
-
-            fm = parse_frontmatter(master_text)
-            master_status = normalize_master_status(fm.get("status") or "")
-
-            # `supervised_only` masters are never autonomously dispatched.
-            # They edit the loop's own infrastructure (or are otherwise
-            # sensitive) and must be run by a human via manual `/ilk`. The
-            # manual path (loop_status) deliberately still selects them.
-            if (fm.get("supervised_only") or "").strip().lower() in ("true", "yes", "1"):
-                continue
-
-            # Only masters with non-shipped sub-plans are runnable.
-            if not master_has_nonshipped(master_path, plans_dir):
-                continue
-
-            # Collect per-sub-plan timestamps for FIFO ordering.
-            master_sub_ts: list[datetime] = []
-            for fname in extract_subplan_files(master_text):
-                sub_path = plans_dir / fname
-                if not sub_path.exists():
-                    continue
-                try:
-                    sub_text = sub_path.read_text(encoding="utf-8-sig")
-                except OSError:
-                    continue
-                sub_fm = parse_frontmatter(sub_text)
-                if sub_fm.get("status", "pending") == "shipped":
-                    continue
-                ts = _parse_ts(sub_fm.get("last_updated", ""))
-                if ts is None:
-                    try:
-                        ts = datetime.fromtimestamp(sub_path.stat().st_mtime)
-                    except OSError:
-                        ts = datetime.min
-                master_sub_ts.append(ts)
-
-            if not master_sub_ts:
-                continue
-
-            oldest_sub = min(master_sub_ts)
-
-            if master_status == "active":
-                active_ts.append(oldest_sub)
-            elif master_status == "queued":
-                queued_ts.append(oldest_sub)
-            # Masters with other statuses (e.g. draft, paused) are
-            # not runnable by the queue model — skip them. `draft` =
-            # authored-but-not-yet-released (the /ilk-plan authoring gate); it
-            # is intentionally invisible to the autonomous scheduler.
-            # Note: legacy `pending` is normalized to `queued` above.
-
-        # --- pass 2: decide inclusion + FIFO timestamp ---
-        # A project is included iff it has a runnable master.
-        if not active_ts and not queued_ts:
-            continue
-
-        # Active master wins for FIFO timestamp; else next-to-promote queued.
-        has_active = bool(active_ts)
-        if has_active:
-            oldest = min(active_ts)
-        else:
-            oldest = min(queued_ts)
-
-        results.append({
-            "key": project_dir.name,
-            "path": str(project_dir),
-            "repo_path": resolve_repo_path(project_dir, project_dir.name),
-            "oldest_queued_ts": oldest.isoformat(),
-            "has_active_master": has_active,
-        })
+        if entry is not None:
+            results.append(entry)
 
     # FIFO: oldest first; ties broken by project key for determinism
     results.sort(key=lambda r: (r["oldest_queued_ts"], r["key"]))
     return results
 
 
+def _scan_one_project(project_dir: Path) -> dict | None:
+    """Classify a single project; return its scan entry or None if not runnable.
+
+    Split out of ``scan_projects`` so its caller can isolate per-project
+    failures: one locked / partially-written plan file skips that project,
+    it does not abort (and crash) the whole unattended scan.
+    """
+    if not project_dir.is_dir():
+        return None
+    plans_dir = project_dir / "plans"
+    if not plans_dir.is_dir():
+        return None
+
+    masters = sorted(plans_dir.glob("MASTER-*.md"))
+    if not masters:
+        return None
+
+    # Reconcile pass: auto-flip any all-shipped master to status: shipped.
+    # Idempotent + best-effort (tolerates concurrent writes).
+    for m in masters:
+        try:
+            reconcile_master_status(m, plans_dir)
+        except OSError:
+            pass
+
+    # --- pass 1: classify masters by status + runnable check ---
+    active_ts: list[datetime] = []
+    queued_ts: list[datetime] = []
+
+    for master_path in masters:
+        try:
+            master_text = master_path.read_text(encoding="utf-8-sig")
+        except OSError:
+            continue
+
+        fm = parse_frontmatter(master_text)
+        master_status = normalize_master_status(fm.get("status") or "")
+
+        # `supervised_only` masters are never autonomously dispatched.
+        # They edit the loop's own infrastructure (or are otherwise
+        # sensitive) and must be run by a human via manual `/ilk`. The
+        # manual path (loop_status) deliberately still selects them.
+        if (fm.get("supervised_only") or "").strip().lower() in ("true", "yes", "1"):
+            continue
+
+        # Only masters with non-shipped sub-plans are runnable.
+        if not master_has_nonshipped(master_path, plans_dir):
+            continue
+
+        # Collect per-sub-plan timestamps for FIFO ordering.
+        master_sub_ts: list[datetime] = []
+        for fname in extract_subplan_files(master_text):
+            sub_path = plans_dir / fname
+            if not sub_path.exists():
+                continue
+            try:
+                sub_text = sub_path.read_text(encoding="utf-8-sig")
+            except OSError:
+                continue
+            sub_fm = parse_frontmatter(sub_text)
+            if sub_fm.get("status", "pending") == "shipped":
+                continue
+            ts = _parse_ts(sub_fm.get("last_updated", ""))
+            if ts is None:
+                try:
+                    ts = datetime.fromtimestamp(sub_path.stat().st_mtime)
+                except OSError:
+                    ts = datetime.min
+            master_sub_ts.append(ts)
+
+        if not master_sub_ts:
+            continue
+
+        oldest_sub = min(master_sub_ts)
+
+        if master_status == "active":
+            active_ts.append(oldest_sub)
+        elif master_status == "queued":
+            queued_ts.append(oldest_sub)
+        # Masters with other statuses (e.g. draft, paused) are
+        # not runnable by the queue model — skip them. `draft` =
+        # authored-but-not-yet-released (the /ilk-plan authoring gate); it
+        # is intentionally invisible to the autonomous scheduler.
+        # Note: legacy `pending` is normalized to `queued` above.
+
+    # --- pass 2: decide inclusion + FIFO timestamp ---
+    # A project is included iff it has a runnable master.
+    if not active_ts and not queued_ts:
+        return None
+
+    # Active master wins for FIFO timestamp; else next-to-promote queued.
+    has_active = bool(active_ts)
+    if has_active:
+        oldest = min(active_ts)
+    else:
+        oldest = min(queued_ts)
+
+    return {
+        "key": project_dir.name,
+        "path": str(project_dir),
+        "repo_path": resolve_repo_path(project_dir, project_dir.name),
+        "oldest_queued_ts": oldest.isoformat(),
+        "has_active_master": has_active,
+    }
+
+
 def main() -> int:
+    # Force UTF-8 on stdout/stderr. The scheduler captures our stdout (the JSON
+    # project list) and reads it back as UTF-8. On a zh-CN console Python
+    # defaults stdout to GBK (cp936); a non-ASCII byte in any field then makes
+    # `print(json.dumps(..., ensure_ascii=False))` die with UnicodeEncodeError,
+    # whose traceback — under the scheduler's `$ErrorActionPreference='Stop'`
+    # — killed the daemon. Reconfiguring to UTF-8 makes the JSON survive any
+    # non-ASCII path/title. Mirrors run_local_checks.main().
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     projects = scan_projects()
     print(json.dumps(projects, indent=2, ensure_ascii=False))
     return 0

@@ -81,7 +81,26 @@ $SkillRoot = Get-IlkSkillRoot
 $ScanScript       = Join-Path $PSScriptRoot 'scheduler_scan.py'
 $PromoteScript    = Join-Path $SkillRoot 'ilk-loop\scripts\promote_next_master.py'
 $LaunchScript     = Join-Path $SkillRoot 'ilk-launcher\scripts\launch.ps1'
-$BootstrapScript  = Join-Path $SkillRoot '..\tools\claude-worker\bootstrap.ps1'
+# bootstrap.ps1 lives in the repo's tools/ (a SIBLING of skills/), NOT under the
+# installed skills home. Each skill dir is an individual symlink/junction into
+# the repo, so `$SkillRoot\..\tools` is LEXICAL and lands in ~/.claude\tools
+# (no such dir) — that mis-resolution is what made every dispatch log
+# "slot N bootstrap failed: cannot find bootstrap.ps1". Resolve THIS script's
+# own real (symlink-followed) location up to the repo root instead, mirroring
+# ilk-upgrade/scripts/upgrade.ps1. Fall back to the lexical join for a real
+# (non-symlinked) clone where skills/ and tools/ are true siblings.
+$BootstrapScript = $null
+try {
+  $watchdogSkillDir = Split-Path -Parent $PSScriptRoot          # ...\ilk-watchdog (maybe a junction)
+  $wdItem = Get-Item -LiteralPath $watchdogSkillDir -Force
+  $realWatchdogDir = if ($wdItem.Target) { @($wdItem.Target)[0] } else { $watchdogSkillDir }
+  $repoRootFromLink = (Resolve-Path (Join-Path $realWatchdogDir '..\..')).Path
+  $candidate = Join-Path $repoRootFromLink 'tools\claude-worker\bootstrap.ps1'
+  if (Test-Path $candidate) { $BootstrapScript = $candidate }
+} catch {}
+if (-not $BootstrapScript) {
+  $BootstrapScript = Join-Path $SkillRoot '..\tools\claude-worker\bootstrap.ps1'
+}
 $NotifyPy         = Join-Path $SkillRoot 'ilk-watchdog\scripts\ilk_notify.py'
 $WatchdogPs1      = Join-Path $PSScriptRoot 'watchdog.ps1'
 $SchedulerLogDir  = Join-Path (Get-IlkDataDir) 'logs'
@@ -191,12 +210,40 @@ function Get-SlotHome {
 }
 
 function Invoke-SchedulerScan {
-  <# Run scheduler_scan.py with the current ILK_DATA_HOME. #>
-  $output = & python $ScanScript 2>&1
-  if ($LASTEXITCODE -ne 0) {
-    throw "scheduler_scan.py exited $LASTEXITCODE. Output: $output"
+  <#
+    Run scheduler_scan.py and parse its JSON stdout.
+
+    Captures stdout and stderr to SEPARATE temp files (never `2>&1`): under
+    this script's `$ErrorActionPreference='Stop'`, merging a native command's
+    stderr makes PowerShell wrap each stderr line in a NativeCommandError and
+    raise a TERMINATING error — so a single Python warning/traceback on stderr
+    used to kill the whole daemon even on exit 0. Reading stdout back as UTF-8
+    matches scheduler_scan's `sys.stdout.reconfigure(encoding="utf-8")`, so a
+    non-ASCII path/title can no longer corrupt the JSON. Throws on non-zero
+    exit or empty stdout; the caller is responsible for surviving the throw.
+  #>
+  $outFile = [System.IO.Path]::GetTempFileName()
+  $errFile = [System.IO.Path]::GetTempFileName()
+  try {
+    $proc = Start-Process -FilePath 'python' -ArgumentList @($ScanScript) `
+      -NoNewWindow -Wait -PassThru `
+      -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+    $exit = $proc.ExitCode
+    $utf8 = [System.Text.UTF8Encoding]::new($false)
+    $stdout = ''
+    $stderr = ''
+    try { $stdout = [System.IO.File]::ReadAllText($outFile, $utf8) } catch {}
+    try { $stderr = [System.IO.File]::ReadAllText($errFile, $utf8) } catch {}
+    if ($exit -ne 0) {
+      throw "scheduler_scan.py exited $exit. stderr: $($stderr.Trim())"
+    }
+    if ([string]::IsNullOrWhiteSpace($stdout)) {
+      throw "scheduler_scan.py produced no stdout. stderr: $($stderr.Trim())"
+    }
+    return ($stdout.Trim() | ConvertFrom-Json)
+  } finally {
+    Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
   }
-  return ($output | Out-String).Trim() | ConvertFrom-Json
 }
 
 function Read-BlacklistFromPostmortems {
@@ -333,7 +380,24 @@ function Run-Scheduler {
 
   while ($true) {
     # --- scan for queued projects ---
-    $queued = Invoke-SchedulerScan
+    # A scan failure must NOT kill the daemon: the scanner reads plan files
+    # that live loops are concurrently writing, so a transient read-race (or
+    # any python hiccup) is expected. Log it, treat this cycle as idle, and
+    # poll again. Before this guard the throw propagated out of the while loop
+    # and the whole scheduler exited (the 2026-06-30 three-project crash).
+    try {
+      $queued = Invoke-SchedulerScan
+    } catch {
+      if ($DryRun -and $Once) {
+        Write-SchedulerLog -Decision 'scan-error' -Reason "$_"
+        @{ decision = 'scan-error'; reason = "$_" } | ConvertTo-Json -Compress
+        return
+      }
+      Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] warning: scan failed this cycle (daemon survives): $_"
+      Write-SchedulerLog -Decision 'scan-error' -Reason "$_"
+      Start-Sleep -Seconds ($PollMin * 60)
+      continue
+    }
 
     if (-not $queued -or $queued.Count -eq 0) {
       if ($DryRun -and $Once) {
