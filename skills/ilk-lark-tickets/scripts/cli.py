@@ -108,6 +108,80 @@ def _normalize_fields_for_write(client: BitableClient, raw_fields: dict) -> dict
 
 
 # ---------------------------------------------------------------------------
+# Empty-record detection (Feishu seeds new bases with blank default rows)
+# ---------------------------------------------------------------------------
+
+def _value_is_nonempty(v) -> bool:
+    """True if a Bitable field value carries client-meaningful content.
+
+    Errs toward 'nonempty' for present scalars (numbers/bools) so purge never
+    deletes a row that holds real data; only truly-blank rows are empty.
+    """
+    if v is None:
+        return False
+    if isinstance(v, str):
+        return v.strip() != ""
+    if isinstance(v, (list, tuple)):
+        return any(_value_is_nonempty(x) for x in v)
+    if isinstance(v, dict):
+        # text segment {"text": ...}, url {"link": ...}, else any nested value
+        if "text" in v:
+            return _value_is_nonempty(v.get("text"))
+        if "link" in v:
+            return _value_is_nonempty(v.get("link"))
+        return any(_value_is_nonempty(x) for x in v.values())
+    return True  # present number / bool — meaningful
+
+
+def _is_empty_record(record: dict) -> bool:
+    """True when a record's `fields` map has no client-meaningful value.
+
+    Feishu auto-seeds a freshly-created bitable's default table with blank
+    rows (no field values). Those are what this flags so init can purge them.
+    """
+    fields = record.get("fields") or {}
+    return not any(_value_is_nonempty(v) for v in fields.values())
+
+
+def _select_empty_records(records: list[dict]) -> list[str]:
+    """Return the record_ids of all-empty records in *records*."""
+    return [
+        r.get("record_id")
+        for r in records
+        if r.get("record_id") and _is_empty_record(r)
+    ]
+
+
+def _purge_empty(client) -> int:
+    """Delete all-empty records on *client*'s table. Return count deleted."""
+    ids = _select_empty_records(client.list_records())
+    if ids:
+        client.batch_delete_records(ids)
+    return len(ids)
+
+
+def _collect_raw_fields(fields_json_path: str | None, field_specs: list | None) -> dict:
+    """Merge update field values from a UTF-8 JSON file and/or --field specs.
+
+    --fields-json values are already typed JSON (read straight from the file,
+    NOT through argv) so non-ASCII values can't be mangled by a GBK console.
+    --field specs (argv) are parsed and override JSON keys of the same name.
+    """
+    raw: dict = {}
+    if fields_json_path:
+        data = json.loads(Path(fields_json_path).read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise SystemExit("--fields-json must contain a JSON object {NAME: VALUE}")
+        raw.update(data)
+    for spec in field_specs or []:
+        if "=" not in spec:
+            raise SystemExit(f"--field must be NAME=VALUE, got: {spec}")
+        name, _, value = spec.partition("=")
+        raw[name.strip()] = _parse_field_value(value)
+    return raw
+
+
+# ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
 
@@ -210,15 +284,26 @@ def cmd_pull_new(args):
 
 def cmd_update(args):
     client = BitableClient(project_name=args.project)
-    raw_fields: dict = {}
-    for spec in args.field or []:
-        if "=" not in spec:
-            raise SystemExit(f"--field must be NAME=VALUE, got: {spec}")
-        name, _, value = spec.partition("=")
-        raw_fields[name.strip()] = _parse_field_value(value)
+    raw_fields = _collect_raw_fields(getattr(args, "fields_json", None), args.field)
+    if not raw_fields:
+        raise SystemExit("nothing to update: pass --field NAME=VALUE and/or --fields-json FILE")
     fields = _normalize_fields_for_write(client, raw_fields)
     result = client.update_record(args.record_id, fields)
     _print(result)
+
+
+def cmd_purge_empty(args):
+    """Delete all-empty records (e.g. Feishu's default blank rows)."""
+    client = BitableClient(project_name=args.project)
+    ids = _select_empty_records(client.list_records())
+    if not ids:
+        _print({"ok": True, "deleted": 0, "message": "no empty records"})
+        return
+    if args.dry_run:
+        _print({"ok": True, "dry_run": True, "would_delete": len(ids), "record_ids": ids})
+        return
+    client.batch_delete_records(ids)
+    _print({"ok": True, "deleted": len(ids), "record_ids": ids})
 
 
 def cmd_next_id(args):
@@ -621,7 +706,11 @@ def cmd_init_project(args):
         stack_field="状态",
         form_name=f"{name}-提交新工单",
     )
-    _print({"ok": True, "steps": steps})
+    # Purge Feishu's auto-seeded blank default rows so the new tracker starts
+    # clean. Create path only — never auto-delete on the reuse path, which
+    # operates on an existing (possibly populated) tracker.
+    purged = _purge_empty(client)
+    _print({"ok": True, "steps": steps, "purged_empty_rows": purged})
 
 
 def _ensure_marker(repo_dir: str, project_name: str) -> Path:
@@ -719,7 +808,24 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("update", help="Update fields on a ticket")
     sp.add_argument("record_id")
     sp.add_argument("--field", action="append", help="NAME=VALUE (repeatable)")
+    sp.add_argument(
+        "--fields-json",
+        help="Path to a UTF-8 JSON file {NAME: VALUE}. Use this for non-ASCII "
+        "(e.g. Chinese) values to avoid GBK argv mangling on Windows. Merged "
+        "with --field, which overrides same-named keys.",
+    )
     sp.set_defaults(func=cmd_update)
+
+    sp = sub.add_parser(
+        "purge-empty",
+        help="Delete all-empty records (e.g. Feishu's auto-seeded blank rows)",
+    )
+    sp.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List record_ids that would be deleted without deleting them",
+    )
+    sp.set_defaults(func=cmd_purge_empty)
 
     sp = sub.add_parser("next-id", help="Generate next ticket id (T-YYYY-NNNN)")
     sp.set_defaults(func=cmd_next_id)

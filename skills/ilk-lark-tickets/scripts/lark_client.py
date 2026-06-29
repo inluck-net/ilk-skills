@@ -462,6 +462,25 @@ class BitableClient:
             body={"records": records},
         )
 
+    def delete_record(self, record_id: str) -> dict:
+        return _request("DELETE", self._path("records", record_id), token=self.token)
+
+    def batch_delete_records(self, record_ids: list[str]) -> dict:
+        """Delete records by id. Feishu caps batch_delete at 500 ids/call, so
+        chunk transparently. Returns {"deleted": N, "record_ids": [...]}."""
+        ids = [rid for rid in record_ids if rid]
+        deleted = 0
+        for i in range(0, len(ids), 500):
+            chunk = ids[i : i + 500]
+            _request(
+                "POST",
+                self._path("records", "batch_delete"),
+                token=self.token,
+                body={"records": chunk},
+            )
+            deleted += len(chunk)
+        return {"deleted": deleted, "record_ids": ids}
+
     # -- attachments -----------------------------------------------------------
 
     def download_attachment(self, file_token: str, dest: Path) -> Path:
