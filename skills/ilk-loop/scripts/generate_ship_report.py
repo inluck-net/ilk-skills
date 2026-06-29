@@ -272,7 +272,7 @@ def dod_section(sub_plan_text: str) -> str:
         lines.append(
             "[WARN] outcome not verified at outcome level -- "
             "no AC references a real entry point (UI/CLI/HTTP/e2e). "
-            "This is the GRIDLOCK Gap-A 'orphaned model' shape."
+            "This is the 'orphaned model' shape."
         )
     lines.append("")
     return "\n".join(lines)

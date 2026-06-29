@@ -205,7 +205,7 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   whose every `local_check` is a pure-unit test (pytest/vitest) with no
   consumer entry-point keyword (UI hit-test, CLI verb, HTTP route, e2e sim).
   The model compiles and unit-tests pass but nothing proves a player/user can
-  actually reach it. Real case: GRIDLOCK v0.2 Gap-A — `upgrade(econ)` fully
+  actually reach it. Field case: an `upgrade(econ)` method fully
   implemented and unit-tested, but no UI affordance to trigger it. **Fix:** add
   an AC that exercises the symbol through its real entry point.
   `plan_lint.py` (`lint_vertical_slice_ac`) warns automatically.
@@ -213,9 +213,9 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   introduces per-instance data (per-stage path, per-tenant config, per-level
   theme) that an existing module should consume, but no `local_check` asserts
   the consumer actually reads the new data vs a hardcoded constant. The data
-  exists but the consumer is still hardcoded to a different source. Real case:
-  GRIDLOCK v0.2 Gap-B — enemy movement hardcoded to Stage-1 `WAYPOINTS` while
-  per-stage path arrays exist in the registry. **Fix:** add a local_check that
+  exists but the consumer is still hardcoded to a different source. Field case:
+  enemy movement hardcoded to one stage's `WAYPOINTS` while
+  per-stage path arrays existed in the registry. **Fix:** add a local_check that
   verifies the consumer reads from the new data source.
   `plan_lint.py` (`lint_anti_hardcode_integration`) warns automatically.
 
@@ -225,7 +225,7 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
 orphaned-capability detector (`orphan_check.py`) runs at **post-ship** time:
 given a repo root and a list of newly-exported symbol names, it reports each
 symbol whose only call sites are test files as "built but unwired."  This
-catches the GRIDLOCK Gap-A shape that planning-time lints can only warn about
+catches the orphaned-model shape that planning-time lints can only warn about
 (the lint says "add a consumer AC"; the detector confirms the consumer was
 actually wired after the code ships).
 

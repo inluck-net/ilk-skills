@@ -694,12 +694,11 @@ def lint_network_tool_mock_only_gate(text: str, slug: str) -> list[str]:
 # A sub-plan that adds a model/logic capability (new exported function, class,
 # or export symbol) in a non-UI module whose EVERY local_check is a pure-unit
 # test (pytest/vitest) with no consumer entry-point keyword (UI hit-test, CLI
-# verb, HTTP route, e2e sim) is the GRIDLOCK Gap-A "orphaned model" shape:
+# verb, HTTP route, e2e sim) is the "orphaned model" shape:
 # the model compiles and unit-tests pass, but nothing proves a player/user can
 # actually reach it.  Warn so the planner adds a consumer-level AC.
 #
-# See: ../gridlock/docs/analysis/2026-06-28-spec-vs-implementation-gap.md Gap A.
-# See: decomposition-principles.md §8, §12.
+# See: decomposition-principles.md §8, §12 ("orphaned model" / model-only gate).
 
 # New model symbol: a def/class/export that signals new capability.
 # Matches both literal code (def upgrade, class Enemy, export function)
@@ -766,7 +765,7 @@ def lint_vertical_slice_ac(text: str, slug: str) -> list[str]:
         f"{slug}: sub-plan adds a model/logic symbol (def/class/export) but "
         f"every local_check is a pure-unit test with no consumer entry-point "
         f"keyword (UI hit-test, CLI verb, HTTP route, e2e sim). This is the "
-        f"GRIDLOCK Gap-A 'orphaned model' shape — the model compiles and "
+        f"'orphaned model' shape — the model compiles and "
         f"unit-tests pass but nothing proves a player/user can reach it. "
         f"Add an AC that exercises the symbol through its real entry point."
     )
@@ -778,14 +777,14 @@ def lint_vertical_slice_ac(text: str, slug: str) -> list[str]:
 # A sub-plan that introduces per-instance data (per-stage path, per-tenant
 # config, per-level theme) that an existing module SHOULD consume, but whose
 # local_checks don't assert the consumer actually reads the new data (vs a
-# hardcoded constant), is the GRIDLOCK Gap-B shape: the data exists but the
+# hardcoded constant), is the 'data-present but runtime-broken' shape: the data exists but the
 # consumer is still hardcoded to a different source.  Warn so the planner
 # adds a check that binds the consumer to the data.
 #
 # Conservative: only fires when BOTH the data-introduction AND
 # consumer-should-read signals are present AND no read-assertion exists.
 #
-# See: ../gridlock/docs/analysis/2026-06-28-spec-vs-implementation-gap.md Gap B.
+# See: decomposition-principles.md §8 (anti-hardcode integration).
 
 # Per-instance data: body describes data that varies by stage/tenant/level/etc.
 _PER_INSTANCE_DATA_RE = re.compile(
@@ -843,7 +842,7 @@ def lint_anti_hardcode_integration(text: str, slug: str) -> list[str]:
         f"{slug}: sub-plan introduces per-instance data and says an existing "
         f"module should consume it, but no local_check asserts the consumer "
         f"actually reads the new data (vs a hardcoded constant). This is the "
-        f"GRIDLOCK Gap-B 'data-present but runtime-broken' shape. Add a "
+        f"'data-present but runtime-broken' shape. Add a "
         f"local_check that verifies the consumer reads from the new data source."
     )
     return findings
@@ -873,7 +872,7 @@ ALL_CHECKS = (
 # discipline: a pillar is not "done" when only its model layer is gated.
 #
 # See: commands/ilk-spec.md, commands/ilk-plan.md
-# See: ../gridlock/docs/analysis/2026-06-28-spec-vs-implementation-gap.md §2 #5
+# See: decomposition-principles.md §8 (spec pillar->outcome-AC traceability).
 # Part of sub-plan 2026-06-28-spec-ac-traceability.
 
 # A pillar heading: a markdown heading line containing bold text, e.g.

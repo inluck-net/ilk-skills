@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for plan_lint anti-hardcode integration gate (GRIDLOCK Gap-B).
+"""Tests for plan_lint anti-hardcode integration gate ('data-present but runtime-broken').
 
 Detects sub-plans that introduce per-instance data (per-stage path, per-tenant
 config) and say an existing module should consume it, but no local_check
@@ -43,7 +43,7 @@ def _run_lint(tmp_path: Path, filename: str, content: str) -> subprocess.Complet
 
 # ── Should fire: data-present but no consumer read-assertion ────────────
 
-# GRIDLOCK Gap-B shape: per-stage path data, enemy module should consume it,
+# 'data-present but runtime-broken' shape: per-stage path data, a module should consume it,
 # but checks only verify the path data exists (not that enemy reads it).
 _STAGE_PATH_HARDCODED = """\
 ---

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for plan_lint vertical-slice AC guard (GRIDLOCK Gap-A).
+"""Tests for plan_lint vertical-slice AC guard ('orphaned model' shape).
 
 Detects sub-plans that add a model/logic capability whose every local_check
 is a pure-unit test with no consumer entry-point keyword (UI hit-test, CLI

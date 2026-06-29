@@ -3,8 +3,8 @@
 
 Given a repo root and one or more symbol names, scan the source tree for
 references to each symbol.  If every reference (excluding the definition
-itself) lives in a test file, the symbol is "built but unwired" — a
-GRIDLOCK Gap-A orphaned capability.
+itself) lives in a test file, the symbol is "built but unwired" — an
+orphaned capability.
 
 Uses ``rg`` (ripgrep) when available for speed, with a pure-Python
 ``os.walk`` + ``re`` fallback so the tool works on boxes without ripgrep.

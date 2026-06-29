@@ -280,9 +280,9 @@ verified: true          # <-- human-verify marker
    before the marker is meaningful. A `verified: true` on a `pending` sub-plan
    is a no-op (and should be flagged as an anomaly if detected).
 
-### Bug reference (GRIDLOCK v0.2, Gap C)
+### Bug reference (field case: compile-only carry-forward)
 
-`combat-vfx` and `visual-overhaul` shipped `compile-only` and the loop advanced
+Two sub-plans shipped `compile-only` and the loop advanced
 to later masters that built on them — no marker, no block, no human pass. The
 unverified work compounded: later sub-plans silently accommodated bugs in the
 earlier layers. This contract closes that gap mechanically.
