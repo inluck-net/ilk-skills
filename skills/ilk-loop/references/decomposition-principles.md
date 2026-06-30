@@ -218,6 +218,17 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   per-stage path arrays existed in the registry. **Fix:** add a local_check that
   verifies the consumer reads from the new data source.
   `plan_lint.py` (`lint_anti_hardcode_integration`) warns automatically.
+- **promise-without-wiring (UI affordance without binding)** → a sub-plan
+  introduces a UI affordance/prompt that advertises a capability ("press C",
+  button label, tooltip, key hint, shortcut, speed indicator) but neither
+  `local_checks` nor the body contains a wiring/trigger assertion (event
+  handler, keybind, `click`, `press_key`, `take_snapshot`, e2e). The user is
+  prompted to act but nothing is bound — worse than a missing feature because
+  the prompt reads as a *promise*, and the unmet promise breaks trust. Field
+  case: "press C for the codex" displayed on level-select with no event
+  listener registered. **Fix:** add a local_check that verifies the affordance
+  is actually wired (press_key, click, take_snapshot, or a binding assertion).
+  `plan_lint.py` (`lint_ui_promise_wiring`) warns automatically.
 
 ### Orphaned-capability detector (post-ship QC tool)
 

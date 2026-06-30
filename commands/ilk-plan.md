@@ -739,6 +739,12 @@ report; fix before launching):
   module should consume it, but no `local_check` asserts the consumer reads the
   new data vs a hardcoded constant. Data exists but consumer is still hardcoded
   (the 'data-present but runtime-broken' shape). See decomposition-principles.md §8.
+- **UI-promise-wiring** — a sub-plan introduces a UI affordance/prompt that
+  advertises a capability (key hint, button label, shortcut, indicator) but
+  neither `local_checks` nor the body contains a wiring/trigger assertion (event
+  handler, keybind, click, press_key, e2e). The user is prompted to act but
+  nothing is bound (the 'promise-without-wiring' shape). See
+  decomposition-principles.md §8.
 
 `plan_lint.py` exits non-zero when it finds anything; treat findings as
 must-fix-before-launch (a contradiction here is what actually stalled the loop).
