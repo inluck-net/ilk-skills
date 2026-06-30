@@ -8,10 +8,11 @@
   .claude.json mcpServers — NOT ~/.claude.json. Use this to give the loop an
   MCP it can actually reach.
 
-  add <name> [-FromUser]   Add a known server (figma, chrome-devtools). With
-                           -FromUser, also copy that server's OAuth token from
-                           ~/.claude/.credentials.json (figma) — never the
-                           planner's Claude identity.
+  add <name> [-FromUser]   Add a known server (chrome-devtools, playwright,
+                           figma). With -FromUser, also copy that server's OAuth
+                           token from ~/.claude/.credentials.json (figma) —
+                           never the planner's Claude identity.
+  remove <name>            Remove a server from the worker (idempotent).
   list                     Print the worker's MCP servers (JSON).
   verify                   Run `claude mcp list` under the worker config dir.
 

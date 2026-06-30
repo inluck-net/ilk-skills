@@ -111,6 +111,28 @@ def add_server(worker_home: str | os.PathLike, name: str, server_obj: dict) -> P
     return claude_json
 
 
+def remove_server(worker_home: str | os.PathLike, name: str) -> bool:
+    """Remove ``name`` from ``<worker_home>/.claude.json`` mcpServers.
+
+    Preserves all other keys; idempotent. Returns True if an entry was
+    removed, False if it was absent (no-op). Does NOT touch credentials —
+    a stale mcpOAuth entry for a removed server is harmless and dropping it
+    is the operator's call.
+    """
+    home = Path(worker_home)
+    claude_json = home / ".claude.json"
+    data = _read_json(claude_json)
+    if not isinstance(data, dict):
+        return False
+    servers = data.get("mcpServers")
+    if not isinstance(servers, dict) or name not in servers:
+        return False
+    del servers[name]
+    data["mcpServers"] = servers
+    _atomic_write_json(claude_json, data)
+    return True
+
+
 def copy_server_oauth(
     worker_home: str | os.PathLike,
     user_cred_path: str | os.PathLike,
@@ -172,6 +194,9 @@ def main() -> int:
                        help="Also copy this server's mcpOAuth from ~/.claude/.credentials.json.")
     p_add.add_argument("--user-cred", default=None, help="Override user credentials path.")
 
+    p_rm = sub.add_parser("remove", help="Remove an MCP server from the worker.")
+    p_rm.add_argument("name", help="Server name to remove (e.g. figma).")
+
     sub.add_parser("list", help="List the worker's MCP servers (JSON).")
     sub.add_parser("verify", help="Run `claude mcp list` under the worker config dir.")
 
@@ -190,6 +215,11 @@ def main() -> int:
             out = copy_server_oauth(home, cred, args.name)
             msg["oauth_copied"] = out is not None
         print(json.dumps(msg))
+        return 0
+
+    if args.cmd == "remove":
+        removed = remove_server(home, args.name)
+        print(json.dumps({"worker_home": str(home), "removed": args.name, "was_present": removed}))
         return 0
 
     if args.cmd == "list":
