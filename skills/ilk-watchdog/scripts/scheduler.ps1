@@ -480,6 +480,116 @@ function Get-ReapableShells {
   return $reapable
 }
 
+function Invoke-ZombieReaper {
+  <#
+    Kill wrapper: enumerate real powershell processes, build candidate list +
+    ProjectState, call Get-ReapableShells, then for each selected pid: log
+    and optionally kill (guarded against race death).
+
+    .PARAMETER DryRun
+      If set, logs 'reap-dry' but does not kill.
+  #>
+  param([switch]$DryRun)
+
+  try {
+    # Enumerate real powershell processes
+    $processes = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop
+
+    # Build candidate list with ProcessId, CommandLine, WindowTitle
+    $candidates = @()
+    foreach ($proc in $processes) {
+      $candidates += [PSCustomObject]@{
+        ProcessId   = $proc.ProcessId
+        CommandLine = $proc.CommandLine
+        WindowTitle = $proc.WindowTitle
+      }
+    }
+
+    # Build ProjectState from each project's runtime files
+    $projectState = @{}
+    $dataRoot = Get-IlkDataDir
+    $projectsDir = Join-Path $dataRoot 'projects'
+    if (Test-Path $projectsDir) {
+      foreach ($projDir in Get-ChildItem -Path $projectsDir -Directory -ErrorAction SilentlyContinue) {
+        $projKey = $projDir.Name
+        $state = @{
+          RunningPid = 0
+          State      = 'unknown'
+        }
+
+        # Read running.pid
+        $runningPidFile = Join-Path $projDir.FullName 'runtime\launcher\running.pid'
+        if (Test-Path $runningPidFile) {
+          try {
+            $raw = (Get-Content $runningPidFile -Raw -ErrorAction Stop).Trim()
+            if ($raw -match '^\d+$') {
+              $state.RunningPid = [int]$raw
+            }
+          } catch {}
+        }
+
+        # Read last-exit.json
+        $sentinelFile = Join-Path $projDir.FullName 'runtime\last-exit.json'
+        if (Test-Path $sentinelFile) {
+          try {
+            $sentinel = Get-Content $sentinelFile -Raw -Encoding utf8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            if ($sentinel.state) {
+              $state.State = $sentinel.state
+            }
+          } catch {}
+        }
+
+        $projectState[$projKey] = $state
+      }
+    }
+
+    # Resolve live scheduler pid
+    $schedulerPid = 0
+    if (Test-Path $SchedulerPidFile) {
+      try {
+        $raw = (Get-Content $SchedulerPidFile -Raw -ErrorAction Stop).Trim()
+        if ($raw -match '^\d+$') {
+          $schedulerPid = [int]$raw
+        }
+      } catch {}
+    }
+
+    # Resolve tray pid
+    $trayPid = 0
+    $trayPidFile = Join-Path $dataRoot 'tray.pid'
+    if (Test-Path $trayPidFile) {
+      try {
+        $raw = (Get-Content $trayPidFile -Raw -ErrorAction Stop).Trim()
+        if ($raw -match '^\d+$') {
+          $trayPid = [int]$raw
+        }
+      } catch {}
+    }
+
+    # Call Get-ReapableShells
+    $reapable = Get-ReapableShells `
+      -Candidates $candidates `
+      -ProjectState $projectState `
+      -SchedulerPid $schedulerPid `
+      -TrayPid $trayPid `
+      -SelfPid $PID
+
+    # Process each reapable pid
+    foreach ($pid in $reapable) {
+      if ($DryRun) {
+        Write-SchedulerLog -Decision 'reap-dry' -Key $pid
+      } else {
+        Write-SchedulerLog -Decision 'reaped' -Key $pid
+        try {
+          Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+        } catch {}
+      }
+    }
+  } catch {
+    Write-SchedulerLog -Decision 'reap-error' -Reason "$_"
+  }
+}
+
 # --- main loop ---------------------------------------------------------------
 
 function Run-Scheduler {
@@ -493,6 +603,15 @@ function Run-Scheduler {
   $runLocalChecksFlag = (-not $NoLocalChecks -and $env:ILK_SCHED_NO_GATES -ne '1')
 
   while ($true) {
+    # --- reap zombie shells (once per poll cycle) ---
+    # A reaper error must NOT kill the daemon — wrap in try/catch that logs
+    # and continues (consistent with scan-error survival pattern).
+    try {
+      Invoke-ZombieReaper -DryRun:$DryRun
+    } catch {
+      Write-SchedulerLog -Decision 'reap-error' -Reason "$_"
+    }
+
     # --- scan for queued projects ---
     # A scan failure must NOT kill the daemon: the scanner reads plan files
     # that live loops are concurrently writing, so a transient read-race (or
