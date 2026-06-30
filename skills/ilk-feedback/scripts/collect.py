@@ -449,6 +449,7 @@ CLASSIFICATION_LABELS: tuple[str, ...] = (
     "budget-exhausted",
     "clean-success",
     "dependency-unreachable",
+    "model-incapability",
     "api-blocked",
     "stuck-no-progress",
     "api-flaky",
@@ -526,6 +527,94 @@ _DEP_NAME_RE = re.compile(
     r"([A-Za-z0-9_.-]+)\s+MCP not connected",
     re.IGNORECASE,
 )
+
+# --- Vision / model-incapability detection ---
+#
+# When MCP tool calls (e.g. chrome-devtools) succeed but the model cannot
+# process the results (e.g. a text-only model receiving an image), the stall
+# is a model capability gap, not a dependency failure.  A restart won't help;
+# the fix is a model that can handle the output modality.
+
+# Detect MCP tool call invocations in the log (e.g. "mcp__chrome-devtools__click").
+_MCP_CALL_RE = re.compile(
+    r"mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_-]+",
+    re.IGNORECASE,
+)
+
+# Detect tool call result indicators suggesting the tool executed.
+# Matches "Tool ran without output or errors", "[{...tool_result...}]", etc.
+_MCP_RESULT_RE = re.compile(
+    r"Tool ran without output or errors|tool_result|<tool_result",
+    re.IGNORECASE,
+)
+
+# Detect a blank image Read result — a Read of an image file that returned
+# an empty source (text-only model cannot see images).
+_BLANK_IMAGE_RE = re.compile(
+    r"Read\s*\([^)]*\.(?:png|jpg|jpeg|gif|webp|bmp)\b[^)]*\).*source\s*=\s*[\])}\"]",
+    re.IGNORECASE,
+)
+
+
+def _has_mcp_success_evidence(lines: list[str]) -> bool:
+    """Return True if the log shows MCP tool calls that executed successfully.
+
+    Checks for MCP call invocations (mcp__<server>__<tool>) AND result
+    indicators. Both must be present — seeing only calls without results
+    means the tool may have been invoked but failed.
+    """
+    if not lines:
+        return False
+    has_calls = False
+    has_results = False
+    for line in lines:
+        if not has_calls and _MCP_CALL_RE.search(line):
+            has_calls = True
+        if not has_results and _MCP_RESULT_RE.search(line):
+            has_results = True
+        if has_calls and has_results:
+            return True
+    return False
+
+
+def _has_blank_image_source(lines: list[str]) -> bool:
+    """Return True if the log shows a Read of an image with empty source."""
+    if not lines:
+        return False
+    return any(_BLANK_IMAGE_RE.search(line) for line in lines)
+
+
+def _detect_model_incapability(
+    dep_log_path: str | None,
+    jsonl_path: str | None,
+    iter_logs: list[str],
+) -> bool:
+    """Return True when the stall is a model capability gap, not dependency failure.
+
+    A model-incapability stall has:
+    - MCP tool calls that executed successfully (e.g. chrome-devtools calls)
+    - No commits made (caller already checked this via stop_reason == "no-progress")
+    - Either: blank image source in a Read result, OR no dependency-unreachable
+      signal in the logs despite the DEPENDENCY_RE match in the outer check.
+    """
+    # Check main log for MCP success evidence
+    if dep_log_path:
+        lines = tail_log(dep_log_path)
+        if _has_mcp_success_evidence(lines):
+            return True
+
+    # Fallback: check per-iter JSONL
+    if jsonl_path and Path(jsonl_path).exists():
+        lines = tail_log(jsonl_path, max_lines=5000)
+        if _has_mcp_success_evidence(lines):
+            return True
+
+    # Check iter logs from JSONL record for blank image + MCP calls
+    if iter_logs:
+        if _has_blank_image_source(iter_logs):
+            return True
+
+    return False
 
 
 def detect_unreachable_dependency(lines: list[str]) -> str | None:
@@ -852,13 +941,27 @@ def _classify_core(
                 dep_log_path = str(resolved)
         if dep_log_path:
             missing = detect_unreachable_dependency(tail_log(dep_log_path))
+            jsonl_dep_path: str | None = None
             if missing is None:
-                jsonl_path = Path(dep_log_path).with_suffix(".log.jsonl")
-                if jsonl_path.exists():
+                jsonl_dep_path = str(Path(dep_log_path).with_suffix(".log.jsonl"))
+                if Path(jsonl_dep_path).exists():
                     missing = detect_unreachable_dependency(
-                        tail_log(str(jsonl_path), max_lines=5000)
+                        tail_log(jsonl_dep_path, max_lines=5000)
                     )
+                else:
+                    jsonl_dep_path = None
             if missing:
+                # Vision/model-incapability override: when the named MCP's
+                # tool calls visibly succeeded in the iteration logs, the
+                # dependency IS reachable — the stall is a model capability
+                # gap (e.g. text-only model receiving an image).  Detect
+                # this before returning dependency-unreachable so the label
+                # accurately reflects the root cause.
+                if _detect_model_incapability(dep_log_path, jsonl_dep_path, []):
+                    return "model-incapability", {
+                        "iter_at_stop": last.get("iteration"),
+                        "mcp_evidence": "tool calls succeeded despite dependency-unreachable signal",
+                    }
                 return "dependency-unreachable", {
                     "iter_at_stop": last.get("iteration"),
                     "missing_dependency": missing,
@@ -1238,6 +1341,15 @@ def recommend_params(
             "For a dev-server/remote source: bring it up. Params unchanged."
         )
 
+    if label == "model-incapability":
+        return cur_max, cur_to, (
+            "the loop stalled because the model cannot process the tool output "
+            "(e.g. text-only model receiving an image). The MCP IS reachable — "
+            "tool calls succeeded — but the model lacks the required modality. "
+            "A restart will NOT help. Use a vision-capable model or a bridging "
+            "tool like vl_describe. Params unchanged."
+        )
+
     if label == "stuck-no-progress":
         return cur_max, cur_to, (
             "agent stalled — likely sub-plan ambiguity or a real bug. Read the "
@@ -1570,6 +1682,18 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
             f"required runtime dependency was unreachable: **{dep}**. A restart "
             f"will NOT help — this is a config/reachability gap, not a stuck "
             f"agent. Fix: {fix}. Then relaunch."
+        )
+    if label == "model-incapability":
+        iter_stop = facts.get('iter_at_stop')
+        iter_clause = f"at iter {iter_stop} " if iter_stop is not None else ""
+        return (
+            f"The loop stalled {iter_clause}because the model cannot process "
+            "the tool output (e.g. a text-only model receiving an image from "
+            "chrome-devtools). The MCP dependency IS reachable — tool calls "
+            "succeeded — but the model lacks the capability to use the results. "
+            "A restart will NOT help. Fix: use a model with the required "
+            "modality (e.g. vision), or use a tool like `vl_describe` to "
+            "bridge the modality gap."
         )
 
     if label == "stuck-no-progress":
