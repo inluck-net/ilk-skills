@@ -148,6 +148,49 @@ class TestSubplanIsRunnable:
         fm = {"status": "pending"}
         assert subplan_is_runnable(fm, {}) is True
 
+    # --- date-prefix normalization (regression 96dab35c) ---
+
+    def test_dated_dep_shipped_stripped_sibling_key_is_runnable(self) -> None:
+        """AC-2: dated depends_on matches shipped sibling with stripped key."""
+        fm = {"status": "pending", "depends_on": "[2026-06-29-planlint-ui-promise-wiring]"}
+        siblings = {"planlint-ui-promise-wiring": "shipped"}
+        assert subplan_is_runnable(fm, siblings) is True
+
+    def test_dated_dep_pending_is_not_runnable(self) -> None:
+        """AC-3: dated depends_on with pending dep → not runnable."""
+        fm = {"status": "pending", "depends_on": "[2026-06-29-foo]"}
+        siblings = {"foo": "pending"}
+        assert subplan_is_runnable(fm, siblings) is False
+
+    def test_dated_dep_absent_is_not_runnable(self) -> None:
+        """AC-3: dated depends_on with no sibling at all → not runnable."""
+        fm = {"status": "pending", "depends_on": "[2026-06-29-foo]"}
+        assert subplan_is_runnable(fm, {}) is False
+
+    def test_stripped_dep_shipped_is_runnable(self) -> None:
+        """AC-4: stripped depends_on + shipped sibling → runnable."""
+        fm = {"status": "pending", "depends_on": "[alpha]"}
+        siblings = {"alpha": "shipped"}
+        assert subplan_is_runnable(fm, siblings) is True
+
+    def test_stripped_dep_pending_is_not_runnable(self) -> None:
+        """AC-4: stripped depends_on + pending sibling → not runnable."""
+        fm = {"status": "pending", "depends_on": "[alpha]"}
+        siblings = {"alpha": "pending"}
+        assert subplan_is_runnable(fm, siblings) is False
+
+    def test_mixed_dated_and_stripped_both_shipped(self) -> None:
+        """AC-4: mixed list (one dated + one stripped), both shipped → runnable."""
+        fm = {"status": "pending", "depends_on": "[2026-06-29-alpha, beta]"}
+        siblings = {"alpha": "shipped", "beta": "shipped"}
+        assert subplan_is_runnable(fm, siblings) is True
+
+    def test_dated_sibling_key_matches_stripped_dep(self) -> None:
+        """Reverse case: sibling key is dated, dep is stripped → still matches."""
+        fm = {"status": "pending", "depends_on": "[alpha]"}
+        siblings = {"2026-06-29-alpha": "shipped"}
+        assert subplan_is_runnable(fm, siblings) is True
+
 
 # ── AC-2: master_is_drainable ────────────────────────────────────────────────
 

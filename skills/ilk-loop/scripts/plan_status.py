@@ -207,6 +207,14 @@ def _slug_from_filename(fname: str) -> str:
     slug = fname
     if slug.endswith(".md"):
         slug = slug[:-3]
+    return _strip_date_prefix(slug)
+
+
+def _strip_date_prefix(slug: str) -> str:
+    """Strip a leading ``YYYY-MM-DD-`` date prefix from a slug.
+
+    Idempotent: a slug with no date prefix is returned unchanged.
+    """
     m = re.match(r"^\d{4}-\d{2}-\d{2}-(.*)$", slug)
     if m:
         return m.group(1)
@@ -232,8 +240,12 @@ def subplan_is_runnable(fm: dict[str, str], sibling_statuses: dict[str, str]) ->
     if status not in ("pending", "in-progress"):
         return False
     deps = _parse_depends_on(fm.get("depends_on", ""))
+    # Normalize sibling keys to the date-stripped form so that a dated
+    # depends_on slug (e.g. "2026-06-29-alpha") matches a stripped key
+    # ("alpha") — and vice-versa.
+    norm_statuses = {_strip_date_prefix(k): v for k, v in sibling_statuses.items()}
     for dep in deps:
-        if sibling_statuses.get(dep) != "shipped":
+        if norm_statuses.get(_strip_date_prefix(dep)) != "shipped":
             return False
     return True
 
