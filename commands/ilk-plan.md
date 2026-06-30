@@ -745,6 +745,12 @@ report; fix before launching):
   handler, keybind, click, press_key, e2e). The user is prompted to act but
   nothing is bound (the 'promise-without-wiring' shape). See
   decomposition-principles.md §8.
+- **balance-regression-flag** — a sub-plan changes a core mechanic or tunable
+  formula (coefficient, multiplier, threshold, rate, weight, pricing/scoring)
+  but contains no baseline before/after regression assertion (baseline, golden,
+  snapshot compare, before-and-after). The change silently shifts behaviour
+  without a before/after delta check (the 'balance-drift' shape). See
+  decomposition-principles.md §8.
 
 `plan_lint.py` exits non-zero when it finds anything; treat findings as
 must-fix-before-launch (a contradiction here is what actually stalled the loop).

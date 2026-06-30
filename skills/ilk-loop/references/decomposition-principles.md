@@ -229,6 +229,16 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   listener registered. **Fix:** add a local_check that verifies the affordance
   is actually wired (press_key, click, take_snapshot, or a binding assertion).
   `plan_lint.py` (`lint_ui_promise_wiring`) warns automatically.
+- **balance drift (core-mechanic change without baseline regression)** → a
+  sub-plan changes a core mechanic or tunable formula (coefficient, multiplier,
+  threshold, rate, weight, pricing/scoring formula) but contains no baseline
+  before/after regression assertion (snapshot/golden compare, recorded baseline,
+  or explicit before-vs-after check). The change silently shifts behaviour
+  because nobody notices the before/after delta — a bug-fix to a core mechanic
+  also rebalances the system and nobody notices until play feels wrong. **Fix:**
+  add a `local_check` that compares against a recorded baseline, or split
+  tuning into its own batch.
+  `plan_lint.py` (`lint_balance_regression_flag`) warns automatically.
 
 ### Orphaned-capability detector (post-ship QC tool)
 
