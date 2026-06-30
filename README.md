@@ -153,6 +153,18 @@ for supervised unattended runs.
   `commands/` directories straight from a clone of this repo. Push
   on one machine, pull on the other, re-run the installer, done.
 
+## Building tools on top of ilk
+
+If you're building an *external* tool that observes or controls the loop —
+a dashboard, a bot, or a mobile remote-controller — start with
+[`docs/integration-surface.md`](docs/integration-surface.md). It documents the
+consumer-facing surface: the status CLIs and their `--json` schemas, the
+`~/.ilk-data/` file layout, the plan-file contract, the verification gates, and
+— critically — the fact that the loop is **plan-file-driven with no
+mid-iteration steering**. ilk exposes no HTTP API or auth layer by design, so a
+controller is a thin shim over these CLIs/files plus whatever transport and auth
+you add.
+
 ## Codex support boundary
 
 All skills install and function under Codex via `~/.codex/skills/`.
