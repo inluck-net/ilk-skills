@@ -188,6 +188,8 @@ component.
 
 - **AC-VIS** (UI sub-plans only): chrome-devtools verification on the
   rendered surface this sub-plan touches.
+  Text-only worker? Interpret screenshots via `vl_describe.py`
+  (see references/vl-describe-tool.md).
   - `take_snapshot` of the full viewport at the canonical breakpoint.
   - For each Figma frame referenced in this sub-plan, assert at least
     one element-level shape constraint via `evaluate_script`:
