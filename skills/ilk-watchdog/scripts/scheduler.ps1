@@ -366,6 +366,120 @@ function Test-RapidTerminal {
   return ($dur -ge 0 -and $dur -lt $ThresholdSeconds)
 }
 
+function Get-ReapableShells {
+  <#
+    Pure selector: given an enumerated candidate process list + per-project
+    run state, returns exactly the pids that are safe to kill (terminal/orphaned
+    ilk shells), excluding the live set.
+
+    .PARAMETER Candidates
+      Array of objects with ProcessId, CommandLine, and WindowTitle properties.
+    .PARAMETER ProjectState
+      Hashtable of project key -> @{RunningPid; State} where State is the
+      sentinel state from last-exit.json.
+    .PARAMETER SchedulerPid
+      The live scheduler pid (from scheduler.pid file).
+    .PARAMETER TrayPid
+      The tray pid (from tray.pid file).
+    .PARAMETER SelfPid
+      The current process pid (to never reap self).
+  #>
+  param(
+    [Parameter(Mandatory)][array]$Candidates,
+    [Parameter(Mandatory)][hashtable]$ProjectState,
+    [int]$SchedulerPid = 0,
+    [int]$TrayPid = 0,
+    [int]$SelfPid = 0
+  )
+
+  $reapable = @()
+
+  foreach ($c in $Candidates) {
+    $candidatePid = $c.ProcessId
+    $cmdLine = $c.CommandLine
+    $windowTitle = $c.WindowTitle
+
+    # Never reap self, scheduler pid, or tray pid
+    if ($candidatePid -eq $SelfPid -or $candidatePid -eq $SchedulerPid -or $candidatePid -eq $TrayPid) {
+      continue
+    }
+
+    # Determine if this is an ilk shell and extract project key
+    $isIlkShell = $false
+    $shellType = $null
+    $projectKey = $null
+
+    if ($cmdLine -match 'scheduler\.ps1') {
+      $isIlkShell = $true
+      $shellType = 'scheduler'
+    } elseif ($cmdLine -match 'watchdog\.ps1') {
+      $isIlkShell = $true
+      $shellType = 'watchdog'
+      # Extract project key from -ProjectPath parameter
+      if ($cmdLine -match '-ProjectPath\s+([^\s]+)') {
+        $path = $matches[1].TrimEnd('\', '/')
+        $projectKey = Split-Path -Leaf $path
+      }
+    } elseif ($cmdLine -match 'claude-worker') {
+      # Loop shell: check for window title 'ilk: <name>'
+      if ($windowTitle -match '^ilk:\s+(.+)$') {
+        $isIlkShell = $true
+        $shellType = 'loop'
+        $projectKey = $matches[1]
+      }
+    }
+
+    if (-not $isIlkShell) {
+      continue
+    }
+
+    # Check if this shell is reapable based on its type
+    $isReapable = $false
+
+    switch ($shellType) {
+      'scheduler' {
+        # Scheduler shell is reapable if its pid ≠ the live scheduler pid
+        # (the live daemon is NEVER reapable)
+        if ($candidatePid -ne $SchedulerPid) {
+          $isReapable = $true
+        }
+      }
+      'loop' {
+        # Loop shell is reapable if:
+        # - Project state shows terminal (state ≠ 'running'), OR
+        # - Shell's pid ≠ project's current running.pid
+        if ($projectKey -and $ProjectState.ContainsKey($projectKey)) {
+          $state = $ProjectState[$projectKey]
+          if ($state.State -ne 'running' -or $candidatePid -ne $state.RunningPid) {
+            $isReapable = $true
+          }
+        } else {
+          # No project state found - treat as reapable (orphaned)
+          $isReapable = $true
+        }
+      }
+      'watchdog' {
+        # Watchdog shell is reapable if the project has no live running.pid
+        if ($projectKey -and $ProjectState.ContainsKey($projectKey)) {
+          $state = $ProjectState[$projectKey]
+          if (-not $state.RunningPid -or $state.RunningPid -eq 0) {
+            $isReapable = $true
+          }
+        } else {
+          # No project state found - treat as reapable (orphaned)
+          $isReapable = $true
+        }
+      }
+    }
+
+    if ($isReapable) {
+      $reapable += $candidatePid
+    }
+  }
+
+  return $reapable
+}
+
 # --- main loop ---------------------------------------------------------------
 
 function Run-Scheduler {

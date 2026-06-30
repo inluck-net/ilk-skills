@@ -14,9 +14,11 @@
                idle: budget ceiling.
     cap      — assert -MaxConcurrent capacity accounting: N busy projects fill
                slots, dispatches stop at the cap.
+    reaper   — validate Get-ReapableShells pure selector against fabricated
+               candidate mix (AC-1, AC-2 for zombie-reaper sub-plan).
 #>
 param(
-  [ValidateSet('scan', 'select', 'dispatch', 'promote', 'blacklist', 'unresolved', 'cap', 'fill', 'gates', 'mutex', 'log', 'staleexit', 'rapiddecay', 'all')]
+  [ValidateSet('scan', 'select', 'dispatch', 'promote', 'blacklist', 'unresolved', 'cap', 'fill', 'gates', 'mutex', 'log', 'staleexit', 'rapiddecay', 'reaper', 'all')]
   [string]$Subcommand = 'all'
 )
 
@@ -1502,6 +1504,135 @@ function Run-RapidDecay {
   exit 0
 }
 
+function Run-Reaper {
+  <#
+  .SYNOPSIS
+    RED test: Get-ReapableShells must correctly identify reapable zombie
+    shells from a fabricated mix of live/zombie scheduler, tray, live/zombie
+    loop, stale watchdog, and non-ilk processes.
+  #>
+  Write-Host '=== test_scheduler.ps1 reaper ==='
+
+  $fail = $false
+  function Assert($cond, $msg) {
+    if (-not $cond) { Write-Host "FAIL: $msg" -ForegroundColor Red; $script:fail = $true }
+  }
+
+  # --- dot-source the scheduler (functions only; no mutex, no poll loop) ---
+  $env:ILK_DOTSOURCE_ONLY = '1'
+  try {
+    . $SchedulerScript
+  } finally {
+    Remove-Item Env:\ILK_DOTSOURCE_ONLY -ErrorAction SilentlyContinue
+  }
+
+  # AC-1: Get-ReapableShells must be defined
+  Assert (Get-Command Get-ReapableShells -ErrorAction SilentlyContinue) `
+    "AC-1: Get-ReapableShells must be defined (dot-sourceable pure function)"
+
+  if ($fail) {
+    Write-Host "RED: Get-ReapableShells not found" -ForegroundColor Red
+    exit 1
+  }
+
+  # --- Build fabricated candidates for AC-2 ---
+  $candidates = @(
+    # Live scheduler (pid 100) - should NOT be reapable
+    [PSCustomObject]@{
+      ProcessId   = 100
+      CommandLine = 'powershell -NoProfile -ExecutionPolicy Bypass -File scheduler.ps1 -PollMin 5'
+      WindowTitle = 'ilk-scheduler'
+    }
+    # Zombie scheduler (pid 101) - SHOULD be reapable
+    [PSCustomObject]@{
+      ProcessId   = 101
+      CommandLine = 'powershell -NoProfile -ExecutionPolicy Bypass -File scheduler.ps1 -PollMin 5'
+      WindowTitle = 'ilk-scheduler'
+    }
+    # Tray (pid 102) - NOT an ilk shell, should be excluded
+    [PSCustomObject]@{
+      ProcessId   = 102
+      CommandLine = 'powershell -NoProfile -ExecutionPolicy Bypass -File tray.ps1'
+      WindowTitle = 'ilk-tray'
+    }
+    # Live loop for proj-live (pid 103) - should NOT be reapable
+    [PSCustomObject]@{
+      ProcessId   = 103
+      CommandLine = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "claude-worker"'
+      WindowTitle = 'ilk: proj-live'
+    }
+    # Zombie loop for proj-zombie (pid 104) - terminal sentinel, SHOULD be reapable
+    [PSCustomObject]@{
+      ProcessId   = 104
+      CommandLine = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "claude-worker"'
+      WindowTitle = 'ilk: proj-zombie'
+    }
+    # Stale watchdog for proj-stale (pid 105) - watched run dead, SHOULD be reapable
+    [PSCustomObject]@{
+      ProcessId   = 105
+      CommandLine = 'powershell -NoProfile -ExecutionPolicy Bypass -File watchdog.ps1 -ProjectPath proj-stale -Detach'
+      WindowTitle = 'watchdog-proj-stale'
+    }
+    # Non-ilk powershell (pid 106) - should be excluded
+    [PSCustomObject]@{
+      ProcessId   = 106
+      CommandLine = 'powershell -NoProfile -ExecutionPolicy Bypass -File something-else.ps1'
+      WindowTitle = 'other-task'
+    }
+  )
+
+  # --- Build ProjectState ---
+  $projectState = @{
+    'proj-live' = @{
+      RunningPid = 103  # matches live loop pid
+      State      = 'running'
+    }
+    'proj-zombie' = @{
+      RunningPid = 200  # different from zombie loop pid (104)
+      State      = 'completed'  # terminal state
+    }
+    'proj-stale' = @{
+      RunningPid = 0  # no running pid (watched run dead)
+      State      = 'completed'
+    }
+  }
+
+  # --- Call Get-ReapableShells ---
+  $reapable = Get-ReapableShells `
+    -Candidates $candidates `
+    -ProjectState $projectState `
+    -SchedulerPid 100 `
+    -TrayPid 102 `
+    -SelfPid 999
+
+  # --- Assert AC-2: exactly {101, 104, 105} ---
+  $expected = @(101, 104, 105)
+  $sortedReapable = $reapable | Sort-Object
+  $sortedExpected = $expected | Sort-Object
+
+  Assert ($sortedReapable.Count -eq $sortedExpected.Count) `
+    "AC-2: expected $($sortedExpected.Count) reapable pids, got $($sortedReapable.Count)"
+
+  for ($i = 0; $i -lt $sortedExpected.Count; $i++) {
+    Assert ($sortedReapable[$i] -eq $sortedExpected[$i]) `
+      "AC-2: expected pid $($sortedExpected[$i]) at position $i, got $($sortedReapable[$i])"
+  }
+
+  # --- Assert exclusions ---
+  Assert ($reapable -notcontains 100) "AC-2: live scheduler (pid 100) must NOT be reapable"
+  Assert ($reapable -notcontains 102) "AC-2: tray (pid 102) must NOT be reapable"
+  Assert ($reapable -notcontains 103) "AC-2: live loop (pid 103) must NOT be reapable"
+  Assert ($reapable -notcontains 106) "AC-2: non-ilk (pid 106) must NOT be reapable"
+  Assert ($reapable -notcontains 999) "AC-2: SelfPid (pid 999) must NOT be reapable"
+
+  if ($fail) {
+    Write-Host "RED: Get-ReapableShells selection is incorrect" -ForegroundColor Red
+    exit 1
+  }
+  Write-Host "PASS: Get-ReapableShells — correct selection from fabricated mix (AC-1, AC-2)" -ForegroundColor Green
+  # Note: no exit 0 here - return normally so 'all' chain can continue
+}
+
 # --- main ---------------------------------------------------------------------
 
 switch ($Subcommand) {
@@ -1518,5 +1649,6 @@ switch ($Subcommand) {
   'log'        { Run-Log }
   'staleexit'  { Run-StaleExit }
   'rapiddecay' { Run-RapidDecay }
-  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Promote; Run-Blacklist; Run-Unresolved; Run-Cap; Run-Fill; Run-Gates; Run-Mutex; Run-Log; Run-StaleExit; Run-RapidDecay; Write-Host 'ALL PASS' }
+  'reaper'     { Run-Reaper }
+  'all'        { Run-Scan; Run-Select; Run-Dispatch; Run-Promote; Run-Blacklist; Run-Unresolved; Run-Cap; Run-Fill; Run-Gates; Run-Mutex; Run-Log; Run-StaleExit; Run-RapidDecay; Run-Reaper; Write-Host 'ALL PASS' }
 }
