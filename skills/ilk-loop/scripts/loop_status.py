@@ -42,6 +42,7 @@ STATUS_ICONS = {
     "ready": "[>>]",
     "pending": "[  ]",
     "blocked": "[XX]",
+    "skipped-by-operator": "[--]",
 }
 
 
@@ -386,9 +387,11 @@ def resolve_status(cwd: Path) -> dict:
     if master_status == "draft":
         next_pending = None
 
-    # Stall detection: non-shipped sub-plans exist but none are runnable.
-    non_shipped = [sp for sp in subplans if sp["status"] != "shipped"]
-    stalled = bool(non_shipped) and next_pending is None and master_status not in ("draft", "paused")
+    # Stall detection: non-terminal sub-plans exist but none are runnable.
+    # skipped-by-operator is terminal (operator explicitly skipped it).
+    _TERMINAL_STATUSES = {"shipped", "skipped-by-operator"}
+    non_terminal = [sp for sp in subplans if sp["status"] not in _TERMINAL_STATUSES]
+    stalled = bool(non_terminal) and next_pending is None and master_status not in ("draft", "paused")
 
     # queue_exit: 0 = all shipped / nothing actionable, 1 = pending work, 2 = error
     if next_pending is None:
@@ -555,7 +558,9 @@ def main() -> int:
         # has non-shipped sub-plans but is non-runnable (status: draft/paused),
         # so they're HELD, not shipped. Reporting "all shipped" for case (b)
         # is a lie (the sub-plans are pending) and misled a run report.
-        non_shipped = [sp for sp in data["subplans"] if sp["status"] != "shipped"]
+        # skipped-by-operator is terminal (operator explicitly skipped it).
+        _TERMINAL = {"shipped", "skipped-by-operator"}
+        non_shipped = [sp for sp in data["subplans"] if sp["status"] not in _TERMINAL]
         mstatus = data.get("master_status", "(none)")
         if not non_shipped:
             print(f"All {len(rows)} sub-plans shipped -- nothing to do.")
