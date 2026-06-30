@@ -930,6 +930,101 @@ def lint_ui_promise_wiring(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── Balance-drift regression flag ─────────────────────────────────────────────
+#
+# A sub-plan that changes a core mechanic or tunable formula (a coefficient,
+# multiplier, threshold, rate, weight, pricing/scoring formula, or core
+# path/algorithm) but whose local_checks/ACs contain no baseline before/after
+# regression comparison (snapshot/golden compare, recorded baseline, or an
+# explicit before-vs-after assertion) is the "balance-drift" shape.  The change
+# silently shifts behaviour because nobody noticed the before/after delta.
+# Warn so the planner adds a baseline regression gate, or splits tuning into
+# its own batch.
+#
+# See: decomposition-principles.md §8.
+# See: commands/ilk-plan.md step 7g.
+
+# Change verb: signals that something is being altered.
+_CHANGE_VERB_RE = re.compile(
+    r"""
+    \bchange\b
+    |\bmodif(?:y|ies|ied)\b
+    |\badjust(?:s|ed)?\b
+    |\btune[ds]?\b
+    |\brebalanc(?:e|es|ed|ing)\b
+    |\btweak(?:s|ed)?\b
+    |\brework(?:s|ed)?\b
+    |\brevis(?:e|es|ed|ing)\b
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+# Mechanic/formula noun: signals a core mechanic or tunable formula.
+_MECHANIC_NOUN_RE = re.compile(
+    r"""
+    \bformula\b
+    |\bcoefficients?\b
+    |\bmultipliers?\b
+    |\bthresholds?\b
+    |\brates?\b
+    |\bweights?\b
+    |\bdamage\b
+    |\bpricing\b
+    |\bscoring\b
+    |\bcore\s+mechanic\b
+    |\btuning\b
+    |\bbalance\b
+    |\bpath\b
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+# Baseline-regression assertion: evidence that a before/after comparison exists.
+_BASELINE_ASSERTION_RE = re.compile(
+    r"""
+    \bbaseline\b
+    |\bbefore[\s/-]*after\b
+    |\bbefore[- ]and[- ]after\b
+    |\bregression\b
+    |\bgolden\b
+    |\bsnapshot\s+compare\b
+    |\bcompare[sd]?\b[^\n]{0,60}\bbaseline\b
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+
+def lint_balance_regression_flag(text: str, slug: str) -> list[str]:
+    """Flag a core-mechanic change with no baseline regression assertion."""
+    findings: list[str] = []
+    body = _strip_frontmatter(text)
+    commands = _extract_local_checks_commands(text)
+    # Structural early-exit: no commands means nothing to gate against.
+    if not commands:
+        return findings
+    # Both a change verb and a mechanic noun must be present (conservative).
+    if not _CHANGE_VERB_RE.search(body):
+        return findings
+    if not _MECHANIC_NOUN_RE.search(body):
+        return findings
+    # Check if any baseline/regression assertion exists in commands or body.
+    all_cmds_text = " ".join(commands)
+    combined = all_cmds_text + " " + body
+    if _BASELINE_ASSERTION_RE.search(combined):
+        return findings
+    findings.append(
+        f"{slug}: sub-plan changes a core mechanic or tunable formula "
+        f"(coefficient, multiplier, threshold, rate, weight, pricing/scoring) "
+        f"but contains no baseline before/after regression assertion "
+        f"(baseline, golden, snapshot compare, before-and-after). "
+        f"This is the 'balance-drift' shape — the change silently shifts "
+        f"behaviour without a before/after delta check. Add a local_check "
+        f"that compares against a recorded baseline, or split tuning into "
+        f"its own batch. See decomposition-principles.md §8."
+    )
+    return findings
+
+
 ALL_CHECKS = (
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
@@ -944,6 +1039,7 @@ ALL_CHECKS = (
     lint_vertical_slice_ac,
     lint_anti_hardcode_integration,
     lint_ui_promise_wiring,
+    lint_balance_regression_flag,
 )
 
 
