@@ -36,6 +36,18 @@ PRESETS: dict[str, dict] = {
                  "--browserUrl", "http://localhost:9222"],
         "env": {},
     },
+    # Default UI smoke / screenshot driver. Self-launches its OWN isolated
+    # Chromium (no shared --browserUrl:9222), so it never contaminates — and is
+    # never contaminated by — a chrome-devtools session. `--isolated` keeps the
+    # profile in-memory (fresh browser per run = deterministic smoke). Prefer
+    # this for render/visual sub-plans; reach for chrome-devtools only when a
+    # task needs perf traces / Lighthouse / CDP internals.
+    "playwright": {
+        "type": "stdio",
+        "command": "cmd",
+        "args": ["/c", "npx", "@playwright/mcp@latest", "--isolated"],
+        "env": {},
+    },
 }
 
 # MCP servers that authenticate via OAuth (need an mcpOAuth token copied).
