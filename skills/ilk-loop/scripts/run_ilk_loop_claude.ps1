@@ -146,6 +146,9 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "_ilk_skill_root.ps1")
 $SkillRoot = Get-IlkSkillRoot
 
+# Source steer-hook functions (Invoke-SteerHook)
+. (Join-Path $PSScriptRoot "steer_hook.ps1")
+
 # Override defaults that were empty strings (param defaults can't call functions)
 if (-not $LoopStatusScript) { $LoopStatusScript = Join-Path $SkillRoot "ilk-loop\scripts\loop_status.py" }
 if (-not $LocalChecksScript){ $LocalChecksScript = Join-Path $SkillRoot "ilk-loop\scripts\run_local_checks.py" }
@@ -324,6 +327,23 @@ function Get-IlkRuntimeDir {
     if ($LASTEXITCODE -ne 0 -or -not $json) { return $null }
     $obj = $json | ConvertFrom-Json -ErrorAction Stop
     if ($obj.external_runtime_dir) { return [string]$obj.external_runtime_dir }
+  } catch {}
+  return $null
+}
+
+function Get-IlkProjectKey {
+  <#
+    Resolve the project key (e.g. "c-mywork-github-inluck-net-ilk-skills")
+    from a project path via ilk_paths.py. Returns $null on failure.
+  #>
+  param([string]$Project)
+  $resolver = Join-Path (Split-Path $PSCommandPath -Parent) "ilk_paths.py"
+  if (-not (Test-Path $resolver)) { return $null }
+  try {
+    $json = & python $resolver --start $Project 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $json) { return $null }
+    $obj = $json | ConvertFrom-Json -ErrorAction Stop
+    if ($obj.project_key) { return [string]$obj.project_key }
   } catch {}
   return $null
 }
@@ -1842,6 +1862,7 @@ Write-Host ""
 # exit (the launcher uses -NoExit), so PID-only watchdogs miss
 # "shipped" — this sentinel is the fix.
 $RuntimeDir    = Get-IlkRuntimeDir -Project $ProjectPath
+$ProjectKey    = Get-IlkProjectKey -Project $ProjectPath
 $LoopStartedAt = (Get-Date).ToString("o")
 $IterCounter   = 0
 $stopReason    = $null
@@ -1918,15 +1939,38 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
   Write-Host ""
   Write-Host "--- Iteration $i / $MaxIterations ---" -ForegroundColor Yellow
 
+  # -- Steer hook: pause gate (OUTSIDE timed iteration region) ---------
+  # If pause.flag is present, idle here — does NOT count toward
+  # IterationTimeoutMin and is NOT classified as no-progress/stuck.
+  if ($ProjectKey) {
+    $steerResult = Invoke-SteerHook -ProjectKey $ProjectKey
+    while ($steerResult.Paused) {
+      Write-Host "[steer] pause.flag detected — idling (remove pause.flag to resume)" -ForegroundColor Cyan
+      Start-Sleep -Seconds 5
+      $steerResult = Invoke-SteerHook -ProjectKey $ProjectKey
+    }
+  } else {
+    $steerResult = @{ InterjectionText = $null; Paused = $false }
+  }
+
+  # -- Timed iteration region starts here ------------------------------
   $iterStart    = Get-Date
   $headsBefore  = Get-RepoHeads -Repos $repos
   $iterLog      = Join-Path $RunLogDir ("iter-{0:D2}.log" -f $i)
   $timeoutSec   = $IterationTimeoutMin * 60
 
+  # -- Steer hook: interjection text -----------------------------------
+  $iterPrompt = $Prompt
+  if ($steerResult.InterjectionText) {
+    $iterPrompt = "OPERATOR INTERJECTIONS (honor before continuing the plan):`n$($steerResult.InterjectionText)`n`n$Prompt"
+    $ijLen = ([string]$steerResult.InterjectionText).Length
+    Write-Host "[steer] interjection injected ($ijLen chars)" -ForegroundColor Cyan
+  }
+
   $result = Invoke-ClaudeIteration `
     -Cwd $ProjectPath `
     -LogFile $iterLog `
-    -PromptText $Prompt `
+    -PromptText $iterPrompt `
     -TimeoutSec $timeoutSec `
     -BudgetUsd $MaxBudgetUsd `
     -ModelOverride $Model
