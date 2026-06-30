@@ -848,6 +848,88 @@ def lint_anti_hardcode_integration(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── UI-promise-wiring guard (affordance without binding) ─────────────────
+#
+# A sub-plan that introduces a UI affordance/prompt that advertises a
+# capability (key hint, button label, tooltip, shortcut, indicator) but
+# whose local_checks and body contain no wiring/trigger assertion (event
+# handler, keybind registration, click/press_key/e2e that exercises the
+# affordance) is the "promise-without-wiring" shape: the UI prompts the
+# user to act, but nothing is bound.  This is worse than a missing feature
+# because the prompt reads as a *promise*, and the unmet promise breaks
+# trust.  Warn so the planner adds a check that the affordance is wired.
+#
+# See: decomposition-principles.md §8.
+# See: commands/ilk-plan.md step 7g.
+
+# Affordance-advertisement signal: a UI prompt that advertises a capability.
+# Matches patterns like "press C", "按 E", "button labeled X", "tooltip",
+# "key hint", "shortcut", "indicator" (e.g. ×N speed indicator).
+_UI_ADVERTISEMENT_RE = re.compile(
+    r"""
+    press\s+[A-Za-z0-9]                    # "press C", "press E"
+    |按\s*[A-Za-z0-9]                       # "按E", "按 E"
+    |menu\s+item                           # "menu item"
+    |button\s+(?:labeled|labelled|that\s+says)  # "button labeled X"
+    |tooltip                               # tooltip hint
+    |hint\b                                # hint (standalone)
+    |key\s*hint                            # key hint
+    |shortcut                              # keyboard shortcut
+    |indicator                             # e.g. "×N speed indicator"
+    |displays?\b.*\b(?:press|tap|click|open)  # "displays 'press X'"
+    |shows?\b.*\b(?:press|tap|click|open)   # "shows 'press X'"
+    |提示.*(?:按|press|tap|click)            # Chinese: "提示按X"
+    |(?:按|press).*提示                      # Chinese: "按X提示"
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+# Wiring/trigger assertion: keywords proving the affordance is actually bound
+# or exercised.  Found in local_checks commands OR the body.
+_WIRING_ASSERTION_RE = re.compile(
+    r"""
+    addeventlistener|onclick|on[a-z]+=     # DOM event binding
+    |keydown|keyup|keypress                # keyboard events
+    |bind|wire|register|handler            # generic wiring
+    |press_key|click\b|take_snapshot       # chrome-devtools actions
+    |playwright|cypress|e2e                # browser e2e frameworks
+    |input\.on|addEventListener            # input event binding
+    |trigger|dispatch                      # event dispatch
+    |模拟.*(?:按|click|press)|测试.*(?:按|click|press)  # Chinese: "模拟按X"
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+
+def lint_ui_promise_wiring(text: str, slug: str) -> list[str]:
+    """Flag a UI affordance advertisement with no wiring/trigger assertion."""
+    findings: list[str] = []
+    body = _strip_frontmatter(text)
+    commands = _extract_local_checks_commands(text)
+    # Structural early-exit: no commands means nothing to gate against.
+    if not commands:
+        return findings
+    # The advertisement signal must be present in the body.
+    if not _UI_ADVERTISEMENT_RE.search(body):
+        return findings
+    # Check if any wiring/trigger assertion exists in commands or body.
+    all_cmds_text = " ".join(commands)
+    combined = all_cmds_text + " " + body
+    if _WIRING_ASSERTION_RE.search(combined):
+        return findings
+    findings.append(
+        f"{slug}: sub-plan introduces a UI affordance/prompt that advertises "
+        f"a capability (key hint, button label, shortcut, indicator) but "
+        f"neither local_checks nor the body contains a wiring/trigger "
+        f"assertion (event handler, keybind, click, press_key, e2e). This is "
+        f"the 'promise-without-wiring' shape — the user is prompted to act "
+        f"but nothing is bound. Add a local_check that verifies the "
+        f"affordance is actually wired (press_key, click, take_snapshot, or "
+        f"a binding assertion). See decomposition-principles.md §8."
+    )
+    return findings
+
+
 ALL_CHECKS = (
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
@@ -861,6 +943,7 @@ ALL_CHECKS = (
     lint_network_tool_mock_only_gate,
     lint_vertical_slice_ac,
     lint_anti_hardcode_integration,
+    lint_ui_promise_wiring,
 )
 
 
