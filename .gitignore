@@ -19,6 +19,9 @@ scratch/
 # Playwright MCP per-run artifacts (snapshots / console logs)
 .playwright-mcp/
 
+# Test-generated fake worker home (steer-hook runner harness)
+skills/ilk-loop/tests/fixtures/fake_worker/
+
 # Per-machine config that should not leave the developer's box —
 # personal project paths, secrets, IDE-generated rules, etc. Each
 # operator copies the *.example.json next to it and edits in place.
