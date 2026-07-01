@@ -100,7 +100,13 @@ This is effectively an **escaped-bug** for the hermetic-hardening effort
     `.sh` runner is POSIX-only, so Git Bash runs skip cleanly instead of
     false-failing (the awk backslash-path issue is thereby moot). Still 15/15
     green on Mac after the change.
-- **Task 2 — NOT DONE (optional).** Real detached `run_ilk_loop_claude.sh`
-  smoke (source `steer_hook.sh`, honor an `inbox.md` interjection once, respect
-  `pause.flag`) not yet run — the harness replicates the wiring and Task 1
-  passes, so this remains a recommended-but-not-blocking follow-up.
+- **Task 2 — DONE.** Real detached-runner smoke added:
+  `test_steer_hook_real_runner_sh.py` drives the actual `run_ilk_loop_claude.sh
+  main()` as a subprocess against a throwaway git project + mock `claude` on
+  PATH. Proves the real runner (a) sources `steer_hook.sh` and injects an
+  `inbox.md` interjection into the actual claude prompt, consuming it exactly
+  once (no re-inject on a second invocation), and (b) idles on `pause.flag`
+  (claude never invoked, inbox not consumed). Both green on macOS. Skips on
+  win32 / missing gtimeout|git|bash.
+
+All three tasks complete. Full ilk-loop suite: 512 passed, 15 skipped (pwsh) on macOS.
