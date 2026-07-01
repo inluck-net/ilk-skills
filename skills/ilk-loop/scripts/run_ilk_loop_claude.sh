@@ -16,6 +16,9 @@ set -Eeuo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_ilk_skill_root.sh"
 _SKILL_ROOT="$(ilk_skill_root)"
 
+# Steer-hook functions (invoke_steer_hook) — operator interjections + pause gate.
+source "$(dirname "${BASH_SOURCE[0]}")/steer_hook.sh"
+
 # ----- Defaults & globals ----------------------------------------------------
 
 # Populated by argument parsing in main().
@@ -1316,6 +1319,21 @@ main() {
     echo ""
     echo "--- Iteration $i / $MAX_ITERATIONS ---"
 
+    # -- Steer hook: pause gate (OUTSIDE timed iteration region) ---------
+    # If pause.flag is present, idle here — does NOT count toward
+    # ITERATION_TIMEOUT_MIN and is NOT classified as no-progress/stuck.
+    if [[ -n "$PROJECT_KEY" ]]; then
+      invoke_steer_hook "$PROJECT_KEY"
+      while [[ "$STEER_PAUSED" -eq 1 ]]; do
+        echo "[steer] pause.flag detected — idling (remove pause.flag to resume)"
+        sleep 5
+        invoke_steer_hook "$PROJECT_KEY"
+      done
+    else
+      STEER_INTERJECTION_TEXT=""
+      STEER_PAUSED=0
+    fi
+
     local iter_start
     iter_start=$(date +%s)
 
@@ -1331,7 +1349,17 @@ main() {
     local timeout_sec
     timeout_sec=$((ITERATION_TIMEOUT_MIN * 60))
 
-    invoke_claude_iteration "$PROJECT_PATH" "$iter_log" "$PROMPT" "$timeout_sec" "$MAX_BUDGET_USD" "$MODEL"
+    # -- Steer hook: interjection text -----------------------------------
+    local iter_prompt="$PROMPT"
+    if [[ -n "$STEER_INTERJECTION_TEXT" ]]; then
+      iter_prompt="OPERATOR INTERJECTIONS (honor before continuing the plan):
+${STEER_INTERJECTION_TEXT}
+
+${PROMPT}"
+      echo "[steer] interjection injected (${#STEER_INTERJECTION_TEXT} chars)"
+    fi
+
+    invoke_claude_iteration "$PROJECT_PATH" "$iter_log" "$iter_prompt" "$timeout_sec" "$MAX_BUDGET_USD" "$MODEL"
 
     local iter_end iter_dur_sec
     iter_end=$(date +%s)
