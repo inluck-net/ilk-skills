@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 import textwrap
@@ -321,8 +322,13 @@ def test_existing_plan_lint_tests_still_pass():
     ]
     for tf in test_files:
         assert tf.exists(), f"Missing test file: {tf}"
+    pytest_cmd = [sys.executable, "-m", "pytest", *[str(f) for f in test_files], "-q"]
+    # --timeout needs the pytest-timeout plugin; only pass it when installed
+    # (the outer subprocess timeout=120 bounds a hang either way).
+    if importlib.util.find_spec("pytest_timeout") is not None:
+        pytest_cmd.append("--timeout=60")
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", *[str(f) for f in test_files], "-q", "--timeout=60"],
+        pytest_cmd,
         capture_output=True, text=True, timeout=120,
         encoding="utf-8", errors="replace",
     )

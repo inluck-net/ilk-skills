@@ -292,7 +292,7 @@ class TestAC3_PidLiveness:
             encoding="utf-8", errors="replace",
         )
         data = json.loads(result.stdout)
-        entry = next(e for e in data if e["project_key"].endswith("live-pid"))
+        entry = next(e for e in data if e["project_key"] == _project_key(SCRATCH / "projects" / "live-pid"))
         assert entry["sentinel"]["alive"] is True
 
     def test_dead_for_nonexistent_pid(self):
@@ -307,7 +307,7 @@ class TestAC3_PidLiveness:
             encoding="utf-8", errors="replace",
         )
         data = json.loads(result.stdout)
-        entry = next(e for e in data if e["project_key"].endswith("dead-pid"))
+        entry = next(e for e in data if e["project_key"] == _project_key(SCRATCH / "projects" / "dead-pid"))
         assert entry["sentinel"]["alive"] is False
 
     def test_alive_for_bom_encoded_sentinel(self):
@@ -331,6 +331,6 @@ class TestAC3_PidLiveness:
             encoding="utf-8", errors="replace",
         )
         data = json.loads(result.stdout)
-        entry = next(e for e in data if e["project_key"].endswith("bom-pid"))
+        entry = next(e for e in data if e["project_key"] == _project_key(SCRATCH / "projects" / "bom-pid"))
         assert entry["sentinel"]["state"] == "running", entry["sentinel"]
         assert entry["sentinel"]["alive"] is True, entry["sentinel"]

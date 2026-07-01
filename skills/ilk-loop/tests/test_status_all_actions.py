@@ -172,7 +172,13 @@ def _get_status(name: str) -> dict:
     )
     assert result.returncode == 0, f"exit {result.returncode}: {result.stderr}"
     data = json.loads(result.stdout)
-    entry = next(e for e in data if e["project_key"].endswith(name))
+    # Match on the exact key computed the same way the fixture stored it —
+    # NOT project_key.endswith(name): a long checkout path pushes the slug past
+    # 80 chars, at which point project_key() truncates + appends a hash, so the
+    # key no longer ends with name (and the entry's `path` is the ilk-data dir,
+    # whose basename is that same hashed key).
+    expected_key = _project_key(SCRATCH / "projects" / name)
+    entry = next(e for e in data if e["project_key"] == expected_key)
     return entry
 
 
@@ -182,11 +188,14 @@ class TestActionFieldsPresent:
     """Every entry has path, runnable, parked."""
 
     def test_path_field(self):
-        """path is the project root directory."""
+        """path is the project's ilk-data dir (basename == project_key)."""
         _setup_project("af")
         entry = _get_status("af")
         assert "path" in entry
-        assert entry["path"].endswith("af")
+        # `path` is str(project_dir) under ILK_DATA, so its basename is the
+        # project_key — assert that, not endswith("af"), which only held while
+        # the (untruncated) key happened to end with the project name.
+        assert Path(entry["path"]).name == _project_key(SCRATCH / "projects" / "af")
 
     def test_runnable_field(self):
         """runnable is a boolean."""
@@ -294,7 +303,7 @@ class TestManuallyRunnableAllShipped:
         _setup_project("mrs", sub_status="shipped", pid=99999999, state="shipped")
         entry = _get_status("mrs")
         # Project should still appear in the list.
-        assert entry["project_key"].endswith("mrs")
+        assert entry["project_key"] == _project_key(SCRATCH / "projects" / "mrs")
         assert entry["manually_runnable"] is False
 
 

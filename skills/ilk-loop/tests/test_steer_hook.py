@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,6 +24,13 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 STEER_HOOK = REPO_ROOT / "skills" / "ilk-loop" / "scripts" / "steer_hook.ps1"
+
+# This suite drives the PowerShell hook; skip where powershell is absent
+# (macOS/Linux). The bash parity suite (test_steer_hook_sh.py) covers Unix.
+pytestmark = pytest.mark.skipif(
+    shutil.which("powershell") is None,
+    reason="powershell not available",
+)
 
 # ── helpers ──────────────────────────────────────────────────────────
 

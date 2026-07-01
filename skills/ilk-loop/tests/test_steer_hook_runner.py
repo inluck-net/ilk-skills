@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -24,6 +25,13 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 SCRIPTS = REPO_ROOT / "skills" / "ilk-loop" / "scripts"
 STEER_HOOK = SCRIPTS / "steer_hook.ps1"
+
+# Drives the PowerShell runner wiring; skip where powershell is absent
+# (macOS/Linux). Bash parity: test_steer_hook_runner_sh.py.
+pytestmark = pytest.mark.skipif(
+    shutil.which("powershell") is None,
+    reason="powershell not available",
+)
 
 
 # ── helpers ──────────────────────────────────────────────────────────
