@@ -87,3 +87,20 @@ This is effectively an **escaped-bug** for the hermetic-hardening effort
 - `.ps1` reference impl + tests: `steer_hook.ps1`, `test_steer_hook.py`,
   `test_steer_hook_runner.py` (all green on Windows).
 - Contract: `../ilk-pocket/docs/handoffs/2026-07-01-ilk-loop-steer-hook.md`.
+
+## Outcome (Mac agent, 2026-07-01)
+
+- **Task 1 — DONE.** `test_steer_hook_sh.py` + `test_steer_hook_runner_sh.py`
+  run on real macOS (darwin): **15/15 green**. Confirms the Windows diagnosis —
+  the bash logic is correct; the Git-Bash failures were environment artifacts.
+- **Task 3 — DONE.** Fixed the `.sh` tests' Windows portability:
+  - mock `claude` now invokes `sys.executable` (not literal `python3`), so it
+    can't hit the Windows Store app-alias stub.
+  - both `.sh` test files now `skipif(sys.platform == "win32" or no bash)` — the
+    `.sh` runner is POSIX-only, so Git Bash runs skip cleanly instead of
+    false-failing (the awk backslash-path issue is thereby moot). Still 15/15
+    green on Mac after the change.
+- **Task 2 — NOT DONE (optional).** Real detached `run_ilk_loop_claude.sh`
+  smoke (source `steer_hook.sh`, honor an `inbox.md` interjection once, respect
+  `pause.flag`) not yet run — the harness replicates the wiring and Task 1
+  passes, so this remains a recommended-but-not-blocking follow-up.

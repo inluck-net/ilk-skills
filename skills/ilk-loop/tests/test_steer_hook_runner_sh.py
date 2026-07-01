@@ -17,6 +17,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -26,8 +27,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 SCRIPTS = REPO_ROOT / "skills" / "ilk-loop" / "scripts"
 STEER_HOOK = SCRIPTS / "steer_hook.sh"
 
+# Drives the POSIX-only .sh runner wiring. Skip on win32 (Git Bash isn't a
+# faithful POSIX env — see test_steer_hook_sh.py) — the .sh runner never runs
+# detached on Windows anyway.
 pytestmark = pytest.mark.skipif(
-    shutil.which("bash") is None, reason="bash not available"
+    sys.platform == "win32" or shutil.which("bash") is None,
+    reason="POSIX-only (.sh runner); bash required and not win32",
 )
 
 
@@ -44,7 +49,7 @@ def _write_mock_claude(mock_dir: Path) -> Path:
             # Args are: -p <prompt> ; drop the flag, keep the rest.
             shift
             prompt="$*"
-            MOCK_LOG='{log_path}' python3 - "$prompt" <<'PY'
+            MOCK_LOG='{log_path}' "{sys.executable}" - "$prompt" <<'PY'
             import json, os, sys
             with open(os.environ['MOCK_LOG'], 'a', encoding='utf-8') as fh:
                 fh.write(json.dumps({{"prompt": sys.argv[1]}}) + "\\n")

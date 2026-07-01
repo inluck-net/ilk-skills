@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -22,8 +23,12 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 STEER_HOOK = REPO_ROOT / "skills" / "ilk-loop" / "scripts" / "steer_hook.sh"
 
+# steer_hook.sh drives the POSIX-only .sh runner. Skip on win32: Git Bash is not
+# a faithful POSIX env (awk mangles backslash paths in the reconcile getline),
+# so running there false-fails without exercising anything real.
 pytestmark = pytest.mark.skipif(
-    shutil.which("bash") is None, reason="bash not available"
+    sys.platform == "win32" or shutil.which("bash") is None,
+    reason="POSIX-only (.sh runner); bash required and not win32",
 )
 
 # ── helpers ──────────────────────────────────────────────────────────
