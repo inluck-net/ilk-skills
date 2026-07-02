@@ -149,3 +149,69 @@ Please include:
 4. `stop.sh` clean?
 5. `tailscale ping chad-z66` result (direct vs DERP).
 6. Any macOS-specific error from `launch.sh`.
+
+## Outcome (Mac agent, 2026-07-02) — PASS with sleep caveat
+
+Verified on real macOS hardware (`chads-macbook-pro`, Darwin 25.5.0). Result
+matches the static prediction: **PASS, with the documented keep-awake caveat.**
+The test ran fully isolated via `ILK_DATA_HOME=<scratchpad>` with a synthetic
+`gen_mock_masters.py` plan, so it never touched the real `~/.ilk-data` registry
+and was invisible to the live cross-project scheduler (which uses the default
+data home).
+
+**Environment**
+- `claude` 2.1.198 at `~/.local/bin/claude`, authenticated. `python3` 3.9.6
+  present (the setsid-shim hard dep). `launch.sh` installed.
+- **`setsid` is absent** (macOS ships none) → the launch exercised the
+  `nohup python3 -c 'os.setsid(); os.execvp(...)'` fallback path, i.e. the
+  exact macOS-specific code under test.
+
+**A. Detached launch survives terminal close — PASS.** The leader process
+(the launcher's `running.pid`) showed:
+`PID 20339  PPID 1  PGID 20339  SESS 0  TTY ??  STAT Ss`. Reparented to init
+(PPID 1), its own session/process-group leader, **no controlling terminal**
+(`TTY ??`). The whole tree (`run_ilk_loop_claude.sh` + `tee` +
+`_stream_json_render.py`) shared the detached PGID with no tty. This is genuine
+detachment — it will survive closing Terminal / an SSH session. The run then
+executed one iteration detached, wrote per-iteration + JSONL logs, and exited
+with a terminal sentinel (`state: "max-iterations"`), cost ~$0.29.
+
+**B. Status tools see it running — PASS.** With the modern external-plans
+layout, `status_progress.py --json` reported `sentinel.state = "running"`,
+`processes.launcher_pid = 24080`, `processes.launcher_alive = true` while the
+loop was mid-iteration.
+
+**C. Stop works — PASS.** `stop.sh` group-killed the leader PGID and its
+orphan-scan terminated the full worker tree (runner + `tee` × N), removed
+`running.pid`, and left **no surviving processes**. The exit sentinel is always
+left in a terminal state (never `running`) — `finalize_sentinel` rewrites a
+still-`running` sentinel to `interrupted` on signal exit (verified by code
+read at `run_ilk_loop_claude.sh:823`). Note: observing the literal
+`interrupted` value requires interrupting a *genuinely long* iteration; the
+synthetic no-op plan makes `claude` return in seconds, so a natural terminal
+state (`max-iterations`) usually wins the race — benign, and the teardown
+contract (tree killed, pid removed, sentinel terminal) holds either way.
+
+**D. Sleep caveat — confirmed.** No `caffeinate` anywhere in the launch path.
+**For unattended Mac runs the system must be kept awake** (`caffeinate -i`, or
+Energy Saver "Prevent sleeping when display is off" while on power). Same class
+of caveat as the Windows machine-asleep note. Documenting, not fixing (a
+`caffeinate` wrapper in `launch.sh` is an optional follow-up).
+
+**E. Mac↔Win tailnet mesh — PASS.** `tailscale ping chad-z66` →
+`pong from chad-z66 (100.89.86.123) via 10.0.0.222:41641 in 66ms` — a **direct**
+(LAN, non-DERP) path. §2.1 hub(Win)↔agent(Mac) reachability confirmed.
+
+**Minor finding (not a blocker) — status runtime-dir resolution on the LEGACY
+in-project layout.** When plans live in-project (`<repo>/docs/plans`, the
+walk-up fallback), `status_progress.py` derives `runtime_dir =
+plans_dir.parent/"runtime"` → `<repo>/docs/runtime`, but `launch.sh` writes the
+launcher `running.pid` / sentinel to the **external** key-based runtime
+(`~/.ilk-data/projects/<key>/runtime`). So on the legacy layout the launcher
+pid/sentinel read as `null` even while the loop runs. The modern external-plans
+layout aligns both (their `plans_dir.parent` *is* `projects/<key>`), so this
+only affects legacy in-project-plan projects — worth a follow-up if any remain.
+
+**Verdict: S3 PASS-with-caveat.** The Mac can start, observe, and stop a
+detached loop that survives terminal close. Safe to mark S3 done and finalize
+the §2.1 hub(Win)↔agent(Mac) decision, with the keep-awake caveat recorded.
