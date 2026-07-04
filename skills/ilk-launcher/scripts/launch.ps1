@@ -283,6 +283,9 @@ function Get-ProjectName {
 
 function Get-ProjectKey {
   param([string]$ProjectPath)
+  # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+  # Function-local Continue auto-restores on exit.
+  $ErrorActionPreference = 'Continue'
   $resolver = Join-Path $SkillRoot "ilk-loop\scripts\ilk_paths.py"
   if (Test-Path $resolver) {
     try {
