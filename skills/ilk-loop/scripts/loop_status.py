@@ -475,6 +475,7 @@ def main() -> int:
     data = resolve_status(cwd, json_mode=args.json)
 
     if args.json:
+        sys.stdout.reconfigure(encoding="utf-8")
         print(json.dumps(data, indent=2, ensure_ascii=False))
         return data["queue_exit"]
 
