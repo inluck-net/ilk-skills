@@ -1426,6 +1426,13 @@ function Parse-MasterBranchBlock {
       $statusPlansDir = [string]$statusObj.plans_dir
       # Prefer loop_status.py's plans_dir so master + dir come from one source.
       if ($statusPlansDir -and (Test-Path $statusPlansDir)) { $plansDir = $statusPlansDir }
+      # Log notices[] from the status probe (e.g. "no active master",
+      # "previewing queued"). Absent on older payloads — guard with null check.
+      if ($statusObj.notices) {
+        foreach ($notice in $statusObj.notices) {
+          Write-Host "[ilk] $notice" -ForegroundColor DarkYellow
+        }
+      }
     } catch { $masterName = "" }
   }
   if (-not $masterName) { return }
