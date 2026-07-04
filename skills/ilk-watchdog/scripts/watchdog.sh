@@ -27,6 +27,21 @@ NOTIFY_PY="${_SKILL_ROOT}/ilk-watchdog/scripts/ilk_notify.py"
 POLL_INTERVAL_SEC=60
 MAX_RESTARTS=5
 
+# Resolve python command ($PYTHON preferred, python fallback for Windows).
+# On Windows, `$PYTHON` may exist as a Microsoft Store alias that doesn't
+# actually work.
+PYTHON=""
+for candidate in $PYTHON python; do
+  if command -v "$candidate" &>/dev/null && "$candidate" -c 'import sys' 2>/dev/null; then
+    PYTHON="$candidate"
+    break
+  fi
+done
+if [[ -z "$PYTHON" ]]; then
+  echo "ERROR: No working Python interpreter found (tried $PYTHON, python)." >&2
+  exit 1
+fi
+
 # CLI overrides
 CLI_PROJECT_PATH=""
 CLI_PROJECT_NAME=""
@@ -45,7 +60,7 @@ invoke_ilk_notify() {
   local event="$1" project="$2" detail="${3:-}"
   local args=("$NOTIFY_PY" --event "$event" --project "$project")
   [[ -n "$detail" ]] && args+=(--detail "$detail")
-  python3 "${args[@]}" 2>/dev/null || true
+  $PYTHON "${args[@]}" 2>/dev/null || true
 }
 
 read_projects_registry() {
@@ -53,13 +68,13 @@ read_projects_registry() {
     echo '[]'
     return
   fi
-  python3 -c "import json; data=json.load(open('$PROJECTS_JSON')); print(json.dumps(data.get('projects', [])))"
+  $PYTHON -c "import json; data=json.load(open('$PROJECTS_JSON')); print(json.dumps(data.get('projects', [])))"
 }
 
 resolve_project_by_name() {
   local name="$1"
   local path
-  path=$(python3 -c "
+  path=$($PYTHON -c "
 import json
 with open('$PROJECTS_JSON') as f:
     data = json.load(f)
@@ -70,7 +85,7 @@ for p in data.get('projects', []):
 ")
   if [[ -z "$path" ]]; then
     local known
-    known=$(python3 -c "
+    known=$($PYTHON -c "
 import json
 with open('$PROJECTS_JSON') as f:
     data = json.load(f)
@@ -87,9 +102,9 @@ resolve_project_by_cwd() {
   resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ -f "$resolver" ]]; then
     local json_out
-    if json_out=$(python3 "$resolver" --start "$(pwd)" 2>/dev/null) && [[ -n "$json_out" ]]; then
+    if json_out=$($PYTHON "$resolver" --start "$(pwd)" 2>/dev/null) && [[ -n "$json_out" ]]; then
       local root
-      root=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('project_root') or '')" <<<"$json_out")
+      root=$($PYTHON -c "import json,sys; d=json.load(sys.stdin); print(d.get('project_root') or '')" <<<"$json_out")
       if [[ -n "$root" ]]; then
         echo "$root"
         return
@@ -122,7 +137,7 @@ resolve_project_by_cwd() {
 get_project_name() {
   local path="$1"
   local name
-  name=$(python3 -c "
+  name=$($PYTHON -c "
 import json
 with open('$PROJECTS_JSON') as f:
     data = json.load(f)
@@ -147,8 +162,8 @@ get_ilk_runtime_dir() {
     return
   fi
   local json_out
-  if json_out=$(python3 "$resolver" --start "$project" 2>/dev/null) && [[ -n "$json_out" ]]; then
-    python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('external_runtime_dir') or '')" <<<"$json_out"
+  if json_out=$($PYTHON "$resolver" --start "$project" 2>/dev/null) && [[ -n "$json_out" ]]; then
+    $PYTHON -c "import json,sys; d=json.load(sys.stdin); print(d.get('external_runtime_dir') or '')" <<<"$json_out"
   else
     echo ""
   fi
@@ -163,8 +178,8 @@ get_ilk_launcher_dir() {
     return
   fi
   local json_out
-  if json_out=$(python3 "$resolver" --start "$project" 2>/dev/null) && [[ -n "$json_out" ]]; then
-    python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('external_launcher_dir') or '')" <<<"$json_out"
+  if json_out=$($PYTHON "$resolver" --start "$project" 2>/dev/null) && [[ -n "$json_out" ]]; then
+    $PYTHON -c "import json,sys; d=json.load(sys.stdin); print(d.get('external_launcher_dir') or '')" <<<"$json_out"
   else
     echo ""
   fi
@@ -179,8 +194,8 @@ get_ilk_watchdog_dir() {
     return
   fi
   local json_out
-  if json_out=$(python3 "$resolver" --start "$project" 2>/dev/null) && [[ -n "$json_out" ]]; then
-    python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('external_watchdog_dir') or '')" <<<"$json_out"
+  if json_out=$($PYTHON "$resolver" --start "$project" 2>/dev/null) && [[ -n "$json_out" ]]; then
+    $PYTHON -c "import json,sys; d=json.load(sys.stdin); print(d.get('external_watchdog_dir') or '')" <<<"$json_out"
   else
     echo ""
   fi
@@ -246,7 +261,7 @@ read_last_exit_state() {
   fi
   # Output lines (1-indexed for sed -n 'Np'):
   #   1: state  2: iterations  3: last_iter_at  4: pid  5: run_id  6: ended_at
-  python3 -c "
+  $PYTHON -c "
 import json, sys
 try:
     with open('$f', encoding='utf-8') as fh:
@@ -369,7 +384,7 @@ invoke_postmortem_collect() {
   [[ -n "$run_id" ]] && collect_args+=("--run-id" "$run_id")
 
   local report_path
-  report_path=$(python3 "$COLLECT_PY" "${collect_args[@]}" 2>/dev/null) || true
+  report_path=$($PYTHON "$COLLECT_PY" "${collect_args[@]}" 2>/dev/null) || true
   if [[ -z "$report_path" || ! -f "$report_path" ]]; then
     write_log "collect.py produced no valid report path: '$report_path'"
     echo ""
@@ -378,7 +393,7 @@ invoke_postmortem_collect() {
 
   # Parse classification from postmortem frontmatter
   local klass
-  klass=$(python3 -c "
+  klass=$($PYTHON -c "
 import sys
 in_fm = False
 for line in open('$report_path', encoding='utf-8'):
@@ -410,18 +425,18 @@ handle_promote() {
   fi
 
   local json_out
-  json_out=$(python3 "$script_path" --project "$project" 2>/dev/null) || true
+  json_out=$($PYTHON "$script_path" --project "$project" 2>/dev/null) || true
   if [[ -z "$json_out" ]]; then
     write_log "promote_next_master.py produced no output."
     return
   fi
 
   local promoted
-  promoted=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('promoted') or '')" <<<"$json_out")
+  promoted=$($PYTHON -c "import json,sys; d=json.load(sys.stdin); print(d.get('promoted') or '')" <<<"$json_out")
   local demoted
-  demoted=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('demoted') or '')" <<<"$json_out")
+  demoted=$($PYTHON -c "import json,sys; d=json.load(sys.stdin); print(d.get('demoted') or '')" <<<"$json_out")
   local queue_remaining
-  queue_remaining=$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('queue_remaining',''))" <<<"$json_out")
+  queue_remaining=$($PYTHON -c "import json,sys; d=json.load(sys.stdin); print(d.get('queue_remaining',''))" <<<"$json_out")
 
   if [[ -n "$promoted" ]]; then
     write_log "queue advanced: demoted=$demoted, promoted=$promoted, queue_remaining=$queue_remaining"
@@ -723,7 +738,7 @@ Watchdog PID: $$" 36
         # Compute loop_status_exit for success states (determines advance vs work-pending).
         local loop_status_exit=1
         if [[ " ${success_states[*]} " =~ [[:space:]]${sentinel_state}[[:space:]] ]]; then
-          python3 "$LOOP_STATUS_PY" --project "$project" >/dev/null 2>&1 && loop_status_exit=0 || loop_status_exit=$?
+          $PYTHON "$LOOP_STATUS_PY" --project "$project" >/dev/null 2>&1 && loop_status_exit=0 || loop_status_exit=$?
         fi
         local startup_action
         startup_action=$(startup_sentinel_action "$sentinel_state" "$sentinel_ended_epoch" "$launch_epoch" "$loop_status_exit" "$loop_alive")
