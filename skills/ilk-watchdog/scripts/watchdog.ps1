@@ -311,30 +311,40 @@ function Get-StartupSentinelAction {
     Returns one of: 'stale-ignore', 'work-pending', 'advance', 'classify'.
 
     - 'stale-ignore': sentinel ended before this watchdog launched — ignore it.
+      For success states, always stale-ignore if ended < launch.
+      For non-success states, stale-ignore only when a live loop PID is
+      detected (LoopAlive $true) — a previous run's leftover sentinel that
+      coincides with a fresh loop coming up.
     - 'work-pending': sentinel says success but loop_status says work pending.
     - 'advance': sentinel says success and loop_status confirms all shipped.
-    - 'classify': non-success terminal state — hand off to feedback path.
+    - 'classify': terminal state to adjudicate — hand off to feedback path.
+      For non-success: either not stale, or stale with no live loop.
   #>
   param(
     [string]$State,
     [string]$EndedAt,
     [datetime]$LaunchTime,
-    [int]$LoopStatusExit
+    [int]$LoopStatusExit,
+    [bool]$LoopAlive = $false
   )
 
   $SuccessStates = @('all-shipped', 'already-shipped', 'shipped')
 
-  # Non-success terminal → classify (staleness doesn't matter)
+  # Compute staleness once: parseable EndedAt earlier than LaunchTime
+  $ended = [datetime]::MinValue
+  $isStale = [datetime]::TryParse($EndedAt, [ref]$ended) -and ($ended -lt $LaunchTime)
+
+  # Non-success terminal
   if ($SuccessStates -notcontains $State) {
+    if ($isStale -and $LoopAlive) {
+      return 'stale-ignore'
+    }
     return 'classify'
   }
 
-  # Freshness check: if EndedAt parses and is earlier than LaunchTime, it's stale
-  $ended = [datetime]::MinValue
-  if ([datetime]::TryParse($EndedAt, [ref]$ended)) {
-    if ($ended -lt $LaunchTime) {
-      return 'stale-ignore'
-    }
+  # Success branch (behaviour unchanged)
+  if ($isStale) {
+    return 'stale-ignore'
   }
   # If EndedAt doesn't parse, skip freshness and rely on cross-check
 
