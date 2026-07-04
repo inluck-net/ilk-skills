@@ -42,6 +42,9 @@ if [[ -z "$PYTHON" ]]; then
   exit 1
 fi
 
+# Force UTF-8 for Python stdout/stderr (avoids GBK encoding errors on Chinese Windows).
+export PYTHONIOENCODING=utf-8
+
 # Normalize a path for use in Python inline code on Windows.
 # Backslashes → forward slashes so Python's unicode-escape doesn't choke.
 _py_path() { echo "${1//\\//}"; }
