@@ -27,20 +27,24 @@ NOTIFY_PY="${_SKILL_ROOT}/ilk-watchdog/scripts/ilk_notify.py"
 POLL_INTERVAL_SEC=60
 MAX_RESTARTS=5
 
-# Resolve python command ($PYTHON preferred, python fallback for Windows).
-# On Windows, `$PYTHON` may exist as a Microsoft Store alias that doesn't
+# Resolve python command (python3 preferred, python fallback for Windows).
+# On Windows, `python3` may exist as a Microsoft Store alias that doesn't
 # actually work.
 PYTHON=""
-for candidate in $PYTHON python; do
+for candidate in python3 python; do
   if command -v "$candidate" &>/dev/null && "$candidate" -c 'import sys' 2>/dev/null; then
     PYTHON="$candidate"
     break
   fi
 done
 if [[ -z "$PYTHON" ]]; then
-  echo "ERROR: No working Python interpreter found (tried $PYTHON, python)." >&2
+  echo "ERROR: No working Python interpreter found (tried python3, python)." >&2
   exit 1
 fi
+
+# Normalize a path for use in Python inline code on Windows.
+# Backslashes → forward slashes so Python's unicode-escape doesn't choke.
+_py_path() { echo "${1//\\//}"; }
 
 # CLI overrides
 CLI_PROJECT_PATH=""
@@ -68,15 +72,19 @@ read_projects_registry() {
     echo '[]'
     return
   fi
-  $PYTHON -c "import json; data=json.load(open('$PROJECTS_JSON')); print(json.dumps(data.get('projects', [])))"
+  local pj
+  pj=$(_py_path "$PROJECTS_JSON")
+  $PYTHON -c "import json; data=json.load(open('$pj')); print(json.dumps(data.get('projects', [])))"
 }
 
 resolve_project_by_name() {
   local name="$1"
+  local pj
+  pj=$(_py_path "$PROJECTS_JSON")
   local path
   path=$($PYTHON -c "
 import json
-with open('$PROJECTS_JSON') as f:
+with open('$pj') as f:
     data = json.load(f)
 for p in data.get('projects', []):
     if p.get('name') == '$name':
@@ -87,7 +95,7 @@ for p in data.get('projects', []):
     local known
     known=$($PYTHON -c "
 import json
-with open('$PROJECTS_JSON') as f:
+with open('$pj') as f:
     data = json.load(f)
 print(', '.join(p.get('name','') for p in data.get('projects', []) if p.get('name')))
 ")
@@ -136,10 +144,12 @@ resolve_project_by_cwd() {
 
 get_project_name() {
   local path="$1"
+  local pj
+  pj=$(_py_path "$PROJECTS_JSON")
   local name
   name=$($PYTHON -c "
 import json
-with open('$PROJECTS_JSON') as f:
+with open('$pj') as f:
     data = json.load(f)
 for p in data.get('projects', []):
     if p.get('path') == '$path':
@@ -261,10 +271,12 @@ read_last_exit_state() {
   fi
   # Output lines (1-indexed for sed -n 'Np'):
   #   1: state  2: iterations  3: last_iter_at  4: pid  5: run_id  6: ended_at
+  local f_py
+  f_py=$(_py_path "$f")
   $PYTHON -c "
 import json, sys
 try:
-    with open('$f', encoding='utf-8') as fh:
+    with open('$f_py', encoding='utf-8') as fh:
         d = json.load(fh)
     print(d.get('state',''))
     print(d.get('iterations',''))
@@ -392,11 +404,13 @@ invoke_postmortem_collect() {
   fi
 
   # Parse classification from postmortem frontmatter
+  local rp_py
+  rp_py=$(_py_path "$report_path")
   local klass
   klass=$($PYTHON -c "
 import sys
 in_fm = False
-for line in open('$report_path', encoding='utf-8'):
+for line in open('$rp_py', encoding='utf-8'):
     line = line.rstrip()
     if line.strip() == '---':
         if in_fm:
