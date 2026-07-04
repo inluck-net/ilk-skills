@@ -244,6 +244,8 @@ read_last_exit_state() {
     echo ""
     return
   fi
+  # Output lines (1-indexed for sed -n 'Np'):
+  #   1: state  2: iterations  3: last_iter_at  4: pid  5: run_id  6: ended_at
   python3 -c "
 import json, sys
 try:
@@ -254,6 +256,7 @@ try:
     print(d.get('last_iter_at',''))
     print(d.get('pid',''))
     print(d.get('run_id',''))
+    print(d.get('ended_at',''))
 except Exception:
     pass
 "
