@@ -607,8 +607,24 @@ Watchdog exiting cleanly. Job done.
           } # end: 'advance' path
         }
         else {
-          # Terminal non-success state. Skip the wrapper-PID dance and
-          # jump straight to classification below.
+          # Terminal non-success state. Route through Get-StartupSentinelAction
+          # so stale sentinels coinciding with a live loop are detected and
+          # ignored (the stale non-success race fix).
+          $rp = Read-ilkPid -Project $Project
+          $loopAlive = ($rp -and (Test-ProcessAlive -ProcessId $rp))
+
+          $sentinelAction = Get-StartupSentinelAction `
+            -State $sentinel.state `
+            -EndedAt $sentinel.ended_at `
+            -LaunchTime $LaunchTime `
+            -LoopStatusExit 0 `
+            -LoopAlive $loopAlive
+
+          if ($sentinelAction -eq 'stale-ignore') {
+            Write-Log ("stale non-success sentinel {0} ended {1} < launch {2} but loop pid alive — ignoring, keep watching." -f $sentinel.state, $sentinel.ended_at, $LaunchTime)
+            Start-Sleep -Seconds $PollSec
+            continue
+          }
           Write-Log ("sentinel terminal state: {0} (iters={1}) — classifying." -f $sentinel.state, $sentinel.iterations)
           $sentinelTerminal = $true
         }
