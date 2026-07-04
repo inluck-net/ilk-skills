@@ -305,6 +305,51 @@ classify_action() {
   esac
 }
 
+# Startup sentinel freshness gate — mirrors PS Get-StartupSentinelAction.
+# Determines what to do with a terminal sentinel on watchdog startup.
+#
+# Args (positional):
+#   $1 = state           (sentinel state string)
+#   $2 = ended_epoch     (sentinel ended_at as unix epoch; 0 if absent/unparseable)
+#   $3 = launch_epoch    (watchdog launch time as unix epoch)
+#   $4 = loop_status_exit (exit code of loop_status.py; unused for non-success)
+#   $5 = loop_alive      ("true" if a live loop process is detected)
+#
+# Echoes one of: stale-ignore | work-pending | advance | classify
+startup_sentinel_action() {
+  local state="$1" ended_epoch="$2" launch_epoch="$3" loop_status_exit="$4" loop_alive="$5"
+  local success_states=("all-shipped" "already-shipped" "shipped")
+  local is_success=false
+  local s
+  for s in "${success_states[@]}"; do
+    [[ "$state" == "$s" ]] && { is_success=true; break; }
+  done
+
+  # Staleness: both epochs must be positive and ended < launch
+  local is_stale=false
+  if [[ "$ended_epoch" -gt 0 && "$launch_epoch" -gt 0 && "$ended_epoch" -lt "$launch_epoch" ]]; then
+    is_stale=true
+  fi
+
+  if [[ "$is_success" == false ]]; then
+    # Non-success terminal
+    if [[ "$is_stale" == true && "$loop_alive" == true ]]; then
+      echo "stale-ignore"
+    else
+      echo "classify"
+    fi
+  else
+    # Success terminal
+    if [[ "$is_stale" == true ]]; then
+      echo "stale-ignore"
+    elif [[ "$loop_status_exit" -eq 0 ]]; then
+      echo "advance"
+    else
+      echo "work-pending"
+    fi
+  fi
+}
+
 # Run collect.py to classify a terminal run. Prints the classification label
 # (e.g. "stuck-no-progress") or empty string on failure.
 invoke_postmortem_collect() {
