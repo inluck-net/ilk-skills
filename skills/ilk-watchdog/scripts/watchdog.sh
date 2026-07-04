@@ -612,6 +612,8 @@ Watchdog PID: $$" 36
   local last_relaunch_at=""
   local saw_alive_once=false
   local last_restart_class=""
+  local launch_epoch
+  launch_epoch=$(date +%s)
   local runtime_dir
   runtime_dir=$(get_ilk_runtime_dir "$project")
   if [[ -n "$runtime_dir" ]]; then
@@ -646,6 +648,15 @@ Watchdog PID: $$" 36
       sentinel_last_iter=$(echo "$sentinel_raw" | sed -n '3p')
       sentinel_pid=$(echo "$sentinel_raw" | sed -n '4p')
       sentinel_run_id=$(echo "$sentinel_raw" | sed -n '5p')
+      # ended_at (line 6) — convert to epoch for freshness gate; 0 if absent/unparseable
+      local sentinel_ended_at sentinel_ended_epoch=0
+      sentinel_ended_at=$(echo "$sentinel_raw" | sed -n '6p')
+      if [[ -n "$sentinel_ended_at" ]]; then
+        sentinel_ended_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$sentinel_ended_at" +%s 2>/dev/null \
+          || date -d "$sentinel_ended_at" +%s 2>/dev/null \
+          || echo 0)
+        [[ -z "$sentinel_ended_epoch" ]] && sentinel_ended_epoch=0
+      fi
     fi
 
     if [[ -n "$sentinel_state" ]]; then
@@ -701,14 +712,43 @@ Watchdog PID: $$" 36
           sleep "$poll_sec"
           continue
         fi
-      elif [[ " ${success_states[*]} " =~ [[:space:]]${sentinel_state}[[:space:]] ]]; then
-        write_log "clean ship detected (state=$sentinel_state, iters=$sentinel_iters). Advancing master queue..."
-        invoke_ilk_notify "ship" "$proj_name"
-        handle_promote "$project" "$proj_name" "$poll_sec"
-        continue
       else
-        write_log "sentinel terminal state: $sentinel_state (iters=$sentinel_iters) — classifying."
-        sentinel_terminal=true
+        # All terminal states (success + non-success) route through freshness gate.
+        local loop_alive="false"
+        local lp
+        lp=$(read_ilk_pid "$project")
+        if [[ -n "$lp" ]] && test_process_alive "$lp"; then
+          loop_alive="true"
+        fi
+        # Compute loop_status_exit for success states (determines advance vs work-pending).
+        local loop_status_exit=1
+        if [[ " ${success_states[*]} " =~ [[:space:]]${sentinel_state}[[:space:]] ]]; then
+          python3 "$LOOP_STATUS_PY" --project "$project" >/dev/null 2>&1 && loop_status_exit=0 || loop_status_exit=$?
+        fi
+        local startup_action
+        startup_action=$(startup_sentinel_action "$sentinel_state" "$sentinel_ended_epoch" "$launch_epoch" "$loop_status_exit" "$loop_alive")
+        case "$startup_action" in
+          stale-ignore)
+            write_log "stale sentinel (state=$sentinel_state, ended=$sentinel_ended_epoch < launch=$launch_epoch, loop_alive=$loop_alive) — ignoring, keep watching."
+            sleep "$poll_sec"
+            continue
+            ;;
+          advance)
+            write_log "clean ship detected (state=$sentinel_state, iters=$sentinel_iters). Advancing master queue..."
+            invoke_ilk_notify "ship" "$proj_name"
+            handle_promote "$project" "$proj_name" "$poll_sec"
+            continue
+            ;;
+          work-pending)
+            write_log "success sentinel but loop_status reports work pending — keeping alive."
+            sleep "$poll_sec"
+            continue
+            ;;
+          classify)
+            write_log "sentinel terminal state: $sentinel_state (iters=$sentinel_iters) — classifying."
+            sentinel_terminal=true
+            ;;
+        esac
       fi
     fi
 
