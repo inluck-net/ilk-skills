@@ -1,7 +1,9 @@
 <#
 .SYNOPSIS
   Red test: Get-StartupSentinelAction must ignore stale sentinels and
-  cross-check loop_status before declaring "QUEUE DRAINED".
+  cross-check loop_status before declaring "QUEUE DRAINED". Also locks in
+  the stale non-success + live-loop race contract (sub-plan
+  2026-07-03-watchdog-stale-nonsuccess-ps).
 
 .NOTES
   Invoked by local_checks in sub-plan 2026-06-07-watchdog-stale-sentinel-guard.
@@ -68,19 +70,44 @@ if ($action -ne 'work-pending') {
   $failures += "fresh all-shipped + pending: expected 'work-pending', got '$action'"
 }
 
-# Case 4: non-success terminal state → 'classify'
-# (regardless of freshness or loop_status, this goes to feedback classification)
+# Case 4: fresh non-success + LoopAlive $false → 'classify'
+# (fresh terminal — this run's own terminal, not a leftover)
 $action = Get-StartupSentinelAction -State 'timeout-bound' -EndedAt '2026-06-07T12:59:00' `
-  -LaunchTime $launchTime -LoopStatusExit 1
+  -LaunchTime $launchTime -LoopStatusExit 1 -LoopAlive $false
 if ($action -ne 'classify') {
-  $failures += "timeout state: expected 'classify', got '$action'"
+  $failures += "fresh non-success + dead: expected 'classify', got '$action'"
 }
 
-# Case 5: stale + non-success → 'classify' (staleness only gates success states)
+# Case 5: stale non-success + LoopAlive $false → 'classify'
+# (stale non-success but no live loop — adjudicate a genuinely-dead run)
 $action = Get-StartupSentinelAction -State 'timeout-bound' -EndedAt '2026-06-06T23:24:24' `
+  -LaunchTime $launchTime -LoopStatusExit 1 -LoopAlive $false
+if ($action -ne 'classify') {
+  $failures += "stale non-success + dead: expected 'classify', got '$action'"
+}
+
+# Case 8: stale non-success + LoopAlive $true → 'stale-ignore'
+# (THE INCIDENT: previous run's leftover sentinel, fresh loop coming up)
+$action = Get-StartupSentinelAction -State 'local_checks_failed' -EndedAt '2026-06-06T23:24:24' `
+  -LaunchTime $launchTime -LoopStatusExit 1 -LoopAlive $true
+if ($action -ne 'stale-ignore') {
+  $failures += "stale non-success + alive: expected 'stale-ignore', got '$action'"
+}
+
+# Case 9: fresh non-success + LoopAlive $true → 'classify'
+# (this run's own terminal — not a leftover, even though loop pid is alive)
+$action = Get-StartupSentinelAction -State 'local_checks_failed' -EndedAt '2026-06-07T13:00:00' `
+  -LaunchTime $launchTime -LoopStatusExit 1 -LoopAlive $true
+if ($action -ne 'classify') {
+  $failures += "fresh non-success + alive: expected 'classify', got '$action'"
+}
+
+# Case 10: stale non-success + default LoopAlive (absent) → 'classify'
+# (back-compat: existing call sites that don't pass LoopAlive get $false default)
+$action = Get-StartupSentinelAction -State 'local_checks_failed' -EndedAt '2026-06-06T23:24:24' `
   -LaunchTime $launchTime -LoopStatusExit 1
 if ($action -ne 'classify') {
-  $failures += "stale + timeout: expected 'classify', got '$action'"
+  $failures += "stale non-success + default LoopAlive: expected 'classify', got '$action'"
 }
 
 # Case 6: unparseable EndedAt + success + pending → 'work-pending'
@@ -178,6 +205,6 @@ if ($failures.Count -gt 0) {
   exit 1
 }
 
-Write-Host "PASS: Get-StartupSentinelAction — all 7 matrix cases correct" -ForegroundColor Green
+Write-Host "PASS: Get-StartupSentinelAction — all 10 matrix cases correct" -ForegroundColor Green
 Write-Host "PASS: Test-RunningPid stale-sentinel cross-check — all 3 cases correct" -ForegroundColor Green
 exit 0
