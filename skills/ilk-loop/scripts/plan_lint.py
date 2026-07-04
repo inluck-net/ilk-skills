@@ -24,6 +24,10 @@ CLI:
     python plan_lint.py <subplan.md> [<subplan.md> ...]
         prints ``WARN: <slug>: <msg>`` lines (ASCII); exit 1 if any finding.
 
+    python plan_lint.py --source-hygiene <scripts...>
+        Scans .py/.ps1 toolkit scripts for native-IO convention violations.
+        See native-io-conventions.md.
+
 Reads files with ``utf-8-sig`` (zh-CN Windows configs may carry a BOM).
 """
 
@@ -31,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from pathlib import Path
 
 # Fallback / degrade markers: language that says "there is a safe alternative
@@ -1043,6 +1048,194 @@ ALL_CHECKS = (
 )
 
 
+# ── Source-hygiene checks (--source-hygiene mode) ──────────────────────────
+#
+# These are NOT sub-plan lints — they scan toolkit source files (.py / .ps1)
+# for violations of the native-IO convention documented in
+# native-io-conventions.md.  Invoked via ``plan_lint.py --source-hygiene``.
+#
+# Two checks:
+#   (a) stderr-in-json-path: Python file writes to sys.stderr inside a
+#       json-mode code path (if args.json: / json_mode parameter).
+#   (b) unguarded-native-python: .ps1 file has a `& python` line without
+#       a $ErrorActionPreference='Continue' guard in scope.
+
+# Python stderr-write patterns.
+_STDERR_WRITE_RE = re.compile(
+    r"""
+    print\s*\([^)]*file\s*=\s*sys\.stderr    # print(..., file=sys.stderr)
+    |sys\.stderr\.write\s*\(                  # sys.stderr.write(
+    """,
+    re.VERBOSE,
+)
+
+# JSON-mode guard: an `if args.json:` or `if json_mode:` or similar block.
+_JSON_MODE_GUARD_RE = re.compile(
+    r"""
+    if\s+args\.json\b
+    |if\s+json_mode\b
+    |if\s+.*--json
+    |json_mode\s*[:=]
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+# PS1 & python invocation (bare, without Continue guard).
+_PS1_AMP_PYTHON_RE = re.compile(r"&\s+python\b")
+
+# PS1 EAP=Continue guard — function-local or save/restore pattern.
+_PS1_EAP_CONTINUE_RE = re.compile(
+    r"\$ErrorActionPreference\s*=\s*['\"]Continue['\"]", re.IGNORECASE
+)
+
+# Allowlist: test scaffolds that are exempt from the unguarded check.
+_SOURCE_HYGIENE_ALLOWLIST = frozenset({
+    "_pipeline_smoketest.ps1",
+})
+
+
+def _is_in_json_mode_scope(lines: list[str], target_line_idx: int) -> bool:
+    """True if *target_line_idx* is inside a json-mode conditional block.
+
+    Scans backwards from the target line looking for an ``if args.json:`` /
+    ``if json_mode:`` guard.  Must verify:
+    1. The guard's body extends to the target line (no early return/dedent).
+    2. We're not in an ``else:`` branch of the guard (else = non-json path).
+    3. We're not past the guard's early return (common pattern: if json_mode:
+       print(json); return — everything after is text-mode).
+    """
+    if target_line_idx < 0 or target_line_idx >= len(lines):
+        return False
+    target_indent = len(lines[target_line_idx]) - len(lines[target_line_idx].lstrip())
+
+    # Walk backwards looking for a json-mode guard.
+    for i in range(target_line_idx - 1, max(-1, target_line_idx - 80), -1):
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped:
+            continue
+        line_indent = len(line) - len(line.lstrip())
+
+        # Skip lines at same or higher indent (peers, not guards).
+        if line_indent >= target_indent:
+            continue
+
+        # An ``else:`` or ``elif`` at a lower indent than target means we're
+        # in a non-json branch — NOT inside the json guard.
+        if stripped == "else:" or stripped.startswith("elif "):
+            return False
+
+        if not _JSON_MODE_GUARD_RE.search(stripped):
+            continue
+
+        # Found a json-mode guard.  Check if the guard body has an early
+        # return before reaching the target line (common: ``if args.json:
+        # print(json); return``).
+        guard_body_indent = line_indent + 4  # Python indent
+        has_return_before_target = False
+        for j in range(i + 1, target_line_idx):
+            body_line = lines[j]
+            body_stripped = body_line.strip()
+            if not body_stripped:
+                continue
+            body_indent = len(body_line) - len(body_line.lstrip())
+            # If we've dedented back to the guard's level or lower, the
+            # guard body is over.
+            if body_indent <= line_indent:
+                break
+            if body_indent == guard_body_indent and body_stripped.startswith("return"):
+                has_return_before_target = True
+                break
+        if has_return_before_target:
+            return False
+
+        # The target is inside this guard's body (no early return found).
+        return True
+
+    return False
+
+
+def lint_stderr_in_json_path(path: Path, text: str) -> list[str]:
+    """Flag Python stderr writes inside a json-mode code path."""
+    findings: list[str] = []
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if not _STDERR_WRITE_RE.search(line):
+            continue
+        if _is_in_json_mode_scope(lines, i):
+            findings.append(
+                f"{path.name}:{i + 1}: stderr write inside a json-mode code path. "
+                f"In --json mode, fold notices into the payload (e.g. notices[]) "
+                f"instead of printing to stderr. See native-io-conventions.md."
+            )
+    return findings
+
+
+def _eap_continue_in_scope(lines: list[str], target_line_idx: int) -> bool:
+    """True if a $ErrorActionPreference='Continue' guard covers *target_line_idx*.
+
+    Checks two idioms:
+    1. Function-local: a $EAP='Continue' at a lower indent within the same function.
+    2. Script-level save/restore: a $savedEAP = ...; $EAP = 'Continue' + try/finally
+       surrounding the target line.
+    """
+    if target_line_idx < 0 or target_line_idx >= len(lines):
+        return False
+    target_indent = len(lines[target_line_idx]) - len(lines[target_line_idx].lstrip())
+
+    # Walk backwards looking for a $EAP='Continue' at a lower or equal indent.
+    for i in range(target_line_idx - 1, max(-1, target_line_idx - 120), -1):
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped:
+            continue
+        line_indent = len(line) - len(line.lstrip())
+        # Only consider guards at same or lower indentation.
+        if line_indent > target_indent:
+            continue
+        if _PS1_EAP_CONTINUE_RE.search(stripped):
+            return True
+        # Stop at function boundary (different scope).
+        if stripped.lower().startswith("function ") and line_indent < target_indent:
+            break
+
+    # Also check forward: a script-level save/restore wrapping the target.
+    for i in range(max(0, target_line_idx - 60), target_line_idx):
+        line = lines[i]
+        if _PS1_EAP_CONTINUE_RE.search(line):
+            # Check if there's a try block after it (save/restore pattern).
+            for j in range(i + 1, min(len(lines), i + 5)):
+                if lines[j].strip().lower() == "try {":
+                    return True
+            break
+
+    return False
+
+
+def lint_unguarded_native_python(path: Path, text: str) -> list[str]:
+    """Flag .ps1 `& python` lines without $ErrorActionPreference='Continue'."""
+    findings: list[str] = []
+    # Allowlist check.
+    if path.name in _SOURCE_HYGIENE_ALLOWLIST:
+        return findings
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if not _PS1_AMP_PYTHON_RE.search(line):
+            continue
+        # Skip comment lines.
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if not _eap_continue_in_scope(lines, i):
+            findings.append(
+                f"{path.name}:{i + 1}: `& python` without "
+                f"$ErrorActionPreference='Continue' guard. PS 5.1 wraps "
+                f"native stderr as NativeCommandError under $EAP='Stop'. "
+                f"See native-io-conventions.md."
+            )
+    return findings
+
+
 # ── Spec pillar → outcome-AC traceability (--spec mode) ─────────────────────
 #
 # A spec document's pillar blocks must each carry a ``verification_tier`` tag
@@ -1190,13 +1383,41 @@ def lint_file(path: str | Path, master_text: str = "") -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Planner degrade-discipline lints.")
-    parser.add_argument("paths", nargs="+", help="Sub-plan .md file(s) to lint.")
+    parser.add_argument("paths", nargs="*", help="Sub-plan .md file(s) to lint.")
     parser.add_argument("--master", help="MASTER plan file (enables slug-collision check).")
     parser.add_argument(
         "--spec", action="store_true",
         help="Run spec pillar traceability check instead of per-sub-plan checks.",
     )
+    parser.add_argument(
+        "--source-hygiene", action="store_true",
+        help="Run native-IO source-hygiene checks on .py/.ps1 scripts.",
+    )
     args = parser.parse_args()
+
+    if not args.paths:
+        parser.error("at least one file path is required")
+
+    if args.source_hygiene:
+        # Source-hygiene mode: scan toolkit scripts for native-IO violations.
+        total = 0
+        for path_str in args.paths:
+            p = Path(path_str)
+            if not p.exists():
+                print(f"WARN: {p}: file not found", file=sys.stderr)
+                continue
+            text = p.read_text(encoding="utf-8-sig")
+            if p.suffix == ".py":
+                for msg in lint_stderr_in_json_path(p, text):
+                    print(f"WARN: {msg}")
+                    total += 1
+            elif p.suffix == ".ps1":
+                for msg in lint_unguarded_native_python(p, text):
+                    print(f"WARN: {msg}")
+                    total += 1
+        if total == 0:
+            print("OK: source-hygiene clean")
+        return 1 if total else 0
 
     if args.spec:
         # Spec mode: run lint_spec_pillar_traceability on each file.
