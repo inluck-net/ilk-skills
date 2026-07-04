@@ -161,13 +161,16 @@ if (-not $LogDir -or -not $JsonlLogPath) {
   $extLogs = ""
   $resolver = Join-Path $SkillRoot "ilk-loop\scripts\ilk_paths.py"
   if (Test-Path $resolver) {
+    # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+    # Script-level: save/restore (not in a function, so no auto-restore).
+    $savedEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     try {
       $json = & python $resolver --start $ProjectPath 2>$null
       if ($LASTEXITCODE -eq 0 -and $json) {
         $obj = $json | ConvertFrom-Json -ErrorAction Stop
         if ($obj.external_logs_dir) { $extLogs = [string]$obj.external_logs_dir }
       }
-    } catch {}
+    } catch {} finally { $ErrorActionPreference = $savedEAP }
   }
   if (-not $LogDir) {
     $LogDir = if ($extLogs) { Join-Path $extLogs "runs\$RunId" } else { Join-Path $legacyLogDir "runs\$RunId" }
@@ -320,6 +323,9 @@ function Get-IlkRuntimeDir {
     runs, watchdog falls back to PID checking).
   #>
   param([string]$Project)
+  # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+  # Function-local Continue auto-restores on exit.
+  $ErrorActionPreference = 'Continue'
   $resolver = Join-Path (Split-Path $PSCommandPath -Parent) "ilk_paths.py"
   if (-not (Test-Path $resolver)) { return $null }
   try {
@@ -337,6 +343,9 @@ function Get-IlkProjectKey {
     from a project path via ilk_paths.py. Returns $null on failure.
   #>
   param([string]$Project)
+  # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+  # Function-local Continue auto-restores on exit.
+  $ErrorActionPreference = 'Continue'
   $resolver = Join-Path (Split-Path $PSCommandPath -Parent) "ilk_paths.py"
   if (-not (Test-Path $resolver)) { return $null }
   try {
@@ -381,6 +390,9 @@ function Get-StepDeclaredTimeout {
     [Parameter(Mandatory)] [string]$Slug,
     [Parameter(Mandatory)] [int]$Step
   )
+  # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+  # Function-local Continue auto-restores on exit.
+  $ErrorActionPreference = 'Continue'
   # Resolve plans dir via ilk_paths.py
   $resolver = Join-Path (Split-Path $PSCommandPath -Parent) "ilk_paths.py"
   if (-not (Test-Path $resolver)) { return 0 }
@@ -557,6 +569,9 @@ function Get-PlansDir {
     legacy in-tree walk-up if the helper is unavailable.
   #>
   param([string]$Project)
+  # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+  # Function-local Continue auto-restores on exit.
+  $ErrorActionPreference = 'Continue'
   $resolver = Join-Path (Split-Path $PSCommandPath -Parent) "ilk_paths.py"
   if (Test-Path $resolver) {
     try {
@@ -607,6 +622,9 @@ $script:_MetaInfo = $null
 
 function Get-MetaInfo {
   param([string]$Project)
+  # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+  # Function-local Continue auto-restores on exit.
+  $ErrorActionPreference = 'Continue'
   if ($script:_MetaInfo -and $script:_MetaInfo.Project -eq $Project) {
     return $script:_MetaInfo
   }
@@ -793,6 +811,9 @@ function Invoke-QualityGatesForSubPlan {
     [string]$HeadRef,
     [string]$Slug
   )
+  # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+  # Function-local Continue auto-restores on exit.
+  $ErrorActionPreference = 'Continue'
 
   $ts = Get-Date -Format "yyyy-MM-dd-HHmm"
   # Reports live next to the active plans dir. In meta mode that's the
@@ -1372,6 +1393,9 @@ function Parse-MasterBranchBlock {
     No-op (all stay empty/default) when no branch: block exists.
   #>
   param([string]$Project)
+  # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+  # Function-local Continue auto-restores on exit.
+  $ErrorActionPreference = 'Continue'
   $resolver = Join-Path $SkillRoot "ilk-loop\scripts\ilk_paths.py"
   if (-not (Test-Path $resolver)) { return }
 
@@ -1815,6 +1839,9 @@ if ($Model) {
 } else {
   $resolverScript = Join-Path (Get-IlkSkillRoot) "ilk-loop\scripts\resolve_worker_model.py"
   if (Test-Path $resolverScript) {
+    # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+    # Script-level: save/restore (not in a function, so no auto-restore).
+    $savedEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     try {
       $resolverOutput = & python $resolverScript "--config-dir" $cfgDir 2>$null
       if ($resolverOutput -and $resolverOutput.Contains("|")) {
@@ -1823,7 +1850,7 @@ if ($Model) {
       }
     } catch {
       $ResolvedModel = ""; $ResolvedModelSource = "unknown"
-    }
+    } finally { $ErrorActionPreference = $savedEAP }
   }
 }
 

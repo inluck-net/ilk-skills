@@ -176,6 +176,9 @@ function Resolve-ProjectByCwd {
   # First try ilk_paths.py — it's authoritative for both single-repo
   # (.git ancestor) AND meta (.ilk-meta.json ancestor) projects. Falls
   # back to legacy walk-up only when the helper is unavailable.
+  # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+  # Function-local Continue auto-restores on exit.
+  $ErrorActionPreference = 'Continue'
   $resolver = Join-Path $SkillRoot "ilk-loop\scripts\ilk_paths.py"
   if (Test-Path $resolver) {
     try {
@@ -204,6 +207,9 @@ function Resolve-ProjectByCwd {
 function Get-ExternalPlansDir {
   # Returns the external plans dir for $ProjectPath (meta-aware), or "".
   param([string]$ProjectPath)
+  # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+  # Function-local Continue auto-restores on exit.
+  $ErrorActionPreference = 'Continue'
   $resolver = Join-Path $SkillRoot "ilk-loop\scripts\ilk_paths.py"
   if (-not (Test-Path $resolver)) { return "" }
   try {
@@ -218,6 +224,9 @@ function Get-ExternalPlansDir {
 
 function Get-ExternalLauncherDir {
   param([string]$ProjectPath)
+  # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+  # Function-local Continue auto-restores on exit.
+  $ErrorActionPreference = 'Continue'
   $resolver = Join-Path $SkillRoot "ilk-loop\scripts\ilk_paths.py"
   if (-not (Test-Path $resolver)) { return "" }
   try {
@@ -232,6 +241,9 @@ function Get-ExternalLauncherDir {
 
 function Get-ExternalRuntimeDir {
   param([string]$ProjectPath)
+  # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+  # Function-local Continue auto-restores on exit.
+  $ErrorActionPreference = 'Continue'
   $resolver = Join-Path $SkillRoot "ilk-loop\scripts\ilk_paths.py"
   if (-not (Test-Path $resolver)) { return "" }
   try {
@@ -246,6 +258,9 @@ function Get-ExternalRuntimeDir {
 
 function Get-ExternalLogsDir {
   param([string]$ProjectPath)
+  # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+  # Function-local Continue auto-restores on exit.
+  $ErrorActionPreference = 'Continue'
   $resolver = Join-Path $SkillRoot "ilk-loop\scripts\ilk_paths.py"
   if (-not (Test-Path $resolver)) { return "" }
   try {
@@ -378,6 +393,9 @@ function Test-QueuedSubplansDeclareLocalChecks {
   # declares local_checks in its frontmatter or per-step blocks.
   # Used to default -RunLocalChecks ON when gates exist.
   param([string]$ProjectPath)
+  # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+  # Function-local Continue auto-restores on exit.
+  $ErrorActionPreference = 'Continue'
   $detector = Join-Path $LauncherDir 'scripts\_detect_local_checks.py'
   if (-not (Test-Path $detector)) { return $false }
   try {

@@ -163,6 +163,9 @@ function Get-NewCommitCount {
 
 function Test-AllShipped {
   param([string]$Project)
+  # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+  # Function-local Continue auto-restores on exit.
+  $ErrorActionPreference = 'Continue'
   Push-Location $Project
   try {
     & python $LoopStatusScript *>$null
@@ -726,8 +729,11 @@ Write-Host "JSONL:    $JsonlLog"
 Write-Host ""
 Write-Host "Final loop_status:"
 Push-Location $ProjectPath
+# PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+# Script-level: save/restore (not in a function, so no auto-restore).
+$savedEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
 try {
   & python $LoopStatusScript
 } finally {
-  Pop-Location
+  Pop-Location; $ErrorActionPreference = $savedEAP
 }

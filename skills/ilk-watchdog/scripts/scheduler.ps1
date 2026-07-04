@@ -130,6 +130,9 @@ function Write-SchedulerLog {
 function Invoke-IlkNotify {
   <# Fire-and-forget desktop notification. Failure is swallowed. #>
   param([string]$Event, [string]$Project, [string]$Detail = "")
+  # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+  # Function-local Continue auto-restores on exit.
+  $ErrorActionPreference = 'Continue'
   try {
     $args = @($NotifyPy, '--event', $Event, '--project', $Project)
     if ($Detail) { $args += @('--detail', $Detail) }
@@ -255,6 +258,9 @@ function Read-BlacklistFromPostmortems {
     that are currently blacklisted (a resolve-ack or auto-expiry omits the key).
   #>
   param([array]$QueuedProjects)
+  # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+  # Function-local Continue auto-restores on exit.
+  $ErrorActionPreference = 'Continue'
   $result = @{}
   if (-not $QueuedProjects) { return $result }
   $blScript = Join-Path $PSScriptRoot 'blacklist_status.py'
@@ -593,6 +599,9 @@ function Invoke-ZombieReaper {
 # --- main loop ---------------------------------------------------------------
 
 function Run-Scheduler {
+  # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+  # Function-local Continue auto-restores on exit.
+  $ErrorActionPreference = 'Continue'
   $dispatchCount = 0
   $backoffSkip = @{}    # transient cross-cycle backoffs ONLY (rapid-terminal, dispatch-fail). Postmortem blacklist is recomputed fresh each cycle — never accumulated here.
   $dispatchTime = @{}   # project key -> [datetime] of last dispatch
