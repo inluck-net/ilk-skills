@@ -162,7 +162,7 @@ def extract_master_order(master_text: str, plans_dir: Path | None = None) -> lis
     return ordered
 
 
-def pick_active_master(masters: list[Path]) -> tuple[Path, dict]:
+def pick_active_master(masters: list[Path], json_mode: bool = False) -> tuple[Path, dict]:
     """
     Choose the master plan to drive this run, plus a summary of the
     queue for display purposes.
@@ -183,7 +183,9 @@ def pick_active_master(masters: list[Path]) -> tuple[Path, dict]:
          layout: pick newest by mtime exactly as before
 
     Returns (chosen_path, queue_view) where queue_view has counts +
-    a list of upcoming queued titles for display.
+    a list of upcoming queued titles for display.  When json_mode is
+    True, notices are collected into queue_view["notices"] instead of
+    being printed to stderr.
     """
     parsed: list[tuple[Path, dict]] = []
     plans_dir = masters[0].parent if masters else None
@@ -233,24 +235,32 @@ def pick_active_master(masters: list[Path]) -> tuple[Path, dict]:
     legacy = by_status.get("(none)", [])
     draft = by_status.get("draft", [])
 
+    notices: list[str] = []
+
     if len(actives) > 1:
-        print(
+        msg = (
             f"[ilk] WARNING: {len(actives)} masters have status: active. "
-            "Only one should be active at a time. Choosing highest priority.",
-            file=sys.stderr,
+            "Only one should be active at a time. Choosing highest priority."
         )
+        if json_mode:
+            notices.append(msg)
+        else:
+            print(msg, file=sys.stderr)
 
     chosen: Path
     if actives:
         chosen = actives[0][0]
     elif queued:
         chosen = queued[0][0]
-        print(
+        msg = (
             f"[ilk] no master is `active`; previewing the next queued "
             f"master: {chosen.name}. Mark its status: active to run it, "
-            "or let the watchdog promote it on the next clean ship.",
-            file=sys.stderr,
+            "or let the watchdog promote it on the next clean ship."
         )
+        if json_mode:
+            notices.append(msg)
+        else:
+            print(msg, file=sys.stderr)
     elif legacy:
         # Pure legacy: newest by mtime
         chosen = max(legacy, key=lambda it: it[0].stat().st_mtime)[0]
@@ -270,11 +280,12 @@ def pick_active_master(masters: list[Path]) -> tuple[Path, dict]:
         "legacy_count": len(legacy),
         "draft_count": len(draft),
         "queued_titles": [it[0].name for it in queued],
+        "notices": notices,
     }
     return chosen, queue_view
 
 
-def resolve_status(cwd: Path) -> dict:
+def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
     """Resolve all status data and return a structured dict.
 
     Returns a dict with keys:
@@ -284,6 +295,7 @@ def resolve_status(cwd: Path) -> dict:
       - queue_exit: 0 (all shipped), 1 (pending), 2 (error)
       - plans_dir: str
       - next: dict|None with fname, status, cur, est, repo (if any)
+      - notices: list[str] (empty when no notices; populated in json_mode)
     """
     plans_dir, plans_source = _resolve_plans_dir(cwd)
     if not plans_dir:
@@ -298,7 +310,7 @@ def resolve_status(cwd: Path) -> dict:
     for m in masters:
         reconcile_master_status(m, plans_dir)
 
-    master, queue_view = pick_active_master(masters)
+    master, queue_view = pick_active_master(masters, json_mode=json_mode)
     master_text = master.read_text(encoding="utf-8-sig")
     ordered_files = extract_master_order(master_text, plans_dir=plans_dir)
 
@@ -410,6 +422,7 @@ def resolve_status(cwd: Path) -> dict:
         "queue_exit": queue_exit,
         "stalled": stalled,
         "compile_only_summary": _compile_only_summary(subplans),
+        "notices": queue_view.get("notices", []),
     }
 
     if next_pending:
@@ -459,7 +472,7 @@ def main() -> int:
     args = ap.parse_args()
 
     cwd = Path.cwd()
-    data = resolve_status(cwd)
+    data = resolve_status(cwd, json_mode=args.json)
 
     if args.json:
         print(json.dumps(data, indent=2, ensure_ascii=False))
