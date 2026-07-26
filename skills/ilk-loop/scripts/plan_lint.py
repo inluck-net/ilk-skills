@@ -1360,6 +1360,151 @@ def lint_slug_collision(text: str, slug: str, master_plan_slug: str) -> list[str
     return findings
 
 
+# ── supervised_only scope guard (§13) ────────────────────────────────────────
+#
+# `supervised_only: true` exists for ONE hazard: a batch that rewrites the
+# loop's own dispatch machinery would be read by the scheduler while being
+# rewritten.  The trigger is therefore mechanical — a sub-plan's `scope_paths`
+# must actually *modify* one of the loop-infra files — never "this batch feels
+# risky" or "we haven't verified it yet" (that is `status: draft` + verification
+# tiers).  See decomposition-principles.md §13.
+#
+# The flag is expensive to mis-set: the scheduler and `promote_next_master`
+# skip the master permanently, AND ilk-runner's preflight HARD-STOPS a manual
+# `/ilk-run` while any cross-project scheduler is alive.  A stray flag costs
+# both autonomy and the manual fallback, so an unwarranted one is a hard
+# finding, not a nit.
+
+# Loop-infra basenames — the narrow §13 set.
+_LOOP_INFRA_BASENAMES = frozenset({
+    "loop_status.py",
+    "scheduler_scan.py",
+    "promote_next_master.py",
+    "plan_status.py",
+    "scheduler.ps1",
+    "scheduler.sh",
+})
+
+# Canonical toolkit-relative locations of those files, used to decide whether a
+# directory/glob scope entry (e.g. `skills/ilk-loop/scripts/**`) pulls one in.
+_LOOP_INFRA_CANONICAL = (
+    "skills/ilk-loop/scripts/loop_status.py",
+    "skills/ilk-loop/scripts/promote_next_master.py",
+    "skills/ilk-loop/scripts/plan_status.py",
+    "skills/ilk-watchdog/scripts/scheduler_scan.py",
+    "skills/ilk-watchdog/scripts/scheduler.ps1",
+    "skills/ilk-watchdog/scripts/scheduler.sh",
+)
+
+_SUPERVISED_ONLY_RE = re.compile(r"^supervised_only:\s*(.+)$", re.MULTILINE)
+_TRUTHY = ("true", "yes", "1")
+
+
+def _scope_entry_names_infra(path: str) -> bool:
+    """True if *path* explicitly names a loop-infra file.
+
+    Strict form: the entry's basename IS an infra file.  A test that merely
+    imports `loop_status.py` (`tests/test_loop_status.py`) does not match —
+    §13 requires the sub-plan to *modify* the infra file.
+    """
+    p = path.replace("\\", "/").rstrip()
+    return any(p == name or p.endswith("/" + name) for name in _LOOP_INFRA_BASENAMES)
+
+
+def _scope_entry_may_cover_infra(path: str) -> bool:
+    """True if *path* names OR could glob in a loop-infra file.
+
+    Broad form: also matches a directory/glob entry whose literal prefix
+    contains a canonical infra path (`skills/ilk-loop/scripts/**`).
+    """
+    if _scope_entry_names_infra(path):
+        return True
+    p = path.replace("\\", "/").rstrip()
+    # Literal prefix = everything before the first glob metacharacter.
+    prefix = re.split(r"[*?\[]", p, maxsplit=1)[0]
+    if not prefix:
+        return True  # a bare glob covers everything
+    if not prefix.endswith("/"):
+        prefix += "/"
+    return any(canon.startswith(prefix) for canon in _LOOP_INFRA_CANONICAL)
+
+
+def _extract_supervised_only(master_text: str) -> str | None:
+    """Return the master's raw `supervised_only` value, or None if absent."""
+    m = re.match(r"^---\n.*?\n---\n", master_text, re.S)
+    fm = master_text[m.start():m.end()] if m else master_text
+    sm = _SUPERVISED_ONLY_RE.search(fm)
+    if not sm:
+        return None
+    # Values in the wild carry trailing rationale comments.
+    return sm.group(1).split("#", 1)[0].strip().strip("\"'")
+
+
+def lint_supervised_only_scope(
+    master_text: str,
+    subplans: list[tuple[str, str]],
+) -> list[str]:
+    """Master-level check: is `supervised_only` warranted by scope_paths?
+
+    *subplans* is a list of ``(slug, text)`` pairs for the batch's sub-plans.
+
+    Two directions, deliberately asymmetric so that each errs toward autonomy:
+
+    - flag set, no scope entry could even glob in an infra file → finding
+      (broad match, so this fires only when the flag is clearly unwarranted);
+    - a scope entry explicitly names an infra file, flag not set → finding
+      (strict match, so we never tell a planner to set the flag on a guess).
+    """
+    findings: list[str] = []
+    if not master_text:
+        return findings
+
+    raw = _extract_supervised_only(master_text)
+    is_set = (raw or "").lower() in _TRUTHY
+
+    covering = [
+        (slug, p)
+        for slug, text in subplans
+        for p in _extract_scope_paths(text)
+        if _scope_entry_may_cover_infra(p)
+    ]
+    naming = [
+        (slug, p)
+        for slug, text in subplans
+        for p in _extract_scope_paths(text)
+        if _scope_entry_names_infra(p)
+    ]
+
+    if is_set and not covering:
+        findings.append(
+            "MASTER: `supervised_only: true` but no sub-plan's scope_paths "
+            "modifies loop-infra ("
+            + ", ".join(sorted(_LOOP_INFRA_BASENAMES))
+            + "). This is the ONE thing the flag is for — it is not a "
+            "readiness gate, a risk gate, or a 'needs review' marker "
+            "(decomposition-principles.md §13). Setting it here removes "
+            "autonomous dispatch AND makes ilk-runner preflight hard-stop a "
+            "manual /ilk-run while a scheduler is alive. Use `status: draft` "
+            "for not-yet-released, verification tiers for trust level, and "
+            "config (e.g. point `clone_path` at a throwaway clone) to "
+            "neutralise local-mutation hazards. HARD FINDING: set "
+            "`supervised_only: false` unless the user explicitly asked for it."
+        )
+
+    if naming and not is_set:
+        offenders = ", ".join(f"{slug} → {p}" for slug, p in naming)
+        findings.append(
+            f"MASTER: sub-plan scope_paths modify loop-infra ({offenders}) but "
+            f"`supervised_only` is not set. A batch that rewrites the loop's "
+            f"own dispatch machinery must never be autonomously dispatched — "
+            f"the scheduler would read code it is simultaneously rewriting. "
+            f"HARD FINDING: set `supervised_only: true` on the MASTER "
+            f"(decomposition-principles.md §13)."
+        )
+
+    return findings
+
+
 def lint_file(path: str | Path, master_text: str = "") -> list[str]:
     """Run all checks against one sub-plan file. Returns finding messages.
 
@@ -1438,10 +1583,20 @@ def main() -> int:
         master_text = Path(args.master).read_text(encoding="utf-8-sig")
 
     total = 0
+    subplans: list[tuple[str, str]] = []
     for path in args.paths:
         for msg in lint_file(path, master_text=master_text):
             print(f"WARN: {msg}")
             total += 1
+        p = Path(path)
+        subplans.append((p.stem, p.read_text(encoding="utf-8-sig")))
+
+    # Master-level checks need every sub-plan's scope_paths at once.
+    if master_text:
+        for msg in lint_supervised_only_scope(master_text, subplans):
+            print(f"WARN: {msg}")
+            total += 1
+
     if total == 0:
         print("OK: plan_lint clean")
     return 1 if total else 0
