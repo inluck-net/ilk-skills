@@ -354,16 +354,29 @@ Once approved, write all files in one batch under the
     authored-but-not-yet-released; `draft` is non-runnable (invisible to the
     scheduler and `loop_status`), so a live scheduler/loop cannot grab it
     mid-authoring. It is flipped to `queued` only in step 8, after QC passes.
-  - **Set `supervised_only: true`** on the MASTER if ANY sub-plan's
-    `scope_paths` touches loop infrastructure (`loop_status.py`,
+  - **Write `supervised_only: false`** — this is the default and it is almost
+    always correct. Set it `true` in exactly one case: ANY sub-plan's
+    `scope_paths` *modifies* loop infrastructure (`loop_status.py`,
     `scheduler_scan.py`, `promote_next_master.py`, `plan_status.py`,
-    `scheduler.*`). A sub-plan must actually *modify* one of those files to
-    trigger this — mere mention or import in prose/test code does not warrant
-    `supervised_only`. Such a self-modifying batch must never be autonomously
+    `scheduler.*`). Mere mention, or an import in prose/test code, does not
+    warrant it. Such a self-modifying batch must never be autonomously
     dispatched — the scheduler and `promote_next_master` skip
     `supervised_only`; only manual `/ilk` runs it. Do NOT auto-flip it to
     `queued` while a scheduler is live (keep `draft`, run supervised with the
     scheduler stopped). Warn about this in the step-9 report.
+
+    In practice only a batch planned against the **ilk-skills toolkit clone**
+    can have those paths in scope. **In a consumer project, write
+    `supervised_only: false` and do not reconsider** unless the user explicitly
+    asks for `true` in this session. Never reach for it to mean "risky",
+    "unverified", "needs human review", "touches auth", or "external API
+    contract" — that is `status: draft` plus a verification tier
+    (decomposition-principles.md §13, §15). It is a costly flag: it removes
+    autonomous dispatch permanently AND makes `ilk-runner` preflight hard-stop
+    even a manual `/ilk-run` while a cross-project scheduler is alive. For real
+    side-effect hazards (mutating a live clone, pushing to a shared remote),
+    fix them in config (`clone_path` → throwaway clone) or with `--dry-run`
+    gates, and keep the batch autonomous. Step 7g enforces both directions.
   - Workstream map (ascii box diagram is fine)
   - Sub-plan registry markdown table
   - Execution rationale section
@@ -454,8 +467,9 @@ Once approved, write all files in one batch under the
 
 Run these passes against every newly-written sub-plan BEFORE
 committing. 7a / 7d-env / 7e findings are warnings (surface to the
-user); 7b mutates files; **7c (meta projects only) and 7d-errors are
-hard gates** — never advance to step 8 with an unresolved hard finding.
+user); 7b mutates files; **7c (meta projects only), 7d-errors, and 7g's
+`supervised_only` scope guard are hard gates** — never advance to step 8
+with an unresolved hard finding.
 
 ### 7a. `local_checks` anti-pattern lint
 
@@ -682,11 +696,15 @@ these are the *enforced* form of guards that used to be prose (and were
 skipped, stalling uccargo twice on 2026-06-13):
 
 ```bash
-python "<skill-root>/ilk-loop/scripts/plan_lint.py" <each new sub-plan .md>
+python "<skill-root>/ilk-loop/scripts/plan_lint.py" \
+  --master <MASTER .md> <each new sub-plan .md>
 ```
 
-It emits finding classes (all warnings — surface counts in the step-9
-report; fix before launching):
+Pass `--master` — it enables the master-level checks (slug-collision and the
+`supervised_only` scope guard) which cannot run from sub-plan text alone.
+
+It emits finding classes (warnings except where marked **hard finding** —
+surface counts in the step-9 report; fix before launching):
 
 - **env_prereq-vs-fallback contradiction** — a sub-plan that hard-gates on an
   MCP via `env_prereqs: claude mcp list | grep -q X` AND documents a
@@ -751,6 +769,14 @@ report; fix before launching):
   snapshot compare, before-and-after). The change silently shifts behaviour
   without a before/after delta check (the 'balance-drift' shape). See
   decomposition-principles.md §8.
+- **supervised_only scope guard** (**hard finding**, needs `--master`) — fires
+  in both directions: (a) the MASTER sets `supervised_only: true` but no
+  sub-plan's `scope_paths` modifies loop infra — the flag is unwarranted, set it
+  `false` unless the user explicitly asked for it; (b) a sub-plan's
+  `scope_paths` names a loop-infra file but the flag is off — a self-modifying
+  batch must not be autonomously dispatchable. Never resolve (a) by inventing a
+  rationale; resolve it by setting the flag `false` and using `status: draft` if
+  a human gate was what you wanted. See decomposition-principles.md §13.
 
 `plan_lint.py` exits non-zero when it finds anything; treat findings as
 must-fix-before-launch (a contradiction here is what actually stalled the loop).
@@ -815,10 +841,16 @@ then leave it `draft` and tell the user what to fix.
 
 > ⚠️ A `queued` master is immediately dispatchable by a running scheduler. For
 > a **self-modifying** batch (edits `loop_status.py` / `scheduler_scan.py` /
-> `promote_next_master.py` / `scheduler.*` / `plan_status.py`), do NOT flip to
-> `queued` while the scheduler is live — keep it `draft` (or set
-> `supervised_only: true`) and run it supervised with the scheduler stopped.
+> `promote_next_master.py` / `scheduler.*` / `plan_status.py`), keep it `draft`
+> while the scheduler is live and run it supervised with the scheduler stopped.
 > Surface this in the step-9 report.
+>
+> Such a batch should ALSO already carry `supervised_only: true` from step 6 —
+> but the two are separate gates and **`supervised_only` is not an alternative
+> to holding at `draft`**. `draft` = not released; `supervised_only` = never
+> self-dispatched. Do not set `supervised_only` to express "not ready" or "human
+> should review first" (decomposition-principles.md §13); that is what `draft`
+> is for, and `plan_lint` reports the substitution as a hard finding.
 
 If you (or the user) want version history for the plans themselves,
 that's a separate concern: `~/.ilk-data` can be its own git repo or

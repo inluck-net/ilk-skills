@@ -149,9 +149,15 @@ flowchart TD
    (also pre-existing). A formal role→provider registry file is deferred —
    the current implicit mapping (bootstrap command → home) is sufficient for
    the three roles shipped.
-3. **Self-hosting safety.** This batch is `supervised_only: true` per the
+3. **Self-hosting safety.** This batch was run `supervised_only: true` per the
    MASTER. All changes are additive (new `tools/minimax/`, bootstrap test
    coverage, docs) and touch no loop infrastructure.
+
+   > ⚠️ Historical record — **do not copy this as precedent.** "Additive and
+   > touches no loop infrastructure" is precisely the case where
+   > `supervised_only` is *unwarranted* (decomposition-principles.md §13); the
+   > flag's only trigger is `scope_paths` modifying loop infra.
+   > `plan_lint.py --master` now reports this combination as a hard finding.
 
 ## 6. Verification discipline
 

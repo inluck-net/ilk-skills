@@ -85,7 +85,7 @@ batch_date: YYYY-MM-DD
 source_status: <ticket-tracker status that fed this batch>
 total_tickets: 21
 status: draft | queued | active | shipped   # lifecycle: draft (authored, not yet released — non-runnable) → queued → active → shipped (also: paused). Legacy `pending` is accepted as `queued` for back-compat.
-supervised_only: false   # if true, the autonomous scheduler + promote_next_master NEVER dispatch this master; only manual /ilk runs it. Set true for self-modifying batches (edits loop_status.py / scheduler_scan.py / promote_next_master.py / plan_status.py / scheduler.*).
+supervised_only: false   # if true, the autonomous scheduler + promote_next_master NEVER dispatch this master, AND ilk-runner preflight hard-stops a manual /ilk-run while a scheduler is alive. Set true ONLY for self-modifying batches (scope_paths modifies loop_status.py / scheduler_scan.py / promote_next_master.py / plan_status.py / scheduler.*) — effectively the ilk-skills toolkit clone only. In a consumer project, leave `false` unless the user explicitly asks. NOT a readiness/risk/review gate — use `status: draft` for that (decomposition-principles.md §13; enforced by plan_lint --master).
 current_subplan: YYYY-MM-DD-<slug>   # cached pointer; loop_status verifies
 ---
 ```

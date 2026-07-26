@@ -494,6 +494,73 @@ Key properties:
 - **Not a readiness gate** — never set `supervised_only: true` because
   the batch "isn't ready yet" or "needs human review". Use `status:
   draft` for not-yet-released, and verification tiers for trust level.
+- **Effectively toolkit-only** — in practice only a batch planned
+  against the ilk-skills clone can have those paths in `scope_paths`.
+  In any consumer project, `supervised_only: false` is the answer. Do
+  not set it in a consumer project unless the user explicitly asks for
+  it in that session.
+
+### Two orthogonal gates — don't substitute one for the other
+
+| Gate | Question it answers | Set by |
+|---|---|---|
+| `status: draft` → `queued` | Is this batch *released* for running at all? | autonomy tier (§15); a human flips it |
+| `supervised_only` | May the scheduler *self-dispatch* it? | the mechanical scope test above, nothing else |
+
+Almost every misuse is reaching for `supervised_only` when the intent was
+`draft`. If the sentence in your head is "a human should look at this
+first", you want `draft`.
+
+### The flag is expensive — price it before setting it
+
+`supervised_only: true` costs more than it looks:
+
+1. The scheduler and `promote_next_master` skip the master **permanently**
+   — every step needs a human driving.
+2. `ilk-runner`'s preflight **hard-stops even a manual `/ilk-run`** while
+   any cross-project scheduler is alive (`preflight.sh` / `preflight.ps1`:
+   *"A cross-project scheduler is alive. Stop it before running a
+   supervised_only master."*). So once you schedule across projects, a
+   stray flag doesn't downgrade the batch to manual — it blocks both paths.
+
+That asymmetry is why an unwarranted flag is a **hard** `plan_lint`
+finding, not a warning.
+
+### Mitigate real hazards with config, not with supervision
+
+When the concern is a genuine side effect — a batch that mutates a repo
+you work in, pushes to a shared remote, or writes to a live service —
+removing autonomy doesn't remove the hazard; it just guarantees you're
+present when it fires. Neutralise it in config instead, and keep the
+batch autonomous:
+
+- Repo mutation (worktrees, branches, fetches) → point the relevant
+  config key (e.g. `clone_path`) at a **throwaway clone**, not the one
+  you have checked out.
+- Outward calls (PRs, comments, labels) → run the loop's gates in
+  `--dry-run` and add an audit gate asserting `mutating_calls == 0`.
+- Destructive local writes → scope them under `tmp_path` / a scratch dir
+  in the gate itself.
+
+> Evidence (gh-resolve, 2026-07-26): the flag was set because the
+> *product* pushes to a shared org repo — but the batch itself ran every
+> gate `--dry-run` and never opened a PR. The one real hazard was git
+> worktrees created in a live clone, which `clone_path` fixes directly.
+> The flag would have cost 37 steps of autonomy and fixed nothing.
+
+### Enforcement
+
+`plan_lint.py --master <MASTER> <sub-plans...>` runs the scope test in
+both directions: unwarranted flag → hard finding; infra-modifying scope
+with the flag off → hard finding. `/ilk-plan` step 7g runs this. Prose
+alone did not hold — see the field record below.
+
+> Field record: before enforcement, two shipped non-toolkit masters
+> carried the flag on risk-prose rationale alone (a kira-cloudflare
+> authz batch; a robot-voice API-contract batch that cited §15's Tier 3
+> "no autonomous dispatch" as its authority), plus a near-miss on
+> gh-resolve. Zero were warranted by the narrow rule. §15 has since been
+> corrected to route Tier 2/3 through `draft`.
 
 ### Prefer fixing the gap over inserting a human
 
@@ -613,13 +680,24 @@ whether the scheduler can dispatch it.
 
 - **Tier 2 — agent-plans-human-approve.** Behavior changes to loop
   infrastructure: runner, launcher, scheduler, feedback, adapter. The
-  agent plans, the master is `draft` + `supervised_only`, and the human
-  reviews each sub-plan before the loop runs it. This is the default for
+  agent plans, the master stays `status: draft`, and the human reviews
+  each sub-plan before releasing it to `queued`. This is the default for
   any sub-plan whose `scope_paths` modifies runtime behavior.
 
 - **Tier 3 — human-only.** Safety-model changes, contested design
   decisions, external-facing API contracts. The human drives; the agent
-  assists on request. No autonomous dispatch.
+  assists on request. The master stays `draft` until the human releases
+  it.
+
+> ⚠️ **Tiers do NOT set `supervised_only`.** The autonomy tier controls
+> *who releases* the master (`draft` → `queued`); `supervised_only`
+> controls whether the scheduler may *self-dispatch* it, and its only
+> trigger is the §13 mechanical test (`scope_paths` modifies
+> `loop_status.py` / `scheduler_scan.py` / `promote_next_master.py` /
+> `plan_status.py` / `scheduler.*`). Tier 2 and Tier 3 are held by
+> `draft`, not by `supervised_only`. Reaching for the flag to express
+> "human should look at this first" is the exact misuse §13 forbids —
+> and `plan_lint.py` now reports it as a hard finding.
 
 ### How to assign a tier
 
@@ -635,8 +713,10 @@ whether the scheduler can dispatch it.
 
 When a batch mixes tiers, the master plan's "Rollout strategy" section
 must list each sub-plan's tier. The highest tier in the batch governs the
-master's `supervised_only` setting (any Tier 2 sub-plan → master is
-`supervised_only`).
+master's **release gate**: any Tier 2 or Tier 3 sub-plan → the master is
+authored `status: draft` and a human flips it to `queued`. It does *not*
+govern `supervised_only`, which is decided independently by the §13
+scope test.
 
 ### Relationship to verification tiers (§12)
 
