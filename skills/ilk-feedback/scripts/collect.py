@@ -82,6 +82,27 @@ try:
 except ImportError:
     _loop_status = None  # type: ignore
 
+
+def _subplan_ref_re():
+    """Canonical sub-plan-reference regex from the sibling ilk-loop skill.
+
+    Resolved relative to this file so it works from a repo clone as well as
+    an installed symlink (the ``~/.cursor`` constants above predate
+    multi-host installs).  Falls back to a local build of the same shape if
+    plan_slug is unreachable — keep the two in sync via plan_slug.py.
+    """
+    try:
+        _sibling = Path(__file__).resolve().parent.parent.parent / "ilk-loop" / "scripts"
+        if _sibling.is_dir() and str(_sibling) not in sys.path:
+            sys.path.insert(0, str(_sibling))
+        from plan_slug import SUBPLAN_REF_RE  # type: ignore
+        return SUBPLAN_REF_RE
+    except Exception:
+        return re.compile(
+            r"(?:^|(?<=[\s(\[|]))(?:\./)?(\d{4}-\d{2}-\d{2}[a-z]?-[a-z0-9][a-z0-9-]*\.md)",
+            re.MULTILINE,
+        )
+
 # Pull in ilk_paths from the sibling ilk-loop skill so meta-project
 # detection is consistent across the suite. Falls back to the legacy
 # walk-up in resolve_by_cwd() if the import fails (e.g. running from a
@@ -807,7 +828,7 @@ def batch_unverified_tiers(project_path: Path) -> list[dict[str, str]]:
             master_text = chosen_master.read_text(encoding="utf-8")
         except OSError:
             master_text = ""
-        refs = re.findall(r"(\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*\.md)", master_text)
+        refs = _subplan_ref_re().findall(master_text)
         refs_set = {r for r in refs if not r.startswith("MASTER")}
         # Only scope when the master actually lists sub-plans. A master with no
         # parseable registry (malformed/minimal) → don't scope (scan all) rather

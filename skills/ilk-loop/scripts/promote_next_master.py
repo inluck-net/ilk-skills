@@ -40,6 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ilk_paths import find_plans_dir as _resolve_plans_dir  # noqa: E402
+from plan_slug import has_date_prefix, strip_date_prefix  # noqa: E402
 from plan_status import master_has_nonshipped, master_is_drainable  # noqa: E402
 
 FRONTMATTER_RE = re.compile(r"^(---\s*\n)(.*?)(\n---\s*\n)", re.DOTALL)
@@ -52,12 +53,11 @@ _TRUTHY_VALUES = {"true", "yes", "1"}
 
 
 def _slug_from_filename(fname: str) -> str:
-    """Strip YYYY-MM-DD- prefix and .md suffix from a sub-plan filename."""
+    """Strip the date prefix and .md suffix from a sub-plan filename."""
     slug = fname
     if slug.endswith(".md"):
         slug = slug[:-3]
-    m = re.match(r"^\d{4}-\d{2}-\d{2}-(.*)$", slug)
-    return m.group(1) if m else slug
+    return strip_date_prefix(slug)
 
 
 def _subplan_file_for_slug(slug: str, plans_dir: Path) -> Path | None:
@@ -68,7 +68,7 @@ def _subplan_file_for_slug(slug: str, plans_dir: Path) -> Path | None:
     exists.
     """
     # If it already looks like a dated filename, try directly.
-    if re.match(r"^\d{4}-\d{2}-\d{2}-", slug):
+    if has_date_prefix(slug):
         p = plans_dir / slug
         if p.exists():
             return p

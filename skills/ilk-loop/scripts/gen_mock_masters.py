@@ -44,6 +44,9 @@ import os
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from plan_slug import strip_date_prefix as _strip_date_prefix  # noqa: E402
+
 
 def _master_template(m: dict) -> str:
     """Build a MASTER-*.md file from a spec entry."""
@@ -53,10 +56,7 @@ def _master_template(m: dict) -> str:
     # title matching the sub-plan regex (which looks for YYYY-MM-DD-*.md).
     default_plan = m["filename"].replace("MASTER-", "").replace(".md", "")
     # Strip the date prefix if present: 2026-06-01-m1 → m1
-    import re as _re
-    date_match = _re.match(r"^\d{4}-\d{2}-\d{2}-(.*)$", default_plan)
-    if date_match:
-        default_plan = date_match.group(1)
+    default_plan = _strip_date_prefix(default_plan)
     plan = m.get("plan", default_plan)
     created = m.get("created", "2026-06-01T00:00:00+08:00")
     status = m.get("status", "active")

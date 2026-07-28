@@ -44,6 +44,7 @@ PROJECTS_JSON = LAUNCHER_DIR / "projects.json"
 sys.path.insert(0, str(LOOP_SCRIPTS))
 from loop_status import find_plans_dir, parse_frontmatter, extract_master_order, pick_active_master  # type: ignore
 from pid_health import pid_alive, pid_command_alive  # type: ignore
+from plan_slug import DATE_PREFIX  # type: ignore
 
 BAR_WIDTH = 10
 PACE_WINDOW = 5  # rolling window of step commits used for "min/step"
@@ -195,7 +196,9 @@ def bar_for(current: int, total: int, status: str) -> str:
     return "[" + ("▓" * filled) + ("░" * (BAR_WIDTH - filled)) + "]"
 
 
-_DATE_PREFIX_RE = __import__("re").compile(r"^(\d{4}-\d{2}-\d{2})-(.+)$")
+# Canonical date shape lives in plan_slug.py — includes the optional
+# same-day letter (2026-07-28b-…).
+_DATE_PREFIX_RE = __import__("re").compile(rf"^({DATE_PREFIX})-(.+)$")
 
 
 def common_date_prefix(rows: list[dict]) -> str | None:

@@ -12,7 +12,14 @@ Stdlib only.
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from plan_slug import (  # noqa: E402
+    SUBPLAN_REF_RE,
+    strip_date_prefix,
+)
 
 
 # ── front-matter parsing ────────────────────────────────────────────────────
@@ -67,14 +74,10 @@ def parse_frontmatter(text: str) -> dict[str, str]:
 
 # ── sub-plan filename extraction ────────────────────────────────────────────
 
-# Matches sub-plan filenames like 2026-06-06-slug.md at the top level
-# (not in subdirectories).  The lookbehind ensures the preceding character
-# is a non-path separator (start-of-line, whitespace, bracket, paren, or
-# ``./``) — but NOT ``/``, which would indicate a subdirectory.
-_SUBPLAN_RE = re.compile(
-    r"(?:^|(?<=[\s(\[|]))(?:\./)?(\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*\.md)",
-    re.MULTILINE,
-)
+# Matches sub-plan filenames like 2026-06-06-slug.md (and same-day variants
+# like 2026-07-28b-slug.md) at the top level, not in subdirectories.
+# Canonical pattern lives in plan_slug.py — do not re-inline it here.
+_SUBPLAN_RE = SUBPLAN_REF_RE
 
 
 def extract_subplan_files(master_text: str) -> list[str]:
@@ -211,14 +214,13 @@ def _slug_from_filename(fname: str) -> str:
 
 
 def _strip_date_prefix(slug: str) -> str:
-    """Strip a leading ``YYYY-MM-DD-`` date prefix from a slug.
+    """Strip a leading ``YYYY-MM-DD[<letter>]-`` date prefix from a slug.
 
     Idempotent: a slug with no date prefix is returned unchanged.
+    Thin wrapper over :func:`plan_slug.strip_date_prefix`, kept because
+    several modules import this private name.
     """
-    m = re.match(r"^\d{4}-\d{2}-\d{2}-(.*)$", slug)
-    if m:
-        return m.group(1)
-    return slug
+    return strip_date_prefix(slug)
 
 
 def subplan_is_runnable(fm: dict[str, str], sibling_statuses: dict[str, str]) -> bool:

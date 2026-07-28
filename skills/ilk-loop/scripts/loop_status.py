@@ -28,6 +28,10 @@ from ilk_paths import (  # noqa: E402
     read_meta_manifest,
     MetaManifestError,
 )
+from plan_slug import (  # noqa: E402
+    SUBPLAN_REF_OPTIONAL_MD_RE,
+    strip_date_prefix,
+)
 from plan_status import (  # noqa: E402
     _slug_from_filename,
     master_has_nonshipped,
@@ -104,14 +108,10 @@ def extract_master_order(master_text: str, plans_dir: Path | None = None) -> lis
                 body = "\n".join(lines[i + 1:])
                 break
 
-    # Capture group is the filename. The lookbehind requires the preceding
-    # character to be a non-path character (start-of-line, whitespace,
-    # bracket, paren, or `./`) — but specifically NOT `/`, which would
-    # mean the filename lives in a subdirectory.
-    pattern = re.compile(
-        r"(?:^|(?<=[\s(\[|]))(?:\./)?(\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*(?:\.md)?)",
-        re.MULTILINE,
-    )
+    # Capture group is the filename; `.md` is optional here because registry
+    # tables sometimes list the bare slug (normalised below).  See
+    # plan_slug.py for the canonical pattern.
+    pattern = SUBPLAN_REF_OPTIONAL_MD_RE
     # Extract the master_plan slug from frontmatter so we can exclude
     # phantom references.  The title line often says
     # "# MASTER plan: 2026-06-20-batch" and the regex matches
@@ -369,13 +369,11 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
     # Build subplans list
     subplans = []
     for fname, status, cur, est, repo in rows:
-        # Derive slug: strip YYYY-MM-DD- prefix and .md suffix
+        # Derive slug: strip the date prefix and .md suffix
         slug = fname
         if fname.endswith(".md"):
             slug = fname[:-3]
-        m = re.match(r"^\d{4}-\d{2}-\d{2}-(.*)$", slug)
-        if m:
-            slug = m.group(1)
+        slug = strip_date_prefix(slug)
         subplans.append({
             "fname": fname,
             "slug": slug,
