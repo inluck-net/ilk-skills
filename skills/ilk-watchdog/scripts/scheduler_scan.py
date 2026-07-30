@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -68,6 +69,7 @@ if _ILK_LOOP_SCRIPTS.is_dir():
 from ilk_paths import ilk_data_root, project_key  # noqa: E402
 from plan_status import (  # noqa: E402
     extract_subplan_files,
+    is_master_all_shipped,
     master_has_nonshipped,
     normalize_master_status,
     parse_frontmatter,
@@ -167,6 +169,109 @@ def scan_projects() -> list[dict]:
     return results
 
 
+_VERIFICATION_DISPATCH_MARKER = "verification-dispatched.json"
+
+
+def _dispatch_verification_on_drain(
+    project_dir: Path,
+    master_path: Path,
+    plans_dir: Path,
+    *,
+    _launch_fn=None,
+) -> None:
+    """Dispatch a planner-tier verification session when a master drains.
+
+    Called after ``reconcile_master_status`` flips a master to ``shipped``
+    (all sub-plans shipped).  Dispatches a planner session running the
+    verification entrypoint so that ``verified: true`` can be set
+    automatically, unblocking ``promote_next_master``.
+
+    **Idempotency:** a marker file prevents double-dispatch.  Two
+    consecutive scan passes over the same shipped master must produce
+    exactly one dispatch (AC-1).
+
+    **Skips:**
+    - ``supervised_only: true`` masters (AC-3) — a self-modifying batch
+      must not auto-verify itself.
+    - Blacklisted projects (AC-4) — a blocked project must not spawn work.
+
+    Errors are logged and non-fatal (AC-7 — the scheduler continues
+    draining other projects).
+    """
+    # --- idempotency guard (AC-1) ---
+    marker_path = project_dir / "runtime" / _VERIFICATION_DISPATCH_MARKER
+    if marker_path.exists():
+        return
+
+    # --- read master frontmatter ---
+    try:
+        master_text = master_path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return
+    fm = parse_frontmatter(master_text)
+
+    # --- supervised_only skip (AC-3) ---
+    if (fm.get("supervised_only") or "").strip().lower() in ("true", "yes", "1"):
+        return
+
+    # --- blacklist skip (AC-4) ---
+    try:
+        from blacklist_status import is_blacklisted
+        bl = is_blacklisted(project_dir)
+        if bl.get("blacklisted"):
+            return
+    except Exception:
+        # Blacklist check failure is non-fatal — treat as not blacklisted.
+        pass
+
+    # --- dispatch the planner verification ---
+    skill_root = _SKILL_ROOT
+    launcher = skill_root / "ilk-launcher" / "scripts" / "launch.sh"
+    if not launcher.exists():
+        return
+
+    repo_path = resolve_repo_path(project_dir, project_dir.name)
+    if not repo_path:
+        return
+
+    cmd = [
+        "bash", str(launcher),
+        "--project-path", repo_path,
+        "--engine", "claude",
+        "--max-iterations", "1",
+    ]
+
+    try:
+        if _launch_fn is not None:
+            _launch_fn(cmd)
+        else:
+            subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+    except Exception:
+        # Dispatch failure is non-fatal (AC-7).
+        return
+
+    # --- write idempotency marker ---
+    try:
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        marker_data = {
+            "master": master_path.name,
+            "dispatched_at": datetime.now().isoformat(),
+            "project_key": project_dir.name,
+        }
+        tmp = marker_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(marker_data, indent=2), encoding="utf-8")
+        os.replace(tmp, marker_path)
+    except OSError:
+        # Marker write failure is non-fatal — worst case we double-dispatch
+        # on the next scan (the launcher itself is idempotent).
+        pass
+
+
 def _scan_one_project(project_dir: Path) -> dict | None:
     """Classify a single project; return its scan entry or None if not runnable.
 
@@ -186,10 +291,22 @@ def _scan_one_project(project_dir: Path) -> dict | None:
 
     # Reconcile pass: auto-flip any all-shipped master to status: shipped.
     # Idempotent + best-effort (tolerates concurrent writes).
+    # When a master flips, dispatch a planner verification session so
+    # that ``verified: true`` can be set automatically (the drain→verify
+    # join).  The dispatch is idempotent (marker file) and skips
+    # supervised_only / blacklisted projects.
+    just_reconciled: list[Path] = []
     for m in masters:
         try:
-            reconcile_master_status(m, plans_dir)
+            if reconcile_master_status(m, plans_dir):
+                just_reconciled.append(m)
         except OSError:
+            pass
+
+    for m in just_reconciled:
+        try:
+            _dispatch_verification_on_drain(project_dir, m, plans_dir)
+        except Exception:
             pass
 
     # --- pass 1: classify masters by status + runnable check ---
