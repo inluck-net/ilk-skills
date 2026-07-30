@@ -358,8 +358,12 @@ class TestDispatchOnDrain:
         _call_dispatch(project_dir, master_path, plans_dir,
                        launch_fn=failing_launch)
 
-    def test_engine_is_claude(self, tmp_path):
-        """AC-2 (partial): dispatch uses --engine claude (planner home)."""
+    def test_engine_is_claude_planner_home(self, tmp_path):
+        """AC-2: dispatch uses --engine claude → launcher resolves
+        CLAUDE_CONFIG_DIR to ~/.claude (planner home), never
+        ~/.claude-worker.  The flag is the mechanism; the launcher's
+        ``resolve_engine`` function maps it to the correct home.
+        Also verifies --max-iterations 1 (one-shot verification)."""
         dispatches: list[list[str]] = []
         project_dir = _setup_project(tmp_path, master_status="active")
 
@@ -373,7 +377,44 @@ class TestDispatchOnDrain:
                        launch_fn=capture_launch)
         assert len(dispatches) == 1
         cmd = dispatches[0]
+
+        # Verify engine is claude (planner), not claude-worker.
         engine_idx = cmd.index("--engine")
         assert cmd[engine_idx + 1] == "claude", (
-            "must dispatch with --engine claude (planner home)"
+            "must dispatch with --engine claude (planner home, ~/.claude), "
+            "not claude-worker (worker home, ~/.claude-worker)"
         )
+        # Verify one-shot: max-iterations 1 prevents the session from looping.
+        iter_idx = cmd.index("--max-iterations")
+        assert cmd[iter_idx + 1] == "1"
+
+        # Verify the launcher script is the real launch.sh, not a shim.
+        assert cmd[1].endswith("launch.sh"), (
+            "must use the real launcher script"
+        )
+
+
+class TestNoPollingInDispatch:
+    """AC-8: no polling loop in any model-invoked path."""
+
+    def test_no_sleep_in_dispatch_code(self):
+        """AC-8: grep the dispatch function source for sleep/poll patterns.
+        A model session that polls and relaunched spawned duplicate loops
+        on 2026-06-22 (decomposition-principles §21)."""
+        import inspect
+        sys.path.insert(0, str(SCRIPTS_ILK_WATCHDOG))
+        sys.path.insert(0, str(SCRIPTS_ILK_LOOP))
+        for mod_name in ("scheduler_scan", "ilk_paths", "plan_status"):
+            if mod_name in sys.modules:
+                del sys.modules[mod_name]
+        import scheduler_scan
+
+        source = inspect.getsource(scheduler_scan._dispatch_verification_on_drain)
+        # These patterns indicate a polling loop — forbidden in a
+        # model-invoked path.
+        forbidden = ["time.sleep", "while True", "poll(", "await"]
+        for pattern in forbidden:
+            assert pattern not in source, (
+                f"dispatch function contains '{pattern}' — "
+                f"AC-8 forbids polling in model-invoked paths"
+            )
