@@ -35,11 +35,14 @@ Exit code 0 always (empty list is valid — means "nothing to do").
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 # --- import ilk_paths from sibling ilk-loop/scripts/ ---
 _SKILL_ROOT_CANDIDATES = [
@@ -222,16 +225,27 @@ def _dispatch_verification_on_drain(
             return
     except Exception:
         # Blacklist check failure is non-fatal — treat as not blacklisted.
-        pass
+        _log.debug("blacklist check failed for %s: continuing as not blacklisted",
+                    project_dir.name)
 
     # --- dispatch the planner verification ---
     skill_root = _SKILL_ROOT
     launcher = skill_root / "ilk-launcher" / "scripts" / "launch.sh"
     if not launcher.exists():
+        _log.warning(
+            "[verify-dispatch] launcher not found at %s — "
+            "degrading to manual verification for %s",
+            launcher, project_dir.name,
+        )
         return
 
     repo_path = resolve_repo_path(project_dir, project_dir.name)
     if not repo_path:
+        _log.warning(
+            "[verify-dispatch] no repo_path for %s — "
+            "degrading to manual verification",
+            project_dir.name,
+        )
         return
 
     cmd = [
@@ -251,8 +265,13 @@ def _dispatch_verification_on_drain(
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
-    except Exception:
+    except Exception as exc:
         # Dispatch failure is non-fatal (AC-7).
+        _log.warning(
+            "[verify-dispatch] dispatch failed for %s: %s — "
+            "degrading to manual verification",
+            project_dir.name, exc,
+        )
         return
 
     # --- write idempotency marker ---
