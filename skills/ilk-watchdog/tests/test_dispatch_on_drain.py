@@ -538,9 +538,76 @@ class TestDrainVerifyPromoteJoin:
             "no unverified blockers expected"
         )
 
+    @pytest.mark.parametrize("escalation_value", [
+        "false",        # what an escalating session writes explicitly
+        "no",
+        "0",
+        "escalated",    # a plausible mis-write: the STATE, not a boolean
+        "needs-human",  # the escalation label leaking into the marker
+    ])
+    def test_escalated_verified_value_blocks_promotion(
+        self, tmp_path, escalation_value,
+    ):
+        """AC-6: an ESCALATING verification session must not unblock promotion.
+
+        Closes the half that ``test_unverified_blocks_promotion`` leaves open.
+        That test covers *absent* ``verified``; this one covers the values an
+        escalating session actually writes.  The distinction matters because
+        absent is the back-compat default (nothing ran), whereas an explicit
+        value means a verification session **did** run and **declined** to
+        verify — and Contract 4 requires both to block.
+
+        The two mis-write cases (``escalated``, ``needs-human``) are the real
+        hazard: a truthy-looking non-empty string is exactly what a careless
+        producer would write on the escalation path, and a naive
+        ``if fm.get("verified"):`` check would treat either as verified and
+        promote on a failed verification.  Contract 4's "any other string →
+        treat as unverified" row is what this pins.
+        """
+        plans = tmp_path / "projects" / "test-proj" / "plans"
+        plans.mkdir(parents=True, exist_ok=True)
+
+        # Master A — shipped, compile-only, verification ESCALATED.
+        _write_master(
+            plans, "MASTER-A.md", status="shipped",
+            subplans=["2026-07-29-dep-work.md"],
+        )
+        self._write_subplan_with_verification(
+            plans, "2026-07-29-dep-work.md",
+            status="shipped", verification_tier="compile-only",
+            verified=escalation_value,
+        )
+
+        # Master B — queued, builds_on A's slug.
+        self._write_master_with_builds_on(
+            plans, "MASTER-B.md", status="queued",
+            subplans=["2026-07-29-consumer.md"],
+            builds_on="dep-work",
+        )
+        _write_subplan(plans, "2026-07-29-consumer.md", status="pending")
+
+        promote_data = self._run_promote(plans)
+
+        assert promote_data["promoted"] is None, (
+            f"verified: {escalation_value!r} came from an ESCALATING session "
+            f"and must NOT unblock promotion — the failure path must not "
+            f"resemble success (AC-6). Got promoted="
+            f"{promote_data['promoted']!r}."
+        )
+        assert promote_data.get("skipped_unverified"), (
+            f"verified: {escalation_value!r} must be reported as a blocking "
+            f"unverified dependency, not silently dropped"
+        )
+        blocker_masters = [
+            entry["master"] for entry in promote_data["skipped_unverified"]
+        ]
+        assert "MASTER-B.md" in blocker_masters
+
     def test_unverified_blocks_promotion(self, tmp_path):
-        """AC-6 (partial): absent verified on a compile-only dependency
-        blocks promotion.  The failure path must not resemble success."""
+        """AC-6: absent verified on a compile-only dependency blocks
+        promotion (the back-compat default — nothing ran).  The escalation
+        half is covered by
+        ``test_escalated_verified_value_blocks_promotion``."""
         plans = tmp_path / "projects" / "test-proj" / "plans"
         plans.mkdir(parents=True, exist_ok=True)
 
