@@ -418,3 +418,193 @@ class TestNoPollingInDispatch:
                 f"dispatch function contains '{pattern}' — "
                 f"AC-8 forbids polling in model-invoked paths"
             )
+
+
+class TestDrainVerifyPromoteJoin:
+    """AC-5, AC-6: the drain→verify→promote join end to end.
+
+    One test exercises the WHOLE join — not the halves.  Two green halves
+    are how the join stayed broken while every component passed.
+    """
+
+    def _write_master_with_builds_on(
+        self, plans_dir, name, *, status, subplans, builds_on,
+    ):
+        """Write a MASTER with a ``builds_on`` frontmatter field."""
+        plans_dir.mkdir(parents=True, exist_ok=True)
+        lines = [
+            "---",
+            f"title: {name}",
+            "created: 2026-07-29T00:00:00+08:00",
+            f"status: {status}",
+            "priority: 0",
+            "pause_after_ship: false",
+            f"builds_on: {builds_on}",
+            "---",
+            "",
+            f"# {name}",
+            "",
+        ]
+        if subplans:
+            lines += [
+                "## Sub-plan registry",
+                "",
+                "| # | Sub-plan | Status |",
+                "|---|---|---|",
+            ]
+            for sp in subplans:
+                lines.append(f"| 1 | [{sp}](./{sp}) | pending |")
+            lines.append("")
+        (plans_dir / name).write_text("\n".join(lines), encoding="utf-8")
+
+    def _write_subplan_with_verification(
+        self, plans_dir, name, *, status="shipped",
+        verification_tier="compile-only", verified=None,
+    ):
+        """Write a sub-plan with verification_tier and optional verified."""
+        plans_dir.mkdir(parents=True, exist_ok=True)
+        lines = [
+            "---",
+            f"plan: {name.replace('.md', '')}",
+            f"status: {status}",
+            "current_step: 3",
+            "estimated_steps: 3",
+            "last_updated: 2026-07-29",
+            f"verification_tier: {verification_tier}",
+        ]
+        if verified is not None:
+            lines.append(f"verified: {verified}")
+        lines += [
+            "---",
+            "",
+            f"# {name}",
+            "",
+        ]
+        (plans_dir / name).write_text("\n".join(lines), encoding="utf-8")
+
+    def _run_promote(self, plans_dir):
+        """Run promote_next_master.py --plans-dir <dir> --dry-run."""
+        import subprocess
+        PROMOTE_SCRIPT = SCRIPTS_ILK_LOOP / "promote_next_master.py"
+        result = subprocess.run(
+            [sys.executable, str(PROMOTE_SCRIPT),
+             "--plans-dir", str(plans_dir), "--dry-run"],
+            capture_output=True, text=True, timeout=15,
+            encoding="utf-8", errors="replace",
+        )
+        assert result.returncode == 0, f"exit {result.returncode}: {result.stderr}"
+        return json.loads(result.stdout)
+
+    def test_verified_unblocks_promotion(self, tmp_path):
+        """AC-5: verified: true on a compile-only dependency unblocks
+        promotion of a master that builds_on it.
+
+        Exercises the WHOLE join:
+        1. Master A ships with verification_tier: compile-only.
+        2. Master B builds_on A's slug.
+        3. A's sub-plan has verified: true.
+        4. promote_next_master promotes B (not blocked).
+        """
+        plans = tmp_path / "projects" / "test-proj" / "plans"
+        plans.mkdir(parents=True, exist_ok=True)
+
+        # Master A — shipped, compile-only, verified.
+        _write_master(
+            plans, "MASTER-A.md", status="shipped",
+            subplans=["2026-07-29-dep-work.md"],
+        )
+        self._write_subplan_with_verification(
+            plans, "2026-07-29-dep-work.md",
+            status="shipped", verification_tier="compile-only",
+            verified="true",
+        )
+
+        # Master B — queued, builds_on A's slug.
+        self._write_master_with_builds_on(
+            plans, "MASTER-B.md", status="queued",
+            subplans=["2026-07-29-consumer.md"],
+            builds_on="dep-work",
+        )
+        _write_subplan(
+            plans, "2026-07-29-consumer.md", status="pending",
+        )
+
+        promote_data = self._run_promote(plans)
+        assert promote_data["promoted"] == "MASTER-B.md", (
+            f"verified dependency should unblock promotion, "
+            f"got {promote_data}"
+        )
+        assert promote_data.get("skipped_unverified") is None, (
+            "no unverified blockers expected"
+        )
+
+    def test_unverified_blocks_promotion(self, tmp_path):
+        """AC-6 (partial): absent verified on a compile-only dependency
+        blocks promotion.  The failure path must not resemble success."""
+        plans = tmp_path / "projects" / "test-proj" / "plans"
+        plans.mkdir(parents=True, exist_ok=True)
+
+        # Master A — shipped, compile-only, NOT verified.
+        _write_master(
+            plans, "MASTER-A.md", status="shipped",
+            subplans=["2026-07-29-dep-work.md"],
+        )
+        self._write_subplan_with_verification(
+            plans, "2026-07-29-dep-work.md",
+            status="shipped", verification_tier="compile-only",
+            # verified is None (absent) → unverified
+        )
+
+        # Master B — queued, builds_on A's slug.
+        self._write_master_with_builds_on(
+            plans, "MASTER-B.md", status="queued",
+            subplans=["2026-07-29-consumer.md"],
+            builds_on="dep-work",
+        )
+        _write_subplan(
+            plans, "2026-07-29-consumer.md", status="pending",
+        )
+
+        promote_data = self._run_promote(plans)
+        assert promote_data["promoted"] is None, (
+            "unverified compile-only dependency must block promotion"
+        )
+        assert promote_data.get("skipped_unverified"), (
+            "skipped_unverified should list the blocking dependency"
+        )
+        blocker_masters = [
+            entry["master"]
+            for entry in promote_data["skipped_unverified"]
+        ]
+        assert "MASTER-B.md" in blocker_masters
+
+    def test_loop_verified_tier_does_not_block(self, tmp_path):
+        """A loop-verified dependency does NOT block promotion
+        (only compile-only and device-manual tiers require verification)."""
+        plans = tmp_path / "projects" / "test-proj" / "plans"
+        plans.mkdir(parents=True, exist_ok=True)
+
+        # Master A — shipped, loop-verified (not compile-only).
+        _write_master(
+            plans, "MASTER-A.md", status="shipped",
+            subplans=["2026-07-29-auto-work.md"],
+        )
+        self._write_subplan_with_verification(
+            plans, "2026-07-29-auto-work.md",
+            status="shipped", verification_tier="loop-verified",
+        )
+
+        # Master B — queued, builds_on A's slug.
+        self._write_master_with_builds_on(
+            plans, "MASTER-B.md", status="queued",
+            subplans=["2026-07-29-consumer.md"],
+            builds_on="auto-work",
+        )
+        _write_subplan(
+            plans, "2026-07-29-consumer.md", status="pending",
+        )
+
+        promote_data = self._run_promote(plans)
+        assert promote_data["promoted"] == "MASTER-B.md", (
+            "loop-verified dependency should NOT block promotion"
+        )
