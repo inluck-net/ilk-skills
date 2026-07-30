@@ -219,15 +219,16 @@ but PID 48268 was recycled to another process. `pid_alive` returned `True`
 
 ---
 
-## Contract 4: Human-verify marker (compile-only / device-manual)
+## Contract 4: Verification marker (compile-only / device-manual)
 
 ### Purpose
 
 A shipped `compile-only` or `device-manual` sub-plan has not been runtime-verified
-in-loop. Before later work can build on it, a human must confirm it actually works.
-This contract defines the on-disk marker that records that confirmation, so
-`promote_next_master.py` can block promotion of dependent masters until verification
-occurs.
+in-loop. Before later work can build on it, verification must occur — either by a
+human (device or manual pass) or by the automated planner verification dispatch
+that fires when a master drains. This contract defines the on-disk marker that
+records that confirmation, so `promote_next_master.py` can block promotion of
+dependent masters until verification occurs.
 
 ### Format
 
@@ -246,7 +247,7 @@ verified: true          # <-- human-verify marker
 
 | Value | Meaning |
 |---|---|
-| `true` / `yes` / `1` | Human has verified — promotion may proceed |
+| `true` / `yes` / `1` | Verified (human or machine) — promotion may proceed |
 | *(absent)* | **Not verified** — back-compat default; treat as unverified |
 | `false` / `no` / `0` | Explicitly unverified (same as absent, but intentional) |
 | Any other string | Treat as unverified (degrade-safe — see below) |
@@ -255,7 +256,13 @@ verified: true          # <-- human-verify marker
 
 - **A human** editing the sub-plan file directly (after a device or manual pass).
 - **`/ilk-feedback`** — when the feedback flow records a human verification result.
-- Never written by the autonomous loop, the runner, or the scheduler.
+- **The planner verification dispatch** — when `scheduler_scan.py` detects a master
+  reaching all-shipped, it dispatches a planner-tier session (engine: `claude`,
+  home: `~/.claude`) running the verification entrypoint. That session may set
+  `verified: true` if gates pass, or escalate (leaving the marker absent). The
+  dispatch is idempotent (marker file) and skips `supervised_only` masters and
+  blacklisted projects. A human pass remains valid and is the fallback when
+  dispatch cannot happen (launcher missing, planner home unbootstrapped).
 
 ### Who reads
 
@@ -279,6 +286,10 @@ verified: true          # <-- human-verify marker
 3. **Marker is independent of `status: shipped`.** A sub-plan must be `shipped`
    before the marker is meaningful. A `verified: true` on a `pending` sub-plan
    is a no-op (and should be flagged as an anomaly if detected).
+4. **Machine-set is valid.** The drain→verify dispatch may set `verified: true`
+   automatically. This is not a bug — it is the intended close of the manual
+   join. A human pass is still valid and is the fallback when dispatch cannot
+   happen. Absent still means unverified (invariant 1).
 
 ### Bug reference (field case: compile-only carry-forward)
 
