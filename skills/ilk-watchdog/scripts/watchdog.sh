@@ -1069,4 +1069,6 @@ main() {
   run_watchdog_loop "$RESOLVED_PATH" "$RESOLVED_NAME" "$POLL_INTERVAL_SEC" "$MAX_RESTARTS"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
