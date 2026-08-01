@@ -290,6 +290,98 @@ else
   fail "own pid file deleted on exit" "expected DELETED, got $result"
 fi
 
+# =============================================================================
+# AC-4: second watchdog launched against a live project refuses
+# =============================================================================
+
+echo "AC-4: second watchdog refuses to start alongside a live one"
+
+# Create a temp project with .git (required for ilk_paths.py to resolve)
+AC4_TMPDIR=$(mktemp -d)
+AC4_PROJ="$AC4_TMPDIR/proj"
+mkdir -p "$AC4_PROJ/.git"
+
+# Set ILK_DATA_HOME to isolate from real ~/.ilk-data
+# Verify the watchdog dir resolves under our tmpdir — if it falls back to
+# ~/.ilk-data, this test would disturb a live watchdog.
+export ILK_DATA_HOME="$AC4_TMPDIR/data"
+
+# Probe the resolved watchdog dir
+RESOLVED_DIR=$(bash -c '
+  source "'"$WATCHDOG"'" 2>/dev/null
+  get_ilk_watchdog_dir "'"$AC4_PROJ"'"
+')
+
+# Normalize paths for macOS where /var is a symlink to /private/var
+AC4_TMPDIR_REAL=$(python3 -c "import os; print(os.path.realpath('$AC4_TMPDIR'))")
+
+if [[ -z "$RESOLVED_DIR" ]]; then
+  fail "AC-4: watchdog dir resolves under TEST_TMPDIR" "resolved to empty"
+elif [[ "$RESOLVED_DIR" != "$AC4_TMPDIR_REAL"* ]]; then
+  fail "AC-4: watchdog dir resolves under TEST_TMPDIR" "resolved to $RESOLVED_DIR (outside $AC4_TMPDIR_REAL)"
+else
+  pass "watchdog dir resolves under TEST_TMPDIR ($RESOLVED_DIR)"
+fi
+
+WATCHDOG_LOG="$RESOLVED_DIR/watchdog.log"
+WATCHDOG_PID_FILE="$RESOLVED_DIR/watchdog.pid"
+
+# Start the first watchdog in background
+# Use exec so the background process IS the watchdog (not a wrapper shell)
+bash -c 'exec bash "'"$WATCHDOG"'" --project-path "'"$AC4_PROJ"'"' &
+WD1_PID=$!
+BACKGROUND_PIDS="$BACKGROUND_PIDS $WD1_PID"
+
+# Wait for the pid file to appear (up to 15s)
+waited=0
+while [[ $waited -lt 15 ]]; do
+  if [[ -f "$WATCHDOG_PID_FILE" ]]; then
+    break
+  fi
+  sleep 1
+  waited=$((waited + 1))
+done
+
+if [[ ! -f "$WATCHDOG_PID_FILE" ]]; then
+  fail "AC-4: first watchdog created pid file" "pid file not found after ${waited}s"
+else
+  WD1_RECORDED_PID=$(tr -d '[:space:]' < "$WATCHDOG_PID_FILE")
+  pass "first watchdog created pid file (pid=$WD1_RECORDED_PID)"
+fi
+
+# Start the second watchdog — it should refuse and exit
+WD2_OUTPUT=$(bash "$WATCHDOG" --project-path "$AC4_PROJ" 2>&1) || true
+
+# Assert it printed WATCHDOG ALREADY RUNNING
+if echo "$WD2_OUTPUT" | grep -q 'WATCHDOG ALREADY RUNNING'; then
+  pass "second watchdog printed WATCHDOG ALREADY RUNNING"
+else
+  fail "second watchdog printed WATCHDOG ALREADY RUNNING" "output: $WD2_OUTPUT"
+fi
+
+# Assert the first watchdog is still alive
+if test_process_alive "$WD1_RECORDED_PID"; then
+  pass "first watchdog still alive after second refused"
+else
+  fail "first watchdog still alive after second refused" "pid $WD1_RECORDED_PID is dead"
+fi
+
+# Assert the pid file still has the first watchdog's pid
+if [[ -f "$WATCHDOG_PID_FILE" ]]; then
+  CURRENT_PID=$(tr -d '[:space:]' < "$WATCHDOG_PID_FILE")
+  if [[ "$CURRENT_PID" == "$WD1_RECORDED_PID" ]]; then
+    pass "pid file still holds first watchdog's pid"
+  else
+    fail "pid file still holds first watchdog's pid" "expected $WD1_RECORDED_PID, got $CURRENT_PID"
+  fi
+else
+  fail "pid file still holds first watchdog's pid" "pid file was deleted"
+fi
+
+# Clean up the AC-4 temp dir separately (don't leave watchdogs running)
+kill "$WD1_RECORDED_PID" 2>/dev/null || true
+rm -rf "$AC4_TMPDIR"
+
 # ----- Report ------------------------------------------------------------
 
 echo ""
