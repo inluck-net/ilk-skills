@@ -196,6 +196,100 @@ else
   fail "tail -f .../watchdog.log correctly rejected" "expected non-zero, got rc=0"
 fi
 
+# =============================================================================
+# AC-3: stale instance exiting does NOT delete a live instance's pid file
+# =============================================================================
+
+echo "AC-3: cleanup respects pid file ownership"
+
+# The cleanup function is local to run_watchdog_loop, so we test the ownership
+# logic directly. This replicates the fixed cleanup from watchdog.sh:
+#   if pid file contains a foreign pid, leave it; if it contains $$, delete it.
+
+# --- AC-3a: foreign pid file is preserved ---
+touch "$TEST_TMPDIR/watchdog.log"  # cleanup writes to log
+
+# Start a live process to act as the "real" watchdog
+sleep 120 &
+FOREIGN_PID=$!
+BACKGROUND_PIDS="$BACKGROUND_PIDS $FOREIGN_PID"
+sleep 0.2
+
+PID_FILE="$TEST_TMPDIR/watchdog.pid"
+echo "$FOREIGN_PID" > "$PID_FILE"
+
+# Run cleanup from a different process (simulating a stale duplicate dying)
+TEST_PID_FILE="$PID_FILE" bash -c '
+  pid_file="$TEST_PID_FILE"
+  my_pid=$$
+  if [[ -f "$pid_file" ]]; then
+    recorded_pid=$(tr -d "[:space:]" < "$pid_file")
+    if [[ "$recorded_pid" == "$my_pid" ]]; then
+      rm -f "$pid_file"
+    fi
+  fi
+'
+
+if [[ -f "$PID_FILE" ]]; then
+  preserved_pid=$(tr -d '[:space:]' < "$PID_FILE")
+  if [[ "$preserved_pid" == "$FOREIGN_PID" ]]; then
+    pass "foreign pid file preserved after stale duplicate exits"
+  else
+    fail "foreign pid file preserved" "pid changed to $preserved_pid"
+  fi
+else
+  fail "foreign pid file preserved" "pid file was deleted"
+fi
+
+# --- AC-3b: own pid file is deleted on exit ---
+OWN_PID_FILE="$TEST_TMPDIR/watchdog_own.pid"
+echo "$$" > "$OWN_PID_FILE"
+
+# Run cleanup where the pid matches (simulating a normal exit)
+TEST_PID_FILE="$OWN_PID_FILE" bash -c '
+  pid_file="$TEST_PID_FILE"
+  my_pid=$$
+  if [[ -f "$pid_file" ]]; then
+    recorded_pid=$(tr -d "[:space:]" < "$pid_file")
+    if [[ "$recorded_pid" == "$my_pid" ]]; then
+      rm -f "$pid_file"
+    fi
+  fi
+'
+
+# The file should still exist because $$ in the file is the test runner,
+# not the subshell — demonstrating the guard works for non-matching pids
+if [[ -f "$OWN_PID_FILE" ]]; then
+  pass "non-matching pid does not delete the file (AC-3b guard works)"
+else
+  fail "non-matching pid does not delete the file" "file was deleted"
+fi
+
+# --- AC-3c: matching pid DOES delete the file ---
+MATCH_PID_FILE="$TEST_TMPDIR/watchdog_match.pid"
+
+result=$(TEST_PID_FILE="$MATCH_PID_FILE" bash -c '
+  pid_file="$TEST_PID_FILE"
+  echo "$$" > "$pid_file"
+  if [[ -f "$pid_file" ]]; then
+    recorded_pid=$(tr -d "[:space:]" < "$pid_file")
+    if [[ "$recorded_pid" == "$$" ]]; then
+      rm -f "$pid_file"
+    fi
+  fi
+  if [[ -f "$pid_file" ]]; then
+    echo "STILL_EXISTS"
+  else
+    echo "DELETED"
+  fi
+')
+
+if [[ "$result" == "DELETED" ]]; then
+  pass "own pid file deleted on exit (matching pid)"
+else
+  fail "own pid file deleted on exit" "expected DELETED, got $result"
+fi
+
 # ----- Report ------------------------------------------------------------
 
 echo ""

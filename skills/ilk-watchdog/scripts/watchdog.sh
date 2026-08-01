@@ -656,9 +656,18 @@ Watchdog PID: $$" 36
 
   local success_states=("all-shipped" "already-shipped" "shipped")
 
-  # Cleanup PID file on exit
+  # Cleanup PID file on exit — only if it still belongs to this process.
+  # A stale duplicate's death must not delete a live instance's pid file.
   cleanup() {
-    rm -f "$watchdog_pid_file"
+    if [[ -f "$watchdog_pid_file" ]]; then
+      local recorded_pid
+      recorded_pid=$(tr -d '[:space:]' < "$watchdog_pid_file")
+      if [[ "$recorded_pid" == "$$" ]]; then
+        rm -f "$watchdog_pid_file"
+      else
+        write_log "watchdog exiting — pid file belongs to $recorded_pid, not $$; leaving it."
+      fi
+    fi
     write_log "watchdog exiting."
   }
   trap cleanup EXIT
