@@ -231,7 +231,7 @@ test_process_command_alive() {
     return 1
   fi
   local actual
-  actual=$(ps -p "$pid" -o comm= 2>/dev/null | xargs basename 2>/dev/null || true)
+  actual=$(ps -p "$pid" -o args= 2>/dev/null || true)
   if [[ -z "$actual" ]]; then
     return 0  # can't determine; alive is sufficient
   fi
@@ -621,7 +621,7 @@ run_watchdog_loop() {
     local existing_pid
     existing_pid=$(tr -d '[:space:]' < "$watchdog_pid_file")
     if [[ -n "$existing_pid" ]] && test_process_alive "$existing_pid" && \
-       test_process_command_alive "$existing_pid" "watchdog"; then
+       test_process_command_alive "$existing_pid" "watchdog.sh"; then
       write_banner "WATCHDOG ALREADY RUNNING" \
         "Project: $proj_name\nExisting watchdog PID: $existing_pid\nRefusing to start a second one." 31
       return

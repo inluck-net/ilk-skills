@@ -124,6 +124,78 @@ else
   fail "executing with no args produces output" "no output captured"
 fi
 
+# =============================================================================
+# AC-1 + AC-2: test_process_command_alive identity check
+# =============================================================================
+
+echo "AC-1: a live watchdog-shaped process is identified as a watchdog"
+
+# Source the watchdog to get the function definitions
+# Use a subshell to isolate set -euo pipefail
+eval "$(bash -c '
+  source "'"$WATCHDOG"'" 2>/dev/null
+  declare -f test_process_alive
+  declare -f test_process_command_alive
+')"
+
+# Create a fake watchdog.sh script in tmpdir and background it
+cat > "$TEST_TMPDIR/watchdog.sh" <<'FAKE'
+#!/usr/bin/env bash
+sleep 120
+FAKE
+chmod +x "$TEST_TMPDIR/watchdog.sh"
+bash "$TEST_TMPDIR/watchdog.sh" &
+FAKE_PID=$!
+BACKGROUND_PIDS="$BACKGROUND_PIDS $FAKE_PID"
+sleep 0.3
+
+# AC-1: the fake watchdog's args contain "watchdog.sh"
+set +e
+test_process_command_alive "$FAKE_PID" "watchdog.sh"
+rc_live=$?
+set -e
+
+if [[ "$rc_live" -eq 0 ]]; then
+  pass "live watchdog-shaped process identified (pid=$FAKE_PID)"
+else
+  fail "live watchdog-shaped process identified" "expected rc=0, got rc=$rc_live"
+fi
+
+echo "AC-2: a dead PID is not identified as a watchdog"
+
+# Use a PID that is guaranteed to be dead
+DEAD_PID=99999999
+set +e
+test_process_command_alive "$DEAD_PID" "watchdog.sh"
+rc_dead=$?
+set -e
+
+if [[ "$rc_dead" -ne 0 ]]; then
+  pass "dead PID correctly rejected (pid=$DEAD_PID)"
+else
+  fail "dead PID correctly rejected" "expected non-zero, got rc=0"
+fi
+
+echo "AC-2: a false-positive command is not identified as a watchdog"
+
+# Background a 'tail -f' on a file named watchdog.log — must NOT match
+touch "$TEST_TMPDIR/watchdog.log"
+tail -f "$TEST_TMPDIR/watchdog.log" &
+TAIL_PID=$!
+BACKGROUND_PIDS="$BACKGROUND_PIDS $TAIL_PID"
+sleep 0.3
+
+set +e
+test_process_command_alive "$TAIL_PID" "watchdog.sh"
+rc_tail=$?
+set -e
+
+if [[ "$rc_tail" -ne 0 ]]; then
+  pass "tail -f .../watchdog.log correctly rejected as false positive (pid=$TAIL_PID)"
+else
+  fail "tail -f .../watchdog.log correctly rejected" "expected non-zero, got rc=0"
+fi
+
 # ----- Report ------------------------------------------------------------
 
 echo ""
