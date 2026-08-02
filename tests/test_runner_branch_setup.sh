@@ -580,8 +580,15 @@ test_genuine_checkout_failure() {
   mkdir -p "$CLONE/.git/hooks"
   cat > "$CLONE/.git/hooks/post-checkout" <<'HOOKEOF'
 #!/bin/sh
-# Simulate genuine failure: move HEAD away from the target branch
-git checkout main 2>/dev/null
+# Simulate genuine failure: move HEAD away from the target branch.
+#
+# Use symbolic-ref rather than `git checkout main`: post-checkout fires on
+# every successful checkout, including one invoked from inside the hook and
+# including a no-op checkout where HEAD does not move. A `git checkout` here
+# re-enters this hook without bound — it spawned 600+ concurrent git
+# processes and wedged the whole suite (issue #18). symbolic-ref repoints
+# HEAD without running any hook, which is all this simulation needs.
+git symbolic-ref HEAD refs/heads/main
 exit 1
 HOOKEOF
   chmod +x "$CLONE/.git/hooks/post-checkout"
