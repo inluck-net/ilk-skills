@@ -83,6 +83,9 @@ cleanup() {
   if [[ -n "${TEST_TMPDIR:-}" && -d "$TEST_TMPDIR" ]]; then
     rm -rf "$TEST_TMPDIR"
   fi
+  if [[ -n "${ILK_DATA_TMPDIR:-}" && -d "$ILK_DATA_TMPDIR" ]]; then
+    rm -rf "$ILK_DATA_TMPDIR"
+  fi
 }
 trap cleanup EXIT
 
@@ -103,7 +106,25 @@ fail() {
 
 # Create a bare "remote" + a clone that tracks it. Sets REMOTE_BARE and
 # CLONE vars. The clone has one commit on 'main'.
+# Mint an isolated ILK_DATA_HOME, dropping the previous one. Same reasoning as
+# setup_repos below: three call sites, one EXIT trap, so an untracked
+# `mktemp -d` per call leaked a dir each time.
+new_ilk_data_home() {
+  if [[ -n "${ILK_DATA_TMPDIR:-}" && -d "$ILK_DATA_TMPDIR" ]]; then
+    rm -rf "$ILK_DATA_TMPDIR"
+  fi
+  ILK_DATA_TMPDIR=$(mktemp -d)
+  export ILK_DATA_HOME="$ILK_DATA_TMPDIR/ilk-data"
+}
+
 setup_repos() {
+  # Drop the previous fixture before minting a new one. This is called at 13
+  # sites while the EXIT trap only removes the last TEST_TMPDIR, so without
+  # this every run orphaned ~12 temp dirs under $TMPDIR. Each call builds a
+  # fresh repo trio; nothing reads the prior one.
+  if [[ -n "${TEST_TMPDIR:-}" && -d "$TEST_TMPDIR" ]]; then
+    rm -rf "$TEST_TMPDIR"
+  fi
   TEST_TMPDIR=$(mktemp -d)
   REMOTE_BARE="$TEST_TMPDIR/remote.git"
   CLONE="$TEST_TMPDIR/clone"
@@ -403,7 +424,7 @@ EOF
 test_active_master_selection() {
   echo ""
   echo "--- Test: Bug #1 — branch block resolved from the ACTIVE master ---"
-  export ILK_DATA_HOME="$(mktemp -d)/ilk-data"
+  new_ilk_data_home
   setup_multimaster_fixture
   source_runner
 
@@ -443,7 +464,7 @@ test_active_master_selection() {
 test_slash_branch_name() {
   echo ""
   echo "--- Test: Bug #2 — create_from with a slash-named branch ---"
-  export ILK_DATA_HOME="$(mktemp -d)/ilk-data"
+  new_ilk_data_home
   setup_multimaster_fixture
   source_runner
 
@@ -487,7 +508,7 @@ test_slash_branch_name() {
 test_bare_slash_local_ref() {
   echo ""
   echo "--- Test: Bug #2 — bare slash create_from => local ref (no fetch) ---"
-  export ILK_DATA_HOME="$(mktemp -d)/ilk-data"
+  new_ilk_data_home
   setup_multimaster_fixture
   source_runner
 

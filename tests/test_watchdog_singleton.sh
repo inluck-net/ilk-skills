@@ -22,10 +22,16 @@ FAIL=0
 TESTS_RUN=0
 
 cleanup() {
-  # Kill any background processes we started
+  # Kill any background processes we started.
+  #
+  # Kill each pid's CHILDREN first. Some of these pids are wrapper shells --
+  # `bash "$TEST_TMPDIR/watchdog.sh" &` records the bash pid, while the actual
+  # `sleep 120` is its child. Killing only the wrapper orphans that sleep,
+  # which then survives the test and accumulates across runs.
   local pids_to_kill="${BACKGROUND_PIDS:-}"
   if [[ -n "$pids_to_kill" ]]; then
     for pid in $pids_to_kill; do
+      pkill -P "$pid" 2>/dev/null || true
       kill "$pid" 2>/dev/null || true
     done
   fi
