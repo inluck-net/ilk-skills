@@ -26,7 +26,60 @@ PASS=0
 FAIL=0
 TESTS_RUN=0
 
+# ----- Self-imposed wall-clock bound -----------------------------------------
+# This file once wedged the entire suite: a post-checkout hook re-entered
+# itself, spawned 600+ git processes, and never terminated, so
+# `for f in tests/*.sh` never got past it (issue #18). That specific hook is
+# fixed, but a hang here is silent and total — it stalls every test after this
+# one and any suite baseline built from it is quietly partial.
+#
+# Bound the run so a future hang fails LOUDLY and the suite carries on.
+# Normal runtime is ~7s; the default leaves a wide margin. Override for a
+# slow box with TEST_TIMEOUT_SEC=<n>.
+TEST_TIMEOUT_SEC="${TEST_TIMEOUT_SEC:-120}"
+_SELF_PID=$$
+_TIMEOUT_WATCHER=""
+
+if [[ "$TEST_TIMEOUT_SEC" -gt 0 ]]; then
+  (
+    sleep "$TEST_TIMEOUT_SEC"
+    kill -0 "$_SELF_PID" 2>/dev/null || exit 0
+    {
+      echo ""
+      echo "=============================================================================="
+      echo " TIMEOUT: test_runner_branch_setup.sh exceeded ${TEST_TIMEOUT_SEC}s — aborting."
+      echo ""
+      echo " This test is bounded because it once fork-bombed the suite (issue #18)."
+      echo " A hang here is most likely a git hook re-entering itself: post-checkout"
+      echo " fires on every successful checkout, including one invoked from inside the"
+      echo " hook and including a no-op checkout where HEAD does not move."
+      echo ""
+      echo " Check for runaway processes and clean up if needed:"
+      echo "   pgrep -fl 'git checkout' ; pkill -f 'git checkout'"
+      echo "=============================================================================="
+    } >&2
+    # Best-effort: take down direct children before the script itself, then
+    # SIGTERM the script so its EXIT trap still removes TEST_TMPDIR.
+    pkill -TERM -P "$_SELF_PID" 2>/dev/null || true
+    kill -TERM "$_SELF_PID" 2>/dev/null || true
+    sleep 5
+    kill -KILL "$_SELF_PID" 2>/dev/null || true
+  ) >/dev/null &
+  _TIMEOUT_WATCHER=$!
+  # Detach the job so bash does not print a "Terminated" notice (with the whole
+  # subshell body) into the test output when cleanup kills it.
+  disown "$_TIMEOUT_WATCHER" 2>/dev/null || true
+fi
+
 cleanup() {
+  # Kill the watcher's `sleep` child BEFORE the watcher itself. Killing only
+  # the subshell orphans the sleep, which keeps this script's inherited
+  # stdout/stderr open — so a caller using `out=$(bash this_test.sh 2>&1)`
+  # blocks for the full TEST_TIMEOUT_SEC even after the tests have passed.
+  if [[ -n "$_TIMEOUT_WATCHER" ]]; then
+    pkill -P "$_TIMEOUT_WATCHER" 2>/dev/null || true
+    kill "$_TIMEOUT_WATCHER" 2>/dev/null || true
+  fi
   if [[ -n "${TEST_TMPDIR:-}" && -d "$TEST_TMPDIR" ]]; then
     rm -rf "$TEST_TMPDIR"
   fi
