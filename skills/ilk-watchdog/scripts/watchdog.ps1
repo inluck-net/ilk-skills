@@ -126,8 +126,19 @@ function Test-ProcessCommandAlive {
   if (-not (Test-ProcessAlive -ProcessId $ProcessId)) { return $false }
   $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
   if (-not $proc) { return $false }
-  $actual = $proc.ProcessName.ToLower()
-  return $actual -like "*$($ExpectedCommand.ToLower())*"
+  # Read the full command line, not the interpreter name (ProcessName returns
+  # "pwsh"/"powershell", which can never contain "watchdog").
+  # Prefer $proc.CommandLine (PowerShell 7+), fall back to CIM.
+  $actual = $null
+  try { $actual = $proc.CommandLine } catch {}
+  if (-not $actual) {
+    try {
+      $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction SilentlyContinue
+      if ($cim) { $actual = $cim.CommandLine }
+    } catch {}
+  }
+  if (-not $actual) { return $true }  # can't determine; alive is sufficient (D3)
+  return $actual -like "*$ExpectedCommand*"
 }
 
 function Read-ilkPid {
@@ -446,7 +457,7 @@ function Run-WatchdogLoop {
   if (Test-Path $watchdogPidFile) {
     $existingPid = (Get-Content $watchdogPidFile -Raw).Trim()
     if ($existingPid -and (Test-ProcessAlive -ProcessId ([int]$existingPid)) -and
-        (Test-ProcessCommandAlive -ProcessId ([int]$existingPid) -ExpectedCommand 'watchdog')) {
+        (Test-ProcessCommandAlive -ProcessId ([int]$existingPid) -ExpectedCommand 'watchdog.ps1')) {
       Write-Banner -Title "WATCHDOG ALREADY RUNNING" -Body "Project: $ProjName`nExisting watchdog PID: $existingPid`nRefusing to start a second one." -Color Red
       return
     } else {
@@ -799,7 +810,16 @@ relaunch manually if it still makes sense.
       Start-Sleep -Seconds $PollSec
     }
   } finally {
-    Remove-Item $watchdogPidFile -Force -ErrorAction SilentlyContinue
+    # Only remove the pid file if it still belongs to this process.
+    # A stale duplicate's death must not delete a live instance's pid file.
+    if (Test-Path $watchdogPidFile) {
+      $recordedPid = (Get-Content $watchdogPidFile -Raw).Trim()
+      if ($recordedPid -eq "$PID") {
+        Remove-Item $watchdogPidFile -Force -ErrorAction SilentlyContinue
+      } else {
+        Write-Log "watchdog exiting — pid file belongs to $recordedPid, not $PID; leaving it."
+      }
+    }
     Write-Log "watchdog exiting."
   }
 }

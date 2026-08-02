@@ -231,7 +231,7 @@ test_process_command_alive() {
     return 1
   fi
   local actual
-  actual=$(ps -p "$pid" -o comm= 2>/dev/null | xargs basename 2>/dev/null || true)
+  actual=$(ps -p "$pid" -o args= 2>/dev/null || true)
   if [[ -z "$actual" ]]; then
     return 0  # can't determine; alive is sufficient
   fi
@@ -621,7 +621,7 @@ run_watchdog_loop() {
     local existing_pid
     existing_pid=$(tr -d '[:space:]' < "$watchdog_pid_file")
     if [[ -n "$existing_pid" ]] && test_process_alive "$existing_pid" && \
-       test_process_command_alive "$existing_pid" "watchdog"; then
+       test_process_command_alive "$existing_pid" "watchdog.sh"; then
       write_banner "WATCHDOG ALREADY RUNNING" \
         "Project: $proj_name\nExisting watchdog PID: $existing_pid\nRefusing to start a second one." 31
       return
@@ -656,9 +656,18 @@ Watchdog PID: $$" 36
 
   local success_states=("all-shipped" "already-shipped" "shipped")
 
-  # Cleanup PID file on exit
+  # Cleanup PID file on exit — only if it still belongs to this process.
+  # A stale duplicate's death must not delete a live instance's pid file.
   cleanup() {
-    rm -f "$watchdog_pid_file"
+    if [[ -f "$watchdog_pid_file" ]]; then
+      local recorded_pid
+      recorded_pid=$(tr -d '[:space:]' < "$watchdog_pid_file")
+      if [[ "$recorded_pid" == "$$" ]]; then
+        rm -f "$watchdog_pid_file"
+      else
+        write_log "watchdog exiting — pid file belongs to $recorded_pid, not $$; leaving it."
+      fi
+    fi
     write_log "watchdog exiting."
   }
   trap cleanup EXIT
@@ -1069,4 +1078,6 @@ main() {
   run_watchdog_loop "$RESOLVED_PATH" "$RESOLVED_NAME" "$POLL_INTERVAL_SEC" "$MAX_RESTARTS"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
