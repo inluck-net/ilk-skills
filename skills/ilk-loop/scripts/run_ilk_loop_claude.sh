@@ -238,7 +238,25 @@ preflight() {
     fi
   fi
 
-  RUN_ID="$(date +%Y%m%d-%H%M%S)"
+  # Adopt the run id from an explicitly supplied --log-dir when its basename is
+  # already one (runs/<YYYYmmdd-HHMMSS>).  The launcher generates a run id of
+  # its own for that directory (launch.sh: run_id="$(date +%Y%m%d-%H%M%S)"), so
+  # generating a second one here made the terminal record disagree with the
+  # directory holding that run's logs whenever the two `date` calls straddled a
+  # second boundary — observed as run_id 20260803-171605 against
+  # logs/runs/20260803-171604, which forces fuzzy timestamp matching to
+  # correlate a run to its own logs.
+  RUN_ID=""
+  if [[ -n "$LOG_DIR" ]]; then
+    local log_dir_base
+    log_dir_base="$(basename "$LOG_DIR")"
+    if [[ "$log_dir_base" =~ ^[0-9]{8}-[0-9]{6}$ ]]; then
+      RUN_ID="$log_dir_base"
+    fi
+  fi
+  if [[ -z "$RUN_ID" ]]; then
+    RUN_ID="$(date +%Y%m%d-%H%M%S)"
+  fi
 
   # Resolve external log paths via ilk_paths.py unless explicitly provided
   local legacy_log_dir="${_SKILL_ROOT}/ilk-loop/logs"
@@ -743,6 +761,38 @@ get_new_commit_count() {
     return
   fi
   git -C "$repo" rev-list --count "${before}..${after}" 2>/dev/null || echo 0
+}
+
+get_active_subplan_targets() {
+  # Emit "<slug> <step>" for the sub-plan the loop is currently executing.
+  #
+  # Fallback for gate discovery when commit trailers are unavailable. Trailer
+  # scanning (get_local_check_targets) is the primary source, but it CANNOT work
+  # on a shared remote: the trailer policy deliberately strips
+  # [plan:<slug>#step-N] from commit messages there (classify_remote →
+  # .ilk-remote-type), so on every shared-remote project a declared
+  # local_checks gate silently never ran while the sub-plan still shipped as
+  # `verification_tier: loop-verified`. Two features that each pass their own
+  # tests, mutually exclusive when combined.
+  #
+  # Uses loop_status.py — the same source branch setup uses to resolve the
+  # active master — so the gate targets the sub-plan the loop is actually
+  # working, not an arbitrary one.
+  local status_json line slug step
+  status_json=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null) || true
+  [[ -n "$status_json" ]] || return 0
+  # --json exits non-zero when work is pending; the payload is still valid.
+  line=$(echo "$status_json" | jq -r '
+    [ (.subplans // [])[] | select(((.status // "") | ascii_downcase) != "shipped") ][0]
+    | if . == null then empty else "\(.slug)\t\(.current_step)" end
+  ' 2>/dev/null) || return 0
+  [[ -n "$line" ]] || return 0
+  slug="${line%%$'\t'*}"
+  step="${line#*$'\t'}"
+  # current_step can be "?" when the front-matter omits it.
+  [[ "$step" =~ ^[0-9]+$ ]] || step=0
+  [[ -n "$slug" && "$slug" != "null" ]] || return 0
+  printf '%s %s\n' "$slug" "$step"
 }
 
 get_local_check_targets() {
@@ -1424,6 +1474,23 @@ ${PROMPT}"
         after=$(grep -F "$r=" "$heads_after_file" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
         get_local_check_targets "$r" "$before" "$after" >> "$all_targets_file"
       done
+
+      # Trailer scanning found nothing, but commits exist ($total_new > 0 to be
+      # here). On a shared remote that is the EXPECTED state, not an anomaly:
+      # the trailer policy strips the [plan:…#step-N] tags this discovery reads.
+      # Without this fallback the declared gate silently never runs and the
+      # sub-plan ships as loop-verified on the strength of nothing.
+      if [[ ! -s "$all_targets_file" ]]; then
+        get_active_subplan_targets >> "$all_targets_file"
+        if [[ -s "$all_targets_file" ]]; then
+          echo "  [local_checks] no commit trailers found; gating the active sub-plan instead ($(tr '\n' ' ' < "$all_targets_file"))"
+        else
+          # Neither source produced a target. Say so loudly: a silent skip here
+          # is what let unverified work ship as verified.
+          echo "  ! [local_checks] commits landed but NO gate target could be resolved (no commit trailers, no unshipped sub-plan) — gate did NOT run" >&2
+        fi
+      fi
+
       # Merge by slug (max step wins)
       local merged_targets_file
       merged_targets_file=$(mktemp)

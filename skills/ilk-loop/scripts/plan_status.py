@@ -304,6 +304,103 @@ def master_is_drainable(master_path: Path, plans_dir: Path) -> bool:
     return False
 
 
+def reconcile_master_registry(master_path: Path, plans_dir: Path) -> bool:
+    """Rewrite the sub-plan registry table's Status cells from the sub-plan files.
+
+    The registry row duplicates a fact the sub-plan front-matter already owns,
+    and nothing kept the copy honest: ``reconcile_master_status`` deliberately
+    leaves the table byte-for-byte alone, and the row was only ever updated by
+    the agent in prose. So a completed master could carry ``status: shipped`` in
+    its front-matter while its only registry row still read ``pending`` — two of
+    three sources agreeing and the table dissenting (observed 2026-08-03 on
+    ``MASTER-issue-2340-2026-08-03.md``). An external consumer that reads the
+    registry to decide whether work is finished concludes it is not.
+
+    Only Status cells of rows referencing a *registered* sub-plan are touched.
+    The column is located by name from the table header, so both
+    ``| # | Sub-plan | Status |`` and ``| # | Slug | Steps | Status |`` work. A
+    registered sub-plan whose file is missing is left alone rather than guessed
+    at. Every other byte of the file is preserved.
+
+    Returns True if the file was modified, False if no change was needed.
+    Idempotent: a table already in agreement is a no-op with no rewrite churn.
+    """
+    try:
+        text = master_path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return False
+
+    registered = extract_subplan_files(text)
+    if not registered:
+        return False
+
+    # Actual status per registered sub-plan, from the sub-plan file itself.
+    actual: dict[str, str] = {}
+    for fname in registered:
+        sub_path = plans_dir / fname
+        if not sub_path.exists():
+            continue  # still being authored — do not invent a status
+        try:
+            sub_text = sub_path.read_text(encoding="utf-8-sig")
+        except OSError:
+            continue
+        actual[fname] = parse_frontmatter(sub_text).get("status", "pending").strip()
+    if not actual:
+        return False
+
+    lines = text.splitlines(keepends=True)
+    status_idx = None
+    changed = False
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            # A table cannot span a non-table line; forget the header.
+            status_idx = None
+            continue
+
+        cells = line.rstrip("\n").rstrip("\r").split("|")
+
+        # Header row: locate the Status column by name.
+        if status_idx is None:
+            for idx, cell in enumerate(cells):
+                if cell.strip().lower() == "status":
+                    status_idx = idx
+                    break
+            continue
+
+        # Separator row (|---|---|) carries no data.
+        if set(stripped.replace("|", "").replace(":", "").strip()) <= {"-"}:
+            continue
+
+        if status_idx >= len(cells):
+            continue
+
+        row_fname = next((f for f in actual if f in line), None)
+        if row_fname is None:
+            continue
+
+        want = actual[row_fname]
+        if cells[status_idx].strip() == want:
+            continue
+
+        cells[status_idx] = f" {want} "
+        rebuilt = "|".join(cells)
+        # Preserve the original line ending.
+        if line.endswith("\r\n"):
+            rebuilt += "\r\n"
+        elif line.endswith("\n"):
+            rebuilt += "\n"
+        lines[i] = rebuilt
+        changed = True
+
+    if not changed:
+        return False
+
+    master_path.write_text("".join(lines), encoding="utf-8")
+    return True
+
+
 def reconcile_master_status(master_path: Path, plans_dir: Path) -> bool:
     """Persist ``status: shipped`` when all registered sub-plans are shipped.
 

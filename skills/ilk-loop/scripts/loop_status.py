@@ -36,6 +36,7 @@ from plan_status import (  # noqa: E402
     _slug_from_filename,
     master_has_nonshipped,
     normalize_master_status,
+    reconcile_master_registry,
     reconcile_master_status,
     subplan_is_runnable,
 )
@@ -305,10 +306,14 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
     if not masters:
         return {"error": f"No MASTER-*.md in {plans_dir}", "queue_exit": 2}
 
-    # Reconcile pass: auto-flip any all-shipped master to status: shipped.
-    # Idempotent — safe to run every invocation.
+    # Reconcile pass: auto-flip any all-shipped master to status: shipped, and
+    # bring its registry rows back in line with the sub-plan files. Both are
+    # idempotent — safe to run every invocation. The registry pass matters
+    # independently: a master mid-flight has accurate front-matter but stale
+    # rows, and an external reader trusting a row concludes work is unfinished.
     for m in masters:
         reconcile_master_status(m, plans_dir)
+        reconcile_master_registry(m, plans_dir)
 
     master, queue_view = pick_active_master(masters, json_mode=json_mode)
     master_text = master.read_text(encoding="utf-8-sig")

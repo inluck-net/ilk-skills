@@ -315,6 +315,62 @@ function Get-LocalCheckTargets {
   return $targets
 }
 
+function Get-ActiveSubplanTarget {
+  <#
+    Return the sub-plan the loop is currently executing, as
+    [PSCustomObject]@{ slug; step }, or $null when none is resolvable.
+
+    Fallback for gate discovery when commit trailers are unavailable.
+    Get-LocalCheckTargets is the primary source, but it CANNOT work on a shared
+    remote: the trailer policy deliberately strips [plan:<slug>#step-N] from
+    commit messages there, so on every shared-remote project a declared
+    local_checks gate silently never ran while the sub-plan still shipped as
+    `verification_tier: loop-verified`.
+
+    Uses loop_status.py so the gate targets the sub-plan the loop is actually
+    working, not an arbitrary one.
+  #>
+  param([string]$Project, [string]$LoopStatusScript)
+  if (-not $Project -or -not $LoopStatusScript) { return $null }
+  if (-not (Test-Path -LiteralPath $LoopStatusScript)) { return $null }
+
+  $statusJson = ""
+  Push-Location -LiteralPath $Project
+  try {
+    # --json exits non-zero when work is pending; the payload is still valid,
+    # so the exit code is deliberately not consulted here.
+    $statusJson = & python3 $LoopStatusScript --json 2>$null | Out-String
+  } catch {
+    return $null
+  } finally {
+    Pop-Location
+  }
+  if (-not $statusJson -or -not $statusJson.Trim()) { return $null }
+
+  try {
+    $data = $statusJson | ConvertFrom-Json
+  } catch {
+    return $null
+  }
+  if (-not $data.subplans) { return $null }
+
+  foreach ($sp in @($data.subplans)) {
+    $status = ""
+    if ($sp.status) { $status = ([string]$sp.status).Trim().ToLower() }
+    if ($status -eq "shipped") { continue }
+    if (-not $sp.slug) { continue }
+    # current_step can be "?" when the front-matter omits it.
+    $step = 0
+    if ($sp.current_step -is [int]) {
+      $step = [int]$sp.current_step
+    } elseif ($sp.current_step -and ([string]$sp.current_step) -match '^\d+$') {
+      $step = [int]([string]$sp.current_step)
+    }
+    return [PSCustomObject]@{ slug = [string]$sp.slug; step = $step }
+  }
+  return $null
+}
+
 function Get-IlkRuntimeDir {
   <#
     Resolve the external runtime dir under ~/.ilk-data/projects/<key>/runtime/
@@ -2066,6 +2122,23 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
         $allTargets += Get-LocalCheckTargets -Repo $r -Before $headsBefore[$r] -After $headsAfter[$r]
       }
     }
+
+    # Trailer scanning found nothing, but commits exist (totalNew > 0 to be
+    # here). On a shared remote that is the EXPECTED state: the trailer policy
+    # strips the [plan:...#step-N] tags this discovery reads, so without a
+    # fallback the declared gate silently never runs and the sub-plan ships as
+    # loop-verified on the strength of nothing.
+    if ($allTargets.Count -eq 0) {
+      $fallback = Get-ActiveSubplanTarget -Project $ProjectPath -LoopStatusScript $LoopStatusScript
+      if ($fallback) {
+        $allTargets += $fallback
+        Write-Host "  [local_checks] no commit trailers found; gating the active sub-plan instead ($($fallback.slug) step $($fallback.step))"
+      } else {
+        # A silent skip here is what let unverified work ship as verified.
+        Write-Host "  ! [local_checks] commits landed but NO gate target could be resolved (no commit trailers, no unshipped sub-plan) - gate did NOT run" -ForegroundColor Red
+      }
+    }
+
     # De-dup across repos by slug (max step wins)
     $merged = @{}
     foreach ($t in $allTargets) {
