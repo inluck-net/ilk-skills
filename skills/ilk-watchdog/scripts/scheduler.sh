@@ -712,6 +712,23 @@ print(int((ea-sa).total_seconds()))
         continue
       fi
 
+      # Resolved but absent: a registered path that no longer exists on disk
+      # (worktree removed, or `git worktree add` failed and left the entry in
+      # projects.json).  launch.sh does reject this with exit 1, but dispatch
+      # runs inside a detached `tmux new-window`, so that status dies with the
+      # window and the scheduler would re-dispatch every poll forever — a
+      # no-op loop that masks the real breakage.  Skip loudly instead.
+      if [[ ! -d "$repo" ]]; then
+        if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+          write_scheduler_log "skip-missing-path" "$key"
+          echo "{\"decision\":\"skip-missing-path\",\"key\":\"$key\"}"
+        else
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip-missing-path: $key (repo path '$repo' does not exist; recreate the worktree or drop it from projects.json)"
+          write_scheduler_log "skip-missing-path" "$key"
+        fi
+        continue
+      fi
+
       # Fill free slots: collect while capacity remains.
       if [[ ${#disp_keys[@]} -lt $remaining_capacity ]]; then
         disp_keys+=("$key")

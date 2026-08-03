@@ -344,6 +344,10 @@ EOF
   # (under scratch/repos/, not scratch/.../ilk-data/projects/). This is what
   # proves the scheduler dispatches the repo path, not the data dir.
   mkdir -p "$proj_a/runtime/launcher" "$proj_b/runtime/launcher"
+  # The repo paths must exist on disk: the scheduler skips a resolved-but-absent
+  # path as skip-missing-path, so a fixture that only names them would assert
+  # nothing about dispatch.
+  mkdir -p "$SCRATCH/repos/proj-a" "$SCRATCH/repos/proj-b"
   printf '{"project_path":"%s","worker_engine":"claude-worker"}\n' "$SCRATCH/repos/proj-a" > "$proj_a/runtime/launcher/last-launch.json"
   printf '{"project_path":"%s","worker_engine":"claude-worker"}\n' "$SCRATCH/repos/proj-b" > "$proj_b/runtime/launcher/last-launch.json"
 }
@@ -563,6 +567,74 @@ EOF
   cleanup
 }
 
+run_missing_path() {
+  echo "=== test_scheduler.sh missing-path ==="
+  cleanup
+  mkdir -p "$FAKE_DATA/projects"
+
+  # One queued project whose repo_path RESOLVES but does not exist on disk —
+  # the state left behind when a worktree is removed, or when `git worktree add`
+  # fails but the project stays registered.  launch.sh rejects this with exit 1,
+  # but dispatch happens inside a detached window, so that status never reaches
+  # the scheduler: without a guard it re-dispatches every poll forever.
+  local proj_d="$FAKE_DATA/projects/proj-d"
+  mkdir -p "$proj_d/plans" "$proj_d/runtime/launcher"
+  cat > "$proj_d/plans/MASTER-2026-06-02-ghost.md" <<'EOF'
+---
+master_plan: 2026-06-02-ghost
+status: active
+---
+
+# MASTER plan: Ghost
+
+## Sub-plan registry
+
+| # | Slug | Steps | Status |
+|---|---|---|---|
+| 1 | [2026-06-02-ghost-slug](./2026-06-02-ghost-slug.md) | 2 | pending |
+EOF
+  cat > "$proj_d/plans/2026-06-02-ghost-slug.md" <<'EOF'
+---
+plan: ghost-slug
+status: pending
+current_step: 0
+estimated_steps: 2
+last_updated: 2026-06-02
+---
+
+# Sub-plan: Ghost slug
+
+Queued, but the source repo path is gone.
+EOF
+
+  # Deliberately NOT created on disk.
+  local ghost_repo="$SCRATCH/repos/proj-d-deleted"
+  [[ ! -d "$ghost_repo" ]] || die "fixture error: $ghost_repo must not exist"
+  printf '{"project_path":"%s","worker_engine":"claude-worker"}\n' "$ghost_repo" > "$proj_d/runtime/launcher/last-launch.json"
+
+  local output
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+
+  local first_line decision key
+  first_line=$(echo "$output" | head -1)
+  decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$first_line")
+  key=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['key'])" <<<"$first_line")
+  [[ "$decision" == "skip-missing-path" ]] || die "expected 'skip-missing-path', got '$decision'. Output: $output"
+  [[ "$key" == "proj-d" ]] || die "expected skip-missing-path for 'proj-d', got '$key'. Output: $output"
+
+  # The absent path must never be dispatched, and the cycle ends idle.
+  [[ "$output" != *'"decision":"dispatch"'* ]] || die "dispatched a missing path. Output: $output"
+
+  local last_line last_decision
+  last_line=$(echo "$output" | tail -1)
+  last_decision=$("$PYTHON" -c "import json,sys; d=json.loads(sys.stdin.read()); print(d['decision'])" <<<"$last_line")
+  [[ "$last_decision" == "idle" ]] || die "expected final 'idle', got '$last_decision'. Output: $output"
+
+  echo "PASS: skip-missing-path when repo_path resolves but is absent, then idle"
+  cleanup
+}
+
 setup_promotable_project() {
   # Project with M1 shipped + M2 queued (promotable) + source repo path resolved
   cleanup
@@ -630,8 +702,8 @@ last_updated: 2026-06-06
 Waiting for promotion.
 EOF
 
-  # last-launch.json so repo_path resolves
-  mkdir -p "$proj_p/runtime/launcher"
+  # last-launch.json so repo_path resolves (dir must exist — see setup_fake_data)
+  mkdir -p "$proj_p/runtime/launcher" "$SCRATCH/repos/proj-promote"
   printf '{"project_path":"%s","worker_engine":"claude-worker"}\n' "$SCRATCH/repos/proj-promote" > "$proj_p/runtime/launcher/last-launch.json"
 }
 
@@ -671,8 +743,8 @@ last_updated: 2026-06-06
 Waiting to be executed.
 EOF
 
-  # last-launch.json so repo_path resolves
-  mkdir -p "$proj_a/runtime/launcher"
+  # last-launch.json so repo_path resolves (dir must exist — see setup_fake_data)
+  mkdir -p "$proj_a/runtime/launcher" "$SCRATCH/repos/proj-active"
   printf '{"project_path":"%s","worker_engine":"claude-worker"}\n' "$SCRATCH/repos/proj-active" > "$proj_a/runtime/launcher/last-launch.json"
 }
 
@@ -758,6 +830,7 @@ last_updated: 2026-06-06
 
 Queued and waiting.
 EOF
+    mkdir -p "$SCRATCH/repos/proj-cap-$i"
     printf '{"project_path":"%s","worker_engine":"claude-worker"}\n' "$SCRATCH/repos/proj-cap-$i" > "$proj/runtime/launcher/last-launch.json"
   done
 }
@@ -1440,6 +1513,7 @@ run_all() {
   run_promote
   run_blacklist
   run_unresolved
+  run_missing_path
   run_cap
   run_fill
   run_gates
@@ -1473,6 +1547,9 @@ case "${1:-all}" in
     ;;
   unresolved)
     run_unresolved
+    ;;
+  missing-path)
+    run_missing_path
     ;;
   cap)
     run_cap
@@ -1514,7 +1591,7 @@ case "${1:-all}" in
     run_all
     ;;
   *)
-    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|cap|fill|gates|mutex|log|compat|stale-sentinel|rapid-terminal|staleexit|rapiddecay|cooldown|cooldown-dispatch|all}" >&2
+    echo "Usage: $0 {scan|select|dispatch|promote|blacklist|unresolved|missing-path|cap|fill|gates|mutex|log|compat|stale-sentinel|rapid-terminal|staleexit|rapiddecay|cooldown|cooldown-dispatch|all}" >&2
     exit 1
     ;;
 esac
