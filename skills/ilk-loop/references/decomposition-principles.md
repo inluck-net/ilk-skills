@@ -500,6 +500,35 @@ Key properties:
   not set it in a consumer project unless the user explicitly asks for
   it in that session.
 
+### `scope_paths` is a declaration, not a boundary
+
+**Settled 2026-08-03.** `scope_paths` is **advisory**. It is read by tooling
+that *classifies* a sub-plan — the §13 self-modification test above, the
+vertical-slice lint, and gate-target/planning heuristics. Nothing compares the
+commit's actual diff against it, and no check fails when a commit touches a file
+the sub-plan never declared.
+
+That is by design: a sub-plan is a briefing, not a decomposition
+(`decisions/0030`), and the issue's own prose routinely names a second file the
+planner could not have enumerated. Observed 2026-08-03: a sub-plan declaring two
+paths shipped a commit touching three; the third was named in the ticket and was
+inside the *consumer's* own allowlist, so nothing unsafe happened — but nothing
+in the loop would have objected either way.
+
+Consequences, both directions:
+
+- **Do not treat it as a guarantee.** An external consumer that derives a safety
+  property from `scope_paths` ("the loop cannot touch anything else") is trusting
+  something no code enforces. Enforcement belongs to whoever owns the risk — a
+  path allowlist/denylist on the consumer side, or a `local_checks` gate that
+  fails on out-of-scope writes.
+- **Do keep it accurate anyway.** The §13 supervised-only trigger reads it, so an
+  understated `scope_paths` on a toolkit batch silently loses the one gate that
+  keeps the scheduler from rewriting code it is executing.
+
+If a future change makes it enforced, that is a behaviour change requiring its
+own decision record — not a docs edit.
+
 ### Two orthogonal gates — don't substitute one for the other
 
 | Gate | Question it answers | Set by |

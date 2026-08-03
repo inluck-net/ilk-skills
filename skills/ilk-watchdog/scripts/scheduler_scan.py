@@ -76,6 +76,7 @@ from plan_status import (  # noqa: E402
     master_has_nonshipped,
     normalize_master_status,
     parse_frontmatter,
+    reconcile_master_registry,
     reconcile_master_status,
 )
 
@@ -319,6 +320,11 @@ def _scan_one_project(project_dir: Path) -> dict | None:
         try:
             if reconcile_master_status(m, plans_dir):
                 just_reconciled.append(m)
+            # Keep the registry rows honest too — a stale row is what an
+            # external consumer reads to decide whether work is finished. Not
+            # added to just_reconciled: that list drives shipped-master
+            # follow-up, and a row rewrite is not a status transition.
+            reconcile_master_registry(m, plans_dir)
         except OSError:
             pass
 
