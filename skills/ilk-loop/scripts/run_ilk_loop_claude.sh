@@ -1393,6 +1393,15 @@ main() {
 
     get_repo_heads "$heads_before_file"
 
+    # Capture the sub-plan this iteration is about to work, BEFORE the agent
+    # runs. It is the gate's fallback target when the commit carries no
+    # [plan:...#step-N] trailer (the shared-remote case), and it has to be read
+    # now: the agent marks the sub-plan `shipped` during the iteration, so by the
+    # time the gate block runs there is no longer an unshipped sub-plan to find.
+    # Measured end-to-end — reading it afterwards resolved nothing and the gate
+    # still did not run.
+    PRE_ITER_TARGET="$(get_active_subplan_targets 2>/dev/null || true)"
+
     local iter_log
     iter_log="${RUN_LOG_DIR}/iter-$(printf '%02d' $i).log"
 
@@ -1481,7 +1490,14 @@ ${PROMPT}"
       # Without this fallback the declared gate silently never runs and the
       # sub-plan ships as loop-verified on the strength of nothing.
       if [[ ! -s "$all_targets_file" ]]; then
-        get_active_subplan_targets >> "$all_targets_file"
+        # Prefer the pre-iteration capture: the sub-plan is `shipped` by now, so
+        # a fresh lookup finds nothing. Fall back to a live lookup only when the
+        # capture is empty (e.g. the iteration started with nothing active).
+        if [[ -n "${PRE_ITER_TARGET:-}" ]]; then
+          printf '%s\n' "$PRE_ITER_TARGET" >> "$all_targets_file"
+        else
+          get_active_subplan_targets >> "$all_targets_file"
+        fi
         if [[ -s "$all_targets_file" ]]; then
           echo "  [local_checks] no commit trailers found; gating the active sub-plan instead ($(tr '\n' ' ' < "$all_targets_file"))"
         else

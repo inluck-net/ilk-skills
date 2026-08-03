@@ -2046,6 +2046,12 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
   # -- Timed iteration region starts here ------------------------------
   $iterStart    = Get-Date
   $headsBefore  = Get-RepoHeads -Repos $repos
+  # Capture the sub-plan this iteration is about to work, BEFORE the agent runs.
+  # It is the gate's fallback target when the commit carries no
+  # [plan:...#step-N] trailer (the shared-remote case), and it has to be read now:
+  # the agent marks the sub-plan `shipped` during the iteration, so by the time
+  # the gate block runs there is no longer an unshipped sub-plan to find.
+  $preIterTarget = Get-ActiveSubplanTarget -Project $ProjectPath -LoopStatusScript $LoopStatusScript
   $iterLog      = Join-Path $RunLogDir ("iter-{0:D2}.log" -f $i)
   $timeoutSec   = $IterationTimeoutMin * 60
 
@@ -2129,7 +2135,12 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     # fallback the declared gate silently never runs and the sub-plan ships as
     # loop-verified on the strength of nothing.
     if ($allTargets.Count -eq 0) {
-      $fallback = Get-ActiveSubplanTarget -Project $ProjectPath -LoopStatusScript $LoopStatusScript
+      # Prefer the pre-iteration capture: the sub-plan is `shipped` by now, so a
+      # fresh lookup finds nothing. Live lookup only when the capture is empty.
+      $fallback = $preIterTarget
+      if (-not $fallback) {
+        $fallback = Get-ActiveSubplanTarget -Project $ProjectPath -LoopStatusScript $LoopStatusScript
+      }
       if ($fallback) {
         $allTargets += $fallback
         Write-Host "  [local_checks] no commit trailers found; gating the active sub-plan instead ($($fallback.slug) step $($fallback.step))"
