@@ -776,6 +776,23 @@ function Run-Scheduler {
         continue
       }
 
+      # Resolved but absent: a registered path that no longer exists on disk
+      # (worktree removed, or `git worktree add` failed and left the entry in
+      # projects.json).  launch.ps1 does throw on this, but dispatch runs in a
+      # detached window, so that failure never reaches the scheduler and it
+      # would re-dispatch every poll forever — a no-op loop that masks the real
+      # breakage.  Skip loudly instead.
+      if (-not (Test-Path -LiteralPath $proj.repo_path -PathType Container)) {
+        if ($DryRun -and $Once) {
+          Write-SchedulerLog -Decision 'skip-missing-path' -Key $key
+          @{ decision = 'skip-missing-path'; key = $key } | ConvertTo-Json -Compress
+        } else {
+          Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] skip-missing-path: $key (repo path '$($proj.repo_path)' does not exist; recreate the worktree or drop it from projects.json)"
+          Write-SchedulerLog -Decision 'skip-missing-path' -Key $key
+        }
+        continue
+      }
+
       # Fill free slots: dispatch while capacity remains.
       if ($toDispatch.Count -lt $remainingCapacity) {
         $toDispatch += $proj
