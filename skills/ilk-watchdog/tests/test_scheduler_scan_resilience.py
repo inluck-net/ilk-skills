@@ -101,10 +101,15 @@ def test_main_survives_gbk_stdout_with_non_ascii(tmp_path):
     env["ILK_DATA_HOME"] = str(tmp_path)
     env["PYTHONIOENCODING"] = "gbk"  # simulate zh-CN console stdout
 
+    # encoding=None is the bytes-mode default, stated explicitly: this test
+    # must capture RAW bytes and decode them itself (see .decode calls below),
+    # because it simulates a zh-CN console whose stdout codec is GBK.
+    # Text-mode capture would defeat the test.
     proc = subprocess.run(
         [sys.executable, str(SCAN_SCRIPT)],
         capture_output=True,
         env=env,
+        encoding=None,
     )
     assert proc.returncode == 0, (
         f"scan crashed under GBK stdout: {proc.stderr.decode('utf-8', 'replace')}"

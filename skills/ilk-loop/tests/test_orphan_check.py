@@ -184,7 +184,7 @@ class TestCLI:
     def test_help_exits_zero(self):
         result = subprocess.run(
             [sys.executable, str(_ORPHAN_CHECK), "--help"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, encoding="utf-8",
         )
         assert result.returncode == 0
         assert "orphan_check" in result.stdout.lower() or "--root" in result.stdout

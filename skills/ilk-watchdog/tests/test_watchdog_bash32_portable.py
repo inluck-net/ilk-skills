@@ -34,7 +34,7 @@ def test_no_bash4_case_expansions():
 def test_syntax_valid_under_system_bash():
     """`bash -n` parses cleanly under the system (3.2) bash."""
     res = subprocess.run([SYSTEM_BASH, "-n", str(WATCHDOG)],
-                         capture_output=True, text=True)
+                         capture_output=True, text=True, encoding="utf-8")
     assert res.returncode == 0, res.stderr
 
 
@@ -74,7 +74,7 @@ def test_to_upper_runs_under_system_bash(raw, expected):
     func = _extract_function("to_upper")
     script = f"{func}\nto_upper {raw!r}"
     res = subprocess.run([SYSTEM_BASH, "-c", script],
-                         capture_output=True, text=True)
+                         capture_output=True, text=True, encoding="utf-8")
     assert res.returncode == 0, res.stderr
     assert "bad substitution" not in res.stderr.lower()
     assert res.stdout == expected

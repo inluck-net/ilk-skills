@@ -98,7 +98,7 @@ def _run_cli(*args: str) -> subprocess.CompletedProcess:
         [sys.executable, _SCRIPT, *args],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=30, encoding="utf-8",
     )
 
 

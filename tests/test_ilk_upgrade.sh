@@ -16,6 +16,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${SCRIPT_DIR}/.."
 UPGRADE_SH="${REPO_ROOT}/skills/ilk-upgrade/scripts/upgrade.sh"
+# upgrade.sh sources the shared data-dir resolver relative to its own repo
+# root, so the fixture must carry it too or every assertion fails on a
+# "No such file or directory" from the `source` line.
+DATA_DIR_SH="${REPO_ROOT}/skills/ilk-loop/scripts/_ilk_data_dir.sh"
 
 PASS=0
 FAIL=0
@@ -84,7 +88,10 @@ git config user.name "Test"
 git checkout -b main >/dev/null 2>&1 || git switch -c main >/dev/null 2>&1 || true
 
 # Create minimal ilk-skills structure
-mkdir -p skills/ilk-upgrade/scripts commands
+mkdir -p skills/ilk-upgrade/scripts skills/ilk-loop/scripts commands
+
+# Carry the sourced data-dir resolver into the fixture (see DATA_DIR_SH above)
+cp "$DATA_DIR_SH" skills/ilk-loop/scripts/_ilk_data_dir.sh
 
 # Stub install.sh — just echoes what it would do
 cat > install.sh << 'INSTALL_EOF'

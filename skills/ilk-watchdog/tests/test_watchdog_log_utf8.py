@@ -46,7 +46,7 @@ class TestUtf8RoundTrip:
         )
         result = subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps_script],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, encoding="utf-8",
         )
         if result.returncode != 0:
             pytest.skip(f"PowerShell not available: {result.stderr}")
@@ -107,7 +107,7 @@ class TestBashParity:
         # Same method as watchdog.sh line 494: echo "$line" >> "$ACTIVITY_LOG"
         result = subprocess.run(
             ["bash", "-c", f"echo '{_NON_ASCII_LINE}' >> '{log_file}'"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, encoding="utf-8",
         )
         if result.returncode != 0:
             pytest.skip(f"bash not available: {result.stderr}")

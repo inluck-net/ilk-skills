@@ -159,8 +159,9 @@ $cli = "python C:\Users\chad\.cursor\skills\lark-tickets\scripts\cli.py"
   `~/.ilk-data/ilk-lark-tickets/` is outside any repo so this is safe by default.
 - Token cache is rewritten on every refresh; safe to delete anytime.
 - Never check `.lark-project` markers into a repo if you don't want others using
-  this skill against your bitable. (For solo dev: it's fine to commit, since the
-  marker only contains the project key — credentials stay local.)
+  this skill against your bitable. The marker holds only a project key (not
+  credentials), but in a **public or shared** repo it still advertises which
+  tracker a clone points at — keep it untracked and `.gitignore`d.
 
 ## Troubleshooting
 
@@ -171,8 +172,18 @@ $cli = "python C:\Users\chad\.cursor\skills\lark-tickets\scripts\cli.py"
 | `[1254005] FieldNameNotFound` | Schema drifted | Run `cli.py fields` to see actual names |
 | All requests fail with 401 | Token cache stale across app changes | Delete `~/.ilk-data/ilk-lark-tickets/.token_cache.json` |
 
-## Currently configured
+## What your configuration looks like
 
-- **App:** `cli_a96b665a33bb9bdf`
-- **Project `uccargo`:** bitable `N4xabAfpdaN9gVsKdjvckJiEnse`, table `tbl0xeC3e8S220wl`
-- **Repo marker:** `c:\mywork\gitee\uccargo\.lark-project` → `uccargo`
+Your own app / bitable / table IDs live **only** in
+`~/.ilk-data/ilk-lark-tickets/config.json` — never in this repo. The shape,
+with placeholder values:
+
+- **App:** `cli_xxxxxxxxxxxxxxxx` (from the Feishu/Lark dev console)
+- **Project `<project-key>`:** bitable `<app_token>`, table `<table_id>` — both
+  readable off the bitable URL:
+  `https://<host>/base/<app_token>?table=<table_id>`
+- **Repo marker:** `<repo>/.lark-project` → `<project-key>`
+
+To see what is actually configured on this machine, read
+`~/.ilk-data/ilk-lark-tickets/config.json`; `cli.py fields` confirms the
+credentials and IDs in it can reach the bitable.

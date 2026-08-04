@@ -36,3 +36,8 @@ skills/ilk-loop/logs/
 # (run_ilk_loop_claude.{sh,ps1}) — records this clone's remote-type
 # (personal|shared) for commit-trailer policy. Must never be committed.
 .ilk-remote-type
+
+# Per-checkout ilk-lark-tickets marker — names which Lark tracker this
+# clone talks to. Not a credential, but it should not travel with a
+# public/shared repo. See skills/ilk-lark-tickets/README.md § Security.
+.lark-project

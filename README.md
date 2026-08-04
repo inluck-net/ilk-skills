@@ -196,9 +196,40 @@ gap.
 
 ## Quick start
 
+> ### ⚠️ Read before installing: this changes your agents *globally*
+>
+> `conventions/config.yml` ships with `auto_use_ilk_plan: true`, and the
+> normal `--apply` path always reconciles the auto-plan managed block. So
+> installing does **not** only add slash commands — it edits your
+> **user-global agent instructions**, which apply to *every* project on the
+> machine, not just this repo:
+>
+> | File | Effect |
+> |---|---|
+> | `~/.claude/CLAUDE.md` | Claude Code routes implementation work to `/ilk-plan` by default |
+> | `~/.codex/AGENTS.md` | same routing for Codex |
+> | `~/.cursor/rules/ilk-auto-plan.mdc` | same routing for Cursor |
+>
+> Note that **`--dry-run` does not show this step** — it exits before the
+> auto-plan reconcile — so the dry-run output understates what `--apply`
+> touches.
+>
+> **To install the skills without changing global agent behavior**, set
+> `auto_use_ilk_plan: false` in `conventions/config.yml` before applying.
+> The block is delimited by `<!-- ilk:auto-plan:start -->` /
+> `<!-- ilk:auto-plan:end -->` markers, so it is removable: set the
+> preference to `false` and re-run the installer to reconcile it away.
+>
+> The routing heuristic itself is documented in
+> [`conventions/auto-plan-routing.md`](conventions/auto-plan-routing.md).
+
 ```bash
 git clone https://github.com/inluck-net/ilk-skills.git
 cd ilk-skills
+
+# Recommended first: see what would be linked.
+# Dry-run is the default for both installers — omit -Apply / --apply.
+./install.sh --dry-run          # Windows: ./install.ps1
 
 # Windows
 ./install.ps1 -Apply

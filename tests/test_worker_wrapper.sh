@@ -83,7 +83,12 @@ echo "=== launch path wiring (static) ==="
 sh="$(cat "$WRAP_SH")"
 check "exports CLAUDE_CONFIG_DIR"  "$sh" contains "export CLAUDE_CONFIG_DIR="
 check "exports ILK_SKILL_HOME"     "$sh" contains "export ILK_SKILL_HOME="
-check "execs claude"               "$sh" contains "exec claude"
+# The wrapper deliberately launches claude as a *child* rather than exec'ing
+# it, so the EXIT trap fires and the worker sentinel is removed on exit
+# (claude-worker.sh: "Launch as a child (not exec) so the EXIT trap fires").
+# Assert both halves so reintroducing `exec` fails here.
+check "launches the resolved claude bin" "$sh" contains '"$resolved_claude_bin"'
+check "does not exec (EXIT trap must fire)" "$sh" absent "exec claude"
 
 echo ""
 echo "=== claude-worker.ps1 parity (static) ==="
