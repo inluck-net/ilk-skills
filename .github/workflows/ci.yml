@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Repo-level shell suite. Each test is hermetic: it redirects HOME to a temp
+  # dir and builds its own git fixtures, so nothing here touches a real agent
+  # home. Runs on both platforms because most runtime logic is shell and macOS
+  # still ships bash 3.2.
+  shell-tests:
+    name: shell tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure git identity for fixture repos
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+          git config --global init.defaultBranch main
+
+      # No `claude` CLI or `gtimeout` is installed here on purpose: the shell
+      # suite is hermetic and must stay that way. A test that needs one of those
+      # binaries present should stub it (see the stub-bin block in
+      # tests/test_runner_gate_discovery_fallback.sh), not depend on a
+      # provisioned machine. Keeping the runners bare is what catches that.
+      - name: Run tests/*.sh
+        run: |
+          fail=0
+          for f in tests/*.sh; do
+            echo "::group::$f"
+            if bash "$f"; then
+              echo "PASS $f"
+            else
+              echo "::error file=$f::shell test failed"
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $fail
+
+  # Static guards + import health. The full Python suite is intentionally NOT
+  # run here: a number of its tests require a fully installed skill home or
+  # powershell and fail outside that layout (see CONTRIBUTING.md). Collection
+  # IS checked, which catches import/syntax breakage across all ~1300 tests
+  # without depending on that environment.
+  python-checks:
+    name: python lints + collection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pytest
+        run: python -m pip install --upgrade pip pytest
+
+      - name: FM-0003 subprocess-encoding lint (must be zero violations)
+        run: python skills/ilk-loop/scripts/lint_subprocess_encoding.py --scan skills tools
+
+      - name: Test collection must be clean
+        run: python -m pytest --collect-only -q
+        env:
+          ILK_SKILL_HOME: ${{ github.workspace }}
+
+      - name: Lint guard tests
+        run: python -m pytest -q tests/test_subprocess_encoding_lint.py tests/test_minimax_draw.py
+
+  # Guard the release-blocking hygiene checks: no per-machine markers or
+  # credential-shaped strings may be committed.
+  hygiene:
+    name: repo hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Per-machine state must not be tracked
+        run: |
+          fail=0
+          for f in .lark-project .ilk-remote-type skills/ilk-launcher/projects.json; do
+            if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+              echo "::error::$f is tracked but must stay per-machine (see SECURITY.md)"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: No credential-shaped strings in tracked files
+        run: |
+          if git ls-files -z | xargs -0 grep -nEI \
+            '(sk-ant-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{50,}|xox[baprs]-[0-9]{8,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |OPENSSH )?PRIVATE KEY)'; then
+            echo "::error::credential-shaped string found in a tracked file"
+            exit 1
+          fi
+          echo "clean"

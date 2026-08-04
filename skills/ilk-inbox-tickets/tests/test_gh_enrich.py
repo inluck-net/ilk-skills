@@ -193,7 +193,7 @@ class TestCliGhCheck:
             [sys.executable, "-m", "scripts.cli", "gh-check",
              "--inbox", str(inbox), "--json"],
             cwd=str(Path(__file__).resolve().parent.parent),
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, encoding="utf-8",
         )
         assert result.returncode == 0
         assert result.stdout.strip() == "[]"
@@ -224,7 +224,7 @@ class TestCliGhCheck:
             [sys.executable, "-m", "scripts.cli", "gh-check",
              "--inbox", str(inbox), "--json"],
             cwd=str(Path(__file__).resolve().parent.parent),
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, encoding="utf-8",
         )
         # Should not crash (exit 2)
         assert result.returncode in (0, 1)
@@ -249,7 +249,7 @@ class TestCliGhCheck:
             [sys.executable, "-m", "scripts.cli", "gh-check",
              "--inbox", str(inbox), "--json"],
             cwd=str(Path(__file__).resolve().parent.parent),
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, encoding="utf-8",
         )
         assert result.returncode == 0
         assert result.stdout.strip() == "[]"

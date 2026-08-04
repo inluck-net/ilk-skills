@@ -37,7 +37,7 @@ def _has_gateway_creds() -> bool:
 def _run_vl(*extra_args: str) -> subprocess.CompletedProcess:
     """Run vl_describe.py as a subprocess (the real consumer entry point)."""
     cmd = [sys.executable, str(SCRIPT)] + list(extra_args)
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=120, encoding="utf-8")
 
 
 def _run_vl_mocked(mock_code: str, *extra_args: str,
@@ -87,7 +87,7 @@ def _run_vl_mocked(mock_code: str, *extra_args: str,
         return subprocess.run(
             [sys.executable, tmp_path],
             capture_output=True, text=True, timeout=30,
-            env=env,
+            env=env, encoding="utf-8",
         )
     finally:
         Path(tmp_path).unlink(missing_ok=True)

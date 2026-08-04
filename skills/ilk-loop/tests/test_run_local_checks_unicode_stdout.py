@@ -61,10 +61,14 @@ def test_json_survives_nonascii_gate_output_on_narrow_stdout(tmp_path: Path) -> 
     # Force the crash condition on ANY OS: a stdout codec that can't encode U+2713.
     env["PYTHONIOENCODING"] = "ascii"
 
+    # encoding=None is the bytes-mode default, stated explicitly: this test
+    # must capture RAW bytes and decode them tolerantly below (see .decode
+    # calls), because the point is to survive a child whose stdout codec
+    # cannot encode U+2713. Text-mode capture would defeat the test.
     proc = subprocess.run(
         [sys.executable, str(SCRIPT), "--project", str(proj),
          "--slug", "uni-test", "--step", "0"],
-        capture_output=True, env=env,
+        capture_output=True, env=env, encoding=None,
     )
 
     # Must NOT crash to empty stdout. Decode tolerantly and parse the JSON.

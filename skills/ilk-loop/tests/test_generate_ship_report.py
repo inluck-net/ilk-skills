@@ -261,32 +261,32 @@ class TestBuildReportDodIntegration:
         """Create a minimal project dir with two git commits."""
         import subprocess
 
-        subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+        subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True, encoding="utf-8")
         subprocess.run(
             ["git", "-C", str(tmp_path), "config", "user.email", "test@test.com"],
             check=True,
-            capture_output=True,
+            capture_output=True, encoding="utf-8",
         )
         subprocess.run(
             ["git", "-C", str(tmp_path), "config", "user.name", "Test"],
             check=True,
-            capture_output=True,
+            capture_output=True, encoding="utf-8",
         )
         # First commit (base).
         (tmp_path / "dummy.txt").write_text("hello\n", encoding="utf-8")
-        subprocess.run(["git", "-C", str(tmp_path), "add", "dummy.txt"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(tmp_path), "add", "dummy.txt"], check=True, capture_output=True, encoding="utf-8")
         subprocess.run(
             ["git", "-C", str(tmp_path), "commit", "-m", "base"],
             check=True,
-            capture_output=True,
+            capture_output=True, encoding="utf-8",
         )
         # Second commit (head) — so HEAD~1..HEAD is a valid range.
         (tmp_path / "dummy.txt").write_text("hello world\n", encoding="utf-8")
-        subprocess.run(["git", "-C", str(tmp_path), "add", "dummy.txt"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(tmp_path), "add", "dummy.txt"], check=True, capture_output=True, encoding="utf-8")
         subprocess.run(
             ["git", "-C", str(tmp_path), "commit", "-m", "head"],
             check=True,
-            capture_output=True,
+            capture_output=True, encoding="utf-8",
         )
         return tmp_path
 

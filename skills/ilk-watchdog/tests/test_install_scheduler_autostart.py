@@ -26,7 +26,7 @@ def _run(args, home: Path):
     env = {**os.environ, "HOME": str(home), "ILK_AUTOSTART_NO_LOAD": "1"}
     return subprocess.run(
         ["bash", str(INSTALLER), *args],
-        capture_output=True, text=True, timeout=30, env=env,
+        capture_output=True, text=True, timeout=30, env=env, encoding="utf-8",
     )
 
 
@@ -83,7 +83,7 @@ def test_plist_passes_plutil_lint(tmp_path):
         pytest.skip("plutil not available")
     _run([], tmp_path)
     plist = tmp_path / "Library" / "LaunchAgents" / f"{LABEL}.plist"
-    res = subprocess.run(["plutil", "-lint", str(plist)], capture_output=True, text=True)
+    res = subprocess.run(["plutil", "-lint", str(plist)], capture_output=True, text=True, encoding="utf-8")
     assert res.returncode == 0, res.stdout + res.stderr
 
 
@@ -93,7 +93,7 @@ def _run_real(args, home: Path, timeout: int = 120):
     env.pop("ILK_AUTOSTART_NO_LOAD", None)
     return subprocess.run(
         ["bash", str(INSTALLER), *args],
-        capture_output=True, text=True, timeout=timeout, env=env,
+        capture_output=True, text=True, timeout=timeout, env=env, encoding="utf-8",
     )
 
 
@@ -135,7 +135,7 @@ def test_restart_durability_keeps_agent_loaded(tmp_path):
     try:
         probe = subprocess.run(
             ["launchctl", "print", f"{domain}/{LABEL}"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, encoding="utf-8",
         )
     except FileNotFoundError:
         pytest.skip("launchctl not available")
@@ -185,7 +185,7 @@ def test_restart_durability_keeps_agent_loaded(tmp_path):
         # Assert label is still present in launchd.
         info = subprocess.run(
             ["launchctl", "print", f"{domain}/{LABEL}"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, encoding="utf-8",
         )
         assert info.returncode == 0, f"label disappeared after crash: {info.stderr}"
 

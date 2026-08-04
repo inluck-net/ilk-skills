@@ -97,19 +97,19 @@ def _init_git_repo(project_path: Path):
     """Initialize a minimal git repo so ilk_paths.py can resolve the project."""
     subprocess.run(
         ["git", "init", str(project_path)],
-        capture_output=True, timeout=10,
+        capture_output=True, timeout=10, encoding="utf-8",
     )
     # Create a dummy commit so the repo has a HEAD
     (project_path / "README.md").touch()
     subprocess.run(
         ["git", "-C", str(project_path), "add", "."],
-        capture_output=True, timeout=10,
+        capture_output=True, timeout=10, encoding="utf-8",
     )
     subprocess.run(
         ["git", "-C", str(project_path), "commit", "-m", "init", "--allow-empty"],
         capture_output=True, timeout=10,
         env={**os.environ, "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@test",
-             "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test@test"},
+             "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test@test"}, encoding="utf-8",
     )
 
 

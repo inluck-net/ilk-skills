@@ -566,7 +566,7 @@ class TestCLINewFields:
              "--source", "supervisor",
              "--relation", "commit=abc123",
              "--relation", "run_id=r42"],
-            capture_output=True, text=True, env=env,
+            capture_output=True, text=True, env=env, encoding="utf-8",
         )
         assert result.returncode == 0, f"add failed: {result.stderr}"
         added = json.loads(result.stdout)
@@ -579,7 +579,7 @@ class TestCLINewFields:
         result2 = subprocess.run(
             [sys.executable, str(_SCRIPT), "list",
              "--source", "supervisor", "--json"],
-            capture_output=True, text=True, env=env,
+            capture_output=True, text=True, env=env, encoding="utf-8",
         )
         assert result2.returncode == 0, f"list failed: {result2.stderr}"
         entries = json.loads(result2.stdout)

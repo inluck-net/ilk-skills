@@ -57,7 +57,7 @@ def _default_runner(number: int) -> dict[str, Any]:
             ["gh", "issue", "view", str(number), "--json", "state"],
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=15, encoding="utf-8",
         )
         if result.returncode != 0:
             return {"state": "UNKNOWN", "error": result.stderr.strip()}

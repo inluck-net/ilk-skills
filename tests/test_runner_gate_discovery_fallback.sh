@@ -39,6 +39,28 @@ TEST_TMPDIR="$(mktemp -d)"
 cleanup() { rm -rf "$TEST_TMPDIR"; }
 trap cleanup EXIT
 
+# AC-7/AC-8 call the runner's preflight() directly, but only to exercise
+# run_id / --log-dir resolution. preflight() also refuses to continue unless
+# `gtimeout`, `claude`, and `python3` are on PATH — presence checks that are
+# incidental to what those two cases assert, and that made this test depend on
+# a fully provisioned dev machine (it failed on CI with "gtimeout not found",
+# then "Claude Code 'claude' not on PATH").
+#
+# Stub the two external binaries so the test is hermetic everywhere. This does
+# not weaken the assertions: neither stub is ever invoked, because preflight
+# only checks that the names resolve. python3 is a genuine test dependency and
+# is intentionally NOT stubbed.
+STUB_BIN="$TEST_TMPDIR/stub-bin"
+mkdir -p "$STUB_BIN"
+for _stub in claude gtimeout; do
+  if ! command -v "$_stub" >/dev/null 2>&1; then
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB_BIN/$_stub"
+    chmod +x "$STUB_BIN/$_stub"
+  fi
+done
+PATH="$STUB_BIN:$PATH"
+export PATH
+
 ok()   { PASS=$((PASS + 1)); echo "  PASS: $1"; }
 bad()  { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 

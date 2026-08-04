@@ -59,7 +59,7 @@ def _extract_function(func_name: str) -> str:
     result = subprocess.run(
         [_bash_exe(), "-c",
          f"sed -n '/^{func_name}()/,/^}}/p' '{_WATCHDOG_SH}'"],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True, text=True, timeout=10, encoding="utf-8",
     )
     assert result.returncode == 0, f"Failed to extract {func_name}: {result.stderr}"
     assert result.stdout.strip(), f"Function {func_name} not found in watchdog.sh"
@@ -74,7 +74,7 @@ def _call_startup_action(state: str, ended_epoch: int, launch_epoch: int,
     script = f"{func_code}\nstartup_sentinel_action '{state}' {ended_epoch} {launch_epoch} {loop_status_exit} {alive_str}"
     result = subprocess.run(
         [_bash_exe(), "-c", script],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True, text=True, timeout=10, encoding="utf-8",
     )
     assert result.returncode == 0, (
         f"startup_sentinel_action failed.\nstdout: {result.stdout}\nstderr: {result.stderr}"
@@ -195,18 +195,18 @@ def _init_git_repo(project_path: Path):
     """Initialize a minimal git repo so ilk_paths.py can resolve the project."""
     subprocess.run(
         ["git", "init", str(project_path)],
-        capture_output=True, timeout=10,
+        capture_output=True, timeout=10, encoding="utf-8",
     )
     (project_path / "README.md").touch()
     subprocess.run(
         ["git", "-C", str(project_path), "add", "."],
-        capture_output=True, timeout=10,
+        capture_output=True, timeout=10, encoding="utf-8",
     )
     subprocess.run(
         ["git", "-C", str(project_path), "commit", "-m", "init", "--allow-empty"],
         capture_output=True, timeout=10,
         env={**os.environ, "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@test",
-             "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test@test"},
+             "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test@test"}, encoding="utf-8",
     )
 
 
