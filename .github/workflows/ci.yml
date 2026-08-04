@@ -30,31 +30,11 @@ jobs:
           git config --global user.name "CI"
           git config --global init.defaultBranch main
 
-      # The bash runner requires GNU timeout under the name `gtimeout` (see
-      # run_ilk_loop_claude.sh preflight), so provide it on both platforms.
-      #
-      # NOTE: on Linux, GNU timeout is installed as `timeout`, not `gtimeout` —
-      # the runner's preflight rejects it. That is a real portability gap in the
-      # runner, not a CI quirk: the shim below is what makes these tests
-      # exercise runner *logic* rather than binary packaging. See the "known
-      # gaps" note in CONTRIBUTING.md.
-      - name: Provide gtimeout (GNU timeout)
-        shell: bash
-        run: |
-          if command -v gtimeout >/dev/null 2>&1; then
-            echo "gtimeout already present"
-          elif [ "$RUNNER_OS" = "macOS" ]; then
-            brew install coreutils
-          else
-            mkdir -p "$HOME/.local/bin"
-            ln -sf "$(command -v timeout)" "$HOME/.local/bin/gtimeout"
-            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          fi
-
-      - name: Verify gtimeout resolves
-        shell: bash
-        run: gtimeout 5s true && echo "gtimeout OK"
-
+      # No `claude` CLI or `gtimeout` is installed here on purpose: the shell
+      # suite is hermetic and must stay that way. A test that needs one of those
+      # binaries present should stub it (see the stub-bin block in
+      # tests/test_runner_gate_discovery_fallback.sh), not depend on a
+      # provisioned machine. Keeping the runners bare is what catches that.
       - name: Run tests/*.sh
         run: |
           fail=0
