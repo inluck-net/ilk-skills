@@ -82,6 +82,20 @@ Any `subprocess.run`/`Popen` that captures output needs an explicit
 explicitly and say why in a comment — that documents the intent and satisfies
 the lint without changing behavior.
 
+## Known gaps
+
+- **The bash runner requires GNU timeout under the name `gtimeout`.** Its
+  preflight checks `command -v gtimeout` unconditionally
+  (`skills/ilk-loop/scripts/run_ilk_loop_claude.sh`), but on Linux GNU coreutils
+  installs it as **`timeout`** — so the runner refuses to start on Linux even
+  though `timeout` is present and GNU. On macOS `brew install coreutils`
+  provides the `gtimeout` name, which is why the gap goes unnoticed there. CI
+  works around it with a `gtimeout -> timeout` symlink so the tests exercise
+  runner logic rather than binary packaging. The real fix is to resolve the
+  timeout binary once (prefer `gtimeout`, accept a GNU `timeout`) and use that
+  everywhere — there are ~10 call sites across `run_ilk_loop_claude.sh` and
+  `skills/ilk-launcher/scripts/stop.sh`, plus tests that stub `gtimeout`.
+
 ## Conventions
 
 - **Cross-platform parity.** Most runtime logic exists as both `*.sh` and
