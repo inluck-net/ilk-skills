@@ -279,4 +279,4 @@ layout. Both are documented there.
 
 ## License
 
-[Apache License 2.0](LICENSE).
+[Apache License 2.0](LICENSE) — Copyright 2026 Chad Cai.
