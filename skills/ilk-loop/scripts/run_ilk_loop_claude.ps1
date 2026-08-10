@@ -2022,6 +2022,107 @@ if (Test-AllShipped -Project $ProjectPath) {
   return
 }
 
+# ----- Timeout-preservation parity (AC-1/2/4/7 .sh → .ps1) ----------------
+
+function Preserve-DirtyTreeOnTimeout {
+  <#
+  .SYNOPSIS
+  When an iteration is killed by timeout, commit dirty tree as WIP (AC-1/2/4/7).
+  #>
+  $wipCount = 0
+  foreach ($repo in $script:Repos) {
+    $isGit = git -C $repo rev-parse --is-inside-work-tree 2>$null
+    if ($LASTEXITCODE -ne 0) { continue }
+
+    $hasDirty = $false
+    git -C $repo diff --quiet 2>$null; if ($LASTEXITCODE -ne 0) { $hasDirty = $true }
+    git -C $repo diff --cached --quiet 2>$null; if ($LASTEXITCODE -ne 0) { $hasDirty = $true }
+    $hasUntracked = $false
+    $untracked = git -C $repo ls-files --others --exclude-standard 2>$null
+    if ($untracked) { $hasUntracked = $true }
+    if (-not $hasDirty -and -not $hasUntracked) { continue }
+
+    try {
+      git -C $repo add -A 2>$null
+      $fileCount = (git -C $repo diff --cached --name-only 2>$null | Measure-Object).Count
+      $diffStat = (git -C $repo diff --cached --stat 2>$null | Select-Object -Last 1)
+      $msg = @"
+WIP: preserve timed-out iteration changes
+
+Preserved by ilk-runner on timeout.  This commit is NOT a gate pass —
+the next iteration will re-run verification.
+
+[wip:timeout] files=$fileCount $diffStat
+"@
+      git -C $repo commit -m $msg 2>$null
+      if ($LASTEXITCODE -eq 0) {
+        Write-Host "[runner] WIP commit: preserved $fileCount files in $repo" -ForegroundColor Yellow
+      } else {
+        Write-Host "[runner] WIP commit failed in $repo — work may be lost" -ForegroundColor Red
+      }
+    } catch {
+      Write-Host "[runner] WIP preservation error in $repo`: $_" -ForegroundColor Red
+    }
+    $wipCount++
+  }
+  return $wipCount
+}
+
+function Count-IterationMetrics {
+  <#
+  .SYNOPSIS
+  Parse the per-iteration stream JSON log for tool-call and test-invocation counts (AC-12).
+  #>
+  param([string]$JsonlLog)
+  if (-not (Test-Path $JsonlLog) -or (Get-Item $JsonlLog).Length -eq 0) {
+    return @{ ToolCalls = 0; TestInvocations = 0 }
+  }
+  $toolCalls = 0
+  $testInvocations = 0
+  $testPattern = 'pytest|jest|npm\s+test|bun\s+test|vitest|mocha|cargo\s+test|go\s+test|run_tests'
+  foreach ($line in Get-Content $JsonlLog -Encoding utf8 -ErrorAction SilentlyContinue) {
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+    try {
+      $d = $line | ConvertFrom-Json -ErrorAction Stop
+    } catch { continue }
+    if ($d.type -ne 'assistant') { continue }
+    foreach ($block in $d.message.content) {
+      if ($block.type -ne 'tool_use') { continue }
+      $toolCalls++
+      if ($block.name -eq 'Bash') {
+        $cmd = $block.input.command
+        if ($cmd -match $testPattern) { $testInvocations++ }
+      }
+    }
+  }
+  return @{ ToolCalls = $toolCalls; TestInvocations = $testInvocations }
+}
+
+function Reap-IterationOrphans {
+  <#
+  .SYNOPSIS
+  Kill background processes spawned by the iteration (AC-13/14).
+  Scoped to direct children of this process, NOT by name pattern.
+  #>
+  try {
+    $myPid = $PID
+    $children = Get-CimInstance Win32_Process -Filter "ParentProcessId=$myPid" -ErrorAction SilentlyContinue
+    $reaped = 0
+    foreach ($child in $children) {
+      if ($child.ProcessId -eq $myPid) { continue }
+      try {
+        Stop-Process -Id $child.ProcessId -Force -ErrorAction SilentlyContinue
+        $reaped++
+      } catch {}
+    }
+    if ($reaped -gt 0) {
+      Write-Host "[runner] reaped $reaped orphaned background processes" -ForegroundColor Yellow
+    }
+  } catch {
+    # AC-14: reaping failure must not abort the run
+  }
+}
+
 # ----- Main loop ----------------------------------------------------
 
 for ($i = 1; $i -le $MaxIterations; $i++) {
@@ -2103,7 +2204,12 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
   else                 { $script:NoProgressStreak++ }
 
   $iterStopReason = $null
-  if (-not $result.Completed)        { $iterStopReason = "timeout" }
+  $wipPreserved = 0
+  if (-not $result.Completed) {
+    $iterStopReason = "timeout"
+    # Preserve dirty tree as WIP commit (AC-1/2/4/7 parity with .sh)
+    $wipPreserved = Preserve-DirtyTreeOnTimeout
+  }
   elseif ($result.BudgetExhausted)   { $iterStopReason = "budget-exhausted" }
   elseif ($script:NoProgressStreak -ge 3) {
     $iterStopReason = "no-progress"  # 3 iters in a row, no commits — real stall
@@ -2114,6 +2220,12 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     # the loop on its own.
     Write-Host ("  ! agent exited {0} (likely transient upstream API error). Streak: {1}/3. Continuing." -f $result.ExitCode, $script:NoProgressStreak) -ForegroundColor DarkYellow
   }
+
+  # Count tool calls and test invocations (AC-12 parity with .sh)
+  $iterMetrics = Count-IterationMetrics -JsonlLog "$iterLog.jsonl"
+
+  # Reap iteration orphans (AC-13/14 parity with .sh)
+  Reap-IterationOrphans
 
   # Optional: run local_checks declared in sub-plan frontmatter / per-step
   # yaml fences. Observation only — never gates or stops the loop. Opt-in
@@ -2293,7 +2405,7 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     }
   }
 
-  Write-JsonlRecord -Record @{
+  $jsonlRecord = @{
     run_id            = $RunId
     cli               = "claude"
     iteration         = $i
@@ -2312,6 +2424,10 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     stop_reason       = $iterStopReason
     local_checks      = $localChecksRun
   }
+  if ($wipPreserved -gt 0) { $jsonlRecord['wip_preserved'] = $wipPreserved }
+  if ($iterMetrics.ToolCalls -gt 0) { $jsonlRecord['tool_calls'] = $iterMetrics.ToolCalls }
+  if ($iterMetrics.TestInvocations -gt 0) { $jsonlRecord['test_invocations'] = $iterMetrics.TestInvocations }
+  Write-JsonlRecord -Record $jsonlRecord
 
   # Deferred B2 break: the failing iteration is now recorded above (so the
   # classifier can see it); stop before running quality gates / shipping.
