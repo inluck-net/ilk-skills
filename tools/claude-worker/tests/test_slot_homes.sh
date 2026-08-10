@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for slot-home clone bootstrap (--clone-slot).
-# AC-1: clone creates settings.json with matching env, skills link, .claude.json;
-#        re-run is idempotent (no error, no duplicate).
+# AC-1: clone creates settings.json with matching env, skills link, commands link,
+#        .claude.json; re-run is idempotent (no error, no duplicate).
 # Exit 0 on success, 1 on failure.
 
 set -euo pipefail
@@ -56,6 +56,7 @@ assert_exit_ok() {
 FAKE_BASE="$REPO_ROOT/scratch/slot-test/base"
 rm -rf "$REPO_ROOT/scratch/slot-test"
 mkdir -p "$FAKE_BASE/skills/ilk-runner"
+mkdir -p "$FAKE_BASE/commands"
 
 # Write a dummy settings.json with provider env.
 cat > "$FAKE_BASE/settings.json" <<'EOF'
@@ -77,6 +78,9 @@ EOF
 
 # Write a dummy file in skills/ so we can verify the link.
 echo "skill-content" > "$FAKE_BASE/skills/ilk-runner/SKILL.md"
+
+# Write a dummy commands/ilk.md so we can verify the commands link.
+echo "# /ilk" > "$FAKE_BASE/commands/ilk.md"
 
 SLOT_HOME="$FAKE_BASE-2"
 
@@ -122,6 +126,16 @@ else
   fail=$((fail + 1))
 fi
 
+# Verify commands link exists and commands/ilk.md is readable through the slot path.
+# AC-1: must be readable, not merely symlinked — a dangling link is the failure mode.
+if [[ -r "$SLOT_HOME/commands/ilk.md" ]]; then
+  echo "  PASS: commands/ilk.md readable through slot home"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: commands/ilk.md not readable through slot home"
+  fail=$((fail + 1))
+fi
+
 # === Test 2: Idempotent re-run ===
 echo ""
 echo "=== Test 2: Idempotent re-run ==="
@@ -140,6 +154,15 @@ if [[ -e "$SLOT_HOME/skills/ilk-runner/SKILL.md" ]]; then
   pass=$((pass + 1))
 else
   echo "  FAIL: skills not accessible after re-run"
+  fail=$((fail + 1))
+fi
+
+# Verify commands still accessible after re-run (AC-2: idempotent).
+if [[ -r "$SLOT_HOME/commands/ilk.md" ]]; then
+  echo "  PASS: commands/ilk.md still readable after re-run"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: commands/ilk.md not readable after re-run"
   fail=$((fail + 1))
 fi
 

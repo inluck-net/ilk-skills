@@ -220,6 +220,26 @@ EOF
     fi
   fi
 
+  # Link commands: symlink on POSIX, same pattern as skills.
+  if [[ -d "$clone_base/commands" ]]; then
+    if [[ -L "$slot_home/commands" ]]; then
+      # Already a symlink — verify it points to the right place.
+      current_target="$(readlink "$slot_home/commands")"
+      if [[ "$current_target" == "$clone_base/commands" ]]; then
+        echo "  commands symlink already correct"
+      else
+        rm "$slot_home/commands"
+        ln -s "$clone_base/commands" "$slot_home/commands"
+        echo "  updated commands symlink -> $clone_base/commands"
+      fi
+    elif [[ -d "$slot_home/commands" ]]; then
+      echo "  kept existing commands directory (left untouched)"
+    else
+      ln -s "$clone_base/commands" "$slot_home/commands"
+      echo "  linked commands -> $clone_base/commands"
+    fi
+  fi
+
   echo
   echo "Slot home ready: $slot_home"
   exit 0
