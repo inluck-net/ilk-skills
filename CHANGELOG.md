@@ -10,6 +10,8 @@ themselves are the authoritative record.
 
 | Version | Date | Highlights |
 |---|---|---|
+| v0.9.53 | 2026-08-10 | Loop fidelity: worker slot homes get `commands/` so slots above 0 can run at all; a never-ran or throttled run no longer parks the project as `stuck-no-progress`; a timed-out iteration preserves its dirty tree and reports what consumed the budget; the dashboard resolves the real repo so pace/ETA work; `plan_lint` flags gates whose selector can silently select nothing |
+| v0.9.52 | 2026-08-04 | Public-release readiness: internal IDs scrubbed, stale tests fixed, first CI, README as an OSS landing page |
 | v0.9.51 | 2026-08-03 | `local_checks` gate actually runs on a shared remote (trailer-independent target discovery, verified end-to-end); one `run_id` per run; MASTER registry rows reconciled |
 | v0.9.50 | 2026-08-03 | Scheduler skips a resolved-but-absent repo path instead of re-dispatching it forever; test fixture + runner hang fixes |
 | v0.9.49 | 2026-07-30 | Dispatch planner verification when a master drains (closes the last manual join); AC-6 escalation guard |
