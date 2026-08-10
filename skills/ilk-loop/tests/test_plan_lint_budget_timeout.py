@@ -223,3 +223,95 @@ local_checks:
 """
     findings = lint_budget_vs_gate_timeout(text, "example-over-boundary")
     assert len(findings) == 1
+
+
+# --- Per-step semantics (regression guard, 2026-08-10) ----------------------
+#
+# The budget is per ITERATION and each step runs in its own iteration, so the
+# lint must compare each step's gates against the budget -- not the sum of every
+# step's gates. The original implementation summed the whole file, which
+# overstates cost by the number of steps: 3 of this repo's own 5 sub-plans
+# false-warned. Frontmatter gates run at EVERY step, so a step's true cost is
+# the frontmatter sum plus that step's own block.
+
+_MANY_CHEAP_STEPS = """\
+---
+plan: many-cheap-steps
+local_checks:
+  - command: python3 -m pytest tests/a.py -q
+    timeout: 300
+---
+
+# Sub-plan: several steps, each cheap
+
+## Steps
+
+### Step 0 - first
+```yaml
+local_checks:
+  - command: python3 -m pytest tests/b.py -q
+    timeout: 300
+```
+- work
+
+### Step 1 - second
+```yaml
+local_checks:
+  - command: python3 -m pytest tests/c.py -q
+    timeout: 300
+```
+- work
+
+### Step 2 - third
+```yaml
+local_checks:
+  - command: python3 -m pytest tests/d.py -q
+    timeout: 300
+```
+- work
+
+### Step 3 - fourth
+```yaml
+local_checks:
+  - command: python3 -m pytest tests/e.py -q
+    timeout: 300
+```
+- work
+"""
+
+
+def test_many_cheap_steps_do_not_warn() -> None:
+    """4 steps x 600s each (300 frontmatter + 300 own) must NOT warn.
+
+    Whole-file summing would total 2400s and false-warn against the 1440s
+    threshold; per-step the worst step is 600s, comfortably under.
+    """
+    findings = lint_budget_vs_gate_timeout(_MANY_CHEAP_STEPS, "many-cheap-steps")
+    assert findings == [], (
+        f"Each step costs 600s, well under 80% of 1800s. A finding here means "
+        f"the lint is summing across steps again: {findings}"
+    )
+
+
+def test_warning_names_the_offending_step() -> None:
+    """A genuinely expensive step warns, and the message identifies which step."""
+    content = _MANY_CHEAP_STEPS.replace(
+        """### Step 2 - third
+```yaml
+local_checks:
+  - command: python3 -m pytest tests/d.py -q
+    timeout: 300
+```""",
+        """### Step 2 - third
+```yaml
+local_checks:
+  - command: python3 -m pytest tests/d.py -q
+    timeout: 1600
+```""",
+    )
+    findings = lint_budget_vs_gate_timeout(content, "one-hog")
+    assert len(findings) == 1, f"Expected one finding for a 1900s step: {findings}"
+    assert "step 2" in findings[0], (
+        f"Finding must name the offending step so the author knows where to "
+        f"look: {findings[0]}"
+    )

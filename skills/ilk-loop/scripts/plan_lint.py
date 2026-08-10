@@ -1067,11 +1067,38 @@ def _extract_body(text: str) -> str:
     return text[m.end():]
 
 
+def _extract_all_local_checks_commands(text: str) -> list[str]:
+    """Every local_checks command: frontmatter AND per-step yaml blocks.
+
+    ``_extract_local_checks_commands`` is deliberately frontmatter-only —
+    ``lint_frontmatter_path_created_later`` depends on that narrowness, since a
+    per-step check referencing a path its own step creates is correct, not a
+    finding. Lints that must see *every* gate use this instead.
+
+    Measured 2026-08-10: real sub-plans in this repo declare 1 frontmatter gate
+    and 3-6 per-step gates, so a frontmatter-only lint sees roughly a fifth of
+    the gates it claims to cover. Selectors in particular live almost entirely
+    in per-step blocks.
+    """
+    commands = list(_extract_local_checks_commands(text))
+    body = _strip_frontmatter(text)
+    for block_match in _STEP_LOCAL_CHECKS_BLOCK_RE.finditer(body):
+        commands.extend(re.findall(r"command:\s*(.+)", block_match.group(1)))
+    return commands
+
+
 def lint_unverifiable_test_selector(text: str, slug: str) -> list[str]:
     """Flag a local_check test command carrying a selector the planner cannot verify."""
     findings: list[str] = []
-    commands = _extract_local_checks_commands(text)
-    body = _extract_body(text)
+    commands = _extract_all_local_checks_commands(text)
+    # The escape below asks "does the sub-plan's PROSE name this test file?".
+    # A per-step ``local_checks`` yaml block is itself part of the body, so the
+    # command's own file token is always present in it — leaving the blocks in
+    # makes the escape fire on every per-step gate and silences the lint
+    # entirely (observed 2026-08-10: the lint warned only on frontmatter gates,
+    # which is where selectors almost never appear). Strip the gate blocks so
+    # only genuine prose counts as justification.
+    body = _STEP_LOCAL_CHECKS_BLOCK_RE.sub(" ", _extract_body(text))
     for cmd in commands:
         # Strip a leading ``python -m`` / ``python3 -m`` prefix so that
         # ``-m pytest`` is not mistaken for pytest's ``-m`` marker selector.
@@ -1169,24 +1196,65 @@ def _extract_recommended_timeout(text: str) -> int:
     return int(match.group(1)) if match else _DEFAULT_ITERATION_TIMEOUT_MIN
 
 
+def _extract_per_step_timeout_sums(text: str) -> list[tuple[str, int]] | None:
+    """Per-step gate-timeout totals, as ``(step_label, seconds)``.
+
+    The budget is **per iteration**, and each step runs in its own iteration, so
+    summing every step's gates together (as a whole-file sum does) overstates the
+    cost by the number of steps and false-warns on any healthy multi-step
+    sub-plan — measured 2026-08-10: 3 of this repo's own 5 sub-plans tripped it.
+
+    Frontmatter ``local_checks`` run at EVERY step, so a step's true cost is the
+    frontmatter sum plus that step's own block.
+
+    Returns None when no timeouts are declared anywhere (absent != zero).
+    """
+    found_any = False
+    fm_total = 0
+    m = re.match(r"^---\n.*?\n---\n", text, re.S)
+    if m:
+        fm = text[m.start():m.end()]
+        lc_match = re.search(r"^local_checks:\s*$", fm, re.MULTILINE)
+        if lc_match:
+            for val in _TIMEOUT_VALUE_RE.findall(fm[lc_match.end():]):
+                fm_total += int(val)
+                found_any = True
+
+    body = _strip_frontmatter(text)
+    per_step: list[tuple[str, int]] = []
+    for block_match in _STEP_LOCAL_CHECKS_BLOCK_RE.finditer(body):
+        step_total = 0
+        for val in _TIMEOUT_VALUE_RE.findall(block_match.group(1)):
+            step_total += int(val)
+            found_any = True
+        heads = re.findall(r"^###\s+Step\s+(\S+)", body[:block_match.start()], re.M)
+        label = f"step {heads[-1]}" if heads else "a step"
+        per_step.append((label, fm_total + step_total))
+
+    if not found_any:
+        return None
+    return per_step or [("frontmatter gates", fm_total)]
+
+
 def lint_budget_vs_gate_timeout(text: str, slug: str) -> list[str]:
     """Warn when a step's declared gate timeouts approach the iteration budget."""
     findings: list[str] = []
-    timeout_sum = _extract_timeout_sum(text)
-    if timeout_sum is None:
+    sums = _extract_per_step_timeout_sums(text)
+    if sums is None:
         return findings  # absent is not zero — no warning
 
     budget = _extract_recommended_timeout(text)
     threshold = int(budget * 60 * _GATE_TIMEOUT_WARN_FRACTION)
 
-    if timeout_sum > threshold:
+    label, worst = max(sums, key=lambda pair: pair[1])
+    if worst > threshold:
         findings.append(
-            f"{slug}: sum of declared local_checks timeouts ({timeout_sum}s) "
-            f"exceeds {_GATE_TIMEOUT_WARN_FRACTION:.0%} of the iteration budget "
-            f"({budget}min = {budget * 60}s). This step may burn its entire "
-            f"budget on gates alone. Either reduce gate timeouts, raise "
-            f"recommended_iteration_timeout_min, or move expensive gates to "
-            f"fewer steps (see decomposition-principles.md section 16)."
+            f"{slug}: {label} declares local_checks timeouts summing to {worst}s, "
+            f"which exceeds {_GATE_TIMEOUT_WARN_FRACTION:.0%} of the iteration "
+            f"budget ({budget}min = {budget * 60}s). That step may burn its "
+            f"entire budget on gates alone. Either reduce gate timeouts, raise "
+            f"recommended_iteration_timeout_min, or split the step "
+            f"(see decomposition-principles.md section 16)."
         )
     return findings
 

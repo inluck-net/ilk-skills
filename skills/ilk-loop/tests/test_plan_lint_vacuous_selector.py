@@ -265,3 +265,113 @@ def test_finding_message_is_ascii(tmp_path):
                 line_bytes.decode("ascii")
             except UnicodeDecodeError:
                 pytest.fail(f"Finding message contains non-ASCII: {line}")
+
+
+# --- Per-step local_checks coverage -----------------------------------------
+#
+# Regression guard added 2026-08-10. Every fixture above declares its gate in
+# FRONTMATTER, so all of them passed while the lint was blind to per-step
+# ``local_checks`` blocks -- which is where selectors almost always live (a real
+# sub-plan in this repo declares 1 frontmatter gate and 3-6 per-step gates).
+#
+# Two defects were fixed together:
+#   1. ``_extract_local_checks_commands`` is frontmatter-only, so per-step gate
+#      commands were never seen. The lint now uses
+#      ``_extract_all_local_checks_commands``.
+#   2. The "body names the test file" escape self-defeated on per-step gates:
+#      the yaml block IS part of the body, so the command's own file token was
+#      always present and the escape always fired. The escape now ignores the
+#      gate blocks and only counts genuine prose.
+
+_SUBPLAN_PER_STEP_SELECTOR = """\
+---
+plan: test-vacuous-per-step
+---
+
+# Sub-plan: per-step gate with -k selector
+
+## Steps
+
+### Step 0 - add a regression test
+```yaml
+local_checks:
+  - command: python3 -m pytest tests/test_triage.py -q -k clone
+    timeout: 60
+```
+- Add the test.
+"""
+
+_SUBPLAN_PER_STEP_NO_SELECTOR = """\
+---
+plan: test-vacuous-per-step-bare
+---
+
+# Sub-plan: per-step gate on the whole file
+
+## Steps
+
+### Step 0 - add a regression test
+```yaml
+local_checks:
+  - command: python3 -m pytest tests/test_triage.py -q
+    timeout: 60
+```
+- Add the test.
+"""
+
+_SUBPLAN_PER_STEP_JUSTIFIED = """\
+---
+plan: test-vacuous-per-step-justified
+---
+
+# Sub-plan: per-step selector justified in prose
+
+The selector narrows the existing tests/test_triage.py clone-path cases, which
+already exist on disk before this sub-plan starts.
+
+## Steps
+
+### Step 0 - extend the existing test
+```yaml
+local_checks:
+  - command: python3 -m pytest tests/test_triage.py -q -k clone
+    timeout: 60
+```
+- Extend the test.
+"""
+
+
+def test_per_step_selector_fires(tmp_path):
+    """A -k selector in a PER-STEP local_checks block must be flagged."""
+    result = _run_lint(tmp_path, "test-per-step-k.md", _SUBPLAN_PER_STEP_SELECTOR)
+    assert result.returncode == 1, (
+        f"Expected non-zero exit for a per-step -k selector, got exit "
+        f"{result.returncode}. Per-step gates are where selectors actually "
+        f"live; a frontmatter-only lint is effectively silent.\n"
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "WARN" in result.stdout
+    assert "-k" in result.stdout
+
+
+def test_per_step_bare_command_clean(tmp_path):
+    """A per-step gate on the whole file must NOT be flagged."""
+    result = _run_lint(tmp_path, "test-per-step-bare.md", _SUBPLAN_PER_STEP_NO_SELECTOR)
+    assert result.returncode == 0, (
+        f"Expected clean exit for a per-step whole-file gate, got exit "
+        f"{result.returncode}.\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "WARN" not in result.stdout
+
+
+def test_per_step_selector_justified_by_prose(tmp_path):
+    """Prose naming the test file still suppresses the finding for a per-step gate.
+
+    Guards the fix from over-correcting: stripping the gate blocks from the body
+    must not also strip genuine prose justification.
+    """
+    result = _run_lint(tmp_path, "test-per-step-just.md", _SUBPLAN_PER_STEP_JUSTIFIED)
+    assert result.returncode == 0, (
+        f"Expected clean exit when prose names the test file, got exit "
+        f"{result.returncode}.\nstdout={result.stdout}\nstderr={result.stderr}"
+    )

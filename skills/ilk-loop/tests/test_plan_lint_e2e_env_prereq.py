@@ -44,7 +44,7 @@ _SUBPLAN_E2E_NO_ENV = """\
 plan: test-e2e-no-env
 local_checks:
   - command: node e2e/home-routing.mjs
-    timeout: 30000
+    timeout: 300
 ---
 
 # Sub-plan: e2e command with no env_prereqs
@@ -161,7 +161,7 @@ env_prereqs:
     verify_cmd: curl -sf http://localhost:3000
 local_checks:
   - command: node e2e/home-routing.mjs
-    timeout: 30000
+    timeout: 300
 ---
 
 # Sub-plan: e2e with env_prereqs
@@ -186,7 +186,7 @@ _SUBPLAN_E2E_PREFLIGHT = """\
 plan: test-e2e-preflight
 local_checks:
   - command: node e2e/home-routing.mjs
-    timeout: 30000
+    timeout: 300
 ---
 
 # Sub-plan: e2e with preflight reference
@@ -322,7 +322,7 @@ plan: test-empty-env
 env_prereqs: []
 local_checks:
   - command: node e2e/home-routing.mjs
-    timeout: 30000
+    timeout: 300
 ---
 
 # Sub-plan: empty env_prereqs list
