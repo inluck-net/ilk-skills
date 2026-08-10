@@ -10,6 +10,7 @@ themselves are the authoritative record.
 
 | Version | Date | Highlights |
 |---|---|---|
+| v0.9.54 | 2026-08-10 | A watchdog can no longer outlive the loop it supervises: `loop_status` was invoked with an unsupported `--project` flag so `advance` was unreachable and every drained queue span forever; both keep-alive paths are now liveness-aware and bounded |
 | v0.9.53 | 2026-08-10 | Loop fidelity: worker slot homes get `commands/` so slots above 0 can run at all; a never-ran or throttled run no longer parks the project as `stuck-no-progress`; a timed-out iteration preserves its dirty tree and reports what consumed the budget; the dashboard resolves the real repo so pace/ETA work; `plan_lint` flags gates whose selector can silently select nothing |
 | v0.9.52 | 2026-08-04 | Public-release readiness: internal IDs scrubbed, stale tests fixed, first CI, README as an OSS landing page |
 | v0.9.51 | 2026-08-03 | `local_checks` gate actually runs on a shared remote (trailer-independent target discovery, verified end-to-end); one `run_id` per run; MASTER registry rows reconciled |
