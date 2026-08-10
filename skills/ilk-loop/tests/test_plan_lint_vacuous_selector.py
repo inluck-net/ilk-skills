@@ -188,6 +188,58 @@ def test_non_test_command_with_k(tmp_path):
     assert "WARN" not in result.stdout
 
 
+# --- AC-6: body names the test file -> suppressed ---
+
+_SUBPLAN_BODY_JUSTIFIES = """\
+---
+plan: test-justified-selector
+local_checks:
+  - command: python3 -m pytest tests/test_triage.py -q -k clone
+    timeout: 60
+---
+
+# Sub-plan: justified selector
+
+The selector targets tests/test_triage.py which already exists and
+has a test named test_clone_smoke.
+"""
+
+
+def test_body_justifies_selector(tmp_path):
+    """AC-6: body names the test file -> selector justified, 0 findings."""
+    result = _run_lint(tmp_path, "test-justified.md", _SUBPLAN_BODY_JUSTIFIES)
+    assert result.returncode == 0, (
+        f"Expected clean exit when body names the test file, "
+        f"got exit {result.returncode}.\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "WARN" not in result.stdout
+
+
+_SUBPLAN_BODY_DOES_NOT_JUSTIFY = """\
+---
+plan: test-unjustified-selector
+local_checks:
+  - command: python3 -m pytest tests/test_triage.py -q -k clone
+    timeout: 60
+---
+
+# Sub-plan: no mention of the test file
+
+This sub-plan does not justify its selector — the body omits the
+test file path entirely.
+"""
+
+
+def test_body_does_not_justify_selector(tmp_path):
+    """AC-6 negative: body does NOT name the test file -> fires."""
+    result = _run_lint(tmp_path, "test-unjustified.md", _SUBPLAN_BODY_DOES_NOT_JUSTIFY)
+    assert result.returncode == 1, (
+        f"Expected non-zero exit when body omits the test file, "
+        f"got exit {result.returncode}.\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "WARN" in result.stdout
+
+
 # --- Function is registered in ALL_CHECKS ---
 
 def test_function_in_all_checks():

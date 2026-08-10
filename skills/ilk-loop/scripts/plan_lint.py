@@ -1059,10 +1059,19 @@ _SELECTOR_RE = re.compile(
 )
 
 
+def _extract_body(text: str) -> str:
+    """Return the sub-plan body (everything after the frontmatter closing ---)."""
+    m = re.match(r"^---\n.*?\n---\n", text, re.S)
+    if not m:
+        return text
+    return text[m.end():]
+
+
 def lint_unverifiable_test_selector(text: str, slug: str) -> list[str]:
     """Flag a local_check test command carrying a selector the planner cannot verify."""
     findings: list[str] = []
     commands = _extract_local_checks_commands(text)
+    body = _extract_body(text)
     for cmd in commands:
         # Strip a leading ``python -m`` / ``python3 -m`` prefix so that
         # ``-m pytest`` is not mistaken for pytest's ``-m`` marker selector.
@@ -1076,13 +1085,26 @@ def lint_unverifiable_test_selector(text: str, slug: str) -> list[str]:
         m = _SELECTOR_RE.search(normalized)
         if not m:
             continue
+        # Escape: if the sub-plan body names the test file the command
+        # targets, the selector is considered justified (the planner knows
+        # which test it matches).  Extract file-path tokens from the
+        # command and check if any appear in the body.
+        tokens = normalized.split()
+        file_tokens = [
+            t for t in tokens
+            if re.search(r"\.(?:py|ts|js|tsx|jsx|mjs)$", t)
+            and not t.startswith("-")
+        ]
+        if file_tokens and any(ft in body for ft in file_tokens):
+            continue  # body names the test file — selector justified
         selector = m.group(0).strip()
         findings.append(
             f"{slug}: local_check test command carries selector '{selector}' "
             f"which the planner cannot verify at plan time -- if the selector "
             f"matches zero tests the gate passes silently. Gate on the whole "
-            f"test file instead, or justify the selector in the sub-plan body "
-            f"(see decomposition-principles.md section 8)."
+            f"test file instead, or justify the selector by naming the test "
+            f"file in the sub-plan body (see decomposition-principles.md "
+            f"section 8)."
         )
     return findings
 
