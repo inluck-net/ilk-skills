@@ -1109,6 +1109,88 @@ def lint_unverifiable_test_selector(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── Budget-vs-gate-timeout warning ───────────────────────────────────────────
+#
+# A sub-plan's per-step ``local_checks`` declare ``timeout:`` values that sum
+# to the wall-clock budget a single step may consume.  If that sum approaches
+# (or exceeds) the ``iteration_timeout_min`` budget, the step will burn its
+# entire budget on gates alone, leaving no time for the actual work.  The
+# default iteration budget is 30 minutes.
+#
+# This lint warns when the sum of a step's declared gate timeouts exceeds a
+# configurable fraction (default 0.8) of the iteration budget.  It does NOT
+# warn when no timeouts are declared — absent is not zero.
+#
+# See decomposition-principles.md §16.
+
+_DEFAULT_ITERATION_TIMEOUT_MIN = 30
+_GATE_TIMEOUT_WARN_FRACTION = 0.8
+
+_TIMEOUT_VALUE_RE = re.compile(r"timeout:\s*(\d+)")
+
+
+def _extract_timeout_sum(text: str) -> int | None:
+    """Sum of all ``timeout:`` values in local_checks blocks (frontmatter + per-step).
+
+    Returns None when no timeouts are declared (absent ≠ zero).
+    """
+    total = 0
+    found_any = False
+
+    # Frontmatter local_checks
+    m = re.match(r"^---\n.*?\n---\n", text, re.S)
+    if m:
+        fm = text[m.start():m.end()]
+        lc_match = re.search(r"^local_checks:\s*$", fm, re.MULTILINE)
+        if lc_match:
+            after = fm[lc_match.end():]
+            for val in _TIMEOUT_VALUE_RE.findall(after):
+                total += int(val)
+                found_any = True
+
+    # Per-step local_checks blocks
+    body = _strip_frontmatter(text)
+    for block_match in _STEP_LOCAL_CHECKS_BLOCK_RE.finditer(body):
+        block = block_match.group(1)
+        for val in _TIMEOUT_VALUE_RE.findall(block):
+            total += int(val)
+            found_any = True
+
+    return total if found_any else None
+
+
+def _extract_recommended_timeout(text: str) -> int:
+    """Extract ``recommended_iteration_timeout_min`` from frontmatter, or default."""
+    m = re.match(r"^---\n.*?\n---\n", text, re.S)
+    if not m:
+        return _DEFAULT_ITERATION_TIMEOUT_MIN
+    fm = text[m.start():m.end()]
+    match = re.search(r"recommended_iteration_timeout_min:\s*(\d+)", fm)
+    return int(match.group(1)) if match else _DEFAULT_ITERATION_TIMEOUT_MIN
+
+
+def lint_budget_vs_gate_timeout(text: str, slug: str) -> list[str]:
+    """Warn when a step's declared gate timeouts approach the iteration budget."""
+    findings: list[str] = []
+    timeout_sum = _extract_timeout_sum(text)
+    if timeout_sum is None:
+        return findings  # absent is not zero — no warning
+
+    budget = _extract_recommended_timeout(text)
+    threshold = int(budget * 60 * _GATE_TIMEOUT_WARN_FRACTION)
+
+    if timeout_sum > threshold:
+        findings.append(
+            f"{slug}: sum of declared local_checks timeouts ({timeout_sum}s) "
+            f"exceeds {_GATE_TIMEOUT_WARN_FRACTION:.0%} of the iteration budget "
+            f"({budget}min = {budget * 60}s). This step may burn its entire "
+            f"budget on gates alone. Either reduce gate timeouts, raise "
+            f"recommended_iteration_timeout_min, or move expensive gates to "
+            f"fewer steps (see decomposition-principles.md section 16)."
+        )
+    return findings
+
+
 ALL_CHECKS = (
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
@@ -1125,6 +1207,7 @@ ALL_CHECKS = (
     lint_ui_promise_wiring,
     lint_balance_regression_flag,
     lint_unverifiable_test_selector,
+    lint_budget_vs_gate_timeout,
 )
 
 

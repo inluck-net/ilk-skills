@@ -830,6 +830,23 @@ planner must still verify baseline-green. The rule is "prefer
 change-scoped; if whole-project, verify baseline", not "never
 whole-project".
 
+### Budget-vs-gate-timeout warning
+
+A sub-plan's per-step `local_checks` declare `timeout:` values that sum to the
+wall-clock budget a single step may consume. If that sum approaches (or exceeds)
+the `iteration_timeout_min` budget, the step will burn its entire budget on
+gates alone, leaving no time for the actual work. The default iteration budget
+is 30 minutes.
+
+`plan_lint.py` (`lint_budget_vs_gate_timeout`) warns when the sum of a step's
+declared gate timeouts exceeds a configurable fraction (default 0.8) of the
+iteration budget. It does **not** warn when no timeouts are declared — absent is
+not zero.
+
+The warning reads `recommended_iteration_timeout_min` from the sub-plan's
+frontmatter (default 30) so projects with longer-running gates can raise the
+budget per sub-plan without changing the lint.
+
 ### Cross-references
 
 - **§1 (Tight contracts)** — runtime smoke over compile smoke.
