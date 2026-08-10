@@ -265,6 +265,10 @@ if [[ ! -d "$skill_home/ilk-runner" ]]; then
   problems+=("ilk-runner skill not found at $skill_home/ilk-runner (run install.sh --claude-home \"$worker_home\" --only-claude)")
 fi
 
+if [[ ! -r "$worker_home/commands/ilk.md" ]]; then
+  problems+=("commands/ilk.md not readable at $worker_home/commands/ilk.md (run install.sh --claude-home \"$worker_home\" --only-claude)")
+fi
+
 echo
 
 if [[ ${#problems[@]} -gt 0 ]]; then

@@ -212,6 +212,11 @@ if (-not (Test-Path -LiteralPath (Join-Path $SkillHome "ilk-runner") -PathType C
   $problems += "ilk-runner skill not found at $(Join-Path $SkillHome 'ilk-runner') (run install.ps1 -ClaudeHome `"$WorkerHome`" -OnlyClaude)"
 }
 
+$ilkCmd = Join-Path $WorkerHome "commands\ilk.md"
+if (-not (Test-Path -LiteralPath $ilkCmd -PathType Leaf)) {
+  $problems += "commands/ilk.md not readable at $ilkCmd (run install.ps1 -ClaudeHome `"$WorkerHome`" -OnlyClaude)"
+}
+
 Write-Host ""
 
 if ($problems.Count -gt 0) {
