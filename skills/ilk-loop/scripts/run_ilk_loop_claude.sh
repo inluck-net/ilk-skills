@@ -1348,6 +1348,94 @@ the next iteration will re-run verification.
   echo "$wip_count"
 }
 
+# count_iteration_metrics
+#
+# Parse the per-iteration stream JSON log to extract tool-call and test-
+# invocation counts.  These are emitted into the JSONL summary record so
+# that `timeout` is diagnosable rather than opaque (AC-12).
+#
+# The stream JSON contains assistant messages with tool_use content blocks.
+# A test invocation is a Bash tool call whose command contains a test-runner
+# pattern (pytest, jest, npm test, bun test, vitest, mocha, cargo test,
+# go test, or run_tests).
+#
+# Globals read: none
+# Globals modified: none
+# Args: $1 = path to the per-iteration .jsonl stream log
+# stdout: "<tool_calls> <test_invocations>"
+count_iteration_metrics() {
+  local jsonl_log="$1"
+  if [[ ! -s "$jsonl_log" ]]; then
+    echo "0 0"
+    return
+  fi
+  python3 -c "
+import json, sys, re
+
+tool_calls = 0
+test_invocations = 0
+test_pattern = re.compile(r'pytest|jest|npm\s+test|bun\s+test|vitest|mocha|cargo\s+test|go\s+test|run_tests', re.I)
+
+for line in open(sys.argv[1], encoding='utf-8', errors='replace'):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        d = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if d.get('type') != 'assistant':
+        continue
+    msg = d.get('message', {})
+    for block in msg.get('content', []):
+        if block.get('type') != 'tool_use':
+            continue
+        tool_calls += 1
+        name = block.get('name', '')
+        inp = block.get('input', {})
+        if name == 'Bash':
+            cmd = inp.get('command', '')
+            if test_pattern.search(cmd):
+                test_invocations += 1
+
+print(f'{tool_calls} {test_invocations}')
+" "$jsonl_log" 2>/dev/null || echo "0 0"
+}
+
+# reap_iteration_orphans
+#
+# Kill background processes spawned by the iteration so they don't outlive
+# it and compete for the next iteration's budget (AC-13).
+#
+# After invoke_claude_iteration returns synchronously, any child of this
+# runner shell that is still running is an orphan from the iteration.
+# Scoped to direct children of this shell — NOT by name pattern, which
+# would kill the operator's own unrelated runs (AC-13 constraint).
+#
+# Wrapped in set +e so a failure (process already dead, permission denied)
+# cannot abort the run (AC-14).
+#
+# Globals read: none
+# Globals modified: none
+# Returns: 0 always (never fatal)
+reap_iteration_orphans() {
+  (
+    set +e
+    local runner_pid=$$
+    local child_pids
+    child_pids=$(pgrep -P "$runner_pid" 2>/dev/null) || true
+    local reaped=0
+    for pid in $child_pids; do
+      # Skip if pid is empty or is the runner itself
+      [[ -z "$pid" || "$pid" == "$runner_pid" ]] && continue
+      kill -TERM "$pid" 2>/dev/null && reaped=$((reaped + 1)) || true
+    done
+    if [[ "$reaped" -gt 0 ]]; then
+      echo "[runner] reaped $reaped orphaned background processes" >&2
+    fi
+  )
+}
+
 # ----- Main ------------------------------------------------------------------
 
 main() {
@@ -1492,6 +1580,20 @@ ${PROMPT}"
     local iter_end iter_dur_sec
     iter_end=$(date +%s)
     iter_dur_sec=$((iter_end - iter_start))
+
+    # Count tool calls and test invocations from the stream JSON log (AC-12).
+    local iter_tool_calls=0 iter_test_invocations=0
+    local _metrics
+    _metrics=$(count_iteration_metrics "${iter_log}.jsonl" 2>/dev/null) || _metrics="0 0"
+    iter_tool_calls=${_metrics%% *}
+    iter_test_invocations=${_metrics##* }
+
+    # Reap background processes spawned by this iteration (AC-13, AC-14).
+    # Find the gtimeout PID from the process tree — it's the direct child of
+    # this shell that ran the claude invocation.  Scoped to what the iteration
+    # started, NOT by name pattern.
+    # Wrapped in set +e is already active below, so a failure here is safe.
+    reap_iteration_orphans
 
     # Non-essential bookkeeping: wrap in set +e so a stray non-zero
     # (grep no match, python3 parse failure, etc.) cannot abort the batch
@@ -1770,6 +1872,8 @@ print(json.dumps([json.loads(l) for l in sys.stdin]))
     _NEW_COMMITS_JSON="$new_commits_json" \
     _LOCAL_CHECKS_JSON="$local_checks_json" \
     _WIP_PRESERVED="$wip_preserved" \
+    _TOOL_CALLS="$iter_tool_calls" \
+    _TEST_INVOCATIONS="$iter_test_invocations" \
     python3 -c "
 import json, os
 d = {
@@ -1794,6 +1898,12 @@ if sr:
 wp = os.environ.get('_WIP_PRESERVED', '0')
 if int(wp) > 0:
   d['wip_preserved'] = int(wp)
+tc = int(os.environ.get('_TOOL_CALLS', '0'))
+ti = int(os.environ.get('_TEST_INVOCATIONS', '0'))
+if tc > 0:
+  d['tool_calls'] = tc
+if ti > 0:
+  d['test_invocations'] = ti
 lc = os.environ.get('_LOCAL_CHECKS_JSON', '')
 if lc and lc != '[]':
   d['local_checks'] = json.loads(lc)

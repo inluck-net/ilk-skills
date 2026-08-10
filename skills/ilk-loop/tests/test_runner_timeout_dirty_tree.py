@@ -719,3 +719,173 @@ class TestLiveRunnerTimeout:
                 f"WIP commit contents:\n{git_show.stdout}\n"
                 f"Current status:\n{git_status.stdout}"
             )
+
+
+# ── AC-12: tool-call and test-invocation counts ─────────────────────────────
+
+class TestAC12IterationMetrics:
+    """count_iteration_metrics parses the stream JSON log correctly."""
+
+    def _run_count(self, jsonl_content: str, env: dict) -> tuple:
+        """Run count_iteration_metrics on the given JSONL content."""
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            f.write(jsonl_content)
+            f.flush()
+            tmp_path = f.name
+        try:
+            script = textwrap.dedent(f"""
+                export ILK_DOTSOURCE_ONLY=1
+                source '{RUNNER}' 2>/dev/null
+                count_iteration_metrics '{tmp_path}'
+            """)
+            result = subprocess.run(
+                ["bash", "-c", script],
+                capture_output=True, text=True, timeout=30,
+                env={**env, "ILK_DOTSOURCE_ONLY": "1"},
+            )
+            parts = result.stdout.strip().split()
+            return int(parts[0]), int(parts[1])
+        finally:
+            os.unlink(tmp_path)
+
+    def test_empty_log(self, env: dict) -> None:
+        """Empty log returns 0 0."""
+        tc, ti = self._run_count("", env)
+        assert tc == 0
+        assert ti == 0
+
+    def test_counts_bash_as_tool_call(self, env: dict) -> None:
+        """A single Bash tool call is counted."""
+        jsonl = json.dumps({
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}
+                ]
+            }
+        })
+        tc, ti = self._run_count(jsonl + "\n", env)
+        assert tc == 1
+        assert ti == 0  # not a test command
+
+    def test_counts_read_as_tool_call(self, env: dict) -> None:
+        """A Read tool call is counted."""
+        jsonl = json.dumps({
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "tool_use", "name": "Read", "input": {"file_path": "/tmp/x"}}
+                ]
+            }
+        })
+        tc, ti = self._run_count(jsonl + "\n", env)
+        assert tc == 1
+        assert ti == 0
+
+    def test_counts_pytest_as_test_invocation(self, env: dict) -> None:
+        """A Bash call with pytest is counted as a test invocation."""
+        jsonl = json.dumps({
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "tool_use", "name": "Bash", "input": {"command": "python3 -m pytest -q"}}
+                ]
+            }
+        })
+        tc, ti = self._run_count(jsonl + "\n", env)
+        assert tc == 1
+        assert ti == 1
+
+    def test_counts_jest_as_test_invocation(self, env: dict) -> None:
+        """A Bash call with jest is counted as a test invocation."""
+        jsonl = json.dumps({
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "tool_use", "name": "Bash", "input": {"command": "npx jest --watch"}}
+                ]
+            }
+        })
+        tc, ti = self._run_count(jsonl + "\n", env)
+        assert tc == 1
+        assert ti == 1
+
+    def test_counts_multiple_calls(self, env: dict) -> None:
+        """Multiple tool calls across messages are all counted."""
+        msgs = [
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}},
+                {"type": "tool_use", "name": "Read", "input": {"file_path": "/tmp/x"}},
+            ]}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Edit", "input": {"file_path": "/tmp/x"}},
+                {"type": "tool_use", "name": "Bash", "input": {"command": "pytest -q"}},
+            ]}},
+        ]
+        jsonl = "\n".join(json.dumps(m) for m in msgs) + "\n"
+        tc, ti = self._run_count(jsonl, env)
+        assert tc == 4
+        assert ti == 1
+
+    def test_non_assistant_messages_ignored(self, env: dict) -> None:
+        """Non-assistant messages (system, tool_result) are ignored."""
+        msgs = [
+            {"type": "system", "subtype": "init"},
+            {"type": "tool_result", "content": "ok"},
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Bash", "input": {"command": "echo hi"}},
+            ]}},
+        ]
+        jsonl = "\n".join(json.dumps(m) for m in msgs) + "\n"
+        tc, ti = self._run_count(jsonl, env)
+        assert tc == 1
+
+    def test_malformed_lines_skipped(self, env: dict) -> None:
+        """Malformed JSON lines are skipped without error."""
+        jsonl = "not json\n" + json.dumps({
+            "type": "assistant",
+            "message": {"content": [
+                {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}},
+            ]},
+        }) + "\n"
+        tc, ti = self._run_count(jsonl, env)
+        assert tc == 1
+
+
+# ── AC-13 / AC-14: orphan reaping ──────────────────────────────────────────
+
+class TestAC13OrphanReaping:
+    """reap_iteration_orphans kills background children of the runner."""
+
+    def test_function_defined(self, env: dict) -> None:
+        """reap_iteration_orphans is defined in the runner."""
+        script = textwrap.dedent(f"""
+            export ILK_DOTSOURCE_ONLY=1
+            source '{RUNNER}' 2>/dev/null
+            type reap_iteration_orphans
+        """)
+        result = subprocess.run(
+            ["bash", "-c", script],
+            capture_output=True, text=True, timeout=30,
+            env={**env, "ILK_DOTSOURCE_ONLY": "1"},
+        )
+        assert result.returncode == 0, "function should be defined"
+
+    def test_does_not_abort_on_failure(self, env: dict) -> None:
+        """The function returns 0 even when pgrep fails."""
+        script = textwrap.dedent(f"""
+            export ILK_DOTSOURCE_ONLY=1
+            source '{RUNNER}' 2>/dev/null
+            # Override pgrep to simulate failure
+            pgrep() {{ return 1; }}
+            reap_iteration_orphans
+            echo "returned: $?"
+        """)
+        result = subprocess.run(
+            ["bash", "-c", script],
+            capture_output=True, text=True, timeout=30,
+            env={**env, "ILK_DOTSOURCE_ONLY": "1"},
+        )
+        assert result.returncode == 0, "function should not abort"
+        assert "returned: 0" in result.stdout
