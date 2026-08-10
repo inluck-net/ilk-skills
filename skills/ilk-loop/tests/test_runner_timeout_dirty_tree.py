@@ -279,6 +279,107 @@ class TestAC7CannotAbort:
         assert "0" in result.stdout, "wip_count should be 0 for nonexistent repo"
 
 
+# ── AC-3: front-matter untouched by preservation ─────────────────────────────
+
+class TestAC3FrontMatterUntouched:
+    """The preservation path does not mutate sub-plan front-matter.
+
+    The function operates on git repos via git commands.  It does not read
+    or write plan files.  This test verifies that a plan file co-located in
+    the repo is not touched by the WIP commit.
+    """
+
+    def test_plan_file_unchanged_after_preservation(self, repo: Path, env: dict) -> None:
+        """A .md file in the repo is not modified by the preservation."""
+        plan_content = textwrap.dedent("""\
+            ---
+            plan: test-slug
+            status: in-progress
+            current_step: 2
+            ---
+            # Test plan
+        """)
+        plan_file = repo / "plan.md"
+        plan_file.write_text(plan_content)
+        # Commit the plan file so it's tracked
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+        subprocess.run(["git", "commit", "-m", "add plan"], cwd=repo, capture_output=True, check=True)
+
+        # Now make a dirty change to a different file
+        (repo / "seed.txt").write_text("modified\n")
+
+        _run_preservation(repo, env)
+
+        # Plan file should be unchanged
+        assert plan_file.read_text() == plan_content, \
+            "plan file must not be modified by preservation"
+
+    def test_no_plan_references_in_function(self, env: dict) -> None:
+        """The function source contains no references to plan/front-matter."""
+        script = textwrap.dedent(f"""
+            export ILK_DOTSOURCE_ONLY=1
+            source '{RUNNER}' 2>/dev/null
+            type preserve_dirty_tree_on_timeout | grep -iE 'plan|front.?matter|current_step|status:' && echo "REFERENCED" || echo "CLEAN"
+        """)
+        result = subprocess.run(
+            ["bash", "-c", script],
+            capture_output=True, text=True, timeout=30,
+            env={**env, "ILK_DOTSOURCE_ONLY": "1"},
+        )
+        assert "CLEAN" in result.stdout, \
+            "function must not reference plan files or front-matter"
+
+
+# ── AC-6: next iteration resumes from preserved state ───────────────────────
+
+class TestAC6NextIterationResumes:
+    """After preservation, the tree is clean and new work can proceed."""
+
+    def test_clean_tree_after_preservation(self, repo: Path, env: dict) -> None:
+        """The working tree is clean after a WIP commit."""
+        (repo / "seed.txt").write_text("modified\n")
+        (repo / "new_file.txt").write_text("new\n")
+
+        _run_preservation(repo, env)
+
+        assert not _is_dirty(repo), "tree should be clean after WIP commit"
+
+    def test_new_work_can_build_on_preserved_state(self, repo: Path, env: dict) -> None:
+        """New commits can be made on top of the WIP commit."""
+        (repo / "seed.txt").write_text("modified\n")
+
+        _run_preservation(repo, env)
+
+        # Now make a new change and commit — simulates next iteration
+        (repo / "seed.txt").write_text("further modified\n")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "real work"],
+            cwd=repo, capture_output=True, check=True,
+        )
+
+        messages = _git_log(repo, 3)
+        assert "real work" in messages[0], "new commit should succeed on top of WIP"
+        assert any("WIP:" in m for m in messages), "WIP commit should be in history"
+
+    def test_wip_commit_does_not_wedge_git(self, repo: Path, env: dict) -> None:
+        """After preservation, git operations work normally."""
+        (repo / "seed.txt").write_text("modified\n")
+
+        _run_preservation(repo, env)
+
+        # Verify basic git operations work
+        status = _git_status(repo)
+        assert status == "", f"tree should be clean, got: '{status}'"
+
+        # Verify we can create new branches
+        result = subprocess.run(
+            ["git", "checkout", "-b", "test-branch"],
+            cwd=repo, capture_output=True, text=True, check=True,
+        )
+        assert result.returncode == 0
+
+
 # ── AC-11: WIP commit does not inflate new_commits_total ────────────────────
 
 class TestAC11ClassificationSafety:
