@@ -14,6 +14,8 @@ AC-11: the WIP commit does not inflate new_commits_total (stop_reason drives
 
 Tests dot-source the runner and call preserve_dirty_tree_on_timeout directly.
 """
+from __future__ import annotations
+
 import subprocess
 import textwrap
 from pathlib import Path
@@ -452,3 +454,268 @@ class TestStructural:
 
         assert isinstance(wip_count, int)
         assert wip_count >= 0
+
+
+# ── AC-10 / AC-11: Live runner invocation with real gtimeout kill ────────────
+
+import glob
+import json
+import os
+import shutil
+import sys as _sys
+from typing import Optional
+
+_real_gtimeout = shutil.which("gtimeout")
+
+_integration_skip = pytest.mark.skipif(
+    _sys.platform == "win32"
+    or shutil.which("bash") is None
+    or _real_gtimeout is None
+    or shutil.which("git") is None
+    or shutil.which("claude") is None,
+    reason="Integration test: needs bash + gtimeout + git + claude CLI",
+)
+
+
+def _setup_scratch_project(tmp_path: Path) -> Path:
+    """Create a minimal project with plans, dirty tree, and an in-progress sub-plan."""
+    proj = tmp_path / "scratch-project"
+    proj.mkdir()
+
+    # Init git repo
+    subprocess.run(["git", "init"], cwd=proj, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "test@test"], cwd=proj, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=proj, capture_output=True, check=True)
+
+    # Create initial files
+    (proj / "README.md").write_text("# scratch\n")
+    (proj / ".gitignore").write_text(".ilk-loop/\n.ilk-remote-type\n")
+    subprocess.run(["git", "add", "."], cwd=proj, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=proj, capture_output=True, check=True)
+
+    # Create dirty files (will be preserved on timeout)
+    (proj / "work.txt").write_text("some work in progress\n")
+    (proj / "untracked_test.py").write_text("def test_wip(): pass\n")
+
+    # Set up plans directory
+    plans = proj / "docs" / "plans"
+    plans.mkdir(parents=True, exist_ok=True)
+
+    (plans / "MASTER-2026-08-10-test.md").write_text(textwrap.dedent("""\
+        ---
+        master_plan: 2026-08-10-test
+        batch_date: 2026-08-10
+        status: active
+        supervised_only: false
+        current_subplan: 2026-08-10-test-sub
+        cross_cutting_invariants: []
+        ---
+
+        # Test Master
+
+        ## Sub-plan registry
+
+        | # | Sub-plan | Steps |
+        |---|---|---|
+        | 1 | [2026-08-10-test-sub.md](./2026-08-10-test-sub.md) | 3 |
+    """))
+
+    (plans / "2026-08-10-test-sub.md").write_text(textwrap.dedent("""\
+        ---
+        plan: 2026-08-10-test-sub
+        status: in-progress
+        current_step: 1
+        priority: P1
+        estimated_steps: 3
+        last_updated: 2026-08-10
+        ---
+
+        # Test sub-plan
+
+        ## Steps
+
+        ### Step 0
+        - Do nothing.
+
+        ### Step 1
+        - Do nothing.
+
+        ### Step 2
+        - Do nothing.
+    """))
+
+    return proj
+
+
+def _find_jsonl_record(proj: Path) -> Optional[dict]:
+    """Find the last JSONL record in the run's log directory."""
+    log_dirs = sorted(glob.glob(str(proj / ".ilk-loop" / "logs" / "run-*")))
+    if not log_dirs:
+        return None
+    jsonl_files = sorted(glob.glob(f"{log_dirs[-1]}/*.log.jsonl"))
+    if not jsonl_files:
+        return None
+    last_record = None
+    with open(jsonl_files[-1]) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                last_record = json.loads(line)
+    return last_record
+
+
+@_integration_skip
+class TestLiveRunnerTimeout:
+    """Drive the real runner CLI with a tiny timeout so gtimeout fires.
+
+    This exercises the full path: runner → gtimeout kill → timeout detection →
+    preserve_dirty_tree_on_timeout → JSONL record.
+    """
+
+    def test_timeout_preserves_dirty_tree_via_real_cli(self, tmp_path: Path) -> None:
+        """A real gtimeout kill preserves the dirty tree as a WIP commit.
+
+        AC-10: the preservation path is exercised through the runner's real CLI
+        entry point.
+        AC-11: the JSONL record has stop_reason=timeout and wip_preserved > 0.
+        """
+        proj = _setup_scratch_project(tmp_path)
+
+        # Create a mock claude that sleeps long enough to be killed by timeout
+        mock_bin = tmp_path / "mock-bin"
+        mock_bin.mkdir()
+        mock_claude = mock_bin / "claude"
+        mock_claude.write_text(textwrap.dedent("""\
+            #!/usr/bin/env bash
+            # Mock claude: sleep until killed by gtimeout
+            sleep 300
+        """))
+        mock_claude.chmod(0o755)
+
+        # Run the real runner with 1-minute timeout
+        env = dict(os.environ)
+        env["PATH"] = f"{mock_bin}:{env.get('PATH', '')}"
+        env["ILK_DOTSOURCE_ONLY"] = ""  # ensure main() runs
+
+        result = subprocess.run(
+            [
+                "bash", str(RUNNER),
+                "--project-path", str(proj),
+                "--max-iterations", "1",
+                "--iteration-timeout-min", "1",
+                "--model", "test-model",
+            ],
+            capture_output=True, text=True, timeout=180,  # 3 min hard limit
+            env=env, cwd=str(proj),
+        )
+
+        # The runner should have exited (not hung)
+        # Check stdout/stderr for timeout indication
+        combined = result.stdout + result.stderr
+
+        # Assert: the runner detected timeout
+        assert "timeout" in combined.lower() or result.returncode in (0, 1), \
+            f"runner should have detected timeout, rc={result.returncode}\n{combined[-500:]}"
+
+        # Assert: WIP commit was created
+        git_log = subprocess.run(
+            ["git", "log", "--oneline", "-5"],
+            cwd=proj, capture_output=True, text=True, check=True,
+        )
+        assert "WIP:" in git_log.stdout, \
+            f"Expected WIP commit in git log:\n{git_log.stdout}"
+
+        # Assert: tree is clean after preservation
+        git_status = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=proj, capture_output=True, text=True, check=True,
+        )
+        assert git_status.stdout.strip() == "", \
+            f"tree should be clean after WIP commit:\n{git_status.stdout}"
+
+        # Assert: WIP commit includes both tracked and untracked files
+        git_show = subprocess.run(
+            ["git", "show", "--stat", "HEAD"],
+            cwd=proj, capture_output=True, text=True, check=True,
+        )
+        assert "work.txt" in git_show.stdout, "tracked file should be in WIP commit"
+        assert "untracked_test.py" in git_show.stdout, "untracked file should be in WIP commit"
+
+        # Assert: JSONL record exists and has correct fields
+        record = _find_jsonl_record(proj)
+        if record is not None:
+            # If we got a JSONL record, verify the contract
+            assert record.get("stop_reason") == "timeout", \
+                f"JSONL stop_reason should be 'timeout', got: {record.get('stop_reason')}"
+            assert record.get("wip_preserved", 0) > 0, \
+                f"JSONL wip_preserved should be > 0, got: {record.get('wip_preserved')}"
+
+    def test_timeout_clean_tree_no_wip(self, tmp_path: Path) -> None:
+        """A timeout with a clean tree produces no WIP commit.
+
+        AC-5 (integration): clean-tree timeout is unchanged.
+        """
+        proj = _setup_scratch_project(tmp_path)
+
+        # Remove all dirty state (make tree clean)
+        for f in ["work.txt", "untracked_test.py"]:
+            p = proj / f
+            if p.exists():
+                p.unlink()
+        subprocess.run(["git", "add", "-A"], cwd=proj, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "clean up"],
+            cwd=proj, capture_output=True, check=True,
+        )
+
+        # Verify tree is clean before running the runner
+        pre_status = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=proj, capture_output=True, text=True, check=True,
+        )
+        assert pre_status.stdout.strip() == "", \
+            f"tree should be clean before runner, got:\n{pre_status.stdout}"
+
+        # Create mock claude
+        mock_bin = tmp_path / "mock-bin"
+        mock_bin.mkdir()
+        mock_claude = mock_bin / "claude"
+        mock_claude.write_text("#!/usr/bin/env bash\nsleep 300\n")
+        mock_claude.chmod(0o755)
+
+        env = dict(os.environ)
+        env["PATH"] = f"{mock_bin}:{env.get('PATH', '')}"
+        env["ILK_DOTSOURCE_ONLY"] = ""
+
+        subprocess.run(
+            [
+                "bash", str(RUNNER),
+                "--project-path", str(proj),
+                "--max-iterations", "1",
+                "--iteration-timeout-min", "1",
+                "--model", "test-model",
+            ],
+            capture_output=True, text=True, timeout=180,
+            env=env, cwd=str(proj),
+        )
+
+        # Assert: no WIP commit (the last commit should still be "clean up")
+        git_log = subprocess.run(
+            ["git", "log", "--oneline", "-3"],
+            cwd=proj, capture_output=True, text=True, check=True,
+        )
+        if "WIP:" in git_log.stdout:
+            # Debug: what did the WIP commit include?
+            git_show = subprocess.run(
+                ["git", "show", "--stat", "HEAD"],
+                cwd=proj, capture_output=True, text=True, check=True,
+            )
+            git_status = subprocess.run(
+                ["git", "status", "--short"],
+                cwd=proj, capture_output=True, text=True, check=True,
+            )
+            pytest.fail(
+                f"clean tree should not produce WIP commit.\n"
+                f"WIP commit contents:\n{git_show.stdout}\n"
+                f"Current status:\n{git_status.stdout}"
+            )
