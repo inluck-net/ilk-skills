@@ -587,9 +587,13 @@ write_banner() {
   printf '\e[%sm %s\e[0m\n' "$color" "$title"
   printf '\e[%sm%s\e[0m\n' "$color" "$bar"
   if [[ -n "$body" ]]; then
+    # Expand escapes before splitting: every one of this file's banner bodies is
+    # written with "\n" separators, but bash double quotes leave those as two
+    # literal characters, so the body printed as one unreadable line. %b expands
+    # them; the read loop then splits on real newlines as intended.
     while IFS= read -r l; do
       printf '\e[%sm %s\e[0m\n' "$color" "$l"
-    done <<<"$body"
+    done < <(printf '%b\n' "$body")
   fi
   printf '\e[%sm%s\e[0m\n' "$color" "$bar"
   echo ""
@@ -673,6 +677,24 @@ Watchdog PID: $$" 36
   }
   trap cleanup EXIT
 
+  # Backstop: how many consecutive 'work-pending' polls before we stop keeping a
+  # watchdog alive. A watchdog that cannot resolve its state must not outlive its
+  # loop indefinitely — two ilk-pocket watchdogs spun for 15 days in exactly that
+  # branch, logging every ~45s into 2.9 MB of activity log, relaunching nothing
+  # and exiting never. Overridable for tests.
+  local work_pending_limit="${ILK_WATCHDOG_WORK_PENDING_LIMIT:-12}"
+  local work_pending_streak=0
+
+  # Same backstop for the OTHER immortality path. A watchdog started AFTER its
+  # loop already finished sees a sentinel older than its own launch, calls it
+  # stale, and waits forever for a loop that will never appear — while already
+  # logging `loop_alive=false` on every line. Observed live 2026-08-10: 10/10
+  # polls in stale-ignore on a drained queue with zero loop processes.
+  # A short grace window is legitimate (a watchdog may start moments before its
+  # loop), so bound it rather than exiting on the first poll.
+  local stale_ignore_limit="${ILK_WATCHDOG_STALE_IGNORE_LIMIT:-12}"
+  local stale_ignore_streak=0
+
   while true; do
     local sentinel_state=""
     local sentinel_iters=""
@@ -716,8 +738,10 @@ Watchdog PID: $$" 36
           if [[ "$saw_alive_once" == false ]]; then
             saw_alive_once=true
             if [[ -n "$loop_pid" ]]; then
+              work_pending_streak=0
               write_log "ilk loop pid=$loop_pid state=running (via sentinel) — watching."
             else
+              work_pending_streak=0
               write_log "ilk loop state=running (via sentinel) — watching."
             fi
           fi
@@ -763,26 +787,85 @@ Watchdog PID: $$" 36
           loop_alive="true"
         fi
         # Compute loop_status_exit for success states (determines advance vs work-pending).
+        #
+        # loop_status.py takes NO --project flag (usage: [-h] [--json]); it walks
+        # up from cwd, the way git does. Passing --project made argparse exit 2
+        # unconditionally, so loop_status_exit was never 0, `advance` was
+        # unreachable, and EVERY drained queue fell through to work-pending and
+        # span forever. That is the 15-day ilk-pocket hang. Run it with cwd set to
+        # the project instead — which is what watchdog.ps1's Test-AllShipped has
+        # always done (-WorkingDirectory $Project, no flag); this was a
+        # bash/PowerShell parity divergence, not a design choice.
+        #
+        # Exit codes: 0 = all shipped, 1 = work pending, 2 = no plans / invalid.
+        # 2 is "I could not look", NOT "there is work" — it must not be laundered
+        # into work-pending, or an unrelated breakage silently becomes an
+        # immortal watchdog again.
         local loop_status_exit=1
         if [[ " ${success_states[*]} " =~ [[:space:]]${sentinel_state}[[:space:]] ]]; then
-          $PYTHON "$LOOP_STATUS_PY" --project "$project" >/dev/null 2>&1 && loop_status_exit=0 || loop_status_exit=$?
+          ( cd "$project" && $PYTHON "$LOOP_STATUS_PY" >/dev/null 2>&1 ) \
+            && loop_status_exit=0 || loop_status_exit=$?
+          if [[ "$loop_status_exit" -ge 2 ]]; then
+            write_banner "BLOCKED — LOOP_STATUS UNREADABLE" \
+              "Project: $proj_name\nsentinel=$sentinel_state but loop_status exited $loop_status_exit\n(2 = no plans dir / invalid project context).\nThe queue state cannot be determined, so this watchdog cannot decide\nwhether to advance or keep waiting. Fix the project context, then relaunch." 31
+            invoke_ilk_notify "blocked" "$proj_name" "loop_status exit $loop_status_exit"
+            write_log "loop_status exit $loop_status_exit (cannot determine queue state) — BLOCKING rather than keeping alive."
+            return
+          fi
         fi
         local startup_action
         startup_action=$(startup_sentinel_action "$sentinel_state" "$sentinel_ended_epoch" "$launch_epoch" "$loop_status_exit" "$loop_alive")
         case "$startup_action" in
           stale-ignore)
-            write_log "stale sentinel (state=$sentinel_state, ended=$sentinel_ended_epoch < launch=$launch_epoch, loop_alive=$loop_alive) — ignoring, keep watching."
+            # Progress this poll — the streak must mean *consecutive*.
+            work_pending_streak=0
+            if [[ "$loop_alive" == "true" ]]; then
+              # A live loop is the legitimate reason to ignore a stale sentinel.
+              stale_ignore_streak=0
+            else
+              stale_ignore_streak=$(( stale_ignore_streak + 1 ))
+              if (( stale_ignore_streak >= stale_ignore_limit )); then
+                write_banner "BLOCKED — NOTHING TO SUPERVISE" \
+                  "Project: $proj_name\n${stale_ignore_streak} consecutive polls with a pre-launch sentinel (state=$sentinel_state)\nand NO ilk loop process alive. This watchdog was started after its loop\nalready finished, so there is nothing to supervise and nothing will appear.\nRelaunch the loop with /ilk-run, then start a watchdog." 31
+                invoke_ilk_notify "blocked" "$proj_name" "nothing to supervise x${stale_ignore_streak}"
+                write_log "stale-ignore streak ${stale_ignore_streak} >= limit ${stale_ignore_limit} with loop_alive=false — nothing to supervise, exiting."
+                return
+              fi
+            fi
+            write_log "stale sentinel (state=$sentinel_state, ended=$sentinel_ended_epoch < launch=$launch_epoch, loop_alive=$loop_alive) — ignoring, keep watching (${stale_ignore_streak}/${stale_ignore_limit})."
             sleep "$poll_sec"
             continue
             ;;
           advance)
+            # Progress this poll — the streak must mean *consecutive*.
+            work_pending_streak=0
             write_log "clean ship detected (state=$sentinel_state, iters=$sentinel_iters). Advancing master queue..."
             invoke_ilk_notify "ship" "$proj_name"
             handle_promote "$project" "$proj_name" "$poll_sec"
             continue
             ;;
           work-pending)
-            write_log "success sentinel but loop_status reports work pending — keeping alive."
+            work_pending_streak=$(( work_pending_streak + 1 ))
+            # A success sentinel plus a DEAD loop plus genuinely-pending work is a
+            # contradiction this watchdog cannot resolve: the run ended cleanly,
+            # yet the queue says there is work, and there is no process to
+            # supervise. Keeping alive here is what let watchdogs outlive their
+            # loops by days. Hand it to a human instead of spinning.
+            if [[ "$loop_alive" != "true" ]]; then
+              write_banner "BLOCKED — WORK PENDING BUT LOOP IS GONE" \
+                "Project: $proj_name\nsentinel=$sentinel_state (success) but loop_status reports work pending,\nand no ilk loop process is alive to do it.\nNothing to supervise — relaunch with /ilk-run after checking the queue." 31
+              invoke_ilk_notify "blocked" "$proj_name" "work pending, loop dead"
+              write_log "work-pending with dead loop (streak ${work_pending_streak}) — nothing to supervise, exiting."
+              return
+            fi
+            if (( work_pending_streak >= work_pending_limit )); then
+              write_banner "BLOCKED — WORK PENDING TOO LONG" \
+                "Project: $proj_name\n${work_pending_streak} consecutive polls with a success sentinel and work still\npending. The watchdog is not making progress and will not outlive its loop.\nInspect the queue, then relaunch." 31
+              invoke_ilk_notify "blocked" "$proj_name" "work-pending x${work_pending_streak}"
+              write_log "work-pending streak ${work_pending_streak} >= limit ${work_pending_limit} — exiting rather than spinning."
+              return
+            fi
+            write_log "success sentinel but loop_status reports work pending — keeping alive (${work_pending_streak}/${work_pending_limit})."
             sleep "$poll_sec"
             continue
             ;;

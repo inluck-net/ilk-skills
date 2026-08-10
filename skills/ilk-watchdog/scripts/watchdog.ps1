@@ -483,6 +483,12 @@ Blacklist (block): $($BlacklistClasses -join ', ')
   $restartCount = 0
   $lastRelaunchAt = [datetime]::MinValue
   $sawAliveOnce = $false
+  # Backstop: consecutive 'work-pending' polls before we stop keeping this
+  # watchdog alive. A watchdog that cannot resolve its state must not outlive its
+  # loop indefinitely (two ilk-pocket watchdogs spun 15 days in that branch).
+  # Mirrors ILK_WATCHDOG_WORK_PENDING_LIMIT in watchdog.sh.
+  $workPendingLimit = if ($env:ILK_WATCHDOG_WORK_PENDING_LIMIT) { [int]$env:ILK_WATCHDOG_WORK_PENDING_LIMIT } else { 12 }
+  $workPendingStreak = 0
   $LaunchTime = Get-Date
   $RuntimeDir = Get-IlkRuntimeDir -Project $Project
   if ($RuntimeDir) {
@@ -552,19 +558,54 @@ Blacklist (block): $($BlacklistClasses -join ', ')
           }
         }
         elseif ($SuccessStates -contains $sentinel.state) {
+          $loopStatusExit = Invoke-LoopStatusExit -Project $Project
+          # Exit codes: 0 = all shipped, 1 = work pending, 2 = no plans/invalid,
+          # -1 = could not run. Anything outside {0,1} means "I could not look",
+          # which must NOT become work-pending or an unrelated breakage silently
+          # produces an immortal watchdog.
+          if ($loopStatusExit -ne 0 -and $loopStatusExit -ne 1) {
+            Write-Banner -Title 'BLOCKED - LOOP_STATUS UNREADABLE' -Body (
+              "Project: $ProjName`nsentinel=$($sentinel.state) but loop_status exited $loopStatusExit`n" +
+              "(2 = no plans dir / invalid project; -1 = could not run).`n" +
+              "Queue state cannot be determined, so this watchdog cannot decide whether`n" +
+              "to advance or keep waiting. Fix the project context, then relaunch.") -Color 'Red'
+            Invoke-IlkNotify -Event 'blocked' -Project $ProjName -Detail "loop_status exit $loopStatusExit"
+            Write-Log ("loop_status exit {0} (cannot determine queue state) - BLOCKING rather than keeping alive." -f $loopStatusExit)
+            return
+          }
           $sentinelAction = Get-StartupSentinelAction `
             -State $sentinel.state `
             -EndedAt $sentinel.ended_at `
             -LaunchTime $LaunchTime `
-            -LoopStatusExit (Invoke-LoopStatusExit -Project $Project)
+            -LoopStatusExit $loopStatusExit
 
           if ($sentinelAction -eq 'stale-ignore') {
+            $workPendingStreak = 0
             Write-Log ("sentinel state={0} ended_at={1} is older than watchdog launch {2} — ignoring stale sentinel." -f $sentinel.state, $sentinel.ended_at, $LaunchTime)
             Start-Sleep -Seconds $PollSec
             continue
           }
           if ($sentinelAction -eq 'work-pending') {
-            Write-Log ("sentinel state={0} but loop_status reports work pending — not draining." -f $sentinel.state)
+            $workPendingStreak++
+            $ilkPidNow = Read-ilkPid -Project $Project
+            $loopAliveNow = ($ilkPidNow) -and (Test-ProcessAlive -ProcessId ([int]$ilkPidNow))
+            if (-not $loopAliveNow) {
+              Write-Banner -Title 'BLOCKED - WORK PENDING BUT LOOP IS GONE' -Body (
+                "Project: $ProjName`nsentinel=$($sentinel.state) (success) but loop_status reports work pending,`n" +
+                "and no ilk loop process is alive to do it.`nNothing to supervise - relaunch with /ilk-run after checking the queue.") -Color 'Red'
+              Invoke-IlkNotify -Event 'blocked' -Project $ProjName -Detail 'work pending, loop dead'
+              Write-Log ("work-pending with dead loop (streak {0}) - nothing to supervise, exiting." -f $workPendingStreak)
+              return
+            }
+            if ($workPendingStreak -ge $workPendingLimit) {
+              Write-Banner -Title 'BLOCKED - WORK PENDING TOO LONG' -Body (
+                "Project: $ProjName`n$workPendingStreak consecutive polls with a success sentinel and work still`n" +
+                "pending. The watchdog is not making progress and will not outlive its loop.`nInspect the queue, then relaunch.") -Color 'Red'
+              Invoke-IlkNotify -Event 'blocked' -Project $ProjName -Detail "work-pending x$workPendingStreak"
+              Write-Log ("work-pending streak {0} >= limit {1} - exiting rather than spinning." -f $workPendingStreak, $workPendingLimit)
+              return
+            }
+            Write-Log ("sentinel state={0} but loop_status reports work pending — not draining ({1}/{2})." -f $sentinel.state, $workPendingStreak, $workPendingLimit)
             Start-Sleep -Seconds $PollSec
             continue
           }
@@ -574,6 +615,7 @@ Blacklist (block): $($BlacklistClasses -join ', ')
           }
           # 'advance' path: proceed with promote/relaunch as before
           if ($sentinelAction -eq 'advance') {
+          $workPendingStreak = 0
           Write-Log ("clean ship detected (state={0}, iters={1}). Advancing master queue..." -f $sentinel.state, $sentinel.iterations)
           Invoke-IlkNotify -Event 'ship' -Project $ProjName
           $advance = Invoke-PromoteNextMaster -Project $Project
