@@ -7,6 +7,7 @@ AC-1: zero-turn, zero-token startup failure → never-ran
 AC-2: each startup-failure shape independently (Unknown command, command not found,
       non-zero exit before first turn)
 AC-3: genuine stuck-no-progress (zero commits, non-zero turns/tokens) stays stuck
+AC-5: postmortem names worker home, missing command, and remediation
 """
 
 from __future__ import annotations
@@ -193,3 +194,38 @@ class TestLabelInVocabulary:
             narrative = collect._label_narrative(label, {})
             assert isinstance(narrative, str)
             assert len(narrative) > 0
+
+
+# -- AC-5: Postmortem names worker home, missing command, remediation -------
+
+class TestPostmortemNamesCause:
+    """The postmortem text must name the worker home probed, the missing
+    command, and state the remediation."""
+
+    def test_postmortem_names_worker_home_and_command(self, tmp_path):
+        """AC-5: rendered postmortem includes worker home, result, and remediation."""
+        facts = {
+            "iter_at_stop": 1,
+            "worker_home": "/home/user/.claude-worker-1",
+            "result": "Unknown command: /ilk",
+        }
+        narrative = collect._label_narrative("never-ran", facts)
+        assert "/home/user/.claude-worker-1" in narrative, (
+            f"Postmortem must name the worker home. Got:\n{narrative}"
+        )
+        assert "Unknown command" in narrative, (
+            f"Postmortem must name the missing command. Got:\n{narrative}"
+        )
+
+    def test_postmortem_remediation_hint(self, tmp_path):
+        """AC-5: the narrative states the remediation."""
+        facts = {
+            "iter_at_stop": 1,
+            "worker_home": "/home/user/.claude-worker-1",
+            "result": "Unknown command: /ilk",
+        }
+        narrative = collect._label_narrative("never-ran", facts)
+        # The remediation should mention checking the worker home or command.
+        assert "worker home" in narrative.lower() or "command" in narrative.lower(), (
+            f"Postmortem must state remediation. Got:\n{narrative}"
+        )

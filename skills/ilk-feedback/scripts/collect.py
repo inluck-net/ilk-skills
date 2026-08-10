@@ -1656,6 +1656,17 @@ def render_report(
         body_lines.append(f"| Original classification | `{facts.get('original_label', 'unknown')}` |")
         body_lines.append("")
 
+    if label == "never-ran":
+        worker_home = facts.get("worker_home", "unknown")
+        result = facts.get("result", "")
+        body_lines.append("## Never-ran details\n")
+        body_lines.append("| Fact | Value |")
+        body_lines.append("|---|---|")
+        body_lines.append(f"| Worker home probed | `{worker_home}` |")
+        body_lines.append(f"| Startup failure | `{result}` |")
+        body_lines.append("| Remediation | Check the worker home directory and ensure the launcher command is installed and accessible |")
+        body_lines.append("")
+
     body_lines.append("## Recommendation for next launch\n")
     body_lines.append(f"- `MaxIterations`: **{rec_max}** (was {max_iter_cfg if max_iter_cfg else 'unknown'})")
     body_lines.append(f"- `IterationTimeoutMin`: **{rec_to}** (was {to_cfg if to_cfg else 'unknown'})")
