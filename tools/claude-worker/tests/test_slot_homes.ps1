@@ -1,6 +1,6 @@
 # Tests for slot-home clone bootstrap (-CloneSlot).
-# AC-1: clone creates settings.json with matching env, skills link, .claude.json;
-#        re-run is idempotent (no error, no duplicate).
+# AC-1: clone creates settings.json with matching env, skills link, commands link,
+#        .claude.json; re-run is idempotent (no error, no duplicate).
 # Run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/claude-worker/tests/test_slot_homes.ps1
 
 $ErrorActionPreference = "Stop"
@@ -54,6 +54,7 @@ if (Test-Path -LiteralPath $ScratchDir) {
   Remove-Item -Recurse -Force $ScratchDir
 }
 New-Item -ItemType Directory -Path (Join-Path $FakeBase "skills\ilk-runner") -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $FakeBase "commands") -Force | Out-Null
 
 # Write a dummy settings.json with provider env.
 $settingsContent = @{
@@ -72,6 +73,9 @@ Set-Content -LiteralPath (Join-Path $FakeBase "settings.json") -Value $settingsC
 
 # Write a dummy file in skills/ so we can verify the link.
 "skill-content" | Set-Content -LiteralPath (Join-Path $FakeBase "skills\ilk-runner\SKILL.md") -Encoding utf8
+
+# Write a dummy commands/ilk.md so we can verify the commands link.
+"# /ilk" | Set-Content -LiteralPath (Join-Path $FakeBase "commands\ilk.md") -Encoding utf8
 
 $SlotHome = "${FakeBase}-2"
 
@@ -103,6 +107,17 @@ try {
     $script:failed++
   }
 
+  # Verify commands link exists and commands/ilk.md is readable through the slot path.
+  # AC-1: must be readable, not merely symlinked — a dangling link is the failure mode.
+  $ilkCmd = Join-Path $SlotHome "commands\ilk.md"
+  if (Test-Path -LiteralPath $ilkCmd -PathType Leaf) {
+    Write-Host "  PASS: commands/ilk.md readable through slot home" -ForegroundColor Green
+    $script:passed++
+  } else {
+    Write-Host "  FAIL: commands/ilk.md not readable through slot home" -ForegroundColor Red
+    $script:failed++
+  }
+
   # === Test 2: Idempotent re-run ===
   Write-Host ""
   Write-Host "=== Test 2: Idempotent re-run ==="
@@ -121,6 +136,15 @@ try {
     $script:passed++
   } else {
     Write-Host "  FAIL: skills not accessible after re-run" -ForegroundColor Red
+    $script:failed++
+  }
+
+  # Verify commands still accessible after re-run (AC-2: idempotent).
+  if (Test-Path -LiteralPath $ilkCmd -PathType Leaf) {
+    Write-Host "  PASS: commands/ilk.md still readable after re-run" -ForegroundColor Green
+    $script:passed++
+  } else {
+    Write-Host "  FAIL: commands/ilk.md not readable after re-run" -ForegroundColor Red
     $script:failed++
   }
 

@@ -208,6 +208,37 @@ if ($CloneSlot -gt 0) {
     }
   }
 
+  # Link commands: junction on Windows, same pattern as skills.
+  $baseCommands = Join-Path $cloneBase "commands"
+  $slotCommands = Join-Path $slotHome "commands"
+  if (Test-Path -LiteralPath $baseCommands -PathType Container) {
+    if (Test-Path -LiteralPath $slotCommands) {
+      $item = Get-Item -LiteralPath $slotCommands
+      if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        # Already a junction/symlink — verify target.
+        $currentTarget = $item.Target
+        if ($currentTarget -and $currentTarget -eq $baseCommands) {
+          Write-Host "  commands junction already correct"
+        } else {
+          Remove-Item -LiteralPath $slotCommands -Force
+          New-Item -ItemType Junction -Path $slotCommands -Target $baseCommands | Out-Null
+          Write-Host "  updated commands junction -> $baseCommands"
+        }
+      } else {
+        Write-Host "  kept existing commands directory (left untouched)"
+      }
+    } else {
+      try {
+        New-Item -ItemType Junction -Path $slotCommands -Target $baseCommands | Out-Null
+        Write-Host "  linked commands (junction) -> $baseCommands"
+      } catch {
+        # Fallback: copy the directory if junction fails (no Developer Mode).
+        Copy-Item -LiteralPath $baseCommands -Destination $slotCommands -Recurse -Force
+        Write-Host "  copied commands (junction failed) -> $slotCommands"
+      }
+    }
+  }
+
   Write-Host ""
   Write-Host "Slot home ready: $slotHome"
   exit 0
