@@ -451,6 +451,44 @@ def newest_run_id(by_run: dict[str, list[dict]]) -> str | None:
     return sorted(by_run.keys())[-1]
 
 
+def count_rate_limit_events(
+    run_id: str,
+    project_path: Path,
+    last_launch: dict | None = None,
+) -> int:
+    """Count rate-limit event records for a specific run_id in the JSONL stream.
+
+    Rate-limit events are separate records with ``type: "rate_limit_event"``.
+    This count is independently useful even without the ``throttled`` label:
+    it tells the operator how much of the run's wall-clock was spent waiting.
+    """
+    total = 0
+    project_path_norm = _normalize_path_for_compare(project_path)
+    for candidate in _jsonl_log_candidates(project_path, last_launch):
+        if not candidate.exists():
+            continue
+        try:
+            with candidate.open("r", encoding="utf-8-sig") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if rec.get("type") != "rate_limit_event":
+                        continue
+                    rec_proj = _normalize_path_for_compare(rec.get("project", ""))
+                    if rec_proj != project_path_norm:
+                        continue
+                    if rec.get("session_id") == run_id or rec.get("run_id") == run_id:
+                        total += 1
+        except OSError:
+            continue
+    return total
+
+
 # ---------- classification ---------------------------------------------------
 
 # Single source of truth for the final classification label vocabulary.
@@ -1634,6 +1672,9 @@ def render_report(
     body_lines.append(f"| Max iter | {max_dur:.1f} min (configured timeout: {to_disp}) |")
     body_lines.append(f"| New commits | {new_commits_total} |")
     body_lines.append(f"| Transient API errors | {err_count} |")
+    rl_count = facts.get("rate_limit_event_count", 0)
+    if rl_count:
+        body_lines.append(f"| Rate-limit events | {rl_count} |")
     body_lines.append(f"| Model | {model} |")
     body_lines.append(f"| Endpoint | {base_url} |")
     body_lines.append("")
@@ -2339,6 +2380,11 @@ def main() -> int:
     iters = by_run[target_run]
 
     label, facts = classify(iters, last_launch, project_path)
+
+    # Count rate-limit events for this run (independently useful metadata).
+    rl_count = count_rate_limit_events(target_run, project_path, last_launch)
+    if rl_count > 0:
+        facts["rate_limit_event_count"] = rl_count
 
     # Emit upstream candidate when the classification is a toolkit signal
     # (conservative — only clear toolkit gaps, never project-local findings).
