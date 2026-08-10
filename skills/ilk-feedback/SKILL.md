@@ -3,7 +3,7 @@ name: ilk-feedback
 description: >-
   Postmortem for the most recent ilk-loop run. Reads the JSONL summary
   + per-iteration logs (external-first from `~/.ilk-data`, with legacy
-  skill-root fallback), classifies the outcome (10 taxonomy labels incl. shipped-unverified,
+  skill-root fallback), classifies the outcome (12 taxonomy labels incl. shipped-unverified,
   self-hosting-drift), recommends next-launch params, saves the report
   under `~/.ilk-data/projects/<key>/runtime/launcher/postmortems/`. Triggers:
   "/ilk-feedback", "postmortem", "debrief", "what went wrong", "why
@@ -18,7 +18,7 @@ metadata:
 A read-only triage skill that turns the structured logs already produced by
 `run_ilk_loop_claude.ps1` into:
 
-1. A **classification** of how the run ended (one of 10 taxonomy labels).
+1. A **classification** of how the run ended (one of 12 taxonomy labels).
 2. **Parameter recommendations** for the next launch (consumed by
    `ilk-launcher` Step 1.5).
 3. A **markdown report** persisted to disk for trend analysis.
@@ -139,6 +139,8 @@ The `recommended_*` fields are what `ilk-launcher` Step 1.5 reads.
 | `interrupted` | last record's `stop_reason=null` AND not `clean-success` AND iter count < MaxIterations | Window was killed externally (chad ran `stop.ps1` or closed window). |
 | `local-checks-stuck` | last iter's `local_checks` had ≥1 fail AND ≥3 of last 5 iters had failing checks (and fail iters > pass iters) | Agent kept committing but sub-plan `local_checks` kept failing — AC may be wrong/over-specified, step too coarse, or a real bug. Read the failing check output before relaunching. Only fires when loop ran with `-RunLocalChecks`. |
 | `self-hosting-drift` | project is the skill source (`is_self_hosting=true`) AND launch log path disappeared or preserved archive exists for a missing path | The project being modified is the same repo that supplies installed `ilk-*` skills, and runtime paths/log evidence changed during the run. Preserve evidence, clean stale sentinel, relaunch from stable runner. Does NOT override `clean-success`, `local-checks-stuck`, `budget-exhausted`, or `timeout-bound` when those have intact evidence. |
+| `never-ran` | `stop_reason="no-progress"` AND `num_turns=0` AND zero input/output tokens AND result matches a startup-failure pattern (`Unknown command`, `command not found`, `No such file`) | The run failed before the model was ever invoked — environment/startup fault (missing command, incomplete worker home). NOT blacklisted; routes to triage. A restart will NOT help until the cause is fixed. |
+| `throttled` | `stop_reason="no-progress"` AND non-trivial rate-limit event count in JSONL AND output rate < 5 tokens/sec | The run was rate-limited, not stalled. Transient condition; relaunch after the rate-limit window expires. NOT blacklisted; routes to relaunch with standard MaxRestarts cap. |
 
 ## Standard workflow
 

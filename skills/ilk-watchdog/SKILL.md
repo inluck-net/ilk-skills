@@ -75,17 +75,19 @@ The only inter-process channel is the file system. No IPC, no ports.
 
 ## Whitelist / blacklist (the core decision)
 
-Reuses `ilk-feedback`'s 9-class taxonomy. Hard-coded in this skill:
+Reuses `ilk-feedback`'s 11-class taxonomy. Hard-coded in this skill:
 
 | Classification | Action |
 |---|---|
 | `clean-success` (or sentinel state `all-shipped`/`shipped`) | Mark current master as `shipped`, promote next queued master to `active`, relaunch via ilk-launcher and keep polling. If the queue is empty, exit cleanly with the "queue drained" banner. |
 | `shipped-unverified` | ✅ TERMINAL — all sub-plans shipped but some need human verification (compile-only / device-manual tiers). No relaunch. Yellow banner. |
 | `no-evidence` | ✅ TERMINAL — run started (sentinel present) but left no usable JSONL records. Triage required. No relaunch. Yellow banner. |
+| `never-ran` | ✅ TRIAGE — run failed before invoking the model (environment/startup fault). NOT blacklisted. Triage required; restart won't help until cause is fixed. Yellow banner. |
 | `timeout-bound` | ✅ Relaunch with postmortem's recommended params |
 | `max-iter-bound` | ✅ Relaunch with postmortem's recommended params |
 | `api-flaky` | ✅ Relaunch (params usually unchanged) |
 | `interrupted` | ✅ Relaunch (user accidentally closed window? continue) |
+| `throttled` | ✅ Relaunch (rate-limit window will pass; restart after it expires). NOT blacklisted. |
 | `stuck-no-progress` | ❌ BLOCKED — agent stalled, restart won't help |
 | `api-blocked` | ❌ BLOCKED — endpoint truly down, restart won't help |
 | `budget-exhausted` | ❌ BLOCKED — `--max-budget-usd` cap hit, raising it is a human decision |
