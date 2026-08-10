@@ -1279,6 +1279,75 @@ local_check_outcome() {
   esac
 }
 
+# preserve_dirty_tree_on_timeout
+#
+# When an iteration is killed by gtimeout (ITER_COMPLETED=0), the working tree
+# may hold finished but uncommitted work.  Commit it as a WIP so the next
+# iteration resumes from a recoverable state.
+#
+# The commit is identifiable as WIP by its message prefix and by the
+# [wip:timeout] trailer.  No sub-plan status is mutated — this is purely a
+# durability measure, not a gate bypass.
+#
+# AC-1: dirty tree → WIP commit on timeout.
+# AC-2: WIP commit identifiable by message shape.
+# AC-4: untracked files inside the repo are included (git add -A).
+# AC-7: failures inside this function must not abort the run (set +e).
+#
+# Globals read: REPOS, PROJECT_PATH
+# Globals modified: none
+# Returns: 0 always (never fatal)
+preserve_dirty_tree_on_timeout() {
+  local wip_count=0
+  local repo
+  for repo in "${REPOS[@]}"; do
+    # Must be a git repo
+    git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || continue
+
+    # Check for tracked changes OR untracked files
+    local has_dirty=0
+    if ! git -C "$repo" diff --quiet 2>/dev/null || \
+       ! git -C "$repo" diff --cached --quiet 2>/dev/null; then
+      has_dirty=1
+    fi
+    local has_untracked=0
+    if [[ -n "$(git -C "$repo" ls-files --others --exclude-standard 2>/dev/null)" ]]; then
+      has_untracked=1
+    fi
+    if [[ "$has_dirty" -eq 0 && "$has_untracked" -eq 0 ]]; then
+      continue
+    fi
+
+    # Stage everything (tracked + untracked) and commit.
+    # Wrapped in set +e so a failure (detached HEAD, hook rejection, unwritable
+    # index) logs and continues to the next repo / terminal classification
+    # rather than aborting the run (AC-7).
+    (
+      set +e
+      git -C "$repo" add -A 2>/dev/null
+      local file_count
+      file_count=$(git -C "$repo" diff --cached --name-only 2>/dev/null | wc -l | tr -d ' ')
+      local diff_stat
+      diff_stat=$(git -C "$repo" diff --cached --stat 2>/dev/null | tail -1)
+      git -C "$repo" commit -m "WIP: preserve timed-out iteration changes
+
+Preserved by ilk-runner on timeout.  This commit is NOT a gate pass —
+the next iteration will re-run verification.
+
+[wip:timeout] files=$file_count $diff_stat" 2>/dev/null
+      local rc=$?
+      if [[ "$rc" -eq 0 ]]; then
+        echo "[runner] WIP commit: preserved $file_count files in $repo" >&2
+      else
+        echo "[runner] WIP commit failed in $repo (rc=$rc) — work may be lost" >&2
+      fi
+    )
+    # Count even if the commit failed — the attempt is what matters for telemetry
+    wip_count=$((wip_count + 1))
+  done
+  echo "$wip_count"
+}
+
 # ----- Main ------------------------------------------------------------------
 
 main() {
@@ -1457,8 +1526,12 @@ ${PROMPT}"
 
     # Stall detection
     local iter_stop_reason=""
+    local wip_preserved=0
     if [[ "$ITER_COMPLETED" -eq 0 ]]; then
       iter_stop_reason="timeout"
+      # Preserve any dirty tree as a WIP commit so the next iteration can
+      # resume from a recoverable state (AC-1, AC-2, AC-4).
+      wip_preserved=$(preserve_dirty_tree_on_timeout 2>/dev/null) || wip_preserved=0
     elif [[ "$ITER_BUDGET_EXHAUSTED" -eq 1 ]]; then
       iter_stop_reason="budget-exhausted"
     elif [[ "$total_new" -eq 0 ]]; then
@@ -1696,6 +1769,7 @@ print(json.dumps([json.loads(l) for l in sys.stdin]))
     _STOP_REASON="$iter_stop_reason" \
     _NEW_COMMITS_JSON="$new_commits_json" \
     _LOCAL_CHECKS_JSON="$local_checks_json" \
+    _WIP_PRESERVED="$wip_preserved" \
     python3 -c "
 import json, os
 d = {
@@ -1717,6 +1791,9 @@ if nc and nc != '{}':
 sr = os.environ.get('_STOP_REASON', '')
 if sr:
   d['stop_reason'] = sr
+wp = os.environ.get('_WIP_PRESERVED', '0')
+if int(wp) > 0:
+  d['wip_preserved'] = int(wp)
 lc = os.environ.get('_LOCAL_CHECKS_JSON', '')
 if lc and lc != '[]':
   d['local_checks'] = json.loads(lc)
