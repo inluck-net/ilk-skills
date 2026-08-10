@@ -313,8 +313,9 @@ classify_action() {
       # Toolkit self-edit drift; human review required.
       echo "needs-human"
       ;;
-    no-evidence)
-      # Run started but left no usable records — triage.
+    no-evidence|never-ran)
+      # Run started but left no usable records, or never invoked the
+      # model (environment/startup fault) — triage.
       echo "triage"
       ;;
     timeout-bound|max-iter-bound|api-flaky|interrupted)

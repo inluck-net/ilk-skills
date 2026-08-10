@@ -845,8 +845,9 @@ function Resolve-WatchdogAction {
     'shipped-unverified'  { return 'needs-human' }
     # Toolkit self-edit drift; human review required
     'self-hosting-drift'  { return 'needs-human' }
-    # Run started but left no usable records
+    # Run started but left no usable records, or never invoked the model
     'no-evidence'         { return 'triage' }
+    'never-ran'           { return 'triage' }
     # Fail-closed: unknown label → block (never silently pass)
     default               { return 'block' }
   }

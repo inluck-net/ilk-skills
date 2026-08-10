@@ -387,6 +387,63 @@ def test_plain_no_progress_still_stuck(scratch_env):
     assert "dependency-unreachable" not in text, text[:600]
 
 
+# ── never-ran: not blacklisted, triage action ──────────────────────────────
+
+
+def test_never_ran_not_blacklisted(scratch_env):
+    """A project whose newest postmortem has classification=never-ran must NOT
+    be blacklisted.  Assert via is_blacklisted (the single source of truth)."""
+    _watchdog_scripts = _REPO_ROOT / "skills" / "ilk-watchdog" / "scripts"
+    if str(_watchdog_scripts) not in sys.path:
+        sys.path.insert(0, str(_watchdog_scripts))
+    import blacklist_status
+
+    project_path, env, key = scratch_env
+    data_home = Path(env["ILK_DATA_HOME"])
+
+    run_id = "20260810-110314"
+    _write_sentinel(data_home, key, run_id, "no-progress")
+
+    # Write a never-ran iteration (zero turns, zero tokens, startup failure).
+    _write_jsonl(data_home, key, project_path, [
+        {
+            "run_id": run_id,
+            "iteration": 1,
+            "exit_code": 0,
+            "new_commits_total": 0,
+            "stop_reason": "no-progress",
+            "num_turns": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "result": "Unknown command: /ilk",
+            "worker_home": "/home/user/.claude-worker-1",
+        },
+    ])
+
+    result = subprocess.run(
+        [sys.executable, str(_COLLECT_PY), "-ProjectPath", str(project_path),
+         "--run-id", run_id, "--quiet"],
+        capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+
+    # Postmortem must say never-ran.
+    pm_dir = _launcher_dir(data_home, key) / "postmortems"
+    pm_path = pm_dir / f"{run_id}.md"
+    assert pm_path.exists(), f"Postmortem not found at {pm_path}"
+    text = pm_path.read_text(encoding="utf-8")
+    assert "never-ran" in text, f"Expected never-ran classification.\n{text[:600]}"
+
+    # is_blacklisted must return false.
+    proj_data = data_home / "projects" / key
+    result_bl = blacklist_status.is_blacklisted(str(proj_data))
+    assert result_bl["blacklisted"] is False, (
+        f"never-ran should NOT be blacklisted: {result_bl}"
+    )
+    assert result_bl["classification"] == "never-ran"
+
+
 # ── classify_action parity (bash watchdog) ─────────────────────────────────
 
 
@@ -397,6 +454,7 @@ def test_plain_no_progress_still_stuck(scratch_env):
     ("shipped", "promote"),
     ("shipped-unverified", "needs-human"),
     ("no-evidence", "triage"),
+    ("never-ran", "triage"),
     ("timeout-bound", "relaunch"),
     ("max-iter-bound", "relaunch"),
     ("api-flaky", "relaunch"),
@@ -422,7 +480,7 @@ def test_classify_action(label, expected_action):
             return "promote"
         if s in ("shipped-unverified",):
             return "needs-human"
-        if s in ("no-evidence",):
+        if s in ("no-evidence", "never-ran"):
             return "triage"
         if s in ("timeout-bound", "max-iter-bound", "api-flaky", "interrupted"):
             return "relaunch"
@@ -445,6 +503,7 @@ def test_classify_action(label, expected_action):
     ("shipped", "promote"),
     ("shipped-unverified", "needs-human"),
     ("no-evidence", "triage"),
+    ("never-ran", "triage"),
     ("timeout-bound", "relaunch"),
     ("max-iter-bound", "relaunch"),
     ("api-flaky", "relaunch"),
