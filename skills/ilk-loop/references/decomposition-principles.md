@@ -239,6 +239,16 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   add a `local_check` that compares against a recorded baseline, or split
   tuning into its own batch.
   `plan_lint.py` (`lint_balance_regression_flag`) warns automatically.
+- **vacuous test selector (gate passes when zero tests match)** → a sub-plan's
+  `local_check` gates on a test command carrying `-k <pattern>`, `-m <marker>`,
+  or a `::` node id.  At plan time the tests may not exist yet, so the selector
+  is a *prediction* — and a wrong prediction is silent: pytest reports
+  `no tests collected` and exits 0, so the gate passes.  In the batch that
+  surfaced this, 22 such gates across 9 sub-plans all linted clean; the first
+  to run passed while selecting **0 of 1992 tests**.  **Fix:** gate on the
+  whole test file instead, or justify the selector by naming the test file in
+  the sub-plan body.  `plan_lint.py` (`lint_unverifiable_test_selector`) warns
+  automatically.
 
 ### Orphaned-capability detector (post-ship QC tool)
 
