@@ -1030,6 +1030,63 @@ def lint_balance_regression_flag(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── Vacuous test-selector guard ──────────────────────────────────────────────
+#
+# A sub-plan's ``local_checks`` may gate on a test command carrying a selector
+# (``-k``, ``-m``, or a ``::`` node id).  At plan time the tests may not exist
+# yet, so the selector is a *prediction* — and a wrong prediction is silent:
+# pytest reports ``no tests collected`` and exits 0, so the gate passes.
+#
+# This lint flags any test-runner command carrying such a selector so the
+# planner gates on the whole test file instead (the safe default).
+#
+# See decomposition-principles.md §8 local_checks anti-patterns.
+
+# Test-runner binary pattern (same as _WHOLE_SUITE_CMD_RE but anchored for
+# prefix-stripping).
+_TEST_RUNNER_RE = re.compile(
+    r"\b(?:pytest|py\.test|vitest|jest)\b", re.IGNORECASE
+)
+
+# Selector patterns — only meaningful inside a test-runner command.
+_SELECTOR_RE = re.compile(
+    r"""
+    (?:^|\s)-k\s+\S+         # pytest -k <pattern>
+    |(?:^|\s)-m\s+\S+        # pytest -m <marker>
+    |::\w+                   # pytest file.py::test_name
+    """,
+    re.VERBOSE,
+)
+
+
+def lint_unverifiable_test_selector(text: str, slug: str) -> list[str]:
+    """Flag a local_check test command carrying a selector the planner cannot verify."""
+    findings: list[str] = []
+    commands = _extract_local_checks_commands(text)
+    for cmd in commands:
+        # Strip a leading ``python -m`` / ``python3 -m`` prefix so that
+        # ``-m pytest`` is not mistaken for pytest's ``-m`` marker selector.
+        normalized = re.sub(
+            r"^.*?\bpython\d*\s+-m\s+", "", cmd.strip(), count=1
+        )
+        if not _TEST_RUNNER_RE.search(normalized):
+            continue
+        # Check for selector patterns in the NORMALIZED command (after
+        # stripping the python -m prefix).
+        m = _SELECTOR_RE.search(normalized)
+        if not m:
+            continue
+        selector = m.group(0).strip()
+        findings.append(
+            f"{slug}: local_check test command carries selector '{selector}' "
+            f"which the planner cannot verify at plan time -- if the selector "
+            f"matches zero tests the gate passes silently. Gate on the whole "
+            f"test file instead, or justify the selector in the sub-plan body "
+            f"(see decomposition-principles.md section 8)."
+        )
+    return findings
+
+
 ALL_CHECKS = (
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
@@ -1045,6 +1102,7 @@ ALL_CHECKS = (
     lint_anti_hardcode_integration,
     lint_ui_promise_wiring,
     lint_balance_regression_flag,
+    lint_unverifiable_test_selector,
 )
 
 
