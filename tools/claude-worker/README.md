@@ -370,9 +370,9 @@ bash tools/claude-worker/bootstrap.sh --clone-slot 2
 
 The clone copies `settings.json` (the provider `env` block — same
 provider as base by default), writes a minimal `.claude.json`, and
-symlinks (or junctions on Windows) `skills/` to the same source the base
-uses. Idempotent (re-run is a no-op / refresh) and lazy (created on
-first use).
+symlinks (or junctions on Windows) `skills/` and `commands/` to the same
+source the base uses. Idempotent (re-run is a no-op / refresh) and lazy
+(created on first use).
 
 **Test override:** pass `--from <base-home>` / `-From` to clone from a
 fake base home (used by tests under `scratch/slot-test/`):
