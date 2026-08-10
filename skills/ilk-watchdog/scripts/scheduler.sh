@@ -817,7 +817,12 @@ print(int((ea-sa).total_seconds()))
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] DRY-RUN: would attach watchdog via $WATCHDOG_SCRIPT --project-path '$drepo' --detach"
       else
         # Ensure slot home exists (lazy-clone from base worker home).
-        bash "$BOOTSTRAP_SCRIPT" --clone-slot "$slot_id" >/dev/null 2>&1 || true
+        local clone_output
+        if ! clone_output="$(bash "$BOOTSTRAP_SCRIPT" --clone-slot "$slot_id" 2>&1)"; then
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] slot $slot_id clone failed: $clone_output" >&2
+          write_scheduler_log "clone-failed" "$dkey (slot $slot_id)" "$clone_output"
+          continue
+        fi
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatching $dkey (slot $slot_id) [mux=$current_mux]..."
         local launch_cmd="bash $LAUNCH_SCRIPT --project-path '$drepo' --engine claude-worker --worker-home '$slot_home'${local_checks_flag} --force"
         if [[ "$current_mux" == "tmux" ]]; then

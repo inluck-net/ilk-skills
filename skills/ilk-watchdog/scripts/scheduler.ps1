@@ -862,9 +862,15 @@ function Run-Scheduler {
       } else {
         # Ensure slot home exists (lazy-clone from base worker home).
         try {
-          & $BootstrapScript -CloneSlot $slotId 2>$null | Out-Null
+          $cloneOutput = & $BootstrapScript -CloneSlot $slotId 2>&1 | Out-String
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+            throw "bootstrap exited with code $LASTEXITCODE"
+          }
         } catch {
-          Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] warning: slot $slotId bootstrap failed: $_"
+          $cloneMsg = $_.Exception.Message
+          Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] slot $slotId clone failed: $cloneMsg" -ForegroundColor Red
+          Write-SchedulerLog -Decision 'clone-failed' -Key "$key (slot $slotId)" -Reason $cloneMsg
+          continue
         }
         Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] dispatching $key (slot $slotId)..."
         try {
