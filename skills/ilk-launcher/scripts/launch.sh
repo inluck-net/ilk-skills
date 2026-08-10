@@ -11,6 +11,7 @@ set -euo pipefail
 # ----- Skill root resolution -------------------------------------------------
 
 source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_skill_root.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_pid.sh"
 _SKILL_ROOT="$(ilk_skill_root)"
 
 # ----- Defaults & globals ----------------------------------------------------
@@ -545,7 +546,9 @@ test_running_pid() {
     echo ""
     return
   fi
-  if kill -0 "$raw_pid" 2>/dev/null; then
+  # Command-verified: a recycled PID would report this project as perpetually
+  # running and block every relaunch. Same guard as the scheduler's sentinel.
+  if ilk_pid_alive "$raw_pid"; then
     echo "$raw_pid"
   else
     rm -f "$pid_file"

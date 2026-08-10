@@ -14,6 +14,10 @@ set -euo pipefail
 
 # --- single-instance guard (pidfile) -----------------------------------------
 
+# Sourced here, not next to the skill-root resolution below: the lock is
+# acquired at source time (before that block runs) and needs ilk_pid_alive.
+source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_pid.sh"
+
 SCHEDULER_PIDFILE="${HOME}/.ilk-data/scheduler.pid"
 
 acquire_scheduler_lock() {
@@ -22,7 +26,11 @@ acquire_scheduler_lock() {
   if [[ -f "$pidfile" ]]; then
     local old_pid
     old_pid=$(tr -d '[:space:]' < "$pidfile" 2>/dev/null) || true
-    if [[ -n "$old_pid" && "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" 2>/dev/null; then
+    # ilk_pid_alive, not bare `kill -0`: a recycled PID here is unrecoverable.
+    # A false "already running" exits 0, and the LaunchAgent's KeepAlive is
+    # SuccessfulExit=false, so launchd never restarts it — the scheduler stays
+    # dead until someone notices by hand.
+    if ilk_pid_alive "$old_pid"; then
       echo "[ilk-scheduler] already running (PID $old_pid). Exiting."
       exit 0
     fi
@@ -195,8 +203,11 @@ test_running_pid() {
   if ! [[ "$raw" =~ ^[0-9]+$ ]]; then
     return 1  # free
   fi
-  if ! kill -0 "$raw" 2>/dev/null; then
-    return 1  # dead pid — free
+  # Command-verified, not bare `kill -0`: a recycled PID makes this return
+  # "busy" on every poll forever, and the cross-check below cannot rescue it
+  # because a sentinel abandoned mid-run still reads state="running".
+  if ! ilk_pid_alive "$raw"; then
+    return 1  # dead pid (or not an ilk process) — free
   fi
 
   # Stale-sentinel cross-check: even if the pid is alive, a terminal
