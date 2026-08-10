@@ -122,6 +122,30 @@ do_check() {
 
 # --- live-loop guard ---------------------------------------------------------
 
+# True only when $1 is alive AND its command line is actually an ilk process.
+#
+# `kill -0` alone answers "does some process hold this PID", which is not the
+# question: PIDs are recycled. Observed 2026-08-10 — a kira-cloudflare
+# running.pid written 2026-07-21 named PID 23339, which by then belonged to an
+# interactive `-zsh` running 21 hours. The upgrade was refused on a 20-day-stale
+# file pointing at an unrelated shell. Mirrors pid_health.pid_command_alive,
+# which exists for exactly this and is used by status_progress/status_all.
+ilk_pid_alive() {
+  local pid="$1"
+  [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  local cmd
+  cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  # Unreadable command (permissions) -> fall back to liveness, same as
+  # pid_command_alive: better to over-block than to swap code under a live loop.
+  [[ -z "$cmd" ]] && return 0
+  case "$cmd" in
+    *run_ilk_loop*|*watchdog.sh*|*watchdog.ps1*|*scheduler.sh*|*scheduler_scan*|*scheduler.ps1*)
+      return 0 ;;
+  esac
+  return 1
+}
+
 check_live_pids() {
   local data_dir; data_dir="$(ilk_data_dir)"
   local projects_dir="$data_dir/projects"
@@ -132,7 +156,7 @@ check_live_pids() {
   if [[ -f "$scheduler_pidfile" ]]; then
     local scheduler_pid
     scheduler_pid="$(cat "$scheduler_pidfile" 2>/dev/null || true)"
-    if [[ -n "$scheduler_pid" && "$scheduler_pid" =~ ^[0-9]+$ ]] && kill -0 "$scheduler_pid" 2>/dev/null; then
+    if ilk_pid_alive "$scheduler_pid"; then
       active_pids+=("scheduler (PID $scheduler_pid)")
     fi
   fi
@@ -179,7 +203,7 @@ check_live_pids() {
         ;;
     esac
 
-    if kill -0 "$pid" 2>/dev/null; then
+    if ilk_pid_alive "$pid"; then
       active_pids+=("$project_name (PID $pid)")
     fi
   done
