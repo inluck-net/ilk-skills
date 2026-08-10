@@ -145,10 +145,15 @@ def find_repos(project_root: Path) -> list[Path]:
     return repos
 
 
-def collect_step_commit_timestamps(repos: list[Path]) -> list[int]:
+def collect_step_commit_timestamps(repos: list[Path]) -> tuple[list[int], bool]:
     """For each repo, run git log --grep for [plan:<slug>#step-N] commits and
-    return all unique unix timestamps merged + sorted ascending."""
+    return (sorted unique unix timestamps, scan_failed).
+
+    ``scan_failed`` is True when at least one repo could not be scanned
+    (not a git repository, git absent, timeout) — the caller must not
+    treat that as "zero commits found"."""
     seen: set[int] = set()
+    scan_failed = False
     for repo in repos:
         try:
             out = subprocess.check_output(
@@ -161,12 +166,13 @@ def collect_step_commit_timestamps(repos: list[Path]) -> list[int]:
                 timeout=20,
             )
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+            scan_failed = True
             continue
         for line in out.splitlines():
             line = line.strip()
             if line.isdigit():
                 seen.add(int(line))
-    return sorted(seen)
+    return sorted(seen), scan_failed
 
 
 def compute_pace_min_per_step(timestamps: list[int], window: int = PACE_WINDOW) -> float | None:
@@ -267,6 +273,7 @@ def render(
     repos: list[Path],
     step_commit_count: int,
     sentinel: dict[str, Any] | None = None,
+    scan_failed: bool = False,
 ) -> str:
     out: list[str] = []
     out.append(f"项目: {project_name}    路径: {project_root}")
@@ -326,6 +333,12 @@ def render(
 
     if remaining == 0:
         out.append("ETA: all sub-plans shipped — nothing remaining.")
+    elif scan_failed:
+        out.append(
+            f"节奏: scan failed ({step_commit_count} step commits found; "
+            "at least one repo could not be scanned — not a git repository or git absent). "
+            "ETA unavailable."
+        )
     elif pace_min is None or step_commit_count < 2:
         out.append(
             f"节奏: insufficient data ({step_commit_count} step commits found; need ≥2). "
@@ -401,6 +414,7 @@ def build_json(
     pace_min: float | None,
     repos: list[Path],
     step_commit_count: int,
+    scan_failed: bool = False,
 ) -> dict[str, Any]:
     """Build the machine-readable JSON structure for --json mode."""
     cur = find_current_in_progress(rows)
@@ -453,6 +467,7 @@ def build_json(
             "remaining_steps": remaining,
             "pace_min_per_step": round(pace_min, 1) if pace_min is not None else None,
             "eta_minutes": round(eta_min, 1) if eta_min is not None else None,
+            "scan_failed": scan_failed,
         },
         "processes": {
             "launcher_pid": launcher_pid,
@@ -504,7 +519,7 @@ def main() -> int:
 
     rows, master = read_subplans(plans_dir)
     repos = find_repos(project_root)
-    timestamps = collect_step_commit_timestamps(repos)
+    timestamps, scan_failed = collect_step_commit_timestamps(repos)
     pace_min = compute_pace_min_per_step(timestamps, PACE_WINDOW)
 
     runtime_dir = plans_dir.parent / "runtime"
@@ -521,6 +536,7 @@ def main() -> int:
             pace_min=pace_min,
             repos=repos,
             step_commit_count=len(timestamps),
+            scan_failed=scan_failed,
         )
         print(json.dumps(data, ensure_ascii=False, indent=2))
     else:
@@ -534,6 +550,7 @@ def main() -> int:
             repos=repos,
             step_commit_count=len(timestamps),
             sentinel=sentinel,
+            scan_failed=scan_failed,
         ))
     return 0
 

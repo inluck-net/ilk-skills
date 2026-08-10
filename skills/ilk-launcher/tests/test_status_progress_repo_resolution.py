@@ -39,6 +39,14 @@ total_tickets: 1
 status: active
 current_subplan: 2026-08-10-example
 ---
+
+# MASTER — test
+
+## Sub-plan registry
+
+| # | Sub-plan | Steps |
+|---|---|---|
+| 1 | [2026-08-10-example.md](./2026-08-10-example.md) | 2 |
 """
 
 SUBPLAN_FM = """\
@@ -163,6 +171,112 @@ def test_in_tree_layout_resolves_project_root(tmp_path: Path) -> None:
     assert captured["step_commit_count"] >= 1, (
         f"step_commit_count should be non-zero (was 0 before the fix), got {captured['step_commit_count']}"
     )
+
+
+# ── AC-4: scan-failed is distinct from zero-found ────────────────────────────
+
+def test_scan_failed_distinct_from_zero(tmp_path: Path) -> None:
+    """When a repo in the list is not scannable (git fails), scan_failed must
+    be True — not silently reported as zero commits."""
+    # Create a directory that looks like it has .git but git log will fail
+    # (empty .git directory, not a real repo)
+    broken_repo = tmp_path / "broken-repo"
+    broken_repo.mkdir()
+    (broken_repo / ".git").mkdir()
+
+    plans_dir = tmp_path / "external" / "plans"
+    _seed_plans(plans_dir)
+
+    # Patch find_repos to return our broken repo
+    with patch.object(status_progress, "find_plans_dir", return_value=plans_dir):
+        with patch.object(status_progress, "find_repos", return_value=[broken_repo]):
+            from io import StringIO
+            buf = StringIO()
+            with patch("sys.stdout", buf):
+                with patch("sys.argv", [
+                    "status_progress.py",
+                    "--json",
+                    "--project-path", str(tmp_path),
+                ]):
+                    status_progress.main()
+
+            data = json.loads(buf.getvalue())
+
+    assert data["summary"]["scan_failed"] is True, (
+        "scan_failed must be True when git fails on a repo"
+    )
+    assert data["summary"]["pace_min_per_step"] is None
+
+
+def test_genuine_zero_not_flagged_as_scan_failed(tmp_path: Path) -> None:
+    """A real git repo with zero step commits must report scan_failed=False.
+    The distinction is the whole point of AC-4."""
+    repo = tmp_path / "myrepo"
+    repo.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init"], cwd=str(repo), capture_output=True, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test"],
+        cwd=str(repo), capture_output=True, check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=str(repo), capture_output=True, check=True,
+    )
+    (repo / "README.md").write_text("test\n")
+    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "initial commit"],
+        cwd=str(repo), capture_output=True, check=True,
+    )
+
+    plans_dir = tmp_path / "external" / "plans"
+    _seed_plans(plans_dir)
+
+    with patch.object(status_progress, "find_plans_dir", return_value=plans_dir):
+        from io import StringIO
+        buf = StringIO()
+        with patch("sys.stdout", buf):
+            with patch("sys.argv", [
+                "status_progress.py",
+                "--json",
+                "--project-path", str(repo),
+            ]):
+                status_progress.main()
+
+        data = json.loads(buf.getvalue())
+
+    assert data["summary"]["scan_failed"] is False, (
+        "scan_failed must be False for a real git repo with no step commits"
+    )
+    assert data["summary"]["pace_min_per_step"] is None
+
+
+def test_human_output_says_scan_failed(tmp_path: Path) -> None:
+    """Human-readable output must say 'scan failed' (not 'insufficient data')
+    when a repo cannot be scanned."""
+    broken_repo = tmp_path / "broken-repo"
+    broken_repo.mkdir()
+    (broken_repo / ".git").mkdir()
+
+    plans_dir = tmp_path / "external" / "plans"
+    _seed_plans(plans_dir)
+
+    with patch.object(status_progress, "find_plans_dir", return_value=plans_dir):
+        with patch.object(status_progress, "find_repos", return_value=[broken_repo]):
+            from io import StringIO
+            buf = StringIO()
+            with patch("sys.stdout", buf):
+                with patch("sys.argv", [
+                    "status_progress.py",
+                    "--project-path", str(tmp_path),
+                ]):
+                    status_progress.main()
+
+    output = buf.getvalue()
+    assert "scan failed" in output, (
+        f"Human output must say 'scan failed' for a broken repo, got: {output}"
+    )
+    assert "insufficient data" not in output
 
 
 # ── AC-5: JSON keys are preserved ────────────────────────────────────────────
