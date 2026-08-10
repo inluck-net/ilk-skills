@@ -517,6 +517,7 @@ CLASSIFICATION_LABELS: tuple[str, ...] = (
     "shipped-unverified",
     "no-evidence",
     "never-ran",
+    "throttled",
 )
 
 LOCAL_CHECK_RE = re.compile(
@@ -1085,6 +1086,27 @@ def _classify_core(
                     "iter_at_stop": last.get("iteration"),
                     "missing_dependency": missing,
                 }
+        # Throttled case: the run hit rate limits (non-trivial event count)
+        # and produced low output.  An environment fault, not a stall —
+        # a restart won't help until the rate-limit window passes.
+        run_id = last.get("run_id")
+        if run_id:
+            rl_count = count_rate_limit_events(run_id, project_path, last_launch)
+            if rl_count > 0:
+                # Compute output-per-second across the last few iters.
+                last3 = iters[-3:]
+                total_output = sum((r.get("output_tokens") or 0) for r in last3)
+                total_dur = sum((r.get("duration_sec") or 0) for r in last3)
+                output_per_sec = total_output / total_dur if total_dur > 0 else 0
+                # A throttled run has low output relative to a normal run.
+                # Threshold: < 5 tokens/sec is suspiciously low for a
+                # functioning model.
+                if output_per_sec < 5:
+                    return "throttled", {
+                        "iter_at_stop": last.get("iteration"),
+                        "rate_limit_event_count": rl_count,
+                        "output_per_sec": round(output_per_sec, 2),
+                    }
         # split by error pattern
         last3 = iters[-3:]
         last3_errs = sum(1 for r in last3 if r.get("exit_code") not in (0, None))
@@ -1842,6 +1864,18 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
             "until the cause is fixed (missing command, incomplete worker home, "
             "or misconfigured launcher). Check the worker home and the "
             "command that was attempted." + result_clause
+        )
+    if label == "throttled":
+        rl_count = facts.get("rate_limit_event_count", 0)
+        ops = facts.get("output_per_sec", 0)
+        iter_stop = facts.get('iter_at_stop')
+        iter_clause = f"at iter {iter_stop} " if iter_stop is not None else ""
+        return (
+            f"The run was rate-limited {iter_clause}— {rl_count} rate-limit "
+            f"events detected, output rate {ops:.1f} tokens/sec. "
+            "This is a transient condition, not a stall. The rate-limit window "
+            "will pass; relaunch after it expires. A restart during the window "
+            "will hit the same limit."
         )
     if label == "stuck-no-progress":
         iter_stop = facts.get('iter_at_stop')

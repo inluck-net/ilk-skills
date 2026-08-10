@@ -455,6 +455,7 @@ def test_never_ran_not_blacklisted(scratch_env):
     ("shipped-unverified", "needs-human"),
     ("no-evidence", "triage"),
     ("never-ran", "triage"),
+    ("throttled", "relaunch"),
     ("timeout-bound", "relaunch"),
     ("max-iter-bound", "relaunch"),
     ("api-flaky", "relaunch"),
@@ -482,7 +483,7 @@ def test_classify_action(label, expected_action):
             return "needs-human"
         if s in ("no-evidence", "never-ran"):
             return "triage"
-        if s in ("timeout-bound", "max-iter-bound", "api-flaky", "interrupted"):
+        if s in ("timeout-bound", "max-iter-bound", "api-flaky", "interrupted", "throttled"):
             return "relaunch"
         if s in ("stuck-no-progress", "api-blocked", "budget-exhausted",
                  "local-checks-stuck", "dependency-unreachable", "merge-conflict"):
@@ -504,6 +505,7 @@ def test_classify_action(label, expected_action):
     ("shipped-unverified", "needs-human"),
     ("no-evidence", "triage"),
     ("never-ran", "triage"),
+    ("throttled", "relaunch"),
     ("timeout-bound", "relaunch"),
     ("max-iter-bound", "relaunch"),
     ("api-flaky", "relaunch"),

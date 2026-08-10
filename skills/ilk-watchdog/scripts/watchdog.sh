@@ -318,7 +318,7 @@ classify_action() {
       # model (environment/startup fault) — triage.
       echo "triage"
       ;;
-    timeout-bound|max-iter-bound|api-flaky|interrupted)
+    timeout-bound|max-iter-bound|api-flaky|interrupted|throttled)
       # Whitelist: transient failures safe to retry.
       echo "relaunch"
       ;;

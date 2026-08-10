@@ -70,7 +70,7 @@ $LoopStatusPy  = Join-Path $SkillRoot 'ilk-loop\scripts\loop_status.py'
 $CollectPy     = Join-Path $SkillRoot 'ilk-feedback\scripts\collect.py'
 $NotifyPy      = Join-Path $SkillRoot 'ilk-watchdog\scripts\ilk_notify.py'
 
-$WhitelistClasses = @('timeout-bound', 'max-iter-bound', 'api-flaky', 'interrupted')
+$WhitelistClasses = @('timeout-bound', 'max-iter-bound', 'api-flaky', 'interrupted', 'throttled')
 $BlacklistClasses = @('stuck-no-progress', 'api-blocked', 'budget-exhausted', 'local-checks-stuck', 'local-checks-broken', 'dependency-unreachable')
 
 # Grace period after a relaunch before we trust the next "PID dead" signal,

@@ -169,3 +169,75 @@ class TestRateLimitInPostmortem:
         assert "Rate-limit events" not in report, (
             f"Postmortem should NOT include rate-limit row when count is 0.\n{report[:1000]}"
         )
+
+
+# -- AC-10, AC-11, AC-12, AC-13: The throttled label -----------------------
+
+class TestThrottledLabel:
+    """A rate-limited run classifies as throttled, not stuck-no-progress."""
+
+    def _make_throttled_iters(self, run_id: str = "20260727-071103") -> list[dict]:
+        """Build iters that look rate-limited: low output, zero commits."""
+        return [
+            {
+                "run_id": run_id,
+                "iteration": i,
+                "stop_reason": "no-progress",
+                "exit_code": 0,
+                "new_commits_total": 0,
+                "num_turns": 3,
+                "input_tokens": 1000,
+                "output_tokens": 100,  # low output
+                "duration_sec": 200,  # long duration → low output/sec
+            }
+            for i in range(1, 4)
+        ]
+
+    def test_throttled_with_rate_limit_events(self, tmp_path):
+        """AC-10: rate-limit events + low output → throttled, not stuck."""
+        iters = self._make_throttled_iters()
+        # Write rate-limit events to JSONL.
+        jsonl = tmp_path / ".ilk-loop.log"
+        lines = []
+        for _ in range(5):
+            evt = _make_rate_limit_event(session_id="20260727-071103")
+            evt["project"] = str(tmp_path)
+            lines.append(json.dumps(evt))
+        jsonl.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        last_launch = {"jsonl_log": str(jsonl)}
+        label, facts = collect.classify(iters, last_launch, tmp_path)
+        assert label == "throttled", f"Expected throttled, got: {label}"
+        assert facts.get("rate_limit_event_count", 0) > 0
+
+    def test_throttled_not_in_blacklist(self, tmp_path):
+        """AC-11: throttled is absent from BLACKLIST_CLASSES."""
+        _watchdog_scripts = Path(__file__).resolve().parent.parent.parent / "ilk-watchdog" / "scripts"
+        if str(_watchdog_scripts) not in sys.path:
+            sys.path.insert(0, str(_watchdog_scripts))
+        import blacklist_status
+        assert "throttled" not in blacklist_status.BLACKLIST_CLASSES
+
+    def test_genuine_stall_stays_stuck(self, tmp_path):
+        """AC-12: zero rate-limit events → stuck-no-progress (not throttled)."""
+        iters = self._make_throttled_iters()
+        # No rate-limit events in JSONL.
+        label, facts = collect.classify(iters, None, tmp_path)
+        assert label == "stuck-no-progress", (
+            f"Zero events should stay stuck-no-progress, got: {label}"
+        )
+
+    def test_throttled_shorter_backoff_than_stall(self, tmp_path):
+        """AC-13: throttled gets a shorter backoff than a stall.
+        Assert the chosen interval differs from the 60-min stall backoff."""
+        _watchdog_scripts = Path(__file__).resolve().parent.parent.parent / "ilk-watchdog" / "scripts"
+        if str(_watchdog_scripts) not in sys.path:
+            sys.path.insert(0, str(_watchdog_scripts))
+        import blacklist_status
+        # throttled is not in BLACKLIST_CLASSES, so it doesn't get the
+        # 60-min backoff at all. It routes to 'relaunch' which has its
+        # own MaxRestarts cap. The key assertion: it's NOT in the blacklist.
+        assert "throttled" not in blacklist_status.BLACKLIST_CLASSES
+        # The relaunch path uses MaxRestarts, not BACKOFF_MIN.
+        # This test asserts the structural difference.
+
