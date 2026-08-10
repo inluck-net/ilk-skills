@@ -43,6 +43,7 @@ PROJECTS_JSON = LAUNCHER_DIR / "projects.json"
 # Reuse loop_status.py's helpers to guarantee identical discovery + ordering.
 sys.path.insert(0, str(LOOP_SCRIPTS))
 from loop_status import find_plans_dir, parse_frontmatter, extract_master_order, pick_active_master  # type: ignore
+from ilk_paths import find_project_root  # type: ignore
 from pid_health import pid_alive, pid_command_alive  # type: ignore
 from plan_slug import DATE_PREFIX  # type: ignore
 
@@ -497,7 +498,8 @@ def main() -> int:
             f"No docs/plans/MASTER-*.md found walking up from {start}. "
             "Either pass -ProjectPath / -ProjectName, or cd into a project."
         )
-    project_root = plans_dir.parent.parent  # plans_dir = <root>/docs/plans
+    resolved_root, _kind = find_project_root(start)
+    project_root = resolved_root if resolved_root is not None else plans_dir.parent.parent
     project_name = args.project_name or project_name_for(project_root)
 
     rows, master = read_subplans(plans_dir)
