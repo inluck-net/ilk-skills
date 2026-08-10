@@ -478,6 +478,7 @@ CLASSIFICATION_LABELS: tuple[str, ...] = (
     "self-hosting-drift",
     "shipped-unverified",
     "no-evidence",
+    "never-ran",
 )
 
 LOCAL_CHECK_RE = re.compile(
@@ -548,6 +549,52 @@ _DEP_NAME_RE = re.compile(
     r"([A-Za-z0-9_.-]+)\s+MCP not connected",
     re.IGNORECASE,
 )
+
+# --- Never-ran detection ---
+#
+# A run that never invoked the model (zero turns, zero tokens) is an
+# environment/startup fault, not a stalled agent.  The runner still writes
+# stop_reason=no-progress because it sees zero new commits, but the cause
+# is distinguishable: num_turns==0, both token counts 0, and the result
+# string is a startup-failure error (e.g. "Unknown command: /ilk").
+#
+# See detect_never_ran and the 2026-08-10-never-ran-classification sub-plan.
+
+STARTUP_FAILURE_RE = re.compile(
+    r"Unknown command|"
+    r"command not found|"
+    r"not recognized as an internal or external command|"
+    r"No such file or directory",
+    re.IGNORECASE,
+)
+
+
+def _is_never_ran_iter(rec: dict) -> bool:
+    """Return True if this iteration record shows a zero-turn, zero-token
+    startup failure — the model was never invoked."""
+    num_turns = rec.get("num_turns")
+    input_tokens = rec.get("input_tokens") or rec.get("usage", {}).get("input_tokens")
+    output_tokens = rec.get("output_tokens") or rec.get("usage", {}).get("output_tokens")
+    result = rec.get("result") or ""
+
+    # Must have zero turns AND zero tokens to qualify — a run that took
+    # even one turn is a genuine stall, not a startup failure.
+    if num_turns != 0:
+        return False
+    if (input_tokens or 0) != 0 or (output_tokens or 0) != 0:
+        return False
+    # Match a startup-failure shape in the result string.
+    return bool(STARTUP_FAILURE_RE.search(result))
+
+
+def detect_never_ran(lines: list[str]) -> bool:
+    """Return True when the log lines show a startup failure — the model
+    was never invoked.  Follows the detect_unreachable_dependency pattern:
+    scan lines for a startup-failure signal."""
+    if not lines:
+        return False
+    return any(STARTUP_FAILURE_RE.search(line) for line in lines)
+
 
 # --- Vision / model-incapability detection ---
 #
@@ -948,7 +995,20 @@ def _classify_core(
             "commits": new_commits_total,
         }
     if last_stop == "no-progress":
-        # Reachability case FIRST: the stall was a missing MCP / unreachable
+        # Never-ran case FIRST: the run never invoked the model (zero turns,
+        # zero tokens, startup-failure result).  This is an environment fault,
+        # not a stalled agent — a restart won't help until the cause is fixed.
+        # Detect it before dependency-unreachable and stuck-no-progress so the
+        # project is not blacklisted for a missing directory / typo.
+        if _is_never_ran_iter(last):
+            worker_home = last.get("worker_home") or (last_launch.get("worker_home") if last_launch else None)
+            result_str = last.get("result") or ""
+            return "never-ran", {
+                "iter_at_stop": last.get("iteration"),
+                "worker_home": worker_home,
+                "result": result_str,
+            }
+        # Reachability case SECOND: the stall was a missing MCP / unreachable
         # env_prereq, not a genuine no-progress. A restart won't help; the fix
         # is config/reachability (e.g. `ilk-worker-mcp add <name>`). Detect it
         # before the generic stuck path — the figma stalls had clean exit codes
@@ -1717,6 +1777,20 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
             "bridge the modality gap."
         )
 
+    if label == "never-ran":
+        worker_home = facts.get("worker_home", "unknown")
+        result = facts.get("result", "")
+        iter_stop = facts.get('iter_at_stop')
+        iter_clause = f"at iter {iter_stop} " if iter_stop is not None else ""
+        result_clause = f"\n\nResult: `{result}`" if result else ""
+        return (
+            f"The run failed {iter_clause}before the model was ever invoked "
+            f"(zero turns, zero tokens). Worker home probed: `{worker_home}`. "
+            "This is an environment/startup fault — a restart will NOT help "
+            "until the cause is fixed (missing command, incomplete worker home, "
+            "or misconfigured launcher). Check the worker home and the "
+            "command that was attempted." + result_clause
+        )
     if label == "stuck-no-progress":
         iter_stop = facts.get('iter_at_stop')
         iter_clause = f" at iter {iter_stop}" if iter_stop is not None else ""
