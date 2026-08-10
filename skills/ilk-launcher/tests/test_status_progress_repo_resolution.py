@@ -309,3 +309,59 @@ def test_json_keys_preserved(tmp_path: Path) -> None:
     assert "pace_min_per_step" in data["summary"], (
         "JSON must have summary.pace_min_per_step"
     )
+
+
+# ── AC-8: stale sentinel returns state="unknown" ─────────────────────────────
+
+def test_detect_sentinel_health_stale_returns_unknown(tmp_path: Path) -> None:
+    """When sentinel says state=running but PID is dead, detect_sentinel_health
+    must return state='unknown' and preserve the raw value in raw_state."""
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    sentinel_file = runtime_dir / "last-exit.json"
+    sentinel_file.write_text(json.dumps({"state": "running", "pid": 99999999}))
+
+    result = status_progress.detect_sentinel_health(runtime_dir, 99999999)
+
+    assert result["state"] == "unknown", (
+        f"Expected state='unknown' for stale sentinel, got {result['state']!r}"
+    )
+    assert result["stale"] is True
+    assert result["raw_state"] == "running", (
+        f"Expected raw_state='running' for stale sentinel, got {result.get('raw_state')!r}"
+    )
+    assert result["pid"] == 99999999
+
+
+def test_detect_sentinel_health_live_returns_running(tmp_path: Path) -> None:
+    """When sentinel says state=running and PID is alive, detect_sentinel_health
+    must return state='running' (not 'unknown')."""
+    import os
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    sentinel_file = runtime_dir / "last-exit.json"
+    sentinel_file.write_text(json.dumps({"state": "running", "pid": os.getpid()}))
+
+    result = status_progress.detect_sentinel_health(runtime_dir, os.getpid())
+
+    assert result["state"] == "running", (
+        f"Expected state='running' for live sentinel, got {result['state']!r}"
+    )
+    assert result["stale"] is False
+    assert "raw_state" not in result, (
+        "raw_state should not be present for non-stale sentinel"
+    )
+
+
+def test_detect_sentinel_health_terminal_state(tmp_path: Path) -> None:
+    """A terminal sentinel (shipped, interrupted) must return its state as-is."""
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    sentinel_file = runtime_dir / "last-exit.json"
+    sentinel_file.write_text(json.dumps({"state": "shipped", "pid": 99999999}))
+
+    result = status_progress.detect_sentinel_health(runtime_dir, 99999999)
+
+    assert result["state"] == "shipped"
+    assert result["stale"] is False
+    assert "raw_state" not in result

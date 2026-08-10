@@ -397,12 +397,19 @@ def detect_sentinel_health(
         if not pid_alive(launcher_pid):
             stale = True
 
-    return {
-        "state": sentinel_state or "unknown",
+    # When stale, report state as "unknown" so consumers that read only
+    # .state are not told a dead run is live.  The raw value is preserved
+    # in raw_state so no diagnostic information is lost.  (AC-8)
+    reported_state = "unknown" if stale else (sentinel_state or "unknown")
+    result: dict[str, Any] = {
+        "state": reported_state,
         "stale": stale,
         "pid": launcher_pid,
         "last_exit_path": last_exit_path,
     }
+    if stale:
+        result["raw_state"] = sentinel_state
+    return result
 
 
 def build_json(
