@@ -10,8 +10,6 @@ set -euo pipefail
 #   - The match predicate catches any process whose argv contains the
 #     project path, not just runner processes
 #
-# Gate: KNOWN_BAD=1 until step 2 flips it.
-#
 # Usage: bash test_stop_leaves_no_survivors.sh
 # Requires: python3, lsof
 # =============================================================================
@@ -24,8 +22,7 @@ PASS=0
 FAIL=0
 TESTS=()
 
-# Gate: set to 1 while stop.sh is known-broken.  Step 2 flips this to 0.
-KNOWN_BAD="${KNOWN_BAD:-1}"
+# Gate: removed in step 2 — stop.sh now verifies the tree is gone.
 
 pass() { PASS=$((PASS + 1)); TESTS+=("PASS: $1"); echo "  PASS: $1"; }
 fail() { FAIL=$((FAIL + 1)); TESTS+=("FAIL: $1"); echo "  FAIL: $1"; }
@@ -82,6 +79,12 @@ cp "$STOP_SCRIPT" "${MOCK_SKILL_ROOT}/ilk-launcher/scripts/stop.sh"
 if [[ -f "${SCRIPT_DIR}/../scripts/mark_sentinel_interrupted.sh" ]]; then
   cp "${SCRIPT_DIR}/../scripts/mark_sentinel_interrupted.sh" \
     "${MOCK_SKILL_ROOT}/ilk-launcher/scripts/"
+fi
+
+# Copy _ilk_pid.sh for ilk_project_runners (used by stop.sh's post-kill verification)
+if [[ -f "${SCRIPT_DIR}/../../ilk-loop/scripts/_ilk_pid.sh" ]]; then
+  cp "${SCRIPT_DIR}/../../ilk-loop/scripts/_ilk_pid.sh" \
+    "${MOCK_SKILL_ROOT}/ilk-loop/scripts/"
 fi
 
 cat > "${MOCK_SKILL_ROOT}/ilk-loop/scripts/_ilk_skill_root.sh" <<'ROOT_SH'
@@ -225,14 +228,8 @@ if [[ -n "$SURVIVORS" || -n "$RUNNER_PIDS" ]]; then
   # Survivors exist.  stop.sh must have reported failure.
   if echo "$STOP_OUTPUT" | grep -qi "surviv\|still alive\|failed\|could not stop"; then
     pass "stop.sh reported failure when survivors remain"
-  elif echo "$STOP_OUTPUT" | grep -q "stopped\."; then
-    if [[ "$KNOWN_BAD" == "1" ]]; then
-      echo "  KNOWN_BAD: stop.sh reported 'stopped.' while survivors exist (expected broken)"
-    else
-      fail "stop.sh reported 'stopped.' while survivors still hold run.lock"
-    fi
   else
-    fail "stop.sh output unclear — survivors exist but no success/failure message found"
+    fail "stop.sh did not report failure while survivors hold run.lock"
   fi
 else
   pass "no survivors — all descendants killed"
@@ -284,11 +281,7 @@ STOP_OUTPUT2=$(bash "${MOCK_SKILL_ROOT}/ilk-launcher/scripts/stop.sh" \
 if kill -0 "$BYSTANDER_PID" 2>/dev/null; then
   pass "bystander (argv contains project path) survived stop.sh"
 else
-  if [[ "$KNOWN_BAD" == "1" ]]; then
-    echo "  KNOWN_BAD: bystander killed by stop.sh (expected broken)"
-  else
-    fail "bystander killed by stop.sh — match predicate too broad"
-  fi
+  fail "bystander killed by stop.sh — match predicate too broad"
 fi
 
 # Clean up

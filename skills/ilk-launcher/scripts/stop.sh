@@ -13,6 +13,9 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_skill_root.sh"
 _SKILL_ROOT="$(ilk_skill_root)"
 
+# Source _ilk_pid.sh for ilk_project_runners (used in post-kill verification)
+source "${_SKILL_ROOT}/ilk-loop/scripts/_ilk_pid.sh"
+
 # ----- Globals ---------------------------------------------------------------
 
 LAUNCHER_DIR="${_SKILL_ROOT}/ilk-launcher"
@@ -336,6 +339,36 @@ stop_project() {
   launcher_dir=$(get_external_launcher_dir "$path")
   if [[ -n "$launcher_dir" ]]; then
     kill_orphans "$path" "$target_pid" "$launcher_dir" "$name"
+  fi
+
+  # Verify the tree is actually gone before reporting success (AC-2 / AC-3).
+  # Two independent checks: ilk_project_runners (process table) and lsof on
+  # run.lock (file-descriptor holders).  Both must be empty.
+  local survivors=""
+  local runner_pids
+  runner_pids=$(ilk_project_runners "$path" 2>/dev/null) || true
+  if [[ -n "$runner_pids" ]]; then
+    survivors="runner processes: $runner_pids"
+  fi
+
+  local run_lock="${launcher_dir}/run.lock"
+  if [[ -f "$run_lock" ]]; then
+    local lock_holders
+    lock_holders=$(lsof -t "$run_lock" 2>/dev/null) || true
+    if [[ -n "$lock_holders" ]]; then
+      survivors="${survivors:+$survivors, }run.lock holders: $lock_holders"
+    fi
+  fi
+
+  if [[ -n "$survivors" ]]; then
+    echo "[$name] FAILED — survivors detected after stop: $survivors" >&2
+    # Print each survivor's command line for diagnosis
+    for spid in $runner_pids $lock_holders; do
+      local scmd
+      scmd=$(ps -p "$spid" -o command= 2>/dev/null) || scmd="(unknown)"
+      echo "[$name]   PID $spid: ${scmd:0:120}" >&2
+    done
+    return 1
   fi
 
   # Report dirty tree state (read-only, does not mutate)

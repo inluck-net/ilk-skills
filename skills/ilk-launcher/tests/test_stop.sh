@@ -123,6 +123,11 @@ if [[ -f "${SCRIPT_DIR}/../scripts/mark_sentinel_interrupted.sh" ]]; then
   cp "${SCRIPT_DIR}/../scripts/mark_sentinel_interrupted.sh" "${MOCK_SKILL_ROOT}/ilk-launcher/scripts/"
 fi
 
+# Copy _ilk_pid.sh for ilk_project_runners (used by stop.sh's post-kill verification)
+if [[ -f "${SCRIPT_DIR}/../../ilk-loop/scripts/_ilk_pid.sh" ]]; then
+  cp "${SCRIPT_DIR}/../../ilk-loop/scripts/_ilk_pid.sh" "${MOCK_SKILL_ROOT}/ilk-loop/scripts/"
+fi
+
 # Create a mock _ilk_skill_root.sh
 cat > "${MOCK_SKILL_ROOT}/ilk-loop/scripts/_ilk_skill_root.sh" <<'ROOT_SH'
 ilk_skill_root() {
