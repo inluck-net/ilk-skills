@@ -166,6 +166,49 @@ def is_master_all_shipped(master_path: Path, plans_dir: Path) -> bool:
     return not master_has_nonshipped(master_path, plans_dir)
 
 
+# ── runnable-aware sibling predicate ─────────────────────────────────────────
+
+_RUNNABLE_SUBPLAN_STATUSES = {"pending", "in-progress"}
+
+
+def master_has_runnable(master_path: Path, plans_dir: Path) -> bool:
+    """Return True if a master has >= 1 sub-plan the loop could pick up.
+
+    Differs from master_has_nonshipped: a ``blocked`` sub-plan is
+    outstanding work, but it is NOT runnable — nothing the loop does
+    will advance it until a human unblocks it.  The scheduler needs
+    "runnable", not "un-shipped", or it dispatches a no-op forever.
+
+    Conservative fallbacks mirror master_has_nonshipped exactly:
+    no registered sub-plans → True; a registered file missing on disk →
+    True; an unreadable file → ``continue``.
+
+    Any status not in ``_RUNNABLE_SUBPLAN_STATUSES`` and not ``shipped``
+    (e.g. ``blocked``, ``skipped``) is treated as not runnable.
+    """
+    try:
+        master_text = master_path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return False
+    registered = extract_subplan_files(master_text)
+    if not registered:
+        # No sub-plan references — treat as "has work" (legacy fallback).
+        return True
+    for fname in registered:
+        sub_path = plans_dir / fname
+        if not sub_path.exists():
+            return True
+        try:
+            sub_text = sub_path.read_text(encoding="utf-8-sig")
+        except OSError:
+            continue
+        fm = parse_frontmatter(sub_text)
+        status = fm.get("status", "pending")
+        if status in _RUNNABLE_SUBPLAN_STATUSES:
+            return True
+    return False
+
+
 # ── depends_on-aware drain predicates (L4) ───────────────────────────────────
 
 def _parse_depends_on(raw: str) -> list[str]:

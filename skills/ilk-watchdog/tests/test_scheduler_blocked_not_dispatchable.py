@@ -132,3 +132,92 @@ class TestBlockedNotDispatchable:
             f"scan should include project with pending sub-plan, got {scan}"
         )
         assert scan[0]["key"] == "test-proj"
+
+
+# ── unit tests for master_has_runnable (AC-1/AC-2/AC-3) ───────────────
+
+SCRIPTS_ILK_LOOP = REPO_ROOT / "skills" / "ilk-loop" / "scripts"
+
+
+def _import_plan_status():
+    """Import plan_status with a clean slate."""
+    for mod_name in ("plan_status", "ilk_paths"):
+        if mod_name in sys.modules:
+            del sys.modules[mod_name]
+    sys.path.insert(0, str(SCRIPTS_ILK_LOOP))
+    import plan_status
+    return plan_status
+
+
+class TestMasterHasRunnable:
+    """Unit tests for the master_has_runnable predicate."""
+
+    def test_all_shipped_returns_false(self, tmp_path):
+        """AC-1: all sub-plans shipped → False."""
+        ps = _import_plan_status()
+        plans = tmp_path / "plans"
+        _write_master(plans, "MASTER-2026-08-12-test.md", status="active",
+                      subplans=["2026-08-12-task-a.md", "2026-08-12-task-b.md"])
+        _write_subplan(plans, "2026-08-12-task-a.md", status="shipped",
+                       current_step=3, estimated_steps=3)
+        _write_subplan(plans, "2026-08-12-task-b.md", status="shipped",
+                       current_step=4, estimated_steps=4)
+        master_path = plans / "MASTER-2026-08-12-test.md"
+        assert ps.master_has_runnable(master_path, plans) is False
+
+    def test_blocked_only_returns_false(self, tmp_path):
+        """AC-1: shipped + blocked, no pending/in-progress → False."""
+        ps = _import_plan_status()
+        plans = tmp_path / "plans"
+        _write_master(plans, "MASTER-2026-08-12-test.md", status="active",
+                      subplans=["2026-08-12-task-a.md", "2026-08-12-task-b.md"])
+        _write_subplan(plans, "2026-08-12-task-a.md", status="shipped",
+                       current_step=3, estimated_steps=3)
+        _write_subplan(plans, "2026-08-12-task-b.md", status="blocked",
+                       current_step=0, estimated_steps=4)
+        master_path = plans / "MASTER-2026-08-12-test.md"
+        assert ps.master_has_runnable(master_path, plans) is False
+
+    def test_pending_returns_true(self, tmp_path):
+        """AC-2: at least one pending sub-plan → True."""
+        ps = _import_plan_status()
+        plans = tmp_path / "plans"
+        _write_master(plans, "MASTER-2026-08-12-test.md", status="active",
+                      subplans=["2026-08-12-task-a.md", "2026-08-12-task-b.md"])
+        _write_subplan(plans, "2026-08-12-task-a.md", status="shipped",
+                       current_step=3, estimated_steps=3)
+        _write_subplan(plans, "2026-08-12-task-b.md", status="pending",
+                       current_step=0, estimated_steps=4)
+        master_path = plans / "MASTER-2026-08-12-test.md"
+        assert ps.master_has_runnable(master_path, plans) is True
+
+    def test_in_progress_returns_true(self, tmp_path):
+        """AC-2: at least one in-progress sub-plan → True."""
+        ps = _import_plan_status()
+        plans = tmp_path / "plans"
+        _write_master(plans, "MASTER-2026-08-12-test.md", status="active",
+                      subplans=["2026-08-12-task-a.md"])
+        _write_subplan(plans, "2026-08-12-task-a.md", status="in-progress",
+                       current_step=2, estimated_steps=4)
+        master_path = plans / "MASTER-2026-08-12-test.md"
+        assert ps.master_has_runnable(master_path, plans) is True
+
+    def test_missing_file_returns_true(self, tmp_path):
+        """AC-3: registered sub-plan file missing on disk → True (conservative)."""
+        ps = _import_plan_status()
+        plans = tmp_path / "plans"
+        _write_master(plans, "MASTER-2026-08-12-test.md", status="active",
+                      subplans=["2026-08-12-task-a.md", "2026-08-12-task-missing.md"])
+        _write_subplan(plans, "2026-08-12-task-a.md", status="shipped",
+                       current_step=3, estimated_steps=3)
+        # 2026-08-12-task-missing.md is not written — file missing on disk
+        master_path = plans / "MASTER-2026-08-12-test.md"
+        assert ps.master_has_runnable(master_path, plans) is True
+
+    def test_no_registered_subplans_returns_true(self, tmp_path):
+        """AC-3: zero registered sub-plans → True (legacy fallback)."""
+        ps = _import_plan_status()
+        plans = tmp_path / "plans"
+        _write_master(plans, "MASTER-2026-08-12-test.md", status="active")
+        master_path = plans / "MASTER-2026-08-12-test.md"
+        assert ps.master_has_runnable(master_path, plans) is True
