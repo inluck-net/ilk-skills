@@ -1272,6 +1272,59 @@ def _is_narrower(body_cmd: str, gate_cmd: str) -> bool:
     return body_parts[:len(gate_parts)] == gate_parts
 
 
+# A body line that actually INSTRUCTS a run, as opposed to mentioning a command.
+# Anchored at the start of the bullet's content (after list markers / emphasis)
+# so that "Run `X`" fires while "Full-suite `X` green" and "The suite `X` takes
+# ~15 minutes" do not.  Deliberately strict: this lint's design constraint is
+# "prefer missing a case to firing on a good plan".
+_RUN_VERB_RE = re.compile(
+    r"""^\s*
+    (?:[-*+]\s*|\d+[.)]\s*|>\s*)*      # list markers / blockquote
+    (?:\*{1,2}|_{1,2})?                # optional emphasis
+    (?:re-?)?(?:run|execute|invoke)\b  # the imperative
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+# Inline code spans — how commands are written in a step body.
+_INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
+
+# Shell-ish fenced blocks: their contents ARE instructions to run.
+_SHELL_FENCE_RE = re.compile(
+    r"```(?:bash|sh|shell|console|zsh)\s*\n(.*?)```", re.S | re.IGNORECASE
+)
+
+
+def _body_instructed_commands(body_clean: str) -> list[tuple[int, str]]:
+    """Commands the body tells the worker to RUN, as (offset, command) pairs.
+
+    Two sources, both instruction-shaped:
+
+    * an inline code span on a line whose content starts with a run verb;
+    * every non-comment line inside a shell-ish fenced block.
+
+    Prose that merely names a command ("the suite ``X`` takes 15 minutes") is
+    excluded by construction — that is AC-4.  The WHOLE command is captured, so
+    a narrower variant keeps its extra arguments and can be recognised as
+    narrower — that is AC-3.  Matching only the gate's own substring, as the
+    first implementation did, made both checks unreachable.
+    """
+    found: list[tuple[int, str]] = []
+    for m in _SHELL_FENCE_RE.finditer(body_clean):
+        base = m.start(1)
+        for line in m.group(1).splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#"):
+                found.append((base, stripped))
+    for line_match in re.finditer(r"^.*$", body_clean, re.M):
+        line = line_match.group(0)
+        if not _RUN_VERB_RE.match(line):
+            continue
+        for code in _INLINE_CODE_RE.finditer(line):
+            found.append((line_match.start(), code.group(1)))
+    return found
+
+
 def lint_redundant_gate(text: str, slug: str) -> list[str]:
     """Flag a step body that instructs a command already declared in its local_checks.
 
@@ -1281,37 +1334,35 @@ def lint_redundant_gate(text: str, slug: str) -> list[str]:
     findings: list[str] = []
     commands = _extract_all_local_checks_commands(text)
     body = _strip_frontmatter(text)
-    # Strip the local_checks yaml blocks from the body so we only match prose.
+    # Strip the local_checks yaml blocks from the body: a gate block is itself
+    # body text, so leaving it in makes every gate match itself.
     body_clean = _STEP_LOCAL_CHECKS_BLOCK_RE.sub(" ", body)
+    instructed = _body_instructed_commands(body_clean)
 
+    seen: set[str] = set()
     for gate_cmd in commands:
         gate_norm = _normalize_command(gate_cmd)
-        if not gate_norm:
+        if not gate_norm or gate_norm in seen:
             continue
-        # Check if the body instructs running the same command.
-        # Look for the command string in the body prose.
-        gate_parts = gate_norm.split()
-        # Build a regex that matches the command with flexible whitespace.
-        gate_pattern = r"\b" + r"\s+".join(re.escape(p) for p in gate_parts) + r"\b"
-        match = re.search(gate_pattern, body_clean, re.IGNORECASE)
-        if not match:
-            continue
-        # Found a match — check if it's narrower (body has more args).
-        matched_text = match.group(0)
-        matched_norm = _normalize_command(matched_text)
-        if _is_narrower(matched_norm, gate_norm):
-            continue
-        # It's a duplicate — find which step this is for.
-        # Look backwards from the match to find the nearest ### Step N.
-        match_pos = match.start()
-        heads = re.findall(r"^###\s+Step\s+(\S+)", body_clean[:match_pos], re.M)
-        label = f"step {heads[-1]}" if heads else "a step"
-        findings.append(
-            f"{slug}: {label} instructs '{gate_cmd.strip()}' which is already "
-            f"declared in that step's local_checks -- the driver runs "
-            f"local_checks after the commit, so remove the manual run from "
-            f"the step body."
-        )
+        for offset, body_cmd in instructed:
+            body_norm = _normalize_command(body_cmd)
+            if not body_norm:
+                continue
+            # A strictly narrower run is a legitimate fast inner-loop check.
+            if _is_narrower(body_norm, gate_norm):
+                continue
+            if body_norm.lower() != gate_norm.lower():
+                continue
+            heads = re.findall(r"^###\s+Step\s+(\S+)", body_clean[:offset], re.M)
+            label = f"step {heads[-1]}" if heads else "a step"
+            seen.add(gate_norm)
+            findings.append(
+                f"{slug}: {label} instructs '{gate_cmd.strip()}' which is already "
+                f"declared in that step's local_checks -- the driver runs "
+                f"local_checks after the commit, so remove the manual run from "
+                f"the step body."
+            )
+            break
     return findings
 
 
