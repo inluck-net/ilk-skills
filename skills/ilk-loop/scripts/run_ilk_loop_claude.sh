@@ -1511,6 +1511,36 @@ main() {
   print_banner
   setup_branch || exit 1
 
+  # --- Single-instance lock (per-project) ----------------------------------
+  # Acquire an exclusive flock via ilk_run_lock.py and re-exec ourselves under
+  # it.  The lock lives on the open file description, survives exec (FD_CLOEXEC
+  # cleared), and is released by the kernel when the process dies — even
+  # SIGKILL.  Placement here is the contract: BEFORE the sentinel write, run
+  # directory creation, or running.pid write, so a refused second runner leaves
+  # no trace (AC-5).
+  if [[ -z "${ILK_RUN_LOCK_HELD:-}" ]]; then
+    local runtime_dir_for_lock
+    runtime_dir_for_lock=$(get_ilk_runtime_dir) || runtime_dir_for_lock=""
+    if [[ -n "$runtime_dir_for_lock" ]]; then
+      local lock_file="${runtime_dir_for_lock}/launcher/run.lock"
+      mkdir -p "$(dirname "$lock_file")"
+      export ILK_RUN_LOCK_HELD=1
+      # The helper acquires the lock and exec's us.  On success the current
+      # process is replaced (the lines below never run).  On failure the
+      # helper exits 3 (lock held) or 1 (other error) and we see the code.
+      local lock_rc=0
+      python3 "${_SKILL_ROOT}/ilk-loop/scripts/ilk_run_lock.py" \
+        --lock "$lock_file" -- bash "$0" "$@" && { exit 0; } || lock_rc=$?
+      # If we get here, the lock was NOT acquired.
+      if [[ $lock_rc -eq 3 ]]; then
+        echo "[runner] another runner holds this project's lock. Exiting." >&2
+        exit 3
+      fi
+      echo "[runner] lock helper failed (exit $lock_rc)" >&2
+      exit 1
+    fi
+  fi
+
   # Determine remote type for commit trailer policy
   # Write to .ilk-remote-type so the agent knows whether to include trailers
   local remote_type="shared"  # default

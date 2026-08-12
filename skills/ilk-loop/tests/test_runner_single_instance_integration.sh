@@ -137,11 +137,14 @@ print(project_key(Path('$1')))
 }
 
 # Build a fixture where every sub-plan is shipped (runner exits immediately).
+# Plans go in $HOME/.ilk-data (external) so loop_status.py finds them.
+# $2 is the HOME dir to use.
 build_fixture_all_shipped() {
   local dir="$1"
+  local home_dir="${2:-$HOME}"
   local key
   key=$(project_key_for "$dir")
-  local plans="$dir/.ilk-data/projects/$key/plans"
+  local plans="$home_dir/.ilk-data/projects/$key/plans"
   mkdir -p "$plans"
 
   cat > "$plans/MASTER-2026-08-12-execution.md" << 'FIXTURE'
@@ -184,20 +187,25 @@ FIXTURE
 # AC: two runners for the SAME project both start (current buggy baseline).
 # After step 2 adds the lock, this test flips to assert refusal.
 test_same_project_double_start() {
-  local tmpdir project_dir
+  local tmpdir project_dir shared_home
   tmpdir="$(mktemp -d)"
   project_dir="$tmpdir/project-a"
-  mkdir -p "$project_dir"
-  build_fixture_all_shipped "$project_dir"
+  shared_home="$tmpdir/shared-home"
+  mkdir -p "$project_dir" "$shared_home"
 
   local out1="$tmpdir/runner1.out"
   local out2="$tmpdir/runner2.out"
 
-  # Launch both concurrently.
-  HOME="$tmpdir/home1" bash "$RUNNER" \
+  # Build the fixture once under the shared HOME.  In production both the
+  # scheduler and a manual /ilk-run share the same HOME, so the lock file
+  # path is the same for both — which is the whole point.
+  build_fixture_all_shipped "$project_dir" "$shared_home"
+
+  # Launch both concurrently with the same HOME.
+  HOME="$shared_home" bash "$RUNNER" \
     --project-path "$project_dir" --max-iterations 0 >"$out1" 2>&1 &
   local pid1=$!
-  HOME="$tmpdir/home2" bash "$RUNNER" \
+  HOME="$shared_home" bash "$RUNNER" \
     --project-path "$project_dir" --max-iterations 0 >"$out2" 2>&1 &
   local pid2=$!
 
@@ -205,26 +213,17 @@ test_same_project_double_start() {
   wait "$pid1" || rc1=$?; rc1=${rc1:-0}
   wait "$pid2" || rc2=$?; rc2=${rc2:-0}
 
-  if [[ "$KNOWN_BAD" -eq 0 ]]; then
-    # Step 2+: one must succeed, the other must exit 3.
-    local ok=0 refused=0
-    if [[ $rc1 -eq 0 ]]; then ok=$((ok+1)); fi
-    if [[ $rc2 -eq 0 ]]; then ok=$((ok+1)); fi
-    if [[ $rc1 -eq 3 ]]; then refused=$((refused+1)); fi
-    if [[ $rc2 -eq 3 ]]; then refused=$((refused+1)); fi
-    if [[ $ok -ne 1 || $refused -ne 1 ]]; then
-      fail "AC-same-project: expected 1 ok + 1 refused, got ok=$ok refused=$refused (rc1=$rc1 rc2=$rc2)"
-      return
-    fi
-    pass "AC-same-project: one runner proceeds, one refused (lock working)"
-  else
-    # Step 1 baseline: both proceed (the bug we're about to fix).
-    if [[ $rc1 -ne 0 || $rc2 -ne 0 ]]; then
-      fail "AC-same-project-baseline: both runners should exit 0 (rc1=$rc1 rc2=$rc2)"
-      return
-    fi
-    pass "AC-same-project-baseline: both runners proceed (expected — lock not yet added)"
+  # One must succeed (exit 0), the other must be refused (exit 3).
+  local ok=0 refused=0
+  if [[ $rc1 -eq 0 ]]; then ok=$((ok+1)); fi
+  if [[ $rc2 -eq 0 ]]; then ok=$((ok+1)); fi
+  if [[ $rc1 -eq 3 ]]; then refused=$((refused+1)); fi
+  if [[ $rc2 -eq 3 ]]; then refused=$((refused+1)); fi
+  if [[ $ok -ne 1 || $refused -ne 1 ]]; then
+    fail "AC-same-project: expected 1 ok + 1 refused, got ok=$ok refused=$refused (rc1=$rc1 rc2=$rc2)"
+    return
   fi
+  pass "AC-same-project: one runner proceeds, one refused (lock working)"
 }
 
 # AC-6: two runners for DIFFERENT projects both succeed (always).
@@ -234,11 +233,12 @@ test_different_projects_independent() {
   dir_a="$tmpdir/project-a"
   dir_b="$tmpdir/project-b"
   mkdir -p "$dir_a" "$dir_b"
-  build_fixture_all_shipped "$dir_a"
-  build_fixture_all_shipped "$dir_b"
 
   local out_a="$tmpdir/runner-a.out"
   local out_b="$tmpdir/runner-b.out"
+
+  build_fixture_all_shipped "$dir_a" "$tmpdir/home-a"
+  build_fixture_all_shipped "$dir_b" "$tmpdir/home-b"
 
   HOME="$tmpdir/home-a" bash "$RUNNER" \
     --project-path "$dir_a" --max-iterations 0 >"$out_a" 2>&1 &
@@ -270,8 +270,6 @@ if [[ "$mode" == "helper-only" ]]; then
 fi
 
 if [[ "$mode" == "full-runner" ]]; then
-  KNOWN_BAD="${KNOWN_BAD:-1}"
-  echo "  KNOWN_BAD=$KNOWN_BAD (0=lock enforced, 1=baseline pre-lock)"
   test_same_project_double_start
   test_different_projects_independent
 fi
