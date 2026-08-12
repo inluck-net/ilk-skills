@@ -87,7 +87,7 @@ For each step:
 
 **Always follow the `long-running-commands` skill** when invoking
 `python manage.py test`, `pytest`, builds, migrations, or any command
-expected to take more than ~10s.
+expected to take more than ~10s — **but only within a single step**.
 
 Specifically:
 
@@ -97,11 +97,10 @@ Specifically:
    - Django: `--verbosity=2 --noinput --keepdb`
    - Pytest: `--timeout=60 --timeout-method=thread` (install
      `pytest-timeout` once if missing)
-3. **Always background long commands** with `block_until_ms: 0`, then poll
-   via `Await` with a `pattern` that matches both success and failure
-   (e.g. `"(Ran \\d+ tests in|FAILED|ERROR:)"`) plus a hard
-   `block_until_ms` upper bound (3 min for unit tests, 10 min for
-   integration).
+3. **Run long commands in the foreground**, bounded by the step's budget.
+   The iteration timeout will kill the process if it runs too long.
+   Do **not** background a long command and end your turn — there is no
+   next turn in this iteration.
 4. **If a command hangs** (no footer + no output change for ≥ 60s + pid
    still alive): apply the hang-detection / kill / diagnose flow from the
    skill. Tree-kill (`taskkill /F /T /PID <pid>`) for test runners. Do NOT
@@ -111,6 +110,25 @@ Specifically:
    to the user with the last 30 lines of output and the diagnosis,
    bump the step's notes (NOT the plan) and hand control back. Do not
    loop indefinitely.
+
+### An iteration is one session
+
+Each iteration is a **separate CLI process**. When it ends, every
+background task, monitor, and poll started in that iteration is gone.
+A task backgrounded in iteration N **will not be resumed** in
+iteration N+1 — the completion event can never arrive.
+
+The observable failure: ending a turn while waiting on a background
+task produces a zero-commit iteration. Three of those in a row
+trigger `no-progress` → `stuck-no-progress` → the project is
+blacklisted, while the actual work sits one commit short of finishing.
+
+**Don't** end a turn waiting on a backgrounded command. There is no
+next turn in this session — the iteration ends and the wait is lost.
+
+**Do** run the gate in the foreground within the step's budget, or
+let the driver run it: `local_checks` execute after your commit, so
+a command already declared there must not be run by hand.
 
 ## 6. Before setting `status: blocked` — escalation checklist
 
