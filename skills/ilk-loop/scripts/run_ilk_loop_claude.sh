@@ -1829,11 +1829,11 @@ print('false' if not d.get('blocked', True) else 'true')
             echo "B2 transient cleared on re-run" >&2
           else
             # Confirmed blocking — try auto-quarantine before stopping.
-            local quarantine_script="$SKILL_ROOT/ilk-loop/scripts/quarantine_subplan.py"
+            local quarantine_script="${_SKILL_ROOT}/ilk-loop/scripts/quarantine_subplan.py"
             local quarantined="false"
             if [[ -f "$quarantine_script" ]]; then
               local q_plans_dir
-              q_plans_dir=$(python3 "$SKILL_ROOT/ilk-loop/scripts/ilk_paths.py" --start "$PROJECT_PATH" --plans-dir 2>/dev/null)
+              q_plans_dir=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py" --start "$PROJECT_PATH" --plans-dir 2>/dev/null)
               if [[ -n "$q_plans_dir" && -d "$q_plans_dir" ]]; then
                 # Extract slugs from blocking results
                 local q_slugs
