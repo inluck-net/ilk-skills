@@ -578,6 +578,105 @@ class TestConfigResolutionGate:
         assert ".ilk-launch.json" in r.artifact
 
 
+class TestReadOnlyProof:
+    """AC-4: doctor.py leaves the project's .ilk-data tree byte-identical."""
+
+    def _hash_tree(self, root: Path) -> dict[str, str]:
+        """Hash every file under root, returning {relative_path: sha256}."""
+        import hashlib
+        hashes = {}
+        for p in sorted(root.rglob("*")):
+            if p.is_file():
+                rel = str(p.relative_to(root))
+                hashes[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
+        return hashes
+
+    def test_doctor_leaves_data_unchanged(self, tmp_path):
+        """Running doctor.py must not modify any file in the project data tree."""
+        # Set up a project with plans, sentinel, config, etc.
+        project = tmp_path / "proj"
+        project.mkdir()
+        plans = project / "docs" / "plans"
+        _write_master(plans, "MASTER-2026-08-12-test.md", status="queued",
+                      subplans=["2026-08-12-task.md"])
+        _write_subplan(plans, "2026-08-12-task.md", status="pending")
+        (project / ".ilk-launch.json").write_text(
+            '{"max_iterations": 50}', encoding="utf-8"
+        )
+
+        # Also create a fake .ilk-data tree.
+        data_dir = tmp_path / "ilk-data"
+        runtime = data_dir / "runtime" / "launcher"
+        runtime.mkdir(parents=True)
+        (runtime / "last-exit.json").write_text(
+            '{"state":"shipped","pid":null,"run_id":"x","iteration":0}',
+            encoding="utf-8",
+        )
+        (runtime / "run.lock").write_text("stale", encoding="utf-8")
+
+        # Hash before.
+        hashes_before = self._hash_tree(data_dir)
+
+        # Patch doctor to use our data dir.
+        original_data = doctor._resolve_project_data
+        original_plans = doctor._resolve_plans_dir
+        doctor._resolve_project_data = lambda p: data_dir
+        doctor._resolve_plans_dir = lambda p: plans
+        try:
+            doctor.run_doctor(project, sample_interval=0.05)
+        finally:
+            doctor._resolve_project_data = original_data
+            doctor._resolve_plans_dir = original_plans
+
+        # Hash after.
+        hashes_after = self._hash_tree(data_dir)
+
+        assert hashes_before == hashes_after, (
+            f"doctor.py modified the data tree! Changed files: "
+            f"{set(hashes_before.items()) ^ set(hashes_after.items())}"
+        )
+
+
+class TestJsonOutput:
+    """AC-6: --json emits structured data."""
+
+    def test_json_output_is_valid(self, tmp_path, capsys):
+        """--json produces valid JSON with the expected structure."""
+        project = _setup_project(tmp_path)
+        original = doctor._resolve_plans_dir
+        doctor._resolve_plans_dir = lambda p: project / "docs" / "plans"
+        try:
+            doctor.main(["--project-path", str(project), "--json", "--sample-interval", "0.05"])
+        finally:
+            doctor._resolve_plans_dir = original
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert "project_path" in data
+        assert "gates" in data
+        assert "verdict" in data
+        assert isinstance(data["gates"], list)
+        assert len(data["gates"]) == 8
+
+    def test_json_gate_has_expected_fields(self, tmp_path, capsys):
+        """Each gate in JSON output has name, status, evidence, artifact."""
+        project = _setup_project(tmp_path)
+        original = doctor._resolve_plans_dir
+        doctor._resolve_plans_dir = lambda p: project / "docs" / "plans"
+        try:
+            doctor.main(["--project-path", str(project), "--json", "--sample-interval", "0.05"])
+        finally:
+            doctor._resolve_plans_dir = original
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        for gate in data["gates"]:
+            assert "name" in gate
+            assert "status" in gate
+            assert "evidence" in gate
+            assert "artifact" in gate
+
+
 class TestGateResultDataclass:
     """GateResult fields are correctly set."""
 
