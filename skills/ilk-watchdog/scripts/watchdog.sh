@@ -301,6 +301,11 @@ classify_action() {
     all-shipped|already-shipped|shipped)
       echo "promote"
       ;;
+    blocked-no-runnable)
+      # Outstanding sub-plans exist but none are runnable (all blocked/skipped).
+      # No relaunch (needs human), no promote (nothing to promote).
+      echo "stop-clean"
+      ;;
     clean-success)
       # Job done — no relaunch, no red banner; scheduler promotes next cycle.
       echo "stop-clean"
