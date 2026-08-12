@@ -1,9 +1,10 @@
 """Tests for doctor.py — the /ilk-doctor diagnostic tool.
 
-Step 0: gate-walk skeleton with first-blocker semantics.
+Steps 0-2: skeleton, plan-state gates, and locks/processes/sentinel gates.
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -94,8 +95,7 @@ class TestGateWalkSkeleton:
 
         assert len(report.gates) == 8, f"Expected 8 gates, got {len(report.gates)}"
         unimplemented = [
-            "progress-over-time", "blacklist", "lock-holders",
-            "process-set", "sentinel-vs-reality", "config-resolution",
+            "progress-over-time", "blacklist", "config-resolution",
         ]
         for gate in report.gates:
             if gate.name in unimplemented:
@@ -308,6 +308,130 @@ class TestSubplanStatusesGate:
         """The artifact field names the master file consulted."""
         r = self._run_gate_with_subplans(tmp_path)
         assert "MASTER" in r.artifact
+
+
+class TestLockHoldersGate:
+    """Gate 4 (lock-holders) tests."""
+
+    def test_no_lock_file_passes(self, tmp_path):
+        """No run.lock → pass."""
+        project_data = tmp_path / "data"
+        project_data.mkdir()
+        r = doctor._gate_lock_holders(project_data)
+        assert r.status == "pass"
+        assert "does not exist" in r.evidence
+
+    def test_lock_with_no_holders_passes(self, tmp_path):
+        """run.lock exists but no process holds it → pass (stale lock)."""
+        project_data = tmp_path / "data"
+        lock_dir = project_data / "runtime" / "launcher"
+        lock_dir.mkdir(parents=True)
+        lock_path = lock_dir / "run.lock"
+        lock_path.write_text("stale lock", encoding="utf-8")
+        r = doctor._gate_lock_holders(project_data)
+        # If lsof is available, it should report no holders.
+        # If lsof is unavailable, it should report unknown.
+        assert r.status in ("pass", "unknown"), f"Unexpected status: {r.status}"
+
+    def test_lock_with_live_holder_is_blocked(self, tmp_path):
+        """A live process holding the lock file → blocked."""
+        import time
+        project_data = tmp_path / "data"
+        lock_dir = project_data / "runtime" / "launcher"
+        lock_dir.mkdir(parents=True)
+        lock_path = lock_dir / "run.lock"
+        lock_path.write_text("locked", encoding="utf-8")
+
+        # Start a child process that holds the file open.
+        # Must assign the fd to a variable so Python doesn't GC it.
+        import subprocess as sp
+        child = sp.Popen(
+            ["python3", "-c",
+             f"f = open('{lock_path}', 'rb'); import time; time.sleep(60)"],
+            stdout=sp.PIPE, stderr=sp.PIPE,
+        )
+        try:
+            # Give the child time to start and open the file.
+            time.sleep(0.5)
+            r = doctor._gate_lock_holders(project_data)
+            # If lsof is available, it should find our child.
+            if r.status != "unknown":
+                assert r.status == "blocked", f"Expected blocked, got {r.status}: {r.evidence}"
+                assert str(child.pid) in r.evidence
+        finally:
+            child.terminate()
+            child.wait(timeout=5)
+
+
+class TestProcessSetGate:
+    """Gate 5 (process-set) tests."""
+
+    def test_no_runners_passes(self, tmp_path):
+        """No matching runner processes → pass."""
+        project = tmp_path / "nonexistent-project-path-12345"
+        r = doctor._gate_process_set(project)
+        assert r.status == "pass"
+        assert "no runner" in r.evidence.lower()
+
+
+class TestSentinelVsRealityGate:
+    """Gate 6 (sentinel-vs-reality) tests."""
+
+    def _write_sentinel(self, project_data: Path, *, state: str = "running",
+                         pid: int = 99999, run_id: str = "test-run"):
+        path = project_data / "runtime" / "launcher"
+        path.mkdir(parents=True, exist_ok=True)
+        sentinel = {
+            "state": state,
+            "pid": pid,
+            "run_id": run_id,
+            "iteration": 1,
+            "exit_code": None,
+            "generated_at": "2026-08-12T00:00:00+08:00",
+        }
+        (path / "last-exit.json").write_text(json.dumps(sentinel), encoding="utf-8")
+
+    def test_no_sentinel_passes(self, tmp_path):
+        """No last-exit.json → pass."""
+        project_data = tmp_path / "data"
+        project_data.mkdir()
+        r = doctor._gate_sentinel_vs_reality(project_data)
+        assert r.status == "pass"
+        assert "no last-exit" in r.evidence
+
+    def test_terminal_state_passes(self, tmp_path):
+        """Terminal sentinel state → pass regardless of pid."""
+        project_data = tmp_path / "data"
+        for state in ["shipped", "local_checks_failed", "interrupted",
+                       "error", "max-iterations", "budget_exhausted", "startup-hang"]:
+            self._write_sentinel(project_data, state=state, pid=99999)
+            r = doctor._gate_sentinel_vs_reality(project_data)
+            assert r.status == "pass", f"State '{state}' should pass, got {r.status}"
+
+    def test_running_with_no_live_pids_is_stale(self, tmp_path):
+        """'running' sentinel but no live runners → blocked (stale)."""
+        project_data = tmp_path / "data"
+        self._write_sentinel(project_data, state="running", pid=99999, run_id="stale-run")
+        r = doctor._gate_sentinel_vs_reality(project_data, live_pids=[])
+        assert r.status == "blocked"
+        assert "stale" in r.evidence.lower()
+        assert "stale-run" in r.evidence
+
+    def test_running_with_matching_pid_passes(self, tmp_path):
+        """'running' sentinel and the pid is in the live set → pass."""
+        project_data = tmp_path / "data"
+        self._write_sentinel(project_data, state="running", pid=12345)
+        r = doctor._gate_sentinel_vs_reality(project_data, live_pids=["12345"])
+        assert r.status == "pass"
+        assert "alive" in r.evidence
+
+    def test_running_with_mismatched_pids_is_stale(self, tmp_path):
+        """'running' sentinel but pid not in live set → blocked."""
+        project_data = tmp_path / "data"
+        self._write_sentinel(project_data, state="running", pid=99999)
+        r = doctor._gate_sentinel_vs_reality(project_data, live_pids=["11111", "22222"])
+        assert r.status == "blocked"
+        assert "stale" in r.evidence.lower() or "not in set" in r.evidence.lower()
 
 
 class TestGateResultDataclass:

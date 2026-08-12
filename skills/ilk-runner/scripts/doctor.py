@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -249,32 +250,194 @@ def _gate_blacklist(project_data: Path) -> GateResult:
 
 
 def _gate_lock_holders(project_data: Path) -> GateResult:
-    """Gate 4: lock holders — lsof on runtime/launcher/run.lock."""
+    """Gate 4: lock holders — lsof on runtime/launcher/run.lock.
+
+    Reports the LIVE holders, not the pid recorded in the file — the
+    recorded pid is routinely dead while inherited-FD_CLOEXEC descendants
+    (gtimeout, claude -p, tee) hold it.
+    """
+    lock_path = project_data / "runtime" / "launcher" / "run.lock"
+    artifact = str(lock_path)
+
+    if not lock_path.exists():
+        return GateResult(
+            name="lock-holders",
+            status="pass",
+            evidence="run.lock does not exist (no lock held)",
+            artifact=artifact,
+        )
+
+    # Check if lsof is available.
+    try:
+        subprocess.run(["lsof", "--version"], capture_output=True, timeout=5)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return GateResult(
+            name="lock-holders",
+            status="unknown",
+            evidence="lsof not available — cannot check lock holders",
+            artifact=artifact,
+        )
+
+    try:
+        result = subprocess.run(
+            ["lsof", str(lock_path)],
+            capture_output=True, text=True, timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        return GateResult(
+            name="lock-holders",
+            status="unknown",
+            evidence="lsof timed out",
+            artifact=artifact,
+        )
+
+    lines = [l for l in result.stdout.strip().splitlines() if l]
+    # First line is the header; actual holders are lines 2+.
+    holders = []
+    for line in lines[1:]:
+        parts = line.split()
+        if len(parts) >= 2:
+            pid = parts[1]
+            cmd = " ".join(parts[8:]) if len(parts) > 8 else parts[0]
+            holders.append((pid, cmd))
+
+    if not holders:
+        return GateResult(
+            name="lock-holders",
+            status="pass",
+            evidence="run.lock exists but no live process holds it (stale lock)",
+            artifact=artifact,
+        )
+
+    holder_strs = [f"pid {pid} ({cmd})" for pid, cmd in holders]
     return GateResult(
         name="lock-holders",
-        status="unknown",
-        evidence="not implemented",
-        artifact=str(project_data / "runtime" / "launcher" / "run.lock"),
+        status="blocked",
+        evidence=f"run.lock held by: {', '.join(holder_strs)}",
+        artifact=artifact,
     )
 
 
 def _gate_process_set(project_path: Path) -> GateResult:
-    """Gate 5: process set — runners matching the project path."""
+    """Gate 5: process set — runners matching the project path.
+
+    Uses the shared ilk_project_runners helper from _ilk_pid.sh.
+    """
+    artifact = f"ps -eo pid,command | ilk_project_runners {project_path}"
+
+    # Source the shared helper and call ilk_project_runners.
+    pid_script = str(_SKILL_ROOT / "ilk-loop" / "scripts" / "_ilk_pid.sh")
+    norm = str(project_path).rstrip("/")
+
+    try:
+        result = subprocess.run(
+            ["bash", "-c",
+             f'source "{pid_script}" && ilk_project_runners "{norm}"'],
+            capture_output=True, text=True, timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        return GateResult(
+            name="process-set",
+            status="unknown",
+            evidence="process check timed out",
+            artifact=artifact,
+        )
+    except (FileNotFoundError, OSError) as exc:
+        return GateResult(
+            name="process-set",
+            status="unknown",
+            evidence=f"cannot run process check: {exc}",
+            artifact=artifact,
+        )
+
+    pids = [p.strip() for p in result.stdout.strip().splitlines() if p.strip()]
+
+    if not pids:
+        return GateResult(
+            name="process-set",
+            status="pass",
+            evidence="no runner processes found for this project",
+            artifact=artifact,
+        )
+
     return GateResult(
         name="process-set",
-        status="unknown",
-        evidence="not implemented",
-        artifact=f"ps -eo pid,command | grep {project_path}",
+        status="pass",
+        evidence=f"{len(pids)} runner process(es): {', '.join(pids)}",
+        artifact=artifact,
     )
 
 
-def _gate_sentinel_vs_reality(project_data: Path) -> GateResult:
-    """Gate 6: sentinel vs reality — last-exit.json state compared against gate 5."""
+LIVE_SENTINEL_STATES = {"running"}
+
+
+def _gate_sentinel_vs_reality(project_data: Path,
+                               live_pids: list[str] | None = None) -> GateResult:
+    """Gate 6: sentinel vs reality — last-exit.json state compared against live pids.
+
+    A ``running`` sentinel with no live runner is the stale-sentinel case.
+    """
+    sentinel_path = project_data / "runtime" / "launcher" / "last-exit.json"
+    artifact = str(sentinel_path)
+
+    if not sentinel_path.exists():
+        return GateResult(
+            name="sentinel-vs-reality",
+            status="pass",
+            evidence="no last-exit.json (no run has started)",
+            artifact=artifact,
+        )
+
+    try:
+        text = sentinel_path.read_text(encoding="utf-8-sig")
+        sentinel = json.loads(text)
+    except (OSError, json.JSONDecodeError) as exc:
+        return GateResult(
+            name="sentinel-vs-reality",
+            status="unknown",
+            evidence=f"cannot read sentinel: {exc}",
+            artifact=artifact,
+        )
+
+    state = sentinel.get("state", "")
+    pid = sentinel.get("pid")
+    run_id = sentinel.get("run_id", "")
+
+    if state not in LIVE_SENTINEL_STATES:
+        return GateResult(
+            name="sentinel-vs-reality",
+            status="pass",
+            evidence=f"sentinel state is '{state}' (terminal) for run {run_id}",
+            artifact=artifact,
+        )
+
+    # Sentinel says running — check against live process set.
+    pids = live_pids or []
+    pid_str = str(pid) if pid else ""
+
+    if pid_str and pid_str in pids:
+        return GateResult(
+            name="sentinel-vs-reality",
+            status="pass",
+            evidence=f"sentinel says running (pid {pid}), process is alive",
+            artifact=artifact,
+        )
+
+    if pids:
+        return GateResult(
+            name="sentinel-vs-reality",
+            status="blocked",
+            evidence=f"sentinel says running (pid {pid}), but live runners are: {', '.join(pids)} "
+                     f"(sentinel pid not in set — stale sentinel or pid mismatch)",
+            artifact=artifact,
+        )
+
     return GateResult(
         name="sentinel-vs-reality",
-        status="unknown",
-        evidence="not implemented",
-        artifact=str(project_data / "runtime" / "launcher" / "last-exit.json"),
+        status="blocked",
+        evidence=f"sentinel says running (pid {pid}, run {run_id}), but no live runner processes found — "
+                 f"stale sentinel (runner crashed without finalizing)",
+        artifact=artifact,
     )
 
 
@@ -312,6 +475,9 @@ def run_doctor(project_path: Path, sample_interval: float = 20.0) -> DoctorRepor
 
     report = DoctorReport(project_path=str(project_path))
 
+    # live_pids is populated by gate 5 and consumed by gate 6.
+    live_pids: list[str] = []
+
     gate_map = {
         "progress-over-time": lambda: _gate_progress_over_time(project_data, sample_interval),
         "master-status": lambda: _gate_master_status(plans_dir),
@@ -319,13 +485,21 @@ def run_doctor(project_path: Path, sample_interval: float = 20.0) -> DoctorRepor
         "blacklist": lambda: _gate_blacklist(project_data),
         "lock-holders": lambda: _gate_lock_holders(project_data),
         "process-set": lambda: _gate_process_set(project_path),
-        "sentinel-vs-reality": lambda: _gate_sentinel_vs_reality(project_data),
+        "sentinel-vs-reality": lambda: _gate_sentinel_vs_reality(project_data, live_pids),
         "config-resolution": lambda: _gate_config_resolution(project_path),
     }
 
     for gate_name in GATE_ORDER:
         result = gate_map[gate_name]()
         report.gates.append(result)
+
+        # Capture live pids from gate 5 for gate 6.
+        if gate_name == "process-set" and result.status == "pass":
+            # Parse pids from evidence like "2 runner process(es): 12345, 67890"
+            for part in result.evidence.split(":"):
+                pid_part = part.strip()
+                if pid_part and all(c.isdigit() or c in ", " for c in pid_part):
+                    live_pids = [p.strip() for p in pid_part.split(",") if p.strip().isdigit()]
 
         if result.status == "blocked":
             report.verdict = f"blocked: {result.name} — {result.evidence}"
