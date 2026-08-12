@@ -73,7 +73,6 @@ local_checks:
 """
 
 
-@pytest.mark.xfail(strict=True, reason="PLANLINT-PERSTEP-BLIND: per-step local_checks invisible to gate lints")
 def test_perstep_gate_flagged():
     """Fixture B: per-step whole-suite gate → 1 finding (FAILS today)."""
     findings = lint_wholesuite_gate_baseline(PERSTEP_GATE, "test-perstep-gate")

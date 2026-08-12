@@ -228,7 +228,7 @@ def _extract_local_checks_commands(text: str) -> list[str]:
 def lint_brittle_exact_list_assertion(text: str, slug: str) -> list[str]:
     """Flag a local_checks command with an exact-list-equality assertion."""
     findings: list[str] = []
-    commands = _extract_local_checks_commands(text)
+    commands = _extract_all_local_checks_commands(text)
     for cmd in commands:
         has_exact = bool(_BRITTLE_EXACT_LIST_RE.search(cmd))
         if not has_exact:
@@ -279,17 +279,9 @@ def _extract_regression_for(text: str) -> str | None:
 
 def _has_any_local_check(text: str) -> bool:
     """True if the sub-plan declares at least one local_check anywhere."""
-    # Frontmatter local_checks
-    cmds = _extract_local_checks_commands(text)
-    if cmds:
-        return True
-    # Per-step local_checks blocks containing at least one command:
-    body = _strip_frontmatter(text)
-    for block_match in _STEP_LOCAL_CHECKS_BLOCK_RE.finditer(body):
-        block = block_match.group(1)
-        if re.search(r"^\s+-\s+command:", block, re.MULTILINE):
-            return True
-    return False
+    # Uses the widened extractor: if a per-step block has a command, that counts.
+    cmds = _extract_all_local_checks_commands(text)
+    return bool(cmds)
 
 
 def lint_escaped_bug_regression_gate(text: str, slug: str) -> list[str]:
@@ -447,22 +439,16 @@ def _has_preflight_ref(text: str) -> bool:
 def lint_e2e_check_without_env_prereq(text: str, slug: str) -> list[str]:
     """Flag an e2e/device-poll local_check with no env_prereq reachability probe."""
     findings: list[str] = []
-    # Collect commands from both frontmatter and per-step blocks.
-    fm_cmds = _extract_local_checks_commands(text)
-    body = _strip_frontmatter(text)
-    step_cmds: list[str] = []
-    for block_match in _STEP_LOCAL_CHECKS_BLOCK_RE.finditer(body):
-        block = block_match.group(1)
-        step_cmds.extend(re.findall(r"command:\s*(.+)", block))
-    all_cmds = fm_cmds + step_cmds
-    if not all_cmds:
+    # Uses the widened extractor: cares about what a gate runs, not where declared.
+    commands = _extract_all_local_checks_commands(text)
+    if not commands:
         return findings
     # Fast-exit: env_prereqs present or preflight referenced -> no finding.
     if _extract_env_prereqs(text):
         return findings
     if _has_preflight_ref(text):
         return findings
-    for cmd in all_cmds:
+    for cmd in commands:
         # Skip reachability probes (curl/wget) — those are env_prereq-style checks, not test gates.
         if _REACHABILITY_CMD_RE.search(cmd):
             continue
@@ -541,8 +527,8 @@ def _is_whole_suite_command(cmd: str) -> bool:
 def lint_wholesuite_gate_baseline(text: str, slug: str) -> list[str]:
     """Flag a whole-suite local_check that lacks a baseline-green note."""
     findings: list[str] = []
-    commands = _extract_local_checks_commands(text)
-    body = _strip_frontmatter(text)
+    # Uses the widened extractor: cares about what a gate runs, not where declared.
+    commands = _extract_all_local_checks_commands(text)
     full_text = text  # markers may appear in frontmatter comments
     for cmd in commands:
         if not _is_whole_suite_command(cmd):
@@ -593,7 +579,8 @@ _PLATFORM_GUARD_RE = re.compile(
 def lint_posix_only_test_assertion(text: str, slug: str) -> list[str]:
     """Flag a local_check with POSIX-only perm assertions and no platform guard."""
     findings: list[str] = []
-    commands = _extract_local_checks_commands(text)
+    # Uses the widened extractor: cares about what a gate runs, not where declared.
+    commands = _extract_all_local_checks_commands(text)
     body = _strip_frontmatter(text)
     full_text = text  # guards may appear anywhere
     # Check commands first — inline POSIX assertions.
@@ -676,7 +663,8 @@ def lint_network_tool_mock_only_gate(text: str, slug: str) -> list[str]:
     # Only flag if the body signals a network tool.
     if not _NETWORK_TOOL_SIGNAL_RE.search(body):
         return findings
-    commands = _extract_local_checks_commands(text)
+    # Uses the widened extractor: cares about what a gate runs, not where declared.
+    commands = _extract_all_local_checks_commands(text)
     if not commands:
         return findings
     # Check if ALL commands are mock-only (no integration smoke).
@@ -750,7 +738,8 @@ def lint_vertical_slice_ac(text: str, slug: str) -> list[str]:
     findings: list[str] = []
     body = _strip_frontmatter(text)
     scope_paths = _extract_scope_paths(text)
-    commands = _extract_local_checks_commands(text)
+    # Uses the widened extractor: cares about what a gate runs, not where declared.
+    commands = _extract_all_local_checks_commands(text)
     # Need at least one scope_path in a non-UI module and one command.
     if not scope_paths or not commands:
         return findings
@@ -832,7 +821,8 @@ def lint_anti_hardcode_integration(text: str, slug: str) -> list[str]:
     """Flag per-instance data introduction without consumer read-assertion."""
     findings: list[str] = []
     body = _strip_frontmatter(text)
-    commands = _extract_local_checks_commands(text)
+    # Uses the widened extractor: cares about what a gate runs, not where declared.
+    commands = _extract_all_local_checks_commands(text)
     # Need both signals in the body to fire.
     if not _PER_INSTANCE_DATA_RE.search(body):
         return findings
@@ -910,7 +900,8 @@ def lint_ui_promise_wiring(text: str, slug: str) -> list[str]:
     """Flag a UI affordance advertisement with no wiring/trigger assertion."""
     findings: list[str] = []
     body = _strip_frontmatter(text)
-    commands = _extract_local_checks_commands(text)
+    # Uses the widened extractor: cares about what a gate runs, not where declared.
+    commands = _extract_all_local_checks_commands(text)
     # Structural early-exit: no commands means nothing to gate against.
     if not commands:
         return findings
@@ -1003,7 +994,8 @@ def lint_balance_regression_flag(text: str, slug: str) -> list[str]:
     """Flag a core-mechanic change with no baseline regression assertion."""
     findings: list[str] = []
     body = _strip_frontmatter(text)
-    commands = _extract_local_checks_commands(text)
+    # Uses the widened extractor: cares about what a gate runs, not where declared.
+    commands = _extract_all_local_checks_commands(text)
     # Structural early-exit: no commands means nothing to gate against.
     if not commands:
         return findings
