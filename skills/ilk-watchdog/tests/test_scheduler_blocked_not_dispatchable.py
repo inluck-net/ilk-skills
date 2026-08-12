@@ -89,7 +89,6 @@ def _run_scan(tmp_home: Path) -> list[dict]:
 class TestBlockedNotDispatchable:
     """A master whose only outstanding sub-plan is blocked must not dispatch."""
 
-    @pytest.mark.xfail(strict=True, reason="defect: scheduler_dispatches_blocked_master")
     def test_blocked_only_master_returns_empty_scan(self, tmp_path):
         """AC-4: active master with 2 shipped + 1 blocked → scan returns []."""
         plans = tmp_path / ".ilk-data" / "projects" / "test-proj" / "plans"

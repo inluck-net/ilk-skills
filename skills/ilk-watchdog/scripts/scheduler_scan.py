@@ -74,6 +74,7 @@ from plan_status import (  # noqa: E402
     extract_subplan_files,
     is_master_all_shipped,
     master_has_nonshipped,
+    master_has_runnable,
     normalize_master_status,
     parse_frontmatter,
     reconcile_master_registry,
@@ -354,8 +355,12 @@ def _scan_one_project(project_dir: Path) -> dict | None:
         if (fm.get("supervised_only") or "").strip().lower() in ("true", "yes", "1"):
             continue
 
-        # Only masters with non-shipped sub-plans are runnable.
-        if not master_has_nonshipped(master_path, plans_dir):
+        # Only masters with at least one runnable sub-plan are dispatched.
+        # master_has_runnable (not master_has_nonshipped) prevents a master
+        # whose only outstanding sub-plan is `blocked` from being dispatched
+        # every poll — the blocked sub-plan is outstanding work, but nothing
+        # the loop does will advance it until a human unblocks it.
+        if not master_has_runnable(master_path, plans_dir):
             continue
 
         # Collect per-sub-plan timestamps for FIFO ordering.
@@ -369,7 +374,11 @@ def _scan_one_project(project_dir: Path) -> dict | None:
             except OSError:
                 continue
             sub_fm = parse_frontmatter(sub_text)
-            if sub_fm.get("status", "pending") == "shipped":
+            # Skip non-runnable sub-plans (shipped, blocked, skipped) so
+            # oldest_queued_ts reflects only real work. Without this, a
+            # blocked sub-plan's timestamp would anchor the FIFO slot and
+            # the project would appear to have queued work when it doesn't.
+            if sub_fm.get("status", "pending") not in ("pending", "in-progress"):
                 continue
             ts = _parse_ts(sub_fm.get("last_updated", ""))
             if ts is None:
