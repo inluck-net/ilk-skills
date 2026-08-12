@@ -317,6 +317,111 @@ else
 fi
 
 # =============================================================================
+# Test 5: isolation — stop project A does not touch project B (AC-5)
+# =============================================================================
+
+echo ""
+echo "Test 5: isolation — stop project A must not touch project B"
+
+# Create a second project
+PROJECT_DIR_B="${WORK_TMPDIR}/test-project-B"
+mkdir -p "$PROJECT_DIR_B"
+(cd "$PROJECT_DIR_B" && git init -q && git commit -q --allow-empty -m "init")
+PROJECT_KEY_B="test-project-B"
+LAUNCHER_DIR_B="${WORK_TMPDIR}/ilk-data/projects/${PROJECT_KEY_B}/runtime/launcher"
+RUNTIME_DIR_B="${WORK_TMPDIR}/ilk-data/projects/${PROJECT_KEY_B}/runtime"
+mkdir -p "$LAUNCHER_DIR_B"
+
+# Spawn a "runner" for project B
+RUN_LOCK_B="${LAUNCHER_DIR_B}/run.lock"
+touch "$RUN_LOCK_B"
+RUNNER_B_PID=""
+bash -c '
+  exec 3<"'${RUN_LOCK_B}'"
+  exec -a "run_ilk_loop_claude 20260812-150000 ${PROJECT_DIR_B}" sleep 600
+' &
+RUNNER_B_PID=$!
+sleep 0.3
+echo "$RUNNER_B_PID" > "${LAUNCHER_DIR_B}/running.pid"
+
+# Create a runner for project A (the one we'll stop)
+RUN_LOCK_A="${LAUNCHER_DIR}/run.lock"
+rm -f "$RUN_LOCK_A"
+touch "$RUN_LOCK_A"
+RUNNER_A_PID=""
+bash -c '
+  exec 3<"'${RUN_LOCK_A}'"
+  exec -a "run_ilk_loop_claude 20260812-150000 ${PROJECT_DIR}" sleep 600
+' &
+RUNNER_A_PID=$!
+sleep 0.3
+echo "$RUNNER_A_PID" > "${LAUNCHER_DIR}/running.pid"
+
+# Set env for project A's resolver
+export TEST_PROJECT_PATH="$PROJECT_DIR"
+export TEST_PROJECT_KEY="$PROJECT_KEY"
+export TEST_LAUNCHER_DIR="$LAUNCHER_DIR"
+export TEST_RUNTIME_DIR="$RUNTIME_DIR"
+
+# Stop project A
+bash "${MOCK_SKILL_ROOT}/ilk-launcher/scripts/stop.sh" \
+  --project-path "$PROJECT_DIR" 2>&1 || true
+
+# Check project B's runner is still alive
+if kill -0 "$RUNNER_B_PID" 2>/dev/null; then
+  pass "project B runner survived stop of project A"
+else
+  fail "project B runner was killed when stopping project A (AC-5 violation)"
+fi
+
+# Clean up project B
+kill "$RUNNER_B_PID" 2>/dev/null || true
+wait "$RUNNER_B_PID" 2>/dev/null || true
+
+# =============================================================================
+# Test 6: scheduler survival — a scheduler-shaped process must survive (AC-6)
+# =============================================================================
+
+echo ""
+echo "Test 6: scheduler survival — scheduler-shaped process must survive stop.sh"
+
+# Create a fresh run.lock for this test
+RUN_LOCK_SCHED="${LAUNCHER_DIR}/run.lock"
+rm -f "$RUN_LOCK_SCHED"
+touch "$RUN_LOCK_SCHED"
+
+# Spawn a "runner" for the project
+RUNNER_SCHED_PID=""
+bash -c '
+  exec 3<"'${RUN_LOCK_SCHED}'"
+  exec -a "run_ilk_loop_claude 20260812-150000 ${PROJECT_DIR}" sleep 600
+' &
+RUNNER_SCHED_PID=$!
+sleep 0.3
+echo "$RUNNER_SCHED_PID" > "${LAUNCHER_DIR}/running.pid"
+
+# Spawn a scheduler-shaped stand-in: argv matches scheduler.sh --poll-min 5
+SCHEDULER_PID=""
+bash -c "sleep 600 # ilk-watchdog/scripts/scheduler.sh --poll-min 5" &
+SCHEDULER_PID=$!
+sleep 0.3
+
+# Stop the project
+bash "${MOCK_SKILL_ROOT}/ilk-launcher/scripts/stop.sh" \
+  --project-path "$PROJECT_DIR" 2>&1 || true
+
+# Check scheduler survived
+if kill -0 "$SCHEDULER_PID" 2>/dev/null; then
+  pass "scheduler-shaped process survived stop.sh"
+else
+  fail "scheduler-shaped process was killed by stop.sh (AC-6 violation)"
+fi
+
+# Clean up
+kill "$SCHEDULER_PID" 2>/dev/null || true
+wait "$SCHEDULER_PID" 2>/dev/null || true
+
+# =============================================================================
 # Summary
 # =============================================================================
 

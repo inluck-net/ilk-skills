@@ -397,6 +397,10 @@ Usage: stop.sh [OPTIONS]
 
 Stop a running ilk-launcher process for a project.
 
+IMPORTANT: If the project's master is still active/queued and a supervised
+scheduler is running, de-queue the master first (set master status to draft
+or paused), THEN stop. Otherwise the scheduler will re-dispatch behind you.
+
 Options:
   --project-path PATH    Absolute path to project root.
   --project-name NAME    Look up path in projects.json.
