@@ -32,13 +32,19 @@ ilk_project_runners() {
   resolved="$(cd "$norm" 2>/dev/null && pwd -P)" || resolved="$norm"
 
   # Match both the bash -c wrapper and the run_ilk_loop_claude.sh process.
-  # Literal substring (not regex) — pgrep -f is regex and needs path escaping.
+  # LITERAL substring via awk index(), never `$0 ~ pat`: `~` treats the path as
+  # a REGEX, so a project path containing `.` (e.g. `tmp.EVYaXMrl92`, or any
+  # dotted directory) would match a DIFFERENT project's runner and report a
+  # false busy — the same wedge class v0.9.55 fixed, arriving by another route.
+  # Verified 2026-08-12: with `~`, querying `/…/ilk.test` matched a live runner
+  # whose real path was `/…/ilkAtest`.
   # Exclude self ($$), parent ($PPID), and grep/this function from results.
   ps -eo pid,command | awk -v pat="$norm" -v pat2="$resolved" '
-    $0 ~ /run_ilk_loop_claude/ && ($0 ~ pat || $0 ~ pat2) {
+    index($0, "run_ilk_loop_claude") > 0 &&
+    (index($0, pat) > 0 || index($0, pat2) > 0) {
       # Skip lines containing our own grep or this function
-      if ($0 ~ /ilk_project_runners/) next
-      if ($0 ~ /grep.*run_ilk_loop/) next
+      if (index($0, "ilk_project_runners") > 0) next
+      if (index($0, "grep") > 0 && index($0, "run_ilk_loop") > 0) next
       print $1
     }
   ' | awk 'NF' | while read -r pid; do

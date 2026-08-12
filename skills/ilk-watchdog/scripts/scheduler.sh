@@ -195,7 +195,10 @@ test_running_pid() {
   # running.pid is absent or names a different PID.  running.pid tracked 1 of
   # 10 live runners on 2026-08-12.  Use the repo path (not data path) because
   # the runner's --project-path flag contains the repo path.
-  if ilk_project_runners "$project_repo_path"; then
+  # stdout suppressed: ilk_project_runners PRINTS the pids it finds, and all
+  # three callers here use it as a boolean, so without this the pids leak into
+  # the scheduler's stdout and interleave with its decision lines.
+  if ilk_project_runners "$project_repo_path" >/dev/null 2>&1; then
     return 0  # busy — live runner in the process table
   fi
   local pid_file="${project_data_path}/runtime/launcher/running.pid"
