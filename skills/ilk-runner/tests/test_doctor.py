@@ -80,12 +80,11 @@ def _setup_project(tmp_path: Path, *, master_status: str = "queued",
 # ── Tests ───────────────────────────────────────────────────────────────────
 
 class TestGateWalkSkeleton:
-    """The gate walk returns unknown for every gate in step 0."""
+    """The gate walk: gates 1-2 are implemented; the rest return unknown."""
 
-    def test_all_gates_return_unknown(self, tmp_path):
-        """Every gate returns status=unknown with evidence='not implemented'."""
+    def test_unimplemented_gates_return_unknown(self, tmp_path):
+        """Gates 0, 3-7 return status=unknown with evidence='not implemented'."""
         project = _setup_project(tmp_path)
-        # Patch the plans dir resolver to use our tmp project.
         original = doctor._resolve_plans_dir
         doctor._resolve_plans_dir = lambda p: project / "docs" / "plans"
         try:
@@ -94,14 +93,19 @@ class TestGateWalkSkeleton:
             doctor._resolve_plans_dir = original
 
         assert len(report.gates) == 8, f"Expected 8 gates, got {len(report.gates)}"
+        unimplemented = [
+            "progress-over-time", "blacklist", "lock-holders",
+            "process-set", "sentinel-vs-reality", "config-resolution",
+        ]
         for gate in report.gates:
-            assert gate.status == "unknown", (
-                f"Gate {gate.name!r} should be unknown, got {gate.status}"
-            )
-            assert gate.evidence == "not implemented", (
-                f"Gate {gate.name!r} evidence should be 'not implemented', "
-                f"got {gate.evidence!r}"
-            )
+            if gate.name in unimplemented:
+                assert gate.status == "unknown", (
+                    f"Gate {gate.name!r} should be unknown, got {gate.status}"
+                )
+                assert gate.evidence == "not implemented", (
+                    f"Gate {gate.name!r} evidence should be 'not implemented', "
+                    f"got {gate.evidence!r}"
+                )
 
     def test_walk_stops_at_first_blocked(self, tmp_path):
         """The walk stops at the first gate returning blocked."""
@@ -172,6 +176,138 @@ class TestGateWalkSkeleton:
     def test_all_gate_names_unique(self):
         """Gate names are unique (no duplicates)."""
         assert len(doctor.GATE_ORDER) == len(set(doctor.GATE_ORDER))
+
+
+class TestMasterStatusGate:
+    """Gate 1 (master-status) returns the right status for each fixture."""
+
+    def _run_gate(self, tmp_path, *, master_status, subplan_status="pending"):
+        project = _setup_project(
+            tmp_path, master_status=master_status, subplan_status=subplan_status
+        )
+        plans = project / "docs" / "plans"
+        return doctor._gate_master_status(plans)
+
+    def test_draft_master_is_blocked(self, tmp_path):
+        r = self._run_gate(tmp_path, master_status="draft")
+        assert r.status == "blocked"
+        assert "draft" in r.evidence
+
+    def test_paused_master_is_blocked(self, tmp_path):
+        r = self._run_gate(tmp_path, master_status="paused")
+        assert r.status == "blocked"
+        assert "paused" in r.evidence
+
+    def test_queued_master_passes(self, tmp_path):
+        r = self._run_gate(tmp_path, master_status="queued")
+        assert r.status == "pass"
+        assert "queued" in r.evidence
+
+    def test_active_master_passes(self, tmp_path):
+        r = self._run_gate(tmp_path, master_status="active")
+        assert r.status == "pass"
+        assert "active" in r.evidence
+
+    def test_shipped_master_passes(self, tmp_path):
+        r = self._run_gate(tmp_path, master_status="shipped")
+        assert r.status == "pass"
+        assert "shipped" in r.evidence
+
+    def test_no_master_is_blocked(self, tmp_path):
+        """A plans directory with no MASTER-*.md is blocked."""
+        plans = tmp_path / "empty-plans"
+        plans.mkdir()
+        r = doctor._gate_master_status(plans)
+        assert r.status == "blocked"
+        assert "no MASTER" in r.evidence
+
+    def test_legacy_pending_normalizes_to_queued(self, tmp_path):
+        """Legacy 'pending' master status normalizes to 'queued' (runnable)."""
+        r = self._run_gate(tmp_path, master_status="pending")
+        assert r.status == "pass"
+        assert "queued" in r.evidence
+
+
+class TestSubplanStatusesGate:
+    """Gate 2 (subplan-statuses) returns the right status for each fixture."""
+
+    def _run_gate_with_subplans(self, tmp_path, *, master_status="queued",
+                                 subplan_statuses: dict[str, str] | None = None):
+        """Create a project with a master and multiple sub-plans."""
+        project = tmp_path / "test-project"
+        project.mkdir()
+        plans = project / "docs" / "plans"
+        plans.mkdir(parents=True)
+
+        if subplan_statuses is None:
+            subplan_statuses = {"2026-08-12-task.md": "pending"}
+
+        subplan_names = list(subplan_statuses.keys())
+        _write_master(plans, "MASTER-2026-08-12-test.md", status=master_status,
+                      subplans=subplan_names)
+        for name, status in subplan_statuses.items():
+            _write_subplan(plans, name, status=status)
+
+        return doctor._gate_subplan_statuses(plans)
+
+    def test_all_shipped_passes(self, tmp_path):
+        r = self._run_gate_with_subplans(
+            tmp_path,
+            subplan_statuses={"2026-08-12-a.md": "shipped", "2026-08-12-b.md": "shipped"},
+        )
+        assert r.status == "pass"
+        assert "all" in r.evidence and "shipped" in r.evidence
+
+    def test_blocked_only_is_blocked(self, tmp_path):
+        """All sub-plans blocked (not runnable) → gate blocked."""
+        r = self._run_gate_with_subplans(
+            tmp_path,
+            subplan_statuses={"2026-08-12-a.md": "blocked", "2026-08-12-b.md": "blocked"},
+        )
+        assert r.status == "blocked"
+        assert "no runnable" in r.evidence
+
+    def test_healthy_queued_with_pending_passes(self, tmp_path):
+        """Queued master with a pending sub-plan → pass."""
+        r = self._run_gate_with_subplans(
+            tmp_path,
+            master_status="queued",
+            subplan_statuses={"2026-08-12-task.md": "pending"},
+        )
+        assert r.status == "pass"
+        assert "runnable" in r.evidence
+
+    def test_mixed_blocked_and_shipped_is_blocked(self, tmp_path):
+        """Blocked + shipped, no pending/in-progress → blocked."""
+        r = self._run_gate_with_subplans(
+            tmp_path,
+            subplan_statuses={
+                "2026-08-12-a.md": "shipped",
+                "2026-08-12-b.md": "blocked",
+            },
+        )
+        assert r.status == "blocked"
+        assert "no runnable" in r.evidence
+
+    def test_in_progress_is_runnable(self, tmp_path):
+        """in-progress counts as runnable."""
+        r = self._run_gate_with_subplans(
+            tmp_path,
+            subplan_statuses={"2026-08-12-task.md": "in-progress"},
+        )
+        assert r.status == "pass"
+
+    def test_no_master_returns_unknown(self, tmp_path):
+        """No master file → cannot evaluate sub-plans."""
+        plans = tmp_path / "empty-plans"
+        plans.mkdir()
+        r = doctor._gate_subplan_statuses(plans)
+        assert r.status == "unknown"
+
+    def test_artifact_points_to_master(self, tmp_path):
+        """The artifact field names the master file consulted."""
+        r = self._run_gate_with_subplans(tmp_path)
+        assert "MASTER" in r.artifact
 
 
 class TestGateResultDataclass:

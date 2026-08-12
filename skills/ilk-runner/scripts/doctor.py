@@ -14,10 +14,24 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
+
+# Resolve the sibling ilk-loop/scripts directory for shared helpers.
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+_SKILL_ROOT = _SCRIPTS_DIR.parent.parent  # skills/ilk-runner → skills → repo root
+sys.path.insert(0, str(_SKILL_ROOT / "ilk-loop" / "scripts"))
+
+from plan_status import (  # noqa: E402
+    extract_subplan_files,
+    is_master_runnable_status,
+    master_has_runnable,
+    normalize_master_status,
+    parse_frontmatter,
+)
 
 # Gate result status values.
 GateStatus = Literal["pass", "blocked", "unknown"]
@@ -69,21 +83,158 @@ def _gate_progress_over_time(project_data: Path, sample_interval: float) -> Gate
 
 def _gate_master_status(plans_dir: Path) -> GateResult:
     """Gate 1: master status — draft / paused / shipped / none found."""
+    masters = sorted(plans_dir.glob("MASTER-*.md"))
+    artifact = str(plans_dir)
+
+    if not masters:
+        return GateResult(
+            name="master-status",
+            status="blocked",
+            evidence="no MASTER-*.md found in plans directory",
+            artifact=artifact,
+        )
+
+    # Use the first master found (sorted by filename).
+    master_path = masters[0]
+    artifact = str(master_path)
+
+    try:
+        text = master_path.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        return GateResult(
+            name="master-status",
+            status="unknown",
+            evidence=f"cannot read master: {exc}",
+            artifact=artifact,
+        )
+
+    fm = parse_frontmatter(text)
+    raw_status = fm.get("status", "")
+    status = normalize_master_status(raw_status)
+
+    if not status:
+        return GateResult(
+            name="master-status",
+            status="blocked",
+            evidence="master has no status field in frontmatter",
+            artifact=artifact,
+        )
+
+    if status == "draft":
+        return GateResult(
+            name="master-status",
+            status="blocked",
+            evidence=f"master status is 'draft' (not released to queue)",
+            artifact=artifact,
+        )
+
+    if status == "paused":
+        return GateResult(
+            name="master-status",
+            status="blocked",
+            evidence=f"master status is 'paused'",
+            artifact=artifact,
+        )
+
+    if status == "shipped":
+        return GateResult(
+            name="master-status",
+            status="pass",
+            evidence=f"master status is 'shipped' — all work complete",
+            artifact=artifact,
+        )
+
+    # queued or active — master is runnable.
     return GateResult(
         name="master-status",
-        status="unknown",
-        evidence="not implemented",
-        artifact=str(plans_dir),
+        status="pass",
+        evidence=f"master status is '{status}' (runnable)",
+        artifact=artifact,
     )
+
+
+_RUNNABLE_SUBPLAN_STATUSES = {"pending", "in-progress"}
 
 
 def _gate_subplan_statuses(plans_dir: Path) -> GateResult:
     """Gate 2: sub-plan statuses — all shipped / all blocked / nothing runnable."""
+    masters = sorted(plans_dir.glob("MASTER-*.md"))
+    artifact = str(plans_dir)
+
+    if not masters:
+        return GateResult(
+            name="subplan-statuses",
+            status="unknown",
+            evidence="no master found — cannot evaluate sub-plans",
+            artifact=artifact,
+        )
+
+    master_path = masters[0]
+    artifact = str(master_path)
+
+    try:
+        master_text = master_path.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        return GateResult(
+            name="subplan-statuses",
+            status="unknown",
+            evidence=f"cannot read master: {exc}",
+            artifact=artifact,
+        )
+
+    registered = extract_subplan_files(master_text)
+    if not registered:
+        return GateResult(
+            name="subplan-statuses",
+            status="pass",
+            evidence="master has no registered sub-plans",
+            artifact=artifact,
+        )
+
+    # Collect statuses for every registered sub-plan.
+    statuses: dict[str, str] = {}
+    for fname in registered:
+        sub_path = plans_dir / fname
+        if not sub_path.exists():
+            statuses[fname] = "pending"  # missing → treat as pending
+            continue
+        try:
+            sub_text = sub_path.read_text(encoding="utf-8-sig")
+        except OSError:
+            statuses[fname] = "pending"
+            continue
+        fm = parse_frontmatter(sub_text)
+        statuses[fname] = fm.get("status", "pending").strip()
+
+    # Classify.
+    all_shipped = all(s == "shipped" for s in statuses.values())
+    if all_shipped:
+        return GateResult(
+            name="subplan-statuses",
+            status="pass",
+            evidence=f"all {len(statuses)} sub-plan(s) shipped",
+            artifact=artifact,
+        )
+
+    blocked = [f for f, s in statuses.items() if s not in _RUNNABLE_SUBPLAN_STATUSES and s != "shipped"]
+    runnable = [f for f, s in statuses.items() if s in _RUNNABLE_SUBPLAN_STATUSES]
+
+    if not runnable:
+        blocked_names = ", ".join(blocked)
+        return GateResult(
+            name="subplan-statuses",
+            status="blocked",
+            evidence=f"no runnable sub-plans; blocked: {blocked_names}",
+            artifact=artifact,
+        )
+
+    # There are runnable sub-plans — this gate passes.
     return GateResult(
         name="subplan-statuses",
-        status="unknown",
-        evidence="not implemented",
-        artifact=str(plans_dir),
+        status="pass",
+        evidence=f"{len(runnable)} runnable, {len(blocked)} blocked, "
+                 f"{sum(1 for s in statuses.values() if s == 'shipped')} shipped",
+        artifact=artifact,
     )
 
 
