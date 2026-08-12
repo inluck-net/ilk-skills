@@ -253,6 +253,18 @@ read_project_config() {
     cat "$cfg_path"
     return
   fi
+  # <project_root>/.ilk-launch.json — the location /ilk-plan step 8a already
+  # documents and reads for the `autoschedule` opt-out, and where projects
+  # actually put the file. Without it a declared iteration_timeout_min was
+  # silently dropped and the launcher fell back to DEFAULT_TIMEOUT: gh-resolve
+  # declared 60, got 30, and its last step was killed mid-suite (2026-08-12).
+  # Appended LAST so the two existing locations keep their precedence — this is
+  # purely additive and cannot change any project that already resolves.
+  cfg_path="${project_path}/.ilk-launch.json"
+  if [[ -f "$cfg_path" ]]; then
+    cat "$cfg_path"
+    return
+  fi
   echo '{}'
 }
 
