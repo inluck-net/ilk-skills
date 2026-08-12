@@ -21,6 +21,11 @@ fail() { failures+=("$1"); }
 # --- normaliser: strip run-specific noise for stable comparison -----------
 normalise() {
   sed -E \
+    -e '/^\[runner\] CLAUDE_CONFIG_DIR=/d' \
+    -e '/^Detected .*settings\.json env block/d' \
+    -e '/^Warning: ANTHROPIC_API_KEY not set/d' \
+    -e 's/^([[:space:]]*Model:).*/\1 <MODEL>/' \
+    -e 's/^([[:space:]]*API base:).*/\1 <API_BASE>/' \
     -e 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}/<TIMESTAMP>/g' \
     -e 's/run_id=[a-f0-9-]+/run_id=<RUN_ID>/g' \
     -e 's|/private/var/folders/[^ /]+|<TMP>|g' \
@@ -164,6 +169,19 @@ if [[ "${1:-}" == "--compare-golden" ]]; then
   exit 0
 fi
 
+# --- mode: --record-golden (explicit re-recording only) --------------------
+if [[ "${1:-}" == "--record-golden" ]]; then
+  tmp_dir=$(mktemp -d)
+  trap 'rm -rf "$tmp_dir"' EXIT
+  build_fixture_all_shipped "$tmp_dir/fixture-a"
+
+  env HOME="$tmp_dir/fixture-a" ILK_SKILL_HOME="$REPO_ROOT/skills" ILK_DATA_HOME="$tmp_dir/fixture-a/.ilk-data" \
+    bash "$RUNNER" --project-path "$tmp_dir/fixture-a" --max-iterations 1 2>&1 \
+    | normalise > "$GOLDEN_FILE"
+  echo "Golden re-recorded: $GOLDEN_FILE"
+  exit 0
+fi
+
 # --- main test body --------------------------------------------------------
 
 TMPDIR_TEST="$(mktemp -d)"
@@ -198,10 +216,12 @@ if [[ -n "$jsonl_a" ]]; then
   fi
 fi
 
-# Record golden baseline (AC-1)
-mkdir -p "$GOLDEN_DIR"
-cp "$TMPDIR_TEST/fixture-a-stdout.txt" "$GOLDEN_FILE"
-echo "  -> golden baseline recorded: $GOLDEN_FILE"
+# Golden baseline is recorded explicitly via --record-golden; never overwrite
+# here so that --compare-golden is a genuine before/after gate.
+if [[ ! -f "$GOLDEN_FILE" ]]; then
+  echo "  -> golden file missing; run with --record-golden first"
+  fail "golden file not found: $GOLDEN_FILE"
+fi
 
 # --- fixture B: blocked only -----------------------------------------------
 echo ""
