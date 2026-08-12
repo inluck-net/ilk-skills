@@ -249,6 +249,14 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   whole test file instead, or justify the selector by naming the test file in
   the sub-plan body.  `plan_lint.py` (`lint_unverifiable_test_selector`) warns
   automatically.
+- **redundant gate (step body runs a command already in its own `local_checks`)** →
+  local_checks run after the commit — the driver executes them, so a step body
+  that instructs the same command doubles a long job inside the iteration budget.
+  Real case: gh-resolve `zero-write-targets` step 3 declared `python3 -m pytest -q`
+  in `local_checks` and also said "Run the full suite" in the body — three
+  failures in ~90 min and ~$9.  **Fix:** remove the manual run from the step
+  body; the driver will run it after the commit.  `plan_lint.py`
+  (`lint_redundant_gate`) warns automatically.
 
 ### Orphaned-capability detector (post-ship QC tool)
 
