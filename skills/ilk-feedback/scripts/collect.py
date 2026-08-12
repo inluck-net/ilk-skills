@@ -1565,17 +1565,21 @@ def resolve_iter_log(
     """Return the path to a specific iteration log if it exists on disk.
 
     Searches all candidate log root directories (external, last-launch.json
-    hint, legacy) for ``ilk-claude-<run_id>/iter-NN.log``.
+    hint, legacy) for the iteration log.  Current layout
+    (``runs/<run_id>/iter-NN.log``) is tried first; legacy layout
+    (``ilk-claude-<run_id>/iter-NN.log``) is the fallback.
     """
     if project_path is not None:
         roots = _iter_log_root_candidates(project_path, last_launch)
     else:
         roots = [LOOP_LOG_DIR]
-    rel = Path(f"ilk-claude-{run_id}") / f"iter-{iteration:02d}.log"
-    for root in roots:
-        p = root / rel
-        if p.exists():
-            return p
+    rel_current = Path("runs") / run_id / f"iter-{iteration:02d}.log"
+    rel_legacy = Path(f"ilk-claude-{run_id}") / f"iter-{iteration:02d}.log"
+    for rel in (rel_current, rel_legacy):
+        for root in roots:
+            p = root / rel
+            if p.exists():
+                return p
     return None
 
 

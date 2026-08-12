@@ -71,17 +71,12 @@ def _logs_dir_for(project_path: Path, data_home: Path | None = None) -> Path:
 # ── AC-1: resolve_iter_log finds the current runs/ layout ──────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Defect e8c2668a923459b4: resolve_iter_log only searches legacy layout",
-)
 def test_resolve_iter_log_finds_runs_layout(
     monkeypatch: pytest.MonkeyPatch, project_path: Path
 ):
     """resolve_iter_log must find ``logs/runs/<run_id>/iter-NN.log``.
 
-    The runner writes iteration logs under this layout.  Today this FAILS
-    because resolve_iter_log only looks for ``ilk-claude-<run_id>/iter-NN.log``.
+    The runner writes iteration logs under this layout.
     """
     # Import AFTER monkeypatch sets ILK_DATA_HOME.
     from collect import resolve_iter_log
