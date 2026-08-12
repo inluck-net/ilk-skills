@@ -16,6 +16,15 @@ project mid-run — use `migrate_plans_to_external.py` between batches.
 
 Follow these steps in order. Do NOT skip the user-approval gate.
 
+## Arguments
+
+- `--yes` / `-y` — skip the step-5 approval wait for this invocation.
+  The full grouping proposal is still printed; only the pause-and-ask
+  is skipped. Everything after the flag is the task description.
+  A flag, not a timer — a timeout cannot distinguish consent from
+  absence, and makes the same plan approve differently depending on
+  whether you stepped away.
+
 ## 1. Load conventions
 
 Read these two files in parallel:
@@ -108,7 +117,9 @@ or create a new master for a new batch — ask the user if unclear.
 ## 3. Read the task description
 
 Whatever the user typed after `/ilk-plan` in the chat is the task
-description. If empty:
+description. If it begins with `--yes` or `-y` (whitespace-separated),
+consume the flag, set a local "skip approval" toggle, and use the rest
+as the task description. If empty after stripping the flag:
 - Stop and ask: "What's the task / batch you'd like me to plan?"
 
 If the task description is short and ambiguous, ask 1-3 clarifying
@@ -338,7 +349,10 @@ Plus:
   accordingly — treat each `device-manual` sub-plan as a human debugging
   session, not a quick diff review (see decomposition §14.3).
 
-Then ASK the user explicitly: "OK to proceed with this grouping, or want
+If `--yes` was passed, print `Approval gate skipped (--yes).` and
+proceed to step 6 without waiting. Otherwise:
+
+ASK the user explicitly: "OK to proceed with this grouping, or want
 to adjust?"
 
 Iterate until they approve. Do NOT write any files yet.
@@ -924,8 +938,8 @@ End your turn with:
 
 ## Boundary rules
 
-- **Never skip step 5 (user approval)** — grouping decisions are
-  subjective; humans always sign off.
+- **Never skip step 5 (user approval)** unless the operator passed
+  `--yes` — grouping decisions are subjective; humans always sign off.
 - **Never write files in step 5** — only after approval.
 - **Never skip the step-7 QC passes** — they are quality gates between
   writing the files and shipping them to the loop. Skipping sends
