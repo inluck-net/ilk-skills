@@ -2417,6 +2417,30 @@ def main() -> int:
 
     iters = by_run[target_run]
 
+    # Guard: when --run-id is explicit and records lack the "iteration" key,
+    # emit a clear message instead of crashing with KeyError.
+    if args.run_id and iters and not any("iteration" in r for r in iters):
+        # Find the run log dir that actually exists on disk.
+        run_log_dir = None
+        for root in _iter_log_root_candidates(project_path, last_launch):
+            candidate = root / "runs" / target_run
+            if candidate.is_dir():
+                run_log_dir = candidate
+                break
+        if run_log_dir is None:
+            # Fallback: construct the expected path even if it doesn't exist.
+            if external_logs_dir is not None and project_key is not None:
+                run_log_dir = external_logs_dir(project_key(project_path)) / "runs" / target_run
+            else:
+                run_log_dir = LOOP_LOG_DIR / "runs" / target_run
+        print(
+            f"no JSONL records for run {target_run!r} — the runner may have "
+            f"died before writing its summary; per-iteration logs are at "
+            f"{run_log_dir}",
+            file=sys.stderr,
+        )
+        return 1
+
     label, facts = classify(iters, last_launch, project_path)
 
     # Count rate-limit events for this run (independently useful metadata).
@@ -2431,9 +2455,11 @@ def main() -> int:
     rec_max, rec_to, rationale = recommend_params(label, iters, last_launch)
     last_log = iters[-1].get("log") if iters else None
     if not last_log and iters:
-        resolved = resolve_iter_log(target_run, iters[-1]["iteration"], project_path, last_launch)
-        if resolved:
-            last_log = str(resolved)
+        iter_num = iters[-1].get("iteration")
+        if iter_num is not None:
+            resolved = resolve_iter_log(target_run, iter_num, project_path, last_launch)
+            if resolved:
+                last_log = str(resolved)
     tail = tail_log(last_log)
 
     report = render_report(

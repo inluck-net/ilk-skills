@@ -116,11 +116,10 @@ def _write_per_iter_log(data_home: Path, key: str, run_id: str, iter_num: int = 
 # ── Test: run with malformed JSONL (missing iteration key) → KeyError ─────
 
 
-@pytest.mark.xfail(strict=True, reason="collect.py raises KeyError on malformed JSONL records")
-def test_malformed_jsonl_raises_keyerror(scratch_env):
+def test_malformed_jsonl_exits_with_message(scratch_env):
     """When --run-id R is passed and R has JSONL records but they lack the
-    'iteration' key, collect.py should handle gracefully — but currently
-    raises KeyError."""
+    'iteration' key, collect.py should exit non-zero with a clear message
+    pointing at the run log directory (AC-1, AC-2, AC-3)."""
     project_path, env, key = scratch_env
     data_home = Path(env["ILK_DATA_HOME"])
 
@@ -153,6 +152,22 @@ def test_malformed_jsonl_raises_keyerror(scratch_env):
     )
     assert "KeyError" not in result.stderr, (
         f"Should not produce a KeyError.\nstderr: {result.stderr}"
+    )
+    # AC-2: message names the run id and points at the run log directory
+    assert target_run in result.stderr, (
+        f"stderr should mention the run id {target_run!r}.\nstderr: {result.stderr}"
+    )
+    assert "per-iteration logs are at" in result.stderr, (
+        f"stderr should point at the run log directory.\nstderr: {result.stderr}"
+    )
+    # AC-3: the run log dir it names actually exists on disk
+    # Extract the path from the stderr message
+    import re
+    match = re.search(r"per-iteration logs are at (.+)$", result.stderr, re.MULTILINE)
+    assert match, f"Could not extract run log dir from stderr: {result.stderr}"
+    run_log_dir = Path(match.group(1).strip())
+    assert run_log_dir.is_dir(), (
+        f"Run log dir should exist on disk: {run_log_dir}"
     )
 
 
