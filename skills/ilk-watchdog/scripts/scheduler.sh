@@ -190,6 +190,14 @@ test_running_pid() {
   # Check if a project has a live running.pid (sentinel mutex).
   # Returns 0 if busy, 1 if free.
   local project_data_path="$1"
+  local project_repo_path="${2:-$project_data_path}"
+  # Process-table check: a live runner makes the project busy even when
+  # running.pid is absent or names a different PID.  running.pid tracked 1 of
+  # 10 live runners on 2026-08-12.  Use the repo path (not data path) because
+  # the runner's --project-path flag contains the repo path.
+  if ilk_project_runners "$project_repo_path"; then
+    return 0  # busy — live runner in the process table
+  fi
   local pid_file="${project_data_path}/runtime/launcher/running.pid"
   if [[ ! -f "$pid_file" ]]; then
     return 1  # free
@@ -374,11 +382,15 @@ count_live_sentinels() {
   # running.pid sentinel. Outputs the count to stdout.
   local scan_output="$1"
   local count=0
-  local paths line
+  local paths repo_paths line
   paths=()
+  repo_paths=()
   while IFS= read -r line; do paths+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p['path']) for p in d]" <<<"$scan_output" | tr -d '\r')
-  for p in "${paths[@]}"; do
-    if test_running_pid "$p"; then
+  while IFS= read -r line; do repo_paths+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p.get('repo_path') or '') for p in d]" <<<"$scan_output" | tr -d '\r')
+  for i in "${!paths[@]}"; do
+    local p="${paths[$i]}"
+    local rp="${repo_paths[$i]}"
+    if test_running_pid "$p" "$rp"; then
       count=$((count + 1))
     fi
   done
@@ -687,7 +699,7 @@ print(int((ea-sa).total_seconds()))
       # the skip-busy check below already covers it.
       local last_dispatch
       last_dispatch="$(dispatch_time_epoch_for_key "$key")"
-      if [[ "$(within_dispatch_cooldown "$last_dispatch" "$now_epoch" "$DISPATCH_COOLDOWN_SEC")" == "true" ]] && ! test_running_pid "$path"; then
+      if [[ "$(within_dispatch_cooldown "$last_dispatch" "$now_epoch" "$DISPATCH_COOLDOWN_SEC")" == "true" ]] && ! test_running_pid "$path" "$repo"; then
         if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
           write_scheduler_log "skip-cooldown" "$key"
           echo "{\"decision\":\"skip-cooldown\",\"key\":\"$key\"}"
@@ -699,7 +711,7 @@ print(int((ea-sa).total_seconds()))
       fi
 
       # Check if project is busy
-      if test_running_pid "$path"; then
+      if test_running_pid "$path" "$repo"; then
         if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
           write_scheduler_log "skip-busy" "$key"
           echo "{\"decision\":\"skip-busy\",\"key\":\"$key\"}"

@@ -533,6 +533,15 @@ get_launch_meta_path() {
 
 test_running_pid() {
   local project_path="$1"
+  # Process-table check: a live runner makes the project busy even when
+  # running.pid is absent or names a different PID.  running.pid tracked 1 of
+  # 10 live runners on 2026-08-12.
+  local live_pids
+  live_pids="$(ilk_project_runners "$project_path" || true)"
+  if [[ -n "$live_pids" ]]; then
+    echo "$(echo "$live_pids" | head -1)"
+    return
+  fi
   local pid_file
   pid_file=$(get_pid_file_path "$project_path")
   if [[ ! -f "$pid_file" ]]; then

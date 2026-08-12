@@ -53,6 +53,12 @@ source "$ILK_PID_SH"
 # Returns 0 if busy, 1 if free.
 scheduler_test_running_pid() {
   local project_data_path="$1"
+  local project_repo_path="${2:-$project_data_path}"
+  # Process-table check: a live runner makes the project busy even when
+  # running.pid is absent or names a different PID.
+  if ilk_project_runners "$project_repo_path"; then
+    return 0  # busy — live runner in the process table
+  fi
   local pid_file="${project_data_path}/runtime/launcher/running.pid"
   if [[ ! -f "$pid_file" ]]; then
     return 1
@@ -86,6 +92,14 @@ scheduler_test_running_pid() {
 # Echoes PID if busy, empty if free.
 launcher_test_running_pid() {
   local project_path="$1"
+  # Process-table check: a live runner makes the project busy even when
+  # running.pid is absent or names a different PID.
+  local live_pids
+  live_pids="$(ilk_project_runners "$project_path" || true)"
+  if [[ -n "$live_pids" ]]; then
+    echo "$(echo "$live_pids" | head -1)"
+    return
+  fi
   local pid_file="${HOME}/.ilk-data/projects/test-project/runtime/launcher/running.pid"
   if [[ ! -f "$pid_file" ]]; then
     echo ""
@@ -128,22 +142,29 @@ fi
 # --- case 1: running.pid absent, live runner present --------------------------
 rm -f "$PID_FILE"
 
+# The real scheduler passes data path (p['path']) and repo path (p['repo_path'])
+# to test_running_pid. DATA_DIR is the data directory; PROJECT_PATH is the repo.
 scheduler_result=1
-scheduler_test_running_pid "$DATA_DIR" && scheduler_result=0 || true
+scheduler_test_running_pid "$DATA_DIR" "$PROJECT_PATH" && scheduler_result=0 || true
 
 launch_output="$(launcher_test_running_pid "$PROJECT_PATH")"
 
-if [[ "$scheduler_result" -eq 0 ]]; then
-  fail "case 1 scheduler: reported busy with no running.pid (unexpected)"
-fi
-if [[ -n "$launch_output" ]]; then
-  fail "case 1 launcher: reported busy ($launch_output) with no running.pid (unexpected)"
-fi
-
-# The defect: both dispatch sites see "free" while a runner IS alive.
-# KNOWN_BAD=1 tolerates this so the test can be committed before the fix.
-if [[ "${KNOWN_BAD:-0}" -ne 1 ]]; then
-  fail "case 1: live runner $fake_runner_pid is invisible to the busy-check (KNOWN_BAD not set)"
+if [[ "${KNOWN_BAD:-0}" -eq 1 ]]; then
+  # Before fix: the busy-check reports "free" (the defect).
+  if [[ "$scheduler_result" -eq 0 ]]; then
+    fail "case 1 scheduler: reported busy with no running.pid (unexpected)"
+  fi
+  if [[ -n "$launch_output" ]]; then
+    fail "case 1 launcher: reported busy ($launch_output) with no running.pid (unexpected)"
+  fi
+else
+  # After fix: the busy-check must detect the live runner.
+  if [[ "$scheduler_result" -ne 0 ]]; then
+    fail "case 1 scheduler: did not detect live runner $fake_runner_pid (got free)"
+  fi
+  if [[ -z "$launch_output" ]]; then
+    fail "case 1 launcher: did not detect live runner $fake_runner_pid (got free)"
+  fi
 fi
 
 # --- case 2: running.pid names a stale/unrelated PID, live runner present -----
@@ -152,19 +173,26 @@ plain_pid=$!
 echo "$plain_pid" > "$PID_FILE"
 
 scheduler_result2=1
-scheduler_test_running_pid "$DATA_DIR" && scheduler_result2=0 || true
+scheduler_test_running_pid "$DATA_DIR" "$PROJECT_PATH" && scheduler_result2=0 || true
 
 launch_output2="$(launcher_test_running_pid "$PROJECT_PATH")"
 
-if [[ "$scheduler_result2" -eq 0 ]]; then
-  fail "case 2 scheduler: reported busy because of unrelated PID $plain_pid (unexpected)"
-fi
-if [[ -n "$launch_output2" ]]; then
-  fail "case 2 launcher: reported busy ($launch_output2) because of unrelated PID $plain_pid (unexpected)"
-fi
-
-if [[ "${KNOWN_BAD:-0}" -ne 1 ]]; then
-  fail "case 2: live runner $fake_runner_pid invisible; stale pid $plain_pid in running.pid (KNOWN_BAD not set)"
+if [[ "${KNOWN_BAD:-0}" -eq 1 ]]; then
+  # Before fix: stale PID in running.pid, live runner invisible.
+  if [[ "$scheduler_result2" -eq 0 ]]; then
+    fail "case 2 scheduler: reported busy because of unrelated PID $plain_pid (unexpected)"
+  fi
+  if [[ -n "$launch_output2" ]]; then
+    fail "case 2 launcher: reported busy ($launch_output2) because of unrelated PID $plain_pid (unexpected)"
+  fi
+else
+  # After fix: live runner detected despite stale running.pid.
+  if [[ "$scheduler_result2" -ne 0 ]]; then
+    fail "case 2 scheduler: did not detect live runner $fake_runner_pid (got free)"
+  fi
+  if [[ -z "$launch_output2" ]]; then
+    fail "case 2 launcher: did not detect live runner $fake_runner_pid (got free)"
+  fi
 fi
 
 # --- unit tests: ilk_project_runners (AC-1 / AC-2) ----------------------------
