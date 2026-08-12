@@ -214,3 +214,64 @@ def test_valid_records_still_produce_report(scratch_env):
     assert "no-evidence" not in text, (
         f"Should not be no-evidence when valid JSONL records exist.\nHead:\n{text[:500]}"
     )
+
+
+# ── Test: --index and --json flags are unaffected (AC-5) ───────────────────
+
+
+def test_index_flag_unaffected(scratch_env):
+    """When --index is passed, collect.py should output the index regardless
+    of run records (AC-5)."""
+    project_path, env, key = scratch_env
+    data_home = Path(env["ILK_DATA_HOME"])
+
+    target_run = "20260812-095202"
+    _write_malformed_jsonl_record(data_home, key, project_path, target_run)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_COLLECT_PY),
+            "-ProjectPath",
+            str(project_path),
+            "--index",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        encoding="utf-8", errors="replace",
+    )
+    # --index should work even with malformed records
+    assert result.returncode == 0, (
+        f"Expected exit 0 with --index, got {result.returncode}.\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+
+def test_json_flag_unaffected(scratch_env):
+    """When --json is passed, collect.py should output JSON regardless
+    of run records (AC-5)."""
+    project_path, env, key = scratch_env
+    data_home = Path(env["ILK_DATA_HOME"])
+
+    target_run = "20260812-095202"
+    _write_malformed_jsonl_record(data_home, key, project_path, target_run)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_COLLECT_PY),
+            "-ProjectPath",
+            str(project_path),
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        encoding="utf-8", errors="replace",
+    )
+    # --json should work even with malformed records
+    assert result.returncode == 0, (
+        f"Expected exit 0 with --json, got {result.returncode}.\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
