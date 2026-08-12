@@ -95,7 +95,7 @@ class TestGateWalkSkeleton:
 
         assert len(report.gates) == 8, f"Expected 8 gates, got {len(report.gates)}"
         unimplemented = [
-            "progress-over-time", "blacklist", "config-resolution",
+            "blacklist",
         ]
         for gate in report.gates:
             if gate.name in unimplemented:
@@ -127,9 +127,9 @@ class TestGateWalkSkeleton:
             doctor._gate_master_status = original_gate
             doctor._resolve_plans_dir = original_plans
 
-        # Gate 0 (progress-over-time) ran and was unknown.
+        # Gate 0 (progress-over-time) ran — it returns pass when no runs exist.
         assert report.gates[0].name == "progress-over-time"
-        assert report.gates[0].status == "unknown"
+        assert report.gates[0].status == "pass"
 
         # Gate 1 (master-status) ran and was blocked.
         assert report.gates[1].name == "master-status"
@@ -432,6 +432,150 @@ class TestSentinelVsRealityGate:
         r = doctor._gate_sentinel_vs_reality(project_data, live_pids=["11111", "22222"])
         assert r.status == "blocked"
         assert "stale" in r.evidence.lower() or "not in set" in r.evidence.lower()
+
+
+class TestProgressOverTimeGate:
+    """Gate 0 (progress-over-time) tests."""
+
+    def _setup_run(self, project_data: Path, run_id: str = "test-run-001"):
+        """Create a run directory with an iter log."""
+        run_dir = project_data / "logs" / "runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        return run_dir
+
+    def test_no_runs_dir_passes(self, tmp_path):
+        """No runs directory → pass."""
+        project_data = tmp_path / "data"
+        project_data.mkdir()
+        r = doctor._gate_progress_over_time(project_data, sample_interval=0.05)
+        assert r.status == "pass"
+        assert "no runs" in r.evidence.lower()
+
+    def test_no_iter_logs_passes(self, tmp_path):
+        """Empty run directory → pass."""
+        project_data = tmp_path / "data"
+        run_dir = self._setup_run(project_data)
+        r = doctor._gate_progress_over_time(project_data, sample_interval=0.05)
+        assert r.status == "pass"
+        assert "no iter" in r.evidence.lower()
+
+    def test_static_file_is_quiet(self, tmp_path):
+        """Untouched iter log → quiet, and 'stalled' absent from evidence."""
+        project_data = tmp_path / "data"
+        run_dir = self._setup_run(project_data)
+        iter_file = run_dir / "iter-01.jsonl"
+        iter_file.write_text('{"event": "start"}\n', encoding="utf-8")
+
+        r = doctor._gate_progress_over_time(project_data, sample_interval=0.05)
+        assert r.status == "pass"
+        assert "quiet" in r.evidence
+        assert "stalled" not in r.evidence.lower(), (
+            f"'stalled' must never appear in a single-sample result: {r.evidence}"
+        )
+
+    def test_growing_file_is_progressing(self, tmp_path):
+        """Iter log appended to between samples → progressing."""
+        import threading
+        import time
+
+        project_data = tmp_path / "data"
+        run_dir = self._setup_run(project_data)
+        iter_file = run_dir / "iter-01.jsonl"
+        iter_file.write_text('{"event": "start"}\n', encoding="utf-8")
+
+        # Append to the file in a background thread during the sample interval.
+        def append_after_delay():
+            time.sleep(0.03)
+            with open(iter_file, "a", encoding="utf-8") as f:
+                f.write('{"event": "step"}\n{"event": "step2"}\n')
+
+        t = threading.Thread(target=append_after_delay)
+        t.start()
+
+        r = doctor._gate_progress_over_time(project_data, sample_interval=0.1)
+        t.join()
+
+        assert r.status == "pass"
+        assert "progressing" in r.evidence
+
+    def test_artifact_names_the_iter_file(self, tmp_path):
+        """The artifact field names the specific iter file sampled."""
+        project_data = tmp_path / "data"
+        run_dir = self._setup_run(project_data)
+        iter_file = run_dir / "iter-05.jsonl"
+        iter_file.write_text('{"event": "x"}\n', encoding="utf-8")
+
+        r = doctor._gate_progress_over_time(project_data, sample_interval=0.05)
+        assert "iter-05" in r.artifact
+
+
+class TestConfigResolutionGate:
+    """Gate 7 (config-resolution) tests."""
+
+    def test_no_config_uses_defaults(self, tmp_path):
+        """No .ilk-launch.json → defaults."""
+        project = tmp_path / "proj"
+        project.mkdir()
+        original = doctor._resolve_plans_dir
+        doctor._resolve_plans_dir = lambda p: project / "nonexistent"
+        try:
+            r = doctor._gate_config_resolution(project)
+        finally:
+            doctor._resolve_plans_dir = original
+        assert r.status == "pass"
+        assert "default" in r.evidence
+
+    def test_config_with_values(self, tmp_path):
+        """Config with max_iterations and timeout → reported."""
+        project = tmp_path / "proj"
+        project.mkdir()
+        cfg = {"max_iterations": 50, "iteration_timeout_min": 45}
+        (project / ".ilk-launch.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+        original = doctor._resolve_plans_dir
+        doctor._resolve_plans_dir = lambda p: project / "nonexistent"
+        try:
+            r = doctor._gate_config_resolution(project)
+        finally:
+            doctor._resolve_plans_dir = original
+
+        assert r.status == "pass"
+        assert "max_iterations=50" in r.evidence
+        assert "iteration_timeout_min=45" in r.evidence
+
+    def test_config_partial_values(self, tmp_path):
+        """Config with only some values → others use defaults."""
+        project = tmp_path / "proj"
+        project.mkdir()
+        cfg = {"iteration_timeout_min": 60}
+        (project / ".ilk-launch.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+        original = doctor._resolve_plans_dir
+        doctor._resolve_plans_dir = lambda p: project / "nonexistent"
+        try:
+            r = doctor._gate_config_resolution(project)
+        finally:
+            doctor._resolve_plans_dir = original
+
+        assert r.status == "pass"
+        assert "iteration_timeout_min=60" in r.evidence
+        assert "default" in r.evidence
+
+    def test_artifact_names_the_config_file(self, tmp_path):
+        """The artifact field names the config file consulted."""
+        project = tmp_path / "proj"
+        project.mkdir()
+        cfg_path = project / ".ilk-launch.json"
+        cfg_path.write_text("{}", encoding="utf-8")
+
+        original = doctor._resolve_plans_dir
+        doctor._resolve_plans_dir = lambda p: project / "nonexistent"
+        try:
+            r = doctor._gate_config_resolution(project)
+        finally:
+            doctor._resolve_plans_dir = original
+
+        assert ".ilk-launch.json" in r.artifact
 
 
 class TestGateResultDataclass:

@@ -73,12 +73,101 @@ class DoctorReport:
 # ── Gate definitions ────────────────────────────────────────────────────────
 
 def _gate_progress_over_time(project_data: Path, sample_interval: float) -> GateResult:
-    """Gate 0: sample newest iter-NN.log twice, report byte/line deltas."""
+    """Gate 0: sample newest iter-NN.log twice, report byte/line deltas.
+
+    Growing ⇒ ``progressing`` (and the walk stops).  Static ⇒ ``quiet``
+    (never ``stalled`` — a 15-minute foreground gate is byte-identical to
+    a stall in any single sample).
+    """
+    import time
+
+    runs_dir = project_data / "logs" / "runs"
+    artifact = str(runs_dir)
+
+    if not runs_dir.exists():
+        return GateResult(
+            name="progress-over-time",
+            status="pass",
+            evidence="no runs directory (no run has started)",
+            artifact=artifact,
+        )
+
+    # Find the newest run directory by mtime.
+    run_dirs = sorted(runs_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not run_dirs:
+        return GateResult(
+            name="progress-over-time",
+            status="pass",
+            evidence="no run directories found",
+            artifact=artifact,
+        )
+
+    latest_run = run_dirs[0]
+    artifact = str(latest_run)
+
+    # Find the newest iter log file (any extension: .log, .jsonl, .txt).
+    iter_files = sorted(
+        latest_run.glob("iter-*"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not iter_files:
+        return GateResult(
+            name="progress-over-time",
+            status="pass",
+            evidence=f"no iter logs in {latest_run.name}",
+            artifact=artifact,
+        )
+
+    iter_file = iter_files[0]
+    artifact = str(iter_file)
+
+    # First sample.
+    try:
+        size1 = iter_file.stat().st_size
+        lines1 = iter_file.read_text(encoding="utf-8-sig", errors="replace").count("\n")
+    except OSError as exc:
+        return GateResult(
+            name="progress-over-time",
+            status="unknown",
+            evidence=f"cannot read iter log: {exc}",
+            artifact=artifact,
+        )
+
+    # Wait for the sample interval.
+    time.sleep(sample_interval)
+
+    # Second sample.
+    try:
+        size2 = iter_file.stat().st_size
+        lines2 = iter_file.read_text(encoding="utf-8-sig", errors="replace").count("\n")
+    except OSError as exc:
+        return GateResult(
+            name="progress-over-time",
+            status="unknown",
+            evidence=f"cannot read iter log on second sample: {exc}",
+            artifact=artifact,
+        )
+
+    delta_bytes = size2 - size1
+    delta_lines = lines2 - lines1
+
+    if delta_bytes > 0 or delta_lines > 0:
+        return GateResult(
+            name="progress-over-time",
+            status="pass",
+            evidence=f"progressing — {delta_bytes} bytes, {delta_lines} lines in {sample_interval}s "
+                     f"(file: {iter_file.name})",
+            artifact=artifact,
+        )
+
     return GateResult(
         name="progress-over-time",
-        status="unknown",
-        evidence="not implemented",
-        artifact="(no iter log sampled)",
+        status="pass",
+        evidence=f"quiet — 0 bytes, 0 lines in {sample_interval}s "
+                 f"(file: {iter_file.name}). This is not a stall — "
+                 f"a long foreground gate is byte-identical to a stall in a single sample.",
+        artifact=artifact,
     )
 
 
@@ -441,14 +530,82 @@ def _gate_sentinel_vs_reality(project_data: Path,
     )
 
 
+DEFAULT_MAX_ITER = 100
+DEFAULT_TIMEOUT = 30
+
+
 def _gate_config_resolution(project_path: Path) -> GateResult:
-    """Gate 7: resolved config vs .ilk-launch.json."""
+    """Gate 7: resolved config vs .ilk-launch.json.
+
+    Reads the launch config from the same locations the launcher uses
+    (external plans dir, docs/plans/, project root) so the doctor cannot
+    disagree with the launcher.
+    """
+    # Resolve the config file location (same precedence as launch.sh).
+    config_path = _resolve_launch_config(project_path)
+    artifact = str(config_path) if config_path else str(project_path / ".ilk-launch.json")
+
+    if config_path is None or not config_path.exists():
+        return GateResult(
+            name="config-resolution",
+            status="pass",
+            evidence=f"no .ilk-launch.json found — defaults apply "
+                     f"(max_iterations={DEFAULT_MAX_ITER}, iteration_timeout_min={DEFAULT_TIMEOUT})",
+            artifact=artifact,
+        )
+
+    try:
+        text = config_path.read_text(encoding="utf-8-sig")
+        cfg = json.loads(text)
+    except (OSError, json.JSONDecodeError) as exc:
+        return GateResult(
+            name="config-resolution",
+            status="unknown",
+            evidence=f"cannot read config: {exc}",
+            artifact=artifact,
+        )
+
+    cfg_max = cfg.get("max_iterations", "")
+    cfg_timeout = cfg.get("iteration_timeout_min", "")
+
+    # Show what the launcher would resolve to.
+    resolved_max = cfg_max if cfg_max else DEFAULT_MAX_ITER
+    resolved_timeout = cfg_timeout if cfg_timeout else DEFAULT_TIMEOUT
+
+    parts = []
+    if cfg_max:
+        parts.append(f"max_iterations={cfg_max}")
+    else:
+        parts.append(f"max_iterations=default({DEFAULT_MAX_ITER})")
+    if cfg_timeout:
+        parts.append(f"iteration_timeout_min={cfg_timeout}")
+    else:
+        parts.append(f"iteration_timeout_min=default({DEFAULT_TIMEOUT})")
+
     return GateResult(
         name="config-resolution",
-        status="unknown",
-        evidence="not implemented",
-        artifact=str(project_path / ".ilk-launch.json"),
+        status="pass",
+        evidence=f"config resolved: {', '.join(parts)}",
+        artifact=artifact,
     )
+
+
+def _resolve_launch_config(project_path: Path) -> Path | None:
+    """Resolve .ilk-launch.json using the same precedence as launch.sh.
+
+    1. External plans dir (~/.ilk-data/projects/<key>/plans/.ilk-launch.json)
+    2. docs/plans/.ilk-launch.json
+    3. <project>/.ilk-launch.json
+    """
+    plans_dir = _resolve_plans_dir(project_path)
+    for candidate in [
+        plans_dir / ".ilk-launch.json",
+        project_path / "docs" / "plans" / ".ilk-launch.json",
+        project_path / ".ilk-launch.json",
+    ]:
+        if candidate.exists():
+            return candidate
+    return None
 
 
 # ── Gate walk ───────────────────────────────────────────────────────────────
