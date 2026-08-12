@@ -14,7 +14,8 @@ that still keep plans in-tree under `<root>/docs/plans/` are
 supported by the resolver as a fallback; do not migrate an in-flight
 project mid-run — use `migrate_plans_to_external.py` between batches.
 
-Follow these steps in order. Do NOT skip the user-approval gate.
+Follow these steps in order. Do NOT skip the user-approval gate unless
+the operator passed `--yes` (see Arguments below).
 
 ## Arguments
 
