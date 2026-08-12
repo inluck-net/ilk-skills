@@ -40,7 +40,7 @@ local_checks:
     timeout: 300
 ```
 
-- Run the full suite. Record counts.
+- Run `python3 -m pytest -q` and record counts.
 """
 
 # AC-2: duplicate against frontmatter local_checks.
@@ -104,7 +104,7 @@ local_checks:
     timeout: 900
 ```
 
-- Run the **full** suite. Record counts.
+- Run `python3 -m pytest -q` and record counts.
 """
 
 
@@ -126,43 +126,34 @@ class TestExtractorSanity:
         assert any("pytest" in c for c in cmds), cmds
 
 
-# ── redundant-gate lint (xfail until step 1) ─────────────────────────
+# ── redundant-gate lint ───────────────────────────────────────────────
 
-def _call_lint(text, slug):
-    """Call lint_redundant_gate if it exists, else return [] (no findings)."""
-    try:
-        from plan_lint import lint_redundant_gate
-        return lint_redundant_gate(text, slug)
-    except ImportError:
-        return []
+from plan_lint import lint_redundant_gate  # noqa: E402
 
 
 class TestRedundantGate:
-    """Positive cases xfail(strict=True) until step 1 implements the lint."""
+    """Verify the redundant-gate lint catches duplicates and respects narrowness."""
 
-    @pytest.mark.xfail(strict=True, reason="lint not implemented yet")
     def test_ac1_duplicate_perstep_flagged(self):
-        findings = _call_lint(DUPLICATE_PERSTEP, "test-dup-perstep")
+        findings = lint_redundant_gate(DUPLICATE_PERSTEP, "test-dup-perstep")
         assert len(findings) >= 1, findings
         assert "pytest" in findings[0]
 
-    @pytest.mark.xfail(strict=True, reason="lint not implemented yet")
     def test_ac2_duplicate_frontmatter_flagged(self):
-        findings = _call_lint(DUPLICATE_FRONTMATTER, "test-dup-frontmatter")
+        findings = lint_redundant_gate(DUPLICATE_FRONTMATTER, "test-dup-frontmatter")
         assert len(findings) >= 1, findings
         assert "pytest" in findings[0]
 
     def test_ac3_narrower_body_no_finding(self):
-        findings = _call_lint(NARROWER_BODY, "test-narrower")
+        findings = lint_redundant_gate(NARROWER_BODY, "test-narrower")
         assert findings == []
 
     def test_ac4_prose_mention_no_finding(self):
-        findings = _call_lint(PROSE_MENTION, "test-prose")
+        findings = lint_redundant_gate(PROSE_MENTION, "test-prose")
         assert findings == []
 
-    @pytest.mark.xfail(strict=True, reason="lint not implemented yet")
     def test_ac5_zero_write_targets_flagged(self):
-        findings = _call_lint(ZERO_WRITE_TARGETS_STEP3, "zero-write-targets")
+        findings = lint_redundant_gate(ZERO_WRITE_TARGETS_STEP3, "zero-write-targets")
         assert len(findings) == 1, findings
         assert "pytest" in findings[0]
         assert "step" in findings[0].lower()

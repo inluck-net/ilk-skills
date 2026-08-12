@@ -1251,6 +1251,70 @@ def lint_budget_vs_gate_timeout(text: str, slug: str) -> list[str]:
     return findings
 
 
+def _normalize_command(cmd: str) -> str:
+    """Normalise a command for comparison: strip leading cd && and collapse whitespace."""
+    # Strip leading ``cd <path> &&`` prefix.
+    cmd = re.sub(r"^cd\s+\S+\s+&&\s*", "", cmd.strip())
+    # Collapse whitespace.
+    return " ".join(cmd.split())
+
+
+def _is_narrower(body_cmd: str, gate_cmd: str) -> bool:
+    """True if body_cmd is a strict prefix-with-more-args of gate_cmd.
+
+    e.g. body ``pytest tests/test_x.py`` is narrower than gate ``pytest -q``.
+    """
+    body_parts = body_cmd.split()
+    gate_parts = gate_cmd.split()
+    if len(body_parts) <= len(gate_parts):
+        return False
+    # Body has more args — check if gate is a prefix of body.
+    return body_parts[:len(gate_parts)] == gate_parts
+
+
+def lint_redundant_gate(text: str, slug: str) -> list[str]:
+    """Flag a step body that instructs a command already declared in its local_checks.
+
+    The driver runs local_checks AFTER the commit, so a body that runs the same
+    command doubles a long job inside the iteration budget.
+    """
+    findings: list[str] = []
+    commands = _extract_all_local_checks_commands(text)
+    body = _strip_frontmatter(text)
+    # Strip the local_checks yaml blocks from the body so we only match prose.
+    body_clean = _STEP_LOCAL_CHECKS_BLOCK_RE.sub(" ", body)
+
+    for gate_cmd in commands:
+        gate_norm = _normalize_command(gate_cmd)
+        if not gate_norm:
+            continue
+        # Check if the body instructs running the same command.
+        # Look for the command string in the body prose.
+        gate_parts = gate_norm.split()
+        # Build a regex that matches the command with flexible whitespace.
+        gate_pattern = r"\b" + r"\s+".join(re.escape(p) for p in gate_parts) + r"\b"
+        match = re.search(gate_pattern, body_clean, re.IGNORECASE)
+        if not match:
+            continue
+        # Found a match — check if it's narrower (body has more args).
+        matched_text = match.group(0)
+        matched_norm = _normalize_command(matched_text)
+        if _is_narrower(matched_norm, gate_norm):
+            continue
+        # It's a duplicate — find which step this is for.
+        # Look backwards from the match to find the nearest ### Step N.
+        match_pos = match.start()
+        heads = re.findall(r"^###\s+Step\s+(\S+)", body_clean[:match_pos], re.M)
+        label = f"step {heads[-1]}" if heads else "a step"
+        findings.append(
+            f"{slug}: {label} instructs '{gate_cmd.strip()}' which is already "
+            f"declared in that step's local_checks -- the driver runs "
+            f"local_checks after the commit, so remove the manual run from "
+            f"the step body."
+        )
+    return findings
+
+
 ALL_CHECKS = (
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
@@ -1268,6 +1332,7 @@ ALL_CHECKS = (
     lint_balance_regression_flag,
     lint_unverifiable_test_selector,
     lint_budget_vs_gate_timeout,
+    lint_redundant_gate,
 )
 
 
