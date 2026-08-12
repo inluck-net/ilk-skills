@@ -258,6 +258,76 @@ test_different_projects_independent() {
   pass "AC-6: runners for different projects both proceed"
 }
 
+# AC-5: a refused second runner leaves no sentinel, no log, no run dir.
+test_refused_runner_leaves_no_trace() {
+  local tmpdir project_dir shared_home
+  tmpdir="$(mktemp -d)"
+  project_dir="$tmpdir/project-a"
+  shared_home="$tmpdir/shared-home"
+  mkdir -p "$project_dir" "$shared_home"
+
+  build_fixture_all_shipped "$project_dir" "$shared_home"
+
+  # Resolve the runtime dir and lock file path.
+  local key
+  key=$(project_key_for "$project_dir")
+  local runtime_dir="$shared_home/.ilk-data/projects/$key/runtime"
+  local lock_file="$runtime_dir/launcher/run.lock"
+  mkdir -p "$runtime_dir/launcher"
+
+  # Hold the lock directly via the helper (background) so it stays held
+  # while we attempt the real runner.  The all-shipped runner exits too
+  # fast for a race.
+  python3 "$LOCK_HELPER" --lock "$lock_file" -- sleep 30 &
+  local holder_pid=$!
+  sleep 0.3
+
+  # Snapshot the runtime dir state before the second attempt.
+  local sentinel_before="$tmpdir/sentinel_before"
+  if [[ -f "$runtime_dir/last-exit.json" ]]; then
+    cp "$runtime_dir/last-exit.json" "$sentinel_before"
+  fi
+  local run_dirs_before=0
+  if [[ -d "$shared_home/.ilk-data/projects/$key/logs/runs" ]]; then
+    run_dirs_before=$(find "$shared_home/.ilk-data/projects/$key/logs/runs" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
+  fi
+
+  # Attempt a real runner — must be refused.
+  local out2="$tmpdir/runner2.out"
+  local rc2=0
+  HOME="$shared_home" bash "$RUNNER" \
+    --project-path "$project_dir" --max-iterations 0 >"$out2" 2>&1 || rc2=$?
+
+  kill "$holder_pid" 2>/dev/null || true
+  wait "$holder_pid" 2>/dev/null || true
+
+  # The second runner must have been refused (exit 3).
+  if [[ $rc2 -ne 3 ]]; then
+    fail "AC-5: second runner should exit 3, got $rc2"
+    return
+  fi
+
+  # No new run directory was created.
+  local run_dirs_after=0
+  if [[ -d "$shared_home/.ilk-data/projects/$key/logs/runs" ]]; then
+    run_dirs_after=$(find "$shared_home/.ilk-data/projects/$key/logs/runs" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
+  fi
+  if [[ "$run_dirs_after" -gt "$run_dirs_before" ]]; then
+    fail "AC-5: refused runner created a new run dir ($run_dirs_before -> $run_dirs_after)"
+    return
+  fi
+
+  # Sentinel is byte-unchanged (if it existed before).
+  if [[ -f "$sentinel_before" ]]; then
+    if ! diff -q "$sentinel_before" "$runtime_dir/last-exit.json" >/dev/null 2>&1; then
+      fail "AC-5: refused runner modified the sentinel"
+      return
+    fi
+  fi
+
+  pass "AC-5: refused runner leaves no trace"
+}
+
 # ===========================================================================
 # Main
 # ===========================================================================
@@ -272,6 +342,7 @@ fi
 if [[ "$mode" == "full-runner" ]]; then
   test_same_project_double_start
   test_different_projects_independent
+  test_refused_runner_leaves_no_trace
 fi
 
 echo ""

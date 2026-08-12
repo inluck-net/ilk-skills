@@ -1492,32 +1492,14 @@ reap_iteration_orphans() {
 
 main() {
   parse_args "$@"
-  preflight
-  discover_git_repos
-  parse_master_branch_block
-  # Resolve the actual worker model for display + JSONL telemetry.
-  # Uses resolve_worker_model.py: flag > env > settings.json env block > unknown.
-  local _cfg_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-  local _resolver="${_SKILL_ROOT}/ilk-loop/scripts/resolve_worker_model.py"
-  if [[ -f "$_resolver" ]]; then
-    local _resolved
-    _resolved=$(python3 "$_resolver" --model "${MODEL:-}" --env-model "${ANTHROPIC_MODEL:-}" --config-dir "$_cfg_dir" 2>/dev/null) || _resolved="|unknown"
-    RESOLVED_MODEL="${_resolved%%|*}"
-    RESOLVED_MODEL_SOURCE="${_resolved##*|}"
-  else
-    RESOLVED_MODEL="${MODEL:-}"
-    RESOLVED_MODEL_SOURCE="unknown"
-  fi
-  print_banner
-  setup_branch || exit 1
 
   # --- Single-instance lock (per-project) ----------------------------------
   # Acquire an exclusive flock via ilk_run_lock.py and re-exec ourselves under
   # it.  The lock lives on the open file description, survives exec (FD_CLOEXEC
   # cleared), and is released by the kernel when the process dies — even
-  # SIGKILL.  Placement here is the contract: BEFORE the sentinel write, run
-  # directory creation, or running.pid write, so a refused second runner leaves
-  # no trace (AC-5).
+  # SIGKILL.  Placement here is the contract: BEFORE preflight (which creates
+  # the run directory), the sentinel write, or running.pid write, so a refused
+  # second runner leaves no trace (AC-5).
   if [[ -z "${ILK_RUN_LOCK_HELD:-}" ]]; then
     local runtime_dir_for_lock
     runtime_dir_for_lock=$(get_ilk_runtime_dir) || runtime_dir_for_lock=""
@@ -1540,6 +1522,25 @@ main() {
       exit 1
     fi
   fi
+
+  preflight
+  discover_git_repos
+  parse_master_branch_block
+  # Resolve the actual worker model for display + JSONL telemetry.
+  # Uses resolve_worker_model.py: flag > env > settings.json env block > unknown.
+  local _cfg_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  local _resolver="${_SKILL_ROOT}/ilk-loop/scripts/resolve_worker_model.py"
+  if [[ -f "$_resolver" ]]; then
+    local _resolved
+    _resolved=$(python3 "$_resolver" --model "${MODEL:-}" --env-model "${ANTHROPIC_MODEL:-}" --config-dir "$_cfg_dir" 2>/dev/null) || _resolved="|unknown"
+    RESOLVED_MODEL="${_resolved%%|*}"
+    RESOLVED_MODEL_SOURCE="${_resolved##*|}"
+  else
+    RESOLVED_MODEL="${MODEL:-}"
+    RESOLVED_MODEL_SOURCE="unknown"
+  fi
+  print_banner
+  setup_branch || exit 1
 
   # Determine remote type for commit trailer policy
   # Write to .ilk-remote-type so the agent knows whether to include trailers
