@@ -1025,6 +1025,58 @@ test_all_shipped() {
   (cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" >/dev/null 2>&1)
 }
 
+# Classify the loop status into exactly three outcomes:
+#   runnable         — at least one sub-plan can be picked up
+#   all-shipped      — every registered sub-plan is shipped
+#   blocked-no-runnable — outstanding sub-plans exist but none are runnable
+#
+# Uses loop_status.py --json to distinguish states that the exit-code
+# contract conflates (exit 0 covers both "all shipped" and "blocked, no
+# runnable"). Falls back to the exit-code heuristic if --json fails.
+#
+# Sets CLASSIFIED_STATUS and BLOCKED_SUBPLANS (space-separated fnames).
+classify_loop_status() {
+  local json_output
+  json_output=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null) || json_output=""
+
+  if [[ -z "$json_output" ]]; then
+    # Fallback: exit-code heuristic (today's behaviour).
+    if test_all_shipped; then
+      CLASSIFIED_STATUS="all-shipped"
+    else
+      CLASSIFIED_STATUS="runnable"
+    fi
+    BLOCKED_SUBPLANS=""
+    return 0
+  fi
+
+  local has_runnable blocked_fnames
+  has_runnable=$(python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read())
+subplans = data.get('subplans', [])
+runnable = [s for s in subplans if s.get('status') in ('pending', 'in-progress')]
+blocked = [s for s in subplans if s.get('status') not in ('shipped', 'pending', 'in-progress')]
+if runnable:
+    print('runnable')
+elif blocked:
+    print('blocked-no-runnable')
+else:
+    print('all-shipped')
+" <<<"$json_output") || has_runnable="runnable"
+
+  blocked_fnames=$(python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read())
+subplans = data.get('subplans', [])
+blocked = [s['fname'] for s in subplans if s.get('status') not in ('shipped', 'pending', 'in-progress')]
+print(' '.join(blocked))
+" <<<"$json_output") || blocked_fnames=""
+
+  CLASSIFIED_STATUS="$has_runnable"
+  BLOCKED_SUBPLANS="$blocked_fnames"
+}
+
 get_plans_dir() {
   # Resolve active plans dir via ilk_paths.py, with legacy walk-up fallback.
   local resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
@@ -1506,13 +1558,23 @@ main() {
     echo "Sentinel: skipped (no runtime dir resolved)"
   fi
 
-  # Initial check: already shipped?
-  if test_all_shipped; then
+  # Initial check: classify the loop status into runnable / all-shipped / blocked.
+  classify_loop_status
+  if [[ "$CLASSIFIED_STATUS" == "all-shipped" ]]; then
     echo "All sub-plans already shipped. Nothing to do."
     echo "[ilk] ALL SHIPPED — nothing to run. Do NOT relaunch."
     local ts
     ts=$(date +%Y-%m-%dT%H:%M:%S%z)
     write_jsonl_record "{\"run_id\":\"$RUN_ID\",\"cli\":\"claude\",\"iteration\":0,\"timestamp\":\"$ts\",\"project\":\"$PROJECT_PATH\",\"stop_reason\":\"already-shipped\"}"
+    return 0
+  elif [[ "$CLASSIFIED_STATUS" == "blocked-no-runnable" ]]; then
+    local blocked_count
+    blocked_count=$(echo "$BLOCKED_SUBPLANS" | wc -w | tr -d ' ')
+    echo "Blocked — ${blocked_count} sub-plan(s) parked for a human, 0 runnable: ${BLOCKED_SUBPLANS}. Nothing to do."
+    echo "[ilk] BLOCKED — ${blocked_count} sub-plan(s) parked for a human, 0 runnable: ${BLOCKED_SUBPLANS}. Do NOT relaunch."
+    local ts
+    ts=$(date +%Y-%m-%dT%H:%M:%S%z)
+    write_jsonl_record "{\"run_id\":\"$RUN_ID\",\"cli\":\"claude\",\"iteration\":0,\"timestamp\":\"$ts\",\"project\":\"$PROJECT_PATH\",\"stop_reason\":\"blocked-no-runnable\"}"
     return 0
   fi
 
@@ -1933,6 +1995,15 @@ print(json.dumps(d))
       stop_reason="all-shipped"
       break
     fi
+
+    classify_loop_status
+    if [[ "$CLASSIFIED_STATUS" == "all-shipped" ]]; then
+      stop_reason="all-shipped"
+      break
+    elif [[ "$CLASSIFIED_STATUS" == "blocked-no-runnable" ]]; then
+      stop_reason="blocked-no-runnable"
+      break
+    fi
   done
 
   if [[ -z "$stop_reason" ]]; then
@@ -1950,6 +2021,10 @@ print(json.dumps(d))
 
   if [[ "$stop_reason" == "all-shipped" ]]; then
     echo "[ilk] ALL SHIPPED — nothing to run. Do NOT relaunch."
+  elif [[ "$stop_reason" == "blocked-no-runnable" ]]; then
+    local blocked_count
+    blocked_count=$(echo "$BLOCKED_SUBPLANS" | wc -w | tr -d ' ')
+    echo "[ilk] BLOCKED — ${blocked_count} sub-plan(s) parked for a human, 0 runnable: ${BLOCKED_SUBPLANS}. Do NOT relaunch."
   fi
 
   # Sentinel teardown (state=<stop_reason>)
