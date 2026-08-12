@@ -151,6 +151,12 @@ local_checks:
 # Sub-plan: test
 
 A sub-plan with a normal pytest check.
+
+The gate names a directory, which is a whole suite (pytest collects the whole
+tree, so a collection error anywhere under it fails the gate). It therefore
+carries the note `lint_wholesuite_gate_baseline` requires: baseline-green on
+macOS 2026-08-12. Without it that unrelated lint fires and the "no WARN"
+assertion below stops testing the brittle-assertion lint it is written for.
 """
 
 _SUBPLAN_CURL = """\

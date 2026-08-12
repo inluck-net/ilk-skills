@@ -52,6 +52,12 @@ local_checks:
 # Sub-plan: test frontmatter path guard
 
 A frontmatter local_check references a path in scope_paths that doesn't exist.
+
+These fixtures gate on a directory, which is a whole suite (a collection error
+anywhere under the tree fails the gate), so they carry the note that
+`lint_wholesuite_gate_baseline` requires: baseline-green on macOS 2026-08-12.
+Without it that unrelated lint fires and the global "no WARN" assertions below
+stop testing what they claim.
 """
 
 
@@ -122,6 +128,12 @@ local_checks:
   - command: python -m pytest tools/xbar/tests/ -q
     timeout: 60
 ```
+
+These fixtures gate on a directory, which is a whole suite (a collection error
+anywhere under the tree fails the gate), so they carry the note that
+`lint_wholesuite_gate_baseline` requires: baseline-green on macOS 2026-08-12.
+Without it that unrelated lint fires and the global "no WARN" assertions below
+stop testing what they claim.
 """
 
 
@@ -235,6 +247,12 @@ local_checks:
 # Sub-plan: token not in scope_paths
 
 The frontmatter check references a path NOT in scope_paths — should not flag.
+
+These fixtures gate on a directory, which is a whole suite (a collection error
+anywhere under the tree fails the gate), so they carry the note that
+`lint_wholesuite_gate_baseline` requires: baseline-green on macOS 2026-08-12.
+Without it that unrelated lint fires and the global "no WARN" assertions below
+stop testing what they claim.
 """
 
 
@@ -295,6 +313,12 @@ local_checks:
 ---
 
 # Sub-plan: command references the dir; scope lists a file under it.
+
+These fixtures gate on a directory, which is a whole suite (a collection error
+anywhere under the tree fails the gate), so they carry the note that
+`lint_wholesuite_gate_baseline` requires: baseline-green on macOS 2026-08-12.
+Without it that unrelated lint fires and the global "no WARN" assertions below
+stop testing what they claim.
 """
 
 

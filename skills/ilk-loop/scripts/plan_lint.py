@@ -505,22 +505,70 @@ _BASELINE_GREEN_RE = re.compile(
 )
 
 
+# Flags that consume the NEXT token as their value.  Without this, e.g.
+# ``--timeout-method thread`` leaves "thread" looking like a bare path.
+_VALUE_TAKING_FLAGS = frozenset({
+    "-k", "-m", "-n", "-p", "-c", "-o", "-W",
+    "--timeout", "--timeout-method", "--tb", "--maxfail", "--ignore",
+    "--deselect", "--durations", "--rootdir", "-r",
+})
+
+# A selector genuinely narrows which tests run; keep treating it as scoped.
+_SELECTOR_FLAGS = frozenset({"-k", "--deselect"})
+
+_TEST_FILE_EXT_RE = re.compile(r"\.(?:py|ts|tsx|js|jsx|mjs)$", re.IGNORECASE)
+
+
+def _is_directory_arg(token: str) -> bool:
+    """True if *token* names a DIRECTORY tree rather than one test file.
+
+    A directory argument does not scope a suite in any way this lint cares
+    about: pytest still collects the whole tree, so a collection error or a
+    baseline-red test anywhere under it fails the gate.  Treating it as "scoped"
+    hid 47 of 131 effectively-whole-suite gates across the real corpus (35%),
+    including the two most common gate forms in it (``pytest tests/ -q``, 33
+    occurrences; ``pytest tests/ -x -q``, 17).
+
+    A single file or a ``::node_id`` is genuinely scoped and returns False.
+    """
+    if "::" in token:
+        return False                          # node id → one test
+    if _TEST_FILE_EXT_RE.search(token):
+        return False                          # a single test file
+    # Require a path shape so a stray bare word is never read as a directory.
+    return token.endswith("/") or "/" in token or token in {"tests", "test", "src"}
+
+
 def _is_whole_suite_command(cmd: str) -> bool:
     """True if *cmd* runs a pre-existing whole test suite (no file scope)."""
     cmd_stripped = cmd.strip()
     if not _WHOLE_SUITE_CMD_RE.search(cmd_stripped):
         return False
-    # For pytest/vitest/jest: any non-flag positional arg scopes the run
-    # (a file path, a directory, a node id).  Only truly bare invocations
-    # (nothing but flags after the runner) count as whole-suite.
+    # For pytest/vitest/jest, decide from the positional args: a single file or
+    # node id scopes the run; a DIRECTORY does not (it runs the whole tree).
     if re.search(r"\b(?:pytest|py\.test|vitest|jest)\b", cmd_stripped, re.IGNORECASE):
         tokens = cmd_stripped.split()
-        positional = [
-            t for t in tokens[1:]  # skip the runner itself
-            if not t.startswith("-") and t not in _NON_PATH_TOKENS
-        ]
+        positional: list[str] = []
+        skip_next = False
+        for tok in tokens[1:]:  # skip the leading program name
+            if skip_next:
+                skip_next = False
+                continue
+            if tok.startswith("-"):
+                # ``--flag=value`` carries its value inline; ``--flag value``
+                # consumes the next token.
+                if "=" not in tok and tok in _VALUE_TAKING_FLAGS:
+                    skip_next = True
+                if tok.split("=", 1)[0] in _SELECTOR_FLAGS:
+                    return False  # a -k/--deselect selector scopes the run
+                continue
+            if tok in _NON_PATH_TOKENS:
+                continue
+            positional.append(tok)
+        if any(_is_directory_arg(t) for t in positional):
+            return True   # a directory tree → whole suite
         if positional:
-            return False  # has a positional arg → scoped
+            return False  # file paths / node ids only → genuinely scoped
     return True
 
 
