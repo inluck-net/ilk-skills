@@ -1,0 +1,20 @@
+[runner] CLAUDE_CONFIG_DIR=/Users/chad/.claude-worker
+Detected /Users/chad/.claude-worker/settings.json env block -- it will be the sole auth source.
+
+=== ilk-loop runner (Claude Code) ===
+Project:        <TMP>/j3z50bn91wxg0khgvhmxftd80000gn/T/tmp.Y23jjjSnS6/fixture-a
+Repos found:    1
+  - <TMP>/j3z50bn91wxg0khgvhmxftd80000gn/T/tmp.Y23jjjSnS6/fixture-a
+Max iterations: 1
+Iter timeout:   30 min
+Model:          mimo-v2.5-pro (from env)
+API base:       https://token-plan-cn.xiaomimimo.com/anthropic
+Per-iter budget: unlimited
+MCP config:     (default -- worker sees user's full MCP registry)
+Run logs:       <TMP>/j3z50bn91wxg0khgvhmxftd80000gn/T/tmp.Y23jjjSnS6/fixture-a/.ilk-data/projects/<PROJECT_KEY>/logs/runs/20260812-101204
+JSONL summary:  <TMP>/j3z50bn91wxg0khgvhmxftd80000gn/T/tmp.Y23jjjSnS6/fixture-a/.ilk-data/projects/<PROJECT_KEY>/logs/.ilk-loop.log
+
+[runner] remote type: shared (remote: origin)
+Sentinel: <TMP>/j3z50bn91wxg0khgvhmxftd80000gn/T/tmp.Y23jjjSnS6/fixture-a/.ilk-data/projects/<PROJECT_KEY>/runtime/last-exit.json (state=running)
+All sub-plans already shipped. Nothing to do.
+[ilk] ALL SHIPPED — nothing to run. Do NOT relaunch.
