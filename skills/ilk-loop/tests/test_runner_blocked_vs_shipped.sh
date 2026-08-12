@@ -26,7 +26,9 @@ normalise() {
     -e 's|/private/var/folders/[^ /]+|<TMP>|g' \
     -e 's|/var/folders/[^ /]+|<TMP>|g' \
     -e 's|/tmp/[^ /]+|<TMP>|g' \
-    -e 's|private-var-folders-[a-z0-9-]+-t-tmp-[a-z0-9-]+|<PROJECT_KEY>|g'
+    -e 's|tmp\.[A-Za-z0-9]+|tmp.<RAND>|g' \
+    -e 's|private-var-folders-[a-z0-9-]+-t-tmp-[a-z0-9-]+|<PROJECT_KEY>|g' \
+    -e 's|runs/[0-9]{8}-[0-9]{6}|runs/<RUN_TS>|g'
 }
 
 # --- helpers: build fixture project dirs -----------------------------------
@@ -39,7 +41,7 @@ sys.path.insert(0, '$REPO_ROOT/skills/ilk-loop/scripts')
 from ilk_paths import project_key
 from pathlib import Path
 print(project_key(Path('$1')))
-"
+" 2>/dev/null
 }
 
 build_fixture_all_shipped() {
@@ -147,10 +149,10 @@ if [[ "${1:-}" == "--compare-golden" ]]; then
   fi
   tmp_dir=$(mktemp -d)
   trap 'rm -rf "$tmp_dir"' EXIT
-  build_fixture_all_shipped "$tmp_dir"
+  build_fixture_all_shipped "$tmp_dir/fixture-a"
 
-  env HOME="$tmp_dir" ILK_SKILL_HOME="$REPO_ROOT/skills" \
-    bash "$RUNNER" --project-path "$tmp_dir" --max-iterations 1 2>&1 \
+  env HOME="$tmp_dir/fixture-a" ILK_SKILL_HOME="$REPO_ROOT/skills" ILK_DATA_HOME="$tmp_dir/fixture-a/.ilk-data" \
+    bash "$RUNNER" --project-path "$tmp_dir/fixture-a" --max-iterations 1 2>&1 \
     | normalise > "$tmp_dir/actual.txt"
 
   if ! diff -q "$GOLDEN_FILE" "$tmp_dir/actual.txt" >/dev/null 2>&1; then
@@ -171,7 +173,7 @@ trap 'rm -rf "$TMPDIR_TEST"' EXIT
 echo "=== Fixture A: all shipped ==="
 build_fixture_all_shipped "$TMPDIR_TEST/fixture-a"
 
-out_a=$(HOME="$TMPDIR_TEST/fixture-a" ILK_SKILL_HOME="$REPO_ROOT/skills" \
+out_a=$(HOME="$TMPDIR_TEST/fixture-a" ILK_SKILL_HOME="$REPO_ROOT/skills" ILK_DATA_HOME="$TMPDIR_TEST/fixture-a/.ilk-data" \
   bash "$RUNNER" --project-path "$TMPDIR_TEST/fixture-a" --max-iterations 1 2>&1) && rc_a=0 || rc_a=$?
 
 echo "$out_a" | normalise > "$TMPDIR_TEST/fixture-a-stdout.txt"
@@ -206,7 +208,7 @@ echo ""
 echo "=== Fixture B: blocked only ==="
 build_fixture_blocked_only "$TMPDIR_TEST/fixture-b"
 
-out_b=$(HOME="$TMPDIR_TEST/fixture-b" ILK_SKILL_HOME="$REPO_ROOT/skills" \
+out_b=$(HOME="$TMPDIR_TEST/fixture-b" ILK_SKILL_HOME="$REPO_ROOT/skills" ILK_DATA_HOME="$TMPDIR_TEST/fixture-b/.ilk-data" \
   bash "$RUNNER" --project-path "$TMPDIR_TEST/fixture-b" --max-iterations 1 2>&1) && rc_b=0 || rc_b=$?
 
 echo "$out_b" | normalise > "$TMPDIR_TEST/fixture-b-stdout.txt"
@@ -215,21 +217,30 @@ if [[ "$rc_b" -ne 0 ]]; then
   fail "fixture B: expected exit 0, got exit $rc_b"
 fi
 
-# The defect: fixture B currently reports "already-shipped" (wrong answer).
-# Gate this as KNOWN_BAD until step 2 fixes it.
-KNOWN_BAD="${KNOWN_BAD:-0}"
+# AC-2: fixture B must report "blocked", not "already-shipped".
 if [[ "$out_b" == *"All sub-plans already shipped"* ]]; then
-  if [[ "$KNOWN_BAD" == "1" ]]; then
-    echo "  [KNOWN_BAD] fixture B: correctly detected the defect (reports already-shipped)"
-  else
-    fail "fixture B: reports 'already-shipped' — the defect is present (set KNOWN_BAD=1 to accept)"
+  fail "fixture B: reports 'already-shipped' — should report blocked"
+fi
+
+if [[ "$out_b" != *"BLOCKED"* ]]; then
+  fail "fixture B: expected 'BLOCKED' in output"
+fi
+
+if [[ "$out_b" != *"2026-08-12-task-b.md"* ]]; then
+  fail "fixture B: expected blocked sub-plan name in output"
+fi
+
+# AC-2: check JSONL stop_reason
+jsonl_b=$(find "$TMPDIR_TEST/fixture-b/.ilk-data" -name "*.jsonl" -type f 2>/dev/null | head -1)
+if [[ -n "$jsonl_b" ]]; then
+  if ! grep -q '"stop_reason":"blocked-no-runnable"' "$jsonl_b" 2>/dev/null; then
+    fail "fixture B: expected stop_reason 'blocked-no-runnable' in JSONL"
   fi
-else
-  if [[ "$KNOWN_BAD" == "1" ]]; then
-    fail "fixture B: defect appears fixed — remove KNOWN_BAD=1 guard"
-  else
-    echo "  fixture B: correctly does NOT report already-shipped"
-  fi
+fi
+
+# AC-3: both paths must return 0
+if [[ "$rc_b" -ne 0 ]]; then
+  fail "fixture B: expected exit 0, got exit $rc_b"
 fi
 
 # --- report ----------------------------------------------------------------
