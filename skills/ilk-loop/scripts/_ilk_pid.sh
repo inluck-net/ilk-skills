@@ -18,6 +18,34 @@
 # The patterns must cover the *pidfile writer*, not just the loop script:
 # running.pid names the `bash -c` wrapper, whose command line embeds the
 # run_ilk_loop_* invocation (verified against a live loop, 2026-08-10).
+# Echo the PIDs of live runner processes for $1 (a project path), one per
+# line. Derived from the process table, not from any pid file: running.pid
+# named 1 of 10 live runners on 2026-08-12.
+ilk_project_runners() {
+  local project_path="$1"
+  [[ -n "$project_path" ]] || return 1
+
+  # Normalise: strip trailing slash, resolve symlinks via cd+pwd -P so
+  # /tmp vs /private/tmp on macOS does not cause a miss.
+  local norm="${project_path%/}"
+  local resolved
+  resolved="$(cd "$norm" 2>/dev/null && pwd -P)" || resolved="$norm"
+
+  # Match both the bash -c wrapper and the run_ilk_loop_claude.sh process.
+  # Literal substring (not regex) — pgrep -f is regex and needs path escaping.
+  # Exclude self ($$), parent ($PPID), and grep/this function from results.
+  ps -eo pid,command | awk -v pat="$norm" -v pat2="$resolved" '
+    $0 ~ /run_ilk_loop_claude/ && ($0 ~ pat || $0 ~ pat2) {
+      # Skip lines containing our own grep or this function
+      if ($0 ~ /ilk_project_runners/) next
+      if ($0 ~ /grep.*run_ilk_loop/) next
+      print $1
+    }
+  ' | awk 'NF' | while read -r pid; do
+    [[ "$pid" != "$$" && "$pid" != "$PPID" ]] && echo "$pid"
+  done | grep .
+}
+
 ilk_pid_alive() {
   local pid="$1"
   [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]] || return 1

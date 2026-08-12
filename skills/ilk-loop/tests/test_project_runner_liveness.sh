@@ -167,6 +167,31 @@ if [[ "${KNOWN_BAD:-0}" -ne 1 ]]; then
   fail "case 2: live runner $fake_runner_pid invisible; stale pid $plain_pid in running.pid (KNOWN_BAD not set)"
 fi
 
+# --- unit tests: ilk_project_runners (AC-1 / AC-2) ----------------------------
+# These verify the new helper that step 1 adds to _ilk_pid.sh.
+# The fake runner (started above) is still alive.
+
+# AC-1: echoes PIDs of live runners whose command line matches the project path.
+runner_pids="$(ilk_project_runners "$PROJECT_PATH" || true)"
+if [[ -z "$runner_pids" ]]; then
+  fail "AC-1: ilk_project_runners returned no PIDs for a project with a live runner"
+elif ! echo "$runner_pids" | grep -q "^${fake_runner_pid}$"; then
+  fail "AC-1: ilk_project_runners returned '$runner_pids' but expected to find $fake_runner_pid"
+fi
+
+# AC-2: does NOT match the checking process itself.
+# Source again in a subshell to check that $$ and $PPID are excluded.
+self_check="$(ilk_project_runners "$PROJECT_PATH" 2>&1 | grep -c "^$$\$" || true)"
+if [[ "$self_check" -ne 0 ]]; then
+  fail "AC-2: ilk_project_runners matched the checking process ($$)"
+fi
+
+# AC-1 negative: no runners for a different project path.
+other_pids="$(ilk_project_runners "/tmp/nonexistent-project" 2>/dev/null || true)"
+if [[ -n "$other_pids" ]]; then
+  fail "AC-1 negative: ilk_project_runners returned '$other_pids' for a nonexistent project"
+fi
+
 # --- report -------------------------------------------------------------------
 if [[ "${#failures[@]}" -gt 0 ]]; then
   echo "FAIL — ${#failures[@]} failure(s):"
