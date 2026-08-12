@@ -160,8 +160,13 @@ if m: print(m.group(1))
   fi
 
   # Find candidate processes whose command line matches the run ID or
-  # project path.  Exclude this shell and the stopped PID itself.
+  # project path.  Exclude this shell, its parent, its process group,
+  # and the stopped PID itself — the scan must never kill stop.sh or
+  # its wrapper (AC-1).  Exclusion by identity, not by narrowing the
+  # match pattern, so genuine orphans are still found (AC-2).
   local my_pid=$$
+  local my_pgid=""
+  my_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]') || true
   local found=0
   while IFS= read -r line; do
     local cpid
@@ -169,16 +174,28 @@ if m: print(m.group(1))
     [[ -z "$cpid" ]] && continue
     [[ "$cpid" == "$stopped_pid" ]] && continue
     [[ "$cpid" == "$my_pid" ]] && continue
+    [[ "$cpid" == "$PPID" ]] && continue
 
-    # Skip if this PID is the grep itself
+    # Skip processes in stop.sh's own process group (this shell and
+    # any wrapper that spawned it).
+    if [[ -n "$my_pgid" ]]; then
+      local cpgid=""
+      cpgid=$(ps -o pgid= -p "$cpid" 2>/dev/null | tr -d '[:space:]') || true
+      [[ -n "$cpgid" && "$cpgid" == "$my_pgid" ]] && continue
+    fi
+
+    # Skip if this process is stop.sh itself (command contains stop.sh
+    # or the kill_orphans function name).
     local cmd
     cmd=$(echo "$line" | sed 's/^[[:space:]]*[0-9]*[[:space:]]*//')
-    echo "$cmd" | grep -q "kill_orphans" && continue
+    case "$cmd" in
+      *stop.sh*|*kill_orphans*) continue ;;
+    esac
 
     echo "[$name] orphan scan: killing PID $cpid — ${cmd:0:120}" >&2
     kill "$cpid" 2>/dev/null || true
     found=$((found + 1))
-  done < <(ps -ax -o pid=,command= 2>/dev/null | grep -E "$run_id|$project_path" | grep -v "grep" || true)
+  done < <(ps -ax -o pid=,command= 2>/dev/null | grep -E "$run_id|$project_path" | grep -v " grep " || true)
 
   if [[ "$found" -eq 0 ]]; then
     echo "[$name] orphan scan: no orphaned workers found." >&2
