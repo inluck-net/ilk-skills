@@ -83,8 +83,15 @@ def _setup_project(tmp_path: Path, *, master_status: str = "queued",
 class TestGateWalkSkeleton:
     """The gate walk: gates 1-2 are implemented; the rest return unknown."""
 
-    def test_unimplemented_gates_return_unknown(self, tmp_path):
-        """Gates 0, 3-7 return status=unknown with evidence='not implemented'."""
+    def test_no_gate_is_an_unimplemented_stub(self, tmp_path):
+        """Every gate in GATE_ORDER is implemented.
+
+        This test previously asserted the OPPOSITE — that `blacklist` returned
+        ``unknown: not implemented``.  It shipped that way: the step-0 skeleton
+        placeholder was never replaced, and the test locked it in.  A permanently
+        `unknown` gate makes every verdict `unknown`, which trains the operator
+        to ignore the field.  Inverted 2026-08-12 when the gate was implemented.
+        """
         project = _setup_project(tmp_path)
         original = doctor._resolve_plans_dir
         doctor._resolve_plans_dir = lambda p: project / "docs" / "plans"
@@ -94,18 +101,8 @@ class TestGateWalkSkeleton:
             doctor._resolve_plans_dir = original
 
         assert len(report.gates) == 8, f"Expected 8 gates, got {len(report.gates)}"
-        unimplemented = [
-            "blacklist",
-        ]
-        for gate in report.gates:
-            if gate.name in unimplemented:
-                assert gate.status == "unknown", (
-                    f"Gate {gate.name!r} should be unknown, got {gate.status}"
-                )
-                assert gate.evidence == "not implemented", (
-                    f"Gate {gate.name!r} evidence should be 'not implemented', "
-                    f"got {gate.evidence!r}"
-                )
+        stubs = [g.name for g in report.gates if "not implemented" in g.evidence]
+        assert not stubs, f"gates still stubbed out: {stubs}"
 
     def test_walk_stops_at_first_blocked(self, tmp_path):
         """The walk stops at the first gate returning blocked."""
@@ -145,15 +142,31 @@ class TestGateWalkSkeleton:
         assert "master-status" in report.verdict
 
     def test_unknown_never_counts_as_pass(self, tmp_path):
-        """A report with any unknown gate never says 'pass'."""
+        """AC-3: a report with any unknown gate never says 'pass'.
+
+        The unknown is now injected explicitly.  This test used to rely on the
+        `blacklist` gate being a permanent stub, so it passed for the wrong
+        reason and would have gone green even if the invariant broke.
+        """
         project = _setup_project(tmp_path)
-        original = doctor._resolve_plans_dir
+        original_plans = doctor._resolve_plans_dir
+        original_gate = doctor._gate_config_resolution
         doctor._resolve_plans_dir = lambda p: project / "docs" / "plans"
+        doctor._gate_config_resolution = lambda *a, **k: doctor.GateResult(
+            name="config-resolution",
+            status="unknown",
+            evidence="injected: cannot read .ilk-launch.json",
+            artifact="<test>",
+        )
         try:
             report = doctor.run_doctor(project, sample_interval=0.1)
         finally:
-            doctor._resolve_plans_dir = original
+            doctor._resolve_plans_dir = original_plans
+            doctor._gate_config_resolution = original_gate
 
+        assert any(g.status == "unknown" for g in report.gates), (
+            "the injected unknown gate did not reach the report"
+        )
         assert "pass" not in report.verdict, (
             f"Verdict should not contain 'pass' when gates are unknown: {report.verdict}"
         )

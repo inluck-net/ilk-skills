@@ -26,6 +26,8 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent
 _SKILL_ROOT = _SCRIPTS_DIR.parent.parent  # skills/ilk-runner → skills → repo root
 sys.path.insert(0, str(_SKILL_ROOT / "ilk-loop" / "scripts"))
 
+import ilk_paths  # noqa: E402
+
 from plan_status import (  # noqa: E402
     extract_subplan_files,
     is_master_runnable_status,
@@ -33,6 +35,24 @@ from plan_status import (  # noqa: E402
     normalize_master_status,
     parse_frontmatter,
 )
+from loop_status import pick_active_master  # noqa: E402
+
+sys.path.insert(0, str(_SKILL_ROOT / "ilk-watchdog" / "scripts"))
+from blacklist_status import is_blacklisted  # noqa: E402
+
+
+def _pick_master(masters: list[Path]) -> Path:
+    """Choose the master whose state the verdict should reflect.
+
+    ``pick_active_master`` is the canonical manual-path selector: exactly one
+    ``active`` wins; otherwise the highest-priority ``queued``; otherwise the
+    newest by mtime.  Using ``sorted(...)[0]`` instead — as this tool
+    originally did — reports whichever master sorts first by filename, which
+    on a real project meant answering "all work complete" from a master two
+    months stale while an ``active`` one was mid-run.
+    """
+    chosen, _ = pick_active_master(masters, json_mode=True)
+    return chosen
 
 # Gate result status values.
 GateStatus = Literal["pass", "blocked", "unknown"]
@@ -184,8 +204,8 @@ def _gate_master_status(plans_dir: Path) -> GateResult:
             artifact=artifact,
         )
 
-    # Use the first master found (sorted by filename).
-    master_path = masters[0]
+    # The ACTIVE master decides the verdict — not the first by filename.
+    master_path = _pick_master(masters)
     artifact = str(master_path)
 
     try:
@@ -259,7 +279,7 @@ def _gate_subplan_statuses(plans_dir: Path) -> GateResult:
             artifact=artifact,
         )
 
-    master_path = masters[0]
+    master_path = _pick_master(masters)
     artifact = str(master_path)
 
     try:
@@ -329,12 +349,47 @@ def _gate_subplan_statuses(plans_dir: Path) -> GateResult:
 
 
 def _gate_blacklist(project_data: Path) -> GateResult:
-    """Gate 3: blacklist / backoff via blacklist_status.py."""
+    """Gate 3: blacklist / backoff via blacklist_status.is_blacklisted.
+
+    Reuses the scheduler's own decision function so the doctor can never
+    disagree with the component that actually parks the project.
+    """
+    artifact = str(project_data / "runtime" / "launcher" / "postmortems")
+    try:
+        state = is_blacklisted(project_data)
+    except Exception as exc:  # noqa: BLE001 — a broken probe must not read as pass
+        return GateResult(
+            name="blacklist",
+            status="unknown",
+            evidence=f"cannot evaluate blacklist: {type(exc).__name__}: {exc}",
+            artifact=artifact,
+        )
+
+    classification = state.get("classification") or "none"
+    reason = state.get("reason") or "unspecified"
+
+    if state.get("blacklisted"):
+        expiry = state.get("expiry") or "no expiry recorded"
+        return GateResult(
+            name="blacklist",
+            status="blocked",
+            evidence=(
+                f"project is parked: {reason} "
+                f"(classification={classification}, expiry={expiry}) — "
+                f"clear it with an ack via /ilk-resume"
+            ),
+            artifact=artifact,
+        )
+
+    ack = state.get("ack_cleared_at")
+    detail = f"classification={classification}, reason={reason}"
+    if ack:
+        detail += f", resume-ack at {ack}"
     return GateResult(
         name="blacklist",
-        status="unknown",
-        evidence="not implemented",
-        artifact=str(project_data / "runtime" / "launcher"),
+        status="pass",
+        evidence=f"not blacklisted ({detail})",
+        artifact=artifact,
     )
 
 
@@ -470,11 +525,32 @@ def _gate_sentinel_vs_reality(project_data: Path,
     artifact = str(sentinel_path)
 
     if not sentinel_path.exists():
+        # "No sentinel" has two very different meanings, and calling both
+        # "no run has started" is a false inference: on 2026-08-12 this gate
+        # said exactly that about a project whose run had just finished 10
+        # iterations (gate 0 had read iter-10.log from it moments earlier).
+        # A completed run that left no sentinel is the record-erasure case
+        # v0.9.57 fixed — it is a finding, not a pass.
+        runs_dir = project_data / "logs" / "runs"
+        run_ids: list[str] = []
+        if runs_dir.is_dir():
+            run_ids = sorted(p.name for p in runs_dir.iterdir() if p.is_dir())
+        if not run_ids:
+            return GateResult(
+                name="sentinel-vs-reality",
+                status="pass",
+                evidence=f"no last-exit.json and no run directories — no run has started",
+                artifact=artifact,
+            )
         return GateResult(
             name="sentinel-vs-reality",
-            status="pass",
-            evidence="no last-exit.json (no run has started)",
-            artifact=artifact,
+            status="unknown",
+            evidence=(
+                f"no last-exit.json, but {len(run_ids)} run dir(s) exist "
+                f"(newest: {run_ids[-1]}) — a run executed and left no exit "
+                f"sentinel, so its outcome cannot be read here"
+            ),
+            artifact=f"{artifact} (runs: {runs_dir})",
         )
 
     try:
@@ -674,30 +750,34 @@ def run_doctor(project_path: Path, sample_interval: float = 20.0) -> DoctorRepor
 
 
 def _resolve_project_data(project_path: Path) -> Path:
-    """Resolve the .ilk-data directory for a project.
+    """Resolve the project's OWN data dir: ``<data root>/projects/<key>``.
 
-    Checks $ILK_DATA_HOME first, then ~/.ilk-data.
+    Delegates to ``ilk_paths`` — do NOT re-derive the key here.  The original
+    implementation returned the data *root* and built the key with
+    ``str(path).replace("/", "-")``, which produced two defects:
+
+    * every gate consulted ``~/.ilk-data/logs/runs`` and
+      ``~/.ilk-data/runtime/launcher/run.lock`` instead of the paths under
+      ``projects/<key>/`` — and reported the resulting absence as ``pass``;
+    * the key was not lowercased and had no length cap, so it diverged from
+      the canonical key.  That only *appeared* to work because macOS APFS is
+      case-insensitive; on a case-sensitive volume it resolved to nothing.
+
+    ``ilk_paths.project_key`` also applies the 80-char cap with a sha1 suffix,
+    which a hand-rolled key silently gets wrong for deep paths.
     """
-    import os
-    data_home = os.environ.get("ILK_DATA_HOME") or os.environ.get("ILK_DATA_DIR")
-    if data_home:
-        return Path(data_home)
-    return Path.home() / ".ilk-data"
+    return ilk_paths.project_data_dir(ilk_paths.project_key(project_path))
 
 
 def _resolve_plans_dir(project_path: Path) -> Path:
     """Resolve the plans directory for a project.
 
-    Tries external ~/.ilk-data first, then legacy in-tree docs/plans/.
+    Tries external ``~/.ilk-data/projects/<key>/plans`` first, then legacy
+    in-tree ``docs/plans/``.
     """
-    # Try to derive project key from path.
-    project_data = _resolve_project_data(project_path)
-    # The project key is the path with slashes replaced by hyphens.
-    key = str(project_path).replace("/", "-").lstrip("-")
-    external = project_data / "projects" / key / "plans"
+    external = _resolve_project_data(project_path) / "plans"
     if external.exists():
         return external
-    # Legacy in-tree.
     legacy = project_path / "docs" / "plans"
     if legacy.exists():
         return legacy
