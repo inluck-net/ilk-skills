@@ -32,6 +32,10 @@ from blacklist_status import is_blacklisted  # noqa: E402
 
 # Reuse loop_status helpers for frontmatter parsing and ordering.
 from loop_status import extract_master_order, find_plans_dir, parse_frontmatter  # noqa: E402
+# Single source of truth for "which sub-plan statuses can the loop pick up".
+# Imported rather than copied: a second literal here is what let the tray and
+# loop_status disagree about the next sub-plan (2026-08-14).
+from plan_status import _RUNNABLE_SUBPLAN_STATUSES  # noqa: E402
 
 
 # ── sentinel state vocabulary ──────────────────────────────────────────
@@ -189,7 +193,17 @@ def _blocked_info(
 
 
 def _resolve_next_subplan(plans_dir: Path, master_text: str) -> tuple[str, str]:
-    """Return (next_subplan_slug, step_string) from a master's sub-plans."""
+    """Return (next_subplan_slug, step_string) for the first RUNNABLE sub-plan.
+
+    "Runnable" — not merely "un-shipped".  A ``blocked`` sub-plan is outstanding
+    work that nothing the loop does will advance until a human unblocks it, so
+    reporting it as *next* narrates a stalled plan as the live one.  See
+    ``plan_status.master_has_runnable`` for the canonical statement of this
+    distinction; this function deliberately reuses its status set rather than
+    keeping a second copy, because the two drifting apart is exactly the defect
+    observed on 2026-08-14 (the tray showed a blocked ``2/4`` sub-plan while the
+    loop was working a different one at ``1/5``).
+    """
     ordered = extract_master_order(master_text)
     for fname in ordered:
         path = plans_dir / fname
@@ -198,7 +212,9 @@ def _resolve_next_subplan(plans_dir: Path, master_text: str) -> tuple[str, str]:
         text = path.read_text(encoding="utf-8-sig")
         fm = parse_frontmatter(text)
         status = fm.get("status", "pending")
-        if status == "shipped":
+        if status not in _RUNNABLE_SUBPLAN_STATUSES:
+            # shipped / blocked / skipped-by-operator — not something the loop
+            # can pick up next.
             continue
         slug = fm.get("plan", fname.replace(".md", ""))
         cur = fm.get("current_step", "?")
