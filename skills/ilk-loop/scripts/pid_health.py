@@ -5,10 +5,15 @@ duplicated PID-check logic with inconsistent semantics.
 
 Usage::
 
-    from pid_health import pid_alive, pid_command_alive, validate_pid
+    from pid_health import pid_alive, ilk_pid_alive, validate_pid
 
-    alive = pid_alive(12345)
+    alive = pid_alive(12345)          # does *some* process hold this PID?
+    ours  = ilk_pid_alive(12345)      # …and is it an ilk process?
     ok, reason = validate_pid(12345, expected_command="python3")
+
+Anything reading a *sentinel* or *pidfile* wants ``ilk_pid_alive``: the
+PID recorded there was written by a past run and may since have been
+recycled.  ``pid_alive`` is for PIDs you hold yourself.
 """
 from __future__ import annotations
 
@@ -47,6 +52,97 @@ def pid_alive(pid: int) -> bool:
     except (ProcessLookupError, OSError):
         return False
     return True
+
+
+def pid_cmdline(pid: int) -> str | None:
+    """Return the *full* command line for *pid*, or ``None`` if unavailable.
+
+    Distinct from ``_pid_command_name``, which returns only the base
+    executable name: every ilk runner is ``bash``/``pwsh``/``python3``,
+    so the base name cannot tell an ilk loop from any other shell.  The
+    script path lives in argv[1..], which only the full command line has.
+    """
+    if pid <= 0:
+        return None
+    if sys.platform == "win32":
+        # tasklist has no command-line column; CIM does.
+        try:
+            out = subprocess.check_output(
+                ["powershell", "-NoProfile", "-Command",
+                 f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=15,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+            return None
+        return out.strip() or None
+    # Linux: /proc/<pid>/cmdline is NUL-separated argv.
+    cmdline = f"/proc/{pid}/cmdline"
+    if os.path.exists(cmdline):
+        try:
+            with open(cmdline, "rb") as fh:
+                raw = fh.read()
+            argv = [p.decode(errors="replace") for p in raw.split(b"\x00") if p]
+            if argv:
+                return " ".join(argv)
+        except OSError:
+            pass
+    # macOS / BSD: -ww defeats the width-based truncation ps applies to argv.
+    try:
+        out = subprocess.check_output(
+            ["ps", "-ww", "-p", str(pid), "-o", "command="],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    return out.strip() or None
+
+
+# Command-line substrings that identify a process as belonging to ilk.
+# Kept byte-identical to the `case` patterns in _ilk_pid.sh:ilk_pid_alive —
+# the two implementations answer the same question for the same pidfiles,
+# and a divergence between them is a status display that contradicts the
+# scheduler.  Matched case-insensitively against the full command line.
+ILK_PROCESS_PATTERNS = (
+    "run_ilk_loop",
+    "watchdog.sh",
+    "watchdog.ps1",
+    "scheduler.sh",
+    "scheduler_scan",
+    "scheduler.ps1",
+)
+
+
+def ilk_pid_alive(pid: int) -> bool:
+    """True only when *pid* is alive AND is actually an ilk process.
+
+    Python mirror of ``_ilk_pid.sh:ilk_pid_alive`` (bash), which the
+    scheduler and launcher already use.  ``pid_alive`` alone answers
+    "does *some* process hold this PID", which is not the question a
+    sentinel asks: PIDs are recycled, so a run abandoned before it could
+    write a terminal state reads as live again the moment the OS hands
+    its number to an unrelated process.
+
+    Observed 2026-08-13: a gh-triage sentinel written 2026-07-08 named
+    PID 18920, which by then belonged to a ``/bin/zsh -c … pytest``
+    shell — the menu-bar count said two loops were running while only
+    one was.
+
+    An unreadable command line falls back to bare liveness: over-
+    reporting a run as live is the safe direction, since the stale-
+    running path it would otherwise take is what parks a project.
+    """
+    if not pid_alive(pid):
+        return False
+    cmd = pid_cmdline(pid)
+    if not cmd:
+        # Can't determine the command; treat alive as sufficient.
+        return True
+    low = cmd.lower()
+    return any(pat in low for pat in ILK_PROCESS_PATTERNS)
 
 
 def _pid_command_name(pid: int) -> str | None:

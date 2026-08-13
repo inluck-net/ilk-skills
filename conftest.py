@@ -18,8 +18,12 @@ works when invoked one directory at a time.
 
 from __future__ import annotations
 
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+import pytest
 
 _ROOT = Path(__file__).resolve().parent
 
@@ -72,6 +76,50 @@ def _ambiguous_module_names() -> set[str]:
 
 
 _AMBIGUOUS = _ambiguous_module_names()
+
+
+# Stub source for `live_ilk_pid`.  The orphan check is a safety net: if
+# pytest is killed before teardown, the stub notices its parent changed
+# and exits on its own rather than sleeping out the hour.
+_STUB_SRC = """\
+import os
+import time
+
+_parent = os.getppid()
+_deadline = time.time() + 3600
+while time.time() < _deadline:
+    time.sleep(0.5)
+    if os.getppid() != _parent:
+        break
+"""
+
+
+@pytest.fixture(scope="session")
+def live_ilk_pid():
+    """PID of a live process that reads as an ilk runner.
+
+    Sentinel liveness is command-verified (``pid_health.ilk_pid_alive``),
+    so ``os.getpid()`` can no longer stand in for "a running loop" — the
+    pytest process is precisely the unrelated command a recycled PID
+    lands on, which is the bug that check exists to catch.  A test that
+    needs a *live run* needs a process whose argv names a runner.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        stub = Path(tmpdir) / "run_ilk_loop_stub.py"
+        stub.write_text(_STUB_SRC, encoding="utf-8")
+        proc = subprocess.Popen(
+            [sys.executable, str(stub)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        try:
+            yield proc.pid
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)
 
 
 def pytest_collectstart(collector) -> None:

@@ -280,9 +280,13 @@ class TestAC2_StatusAllJson:
 class TestAC3_PidLiveness:
     """sentinel.alive reflects real pid liveness."""
 
-    def test_alive_for_current_pid(self):
-        """os.getpid() should show alive=True."""
-        _setup_project("live-pid", pid=os.getpid())
+    def test_alive_for_live_runner_pid(self, live_ilk_pid):
+        """A live PID belonging to a runner should show alive=True.
+
+        Not os.getpid(): liveness is command-verified, so the pytest
+        process reads as a recycled PID (correctly) rather than a run.
+        """
+        _setup_project("live-pid", pid=live_ilk_pid)
         env = {**os.environ, "ILK_DATA_HOME": str(ILK_DATA)}
         result = subprocess.run(
             [sys.executable, str(STATUS_ALL), "--json"],
@@ -310,15 +314,15 @@ class TestAC3_PidLiveness:
         entry = next(e for e in data if e["project_key"] == _project_key(SCRATCH / "projects" / "dead-pid"))
         assert entry["sentinel"]["alive"] is False
 
-    def test_alive_for_bom_encoded_sentinel(self):
+    def test_alive_for_bom_encoded_sentinel(self, live_ilk_pid):
         """The PowerShell runner writes last-exit.json with a UTF-8 BOM. The
         reader MUST use utf-8-sig, else json.loads chokes on the BOM -> sentinel
         None -> alive=False, and the tray renders every running loop as "(idle)".
         Regression for the 2026-06-13 tray-always-idle bug."""
-        proj = _setup_project("bom-pid", pid=os.getpid())
+        proj = _setup_project("bom-pid", pid=live_ilk_pid)
         key = _project_key(proj)
         sentinel_path = ILK_DATA / "projects" / key / "runtime" / "last-exit.json"
-        sentinel = {"state": "running", "pid": os.getpid(),
+        sentinel = {"state": "running", "pid": live_ilk_pid,
                     "iterations": 3, "run_id": "bom-run"}
         # Write WITH a UTF-8 BOM, exactly like the PowerShell runner does.
         sentinel_path.write_text(json.dumps(sentinel), encoding="utf-8-sig")

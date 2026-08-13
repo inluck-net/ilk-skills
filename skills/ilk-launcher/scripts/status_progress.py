@@ -44,7 +44,7 @@ PROJECTS_JSON = LAUNCHER_DIR / "projects.json"
 sys.path.insert(0, str(LOOP_SCRIPTS))
 from loop_status import find_plans_dir, parse_frontmatter, extract_master_order, pick_active_master  # type: ignore
 from ilk_paths import find_project_root  # type: ignore
-from pid_health import pid_alive, pid_command_alive  # type: ignore
+from pid_health import ilk_pid_alive  # type: ignore
 from plan_slug import DATE_PREFIX  # type: ignore
 
 BAR_WIDTH = 10
@@ -394,7 +394,9 @@ def detect_sentinel_health(
 
     stale = False
     if sentinel_state == "running" and launcher_pid is not None:
-        if not pid_alive(launcher_pid):
+        # ilk_pid_alive: a run killed before Finalize-Sentinel leaves
+        # state="running" forever, so a recycled PID hides the staleness.
+        if not ilk_pid_alive(launcher_pid):
             stale = True
 
     # When stale, report state as "unknown" so consumers that read only
@@ -476,11 +478,14 @@ def build_json(
             "eta_minutes": round(eta_min, 1) if eta_min is not None else None,
             "scan_failed": scan_failed,
         },
+        # Both PIDs come from pidfiles a past run wrote, so both need the
+        # command check — "alive" here must mean "that process", not "some
+        # process now holding that number".
         "processes": {
             "launcher_pid": launcher_pid,
-            "launcher_alive": pid_alive(launcher_pid) if launcher_pid is not None else None,
+            "launcher_alive": ilk_pid_alive(launcher_pid) if launcher_pid is not None else None,
             "watchdog_pid": watchdog_pid,
-            "watchdog_alive": pid_alive(watchdog_pid) if watchdog_pid is not None else None,
+            "watchdog_alive": ilk_pid_alive(watchdog_pid) if watchdog_pid is not None else None,
         },
         "sentinel": sentinel,
         "rows": json_rows,

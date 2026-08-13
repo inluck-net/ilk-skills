@@ -44,12 +44,12 @@ except ImportError:
     project_key = None  # type: ignore
 
 try:
-    from status_all import LIVE_SENTINEL_STATES, pid_alive  # type: ignore
+    from status_all import LIVE_SENTINEL_STATES, ilk_pid_alive  # type: ignore
 except ImportError:
     LIVE_SENTINEL_STATES = {"running"}
 
-    def pid_alive(pid: int) -> bool:  # type: ignore[misc]
-        """Fallback PID liveness check (POSIX-only)."""
+    def ilk_pid_alive(pid: int) -> bool:  # type: ignore[misc]
+        """Fallback PID liveness check (POSIX-only, no command check)."""
         if pid <= 0:
             return False
         try:
@@ -123,7 +123,9 @@ class ProjectWatch:
     _read_sentinel : callable, optional
         Injectable: ``(runtime_dir: Path) -> dict | None``.
     _pid_alive : callable, optional
-        Injectable: ``(pid: int) -> bool``.
+        Injectable: ``(pid: int) -> bool``.  Defaults to ``ilk_pid_alive``
+        (liveness *and* command identity) — the sentinel's PID was written
+        by a past run and may have been recycled since.
     _resolve_queue : callable, optional
         Injectable: ``(project_path: Path) -> dict`` (loop_status --json output).
     """
@@ -138,7 +140,7 @@ class ProjectWatch:
     ) -> None:
         self.project_path = Path(project_path).resolve()
         self._read_sentinel = _read_sentinel or _read_sentinel_default
-        self._pid_alive = _pid_alive or pid_alive
+        self._pid_alive = _pid_alive or ilk_pid_alive
         self._resolve_queue = _resolve_queue or _resolve_queue_default
 
     # ── derived paths ───────────────────────────────────────────────────

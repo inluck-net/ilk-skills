@@ -41,7 +41,7 @@ except ImportError:
     external_runtime_dir = None  # type: ignore
     project_key = None  # type: ignore
 
-from pid_health import pid_alive  # type: ignore
+from pid_health import ilk_pid_alive  # type: ignore
 
 
 def _get_pid_file_path(project_path: Path) -> Path | None:
@@ -156,7 +156,9 @@ def main() -> int:
 
         pid = read_pid_file(path)
         sentinel_state = read_sentinel_state(path)
-        if pid is not None and pid_alive(pid):
+        # ilk_pid_alive, not bare liveness: running.pid outlives the run that
+        # wrote it, and a recycled PID would read as "running" forever.
+        if pid is not None and ilk_pid_alive(pid):
             state = "running"
             pid_disp = str(pid)
         elif sentinel_state == "running" and pid is not None:

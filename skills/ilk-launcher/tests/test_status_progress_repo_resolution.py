@@ -333,16 +333,19 @@ def test_detect_sentinel_health_stale_returns_unknown(tmp_path: Path) -> None:
     assert result["pid"] == 99999999
 
 
-def test_detect_sentinel_health_live_returns_running(tmp_path: Path) -> None:
-    """When sentinel says state=running and PID is alive, detect_sentinel_health
-    must return state='running' (not 'unknown')."""
-    import os
+def test_detect_sentinel_health_live_returns_running(tmp_path: Path, live_ilk_pid: int) -> None:
+    """When sentinel says state=running and the PID is a live run,
+    detect_sentinel_health must return state='running' (not 'unknown').
+
+    The PID must belong to an actual runner: liveness is command-verified,
+    so an arbitrary live PID (os.getpid(), say) reads as recycled.
+    """
     runtime_dir = tmp_path / "runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
     sentinel_file = runtime_dir / "last-exit.json"
-    sentinel_file.write_text(json.dumps({"state": "running", "pid": os.getpid()}))
+    sentinel_file.write_text(json.dumps({"state": "running", "pid": live_ilk_pid}))
 
-    result = status_progress.detect_sentinel_health(runtime_dir, os.getpid())
+    result = status_progress.detect_sentinel_health(runtime_dir, live_ilk_pid)
 
     assert result["state"] == "running", (
         f"Expected state='running' for live sentinel, got {result['state']!r}"

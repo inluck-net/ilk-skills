@@ -217,15 +217,16 @@ class TestActionFieldsPresent:
 class TestStateRunning:
     """When loop is alive: runnable=False, parked=False."""
 
-    def test_runnable_false_when_alive(self):
-        _setup_project("r", pid=os.getpid(), state="running")
+    def test_runnable_false_when_alive(self, live_ilk_pid):
+        _setup_project("r", pid=live_ilk_pid, state="running")
         entry = _get_status("r")
         assert entry["sentinel"]["alive"] is True
         assert entry["runnable"] is False
 
-    def test_parked_false_when_alive(self):
-        _setup_project("rp", pid=os.getpid(), state="running")
+    def test_parked_false_when_alive(self, live_ilk_pid):
+        _setup_project("rp", pid=live_ilk_pid, state="running")
         entry = _get_status("rp")
+        assert entry["sentinel"]["alive"] is True
         assert entry["parked"] is False
 
 
@@ -287,8 +288,8 @@ class TestManuallyRunnableSupervised:
 class TestManuallyRunnableRunning:
     """AC-3: running project (sentinel alive) → manually_runnable=False."""
 
-    def test_running_not_manually_runnable(self):
-        _setup_project("mrr", pid=os.getpid(), state="running")
+    def test_running_not_manually_runnable(self, live_ilk_pid):
+        _setup_project("mrr", pid=live_ilk_pid, state="running")
         entry = _get_status("mrr")
         assert entry["sentinel"]["alive"] is True
         assert entry["manually_runnable"] is False
@@ -316,10 +317,13 @@ class TestRunnableRegression:
     dispatch.  Adding `manually_runnable` must NOT alter its semantics.
     """
 
-    def test_runnable_false_when_alive(self):
+    def test_runnable_false_when_alive(self, live_ilk_pid):
         """Running loop → runnable=False (scheduler must not re-dispatch)."""
-        _setup_project("rr1", pid=os.getpid(), state="running")
+        _setup_project("rr1", pid=live_ilk_pid, state="running")
         entry = _get_status("rr1")
+        # Assert the premise: without this the test would still pass via the
+        # stale-running blocked path, i.e. for the wrong reason.
+        assert entry["sentinel"]["alive"] is True
         assert entry["runnable"] is False
         # Also verify manually_runnable is consistent.
         assert entry["manually_runnable"] is False
@@ -378,9 +382,9 @@ class TestModelFromJsonl:
             for rec in records:
                 fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
-    def test_model_present_in_entry(self):
+    def test_model_present_in_entry(self, live_ilk_pid):
         """When JSONL has model, entry reflects it."""
-        _setup_project("mp1", pid=os.getpid(), state="running")
+        _setup_project("mp1", pid=live_ilk_pid, state="running")
         self._write_jsonl("mp1", [
             {"run_id": "r1", "iteration": 1, "model": "claude-sonnet-4-20250514"},
         ])
@@ -402,9 +406,9 @@ class TestModelFromJsonl:
         entry = _get_status("mp3")
         assert entry["model"] == ""
 
-    def test_model_from_latest_record(self):
+    def test_model_from_latest_record(self, live_ilk_pid):
         """model comes from the LAST JSONL record."""
-        _setup_project("mp4", pid=os.getpid(), state="running")
+        _setup_project("mp4", pid=live_ilk_pid, state="running")
         self._write_jsonl("mp4", [
             {"run_id": "r1", "iteration": 1, "model": "claude-haiku-4-5-20251001"},
             {"run_id": "r1", "iteration": 2, "model": "claude-sonnet-4-20250514"},

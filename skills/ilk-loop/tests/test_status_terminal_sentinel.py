@@ -7,9 +7,18 @@ pid_alive returns True → alive=True → tray shows "running" indefinitely.
 
 Fix (step 1): gate alive on state ∈ LIVE_SENTINEL_STATES before consulting PID.
 
-AC-1: terminal state + live PID → alive == False
-AC-2: running + live PID → alive == True  (no regression)
-AC-3: running + dead PID → alive == False (existing stale-detection preserved)
+Fix (step 2): that gate only covers runs that *reached* Finalize-Sentinel.
+A run killed before it could rewrite the state keeps state="running"
+forever, leaving the PID as the sole evidence — and a recycled PID then
+resurrects it.  Observed 2026-08-13: a gh-triage sentinel from 2026-07-08
+named PID 18920, by then a `/bin/zsh -c … pytest` shell; the menu bar
+counted two running loops while one was running.  alive now additionally
+requires the PID's command line to be an ilk process (ilk_pid_alive).
+
+AC-1: terminal state + live PID       → alive == False
+AC-2: running + live *ilk* PID        → alive == True  (no regression)
+AC-3: running + dead PID              → alive == False (stale-detection preserved)
+AC-4: running + live *non-ilk* PID    → alive == False (recycled-PID phantom)
 """
 from __future__ import annotations
 
@@ -17,6 +26,7 @@ import json
 import os
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -122,6 +132,35 @@ def _clean():
     _cleanup()
 
 
+@contextmanager
+def _ilk_stub_process():
+    """Spawn a live process whose command line reads as an ilk runner.
+
+    os.getpid() cannot serve as the "live PID" any more: the pytest
+    process is exactly the kind of unrelated command a recycled PID
+    lands on, which is what AC-4 asserts is *not* alive.  A real ilk
+    runner is identified by `run_ilk_loop` in its argv, so the stub is
+    a script named for it — the same trick test_project_runner_liveness.sh
+    uses against the bash helper.
+    """
+    SCRATCH.mkdir(parents=True, exist_ok=True)
+    stub = SCRATCH / "run_ilk_loop_stub.py"
+    stub.write_text("import time\ntime.sleep(120)\n", encoding="utf-8")
+    proc = subprocess.Popen(
+        [sys.executable, str(stub)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        yield proc.pid
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
+
+
 def _get_sentinel(project_name: str) -> dict:
     """Run status_all.py --json and return the sentinel for *project_name*."""
     env = {**os.environ, "ILK_DATA_HOME": str(ILK_DATA)}
@@ -155,26 +194,28 @@ class TestAC1_TerminalStateLivePid:
         "budget_exhausted",
     ])
     def test_terminal_state_forces_dead(self, state: str):
-        """Terminal state + live PID (os.getpid()) → alive must be False."""
-        _setup_project("term-live", state=state, pid=os.getpid())
-        sentinel = _get_sentinel("term-live")
+        """Terminal state + live ilk PID → alive must be False."""
+        with _ilk_stub_process() as live_pid:
+            _setup_project("term-live", state=state, pid=live_pid)
+            sentinel = _get_sentinel("term-live")
         assert sentinel["alive"] is False, (
-            f"state={state!r}, pid={os.getpid()} (alive) — "
+            f"state={state!r}, pid={live_pid} (alive ilk runner) — "
             f"sentinel.alive should be False but was {sentinel['alive']}"
         )
 
 
-# ── AC-2: running + live PID → alive == True ───────────────────────
+# ── AC-2: running + live ilk PID → alive == True ───────────────────
 
 class TestAC2_RunningLivePid:
-    """A running sentinel with a live PID must stay alive (no regression)."""
+    """A running sentinel with a live ilk PID must stay alive (no regression)."""
 
     def test_running_live_pid_is_alive(self):
-        """state=running + live PID → alive must be True."""
-        _setup_project("run-live", state="running", pid=os.getpid())
-        sentinel = _get_sentinel("run-live")
+        """state=running + live PID owned by an ilk runner → alive must be True."""
+        with _ilk_stub_process() as live_pid:
+            _setup_project("run-live", state="running", pid=live_pid)
+            sentinel = _get_sentinel("run-live")
         assert sentinel["alive"] is True, (
-            f"state='running', pid={os.getpid()} (alive) — "
+            f"state='running', pid={live_pid} (alive ilk runner) — "
             f"sentinel.alive should be True but was {sentinel['alive']}"
         )
 
@@ -191,4 +232,28 @@ class TestAC3_RunningDeadPid:
         assert sentinel["alive"] is False, (
             f"state='running', pid=99999999 (dead) — "
             f"sentinel.alive should be False but was {sentinel['alive']}"
+        )
+
+
+# ── AC-4: running + live non-ilk PID → alive == False ──────────────
+
+class TestAC4_RunningRecycledPid:
+    """A never-finalised sentinel whose PID was recycled must read dead.
+
+    The regression this guards: gh-triage's 2026-07-08 sentinel still said
+    state="running", and its PID 18920 had been handed to an unrelated
+    shell.  State-gating (step 1) cannot catch it — the state really is
+    "running" — so only the command check can.
+    """
+
+    def test_running_recycled_pid_is_not_alive(self):
+        """state=running + live PID owned by a non-ilk process → alive False."""
+        # os.getpid() is the pytest process: alive, and emphatically not
+        # an ilk runner — the same shape as the observed recycled PID.
+        _setup_project("run-recycled", state="running", pid=os.getpid())
+        sentinel = _get_sentinel("run-recycled")
+        assert sentinel["alive"] is False, (
+            f"state='running', pid={os.getpid()} (alive, but a pytest "
+            f"process, not an ilk runner) — sentinel.alive should be False "
+            f"but was {sentinel['alive']}"
         )

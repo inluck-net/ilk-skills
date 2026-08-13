@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -46,37 +44,11 @@ LIVE_SENTINEL_STATES = {"running"}
 
 
 # ── pid liveness (cross-platform) ───────────────────────────────────
-
-def pid_alive(pid: int) -> bool:
-    """Check whether *pid* is alive, cross-platform.
-
-    POSIX: ``os.kill(pid, 0)`` — catch ``ProcessLookupError`` → dead,
-    ``PermissionError`` → alive (owned by another user).
-    Windows: ``tasklist /FI "PID eq <pid>"`` and check the pid appears.
-    """
-    if pid <= 0:
-        return False
-    if os.name == "nt":
-        try:
-            out = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {pid}"],
-                capture_output=True, text=True, timeout=5,
-                encoding="utf-8", errors="replace",
-            )
-            return str(pid) in out.stdout
-        except (subprocess.TimeoutExpired, OSError):
-            return False
-    else:
-        try:
-            os.kill(pid, 0)
-            return True
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            # Exists but we don't own it.
-            return True
-        except OSError:
-            return False
+# Both come from pid_health, the single implementation shared with
+# status_progress/ilk_watch; `pid_alive` is re-exported because
+# ilk_watch.py imports it from this module.  Sentinel liveness uses
+# `ilk_pid_alive` — see its docstring for why bare liveness is wrong.
+from pid_health import ilk_pid_alive, pid_alive  # noqa: E402,F401
 
 
 # ── per-project resolution ──────────────────────────────────────────
@@ -330,8 +302,14 @@ def resolve_project_status(project_dir: Path) -> dict:
         # the run is over regardless of PID — the PID may have been recycled.
         # This is the read-side complement to the runner's Finalize-Sentinel,
         # which treats "running" as the only live state.
+        #
+        # That guard only covers runs that *reached* Finalize-Sentinel.  A run
+        # killed before it could rewrite the state leaves state="running"
+        # forever, so the PID is the only remaining evidence — and a bare
+        # liveness check on a recycled PID resurrects it.  ilk_pid_alive also
+        # verifies the process is an ilk one.
         is_live = state in LIVE_SENTINEL_STATES
-        alive = is_live and pid_alive(int(spid) if isinstance(spid, (int, float)) else 0)
+        alive = is_live and ilk_pid_alive(int(spid) if isinstance(spid, (int, float)) else 0)
         sentinel = {
             "pid": spid,
             "state": state,
