@@ -842,6 +842,16 @@ surface counts in the step-9 report; fix before launching):
   batch must not be autonomously dispatchable. Never resolve (a) by inventing a
   rationale; resolve it by setting the flag `false` and using `status: draft` if
   a human gate was what you wanted. See decomposition-principles.md §13.
+- **scope_path off base branch** (**hard finding**, needs `--master`) — a
+  sub-plan's `scope_paths` entry exists on a ref other than the master's
+  declared `base_branch:`. The loop commits to whichever branch is checked
+  out, so a straddling batch corrupts two PRs. A file absent from all
+  history (new-file case) passes; a file present only on an open PR's
+  branch is a HARD finding. See decomposition-principles.md §22.
+- **one batch one branch** (**hard finding**, needs `--master`) — a
+  master's sub-plans' `scope_paths` resolve to different branches, or
+  the master lacks `base_branch:` entirely. Every sub-plan in a batch
+  must target files on the same branch. See decomposition-principles.md §22.
 
 `plan_lint.py` exits non-zero when it finds anything; treat findings as
 must-fix-before-launch (a contradiction here is what actually stalled the loop).
