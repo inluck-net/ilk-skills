@@ -49,8 +49,11 @@ def _setup_fixture(base: Path) -> tuple[Path, str]:
         "started_at": "2026-05-28T12:00:00+0800",
     }))
 
-    # Fake last-exit.json sentinel
-    runtime_dir = base / "ilk-data" / "projects" / key / "runtime"
+    # Fake last-exit.json sentinel.  Lives in runtime/launcher/ — the path every
+    # reader uses, and where preserve_active_run looks (external_launcher_dir).
+    # Moved there by `the-sentinel-lands-where-readers-look` (736d6d5); this
+    # fixture wrote the old runtime/ path, so the sentinel was never archived.
+    runtime_dir = base / "ilk-data" / "projects" / key / "runtime" / "launcher"
     runtime_dir.mkdir(parents=True, exist_ok=True)
     (runtime_dir / "last-exit.json").write_text(json.dumps({
         "state": "running",

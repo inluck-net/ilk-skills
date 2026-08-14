@@ -69,7 +69,10 @@ def _logs_dir(data_home: Path, key: str) -> Path:
 
 
 def _write_sentinel(data_home: Path, key: str, run_id: str, state: str) -> None:
-    rt_dir = _runtime_dir(data_home, key)
+    # The sentinel lives in runtime/launcher/ — where every reader looks, since
+    # `the-sentinel-lands-where-readers-look` (736d6d5) moved it. Writing the old
+    # runtime/ path means collect.py finds no sentinel at all.
+    rt_dir = _launcher_dir(data_home, key)
     rt_dir.mkdir(parents=True, exist_ok=True)
     sentinel = {"state": state, "run_id": run_id, "iters": 1}
     (rt_dir / "last-exit.json").write_text(json.dumps(sentinel), encoding="utf-8")

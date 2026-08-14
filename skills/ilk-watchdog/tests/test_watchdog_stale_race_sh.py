@@ -161,7 +161,14 @@ def test_unknown_state_treated_as_non_success():
 
 
 def _write_stale_sentinel(runtime_dir: Path, state: str, ended_at: str, run_id: str = "prev-run"):
-    """Write a stale last-exit.json."""
+    """Write a stale last-exit.json into runtime/launcher/.
+
+    Takes the runtime dir and descends into launcher/ itself, so the two callers
+    keep passing rt_dir. The sentinel moved there in 736d6d5
+    (`the-sentinel-lands-where-readers-look`); writing runtime/ directly means
+    every reader sees no sentinel.
+    """
+    runtime_dir = runtime_dir / "launcher"
     runtime_dir.mkdir(parents=True, exist_ok=True)
     sentinel = {
         "state": state,
