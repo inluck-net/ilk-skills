@@ -233,14 +233,12 @@ class TestUnresolvableRefHard:
 class TestTemplateHasBaseBranch:
     """AC-5: master-template.md declares base_branch with comment."""
 
-    @pytest.mark.xfail(strict=True, reason="template updated in step 1")
     def test_template_has_base_branch_field(self) -> None:
         text = _MASTER_TEMPLATE.read_text(encoding="utf-8-sig")
         assert "base_branch:" in text, (
             "master-template.md must contain base_branch: field"
         )
 
-    @pytest.mark.xfail(strict=True, reason="template updated in step 1")
     def test_template_comment_distinguishes_from_branch(self) -> None:
         """The comment must explain base_branch is the validation ref,
         distinct from branch: (child-branch policy)."""

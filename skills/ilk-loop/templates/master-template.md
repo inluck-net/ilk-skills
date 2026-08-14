@@ -6,6 +6,7 @@ status: queued                          # draft | queued | active | shipped (dra
 priority: null                          # optional integer; lower = jumps queue
 pause_after_ship: false                 # if true, watchdog stops after this MASTER ships
 supervised_only: false                  # KEEP false unless scope_paths MODIFIES loop infra (loop_status.py / scheduler_scan.py / promote_next_master.py / plan_status.py / scheduler.*) — effectively ilk-skills only; in a consumer project leave false unless the user explicitly asks. If true: scheduler + promote never dispatch it, and ilk-runner preflight hard-stops even a manual /ilk-run while a scheduler is alive. NOT a readiness/risk/"needs review" gate — that is `status: draft`. See decomposition-principles.md §13; enforced by `plan_lint.py --master`.
+base_branch: main                       # ref that scope_paths are validated against (declared, not derived — see decomposition-principles.md §22). Distinct from branch: which is the child-branch policy.
 branch: null                            # optional child-branch policy:
 #   create_from: HEAD                   #   base ref to fork from
 #   name: spike/<slug>                  #   target branch name
