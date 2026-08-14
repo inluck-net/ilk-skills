@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -1414,6 +1415,109 @@ def lint_redundant_gate(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── Git-aware scope-path lint ─────────────────────────────────────────
+
+def _run_git(args: list[str], cwd: Path) -> tuple[int, str, str]:
+    """Run a git command in *cwd*. Returns (rc, stdout, stderr).
+
+    Never swallows stderr — the caller decides what to surface.
+    """
+    try:
+        r = subprocess.run(
+            ["git"] + args,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        return r.returncode, r.stdout.strip(), r.stderr.strip()
+    except FileNotFoundError:
+        return 127, "", "git: command not found"
+    except subprocess.TimeoutExpired:
+        return 124, "", "git: timed out"
+
+
+def lint_scope_path_off_base_branch(
+    text: str, slug: str, base_ref: str = "main",
+) -> list[str]:
+    """Flag a scope_path that exists only off the base branch.
+
+    Three-way discriminator per path:
+      - absent from all history  -> OK (new file the sub-plan will create)
+      - present on base          -> OK
+      - absent on base, present on another ref  -> HARD finding
+
+    When git cannot be consulted (not a repo / unresolvable base / git
+    absent), reports ``unknown`` — never a pass.
+
+    *base_ref* is explicit (AC-8) with documented default ``"main"``.
+    """
+    findings: list[str] = []
+    scope_paths = _extract_scope_paths(text)
+    if not scope_paths:
+        return findings
+
+    cwd = Path.cwd()
+    if not (cwd / ".git").exists():
+        for p in scope_paths:
+            findings.append(
+                f"{slug}: scope_path '{p}': unknown — "
+                f"not a git repository; cannot verify branch topology."
+            )
+        return findings
+
+    for p in scope_paths:
+        rc_list, out_list, err_list = _run_git(
+            ["rev-list", "--all", "--", p], cwd,
+        )
+        if rc_list != 0:
+            findings.append(
+                f"{slug}: scope_path '{p}': unknown — "
+                f"git rev-list failed (rc={rc_list}): {err_list}"
+            )
+            continue
+
+        if not out_list:
+            # Path nowhere in history — new file, OK.
+            continue
+
+        rc_base, _, err_base = _run_git(
+            ["cat-file", "-e", f"{base_ref}:{p}"], cwd,
+        )
+        if rc_base == 0:
+            # Present on base — OK.
+            continue
+
+        if rc_base in (1, 128):
+            # Absent on base (rc=1 or rc=128 "does not exist in 'ref'")
+            # but present elsewhere — HARD finding.
+            # Find which refs carry it.
+            rc_refs, out_refs, err_refs = _run_git(
+                ["branch", "--contains", out_list.splitlines()[0]], cwd,
+            )
+            ref_names = (
+                [r.strip().lstrip("* ") for r in out_refs.splitlines()
+                 if r.strip()]
+                if rc_refs == 0 and out_refs
+                else ["<unknown ref>"]
+            )
+            findings.append(
+                f"HARD {slug}: scope_path '{p}' is absent on "
+                f"base ref '{base_ref}' but exists on: "
+                f"{', '.join(ref_names)}. "
+                f"This would route commits to the wrong branch."
+            )
+            continue
+
+        # Unexpected failure — git could not evaluate.
+        findings.append(
+            f"{slug}: scope_path '{p}': unknown — "
+            f"git cat-file failed (rc={rc_base}): {err_base}"
+        )
+
+    return findings
+
+
 ALL_CHECKS = (
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
@@ -1432,6 +1536,7 @@ ALL_CHECKS = (
     lint_unverifiable_test_selector,
     lint_budget_vs_gate_timeout,
     lint_redundant_gate,
+    lint_scope_path_off_base_branch,
 )
 
 

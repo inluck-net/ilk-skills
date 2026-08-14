@@ -114,7 +114,6 @@ class TestScopePathBranchTopology:
         self.tmp_path = tmp_path
 
     # (a) path on branch only -> HARD finding
-    @pytest.mark.xfail(reason="lint not yet implemented", strict=True)
     def test_path_on_branch_only_is_hard_finding(self) -> None:
         r = _run_lint_on_fixture(
             self.tmp_path,
@@ -141,7 +140,6 @@ class TestScopePathBranchTopology:
         assert r.returncode == 0, f"expected clean, got: {r.stdout}{r.stderr}"
 
     # (d) non-git directory -> unknown finding
-    @pytest.mark.xfail(reason="lint not yet implemented", strict=True)
     def test_non_git_dir_reports_unknown(self) -> None:
         non_git = _make_non_git_dir(self.tmp_path)
         r = _run_lint_on_fixture(
