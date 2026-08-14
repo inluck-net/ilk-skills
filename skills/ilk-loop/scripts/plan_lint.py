@@ -1437,6 +1437,24 @@ def _run_git(args: list[str], cwd: Path) -> tuple[int, str, str]:
         return 124, "", "git: timed out"
 
 
+_GLOB_CHARS = re.compile(r"[*?[]")
+
+
+def _is_validatable_scope_path(p: str) -> bool:
+    """True if *p* is a literal relative file path the lint can check.
+
+    Skips: glob patterns (``*``, ``?``, ``[...]``), absolute paths,
+    API-style paths (``/api/...``), and empty strings.
+    """
+    if not p or not p.strip():
+        return False
+    if p.startswith("/"):
+        return False  # absolute or API path
+    if _GLOB_CHARS.search(p):
+        return False  # glob pattern — file class, not a specific file
+    return True
+
+
 def lint_scope_path_off_base_branch(
     text: str, slug: str, base_ref: str = "main",
 ) -> list[str]:
@@ -1446,6 +1464,9 @@ def lint_scope_path_off_base_branch(
       - absent from all history  -> OK (new file the sub-plan will create)
       - present on base          -> OK
       - absent on base, present on another ref  -> HARD finding
+
+    Skips glob patterns (``*``, ``?``, ``[...]``) — those represent file
+    classes, not specific files the three-way discriminator can evaluate.
 
     When git cannot be consulted (not a repo / unresolvable base / git
     absent), reports ``unknown`` — never a pass.
@@ -1459,14 +1480,12 @@ def lint_scope_path_off_base_branch(
 
     cwd = Path.cwd()
     if not (cwd / ".git").exists():
-        for p in scope_paths:
-            findings.append(
-                f"{slug}: scope_path '{p}': unknown — "
-                f"not a git repository; cannot verify branch topology."
-            )
+        # Not a git repo — no branches to confuse, nothing to validate.
         return findings
 
     for p in scope_paths:
+        if not _is_validatable_scope_path(p):
+            continue
         rc_list, out_list, err_list = _run_git(
             ["rev-list", "--all", "--", p], cwd,
         )

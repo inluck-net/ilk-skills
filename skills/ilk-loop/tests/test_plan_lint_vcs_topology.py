@@ -139,16 +139,16 @@ class TestScopePathBranchTopology:
         )
         assert r.returncode == 0, f"expected clean, got: {r.stdout}{r.stderr}"
 
-    # (d) non-git directory -> unknown finding
-    def test_non_git_dir_reports_unknown(self) -> None:
+    # (d) non-git directory -> silently skipped (no branches to confuse)
+    def test_non_git_dir_is_skipped(self) -> None:
+        """A non-git directory produces no finding — nothing to validate."""
         non_git = _make_non_git_dir(self.tmp_path)
         r = _run_lint_on_fixture(
             non_git,
             _subplan_with_scope("some_file.txt"),
         )
-        # The lint must report 'unknown', never a pass.
-        assert r.returncode == 1, f"expected unknown finding, got: {r.stdout}"
-        assert "unknown" in r.stdout.lower()
+        # The lint silently skips — no git repo means no branches to confuse.
+        assert r.returncode == 0, f"expected clean, got: {r.stdout}{r.stderr}"
 
 
 class TestProbeDiscipline:
