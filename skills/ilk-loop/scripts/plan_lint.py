@@ -1794,51 +1794,41 @@ def lint_gate_extractable(text: str, slug: str) -> list[str]:
     findings: list[str] = []
 
     # ── Frontmatter block ─────────────────────────────────────────────────
+    # ``local_checks: []`` is a deliberate "no frontmatter gate" marker —
+    # only flag when there IS content that the runtime cannot extract.
     m = re.match(r"^---\n.*?\n---\n", text, re.S)
     if m:
         fm = text[m.start():m.end()]
         fm_lc = re.search(r"^local_checks:", fm, re.MULTILINE)
         if fm_lc:
-            fm_parsed = parse_local_checks_block(fm[fm_lc.start():])
-            if not fm_parsed:
-                findings.append(
-                    f"HARD {slug}: frontmatter local_checks declares a gate "
-                    f"but the runtime parser extracts 0 commands from it."
-                )
+            fm_after = fm[fm_lc.end():]
+            # Skip empty inline list: local_checks: [] or local_checks: [ ]
+            if not re.match(r"\s*\[\s*\]\s*$", fm_after.split("\n", 1)[0]):
+                fm_parsed = parse_local_checks_block(fm[fm_lc.start():])
+                if not fm_parsed:
+                    findings.append(
+                        f"HARD {slug}: frontmatter local_checks declares a gate "
+                        f"but the runtime parser extracts 0 commands from it."
+                    )
 
     # ── Per-step yaml blocks ──────────────────────────────────────────────
-    # Two patterns: (1) multi-line ``local_checks:`` followed by indented
-    # list items; (2) inline empty ``local_checks: []`` or ``local_checks: [ ]``.
+    # Only multi-line ``local_checks:`` blocks (with indented list items).
+    # Inline ``local_checks: []`` is a deliberate empty marker — skip it.
     body = _strip_frontmatter(text)
     _PERSTEP_MULTI = re.compile(
         r"```(?:yaml|yml)?\s*\n(.*?local_checks:\s*\n.*?)```",
         re.S,
     )
-    _PERSTEP_INLINE_EMPTY = re.compile(
-        r"```(?:yaml|yml)?\s*\n[^`]*?local_checks:\s*\[\s*\][^`]*?```",
-        re.S,
-    )
 
-    seen_starts: set[int] = set()
     for block_match in _PERSTEP_MULTI.finditer(body):
         block_text = block_match.group(1)
         parsed = parse_local_checks_block(block_text)
-        seen_starts.add(block_match.start())
         if not parsed:
             heading = _nearest_step_heading(body, block_match.start())
             findings.append(
                 f"HARD {slug}: {heading} declares a local_checks gate "
                 f"but the runtime parser extracts 0 commands from it."
             )
-    for block_match in _PERSTEP_INLINE_EMPTY.finditer(body):
-        if block_match.start() in seen_starts:
-            continue  # already covered by the multi-line pattern
-        seen_starts.add(block_match.start())
-        heading = _nearest_step_heading(body, block_match.start())
-        findings.append(
-            f"HARD {slug}: {heading} declares a local_checks gate "
-            f"but the runtime parser extracts 0 commands from it."
-        )
 
     # ── Count mismatch (AC-5) ─────────────────────────────────────────────
     # Count command: lines the body DECLARES in gate blocks via regex,

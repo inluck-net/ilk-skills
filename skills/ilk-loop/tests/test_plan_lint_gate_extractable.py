@@ -27,26 +27,26 @@ from run_local_checks import parse_local_checks_block  # noqa: E402
 from plan_lint import lint_gate_extractable  # noqa: E402
 
 
-# ── Fixture a: per-step gate block with 0 extractable commands (AC-2) ─────────
+# ── Fixture a: per-step gate block with items but 0 extractable commands (AC-2) ─
 
 FIXTURE_A = """\
 ---
-plan: test-empty-perstep-gate
+plan: test-unextractable-perstep-gate
 status: pending
 ---
 
-# Sub-plan: empty per-step gate
+# Sub-plan: unextractable per-step gate
 
 ### Step 0 — Do the thing
 ```yaml
-local_checks: []
+local_checks:
+  - timeout: 30
 ```
 """
 
 
 def test_fixture_a_perstep_empty():
-    """Fixture a: per-step local_checks: [] → runtime extracts 0 commands."""
-    # Verify the runtime extracts 0 from the yaml block
+    """Fixture a: per-step local_checks with no command → runtime extracts 0."""
     import re
     fence = re.search(
         r"^```(?:yaml|yml)?\s*\n(.*?)^```",
@@ -56,51 +56,97 @@ def test_fixture_a_perstep_empty():
     assert fence is not None
     extracted = parse_local_checks_block(fence.group(1))
     assert extracted == [], (
-        f"Runtime should extract 0 from empty local_checks, got {extracted}"
+        f"Runtime should extract 0 from gate with no command, got {extracted}"
     )
 
 
 def test_fixture_a_finds_empty_perstep():
-    """Fixture a: per-step local_checks: [] should produce a finding (AC-2)."""
-    findings = lint_gate_extractable(FIXTURE_A, "test-empty-perstep-gate")
+    """Fixture a: per-step local_checks with no command → finding (AC-2)."""
+    findings = lint_gate_extractable(FIXTURE_A, "test-unextractable-perstep-gate")
     assert len(findings) >= 1, (
-        f"Expected finding for empty per-step gate, got {findings}"
+        f"Expected finding for unextractable per-step gate, got {findings}"
     )
     assert "HARD" in findings[0]
     assert "Step 0" in findings[0]
 
 
-# ── Fixture b: frontmatter local_checks: [] → 0 extractable (AC-3) ───────────
+# ── Fixture b: frontmatter local_checks with items but 0 extractable (AC-3) ───
 
 FIXTURE_B = """\
 ---
-plan: test-empty-fm-gate
+plan: test-unextractable-fm-gate
 status: pending
-local_checks: []
+local_checks:
+  - timeout: 30
 ---
 
-# Sub-plan: empty frontmatter gate
+# Sub-plan: unextractable frontmatter gate
 
 Some prose here.
 """
 
 
 def test_fixture_b_fm_empty():
-    """Fixture b: frontmatter local_checks: [] → runtime extracts 0 commands."""
+    """Fixture b: frontmatter local_checks with no command → runtime extracts 0."""
     extracted = parse_local_checks_block(FIXTURE_B)
     assert extracted == [], (
-        f"Runtime should extract 0 from empty fm local_checks, got {extracted}"
+        f"Runtime should extract 0 from fm gate with no command, got {extracted}"
     )
 
 
 def test_fixture_b_finds_empty_fm():
-    """Fixture b: frontmatter local_checks: [] should produce a finding (AC-3)."""
-    findings = lint_gate_extractable(FIXTURE_B, "test-empty-fm-gate")
+    """Fixture b: frontmatter local_checks with no command → finding (AC-3)."""
+    findings = lint_gate_extractable(FIXTURE_B, "test-unextractable-fm-gate")
     assert len(findings) >= 1, (
-        f"Expected finding for empty frontmatter gate, got {findings}"
+        f"Expected finding for unextractable frontmatter gate, got {findings}"
     )
     assert "HARD" in findings[0]
     assert "frontmatter" in findings[0].lower()
+
+
+# ── Deliberate empty markers must stay silent ─────────────────────────────────
+
+FIXTURE_EMPTY_FM = """\
+---
+plan: test-deliberate-empty-fm
+status: pending
+local_checks: []
+---
+
+# Sub-plan: deliberate empty frontmatter
+
+No frontmatter gate — gates are in per-step blocks.
+"""
+
+FIXTURE_EMPTY_PERSTEP = """\
+---
+plan: test-deliberate-empty-perstep
+status: pending
+---
+
+# Sub-plan: deliberate empty per-step
+
+### Step 0 — No gate for this step
+```yaml
+local_checks: []
+```
+"""
+
+
+def test_deliberate_empty_fm_silent():
+    """local_checks: [] in frontmatter → 0 findings (deliberate marker)."""
+    findings = lint_gate_extractable(FIXTURE_EMPTY_FM, "test-deliberate-empty-fm")
+    assert findings == [], (
+        f"Expected 0 findings for deliberate empty fm, got {findings}"
+    )
+
+
+def test_deliberate_empty_perstep_silent():
+    """local_checks: [] in per-step → 0 findings (deliberate marker)."""
+    findings = lint_gate_extractable(FIXTURE_EMPTY_PERSTEP, "test-deliberate-empty-perstep")
+    assert findings == [], (
+        f"Expected 0 findings for deliberate empty perstep, got {findings}"
+    )
 
 
 # ── Fixture c: colon-space command → must stay silent (AC-4) ──────────────────
