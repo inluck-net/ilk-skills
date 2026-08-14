@@ -249,3 +249,24 @@ def test_parser_handles_empty_inline():
     """local_checks: [] returns empty list."""
     assert parse_local_checks_block("local_checks: []") == []
     assert parse_local_checks_block("local_checks: [ ]") == []
+
+
+# ── AC-10: CLI-level test — drive plan_lint.py over a fixture file ─────────────
+
+def test_cli_finds_unextractable_gate(tmp_path):
+    """AC-10: plan_lint.py CLI reports the finding for an empty gate block."""
+    import subprocess
+
+    fixture = tmp_path / "test-cli-gate.md"
+    fixture.write_text(FIXTURE_B, encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "plan_lint.py"), str(fixture)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1, (
+        f"plan_lint.py should exit 1 on unextractable gate, "
+        f"got rc={result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert "HARD" in result.stdout
+    assert "frontmatter" in result.stdout.lower() or "local_checks" in result.stdout.lower()
