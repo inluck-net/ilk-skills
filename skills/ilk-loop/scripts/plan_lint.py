@@ -42,6 +42,9 @@ from pathlib import Path
 # Working directory for git operations.  Overridable via --git-cwd for tests.
 _GIT_CWD: Path | None = None
 
+# Project root for importer-lookup grep.  Overridable for tests.
+_PROJECT_ROOT: Path | None = None
+
 # Fallback / degrade markers: language that says "there is a safe alternative
 # path if the capability is missing".
 _FALLBACK_MARKERS = re.compile(
@@ -1418,6 +1421,212 @@ def lint_redundant_gate(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── Shared-module gate lint (caller-aware importer oracle) ────────────
+#
+# A sub-plan whose scope_paths modifies a module that other files import,
+# and whose gates only run a single test file, hides integration bugs.
+# The oracle uses grep to find production importers (non-test .py files)
+# of the changed module.  If the oracle cannot run, it reports nothing
+# rather than firing — an unaskable oracle must not manufacture findings.
+#
+# See decomposition-principles.md §8.
+# See commands/ilk-plan.md step 7a (the manual pass that was skipped).
+
+
+def _resolve_project_root() -> Path:
+    """Return the project root for importer-lookup grep.
+
+    Uses ``_PROJECT_ROOT`` if set, otherwise ``Path.cwd()``.
+    """
+    return _PROJECT_ROOT if _PROJECT_ROOT is not None else Path.cwd()
+
+
+def _resolve_module_name(scope_path: str) -> str | None:
+    """Derive the importable Python module name from a scope_path.
+
+    Returns ``None`` for non-Python files or paths where the module name
+    cannot be determined.
+    """
+    p = scope_path.replace("\\", "/")
+    # Walk up to find the .py file — skip directory-only entries.
+    parts = p.split("/")
+    for i, part in enumerate(parts):
+        if part.endswith(".py"):
+            module = part[:-3]  # strip .py
+            if module == "__init__":
+                # Use the parent directory name as the module name.
+                if i > 0:
+                    return parts[i - 1]
+                return None
+            return module
+    return None
+
+
+def _is_test_path(rel_path: str) -> bool:
+    """True if *rel_path* looks like a test file or lives in a test directory.
+
+    Matches standard pytest discovery conventions:
+    - Directories: ``test/``, ``tests/``, ``spec/``, ``specs/``
+    - Files: ``test_*.py``, ``*_test.py`` (at any nesting level)
+
+    Does NOT match substrings — ``testing_utils.py`` is NOT excluded, nor is
+    ``conftest.py`` or ``my_test_data.py``.
+    """
+    parts = rel_path.replace("\\", "/").split("/")
+    _TEST_DIR_NAMES = {"test", "tests", "spec", "specs"}
+    for part in parts[:-1]:  # directories only (exclude the filename)
+        if part in _TEST_DIR_NAMES:
+            return True
+    filename = parts[-1]
+    if filename.startswith("test_") and filename.endswith(".py"):
+        return True
+    if filename.endswith("_test.py"):
+        return True
+    return False
+
+
+def _find_importers(module_name: str, project_root: Path) -> list[str]:
+    """Find production Python files that import *module_name*.
+
+    Uses ``grep -rn`` with ``--include="*.py"`` to locate ``from <mod> import``
+    or ``import <mod>`` lines.  Returns a list of relative file paths (the
+    files that import the module).  Excludes test files (files in standard
+    test directories or matching ``test_*.py`` / ``*_test.py``).
+
+    Returns an empty list when grep cannot run, finds nothing, or the
+    project root is not searchable — the oracle fails silently rather than
+    manufacturing findings.
+    """
+    pattern = f"from {module_name} import|import {module_name}"
+    try:
+        result = subprocess.run(
+            ["grep", "-Ern", "--include=*.py", "-l", pattern, str(project_root)],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode != 0:
+            # grep exit 1 = no matches; exit 2 = error.  Either way, no importers found.
+            return []
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        # grep missing or timed out — oracle unaskable, report nothing.
+        return []
+
+    importers: list[str] = []
+    root_str = str(project_root)
+    for line in result.stdout.strip().splitlines():
+        if not line:
+            continue
+        # grep returns absolute paths; make them relative.
+        abs_path = line.strip()
+        if abs_path.startswith(root_str):
+            rel = abs_path[len(root_str):].lstrip("/")
+        else:
+            rel = abs_path
+        # Exclude test files — integration risk is about production callers.
+        if _is_test_path(rel):
+            continue
+        importers.append(rel)
+    return importers
+
+
+def lint_shared_module_gate(text: str, slug: str) -> list[str]:
+    """Flag a one-file gate on a module whose production callers depend on it.
+
+    A sub-plan that modifies a module other files import, and whose gates only
+    ever run a single test file, hides integration bugs — the callers' tests
+    are never run.  This lint resolves whether the changed module has production
+    importers (caller-aware detector), and only fires when it does.
+
+    Composes with ``lint_wholesuite_gate_baseline``: if the author widens the
+    gate, the baseline lint may require a ``baseline-green on <platform>`` note.
+    The finding text names this interaction so the author isn't whipsawed.
+    """
+    findings: list[str] = []
+    scope_paths = _extract_scope_paths(text)
+    if not scope_paths:
+        return findings
+
+    project_root = _resolve_project_root()
+
+    # Collect non-test .py source files from scope_paths.
+    source_files: list[tuple[str, str]] = []  # (scope_path, module_name)
+    for sp in scope_paths:
+        norm = sp.replace("\\", "/")
+        # Skip test files, docs, non-Python.
+        basename = norm.rsplit("/", 1)[-1] if "/" in norm else norm
+        if not basename.endswith(".py"):
+            continue
+        if _is_test_path(norm):
+            continue
+        module = _resolve_module_name(sp)
+        if module:
+            source_files.append((sp, module))
+
+    if not source_files:
+        return findings  # No source files changed — docs-only or test-only.
+
+    # Extract ALL local_checks commands (frontmatter + per-step blocks).
+    commands = _extract_all_local_checks_commands(text)
+    if not commands:
+        return findings  # No gates — nothing to check.
+
+    # Check whether ALL gates are single-test-file scoped.
+    # If ANY gate runs a directory or whole suite, the sub-plan is compliant.
+    single_file_gates = 0
+    broader_gates = 0
+    for cmd in commands:
+        if _is_whole_suite_command(cmd):
+            broader_gates += 1
+            continue
+        # Check if the command targets a single test file.
+        tokens = cmd.strip().split()
+        test_files = [
+            t for t in tokens
+            if re.search(r"(?:^|/)test[_a-zA-Z].*\.(?:py|ts|js|tsx|jsx|mjs)$", t)
+            and not t.startswith("-")
+        ]
+        if test_files:
+            single_file_gates += 1
+        else:
+            # Not clearly a single test file — could be anything.  Count as broader.
+            broader_gates += 1
+
+    if broader_gates > 0:
+        return findings  # Later step or frontmatter already widens the gate.
+
+    if single_file_gates == 0:
+        return findings  # No recognisable test-file gates.
+
+    # Check if ANY later step in the sub-plan runs a broader gate.
+    body = _strip_frontmatter(text)
+    for block_match in _STEP_LOCAL_CHECKS_BLOCK_RE.finditer(body):
+        block_cmds = re.findall(r"command:\s*(.+)", block_match.group(1))
+        for cmd in block_cmds:
+            if _is_whole_suite_command(cmd):
+                return findings  # Later step widens — compliant.
+
+    # All gates are single-test-file scoped.  Check for production importers.
+    for sp, module in source_files:
+        importers = _find_importers(module, project_root)
+        if not importers:
+            continue  # No production importers — leaf module, no finding.
+
+        # AC-6: finding text names the importing files and warns about baseline.
+        importer_names = ", ".join(sorted(set(importers)))
+        findings.append(
+            f"{slug}: scope_path '{sp}' changes module '{module}' which is "
+            f"imported by: {importer_names}.  Every gate in this sub-plan "
+            f"runs a single test file — the callers' integration is never "
+            f"exercised.  Add a gate that runs the callers' tests (or the "
+            f"full suite).  Note: widening the gate to a directory or whole "
+            f"suite will also require a 'baseline-green on <platform>' note "
+            f"(see lint_wholesuite_gate_baseline)."
+        )
+
+    return findings
+
+
 # ── Git-aware scope-path lint ─────────────────────────────────────────
 
 def _resolve_git_cwd() -> Path:
@@ -1573,6 +1782,7 @@ ALL_CHECKS = (
     lint_budget_vs_gate_timeout,
     lint_redundant_gate,
     lint_scope_path_off_base_branch,
+    lint_shared_module_gate,
 )
 
 
@@ -2179,6 +2389,10 @@ def main() -> int:
         help="Working directory for git operations (default: cwd).",
     )
     parser.add_argument(
+        "--project-root", default=None,
+        help="Project root for importer-lookup grep (default: cwd).",
+    )
+    parser.add_argument(
         "--spec", action="store_true",
         help="Run spec pillar traceability check instead of per-sub-plan checks.",
     )
@@ -2192,6 +2406,11 @@ def main() -> int:
     if args.git_cwd:
         global _GIT_CWD
         _GIT_CWD = Path(args.git_cwd).resolve()
+
+    # Override the project root for importer lookup if requested.
+    if args.project_root:
+        global _PROJECT_ROOT
+        _PROJECT_ROOT = Path(args.project_root).resolve()
 
     if not args.paths:
         parser.error("at least one file path is required")

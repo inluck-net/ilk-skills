@@ -23,6 +23,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+import plan_lint as _pl  # noqa: E402
 from plan_lint import lint_file  # noqa: E402
 
 
@@ -34,6 +35,9 @@ def _run_lint(subplan_text: str, tmp_path: Path,
 
     ``project_files`` maps relative paths to content — simulates a repo
     with source files the caller-aware oracle can inspect.
+
+    Sets ``_PROJECT_ROOT`` to *tmp_path* so the importer oracle searches
+    the fixture tree.  Restores the original value afterwards.
     """
     if project_files:
         for rel, content in project_files.items():
@@ -43,7 +47,13 @@ def _run_lint(subplan_text: str, tmp_path: Path,
 
     sp = tmp_path / "test-subplan.md"
     sp.write_text(textwrap.dedent(subplan_text), encoding="utf-8")
-    return lint_file(str(sp))
+
+    old_root = _pl._PROJECT_ROOT
+    try:
+        _pl._PROJECT_ROOT = tmp_path
+        return lint_file(str(sp))
+    finally:
+        _pl._PROJECT_ROOT = old_root
 
 
 # ── project file fixtures ────────────────────────────────────────────
@@ -234,10 +244,6 @@ Pure documentation, no code change.
 class TestSharedModuleOneFileGate:
     """AC-1: shared module + one-file gate -> finding."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="shared-module gate lint not implemented yet (step 1-2)",
-    )
     def test_finding_for_shared_module_one_file_gate(self, tmp_path: Path) -> None:
         findings = _run_lint(
             SHARED_MODULE_ONE_FILE_GATE, tmp_path,
@@ -253,10 +259,6 @@ class TestSharedModuleOneFileGate:
 class TestGhResolveStep3:
     """AC-2: the real regression case — return-type change with production caller."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="shared-module gate lint not implemented yet (step 1-2)",
-    )
     def test_finding_for_ghresolve_shape(self, tmp_path: Path) -> None:
         findings = _run_lint(
             GHRESOLVE_STEP3, tmp_path,
