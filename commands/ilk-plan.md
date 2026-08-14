@@ -296,6 +296,44 @@ sub-plan; `env_prereqs` is for sub-plan-specific reachability.
 Surface the env_prereqs you intend to assign in the step-5 proposal,
 in an "Environment prereqs" table alongside the fixtures table.
 
+## 4e. VCS topology scan (decomposition-principles.md §22)
+
+`data_prereqs` (4c) covers data state; `env_prereqs` (4d) covers
+runtime reachability. This step covers **where each candidate
+sub-plan's `scope_paths` currently live** — a distinct failure mode:
+a batch whose files straddle two branches corrupts two PRs.
+
+For each candidate sub-plan, resolve every `scope_paths` entry against
+the declared `base_branch:` (or `main` if none is declared yet):
+
+1. **Present on base** — clean.
+2. **Absent from all history** (new-file case) — clean.
+3. **Present on a ref other than base** — a HARD finding at plan time;
+   the loop would commit to whichever branch is checked out, landing
+   half the changes on the wrong base.
+
+Two lints enforce this mechanically at `/ilk-plan` step 7g:
+
+- **`lint_scope_path_off_base_branch`** (per-path) — flags any
+  `scope_paths` entry that exists on a ref other than the declared
+  base.
+- **`lint_one_batch_one_branch`** (master-level) — rejects a batch
+  whose sub-plans' paths resolve to different branches, or whose
+  master lacks `base_branch:` entirely.
+
+Both run under `plan_lint.py --master`. The plan-time gate catches the
+defect at proposal review — the cheaper interception point.
+
+Surface the branch resolution in the step-5 proposal as a "Branch
+targets" table alongside the Fixtures and Environment-prereqs tables:
+
+```
+| Sub-plan | Paths resolve to | Declared base | Status |
+|---|---|---|---|
+| <slug-1> | `main` | `main` | clean |
+| <slug-2> | `fix/foo` | `main` | HARD — path lives on another branch |
+```
+
 ## 5. Propose grouping (USER APPROVAL REQUIRED)
 
 Apply the rubric from `decomposition-principles.md` while drafting:
@@ -332,6 +370,9 @@ Plus:
 - Suggested execution order (with a brief 1-2 sentence rationale per
   position).
 - Cross-workstream dependencies (if any).
+- **Branch targets table** (from step 4e) — shows where each
+  sub-plan's `scope_paths` resolve to, beside the Fixtures and
+  Environment-prereqs tables.
 - **Batch-by-tier recommendation** — group `loop-verified` sub-plans into
   an autonomous batch (loop can drive without human) and
   `compile-only`/`device-manual` into a supervised or human-paired batch.
