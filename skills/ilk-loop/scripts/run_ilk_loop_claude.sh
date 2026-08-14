@@ -818,10 +818,14 @@ get_local_check_targets() {
 get_ilk_runtime_dir() {
   local resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ ! -f "$resolver" ]]; then
+    echo "get_ilk_runtime_dir: resolver not found at $resolver" >&2
     return 1
   fi
   local json
-  json="$(python3 "$resolver" --start "$PROJECT_PATH" 2>/dev/null)" || return 1
+  json="$(python3 "$resolver" --start "$PROJECT_PATH")" || {
+    echo "get_ilk_runtime_dir: resolver failed for $PROJECT_PATH" >&2
+    return 1
+  }
   echo "$json" | jq -r '.external_launcher_dir // empty'
 }
 

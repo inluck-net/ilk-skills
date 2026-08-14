@@ -171,13 +171,15 @@ get_ilk_runtime_dir() {
   local resolver
   resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ ! -f "$resolver" ]]; then
+    echo "get_ilk_runtime_dir: resolver not found at $resolver" >&2
     echo ""
     return
   fi
   local json_out
-  if json_out=$($PYTHON "$resolver" --start "$project" 2>/dev/null) && [[ -n "$json_out" ]]; then
+  if json_out=$($PYTHON "$resolver" --start "$project") && [[ -n "$json_out" ]]; then
     $PYTHON -c "import json,sys; d=json.load(sys.stdin); print(d.get('external_launcher_dir') or '')" <<<"$json_out"
   else
+    echo "get_ilk_runtime_dir: resolver failed for $project" >&2
     echo ""
   fi
 }

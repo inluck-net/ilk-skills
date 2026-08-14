@@ -97,13 +97,6 @@ def _grep_file_for_pattern(path: Path, pattern: str) -> list[tuple[int, str]]:
     return matches
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Both get_ilk_runtime_dir functions suppress resolver stderr with "
-        "2>/dev/null.  Fixed in step 2."
-    ),
-)
 def test_no_stderr_suppression_in_get_ilk_runtime_dir():
     """AC-4: get_ilk_runtime_dir must not swallow resolver stderr.
 
@@ -114,13 +107,13 @@ def test_no_stderr_suppression_in_get_ilk_runtime_dir():
     runner_matches = _grep_file_for_pattern(_RUNNER, "2>/dev/null")
     watchdog_matches = _grep_file_for_pattern(_WATCHDOG, "2>/dev/null")
 
-    # Filter to lines inside get_ilk_runtime_dir (approximate: lines 818-826
-    # for runner, 169-183 for watchdog).  If the grep is clean, this is empty.
+    # Filter to lines inside get_ilk_runtime_dir (approximate: lines 818-835
+    # for runner, 169-190 for watchdog).  If the grep is clean, this is empty.
     runner_in_fn = [
-        (ln, text) for ln, text in runner_matches if 818 <= ln <= 830
+        (ln, text) for ln, text in runner_matches if 818 <= ln <= 835
     ]
     watchdog_in_fn = [
-        (ln, text) for ln, text in watchdog_matches if 169 <= ln <= 185
+        (ln, text) for ln, text in watchdog_matches if 169 <= ln <= 190
     ]
 
     problems = []
