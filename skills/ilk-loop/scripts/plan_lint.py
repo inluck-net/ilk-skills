@@ -1508,10 +1508,11 @@ def lint_scope_path_off_base_branch(
             continue
 
         # rc=128 "path 'X' does not exist in 'Y'" = genuine absence → HARD.
+        # rc=128 "exists on disk, but not in 'Y'" (macOS git) = same.
         # rc=128 "invalid object name" / "Not a valid object" = bad ref → unknown.
         is_absent = rc_base == 1 or (
             rc_base == 128
-            and "does not exist in" in err_base
+            and ("does not exist in" in err_base or "but not in" in err_base)
         )
         if is_absent:
             # Absent on base but present elsewhere — HARD finding.
