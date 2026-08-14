@@ -1019,7 +1019,10 @@ except: pass
     esac
     echo "  [local_checks $tag] $slug step $step -> $outcome"
 
-    echo "{\"slug\":\"$slug\",\"step\":$step,\"outcome\":\"$outcome\",\"exit_code\":$check_exit}" >> "$results_file"
+    # Emit JSONL record with command + output for failing checks (AC-1..AC-4).
+    # Uses emit_jsonl_record.py to avoid hand-interpolated JSON (the quoting trap).
+    python3 "${_SKILL_ROOT}/ilk-loop/scripts/emit_jsonl_record.py" \
+      "$results_file" "$tmp_out" "$outcome" "$check_exit"
 
     rm -f "$tmp_out"
   done < "$targets_file"
