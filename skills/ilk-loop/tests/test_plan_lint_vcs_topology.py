@@ -173,3 +173,63 @@ class TestProbeDiscipline:
             "Forbidden patterns found in plan_lint.py:\n"
             + "\n".join(bad_patterns)
         )
+
+
+# ── AC-6: CLI reachability ───────────────────────────────────────────
+
+class TestCliReachability:
+    """AC-6: the lint is reachable through the real CLI entrypoint."""
+
+    @pytest.fixture(autouse=True)
+    def _repo(self, tmp_path: Path):
+        _make_repo_with_branch(tmp_path)
+        self.tmp_path = tmp_path
+
+    def test_cli_emits_hard_finding_for_branch_only_path(self) -> None:
+        """A fixture sub-plan with a branch-only scope_path produces a
+        HARD finding via the CLI (not a direct function call)."""
+        p = self.tmp_path / "test-plan.md"
+        p.write_text(textwrap.dedent("""\
+            ---
+            plan: test-cli-reachability
+            status: in-progress
+            scope_paths:
+              - "branch_only.txt"
+            ---
+
+            # Sub-plan: test cli reachability
+
+            Some work.
+        """), encoding="utf-8")
+        r = subprocess.run(
+            [sys.executable, str(_PLAN_LINT), str(p)],
+            cwd=self.tmp_path,
+            capture_output=True, text=True, timeout=30,
+            encoding="utf-8", errors="replace",
+        )
+        assert r.returncode == 1, f"expected finding via CLI, got: {r.stdout}"
+        assert "HARD" in r.stdout
+        assert "branch_only.txt" in r.stdout
+
+    def test_cli_clean_for_base_path(self) -> None:
+        """A fixture sub-plan with a base-branch scope_path is clean via CLI."""
+        p = self.tmp_path / "test-plan-clean.md"
+        p.write_text(textwrap.dedent("""\
+            ---
+            plan: test-cli-clean
+            status: in-progress
+            scope_paths:
+              - "base.txt"
+            ---
+
+            # Sub-plan: test cli clean
+
+            Some work.
+        """), encoding="utf-8")
+        r = subprocess.run(
+            [sys.executable, str(_PLAN_LINT), str(p)],
+            cwd=self.tmp_path,
+            capture_output=True, text=True, timeout=30,
+            encoding="utf-8", errors="replace",
+        )
+        assert r.returncode == 0, f"expected clean, got: {r.stdout}{r.stderr}"
