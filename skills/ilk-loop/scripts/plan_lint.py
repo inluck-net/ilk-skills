@@ -39,6 +39,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Working directory for git operations.  Overridable via --git-cwd for tests.
+_GIT_CWD: Path | None = None
+
 # Fallback / degrade markers: language that says "there is a safe alternative
 # path if the capability is missing".
 _FALLBACK_MARKERS = re.compile(
@@ -1417,6 +1420,14 @@ def lint_redundant_gate(text: str, slug: str) -> list[str]:
 
 # ── Git-aware scope-path lint ─────────────────────────────────────────
 
+def _resolve_git_cwd() -> Path:
+    """Return the working directory for git operations.
+
+    Uses ``_GIT_CWD`` if set (via ``--git-cwd``), otherwise ``Path.cwd()``.
+    """
+    return _GIT_CWD if _GIT_CWD is not None else Path.cwd()
+
+
 def _run_git(args: list[str], cwd: Path) -> tuple[int, str, str]:
     """Run a git command in *cwd*. Returns (rc, stdout, stderr).
 
@@ -1478,7 +1489,7 @@ def lint_scope_path_off_base_branch(
     if not scope_paths:
         return findings
 
-    cwd = Path.cwd()
+    cwd = _resolve_git_cwd()
     if not (cwd / ".git").exists():
         # Not a git repo — no branches to confuse, nothing to validate.
         return findings
@@ -1914,6 +1925,7 @@ _LOOP_INFRA_CANONICAL = (
 )
 
 _SUPERVISED_ONLY_RE = re.compile(r"^supervised_only:\s*(.+)$", re.MULTILINE)
+_BASE_BRANCH_RE = re.compile(r"^base_branch:\s*(.+)$", re.MULTILINE)
 _TRUTHY = ("true", "yes", "1")
 
 
@@ -2022,6 +2034,121 @@ def lint_supervised_only_scope(
     return findings
 
 
+def _extract_base_branch(master_text: str) -> str | None:
+    """Return the master's raw ``base_branch`` value, or *None* if absent."""
+    m = re.match(r"^---\n.*?\n---\n", master_text, re.S)
+    fm = master_text[m.start():m.end()] if m else master_text
+    bm = _BASE_BRANCH_RE.search(fm)
+    if not bm:
+        return None
+    return bm.group(1).split("#", 1)[0].strip().strip("\"'")
+
+
+def lint_one_batch_one_branch(
+    master_text: str,
+    subplans: list[tuple[str, str]],
+) -> list[str]:
+    """Master-level check: all sub-plans' scope_paths resolve to base_branch.
+
+    *subplans* is a list of ``(slug, text)`` pairs for the batch's sub-plans.
+
+    AC-3: absent ``base_branch:`` → HARD finding (no fallback to HEAD).
+    AC-4: unresolvable ref → HARD finding naming git's stderr.
+    AC-2: sub-plans straddle >1 branch → HARD finding naming each branch.
+    """
+    findings: list[str] = []
+    if not master_text:
+        return findings
+
+    base_branch = _extract_base_branch(master_text)
+
+    # AC-3: no base_branch declared.
+    if base_branch is None:
+        findings.append(
+            "MASTER: no `base_branch:` declared. The one-batch-one-branch gate "
+            "requires a fixed ref to validate scope_paths against — deriving it "
+            "from the checked-out branch would silently pass when a human switches "
+            "branches mid-batch, which is the scenario the gate exists to catch. "
+            "HARD FINDING: add `base_branch: <ref>` to the MASTER frontmatter."
+        )
+        return findings
+
+    # AC-4: unresolvable ref.
+    cwd = _resolve_git_cwd()
+    if not (cwd / ".git").exists():
+        # Not a git repo — nothing to validate.
+        return findings
+
+    rc, out, err = _run_git(["rev-parse", "--verify", base_branch], cwd)
+    if rc != 0:
+        findings.append(
+            f"MASTER: `base_branch: {base_branch}` does not resolve "
+            f"(git rev-parse rc={rc}): {err.strip() or out.strip()}. "
+            f"HARD FINDING: fix the ref or add the branch."
+        )
+        return findings
+
+    # AC-2: check each sub-plan's scope_paths against the base branch.
+    # Collect (slug, path, branch) for any path absent on base but present
+    # on another ref.
+    offenders: list[tuple[str, str, list[str]]] = []
+    for slug, text in subplans:
+        scope_paths = _extract_scope_paths(text)
+        for p in scope_paths:
+            if not _is_validatable_scope_path(p):
+                continue
+            rc_list, out_list, err_list = _run_git(
+                ["rev-list", "--all", "--", p], cwd,
+            )
+            if rc_list != 0:
+                continue  # git failure — the per-path lint handles this
+            if not out_list:
+                continue  # new file, nowhere in history — OK
+
+            rc_base, _, err_base = _run_git(
+                ["cat-file", "-e", f"{base_branch}:{p}"], cwd,
+            )
+            if rc_base == 0:
+                continue  # present on base — OK
+
+            is_absent = rc_base == 1 or (
+                rc_base == 128
+                and ("does not exist in" in err_base or "but not in" in err_base)
+            )
+            if not is_absent:
+                continue  # unresolvable — per-path lint handles this
+
+            # Path absent on base, present elsewhere — find which ref.
+            rc_refs, out_refs, err_refs = _run_git(
+                ["branch", "--contains", out_list.splitlines()[0]], cwd,
+            )
+            ref_names = (
+                [r.strip().lstrip("* ") for r in out_refs.splitlines()
+                 if r.strip()]
+                if rc_refs == 0 and out_refs
+                else ["<unknown ref>"]
+            )
+            offenders.append((slug, p, ref_names))
+
+    if offenders:
+        # Group by branch for the finding message.
+        by_branch: dict[str, list[str]] = {}
+        for slug, path, refs in offenders:
+            for ref in refs:
+                by_branch.setdefault(ref, []).append(f"{slug} → {path}")
+        branch_summary = "; ".join(
+            f"{ref}: {', '.join(paths)}"
+            for ref, paths in sorted(by_branch.items())
+        )
+        findings.append(
+            f"HARD MASTER: sub-plans' scope_paths straddle multiple branches. "
+            f"Base branch is '{base_branch}'. Off-base: {branch_summary}. "
+            f"This would route commits to the wrong branch."
+        )
+
+    return findings
+
+
 def lint_file(path: str | Path, master_text: str = "") -> list[str]:
     """Run all checks against one sub-plan file. Returns finding messages.
 
@@ -2048,6 +2175,10 @@ def main() -> int:
     parser.add_argument("paths", nargs="*", help="Sub-plan .md file(s) to lint.")
     parser.add_argument("--master", help="MASTER plan file (enables slug-collision check).")
     parser.add_argument(
+        "--git-cwd", default=None,
+        help="Working directory for git operations (default: cwd).",
+    )
+    parser.add_argument(
         "--spec", action="store_true",
         help="Run spec pillar traceability check instead of per-sub-plan checks.",
     )
@@ -2056,6 +2187,11 @@ def main() -> int:
         help="Run native-IO source-hygiene checks on .py/.ps1 scripts.",
     )
     args = parser.parse_args()
+
+    # Override the git working directory if requested.
+    if args.git_cwd:
+        global _GIT_CWD
+        _GIT_CWD = Path(args.git_cwd).resolve()
 
     if not args.paths:
         parser.error("at least one file path is required")
@@ -2111,6 +2247,9 @@ def main() -> int:
     # Master-level checks need every sub-plan's scope_paths at once.
     if master_text:
         for msg in lint_supervised_only_scope(master_text, subplans):
+            print(f"WARN: {msg}")
+            total += 1
+        for msg in lint_one_batch_one_branch(master_text, subplans):
             print(f"WARN: {msg}")
             total += 1
 

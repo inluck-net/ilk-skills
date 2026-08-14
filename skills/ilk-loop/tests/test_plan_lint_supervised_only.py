@@ -46,6 +46,7 @@ def _master(supervised: str | None) -> str:
         "title: Test batch\n"
         "slug: 2026-07-26-test\n"
         "status: queued\n"
+        "base_branch: main\n"
         f"{flag}"
         "master_plan: 2026-07-26-master\n"
         "---\n"

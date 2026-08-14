@@ -65,7 +65,11 @@ def _make_two_branch_repo(tmp_path: Path) -> None:
 
 def _run_master(tmp_path: Path, master: str,
                 subplans: dict[str, str]) -> subprocess.CompletedProcess:
-    """Write a MASTER + sub-plans, run plan_lint with --master, return result."""
+    """Write a MASTER + sub-plans, run plan_lint with --master, return result.
+
+    Passes ``--git-cwd tmp_path`` so git operations target the test's
+    hermetic repo, not the real repo the test runner happens to be in.
+    """
     mp = tmp_path / "MASTER-2026-08-13-execution-plan.md"
     mp.write_text(textwrap.dedent(master), encoding="utf-8")
     paths = []
@@ -74,7 +78,8 @@ def _run_master(tmp_path: Path, master: str,
         sp.write_text(textwrap.dedent(content), encoding="utf-8")
         paths.append(str(sp))
     return subprocess.run(
-        [sys.executable, str(_PLAN_LINT), "--master", str(mp), *paths],
+        [sys.executable, str(_PLAN_LINT), "--git-cwd", str(tmp_path),
+         "--master", str(mp), *paths],
         capture_output=True, text=True, timeout=30,
         encoding="utf-8", errors="replace",
     )
@@ -157,7 +162,6 @@ class TestTwoBranchHard:
         _make_two_branch_repo(tmp_path)
         self.tmp_path = tmp_path
 
-    @pytest.mark.xfail(strict=True, reason="master-level gate not yet implemented")
     def test_two_branch_batch_is_hard(self) -> None:
         result = _run_master(
             self.tmp_path,
@@ -184,7 +188,6 @@ class TestNoBaseBranchHard:
         _make_two_branch_repo(tmp_path)
         self.tmp_path = tmp_path
 
-    @pytest.mark.xfail(strict=True, reason="master-level gate not yet implemented")
     def test_no_base_branch_is_hard(self) -> None:
         result = _run_master(
             self.tmp_path,
@@ -211,7 +214,6 @@ class TestUnresolvableRefHard:
         _make_two_branch_repo(tmp_path)
         self.tmp_path = tmp_path
 
-    @pytest.mark.xfail(strict=True, reason="master-level gate not yet implemented")
     def test_unresolvable_ref_is_hard(self) -> None:
         result = _run_master(
             self.tmp_path,
