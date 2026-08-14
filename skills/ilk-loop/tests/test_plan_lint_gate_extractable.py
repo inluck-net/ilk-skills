@@ -23,10 +23,8 @@ SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from run_local_checks import (  # noqa: E402
-    parse_local_checks_block,
-    extract_step_local_checks,
-)
+from run_local_checks import parse_local_checks_block  # noqa: E402
+from plan_lint import lint_gate_extractable  # noqa: E402
 
 
 # ── Fixture a: per-step gate block with 0 extractable commands (AC-2) ─────────
@@ -62,14 +60,14 @@ def test_fixture_a_perstep_empty():
     )
 
 
-@pytest.mark.xfail(
-    reason="gate-extractability lint does not exist yet (step 1 adds it)",
-    strict=True,
-)
 def test_fixture_a_finds_empty_perstep():
     """Fixture a: per-step local_checks: [] should produce a finding (AC-2)."""
-    # Will be filled in step 1 when the lint exists
-    raise NotImplementedError("lint not yet implemented")
+    findings = lint_gate_extractable(FIXTURE_A, "test-empty-perstep-gate")
+    assert len(findings) >= 1, (
+        f"Expected finding for empty per-step gate, got {findings}"
+    )
+    assert "HARD" in findings[0]
+    assert "Step 0" in findings[0]
 
 
 # ── Fixture b: frontmatter local_checks: [] → 0 extractable (AC-3) ───────────
@@ -95,13 +93,14 @@ def test_fixture_b_fm_empty():
     )
 
 
-@pytest.mark.xfail(
-    reason="gate-extractability lint does not exist yet (step 1 adds it)",
-    strict=True,
-)
 def test_fixture_b_finds_empty_fm():
     """Fixture b: frontmatter local_checks: [] should produce a finding (AC-3)."""
-    raise NotImplementedError("lint not yet implemented")
+    findings = lint_gate_extractable(FIXTURE_B, "test-empty-fm-gate")
+    assert len(findings) >= 1, (
+        f"Expected finding for empty frontmatter gate, got {findings}"
+    )
+    assert "HARD" in findings[0]
+    assert "frontmatter" in findings[0].lower()
 
 
 # ── Fixture c: colon-space command → must stay silent (AC-4) ──────────────────
@@ -172,6 +171,10 @@ def test_fixture_d_backtick_silent():
 
 
 # ── Fixture e: 3 command: lines declared, 2 extracted (AC-5) ─────────────────
+#
+# A yaml block has 3 ``command:`` lines (regex finds all 3), but the second
+# list item has a duplicate ``command:`` key — the runtime parser's dict
+# overwrites the first, so it extracts only 2.  This is the count mismatch.
 
 FIXTURE_E = """\
 ---
@@ -186,44 +189,43 @@ status: pending
 local_checks:
   - command: echo one
     timeout: 10
-  - command: echo two
+    command: echo two
+    timeout: 10
+  - command: echo three
     timeout: 10
 ```
-
-### Step 1 — Document the third command
-
-The third check runs: `command: echo three` but lives outside a yaml fence.
 """
 
 
 def test_fixture_e_extraction_count():
-    """Fixture e: body has 3 command: lines but only 2 in yaml fences."""
+    """Fixture e: 3 command: lines in yaml but runtime extracts 2."""
     import re
-    # Count command: lines in the full text
-    all_cmd_lines = re.findall(r"command:\s*.+", FIXTURE_E)
-    assert len(all_cmd_lines) == 3, (
-        f"Expected 3 command: lines in text, got {len(all_cmd_lines)}"
-    )
-    # Count what the runtime actually extracts (yaml fences only)
-    extracted = []
-    for fence in re.finditer(
+    # Count command: lines the regex sees in the yaml block
+    fence = re.search(
         r"^```(?:yaml|yml)?\s*\n(.*?)^```",
         FIXTURE_E,
         re.MULTILINE | re.DOTALL,
-    ):
-        extracted.extend(parse_local_checks_block(fence.group(1)))
+    )
+    assert fence is not None
+    declared = re.findall(r"command:\s*(.+)", fence.group(1))
+    assert len(declared) == 3, (
+        f"Expected 3 command: lines in yaml block, got {len(declared)}"
+    )
+    # Count what the runtime parser actually extracts
+    extracted = parse_local_checks_block(fence.group(1))
     assert len(extracted) == 2, (
-        f"Runtime should extract 2 commands from yaml fences, got {len(extracted)}"
+        f"Runtime should extract 2 (duplicate key overwrites), got {len(extracted)}"
     )
 
 
-@pytest.mark.xfail(
-    reason="gate-extractability lint does not exist yet (step 1 adds it)",
-    strict=True,
-)
 def test_fixture_e_finds_count_mismatch():
     """Fixture e: count mismatch should produce a finding (AC-5)."""
-    raise NotImplementedError("lint not yet implemented")
+    findings = lint_gate_extractable(FIXTURE_E, "test-count-mismatch")
+    assert len(findings) >= 1, (
+        f"Expected finding for count mismatch, got {findings}"
+    )
+    assert "mismatch" in findings[0].lower()
+    assert "3" in findings[0] and "2" in findings[0]
 
 
 # ── Sanity: the runtime parser itself works on the refuted shapes ─────────────

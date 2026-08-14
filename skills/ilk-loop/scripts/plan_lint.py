@@ -39,6 +39,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from run_local_checks import parse_local_checks_block
+
 # Working directory for git operations.  Overridable via --git-cwd for tests.
 _GIT_CWD: Path | None = None
 
@@ -1763,6 +1765,122 @@ def lint_scope_path_off_base_branch(
     return findings
 
 
+# ── Gate-extractability check ─────────────────────────────────────────────────
+#
+# plan_lint validates gate TEXT (23 content checks) but never asks whether the
+# runtime parser can actually EXTRACT the declared commands.  This lint reuses
+# ``run_local_checks.parse_local_checks_block`` as the oracle: if a sub-plan
+# declares a ``local_checks`` block (frontmatter or per-step yaml fence) and
+# the runtime parser extracts 0 commands from it, that is a finding — the gate
+# will not run.
+#
+# Zero false-positive surface by construction: the oracle is the consumer itself.
+# See decomposition-principles.md §gate-extractability.
+
+
+def lint_gate_extractable(text: str, slug: str) -> list[str]:
+    """Flag a local_checks block the runtime parser cannot extract commands from.
+
+    A sub-plan that declares ``local_checks:`` in frontmatter or a per-step
+    yaml fence, but from which the runtime parser extracts 0 commands, has a
+    gate that will not run.  Also flags a count mismatch: body declares N
+    ``command:`` lines in gate blocks but the runtime extracts M < N.
+
+    AC-2: per-step yaml block with 0 extractable commands → finding.
+    AC-3: frontmatter local_checks with 0 extractable commands → finding.
+    AC-5: count mismatch (declared > extracted) → finding.
+    AC-6: does not import yaml.
+    """
+    findings: list[str] = []
+
+    # ── Frontmatter block ─────────────────────────────────────────────────
+    m = re.match(r"^---\n.*?\n---\n", text, re.S)
+    if m:
+        fm = text[m.start():m.end()]
+        fm_lc = re.search(r"^local_checks:", fm, re.MULTILINE)
+        if fm_lc:
+            fm_parsed = parse_local_checks_block(fm[fm_lc.start():])
+            if not fm_parsed:
+                findings.append(
+                    f"HARD {slug}: frontmatter local_checks declares a gate "
+                    f"but the runtime parser extracts 0 commands from it."
+                )
+
+    # ── Per-step yaml blocks ──────────────────────────────────────────────
+    # Two patterns: (1) multi-line ``local_checks:`` followed by indented
+    # list items; (2) inline empty ``local_checks: []`` or ``local_checks: [ ]``.
+    body = _strip_frontmatter(text)
+    _PERSTEP_MULTI = re.compile(
+        r"```(?:yaml|yml)?\s*\n(.*?local_checks:\s*\n.*?)```",
+        re.S,
+    )
+    _PERSTEP_INLINE_EMPTY = re.compile(
+        r"```(?:yaml|yml)?\s*\n[^`]*?local_checks:\s*\[\s*\][^`]*?```",
+        re.S,
+    )
+
+    seen_starts: set[int] = set()
+    for block_match in _PERSTEP_MULTI.finditer(body):
+        block_text = block_match.group(1)
+        parsed = parse_local_checks_block(block_text)
+        seen_starts.add(block_match.start())
+        if not parsed:
+            heading = _nearest_step_heading(body, block_match.start())
+            findings.append(
+                f"HARD {slug}: {heading} declares a local_checks gate "
+                f"but the runtime parser extracts 0 commands from it."
+            )
+    for block_match in _PERSTEP_INLINE_EMPTY.finditer(body):
+        if block_match.start() in seen_starts:
+            continue  # already covered by the multi-line pattern
+        seen_starts.add(block_match.start())
+        heading = _nearest_step_heading(body, block_match.start())
+        findings.append(
+            f"HARD {slug}: {heading} declares a local_checks gate "
+            f"but the runtime parser extracts 0 commands from it."
+        )
+
+    # ── Count mismatch (AC-5) ─────────────────────────────────────────────
+    # Count command: lines the body DECLARES in gate blocks via regex,
+    # then compare against what the runtime parser actually extracts.
+    declared_cmds: list[str] = []
+    extracted_cmds: list[str] = []
+    if m:
+        fm = text[m.start():m.end()]
+        fm_lc = re.search(r"^local_checks:", fm, re.MULTILINE)
+        if fm_lc:
+            fm_block = fm[fm_lc.start():]
+            declared_cmds.extend(re.findall(r"command:\s*(.+)", fm_block))
+            extracted_cmds.extend(
+                c.get("command", "") for c in parse_local_checks_block(fm_block)
+            )
+    for block_match in re.finditer(
+        r"```(?:yaml|yml)?\s*\n(.*?)```", body, re.S,
+    ):
+        block_text = block_match.group(1)
+        if "local_checks:" in block_text:
+            declared_cmds.extend(re.findall(r"command:\s*(.+)", block_text))
+            extracted_cmds.extend(
+                c.get("command", "")
+                for c in parse_local_checks_block(block_text)
+            )
+    if len(extracted_cmds) < len(declared_cmds):
+        findings.append(
+            f"{slug}: gate count mismatch — body declares "
+            f"{len(declared_cmds)} command(s) in local_checks blocks but "
+            f"the runtime parser extracts {len(extracted_cmds)}."
+        )
+
+    return findings
+
+
+def _nearest_step_heading(body: str, pos: int) -> str:
+    """Find the ``### Step N`` heading nearest before *pos* in *body*."""
+    region = body[:pos]
+    m = re.findall(r"###\s+Step\s+\d+[^\n]*", region)
+    return m[-1].strip() if m else "<unknown step>"
+
+
 ALL_CHECKS = (
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
@@ -1783,6 +1901,7 @@ ALL_CHECKS = (
     lint_redundant_gate,
     lint_scope_path_off_base_branch,
     lint_shared_module_gate,
+    lint_gate_extractable,
 )
 
 
