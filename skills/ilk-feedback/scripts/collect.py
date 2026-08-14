@@ -1373,12 +1373,18 @@ def maybe_emit_upstream_candidate(
         if label == "local-checks-broken":
             evidence["exit_codes"] = fail_exit_codes
 
+    # AC-8: when a command was captured, the recommendation names it.
+    failing_cmd_str = ""
+    if fail_checks:
+        failing_cmd_str = f" Failing command: `{fail_checks[0]}`"
+
     if label == "local-checks-broken":
         gap_desc = (
             f"Loop classified as '{label}': gate COMMAND could not execute "
             f"(exit_code in {{4,5,127}} or 'not found' in stderr). "
             f"Product code is NOT implicated; a blind resume re-fails. "
             f"Fix the gate config (often a path a later step creates)."
+            f"{failing_cmd_str}"
         )
         proposed_fix = (
             "Fix the gate config: check if the command references a path "
@@ -1394,8 +1400,17 @@ def maybe_emit_upstream_candidate(
             f"{facts.get('fail_iters_in_window')}, "
             f"pass_iters_in_window={facts.get('pass_iters_in_window')}). "
             f"Sub-plan AC may be wrong/over-specified or there's a real bug."
+            f"{failing_cmd_str}"
         )
-        proposed_fix = "Review the sub-plan's local_checks AC for achievability; consider splitting the step or adjusting the check."
+        # AC-8: when a command was captured, name it in the recommendation.
+        if fail_checks:
+            proposed_fix = (
+                f"Review the failing command `{fail_checks[0]}` — check if the "
+                f"AC is achievable, the command syntax is correct, or there's a "
+                f"real bug in the code being tested."
+            )
+        else:
+            proposed_fix = "Review the sub-plan's local_checks AC for achievability; consider splitting the step or adjusting the check."
         candidate_kind = "toolkit"
 
     try:
@@ -1770,6 +1785,44 @@ def render_report(
     body_lines.append("## What happened\n")
     body_lines.append(_label_narrative(label, facts))
     body_lines.append("")
+
+    # AC-8: extract failing check details from iteration records
+    fail_checks = []
+    fail_exit_codes: list[int | None] = []
+    fail_stdout_tails: list[str] = []
+    fail_stderr_tails: list[str] = []
+    for r in iters[-3:]:
+        lc = r.get("local_checks")
+        if isinstance(lc, dict):
+            lc = [lc]
+        if isinstance(lc, list):
+            for c in lc:
+                if isinstance(c, dict) and c.get("outcome") in ("fail", "error"):
+                    cmd = c.get("command", "")
+                    if cmd and cmd not in fail_checks:
+                        fail_checks.append(cmd)
+                        fail_exit_codes.append(c.get("exit_code"))
+                        fail_stdout_tails.append(c.get("stdout_tail", ""))
+                        fail_stderr_tails.append(c.get("stderr_tail", ""))
+
+    if fail_checks:
+        body_lines.append("## Failing check details\n")
+        for i, cmd in enumerate(fail_checks):
+            body_lines.append(f"### Check {i+1}\n")
+            body_lines.append(f"- **Command:** `{cmd}`")
+            if i < len(fail_exit_codes) and fail_exit_codes[i] is not None:
+                body_lines.append(f"- **Exit code:** {fail_exit_codes[i]}")
+            if i < len(fail_stdout_tails) and fail_stdout_tails[i]:
+                body_lines.append(f"- **Stdout tail:**")
+                body_lines.append("```")
+                body_lines.append(fail_stdout_tails[i][-2048:])  # Cap at 2KB
+                body_lines.append("```")
+            if i < len(fail_stderr_tails) and fail_stderr_tails[i]:
+                body_lines.append(f"- **Stderr tail:**")
+                body_lines.append("```")
+                body_lines.append(fail_stderr_tails[i][-2048:])  # Cap at 2KB
+                body_lines.append("```")
+        body_lines.append("")
 
     if label == "self-hosting-drift":
         body_lines.append("## Self-hosting drift details\n")
