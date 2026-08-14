@@ -80,7 +80,7 @@ def test_collect_writes_only_under_ilk_data_home(scratch_env):
     )
 
     # Write sentinel
-    rt_dir = data_home / "projects" / key / "runtime"
+    rt_dir = data_home / "projects" / key / "runtime" / "launcher"
     rt_dir.mkdir(parents=True, exist_ok=True)
     (rt_dir / "last-exit.json").write_text(
         json.dumps({"state": "running", "run_id": "20260609-120000"}),

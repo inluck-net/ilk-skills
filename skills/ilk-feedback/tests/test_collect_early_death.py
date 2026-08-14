@@ -77,7 +77,7 @@ def test_early_death_emits_interrupted(scratch_env):
     data_home = Path(env["ILK_DATA_HOME"])
 
     # Write sentinel (what the runner writes at start + finally).
-    rt_dir = _runtime_dir(data_home, key)
+    rt_dir = _launcher_dir(data_home, key)
     rt_dir.mkdir(parents=True, exist_ok=True)
     sentinel = {
         "state": "interrupted",

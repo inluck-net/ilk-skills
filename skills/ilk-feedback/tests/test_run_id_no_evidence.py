@@ -75,7 +75,7 @@ def _logs_dir(data_home: Path, key: str) -> Path:
 
 def _write_sentinel(data_home: Path, key: str, run_id: str, state: str = "local_checks_failed") -> None:
     """Write a last-exit.json sentinel."""
-    rt_dir = _runtime_dir(data_home, key)
+    rt_dir = _launcher_dir(data_home, key)
     rt_dir.mkdir(parents=True, exist_ok=True)
     sentinel = {"state": state, "run_id": run_id, "iters": 1}
     (rt_dir / "last-exit.json").write_text(json.dumps(sentinel), encoding="utf-8")

@@ -456,7 +456,7 @@ class TestAC3Emission:
         self._write_jsonl(log_dir, project_path, records)
 
         # Write sentinel
-        rt_dir = data_home / "projects" / key / "runtime"
+        rt_dir = data_home / "projects" / key / "runtime" / "launcher"
         rt_dir.mkdir(parents=True, exist_ok=True)
         (rt_dir / "last-exit.json").write_text(
             json.dumps({"state": "running", "run_id": "20260609-120000"}),
@@ -495,7 +495,7 @@ class TestAC3Emission:
         }]
         self._write_jsonl(log_dir, project_path, records)
 
-        rt_dir = data_home / "projects" / key / "runtime"
+        rt_dir = data_home / "projects" / key / "runtime" / "launcher"
         rt_dir.mkdir(parents=True, exist_ok=True)
         (rt_dir / "last-exit.json").write_text(
             json.dumps({"state": "done", "run_id": "20260609-130000"}),

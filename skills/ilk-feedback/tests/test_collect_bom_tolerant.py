@@ -146,7 +146,7 @@ def test_bomd_sentinel_parses(scratch_env):
     project_path, env, key = scratch_env
     data_home = Path(env["ILK_DATA_HOME"])
 
-    rt_dir = _runtime_dir(data_home, key)
+    rt_dir = _runtime_dir(data_home, key) / "launcher"
     rt_dir.mkdir(parents=True, exist_ok=True)
     sentinel_path = rt_dir / "last-exit.json"
 

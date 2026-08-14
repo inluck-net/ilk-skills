@@ -111,7 +111,7 @@ def _write_per_iter_jsonl(
 
 def _write_sentinel(data_home: Path, key: str, run_id: str, state: str = "running") -> None:
     """Write a last-exit.json sentinel."""
-    rt_dir = data_home / "projects" / key / "runtime"
+    rt_dir = data_home / "projects" / key / "runtime" / "launcher"
     rt_dir.mkdir(parents=True, exist_ok=True)
     sentinel = {"state": state, "run_id": run_id, "iters": 1}
     (rt_dir / "last-exit.json").write_text(json.dumps(sentinel), encoding="utf-8")
