@@ -1572,6 +1572,55 @@ def tail_log(log_path_str: str | None, max_lines: int = TAIL_LINES) -> list[str]
     return [ln.rstrip("\n") for ln in lines[-max_lines:]]
 
 
+def filter_system_lines(lines: list[str]) -> list[str]:
+    """Filter out [system] lines from a tail.
+
+    [system] lines (e.g. thinking_tokens) are technically present but
+    entirely uninformative for diagnosis. If every line is [system],
+    return a sentinel indicating so.
+    """
+    filtered = [ln for ln in lines if not ln.startswith("[system] ")]
+    if not filtered and lines:
+        return ["<all lines were [system] noise — no substantive output>"]
+    return filtered
+
+
+def detect_uncommitted_changes(project_path: Path) -> list[dict[str, Any]]:
+    """Detect uncommitted changes in the project repository.
+
+    Returns a list of dicts with 'path' and 'line_count' for each changed file.
+    AC-7: on a local_checks_failed stop, name uncommitted paths and line counts.
+    """
+    import subprocess
+
+    try:
+        # Get list of changed files with line counts
+        result = subprocess.run(
+            ["git", "diff", "--numstat"],
+            cwd=project_path,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return []
+
+        changes = []
+        for line in result.stdout.strip().split("\n"):
+            if not line:
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 3:
+                added, deleted, path = parts[0], parts[1], parts[2]
+                # Only include files with actual changes
+                if added != "-" or deleted != "-":
+                    total = (int(added) if added != "-" else 0) + (int(deleted) if deleted != "-" else 0)
+                    changes.append({"path": path, "line_count": total})
+        return changes
+    except Exception:
+        return []
+
+
 def resolve_iter_log(
     run_id: str, iteration: int, project_path: Path | None = None, last_launch: dict | None = None
 ) -> Path | None:
@@ -1747,6 +1796,19 @@ def render_report(
         body_lines.append("| Remediation | Check the worker home directory and ensure the launcher command is installed and accessible |")
         body_lines.append("")
 
+    # AC-7: on a local_checks_failed stop, name uncommitted paths and line counts.
+    if label in ("local-checks-stuck", "local-checks-broken"):
+        uncommitted = detect_uncommitted_changes(project_path)
+        if uncommitted:
+            body_lines.append("## Uncommitted changes at stop\n")
+            body_lines.append("| File | Lines changed |")
+            body_lines.append("|---|---|")
+            for change in uncommitted:
+                body_lines.append(f"| `{change['path']}` | {change['line_count']} |")
+            body_lines.append("")
+            body_lines.append("**Do not commit these** — they represent half-finished work from the last iteration.")
+            body_lines.append("")
+
     body_lines.append("## Recommendation for next launch\n")
     body_lines.append(f"- `MaxIterations`: **{rec_max}** (was {max_iter_cfg if max_iter_cfg else 'unknown'})")
     body_lines.append(f"- `IterationTimeoutMin`: **{rec_to}** (was {to_cfg if to_cfg else 'unknown'})")
@@ -1771,7 +1833,10 @@ def render_report(
     else:
         body_lines.append("## Tail of last iter\n")
     body_lines.append("```")
-    body_lines.extend(tail or ["<no tail available>"])
+    # AC-6: skip [system] lines (e.g. thinking_tokens) — they are technically
+    # present but entirely uninformative for diagnosis.
+    filtered_tail = filter_system_lines(tail) if tail else ["<no tail available>"]
+    body_lines.extend(filtered_tail)
     body_lines.append("```")
     body_lines.append("")
 
