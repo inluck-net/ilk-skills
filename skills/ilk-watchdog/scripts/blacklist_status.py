@@ -44,6 +44,7 @@ BLACKLIST_CLASSES = {
     "api-blocked",
     "budget-exhausted",
     "local-checks-stuck",
+    "local-checks-broken",
     "dependency-unreachable",
 }
 

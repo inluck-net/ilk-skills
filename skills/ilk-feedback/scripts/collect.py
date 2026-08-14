@@ -1258,17 +1258,30 @@ def classify(
     # heuristic or the agent narrative.  See
     # orchestration-collaboration.md §L1 and the 2026-06-16 bug
     # (state=local_checks_failed laundered into clean-success).
+    #
+    # Narrowing (2026-08-14): a one-iteration local_checks_failed is
+    # unrunnable (the gate couldn't execute), not stuck (the agent failed).
+    # The iter-count heuristic already guards ≥3 correctly; only the <3
+    # case needs the different label.  See sub-plan
+    # a-one-iteration-gate-failure-is-not-stuck.
     sentinel = read_sentinel(project_path)
     _SENTINEL_FAILURE_MAP: dict[str, str] = {
-        "local_checks_failed": "local-checks-stuck",
         "budget_exhausted": "budget-exhausted",
         "max-iterations": "max-iter-bound",
         "interrupted": "interrupted",
     }
     if sentinel is not None:
         sentinel_state = (sentinel.get("state") or "").strip()
-        if sentinel_state in _SENTINEL_FAILURE_MAP:
-            label = _SENTINEL_FAILURE_MAP[sentinel_state]
+        if sentinel_state in _SENTINEL_FAILURE_MAP or sentinel_state == "local_checks_failed":
+            if sentinel_state == "local_checks_failed":
+                iter_count = len(iters)
+                last_iter = iters[-1] if iters else {}
+                if iter_count < 3 and last_iter.get("exit_code", 1) == 0:
+                    label = "local-checks-broken"
+                else:
+                    label = "local-checks-stuck"
+            else:
+                label = _SENTINEL_FAILURE_MAP[sentinel_state]
             facts: dict[str, Any] = {
                 "iter_at_stop": sentinel.get("iteration"),
                 "reason": "sentinel terminal state",

@@ -218,11 +218,15 @@ class TestClassifierSplit:
 
 
 class TestSentinelPathUnchanged:
-    """Sentinel-derived local-checks-stuck is unchanged (no split at sentinel level)."""
+    """Sentinel-derived local-checks-broken for 1-iter unrunnable gate."""
 
-    def test_sentinel_local_checks_failed_is_still_stuck(self):
-        """state=local_checks_failed → local-checks-stuck (sentinel doesn't
-        distinguish broken from stuck — that requires JSONL check details)."""
+    def test_sentinel_one_iter_exit_0_is_broken(self):
+        """state=local_checks_failed, 1 iter, exit_code=0 → local-checks-broken.
+
+        A single iteration whose sentinel records local_checks_failed with
+        exit_code=0 is an unrunnable gate, not a stuck agent.  The L1
+        sentinel path now distinguishes this from the ≥3-iter case.
+        """
         iters = [{
             "run_id": "20260619-120000",
             "iteration": 1,
@@ -237,7 +241,7 @@ class TestSentinelPathUnchanged:
             with patch.object(collect, "collect_self_hosting_facts", return_value={}):
                 label, facts = collect.classify(iters, None, Path("/tmp/fake-project"))
 
-        assert label == "local-checks-stuck"
+        assert label == "local-checks-broken"
 
 
 # ── AC-2: diagnosis narrative ───────────────────────────────────────────────

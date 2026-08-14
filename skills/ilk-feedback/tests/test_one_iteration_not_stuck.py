@@ -90,11 +90,12 @@ class TestOneIterationGateFailure:
     label and flips when the fix lands.
     """
 
-    def test_today_labels_it_stuck(self):
-        """AC-1 pin: 1-iter sentinel=local_checks_failed → local-checks-stuck (today).
+    def test_one_iter_exit_0_is_broken(self):
+        """AC-1: 1-iter sentinel=local_checks_failed, exit_code=0 → local-checks-broken.
 
-        xfail because this is the WRONG label — it should point at the plan
-        file, not the work.  Step 1 removes the xfail.
+        A single iteration whose sentinel records local_checks_failed with
+        exit_code=0 is an unrunnable gate — the plan file caused the failure,
+        not the work.  The label should point at the gate config, not the ACs.
         """
         iters = _make_single_iter(exit_code=0, new_commits=1)
         sentinel = _sentinel()
@@ -103,19 +104,11 @@ class TestOneIterationGateFailure:
             with patch.object(collect, "collect_self_hosting_facts", return_value={}):
                 label, facts = collect.classify(iters, None, Path("/tmp/fake-project"))
 
-        # Today: wrong label.  After step 1: local-checks-broken.
-        assert label == "local-checks-stuck", (
-            f"Expected local-checks-stuck (today's behaviour), got {label}"
-        )
-
-        # This is the assertion that should become local-checks-broken after step 1.
-        # Mark xfail so the test passes today and fails when the fix lands,
-        # reminding us to remove the xfail.
-        pytest.xfail(
-            "Step 0 pins the mislabel; step 1 will change this to local-checks-broken"
-        )
         assert label == "local-checks-broken", (
-            f"After fix: expected local-checks-broken, got {label}"
+            f"Expected local-checks-broken for 1-iter unrunnable gate, got {label}"
+        )
+        assert facts.get("reason") == "sentinel terminal state", (
+            f"Expected reason='sentinel terminal state', got {facts.get('reason')}"
         )
 
 
@@ -157,8 +150,8 @@ class TestSentinelOverridesNarrative:
     def test_sentinel_wins_over_success_narrative(self):
         """Sentinel says local_checks_failed, agent says shipped.
 
-        After step 1, with 1 iter, this should become local-checks-broken
-        (unrunnable gate).  The sentinel still wins — just a different label.
+        With 1 iter and exit_code=0, the sentinel's terminal failure state
+        takes precedence over the agent narrative → local-checks-broken.
         """
         iters = _make_single_iter(exit_code=0, new_commits=1)
         iters[0]["stop_reason"] = "already-shipped"
@@ -170,7 +163,7 @@ class TestSentinelOverridesNarrative:
                 label, facts = collect.classify(iters, None, Path("/tmp/fake-project"))
 
         # The sentinel must produce a failure label — not clean-success.
-        assert label in ("local-checks-stuck", "local-checks-broken"), (
+        assert label == "local-checks-broken", (
             f"Sentinel failure must override agent narrative, got {label}"
         )
         assert facts.get("reason") == "sentinel terminal state", (
