@@ -92,22 +92,22 @@ def backlog_dir(tmp_path: Path) -> Path:
 class TestFromDict:
     """Entry.from_dict behaviour against each record shape."""
 
-    def test_legacy_record_raises_typeerror(self) -> None:
-        """A legacy record missing five required fields raises TypeError."""
-        with pytest.raises(TypeError, match="missing 5 required positional arguments"):
-            improvement_backlog.Entry.from_dict(_LEGACY_RECORD)
+    def test_legacy_record_constructs_after_fix(self) -> None:
+        """A legacy record missing five required fields now constructs with defaults."""
+        entry = improvement_backlog.Entry.from_dict(_LEGACY_RECORD)
+        assert entry.id == "legacy-001"
+        assert entry.leverage == "low"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Step 1 will give the five fields defaults; until then this fails.",
-    )
     def test_legacy_record_constructs_with_defaults(self) -> None:
-        """After step 1, a legacy record should construct with defaults."""
+        """A legacy record constructs with defaults for the five newer fields."""
         entry = improvement_backlog.Entry.from_dict(_LEGACY_RECORD)
         assert entry.id == "legacy-001"
         # The five defaulted fields should have safe values, not be absent.
-        assert entry.leverage is not None
-        assert entry.severity is not None
+        assert entry.leverage == "low"
+        assert entry.severity == "low"
+        assert entry.first_seen == ""
+        assert entry.last_seen == ""
+        assert entry.seen_count == 0
 
     def test_current_record_constructs(self) -> None:
         """A current record with all fields constructs fine."""
@@ -130,21 +130,22 @@ class TestFromDict:
 class TestListing:
     """improvement_backlog.load / list_entries against a mixed store."""
 
-    def test_load_aborts_on_legacy_record(self, backlog_dir: Path) -> None:
-        """One legacy record aborts the entire listing (list comprehension).
+    def test_load_aborts_on_unconstructible_record(self, backlog_dir: Path) -> None:
+        """One unconstructible record still aborts the entire listing.
 
-        This is the defect: the list comprehension at :309 propagates the
-        first TypeError, so the whole listing fails.
+        The list comprehension at :309 propagates the first TypeError.
+        After step 1, the legacy record constructs fine, but the
+        unconstructible one (missing ``id``) still raises.
         """
-        with pytest.raises(TypeError, match="missing 5 required positional arguments"):
+        with pytest.raises(TypeError):
             improvement_backlog.load(backlog_dir)
 
     @pytest.mark.xfail(
         strict=True,
-        reason="Step 1 will make legacy records construct; until then this fails.",
+        reason="Step 2 will skip unconstructible records; until then load still aborts.",
     )
     def test_load_succeeds_with_legacy_record(self, backlog_dir: Path) -> None:
-        """After step 1, load should succeed and return all constructible records."""
+        """After step 2, load should succeed and return all constructible records."""
         entries = improvement_backlog.load(backlog_dir)
         # Legacy + current = 2 (unconstructible is skipped in step 2).
         assert len(entries) >= 2

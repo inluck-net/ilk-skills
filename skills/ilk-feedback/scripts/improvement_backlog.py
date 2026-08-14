@@ -109,12 +109,12 @@ class Entry:
     gap: str              # description of the gap
     evidence: dict        # {file, line, run_id, project}
     proposed_fix: str     # suggested fix
-    leverage: str         # "high" / "medium" / "low"
-    severity: str         # "high" / "medium" / "low"
-    status: str           # "open" (default) / "planned" / "shipped" / "wontfix"
-    first_seen: str       # ISO datetime
-    last_seen: str        # ISO datetime
-    seen_count: int       # how many times this candidate has been observed
+    leverage: str = "low"  # "high" / "medium" / "low" — default "low" so legacy records don't inflate triage
+    severity: str = "low"  # "high" / "medium" / "low" — same reasoning
+    status: str = "open"   # "open" (default) / "planned" / "shipped" / "wontfix"
+    first_seen: str = ""   # ISO datetime — empty signals "unknown" for legacy records
+    last_seen: str = ""    # ISO datetime — same
+    seen_count: int = 0    # how many times this candidate has been observed — 0 is honest for "unknown"
     source: str = ""      # origin (e.g. "feedback", "supervisor", "lark", "github")
     source_id: str = ""   # per-source stable key for PULL-upsert dedup (e.g. lark record_id)
     relations: dict = field(default_factory=dict)  # structured links (run_id, commit, plan, …)
