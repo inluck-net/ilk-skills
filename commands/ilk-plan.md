@@ -784,6 +784,15 @@ surface counts in the step-9 report; fix before launching):
   snapshot compare, before-and-after). The change silently shifts behaviour
   without a before/after delta check (the 'balance-drift' shape). See
   decomposition-principles.md §8.
+- **shared-module gate** — a sub-plan's `scope_paths` modifies a module that
+  other production files import, and every gate in the sub-plan runs only a
+  single test file. The callers' integration is never exercised. The finding
+  names the importing files and warns that widening the gate to a directory or
+  whole suite will also require a 'baseline-green on \<platform\>' note (see
+  whole-suite gate baseline above). Uses a caller-aware detector (grep for
+  `from <mod> import` / `import <mod>`, excluding test files); if the oracle
+  cannot run, it reports nothing rather than firing. See
+  decomposition-principles.md §8.
 - **supervised_only scope guard** (**hard finding**, needs `--master`) — fires
   in both directions: (a) the MASTER sets `supervised_only: true` but no
   sub-plan's `scope_paths` modifies loop infra — the flag is unwarranted, set it
