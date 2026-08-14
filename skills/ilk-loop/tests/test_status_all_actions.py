@@ -121,7 +121,12 @@ def _setup_project(
 
     # Sentinel (last-exit.json)
     sentinel = {"state": state, "pid": pid, "iterations": 3, "run_id": run_id}
-    (runtime / "last-exit.json").write_text(json.dumps(sentinel), encoding="utf-8")
+    # The sentinel lives in runtime/launcher/ — the path every reader uses.
+    # Moved there by `the-sentinel-lands-where-readers-look` (736d6d5); these
+    # tests still wrote the old runtime/ path and so found no sentinel at all.
+    launcher = runtime / "launcher"
+    launcher.mkdir(parents=True, exist_ok=True)
+    (launcher / "last-exit.json").write_text(json.dumps(sentinel), encoding="utf-8")
 
     # Optional: blacklist postmortem (use recent naive datetime to stay within backoff)
     if blacklist_class:

@@ -116,8 +116,13 @@ def _setup_project(name: str, *, master_status: str = "active",
     (plans / sub_fname).write_text(sub, encoding="utf-8")
 
     # Sentinel (last-exit.json)
+    # The sentinel lives in runtime/launcher/ — the path every reader uses.
+    # Moved there by `the-sentinel-lands-where-readers-look` (736d6d5); these
+    # tests still wrote the old runtime/ path and so found no sentinel at all.
     sentinel = {"state": state, "pid": pid, "iterations": 3, "run_id": run_id}
-    (runtime / "last-exit.json").write_text(
+    launcher = runtime / "launcher"
+    launcher.mkdir(parents=True, exist_ok=True)
+    (launcher / "last-exit.json").write_text(
         json.dumps(sentinel), encoding="utf-8"
     )
 
@@ -321,7 +326,8 @@ class TestAC3_PidLiveness:
         Regression for the 2026-06-13 tray-always-idle bug."""
         proj = _setup_project("bom-pid", pid=live_ilk_pid)
         key = _project_key(proj)
-        sentinel_path = ILK_DATA / "projects" / key / "runtime" / "last-exit.json"
+        sentinel_path = ILK_DATA / "projects" / key / "runtime" / "launcher" / "last-exit.json"
+        sentinel_path.parent.mkdir(parents=True, exist_ok=True)
         sentinel = {"state": "running", "pid": live_ilk_pid,
                     "iterations": 3, "run_id": "bom-run"}
         # Write WITH a UTF-8 BOM, exactly like the PowerShell runner does.

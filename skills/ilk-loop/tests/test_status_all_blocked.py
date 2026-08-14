@@ -105,7 +105,8 @@ def _build_project(
 
     # Sentinel (optional)
     if sentinel_pid is not None:
-        _write_file(runtime / "last-exit.json", _sentinel_json(sentinel_pid, sentinel_state))
+        (runtime / "launcher").mkdir(parents=True, exist_ok=True)
+        _write_file(runtime / "launcher" / "last-exit.json", _sentinel_json(sentinel_pid, sentinel_state))
 
     # Postmortem (optional)
     if postmortem_class and postmortem_time:

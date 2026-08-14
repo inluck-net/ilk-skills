@@ -108,7 +108,12 @@ def _setup_project(name: str, *, state: str = "running",
 
     # Sentinel — state and pid are the variables under test.
     sentinel = {"state": state, "pid": pid, "iterations": 3, "run_id": f"{name}-run"}
-    (runtime / "last-exit.json").write_text(
+    # The sentinel lives in runtime/launcher/ — the path every reader uses.
+    # Moved there by `the-sentinel-lands-where-readers-look` (736d6d5); these
+    # tests still wrote the old runtime/ path and so found no sentinel at all.
+    launcher = runtime / "launcher"
+    launcher.mkdir(parents=True, exist_ok=True)
+    (launcher / "last-exit.json").write_text(
         json.dumps(sentinel), encoding="utf-8"
     )
 
