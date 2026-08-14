@@ -1,11 +1,8 @@
 """Tests for the shared-module gate lint: a one-file gate on a module whose
 callers depend on it hides integration bugs.
 
-The lint does not exist yet, so positive cases (a) and (b) are
-xfail(strict=True).  Flip to pass in step 2 when the lint is implemented.
-
-AC-1: shared module + one-file gate -> finding          (xfail)
-AC-2: the real gh-resolve case (return-type change)     (xfail)
+AC-1: shared module + one-file gate -> finding
+AC-2: the real gh-resolve case (return-type change)
 AC-3: later step runs a directory -> silent
 AC-4: leaf module nothing imports -> silent
 AC-5: docs-only sub-plan -> silent
