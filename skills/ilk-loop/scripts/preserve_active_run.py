@@ -157,8 +157,8 @@ def preserve(project_path: Path, run_id: str | None = None) -> Path:
     jsonl_count = _filter_jsonl_for_run(jsonl_src, run_id, jsonl_dst)
 
     # 3. Sentinel (last-exit.json)
-    runtime_dir = external_runtime_dir(key)
-    sentinel_src = runtime_dir / "last-exit.json"
+    launcher_dir = external_launcher_dir(key)
+    sentinel_src = launcher_dir / "last-exit.json"
     sentinel_copied = _copy_file(sentinel_src, archive / "last-exit.json")
 
     # 4. Launcher metadata (last-launch.json)

@@ -281,7 +281,7 @@ def resolve_project_status(project_dir: Path) -> dict:
     """
     key = project_dir.name
     plans_dir = project_dir / "plans"
-    runtime_dir = external_runtime_dir(key)
+    runtime_dir = external_launcher_dir(key)
     launcher_dir = external_launcher_dir(key)
 
     # Active master + next subplan (also track queued for manually_runnable).

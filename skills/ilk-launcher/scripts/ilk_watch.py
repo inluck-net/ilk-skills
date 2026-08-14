@@ -29,6 +29,7 @@ if _SCRIPTS_DIR.is_dir():
 
 try:
     from ilk_paths import (  # type: ignore
+        external_launcher_dir,
         external_logs_dir,
         external_runtime_dir,
         find_project_root,
@@ -37,6 +38,7 @@ try:
     )
 except ImportError:
     # Graceful degradation when ilk_paths is not on sys.path.
+    external_launcher_dir = None  # type: ignore
     external_logs_dir = None  # type: ignore
     external_runtime_dir = None  # type: ignore
     find_project_root = None  # type: ignore
@@ -157,9 +159,9 @@ class ProjectWatch:
     @property
     def _runtime_dir(self) -> Path | None:
         key = self._key
-        if key is None or external_runtime_dir is None:
+        if key is None or external_launcher_dir is None:
             return None
-        return external_runtime_dir(key)
+        return external_launcher_dir(key)
 
     @property
     def _logs_dir(self) -> Path | None:

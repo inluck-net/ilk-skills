@@ -176,7 +176,7 @@ get_ilk_runtime_dir() {
   fi
   local json_out
   if json_out=$($PYTHON "$resolver" --start "$project" 2>/dev/null) && [[ -n "$json_out" ]]; then
-    $PYTHON -c "import json,sys; d=json.load(sys.stdin); print(d.get('external_runtime_dir') or '')" <<<"$json_out"
+    $PYTHON -c "import json,sys; d=json.load(sys.stdin); print(d.get('external_launcher_dir') or '')" <<<"$json_out"
   else
     echo ""
   fi
@@ -759,7 +759,7 @@ Watchdog PID: $$" 36
           # the max means a freshly-started run (sentinel just written, JSONL
           # still from the PREVIOUS run) is NOT mistaken for hung.
           local thr="${ILK_HUNG_THRESHOLD_MIN:-45}"
-          local jsonl="$(dirname "$runtime_dir")/logs/.ilk-loop.log"
+          local jsonl="$(dirname "$(dirname "$runtime_dir")")/logs/.ilk-loop.log"
           local sentinel_file="${runtime_dir}/last-exit.json"
           local mtime=0 m f
           for f in "$jsonl" "$sentinel_file"; do

@@ -52,10 +52,10 @@ def _get_pid_file_path(project_path: Path) -> Path | None:
 
 
 def _get_runtime_dir(project_path: Path) -> Path | None:
-    if external_runtime_dir is None or project_key is None:
+    if external_launcher_dir is None or project_key is None:
         return None
     key = project_key(project_path)
-    return external_runtime_dir(key)
+    return external_launcher_dir(key)
 
 
 def read_sentinel_state(project_path: Path) -> str | None:

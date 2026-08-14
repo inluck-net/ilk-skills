@@ -245,7 +245,7 @@ def read_sentinel(project_path: Path) -> dict | None:
     """
     if external_runtime_dir is None or project_key is None:
         return None
-    f = external_runtime_dir(project_key(project_path)) / "last-exit.json"
+    f = external_launcher_dir(project_key(project_path)) / "last-exit.json"
     if not f.exists():
         return None
     try:

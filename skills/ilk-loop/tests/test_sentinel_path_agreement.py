@@ -1,10 +1,11 @@
 """Tests for the sentinel path agreement contract.
 
 The runner writes last-exit.json to the directory returned by
-external_runtime_dir (via get_ilk_runtime_dir in run_ilk_loop_claude.sh:818).
-Eight readers look in external_launcher_dir (runtime/launcher/).
+external_launcher_dir (via get_ilk_runtime_dir in run_ilk_loop_claude.sh:818).
+All readers look in the same external_launcher_dir (runtime/launcher/).
 
-These two must agree.  Until they do, the path-agreement test is xfail(strict).
+These must agree — asserted by deriving the writer's path the same way
+the runner does and comparing it to the reader path.
 
 Also asserts (AC-4) that neither get_ilk_runtime_dir function swallows
 resolver stderr with 2>/dev/null — that test is xfail until step 2.
@@ -33,8 +34,11 @@ _PROJECT_PATH = str(_REPO_ROOT)
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
-def _resolve_external_runtime_dir() -> str:
-    """Invoke the resolver the way run_ilk_loop_claude.sh:818 does."""
+def _resolve_writer_dir() -> str:
+    """Invoke the resolver the way run_ilk_loop_claude.sh:818 does.
+
+    After the fix, the runner extracts external_launcher_dir from the JSON.
+    """
     result = subprocess.run(
         [sys.executable, str(_RESOLVER), "--start", _PROJECT_PATH],
         capture_output=True, text=True, timeout=30,
@@ -44,10 +48,10 @@ def _resolve_external_runtime_dir() -> str:
         f"stdout={result.stdout}\nstderr={result.stderr}"
     )
     data = json.loads(result.stdout)
-    return data["external_runtime_dir"]
+    return data["external_launcher_dir"]
 
 
-def _resolve_external_launcher_dir() -> str:
+def _resolve_reader_dir() -> str:
     """Call external_launcher_dir via the same resolver JSON output."""
     result = subprocess.run(
         [sys.executable, str(_RESOLVER), "--start", _PROJECT_PATH],
@@ -64,22 +68,15 @@ def _resolve_external_launcher_dir() -> str:
 # ── AC-1: writer and readers resolve to the same directory ───────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known disagreement: writer uses external_runtime_dir, "
-        "readers use external_launcher_dir.  Flipped in step 1."
-    ),
-)
 def test_writer_and_reader_resolve_same_dir():
     """The directory the runner writes to must match what readers expect.
 
     Writer path: derived by invoking ilk_paths.py the way :818 does
-        (json.external_runtime_dir).
+        (json.external_launcher_dir — the runner now extracts this field).
     Reader path: ilk_paths' external_launcher_dir from the same JSON.
     """
-    writer_dir = _resolve_external_runtime_dir()
-    reader_dir = _resolve_external_launcher_dir()
+    writer_dir = _resolve_writer_dir()
+    reader_dir = _resolve_reader_dir()
 
     assert writer_dir == reader_dir, (
         f"Sentinel writer resolves to:\n  {writer_dir}\n"

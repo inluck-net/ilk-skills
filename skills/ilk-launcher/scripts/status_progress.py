@@ -455,9 +455,10 @@ def build_json(
         })
 
     runtime_dir = plans_dir.parent / "runtime"
-    launcher_pid = _read_pid(runtime_dir / "launcher" / "running.pid")
+    launcher_dir = runtime_dir / "launcher"
+    launcher_pid = _read_pid(launcher_dir / "running.pid")
     watchdog_pid = _read_pid(runtime_dir / "watchdog" / "watchdog.pid")
-    sentinel = detect_sentinel_health(runtime_dir, launcher_pid)
+    sentinel = detect_sentinel_health(launcher_dir, launcher_pid)
 
     return {
         "project": {
@@ -535,8 +536,9 @@ def main() -> int:
     pace_min = compute_pace_min_per_step(timestamps, PACE_WINDOW)
 
     runtime_dir = plans_dir.parent / "runtime"
-    launcher_pid = _read_pid(runtime_dir / "launcher" / "running.pid")
-    sentinel = detect_sentinel_health(runtime_dir, launcher_pid)
+    launcher_dir = runtime_dir / "launcher"
+    launcher_pid = _read_pid(launcher_dir / "running.pid")
+    sentinel = detect_sentinel_health(launcher_dir, launcher_pid)
 
     if args.json_mode:
         data = build_json(

@@ -822,7 +822,7 @@ get_ilk_runtime_dir() {
   fi
   local json
   json="$(python3 "$resolver" --start "$PROJECT_PATH" 2>/dev/null)" || return 1
-  echo "$json" | jq -r '.external_runtime_dir // empty'
+  echo "$json" | jq -r '.external_launcher_dir // empty'
 }
 
 write_ilk_sentinel() {
@@ -1504,7 +1504,7 @@ main() {
     local runtime_dir_for_lock
     runtime_dir_for_lock=$(get_ilk_runtime_dir) || runtime_dir_for_lock=""
     if [[ -n "$runtime_dir_for_lock" ]]; then
-      local lock_file="${runtime_dir_for_lock}/launcher/run.lock"
+      local lock_file="${runtime_dir_for_lock}/run.lock"
       mkdir -p "$(dirname "$lock_file")"
       export ILK_RUN_LOCK_HELD=1
       # The helper acquires the lock and exec's us.  On success the current
