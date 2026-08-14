@@ -1079,3 +1079,61 @@ session had no canonical way to distinguish "exited because queue drained
   the most expensive way to get it wrong.
 - **`ilk_watch.py`** — the canonical state-query helper (AC-1/AC-2/AC-3
   in the loop-watch-helper sub-plan).
+
+---
+
+## 22. One batch, one branch
+
+Every sub-plan in a batch must target files that live on the **same
+branch**. A batch whose `scope_paths` straddle two branches corrupts
+two PRs: the loop commits to whichever branch is checked out, so half
+the changes land on the wrong base and the resulting PRs each contain
+commits that belong to the other.
+
+### The rule
+
+A master plan must declare `base_branch:` — the single ref its
+sub-plans' `scope_paths` are validated against. Two lints enforce this
+at plan time:
+
+1. **`lint_scope_path_off_base_branch`** (per-path) — flags any
+   `scope_paths` entry that exists on a ref other than the declared
+   base. A file absent from all history (new-file case) passes; a file
+   present only on an open PR's branch is a HARD finding.
+2. **`lint_one_batch_one_branch`** (master-level) — rejects a batch
+   whose sub-plans' paths resolve to different branches, or whose
+   master lacks `base_branch:` entirely.
+
+Both run under `plan_lint.py --master` during `/ilk-plan` step 7g.
+
+### The mechanism
+
+The loop has no concept of "target branch" at commit time — it runs
+`git add` + `git commit` in the working tree, which is whatever the
+host checked out. If sub-plan A's files live on `main` and sub-plan
+B's live on `feature/foo`, the loop commits both sets to whichever
+branch happens to be checked out. The `feature/foo` PR then contains
+A's changes (wrong base), and the `main` PR is missing them entirely.
+
+The same failure exists one level up in meta-mode: a sub-plan whose
+`repo:` tag routes it to the wrong member repo commits to the wrong
+tree. `repo:` validation (7c in `commands/ilk-plan.md`) is the
+meta-mode analogue of the branch gate — both enforce "one batch, one
+destination".
+
+### Enforcement
+
+Both lints run at plan time (`/ilk-plan` step 7g), not at loop runtime.
+The plan-time gate catches the defect at proposal review — the cheaper
+interception point. Runtime enforcement (the runner checking
+`base_branch` before committing) is a possible follow-up but not
+implemented here.
+
+### Field record
+
+**2026-08-13 — `keyreply/kira-cloudflare` scheduled-promotion plan
+(ADR-024, PR #2680).** A proposed sub-plan targeted a file present
+only on an open PR's branch (`fix/watchdog-bash32-uppercase`), not on
+`main`. A human caught it during proposal review. The lint now catches
+this mechanically — the corpus scan (376 sub-plan files) found 2 HARD
+findings on the exact defect family, zero false positives.
