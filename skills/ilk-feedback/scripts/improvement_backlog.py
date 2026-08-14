@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -306,7 +307,14 @@ def load(backlog_dir: Path | str | None = None) -> list[Entry]:
     else:
         backlog_dir = Path(backlog_dir)
 
-    return [Entry.from_dict(d) for d in _load_raw(backlog_dir)]
+    entries: list[Entry] = []
+    for d in _load_raw(backlog_dir):
+        try:
+            entries.append(Entry.from_dict(d))
+        except (TypeError, KeyError) as exc:
+            label = d.get("id") or d.get("title") or repr(d)[:80]
+            print(f"WARNING: skipping unconstructible record {label!r}: {exc}", file=sys.stderr)
+    return entries
 
 
 def list_entries(

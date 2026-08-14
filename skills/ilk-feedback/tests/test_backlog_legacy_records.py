@@ -130,36 +130,29 @@ class TestFromDict:
 class TestListing:
     """improvement_backlog.load / list_entries against a mixed store."""
 
-    def test_load_aborts_on_unconstructible_record(self, backlog_dir: Path) -> None:
-        """One unconstructible record still aborts the entire listing.
-
-        The list comprehension at :309 propagates the first TypeError.
-        After step 1, the legacy record constructs fine, but the
-        unconstructible one (missing ``id``) still raises.
-        """
-        with pytest.raises(TypeError):
-            improvement_backlog.load(backlog_dir)
-
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Step 2 will skip unconstructible records; until then load still aborts.",
-    )
-    def test_load_succeeds_with_legacy_record(self, backlog_dir: Path) -> None:
-        """After step 2, load should succeed and return all constructible records."""
+    def test_load_warns_on_unconstructible_record(
+        self, backlog_dir: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An unconstructible record is skipped with a warning, not an abort."""
         entries = improvement_backlog.load(backlog_dir)
-        # Legacy + current = 2 (unconstructible is skipped in step 2).
-        assert len(entries) >= 2
+        # All three records attempted; unconstructible is skipped.
+        assert len(entries) == 2
+        captured = capsys.readouterr()
+        # The warning should name the record (by id or title).
+        assert "No id field" in captured.err or "unconstructible" in captured.err
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Step 2 will skip unconstructible records; until then this fails.",
-    )
+    def test_load_succeeds_with_legacy_record(self, backlog_dir: Path) -> None:
+        """Load should succeed and return all constructible records."""
+        entries = improvement_backlog.load(backlog_dir)
+        # Legacy + current = 2; unconstructible is skipped.
+        assert len(entries) == 2
+
     def test_load_skips_unconstructible_with_warning(
         self, backlog_dir: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """After step 2, an unconstructible record is skipped with a warning."""
+        """An unconstructible record is skipped with a warning naming it."""
         entries = improvement_backlog.load(backlog_dir)
         # Legacy + current = 2; unconstructible is skipped.
         assert len(entries) == 2
         captured = capsys.readouterr()
-        assert "No id field" in captured.err or "No id field" in captured.out
+        assert "No id field" in captured.err
