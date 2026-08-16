@@ -344,3 +344,97 @@ class TestAC3_PidLiveness:
         entry = next(e for e in data if e["project_key"] == _project_key(SCRATCH / "projects" / "bom-pid"))
         assert entry["sentinel"]["state"] == "running", entry["sentinel"]
         assert entry["sentinel"]["alive"] is True, entry["sentinel"]
+
+
+# ── Queued master is the current master ─────────────────────────────
+
+def _status_all(name: str) -> dict:
+    """Run status_all --json and return the entry for project `name`."""
+    env = {**os.environ, "ILK_DATA_HOME": str(ILK_DATA)}
+    result = subprocess.run(
+        [sys.executable, str(STATUS_ALL), "--json"],
+        capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
+    )
+    assert result.returncode == 0, f"exit {result.returncode}: {result.stderr}"
+    key = _project_key(SCRATCH / "projects" / name)
+    data = json.loads(result.stdout)
+    return next(e for e in data if e["project_key"] == key)
+
+
+class TestQueuedMasterIsCurrent:
+    """A `queued` master the loop is driving must still report progress.
+
+    `queued -> active` is written only by promote_next_master.py, which the
+    watchdog calls AFTER a run exits.  While a run is live the loop only
+    *peeks* the top queued master (loop_status.pick_active_master rule 3), so
+    a master queued mid-run stays `queued` for its whole execution.  Before
+    2026-08-16 status_all tested `status == "active"` literally, so the xbar
+    panel rendered such a project with no master, no sub-plan and no step
+    while /ilk-status showed it running normally.
+    """
+
+    def test_queued_master_reports_progress(self):
+        """status: queued + in-progress sub-plan → master/next/step populated."""
+        _setup_project("q-live", master_status="queued",
+                       sub_status="in-progress", pid=99999999, state="none")
+        entry = _status_all("q-live")
+        assert entry["active_master"] == "MASTER-2026-06-07-q-live.md", entry
+        assert entry["next_subplan"] == "q-live-sub", entry
+        assert entry["step"] == "0/3", entry
+
+    def test_queued_master_displays_but_is_not_scheduler_runnable(self):
+        """Display follows the loop; `runnable` still means strictly `active`.
+
+        Showing a queued master's progress must not make it look
+        auto-dispatchable — promotion is what does that.  This is the plain
+        (non-supervised) twin of TestRunnableRegression's supervised guard in
+        test_status_all_actions.py.
+        """
+        _setup_project("q-flags", master_status="queued",
+                       sub_status="in-progress", pid=99999999, state="shipped")
+        entry = _status_all("q-flags")
+        assert entry["step"] == "0/3", entry            # display: populated
+        assert entry["runnable"] is False, entry         # scheduler: not yet
+        assert entry["manually_runnable"] is True, entry  # human: go ahead
+        assert entry["blocked"] is False, entry
+
+    def test_legacy_pending_master_reports_progress(self):
+        """Legacy `pending` normalizes to queued (plan_status:118) and counts."""
+        _setup_project("q-pending", master_status="pending",
+                       sub_status="pending", pid=99999999, state="none")
+        entry = _status_all("q-pending")
+        assert entry["active_master"] == "MASTER-2026-06-07-q-pending.md", entry
+        assert entry["step"] == "0/3", entry
+
+    def test_active_master_still_reports_progress(self):
+        """Regression guard: the `active` path is unchanged."""
+        _setup_project("q-active", master_status="active",
+                       sub_status="in-progress", pid=99999999, state="none")
+        entry = _status_all("q-active")
+        assert entry["active_master"] == "MASTER-2026-06-07-q-active.md", entry
+        assert entry["step"] == "0/3", entry
+
+    def test_shipped_master_is_not_current_and_not_blocked(self):
+        """A terminal master must NOT become active_master.
+
+        pick_active_master's rules 4-5 fall back to newest-by-mtime among
+        paused/shipped/draft masters purely so its own table renders a row.
+        Accepting that here would set active_master with no runnable sub-plan,
+        which _blocked_info's `stalled` rule turns into blocked=True — lighting
+        up an alert on every finished project.
+        """
+        _setup_project("q-shipped", master_status="shipped",
+                       sub_status="shipped", pid=99999999, state="none")
+        entry = _status_all("q-shipped")
+        assert entry["active_master"] == "", entry
+        assert entry["blocked"] is False, entry
+        assert entry["blocked_reason"] is None, entry
+
+    def test_draft_master_is_not_current(self):
+        """`draft` is a readiness gate — never the current master."""
+        _setup_project("q-draft", master_status="draft",
+                       sub_status="pending", pid=99999999, state="none")
+        entry = _status_all("q-draft")
+        assert entry["active_master"] == "", entry
+        assert entry["blocked"] is False, entry

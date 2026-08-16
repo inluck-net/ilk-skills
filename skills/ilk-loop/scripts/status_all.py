@@ -31,11 +31,16 @@ if str(_WATCHDOG_SCRIPTS) not in sys.path:
 from blacklist_status import is_blacklisted  # noqa: E402
 
 # Reuse loop_status helpers for frontmatter parsing and ordering.
-from loop_status import extract_master_order, find_plans_dir, parse_frontmatter  # noqa: E402
+from loop_status import (  # noqa: E402
+    extract_master_order,
+    find_plans_dir,
+    parse_frontmatter,
+    pick_active_master,
+)
 # Single source of truth for "which sub-plan statuses can the loop pick up".
 # Imported rather than copied: a second literal here is what let the tray and
 # loop_status disagree about the next sub-plan (2026-08-14).
-from plan_status import _RUNNABLE_SUBPLAN_STATUSES  # noqa: E402
+from plan_status import _RUNNABLE_SUBPLAN_STATUSES, normalize_master_status  # noqa: E402
 
 
 # ── sentinel state vocabulary ──────────────────────────────────────────
@@ -285,28 +290,72 @@ def resolve_project_status(project_dir: Path) -> dict:
     launcher_dir = external_launcher_dir(key)
 
     # Active master + next subplan (also track queued for manually_runnable).
+    #
+    # "Current master" is resolved by `pick_active_master` — the SAME function
+    # `/ilk-status` uses — rather than by testing `status == "active"` here.
+    # The literal test was wrong: `queued → active` is written only by
+    # promote_next_master.py, which the watchdog calls *after a run exits*
+    # (watchdog.sh:851).  While a run is live the loop merely *peeks* the top
+    # queued master (loop_status.py:176-179, explicitly "do NOT promote"), so a
+    # master queued mid-run stays `queued` for its entire execution.  Observed
+    # on gh-resolve 2026-08-16: run started 12:58, MASTER-2026-08-16 authored
+    # 13:10 and driven to completion while still `queued` — the panel showed
+    # the project running with no master, no sub-plan and no step, because zero
+    # of its 21 masters were ever `active`.  This is the master-level twin of
+    # the sub-plan drift already recorded in _resolve_next_subplan's docstring.
+    #
+    # DISPLAY vs SCHEDULER.  `active_master`/`next_subplan`/`step` are what the
+    # tray and xbar render, and they follow the loop: active OR queued.  The
+    # scheduler-facing flags (`runnable`, `manually_runnable`, and the `stalled`
+    # rule in _blocked_info) keep their old, strictly-`active` meaning via
+    # `master_is_active` — a queued master is NOT auto-dispatchable, promotion
+    # is what makes it so.  Conflating the two turns every queued master into
+    # `runnable`, which the AC-6 guards in test_status_all_actions.py catch.
     active_master = ""
     next_subplan = ""
     step = ""
+    master_is_active = False
     queued_has_work = False
     if plans_dir.is_dir():
         masters = sorted(plans_dir.glob("MASTER-*.md"))
+        if masters:
+            try:
+                chosen, _qv = pick_active_master(masters, json_mode=True)
+                ctext = chosen.read_text(encoding="utf-8-sig")
+                cstatus = normalize_master_status(
+                    parse_frontmatter(ctext).get("status") or ""
+                )
+                # Accept only a master the loop would actually drive.
+                # pick_active_master's rules 4-5 fall back to newest-by-mtime
+                # among paused/shipped/draft/legacy masters purely so its table
+                # renders a row.  Treating one of those as "current" here would
+                # be actively harmful: a shipped master has no runnable sub-plan,
+                # so _blocked_info's "stalled" rule below would flag every idle
+                # project as needing a human.
+                if cstatus in ("active", "queued"):
+                    active_master = chosen.name
+                    master_is_active = cstatus == "active"
+                    next_subplan, step = _resolve_next_subplan(plans_dir, ctext)
+            except (OSError, IndexError, ValueError):
+                pass
+
+        # Any queued master with runnable work makes the project manually
+        # runnable.  Scanned unconditionally: the chosen master counts when it
+        # is itself queued (the common case — that is exactly the project a
+        # human can `/ilk`), and a master chosen as `active` cannot match the
+        # `queued` test below, so no skip is needed.
         for mp in masters:
             try:
                 mtext = mp.read_text(encoding="utf-8-sig")
             except OSError:
                 continue
-            mfm = parse_frontmatter(mtext)
-            m_status = (mfm.get("status") or "").strip()
-            if m_status == "active":
-                active_master = mp.name
-                next_subplan, step = _resolve_next_subplan(plans_dir, mtext)
-                break
-            # Track queued masters with non-shipped sub-plans for manually_runnable.
-            if m_status == "queued":
+            if normalize_master_status(
+                parse_frontmatter(mtext).get("status") or ""
+            ) == "queued":
                 q_slug, _ = _resolve_next_subplan(plans_dir, mtext)
                 if q_slug:
                     queued_has_work = True
+                    break
 
     # Sentinel
     sentinel_raw = _read_sentinel(runtime_dir)
@@ -342,17 +391,22 @@ def resolve_project_status(project_dir: Path) -> dict:
     model = _latest_jsonl_model(logs_dir)
 
     # Needs-human blocked classification (blacklist / stale-running / stalled).
-    blocked = _blocked_info(project_dir, sentinel, active_master, next_subplan)
+    # `master_is_active`, not `active_master`: the `stalled` rule means "an
+    # ACTIVE master has no runnable sub-plan".  A queued master that cannot
+    # drain is the promotion gate's problem (promote_next_master's
+    # master_is_drainable check), not a needs-human alert on this panel.
+    strict_active = active_master if master_is_active else ""
+    blocked = _blocked_info(project_dir, sentinel, strict_active, next_subplan)
 
     # Action flags for tray/xbar (SP1: tray-actions-render).
     # runnable: has a dispatchable master with pending/in-progress work AND not currently running AND not blocked.
     # parked: blacklisted with no valid resolve-ack (project needs /ilk-resume).
     # manually_runnable: has a queued/active master with work AND not alive AND not blocked.
     #   Includes supervised_only masters (which scan_projects() filters out).
-    runnable = bool(active_master and next_subplan and not sentinel.get("alive") and not blocked.get("blocked"))
+    runnable = bool(strict_active and next_subplan and not sentinel.get("alive") and not blocked.get("blocked"))
     parked = blocked.get("blocked") and blocked.get("blocked_reason") == "within-backoff"
     manually_runnable = bool(
-        (active_master and next_subplan or queued_has_work)
+        (strict_active and next_subplan or queued_has_work)
         and not sentinel.get("alive")
         and not blocked.get("blocked")
     )
@@ -365,7 +419,6 @@ def resolve_project_status(project_dir: Path) -> dict:
     # in test_runner_timeout_dirty_tree.py (2026-08-16): 32 pytest tmpdirs had
     # been registered as projects, two of them with state=running sentinels
     # that rendered as permanent "!" alerts no action could clear.
-    #
     # NB: "orphaned", not "stale" — "stale" already names a *sentinel* claiming
     # state=running with a dead PID (see blocked_reason="stale-running" above
     # and render_tray.py's stale_count).  This is a property of the data dir.
