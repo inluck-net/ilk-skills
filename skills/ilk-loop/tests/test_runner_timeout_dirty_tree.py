@@ -477,6 +477,26 @@ _integration_skip = pytest.mark.skipif(
 )
 
 
+def _isolated_env(tmp_path: Path) -> dict:
+    """os.environ with ILK_DATA_HOME redirected under tmp_path.
+
+    These tests drive the REAL runner, which resolves its data dir through
+    ``ilk_paths.py`` — that honours ``$ILK_DATA_HOME`` and otherwise falls back
+    to ``~/.ilk-data``.  Without this redirect the runner writes a real
+    ``projects/<key>/runtime/launcher/last-exit.json`` for every pytest tmpdir
+    it is pointed at.  Because the mock claude is killed by gtimeout, some of
+    those sentinels are left at ``state: running`` with a now-dead PID, which
+    ``status_all`` reports as ``blocked: stale-running`` forever and the xbar
+    panel renders as a permanent ``!`` row.  Observed 2026-08-14: two leaked
+    sentinels from this file plus 87 orphaned project dirs under ~/.ilk-data.
+    """
+    env = dict(os.environ)
+    data_home = tmp_path / "ilk-data"
+    data_home.mkdir(parents=True, exist_ok=True)
+    env["ILK_DATA_HOME"] = str(data_home)
+    return env
+
+
 def _setup_scratch_project(tmp_path: Path) -> Path:
     """Create a minimal project with plans, dirty tree, and an in-progress sub-plan."""
     proj = tmp_path / "scratch-project"
@@ -593,7 +613,7 @@ class TestLiveRunnerTimeout:
         mock_claude.chmod(0o755)
 
         # Run the real runner with 1-minute timeout
-        env = dict(os.environ)
+        env = _isolated_env(tmp_path)
         env["PATH"] = f"{mock_bin}:{env.get('PATH', '')}"
         env["ILK_DOTSOURCE_ONLY"] = ""  # ensure main() runs
 
@@ -683,7 +703,7 @@ class TestLiveRunnerTimeout:
         mock_claude.write_text("#!/usr/bin/env bash\nsleep 300\n")
         mock_claude.chmod(0o755)
 
-        env = dict(os.environ)
+        env = _isolated_env(tmp_path)
         env["PATH"] = f"{mock_bin}:{env.get('PATH', '')}"
         env["ILK_DOTSOURCE_ONLY"] = ""
 
