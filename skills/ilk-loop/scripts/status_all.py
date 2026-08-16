@@ -357,10 +357,26 @@ def resolve_project_status(project_dir: Path) -> dict:
         and not blocked.get("blocked")
     )
 
+    # Orphaned data dir: the source repo this project was launched from is
+    # gone.  Nothing here can be acted on — "Start now" has no repo to cd into
+    # and any sentinel left behind is unfalsifiable.  Surfaced as a field
+    # rather than dropped from the array so JSON consumers still see the whole
+    # data root; only the tray/xbar renderers hide these.  See the leak fixed
+    # in test_runner_timeout_dirty_tree.py (2026-08-16): 32 pytest tmpdirs had
+    # been registered as projects, two of them with state=running sentinels
+    # that rendered as permanent "!" alerts no action could clear.
+    #
+    # NB: "orphaned", not "stale" — "stale" already names a *sentinel* claiming
+    # state=running with a dead PID (see blocked_reason="stale-running" above
+    # and render_tray.py's stale_count).  This is a property of the data dir.
+    repo_path = _resolve_repo_path(project_dir, key)
+    orphaned = bool(repo_path) and not Path(repo_path).exists()
+
     return {
         "project_key": key,
         "path": str(project_dir),
-        "repo_path": _resolve_repo_path(project_dir, key),
+        "repo_path": repo_path,
+        "orphaned": orphaned,
         "active_master": active_master,
         "next_subplan": next_subplan,
         "step": step,

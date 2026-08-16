@@ -293,3 +293,64 @@ class TestActionPathRouting:
         line = _line_with(out, "Resume")
         assert _DATA in line, line
         assert _REPO not in line, "Resume must target the data dir, not the repo"
+
+
+# ── Orphan filter: data dirs whose source repo is gone ──────────────
+
+def _orphaned_stale_running_entry():
+    """A leaked data dir: repo gone, sentinel frozen at state=running.
+
+    This is the exact shape the two pytest tmpdirs had on 2026-08-16 — a
+    dead PID plus state=running makes status_all mark it
+    blocked/stale-running, which no operator action can ever clear because
+    the repo it names does not exist.
+    """
+    return {
+        "project_key": "pytest-of-chad-p-1d71391",
+        "path": _DATA,
+        "repo_path": "/tmp/pytest-of-chad/pytest-1345/scratch-project",
+        "orphaned": True,
+        "active_master": "",
+        "next_subplan": "",
+        "step": "",
+        "sentinel": {"pid": 44720, "state": "running", "alive": False},
+        "last_class": None,
+        "blocked": True,
+        "blocked_reason": "stale-running",
+        "manually_runnable": False,
+        "parked": False,
+    }
+
+
+class TestOrphanFilter:
+    """Entries flagged ``orphaned`` never reach the menu."""
+
+    def test_orphaned_blocked_entry_is_hidden(self):
+        """A blocked orphan is dropped — `blocked` alone must not force a row."""
+        fxt = _write_fixture([_orphaned_stale_running_entry()], "orphan_blocked")
+        out = _run_render(fxt).stdout
+        assert "pytest-of-chad" not in out, f"orphan rendered a row:\n{out}"
+        assert "!" not in out, f"orphan produced an alert icon:\n{out}"
+
+    def test_orphan_does_not_suppress_real_projects(self):
+        """A live project still renders when an orphan is present."""
+        entries = [_orphaned_stale_running_entry()] + FIXTURE_TWO_ALIVE
+        fxt = _write_fixture(entries, "orphan_plus_live")
+        out = _run_render(fxt).stdout
+        assert "* alpha" in out, out
+        assert "* beta" in out, out
+        assert "pytest-of-chad" not in out, out
+
+    def test_orphan_excluded_from_title_count(self):
+        """An orphan marked alive must not inflate the menu-bar count."""
+        orphan = _orphaned_stale_running_entry()
+        orphan["sentinel"] = {"pid": 44720, "state": "running", "alive": True}
+        fxt = _write_fixture([orphan] + FIXTURE_TWO_ALIVE, "orphan_alive")
+        out = _run_render(fxt).stdout
+        assert out.splitlines()[0].strip() == "ilk 2*", out.splitlines()[0]
+
+    def test_absent_orphaned_key_renders_normally(self):
+        """Entries with no `orphaned` key (older producers) are unaffected."""
+        fxt = _write_fixture(FIXTURE_TWO_ALIVE, "no_orphan_key")
+        out = _run_render(fxt).stdout
+        assert "* alpha" in out and "* beta" in out, out

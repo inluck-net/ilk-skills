@@ -46,7 +46,10 @@ def render_xbar(
     if not entries:
         return "ilk !\n---\nNo projects found"
 
-    alive_count = sum(1 for e in entries if e.get("sentinel", {}).get("alive"))
+    alive_count = sum(
+        1 for e in entries
+        if e.get("sentinel", {}).get("alive") and not e.get("orphaned")
+    )
     total = len(entries)
 
     # Title
@@ -58,6 +61,15 @@ def render_xbar(
     lines = [title, "---"]
 
     for e in entries:
+        # ── Orphan filter: the source repo is gone ───────────────────
+        # status_all marks a project orphaned when its resolved repo_path no
+        # longer exists on disk.  Such an entry can only report history, and
+        # a sentinel it left at state=running renders as a permanent "!"
+        # that no action can clear.  Hidden before the icon is computed so
+        # the blocked/alive branches below never see it.
+        if e.get("orphaned"):
+            continue
+
         key = e.get("project_key", "?")
         sent = e.get("sentinel", {})
         is_alive = sent.get("alive", False)
@@ -85,11 +97,14 @@ def render_xbar(
 
         # Row text: key + icon + step info
         model = e.get("model") or ""
+        # Sub-plan then step, matching /ilk-status ("<slug> 3/5").  The
+        # reverse order read as "3/5 a-draft-is-checked-…", which parses as a
+        # step count applied to nothing.
         row = f"{icon} {key}"
-        if step:
-            row += f"  {step}"
         if next_sp:
             row += f"  {next_sp}"
+        if step:
+            row += f"  {step}"
 
         # Add state suffix for non-obvious states
         if is_alive and model:

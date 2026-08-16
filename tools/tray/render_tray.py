@@ -47,6 +47,14 @@ def render_tray(entries: list[dict]) -> dict:
     rows: list[dict] = []
 
     for e in entries:
+        # Orphan filter — mirrors render_xbar.py.  status_all marks a project
+        # orphaned when its resolved repo_path is gone from disk; the entry can
+        # only report history and no action here can reach a repo.  Dropped
+        # before icon assignment so a leftover state=running sentinel cannot
+        # raise `attention` (which the idle filter below would not catch).
+        if e.get("orphaned"):
+            continue
+
         key = e.get("project_key", "?")
         sent = e.get("sentinel", {})
         is_alive = sent.get("alive", False)
