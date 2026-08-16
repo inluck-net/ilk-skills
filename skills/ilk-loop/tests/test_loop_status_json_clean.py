@@ -2,6 +2,11 @@
 
 Verifies AC-1, AC-2, AC-3, AC-4 from sub-plan 2026-07-04-loop-status-json-clean.
 """
+# Required on Python 3.9 (the system python3 on macOS): `list[str] | None` in a
+# signature is evaluated at def time without it, so the module raises TypeError
+# at import and pytest cannot collect ANY test in skills/ilk-loop/tests/.
+from __future__ import annotations
+
 import json
 import subprocess
 import sys
