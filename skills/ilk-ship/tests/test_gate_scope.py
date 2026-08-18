@@ -16,12 +16,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from gate_scope import (
     CONTRACT_GOVERNED_FILES,
+    FLOOR_COMMANDS,
     ConsumerResult,
     OracleStatus,
+    SubtractionResult,
+    _commands_match,
+    _extract_test_path,
     _is_contract_governed,
     _is_path_or_schema_change,
     _is_test_path,
     select_tier,
+    subtract_complement,
 )
 
 
@@ -228,3 +233,133 @@ class TestContractGoverned:
 
     def test_regular_module(self) -> None:
         assert _is_contract_governed("src/module.py", CONTRACT_GOVERNED_FILES) is False
+
+
+# ── Complement subtraction (AC-6, AC-8) ────────────────────────────────────
+
+class TestComplementSubtraction:
+    """AC-6: reports what was subtracted and why.  AC-8: floors never shrink."""
+
+    def test_subtract_matching_command(self) -> None:
+        """A command already in JSONL is subtracted."""
+        selected = ["python3 -m pytest skills/ilk-loop/tests/ -q --timeout=180 --timeout-method=signal"]
+        recorded = ["python3 -m pytest skills/ilk-loop/tests/ -q --timeout=180 --timeout-method=signal"]
+        result = subtract_complement(selected, recorded)
+        assert len(result.subtracted) == 1
+        assert len(result.kept) == 0
+
+    def test_different_flags_not_subtracted(self) -> None:
+        """Same path but different flags → NOT subtracted (different work)."""
+        selected = ["python3 -m pytest skills/ilk-loop/tests/ -q --timeout-method=signal"]
+        recorded = ["python3 -m pytest skills/ilk-loop/tests/ -q --timeout-method=thread"]
+        result = subtract_complement(selected, recorded)
+        assert len(result.subtracted) == 0
+        assert len(result.kept) == 1
+
+    def test_different_path_not_subtracted(self) -> None:
+        """Different path → NOT subtracted."""
+        selected = ["python3 -m pytest skills/ilk-loop/tests/ -q"]
+        recorded = ["python3 -m pytest skills/ilk-runner/tests/ -q"]
+        result = subtract_complement(selected, recorded)
+        assert len(result.subtracted) == 0
+        assert len(result.kept) == 1
+
+    def test_empty_recorded_subtracts_nothing(self) -> None:
+        """No recorded commands → nothing subtracted."""
+        selected = ["python3 -m pytest skills/ilk-loop/tests/ -q"]
+        result = subtract_complement(selected, [])
+        assert len(result.subtracted) == 0
+        assert result.kept == tuple(selected)
+
+    def test_ac6_result_to_dict_is_auditable(self) -> None:
+        """AC-6: the result is machine-readable and names what was subtracted."""
+        selected = ["pytest A", "pytest B"]
+        recorded = ["pytest A"]
+        result = subtract_complement(selected, recorded)
+        d = result.to_dict()
+        assert "subtracted" in d
+        assert "kept" in d
+        assert "already_run" in d
+
+
+# ── AC-8: floors can never be subtracted ────────────────────────────────────
+
+class TestFloorsNeverShrink:
+    """AC-8: baseline-compare and collection are always kept."""
+
+    def test_baseline_compare_never_subtracted(self) -> None:
+        """baseline-compare is a floor — kept even if already run."""
+        selected = ["baseline-compare --tag v0.9.66", "python3 -m pytest skills/ilk-loop/tests/ -q"]
+        recorded = ["baseline-compare --tag v0.9.66"]
+        result = subtract_complement(selected, recorded)
+        assert "baseline-compare --tag v0.9.66" in result.kept
+        assert "baseline-compare --tag v0.9.66" in result.floors_protected
+        assert "baseline-compare --tag v0.9.66" not in result.subtracted
+
+    def test_collection_never_subtracted(self) -> None:
+        """collection (--collect-only) is a floor — kept even if already run."""
+        selected = ["python3 -m pytest --collect-only -q", "python3 -m pytest skills/ilk-loop/tests/ -q"]
+        recorded = ["python3 -m pytest --collect-only -q"]
+        result = subtract_complement(selected, recorded)
+        assert any("collect" in cmd for cmd in result.floors_protected)
+        assert len(result.subtracted) == 0 or "collect" not in result.subtracted[0]
+
+    def test_all_commands_subtracted_but_floors_kept(self) -> None:
+        """AC-8: complement empties the gate, but floors still run."""
+        selected = [
+            "baseline-compare --tag v0.9.66",
+            "python3 -m pytest --collect-only -q",
+            "python3 -m pytest skills/ilk-loop/tests/ -q",
+        ]
+        recorded = [
+            "baseline-compare --tag v0.9.66",
+            "python3 -m pytest --collect-only -q",
+            "python3 -m pytest skills/ilk-loop/tests/ -q",
+        ]
+        result = subtract_complement(selected, recorded)
+        # The pytest command is subtracted, but both floors are kept
+        assert len(result.floors_protected) == 2
+        assert len(result.kept) >= 2  # at least the two floors
+
+
+# ── _extract_test_path ─────────────────────────────────────────────────────
+
+class TestExtractTestPath:
+    """Test path extraction from pytest commands."""
+
+    def test_simple_path(self) -> None:
+        assert _extract_test_path("python3 -m pytest skills/ilk-loop/tests/ -q") == "skills/ilk-loop/tests/"
+
+    def test_path_with_flags_before(self) -> None:
+        assert _extract_test_path("python3 -m pytest -v skills/ilk-loop/tests/ -q") == "skills/ilk-loop/tests/"
+
+    def test_no_pytest(self) -> None:
+        assert _extract_test_path("grep -rn foo .") is None
+
+    def test_pytest_no_path(self) -> None:
+        assert _extract_test_path("python3 -m pytest -q") is None
+
+
+# ── _commands_match ────────────────────────────────────────────────────────
+
+class TestCommandsMatch:
+    """Command reconciliation — same work or not?"""
+
+    def test_identical_commands_match(self) -> None:
+        cmd = "python3 -m pytest skills/ilk-loop/tests/ -q --timeout=180"
+        assert _commands_match(cmd, cmd) is True
+
+    def test_different_flags_no_match(self) -> None:
+        sel = "python3 -m pytest skills/ilk-loop/tests/ -q --timeout-method=signal"
+        rec = "python3 -m pytest skills/ilk-loop/tests/ -q --timeout-method=thread"
+        assert _commands_match(sel, rec) is False
+
+    def test_different_path_no_match(self) -> None:
+        sel = "python3 -m pytest skills/ilk-loop/tests/ -q"
+        rec = "python3 -m pytest skills/ilk-runner/tests/ -q"
+        assert _commands_match(sel, rec) is False
+
+    def test_trailing_slash_normalized(self) -> None:
+        sel = "python3 -m pytest skills/ilk-loop/tests -q"
+        rec = "python3 -m pytest skills/ilk-loop/tests/ -q"
+        assert _commands_match(sel, rec) is True

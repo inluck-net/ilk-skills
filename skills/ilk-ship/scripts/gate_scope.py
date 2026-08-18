@@ -17,6 +17,7 @@ AC-9: a change touching any .py/.sh/.ps1 can never be tier 0.
 """
 from __future__ import annotations
 
+import shlex
 import subprocess
 from dataclasses import dataclass
 from enum import Enum
@@ -280,4 +281,160 @@ def select_tier(
         tier=2,
         reason=f"{consumer_result.count} resolved consumer(s)",
         consumer_count=consumer_result.count,
+    )
+
+
+# ── Complement subtraction (AC-6, AC-8, AC-10) ─────────────────────────────
+
+# The two floors that can NEVER be subtracted, regardless of complement.
+# AC-8: "a complement that would empty the gate still runs both floors."
+# Each floor has a primary keyword and optional aliases for matching.
+FLOOR_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "baseline-compare": ("baseline-compare", "baseline"),
+    "collection": ("collection", "collect-only", "--collect-only"),
+}
+FLOOR_COMMANDS: frozenset[str] = frozenset(FLOOR_KEYWORDS.keys())
+
+
+@dataclass(frozen=True)
+class SubtractionResult:
+    """What was subtracted and why (AC-6: auditable after the fact)."""
+    selected: tuple[str, ...]      # commands the gate would run
+    already_run: tuple[str, ...]   # commands found in JSONL
+    subtracted: tuple[str, ...]    # commands removed (overlap)
+    kept: tuple[str, ...]          # commands that will actually run
+    floors_protected: tuple[str, ...]  # floor commands that were kept
+
+    def to_dict(self) -> dict:
+        return {
+            "selected": list(self.selected),
+            "already_run": list(self.already_run),
+            "subtracted": list(self.subtracted),
+            "kept": list(self.kept),
+            "floors_protected": list(self.floors_protected),
+        }
+
+
+def _extract_test_path(command: str) -> str | None:
+    """Extract the test path from a pytest command for comparison.
+
+    Returns the path argument (e.g. "skills/ilk-loop/tests/") or None
+    if the command doesn't look like a pytest invocation.
+    """
+    import shlex
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return None
+    # Find the pytest path argument (first non-flag arg after "pytest")
+    try:
+        pytest_idx = next(i for i, p in enumerate(parts) if p.endswith("pytest"))
+    except StopIteration:
+        return None
+    for part in parts[pytest_idx + 1:]:
+        if not part.startswith("-"):
+            return part
+    return None
+
+
+def _commands_match(selected_cmd: str, recorded_cmd: str) -> bool:
+    """True if the recorded command covers the same work as the selected one.
+
+    Reconciliation: a differently-flagged invocation of the same path is NOT
+    the same work.  This repo's ``--timeout-method=signal`` requirement makes
+    that a live concern — ``pytest tests/ --timeout-method=thread`` is NOT
+    equivalent to ``pytest tests/ --timeout-method=signal``.
+    """
+    sel_path = _extract_test_path(selected_cmd)
+    rec_path = _extract_test_path(recorded_cmd)
+    if sel_path is None or rec_path is None:
+        return False
+    # Paths must match (normalize trailing slash)
+    if sel_path.rstrip("/") != rec_path.rstrip("/"):
+        return False
+    # Flags must also match — different flags = different work
+    sel_flags = sorted(p for p in shlex.split(selected_cmd) if p.startswith("-"))
+    rec_flags = sorted(p for p in shlex.split(recorded_cmd) if p.startswith("-"))
+    return sel_flags == rec_flags
+
+
+def read_jsonl_commands(jsonl_path: Path) -> list[str]:
+    """Read all recorded gate commands from a JSONL log.
+
+    Returns a deduplicated list of commands that were recorded for any
+    outcome (pass, fail, error, inconclusive).  Historical records without
+    a ``command`` field are skipped (AC-2: readers tolerate absence).
+    """
+    import json as _json
+    commands: list[str] = []
+    seen: set[str] = set()
+    try:
+        with open(jsonl_path, encoding="utf-8-sig") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = _json.loads(line)
+                except _json.JSONDecodeError:
+                    continue
+                # Gate records are nested in local_checks
+                checks = rec.get("local_checks", [])
+                if isinstance(checks, dict):
+                    checks = [checks]
+                for check in checks:
+                    if isinstance(check, dict):
+                        cmd = check.get("command", "")
+                        if cmd and cmd not in seen:
+                            seen.add(cmd)
+                            commands.append(cmd)
+    except (FileNotFoundError, OSError):
+        pass
+    return commands
+
+
+def subtract_complement(
+    selected_commands: list[str],
+    recorded_commands: list[str],
+    floor_commands: frozenset[str] = FLOOR_COMMANDS,
+) -> SubtractionResult:
+    """Subtract already-run commands from the selected gate.
+
+    AC-6: reports what it subtracted and why, so the decision is auditable.
+    AC-8: subtraction can never shrink the two floors (baseline-compare,
+    collection) — those are applied after scoping, at whatever scope was
+    chosen.
+
+    ``floor_commands`` are matched by substring: if a selected command
+    contains a floor keyword, it is always kept regardless of complement.
+    """
+    subtracted: list[str] = []
+    kept: list[str] = []
+    floors_protected: list[str] = []
+
+    for sel_cmd in selected_commands:
+        # AC-8: floors are never subtracted
+        is_floor = any(
+            kw in sel_cmd
+            for keywords in FLOOR_KEYWORDS.values()
+            for kw in keywords
+        )
+        if is_floor:
+            kept.append(sel_cmd)
+            floors_protected.append(sel_cmd)
+            continue
+
+        # Check if this command was already run
+        already_covered = any(_commands_match(sel_cmd, rec) for rec in recorded_commands)
+        if already_covered:
+            subtracted.append(sel_cmd)
+        else:
+            kept.append(sel_cmd)
+
+    return SubtractionResult(
+        selected=tuple(selected_commands),
+        already_run=tuple(recorded_commands),
+        subtracted=tuple(subtracted),
+        kept=tuple(kept),
+        floors_protected=tuple(floors_protected),
     )
