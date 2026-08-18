@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from baseline_diff import (
     BaselineReport,
     BaselineStatus,
+    CollectionError,
+    CollectionFloor,
     StaleExclusion,
     baseline_key,
     check_stale_exclusions,
@@ -28,6 +30,7 @@ from baseline_diff import (
     format_denominator,
     load_baseline,
     make_ref,
+    parse_collection_output,
     resolve_last_tag,
     run_baseline_diff,
     store_baseline,
@@ -298,6 +301,139 @@ class TestStaleExclusions:
         """Empty baseline_red list → no stale entries."""
         stale = check_stale_exclusions([], frozenset({"a"}))
         assert len(stale) == 0
+
+
+# ── AC-4: collection floor ──────────────────────────────────────────────────
+
+class TestCollectionFloor:
+    """AC-4: a collection error is a distinct, loud outcome that voids every other result."""
+
+    def test_parse_no_errors(self) -> None:
+        """Clean --collect-only output: no errors."""
+        output = "collected 100 items\n"
+        floor = parse_collection_output(output)
+
+        assert floor.has_errors is False
+        assert floor.voids_run is False
+        assert floor.collected_count == 100
+
+    def test_parse_collection_error(self) -> None:
+        """ERROR collecting line detected."""
+        output = (
+            "collected 0 items / 1 error\n"
+            "========================= ERRORS =========================\n"
+            "_ ERROR collecting tests/test_bad.py _\n"
+            "tests/test_bad.py:20: in <module>\n"
+            "    def f(x: list[str] | None) -> str:\n"
+            "E   TypeError: unsupported operand type(s) for |: 'types.GenericAlias' and 'NoneType'\n"
+            "Interrupted: 1 error during collection\n"
+        )
+        floor = parse_collection_output(output)
+
+        assert floor.has_errors is True
+        assert floor.voids_run is True
+        assert len(floor.errors) == 1
+        assert "test_bad.py" in floor.errors[0].file_path
+        assert floor.errors[0].error_type == "TypeError"
+
+    def test_parse_multiple_errors(self) -> None:
+        """Multiple collection errors all detected."""
+        output = (
+            "_ ERROR collecting tests/a.py _\n"
+            "E   ImportError: No module named 'foo'\n"
+            "_ ERROR collecting tests/b.py _\n"
+            "E   SyntaxError: invalid syntax\n"
+        )
+        floor = parse_collection_output(output)
+
+        assert floor.has_errors is True
+        assert len(floor.errors) == 2
+
+    def test_voids_run_property(self) -> None:
+        """AC-4: voids_run is True when any error exists."""
+        floor = CollectionFloor(
+            errors=(CollectionError(
+                file_path="x.py", error_type="TypeError", message="boom"
+            ),),
+            collected_count=0,
+            has_errors=True,
+        )
+        assert floor.voids_run is True
+
+    def test_real_fixture_causes_collection_error(self) -> None:
+        """AC-4: the committed fixture actually fails to collect.
+
+        This is a positive experiment — if the fixture is ever fixed
+        (e.g. by adding `from __future__ import annotations`), this test
+        will fail, which is exactly the signal we want.
+        """
+        fixture_dir = Path(__file__).resolve().parent / "fixtures" / "collection_error"
+        if not fixture_dir.exists():
+            pytest.skip("fixture directory not found")
+
+        import subprocess
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", str(fixture_dir), "--collect-only"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        output = result.stdout + "\n" + result.stderr
+        floor = parse_collection_output(output)
+
+        assert floor.has_errors is True, (
+            f"Fixture should cause collection error, got: {output}"
+        )
+
+    def test_collection_floor_in_report(self, tmp_path: Path) -> None:
+        """Collection floor appears in the full report."""
+        store_baseline(tmp_path, "v1.0", "pytest -q", frozenset(), 100)
+
+        coll = CollectionFloor(
+            errors=(),
+            collected_count=100,
+            has_errors=False,
+        )
+
+        report = run_baseline_diff(
+            current_failures=frozenset(),
+            search_space=100,
+            filtered=False,
+            suite_invocation="pytest -q",
+            project_root=tmp_path,
+            tag_override="v1.0",
+            collection_floor=coll,
+        )
+
+        assert report.collection_floor is not None
+        assert report.collection_floor.has_errors is False
+        d = report.to_dict()
+        assert "collection_floor" in d
+
+    def test_collection_floor_voids_report(self, tmp_path: Path) -> None:
+        """Collection error in report: voids_run is True."""
+        store_baseline(tmp_path, "v1.0", "pytest -q", frozenset(), 100)
+
+        coll = CollectionFloor(
+            errors=(CollectionError(
+                file_path="test_bad.py", error_type="TypeError", message="boom"
+            ),),
+            collected_count=0,
+            has_errors=True,
+        )
+
+        report = run_baseline_diff(
+            current_failures=frozenset(),
+            search_space=0,
+            filtered=False,
+            suite_invocation="pytest -q",
+            project_root=tmp_path,
+            tag_override="v1.0",
+            collection_floor=coll,
+        )
+
+        assert report.collection_floor is not None
+        assert report.collection_floor.voids_run is True
 
 
 # ── AC-9: baseline keying ───────────────────────────────────────────────────

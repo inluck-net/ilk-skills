@@ -7,12 +7,14 @@ Two floors that never shrink:
   1. Baseline-compare by node id against the last tag.
   2. Collection (--collect-only catches the class that voids every other result).
 
-This script implements floor 1.  Floor 2 (collection errors) and floor 3
-(inconclusive/timeout) are added in later steps.
+This script implements floors 1 and 2.  Floor 3 (inconclusive/timeout) is
+added in step 2.
 
 AC-1: comparison by node id, not count.
 AC-2: the ref is resolved (git describe --tags --abbrev=0), never assumed.
 AC-3: missing baseline is "could not compare", distinct from "zero regressions".
+AC-4: a collection error is a distinct, loud outcome that voids every other result.
+AC-5: the collection floor runs at whatever scope was selected, including tier 0.
 AC-8: baseline_red entries subtracted by node id; stale entries reported.
 AC-9: baselines keyed by (tag, suite-invocation flags).
 
@@ -79,13 +81,14 @@ class StaleExclusion:
 
 @dataclass(frozen=True)
 class BaselineReport:
-    """Full report: diff + stale exclusions."""
+    """Full report: diff + stale exclusions + collection floor."""
     diff: NodeIdDiff
     stale_exclusions: Tuple[StaleExclusion, ...]
     denominator_statement: str   # "N regressions across M collected tests vs vX.Y.Z"
+    collection_floor: Optional[CollectionFloor] = None
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "ref": self.diff.ref.tag,
             "ref_resolved": self.diff.ref.resolved,
             "could_not_compare": self.diff.could_not_compare,
@@ -103,6 +106,163 @@ class BaselineReport:
             ],
             "denominator_statement": self.denominator_statement,
         }
+        if self.collection_floor is not None:
+            d["collection_floor"] = self.collection_floor.to_dict()
+        return d
+
+
+# ── Collection floor (AC-4, AC-5) ────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class CollectionError:
+    """A single collection error from pytest --collect-only."""
+    file_path: str
+    error_type: str   # e.g. "TypeError", "ImportError"
+    message: str
+
+
+@dataclass(frozen=True)
+class CollectionFloor:
+    """Result of the collection floor check.
+
+    AC-4: a collection error voids every other result from that run.
+    AC-5: the floor runs at whatever scope was selected, including tier 0.
+    A collection error in an unrelated directory does not block a docs-only
+    release, but it must still be reported.
+    """
+    errors: Tuple[CollectionError, ...]
+    collected_count: int       # tests successfully collected (0 if errors)
+    has_errors: bool
+
+    @property
+    def voids_run(self) -> bool:
+        """AC-4: a collection error voids every other result."""
+        return self.has_errors
+
+    def to_dict(self) -> dict:
+        return {
+            "has_errors": self.has_errors,
+            "voids_run": self.voids_run,
+            "collected_count": self.collected_count,
+            "errors": [
+                {"file_path": e.file_path, "error_type": e.error_type, "message": e.message}
+                for e in self.errors
+            ],
+        }
+
+
+# Patterns in pytest's --collect-only stderr/output for collection errors.
+_COLLECT_ERROR_PREFIX = "ERROR collecting"
+_COLLECT_ERROR_TYPE_RE = __import__("re").compile(
+    r"ERROR collecting (.+)"
+)
+_COLLECT_EXCEPTION_RE = __import__("re").compile(
+    r"E\s+(\w+(?:\.\w+)*)\s*:\s*(.*)"
+)
+_COLLECTED_COUNT_RE = __import__("re").compile(
+    r"collected (\d+) items?"
+)
+
+
+def parse_collection_output(output: str) -> CollectionFloor:
+    """Parse pytest --collect-only output for collection errors.
+
+    AC-4: detect "ERROR collecting" lines and extract the error details.
+    Returns a CollectionFloor with any errors found.
+    """
+    import re
+
+    errors: list[CollectionError] = []
+    collected_count = 0
+
+    for line in output.splitlines():
+        # Count collected tests
+        m = _COLLECTED_COUNT_RE.search(line)
+        if m:
+            collected_count = int(m.group(1))
+
+        # Detect collection errors
+        if _COLLECT_ERROR_PREFIX in line:
+            # Extract file path from "ERROR collecting <path>"
+            m2 = _COLLECT_ERROR_TYPE_RE.search(line)
+            file_path = m2.group(1).strip() if m2 else "unknown"
+
+            # Look for the exception in subsequent lines (already seen or upcoming)
+            # For now, record the file; the error type comes from E lines
+            errors.append(CollectionError(
+                file_path=file_path,
+                error_type="CollectionError",
+                message=line.strip(),
+            ))
+
+        # Detect exception type from "E TypeError: ..." lines
+        if errors and line.strip().startswith("E "):
+            m3 = _COLLECT_EXCEPTION_RE.match(line.strip())
+            if m3:
+                # Update the last error with the actual exception type
+                last = errors[-1]
+                errors[-1] = CollectionError(
+                    file_path=last.file_path,
+                    error_type=m3.group(1),
+                    message=m3.group(2),
+                )
+
+    return CollectionFloor(
+        errors=tuple(errors),
+        collected_count=collected_count,
+        has_errors=len(errors) > 0,
+    )
+
+
+def run_collect_only(
+    collect_command: str,
+    cwd: Optional[Path] = None,
+    timeout: int = 120,
+) -> CollectionFloor:
+    """Run pytest --collect-only and parse the result.
+
+    AC-5: the collection floor runs at whatever scope was selected.
+
+    Args:
+        collect_command: the pytest --collect-only command to run.
+        cwd: working directory for the command.
+        timeout: seconds before the collection is considered hung.
+
+    Returns:
+        CollectionFloor with any errors found.
+    """
+    try:
+        result = subprocess.run(
+            collect_command,
+            shell=True,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        output = result.stdout + "\n" + result.stderr
+    except subprocess.TimeoutExpired:
+        return CollectionFloor(
+            errors=(CollectionError(
+                file_path="<timeout>",
+                error_type="TimeoutExpired",
+                message=f"collection timed out after {timeout}s",
+            ),),
+            collected_count=0,
+            has_errors=True,
+        )
+    except Exception as e:
+        return CollectionFloor(
+            errors=(CollectionError(
+                file_path="<error>",
+                error_type=type(e).__name__,
+                message=str(e),
+            ),),
+            collected_count=0,
+            has_errors=True,
+        )
+
+    return parse_collection_output(output)
 
 
 # ── Ref resolution (AC-2) ───────────────────────────────────────────────────
@@ -324,6 +484,7 @@ def run_baseline_diff(
     baseline_red_entries: Sequence[dict] = (),
     project_root: Optional[Path] = None,
     tag_override: Optional[str] = None,
+    collection_floor: Optional[CollectionFloor] = None,
 ) -> BaselineReport:
     """Full baseline-diff pipeline.
 
@@ -335,9 +496,11 @@ def run_baseline_diff(
         baseline_red_entries: from ship: block's baseline_red list.
         project_root: for loading stored baselines. Cwd if None.
         tag_override: use this tag instead of resolving via git describe.
+        collection_floor: pre-computed collection floor result (optional).
 
     Returns:
-        BaselineReport with diff, stale exclusions, and denominator statement.
+        BaselineReport with diff, stale exclusions, denominator statement,
+        and collection floor.
     """
     cwd = project_root or Path.cwd()
 
@@ -370,7 +533,12 @@ def run_baseline_diff(
     # AC-7: denominator statement
     denom = format_denominator(diff, filtered)
 
-    return BaselineReport(diff=diff, stale_exclusions=stale, denominator_statement=denom)
+    return BaselineReport(
+        diff=diff,
+        stale_exclusions=stale,
+        denominator_statement=denom,
+        collection_floor=collection_floor,
+    )
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -417,6 +585,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         action="store_true",
         help="Store the current failures as a baseline for this tag",
     )
+    parser.add_argument(
+        "--collect-command",
+        help="pytest --collect-only command to check for collection errors",
+    )
+    parser.add_argument(
+        "--collect-timeout",
+        type=int,
+        default=120,
+        help="Timeout for --collect-command (default: 120s)",
+    )
     args = parser.parse_args(argv)
 
     # Load failures
@@ -445,6 +623,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     project_root = args.project_root or Path.cwd()
 
+    # AC-4, AC-5: collection floor (optional)
+    coll_floor = None
+    if args.collect_command:
+        coll_floor = run_collect_only(
+            args.collect_command,
+            cwd=project_root,
+            timeout=args.collect_timeout,
+        )
+        if coll_floor.voids_run:
+            print(f"collection error: {len(coll_floor.errors)} error(s) found", file=sys.stderr)
+            for err in coll_floor.errors:
+                print(f"  {err.file_path}: {err.error_type}: {err.message}", file=sys.stderr)
+
     # Optionally store baseline
     if args.store_baseline:
         tag = args.tag or resolve_last_tag(project_root)
@@ -463,6 +654,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         baseline_red_entries=baseline_red,
         project_root=project_root,
         tag_override=args.tag,
+        collection_floor=coll_floor,
     )
 
     print(json.dumps(report.to_dict(), indent=2))
