@@ -702,6 +702,72 @@ if [[ $blocked_any -eq 1 ]]; then
   echo "Re-run with --force to back them up to <link>.pre-ilk-<timestamp> before linking."
 fi
 
+# --- reconcile settings.json hooks block ------------------------------------
+# Ensures the no-full-suite guardrail hook is registered in settings.json
+# without disturbing foreign entries.  AC-3, AC-4, AC-5.
+reconcile_hooks_settings() {
+  [[ ${#TARGET_HOOKS[@]} -gt 0 ]] || return 0
+
+  local mode="DRY-RUN"
+  [[ $apply -eq 1 ]] && mode="APPLY"
+
+  echo
+  echo "=== hooks settings.json reconcile ($mode) ==="
+
+  for hooks_dir in "${TARGET_HOOKS[@]}"; do
+    local settings="${hooks_dir%/hooks}/settings.json"
+    local hook_cmd="$hooks_dir/no-full-suite.sh"
+
+    python3 - "$settings" "$hook_cmd" "$apply" <<'PYEOF'
+import json, os, sys
+
+settings_path = sys.argv[1]
+hook_cmd = sys.argv[2]
+dry_run = sys.argv[3] != "1"
+
+if os.path.isfile(settings_path):
+    with open(settings_path) as f:
+        settings = json.load(f)
+else:
+    settings = {}
+
+hooks = settings.get("hooks", {})
+pre_tool = hooks.get("PreToolUse", [])
+if not pre_tool:
+    pre_tool = [{"matcher": "Bash", "hooks": []}]
+    hooks["PreToolUse"] = pre_tool
+
+bash_entry = pre_tool[0]
+existing = bash_entry.get("hooks", [])
+already = any(h.get("command") == hook_cmd for h in existing)
+
+if already:
+    print("skip: {} already has the hook".format(settings_path))
+    sys.exit(0)
+
+kept = [h for h in existing if h.get("command") != hook_cmd]
+hook_entry = {"type": "command", "command": hook_cmd}
+new_hooks = kept + [hook_entry]
+bash_entry["hooks"] = new_hooks
+hooks["PreToolUse"] = pre_tool
+settings["hooks"] = hooks
+
+if dry_run:
+    print("would update: {}".format(settings_path))
+else:
+    os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+    with open(settings_path, "w") as f:
+        json.dump(settings, f, indent=2)
+        f.write("\n")
+    print("updated: {}".format(settings_path))
+PYEOF
+  done
+}
+
+# Reconcile hooks into settings.json (Claude Code only).  Runs in both
+# dry-run and apply modes so the user sees what would change.
+reconcile_hooks_settings
+
 if [[ $apply -eq 0 ]]; then
   echo
   echo "Dry-run complete. Re-run with --apply to install."
@@ -759,6 +825,7 @@ if [[ -f "$projects_example" && ! -f "$projects_json" ]]; then
   echo "Created: $projects_json (from projects.example.json)"
   echo "Edit it to point at your real projects before using launch.sh --all."
 fi
+
 
 # --install-path: also install the claude-worker PATH entry
 if [[ $install_path -eq 1 ]]; then

@@ -2,23 +2,30 @@
 
 AC-7: ILK_ALLOW_FULL_SUITE=1 escape hatch works both inline and exported.
 AC-8: A full-suite pytest command is denied with permissionDecision: deny.
+AC-3: Reconciling settings.json never removes or reorders foreign hooks.
+AC-4: The reconcile is idempotent.
+AC-5: Install succeeds with no settings.json or no hooks key.
 
 These tests pin the behaviours that the rest of the sub-plan must not break.
 They invoke the hook script directly with representative input.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 HOOK_PATH = REPO_ROOT / "hooks" / "no-full-suite.sh"
+# The command string that install.sh writes into settings.json
+HOOK_CMD_SUFFIX = "hooks/no-full-suite.sh"
 
 
 def _run_hook(command: str, env: dict[str, str] | None = None) -> dict:
@@ -111,3 +118,194 @@ class TestHookFileIntegrity:
         digest = hashlib.sha256(HOOK_PATH.read_bytes()).hexdigest()
         # This is the sha256 of the imported file as of 2026-08-14
         assert digest == "c73ee1e8f611afc145dbc94ff164ccaa9b5d312dd634656d0e847f34282be4c4"
+
+
+# ── settings.json reconcile (AC-3, AC-4, AC-5) ──────────────────────────────
+
+# The three real kr-sdlc foreign hooks that AC-3 must protect.
+FOREIGN_HOOKS = [
+    {"type": "command", "command": "/Users/chad/Projects/github/inluck-net/kr-sdlc/hooks/r1-prod-data.sh"},
+    {"type": "command", "command": "/Users/chad/Projects/github/inluck-net/kr-sdlc/hooks/r2-self-merge.sh"},
+    {"type": "command", "command": "/Users/chad/Projects/github/inluck-net/kr-sdlc/hooks/r3-secrets.sh"},
+]
+
+
+def _make_settings(*, hooks_list: list[dict] | None = None,
+                   include_hooks_key: bool = True) -> dict:
+    """Build a settings.json fixture."""
+    settings: dict = {"env": {}, "permissions": {"defaultMode": "auto"}}
+    if include_hooks_key:
+        entry = {"matcher": "Bash", "hooks": hooks_list or []}
+        settings["hooks"] = {"PreToolUse": [entry]}
+    return settings
+
+
+def _find_hook_command(hooks_dir: str) -> str:
+    """Return the absolute path to the hook as install.sh would compute it."""
+    return os.path.join(hooks_dir, "no-full-suite.sh")
+
+
+def _run_reconcile(settings_path: str, hooks_dir: str, *, apply: bool = True) -> str:
+    """Run the reconciliation Python logic (extracted from install.sh).
+
+    Returns stdout output.
+    """
+    hook_cmd = _find_hook_command(hooks_dir)
+    script = r'''
+import json, os, sys
+
+settings_path = sys.argv[1]
+hook_cmd = sys.argv[2]
+dry_run = sys.argv[3] != "1"
+
+if os.path.isfile(settings_path):
+    with open(settings_path) as f:
+        settings = json.load(f)
+else:
+    settings = {}
+
+hooks = settings.get("hooks", {})
+pre_tool = hooks.get("PreToolUse", [])
+if not pre_tool:
+    pre_tool = [{"matcher": "Bash", "hooks": []}]
+    hooks["PreToolUse"] = pre_tool
+
+bash_entry = pre_tool[0]
+existing = bash_entry.get("hooks", [])
+already = any(h.get("command") == hook_cmd for h in existing)
+
+if already:
+    print("skip: {} already has the hook".format(settings_path))
+    sys.exit(0)
+
+kept = [h for h in existing if h.get("command") != hook_cmd]
+hook_entry = {"type": "command", "command": hook_cmd}
+new_hooks = kept + [hook_entry]
+bash_entry["hooks"] = new_hooks
+hooks["PreToolUse"] = pre_tool
+settings["hooks"] = hooks
+
+if dry_run:
+    print("would update: {}".format(settings_path))
+else:
+    os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+    with open(settings_path, "w") as f:
+        json.dump(settings, f, indent=2)
+        f.write("\n")
+    print("updated: {}".format(settings_path))
+'''
+    result = subprocess.run(
+        ["python3", "-", settings_path, hook_cmd, "1" if apply else "0"],
+        input=script, capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0, f"reconcile failed: {result.stderr}"
+    return result.stdout.strip()
+
+
+class TestSettingsReconcileForeignEntries:
+    """AC-3: foreign hooks are never removed or reordered."""
+
+    def test_foreign_entries_preserved(self, tmp_path: Path) -> None:
+        """The 3 kr-sdlc hooks survive reconciliation."""
+        hooks_dir = str(tmp_path / "hooks")
+        os.makedirs(hooks_dir)
+        settings_path = str(tmp_path / "settings.json")
+        data = _make_settings(hooks_list=list(FOREIGN_HOOKS))
+        with open(settings_path, "w") as f:
+            json.dump(data, f, indent=2)
+
+        _run_reconcile(settings_path, hooks_dir)
+
+        with open(settings_path) as f:
+            result = json.load(f)
+        hooks = result["hooks"]["PreToolUse"][0]["hooks"]
+        assert hooks[:3] == FOREIGN_HOOKS
+        assert hooks[-1]["command"] == _find_hook_command(hooks_dir)
+
+    def test_foreign_plus_existing_hook(self, tmp_path: Path) -> None:
+        """Foreign entries + our hook already present → skip (idempotent)."""
+        hooks_dir = str(tmp_path / "hooks")
+        os.makedirs(hooks_dir)
+        settings_path = str(tmp_path / "settings.json")
+        hook_cmd = _find_hook_command(hooks_dir)
+        data = _make_settings(hooks_list=FOREIGN_HOOKS + [
+            {"type": "command", "command": hook_cmd},
+        ])
+        with open(settings_path, "w") as f:
+            json.dump(data, f, indent=2)
+
+        output = _run_reconcile(settings_path, hooks_dir)
+        assert "skip" in output
+
+
+class TestSettingsReconcileIdempotent:
+    """AC-4: running reconcile twice produces no diff."""
+
+    def test_twice_produces_no_change(self, tmp_path: Path) -> None:
+        hooks_dir = str(tmp_path / "hooks")
+        os.makedirs(hooks_dir)
+        settings_path = str(tmp_path / "settings.json")
+        data = _make_settings(hooks_list=list(FOREIGN_HOOKS))
+        with open(settings_path, "w") as f:
+            json.dump(data, f, indent=2)
+
+        _run_reconcile(settings_path, hooks_dir)
+        with open(settings_path) as f:
+            first = f.read()
+
+        _run_reconcile(settings_path, hooks_dir)
+        with open(settings_path) as f:
+            second = f.read()
+
+        assert first == second
+
+
+class TestSettingsReconcileMissing:
+    """AC-5: no settings.json, or no hooks key — both succeed."""
+
+    def test_no_settings_json(self, tmp_path: Path) -> None:
+        hooks_dir = str(tmp_path / "hooks")
+        os.makedirs(hooks_dir)
+        settings_path = str(tmp_path / "settings.json")
+
+        _run_reconcile(settings_path, hooks_dir)
+
+        with open(settings_path) as f:
+            result = json.load(f)
+        hooks = result["hooks"]["PreToolUse"][0]["hooks"]
+        assert len(hooks) == 1
+        assert hooks[0]["command"] == _find_hook_command(hooks_dir)
+
+    def test_no_hooks_key(self, tmp_path: Path) -> None:
+        hooks_dir = str(tmp_path / "hooks")
+        os.makedirs(hooks_dir)
+        settings_path = str(tmp_path / "settings.json")
+        data = _make_settings(include_hooks_key=False)
+        with open(settings_path, "w") as f:
+            json.dump(data, f, indent=2)
+
+        _run_reconcile(settings_path, hooks_dir)
+
+        with open(settings_path) as f:
+            result = json.load(f)
+        hooks = result["hooks"]["PreToolUse"][0]["hooks"]
+        assert len(hooks) == 1
+        assert hooks[0]["command"] == _find_hook_command(hooks_dir)
+
+
+class TestSettingsReconcileDryRun:
+    """AC-6: dry-run prints what would change and modifies nothing."""
+
+    def test_dry_run_does_not_modify(self, tmp_path: Path) -> None:
+        hooks_dir = str(tmp_path / "hooks")
+        os.makedirs(hooks_dir)
+        settings_path = str(tmp_path / "settings.json")
+        data = _make_settings(hooks_list=list(FOREIGN_HOOKS))
+        with open(settings_path, "w") as f:
+            json.dump(data, f, indent=2)
+
+        before_hash = hashlib.sha256(Path(settings_path).read_bytes()).hexdigest()
+        _run_reconcile(settings_path, hooks_dir, apply=False)
+        after_hash = hashlib.sha256(Path(settings_path).read_bytes()).hexdigest()
+
+        assert before_hash == after_hash, "dry-run modified settings.json"
