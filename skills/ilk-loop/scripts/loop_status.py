@@ -389,6 +389,42 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
             "verification_tier": tiers.get(fname, "loop-verified"),
         })
 
+    # ── ship-audit: annotate shipped sub-plans with proof status ──────────
+    # Defensive import — if ship_audit is missing or broken, degrade to
+    # today's output (every shipped sub-plan looks proven).  AC-7.
+    _ship_audit_available = False
+    try:
+        import ship_audit as _ship_audit_mod
+        _ship_audit_available = True
+    except Exception:
+        _ship_audit_mod = None  # type: ignore[assignment]
+
+    if _ship_audit_available:
+        for sp in subplans:
+            if sp["status"] != "shipped":
+                sp["proven"] = True
+                continue
+            # Read the sub-plan file to get body + declared_checks + slug.
+            sp_path = plans_dir / sp["fname"]
+            try:
+                info = _ship_audit_mod.read_subplan_for_audit(sp_path)
+                result = _ship_audit_mod.audit_ship(
+                    status=info["status"],
+                    body=info["body"],
+                    declared_checks=info["declared_checks"],
+                    gate_passed="unknown",  # gate records not resolved here
+                    slug=info["slug"],
+                    cwd=cwd,
+                )
+                sp["proven"] = result["proven"]
+                sp["unproven_reasons"] = result["reasons"]
+            except Exception:
+                # Any failure → degrade to today's behaviour (proven).
+                sp["proven"] = True
+    else:
+        for sp in subplans:
+            sp["proven"] = True
+
     # Counts
     active = queue_view["active_count"]
     queued = queue_view["queued_count"]
@@ -468,6 +504,27 @@ def _compile_only_summary(subplans: list[dict]) -> str | None:
     )
 
 
+def _unproven_summary(subplans: list[dict]) -> str | None:
+    """Banner for shipped sub-plans that lack proof (step commits or gate).
+
+    Follows ``_compile_only_summary``'s shape: count + slugs, ASCII-only.
+    Returns None when all shipped sub-plans are proven.
+    """
+    offenders = [
+        sp for sp in subplans
+        if sp["status"] == "shipped" and not sp.get("proven", True)
+    ]
+    if not offenders:
+        return None
+    slugs = ", ".join(sp["slug"] for sp in offenders)
+    n = len(offenders)
+    plural = "s" if n != 1 else ""
+    return (
+        f"SHIP PROOF MISSING: {n} sub-plan{plural} shipped without proof\n"
+        f"  slugs: {slugs}"
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="ilk-loop status checker")
     ap.add_argument("--json", action="store_true",
@@ -520,9 +577,9 @@ def main() -> int:
     print()
 
     # Reconstruct rows from subplans for the text table.
-    rows: list[tuple[str, str, str, str, str, str]] = []  # +verification_tier
+    rows: list[tuple[str, str, str, str, str, str, bool]] = []  # +verification_tier, +proven
     for sp in data["subplans"]:
-        rows.append((sp["fname"], sp["status"], sp["current_step"], sp["estimated_steps"], sp.get("repo", ""), sp.get("verification_tier", "loop-verified")))
+        rows.append((sp["fname"], sp["status"], sp["current_step"], sp["estimated_steps"], sp.get("repo", ""), sp.get("verification_tier", "loop-verified"), sp.get("proven", True)))
 
     if not rows:
         print("Master plan contains no sub-plan references.", file=sys.stderr)
@@ -541,6 +598,14 @@ def main() -> int:
         # run 20260608-104937).
         return f"  (!) needs-verify:{tier}" if tier != "loop-verified" and status == "shipped" else ""
 
+    def _unproven_suffix(proven: bool, status: str) -> str:
+        """ASCII-only suffix for shipped sub-plans that lack proof.
+
+        Follows ``_tier_suffix``'s convention: only on shipped rows, ASCII-only
+        to avoid cp936 UnicodeEncodeError (see _tier_suffix for the incident).
+        """
+        return "  (!) unproven" if status == "shipped" and not proven else ""
+
     show_repo = bool(meta_members)
     name_w = max(len(r[0]) for r in rows)
     name_w = max(name_w, len("sub-plan"))
@@ -552,10 +617,10 @@ def main() -> int:
         print(
             f"{'-' * name_w}  {'-' * repo_w}  ----------------  --------"
         )
-        for fname, status, cur, est, repo, tier in rows:
+        for fname, status, cur, est, repo, tier, proven in rows:
             icon = STATUS_ICONS.get(status, "[??]")
             shown = repo if repo else "(?)"
-            suffix = _tier_suffix(tier, status)
+            suffix = _tier_suffix(tier, status) + _unproven_suffix(proven, status)
             print(
                 f"{fname.ljust(name_w)}  {shown.ljust(repo_w)}  "
                 f"{icon} {status.ljust(13)} {cur}/{est}{suffix}"
@@ -563,9 +628,9 @@ def main() -> int:
     else:
         print(f"{'sub-plan'.ljust(name_w)}  status            step")
         print(f"{'-' * name_w}  ----------------  --------")
-        for fname, status, cur, est, _repo, tier in rows:
+        for fname, status, cur, est, _repo, tier, proven in rows:
             icon = STATUS_ICONS.get(status, "[??]")
-            suffix = _tier_suffix(tier, status)
+            suffix = _tier_suffix(tier, status) + _unproven_suffix(proven, status)
             print(f"{fname.ljust(name_w)}  {icon} {status.ljust(13)} {cur}/{est}{suffix}")
 
     print()
@@ -580,7 +645,14 @@ def main() -> int:
         non_shipped = [sp for sp in data["subplans"] if sp["status"] not in _TERMINAL]
         mstatus = data.get("master_status", "(none)")
         if not non_shipped:
-            print(f"All {len(rows)} sub-plans shipped -- nothing to do.")
+            unproven_count = sum(
+                1 for sp in data["subplans"]
+                if sp["status"] == "shipped" and not sp.get("proven", True)
+            )
+            if unproven_count:
+                print(f"All {len(rows)} sub-plans shipped -- {unproven_count} need verification.")
+            else:
+                print(f"All {len(rows)} sub-plans shipped -- nothing to do.")
         elif mstatus in ("draft", "paused"):
             print(
                 f"Master is '{mstatus}' (held -- not runnable): "
@@ -607,6 +679,11 @@ def main() -> int:
         if summary:
             print()
             print(summary)
+        # Loud summary for shipped-but-unproven sub-plans.
+        unproven = _unproven_summary(data["subplans"])
+        if unproven:
+            print()
+            print(unproven)
         return 0
 
     nxt = data["next"]
@@ -625,6 +702,11 @@ def main() -> int:
     if summary:
         print()
         print(summary)
+    # Loud summary for shipped-but-unproven sub-plans.
+    unproven = _unproven_summary(data["subplans"])
+    if unproven:
+        print()
+        print(unproven)
     return 1
 
 
