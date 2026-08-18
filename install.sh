@@ -343,6 +343,7 @@ fi
 declare -a TARGET_NAMES=()
 declare -a TARGET_SKILLS=()
 declare -a TARGET_COMMANDS=()
+declare -a TARGET_HOOKS=()
 
 # An --only-X flag selects exactly one target; when none are set, all
 # targets are included.
@@ -358,10 +359,12 @@ if [[ $any_only -eq 0 || $only_claude -eq 1 ]]; then
     TARGET_NAMES+=("Claude Code [$claude_home]")
     TARGET_SKILLS+=("$claude_home/skills")
     TARGET_COMMANDS+=("$claude_home/commands")
+    TARGET_HOOKS+=("$claude_home/hooks")
   else
     TARGET_NAMES+=("Claude Code")
     TARGET_SKILLS+=("$HOME/.claude/skills")
     TARGET_COMMANDS+=("$HOME/.claude/commands")
+    TARGET_HOOKS+=("$HOME/.claude/hooks")
   fi
 fi
 if [[ $any_only -eq 0 || $only_codex -eq 1 ]]; then
@@ -385,6 +388,14 @@ COMMAND_FILES=()
 while IFS= read -r line; do
   COMMAND_FILES+=("$line")
 done < <(find "$COMMANDS_SRC" -maxdepth 1 -mindepth 1 -type f -name 'ilk*' -exec basename {} \; | sort)
+
+HOOKS_SRC="$REPO_ROOT/hooks"
+HOOK_FILES=()
+if [[ -d "$HOOKS_SRC" ]]; then
+  while IFS= read -r line; do
+    HOOK_FILES+=("$line")
+  done < <(find "$HOOKS_SRC" -maxdepth 1 -mindepth 1 -type f -name '*.sh' -exec basename {} \; | sort)
+fi
 
 # --- planning ---------------------------------------------------------------
 
@@ -618,6 +629,19 @@ for i in "${!TARGET_NAMES[@]}"; do
   done
 done
 
+# Hooks are Claude Code only — one entry per discovered hook.
+for hook_name in "${HOOK_FILES[@]}"; do
+  for i in "${!TARGET_HOOKS[@]}"; do
+    link="${TARGET_HOOKS[$i]}/$hook_name"
+    source="$HOOKS_SRC/$hook_name"
+    action="$(plan_link "$link" "$source")"
+    PLAN_TARGET+=("hooks")
+    PLAN_LINK+=("$link")
+    PLAN_SOURCE+=("$source")
+    PLAN_ACTION+=("$action")
+  done
+done
+
 # --- print plan -------------------------------------------------------------
 
 mode="DRY-RUN"
@@ -628,6 +652,7 @@ echo "repo:           $REPO_ROOT"
 [[ -n "$claude_home" ]] && echo "claude home:    $claude_home (custom)"
 echo "skills found:   ${#SKILL_NAMES[@]} (ilk-*)"
 echo "commands found: ${#COMMAND_FILES[@]} (ilk*)"
+echo "hooks found:    ${#HOOK_FILES[@]} (*.sh)"
 printf 'targets:        '
 printf '%s ' "${TARGET_NAMES[@]}"
 echo
