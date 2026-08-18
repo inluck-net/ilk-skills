@@ -100,6 +100,30 @@ class TestPathChangeIsTier3:
         decision = select_tier([".ilk-launch.json"], zero)
         assert decision.tier == 3
 
+    def test_sentinel_fixture_selects_tier3(self) -> None:
+        """THE SENTINEL CASE: a path/schema change that broke 12 fixtures
+        across 7 files, despite the consumer oracle returning zero.
+
+        From the MASTER: "The sentinel move was one identifier at 2 call sites
+        and broke 12 fixtures in 3 skills." A path has no import graph, so the
+        consumer oracle returns zero — but the change is high-risk. If this
+        selects tier 1, the whole design has failed.
+
+        The sentinel was a JSONL schema change (a writer path). We model it
+        as a .json config file change with zero consumers.
+        """
+        zero = ConsumerResult(status=OracleStatus.OK, importers=())
+        # Sentinel: schema/config change that has no import graph
+        sentinel_paths = [
+            "skills/ilk-loop/scripts/.ilk-loop-schema.json",
+        ]
+        decision = select_tier(sentinel_paths, zero)
+        assert decision.tier == 3, (
+            f"Sentinel path change selected tier {decision.tier}, expected 3. "
+            f"The oracle returned zero consumers, but a path change has no "
+            f"import graph — zero is not a real zero. Reason: {decision.reason}"
+        )
+
 
 # ── Tier selection: AC-9 (code file → never tier 0) ────────────────────────
 
