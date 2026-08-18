@@ -112,6 +112,43 @@ class TestPhase0HardStop:
         )
 
 
+class TestCommandPhase0HardStop:
+    """The /ilk-ship command enforces Phase 0 as a hard stop."""
+
+    @pytest.fixture(scope="class")
+    def command_text(self) -> str:
+        assert COMMAND_FILE.exists(), f"Command file not found at {COMMAND_FILE}"
+        return COMMAND_FILE.read_text(encoding="utf-8")
+
+    def test_command_exists(self, command_text: str):
+        """commands/ilk-ship.md exists."""
+        pass  # fixture assertion is enough
+
+    def test_command_refuses_to_advance(self, command_text: str):
+        """The command says to refuse to advance on unproven sub-plans."""
+        assert "refuse to advance" in command_text.lower() or "refuse to proceed" in command_text.lower(), (
+            "Command does not say 'refuse to advance/proceed' on unproven sub-plans"
+        )
+
+    def test_command_phase_3_blocked(self, command_text: str):
+        """The command ties the refusal to Phase 3."""
+        assert "phase 3" in command_text.lower(), (
+            "Command does not reference Phase 3 as the blocked destination"
+        )
+
+    def test_command_hard_stop_label(self, command_text: str):
+        """The command labels Phase 0 as a hard stop."""
+        assert "hard stop" in command_text.lower(), (
+            "Command does not label Phase 0 as a 'hard stop'"
+        )
+
+    def test_command_2026_08_14_reference(self, command_text: str):
+        """The command references the 2026-08-14 failure that motivated it."""
+        assert "2026-08-14" in command_text, (
+            "Command does not reference the 2026-08-14 failure"
+        )
+
+
 # ── AC-3: ILK_ALLOW_FULL_SUITE=1 escape documented ─────────────────────────
 
 class TestEscapeHatchDocumented:
