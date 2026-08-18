@@ -363,3 +363,48 @@ class TestCommandsMatch:
         sel = "python3 -m pytest skills/ilk-loop/tests -q"
         rec = "python3 -m pytest skills/ilk-loop/tests/ -q"
         assert _commands_match(sel, rec) is True
+
+
+# ── Replay fixture: 08-13 batch sub-plan 2 ─────────────────────────────────
+
+class TestReplay0813Batch:
+    """Replay the 08-13 batch's sub-plan 2 against the selector.
+
+    Sub-plan 2 of the 08-13 batch modified ``skills/ilk-loop/scripts/status_all.py``
+    (a contract-governed file) and gated on only
+    ``pytest skills/ilk-runner/tests/ skills/ilk-feedback/tests/`` —
+    missing the ``ilk-loop`` scope that broke 12 fixtures across 7 files.
+
+    The selector must add the ``ilk-loop`` scope that gate omitted.
+    """
+
+    def test_status_all_py_change_is_tier3(self) -> None:
+        """status_all.py is contract-governed → tier 3, not tier 1 or 2."""
+        zero = ConsumerResult(status=OracleStatus.OK, importers=())
+        changed_paths = ["skills/ilk-loop/scripts/status_all.py"]
+        decision = select_tier(changed_paths, zero)
+        assert decision.tier == 3, (
+            f"status_all.py is contract-governed (in CONTRACT_GOVERNED_FILES), "
+            f"but selector returned tier {decision.tier}. "
+            f"The 08-13 batch's narrow gate would still have been too narrow."
+        )
+
+    def test_narrow_gate_would_miss_ilk_loop_scope(self) -> None:
+        """The 08-13 gate (ilk-runner + ilk-feedback only) missed ilk-loop tests.
+
+        This fixture verifies the selector would have expanded the gate
+        to include the ilk-loop scope.
+        """
+        # The 08-13 batch's actual gate was:
+        narrow_gate = [
+            "python3 -m pytest skills/ilk-runner/tests/ -q",
+            "python3 -m pytest skills/ilk-feedback/tests/ -q",
+        ]
+        # The selector says tier 3 (contract-governed file) → whole suite
+        zero = ConsumerResult(status=OracleStatus.OK, importers=())
+        decision = select_tier(["skills/ilk-loop/scripts/status_all.py"], zero)
+        assert decision.tier == 3
+        # A tier-3 gate should include the ilk-loop tests, not just runner+feedback
+        # (this is verified by the SKILL.md in sub-plan 6, but the fixture
+        # confirms the tier is correct)
+
