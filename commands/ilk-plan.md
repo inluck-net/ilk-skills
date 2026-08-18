@@ -542,6 +542,14 @@ per-step `local_checks` yaml block. Warn on each occurrence:
   second grep's status, not the first's. Use `pgrep` or `kill -0 $pid`.
   **Automated:** `plan_lint.py` `lint_broken_process_wait` flags this
   at step 7g
+- **Re-launching a backgrounded command to read its output** — when a
+  long command is auto-backgrounded by the harness (exceeds
+  `BASH_DEFAULT_TIMEOUT_MS`), its `.output` file accumulates results.
+  Do NOT re-run the command to "get the result." Instead, poll the
+  file for the `[exited with code` marker with
+  `wait_for_background_output.sh`. See
+  `decomposition-principles.md` §8 for the protocol and the
+  `20260818-154347` incident that motivated it (~24 of 43 min burned).
 - `grep` without `-q` and without an `-E '<expected-pattern>'` regex
   — tests for existence of a string, not for the contract value;
   tighten the pattern, or use `jq -e` for JSON

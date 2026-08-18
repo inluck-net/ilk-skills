@@ -281,6 +281,19 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   meaning) was not chosen because it adds no information — the gate still
   runs the same command, it just flips the pass/fail interpretation without
   asserting anything about the actual red state.
+- **re-ran to read its own output** → a backgrounded command's `.output`
+  file is read before the command finishes writing, gets empty-because-early,
+  and the agent re-launches the command to "get the result" — which already
+  exists. Real case: gh-resolve run `20260818-154347`, iter-01 — the worker
+  read the `.output` file while pytest was still writing, got empty, and
+  re-launched the suite three times. Net cost: **~24 of 43 iteration minutes**
+  re-running a suite that had already passed twice (`2825 passed, 2 skipped`
+  in 725.16s and 744.42s). **Fix:** redirect once to a file, then poll for
+  the `[exited with code` marker with `wait_for_background_output.sh`; never
+  pipe a gate to `tail`; never re-launch on an empty read. The helper polls
+  the marker (not process absence), waits on empty files, and reports
+  `inconclusive` when the bound expires. Use it instead of ad-hoc `while ps
+  aux | grep` loops (which exit instantly because `grep -q` closes the pipe).
 
 ### Orphaned-capability detector (post-ship QC tool)
 
