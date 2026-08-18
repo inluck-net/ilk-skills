@@ -1587,14 +1587,27 @@ def tail_log(log_path_str: str | None, max_lines: int = TAIL_LINES) -> list[str]
     return [ln.rstrip("\n") for ln in lines[-max_lines:]]
 
 
-def filter_system_lines(lines: list[str]) -> list[str]:
-    """Filter out [system] lines from a tail.
+# Renderer lines may carry a leading wall-clock stamp ("[17:29:48] ...");
+# strip it before classifying so the filter keeps working on both the
+# stamped format and older unstamped logs.
+_TS_PREFIX_RE = re.compile(r"^\[\d{2}:\d{2}:\d{2}\]\s+")
 
-    [system] lines (e.g. thinking_tokens) are technically present but
-    entirely uninformative for diagnosis. If every line is [system],
-    return a sentinel indicating so.
+
+def filter_system_lines(lines: list[str]) -> list[str]:
+    """Filter out uninformative [system] lines from a tail.
+
+    Most [system] lines (e.g. thinking_tokens) are technically present but
+    entirely uninformative for diagnosis. [system] api_retry is the
+    exception — a retry storm is exactly the kind of thing a postmortem
+    needs to see — so it is kept. If every line is noise, return a
+    sentinel indicating so.
     """
-    filtered = [ln for ln in lines if not ln.startswith("[system] ")]
+    filtered = [
+        ln
+        for ln in lines
+        if not _TS_PREFIX_RE.sub("", ln).startswith("[system] ")
+        or _TS_PREFIX_RE.sub("", ln).startswith("[system] api_retry")
+    ]
     if not filtered and lines:
         return ["<all lines were [system] noise — no substantive output>"]
     return filtered
