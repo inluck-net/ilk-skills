@@ -273,6 +273,21 @@ transport + auth ilk deliberately leaves out.
 
 ---
 
+## 10. Installed hooks (Claude Code only)
+
+`install.sh --apply` symlinks `hooks/*.sh` into `~/.claude/hooks/` and
+reconciles `~/.claude/settings.json` to register them under
+`PreToolUse` → `Bash`.  Foreign entries in `settings.json` are preserved
+(idempotent, dry-run safe).  Currently one hook:
+
+| Hook | File | Behaviour |
+|---|---|---|
+| Full-suite guardrail | `hooks/no-full-suite.sh` | Denies unscoped `pytest`/`npm test`/`cargo test`/`go test` runs. Escape hatch: `ILK_ALLOW_FULL_SUITE=1` (inline or exported). See the file's header comment for rationale. |
+
+Cursor and Codex have no equivalent hook mechanism.
+
+---
+
 ## Source-of-truth pointers
 
 - `skills/ilk-loop/scripts/loop_status.py` — queue state + exit codes
