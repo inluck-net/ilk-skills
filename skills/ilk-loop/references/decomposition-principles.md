@@ -257,6 +257,23 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   failures in ~90 min and ~$9.  **Fix:** remove the manual run from the step
   body; the driver will run it after the commit.  `plan_lint.py`
   (`lint_redundant_gate`) warns automatically.
+- **red-first step-0 gate asserts exit 0** → a step whose purpose is to
+  *record* failing tests (the gate command is designed to exit non-zero)
+  declares a plain `exit 0` gate.  The gate always fails (the command exits
+  non-zero by design), the B2 confirm path blocks the loop, but the agent
+  has already committed and bumped `current_step` before the gate fires.
+  Real case: gh-resolve `a-terminal-run-keeps-its-unshipped-commits` step 0,
+  commit `b0b129b` — body reads "Red-first: 4 failed, 2 passed of 6 tests",
+  yet `current_step` advanced to 3 with `--run-local-checks` active.
+  **Fix:** gate on the **red count** instead of exit 0.  A command that greps
+  the pytest summary for the expected failure count asserts something *true*
+  about the red state, catches drift (fewer or more failures), and uses
+  standard exit-code semantics:
+  `python3 -m pytest tests/test_foo.py -q 2>&1 | tail -5 | grep -q '4 failed'`.
+  The rejected alternative (`expected_red` marker that inverts the gate's
+  meaning) was not chosen because it adds no information — the gate still
+  runs the same command, it just flips the pass/fail interpretation without
+  asserting anything about the actual red state.
 
 ### Orphaned-capability detector (post-ship QC tool)
 

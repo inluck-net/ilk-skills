@@ -231,6 +231,21 @@ local_checks:
   **Note:** If the remote is shared (check `.ilk-remote-type`), omit the
   `[plan:<slug>#step-N]` trailer from the commit message.
 
+> **Red-first step-0 rule.** If this step's purpose is to *record* failing
+> tests (the gate command is designed to exit non-zero), the gate MUST assert
+> the **red count**, not exit 0. A gate that checks `exit 0` on a step
+> designed to fail always fails and blocks the loop — the agent has already
+> committed before the gate fires. Instead, grep the pytest summary for the
+> expected failure count:
+> ```yaml
+> local_checks:
+>   - command: "python3 -m pytest tests/test_foo.py -q 2>&1 | tail -5 | grep -q '4 failed'"
+>     timeout: 300
+> ```
+> This asserts something *true*: the expected number of tests failed. It
+> catches drift (fewer or more failures than expected) and uses standard
+> exit-code semantics. See decomposition-principles.md §8 for the full rule.
+
 ### Step 1 — <short title>
 - <bullet>
 - Commit: `<type>(<scope>): <summary> [plan:<slug>#step-1]`
