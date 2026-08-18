@@ -87,6 +87,46 @@ See [references/worker-engine.md](references/worker-engine.md) for the
 full engine table, precedence, capability matrix, and instructions for
 adding a Codex runner.
 
+### The `ship:` block
+
+`.ilk-launch.json` may contain a `ship:` key that declares how the
+project's release gate runs. The `ilk-ship` skill reads this block to
+scope the gate to the project's actual test suite and known baseline
+exclusions.
+
+```jsonc
+{
+  "ship": {
+    "suite": {
+      "command": "python3 -m pytest",   // required — the test runner
+      "flags": ["--timeout=60"],         // optional — defaults to []
+      "timeout": 300                     // optional — wall-clock limit (s)
+    },
+    "baseline_red": [                    // optional — known pre-existing failures
+      {
+        "node_id": "tests/test_foo.py",  // pytest node id
+        "reason": "20 failed at v0.9.62",// required — why it's excluded
+        "as_of": "2026-08-14"            // optional — staleness tracking
+      }
+    ],
+    "hosts": ["chad-mbp", "rezmac"],     // optional — declarative, no probing
+    "path_prelude": "export PATH=\"/opt/homebrew/bin:$PATH\""
+                                         // optional — PATH for non-interactive shells
+  }
+}
+```
+
+**Schema rules:**
+- `suite.command` is required, must be a non-empty string.
+- `suite.flags` defaults to `[]` when omitted; must be a list if present.
+- Every `baseline_red` entry requires a non-empty `reason` — an exclusion
+  without a reason is rejected by the loader.
+- `as_of` (date string, `YYYY-MM-DD`) enables staleness reporting; entries
+  older than the threshold (default 90 days) are flagged but do not fail.
+
+**Loader:** `skills/ilk-ship/scripts/ship_config.py` — see
+[ilk-ship SKILL.md](../ilk-ship/SKILL.md) for the full API.
+
 ## State directory
 
 All per-project runtime state (PID files, launch metadata, MCP worker
