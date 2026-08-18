@@ -310,6 +310,76 @@ class TestValidConfig:
 
 # ── Staleness (AC-6) ───────────────────────────────────────────────────────
 
+class TestSuiteRoundTrip:
+    """suite.command and suite.flags round-trip exactly (AC-7)."""
+
+    def test_command_and_flags_preserved(self, tmp_path: Path) -> None:
+        """command + flags survive write → load unchanged."""
+        project = _make_project(tmp_path)
+        _write_json(project / ".ilk-launch.json", {
+            "ship": {
+                "suite": {
+                    "command": "python3 -m pytest",
+                    "flags": ["--timeout-method=signal", "--timeout=60"],
+                },
+            },
+        })
+        result = load_ship_config(project)
+        assert isinstance(result, ShipConfig)
+        assert result.ship["suite"]["command"] == "python3 -m pytest"
+        assert result.ship["suite"]["flags"] == [
+            "--timeout-method=signal", "--timeout=60",
+        ]
+
+    def test_flags_none_normalized_to_empty_list(self, tmp_path: Path) -> None:
+        """flags: null → [] after load, not None."""
+        project = _make_project(tmp_path)
+        _write_json(project / ".ilk-launch.json", {
+            "ship": {
+                "suite": {"command": "pytest", "flags": None},
+            },
+        })
+        result = load_ship_config(project)
+        assert isinstance(result, ShipConfig)
+        assert result.ship["suite"]["flags"] == []
+        # Caller can reconstruct invocation as: command + " ".join(flags)
+
+    def test_flags_omitted_normalized_to_empty_list(self, tmp_path: Path) -> None:
+        """flags absent → [] after load."""
+        project = _make_project(tmp_path)
+        _write_json(project / ".ilk-launch.json", {
+            "ship": {"suite": {"command": "pytest"}},
+        })
+        result = load_ship_config(project)
+        assert isinstance(result, ShipConfig)
+        assert result.ship["suite"]["flags"] == []
+
+    def test_suite_command_must_be_non_empty_string(self, tmp_path: Path) -> None:
+        """suite.command: '' → MalformedConfig."""
+        project = _make_project(tmp_path)
+        _write_json(project / ".ilk-launch.json", {
+            "ship": {"suite": {"command": ""}},
+        })
+        result = load_ship_config(project)
+        assert isinstance(result, MalformedConfig)
+        assert "command" in result.detail
+
+    def test_baseline_red_entry_missing_node_id(self, tmp_path: Path) -> None:
+        """A baseline_red entry without node_id → MalformedConfig (AC-5)."""
+        project = _make_project(tmp_path)
+        _write_json(project / ".ilk-launch.json", {
+            "ship": {
+                "suite": {"command": "pytest"},
+                "baseline_red": [
+                    {"reason": "something"},
+                ],
+            },
+        })
+        result = load_ship_config(project)
+        assert isinstance(result, MalformedConfig)
+        assert "node_id" in result.detail
+
+
 class TestStaleness:
     """baseline_red entries older than a threshold are reported as stale."""
 
