@@ -1871,6 +1871,132 @@ def _nearest_step_heading(body: str, pos: int) -> str:
     return m[-1].strip() if m else "<unknown step>"
 
 
+# ── Exit-status-loss lints (§8 enforcement) ──────────────────────────────────
+#
+# These enforce decomposition-principles.md §8 mechanically. The rules are:
+#   (a) A command piped to | tail, | head, or | awk 'NR==1' discards the
+#       upstream exit status — the check always "passes".
+#   (b) A while loop whose condition pipes grep -q into another command tests
+#       the wrong command's exit status (grep -q closes the pipe early).
+#
+# Both are plan-time lints (not runtime hooks).
+
+# Trailing pipe patterns that discard upstream exit status.
+_EXIT_STATUS_DISCARD_RE = re.compile(
+    r"""
+    \|\s*(?:tail|head)\s*(?:-\d+)?\s*$        # | tail, | head, | tail -10
+    |\|\s*awk\s+['"]NR\s*==\s*1['"]\s*$        # | awk 'NR==1'
+    """,
+    re.VERBOSE | re.MULTILINE,
+)
+
+# Commands whose exit status is the assertion itself — not a discard.
+_ASSERTION_CMD_RE = re.compile(
+    r"""
+    grep\s+-[a-zA-Z]*q    # grep -q (or -qX combos)
+    |bash\s+-o\s+pipefail  # bash -o pipefail wrapper
+    """,
+    re.VERBOSE,
+)
+
+# Broken process-wait: while ... | grep -q ... | grep -v grep
+_BROKEN_WAIT_RE = re.compile(
+    r"""
+    while\s+               # while keyword
+    .*?                    # some command
+    \|\s*grep\s+-q\s+      # piped to grep -q (closes pipe early)
+    .*?                    # pattern arg
+    \|\s*grep\s+-v\s+grep  # piped to grep -v grep (tests wrong status)
+    """,
+    re.VERBOSE | re.DOTALL,
+)
+
+
+def lint_exit_status_discarded(text: str, slug: str) -> list[str]:
+    """Flag commands whose exit status is discarded by a trailing pipe.
+
+    Enforces decomposition-principles.md §8: | tail, | head, | awk 'NR==1'
+    after a check command discards the upstream exit status.
+
+    Does NOT fire when:
+    - The command uses bash -o pipefail (preserves upstream status).
+    - The pipeline ends in grep -q (the final command IS the assertion).
+    - There is no pipe at all.
+    """
+    findings: list[str] = []
+
+    # Extract all local_checks command strings from the text.
+    for cmd in _extract_gate_commands(text):
+        if not _EXIT_STATUS_DISCARD_RE.search(cmd):
+            continue
+        # Check for exemptions.
+        if _ASSERTION_CMD_RE.search(cmd):
+            continue
+        findings.append(
+            f"HARD {slug}: gate command discards exit status: {cmd!r}. "
+            f"Piping to | tail, | head, or | awk 'NR==1' means the check "
+            f"always 'passes' regardless of the upstream result. "
+            f"Either run the command directly, use bash -o pipefail to "
+            f"preserve the upstream status, or end the pipeline with an "
+            f"assertion command (e.g. | grep -q 'passed'). "
+            f"See decomposition-principles.md §8."
+        )
+    return findings
+
+
+def lint_broken_process_wait(text: str, slug: str) -> list[str]:
+    """Flag broken process-wait idioms where the loop tests the wrong status.
+
+    Enforces decomposition-principles.md §8: a while loop whose condition
+    pipes grep -q into another command (e.g. grep -v grep) tests the
+    SECOND command's exit status, not the first's. The loop exits
+    immediately.
+    """
+    findings: list[str] = []
+
+    for cmd in _extract_gate_commands(text):
+        if _BROKEN_WAIT_RE.search(cmd):
+            findings.append(
+                f"HARD {slug}: broken process-wait idiom: {cmd!r}. "
+                f"'grep -q' closes the pipe on first match, so the loop "
+                f"condition tests the SECOND grep's status, not the first's. "
+                f"This loop exits immediately. Use 'pgrep' or "
+                f"'kill -0 $pid' to test process liveness. "
+                f"See decomposition-principles.md §8."
+            )
+    return findings
+
+
+def _extract_gate_commands(text: str) -> list[str]:
+    """Extract all command strings from local_checks blocks in *text*."""
+    commands: list[str] = []
+
+    # Frontmatter local_checks.
+    m = re.match(r"^---\s*\n(.*?)\n---", text, re.S)
+    if m:
+        fm = text[m.start():m.end()]
+        fm_lc = re.search(r"^local_checks:", fm, re.MULTILINE)
+        if fm_lc:
+            fm_block = fm[fm_lc.start():]
+            for entry in parse_local_checks_block(fm_block):
+                cmd = entry.get("command", "")
+                if cmd:
+                    commands.append(cmd)
+
+    # Per-step local_checks in yaml blocks.
+    for block_match in re.finditer(
+        r"```(?:yaml|yml)?\s*\n(.*?)```", text, re.S,
+    ):
+        block_text = block_match.group(1)
+        if "local_checks:" in block_text:
+            for entry in parse_local_checks_block(block_text):
+                cmd = entry.get("command", "")
+                if cmd:
+                    commands.append(cmd)
+
+    return commands
+
+
 ALL_CHECKS = (
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
@@ -1892,6 +2018,8 @@ ALL_CHECKS = (
     lint_scope_path_off_base_branch,
     lint_shared_module_gate,
     lint_gate_extractable,
+    lint_exit_status_discarded,
+    lint_broken_process_wait,
 )
 
 
