@@ -111,6 +111,43 @@ class BaselineReport:
         return d
 
 
+# ── Run verdict (AC-6) ───────────────────────────────────────────────────────
+
+class Verdict(Enum):
+    """Run verdict, mirroring the driver's vocabulary.
+
+    run_ilk_loop_claude.sh:1014-1019 already tags all four:
+    pass / fail / inconclusive / error.
+
+    AC-6: a timeout is reported as inconclusive, naming the bound.
+    A timeout is a fact about the bound, not about the code.
+    """
+    PASS = "pass"
+    FAIL = "fail"
+    INCONCLUSIVE = "inconclusive"
+    ERROR = "error"
+
+
+@dataclass(frozen=True)
+class RunVerdict:
+    """The verdict of a test run, with the bound if inconclusive."""
+    verdict: Verdict
+    bound_seconds: Optional[int] = None   # only set when verdict is INCONCLUSIVE
+    message: str = ""
+
+    @property
+    def is_inconclusive(self) -> bool:
+        return self.verdict == Verdict.INCONCLUSIVE
+
+    def to_dict(self) -> dict:
+        d = {"verdict": self.verdict.value}
+        if self.bound_seconds is not None:
+            d["bound_seconds"] = self.bound_seconds
+        if self.message:
+            d["message"] = self.message
+        return d
+
+
 # ── Collection floor (AC-4, AC-5) ────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -212,6 +249,65 @@ def parse_collection_output(output: str) -> CollectionFloor:
         collected_count=collected_count,
         has_errors=len(errors) > 0,
     )
+
+
+def run_with_timeout(
+    command: str,
+    cwd: Optional[Path] = None,
+    timeout: int = 120,
+) -> Tuple[RunVerdict, str]:
+    """Run a command with a timeout and return the verdict.
+
+    AC-6: a timeout → inconclusive, naming the bound.
+    Mirrors run_ilk_loop_claude.sh:997-998 (gtimeout exit 124 → inconclusive).
+
+    Args:
+        command: shell command to run.
+        cwd: working directory.
+        timeout: seconds before the run is killed.
+
+    Returns:
+        (RunVerdict, combined stdout+stderr output).
+    """
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        output = result.stdout + "\n" + result.stderr
+        if result.returncode == 0:
+            return RunVerdict(verdict=Verdict.PASS), output
+        elif result.returncode == 124:
+            # gtimeout's exit code for killed-by-timeout
+            return RunVerdict(
+                verdict=Verdict.INCONCLUSIVE,
+                bound_seconds=timeout,
+                message=f"run hit its timeout of {timeout}s",
+            ), output
+        elif result.returncode in (126, 127):
+            # 126 = permission denied, 127 = command not found
+            return RunVerdict(
+                verdict=Verdict.ERROR,
+                message=f"exit {result.returncode}: command not found or not executable",
+            ), output
+        else:
+            return RunVerdict(verdict=Verdict.FAIL), output
+    except subprocess.TimeoutExpired as e:
+        output = (e.stdout or "") + "\n" + (e.stderr or "")
+        return RunVerdict(
+            verdict=Verdict.INCONCLUSIVE,
+            bound_seconds=timeout,
+            message=f"run hit its timeout of {timeout}s",
+        ), output
+    except Exception as e:
+        return RunVerdict(
+            verdict=Verdict.ERROR,
+            message=f"{type(e).__name__}: {e}",
+        ), ""
 
 
 def run_collect_only(

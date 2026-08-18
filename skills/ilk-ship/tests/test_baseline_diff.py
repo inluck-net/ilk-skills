@@ -22,7 +22,9 @@ from baseline_diff import (
     BaselineStatus,
     CollectionError,
     CollectionFloor,
+    RunVerdict,
     StaleExclusion,
+    Verdict,
     baseline_key,
     check_stale_exclusions,
     compare,
@@ -33,6 +35,7 @@ from baseline_diff import (
     parse_collection_output,
     resolve_last_tag,
     run_baseline_diff,
+    run_with_timeout,
     store_baseline,
 )
 
@@ -434,6 +437,64 @@ class TestCollectionFloor:
 
         assert report.collection_floor is not None
         assert report.collection_floor.voids_run is True
+
+
+# ── AC-6: timeout → inconclusive ─────────────────────────────────────────────
+
+class TestRunVerdict:
+    """AC-6: a timeout names its bound — never pass, never fail."""
+
+    def test_pass_verdict(self) -> None:
+        """Exit 0 → pass."""
+        v, output = run_with_timeout("true")
+        assert v.verdict == Verdict.PASS
+        assert v.bound_seconds is None
+
+    def test_fail_verdict(self) -> None:
+        """Exit 1 → fail."""
+        v, output = run_with_timeout("false")
+        assert v.verdict == Verdict.FAIL
+
+    def test_timeout_verdict_names_bound(self) -> None:
+        """AC-6: a timeout → inconclusive, naming the bound.
+
+        A timeout is a fact about the bound, not about the code.
+        """
+        v, output = run_with_timeout("sleep 10", timeout=1)
+        assert v.verdict == Verdict.INCONCLUSIVE
+        assert v.bound_seconds == 1
+        assert "1s" in v.message
+
+    def test_inconclusive_is_not_pass_or_fail(self) -> None:
+        """AC-6: inconclusive is distinct from pass and fail."""
+        v, _ = run_with_timeout("sleep 10", timeout=1)
+        assert v.is_inconclusive is True
+        assert v.verdict != Verdict.PASS
+        assert v.verdict != Verdict.FAIL
+
+    def test_verdict_to_dict(self) -> None:
+        """Verdict serializes cleanly."""
+        v = RunVerdict(verdict=Verdict.INCONCLUSIVE, bound_seconds=120, message="hit 120s")
+        d = v.to_dict()
+        assert d["verdict"] == "inconclusive"
+        assert d["bound_seconds"] == 120
+        assert "120s" in d["message"]
+
+    def test_exit_124_is_inconclusive(self) -> None:
+        """Exit 124 (gtimeout's kill code) → inconclusive."""
+        # Use a shell command that exits 124
+        v, _ = run_with_timeout("exit 124")
+        assert v.verdict == Verdict.INCONCLUSIVE
+        assert v.bound_seconds is not None
+
+    def test_error_command_not_found(self) -> None:
+        """Command not found → error, not fail.
+
+        Exit 127 = command not found, 126 = permission denied.
+        """
+        v, _ = run_with_timeout("nonexistent_command_xyz_42")
+        assert v.verdict == Verdict.ERROR
+        assert "not found" in v.message
 
 
 # ── AC-9: baseline keying ───────────────────────────────────────────────────
