@@ -147,6 +147,13 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   pipeline exit-status is lost; the check always "passes" regardless
   of upstream result. Use `grep -q PATTERN file` (single command, real
   exit code) or split into separate `local_checks` entries.
+  **Mechanically enforced** by `plan_lint.py` `lint_exit_status_discarded`.
+- Broken process-wait idiom: `while ... | grep -q ... | grep -v grep`
+  → `grep -q` closes the pipe on first match, so the loop condition
+  tests the **second** grep's exit status, not the first's. The loop
+  exits immediately. Use `pgrep` or `kill -0 $pid` to test process
+  liveness. **Mechanically enforced** by `plan_lint.py`
+  `lint_broken_process_wait`.
 - `grep` without `-q` and without `-E '<expected-pattern>'` → tests
   for existence of a string, not for the contract value. Tighten the
   pattern, or use `jq -e` for JSON.

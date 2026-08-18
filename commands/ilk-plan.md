@@ -534,7 +534,14 @@ per-step `local_checks` yaml block. Warn on each occurrence:
 
 - `| head` / `| tail` / `| awk 'NR==1'` after a check command —
   pipeline exit-status is lost; rewrite as `grep -q PATTERN file`
-  (single command, real exit code) or split into separate entries
+  (single command, real exit code) or split into separate entries.
+  **Automated:** `plan_lint.py` `lint_exit_status_discarded` flags this
+  at step 7g
+- Broken process-wait idiom: `while ... | grep -q ... | grep -v grep`
+  — `grep -q` closes the pipe on first match, so the loop tests the
+  second grep's status, not the first's. Use `pgrep` or `kill -0 $pid`.
+  **Automated:** `plan_lint.py` `lint_broken_process_wait` flags this
+  at step 7g
 - `grep` without `-q` and without an `-E '<expected-pattern>'` regex
   — tests for existence of a string, not for the contract value;
   tighten the pattern, or use `jq -e` for JSON
