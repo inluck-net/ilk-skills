@@ -1159,11 +1159,14 @@ find_shipped_subplans_pending_gates() {
 test_ship_integrity() {
   # Ship-integrity enforcement: a sub-plan must not be "shipped" while its
   # declared local_checks gate is red.
-  # Args: $1 = local_checks_results_file (JSONL, one line per check)
+  # Args: $1 = plans_dir (optional, defaults to get_plans_dir)
+  #       $2 = local_checks_results_file (JSONL, one line per check)
   # Returns 0 if all clean, 1 if violations found (and prints them to stderr).
-  local lc_file="${1:-}"
-  local plans_dir
-  plans_dir=$(get_plans_dir) || return 0
+  local plans_dir="${1:-}"
+  local lc_file="${2:-}"
+  if [[ -z "$plans_dir" || ! -d "$plans_dir" ]]; then
+    plans_dir=$(get_plans_dir) || return 0
+  fi
   [[ -z "$plans_dir" || ! -d "$plans_dir" ]] && return 0
 
   local ship_integrity_script="${_SKILL_ROOT}/ilk-loop/scripts/ship_integrity.py"
@@ -1181,34 +1184,75 @@ test_ship_integrity() {
       continue
     fi
 
-    # Get slug
-    local slug
-    slug=$(head -20 "$f" | grep -oP '^plan:\s*\K.+' | tr -d '[:space:]')
+    # Call ship_integrity.py with gate-passed (slug + gate lookup in Python).
+    # Uses --gate-passed (scalar) to avoid shell JSON quote-mangling.
+    local si_out si_exit
+    si_exit=0
+    si_out=$(python3 -c "
+import json, sys, re
+from pathlib import Path
 
-    # Look up gate result from this iteration's local_checks
-    local gate_json="null"
-    if [[ -n "$lc_file" && -s "$lc_file" && -n "$slug" ]]; then
-      local lc_line
-      lc_line=$(grep "\"slug\":\"$slug\"" "$lc_file" | head -1) || true
-      if [[ -n "$lc_line" ]]; then
-        local outcome
-        outcome=$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('outcome',''))" <<<"$lc_line")
-        if [[ "$outcome" == "fail" || "$outcome" == "error" ]]; then
-          gate_json='{"all_passed":false,"results":[]}'
-        elif [[ "$outcome" == "pass" ]]; then
-          gate_json='{"all_passed":true,"results":[]}'
-        fi
-      fi
+f = Path(sys.argv[1])
+lc_file = sys.argv[2] if len(sys.argv) > 2 else ''
+
+# Extract slug from frontmatter (POSIX-safe, no grep -P)
+body = f.read_text()
+m = re.search(r'^---\s*\n(.*?)\n---', body, re.DOTALL)
+slug = ''
+if m:
+    for line in m.group(1).splitlines():
+        if line.strip().startswith('plan:'):
+            slug = line.split(':', 1)[1].strip()
+            break
+
+# Look up gate outcome from local_checks JSONL
+gate_passed = 'unknown'
+if lc_file and slug:
+    try:
+        for raw in Path(lc_file).read_text().splitlines():
+            rec = json.loads(raw)
+            if rec.get('slug') == slug:
+                outcome = rec.get('outcome', '')
+                if outcome == 'pass':
+                    gate_passed = 'true'
+                elif outcome in ('fail', 'error'):
+                    gate_passed = 'false'
+                break
+    except (OSError, json.JSONDecodeError):
+        pass
+
+print(gate_passed)
+" "$f" "$lc_file" 2>&1) || si_exit=$?
+
+    local gate_passed="$si_out"
+    if [[ "$gate_passed" != "true" && "$gate_passed" != "false" && "$gate_passed" != "unknown" ]]; then
+      gate_passed="unknown"
     fi
 
-    # Call ship_integrity.py
-    local si_out si_exit
-    si_out=$(python3 "$ship_integrity_script" --subplan "$f" --gate-json "$gate_json" 2>&1) || true
-    si_exit=$?
+    si_exit=0
+    si_out=$(python3 "$ship_integrity_script" --subplan "$f" --gate-passed "$gate_passed" 2>&1) || si_exit=$?
     if [[ $si_exit -ne 0 ]]; then
+      local slug
+      slug=$(python3 -c "
+import re, sys
+from pathlib import Path
+body = Path(sys.argv[1]).read_text()
+m = re.search(r'^---\s*\n(.*?)\n---', body, re.DOTALL)
+if m:
+    for line in m.group(1).splitlines():
+        if line.strip().startswith('plan:'):
+            print(line.split(':', 1)[1].strip()); break
+" "$f" 2>/dev/null)
       echo "  [ship-integrity VIOLATION] $slug: $si_out" >&2
-      # Revert status to in-progress
-      sed -i 's/^status:\s*shipped/status: in-progress/' "$f"
+      # Revert status to in-progress (Python — BSD sed -i requires explicit suffix)
+      python3 -c "
+import re, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+body = p.read_text()
+body = re.sub(r'^(status:\s*)shipped', r'\1in-progress', body, count=1, flags=re.MULTILINE)
+p.write_text(body)
+" "$f"
       echo "  [ship-integrity] reverted $slug to in-progress" >&2
       violations=1
     fi
@@ -2041,7 +2085,7 @@ print(json.dumps(d))
 
     # Ship-integrity enforcement: a sub-plan must not be "shipped" while its
     # declared local_checks gate is red.
-    if ! test_ship_integrity "$local_checks_results"; then
+    if ! test_ship_integrity "$(get_plans_dir)" "$local_checks_results"; then
       stop_reason="ship_integrity_violation"
       iter_stop_reason="ship_integrity_violation"
       break

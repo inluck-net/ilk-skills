@@ -1,11 +1,12 @@
-"""Tests pinning the three ship-integrity defects (all xfail(strict=True)).
+"""Tests verifying the ship-integrity correction path executes correctly.
 
-Each test asserts the CORRECT post-fix behavior.  They fail now because
-the defects exist; after step 1 fixes them, they pass (XPASS for strict=True).
+Each test drives ``test_ship_integrity`` (dot-sourced from the driver) against
+a shipped sub-plan with a red gate and asserts the three formerly-dead defects
+are fixed:
 
-Defect 1 — ``|| true`` masks exit code (run_ilk_loop_claude.sh:1206-1207)
-Defect 2 — ``grep -oP`` is GNU-only; BSD grep exits 2 (:1186)
-Defect 3 — ``sed -i`` without backup suffix fails on BSD (:1211)
+Defect 1 — ``|| true`` masks exit code → fixed: uses ``|| si_exit=$?`` capture
+Defect 2 — ``grep -oP`` is GNU-only   → fixed: Python extracts slug
+Defect 3 — ``sed -i`` fails on BSD    → fixed: Python reverts status
 """
 from __future__ import annotations
 
@@ -38,9 +39,12 @@ def _source_runner_and_call(func_call: str, env_extra: dict | None = None) -> su
 
 
 def _make_plans_dir(tmp: Path) -> tuple[Path, Path]:
-    """Create a minimal plans dir with a MASTER and a shipped sub-plan."""
-    plans = tmp / "plans"
-    plans.mkdir()
+    """Create a minimal plans dir with a MASTER and a shipped sub-plan.
+
+    Uses ``docs/plans/`` layout so ``get_plans_dir`` (legacy walk-up) finds it.
+    """
+    plans = tmp / "docs" / "plans"
+    plans.mkdir(parents=True)
     (plans / "MASTER-2026-08-14-test.md").write_text(textwrap.dedent("""\
         ---
         master_plan: 2026-08-14-test
@@ -67,25 +71,20 @@ def _make_plans_dir(tmp: Path) -> tuple[Path, Path]:
 
 # ── Defect 1: || true masks exit code ────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="Defect 1: || true resets $? to 0 — violation branch unreachable")
 def test_defect1_ship_integrity_detects_violation(tmp_path: Path) -> None:
     """``test_ship_integrity`` must return non-zero when a red gate is recorded.
 
-    Defect 1 (``|| true`` at :1206-1207) makes ``si_exit`` always 0, so the
-    violation branch at :1208 is unreachable and the function returns 0
-    even with a red gate.
-
-    After the fix, the function returns 1 (violations found).
+    The ``|| true`` antipattern (now fixed) made ``si_exit`` always 0, so the
+    violation branch was unreachable.  After the fix the function returns 1.
     """
     plans, subplan = _make_plans_dir(tmp_path)
     lc_file = plans / "results.jsonl"
     lc_file.write_text('{"slug":"test-slug","outcome":"fail"}\n')
 
     result = _source_runner_and_call(
-        f"test_ship_integrity '{lc_file}'",
+        f"test_ship_integrity '{plans}' '{lc_file}'",
         env_extra={"PROJECT_PATH": str(tmp_path)},
     )
-    # After fix: returns 1 (violation detected).  Now: returns 0.
     assert result.returncode != 0, (
         f"Expected violation detection (exit 1), got {result.returncode}.\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
@@ -94,24 +93,20 @@ def test_defect1_ship_integrity_detects_violation(tmp_path: Path) -> None:
 
 # ── Defect 2: grep -oP is GNU-only ──────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="Defect 2: BSD grep rejects -oP; slug extraction routed through Python")
 def test_defect2_slug_extraction_portable(tmp_path: Path) -> None:
-    """After the fix, ``test_ship_integrity`` detects a violation even when
-    ``grep -oP`` would fail, because slug extraction is routed through Python.
+    """Slug extraction uses Python, so BSD ``grep`` cannot defeat it.
 
-    Now: ``grep -oP`` fails on BSD → slug empty → gate_json stays "null" →
-    ``ship_integrity.py`` sees declared checks with no result → returns 1.
-    BUT ``|| true`` (defect 1) masks the exit, so the function returns 0.
-
-    After the fix: Python extracts the slug, gate_json is populated correctly,
-    and the function returns 1.
+    The old ``grep -oP`` failed on BSD (exit 2) → slug empty → gate stays
+    ``"null"`` → ``ship_integrity.py`` saw declared checks with no result but
+    the exit was masked by ``|| true``.  After the fix, Python extracts the
+    slug and the gate lookup works.
     """
     plans, subplan = _make_plans_dir(tmp_path)
     lc_file = plans / "results.jsonl"
     lc_file.write_text('{"slug":"test-slug","outcome":"fail"}\n')
 
     result = _source_runner_and_call(
-        f"test_ship_integrity '{lc_file}'",
+        f"test_ship_integrity '{plans}' '{lc_file}'",
         env_extra={"PROJECT_PATH": str(tmp_path)},
     )
     assert result.returncode != 0, (
@@ -122,27 +117,22 @@ def test_defect2_slug_extraction_portable(tmp_path: Path) -> None:
 
 # ── Defect 3: sed -i without backup suffix ──────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="Defect 3: BSD sed -i fails; status revert routed through Python")
 def test_defect3_status_revert_works(tmp_path: Path) -> None:
-    """After the fix, ``test_ship_integrity`` reverts the sub-plan status from
-    ``shipped`` to ``in-progress`` when a violation is detected.
+    """Status revert uses Python, so BSD ``sed -i`` cannot defeat it.
 
-    Now: ``sed -i`` fails on BSD (defect 3) AND ``|| true`` masks the exit
-    (defect 1), so the file stays ``status: shipped``.
-
-    After the fix: Python performs the revert and the file reads
-    ``status: in-progress``.
+    The old ``sed -i 's/.../…/'`` (no backup suffix) fails on BSD with
+    ``invalid command code f``.  After the fix, Python performs the revert
+    and the file reads ``status: in-progress``.
     """
     plans, subplan = _make_plans_dir(tmp_path)
     lc_file = plans / "results.jsonl"
     lc_file.write_text('{"slug":"test-slug","outcome":"fail"}\n')
 
     _source_runner_and_call(
-        f"test_ship_integrity '{lc_file}'",
+        f"test_ship_integrity '{plans}' '{lc_file}'",
         env_extra={"PROJECT_PATH": str(tmp_path)},
     )
     content = subplan.read_text()
-    # After fix: status reverted to in-progress.  Now: still shipped.
     assert "status: in-progress" in content, (
         f"Expected status revert to in-progress, but file still contains:\n{content}"
     )
