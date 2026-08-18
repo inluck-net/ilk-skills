@@ -10,6 +10,7 @@ as the AC-3 baseline (these must pass now and keep passing after the fix).
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import textwrap
@@ -296,3 +297,57 @@ def test_exit_code_one_when_pending_subplan(tmp_path: Path) -> None:
         f"Expected exit 1 when pending sub-plan exists, got {result.returncode}.\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
+
+
+# ── AC-6: --json parity ───────────────────────────────────────────────────
+
+def test_json_has_proven_field(tmp_path: Path) -> None:
+    """AC-6: --json output carries per-subplan 'proven' boolean."""
+    _make_gap_fixture(tmp_path)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--json"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=tmp_path,
+        env={**__import__("os").environ, "ILK_DATA_HOME": str(tmp_path / "ilk-data")},
+    )
+    assert result.returncode in (0, 1), result.stderr
+    data = json.loads(result.stdout)
+    for sp in data["subplans"]:
+        assert "proven" in sp, (
+            f"subplan {sp['fname']} missing 'proven' key in --json output"
+        )
+        assert isinstance(sp["proven"], bool), (
+            f"subplan {sp['fname']} 'proven' should be bool, got {type(sp['proven'])}"
+        )
+
+
+def test_json_existing_keys_preserved(tmp_path: Path) -> None:
+    """AC-6: additive-only — existing keys must not be removed."""
+    _make_gap_fixture(tmp_path)
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--json"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=tmp_path,
+        env={**__import__("os").environ, "ILK_DATA_HOME": str(tmp_path / "ilk-data")},
+    )
+    assert result.returncode in (0, 1), result.stderr
+    data = json.loads(result.stdout)
+
+    # Top-level keys that must always be present.
+    expected_top = {
+        "master", "master_status", "plans_dir", "subplans",
+        "active", "queued", "shipped", "queue_exit", "stalled",
+        "compile_only_summary", "notices",
+    }
+    missing_top = expected_top - set(data.keys())
+    assert not missing_top, f"Missing top-level keys: {missing_top}"
+
+    # Per-subplan keys that must always be present.
+    expected_sp = {"fname", "slug", "status", "current_step", "estimated_steps", "repo", "verification_tier"}
+    for sp in data["subplans"]:
+        missing_sp = expected_sp - set(sp.keys())
+        assert not missing_sp, f"subplan {sp['fname']} missing keys: {missing_sp}"
