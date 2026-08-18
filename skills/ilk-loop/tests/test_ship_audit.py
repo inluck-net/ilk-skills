@@ -1,12 +1,15 @@
-"""Tests verifying the ship-integrity correction path executes correctly.
+"""Tests verifying ship-integrity and ship-audit.
 
-Each test drives ``test_ship_integrity`` (dot-sourced from the driver) against
-a shipped sub-plan with a red gate and asserts the three formerly-dead defects
-are fixed:
+Part 1 (step 0/1): drives ``test_ship_integrity`` (dot-sourced from the driver)
+against a shipped sub-plan with a red gate and asserts the three formerly-dead
+defects are fixed:
 
 Defect 1 — ``|| true`` masks exit code → fixed: uses ``|| si_exit=$?`` capture
 Defect 2 — ``grep -oP`` is GNU-only   → fixed: Python extracts slug
 Defect 3 — ``sed -i`` fails on BSD    → fixed: Python reverts status
+
+Part 2 (step 2): tests ``ship_audit.py`` — the pure predicate that checks
+step-commit presence AND gate outcome (AC-5 through AC-8).
 """
 from __future__ import annotations
 
@@ -136,3 +139,370 @@ def test_defect3_status_revert_works(tmp_path: Path) -> None:
     assert "status: in-progress" in content, (
         f"Expected status revert to in-progress, but file still contains:\n{content}"
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Part 2: ship_audit.py — the step-commit half (AC-5 through AC-8)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import ship_audit
+
+
+# ── git helpers ───────────────────────────────────────────────────────────────
+
+def _init_repo(path: Path) -> None:
+    """Create a git repo with an initial commit so ``git log`` works."""
+    subprocess.run(["git", "init"], cwd=path, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test"], cwd=path,
+        capture_output=True, check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"], cwd=path,
+        capture_output=True, check=True,
+    )
+    (path / ".gitkeep").write_text("")
+    subprocess.run(
+        ["git", "add", ".gitkeep"], cwd=path, capture_output=True, check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "init"], cwd=path, capture_output=True, check=True,
+    )
+
+
+def _commit_with_message(path: Path, subject: str, body: str = "") -> None:
+    """Create a commit with a specific subject and optional body."""
+    (path / "marker.txt").write_text(subject)
+    subprocess.run(
+        ["git", "add", "marker.txt"], cwd=path, capture_output=True, check=True,
+    )
+    msg = subject if not body else f"{subject}\n\n{body}"
+    subprocess.run(
+        ["git", "commit", "-m", msg, "--allow-empty"],
+        cwd=path, capture_output=True, check=True,
+    )
+
+
+# ── AC-5: audit_ship is pure, returns correct shape ──────────────────────────
+
+def test_audit_ship_returns_correct_shape_for_proven(tmp_path: Path) -> None:
+    """A shipped sub-plan with all steps committed and green gate is proven."""
+    _init_repo(tmp_path)
+    _commit_with_message(
+        tmp_path,
+        "feat(foo): step 0 [plan:test-slug#step-0]",
+    )
+    _commit_with_message(
+        tmp_path,
+        "feat(foo): step 1 [plan:test-slug#step-1]",
+    )
+    _commit_with_message(
+        tmp_path,
+        "feat(foo): step 2 [plan:test-slug#step-2]",
+    )
+    result = ship_audit.audit_ship(
+        status="shipped",
+        body="### Step 0\n### Step 1\n### Step 2\n",
+        declared_checks=[{"command": "echo ok", "timeout": 10}],
+        gate_passed="true",
+        slug="test-slug",
+        cwd=tmp_path,
+    )
+    assert result["proven"] is True
+    assert result["missing_steps"] == []
+    assert result["final_gate"] == "pass"
+    assert result["reasons"] == []
+
+
+def test_audit_ship_returns_correct_shape_for_unproven_red_gate(tmp_path: Path) -> None:
+    """A shipped sub-plan with all steps committed but red gate is unproven."""
+    _init_repo(tmp_path)
+    _commit_with_message(
+        tmp_path,
+        "feat(foo): step 0 [plan:test-slug#step-0]",
+    )
+    _commit_with_message(
+        tmp_path,
+        "feat(foo): step 1 [plan:test-slug#step-1]",
+    )
+    _commit_with_message(
+        tmp_path,
+        "feat(foo): step 2 [plan:test-slug#step-2]",
+    )
+    result = ship_audit.audit_ship(
+        status="shipped",
+        body="### Step 0\n### Step 1\n### Step 2\n",
+        declared_checks=[{"command": "echo ok", "timeout": 10}],
+        gate_passed="false",
+        slug="test-slug",
+        cwd=tmp_path,
+    )
+    assert result["proven"] is False
+    assert result["missing_steps"] == []
+    assert result["final_gate"] == "fail"
+    assert len(result["reasons"]) == 1
+    assert "gate" in result["reasons"][0].lower()
+
+
+def test_audit_ship_returns_correct_shape_for_missing_steps(tmp_path: Path) -> None:
+    """A shipped sub-plan with missing commits is unproven even with green gate."""
+    _init_repo(tmp_path)
+    _commit_with_message(
+        tmp_path,
+        "feat(foo): step 0 [plan:test-slug#step-0]",
+    )
+    # step 1 and 2 not committed
+    result = ship_audit.audit_ship(
+        status="shipped",
+        body="### Step 0\n### Step 1\n### Step 2\n",
+        declared_checks=[{"command": "echo ok", "timeout": 10}],
+        gate_passed="true",
+        slug="test-slug",
+        cwd=tmp_path,
+    )
+    assert result["proven"] is False
+    assert result["missing_steps"] == [1, 2]
+    assert result["final_gate"] == "pass"
+    assert len(result["reasons"]) == 1
+    assert "step" in result["reasons"][0].lower()
+
+
+def test_audit_ship_non_shipped_is_always_proven() -> None:
+    """Non-shipped sub-plans are always proven (nothing to audit)."""
+    for status in ("pending", "in-progress", "blocked"):
+        result = ship_audit.audit_ship(
+            status=status,
+            body="### Step 0\n",
+            declared_checks=[],
+            gate_passed="unknown",
+            slug="test",
+        )
+        assert result["proven"] is True, f"status={status}"
+
+
+# ── AC-6: full-message search (body-placed trailers count) ───────────────────
+
+def test_step_heading_count() -> None:
+    """``count_authored_steps`` extracts step numbers from headings."""
+    body = "### Step 0\nfoo\n### Step 1\nbar\n### Step 2\nbaz\n"
+    assert ship_audit.count_authored_steps(body) == [0, 1, 2]
+
+
+def test_step_heading_count_with_gaps() -> None:
+    """Non-contiguous step numbers are preserved."""
+    body = "### Step 0\n### Step 3\n### Step 7\n"
+    assert ship_audit.count_authored_steps(body) == [0, 3, 7]
+
+
+def test_step_heading_count_empty() -> None:
+    """No step headings → empty list."""
+    assert ship_audit.count_authored_steps("just some text\n") == []
+
+
+def test_check_step_commits_finds_subject_trailer(tmp_path: Path) -> None:
+    """Trailers in the subject line are found."""
+    _init_repo(tmp_path)
+    _commit_with_message(
+        tmp_path,
+        "feat(foo): do step 0 [plan:my-slug#step-0]",
+    )
+    present, missing = ship_audit.check_step_commits("my-slug", [0, 1], cwd=tmp_path)
+    assert present == [0]
+    assert missing == [1]
+
+
+def test_check_step_commits_finds_body_placed_trailer(tmp_path: Path) -> None:
+    """Trailers in the commit body are found (AC-6: full-message search).
+
+    This is the critical test — 1.3% of real commits place the trailer in the
+    body.  A subject-only predicate would report these as missing and revert
+    correct work.
+    """
+    _init_repo(tmp_path)
+    _commit_with_message(
+        tmp_path,
+        "feat(plan-lint): resolve whether a changed module has importers",
+        body="[plan:a-shared-module-change-gates-on-its-callers#step-1]",
+    )
+    present, missing = ship_audit.check_step_commits(
+        "a-shared-module-change-gates-on-its-callers", [1], cwd=tmp_path,
+    )
+    assert present == [1]
+    assert missing == []
+
+
+def test_check_step_commits_finds_comma_separated_trailers(tmp_path: Path) -> None:
+    """Comma-separated step numbers in a single trailer are parsed."""
+    _init_repo(tmp_path)
+    _commit_with_message(
+        tmp_path,
+        "feat(foo): combined step [plan:my-slug#step-0,step-1]",
+    )
+    present, missing = ship_audit.check_step_commits("my-slug", [0, 1, 2], cwd=tmp_path)
+    assert sorted(present) == [0, 1]
+    assert missing == [2]
+
+
+def test_check_step_commits_empty_steps() -> None:
+    """No expected steps → empty results, no git call."""
+    present, missing = ship_audit.check_step_commits("any-slug", [])
+    assert present == []
+    assert missing == []
+
+
+# ── AC-8: no-gate sub-plan is exempt from gate half only ─────────────────────
+
+def test_no_gate_sub_plan_exempt_from_gate_check(tmp_path: Path) -> None:
+    """A sub-plan with no declared local_checks is NOT reported unproven for
+    the gate half.  Missing-step commits still count.
+    """
+    _init_repo(tmp_path)
+    _commit_with_message(
+        tmp_path,
+        "feat(foo): step 0 [plan:test-slug#step-0]",
+    )
+    result = ship_audit.audit_ship(
+        status="shipped",
+        body="### Step 0\n### Step 1\n",
+        declared_checks=[],
+        gate_passed="unknown",
+        slug="test-slug",
+        cwd=tmp_path,
+    )
+    # Gate is exempt (None), but step 1 is missing.
+    assert result["proven"] is False
+    assert result["missing_steps"] == [1]
+    assert result["final_gate"] is None
+    assert len(result["reasons"]) == 1
+    assert "step 1" in result["reasons"][0]
+
+
+def test_no_gate_sub_plan_all_steps_present(tmp_path: Path) -> None:
+    """A no-gate sub-plan with all steps committed is proven."""
+    _init_repo(tmp_path)
+    _commit_with_message(
+        tmp_path,
+        "feat(foo): step 0 [plan:test-slug#step-0]",
+    )
+    _commit_with_message(
+        tmp_path,
+        "feat(foo): step 1 [plan:test-slug#step-1]",
+    )
+    result = ship_audit.audit_ship(
+        status="shipped",
+        body="### Step 0\n### Step 1\n",
+        declared_checks=[],
+        gate_passed="unknown",
+        slug="test-slug",
+        cwd=tmp_path,
+    )
+    assert result["proven"] is True
+    assert result["final_gate"] is None
+    assert result["reasons"] == []
+
+
+# ── AC-7: predicate over 9 sub-plans reproduces 3/6 split ────────────────────
+
+# Fixture: the 9 sub-plans of MASTER-2026-08-13, as they shipped.
+# Each entry: (slug, step_headings, has_gate, gate_passed, expected_proven)
+# gate_passed: "true"/"false"/"unknown" (no record)
+_FIXTURE_08_13 = [
+    # 3 proven: all steps committed, gate green
+    ("the-sentinel-lands-where-readers-look", [0, 1, 2, 3], True, "true", True),
+    ("the-postmortem-names-the-failing-command", [0, 1, 2, 3], True, "true", True),
+    ("the-backlog-reader-survives-legacy-records", [0, 1, 2], True, "true", True),
+    # 6 unproven: missing commits or red gate
+    ("a-one-iteration-gate-failure-is-not-stuck", [0, 1, 2], True, "unknown", False),
+    ("the-linter-knows-where-a-path-lives", [0, 1, 2, 3, 4], True, "false", False),
+    ("one-batch-one-branch", [0, 1, 2, 3], True, "unknown", False),
+    ("a-shared-module-change-gates-on-its-callers", [0, 1, 2, 3], True, "false", False),
+    ("the-planner-shows-its-branch-targets", [0, 1, 2], True, "false", False),
+    ("plan-lint-validates-with-the-runtime-parser", [0, 1, 2, 3], True, "false", False),
+]
+
+
+def test_audit_08_13_batch_produces_3_proven_6_unproven(tmp_path: Path) -> None:
+    """AC-7: running the predicate over the 08-13 batch's 9 sub-plans
+    reproduces exactly 3 proven / 6 unproven.
+
+    Uses a committed fixture (not live git) so the test is repeatable.
+    We create a git repo with commits for the "proven" sub-plans' steps.
+    """
+    _init_repo(tmp_path)
+
+    # Create commits for the 3 proven sub-plans (all steps present).
+    for slug, steps, _, _, _ in _FIXTURE_08_13:
+        if slug in (
+            "the-sentinel-lands-where-readers-look",
+            "the-postmortem-names-the-failing-command",
+            "the-backlog-reader-survives-legacy-records",
+        ):
+            for step_n in steps:
+                _commit_with_message(
+                    tmp_path,
+                    f"feat({slug}): step {step_n} "
+                    f"[plan:{slug}#step-{step_n}]",
+                )
+
+    proven_count = 0
+    unproven_count = 0
+    per_plan: dict[str, bool] = {}
+
+    for slug, steps, has_gate, gate_passed, expected_proven in _FIXTURE_08_13:
+        checks = [{"command": "echo ok", "timeout": 10}] if has_gate else []
+        body = "\n".join(f"### Step {n}" for n in steps) + "\n"
+        result = ship_audit.audit_ship(
+            status="shipped",
+            body=body,
+            declared_checks=checks,
+            gate_passed=gate_passed,
+            slug=slug,
+            cwd=tmp_path,
+        )
+        per_plan[slug] = result["proven"]
+        if result["proven"]:
+            proven_count += 1
+        else:
+            unproven_count += 1
+
+    assert proven_count == 3, (
+        f"Expected 3 proven, got {proven_count}. Per-plan: {per_plan}"
+    )
+    assert unproven_count == 6, (
+        f"Expected 6 unproven, got {unproven_count}. Per-plan: {per_plan}"
+    )
+
+    # Verify per-sub-plan verdicts match the table.
+    for slug, _, _, _, expected_proven in _FIXTURE_08_13:
+        assert per_plan[slug] == expected_proven, (
+            f"{slug}: expected proven={expected_proven}, got {per_plan[slug]}"
+        )
+
+
+# ── read_subplan_for_audit: file reader ──────────────────────────────────────
+
+def test_read_subplan_for_audit_extracts_fields(tmp_path: Path) -> None:
+    """``read_subplan_for_audit`` extracts status, body, checks, slug."""
+    subplan = tmp_path / "test-plan.md"
+    subplan.write_text(textwrap.dedent("""\
+        ---
+        plan: my-slug
+        status: shipped
+        current_step: 3
+        local_checks:
+          - command: echo ok
+            timeout: 10
+        ---
+        ### Step 0
+        do stuff
+        ### Step 1
+        more stuff
+        ### Step 2
+        final stuff
+    """))
+    info = ship_audit.read_subplan_for_audit(subplan)
+    assert info["status"] == "shipped"
+    assert info["slug"] == "my-slug"
+    assert len(info["declared_checks"]) == 1
+    assert "### Step 0" in info["body"]
+    assert "### Step 2" in info["body"]
