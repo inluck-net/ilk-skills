@@ -1,0 +1,31 @@
+{
+  "ship": {
+    "suite": {
+      "command": "python3 -m pytest",
+      "flags": [
+        "--timeout=60",
+        "--timeout-method=signal"
+      ],
+      "timeout": 300
+    },
+    "baseline_red": [
+      {
+        "node_id": "skills/ilk-lark-tickets/tests/test_init_project.py",
+        "reason": "20 failed at v0.9.62, still 20 failed 2026-08-19 (Lark API fixtures missing from CI env)",
+        "as_of": "2026-08-19"
+      },
+      {
+        "node_id": "skills/ilk-loop/scripts/test_meta_paths.py",
+        "reason": "7 collection errors on Python 3.9.6 (module-scope list[str] | None, no from __future__ import annotations); 59 of 63 files in that dir have the same issue. Present since 2026-07-04 (2dd3532)",
+        "as_of": "2026-08-19"
+      },
+      {
+        "node_id": "tests/test_subprocess_encoding_lint.py::test_toolkit_scan_clean",
+        "reason": "1 failed — linter finds subprocess calls without explicit encoding= in the codebase",
+        "as_of": "2026-08-19"
+      }
+    ],
+    "hosts": ["chad-mbp", "rezmac"],
+    "path_prelude": "export PATH=\"/opt/homebrew/bin:$PATH\""
+  }
+}
