@@ -1017,7 +1017,25 @@ except: pass
       inconclusive) tag="INCONCLUSIVE" ;;
       *) tag="ERR" ;;
     esac
-    echo "  [local_checks $tag] $slug step $step -> $outcome"
+    # Include the gate command in the echo so every gate outcome is auditable.
+    # Previously only slug/step/outcome were shown — a passing gate was
+    # indistinguishable from one that never ran.
+    local gate_cmd=""
+    if [[ -s "$tmp_out" ]]; then
+      gate_cmd=$(python3 -c "
+import json, sys
+try:
+  d = json.load(sys.stdin)
+  rs = d.get('results', [])
+  if rs: print(rs[0].get('command', ''))
+except: pass
+" < "$tmp_out" 2>/dev/null || true)
+    fi
+    if [[ -n "$gate_cmd" ]]; then
+      echo "  [local_checks $tag] $slug step $step -> $outcome  cmd: $gate_cmd"
+    else
+      echo "  [local_checks $tag] $slug step $step -> $outcome"
+    fi
 
     # Emit JSONL record with command + output for failing checks (AC-1..AC-4).
     # Uses emit_jsonl_record.py to avoid hand-interpolated JSON (the quoting trap).

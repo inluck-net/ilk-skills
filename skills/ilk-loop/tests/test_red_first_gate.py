@@ -327,6 +327,43 @@ class TestRedFirstGateCharacterization:
         )
 
 
+class TestRedFirstGateDistinguishable:
+    """Step-1 fix assertions: a red gate is distinguishable from a green one.
+
+    After the fix, the gate output includes the command for ALL outcomes
+    (pass and fail), so a gate that ran and passed is not confused with one
+    that never ran.
+    """
+
+    def test_passing_gate_cli_output_includes_command(self, tmp_path: Path) -> None:
+        """A green gate's JSON output includes the command from results[0].
+
+        This is the step-1 fix: previously passing gates had no command in the
+        JSONL record, making them indistinguishable from vacuous passes.
+        """
+        project = _make_project(tmp_path, FIXTURE_SUBPLAN_GREEN_GATE)
+        _, data = _run_cli(project, "fixture-green-gate", step=0)
+        results = data.get("results", [])
+        assert len(results) == 1
+        assert results[0].get("command") == "exit 0", (
+            f"expected command='exit 0' in results[0], got: {results[0].get('command')}"
+        )
+
+    def test_red_gate_cli_output_includes_command(self, tmp_path: Path) -> None:
+        """A red gate's JSON output includes the command from results[0].
+
+        The command was already included for failing gates (via failing_check);
+        this confirms it's also present in the results array directly.
+        """
+        project = _make_project(tmp_path, FIXTURE_SUBPLAN_RED_FIRST)
+        _, data = _run_cli(project, "fixture-red-first-gate", step=0)
+        results = data.get("results", [])
+        assert len(results) == 1
+        assert results[0].get("command") == "exit 1", (
+            f"expected command='exit 1' in results[0], got: {results[0].get('command')}"
+        )
+
+
 class TestRedFirstGateDriverBehaviour:
     """Characterization of the driver's gate path for red-first steps.
 

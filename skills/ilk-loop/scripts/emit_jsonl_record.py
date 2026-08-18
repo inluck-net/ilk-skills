@@ -30,8 +30,15 @@ def build_record(
     outcome: str,
     exit_code: int,
     failing_check: dict | None,
+    data: dict | None = None,
 ) -> dict:
-    """Build a JSONL record with command and output for failing checks."""
+    """Build a JSONL record with command and output for failing checks.
+
+    The ``command`` field is included for ALL outcomes (pass, fail, error,
+    inconclusive) so that the gate's output names every command it counted.
+    Previously it was only emitted for fail/error, which meant a passing gate
+    was indistinguishable from a gate that never ran — both showed no command.
+    """
     rec = {
         "slug": slug,
         "step": step,
@@ -39,10 +46,21 @@ def build_record(
         "exit_code": exit_code,
     }
 
-    if failing_check and outcome in ("fail", "error"):
+    # Always include the command so every gate outcome — pass or fail — is
+    # auditable.  Source preference: data.results[0] (full run_local_checks
+    # output, all outcomes) → failing_check (back-compat, fail/error only).
+    results = (data or {}).get("results", [])
+    if results:
+        cmd = results[0].get("command", "")
+        if cmd:
+            rec["command"] = cmd
+    elif failing_check and outcome in ("fail", "error"):
+        # Back-compat: when data is not provided, extract from failing_check.
         cmd = failing_check.get("command", "")
         if cmd:
             rec["command"] = cmd
+
+    if failing_check and outcome in ("fail", "error"):
         # Cap tails at 4KB each — enough for diagnosis, not enough to bloat
         stdout = failing_check.get("stdout_tail", "")
         stderr = failing_check.get("stderr_tail", "")
@@ -84,7 +102,7 @@ def main() -> int:
     step = data.get("step")
     failing_check = extract_failing_check(data)
 
-    rec = build_record(slug, step, outcome, check_exit, failing_check)
+    rec = build_record(slug, step, outcome, check_exit, failing_check, data=data)
 
     # Append to results file
     with open(results_file, "a", encoding="utf-8") as f:

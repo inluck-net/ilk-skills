@@ -26,9 +26,10 @@ def _build_record(
     outcome: str,
     exit_code: int,
     failing_check: dict | None = None,
+    data: dict | None = None,
 ) -> dict:
     """Build a record using the actual module."""
-    return ejr.build_record(slug, step, outcome, exit_code, failing_check)
+    return ejr.build_record(slug, step, outcome, exit_code, failing_check, data=data)
 
 
 # ── Fixture A: the new contract (command key present for failures) ───────────
@@ -58,8 +59,24 @@ class TestFailingCheckRecord:
         rec = _build_record("some-slug", 0, "fail", 1, None)
         assert "command" not in rec
 
-    def test_passing_record_has_no_command(self) -> None:
-        """AC-4: passing checks don't carry command."""
+    def test_passing_record_has_command_from_data(self) -> None:
+        """Step-1 fix: passing checks NOW carry command (from data.results[0]).
+
+        Previously passing checks had no command, making them indistinguishable
+        from a gate that never ran. The fix includes the command for ALL
+        outcomes so every gate is auditable. Changed from the step-0
+        characterization assertion (which asserted no command on pass).
+        """
+        data = {
+            "results": [
+                {"command": "exit 0", "passed": True, "exit_code": 0},
+            ]
+        }
+        rec = _build_record("some-slug", 0, "pass", 0, None, data=data)
+        assert rec.get("command") == "exit 0"
+
+    def test_passing_record_without_data_has_no_command(self) -> None:
+        """Without data dict, passing record still has no command (back-compat)."""
         rec = _build_record("some-slug", 0, "pass", 0, None)
         assert "command" not in rec
 
