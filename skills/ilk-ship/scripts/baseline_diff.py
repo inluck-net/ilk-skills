@@ -404,7 +404,11 @@ def baseline_key(tag: str, suite_invocation: str) -> str:
 
 def baseline_dir(project_root: Path) -> Path:
     """Where baselines are stored on disk."""
-    return project_root / ".ilk-baselines"
+    # Name owned by gate_scope so the tier selector and the writer cannot
+    # drift apart (a drift would re-poison tier selection).
+    from gate_scope import BASELINE_DIR_NAME
+
+    return project_root / BASELINE_DIR_NAME
 
 
 def store_baseline(

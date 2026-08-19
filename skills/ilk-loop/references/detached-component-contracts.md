@@ -358,6 +358,8 @@ types above, follow this checklist:
 ## See also
 
 - `docs/loop-runtime-hardening.md` — broader runtime hardening notes
+- `docs/ship-gate-design.md` — the ship gate: why `shipped` never meant
+  "gated", the tier table's measured behaviour, and its open limits
   (BOM reads, git stderr, branch policy, hung-alive detection).
 - `skills/ilk-loop/SKILL.md` — the loop convention itself.
 - Sub-plan #1 (`collect-bom-tolerant-reads`) — the BOM fix.

@@ -219,6 +219,41 @@ class TestPathOrSchemaDetection:
     def test_py_file_not_path(self) -> None:
         assert _is_path_or_schema_change("src/module.py") is False
 
+    # ── the tool's own artifacts are not risk signals ──────────────────────
+    #
+    # `store_baseline` writes .ilk-baselines/<tag>__<hash>.json into the repo
+    # on every release. Because `.json` is a path/schema extension, that
+    # artifact made the NEXT release select tier 3 regardless of what actually
+    # changed: measured 2026-08-19, a docs-only diff plus a stored baseline
+    # selected tier 3, while the same diff without it selected tier 0. The
+    # release process was poisoning its own next gate decision. A baseline is
+    # also host-specific (rezmac 745 passed/16 skipped vs this Mac 746/15 at
+    # v0.9.66), so it is never shared state worth gating on.
+
+    def test_stored_baseline_is_not_a_path_change(self) -> None:
+        assert _is_path_or_schema_change(
+            ".ilk-baselines/v0.9.66__22bbe8a191e8.json"
+        ) is False
+
+    def test_stored_baseline_nested_under_project_root(self) -> None:
+        assert _is_path_or_schema_change(
+            "some/project/.ilk-baselines/v1.2.3__abc123.json"
+        ) is False
+
+    def test_windows_separator_stored_baseline(self) -> None:
+        assert _is_path_or_schema_change(
+            r".ilk-baselines\v0.9.66__22bbe8a191e8.json"
+        ) is False
+
+    def test_unrelated_json_still_a_path_change(self) -> None:
+        """The exemption must be narrow — a real config json still widens."""
+        assert _is_path_or_schema_change("config/data.json") is True
+        assert _is_path_or_schema_change(".ilk-launch.json") is True
+
+    def test_baseline_lookalike_outside_the_dir_still_counts(self) -> None:
+        """Only the real artifact directory is exempt, not a similar name."""
+        assert _is_path_or_schema_change("ilk-baselines-notes.json") is True
+
 
 # ── _is_contract_governed ──────────────────────────────────────────────────
 

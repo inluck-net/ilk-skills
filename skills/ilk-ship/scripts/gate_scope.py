@@ -27,6 +27,12 @@ from typing import Optional
 
 # ── Contract-governed files (from plan_lint.py:123-136) ────────────────────
 
+# Directories holding artifacts THIS tool writes. Changes inside them must never
+# influence tier selection — see `_is_path_or_schema_change`. `baseline_diff`
+# imports BASELINE_DIR_NAME from here so the name has exactly one definition.
+BASELINE_DIR_NAME = ".ilk-baselines"
+TOOL_ARTIFACT_DIRS = frozenset({BASELINE_DIR_NAME})
+
 CONTRACT_GOVERNED_FILES: frozenset[str] = frozenset({
     "collect.py",
     "watchdog.ps1",
@@ -165,6 +171,17 @@ def _is_path_or_schema_change(path: str) -> bool:
     """
     p = path.replace("\\", "/")
     basename = p.rsplit("/", 1)[-1] if "/" in p else p
+    # This tool's OWN artifacts are not risk signals. `store_baseline` commits
+    # .ilk-baselines/<tag>__<hash>.json on every release; because `.json` is a
+    # path/schema extension, that artifact forced the NEXT release to tier 3
+    # regardless of what changed. Measured 2026-08-19: a docs-only diff plus a
+    # stored baseline selected tier 3, the same diff without it selected tier 0
+    # — the release process poisoned its own gate decision, and 8 of the 10
+    # releases v0.9.57..v0.9.67 selected tier 3. A baseline is host-specific
+    # anyway (rezmac 745 passed/16 skipped vs this Mac 746/15 at v0.9.66), so it
+    # is never shared state worth widening a gate over.
+    if any(seg in TOOL_ARTIFACT_DIRS for seg in p.split("/")):
+        return False
     # Explicit path/config files
     if basename in {
         ".ilk-launch.json", "pytest.ini", "setup.cfg", "pyproject.toml",

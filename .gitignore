@@ -41,3 +41,12 @@ skills/ilk-loop/logs/
 # clone talks to. Not a credential, but it should not travel with a
 # public/shared repo. See skills/ilk-lark-tickets/README.md § Security.
 .lark-project
+
+# Release baselines written by skills/ilk-ship (baseline_diff.store_baseline).
+# NOT committed, for two reasons:
+#  1. A baseline is host-specific — the same tag measured 746 passed/15 skipped
+#     on chad-mbp and 745/16 on rezmac at v0.9.66 — so it is not shared state.
+#  2. Committing it poisoned the next release's gate decision: `.json` is a
+#     path/schema extension, so last release's artifact forced the next release
+#     to tier 3 regardless of what changed (measured 2026-08-19).
+.ilk-baselines/

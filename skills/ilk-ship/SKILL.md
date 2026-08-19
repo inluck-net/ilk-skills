@@ -85,9 +85,28 @@ is entered.
 | 2 | N resolved consumers | tests covering those consumers, one hop out |
 | 3 | contract-governed file OR a shared path/schema OR oracle failed | whole suite |
 
+The three tier-3 triggers are checked **first and against the whole diff**: one
+matching file among many forces the widest gate for the entire batch. There is no
+per-file scoping.
+
+**This tool's own artifacts are exempt** (`gate_scope.TOOL_ARTIFACT_DIRS`).
+Anything under `.ilk-baselines/` is skipped by `_is_path_or_schema_change`,
+because `store_baseline` writes a `.json` there on every release and `.json` is a
+path/schema extension — so without the exemption last release's artifact forced
+the next release to tier 3 regardless of what changed. See "Measured behaviour and
+known limits" below.
+
 Tier selection is a pure function of `(changed_paths, consumer_result,
 contract_governed_set)`. Resolution happens in
 `gate_scope.resolve_consumers`.
+
+**Note the shape mismatch when wiring these together:** `select_tier` takes a
+*list* of changed paths, but `resolve_consumers(module_name, project_root)`
+resolves *one* module. Nothing in the API says which module to resolve for a
+multi-file diff, and passing the path list where a module name is expected makes
+the oracle report `FAILED` — which correctly degrades to tier 3, so the mistake is
+silent and looks like a legitimate decision. Resolve per changed module and
+combine, or state explicitly which module governs.
 
 **Complement subtraction** (`gate_scope.subtract_complement`): the
 selected gate commands are compared against already-recorded commands
@@ -108,7 +127,62 @@ from the JSONL log. Commands already run are subtracted. The two
   regressions".
 - A collection error voids every other result from that run.
 - The denominator statement carries the search space: "0 regressions
-  across 698 collected tests vs v0.9.63".
+  across 1846 collected tests vs v0.9.66" (1846 = this repo's whole-suite
+  collection measured 2026-08-19; `skills/ilk-loop/tests/` alone is 761).
+- **Where baselines live:** `<project_root>/.ilk-baselines/<tag>__<hash>.json`
+  (`baseline_diff.baseline_dir`, named by `gate_scope.BASELINE_DIR_NAME`). The
+  directory is **gitignored on purpose** — a baseline is host-specific (the same
+  v0.9.66 tag measured 746 passed/15 skipped on chad-mbp and 745/16 on rezmac),
+  so it is not shared state, and committing it poisoned tier selection.
+- Baselines are keyed on **(tag, suite_invocation)**. A scoped invocation will
+  not compare against a whole-suite baseline — it returns `could_not_compare`
+  rather than a misleading zero. That is correct, but it means a scoped Phase 1
+  yields **no regression attribution at all**.
+
+### Measured behaviour and known limits
+
+Measured 2026-08-19 by replaying `select_tier` over v0.9.57..v0.9.67 with a
+**healthy** oracle (so this is the best case, not the degraded one):
+
+| release range | files | tier | trigger |
+|---|---|---|---|
+| v0.9.57..58 | 3 | 1 | zero resolved consumers |
+| v0.9.58..59 | 15 | 3 | `collect.py` |
+| v0.9.59..60 | 5 | 1 | zero resolved consumers |
+| v0.9.60..61 | 12 | 3 | `status_all.py` |
+| v0.9.61..62 | 3 | 3 | `status_all.py` |
+| v0.9.62..63 | 40 | 3 | `collect.py` |
+| v0.9.63..64 | 8 | 3 | `status_all.py` |
+| v0.9.64..65 | 4 | 3 | `collect.py` |
+| v0.9.65..66 | 12 | 3 | `run_ilk_loop_claude.sh` |
+| v0.9.66..67 | 24 | 3 | `.ilk-baselines/…json` (spurious — now fixed) |
+
+**Distribution: tier 3 in 8 of 10; tier 0 and tier 2 never selected.** In
+practice the four-tier ladder behaves as a binary that says "run everything",
+because the dominant trigger is the contract-governed set — and `collect.py`,
+`status_all.py`, `loop_status.py` and `run_ilk_loop_claude.sh` are exactly the
+files toolkit batches tend to touch.
+
+Two consequences worth knowing before relying on Phase 1:
+
+1. **Tier 3 has no cost ceiling.** `TierDecision` carries `tier`, `reason` and
+   `consumer_count` — there is **no cost field**. Nothing measures, records or
+   bounds what the selected gate costs, so tier 3 on this repo means 1846 tests
+   with no declared budget and no cheaper substitute. When a whole-suite run is
+   disallowed, Phase 1 has nothing to fall back to and simply cannot complete —
+   which is what happened on the v0.9.67 release: the tier-3 gate was not run,
+   and the release shipped on scoped evidence plus the collection floor instead.
+   A ceiling should compare the selected tier's measured cost against a budget in
+   the `ship:` block and **state** any downgrade, since a silent narrowing is the
+   failure this whole skill exists to prevent.
+2. **The artifact self-poisoning is fixed, but did not move the historical rate.**
+   Exempting `.ilk-baselines/` changes a docs-only-plus-baseline diff from tier 3
+   to tier 0, and that is worth having. It does **not** reduce the 8-of-10 figure,
+   because those selections were driven by contract-governed files, not by the
+   artifact. Making the tier-3 triggers per-file rather than whole-diff is the
+   change that would move it — and that interacts with the sentinel case behind
+   AC-4 (a path change at 2 call sites broke 12 fixtures across 7 files), so it
+   needs care rather than a quick narrowing.
 
 ### Phase 2 — Fix
 
@@ -193,7 +267,7 @@ python3 skills/ilk-ship/scripts/gate_scope.py  # (imported, not CLI)
 # Run baseline-diff
 python3 skills/ilk-ship/scripts/baseline_diff.py \
   --failures-json '["test_foo", "test_bar"]' \
-  --search-space 698 \
+  --search-space 1846 \
   --suite-invocation "python3 -m pytest --timeout-method=signal"
 
 # Validate ship config

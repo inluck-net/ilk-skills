@@ -77,6 +77,21 @@ The tier table:
 | 2 | N resolved consumers | tests covering those consumers |
 | 3 | contract-governed file OR path/schema OR oracle failed | whole suite |
 
+Tier-3 triggers are checked against the **whole diff** — one matching file forces
+the widest gate for the entire batch. `.ilk-baselines/` is exempt
+(`gate_scope.TOOL_ARTIFACT_DIRS`); without that exemption the previous release's
+own stored baseline forced tier 3 every time.
+
+**Two things that will bite you here.** First, `select_tier` takes a *list* of
+paths but `resolve_consumers(module_name, project_root)` takes *one* module —
+passing the list makes the oracle report `FAILED`, which degrades to tier 3, so
+the error is silent and indistinguishable from a real decision. Second, **tier 3
+has no cost ceiling**: on this repo it means 1846 tests, `TierDecision` carries no
+cost field, and there is no cheaper fallback. If a whole-suite run is not
+available, Phase 1 cannot complete — record that plainly in the tag rather than
+implying the gate ran (this is what v0.9.67 did). See
+`skills/ilk-ship/SKILL.md` § "Measured behaviour and known limits".
+
 ### 3c. Run the gate
 
 Run the selected gate scope. Apply both floors:
