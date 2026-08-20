@@ -610,6 +610,131 @@ DEFAULT_MAX_ITER = 100
 DEFAULT_TIMEOUT = 30
 
 
+def _gate_scheduler_visibility(project_data: Path, plans_dir: Path) -> GateResult:
+    """Gate 7: can the cross-project scheduler actually SEE this project?
+
+    The gap this closes: on 2026-08-20 ilk-doctor returned
+    ``verdict: pass: all gates clear`` for a project the scheduler had been
+    unable to see for over an hour. Gate ``master-status`` reported
+    ``active (runnable)`` and gate ``process-set`` reported ``no runner
+    processes found`` — both true, and together they describe a **stranded**
+    master: runnable, nothing running, nothing coming. No gate joined them, and
+    none asked the scheduler's own scanner what it saw. The cause was a
+    ``TypeError`` inside ``_scan_one_project`` that ``scan_projects`` swallows
+    per-project by design, so the project was simply absent from every scan.
+
+    Three outcomes, per the doctor's contract that a gate which cannot be
+    evaluated reports ``unknown`` and never ``pass``:
+
+    * the scan **raises** for this project -> ``blocked`` (the scheduler will
+      never dispatch it, and nothing else reports the reason)
+    * the scan returns **no entry** while the master is runnable -> ``blocked``
+      (the stranded-active shape: runnable but not dispatchable)
+    * the scan returns an entry, or returns none because the master is
+      legitimately not runnable -> ``pass``
+
+    Calls ``scheduler_scan`` in-process rather than shelling its CLI: the whole
+    point of the gate is to distinguish "absent" from "raised", and only an
+    in-process call yields the exception itself.
+    """
+    name = "scheduler-visibility"
+    artifact = str(project_data)
+
+    try:
+        sys.path.insert(0, str(_SKILL_ROOT / "ilk-watchdog" / "scripts"))
+        import scheduler_scan  # noqa: PLC0415
+    except Exception as exc:  # pragma: no cover - import environment
+        return GateResult(
+            name=name,
+            status="unknown",
+            evidence=f"cannot import scheduler_scan: {type(exc).__name__}: {exc}",
+            artifact=artifact,
+        )
+
+    # The scheduler only ever iterates ``<data root>/projects/*``. If this
+    # project has no data dir there, "absent from the scan" carries no
+    # information about strandedness — the gate cannot be evaluated, and the
+    # doctor's contract is that such a gate reports `unknown`, never `pass`
+    # (and never a false `blocked` either).
+    if not project_data.is_dir():
+        return GateResult(
+            name=name,
+            status="unknown",
+            evidence=(
+                "no project data directory — cannot tell 'stranded' from "
+                "'never launched here'; the scheduler scans "
+                "<data root>/projects/* only"
+            ),
+            artifact=artifact,
+        )
+
+    # Is the master runnable at all? Without this the gate cannot tell a
+    # legitimately-finished project from a stranded one.
+    master_runnable = False
+    masters = sorted(plans_dir.glob("MASTER-*.md")) if plans_dir.is_dir() else []
+    if masters:
+        try:
+            master_path = _pick_master(masters)
+            text = master_path.read_text(encoding="utf-8-sig")
+            status = normalize_master_status(parse_frontmatter(text).get("status", ""))
+            master_runnable = bool(
+                is_master_runnable_status(status)
+                and master_has_runnable(master_path, plans_dir)
+            )
+        except OSError:
+            master_runnable = False
+
+    try:
+        entry = scheduler_scan._scan_one_project(project_data)
+    except Exception as exc:
+        where = getattr(scheduler_scan, "_exc_origin", lambda _e: "?")(exc)
+        return GateResult(
+            name=name,
+            status="blocked",
+            evidence=(
+                f"scheduler scan RAISED for this project — it is invisible to "
+                f"the scheduler and will never be dispatched: "
+                f"{type(exc).__name__}: {exc} @ {where}"
+            ),
+            artifact=artifact,
+        )
+
+    if entry is not None:
+        return GateResult(
+            name=name,
+            status="pass",
+            evidence=(
+                f"scheduler scan sees this project "
+                f"(oldest_queued_ts={entry.get('oldest_queued_ts')}, "
+                f"has_active_master={entry.get('has_active_master')})"
+            ),
+            artifact=artifact,
+        )
+
+    if master_runnable:
+        return GateResult(
+            name=name,
+            status="blocked",
+            evidence=(
+                "STRANDED: the master is runnable but the scheduler scan "
+                "returns no entry for this project, so nothing will dispatch "
+                "it. Run `scheduler_scan.py --scan-errors` for per-project "
+                "scan failures"
+            ),
+            artifact=artifact,
+        )
+
+    return GateResult(
+        name=name,
+        status="pass",
+        evidence=(
+            "not dispatchable, and correctly so — no runnable master for the "
+            "queue model to pick up"
+        ),
+        artifact=artifact,
+    )
+
+
 def _gate_config_resolution(project_path: Path) -> GateResult:
     """Gate 7: resolved config vs .ilk-launch.json.
 
@@ -694,6 +819,7 @@ GATE_ORDER = [
     "lock-holders",
     "process-set",
     "sentinel-vs-reality",
+    "scheduler-visibility",
     "config-resolution",
 ]
 
@@ -719,6 +845,7 @@ def run_doctor(project_path: Path, sample_interval: float = 20.0) -> DoctorRepor
         "lock-holders": lambda: _gate_lock_holders(project_data),
         "process-set": lambda: _gate_process_set(project_path),
         "sentinel-vs-reality": lambda: _gate_sentinel_vs_reality(project_data, live_pids),
+        "scheduler-visibility": lambda: _gate_scheduler_visibility(project_data, plans_dir),
         "config-resolution": lambda: _gate_config_resolution(project_path),
     }
 

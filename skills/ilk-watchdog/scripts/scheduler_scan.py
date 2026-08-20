@@ -122,16 +122,57 @@ def resolve_repo_path(project_dir: Path, key: str) -> str | None:
 
 
 def _parse_ts(raw: str) -> datetime | None:
-    """Parse an ISO-ish timestamp string. Returns None on failure."""
+    """Parse an ISO-ish timestamp string as **naive local**. None on failure.
+
+    Always naive, never aware. The two fallbacks used when this returns None —
+    ``datetime.fromtimestamp(st_mtime)`` and ``datetime.min`` — are both naive
+    local, and ``_scan_one_project`` mixes all three sources in a single
+    ``min()``. A ``last_updated: 2026-08-03`` parses naive while a
+    ``last_updated: 2026-08-03T17:30:00+08:00`` parses aware, so one master
+    carrying both formats raised
+
+        TypeError: can't compare offset-naive and offset-aware datetimes
+
+    which the per-project guard in ``scan_projects`` swallowed — silently
+    retiring the whole project from the scheduler's view (2026-08-20; it hit
+    two of nine projects, including the toolkit's own).
+
+    Naive-local rather than aware-local because the fallbacks are already
+    naive: coercing here is one conversion, whereas going aware would mean
+    changing both fallbacks plus ``datetime.min``, which has no meaningful tz.
+    ``oldest_queued_ts`` is only ever compared against other values produced
+    here, so dropping the offset costs nothing downstream.
+    """
     if not raw:
         return None
     try:
         # Handle common formats: 2026-06-06, 2026-06-06T13:40:00+08:00
-        return datetime.fromisoformat(raw)
+        ts = datetime.fromisoformat(raw)
     except (ValueError, TypeError):
         return None
+    if ts.tzinfo is not None:
+        # Convert to local wall-clock, then drop the offset.
+        ts = ts.astimezone().replace(tzinfo=None)
+    return ts
 
 
+
+
+# Per-project scan failures from the most recent ``scan_projects()`` call.
+# Recorded instead of swallowed silently; read by ``main(--scan-errors)``, by
+# the scheduler's idle branch, and by ilk-doctor's scheduler-visibility gate.
+SCAN_ERRORS: list[dict] = []
+
+
+def _exc_origin(exc: BaseException) -> str:
+    """``file:line`` of the innermost frame of *exc*, or ``"?"``."""
+    tb = exc.__traceback__
+    if tb is None:
+        return "?"
+    last = tb
+    while last.tb_next is not None:
+        last = last.tb_next
+    return f"{Path(last.tb_frame.f_code.co_filename).name}:{last.tb_lineno}"
 
 
 def scan_projects() -> list[dict]:
@@ -148,6 +189,8 @@ def scan_projects() -> list[dict]:
     (oldest non-shipped sub-plan timestamp), else the next-to-promote
     queued master.
     """
+    SCAN_ERRORS.clear()
+
     root = ilk_data_root() / "projects"
     if not root.is_dir():
         return []
@@ -157,7 +200,7 @@ def scan_projects() -> list[dict]:
     for project_dir in sorted(root.iterdir()):
         try:
             entry = _scan_one_project(project_dir)
-        except Exception:
+        except Exception as exc:
             # Resilience: this scanner runs unattended while other ilk loops
             # concurrently WRITE plan files in these same dirs. A read that
             # races a half-written master/sub-plan (or any other per-project
@@ -165,6 +208,27 @@ def scan_projects() -> list[dict]:
             # scan — an aborted scan emits a traceback that, under the
             # scheduler's `$ErrorActionPreference='Stop'` + `2>&1` merge,
             # killed the daemon outright (the 2026-06-30 three-project crash).
+            #
+            # Keep the `continue` — but never let it be silent. Before
+            # 2026-08-20 it was: a TypeError in the FIFO timestamp comparison
+            # (line 394, mixed naive/aware `last_updated`) removed a project
+            # from every scan for over an hour while the scheduler logged the
+            # generic `all-queues-empty` and ilk-doctor reported `pass: all
+            # gates clear`. A project that CANNOT BE SCANNED is a different
+            # condition from a project with NO WORK, and only one of the two
+            # needs a human.
+            SCAN_ERRORS.append({
+                "key": project_dir.name,
+                "path": str(project_dir),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "where": _exc_origin(exc),
+            })
+            print(
+                f"[scan-error] {project_dir.name}: {type(exc).__name__}: "
+                f"{exc} @ {_exc_origin(exc)}",
+                file=sys.stderr,
+            )
             continue
         if entry is not None:
             results.append(entry)
@@ -438,8 +502,28 @@ def main() -> int:
         except Exception:
             pass
 
+    scan_errors_only = "--scan-errors" in sys.argv[1:]
+
     projects = scan_projects()
+    if scan_errors_only:
+        # Print ONLY the per-project scan failures. Separate mode rather than a
+        # changed default payload: scheduler.sh, scheduler.ps1 and both
+        # test_scheduler suites parse stdout as a bare project array, and a
+        # wrapped object would break all four.
+        print(json.dumps(SCAN_ERRORS, indent=2, ensure_ascii=False))
+        return 0
+
     print(json.dumps(projects, indent=2, ensure_ascii=False))
+    # A scan that could not look at every project is not the same as a scan
+    # that found no work. Say so on stderr in one summary line; callers that
+    # need the detail re-invoke with --scan-errors.
+    if SCAN_ERRORS:
+        keys = ", ".join(e["key"] for e in SCAN_ERRORS)
+        print(
+            f"[scan-error] {len(SCAN_ERRORS)} project(s) could not be scanned: "
+            f"{keys}",
+            file=sys.stderr,
+        )
     return 0
 
 

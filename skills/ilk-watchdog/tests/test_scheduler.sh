@@ -1076,14 +1076,24 @@ run_log() {
   echo "=== test_scheduler.sh log ==="
   setup_two_queued_projects
 
-  # Remove any pre-existing scheduler.log.
-  local log_dir="${HOME}/.ilk-data/logs"
+  # scheduler.sh resolves SCHEDULER_LOG_DIR from ${HOME}, NOT from
+  # ILK_DATA_HOME (scheduler.sh:73) — so this subtest must isolate HOME or it
+  # operates on the operator's real journal. It did until 2026-08-20, when the
+  # `rm -f` below deleted ~9200 real decision lines going back to 2026-06-26
+  # (recovered only because the daemon's own stdout log was unaffected) and the
+  # run then left six false `dispatch: proj-a/proj-b` fixture lines behind.
+  local fake_home="$SCRATCH/home"
+  mkdir -p "$fake_home"
+  local log_dir="${fake_home}/.ilk-data/logs"
   local log_file="${log_dir}/scheduler.log"
   rm -f "$log_file"
 
-  # Run a --dry-run --once cycle — should write a decision line to scheduler.log.
+  # ILK_SKILL_HOME as well as HOME: scheduler_scan.py resolves its skill root
+  # from ILK_SKILL_HOME, else from ~/.codex|.cursor|.claude/skills. Isolating
+  # HOME alone makes that resolution raise, the scan fail, and the run turn
+  # into a poll-forever loop -- i.e. the suite hangs rather than failing.
   local output
-  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 1 2>&1) || die "scheduler exited non-zero: $output"
+  output=$(HOME="$fake_home" ILK_SKILL_HOME="$REPO_ROOT/skills" ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 1 2>&1) || die "scheduler exited non-zero: $output"
 
   # Assert: scheduler.log exists and contains a dispatch line.
   [[ -f "$log_file" ]] || die "scheduler.log was not created at $log_file"
