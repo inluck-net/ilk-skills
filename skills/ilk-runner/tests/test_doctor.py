@@ -100,7 +100,7 @@ class TestGateWalkSkeleton:
         finally:
             doctor._resolve_plans_dir = original
 
-        assert len(report.gates) == 8, f"Expected 8 gates, got {len(report.gates)}"
+        assert len(report.gates) == 9, f"Expected 9 gates, got {len(report.gates)}"
         stubs = [g.name for g in report.gates if "not implemented" in g.evidence]
         assert not stubs, f"gates still stubbed out: {stubs}"
 
@@ -182,6 +182,7 @@ class TestGateWalkSkeleton:
             "lock-holders",
             "process-set",
             "sentinel-vs-reality",
+            "scheduler-visibility",
             "config-resolution",
         ]
         assert doctor.GATE_ORDER == expected
@@ -669,7 +670,7 @@ class TestJsonOutput:
         assert "gates" in data
         assert "verdict" in data
         assert isinstance(data["gates"], list)
-        assert len(data["gates"]) == 8
+        assert len(data["gates"]) == 9
 
     def test_json_gate_has_expected_fields(self, tmp_path, capsys):
         """Each gate in JSON output has name, status, evidence, artifact."""

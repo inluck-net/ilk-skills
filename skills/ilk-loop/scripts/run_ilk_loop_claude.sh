@@ -1205,8 +1205,11 @@ if m:
             slug = line.split(':', 1)[1].strip()
             break
 
-# Look up gate outcome from local_checks JSONL
-gate_passed = 'unknown'
+# Look up gate outcome from THIS iteration's local_checks JSONL.
+# 'skip' means the slug has no result in this iteration — see the scoping
+# guard in the caller. Only 'true'/'false' are real verdicts; this path
+# must never emit 'unknown', which ship_integrity.py treats as a violation.
+gate_passed = 'skip'
 if lc_file and slug:
     try:
         for raw in Path(lc_file).read_text().splitlines():
@@ -1225,8 +1228,18 @@ print(gate_passed)
 " "$f" "$lc_file" 2>&1) || si_exit=$?
 
     local gate_passed="$si_out"
-    if [[ "$gate_passed" != "true" && "$gate_passed" != "false" && "$gate_passed" != "unknown" ]]; then
-      gate_passed="unknown"
+    # Scope to THIS iteration's ships only: enforce on sub-plans whose gate
+    # actually ran this iteration (present in the local_checks JSONL). A
+    # sub-plan shipped in a PRIOR run has no current-iteration gate result --
+    # re-litigating it would falsely flag (and revert) already-shipped work on
+    # every iteration. Ported from run_ilk_loop_claude.ps1:816-821, whose
+    # absence here reverted 69 of 150 sub-plans in one run (2026-08-20).
+    #
+    # Anything that is not a real verdict is a skip, never 'unknown':
+    # ship_integrity.py counts 'unknown' as a violation, so passing it from
+    # this enforcement path is what caused the mass revert.
+    if [[ "$gate_passed" != "true" && "$gate_passed" != "false" ]]; then
+      continue
     fi
 
     si_exit=0

@@ -141,6 +141,21 @@ invariants — the worker will not enforce them.
 
 ## 8. Avoid common `local_checks` anti-patterns
 
+**Frontmatter `local_checks` run at EVERY step.** This property governs several
+of the bullets below, so state it once, up front: a subplan-scope (frontmatter)
+gate is evaluated after *every* step's commit, not only at the end. Per-step
+`local_checks` run only for their own step. Two consequences the planner must
+hold in mind:
+
+- A frontmatter gate must be green from step 0 onward — including before the
+  work exists. Anything that only becomes true later belongs in the
+  per-step block of the step that makes it true.
+- A frontmatter gate that is red on iteration 1 is not merely noise. The
+  runner's ship-integrity pass reacts to a red gate, and until 2026-08-20 the
+  bash runner reacted to it by re-judging *every* sub-plan in the plans
+  directory — reverting `status: shipped` to `in-progress` on 69 of 150 files
+  from prior batches in a single 4-minute run.
+
 Surfaced by the QC lint pass before sub-plans go to the loop:
 
 - `| head` / `| tail` / `| awk 'NR==1'` after a check command →
@@ -281,6 +296,19 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   meaning) was not chosen because it adds no information — the gate still
   runs the same command, it just flips the pass/fail interpretation without
   asserting anything about the actual red state.
+
+  **And keep the red out of the frontmatter gate's scope.** Frontmatter
+  `local_checks` run at every step (see the note opening this section), so a
+  red-first step 0 under a frontmatter gate that *covers* the tests step 0
+  makes red is guaranteed red on iteration 1 — before a line of the fix
+  exists. The pairing is fine when the frontmatter gate is scoped to files
+  step 0 does not touch, and that is the shape to write. Real case:
+  2026-08-20, six sub-plans authored with a red-first step 0 plus a
+  frontmatter gate, all six `plan_lint`-clean, and the resulting red gate
+  reverted 69 of 150 prior-batch sub-plans. `plan_lint.py`
+  (`lint_redfirst_step0_under_frontmatter_gate`) now emits a HARD finding when
+  the frontmatter gate is a whole-suite/directory run, or names a test path
+  step 0 itself makes red.
 - **re-ran to read its own output** → a backgrounded command's `.output`
   file is read before the command finishes writing, gets empty-because-early,
   and the agent re-launches the command to "get the result" — which already

@@ -1912,6 +1912,117 @@ _BROKEN_WAIT_RE = re.compile(
 )
 
 
+# ── Red-first step 0 under a frontmatter gate (§8 enforcement) ──────────────
+#
+# Frontmatter (subplan-scope) ``local_checks`` run at **EVERY** step, step 0
+# included. §8 separately recommends the red-first step-0 pattern: a step whose
+# whole purpose is to *record* failing tests. Pair the two and the frontmatter
+# gate is red on iteration 1 by construction — before a single line of the fix
+# exists.
+#
+# Why this is worth a HARD finding rather than a note: on 2026-08-20 six
+# sub-plans were authored with exactly this pairing, all six passed plan_lint
+# clean, and the resulting red gate drove the bash runner's ship-integrity pass
+# to rewrite `status: shipped` -> `in-progress` on **69 of 150** sub-plan files
+# from every prior batch (the runner lacked the cross-run scoping guard its
+# PowerShell twin has had all along).
+#
+# The pairing ALONE is not the defect, and flagging it alone would false-
+# positive on legitimate plans: a frontmatter gate deliberately scoped to
+# already-green files coexists fine with a red-first step 0 (real sub-plans in
+# this repo do precisely that, with a comment saying so). The finding needs the
+# gate to actually COVER what step 0 makes red. Two discriminators, both tight:
+#
+#   (a) the frontmatter command is a whole-suite / directory-scoped run, so it
+#       necessarily collects step 0's new failing tests; or
+#   (b) the frontmatter command names a test path that step 0's own section
+#       also names — the same file, gated at every step.
+
+# Markers that a step's purpose is to LAND FAILING TESTS.
+_RED_FIRST_RE = re.compile(
+    r"red-first"
+    r"|red\s+first"
+    r"|\bred\s+state\b"
+    r"|\d+\s+failed\b"
+    r"|records?\s+(?:the\s+)?failing"
+    r"|(?:must|should|expected\s+to)\s+fail"
+    r"|failing\s+tests?\s+(?:that|which)?\s*(?:land|committed|recorded)"
+    r"|assert(?:s|ing)?\s+the\s+red",
+    re.IGNORECASE,
+)
+
+
+def _extract_step_section(body: str, step_no: int) -> str:
+    """Return the text of ``### Step <step_no>`` up to the next step heading."""
+    pat = re.compile(
+        rf"^###\s+Step\s+{step_no}\b.*?(?=^###\s+Step\s+\d+\b|\Z)",
+        re.MULTILINE | re.DOTALL,
+    )
+    m = pat.search(body)
+    return m.group(0) if m else ""
+
+
+def _test_paths_in(cmd: str) -> set[str]:
+    """Test-ish paths mentioned in *cmd*, normalised to forward slashes."""
+    out: set[str] = set()
+    for tok in cmd.split():
+        if tok.startswith("-"):
+            continue
+        norm = tok.strip("'\"`,;()").replace("\\", "/")
+        if not norm or "/" not in norm and not norm.startswith("test"):
+            continue
+        if _is_test_path(norm) or re.search(r"test[^/]*\.(?:py|ts|tsx|js|mjs|sh)$", norm):
+            out.add(norm.rstrip("/"))
+    return out
+
+
+def lint_redfirst_step0_under_frontmatter_gate(text: str, slug: str) -> list[str]:
+    """Flag a red-first step 0 whose red is inside the frontmatter gate's scope."""
+    findings: list[str] = []
+
+    fm_commands = _extract_local_checks_commands(text)
+    if not fm_commands:
+        return findings
+
+    body = _strip_frontmatter(text)
+    step0 = _extract_step_section(body, 0)
+    if not step0 or not _RED_FIRST_RE.search(step0):
+        return findings
+
+    step0_paths = set()
+    for m in re.finditer(r"[\w./\\-]+", step0):
+        tok = m.group(0)
+        if _is_test_path(tok.replace("\\", "/")):
+            step0_paths.add(tok.replace("\\", "/").rstrip("/"))
+
+    for cmd in fm_commands:
+        # (a) whole-suite / directory run — collects step 0's new red tests.
+        if _is_whole_suite_command(cmd):
+            findings.append(
+                f"{slug}: step 0 is red-first (it lands FAILING tests) while the "
+                f"frontmatter local_check `{cmd.strip()}` runs the whole suite or a "
+                f"directory tree. Frontmatter checks run at EVERY step, so this "
+                f"gate is red on iteration 1 by construction, before any fix "
+                f"exists. HARD FINDING: move this gate into the per-step "
+                f"local_checks of the step that makes it green, or scope it to "
+                f"files step 0 does not touch."
+            )
+            continue
+        # (b) the gate names a test path step 0 also names.
+        overlap = _test_paths_in(cmd) & step0_paths
+        if overlap:
+            named = ", ".join(sorted(overlap))
+            findings.append(
+                f"{slug}: step 0 is red-first and the frontmatter local_check "
+                f"`{cmd.strip()}` runs the very test path(s) it makes red "
+                f"({named}). Frontmatter checks run at EVERY step, so this gate "
+                f"is red on iteration 1 by construction. HARD FINDING: move it "
+                f"to the per-step local_checks of the step that turns it green."
+            )
+
+    return findings
+
+
 def lint_exit_status_discarded(text: str, slug: str) -> list[str]:
     """Flag commands whose exit status is discarded by a trailing pipe.
 
@@ -2018,6 +2129,7 @@ ALL_CHECKS = (
     lint_scope_path_off_base_branch,
     lint_shared_module_gate,
     lint_gate_extractable,
+    lint_redfirst_step0_under_frontmatter_gate,
     lint_exit_status_discarded,
     lint_broken_process_wait,
 )

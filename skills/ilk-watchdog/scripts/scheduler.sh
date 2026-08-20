@@ -60,6 +60,10 @@ _SKILL_ROOT="$(ilk_skill_root)"
 # --- defaults ----------------------------------------------------------------
 
 SCAN_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/scheduler_scan.py"
+# Holds the most recent scan's stderr so the idle branch can tell
+# "no work" from "could not look". See invoke_scheduler_scan.
+_SCAN_STDERR_FILE="$(mktemp "${TMPDIR:-/tmp}/ilk-scan-stderr-XXXXXX")"
+trap 'rm -f "$_SCAN_STDERR_FILE"' EXIT
 PROMOTE_SCRIPT="${_SKILL_ROOT}/ilk-loop/scripts/promote_next_master.py"
 LAUNCH_SCRIPT="${_SKILL_ROOT}/ilk-launcher/scripts/launch.sh"
 BOOTSTRAP_SCRIPT="${_SKILL_ROOT}/../tools/claude-worker/bootstrap.sh"
@@ -414,7 +418,29 @@ get_slot_home() {
 invoke_scheduler_scan() {
   # Run scheduler_scan.py, output JSON to stdout
   # Strip \r for Windows compatibility
-  $PYTHON "$SCAN_SCRIPT" | tr -d '\r'
+  #
+  # stderr is captured to _SCAN_STDERR_FILE rather than inherited: the scan
+  # names any project it could not read on stderr as `[scan-error] <key>: ...`,
+  # and the idle branch below needs that to log a reason other than
+  # `all-queues-empty`. A project that CANNOT BE SCANNED looked identical to a
+  # project with NO WORK until 2026-08-20, when a TypeError silently retired a
+  # project for three hours while every poll logged `all-queues-empty`.
+  # stderr is still echoed through to the daemon log, so nothing is hidden.
+  : > "$_SCAN_STDERR_FILE"
+  $PYTHON "$SCAN_SCRIPT" 2>"$_SCAN_STDERR_FILE" | tr -d '\r'
+  local rc=${PIPESTATUS[0]}
+  if [[ -s "$_SCAN_STDERR_FILE" ]]; then
+    cat "$_SCAN_STDERR_FILE" >&2
+  fi
+  return "$rc"
+}
+
+scan_error_keys() {
+  # Echo a comma-separated list of project keys the last scan could not read,
+  # or nothing when the scan was clean.
+  [[ -s "$_SCAN_STDERR_FILE" ]] || return 0
+  sed -n 's/^\[scan-error\] \([^:]*\):.*/\1/p' "$_SCAN_STDERR_FILE" \
+    | sort -u | paste -sd, - | sed 's/,$//'
 }
 
 read_blacklist_from_postmortems() {
@@ -508,7 +534,23 @@ run_scheduler() {
     # --- scan for queued projects ---
     local scan_output
     scan_output=$(invoke_scheduler_scan) || {
-      echo "[$(date '+%Y-%m-%d %H:%M:%S')] scheduler_scan.py failed" >&2
+      # A CRASHED scan is a third flavour of the same silent failure: until
+      # invoke_scheduler_scan started propagating python's exit status (the
+      # `| tr` pipeline masked it, making this whole handler dead code), a
+      # traceback was read as a valid empty project list and logged as
+      # `all-queues-empty`. Record it in the journal the operator actually
+      # reads, not only on stderr.
+      local scan_fail_detail
+      scan_fail_detail=$(tail -n 1 "$_SCAN_STDERR_FILE" 2>/dev/null | tr -d '\n')
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] scheduler_scan.py failed: ${scan_fail_detail}" >&2
+      write_scheduler_log "idle" "" "scan-failed: ${scan_fail_detail:-unknown}"
+      # --once means one cycle, including a failed one. Without this the
+      # scheduler sleeps and retries forever, so a --once invocation whose
+      # scan cannot start never returns (it hung the test suite).
+      if [[ "$ONCE" == true ]]; then
+        echo '{"decision":"idle","reason":"scan-failed"}'
+        return
+      fi
       sleep $((POLL_MIN * 60))
       continue
     }
@@ -519,13 +561,26 @@ run_scheduler() {
     count=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(len(d))" <<<"$scan_output" | tr -d '\r')
 
     if [[ "$count" == "0" ]]; then
+      # Zero dispatchable is ambiguous: it can mean "every queue is empty" or
+      # "the scan could not read some projects". Only the second needs a human,
+      # so give it its own reason string rather than folding it into
+      # all-queues-empty (the 2026-08-20 silent-retirement failure).
+      local scan_err_keys idle_reason idle_msg
+      scan_err_keys=$(scan_error_keys)
+      if [[ -n "$scan_err_keys" ]]; then
+        idle_reason="skip-scan-error: ${scan_err_keys}"
+        idle_msg="idle: 0 dispatchable, but could not scan ${scan_err_keys}"
+      else
+        idle_reason="all-queues-empty"
+        idle_msg="idle: all queues empty"
+      fi
       if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
-        write_scheduler_log "idle" "" "all-queues-empty"
-        echo '{"decision":"idle","reason":"all queues empty"}'
+        write_scheduler_log "idle" "" "$idle_reason"
+        echo "{\"decision\":\"idle\",\"reason\":\"${idle_reason}\"}"
         return
       fi
-      echo "[$(date '+%Y-%m-%d %H:%M:%S')] idle: all queues empty. Polling in ${POLL_MIN} min."
-      write_scheduler_log "idle" "" "all-queues-empty"
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] ${idle_msg}. Polling in ${POLL_MIN} min."
+      write_scheduler_log "idle" "" "$idle_reason"
       sleep $((POLL_MIN * 60))
       continue
     fi
