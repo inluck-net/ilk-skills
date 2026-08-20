@@ -203,8 +203,11 @@ def test_default_stdout_stays_a_bare_project_array(tmp_path):
     env["ILK_DATA_HOME"] = str(tmp_path)
 
     proc = subprocess.run(
+        # encoding= is explicit, not implied by text=True: without it the child's
+        # output decodes via the locale codec (FM-0003), which is what the
+        # repo's subprocess-encoding lint gates on.
         [sys.executable, str(SCAN_SCRIPT)],
-        capture_output=True, text=True, env=env,
+        capture_output=True, text=True, encoding="utf-8", env=env,
     )
     assert proc.returncode == 0, proc.stderr
     parsed = json.loads(proc.stdout)
