@@ -1,0 +1,13 @@
+{
+  "measured_at": "2026-08-21",
+  "iterations_parsed": 527,
+  "iterations_unusable": 21,
+  "total_hours": 118.4,
+  "shares": {
+    "model_remainder_pct": 69.2,
+    "tool_pct": 30.8,
+    "test_pct": 23.4,
+    "broad_test_pct": 16.7
+  },
+  "note": "MASTER claimed 526/544, 118.0h, test 23.3%, broad 16.6%. Differences are within rounding (1 more iteration parsed, 0.4h more total)."
+}
