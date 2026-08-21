@@ -201,7 +201,7 @@ def read_subplan_for_audit(path: Path) -> dict[str, Any]:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from run_local_checks import (
         split_frontmatter as _split_fm,
-        parse_local_checks_block as _parse_checks,
+        collect_declared_local_checks as _collect_checks,
         read_text as _read_text,
     )
 
@@ -218,7 +218,10 @@ def read_subplan_for_audit(path: Path) -> dict[str, Any]:
         elif s.startswith("plan:") and not slug:
             slug = s[len("plan:"):].strip().strip("'\"")
 
-    checks = _parse_checks(fm_text)
+    # Frontmatter gates + per-step gates, via the single oracle in
+    # run_local_checks.  Do not re-parse here: the audit must not disagree
+    # with what the driver actually ran.
+    checks = _collect_checks(fm_text, body)
     return {"status": status, "body": body, "declared_checks": checks, "slug": slug}
 
 

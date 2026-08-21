@@ -108,12 +108,12 @@ def read_subplan_status_and_checks(path: Path) -> tuple[str, list[dict[str, Any]
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from run_local_checks import (
         split_frontmatter as _split_fm,
-        parse_local_checks_block as _parse_checks,
+        collect_declared_local_checks as _collect_checks,
         read_text as _read_text,
     )
 
-    body = _read_text(path)
-    fm_text, _ = _split_fm(body)
+    full = _read_text(path)
+    fm_text, doc_body = _split_fm(full)
 
     # Extract status from frontmatter.
     status = ""
@@ -123,7 +123,9 @@ def read_subplan_status_and_checks(path: Path) -> tuple[str, list[dict[str, Any]
             status = s[len("status:"):].strip().strip("'\"")
             break
 
-    checks = _parse_checks(fm_text)
+    # Per-step gates count as declared gates; a frontmatter-only read made
+    # evaluate_ship take the "no gate declared" branch and enforce nothing.
+    checks = _collect_checks(fm_text, doc_body)
     return status, checks
 
 

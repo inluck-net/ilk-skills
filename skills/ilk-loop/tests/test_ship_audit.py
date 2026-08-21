@@ -506,3 +506,120 @@ def test_read_subplan_for_audit_extracts_fields(tmp_path: Path) -> None:
     assert len(info["declared_checks"]) == 1
     assert "### Step 0" in info["body"]
     assert "### Step 2" in info["body"]
+
+
+# ── Per-step gates are gates too (final_gate must not be None) ───────────────
+#
+# A sub-plan may declare `local_checks: []` in frontmatter and carry its real
+# gates in per-step ```yaml blocks under `### Step N`.  /ilk-plan writes this
+# shape, and `_detect_local_checks.py` already treats it as gated.  Two readers
+# disagreed with it, so a gated sub-plan audited as if it had no gate at all:
+#
+#   ship_audit.read_subplan_for_audit  — parsed frontmatter only, so
+#     `declared_checks` came back empty and `audit_ship` set
+#     `final_gate: None` (ship_audit.py:177) no matter what the gate did.
+#   run_ilk_loop_claude.sh test_ship_integrity — `head -20 | grep -qE
+#     '^\s*local_checks:\s*$'` matches only block form in the first 20 lines,
+#     so it `continue`d past these sub-plans and never enforced the gate.
+#
+# Observed 2026-08-21 on MASTER-2026-08-21-loop-execution-speed: all three
+# sub-plans audited `final_gate: None`.
+
+_PER_STEP_GATED = """\
+---
+plan: per-step-slug
+status: shipped
+current_step: 2
+priority: P1
+estimated_steps: 2
+verification_tier: loop-verified
+data_prereqs:
+  - description: "a data prereq long enough to push local_checks past line 20"
+    verify_cmd: "test -d /"
+env_prereqs:
+  - description: "an env prereq that also pushes the frontmatter down"
+    verify_cmd: "test -d /"
+local_checks: []
+scope_paths:
+  - "skills/ilk-loop/scripts/thing.py"
+---
+
+### Step 0 — first
+```yaml
+local_checks:
+  - command: echo step0
+    timeout: 30
+```
+- do the thing
+- Commit: `feat(x): thing [plan:per-step-slug#step-0]`
+
+### Step 1 — second
+```yaml
+local_checks:
+  - command: echo step1
+    timeout: 30
+```
+- do the other thing
+- Commit: `feat(x): other [plan:per-step-slug#step-1]`
+"""
+
+
+def test_read_subplan_sees_per_step_gates(tmp_path: Path) -> None:
+    """Per-step ``local_checks`` blocks must land in ``declared_checks``."""
+    subplan = tmp_path / "2026-08-21-per-step.md"
+    subplan.write_text(_PER_STEP_GATED)
+    info = ship_audit.read_subplan_for_audit(subplan)
+    cmds = [c.get("command") for c in info["declared_checks"]]
+    assert info["declared_checks"], (
+        "frontmatter says `local_checks: []` but Steps 0 and 1 each declare a "
+        f"gate; declared_checks came back empty. cmds={cmds}"
+    )
+    assert "echo step0" in cmds and "echo step1" in cmds, cmds
+
+
+def test_final_gate_not_none_for_per_step_gated_subplan(tmp_path: Path) -> None:
+    """A per-step-gated sub-plan must report a real verdict, never ``None``."""
+    subplan = tmp_path / "2026-08-21-per-step.md"
+    subplan.write_text(_PER_STEP_GATED)
+    info = ship_audit.read_subplan_for_audit(subplan)
+    _init_repo(tmp_path)
+    for n in (0, 1):
+        _commit_with_message(tmp_path, f"feat(x): s{n} [plan:per-step-slug#step-{n}]")
+    result = ship_audit.audit_ship(
+        slug=info["slug"],
+        status=info["status"],
+        body=info["body"],
+        declared_checks=info["declared_checks"],
+        gate_passed="true",
+        cwd=tmp_path,
+    )
+    assert result["final_gate"] == "pass", (
+        f"gate passed, so final_gate must be 'pass', got {result['final_gate']!r}. "
+        f"full result={result}"
+    )
+
+
+def test_ship_integrity_does_not_skip_per_step_gated_subplan(tmp_path: Path) -> None:
+    """The driver's detector must enforce the gate on a per-step-gated plan.
+
+    A red gate is recorded, so ``test_ship_integrity`` must report a violation.
+    Before the fix the narrow frontmatter grep skipped the file and returned 0.
+    """
+    plans = tmp_path / "docs" / "plans"
+    plans.mkdir(parents=True)
+    (plans / "MASTER-2026-08-21-test.md").write_text(
+        "---\nmaster_plan: 2026-08-21-test\nstatus: active\n---\n# test\n"
+    )
+    (plans / "2026-08-21-per-step.md").write_text(_PER_STEP_GATED)
+    lc_file = plans / "results.jsonl"
+    lc_file.write_text('{"slug":"per-step-slug","outcome":"fail"}\n')
+
+    result = _source_runner_and_call(
+        f"test_ship_integrity '{plans}' '{lc_file}'",
+        env_extra={"PROJECT_PATH": str(tmp_path)},
+    )
+    assert result.returncode != 0, (
+        "red gate on a per-step-gated shipped sub-plan must be a violation; "
+        f"got exit {result.returncode} (detector skipped the file).\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )

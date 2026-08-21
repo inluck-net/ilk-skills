@@ -1179,10 +1179,15 @@ test_ship_integrity() {
     if ! head -20 "$f" | grep -qE '^status:\s*shipped'; then
       continue
     fi
-    # Check if has declared local_checks
-    if ! head -20 "$f" | grep -qE '^\s*local_checks:\s*$'; then
-      continue
-    fi
+    # NOTE: the gate-declared test lives in the Python block below, which
+    # reuses ship_audit.read_subplan_for_audit -- the same reader the audit
+    # uses. It was previously `head -20 | grep -qE '^\s*local_checks:\s*'` +
+    # end-of-line anchor, which missed BOTH per-step ```yaml gates and
+    # `local_checks: []` frontmatter, and also missed any frontmatter longer
+    # than 20 lines. A gated sub-plan therefore skipped enforcement entirely
+    # (observed 2026-08-21: MASTER-2026-08-21-loop-execution-speed, 3 of 3
+    # sub-plans). A detector the driver and the audit disagree on is worse
+    # than no detector, so there is exactly one reader now.
 
     # Call ship_integrity.py with gate-passed (slug + gate lookup in Python).
     # Uses --gate-passed (scalar) to avoid shell JSON quote-mangling.
@@ -1194,6 +1199,20 @@ from pathlib import Path
 
 f = Path(sys.argv[1])
 lc_file = sys.argv[2] if len(sys.argv) > 2 else ''
+scripts_dir = sys.argv[3] if len(sys.argv) > 3 else ''
+
+# Gate-declared test, via the audit's own reader so the two cannot disagree.
+# Covers frontmatter block form, 'local_checks: []' plus per-step blocks, and
+# frontmatter of any length. 'nogate' falls through the caller's skip branch.
+if scripts_dir:
+    sys.path.insert(0, scripts_dir)
+    try:
+        from ship_audit import read_subplan_for_audit as _read_sp
+        if not _read_sp(f).get('declared_checks'):
+            print('nogate')
+            raise SystemExit(0)
+    except (ImportError, OSError):
+        pass
 
 # Extract slug from frontmatter (POSIX-safe, no grep -P)
 body = f.read_text()
@@ -1225,7 +1244,7 @@ if lc_file and slug:
         pass
 
 print(gate_passed)
-" "$f" "$lc_file" 2>&1) || si_exit=$?
+" "$f" "$lc_file" "${_SKILL_ROOT}/ilk-loop/scripts" 2>&1) || si_exit=$?
 
     local gate_passed="$si_out"
     # Scope to THIS iteration's ships only: enforce on sub-plans whose gate

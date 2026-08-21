@@ -267,6 +267,43 @@ class CheckResult:
     error: str = ""
 
 
+_STEP_HEADING_ANY_RE = re.compile(r"^###\s+Step\s+(\d+)", re.MULTILINE)
+
+
+def collect_declared_local_checks(fm_text: str, body: str) -> list[dict]:
+    """Every gate a sub-plan declares: frontmatter block + per-step blocks.
+
+    A sub-plan may declare gates in frontmatter, in per-step ```yaml blocks, or
+    both.  /ilk-plan writes ``local_checks: []`` in frontmatter and puts the
+    real gates under each ``### Step N``, so a frontmatter-only reader reports
+    a gated sub-plan as ungated.  That made three readers disagree with
+    ``_detect_local_checks.py`` (which was already per-step aware):
+
+      * ``ship_audit.read_subplan_for_audit``   -> ``final_gate: None``
+      * ``ship_integrity.read_subplan_status_and_checks``
+        -> ``evaluate_ship`` took the "no gate declared" branch and enforced
+           nothing
+      * ``run_ilk_loop_claude.sh`` ``test_ship_integrity``
+        -> ``head -20 | grep`` skipped the file outright
+
+    Observed 2026-08-21 on MASTER-2026-08-21-loop-execution-speed: 3 of 3
+    sub-plans audited as ungated while every step carried a real gate.  This
+    function is the single oracle; callers must not re-parse.
+
+    De-duplicates on ``(command, timeout)`` so a gate repeated in frontmatter
+    and in a step is counted once.
+    """
+    checks: list[dict] = list(parse_local_checks_block(fm_text))
+    seen = {(c.get("command"), c.get("timeout")) for c in checks}
+    for step_n in sorted({int(n) for n in _STEP_HEADING_ANY_RE.findall(body)}):
+        for chk in extract_step_local_checks(body, step_n):
+            key = (chk.get("command"), chk.get("timeout"))
+            if key not in seen:
+                seen.add(key)
+                checks.append(chk)
+    return checks
+
+
 def _resolve_bash() -> str | None:
     """Resolve a bash that can run posix gate commands with a Windows cwd.
 
