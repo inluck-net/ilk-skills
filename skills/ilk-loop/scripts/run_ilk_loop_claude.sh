@@ -1536,6 +1536,101 @@ print(f'{tool_calls} {test_invocations}')
 " "$jsonl_log" 2>/dev/null || echo "0 0"
 }
 
+# write_suite_result_artifact
+#
+# After an iteration completes, scan its JSONL log for a broad test command.
+# If found, write a machine-readable ``suite-result.json`` into the run
+# directory so the next iteration can read it instead of re-running the suite.
+#
+# Fields: command, outcome, summary_line, exit_code, head_sha, timestamp.
+# Absent data is written as explicit null (never as a plausible-looking zero).
+#
+# AC-4 from a-suite-result-outlives-its-iteration.
+#
+# Globals read: RUN_LOG_DIR
+# Globals modified: none
+# Args: $1 = path to the per-iteration .jsonl stream log
+# Returns: 0 always (never fatal — a missing artifact is not a run-stopper)
+write_suite_result_artifact() {
+  local jsonl_log="$1"
+  local artifact="${RUN_LOG_DIR}/suite-result.json"
+  if [[ ! -s "$jsonl_log" ]]; then
+    return 0
+  fi
+  python3 -c "
+import json, sys
+from pathlib import Path
+
+# Import from the co-located iteration_timing module.
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parent.parent / 'scripts'))
+from iteration_timing import extract_suite_result_from_jsonl
+
+jsonl_path = Path(sys.argv[1])
+artifact_path = Path(sys.argv[2])
+
+records = []
+with open(jsonl_path, encoding='utf-8') as f:
+    for line in f:
+        line = line.strip()
+        if line:
+            records.append(json.loads(line))
+
+result = extract_suite_result_from_jsonl(records)
+if result is None:
+    sys.exit(0)
+
+# Write with explicit nulls for absent data (AC-4 contract).
+artifact_path.write_text(
+    json.dumps(result, indent=2, ensure_ascii=False) + '\n',
+    encoding='utf-8',
+)
+print(f'[suite-result] wrote artifact: {result[\"outcome\"]} — {result.get(\"summary_line\", \"no summary\")}', file=sys.stderr)
+" "$jsonl_log" "$artifact" 2>/dev/null || true
+}
+
+# read_prior_suite_result_for_prompt
+#
+# Read the suite-result.json artifact from the previous iteration and format
+# it for prompt injection.  Returns empty string when no artifact exists.
+#
+# AC-5 from a-suite-result-outlives-its-iteration.
+#
+# Globals read: RUN_LOG_DIR
+# Globals modified: none
+# stdout: formatted text for prompt injection (empty if no artifact)
+read_prior_suite_result_for_prompt() {
+  local artifact="${RUN_LOG_DIR}/suite-result.json"
+  if [[ ! -f "$artifact" ]]; then
+    return 0
+  fi
+  python3 -c "
+import json, sys
+from pathlib import Path
+
+artifact = Path(sys.argv[1])
+try:
+    d = json.loads(artifact.read_text(encoding='utf-8-sig'))
+except (json.JSONDecodeError, OSError):
+    sys.exit(0)
+
+cmd = d.get('command', '')
+outcome = d.get('outcome', 'unknown')
+summary = d.get('summary_line')
+sha = d.get('head_sha')
+ts = d.get('timestamp', '')
+
+parts = [f'Previous iteration ran: {cmd}']
+parts.append(f'Outcome: {outcome}')
+if summary:
+    parts.append(f'Result: {summary}')
+if sha:
+    parts.append(f'At commit: {sha[:12]}')
+if ts:
+    parts.append(f'When: {ts}')
+print('\n'.join(parts))
+" "$artifact" 2>/dev/null || true
+}
+
 # reap_iteration_orphans
 #
 # Kill background processes spawned by the iteration so they don't outlive
@@ -1740,8 +1835,21 @@ main() {
     local timeout_sec
     timeout_sec=$((ITERATION_TIMEOUT_MIN * 60))
 
-    # -- Steer hook: interjection text -----------------------------------
+    # -- Prior suite result carry-forward (AC-5) --------------------------
+    # If a previous iteration ran a broad suite, inject its result so this
+    # iteration starts informed instead of re-running from scratch.
+    local prior_suite_text
+    prior_suite_text=$(read_prior_suite_result_for_prompt)
     local iter_prompt="$PROMPT"
+    if [[ -n "$prior_suite_text" ]]; then
+      iter_prompt="SUITE RESULT FROM PREVIOUS ITERATION (do not re-run unless you have reason to believe the result is stale):
+${prior_suite_text}
+
+${iter_prompt}"
+      echo "[suite-result] prior result injected into prompt"
+    fi
+
+    # -- Steer hook: interjection text -----------------------------------
     if [[ -n "$STEER_INTERJECTION_TEXT" ]]; then
       iter_prompt="OPERATOR INTERJECTIONS (honor before continuing the plan):
 ${STEER_INTERJECTION_TEXT}
@@ -1769,6 +1877,10 @@ ${PROMPT}"
     # started, NOT by name pattern.
     # Wrapped in set +e is already active below, so a failure here is safe.
     reap_iteration_orphans
+
+    # Write suite-result artifact if a broad test ran this iteration (AC-4).
+    # Must happen before set +e so a Python crash is visible.
+    write_suite_result_artifact "${iter_log}.jsonl"
 
     # Non-essential bookkeeping: wrap in set +e so a stray non-zero
     # (grep no match, python3 parse failure, etc.) cannot abort the batch

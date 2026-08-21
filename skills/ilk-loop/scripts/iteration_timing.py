@@ -20,6 +20,8 @@ Usage:
     iteration_timing.py --baseline            # corpus-wide summary
     iteration_timing.py --baseline --json     # JSON output
 """
+from __future__ import annotations
+
 import argparse
 import json
 import re
@@ -285,6 +287,194 @@ def find_repeated_commands(run_dir: Path) -> list:
             })
     repeated.sort(key=lambda r: r["total_wallclock_sec"], reverse=True)
     return repeated
+
+
+# ── suite-result extraction (AC-4) ──────────────────────────────────────────
+
+_SUMMARY_LINE_RE = re.compile(
+    r"\d+ passed.*|\d+ failed.*|\d+ error.*|FAILED.*|ERROR.*",
+    re.IGNORECASE,
+)
+
+# Patterns for extracting exit codes from content strings.
+_EXIT_CODE_RE = re.compile(r"\[exited with code (\d+)\]")
+_TASK_OUTPUT_EXIT_RE = re.compile(r"<exit_code>(\d+)</exit_code>")
+_RETRIEVAL_STATUS_RE = re.compile(r"<retrieval_status>(\w+)</retrieval_status>")
+
+
+def _parse_exit_code(content: str, raw_exit: int | None) -> int | None:
+    """Try to extract exit code from content when raw_exit is absent."""
+    if raw_exit is not None:
+        return raw_exit
+    # Pattern: "[exited with code 0]"
+    m = _EXIT_CODE_RE.search(content)
+    if m:
+        return int(m.group(1))
+    # Pattern: "<exit_code>0</exit_code>" (TaskOutput retrieval)
+    m = _TASK_OUTPUT_EXIT_RE.search(content)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def _is_successful_retrieval(content: str) -> bool:
+    """Check if a TaskOutput retrieval succeeded (retrieval_status=success)."""
+    m = _RETRIEVAL_STATUS_RE.search(content)
+    return m is not None and m.group(1) == "success"
+
+
+def extract_suite_result_from_jsonl(records: list[dict]) -> dict | None:
+    """Extract the suite result from a completed broad-test invocation.
+
+    Scans *records* (one iteration's JSONL) for a ``Bash`` tool_use whose
+    command is a broad test invocation, then extracts the outcome from the
+    paired tool_result.  Returns ``None`` when no broad test ran.
+
+    Handles two patterns:
+    - Direct result: tool_result immediately after the Bash tool_use.
+    - Backgrounded + retrieved: the initial result is "moved to the
+      background", then a ``TaskOutput`` call retrieves the real result.
+
+    Returned dict keys: ``command``, ``outcome``, ``summary_line``,
+    ``exit_code``, ``head_sha``, ``timestamp``.  Absent data is ``None``.
+    """
+    tool_uses: dict[str, dict] = {}
+    tool_results: dict[str, dict] = {}
+
+    for rec in records:
+        rec_type = rec.get("type")
+        ts_str = rec.get("timestamp")
+        if rec_type == "assistant":
+            for block in rec.get("message", {}).get("content", []):
+                if block.get("type") == "tool_use":
+                    uid = block["id"]
+                    inp = block.get("input", {})
+                    tool_uses[uid] = {
+                        "name": block.get("name", ""),
+                        "command": inp.get("command", ""),
+                        "ts": ts_str,
+                    }
+        elif rec_type == "user":
+            for block in rec.get("message", {}).get("content", []):
+                if block.get("type") == "tool_result":
+                    uid = block.get("tool_use_id")
+                    if uid:
+                        content = block.get("content", "")
+                        tur = rec.get("tool_use_result")
+                        raw_exit = block.get("exit_code")
+                        if raw_exit is None and tur:
+                            raw_exit = tur.get("exitCode")
+                        tool_results[uid] = {
+                            "content": content,
+                            "exit_code": raw_exit,
+                            "is_error": block.get("is_error", False),
+                        }
+
+    # Build a map of TaskOutput calls → their retrieval results, so we can
+    # follow the backgrounded → retrieved chain.
+    task_output_results: dict[str, dict] = {}  # task_id → {content, exit_code}
+    for uid, tu in tool_uses.items():
+        if tu["name"] != "TaskOutput":
+            continue
+        tr = tool_results.get(uid)
+        if tr is None:
+            continue
+        content = str(tr.get("content", ""))
+        task_id = ""
+        inp = {}
+        for rec in records:
+            if rec.get("type") != "assistant":
+                continue
+            for block in rec.get("message", {}).get("content", []):
+                if block.get("type") == "tool_use" and block["id"] == uid:
+                    inp = block.get("input", {})
+                    break
+        task_id = inp.get("task_id", "")
+        if task_id and _is_successful_retrieval(content):
+            exit_code = _parse_exit_code(content, tr.get("exit_code"))
+            task_output_results[task_id] = {
+                "content": content,
+                "exit_code": exit_code,
+            }
+
+    # Find the first broad test command.
+    for uid, tu in tool_uses.items():
+        cmd = tu["command"]
+        if not is_broad_test_command(cmd):
+            continue
+        tr = tool_results.get(uid)
+        if tr is None:
+            continue
+
+        content = str(tr.get("content", ""))
+        exit_code = _parse_exit_code(content, tr.get("exit_code"))
+
+        # If this was backgrounded, follow the TaskOutput chain.
+        if "moved to the background" in content:
+            # Extract the background task ID.
+            bg_match = re.search(r"ID: (\w+)", content)
+            if bg_match:
+                task_id = bg_match.group(1)
+                retrieved = task_output_results.get(task_id)
+                if retrieved:
+                    content = retrieved["content"]
+                    exit_code = retrieved["exit_code"]
+
+        # Determine outcome from exit code and content.
+        outcome = "unknown"
+        if exit_code == 0:
+            outcome = "pass"
+        elif exit_code is not None and exit_code != 0:
+            outcome = "fail"
+        # Fallback: check content for pass indicators when exit code absent.
+        if outcome == "unknown" and "passed" in content.lower():
+            outcome = "pass"
+
+        # Extract summary line from the output tail.
+        summary_line = None
+        for line in reversed(content.splitlines()):
+            line = line.strip()
+            if _SUMMARY_LINE_RE.search(line):
+                summary_line = line
+                break
+
+        return {
+            "command": cmd,
+            "outcome": outcome,
+            "summary_line": summary_line,
+            "exit_code": exit_code,
+            "head_sha": None,  # filled by caller if available
+            "timestamp": tu["ts"],
+        }
+
+    return None
+
+
+def build_suite_result_artifact(records: list[dict], head_sha: str | None = None) -> dict | None:
+    """Build a suite-result artifact dict from JSONL records.
+
+    Like :func:`extract_suite_result_from_jsonl` but also attaches
+    *head_sha* when provided.  Returns ``None`` when no broad test ran.
+    """
+    result = extract_suite_result_from_jsonl(records)
+    if result is not None and head_sha:
+        result["head_sha"] = head_sha
+    return result
+
+
+def read_prior_suite_result(run_dir: Path) -> dict | None:
+    """Read a previously-written ``suite-result.json`` from *run_dir*.
+
+    Returns ``None`` when the file does not exist or is unparseable.
+    Uses ``utf-8-sig`` encoding per detached-component-contracts (BOM-safe).
+    """
+    artifact = run_dir / "suite-result.json"
+    if not artifact.is_file():
+        return None
+    try:
+        return json.loads(artifact.read_text(encoding="utf-8-sig"))
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 # ── corpus baseline (AC-4) ──────────────────────────────────────────────────

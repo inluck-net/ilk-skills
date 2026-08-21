@@ -182,3 +182,189 @@ class TestFixtureIntegrity:
                                 if "pytest" in cmd and "-q" in cmd:
                                     found_broad = True
             assert found_broad, f"iter-{i} fixture has no broad pytest command"
+
+
+# ── AC-4: suite-result artifact extraction ───────────────────────────────────
+
+class TestSuiteResultExtraction:
+    """AC-4: extract_suite_result_from_jsonl() extracts the broad test result."""
+
+    def _load_records(self, name: str) -> list:
+        path = FIXTURES / name
+        records = []
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+        return records
+
+    def test_broad_pytest_detected(self):
+        """A broad pytest command is detected and its result extracted."""
+        from iteration_timing import extract_suite_result_from_jsonl
+        records = self._load_records("broad_pytest.jsonl")
+        result = extract_suite_result_from_jsonl(records)
+        assert result is not None, "expected a suite result from broad_pytest.jsonl"
+        assert "pytest" in result["command"]
+        assert result["outcome"] in ("pass", "fail", "unknown")
+
+    def test_broad_pytest_has_summary_line(self):
+        """The summary line is extracted from pytest output."""
+        from iteration_timing import extract_suite_result_from_jsonl
+        records = self._load_records("broad_pytest.jsonl")
+        result = extract_suite_result_from_jsonl(records)
+        assert result is not None
+        assert result["summary_line"] is not None
+        assert "passed" in result["summary_line"]
+
+    def test_broad_pytest_has_timestamp(self):
+        """The artifact includes the timestamp of the tool_use."""
+        from iteration_timing import extract_suite_result_from_jsonl
+        records = self._load_records("broad_pytest.jsonl")
+        result = extract_suite_result_from_jsonl(records)
+        assert result is not None
+        assert result["timestamp"] is not None
+        assert len(result["timestamp"]) > 0
+
+    def test_broad_pytest_outcome_pass(self):
+        """A passing suite (content says 'passed') has outcome 'pass'."""
+        from iteration_timing import extract_suite_result_from_jsonl
+        records = self._load_records("broad_pytest.jsonl")
+        result = extract_suite_result_from_jsonl(records)
+        assert result is not None
+        assert result["outcome"] == "pass"
+
+    def test_no_broad_test_returns_none(self):
+        """A non-test iteration returns None."""
+        from iteration_timing import extract_suite_result_from_jsonl
+        records = self._load_records("clean_paired.jsonl")
+        result = extract_suite_result_from_jsonl(records)
+        assert result is None
+
+    def test_targeted_pytest_not_broad(self):
+        """A targeted pytest command (with path) is not extracted."""
+        from iteration_timing import extract_suite_result_from_jsonl
+        records = self._load_records("targeted_pytest.jsonl")
+        result = extract_suite_result_from_jsonl(records)
+        assert result is None
+
+    def test_iter_fixture_has_extractable_result(self):
+        """The real iter-01 fixture (backgrounded + TaskOutput) yields a result."""
+        from iteration_timing import extract_suite_result_from_jsonl
+        records = self._load_records("iter-01.log.jsonl")
+        result = extract_suite_result_from_jsonl(records)
+        # iter-01 is backgrounded then retrieved — the retrieval has the real result
+        assert result is not None, "iter-01 should have an extractable suite result"
+        assert result["outcome"] == "pass"
+
+
+# ── AC-4: artifact building ─────────────────────────────────────────────────
+
+class TestBuildSuiteResultArtifact:
+    """AC-4: build_suite_result_artifact() attaches head_sha."""
+
+    def _load_records(self, name: str) -> list:
+        path = FIXTURES / name
+        records = []
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+        return records
+
+    def test_artifact_includes_head_sha(self):
+        """When head_sha is provided, it appears in the artifact."""
+        from iteration_timing import build_suite_result_artifact
+        records = self._load_records("broad_pytest.jsonl")
+        result = build_suite_result_artifact(records, head_sha="abc123")
+        assert result is not None
+        assert result["head_sha"] == "abc123"
+
+    def test_artifact_without_sha(self):
+        """Without head_sha, the field is None."""
+        from iteration_timing import build_suite_result_artifact
+        records = self._load_records("broad_pytest.jsonl")
+        result = build_suite_result_artifact(records)
+        assert result is not None
+        assert result["head_sha"] is None
+
+    def test_no_test_returns_none(self):
+        """No broad test → None."""
+        from iteration_timing import build_suite_result_artifact
+        records = self._load_records("clean_paired.jsonl")
+        result = build_suite_result_artifact(records)
+        assert result is None
+
+
+# ── AC-5: prior result readable from disk ────────────────────────────────────
+
+class TestPriorSuiteResult:
+    """AC-5: read_prior_suite_result() reads the artifact from disk."""
+
+    def test_reads_written_artifact(self, tmp_path):
+        """An artifact written to disk is readable."""
+        from iteration_timing import read_prior_suite_result
+        artifact = {
+            "command": "python3 -m pytest -q",
+            "outcome": "pass",
+            "summary_line": "2919 passed in 784.40s",
+            "exit_code": 0,
+            "head_sha": "abc123",
+            "timestamp": "2026-08-20T06:50:32.571Z",
+        }
+        (tmp_path / "suite-result.json").write_text(
+            json.dumps(artifact), encoding="utf-8"
+        )
+        result = read_prior_suite_result(tmp_path)
+        assert result is not None
+        assert result["command"] == "python3 -m pytest -q"
+        assert result["outcome"] == "pass"
+        assert result["head_sha"] == "abc123"
+
+    def test_missing_file_returns_none(self, tmp_path):
+        """No artifact file → None."""
+        from iteration_timing import read_prior_suite_result
+        result = read_prior_suite_result(tmp_path)
+        assert result is None
+
+    def test_malformed_json_returns_none(self, tmp_path):
+        """A corrupted artifact file → None, not an exception."""
+        from iteration_timing import read_prior_suite_result
+        (tmp_path / "suite-result.json").write_text("NOT JSON", encoding="utf-8")
+        result = read_prior_suite_result(tmp_path)
+        assert result is None
+
+    def test_bom_prefixed_json_parses(self, tmp_path):
+        """A BOM-prefixed artifact (Windows PS 5.1) parses via utf-8-sig."""
+        from iteration_timing import read_prior_suite_result
+        artifact = {"command": "pytest -q", "outcome": "pass"}
+        content = json.dumps(artifact)
+        # Write with BOM
+        with open(tmp_path / "suite-result.json", "wb") as f:
+            f.write(b"\xef\xbb\xbf" + content.encode("utf-8"))
+        result = read_prior_suite_result(tmp_path)
+        assert result is not None
+        assert result["outcome"] == "pass"
+
+    def test_absent_data_written_as_null(self, tmp_path):
+        """Absent fields are explicit null, not missing keys."""
+        from iteration_timing import read_prior_suite_result
+        artifact = {
+            "command": "pytest -q",
+            "outcome": "pass",
+            "summary_line": None,
+            "exit_code": 0,
+            "head_sha": None,
+            "timestamp": "2026-08-20T06:50:32.571Z",
+        }
+        (tmp_path / "suite-result.json").write_text(
+            json.dumps(artifact), encoding="utf-8"
+        )
+        result = read_prior_suite_result(tmp_path)
+        assert result is not None
+        # Keys are present even when values are null
+        assert "summary_line" in result
+        assert result["summary_line"] is None
+        assert "head_sha" in result
+        assert result["head_sha"] is None
