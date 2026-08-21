@@ -435,6 +435,37 @@ not a personal single-user project), follow these steps **before push**:
   Context economy is the entire point of this convention.
 - **PowerShell on Windows**: use `;` not `&&`, and quote paths with spaces.
 
+## Ad-hoc test invocation (worker rule)
+
+When you need to run tests during a step, follow this order:
+
+1. **Targeted first.** Pass a path, `::` node id, `-k`, or `--lf` to
+   `pytest` so only the relevant tests run.
+2. **Inspect scope with `--collect-only`.** It lists what would run
+   without executing — 1870 tests collected in 0.32s on this repo (measured
+   2026-08-21). Use it before a broad run to confirm the scope is what you
+   expect.
+3. **When a broad run is genuinely needed**, reuse the project's declared
+   suite from `.ilk-launch.json` → `ship.suite`:
+   `python3 -m pytest --timeout=60 --timeout-method=signal` (capped at
+   300s). Never run a bare `pytest -q` without a per-test timeout.
+
+**`--timeout-method=thread` is known to hang.** Always use
+`--timeout-method=signal`.
+
+When a command result says *"moved to the background (ID: …)"*, poll the
+helper — do not re-run the command, and do not hand-roll an
+`until … sleep` loop (that pattern was SIGKILLed after 9.6 min in
+`20260820-143915/iter-07`):
+
+```bash
+bash <skill-root>/ilk-loop/scripts/wait_for_background_output.sh <output-file>
+```
+
+This composes with the iteration-boundary rule: an iteration is one
+session, so a long gate must either run in the foreground (bounded by the
+iteration timeout) or be left to the driver's `local_checks`.
+
 ## Project-side preflight (the standard escalation lever)
 
 A common loop failure mode is "agent set `status: blocked` because it
