@@ -95,8 +95,9 @@ Specifically:
    haven't already in this session.
 2. **Always run tests with the mandatory flags** from that skill:
    - Django: `--verbosity=2 --noinput --keepdb`
-   - Pytest: `--timeout=60 --timeout-method=thread` (install
-     `pytest-timeout` once if missing)
+   - Pytest: `--timeout=60 --timeout-method=signal` (install
+     `pytest-timeout` once if missing; `--timeout-method=thread` is
+     known to hang)
 3. **Run long commands in the foreground**, bounded by the step's budget.
    The iteration timeout will kill the process if it runs too long.
    Do **not** background a long command and end your turn — there is no
@@ -129,6 +130,15 @@ next turn in this session — the iteration ends and the wait is lost.
 **Do** run the gate in the foreground within the step's budget, or
 let the driver run it: `local_checks` execute after your commit, so
 a command already declared there must not be run by hand.
+
+When a command result says *"moved to the background (ID: …)"*, poll
+the shipped helper — do not re-run the command, and do not hand-roll
+an `until … sleep` loop (that pattern was SIGKILLed after 9.6 min in
+`20260820-143915/iter-07`):
+
+```bash
+bash <skill-root>/ilk-loop/scripts/wait_for_background_output.sh <output-file>
+```
 
 ## 6. Before setting `status: blocked` — escalation checklist
 
