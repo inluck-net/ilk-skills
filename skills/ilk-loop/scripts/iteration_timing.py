@@ -61,6 +61,27 @@ def is_test_command(command: str) -> bool:
     return bool(_TEST_CMD_RE.search(command))
 
 
+# ── command normalisation (AC-2) ─────────────────────────────────────────────
+
+_HARNESS_OPT_RE = re.compile(r"--timeout(?:-method)?=\S+")
+_PIPE_TAIL_RE = re.compile(r"\s*\|\s*tail\s+-\d+\s*$")
+_REDIRECT_RE = re.compile(r"\s*\d*>&\d*\s*")
+
+
+def normalise_command(command: str) -> str:
+    """Normalise a test command for repeat-detection grouping.
+
+    Strips output-truncation pipes (``| tail -N``), shell redirections
+    (``2>&1``), and harness options (``--timeout``, ``--timeout-method``)
+    that do not affect *which* tests run.  Preserves test-file paths,
+    ``::`` node ids, ``-k`` selectors, and ``--lf``/``--last-failed``.
+    """
+    s = _HARNESS_OPT_RE.sub("", command)
+    s = _PIPE_TAIL_RE.sub("", s)
+    s = _REDIRECT_RE.sub(" ", s)
+    return " ".join(s.split())
+
+
 # ── analysis ─────────────────────────────────────────────────────────────────
 
 _BACKGROUND_RE = re.compile(r"moved to the background \(ID:")
@@ -182,6 +203,88 @@ def analyze_iteration(path: Path) -> dict:
         "unpaired": unpaired,
         "backgrounded_calls": backgrounded_calls,
     }
+
+
+# ── repeat detection (AC-1, AC-3) ───────────────────────────────────────────
+
+def find_repeated_commands(run_dir: Path) -> list:
+    """Find normalised test commands executed in more than one iteration.
+
+    *run_dir* must contain ``iter-*.log.jsonl`` files.  Returns a list of
+    dicts, each with keys: ``normalised``, ``iteration_count``,
+    ``total_wallclock_sec``, ``iterations`` (list of iteration identifiers).
+    Only commands that appear in ≥2 distinct iterations are reported.
+    """
+    jsonl_files = sorted(run_dir.glob("iter-*.log.jsonl"))
+    if not jsonl_files:
+        return []
+
+    # norm_cmd → {iterations: set, total_sec: float}
+    seen: dict[str, dict] = {}
+
+    for jsonl_file in jsonl_files:
+        iter_label = jsonl_file.stem  # e.g. "six_fold_repeat_iter01"
+        records = []
+        with open(jsonl_file, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+
+        # Collect tool_use blocks with timestamps.
+        tool_uses: dict[str, dict] = {}
+        tool_results: dict[str, dict] = {}
+
+        for rec in records:
+            rec_type = rec.get("type")
+            ts_str = rec.get("timestamp")
+            if not ts_str:
+                continue
+            ts = _parse_ts(ts_str)
+
+            if rec_type == "assistant":
+                for block in rec.get("message", {}).get("content", []):
+                    if block.get("type") == "tool_use":
+                        uid = block["id"]
+                        inp = block.get("input", {})
+                        tool_uses[uid] = {
+                            "command": inp.get("command", ""),
+                            "ts": ts,
+                        }
+            elif rec_type == "user":
+                for block in rec.get("message", {}).get("content", []):
+                    if block.get("type") == "tool_result":
+                        uid = block.get("tool_use_id")
+                        if uid:
+                            tool_results[uid] = {"ts": ts}
+
+        # Pair and record test commands.
+        for uid, tu in tool_uses.items():
+            tr = tool_results.get(uid)
+            if tr is None:
+                continue
+            cmd = tu["command"]
+            if not is_test_command(cmd):
+                continue
+            duration = (tr["ts"] - tu["ts"]).total_seconds()
+            norm = normalise_command(cmd)
+            if norm not in seen:
+                seen[norm] = {"iterations": set(), "total_sec": 0.0}
+            seen[norm]["iterations"].add(iter_label)
+            seen[norm]["total_sec"] += duration
+
+    # Filter to repeated (≥2 iterations) and sort by wall-clock descending.
+    repeated = []
+    for norm, info in seen.items():
+        if len(info["iterations"]) >= 2:
+            repeated.append({
+                "normalised": norm,
+                "iteration_count": len(info["iterations"]),
+                "total_wallclock_sec": round(info["total_sec"], 3),
+                "iterations": sorted(info["iterations"]),
+            })
+    repeated.sort(key=lambda r: r["total_wallclock_sec"], reverse=True)
+    return repeated
 
 
 # ── corpus baseline (AC-4) ──────────────────────────────────────────────────

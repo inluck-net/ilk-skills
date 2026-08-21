@@ -81,10 +81,11 @@ class TestRepeatDetection:
         assert len(repeats) >= 1, "expected at least one repeated command"
 
     def test_broad_pytest_repeated_across_six_iterations(self):
-        from iteration_timing import find_repeated_commands
+        from iteration_timing import find_repeated_commands, normalise_command
         repeats = find_repeated_commands(self._run_dir())
-        # Find the broad pytest repeat
-        broad = [r for r in repeats if "pytest" in r["normalised"] and "tail" in r["normalised"]]
+        # Find the broad pytest repeat — normalised form strips tail/redirects
+        broad_norm = normalise_command("python3 -m pytest -q 2>&1 | tail -10")
+        broad = [r for r in repeats if r["normalised"] == broad_norm]
         assert len(broad) >= 1, (
             f"expected a broad pytest repeat; got {repeats}"
         )
@@ -156,12 +157,12 @@ class TestFixtureIntegrity:
     def test_fixture_files_exist(self):
         """All six trimmed iteration fixtures are committed."""
         for i in ["01", "03", "04", "05", "06", "07"]:
-            path = FIXTURES / f"six_fold_repeat_iter{i}.jsonl"
+            path = FIXTURES / f"iter-{i}.log.jsonl"
             assert path.exists(), f"missing fixture: {path}"
 
     def test_fixtures_are_valid_jsonl(self):
         """Each fixture file contains valid JSON on every line."""
-        for fixture in FIXTURES.glob("six_fold_repeat_iter*.jsonl"):
+        for fixture in FIXTURES.glob("iter-*.log.jsonl"):
             for i, line in enumerate(fixture.read_text(encoding="utf-8").splitlines(), 1):
                 if line.strip():
                     json.loads(line), f"{fixture}:{i} is not valid JSON"
@@ -169,7 +170,7 @@ class TestFixtureIntegrity:
     def test_each_fixture_has_broad_pytest_command(self):
         """Each iteration fixture contains at least one broad pytest command."""
         for i in ["01", "03", "04", "05", "06", "07"]:
-            path = FIXTURES / f"six_fold_repeat_iter{i}.jsonl"
+            path = FIXTURES / f"iter-{i}.log.jsonl"
             found_broad = False
             with open(path) as f:
                 for line in f:
