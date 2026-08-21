@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"content":[{"type":"text","text":"Let me run the full test suite."},{"type":"tool_use","id":"toolu_001","name":"Bash","input":{"command":"python3 -m pytest -q 2>&1 | tail -10","description":"Run full test suite"}}]},"timestamp":"2026-08-21T03:18:21.681Z","session_id":"test-session"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_001","content":".......\n7 passed in 120.50s"}]},"timestamp":"2026-08-21T03:20:22.181Z","session_id":"test-session"}

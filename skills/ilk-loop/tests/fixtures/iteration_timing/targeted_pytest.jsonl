@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"content":[{"type":"text","text":"Running just the failing test."},{"type":"tool_use","id":"toolu_001","name":"Bash","input":{"command":"python3 -m pytest tests/test_x.py::TestY -q","description":"Run targeted test"}}]},"timestamp":"2026-08-21T03:18:21.681Z","session_id":"test-session"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_001","content":".\n1 passed in 3.20s"}]},"timestamp":"2026-08-21T03:18:24.881Z","session_id":"test-session"}

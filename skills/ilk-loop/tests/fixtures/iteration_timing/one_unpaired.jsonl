@@ -1,0 +1,5 @@
+{"type":"assistant","message":{"content":[{"type":"text","text":"Running a command."},{"type":"tool_use","id":"toolu_001","name":"Bash","input":{"command":"echo hello","description":"Print hello"}}]},"timestamp":"2026-08-21T03:18:21.681Z","session_id":"test-session"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_001","content":"hello"}]},"timestamp":"2026-08-21T03:18:22.000Z","session_id":"test-session"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Now a second command."},{"type":"tool_use","id":"toolu_002","name":"Bash","input":{"command":"echo world","description":"Print world"}}]},"timestamp":"2026-08-21T03:18:23.000Z","session_id":"test-session"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"I'll skip waiting and move on."},{"type":"tool_use","id":"toolu_003","name":"Read","input":{"file_path":"some/file.txt"}}]},"timestamp":"2026-08-21T03:18:24.000Z","session_id":"test-session"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_003","content":"file content"}]},"timestamp":"2026-08-21T03:18:24.500Z","session_id":"test-session"}
