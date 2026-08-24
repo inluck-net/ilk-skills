@@ -470,7 +470,7 @@ class TestCLI:
              "--validate", "--project", str(project)],
             capture_output=True, text=True,
         )
-        assert proc.returncode == 0
+        assert proc.returncode == 2
         assert "not configured" in proc.stdout.lower() or "not configured" in proc.stderr.lower()
 
     def test_validate_with_config(self, tmp_path: Path) -> None:

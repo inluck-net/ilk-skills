@@ -336,10 +336,11 @@ def main() -> None:
             print(f"Not configured: file at {result.resolved_path} has no 'ship' key")
         else:
             print("Not configured: no .ilk-launch.json found")
+        sys.exit(2)
     elif isinstance(result, MalformedConfig):
         print(f"Malformed: {result.detail}", file=sys.stderr)
         print(f"  file: {result.resolved_path}", file=sys.stderr)
-        sys.exit(1)
+        sys.exit(3)
 
 
 if __name__ == "__main__":
