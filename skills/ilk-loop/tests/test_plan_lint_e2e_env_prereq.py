@@ -25,6 +25,11 @@ _PLAN_LINT = _HERE.parent / "scripts" / "plan_lint.py"
 
 def _run_lint(tmp_path: Path, filename: str, content: str) -> subprocess.CompletedProcess:
     """Write a temp sub-plan and run plan_lint.py against it."""
+    # Seed a pytest.ini so the broad-suite-in-unbounded-project lint
+    # (a-bare-pytest-is-bounded-by-config) doesn't fire on every fixture.
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\naddopts = --timeout=60\n", encoding="utf-8",
+    )
     p = tmp_path / filename
     p.write_text(textwrap.dedent(content), encoding="utf-8")
     return subprocess.run(
