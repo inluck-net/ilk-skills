@@ -40,6 +40,14 @@ from loop_status import pick_active_master  # noqa: E402
 sys.path.insert(0, str(_SKILL_ROOT / "ilk-watchdog" / "scripts"))
 from blacklist_status import is_blacklisted  # noqa: E402
 
+sys.path.insert(0, str(_SKILL_ROOT / "ilk-ship" / "scripts"))
+from ship_config import (  # noqa: E402
+    MalformedConfig,
+    NotConfigured,
+    ShipConfig,
+    load_ship_config,
+)
+
 
 def _pick_master(masters: list[Path]) -> Path:
     """Choose the master whose state the verdict should reflect.
@@ -809,6 +817,57 @@ def _resolve_launch_config(project_path: Path) -> Path | None:
     return None
 
 
+def _gate_declared_suite(project_path: Path) -> GateResult:
+    """Gate 9: declared suite — is the project's test suite configured?
+
+    Calls ``load_ship_config`` directly — this is the non-test runtime caller
+    that AC-2 requires (the orphan defect).  Reports:
+
+    * ``declared`` — a valid ship: block was found, naming suite.command + flags
+    * ``not configured`` — no ship: key found, naming the resolved path
+    * ``malformed`` — invalid schema, naming the offending detail
+    """
+    result = load_ship_config(project_path)
+
+    if isinstance(result, ShipConfig):
+        flags = result.ship["suite"].get("flags", [])
+        flags_str = ", ".join(flags) if flags else "(none)"
+        return GateResult(
+            name="declared-suite",
+            status="pass",
+            evidence=(
+                f"declared — command: {result.ship['suite']['command']}, "
+                f"flags: {flags_str}"
+            ),
+            artifact=str(result.resolved_path),
+        )
+
+    if isinstance(result, NotConfigured):
+        if result.resolved_path:
+            return GateResult(
+                name="declared-suite",
+                status="blocked",
+                evidence=(
+                    f"not configured: {result.resolved_path} has no 'ship' key"
+                ),
+                artifact=str(result.resolved_path),
+            )
+        return GateResult(
+            name="declared-suite",
+            status="blocked",
+            evidence="not configured: no .ilk-launch.json found in any of the 3 locations",
+            artifact=str(project_path / ".ilk-launch.json"),
+        )
+
+    # MalformedConfig
+    return GateResult(
+        name="declared-suite",
+        status="blocked",
+        evidence=f"malformed: {result.detail}",
+        artifact=str(result.resolved_path),
+    )
+
+
 # ── Gate walk ───────────────────────────────────────────────────────────────
 
 GATE_ORDER = [
@@ -821,6 +880,7 @@ GATE_ORDER = [
     "sentinel-vs-reality",
     "scheduler-visibility",
     "config-resolution",
+    "declared-suite",
 ]
 
 
@@ -847,6 +907,7 @@ def run_doctor(project_path: Path, sample_interval: float = 20.0) -> DoctorRepor
         "sentinel-vs-reality": lambda: _gate_sentinel_vs_reality(project_data, live_pids),
         "scheduler-visibility": lambda: _gate_scheduler_visibility(project_data, plans_dir),
         "config-resolution": lambda: _gate_config_resolution(project_path),
+        "declared-suite": lambda: _gate_declared_suite(project_path),
     }
 
     for gate_name in GATE_ORDER:

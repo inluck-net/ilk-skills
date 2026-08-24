@@ -100,7 +100,7 @@ class TestGateWalkSkeleton:
         finally:
             doctor._resolve_plans_dir = original
 
-        assert len(report.gates) == 9, f"Expected 9 gates, got {len(report.gates)}"
+        assert len(report.gates) == 10, f"Expected 10 gates, got {len(report.gates)}"
         stubs = [g.name for g in report.gates if "not implemented" in g.evidence]
         assert not stubs, f"gates still stubbed out: {stubs}"
 
@@ -151,6 +151,7 @@ class TestGateWalkSkeleton:
         project = _setup_project(tmp_path)
         original_plans = doctor._resolve_plans_dir
         original_gate = doctor._gate_config_resolution
+        original_suite = doctor._gate_declared_suite
         doctor._resolve_plans_dir = lambda p: project / "docs" / "plans"
         doctor._gate_config_resolution = lambda *a, **k: doctor.GateResult(
             name="config-resolution",
@@ -158,11 +159,19 @@ class TestGateWalkSkeleton:
             evidence="injected: cannot read .ilk-launch.json",
             artifact="<test>",
         )
+        # declared-suite must not block before the injected unknown is reached.
+        doctor._gate_declared_suite = lambda *a, **k: doctor.GateResult(
+            name="declared-suite",
+            status="pass",
+            evidence="injected: bypass for test",
+            artifact="<test>",
+        )
         try:
             report = doctor.run_doctor(project, sample_interval=0.1)
         finally:
             doctor._resolve_plans_dir = original_plans
             doctor._gate_config_resolution = original_gate
+            doctor._gate_declared_suite = original_suite
 
         assert any(g.status == "unknown" for g in report.gates), (
             "the injected unknown gate did not reach the report"
@@ -184,6 +193,7 @@ class TestGateWalkSkeleton:
             "sentinel-vs-reality",
             "scheduler-visibility",
             "config-resolution",
+            "declared-suite",
         ]
         assert doctor.GATE_ORDER == expected
 
@@ -670,7 +680,7 @@ class TestJsonOutput:
         assert "gates" in data
         assert "verdict" in data
         assert isinstance(data["gates"], list)
-        assert len(data["gates"]) == 9
+        assert len(data["gates"]) == 10
 
     def test_json_gate_has_expected_fields(self, tmp_path, capsys):
         """Each gate in JSON output has name, status, evidence, artifact."""

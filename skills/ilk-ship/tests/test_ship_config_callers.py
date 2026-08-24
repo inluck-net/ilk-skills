@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
-REPO_ROOT = SCRIPTS_DIR.parent.parent  # skills/ilk-ship → skills → repo root
+REPO_ROOT = SCRIPTS_DIR.parent.parent.parent  # skills/ilk-ship/scripts → skills → repo root
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
