@@ -11,6 +11,9 @@
 # =============================================================================
 set -euo pipefail
 
+# Ensure a clean environment — a previous test run may have exported this.
+unset ILK_RUN_LOCK_HELD 2>/dev/null || true
+
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 LOCK_HELPER="$REPO_ROOT/skills/ilk-loop/scripts/ilk_run_lock.py"
 
@@ -184,46 +187,46 @@ FIXTURE
 # Full-runner tests
 # ===========================================================================
 
-# AC: two runners for the SAME project both start (current buggy baseline).
-# After step 2 adds the lock, this test flips to assert refusal.
-test_same_project_double_start() {
+# AC: a runner for a project where the lock is already held is refused (exit 3).
+# Uses the same pattern as AC-5: hold the lock directly via the helper so the
+# race window is eliminated.
+test_same_project_lock_refused() {
   local tmpdir project_dir shared_home
   tmpdir="$(mktemp -d)"
   project_dir="$tmpdir/project-a"
   shared_home="$tmpdir/shared-home"
   mkdir -p "$project_dir" "$shared_home"
 
-  local out1="$tmpdir/runner1.out"
-  local out2="$tmpdir/runner2.out"
-
-  # Build the fixture once under the shared HOME.  In production both the
-  # scheduler and a manual /ilk-run share the same HOME, so the lock file
-  # path is the same for both — which is the whole point.
   build_fixture_all_shipped "$project_dir" "$shared_home"
 
-  # Launch both concurrently with the same HOME.
-  HOME="$shared_home" bash "$RUNNER" \
-    --project-path "$project_dir" --max-iterations 0 >"$out1" 2>&1 &
-  local pid1=$!
-  HOME="$shared_home" bash "$RUNNER" \
-    --project-path "$project_dir" --max-iterations 0 >"$out2" 2>&1 &
-  local pid2=$!
+  # Resolve the lock file path.
+  local key
+  key=$(project_key_for "$project_dir")
+  local runtime_dir="$shared_home/.ilk-data/projects/$key/runtime"
+  local lock_file="$runtime_dir/launcher/run.lock"
+  mkdir -p "$runtime_dir/launcher"
 
-  local rc1 rc2
-  wait "$pid1" || rc1=$?; rc1=${rc1:-0}
-  wait "$pid2" || rc2=$?; rc2=${rc2:-0}
+  # Hold the lock directly via the helper (background) so it stays held
+  # while we attempt the real runner.  An all-shipped runner exits too
+  # fast for a concurrent race.
+  python3 "$LOCK_HELPER" --lock "$lock_file" -- sleep 30 &
+  local holder_pid=$!
+  sleep 0.3
 
-  # One must succeed (exit 0), the other must be refused (exit 3).
-  local ok=0 refused=0
-  if [[ $rc1 -eq 0 ]]; then ok=$((ok+1)); fi
-  if [[ $rc2 -eq 0 ]]; then ok=$((ok+1)); fi
-  if [[ $rc1 -eq 3 ]]; then refused=$((refused+1)); fi
-  if [[ $rc2 -eq 3 ]]; then refused=$((refused+1)); fi
-  if [[ $ok -ne 1 || $refused -ne 1 ]]; then
-    fail "AC-same-project: expected 1 ok + 1 refused, got ok=$ok refused=$refused (rc1=$rc1 rc2=$rc2)"
+  # Attempt a real runner — must be refused.
+  local out="$tmpdir/runner.out"
+  local rc=0
+  HOME="$shared_home" bash "$RUNNER" \
+    --project-path "$project_dir" --max-iterations 0 >"$out" 2>&1 || rc=$?
+
+  kill "$holder_pid" 2>/dev/null || true
+  wait "$holder_pid" 2>/dev/null || true
+
+  if [[ $rc -ne 3 ]]; then
+    fail "AC-same-project: runner should exit 3 when lock held, got $rc"
     return
   fi
-  pass "AC-same-project: one runner proceeds, one refused (lock working)"
+  pass "AC-same-project: runner refused when lock held (exit 3)"
 }
 
 # AC-6: two runners for DIFFERENT projects both succeed (always).
@@ -340,7 +343,7 @@ if [[ "$mode" == "helper-only" ]]; then
 fi
 
 if [[ "$mode" == "full-runner" ]]; then
-  test_same_project_double_start
+  test_same_project_lock_refused
   test_different_projects_independent
   test_refused_runner_leaves_no_trace
 fi
