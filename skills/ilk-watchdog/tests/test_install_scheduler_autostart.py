@@ -119,6 +119,14 @@ def _read_scheduler_pid(home: Path) -> int | None:
         return None
 
 
+# Judgment call, 2026-08-24: timeout(240), not a raise of the global bound.
+# This test's own declared waits are 30x1s (pidfile) + 15x2s (launchd restart)
+# = 60s of sleeps before any install or launchctl overhead, so it cannot fit
+# pytest.ini's --timeout=60. Measured: it hit "Timeout (>60.0s)" at line 172
+# on the first whole-suite run after the bound landed. 240 leaves ~4x headroom
+# over the declared sleeps. Wrong if launchd restart latency ever exceeds
+# ~3 min, in which case the test's own range(15) budget is the thing to fix.
+@pytest.mark.timeout(240)
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS launchctl required")
 def test_restart_durability_keeps_agent_loaded(tmp_path):
     """AC-4: crash-kill → launchd restarts → agent still loaded.
