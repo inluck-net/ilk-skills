@@ -144,6 +144,19 @@ try:
 except ImportError:
     _improvement_backlog = None  # type: ignore
 
+# Import iteration_timing for suspected-hang detection (sub-plan
+# a-gate-that-produces-nothing-is-a-hang).  analyze_iteration reads
+# per-iteration JSONL and returns a hang_suspected list when a broad
+# test command hits the harness ceiling, was backgrounded, and
+# produced no captured output.
+_TIMING_SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "ilk-loop" / "scripts"
+if _TIMING_SCRIPTS_DIR.is_dir() and str(_TIMING_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TIMING_SCRIPTS_DIR))
+try:
+    from iteration_timing import analyze_iteration as _analyze_iteration  # type: ignore
+except ImportError:
+    _analyze_iteration = None  # type: ignore
+
 try:
     import autoclose_tracker as _autoclose_tracker
 except ImportError:
@@ -1431,6 +1444,49 @@ def maybe_emit_upstream_candidate(
         pass
 
 
+# ---------- suspected-hang detection ----------------------------------------
+
+
+def detect_suspected_hangs(
+    run_id: str,
+    project_path: Path,
+    last_launch: dict | None = None,
+) -> list[dict[str, Any]]:
+    """Detect suspected hangs from per-iteration JSONL files.
+
+    A suspected hang is a broad test command that hit the harness ceiling,
+    was auto-backgrounded, and produced no captured output.  Reads each
+    per-iteration JSONL through ``iteration_timing.analyze_iteration`` and
+    collects the ``hang_suspected`` entries.
+
+    Returns a list of dicts with keys: ``command``, ``duration_sec``,
+    ``iteration``.  Empty when no suspected hangs are found.
+    """
+    if _analyze_iteration is None:
+        return []
+
+    hangs: list[dict[str, Any]] = []
+    for root in _iter_log_root_candidates(project_path, last_launch):
+        runs_dir = root / "runs" / run_id
+        if not runs_dir.is_dir():
+            continue
+        for jsonl_file in sorted(runs_dir.glob("iter-*.jsonl")):
+            # Extract iteration number from filename.
+            iter_match = re.match(r"iter-(\d+)\.jsonl", jsonl_file.name)
+            iter_num = int(iter_match.group(1)) if iter_match else 0
+            try:
+                result = _analyze_iteration(jsonl_file)
+                for entry in result.get("hang_suspected", []):
+                    hangs.append({
+                        "command": entry["command"],
+                        "duration_sec": entry["duration_sec"],
+                        "iteration": iter_num,
+                    })
+            except Exception:
+                continue
+    return hangs
+
+
 # ---------- recommendations --------------------------------------------------
 
 
@@ -1798,6 +1854,25 @@ def render_report(
     body_lines.append("## What happened\n")
     body_lines.append(_label_narrative(label, facts))
     body_lines.append("")
+
+    # Suspected hangs: a broad test that hit the ceiling, was backgrounded,
+    # and produced no output.  Reported as evidence, not as a new label.
+    hang_entries = facts.get("hang_suspected", [])
+    if hang_entries:
+        body_lines.append("## Suspected hangs\n")
+        body_lines.append(
+            "The following broad test commands are suspected of hanging "
+            "(hit the harness ceiling, were auto-backgrounded, and produced "
+            "no captured output).  These are reported as evidence, not as a "
+            "change to the run's classification.\n"
+        )
+        for h in hang_entries:
+            body_lines.append(
+                f"- **iter {h.get('iteration', '?')}**: "
+                f"`{h['command']}` — {h['duration_sec']:.1f}s, "
+                f"backgrounded, 0 bytes output"
+            )
+        body_lines.append("")
 
     # AC-8: extract failing check details from iteration records
     fail_checks = []
@@ -2595,6 +2670,12 @@ def main() -> int:
     # Emit upstream candidate when the classification is a toolkit signal
     # (conservative — only clear toolkit gaps, never project-local findings).
     maybe_emit_upstream_candidate(label, facts, project_path, target_run, iters)
+
+    # Detect suspected hangs from per-iteration JSONL.  Reported as evidence
+    # in the postmortem, not as a classification change.
+    hangs = detect_suspected_hangs(target_run, project_path, last_launch)
+    if hangs:
+        facts["hang_suspected"] = hangs
 
     rec_max, rec_to, rationale = recommend_params(label, iters, last_launch)
     last_log = iters[-1].get("log") if iters else None

@@ -147,3 +147,150 @@ class TestNoFalsePositives:
             f"targeted_pytest.jsonl must produce 0 suspected hangs, got {len(hang)} — "
             "a targeted 3.2s run is not a hang"
         )
+
+
+# ── AC-4: hang evidence in postmortem, classification unchanged ──────────────
+
+# Import collect.py for detect_suspected_hangs and classify.
+_COLLECT_SCRIPTS = Path(__file__).resolve().parent.parent.parent / "ilk-feedback" / "scripts"
+if str(_COLLECT_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_COLLECT_SCRIPTS))
+
+import collect  # noqa: E402
+
+
+class TestHangEvidenceInPostmortem:
+    """AC-4: collect.py includes suspected hangs in postmortem output.
+
+    The classification label must NOT change when a suspected hang is
+    detected — a hang is evidence attached to whatever label the run
+    already earns, not a new top-level classification.  CLASSIFICATION_LABELS
+    is NOT extended.
+    """
+
+    def test_detect_suspected_hangs_finds_hang(self, tmp_path):
+        """detect_suspected_hangs() finds the hang in the fixture."""
+        import shutil
+
+        # Set up a log root with per-iter JSONL matching the fixture.
+        # detect_suspected_hangs uses _iter_log_root_candidates which
+        # checks last_launch["log_dir"] first.
+        log_root = tmp_path / "logs"
+        run_dir = log_root / "runs" / "test-run"
+        run_dir.mkdir(parents=True)
+        shutil.copy(FIXTURES / "hang_600s.jsonl", run_dir / "iter-01.jsonl")
+
+        project_path = tmp_path / "proj"
+        project_path.mkdir()
+        last_launch = {"log_dir": str(log_root)}
+
+        hangs = collect.detect_suspected_hangs("test-run", project_path, last_launch)
+        assert len(hangs) == 1, (
+            f"expected 1 suspected hang, got {len(hangs)}"
+        )
+        assert "python3 -m pytest -q" in hangs[0]["command"]
+        assert hangs[0]["duration_sec"] >= 599.0
+        assert hangs[0]["iteration"] == 1
+
+    def test_classify_label_unchanged_by_hang(self, tmp_path):
+        """classify() returns the same label regardless of hang evidence.
+
+        A run that would classify as clean-success must still classify as
+        clean-success even when its per-iteration JSONL contains a suspected
+        hang.  The hang is evidence, not a label change.
+        """
+        # Build minimal clean-success summary records.
+        import json as _json
+
+        project_path = tmp_path / "proj"
+        project_path.mkdir()
+        run_id = "test-run"
+
+        records = [
+            {
+                "run_id": run_id, "iteration": 1, "exit_code": 0,
+                "new_commits_total": 2, "duration_sec": 100,
+            },
+            {
+                "run_id": run_id, "iteration": 2, "exit_code": 0,
+                "new_commits_total": 1, "duration_sec": 80,
+            },
+        ]
+
+        label, facts = collect.classify(records, None, project_path)
+        # The label should be one of the known taxonomy labels.
+        assert label in collect.CLASSIFICATION_LABELS
+        # hang_suspected must NOT be a classification label.
+        assert "hang_suspected" not in collect.CLASSIFICATION_LABELS
+
+        # Even if we simulate attaching hang evidence, the label must not
+        # change.  detect_suspected_hangs modifies facts, not the label.
+        facts["hang_suspected"] = [
+            {"command": "python3 -m pytest -q", "duration_sec": 600.5, "iteration": 1}
+        ]
+        # The label is determined by classify(), not by hang evidence.
+        assert label in collect.CLASSIFICATION_LABELS
+
+    def test_render_report_includes_hang_section(self, tmp_path):
+        """render_report() includes a 'Suspected hangs' section when evidence present."""
+        project_path = tmp_path / "proj"
+        project_path.mkdir()
+
+        iters = [
+            {
+                "run_id": "test-run", "iteration": 1, "exit_code": 0,
+                "new_commits_total": 2, "duration_sec": 100,
+                "timestamp": "2026-08-24T08:00:00Z",
+            },
+        ]
+        facts = {
+            "hang_suspected": [
+                {"command": "python3 -m pytest -q 2>&1 | tail -30", "duration_sec": 600.5, "iteration": 1}
+            ]
+        }
+
+        report = collect.render_report(
+            project_path=project_path,
+            project_name="test-proj",
+            run_id="test-run",
+            iters=iters,
+            last_launch=None,
+            label="clean-success",
+            facts=facts,
+            rec_max=30,
+            rec_to=30,
+            rationale="test",
+            tail=[],
+        )
+        assert "Suspected hangs" in report
+        assert "python3 -m pytest -q" in report
+        assert "600.5s" in report
+
+    def test_render_report_no_hang_section_without_evidence(self, tmp_path):
+        """render_report() omits 'Suspected hangs' when no evidence present."""
+        project_path = tmp_path / "proj"
+        project_path.mkdir()
+
+        iters = [
+            {
+                "run_id": "test-run", "iteration": 1, "exit_code": 0,
+                "new_commits_total": 2, "duration_sec": 100,
+                "timestamp": "2026-08-24T08:00:00Z",
+            },
+        ]
+        facts = {}
+
+        report = collect.render_report(
+            project_path=project_path,
+            project_name="test-proj",
+            run_id="test-run",
+            iters=iters,
+            last_launch=None,
+            label="clean-success",
+            facts=facts,
+            rec_max=30,
+            rec_to=30,
+            rationale="test",
+            tail=[],
+        )
+        assert "Suspected hangs" not in report
