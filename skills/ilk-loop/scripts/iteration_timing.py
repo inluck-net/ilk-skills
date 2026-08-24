@@ -195,6 +195,47 @@ def analyze_iteration(path: Path) -> dict:
 
     model_remainder_sec = max(0.0, span_sec - tool_sec)
 
+    # ── suspected-hang detection ───────────────────────────────────────────────
+    # A hang is a broad test command that hits the harness ceiling, was
+    # auto-backgrounded, and produced no captured output.  All three
+    # conditions must hold; each is asserted separately in tests so a
+    # future change that satisfies only two does not silently qualify.
+    _HARNESS_CEILING_SEC = 600.0
+    _CEILING_EPSILON = 10.0
+
+    hang_suspected = []
+    for uid, tu in tool_uses.items():
+        tr = tool_results.get(uid)
+        if tr is None:
+            continue
+
+        cmd = tu["command"]
+        duration = (tr["ts"] - tu["ts"]).total_seconds()
+        content = str(tr["content"])
+
+        # Condition 1: broad test command.
+        if not is_broad_test_command(cmd):
+            continue
+
+        # Condition 2: duration near harness ceiling.
+        if duration < (_HARNESS_CEILING_SEC - _CEILING_EPSILON):
+            continue
+
+        # Condition 3: backgrounded with no captured output.
+        if not _BACKGROUND_RE.search(content):
+            continue
+
+        # Verify no captured output — strip the background message and
+        # check that nothing resembling a test summary remains.
+        remaining = _BACKGROUND_RE.sub("", content).strip()
+        if remaining and _SUMMARY_LINE_RE.search(remaining):
+            continue  # has test output → slow, not hung
+
+        hang_suspected.append({
+            "command": cmd,
+            "duration_sec": round(duration, 3),
+        })
+
     return {
         "span_sec": round(span_sec, 3),
         "tool_sec": round(tool_sec, 3),
@@ -204,6 +245,7 @@ def analyze_iteration(path: Path) -> dict:
         "paired": paired,
         "unpaired": unpaired,
         "backgrounded_calls": backgrounded_calls,
+        "hang_suspected": hang_suspected,
     }
 
 
