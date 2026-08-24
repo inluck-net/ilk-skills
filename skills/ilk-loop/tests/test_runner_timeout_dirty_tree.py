@@ -592,6 +592,7 @@ class TestLiveRunnerTimeout:
     preserve_dirty_tree_on_timeout → JSONL record.
     """
 
+    @pytest.mark.timeout(120)  # runner runs with 1-min iteration timeout
     def test_timeout_preserves_dirty_tree_via_real_cli(self, tmp_path: Path) -> None:
         """A real gtimeout kill preserves the dirty tree as a WIP commit.
 
@@ -670,6 +671,7 @@ class TestLiveRunnerTimeout:
             assert record.get("wip_preserved", 0) > 0, \
                 f"JSONL wip_preserved should be > 0, got: {record.get('wip_preserved')}"
 
+    @pytest.mark.timeout(120)  # runner runs with 1-min iteration timeout
     def test_timeout_clean_tree_no_wip(self, tmp_path: Path) -> None:
         """A timeout with a clean tree produces no WIP commit.
 

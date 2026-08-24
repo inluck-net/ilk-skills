@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "hanging_test"
-PYTEST_INI = Path(__file__).resolve().parents[2] / "pytest.ini"
+PYTEST_INI = Path(__file__).resolve().parents[3] / "pytest.ini"
 
 
 # ── AC-1: pytest.ini addopts carries the bound ───────────────────────────────
@@ -44,6 +44,7 @@ def test_pytest_ini_addopts_has_timeout_and_signal_method():
 
 # ── AC-2: a hanging test is killed by config, not by CLI flags ───────────────
 
+@pytest.mark.timeout(120)  # subprocess sleeps 90s; killed at 60s by config
 def test_hanging_fixture_killed_by_config_timeout():
     """A bare pytest (no --timeout on CLI) on a sleeping test must timeout.
 
