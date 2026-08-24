@@ -603,6 +603,100 @@ def lint_wholesuite_gate_baseline(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── Unbounded broad-suite gate lint ────────────────────────────────────────
+#
+# A sub-plan that declares a broad-suite ``local_check`` (bare pytest/vitest/
+# npm test with no file argument) in a project that has neither a ``ship.suite``
+# declaration nor a timeout bound in its pytest config means every invocation
+# is unbounded.  The worker will fall through to a bare ``pytest -q`` that no
+# timeout bounds — the exact defect measured in MASTER-2026-08-24.
+#
+# This lint catches the gap at *plan* time, not at iteration 1 of a 30-iteration
+# run.
+
+_SHIP_CONFIG_SCRIPT = (
+    Path(__file__).resolve().parent.parent.parent
+    / "ilk-ship" / "scripts" / "ship_config.py"
+)
+
+
+def _project_has_ship_suite(project_root: Path) -> bool:
+    """True if the project's .ilk-launch.json declares ship.suite."""
+    try:
+        result = subprocess.run(
+            [sys.executable, str(_SHIP_CONFIG_SCRIPT),
+             "--validate", "--project", str(project_root)],
+            capture_output=True, text=True, timeout=15,
+        )
+        return result.returncode == 0  # 0 = ShipConfig (configured)
+    except (subprocess.TimeoutExpired, OSError):
+        return False  # can't determine → treat as unbounded
+
+
+def _project_has_pytest_timeout(project_root: Path) -> bool:
+    """True if pytest config carries --timeout= in addopts."""
+    # Check pytest.ini
+    pytest_ini = project_root / "pytest.ini"
+    if pytest_ini.exists():
+        for line in pytest_ini.read_text(encoding="utf-8-sig").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("addopts") and "--timeout" in stripped:
+                return True
+    # Check setup.cfg [tool:pytest]
+    setup_cfg = project_root / "setup.cfg"
+    if setup_cfg.exists():
+        in_pytest = False
+        for line in setup_cfg.read_text(encoding="utf-8-sig").splitlines():
+            if line.strip().startswith("[tool:pytest]"):
+                in_pytest = True
+            elif line.strip().startswith("["):
+                in_pytest = False
+            elif in_pytest and line.strip().startswith("addopts") and "--timeout" in line:
+                return True
+    # Check pyproject.toml [tool.pytest.ini_options]
+    pyproject = project_root / "pyproject.toml"
+    if pyproject.exists():
+        text = pyproject.read_text(encoding="utf-8-sig")
+        # Simple check: look for timeout in the pytest section
+        in_pytest = False
+        for line in text.splitlines():
+            if line.strip() == "[tool.pytest.ini_options]":
+                in_pytest = True
+            elif line.strip().startswith("["):
+                in_pytest = False
+            elif in_pytest and "timeout" in line.lower():
+                return True
+    return False
+
+
+def lint_unbounded_broad_suite(text: str, slug: str) -> list[str]:
+    """Flag a broad-suite gate in a project with no timeout bound."""
+    findings: list[str] = []
+    commands = _extract_all_local_checks_commands(text)
+    has_broad = any(_is_whole_suite_command(cmd) for cmd in commands)
+    if not has_broad:
+        return findings
+
+    project_root = _resolve_project_root()
+    has_suite = _project_has_ship_suite(project_root)
+    has_timeout = _project_has_pytest_timeout(project_root)
+
+    if has_suite or has_timeout:
+        return findings  # at least one bound present — project is bounded
+
+    suite_path = project_root / ".ilk-launch.json"
+    ini_path = project_root / "pytest.ini"
+    findings.append(
+        f"{slug}: broad-suite local_check declared but project is unbounded — "
+        f"no ship.suite declaration (checked {suite_path}) and "
+        f"no --timeout in pytest config (checked {ini_path}, setup.cfg, pyproject.toml). "
+        f"Add --timeout to pytest.ini addopts or declare ship.suite in "
+        f".ilk-launch.json. Without a bound, a bare pytest invocation can "
+        f"burn the full harness ceiling."
+    )
+    return findings
+
+
 # ── POSIX-only test assertion guard ──────────────────────────────────────────
 #
 # A ``.sh`` test (or a ``local_check`` shell command) that asserts a POSIX file
@@ -2117,6 +2211,7 @@ ALL_CHECKS = (
     lint_frontmatter_path_created_later,
     lint_e2e_check_without_env_prereq,
     lint_wholesuite_gate_baseline,
+    lint_unbounded_broad_suite,
     lint_posix_only_test_assertion,
     lint_network_tool_mock_only_gate,
     lint_vertical_slice_ac,
