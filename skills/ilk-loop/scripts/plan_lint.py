@@ -41,6 +41,13 @@ from pathlib import Path
 
 from run_local_checks import parse_local_checks_block
 
+# Harness ceiling: the Bash tool's BASH_MAX_TIMEOUT_MS auto-backgrounds at 600s.
+# A foreground broad-suite gate that exceeds this is auto-backgrounded and
+# returns zero bytes — the measured waste this lint exists to prevent.
+# Source: Claude Code harness (BASH_MAX_TIMEOUT_MS default); banked at
+# gate_cost.py commit 1364cf1.
+HARNESS_CEILING_SECONDS = 600
+
 # Working directory for git operations.  Overridable via --git-cwd for tests.
 _GIT_CWD: Path | None = None
 
@@ -599,6 +606,80 @@ def lint_wholesuite_gate_baseline(text: str, slug: str) -> list[str]:
             f"(e.g. POSIX-only perms check on Windows), every step will "
             f"false-block. Add a baseline-green note or scope the gate to "
             f"the changed module."
+        )
+    return findings
+
+
+# ── Foreground whole-suite gate beyond harness ceiling ──────────────────────
+#
+# A sub-plan that declares a whole-suite ``local_check`` (bare pytest/vitest/
+# npm test with no file argument) whose declared ``timeout:`` is at or beyond
+# the harness ceiling (600s) has authored a gate that will be auto-backgrounded
+# and return zero bytes — the measured waste from MASTER-2026-08-25.
+#
+# The distinction from a driver ``local_check`` matters: a driver gate runs in
+# ``run_local_checks.py``'s own subprocess with the declared ``timeout:``,
+# OUTSIDE the harness, so the 600s ceiling never applies.  But the same
+# command will also be typed ad-hoc by the worker, where the ceiling DOES
+# apply.  The lint is therefore not "whole-suite gates are bad"; it is "a
+# whole-suite gate whose declared timeout exceeds the harness ceiling signals
+# that the same command will be run in the foreground, where it cannot succeed".
+#
+# Does NOT fire on scoped gates (single file, node id, -k selector).
+# Does NOT duplicate ``lint_wholesuite_gate_baseline`` (that checks for a
+# baseline-green note; this checks for a timeout beyond the ceiling).
+
+
+def _extract_command_timeout_pairs(text: str) -> list[tuple[str, int]]:
+    """Return ``(command, timeout)`` pairs from all local_checks blocks.
+
+    Covers both frontmatter and per-step yaml blocks.  Pairs with no
+    ``timeout:`` line are skipped (absent ≠ zero).
+    """
+    pairs: list[tuple[str, int]] = []
+    blocks: list[str] = []
+
+    # Frontmatter
+    m = re.match(r"^---\n.*?\n---\n", text, re.S)
+    if m:
+        fm = text[m.start():m.end()]
+        lc = re.search(r"^local_checks:", fm, re.MULTILINE)
+        if lc:
+            blocks.append(fm[lc.start():])
+
+    # Per-step
+    body = _strip_frontmatter(text)
+    for block_match in _STEP_LOCAL_CHECKS_BLOCK_RE.finditer(body):
+        blocks.append(block_match.group(0))
+
+    for block in blocks:
+        # Each ``- command: ...`` / ``timeout: ...`` pair.
+        cmds = re.findall(r"command:\s*(.+)", block)
+        timeouts = re.findall(r"timeout:\s*(\d+)", block)
+        for cmd, to in zip(cmds, timeouts):
+            pairs.append((cmd.strip(), int(to)))
+    return pairs
+
+
+def lint_foreground_whole_suite_gate(text: str, slug: str) -> list[str]:
+    """Flag a whole-suite gate whose declared timeout is at or beyond the ceiling."""
+    findings: list[str] = []
+    for cmd, timeout in _extract_command_timeout_pairs(text):
+        if not _is_whole_suite_command(cmd):
+            continue
+        if timeout < HARNESS_CEILING_SECONDS:
+            continue
+        findings.append(
+            f"{slug}: local_check '{cmd[:80]}' runs a whole suite with "
+            f"timeout {timeout}s, which is at or beyond the harness ceiling "
+            f"({HARNESS_CEILING_SECONDS}s). In the foreground, the harness "
+            f"auto-backgrounds at {HARNESS_CEILING_SECONDS}s and returns zero "
+            f"bytes — the gate costs {timeout}s and yields nothing. "
+            f"A driver-declared local_check runs outside the harness (so the "
+            f"ceiling does not apply there), but the same command will also "
+            f"be typed ad-hoc by the worker where the ceiling DOES apply. "
+            f"Either scope the gate to changed modules, or background the "
+            f"run and poll with wait_for_background_output.sh."
         )
     return findings
 
@@ -2211,6 +2292,7 @@ ALL_CHECKS = (
     lint_frontmatter_path_created_later,
     lint_e2e_check_without_env_prereq,
     lint_wholesuite_gate_baseline,
+    lint_foreground_whole_suite_gate,
     lint_unbounded_broad_suite,
     lint_posix_only_test_assertion,
     lint_network_tool_mock_only_gate,
