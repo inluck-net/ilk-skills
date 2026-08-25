@@ -1325,12 +1325,11 @@ invoke_batch_gate() {
 
   echo "[batch-gate] Running batch-end gate..."
   local gate_output
+  local gate_exit=0
   gate_output=$(python3 "$batch_gate_script" \
     --project "$project_path" \
     --runtime-dir "$runtime_dir" \
-    --run 2>&1) || true
-
-  local gate_exit=$?
+    --run 2>&1) || gate_exit=$?
   if [[ $gate_exit -ne 0 ]]; then
     echo "[batch-gate] Gate exited with code $gate_exit — output:"
     echo "$gate_output"
