@@ -195,15 +195,20 @@ def analyze_iteration(path: Path) -> dict:
 
     model_remainder_sec = max(0.0, span_sec - tool_sec)
 
-    # ── suspected-hang detection ───────────────────────────────────────────────
-    # A hang is a broad test command that hits the harness ceiling, was
+    # ── ceiling-hit-with-no-output detection ───────────────────────────────────
+    # A ceiling hit is a broad test command that hits the harness ceiling, was
     # auto-backgrounded, and produced no captured output.  All three
     # conditions must hold; each is asserted separately in tests so a
     # future change that satisfies only two does not silently qualify.
+    #
+    # Previously named "hang_suspected" but measurement (2026-08-25) showed
+    # these are not hangs — the supposed-hang test passes in 2.52s in
+    # isolation; the suite simply exceeds the ceiling.  The detection
+    # condition is unchanged; only the name and reported meaning differ.
     _HARNESS_CEILING_SEC = 600.0
     _CEILING_EPSILON = 10.0
 
-    hang_suspected = []
+    ceiling_hit_no_output = []
     for uid, tu in tool_uses.items():
         tr = tool_results.get(uid)
         if tr is None:
@@ -229,9 +234,9 @@ def analyze_iteration(path: Path) -> dict:
         # check that nothing resembling a test summary remains.
         remaining = _BACKGROUND_RE.sub("", content).strip()
         if remaining and _SUMMARY_LINE_RE.search(remaining):
-            continue  # has test output → slow, not hung
+            continue  # has test output → slow, not a ceiling hit
 
-        hang_suspected.append({
+        ceiling_hit_no_output.append({
             "command": cmd,
             "duration_sec": round(duration, 3),
         })
@@ -245,7 +250,7 @@ def analyze_iteration(path: Path) -> dict:
         "paired": paired,
         "unpaired": unpaired,
         "backgrounded_calls": backgrounded_calls,
-        "hang_suspected": hang_suspected,
+        "ceiling_hit_no_output": ceiling_hit_no_output,
     }
 
 
@@ -326,6 +331,80 @@ def find_repeated_commands(run_dir: Path) -> list:
                 "iteration_count": len(info["iterations"]),
                 "total_wallclock_sec": round(info["total_sec"], 3),
                 "iterations": sorted(info["iterations"]),
+            })
+    repeated.sort(key=lambda r: r["total_wallclock_sec"], reverse=True)
+    return repeated
+
+
+def find_within_iteration_repeats(path: Path) -> list:
+    """Find normalised test commands executed ≥2 times within a single iteration.
+
+    *path* must be a ``.jsonl`` file (not a directory).  Returns a list of
+    dicts, each with keys: ``normalised``, ``count``,
+    ``total_wallclock_sec``.  Only commands that appear ≥2 times in the
+    same iteration file are reported.
+
+    Distinct from :func:`find_repeated_commands`, which reports commands
+    appearing in ≥2 *different* iterations (across-iteration repeats).
+    """
+    records = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+
+    # Pair tool_use → tool_result.
+    tool_uses: dict[str, dict] = {}
+    tool_results: dict[str, dict] = {}
+
+    for rec in records:
+        rec_type = rec.get("type")
+        ts_str = rec.get("timestamp")
+        if not ts_str:
+            continue
+        ts = _parse_ts(ts_str)
+
+        if rec_type == "assistant":
+            for block in rec.get("message", {}).get("content", []):
+                if block.get("type") == "tool_use":
+                    uid = block["id"]
+                    inp = block.get("input", {})
+                    tool_uses[uid] = {
+                        "command": inp.get("command", ""),
+                        "ts": ts,
+                    }
+        elif rec_type == "user":
+            for block in rec.get("message", {}).get("content", []):
+                if block.get("type") == "tool_result":
+                    uid = block.get("tool_use_id")
+                    if uid:
+                        tool_results[uid] = {"ts": ts}
+
+    # Group test commands by normalised form.
+    seen: dict[str, dict] = {}
+    for uid, tu in tool_uses.items():
+        tr = tool_results.get(uid)
+        if tr is None:
+            continue
+        cmd = tu["command"]
+        if not is_test_command(cmd):
+            continue
+        duration = (tr["ts"] - tu["ts"]).total_seconds()
+        norm = normalise_command(cmd)
+        if norm not in seen:
+            seen[norm] = {"count": 0, "total_sec": 0.0}
+        seen[norm]["count"] += 1
+        seen[norm]["total_sec"] += duration
+
+    # Filter to repeated (≥2 occurrences) and sort by wall-clock descending.
+    repeated = []
+    for norm, info in seen.items():
+        if info["count"] >= 2:
+            repeated.append({
+                "normalised": norm,
+                "count": info["count"],
+                "total_wallclock_sec": round(info["total_sec"], 3),
             })
     repeated.sort(key=lambda r: r["total_wallclock_sec"], reverse=True)
     return repeated
