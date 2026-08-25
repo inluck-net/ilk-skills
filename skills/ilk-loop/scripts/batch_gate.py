@@ -176,13 +176,20 @@ def _gate_lock_path(runtime_dir: Path) -> Path:
 
 
 def _acquire_gate_lock(runtime_dir: Path) -> bool:
-    """Try to acquire the re-entry guard.  Returns True if acquired.
+    """Try to acquire the in-flight lock.  Returns True if acquired.
 
-    The marker now carries pid and started_at so the append-freeze check
-    can verify the gate process is still alive (AC-5: stale sentinel).
+    The marker carries pid and started_at so the append-freeze check can
+    verify the gate process is still alive (AC-5: stale sentinel).
+
+    Refuses only while a gate process is **actually alive**.  Mere file
+    presence used to be enough, which turned a single completed run into a
+    permanent tombstone: the marker was never released, so every later gate
+    for that project answered "already ran" forever.  Liveness here is the
+    same probe ``read_gate_running_state`` already applies for the freeze —
+    the two readers of this marker must not disagree about what it means.
     """
     p = _gate_lock_path(runtime_dir)
-    if p.is_file():
+    if read_gate_running_state(runtime_dir).running:
         return False
     runtime_dir.mkdir(parents=True, exist_ok=True)
     marker = {"pid": os.getpid(), "started_at": _now_iso()}
@@ -359,30 +366,46 @@ def run_batch_gate(
     Returns the record written, or None if re-entry was detected (the
     gate already ran).  The runner calls this at the ALL-SHIPPED point.
 
-    AC-1: runs exactly once (guarded by a marker file).
+    AC-1: runs exactly once per batch — guarded by the persisted record,
+          which is keyed on the HEAD the suite ran against.
     AC-5: missing/unrunnable/failing suite → fail, never pass.
     """
+    head_sha = _git_head_sha(project_path)
+
     # ── re-entry guard (AC-1) ────────────────────────────────────────────
+    # The *record* is the guard: this batch's HEAD already has a verdict, so
+    # re-running would only re-derive it.  The running marker is a separate
+    # thing — an in-flight lock, released below.  Conflating the two is what
+    # made one run disable the gate permanently.
+    existing = read_record(runtime_dir)
+    if existing is not None and existing.head_sha == head_sha:
+        return None  # already ran for this HEAD
+
     if not _acquire_gate_lock(runtime_dir):
-        return None  # already ran
+        return None  # a gate process is running right now
 
     try:
-        return _run_gate_inner(
+        rec = _run_gate_inner(
             project_path, runtime_dir,
             _wait_helper=_wait_helper,
             _poll_timeout=_poll_timeout,
         )
-    except Exception as exc:
+    except Exception:
         # AC-6: gate code error → record error, never hang
         rec = BatchGateRecord(
             verdict="error",
-            head_sha=_git_head_sha(project_path),
+            head_sha=head_sha,
             invocation="<gate-code-error>",
             timestamp=_now_iso(),
         )
-        write_record(rec, runtime_dir)
-        return rec
-    # Note: lock persists — re-entry guard is permanent per batch.
+    finally:
+        _release_gate_lock(runtime_dir)
+
+    # AC-3: persist on EVERY path.  A verdict that is computed and returned
+    # but never written is a verdict nobody can read — the gate reported
+    # `fail` to stdout on 2026-08-25 while disk kept a 3-hour-old `pass`.
+    write_record(rec, runtime_dir)
+    return rec
 
 
 def _run_gate_inner(
@@ -428,8 +451,17 @@ def _run_gate_inner(
     wait = _wait_helper or (_skill_root() / "ilk-loop" / "scripts" /
                             "wait_for_background_output.sh")
 
+    # The helper polls for an "[exited with code N]" marker, which the
+    # harness appends when *it* auto-backgrounds a Bash call.  Nothing
+    # appends it to a Popen'd process's stdout, so without this wrapper the
+    # poll can never succeed: it burns its full bound and returns 125, and
+    # the verdict is `fail` no matter what the suite did.  Measured on run
+    # 20260825-180144 — 0 occurrences of the marker in 3063 lines of output,
+    # 263s spent waiting after the suite had already finished.
+    wrapped_cmd = f"{full_cmd}\nprintf '[exited with code %s]\\n' \"$?\"\n"
+
     proc = subprocess.Popen(
-        full_cmd,
+        wrapped_cmd,
         shell=True,
         stdout=open(output_file, "w"),  # noqa: SIM115
         stderr=subprocess.STDOUT,
@@ -441,14 +473,15 @@ def _run_gate_inner(
         result = subprocess.run(
             ["bash", str(wait), str(output_file),
              "--timeout", str(_poll_timeout)],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8",
             timeout=_poll_timeout + 30,
         )
         exit_code = result.returncode
     except subprocess.TimeoutExpired:
         exit_code = 125  # wait_for_background_output's inconclusive code
     finally:
-        proc.kill()  # ensure no zombie
+        proc.kill()   # no-op once the marker was written; bounds the timeout path
+        proc.wait()   # reap — the 2026-08-25 run left a <defunct> child
 
     if exit_code == 0:
         verdict = "pass"
@@ -498,8 +531,21 @@ def main() -> None:
     rec = run_batch_gate(project, runtime, _poll_timeout=args.poll_timeout)
     if rec is None:
         print("[batch-gate] Re-entry detected — gate already ran. Skipping.")
-    else:
-        print(f"[batch-gate] verdict={rec.verdict} head_sha={rec.head_sha[:12]}")
+        return
+
+    print(f"[batch-gate] verdict={rec.verdict} head_sha={rec.head_sha[:12]}")
+
+    # The runner captures $? (run_ilk_loop_claude.sh:1333).  Exiting 0 on a
+    # failing verdict is why a 32-failure suite printed under the runner's
+    # "Gate completed." banner on 2026-08-25.
+    #
+    # `not_configured` stays 0 deliberately: SP6 created that verdict so
+    # "no suite" would not read as "suite failed", and one exit code for
+    # both undoes it.  It is still printed, and plan_lint flags the batch at
+    # plan time.  Wrong if batch-end should hard-stop on zero coverage —
+    # that wants a third exit code, not this one folded into 1.
+    if rec.verdict in ("fail", "error"):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
