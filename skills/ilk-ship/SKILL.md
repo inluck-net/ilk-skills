@@ -78,12 +78,12 @@ is entered.
 
 **Tier selection** (`gate_scope.py:select_tier`):
 
-| Tier | Trigger | Gate scope |
+| Tier | Trigger | Attribution scope |
 |---|---|---|
-| 0 | docs/changelog only, no code (.py/.sh/.ps1) | content assertions, no suite |
+| 0 | docs/changelog only, no code (.py/.sh/.ps1) | content assertions only |
 | 1 | changed symbol has zero resolved consumers | that module's own tests |
 | 2 | N resolved consumers | tests covering those consumers, one hop out |
-| 3 | contract-governed file OR a shared path/schema OR oracle failed | whole suite |
+| 3 | contract-governed file OR a shared path/schema OR oracle failed | widest attribution scope (collection-floor + baseline-diff) |
 
 The three tier-3 triggers are checked **first and against the whole diff**: one
 matching file among many forces the widest gate for the entire batch. There is no
