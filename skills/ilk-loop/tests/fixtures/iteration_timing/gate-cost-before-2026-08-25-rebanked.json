@@ -1,0 +1,149 @@
+{
+  "measured_at": "2026-08-25",
+  "supersedes": "gate-cost-before-2026-08-25.json (same date, superseded classifier)",
+  "head": "4293e82",
+  "host": "chad-mbp",
+  "cut": "2026-08-25T12:00:00+08:00",
+  "tool": "skills/ilk-loop/scripts/gate_cost.py",
+  "note": "RE-BANKED BEFORE. The first banking used a classifier that could not see a whole-suite run spelled as a runtime-computed FILE LIST. Observed on gh-resolve run 20260825-145122 iter-02: `pytest -q $(ls tests/test_*.py | awk 'NR%2==0' ...)` ran 63 of 127 test files in 528.2s and its NR%2==1 sibling ran the other 64 in 334.6s -- the entire suite in two halves, each sized to fit under the 600s ceiling -- and BOTH classified as targeted, so the iteration recorded broad_test_sec = 0.0 while spending 866.3s in tests. Isolated on an identical 600-iteration corpus, the corrected classifier reclassifies 21 additional commands as broad (639 -> 660 broad calls, 77041.2 -> 78006.7 broad seconds, 252 -> 256 gate-bearing iterations); ceiling hits are unchanged at 53 because those were bare `pytest -q`, already caught. This window is bounded by --before the cut so post-fix data cannot contaminate it -- the mirror flag was added for exactly this re-derivation. AFTER must be measured with THIS classifier or the comparison is definitional rather than real. Headline is per-project ceiling hits; broad_s_per_gate_iter is BLENDED across projects with structurally different costs and is context only.",
+  "windows": {
+    "prefix_all": {
+      "measured_at": "2026-08-25 15:31",
+      "since": null,
+      "after": null,
+      "before": "2026-08-25T12:00:00+08:00",
+      "excluded_no_timestamp": 8,
+      "ceiling_s": 590.0,
+      "total": {
+        "iters": 585,
+        "gate_iters": 254,
+        "broad_s": 77143.9,
+        "ceiling_hits": 53,
+        "repeats": 203,
+        "broad_calls": 657,
+        "broad_s_per_gate_iter": 303.7
+      },
+      "per_project": {
+        "users-chad-gh-resolve-canary-clone-worktrees-resolver-1": {
+          "iters": 1,
+          "gate_iters": 0,
+          "broad_s": 0.0,
+          "ceiling_hits": 0,
+          "repeats": 0,
+          "broad_calls": 0,
+          "runs": 1,
+          "broad_s_per_gate_iter": null
+        },
+        "users-chad-projects-github-inluck-net-gh-resolve": {
+          "iters": 334,
+          "gate_iters": 217,
+          "broad_s": 73744.9,
+          "ceiling_hits": 53,
+          "repeats": 193,
+          "broad_calls": 574,
+          "runs": 225,
+          "broad_s_per_gate_iter": 339.8
+        },
+        "users-chad-projects-github-inluck-net-gh-triage": {
+          "iters": 6,
+          "gate_iters": 0,
+          "broad_s": 0.0,
+          "ceiling_hits": 0,
+          "repeats": 0,
+          "broad_calls": 0,
+          "runs": 6,
+          "broad_s_per_gate_iter": null
+        },
+        "users-chad-projects-github-inluck-net-ilk-pocket": {
+          "iters": 24,
+          "gate_iters": 0,
+          "broad_s": 0.0,
+          "ceiling_hits": 0,
+          "repeats": 0,
+          "broad_calls": 0,
+          "runs": 13,
+          "broad_s_per_gate_iter": null
+        },
+        "users-chad-projects-github-inluck-net-ilk-skills": {
+          "iters": 111,
+          "gate_iters": 37,
+          "broad_s": 3399.0,
+          "ceiling_hits": 0,
+          "repeats": 10,
+          "broad_calls": 83,
+          "runs": 39,
+          "broad_s_per_gate_iter": 91.9
+        },
+        "users-chad-projects-github-inluck-net-todo-triage": {
+          "iters": 9,
+          "gate_iters": 0,
+          "broad_s": 0.0,
+          "ceiling_hits": 0,
+          "repeats": 0,
+          "broad_calls": 0,
+          "runs": 3,
+          "broad_s_per_gate_iter": null
+        },
+        "users-chad-projects-keyreply-kira-cloudflare": {
+          "iters": 100,
+          "gate_iters": 0,
+          "broad_s": 0.0,
+          "ceiling_hits": 0,
+          "repeats": 0,
+          "broad_calls": 0,
+          "runs": 75,
+          "broad_s_per_gate_iter": null
+        }
+      }
+    },
+    "prefix_since_20260820": {
+      "measured_at": "2026-08-25 15:31",
+      "since": "20260820",
+      "after": null,
+      "before": "2026-08-25T12:00:00+08:00",
+      "excluded_no_timestamp": 3,
+      "ceiling_s": 590.0,
+      "total": {
+        "iters": 66,
+        "gate_iters": 30,
+        "broad_s": 18360.5,
+        "ceiling_hits": 19,
+        "repeats": 50,
+        "broad_calls": 118,
+        "broad_s_per_gate_iter": 612.0
+      },
+      "per_project": {
+        "users-chad-projects-github-inluck-net-gh-resolve": {
+          "iters": 38,
+          "gate_iters": 23,
+          "broad_s": 17723.4,
+          "ceiling_hits": 19,
+          "repeats": 50,
+          "broad_calls": 99,
+          "runs": 8,
+          "broad_s_per_gate_iter": 770.6
+        },
+        "users-chad-projects-github-inluck-net-ilk-skills": {
+          "iters": 26,
+          "gate_iters": 7,
+          "broad_s": 637.1,
+          "ceiling_hits": 0,
+          "repeats": 0,
+          "broad_calls": 19,
+          "runs": 4,
+          "broad_s_per_gate_iter": 91.0
+        },
+        "users-chad-projects-keyreply-kira-cloudflare": {
+          "iters": 2,
+          "gate_iters": 0,
+          "broad_s": 0.0,
+          "ceiling_hits": 0,
+          "repeats": 0,
+          "broad_calls": 0,
+          "runs": 1,
+          "broad_s_per_gate_iter": null
+        }
+      }
+    }
+  }
+}

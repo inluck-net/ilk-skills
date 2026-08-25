@@ -217,3 +217,71 @@ class TestHermetic:
             for i, line in enumerate(fixture.read_text(encoding="utf-8").splitlines(), 1):
                 if line.strip():
                     json.loads(line), f"{fixture}:{i} is not valid JSON"
+
+
+# ── suite-in-disguise (2026-08-25) ───────────────────────────────────────────
+# A whole-suite run can be spelled as a file list. Observed on gh-resolve run
+# 20260825-145122 iter-02: `pytest -q $(ls tests/test_*.py | awk 'NR%2==0' ...)`
+# ran 63 of 127 test files in 528.2s and its sibling ran the other 64 in 334.6s
+# — the ENTIRE suite in two halves, each sized to fit under the 600s ceiling.
+# Both classified as *targeted*, because the substitution supplies file
+# arguments, so the run recorded broad_test_sec = 0.0.
+
+def test_command_substitution_is_broad_not_targeted() -> None:
+    """A runtime-computed file set cannot be called targeted — we can't see it."""
+    from iteration_timing import is_broad_test_command
+    cmd = ("python3 -m pytest -q $(ls tests/test_*.py | awk 'NR%2==0' | tr '\\n' ' ') "
+           "--timeout=60 --timeout-method=signal")
+    from iteration_timing import is_broad_test_command
+    assert is_broad_test_command(cmd) is True
+
+
+def test_backtick_substitution_is_broad() -> None:
+    from iteration_timing import is_broad_test_command
+    assert is_broad_test_command(
+        "pytest -q `ls tests/test_*.py`") is True
+
+
+def test_xargs_into_pytest_is_broad() -> None:
+    from iteration_timing import is_broad_test_command
+    assert is_broad_test_command(
+        "ls tests/test_*.py | xargs python3 -m pytest -q") is True
+
+
+def test_glob_file_argument_is_broad() -> None:
+    """An unexpanded glob names an unknown number of files."""
+    from iteration_timing import is_broad_test_command
+    assert is_broad_test_command(
+        "python3 -m pytest tests/test_*.py -q") is True
+
+
+# The no-false-positive direction: genuinely targeted runs must stay targeted,
+# or the fix would reclassify the whole corpus and inflate the BEFORE number.
+
+def test_named_file_stays_targeted() -> None:
+    from iteration_timing import is_broad_test_command
+    assert is_broad_test_command(
+        "python3 -m pytest tests/test_foo.py -q") is False
+
+
+def test_several_named_files_stay_targeted() -> None:
+    from iteration_timing import is_broad_test_command
+    assert is_broad_test_command(
+        "pytest tests/test_foo.py tests/test_bar.py -q") is False
+
+
+def test_node_id_stays_targeted() -> None:
+    from iteration_timing import is_broad_test_command
+    assert is_broad_test_command(
+        "pytest tests/test_foo.py::TestBar::test_baz -q") is False
+
+
+def test_k_selector_stays_targeted() -> None:
+    from iteration_timing import is_broad_test_command
+    assert is_broad_test_command(
+        "pytest -q -k 'archive or bound'") is False
+
+
+def test_bare_suite_still_broad() -> None:
+    from iteration_timing import is_broad_test_command
+    assert is_broad_test_command("python3 -m pytest -q") is True

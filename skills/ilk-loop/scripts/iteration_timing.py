@@ -44,14 +44,41 @@ _TARGETED_PATTERNS = [
 ]
 
 
+# A whole-suite run can be spelled as a FILE LIST, which the targeted patterns
+# below then match. Observed 2026-08-25 on gh-resolve run 20260825-145122
+# iter-02: `pytest -q $(ls tests/test_*.py | awk 'NR%2==0' | tr '\n' ' ')` ran
+# 63 of 127 test files in 528.2s, and its NR%2==1 sibling ran the other 64 in
+# 334.6s -- the entire suite in two halves, each sized to fit under the 600s
+# ceiling. Both classified *targeted*, so that iteration recorded
+# broad_test_sec = 0.0 while spending 866.3s in tests.
+#
+# The rule: if the file set is computed at RUN time, we cannot see what it
+# expands to, so we must not call it targeted. Erring toward "broad" is the
+# safe direction -- under-counting broad runs is what hid the workaround.
+_SUITE_IN_DISGUISE_PATTERNS = [
+    re.compile(r"\$\("),                      # $(ls ...), $(find ...), $(cat ...)
+    re.compile(r"`[^`]+`"),                    # backtick substitution
+    re.compile(r"\bxargs\b"),                  # ... | xargs pytest
+    re.compile(r"tests?[\\/][^\s]*\*"),         # unexpanded glob: tests/test_*.py
+]
+
+
 def is_broad_test_command(command: str) -> bool:
     """Return True if *command* is a broad (full-suite) test invocation.
 
     A command is *targeted* if it names a path, ``::`` node id, ``-k``
     selector, or ``--lf``/``--last-failed``; otherwise *broad*.
+
+    Exception, checked first: a command whose file set is computed at run time
+    (command substitution, ``xargs``, an unexpanded glob) is **broad**, because
+    its expansion is not visible here and may be the whole suite.  See
+    ``_SUITE_IN_DISGUISE_PATTERNS``.
     """
     if not _TEST_CMD_RE.search(command):
         return False  # not a test command at all
+    for pat in _SUITE_IN_DISGUISE_PATTERNS:
+        if pat.search(command):
+            return True
     for pat in _TARGETED_PATTERNS:
         if pat.search(command):
             return False

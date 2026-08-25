@@ -129,6 +129,10 @@ def main() -> int:
     ap.add_argument("--after", help="only ITERATIONS starting after this ISO8601 "
                                     "timestamp (precise; handles a run that "
                                     "straddles the change being measured)")
+    ap.add_argument("--before", help="only ITERATIONS starting at or before this "
+                                     "ISO8601 timestamp. The mirror of --after: "
+                                     "needed to re-derive a BEFORE number once "
+                                     "post-change data has entered the corpus.")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
 
@@ -138,6 +142,13 @@ def main() -> int:
             after_ts = it._parse_ts(a.after)
         except Exception:
             raise SystemExit(f"gate_cost: --after {a.after!r} is not an ISO8601 timestamp")
+
+    before_ts = None
+    if a.before:
+        try:
+            before_ts = it._parse_ts(a.before)
+        except Exception:
+            raise SystemExit(f"gate_cost: --before {a.before!r} is not an ISO8601 timestamp")
 
     skipped_no_ts = 0
     per_project: dict[str, dict] = {}
@@ -150,14 +161,16 @@ def main() -> int:
                                               broad_calls=0, runs=0))
         p["runs"] += 1
         for f in sorted(run.glob("iter-*.log.jsonl")):
-            if after_ts is not None:
+            if after_ts is not None or before_ts is not None:
                 start = _iter_start_ts(f)
                 if start is None:
                     # Undatable iteration: EXCLUDE and count it.  Silently
                     # including it would let pre-cut data into an after-window.
                     skipped_no_ts += 1
                     continue
-                if start <= after_ts:
+                if after_ts is not None and start <= after_ts:
+                    continue
+                if before_ts is not None and start > before_ts:
                     continue
             p["iters"] += 1
             tot["iters"] += 1
@@ -192,6 +205,7 @@ def main() -> int:
         "measured_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "since": a.since,
         "after": a.after,
+        "before": a.before,
         "excluded_no_timestamp": skipped_no_ts,
         "ceiling_s": CEILING_S,
         "total": _fmt(tot),
@@ -204,7 +218,8 @@ def main() -> int:
         return 0
 
     t = out["total"]
-    window = (f"iterations starting after {a.after}" if a.after
+    window = (f"iterations starting at or before {a.before}" if a.before and not a.after
+              else f"iterations starting after {a.after}" if a.after
               else f"runs since {a.since}" if a.since else "all runs")
     print(f"measured {t['iters']} iterations ({window})")
     if not t["iters"]:
