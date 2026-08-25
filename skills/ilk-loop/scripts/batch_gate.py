@@ -1,8 +1,12 @@
-"""batch_gate — batch-end gate verdict persistence.
+"""batch_gate — batch-end gate verdict persistence and append freeze.
 
 Persists the result of running the project's declared test suite once at
-batch end. The runner calls this module; it does not own the suite
+batch end.  The runner calls this module; it does not own the suite
 invocation or the background/poll lifecycle.
+
+Also enforces the append-freeze rule: once the batch gate starts running,
+no new sub-plan may be appended to that batch (the verdict would not
+cover it).  Appends during the freeze are deferred to the next batch.
 
 Record format (JSON):
 {
@@ -12,6 +16,12 @@ Record format (JSON):
   "timestamp":  "<ISO-8601>"
 }
 
+Running-marker format (JSON):
+{
+  "pid":        <int>,
+  "started_at": "<ISO-8601>"
+}
+
 Contract governed by detached-component-contracts.md — this module is a
 new *writer* of runtime state.  See the "Adding a new reader or writer"
 checklist there.
@@ -19,6 +29,8 @@ checklist there.
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
 import time
 from dataclasses import dataclass
@@ -96,12 +108,17 @@ def _gate_lock_path(runtime_dir: Path) -> Path:
 
 
 def _acquire_gate_lock(runtime_dir: Path) -> bool:
-    """Try to acquire the re-entry guard.  Returns True if acquired."""
+    """Try to acquire the re-entry guard.  Returns True if acquired.
+
+    The marker now carries pid and started_at so the append-freeze check
+    can verify the gate process is still alive (AC-5: stale sentinel).
+    """
     p = _gate_lock_path(runtime_dir)
     if p.is_file():
         return False
     runtime_dir.mkdir(parents=True, exist_ok=True)
-    p.write_text(str(time.time()), encoding="utf-8")
+    marker = {"pid": os.getpid(), "started_at": _now_iso()}
+    p.write_text(json.dumps(marker), encoding="utf-8")
     return True
 
 
@@ -109,6 +126,109 @@ def _release_gate_lock(runtime_dir: Path) -> None:
     """Release the re-entry guard.  Idempotent."""
     p = _gate_lock_path(runtime_dir)
     p.unlink(missing_ok=True)
+
+
+# ── append-freeze check ─────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class GateRunningState:
+    """Whether the batch gate is currently running."""
+    running: bool
+    pid: Optional[int] = None
+    started_at: Optional[str] = None
+
+
+def read_gate_running_state(runtime_dir: Path) -> GateRunningState:
+    """Check whether the batch gate is running.
+
+    Reads the marker file and probes the pid for liveness.  A marker
+    whose pid is gone is treated as stale (not running) — the same
+    stale-sentinel class that kept dead watchdogs alive for 15 days.
+    """
+    p = _gate_lock_path(runtime_dir)
+    if not p.is_file():
+        return GateRunningState(running=False)
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        # Corrupt marker → treat as stale
+        return GateRunningState(running=False)
+
+    pid = data.get("pid") if isinstance(data, dict) else None
+    started_at = data.get("started_at") if isinstance(data, dict) else None
+
+    if pid is None:
+        # Legacy format (bare timestamp) — no pid to check, treat as stale
+        return GateRunningState(running=False)
+
+    # Probe the pid for liveness (AC-5)
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, OSError):
+        # Pid is gone → stale marker
+        return GateRunningState(running=False)
+    except PermissionError:
+        # Process exists but owned by another user → still alive
+        pass
+
+    return GateRunningState(running=True, pid=pid, started_at=started_at)
+
+
+# ── append-freeze ────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class AppendResult:
+    """Result of an attempt to append a sub-plan to a batch."""
+    status: str            # "appended" | "deferred" | "rejected"
+    message: str           # human-readable explanation
+    deferred_to: Optional[str] = None  # next batch identifier, if deferred
+
+
+def append_subplan_if_allowed(
+    plans_dir: Path,
+    runtime_dir: Path,
+    slug: str,
+    body: str,
+    filename_prefix: str = "2026-08-25",
+) -> AppendResult:
+    """Append a sub-plan to the current batch, or defer if the gate is running.
+
+    This is the real append path — the same entry point /ilk-plan workflow #3
+    uses.  AC-1b requires the freeze to be exercised through here, not just
+    in a predicate called in isolation.
+
+    AC-1:  refused while running, with message naming batch, start time, reason.
+    AC-2:  defers rather than discards — caller can distinguish "deferred".
+    AC-3:  appending before the gate starts works exactly as today.
+    AC-4:  freeze lifts once the gate completes (marker removed).
+    AC-5:  stale running-state (pid gone) does not freeze forever.
+    """
+    state = read_gate_running_state(runtime_dir)
+
+    if state.running:
+        # AC-1: refuse with a message naming the batch, start time, reason
+        msg = (
+            f"Batch gate is running (pid={state.pid}, "
+            f"started_at={state.started_at}). "
+            f"Sub-plan '{slug}' cannot be appended — the verdict would not "
+            f"cover it.  Deferred to the next batch."
+        )
+        return AppendResult(
+            status="deferred",
+            message=msg,
+            deferred_to="next-batch",
+        )
+
+    # AC-3: no freeze → append as today
+    plans_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{filename_prefix}-{slug}.md"
+    target = plans_dir / filename
+    target.write_text(body, encoding="utf-8")
+
+    return AppendResult(
+        status="appended",
+        message=f"Sub-plan '{slug}' appended as {filename}.",
+    )
 
 
 # ── git helper ───────────────────────────────────────────────────────────────

@@ -79,7 +79,7 @@ class TestAC1RefusedWhileRunning:
         runtime = tmp_path / "runtime"
         plans = tmp_path / "plans"
         _make_master_plan(plans)
-        _write_running_marker(runtime, pid=99999, started_at="2026-08-25T10:00:00+08:00")
+        _write_running_marker(runtime, pid=os.getpid(), started_at="2026-08-25T10:00:00+08:00")
 
         result = append_subplan_if_allowed(
             plans_dir=plans,
@@ -105,7 +105,7 @@ class TestAC1bThroughAppendPath:
         runtime = tmp_path / "runtime"
         plans = tmp_path / "plans"
         _make_master_plan(plans)
-        _write_running_marker(runtime, pid=99999, started_at="2026-08-25T10:00:00+08:00")
+        _write_running_marker(runtime, pid=os.getpid(), started_at="2026-08-25T10:00:00+08:00")
 
         result = append_subplan_if_allowed(
             plans_dir=plans,
@@ -131,7 +131,7 @@ class TestAC2DefersNotDiscards:
         runtime = tmp_path / "runtime"
         plans = tmp_path / "plans"
         _make_master_plan(plans)
-        _write_running_marker(runtime, pid=99999, started_at="2026-08-25T10:00:00+08:00")
+        _write_running_marker(runtime, pid=os.getpid(), started_at="2026-08-25T10:00:00+08:00")
 
         result = append_subplan_if_allowed(
             plans_dir=plans,
