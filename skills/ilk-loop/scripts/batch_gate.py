@@ -407,10 +407,15 @@ def _run_gate_inner(
     head_sha = _git_head_sha(project_path)
 
     if isinstance(config, NotConfigured):
+        # AC-5: surface the config path so the runner reports what did not run.
+        if config.resolved_path:
+            inv = f"not_configured: no ship block in {config.resolved_path}"
+        else:
+            inv = "not_configured: no .ilk-launch.json found"
         return BatchGateRecord(
             verdict="not_configured",
             head_sha=head_sha,
-            invocation="",
+            invocation=inv,
             timestamp=_now_iso(),
         )
 
