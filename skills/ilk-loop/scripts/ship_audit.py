@@ -100,66 +100,64 @@ def check_step_commits(
 
 # ── compose with ship_integrity for the gate half ────────────────────────────
 
+def _resolve_expected_invocation(project_path: Path) -> str:
+    """Build the expected invocation from ship.suite.
+
+    Reuses the same construction path as batch_gate._run_gate_inner so
+    the validator and the writer cannot drift (AC-3).
+    """
+    try:
+        _scripts_dir = str(Path(__file__).resolve().parent)
+        if _scripts_dir not in sys.path:
+            sys.path.insert(0, _scripts_dir)
+        # batch_gate._skill_root() resolves the skills/ directory
+        from batch_gate import _skill_root  # type: ignore[import-untyped]
+        sys_path_backup = list(sys.path)
+        try:
+            sys.path.insert(0, str(_skill_root() / "ilk-ship" / "scripts"))
+            from ship_config import NotConfigured, load_ship_config  # type: ignore[import-untyped]
+        finally:
+            sys.path[:] = sys_path_backup
+        config = load_ship_config(project_path)
+        if isinstance(config, NotConfigured):
+            return ""
+        invocation = config.ship["suite"]["command"]
+        flags = config.ship["suite"].get("flags", [])
+        return invocation if not flags else f"{invocation} {' '.join(flags)}"
+    except (ImportError, FileNotFoundError, KeyError):
+        return ""
+
+
 def _resolve_batch_record(
     runtime_dir: Path | None,
     cwd: Path | None = None,
 ) -> tuple[str | None, str | None]:
-    """Read the persisted batch-gate verdict.
+    """Read the persisted batch-gate verdict using SP2's validator.
 
     Returns ``(gate_verdict, reason)`` where verdict is one of:
-    ``"pass"``, ``"fail"``, ``"stale"``, ``"no_record"``,
-    ``"invalid_record"``, or ``None`` (no runtime_dir supplied).
+    ``"pass"``, ``"fail"``, ``"stale_head"``, ``"stale_invocation"``,
+    ``"absent"``, ``"incomplete"``, or ``None`` (no runtime_dir supplied).
 
     AC-1: reads the verdict from the record.
-    AC-2: stale head_sha → its own outcome, distinguishable from pass/fail.
-    AC-3: missing record → ``"no_record"``, not a pass.
-    AC-4: incomplete record → ``"invalid_record"``, per missing field.
+    AC-2: stale / invalid / absent each its own outcome (validator vocabulary).
+    AC-3: reuses batch_gate.validate_record — no second staleness implementation.
     """
     if runtime_dir is None:
         return None, None  # no record available — fall back to legacy path
 
     try:
-        # Ensure the scripts directory is importable (same pattern as
-        # read_subplan_for_audit's sys.path insert).
         _scripts_dir = str(Path(__file__).resolve().parent)
         if _scripts_dir not in sys.path:
             sys.path.insert(0, _scripts_dir)
         from batch_gate import (  # type: ignore[import-untyped]
-            read_record, REQUIRED_FIELDS, record_path,
+            record_path, validate_record,
         )
     except ImportError:
         return None, None
 
-    # AC-3: missing file → no_record
     rp = record_path(runtime_dir)
-    if not rp.is_file():
-        return "no_record", "no batch-gate record found"
 
-    # AC-4: incomplete record — read raw JSON to name the missing field.
-    try:
-        data = json.loads(rp.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return "invalid_record", "batch-gate record is unreadable"
-
-    if not isinstance(data, dict):
-        return "invalid_record", "batch-gate record is not a JSON object"
-
-    for field in REQUIRED_FIELDS:
-        if field not in data:
-            return "invalid_record", f"batch-gate record missing '{field}'"
-
-    record = read_record(runtime_dir)
-
-    if record is None:
-        return "invalid_record", "batch-gate record failed validation"
-
-    # AC-4: incomplete record — read_record already validates required fields,
-    # but a raw JSON write could still bypass it.  Double-check explicitly.
-    for field in ("verdict", "head_sha", "invocation", "timestamp"):
-        if not getattr(record, field, None):
-            return "invalid_record", f"batch-gate record missing '{field}'"
-
-    # AC-2: staleness — compare head_sha to current HEAD
+    # Resolve expected head and invocation for the validator.
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -170,17 +168,25 @@ def _resolve_batch_record(
     except (subprocess.TimeoutExpired, OSError):
         current_head = ""
 
-    if current_head and record.head_sha != current_head:
-        return (
-            "stale",
-            f"batch-gate record is stale: ran at {record.head_sha[:12]}, "
-            f"current HEAD is {current_head[:12]}",
-        )
+    project_path = cwd or Path.cwd()
+    expected_invocation = _resolve_expected_invocation(project_path)
 
-    # AC-1: record is fresh — use its verdict
-    if record.verdict == "pass":
-        return "pass", None
-    return "fail", f"batch gate recorded: {record.verdict}"
+    # AC-3: delegate to SP2's validator.
+    outcome = validate_record(rp, current_head, expected_invocation)
+
+    if outcome == "fresh":
+        # Record is trustworthy — read its verdict.
+        try:
+            data = json.loads(rp.read_text(encoding="utf-8"))
+            verdict = data.get("verdict", "fail") if isinstance(data, dict) else "fail"
+        except (OSError, json.JSONDecodeError):
+            verdict = "fail"
+        if verdict == "pass":
+            return "pass", None
+        return "fail", f"batch gate recorded: {verdict}"
+
+    # AC-2: stale_head / stale_invocation / incomplete / absent — refuse.
+    return outcome, f"batch-gate record is {outcome}"
 
 
 def _evaluate_gate(
@@ -193,11 +199,14 @@ def _evaluate_gate(
     """Run the gate half via ``ship_integrity.evaluate_ship``.
 
     Returns ``(gate_verdict, reason)`` where verdict is ``None`` for no-gate
-    sub-plans, ``"pass"`` or ``"fail"`` otherwise.
+    sub-plans, ``"pass"`` or ``"fail"`` for trusted records, or one of
+    ``"stale_head"``, ``"stale_invocation"``, ``"incomplete"``, ``"absent"``
+    for untrusted records (validator vocabulary from SP2).
 
     When *runtime_dir* is provided, reads the persisted batch-gate verdict
-    (AC-1 through AC-4).  Falls back to the legacy *gate_passed* argument
-    only when no record exists or no runtime_dir is supplied (AC-5).
+    via SP2's ``batch_gate.validate_record`` (AC-1 through AC-3).  Falls
+    back to the legacy *gate_passed* argument only when no record exists
+    or no runtime_dir is supplied (AC-5).
     """
     from ship_integrity import evaluate_ship
 
@@ -213,7 +222,7 @@ def _evaluate_gate(
             return "pass", None
         if record_verdict == "fail":
             return "fail", record_reason
-        # Stale / no_record / invalid_record — each is its own outcome.
+        # stale_head / stale_invocation / incomplete / absent — refuse.
         return record_verdict, record_reason
 
     # AC-5: no record available — fall back to the explicit override.
@@ -292,7 +301,7 @@ def audit_ship(
         )
     if gate_verdict == "fail":
         reasons.append(gate_reason or "gate is red")
-    elif gate_verdict in ("stale", "no_record", "invalid_record"):
+    elif gate_verdict in ("stale_head", "stale_invocation", "incomplete", "absent"):
         reasons.append(gate_reason or f"gate is {gate_verdict}")
 
     proven = not missing and gate_verdict in (None, "pass")
