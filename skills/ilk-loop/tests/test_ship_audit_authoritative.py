@@ -189,6 +189,64 @@ class TestAC3UsesValidator:
         mock.assert_called_once()
 
 
+# ── AC-4: --gate-passed overrides and announces itself ──────────────────────
+
+class TestAC4OverrideAnnounces:
+    """--gate-passed overrides the record and the output says so."""
+
+    def test_override_pass_announces_itself(self) -> None:
+        """AC-4: --gate-passed=true overrides and the reason says overridden."""
+        verdict, reason = _evaluate_gate(
+            "shipped",
+            [{"command": "echo ok", "timeout": 10}],
+            "true",
+        )
+        assert verdict == "pass"
+        assert "overridden" in reason.lower(), (
+            f"override must announce itself, got: {reason}"
+        )
+
+    def test_override_fail_announces_itself(self) -> None:
+        """AC-4: --gate-passed=false overrides and the reason says overridden."""
+        verdict, reason = _evaluate_gate(
+            "shipped",
+            [{"command": "echo ok", "timeout": 10}],
+            "false",
+        )
+        assert verdict == "fail"
+        assert "overridden" in reason.lower(), (
+            f"override must announce itself, got: {reason}"
+        )
+
+    def test_override_takes_precedence_over_record(
+        self, fresh_pass_runtime: Path,
+    ) -> None:
+        """AC-4: --gate-passed overrides even when a fresh record exists."""
+        with patch("batch_gate.validate_record", return_value="fresh"):
+            verdict, reason = _evaluate_gate(
+                "shipped",
+                [{"command": "echo ok", "timeout": 10}],
+                "true",
+                runtime_dir=fresh_pass_runtime,
+            )
+        assert verdict == "pass"
+        assert "overridden" in reason.lower()
+
+    def test_unknown_defers_to_record(
+        self, fresh_pass_runtime: Path,
+    ) -> None:
+        """When --gate-passed=unknown, the record decides."""
+        with patch("batch_gate.validate_record", return_value="fresh"):
+            verdict, reason = _evaluate_gate(
+                "shipped",
+                [{"command": "echo ok", "timeout": 10}],
+                "unknown",
+                runtime_dir=fresh_pass_runtime,
+            )
+        assert verdict == "pass"
+        assert reason is None  # fresh pass has no reason
+
+
 # ── AC-7: the real production record is refused ─────────────────────────────
 
 class TestAC7ProductionRecordRefused:

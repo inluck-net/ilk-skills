@@ -213,7 +213,17 @@ def _evaluate_gate(
     if not declared_checks:
         return None, None
 
-    # AC-1..4: try the persisted record first.
+    # AC-4: explicit --gate-passed overrides the record.
+    if gate_passed in ("true", "false"):
+        override_reason = (
+            f"gate verdict overridden to {gate_passed} "
+            f"(manual --gate-passed flag)"
+        )
+        if gate_passed == "true":
+            return "pass", override_reason
+        return "fail", override_reason
+
+    # AC-1..3: no explicit override — use the validated record.
     record_verdict, record_reason = _resolve_batch_record(runtime_dir, cwd=cwd)
 
     if record_verdict is not None:
@@ -225,12 +235,8 @@ def _evaluate_gate(
         # stale_head / stale_invocation / incomplete / absent — refuse.
         return record_verdict, record_reason
 
-    # AC-5: no record available — fall back to the explicit override.
-    gate_result: dict[str, Any] | None
-    if gate_passed == "unknown":
-        gate_result = None
-    else:
-        gate_result = {"all_passed": gate_passed == "true"}
+    # AC-5: no record available, no override — no gate result recorded.
+    gate_result: dict[str, Any] | None = None
 
     verdict = evaluate_ship(status, declared_checks, gate_result)
     if verdict.ok:
