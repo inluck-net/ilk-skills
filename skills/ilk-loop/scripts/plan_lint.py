@@ -1707,17 +1707,56 @@ def _find_importers(module_name: str, project_root: Path) -> list[str]:
     return importers
 
 
-def lint_shared_module_gate(text: str, slug: str) -> list[str]:
-    """Flag a one-file gate on a module whose production callers depend on it.
+def _extract_test_file_tokens(cmd: str) -> list[str]:
+    """Extract test-file path tokens from a command string."""
+    tokens = cmd.strip().split()
+    return [
+        t for t in tokens
+        if re.search(r"(?:^|/)test[_a-zA-Z].*\.(?:py|ts|js|tsx|jsx|mjs)$", t)
+        and not t.startswith("-")
+    ]
 
-    A sub-plan that modifies a module other files import, and whose gates only
-    ever run a single test file, hides integration bugs — the callers' tests
-    are never run.  This lint resolves whether the changed module has production
-    importers (caller-aware detector), and only fires when it does.
+
+def _resolve_test_paths(test_files: list[str], project_root: Path) -> set[str]:
+    """Resolve test-file tokens to real paths on disk."""
+    resolved: set[str] = set()
+    for tf in test_files:
+        p = project_root / tf
+        if p.exists():
+            resolved.add(str(p))
+        else:
+            resolved.add(str(p))  # keep the intended path for matching
+    return resolved
+
+
+def _gate_covers_module_and_callers(
+    cmd: str,
+    changed_module_test_files: set[str],
+    callers_test_files: set[str],
+    project_root: Path,
+) -> bool:
+    """True if *cmd* runs tests for both the changed module and its callers."""
+    test_tokens = _extract_test_file_tokens(cmd)
+    if not test_tokens:
+        return False
+    gate_paths = _resolve_test_paths(test_tokens, project_root)
+    covers_module = bool(gate_paths & changed_module_test_files)
+    covers_callers = bool(gate_paths & callers_test_files)
+    return covers_module and covers_callers
+
+
+def lint_shared_module_gate(text: str, slug: str) -> list[str]:
+    """Flag a gate that misses the changed module's resolved callers' tests.
+
+    A sub-plan that modifies a module other files import, and whose gates do
+    not run the callers' tests, hides integration bugs.  A gate that covers
+    both the changed module's tests AND the resolved importers' tests satisfies
+    the rule — a whole-suite gate is not required.
 
     Composes with ``lint_wholesuite_gate_baseline``: if the author widens the
-    gate, the baseline lint may require a ``baseline-green on <platform>`` note.
-    The finding text names this interaction so the author isn't whipsawed.
+    gate to a directory or whole suite, the baseline lint may require a
+    ``baseline-green on <platform>`` note.  The finding text names this
+    interaction so the author isn't whipsawed.
     """
     findings: list[str] = []
     scope_paths = _extract_scope_paths(text)
@@ -1748,32 +1787,10 @@ def lint_shared_module_gate(text: str, slug: str) -> list[str]:
     if not commands:
         return findings  # No gates — nothing to check.
 
-    # Check whether ALL gates are single-test-file scoped.
-    # If ANY gate runs a directory or whole suite, the sub-plan is compliant.
-    single_file_gates = 0
-    broader_gates = 0
+    # Check whether ANY gate runs a directory or whole suite — compliant.
     for cmd in commands:
         if _is_whole_suite_command(cmd):
-            broader_gates += 1
-            continue
-        # Check if the command targets a single test file.
-        tokens = cmd.strip().split()
-        test_files = [
-            t for t in tokens
-            if re.search(r"(?:^|/)test[_a-zA-Z].*\.(?:py|ts|js|tsx|jsx|mjs)$", t)
-            and not t.startswith("-")
-        ]
-        if test_files:
-            single_file_gates += 1
-        else:
-            # Not clearly a single test file — could be anything.  Count as broader.
-            broader_gates += 1
-
-    if broader_gates > 0:
-        return findings  # Later step or frontmatter already widens the gate.
-
-    if single_file_gates == 0:
-        return findings  # No recognisable test-file gates.
+            return findings
 
     # Check if ANY later step in the sub-plan runs a broader gate.
     body = _strip_frontmatter(text)
@@ -1783,22 +1800,45 @@ def lint_shared_module_gate(text: str, slug: str) -> list[str]:
             if _is_whole_suite_command(cmd):
                 return findings  # Later step widens — compliant.
 
-    # All gates are single-test-file scoped.  Check for production importers.
+    # All gates are file-scoped.  Check whether any gate covers both the
+    # changed module AND its resolved importers' tests.
     for sp, module in source_files:
         importers = _find_importers(module, project_root)
         if not importers:
             continue  # No production importers — leaf module, no finding.
+
+        # Resolve test-file paths for the changed module and its importers.
+        module_test = _resolve_test_paths(
+            [f"tests/test_{module}.py"], project_root,
+        )
+        callers_test: set[str] = set()
+        for imp in importers:
+            imp_module = _resolve_module_name(imp)
+            if imp_module:
+                callers_test |= _resolve_test_paths(
+                    [f"tests/test_{imp_module}.py"], project_root,
+                )
+
+        # Check if ANY gate covers both.
+        any_covers = any(
+            _gate_covers_module_and_callers(
+                cmd, module_test, callers_test, project_root,
+            )
+            for cmd in commands
+        )
+        if any_covers:
+            continue  # At least one gate covers module + callers — compliant.
 
         # AC-6: finding text names the importing files and warns about baseline.
         importer_names = ", ".join(sorted(set(importers)))
         findings.append(
             f"{slug}: scope_path '{sp}' changes module '{module}' which is "
             f"imported by: {importer_names}.  Every gate in this sub-plan "
-            f"runs a single test file — the callers' integration is never "
-            f"exercised.  Add a gate that runs the callers' tests (or the "
-            f"full suite).  Note: widening the gate to a directory or whole "
-            f"suite will also require a 'baseline-green on <platform>' note "
-            f"(see lint_wholesuite_gate_baseline)."
+            f"runs only the module's own tests — the callers' integration "
+            f"is never exercised.  Add a gate that runs the callers' tests "
+            f"(or the full suite).  Note: widening the gate to a directory "
+            f"or whole suite will also require a 'baseline-green on "
+            f"<platform>' note (see lint_wholesuite_gate_baseline)."
         )
 
     return findings
