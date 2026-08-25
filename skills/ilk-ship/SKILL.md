@@ -85,6 +85,8 @@ is entered.
 | 2 | N resolved consumers | tests covering those consumers, one hop out |
 | 3 | contract-governed file OR a shared path/schema OR oracle failed | widest attribution scope (collection-floor + baseline-diff) |
 
+Tier selection determines the **attribution scope** for the collection floor and baseline-diff — it does not prescribe a suite to run.
+
 The three tier-3 triggers are checked **first and against the whole diff**: one
 matching file among many forces the widest gate for the entire batch. There is no
 per-file scoping.
