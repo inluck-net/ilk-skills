@@ -623,3 +623,46 @@ def test_ship_integrity_does_not_skip_per_step_gated_subplan(tmp_path: Path) -> 
         f"got exit {result.returncode} (detector skipped the file).\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
+
+
+# ── #ship satisfies the final declared step ──────────────────────────────────
+# subplan-template.md mandates that the LAST step commits with
+# [plan:<slug>#ship], not [plan:<slug>#step-N].  A template-conformant sub-plan
+# must therefore audit PROVEN.  Before this was fixed, ship_audit only matched
+# #step-N, so 2 of 3 UNPROVEN verdicts on gh-resolve (2026-08-25) were spurious
+# — a hard stop that cries wolf trains the operator to override it.
+
+def test_ship_trailer_satisfies_final_step(tmp_path: Path) -> None:
+    """A final step committed with #ship (per the template) counts as present."""
+    _init_repo(tmp_path)
+    _commit_with_message(tmp_path, "feat(foo): step 0 [plan:test-slug#step-0]")
+    _commit_with_message(tmp_path, "feat(foo): step 1 [plan:test-slug#step-1]")
+    _commit_with_message(tmp_path, "chore(plans): test-slug shipped [plan:test-slug#ship]")
+    result = ship_audit.audit_ship(
+        status="shipped",
+        body="### Step 0\n### Step 1\n### Step 2\n",
+        declared_checks=[{"command": "echo ok", "timeout": 10}],
+        gate_passed="true",
+        slug="test-slug",
+        cwd=tmp_path,
+    )
+    assert result["missing_steps"] == [], result["reasons"]
+    assert result["proven"] is True
+
+
+def test_ship_trailer_does_not_excuse_an_earlier_missing_step(tmp_path: Path) -> None:
+    """#ship covers only the FINAL step — a gap in the middle still fails."""
+    _init_repo(tmp_path)
+    _commit_with_message(tmp_path, "feat(foo): step 0 [plan:test-slug#step-0]")
+    # step 1 skipped
+    _commit_with_message(tmp_path, "chore(plans): test-slug shipped [plan:test-slug#ship]")
+    result = ship_audit.audit_ship(
+        status="shipped",
+        body="### Step 0\n### Step 1\n### Step 2\n",
+        declared_checks=[{"command": "echo ok", "timeout": 10}],
+        gate_passed="true",
+        slug="test-slug",
+        cwd=tmp_path,
+    )
+    assert result["missing_steps"] == [1]
+    assert result["proven"] is False
