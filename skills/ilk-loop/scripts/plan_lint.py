@@ -2966,6 +2966,81 @@ def lint_one_batch_one_branch(
     return findings
 
 
+# ── Batch-has-no-suite lint (master-level) ────────────────────────────────
+#
+# A batch whose every sub-plan has no broad-suite gate AND whose project
+# config resolves to ``NotConfigured`` means the full suite will never run
+# — not per sub-plan, not at batch end.  Every existing suite lint opens
+# with ``if not has_broad: return findings``, so removing the gates also
+# removed the trigger for the checks that would have caught the missing
+# ``ship.suite``.
+#
+# This is a **master-level** check because the condition is a property of
+# the batch plus project config — no single sub-plan has scope over it.
+#
+# AC-1: finding when no broad gates + NotConfigured.
+# AC-2: no finding when ship.suite is declared.
+# AC-3: no finding when a broad gate is present.
+# AC-4: master-level only (not fired for per-sub-plan linting).
+
+
+def lint_batch_has_no_suite(
+    master_text: str,
+    subplan_texts: list[str],
+    project_root: Path,
+) -> list[str]:
+    """Flag a batch with no broad-suite gate in a NotConfigured project.
+
+    A ``NotConfigured`` project whose batch declares no broad-suite gate
+    anywhere means the full suite will never run — ``batch_gate`` will
+    record ``verdict: not_configured`` having executed nothing.  This
+    check makes that visible at plan time.
+
+    *master_text* and *subplan_texts* are passed explicitly (not read
+    from disk) so the caller controls the source.
+
+    AC-4: this function is only called from the ``--master`` path.
+    """
+    findings: list[str] = []
+
+    # Check if ANY sub-plan declares a broad-suite gate (AC-3).
+    has_broad = False
+    for text in subplan_texts:
+        commands = _extract_all_local_checks_commands(text)
+        if any(_is_whole_suite_command(cmd) for cmd in commands):
+            has_broad = True
+            break
+    if has_broad:
+        return findings  # AC-3: broad gate present — old route covers it.
+
+    # Resolve the project's ship config — the same reader batch_gate uses.
+    # Use _SHIP_CONFIG_SCRIPT (already defined at module level) to locate it.
+    sys_path_backup = list(__import__("sys").path)
+    try:
+        __import__("sys").path.insert(
+            0, str(_SHIP_CONFIG_SCRIPT.parent))
+        from ship_config import (  # type: ignore[import-untyped]
+            NotConfigured, load_ship_config,
+        )
+    finally:
+        __import__("sys").path[:] = sys_path_backup
+
+    config = load_ship_config(project_root)
+    if not isinstance(config, NotConfigured):
+        return findings  # AC-2: ship.suite declared — batch gate will run.
+
+    # AC-1: no broad gates + NotConfigured → finding.
+    config_path = project_root / ".ilk-launch.json"
+    findings.append(
+        f"batch declares no broad-suite gate in any sub-plan and the "
+        f"project config ({config_path}) resolves to NotConfigured — "
+        f"the batch gate will record 'not_configured' and run nothing. "
+        f"Add a ship.suite block to .ilk-launch.json or declare a "
+        f"broad-suite local_check in at least one sub-plan."
+    )
+    return findings
+
+
 def lint_file(path: str | Path, master_text: str = "") -> list[str]:
     """Run all checks against one sub-plan file. Returns finding messages.
 
@@ -3076,6 +3151,12 @@ def main() -> int:
             print(f"WARN: {msg}")
             total += 1
         for msg in lint_one_batch_one_branch(master_text, subplans):
+            print(f"WARN: {msg}")
+            total += 1
+        # Batch-has-no-suite check (AC-4: master-level only).
+        project_root = Path(args.project_root).resolve() if args.project_root else Path.cwd()
+        subplan_texts = [text for _, text in subplans]
+        for msg in lint_batch_has_no_suite(master_text, subplan_texts, project_root):
             print(f"WARN: {msg}")
             total += 1
 
