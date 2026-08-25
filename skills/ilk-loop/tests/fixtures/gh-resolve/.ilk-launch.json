@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "launch": {
+    "command": "python3 run.py"
+  },
+  "worker": {
+    "model": "sonnet"
+  }
+}
