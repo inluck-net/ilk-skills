@@ -100,6 +100,74 @@ def read_record(runtime_dir: Path) -> Optional[BatchGateRecord]:
     )
 
 
+# ── record validation ───────────────────────────────────────────────────────
+
+def validate_record(
+    record_path: Path,
+    expected_head_sha: str,
+    expected_invocation: str,
+) -> str:
+    """Validate a batch-gate record against the project as it is now.
+
+    Returns one of five outcome words:
+      fresh            — head_sha and invocation both match
+      stale_head       — head_sha differs from current HEAD
+      stale_invocation — invocation differs from what ship.suite builds
+      incomplete       — a required field is missing
+      absent           — no record file exists
+    """
+    if not record_path.is_file():
+        return "absent"
+    try:
+        data = json.loads(record_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "incomplete"
+    if not isinstance(data, dict):
+        return "incomplete"
+    for field in REQUIRED_FIELDS:
+        if field not in data:
+            return "incomplete"
+    if data["head_sha"] != expected_head_sha:
+        return "stale_head"
+    if data["invocation"] != expected_invocation:
+        return "stale_invocation"
+    return "fresh"
+
+
+def validate_record_detail(
+    record_path: Path,
+    expected_head_sha: str,
+    expected_invocation: str,
+) -> str:
+    """Validate and return a human-readable detail string.
+
+    Same logic as validate_record, but the result names both sides of
+    every mismatch so a reader can see what changed.
+    """
+    if not record_path.is_file():
+        return "absent: no batch-gate record found"
+    try:
+        data = json.loads(record_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "incomplete: unreadable record"
+    if not isinstance(data, dict):
+        return "incomplete: record is not a JSON object"
+    missing = [f for f in REQUIRED_FIELDS if f not in data]
+    if missing:
+        return f"incomplete: missing field(s): {', '.join(missing)}"
+    if data["head_sha"] != expected_head_sha:
+        return (
+            f"stale_head: record sha {data['head_sha'][:7]} "
+            f"!= current HEAD {expected_head_sha[:7]}"
+        )
+    if data["invocation"] != expected_invocation:
+        return (
+            f"stale_invocation: record invocation "
+            f"'{data['invocation']}' != expected '{expected_invocation}'"
+        )
+    return "fresh"
+
+
 # ── re-entry guard ───────────────────────────────────────────────────────────
 
 def _gate_lock_path(runtime_dir: Path) -> Path:
