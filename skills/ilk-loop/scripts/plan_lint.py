@@ -1717,15 +1717,49 @@ def _extract_test_file_tokens(cmd: str) -> list[str]:
     ]
 
 
-def _resolve_test_paths(test_files: list[str], project_root: Path) -> set[str]:
-    """Resolve test-file tokens to real paths on disk."""
+def _resolve_test_paths(
+    test_files: list[str], project_root: Path,
+    scope_path: str | None = None,
+) -> set[str]:
+    """Resolve test-file tokens to real paths on disk.
+
+    Searches in order:
+    1. The token as-is under *project_root* (top-level ``tests/`` layout).
+    2. A sibling ``tests/`` directory when the scope path lives under
+       ``skills/<skill>/scripts/`` (this repo's layout).
+    3. A project-wide glob for the filename as a last resort.
+
+    Returns the set of *existing* resolved paths.  When nothing is found
+    the set is empty — callers treat that as "tests unresolvable" and skip
+    the finding rather than firing on a phantom path.
+    """
     resolved: set[str] = set()
     for tf in test_files:
         p = project_root / tf
         if p.exists():
             resolved.add(str(p))
-        else:
-            resolved.add(str(p))  # keep the intended path for matching
+            continue
+
+        # Extract the bare test filename for searching.
+        test_filename = tf.rsplit("/", 1)[-1] if "/" in tf else tf
+
+        # Sibling-dir search: skills/<skill>/scripts/m.py →
+        # skills/<skill>/tests/test_m.py
+        if scope_path:
+            norm_sp = scope_path.replace("\\", "/")
+            if "/scripts/" in norm_sp:
+                skill_dir = project_root / norm_sp.split("/scripts/")[0]
+                candidate = skill_dir / "tests" / test_filename
+                if candidate.exists():
+                    resolved.add(str(candidate))
+                    continue
+
+        # Glob search as a last resort.
+        found = list(project_root.rglob(test_filename))
+        if found:
+            resolved.add(str(found[0]))
+            continue
+
     return resolved
 
 
@@ -1810,6 +1844,7 @@ def lint_shared_module_gate(text: str, slug: str) -> list[str]:
         # Resolve test-file paths for the changed module and its importers.
         module_test = _resolve_test_paths(
             [f"tests/test_{module}.py"], project_root,
+            scope_path=sp,
         )
         callers_test: set[str] = set()
         for imp in importers:
@@ -1817,7 +1852,13 @@ def lint_shared_module_gate(text: str, slug: str) -> list[str]:
             if imp_module:
                 callers_test |= _resolve_test_paths(
                     [f"tests/test_{imp_module}.py"], project_root,
+                    scope_path=imp,
                 )
+
+        # AC-5: if tests for the module or all callers cannot be located,
+        # the oracle cannot run — report nothing rather than firing.
+        if not module_test or not callers_test:
+            continue
 
         # Check if ANY gate covers both.
         any_covers = any(
