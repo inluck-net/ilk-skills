@@ -116,3 +116,87 @@ class TestBackgroundedWithHatchAllowed:
             env={"ILK_ALLOW_FULL_SUITE": "1"},
         )
         assert result["allowed"] is True
+
+
+# ── AC-3: scoped runs still allowed ──────────────────────────────────────────
+
+class TestScopedRunAllowed:
+    """A pytest run with a path argument is already cheap — allowed.
+
+    These must be green before and after step 2. The hook must not become
+    stricter for scoped work.
+    """
+
+    def test_scoped_with_path(self) -> None:
+        """AC-3: pytest with a path argument → allowed."""
+        result = _run_hook("pytest tests/test_foo.py -q")
+        assert result["allowed"] is True
+
+    def test_scoped_with_hatch(self) -> None:
+        """AC-3: scoped run with the escape hatch → still allowed."""
+        result = _run_hook("ILK_ALLOW_FULL_SUITE=1 pytest tests/test_foo.py -q")
+        assert result["allowed"] is True
+
+    def test_scoped_with_k_selector(self) -> None:
+        """AC-3: pytest -k selector → allowed (already-cheap form)."""
+        result = _run_hook("pytest -k test_foo -q")
+        assert result["allowed"] is True
+
+    def test_collect_only(self) -> None:
+        """AC-3: --collect-only → allowed (already-cheap form)."""
+        result = _run_hook("pytest --collect-only -q")
+        assert result["allowed"] is True
+
+
+# ── AC-4: false-positive guards preserved ─────────────────────────────────────
+
+class TestFalsePositiveGuards:
+    """Commands that merely MENTION a runner must not be denied.
+
+    These are real incidents from 2026-08-10 recorded in the hook's own
+    comments (lines 78-95). The hook strips quoted substrings and heredoc
+    bodies before detecting runners.
+    """
+
+    def test_quoted_runner_mention_allowed(self) -> None:
+        """AC-4: a runner name inside a quoted string → allowed.
+
+        Real incident: `backlog add --gap "...19 separate pytest invocations..."`
+        """
+        result = _run_hook(
+            'backlog add --gap "...19 separate pytest invocations..."'
+        )
+        assert result["allowed"] is True
+
+    def test_heredoc_fixture_text_allowed(self) -> None:
+        """AC-4: a heredoc body mentioning a runner → allowed.
+
+        Real incident: `cat >> test_file <<'PYEOF'` writing pytest fixtures.
+        """
+        result = _run_hook(
+            "cat >> test_file <<'PYEOF'\n@pytest.fixture\ndef foo(): pass\nPYEOF"
+        )
+        assert result["allowed"] is True
+
+
+# ── AC-5: unscoped without hatch still denied ─────────────────────────────────
+
+class TestUnscopedWithoutHatchDenied:
+    """An unscoped run without the escape hatch is still denied.
+
+    This is the existing guardrail behaviour that must not change.
+    """
+
+    def test_bare_pytest_denied(self) -> None:
+        """AC-5: bare `pytest` → denied."""
+        result = _run_hook("pytest")
+        assert result["allowed"] is False
+        reason = _deny_reason(result)
+        assert "guardrail" in reason.lower()
+
+    def test_python_m_pytest_denied(self) -> None:
+        """AC-5: `python3 -m pytest` → denied."""
+        result = _run_hook("python3 -m pytest -q")
+        assert result["allowed"] is False
+        reason = _deny_reason(result)
+        assert "guardrail" in reason.lower()
