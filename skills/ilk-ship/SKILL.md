@@ -139,6 +139,14 @@ from the JSONL log. Commands already run are subtracted. The two
   rather than a misleading zero. That is correct, but it means a scoped Phase 1
   yields **no regression attribution at all**.
 
+**Batch verdict verification.** Phase 1 does **not** run the test suite.
+It **verifies** the recorded batch verdict — the record persisted by
+the batch gate at the end of the loop run. The verification reads the
+record, checks `head_sha` against the current HEAD, runs the collection
+floor, and baseline-diffs. Phase 1 **refuses to release** on a
+**missing**, **failed**, or **stale** verdict. A verify step that
+proceeds anyway is the rubber-stamp failure mode.
+
 ### Measured behaviour and known limits
 
 Measured 2026-08-19 by replaying `select_tier` over v0.9.57..v0.9.67 with a

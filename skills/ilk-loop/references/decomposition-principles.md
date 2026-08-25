@@ -532,14 +532,18 @@ The `verified:` marker is set by a human after a manual or device pass (see
 Contract 4 in `detached-component-contracts.md`). Absent ⇒ unverified
 (back-compat). Malformed values degrade to unverified (never crash).
 
-### Shared-module full-suite rule
+### Shared-module change-scoped rule
 
 When a sub-plan's changes touch a shared/imported module (not just a
-leaf file), the LAST step must run the FULL test suite, not just the
-new file's tests. Per-file-only gates hide integration bugs and
-test-state-leak bugs that only surface when the full suite runs
-(WeChatRelay bugs #1/#2). See also §8 anti-pattern
-"per-file-only gate on a shared module".
+leaf file), the sub-plan's last step gates **change-scoped** — its own
+module's tests plus the resolved callers' tests (the importer oracle
+from `plan_lint.py:lint_shared_module_gate`). The **whole-suite
+obligation** belongs to the **batch gate** — the gate that runs once
+after every sub-plan in a batch ships, before the master is marked
+shipped. Per-file-only gates (module tests without caller tests) still
+hide integration bugs (WeChatRelay bugs #1/#2). See also §8
+anti-pattern "per-file-only gate on a shared module", and §16 which
+this rule now aligns with rather than overriding.
 
 ---
 

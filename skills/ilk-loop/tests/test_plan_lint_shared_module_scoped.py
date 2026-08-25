@@ -194,3 +194,43 @@ class TestOldPhrasingGone:
             "phrasing.  Step 2 should have replaced it with the batch-gate "
             "escalation language."
         )
+
+
+# ── AC-2 test ────────────────────────────────────────────────────────
+
+class TestPhase1VerifiesRecordedVerdict:
+    """AC-2: Phase 1 describes verifying the recorded batch verdict."""
+
+    def test_phase1_describes_verifying_not_running(self) -> None:
+        ship_skill = (
+            Path(__file__).resolve().parent.parent.parent
+            / "ilk-ship" / "SKILL.md"
+        )
+        text = ship_skill.read_text(encoding="utf-8")
+        # Phase 1 must describe verifying the recorded batch verdict.
+        assert "verif" in text.lower() and "batch verdict" in text.lower(), (
+            "ilk-ship/SKILL.md Phase 1 should describe verifying the recorded "
+            "batch verdict."
+        )
+        # Phase 1 must state it does NOT run the suite.
+        assert "does **not** run the test suite" in text, (
+            "ilk-ship/SKILL.md Phase 1 should state it does not run the test suite."
+        )
+
+
+# ── AC-3 test ────────────────────────────────────────────────────────
+
+class TestPhase1RefusesOnBadVerdict:
+    """AC-3: Phase 1 refuses to release on missing, failed, or stale verdict."""
+
+    def test_phase1_names_three_refusal_conditions(self) -> None:
+        ship_skill = (
+            Path(__file__).resolve().parent.parent.parent
+            / "ilk-ship" / "SKILL.md"
+        )
+        text = ship_skill.read_text(encoding="utf-8").lower()
+        for condition in ("missing", "failed", "stale"):
+            assert condition in text, (
+                f"ilk-ship/SKILL.md Phase 1 should name '{condition}' as a "
+                f"refusal condition for batch verdict verification."
+            )
