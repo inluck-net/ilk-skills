@@ -144,11 +144,11 @@ try:
 except ImportError:
     _improvement_backlog = None  # type: ignore
 
-# Import iteration_timing for suspected-hang detection (sub-plan
-# a-gate-that-produces-nothing-is-a-hang).  analyze_iteration reads
-# per-iteration JSONL and returns a hang_suspected list when a broad
-# test command hits the harness ceiling, was backgrounded, and
-# produced no captured output.
+# Import iteration_timing for ceiling-hit detection (sub-plan
+# a-gate-that-produces-nothing-is-a-hang → a-wasted-gate-is-named).
+# analyze_iteration reads per-iteration JSONL and returns a
+# ceiling_hit_no_output list when a broad test command hits the harness
+# ceiling, was backgrounded, and produced no captured output.
 _TIMING_SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "ilk-loop" / "scripts"
 if _TIMING_SCRIPTS_DIR.is_dir() and str(_TIMING_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_TIMING_SCRIPTS_DIR))
@@ -1452,15 +1452,15 @@ def detect_suspected_hangs(
     project_path: Path,
     last_launch: dict | None = None,
 ) -> list[dict[str, Any]]:
-    """Detect suspected hangs from per-iteration JSONL files.
+    """Detect ceiling-hit-with-no-output events from per-iteration JSONL files.
 
-    A suspected hang is a broad test command that hit the harness ceiling,
+    A ceiling hit is a broad test command that hit the harness ceiling,
     was auto-backgrounded, and produced no captured output.  Reads each
     per-iteration JSONL through ``iteration_timing.analyze_iteration`` and
-    collects the ``hang_suspected`` entries.
+    collects the ``ceiling_hit_no_output`` entries.
 
     Returns a list of dicts with keys: ``command``, ``duration_sec``,
-    ``iteration``.  Empty when no suspected hangs are found.
+    ``iteration``.  Empty when no ceiling hits are found.
     """
     if _analyze_iteration is None:
         return []
@@ -1476,7 +1476,7 @@ def detect_suspected_hangs(
             iter_num = int(iter_match.group(1)) if iter_match else 0
             try:
                 result = _analyze_iteration(jsonl_file)
-                for entry in result.get("hang_suspected", []):
+                for entry in result.get("ceiling_hit_no_output", []):
                     hangs.append({
                         "command": entry["command"],
                         "duration_sec": entry["duration_sec"],
@@ -1855,15 +1855,17 @@ def render_report(
     body_lines.append(_label_narrative(label, facts))
     body_lines.append("")
 
-    # Suspected hangs: a broad test that hit the ceiling, was backgrounded,
-    # and produced no output.  Reported as evidence, not as a new label.
-    hang_entries = facts.get("hang_suspected", [])
+    # Ceiling hits with zero output: a broad test that hit the ceiling,
+    # was backgrounded, and produced no output.  Reported as evidence,
+    # not as a new label.
+    hang_entries = facts.get("ceiling_hit_no_output", [])
     if hang_entries:
-        body_lines.append("## Suspected hangs\n")
+        body_lines.append("## Ceiling hits (zero output)\n")
         body_lines.append(
-            "The following broad test commands are suspected of hanging "
-            "(hit the harness ceiling, were auto-backgrounded, and produced "
-            "no captured output).  These are reported as evidence, not as a "
+            "The following broad test commands hit the harness ceiling, were "
+            "auto-backgrounded, and produced no captured output.  These are "
+            "wasted gate runs — the test suite exceeded the time limit and "
+            "the result was discarded.  Reported as evidence, not as a "
             "change to the run's classification.\n"
         )
         for h in hang_entries:
@@ -2671,11 +2673,11 @@ def main() -> int:
     # (conservative — only clear toolkit gaps, never project-local findings).
     maybe_emit_upstream_candidate(label, facts, project_path, target_run, iters)
 
-    # Detect suspected hangs from per-iteration JSONL.  Reported as evidence
-    # in the postmortem, not as a classification change.
+    # Detect ceiling-hit-with-no-output from per-iteration JSONL.  Reported
+    # as evidence in the postmortem, not as a classification change.
     hangs = detect_suspected_hangs(target_run, project_path, last_launch)
     if hangs:
-        facts["hang_suspected"] = hangs
+        facts["ceiling_hit_no_output"] = hangs
 
     rec_max, rec_to, rationale = recommend_params(label, iters, last_launch)
     last_log = iters[-1].get("log") if iters else None

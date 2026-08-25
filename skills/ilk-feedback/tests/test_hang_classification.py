@@ -1,12 +1,11 @@
-"""Red-first tests for suspected-hang classification.
+"""Tests for ceiling-hit-with-no-output detection.
 
 Part of sub-plan a-gate-that-produces-nothing-is-a-hang.
 
-Covers AC-1, AC-2, and AC-3 from the sub-plan.  These tests import from
-skills/ilk-loop/scripts/iteration_timing.py, which does not yet have a
-`hang_suspected` field.  They are designed to fail here (red-first rule,
-decomposition-principles §8) so the step-0 gate asserts a non-zero failure
-count rather than exit 0.
+Covers AC-1, AC-2, and AC-3 from the sub-plan.  The field was renamed from
+`hang_suspected` to `ceiling_hit_no_output` in sub-plan a-wasted-gate-is-named
+because measurement showed these are not hangs — the suite simply exceeds
+the ceiling.  The detection condition is unchanged.
 
 All tests read only from committed fixtures under
 skills/ilk-loop/tests/fixtures/iteration_timing/ — never from ~/.ilk-data.
@@ -29,11 +28,11 @@ if str(SCRIPTS) not in sys.path:
 from iteration_timing import analyze_iteration, is_broad_test_command  # noqa: E402
 
 
-# ── AC-1: hang_suspected entry with three separate conditions ─────────────────
+# ── AC-1: ceiling_hit_no_output entry with three separate conditions ──────────
 
 
-class TestHangSuspectedField:
-    """AC-1: analyze_iteration() returns a hang_suspected entry.
+class TestCeilingHitField:
+    """AC-1: analyze_iteration() returns a ceiling_hit_no_output entry.
 
     A call qualifies when ALL of:
       1. It is a broad test command (is_broad_test_command)
@@ -44,81 +43,81 @@ class TestHangSuspectedField:
     only two does not silently qualify.
     """
 
-    def test_hang_suspected_field_exists(self):
-        """analyze_iteration() must return a hang_suspected field."""
+    def test_ceiling_hit_field_exists(self):
+        """analyze_iteration() must return a ceiling_hit_no_output field."""
         result = analyze_iteration(FIXTURES / "hang_600s.jsonl")
-        assert "hang_suspected" in result, (
-            "analyze_iteration() must return a hang_suspected key — "
-            "a ceiling-hitting, zero-output broad run is currently unnamed"
+        assert "ceiling_hit_no_output" in result, (
+            "analyze_iteration() must return a ceiling_hit_no_output key — "
+            "a ceiling-hitting, zero-output broad run must be named"
         )
 
     def test_broad_command_is_required(self):
-        """A targeted test command must NOT qualify as a hang, even if
+        """A targeted test command must NOT qualify as a ceiling hit, even if
         it hits the ceiling and backgrounds with no output."""
         result = analyze_iteration(FIXTURES / "targeted_pytest.jsonl")
-        hang = result.get("hang_suspected", [])
-        assert hang == [], (
-            "A targeted test command must not be classified as a hang — "
+        hits = result.get("ceiling_hit_no_output", [])
+        assert hits == [], (
+            "A targeted test command must not be classified as a ceiling hit — "
             "only broad (full-suite) invocations qualify"
         )
 
     def test_near_ceiling_duration_is_required(self):
         """A broad test that completes well under the ceiling must NOT
-        qualify as a hang, even if it is a broad command."""
+        qualify, even if it is a broad command."""
         result = analyze_iteration(FIXTURES / "broad_pytest.jsonl")
-        hang = result.get("hang_suspected", [])
-        assert hang == [], (
+        hits = result.get("ceiling_hit_no_output", [])
+        assert hits == [], (
             "A broad test that completes in 120.5s (well under 600s ceiling) "
-            "must not be classified as a hang"
+            "must not be classified as a ceiling hit"
         )
 
     def test_backgrounded_with_no_output_is_required(self):
         """A broad test that completes normally (not backgrounded) must NOT
-        qualify as a hang, even if it runs for a long time."""
+        qualify, even if it runs for a long time."""
         result = analyze_iteration(FIXTURES / "broad_pytest.jsonl")
-        hang = result.get("hang_suspected", [])
-        assert hang == [], (
+        hits = result.get("ceiling_hit_no_output", [])
+        assert hits == [], (
             "A broad test that completes normally (not backgrounded) "
-            "must not be classified as a hang"
+            "must not be classified as a ceiling hit"
         )
 
 
-# ── AC-2: fixture reports exactly one suspected hang ─────────────────────────
+# ── AC-2: fixture reports exactly one ceiling hit ────────────────────────────
 
 
-class TestHangFixture:
+class TestCeilingHitFixture:
     """AC-2: Running the analyzer over the committed hang_600s.jsonl fixture
-    reports exactly one suspected hang and names the command."""
+    reports exactly one ceiling hit and names the command."""
 
-    def test_exactly_one_hang_detected(self):
-        """The hang_600s.jsonl fixture must produce exactly one hang entry."""
+    def test_exactly_one_ceiling_hit_detected(self):
+        """The hang_600s.jsonl fixture must produce exactly one ceiling hit."""
         result = analyze_iteration(FIXTURES / "hang_600s.jsonl")
-        hang = result.get("hang_suspected", [])
-        assert len(hang) == 1, (
-            f"expected 1 suspected hang, got {len(hang)} — "
+        hits = result.get("ceiling_hit_no_output", [])
+        assert len(hits) == 1, (
+            f"expected 1 ceiling hit, got {len(hits)} — "
             "the 600.5s backgrounded broad call must be detected"
         )
 
-    def test_hang_names_the_command(self):
-        """The hang entry must name the offending command."""
+    def test_ceiling_hit_names_the_command(self):
+        """The ceiling hit entry must name the offending command."""
         result = analyze_iteration(FIXTURES / "hang_600s.jsonl")
-        hang = result.get("hang_suspected", [])
-        assert len(hang) == 1
-        entry = hang[0]
-        assert "command" in entry, "hang entry must include the command"
+        hits = result.get("ceiling_hit_no_output", [])
+        assert len(hits) == 1
+        entry = hits[0]
+        assert "command" in entry, "ceiling entry must include the command"
         assert "python3 -m pytest -q 2>&1 | tail -30" in entry["command"], (
-            f"hang entry must name the offending command, got: {entry.get('command')}"
+            f"ceiling entry must name the offending command, got: {entry.get('command')}"
         )
 
-    def test_hang_reports_duration(self):
-        """The hang entry must include the call's duration."""
+    def test_ceiling_hit_reports_duration(self):
+        """The ceiling hit entry must include the call's duration."""
         result = analyze_iteration(FIXTURES / "hang_600s.jsonl")
-        hang = result.get("hang_suspected", [])
-        assert len(hang) == 1
-        entry = hang[0]
-        assert "duration_sec" in entry, "hang entry must include duration_sec"
+        hits = result.get("ceiling_hit_no_output", [])
+        assert len(hits) == 1
+        entry = hits[0]
+        assert "duration_sec" in entry, "ceiling entry must include duration_sec"
         assert entry["duration_sec"] >= 599.0, (
-            f"hang duration should be ~600s, got {entry.get('duration_sec')}"
+            f"ceiling duration should be ~600s, got {entry.get('duration_sec')}"
         )
 
 
@@ -127,25 +126,25 @@ class TestHangFixture:
 
 class TestNoFalsePositives:
     """AC-3: Running the analyzer over the existing broad_pytest.jsonl and
-    targeted_pytest.jsonl fixtures reports zero suspected hangs — the
+    targeted_pytest.jsonl fixtures reports zero ceiling hits — the
     no-false-positive direction, asserted explicitly rather than assumed."""
 
-    def test_broad_pytest_no_hang(self):
+    def test_broad_pytest_no_ceiling_hit(self):
         """broad_pytest.jsonl (120.5s, completed normally) must not trigger."""
         result = analyze_iteration(FIXTURES / "broad_pytest.jsonl")
-        hang = result.get("hang_suspected", [])
-        assert hang == [], (
-            f"broad_pytest.jsonl must produce 0 suspected hangs, got {len(hang)} — "
-            "a completed 120.5s run is not a hang"
+        hits = result.get("ceiling_hit_no_output", [])
+        assert hits == [], (
+            f"broad_pytest.jsonl must produce 0 ceiling hits, got {len(hits)} — "
+            "a completed 120.5s run does not hit the 600s ceiling"
         )
 
-    def test_targeted_pytest_no_hang(self):
+    def test_targeted_pytest_no_ceiling_hit(self):
         """targeted_pytest.jsonl (3.2s, targeted) must not trigger."""
         result = analyze_iteration(FIXTURES / "targeted_pytest.jsonl")
-        hang = result.get("hang_suspected", [])
-        assert hang == [], (
-            f"targeted_pytest.jsonl must produce 0 suspected hangs, got {len(hang)} — "
-            "a targeted 3.2s run is not a hang"
+        hits = result.get("ceiling_hit_no_output", [])
+        assert hits == [], (
+            f"targeted_pytest.jsonl must produce 0 ceiling hits, got {len(hits)} — "
+            "a targeted 3.2s run does not hit the 600s ceiling"
         )
 
 
@@ -220,19 +219,20 @@ class TestHangEvidenceInPostmortem:
         label, facts = collect.classify(records, None, project_path)
         # The label should be one of the known taxonomy labels.
         assert label in collect.CLASSIFICATION_LABELS
-        # hang_suspected must NOT be a classification label.
+        # hang_suspected and ceiling_hit_no_output must NOT be classification labels.
         assert "hang_suspected" not in collect.CLASSIFICATION_LABELS
+        assert "ceiling_hit_no_output" not in collect.CLASSIFICATION_LABELS
 
-        # Even if we simulate attaching hang evidence, the label must not
+        # Even if we simulate attaching ceiling-hit evidence, the label must not
         # change.  detect_suspected_hangs modifies facts, not the label.
-        facts["hang_suspected"] = [
+        facts["ceiling_hit_no_output"] = [
             {"command": "python3 -m pytest -q", "duration_sec": 600.5, "iteration": 1}
         ]
         # The label is determined by classify(), not by hang evidence.
         assert label in collect.CLASSIFICATION_LABELS
 
-    def test_render_report_includes_hang_section(self, tmp_path):
-        """render_report() includes a 'Suspected hangs' section when evidence present."""
+    def test_render_report_includes_ceiling_section(self, tmp_path):
+        """render_report() includes a 'Ceiling hits' section when evidence present."""
         project_path = tmp_path / "proj"
         project_path.mkdir()
 
@@ -244,7 +244,7 @@ class TestHangEvidenceInPostmortem:
             },
         ]
         facts = {
-            "hang_suspected": [
+            "ceiling_hit_no_output": [
                 {"command": "python3 -m pytest -q 2>&1 | tail -30", "duration_sec": 600.5, "iteration": 1}
             ]
         }
@@ -262,12 +262,12 @@ class TestHangEvidenceInPostmortem:
             rationale="test",
             tail=[],
         )
-        assert "Suspected hangs" in report
+        assert "Ceiling hits" in report
         assert "python3 -m pytest -q" in report
         assert "600.5s" in report
 
-    def test_render_report_no_hang_section_without_evidence(self, tmp_path):
-        """render_report() omits 'Suspected hangs' when no evidence present."""
+    def test_render_report_no_ceiling_section_without_evidence(self, tmp_path):
+        """render_report() omits 'Ceiling hits' when no evidence present."""
         project_path = tmp_path / "proj"
         project_path.mkdir()
 
@@ -293,4 +293,4 @@ class TestHangEvidenceInPostmortem:
             rationale="test",
             tail=[],
         )
-        assert "Suspected hangs" not in report
+        assert "Ceiling hits" not in report
