@@ -268,3 +268,46 @@ def _run_gate_inner(
         invocation=full_cmd,
         timestamp=_now_iso(),
     )
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="Run the batch-end gate and persist the verdict.",
+    )
+    parser.add_argument("--project", type=Path, required=True,
+                        help="Project root path")
+    parser.add_argument("--runtime-dir", type=Path, default=None,
+                        help="Runtime dir (default: resolve from ilk_paths)")
+    parser.add_argument("--run", action="store_true", required=True,
+                        help="Actually run the gate")
+    parser.add_argument("--poll-timeout", type=int, default=600,
+                        help="Timeout for polling the background suite (seconds)")
+    args = parser.parse_args()
+
+    if not args.run:
+        parser.print_help()
+        return
+
+    project = args.project.resolve()
+    if args.runtime_dir:
+        runtime = args.runtime_dir.resolve()
+    else:
+        from ilk_paths import external_runtime_dir, resolve_project_key  # type: ignore[import-untyped]
+        key = resolve_project_key(project)
+        if key is None:
+            print("[batch-gate] ERROR: cannot resolve project key", file=__import__("sys").stderr)
+            raise SystemExit(1)
+        runtime = external_runtime_dir(key)
+
+    rec = run_batch_gate(project, runtime, _poll_timeout=args.poll_timeout)
+    if rec is None:
+        print("[batch-gate] Re-entry detected — gate already ran. Skipping.")
+    else:
+        print(f"[batch-gate] verdict={rec.verdict} head_sha={rec.head_sha[:12]}")
+
+
+if __name__ == "__main__":
+    main()

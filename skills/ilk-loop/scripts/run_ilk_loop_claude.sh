@@ -1304,6 +1304,48 @@ write_jsonl_record() {
   python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)))" <<< "$1" >> "$JSONL_LOG"
 }
 
+# ── Batch-end gate ───────────────────────────────────────────────────────────
+# Runs the project's declared test suite ONCE at batch end (all sub-plans
+# shipped).  Persists {verdict, head_sha, invocation, timestamp} to the
+# runtime dir so /ilk-ship can verify the record instead of running its own
+# suite.
+#
+# AC-6: a failure inside the gate is reported and the runner still terminates.
+#       Never hang, never continue as though it passed.
+invoke_batch_gate() {
+  local project_path="$1"
+  local runtime_dir="$2"
+
+  # Resolve batch_gate.py from the same skill root
+  local batch_gate_script="${_SKILL_ROOT}/ilk-loop/scripts/batch_gate.py"
+  if [[ ! -f "$batch_gate_script" ]]; then
+    echo "[batch-gate] WARNING: batch_gate.py not found at $batch_gate_script — skipping gate"
+    return 0
+  fi
+
+  echo "[batch-gate] Running batch-end gate..."
+  local gate_output
+  gate_output=$(python3 "$batch_gate_script" \
+    --project "$project_path" \
+    --runtime-dir "$runtime_dir" \
+    --run 2>&1) || true
+
+  local gate_exit=$?
+  if [[ $gate_exit -ne 0 ]]; then
+    echo "[batch-gate] Gate exited with code $gate_exit — output:"
+    echo "$gate_output"
+    echo "[batch-gate] Continuing despite gate failure (AC-6)."
+  else
+    echo "[batch-gate] Gate completed."
+    if [[ -n "$gate_output" ]]; then
+      echo "$gate_output"
+    fi
+  fi
+
+  # Always return 0 — the gate must never prevent the runner from terminating
+  return 0
+}
+
 invoke_claude_iteration() {
   local cwd="$1"
   local iter_log="$2"
@@ -1789,6 +1831,10 @@ main() {
   classify_loop_status
   if [[ "$CLASSIFIED_STATUS" == "all-shipped" ]]; then
     echo "All sub-plans already shipped. Nothing to do."
+    # Batch-end gate: run the suite once before the master is done (SP1)
+    if [[ -n "$runtime_dir" ]]; then
+      invoke_batch_gate "$PROJECT_PATH" "$runtime_dir"
+    fi
     echo "[ilk] ALL SHIPPED — nothing to run. Do NOT relaunch."
     local ts
     ts=$(date +%Y-%m-%dT%H:%M:%S%z)
@@ -2264,6 +2310,10 @@ print(json.dumps(d))
   python3 "$LOOP_STATUS_SCRIPT" 2>&1 || true
 
   if [[ "$stop_reason" == "all-shipped" ]]; then
+    # Batch-end gate: run the suite once before the master is done (SP1)
+    if [[ -n "$runtime_dir" ]]; then
+      invoke_batch_gate "$PROJECT_PATH" "$runtime_dir"
+    fi
     echo "[ilk] ALL SHIPPED — nothing to run. Do NOT relaunch."
   elif [[ "$stop_reason" == "blocked-no-runnable" ]]; then
     local blocked_count
