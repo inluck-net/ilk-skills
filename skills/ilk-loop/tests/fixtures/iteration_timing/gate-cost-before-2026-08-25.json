@@ -1,0 +1,141 @@
+{
+  "measured_at": "2026-08-25",
+  "head": "d85810f",
+  "host": "chad-mbp",
+  "tool": "skills/ilk-loop/scripts/gate_cost.py",
+  "note": "BEFORE number for the broad-gate cost work. Host-specific: measured from this machine's ~/.ilk-data corpus, so rezmac will differ (the v0.9.66 tag measured 746/15 here vs 745/16 there). The metric to move is broad_s_per_gate_iter, denominated in GATE-BEARING iterations only \u2014 iterations that never issued a broad command say nothing about gate cost, and averaging over all iterations is what made an earlier reading look like an improvement when none had occurred. Diagnosis this supersedes: v0.9.71 assumed the 600s cost was an unbounded HANG and added a per-test --timeout. Measured here, the cost is (a) whole-suite gates that legitimately exceed the 600s harness ceiling and return zero bytes, and (b) re-running or hand-polling instead of wait_for_background_output.sh. A per-test timeout addresses neither.",
+  "windows": {
+    "alltime": {
+      "measured_at": "2026-08-25 11:43",
+      "since": null,
+      "ceiling_s": 590.0,
+      "total": {
+        "iters": 592,
+        "gate_iters": 250,
+        "broad_s": 77040.9,
+        "ceiling_hits": 53,
+        "repeats": 202,
+        "broad_calls": 637,
+        "broad_s_per_gate_iter": 308.2
+      },
+      "per_project": {
+        "users-chad-gh-resolve-canary-clone-worktrees-resolver-1": {
+          "iters": 1,
+          "gate_iters": 0,
+          "broad_s": 0.0,
+          "ceiling_hits": 0,
+          "repeats": 0,
+          "broad_calls": 0,
+          "runs": 1,
+          "broad_s_per_gate_iter": null
+        },
+        "users-chad-projects-github-inluck-net-gh-resolve": {
+          "iters": 334,
+          "gate_iters": 216,
+          "broad_s": 73660.5,
+          "ceiling_hits": 53,
+          "repeats": 193,
+          "broad_calls": 559,
+          "runs": 224,
+          "broad_s_per_gate_iter": 341.0
+        },
+        "users-chad-projects-github-inluck-net-gh-triage": {
+          "iters": 6,
+          "gate_iters": 0,
+          "broad_s": 0.0,
+          "ceiling_hits": 0,
+          "repeats": 0,
+          "broad_calls": 0,
+          "runs": 6,
+          "broad_s_per_gate_iter": null
+        },
+        "users-chad-projects-github-inluck-net-ilk-pocket": {
+          "iters": 24,
+          "gate_iters": 0,
+          "broad_s": 0.0,
+          "ceiling_hits": 0,
+          "repeats": 0,
+          "broad_calls": 0,
+          "runs": 13,
+          "broad_s_per_gate_iter": null
+        },
+        "users-chad-projects-github-inluck-net-ilk-skills": {
+          "iters": 115,
+          "gate_iters": 34,
+          "broad_s": 3380.3,
+          "ceiling_hits": 0,
+          "repeats": 9,
+          "broad_calls": 78,
+          "runs": 38,
+          "broad_s_per_gate_iter": 99.4
+        },
+        "users-chad-projects-github-inluck-net-todo-triage": {
+          "iters": 9,
+          "gate_iters": 0,
+          "broad_s": 0.0,
+          "ceiling_hits": 0,
+          "repeats": 0,
+          "broad_calls": 0,
+          "runs": 3,
+          "broad_s_per_gate_iter": null
+        },
+        "users-chad-projects-keyreply-kira-cloudflare": {
+          "iters": 103,
+          "gate_iters": 0,
+          "broad_s": 0.0,
+          "ceiling_hits": 0,
+          "repeats": 0,
+          "broad_calls": 0,
+          "runs": 75,
+          "broad_s_per_gate_iter": null
+        }
+      }
+    },
+    "since_20260820": {
+      "measured_at": "2026-08-25 11:43",
+      "since": "20260820",
+      "ceiling_s": 590.0,
+      "total": {
+        "iters": 68,
+        "gate_iters": 29,
+        "broad_s": 18357.2,
+        "ceiling_hits": 19,
+        "repeats": 50,
+        "broad_calls": 116,
+        "broad_s_per_gate_iter": 633.0
+      },
+      "per_project": {
+        "users-chad-projects-github-inluck-net-gh-resolve": {
+          "iters": 38,
+          "gate_iters": 23,
+          "broad_s": 17720.2,
+          "ceiling_hits": 19,
+          "repeats": 50,
+          "broad_calls": 98,
+          "runs": 7,
+          "broad_s_per_gate_iter": 770.4
+        },
+        "users-chad-projects-github-inluck-net-ilk-skills": {
+          "iters": 28,
+          "gate_iters": 6,
+          "broad_s": 636.9,
+          "ceiling_hits": 0,
+          "repeats": 0,
+          "broad_calls": 18,
+          "runs": 3,
+          "broad_s_per_gate_iter": 106.2
+        },
+        "users-chad-projects-keyreply-kira-cloudflare": {
+          "iters": 2,
+          "gate_iters": 0,
+          "broad_s": 0.0,
+          "ceiling_hits": 0,
+          "repeats": 0,
+          "broad_calls": 0,
+          "runs": 1,
+          "broad_s_per_gate_iter": null
+        }
+      }
+    }
+  }
+}
