@@ -30,8 +30,8 @@ from batch_gate import BatchGateRecord, write_record
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def _init_repo(path: Path) -> str:
-    """Create a git repo with an initial commit.  Returns the HEAD sha."""
+def _init_repo(path: Path) -> None:
+    """Create a git repo with an initial commit."""
     subprocess.run(["git", "init"], cwd=path, capture_output=True, check=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test"], cwd=path,
@@ -49,6 +49,10 @@ def _init_repo(path: Path) -> str:
         ["git", "commit", "-m", "init"], cwd=path,
         capture_output=True, check=True,
     )
+
+
+def _head_sha(path: Path) -> str:
+    """Return the current HEAD sha."""
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=path,
         capture_output=True, text=True, check=True,
@@ -77,22 +81,23 @@ def _make_shipped_subplan(
     slug: str = "test-slug",
 ) -> Path:
     """Create a minimal shipped sub-plan file."""
-    checks_yaml = textwrap.dedent("""\
-        local_checks:
-          - command: echo ok
-            timeout: 10
-    """) if has_gate else "local_checks: []\n"
+    checks_block = (
+        "local_checks:\n"
+        "  - command: echo ok\n"
+        "    timeout: 10\n"
+    ) if has_gate else "local_checks: []\n"
     step_headings = "\n".join(f"### Step {n}" for n in steps)
-    body = textwrap.dedent(f"""\
-        ---
-        plan: {slug}
-        status: shipped
-        current_step: {len(steps)}
-        {checks_yaml}---
-        {step_headings}
-    """)
+    content = (
+        f"---\n"
+        f"plan: {slug}\n"
+        f"status: shipped\n"
+        f"current_step: {len(steps)}\n"
+        f"{checks_block}"
+        f"---\n"
+        f"{step_headings}\n"
+    )
     subplan = tmp / f"2026-08-25-{slug}.md"
-    subplan.write_text(body)
+    subplan.write_text(content)
     return subplan
 
 
@@ -111,9 +116,10 @@ class TestAC1ReadsVerdictFromRecord:
 
     def test_pass_record_means_gate_passed(self, tmp_path: Path) -> None:
         """AC-1a: a pass record → gate passes, no --gate-passed needed."""
-        head_sha = _init_repo(tmp_path)
+        _init_repo(tmp_path)
         _commit_with_message(tmp_path, "feat(x): s0 [plan:test-slug#step-0]")
         _commit_with_message(tmp_path, "feat(x): s1 [plan:test-slug#step-1]")
+        head_sha = _head_sha(tmp_path)
         runtime = tmp_path / "runtime"
         write_record(
             BatchGateRecord(
@@ -142,9 +148,10 @@ class TestAC1ReadsVerdictFromRecord:
 
     def test_fail_record_means_gate_failed(self, tmp_path: Path) -> None:
         """AC-1b: a fail record → gate fails."""
-        head_sha = _init_repo(tmp_path)
+        _init_repo(tmp_path)
         _commit_with_message(tmp_path, "feat(x): s0 [plan:test-slug#step-0]")
         _commit_with_message(tmp_path, "feat(x): s1 [plan:test-slug#step-1]")
+        head_sha = _head_sha(tmp_path)
         runtime = tmp_path / "runtime"
         write_record(
             BatchGateRecord(

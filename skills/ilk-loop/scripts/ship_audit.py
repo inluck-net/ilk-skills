@@ -17,6 +17,7 @@ Exit 0 if proven, exit 1 if unproven, exit 2 on bad input.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -99,21 +100,123 @@ def check_step_commits(
 
 # ── compose with ship_integrity for the gate half ────────────────────────────
 
+def _resolve_batch_record(
+    runtime_dir: Path | None,
+    cwd: Path | None = None,
+) -> tuple[str | None, str | None]:
+    """Read the persisted batch-gate verdict.
+
+    Returns ``(gate_verdict, reason)`` where verdict is one of:
+    ``"pass"``, ``"fail"``, ``"stale"``, ``"no_record"``,
+    ``"invalid_record"``, or ``None`` (no runtime_dir supplied).
+
+    AC-1: reads the verdict from the record.
+    AC-2: stale head_sha → its own outcome, distinguishable from pass/fail.
+    AC-3: missing record → ``"no_record"``, not a pass.
+    AC-4: incomplete record → ``"invalid_record"``, per missing field.
+    """
+    if runtime_dir is None:
+        return None, None  # no record available — fall back to legacy path
+
+    try:
+        # Ensure the scripts directory is importable (same pattern as
+        # read_subplan_for_audit's sys.path insert).
+        _scripts_dir = str(Path(__file__).resolve().parent)
+        if _scripts_dir not in sys.path:
+            sys.path.insert(0, _scripts_dir)
+        from batch_gate import (  # type: ignore[import-untyped]
+            read_record, REQUIRED_FIELDS, record_path,
+        )
+    except ImportError:
+        return None, None
+
+    # AC-3: missing file → no_record
+    rp = record_path(runtime_dir)
+    if not rp.is_file():
+        return "no_record", "no batch-gate record found"
+
+    # AC-4: incomplete record — read raw JSON to name the missing field.
+    try:
+        data = json.loads(rp.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "invalid_record", "batch-gate record is unreadable"
+
+    if not isinstance(data, dict):
+        return "invalid_record", "batch-gate record is not a JSON object"
+
+    for field in REQUIRED_FIELDS:
+        if field not in data:
+            return "invalid_record", f"batch-gate record missing '{field}'"
+
+    record = read_record(runtime_dir)
+
+    if record is None:
+        return "invalid_record", "batch-gate record failed validation"
+
+    # AC-4: incomplete record — read_record already validates required fields,
+    # but a raw JSON write could still bypass it.  Double-check explicitly.
+    for field in ("verdict", "head_sha", "invocation", "timestamp"):
+        if not getattr(record, field, None):
+            return "invalid_record", f"batch-gate record missing '{field}'"
+
+    # AC-2: staleness — compare head_sha to current HEAD
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+            cwd=cwd,
+        )
+        current_head = result.stdout.strip() if result.returncode == 0 else ""
+    except (subprocess.TimeoutExpired, OSError):
+        current_head = ""
+
+    if current_head and record.head_sha != current_head:
+        return (
+            "stale",
+            f"batch-gate record is stale: ran at {record.head_sha[:12]}, "
+            f"current HEAD is {current_head[:12]}",
+        )
+
+    # AC-1: record is fresh — use its verdict
+    if record.verdict == "pass":
+        return "pass", None
+    return "fail", f"batch gate recorded: {record.verdict}"
+
+
 def _evaluate_gate(
     status: str,
     declared_checks: list[dict[str, Any]],
     gate_passed: str,
+    runtime_dir: Path | None = None,
+    cwd: Path | None = None,
 ) -> tuple[str | None, str | None]:
     """Run the gate half via ``ship_integrity.evaluate_ship``.
 
     Returns ``(gate_verdict, reason)`` where verdict is ``None`` for no-gate
     sub-plans, ``"pass"`` or ``"fail"`` otherwise.
+
+    When *runtime_dir* is provided, reads the persisted batch-gate verdict
+    (AC-1 through AC-4).  Falls back to the legacy *gate_passed* argument
+    only when no record exists or no runtime_dir is supplied (AC-5).
     """
     from ship_integrity import evaluate_ship
 
     if not declared_checks:
         return None, None
 
+    # AC-1..4: try the persisted record first.
+    record_verdict, record_reason = _resolve_batch_record(runtime_dir, cwd=cwd)
+
+    if record_verdict is not None:
+        # We have a record (or a named absence).
+        if record_verdict == "pass":
+            return "pass", None
+        if record_verdict == "fail":
+            return "fail", record_reason
+        # Stale / no_record / invalid_record — each is its own outcome.
+        return record_verdict, record_reason
+
+    # AC-5: no record available — fall back to the explicit override.
     gate_result: dict[str, Any] | None
     if gate_passed == "unknown":
         gate_result = None
@@ -135,6 +238,7 @@ def audit_ship(
     gate_passed: str,
     slug: str,
     cwd: Path | None = None,
+    runtime_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Audit a shipped sub-plan: step commits + gate outcome.
 
@@ -152,6 +256,10 @@ def audit_ship(
         The sub-plan slug (``plan:`` value).
     cwd : Path | None
         Working directory for ``git log``.  ``None`` = current dir.
+    runtime_dir : Path | None
+        Path to the project's runtime directory.  When provided,
+        ``ship_audit`` reads the persisted batch-gate verdict from it
+        instead of relying on the ``gate_passed`` argument.
 
     Returns
     -------
@@ -171,7 +279,10 @@ def audit_ship(
     present, missing = check_step_commits(slug, authored, cwd=cwd)
 
     # Gate half (AC-8: exempt no-gate sub-plans from gate check only).
-    gate_verdict, gate_reason = _evaluate_gate(status, declared_checks, gate_passed)
+    gate_verdict, gate_reason = _evaluate_gate(
+        status, declared_checks, gate_passed,
+        runtime_dir=runtime_dir, cwd=cwd,
+    )
 
     reasons: list[str] = []
     if missing:
@@ -181,8 +292,10 @@ def audit_ship(
         )
     if gate_verdict == "fail":
         reasons.append(gate_reason or "gate is red")
+    elif gate_verdict in ("stale", "no_record", "invalid_record"):
+        reasons.append(gate_reason or f"gate is {gate_verdict}")
 
-    proven = not missing and gate_verdict != "fail"
+    proven = not missing and gate_verdict in (None, "pass")
     final_gate: str | None
     if declared_checks:
         final_gate = gate_verdict  # "pass" or "fail"
