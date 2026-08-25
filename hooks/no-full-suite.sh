@@ -71,10 +71,6 @@ PY
 )"
 [[ -n "${norm}" ]] || norm="${cmd}"
 
-# Explicit opt-in, either inline or inherited from the environment.
-case "${cmd}" in *ILK_ALLOW_FULL_SUITE=1*) allow ;; esac
-[[ "${ILK_ALLOW_FULL_SUITE:-0}" == "1" ]] && allow
-
 # Strip quoted substrings before runner detection. A command that merely
 # *mentions* a runner inside an argument — prose in a --gap string, a grep
 # pattern, a commit message — is not running it. Without this the hook fires on
@@ -156,6 +152,29 @@ print("yes" if positional else "no")
 PY
 )"
 [[ "${scoped}" == "yes" ]] && allow
+
+# --- escape hatch: requires backgrounding ------------------------------------
+# The hatch exists so a deliberate full-suite gate can proceed.  But a
+# foreground broad run cannot succeed — the harness auto-backgrounds at 600s
+# and with | tail the pipeline never flushes, costing the full 600s for 0 bytes.
+has_hatch=0
+case "${cmd}" in *ILK_ALLOW_FULL_SUITE=1*) has_hatch=1 ;; esac
+[[ "${ILK_ALLOW_FULL_SUITE:-0}" == "1" ]] && has_hatch=1
+if [[ "${has_hatch}" == "1" ]]; then
+  trimmed="${bare%"${bare##*[![:space:]]}"}"
+  case "${trimmed}" in
+    *\&) allow ;;
+    *)
+      deny "The ILK_ALLOW_FULL_SUITE=1 escape hatch requires a backgrounded run — a foreground broad gate hits the 600s ceiling and returns 0 bytes.
+
+Background the command instead:
+  python3 -m pytest -q > /tmp/pytest_gate.log 2>&1 &
+  bash skills/ilk-loop/scripts/wait_for_background_output.sh /tmp/pytest_gate.log
+
+Or let the loop's own local_checks run the suite."
+      ;;
+  esac
+fi
 
 deny "Blocked by your own no-full-suite guardrail (~/.claude/hooks/no-full-suite.sh): this is an unscoped '${runner}' run over the whole project.
 

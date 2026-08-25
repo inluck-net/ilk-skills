@@ -87,16 +87,21 @@ class TestDenyPayload:
 # ── AC-7: escape hatch ──────────────────────────────────────────────────────
 
 class TestEscapeHatch:
-    """ILK_ALLOW_FULL_SUITE=1 permits full-suite runs."""
+    """ILK_ALLOW_FULL_SUITE=1 permits backgrounded full-suite runs.
 
-    def test_inline_escape(self) -> None:
-        """AC-7: ILK_ALLOW_FULL_SUITE=1 inline in the command."""
+    A foreground broad run with the hatch is denied — the harness
+    auto-backgrounds at 600s and returns 0 bytes.  Only a backgrounded
+    invocation (ending with &) is allowed.
+    """
+
+    def test_foreground_hatch_is_denied(self) -> None:
+        """A foreground hatch run is denied (must be backgrounded)."""
         result = _run_hook("ILK_ALLOW_FULL_SUITE=1 pytest")
-        assert result["allowed"] is True
+        assert result["allowed"] is False
 
-    def test_exported_escape(self) -> None:
-        """AC-7: ILK_ALLOW_FULL_SUITE=1 exported in the environment."""
-        result = _run_hook("pytest", env={"ILK_ALLOW_FULL_SUITE": "1"})
+    def test_backgrounded_hatch_is_allowed(self) -> None:
+        """A backgrounded hatch run is allowed."""
+        result = _run_hook("ILK_ALLOW_FULL_SUITE=1 pytest > /tmp/gate.log 2>&1 &")
         assert result["allowed"] is True
 
 
@@ -117,7 +122,7 @@ class TestHookFileIntegrity:
         import hashlib
         digest = hashlib.sha256(HOOK_PATH.read_bytes()).hexdigest()
         # This is the sha256 of the imported file as of 2026-08-14
-        assert digest == "c73ee1e8f611afc145dbc94ff164ccaa9b5d312dd634656d0e847f34282be4c4"
+        assert digest == "f3866a4ca2fd5862d738ee5153a4cdc03b3b4cf795e875809566bde60b54f447"
 
 
 # ── settings.json reconcile (AC-3, AC-4, AC-5) ──────────────────────────────
