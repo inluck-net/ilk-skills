@@ -82,6 +82,16 @@ def check_step_commits(
                     except ValueError:
                         pass
 
+    # The template mandates that the FINAL step commits with
+    # ``[plan:<slug>#ship]`` rather than ``#step-N`` (subplan-template.md:
+    # "### Step N — E2E + handoff … chore(plans): <slug> shipped
+    # [plan:<slug>#ship]").  A template-conformant sub-plan must audit PROVEN,
+    # so a #ship trailer satisfies the last declared step -- and only that one:
+    # a gap earlier in the sequence is still a gap.
+    ship_re = re.compile(rf"\[plan:{re.escape(slug)}#ship\]")
+    if ship_re.search(result.stdout):
+        committed.add(max(expected_steps))
+
     present = [s for s in expected_steps if s in committed]
     missing = [s for s in expected_steps if s not in committed]
     return present, missing
