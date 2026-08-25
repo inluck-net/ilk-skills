@@ -7,6 +7,8 @@ AC-2: a sub-plan declaring the same command with a timeout BELOW the ceiling
       produces NO finding from this lint.
 AC-3: a scoped gate (``pytest tests/test_foo.py -q``) produces no finding at
       any timeout.
+AC-4: the new lint composes with ``lint_wholesuite_gate_baseline`` — a sub-plan
+      tripping both reports two findings with distinct text.
 """
 from __future__ import annotations
 
@@ -19,7 +21,10 @@ SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from plan_lint import lint_foreground_whole_suite_gate  # noqa: E402
+from plan_lint import (  # noqa: E402
+    lint_foreground_whole_suite_gate,
+    lint_wholesuite_gate_baseline,
+)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -124,3 +129,66 @@ class TestScopedGate:
         text = _make_subplan("python3 -m pytest -k test_writeback -q", 1200)
         findings = lint_foreground_whole_suite_gate(text, "test-slug")
         assert findings == [], f"Expected no findings, got: {findings}"
+
+
+# ── AC-4: compose with baseline lint, don't duplicate ─────────────────────
+
+
+class TestComposesWithBaseline:
+    """A sub-plan tripping both lints reports two findings with distinct text."""
+
+    def test_both_lints_fire_independently(self):
+        """Bare pytest -q with timeout above ceiling AND no baseline-green note.
+
+        Both ``lint_foreground_whole_suite_gate`` and
+        ``lint_wholesuite_gate_baseline`` must fire, producing two findings
+        with distinct text.
+        """
+        # No baseline-green note anywhere — trips lint_wholesuite_gate_baseline.
+        # timeout: 1200 >= 600 — trips lint_foreground_whole_suite_gate.
+        text = _make_subplan("python3 -m pytest -q", 1200)
+        fg_findings = lint_foreground_whole_suite_gate(text, "test-slug")
+        bl_findings = lint_wholesuite_gate_baseline(text, "test-slug")
+        assert len(fg_findings) == 1, f"Expected 1 foreground finding, got: {fg_findings}"
+        assert len(bl_findings) == 1, f"Expected 1 baseline finding, got: {bl_findings}"
+        # The two findings must have distinct text — not duplicates.
+        assert fg_findings[0] != bl_findings[0], (
+            f"Findings should be distinct but both are: {fg_findings[0]}"
+        )
+
+    def test_baseline_green_silences_baseline_only(self):
+        """A baseline-green note silences lint_wholesuite_gate_baseline but NOT
+        the foreground ceiling lint — the two lints address different problems.
+        """
+        text = (
+            "---\n"
+            "plan: test-slug\n"
+            "status: in-progress\n"
+            "current_step: 0\n"
+            "estimated_steps: 1\n"
+            "---\n"
+            "\n# Sub-plan: test\n"
+            "\nBaseline-green on macOS 2026-08-25.\n"
+            "\n### Step 0 — Do the thing\n"
+            "```yaml\n"
+            "local_checks:\n"
+            "  - command: python3 -m pytest -q\n"
+            "    timeout: 1200\n"
+            "```\n"
+        )
+        fg_findings = lint_foreground_whole_suite_gate(text, "test-slug")
+        bl_findings = lint_wholesuite_gate_baseline(text, "test-slug")
+        # Foreground lint still fires — baseline-green doesn't fix the ceiling.
+        assert len(fg_findings) == 1, f"Expected 1 foreground finding, got: {fg_findings}"
+        # Baseline lint is silenced by the baseline-green note.
+        assert bl_findings == [], f"Expected no baseline finding, got: {bl_findings}"
+
+    def test_timeout_below_ceiling_silences_foreground_only(self):
+        """Timeout below ceiling silences the foreground lint but NOT baseline."""
+        text = _make_subplan("python3 -m pytest -q", 300)
+        fg_findings = lint_foreground_whole_suite_gate(text, "test-slug")
+        bl_findings = lint_wholesuite_gate_baseline(text, "test-slug")
+        # Foreground lint silenced — timeout under ceiling.
+        assert fg_findings == [], f"Expected no foreground finding, got: {fg_findings}"
+        # Baseline lint still fires — no baseline-green note.
+        assert len(bl_findings) == 1, f"Expected 1 baseline finding, got: {bl_findings}"
