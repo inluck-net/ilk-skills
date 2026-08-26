@@ -21,6 +21,8 @@ set -euo pipefail
 
 LABEL="net.inluck.ilk.scheduler"
 PLIST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
+HEALTH_LABEL="net.inluck.ilk.scheduler-health"
+HEALTH_PLIST="${HOME}/Library/LaunchAgents/${HEALTH_LABEL}.plist"
 UID_NUM="$(id -u)"
 DOMAIN="gui/${UID_NUM}"
 
@@ -33,6 +35,7 @@ while [ -L "$src" ]; do
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$src")" && pwd)"
 SCHEDULER_SH="${SCRIPT_DIR}/scheduler.sh"
+HEALTH_CHECK_SH="${SCRIPT_DIR}/scheduler_health.sh"
 
 ACTION="install"
 case "${1:-}" in
@@ -43,6 +46,7 @@ case "${1:-}" in
 esac
 
 if [[ "$ACTION" == "status" ]]; then
+  echo "--- scheduler ---"
   if [[ -f "$PLIST" ]]; then
     echo "plist: $PLIST"
     launchctl print "${DOMAIN}/${LABEL}" 2>/dev/null | grep -E "state =|pid =|program =" || \
@@ -50,15 +54,25 @@ if [[ "$ACTION" == "status" ]]; then
   else
     echo "(no LaunchAgent installed)"
   fi
+  echo "--- health check ---"
+  if [[ -f "$HEALTH_PLIST" ]]; then
+    echo "plist: $HEALTH_PLIST"
+    launchctl print "${DOMAIN}/${HEALTH_LABEL}" 2>/dev/null | grep -E "state =|pid =|program =" || \
+      echo "(agent not currently loaded)"
+  else
+    echo "(no health check agent installed)"
+  fi
   exit 0
 fi
 
 if [[ "$ACTION" == "uninstall" ]]; then
   if [[ "${ILK_AUTOSTART_NO_LOAD:-}" != "1" ]]; then
     launchctl bootout "${DOMAIN}/${LABEL}" 2>/dev/null || true
+    launchctl bootout "${DOMAIN}/${HEALTH_LABEL}" 2>/dev/null || true
   fi
   rm -f "$PLIST"
-  echo "[ilk-scheduler] auto-start removed."
+  rm -f "$HEALTH_PLIST"
+  echo "[ilk-scheduler] auto-start removed (scheduler + health check)."
   exit 0
 fi
 
@@ -115,12 +129,52 @@ cat > "$PLIST" <<PLIST_EOF
 </plist>
 PLIST_EOF
 
-# Re-bootstrap idempotently. ILK_AUTOSTART_NO_LOAD=1 writes the plist but
+# Health check agent: runs scheduler_health.sh every 5 minutes to detect
+# and restore a dead scheduler.  Own label, own plist — uninstalling the
+# scheduler does not leave an orphaned health-check agent (AC-8): the
+# hold mechanism ($ILK_DATA/scheduler.hold) is what the operator uses to
+# suppress the health check, and `--uninstall` removes both plists.
+cat > "$HEALTH_PLIST" <<HEALTH_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${HEALTH_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>${HEALTH_CHECK_SH}</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>${AGENT_PATH}</string>
+        <key>HOME</key>
+        <string>${HOME}</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <!-- Run every 5 minutes, matching the scheduler's own poll cadence.
+         A tighter interval buys nothing: the thing being detected is a
+         daemon that will stay dead indefinitely. -->
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>StandardOutPath</key>
+    <string>${LOG_DIR}/scheduler-health-launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>${LOG_DIR}/scheduler-health-launchd.err.log</string>
+</dict>
+</plist>
+HEALTH_EOF
+
+# Re-bootstrap idempotently. ILK_AUTOSTART_NO_LOAD=1 writes the plists but
 # skips the launchctl calls (used by tests to validate plist generation
 # without mutating the real per-user launchd domain).
 if [[ "${ILK_AUTOSTART_NO_LOAD:-}" == "1" ]]; then
-  echo "[ilk-scheduler] plist written (ILK_AUTOSTART_NO_LOAD=1; launchctl skipped):"
+  echo "[ilk-scheduler] plists written (ILK_AUTOSTART_NO_LOAD=1; launchctl skipped):"
   echo "  $PLIST"
+  echo "  $HEALTH_PLIST"
   exit 0
 fi
 
@@ -129,9 +183,15 @@ launchctl bootstrap "${DOMAIN}" "$PLIST"
 launchctl enable "${DOMAIN}/${LABEL}" 2>/dev/null || true
 launchctl kickstart -k "${DOMAIN}/${LABEL}" 2>/dev/null || true
 
+launchctl bootout "${DOMAIN}/${HEALTH_LABEL}" 2>/dev/null || true
+launchctl bootstrap "${DOMAIN}" "$HEALTH_PLIST"
+launchctl enable "${DOMAIN}/${HEALTH_LABEL}" 2>/dev/null || true
+
 echo "[ilk-scheduler] auto-start installed and started."
-echo "  Label:  ${LABEL}"
-echo "  Plist:  ${PLIST}"
-echo "  Logs:   ${LOG_DIR}/scheduler.log (decisions), scheduler-launchd.{out,err}.log"
-echo "  Status: launchctl print ${DOMAIN}/${LABEL}"
-echo "  Stop:   $(basename "$0") --uninstall"
+echo "  Scheduler:    ${LABEL}"
+echo "  Health check: ${HEALTH_LABEL} (every 5 min)"
+echo "  Plist:        ${PLIST}"
+echo "  Health plist: ${HEALTH_PLIST}"
+echo "  Logs:         ${LOG_DIR}/scheduler.log (decisions), scheduler-launchd.{out,err}.log"
+echo "  Status:       launchctl print ${DOMAIN}/${LABEL}"
+echo "  Stop:         $(basename "$0") --uninstall"

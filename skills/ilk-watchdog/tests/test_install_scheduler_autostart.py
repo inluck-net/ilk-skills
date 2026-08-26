@@ -18,6 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 INSTALLER = REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "install-scheduler-autostart.sh"
 SCHEDULER = REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "scheduler.sh"
 LABEL = "net.inluck.ilk.scheduler"
+HEALTH_LABEL = "net.inluck.ilk.scheduler-health"
 
 pytestmark = pytest.mark.skipif(sys.platform != "darwin", reason="macOS LaunchAgent installer")
 
@@ -61,21 +62,47 @@ def test_install_writes_valid_plist(tmp_path):
     assert str(tmp_path / ".local" / "bin") in agent_path
 
 
+def test_install_writes_health_check_plist(tmp_path):
+    """AC-7: the installer also writes a health check agent plist."""
+    res = _run([], tmp_path)
+    assert res.returncode == 0, res.stderr
+    plist = tmp_path / "Library" / "LaunchAgents" / f"{HEALTH_LABEL}.plist"
+    assert plist.is_file(), f"health check plist not written: {res.stdout}\n{res.stderr}"
+
+    with plist.open("rb") as fh:
+        data = plistlib.load(fh)
+
+    assert data["Label"] == HEALTH_LABEL
+    # Health check runs on a 5-minute interval (300s), not at load.
+    assert data["RunAtLoad"] is False
+    assert data["StartInterval"] == 300
+    # Runs scheduler_health.sh.
+    argv = data["ProgramArguments"]
+    assert argv[0] == "/bin/bash"
+    assert "scheduler_health" in argv[1]
+
+
 def test_install_is_idempotent(tmp_path):
     first = _run([], tmp_path)
     second = _run([], tmp_path)
     assert first.returncode == 0 and second.returncode == 0
     plist = tmp_path / "Library" / "LaunchAgents" / f"{LABEL}.plist"
     assert plist.is_file()
+    # Health check plist also survives idempotent re-install.
+    health_plist = tmp_path / "Library" / "LaunchAgents" / f"{HEALTH_LABEL}.plist"
+    assert health_plist.is_file()
 
 
 def test_uninstall_removes_plist(tmp_path):
     _run([], tmp_path)
     plist = tmp_path / "Library" / "LaunchAgents" / f"{LABEL}.plist"
+    health_plist = tmp_path / "Library" / "LaunchAgents" / f"{HEALTH_LABEL}.plist"
     assert plist.is_file()
+    assert health_plist.is_file()
     res = _run(["--uninstall"], tmp_path)
     assert res.returncode == 0, res.stderr
-    assert not plist.exists(), "uninstall should remove the plist"
+    assert not plist.exists(), "uninstall should remove the scheduler plist"
+    assert not health_plist.exists(), "uninstall should remove the health check plist"
 
 
 def test_plist_passes_plutil_lint(tmp_path):
