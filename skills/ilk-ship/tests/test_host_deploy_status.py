@@ -310,8 +310,17 @@ class TestSummaryListsEveryHost:
 
 
 # ---------------------------------------------------------------------------
-# Host resolver (the module under test — does not exist yet)
+# Host resolver — delegates to host_deploy_status.resolve_host()
 # ---------------------------------------------------------------------------
+
+import sys
+
+_SCRIPTS_DIR = _REPO_ROOT / "skills" / "ilk-ship" / "scripts"
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from host_deploy_status import resolve_host as _real_resolve_host  # noqa: E402
+
 
 def _resolve_host(
     bouncer_path: Path,
@@ -322,14 +331,8 @@ def _resolve_host(
 ) -> str:
     """Resolve a single host's deploy status.
 
-    This is the function that ``host_deploy_status.py`` must implement.
-    Currently raises NotImplementedError — the tests are expected to fail.
-
     Returns one of: 'ok', 'stale-daemon', 'unreachable'.
     """
-    # This function will be replaced by the actual implementation in Step 1.
-    # For now, it exists only to make the test file importable and the ACs assertable.
-    raise NotImplementedError(
-        "host_deploy_status.resolve_host() not yet implemented — "
-        "this is expected in the red-first step."
+    return _real_resolve_host(
+        bouncer_path, tmp_path, log_file=log_file, bounce_hosts=bounce_hosts
     )
