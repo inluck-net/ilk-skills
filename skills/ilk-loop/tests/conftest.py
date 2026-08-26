@@ -25,7 +25,7 @@ import pytest
 # ── Guard configuration ─────────────────────────────────────────────────
 
 _HOST_DENYLIST = frozenset({"launchctl"})
-_HOST_ENFORCE_ENV = "ILK_TEST_GUARD_ENFORCE"
+_HOST_REPORT_ENV = "ILK_TEST_GUARD_REPORT"
 _host_blocked_calls: list[tuple[str, str]] = []  # (nodeid, described_argv)
 
 
@@ -93,14 +93,13 @@ def _host_guard_active(request: pytest.FixtureRequest):
             if prog is not None and prog in _HOST_DENYLIST:
                 described = _describe_argv(args[0] if args else None)
                 _host_blocked_calls.append((nodeid, described))
-                # Enforce behind an env var; report-only by default.
-                # Step 0 ships report-only; step 1 flips to enforcement.
+                # Report-only behind an env var; enforce by default.
                 # Check at call time so a test's monkeypatch.setenv takes
                 # effect before the guard sees the call.
-                is_enforced = os.environ.get(
-                    _HOST_ENFORCE_ENV, "",
+                is_report = os.environ.get(
+                    _HOST_REPORT_ENV, "",
                 ).strip().lower() not in ("", "0", "false", "no")
-                if is_enforced:
+                if not is_report:
                     raise HostMutationBlocked(
                         f"{nodeid} shelled out to `{prog}`, a host-mutating binary:\n"
                         f"    {described}\n"
@@ -108,7 +107,7 @@ def _host_guard_active(request: pytest.FixtureRequest):
                         f"If this test genuinely needs the real binary, mark it "
                         f"`@pytest.mark.allow_launchctl` and say why.\n"
                         f"To inventory every such call instead of failing on the "
-                        f"first, run without {_HOST_ENFORCE_ENV}."
+                        f"first, run with {_HOST_REPORT_ENV}=1."
                     )
             super().__init__(*args, **kwargs)
 
@@ -116,12 +115,14 @@ def _host_guard_active(request: pytest.FixtureRequest):
         yield
 
 
-@pytest.fixture()
+@pytest.fixture(autouse=True)
 def exempts_recorded_during() -> None:
-    """For tests that deliberately trip the guard and catch the raise.
+    """Drop guard recordings made during each test.
 
-    Drops calls recorded during the test so the session-level enforcement
-    does not double-count them.  Scoped to the test that asked for it.
+    Autouse so that every test that deliberately trips the guard and catches
+    the raise has its calls removed from the ledger before
+    ``pytest_sessionfinish`` runs.  Tests that never touch a deny-listed
+    binary add nothing; the slice is a no-op for them.
     """
     before = len(_host_blocked_calls)
     yield
@@ -132,10 +133,10 @@ def _enforce_no_host_mutations(session) -> None:
     """Fail the session if any host-mutation call was not accounted for (AC-4)."""
     if not _host_blocked_calls:
         return
-    is_enforced = os.environ.get(
-        _HOST_ENFORCE_ENV, "",
+    is_report = os.environ.get(
+        _HOST_REPORT_ENV, "",
     ).strip().lower() not in ("", "0", "false", "no")
-    if not is_enforced:
+    if is_report:
         return  # report-only: the inventory is the deliverable
     by_test: dict[str, int] = {}
     for nodeid, _argv in _host_blocked_calls:

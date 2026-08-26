@@ -27,12 +27,12 @@ class TestGuardRefusesHostMutatingBinary:
     default flips to enforcement and they go green.
     """
 
-    def test_launchctl_is_refused(self) -> None:
-        """AC-2: raises a BaseException subclass naming the test and argv."""
+    def test_popen_run_is_refused(self) -> None:
+        """AC-2: ``subprocess.run`` funnels through Popen; raises BaseException."""
         with pytest.raises(BaseException, match="host-mutating binary"):
             subprocess.run(["launchctl", "list"], capture_output=True)
 
-    def test_absolute_path_is_matched(self) -> None:
+    def test_basename_absolute_path_is_matched(self) -> None:
         """AC-1: basename matching — /bin/launchctl → launchctl."""
         with pytest.raises(BaseException, match="host-mutating binary"):
             subprocess.run(["/bin/launchctl", "list"], capture_output=True)
@@ -45,17 +45,17 @@ class TestGuardRefusesHostMutatingBinary:
                 shell=True, capture_output=True,
             )
 
-    def test_subprocess_call_is_refused(self) -> None:
+    def test_popen_call_is_refused(self) -> None:
         """AC-1: ``subprocess.call`` funnels through Popen."""
         with pytest.raises(BaseException, match="host-mutating binary"):
             subprocess.call(["launchctl", "list"])
 
-    def test_subprocess_check_output_is_refused(self) -> None:
+    def test_popen_check_output_is_refused(self) -> None:
         """AC-1: ``subprocess.check_output`` funnels through Popen."""
         with pytest.raises(BaseException, match="host-mutating binary"):
             subprocess.check_output(["launchctl", "list"])
 
-    def test_subprocess_check_call_is_refused(self) -> None:
+    def test_popen_check_call_is_refused(self) -> None:
         """AC-1: ``subprocess.check_call`` funnels through Popen."""
         with pytest.raises(BaseException, match="host-mutating binary"):
             subprocess.check_call(["launchctl", "list"])
@@ -150,16 +150,17 @@ class TestMarkerExemption:
 class TestReportOnlyMode:
     """By default (no env var), the guard records but allows through (AC-6).
 
-    Set ``ILK_TEST_GUARD_ENFORCE=1`` to make the guard raise instead.
+    Set ``ILK_TEST_GUARD_REPORT=1`` to make the guard raise instead.
     """
 
-    def test_report_only_allows_launchctl(self, exempts_recorded_during) -> None:
-        """AC-6: default (report-only) mode does not raise — records and passes through.
+    def test_report_only_allows_launchctl(self, monkeypatch, exempts_recorded_during) -> None:
+        """AC-6: report-only mode does not raise — records and passes through.
 
-        No env var is set, so the guard is in report-only mode.
+        Set the env var to enable report-only mode (default is now enforcement).
         The guard records the call; exempts_recorded_during drops it from
         the session ledger so pytest_sessionfinish doesn't double-count it.
         """
+        monkeypatch.setenv("ILK_TEST_GUARD_REPORT", "1")
         result = subprocess.run(["launchctl", "list"], capture_output=True, text=True, timeout=5)
         # launchctl list may return 0 or 3; either way it ran (no guard raise).
         assert result.returncode in (0, 3), f"unexpected returncode: {result.returncode}"
