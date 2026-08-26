@@ -138,17 +138,34 @@ def test_toolkit_head_is_40char_hex(tmp_path):
 # ── AC-3: scheduler.pid stays a bare PID ─────────────────────────────────────
 
 def test_bare_pid(tmp_path):
-    """AC-3: scheduler.pid must contain exactly a bare PID, nothing else."""
-    _run_scheduler(tmp_path)
-    pid_file = tmp_path / ".ilk-data" / "scheduler.pid"
-    assert pid_file.is_file(), "scheduler.pid not created"
-    raw = pid_file.read_text(encoding="utf-8")
-    assert raw.strip() == raw.rstrip("\n"), (
-        f"scheduler.pid has trailing whitespace: {raw!r}"
+    """AC-3: scheduler.pid must contain exactly a bare PID, nothing else.
+
+    Must check while the scheduler is running — the cleanup handler (which now
+    works correctly) removes the pidfile on exit.
+    """
+    import time as _time
+    env = {**os.environ, "HOME": str(tmp_path), "ILK_SKILL_HOME": str(SKILLS_DIR)}
+    proc = subprocess.Popen(
+        ["bash", str(SCHEDULER), "--poll-min", "60"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env=env, encoding="utf-8",
     )
-    assert raw.strip().isdigit(), (
-        f"scheduler.pid should be a bare PID (digits only), got: {raw!r}"
-    )
+    try:
+        pid_file = tmp_path / ".ilk-data" / "scheduler.pid"
+        deadline = _time.monotonic() + 15
+        while not pid_file.is_file() and _time.monotonic() < deadline:
+            _time.sleep(0.1)
+        assert pid_file.is_file(), "scheduler.pid not created"
+        raw = pid_file.read_text(encoding="utf-8")
+        assert raw.strip() == raw.rstrip("\n"), (
+            f"scheduler.pid has trailing whitespace: {raw!r}"
+        )
+        assert raw.strip().isdigit(), (
+            f"scheduler.pid should be a bare PID (digits only), got: {raw!r}"
+        )
+    finally:
+        proc.kill()
+        proc.wait(timeout=5)
 
 
 # ── AC-4: file rewritten on every start ──────────────────────────────────────

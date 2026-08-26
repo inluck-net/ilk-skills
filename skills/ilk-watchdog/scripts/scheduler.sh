@@ -113,6 +113,21 @@ _scheduler_cleanup() {
   rm -f "$_SCAN_STDERR_FILE" 2>/dev/null || true
 }
 trap _scheduler_cleanup EXIT
+
+# Signal handlers: log the signal, then exit 128+signo.
+# The EXIT trap (_scheduler_cleanup) fires automatically on exit, so the
+# pidfile is released and the tempfile removed without a second trap.
+_scheduler_handle_sig() {
+  local name="$1" num="$2"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] stopping: received ${name}" >&2
+  type write_scheduler_log &>/dev/null && write_scheduler_log "signal" "" "$name"
+  exit $((128 + num))
+}
+# SIGTERM(15), SIGINT(2), SIGHUP(1) — all three per AC-2/AC-3.
+trap '_scheduler_handle_sig SIGTERM 15' TERM
+trap '_scheduler_handle_sig SIGINT 2' INT
+trap '_scheduler_handle_sig SIGHUP 1' HUP
+
 PROMOTE_SCRIPT="${_SKILL_ROOT}/ilk-loop/scripts/promote_next_master.py"
 LAUNCH_SCRIPT="${_SKILL_ROOT}/ilk-launcher/scripts/launch.sh"
 BOOTSTRAP_SCRIPT="${_SKILL_ROOT}/../tools/claude-worker/bootstrap.sh"
@@ -600,7 +615,7 @@ run_scheduler() {
         echo '{"decision":"idle","reason":"scan-failed"}'
         return
       fi
-      sleep $((POLL_MIN * 60))
+      sleep $((POLL_MIN * 60)) & wait $!
       continue
     }
     # Strip any remaining \r (Windows line endings)
@@ -630,7 +645,7 @@ run_scheduler() {
       fi
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] ${idle_msg}. Polling in ${POLL_MIN} min."
       write_scheduler_log "idle" "" "$idle_reason"
-      sleep $((POLL_MIN * 60))
+      sleep $((POLL_MIN * 60)) & wait $!
       continue
     fi
 
@@ -644,7 +659,7 @@ run_scheduler() {
       fi
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] idle: budget ceiling (dispatched ${dispatch_count}/${MAX_DISPATCHES}). Polling in ${POLL_MIN} min."
       write_scheduler_log "idle" "" "budget-ceiling"
-      sleep $((POLL_MIN * 60))
+      sleep $((POLL_MIN * 60)) & wait $!
       continue
     fi
 
@@ -660,7 +675,7 @@ run_scheduler() {
       fi
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] idle: capacity full ($live_count/$MAX_CONCURRENT live). Polling in ${POLL_MIN} min."
       write_scheduler_log "idle" "" "capacity-full ($live_count/$MAX_CONCURRENT)"
-      sleep $((POLL_MIN * 60))
+      sleep $((POLL_MIN * 60)) & wait $!
       continue
     fi
 
@@ -876,7 +891,7 @@ print(int((ea-sa).total_seconds()))
       fi
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] idle: no dispatchable project (all busy/blacklisted/unresolved). Polling in ${POLL_MIN} min."
       write_scheduler_log "idle" "" "no-dispatchable-project"
-      sleep $((POLL_MIN * 60))
+      sleep $((POLL_MIN * 60)) & wait $!
       continue
     fi
 
@@ -992,7 +1007,7 @@ print(int((ea-sa).total_seconds()))
       return
     fi
 
-    sleep $((POLL_MIN * 60))
+    sleep $((POLL_MIN * 60)) & wait $!
   done
 }
 
