@@ -44,7 +44,7 @@ def _write_fake_launchctl(tmp_path: Path) -> Path:
     Returns the path to the fake binary.
     """
     fake = tmp_path / "bin" / "launchctl"
-    fake.parent.mkdir(parents=True)
+    fake.parent.mkdir(parents=True, exist_ok=True)
     fake.write_text(
         textwrap.dedent("""\
             #!/usr/bin/env bash
@@ -60,6 +60,9 @@ def _write_fake_launchctl(tmp_path: Path) -> Path:
 def _write_fake_git(tmp_path: Path, head_sha: str) -> Path:
     """Create a fake git that returns ``head_sha`` for rev-parse HEAD.
 
+    Handles ``git [-C <path>] rev-parse HEAD`` — the real script passes
+    ``-C <toolkit_path>`` so we must skip those args.
+
     Returns the path to the fake binary.
     """
     fake = tmp_path / "bin" / "git"
@@ -67,6 +70,10 @@ def _write_fake_git(tmp_path: Path, head_sha: str) -> Path:
     fake.write_text(
         textwrap.dedent(f"""\
             #!/usr/bin/env bash
+            # Skip -C <path> if present.
+            if [[ "$1" == "-C" ]]; then
+                shift 2
+            fi
             if [[ "$1" == "rev-parse" && "$2" == "HEAD" ]]; then
                 echo "{head_sha}"
                 exit 0
@@ -83,7 +90,7 @@ def _write_fake_git(tmp_path: Path, head_sha: str) -> Path:
 def _run_bounce(
     tmp_path: Path,
     *,
-    state: dict | None = None,
+    state: dict | str | None = None,
     head_sha: str = "abc123",
     extra_args: list[str] | None = None,
     platform: str = "Darwin",
@@ -92,16 +99,26 @@ def _run_bounce(
 ) -> subprocess.CompletedProcess:
     """Set up the hermetic environment and run bounce_daemons.sh.
 
+    ``state`` controls the state file:
+      - ``None``        → no state file (absent)
+      - ``dict``        → JSON-serialized into the state file
+      - ``"empty"``     → file exists but is empty
+      - ``"non_json"``  → file exists with non-JSON content
+
     Returns the CompletedProcess so callers can inspect stdout, stderr, exit.
     """
     home = tmp_path / "home"
-    home.mkdir()
+    home.mkdir(exist_ok=True)
     ilk_data = home / ".ilk-data"
-    ilk_data.mkdir()
+    ilk_data.mkdir(exist_ok=True)
 
     # Write state file
-    if state is not None:
-        state_file = ilk_data / "scheduler.state.json"
+    state_file = ilk_data / "scheduler.state.json"
+    if state == "empty":
+        state_file.write_text("", encoding="utf-8")
+    elif state == "non_json":
+        state_file.write_text("NOT JSON {{{", encoding="utf-8")
+    elif state is not None:
         state_file.write_text(json.dumps(state), encoding="utf-8")
 
     # Fake binaries
@@ -128,7 +145,7 @@ def _run_bounce(
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "LAUNCHCTL_LOG": str(launchctl_log),
         "ILK_BOUNCE_PLATFORM": platform,
-        "ILK_BOUNCE_DAEmon_LOADED": "1" if daemon_loaded else "0",
+        "ILK_BOUNCE_DAEMON_LOADED": "1" if daemon_loaded else "0",
     }
 
     cmd = ["bash", str(_BOUNCE_SH)]
@@ -225,48 +242,15 @@ class TestAc5AbsentState:
 
     def test_empty_state_is_stale(self, tmp_path):
         """Empty file → must bounce."""
-        home = tmp_path / "home"
-        home.mkdir()
-        ilk_data = home / ".ilk-data"
-        ilk_data.mkdir()
-        (ilk_data / "scheduler.state.json").write_text("", encoding="utf-8")
-        # Use _run_bounce but with state=None so it doesn't overwrite,
-        # then manually write the empty file.  Easier: just set up directly.
-        result = _run_bounce(tmp_path, state={}, head_sha="abc123")
-        # Empty dict has no toolkit_head → stale
+        result = _run_bounce(tmp_path, state="empty", head_sha="abc123")
         launchctl_args = _read_launchctl_log(tmp_path)
         assert len(launchctl_args) > 0, (
-            "Empty state dict should trigger bounce"
+            "Empty state file should trigger bounce"
         )
 
     def test_non_json_state_is_stale(self, tmp_path):
         """Non-JSON content → must bounce."""
-        home = tmp_path / "home"
-        home.mkdir()
-        ilk_data = home / ".ilk-data"
-        ilk_data.mkdir()
-        (ilk_data / "scheduler.state.json").write_text("NOT JSON {{{", encoding="utf-8")
-
-        bin_dir = tmp_path / "bin"
-        bin_dir.mkdir(exist_ok=True)
-        _write_fake_launchctl(tmp_path)
-        _write_fake_git(tmp_path, "abc123")
-        launchctl_log = tmp_path / "launchctl.log"
-        launchctl_log.write_text("", encoding="utf-8")
-
-        env = {
-            **os.environ,
-            "HOME": str(home),
-            "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "LAUNCHCTL_LOG": str(launchctl_log),
-        }
-        result = subprocess.run(
-            ["bash", str(_BOUNCE_SH)],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+        result = _run_bounce(tmp_path, state="non_json", head_sha="abc123")
         args = _read_launchctl_log(tmp_path)
         assert len(args) > 0, "Non-JSON state should trigger bounce"
 
