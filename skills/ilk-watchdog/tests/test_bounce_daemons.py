@@ -43,10 +43,15 @@ def _write_fake_launchctl(tmp_path: Path) -> Path:
     """Create a fake launchctl that logs argv and exits per-verb RC.
 
     Reads exit codes from environment variables:
-      ``ILK_FAKE_LAUNCHCTL_BOOTSTRAP_RC`` — exit code for ``bootstrap`` verb
-      ``ILK_FAKE_LAUNCHCTL_PRINT_RC``     — exit code for ``print`` verb
+      ``ILK_FAKE_LAUNCHCTL_BOOTSTRAP_RC``       — exit code for ``bootstrap`` verb
+      ``ILK_FAKE_LAUNCHCTL_PRINT_RC``            — exit code for ``print`` verb
+      ``ILK_FAKE_LAUNCHCTL_BOOTSTRAP_FAIL_TIMES`` — fail the first N bootstrap
+          calls (overrides ``BOOTSTRAP_RC`` for those calls), then succeed.
+          Call count is written to ``$LAUNCHCTL_LOG.count``.
+      ``ILK_FAKE_LAUNCHCTL_BOOTSTRAP_COUNT_FILE`` — path to write the total
+          number of bootstrap invocations (for assertion).
 
-    Both default to 0 when unset, preserving the original behaviour.
+    Both ``BOOTSTRAP_RC`` and ``PRINT_RC`` default to 0 when unset.
 
     Returns the path to the fake binary.
     """
@@ -60,6 +65,20 @@ def _write_fake_launchctl(tmp_path: Path) -> Path:
             verb="$1"
             case "$verb" in
                 bootstrap)
+                    # Track bootstrap call count.
+                    count_file="${ILK_FAKE_LAUNCHCTL_BOOTSTRAP_COUNT_FILE:-/dev/null}"
+                    if [[ -f "$count_file" ]]; then
+                        count=$(cat "$count_file")
+                    else
+                        count=0
+                    fi
+                    count=$((count + 1))
+                    echo "$count" > "$count_file"
+                    # Fail the first N calls if requested; otherwise use RC.
+                    fail_times="${ILK_FAKE_LAUNCHCTL_BOOTSTRAP_FAIL_TIMES:-0}"
+                    if [[ "$fail_times" -gt 0 && "$count" -le "$fail_times" ]]; then
+                        exit "${ILK_FAKE_LAUNCHCTL_BOOTSTRAP_RC:-5}"
+                    fi
                     exit "${ILK_FAKE_LAUNCHCTL_BOOTSTRAP_RC:-0}"
                     ;;
                 print)
@@ -118,6 +137,7 @@ def _run_bounce(
     allow_foreign_home: bool = True,
     bootstrap_rc: int | None = None,
     print_rc: int | None = None,
+    bootstrap_fail_times: int | None = None,
 ) -> subprocess.CompletedProcess:
     """Set up the hermetic environment and run bounce_daemons.sh.
 
@@ -175,10 +195,17 @@ def _run_bounce(
     }
     if allow_foreign_home:
         env["ILK_BOUNCE_ALLOW_FOREIGN_HOME"] = "1"
+    # Bootstrap call-count file (for retry assertions).
+    bootstrap_count_file = tmp_path / "bootstrap_count.txt"
+    bootstrap_count_file.write_text("0", encoding="utf-8")
+    env["ILK_FAKE_LAUNCHCTL_BOOTSTRAP_COUNT_FILE"] = str(bootstrap_count_file)
+
     if bootstrap_rc is not None:
         env["ILK_FAKE_LAUNCHCTL_BOOTSTRAP_RC"] = str(bootstrap_rc)
     if print_rc is not None:
         env["ILK_FAKE_LAUNCHCTL_PRINT_RC"] = str(print_rc)
+    if bootstrap_fail_times is not None:
+        env["ILK_FAKE_LAUNCHCTL_BOOTSTRAP_FAIL_TIMES"] = str(bootstrap_fail_times)
 
     cmd = ["bash", str(_BOUNCE_SH)]
     if extra_args:
@@ -200,6 +227,14 @@ def _read_launchctl_log(tmp_path: Path) -> list[str]:
     if not log.exists():
         return []
     return [line for line in log.read_text().splitlines() if line.strip()]
+
+
+def _read_bootstrap_count(tmp_path: Path) -> int:
+    """Read the number of bootstrap invocations recorded by the fake launchctl."""
+    count_file = tmp_path / "bootstrap_count.txt"
+    if not count_file.exists():
+        return 0
+    return int(count_file.read_text(encoding="utf-8").strip())
 
 
 # ---------------------------------------------------------------------------
@@ -605,23 +640,166 @@ class TestBounceMustRestore:
 
 
 # ---------------------------------------------------------------------------
+# Bounce retries — AC-1..AC-6 from MASTER-2026-08-26e SP1
+# ---------------------------------------------------------------------------
+
+
+class TestBounceRetries:
+    """A bounce must retry bootstrap before declaring the daemon unreachable.
+
+    AC-1: bootstrap fails once then succeeds → bounce succeeds (exit 1),
+          stdout has 'bouncing:' and no 'unreachable:', exactly 2 bootstrap calls.
+    AC-2: bootstrap fails on every attempt → 'unreachable:' + exit 2,
+          exactly 3 bootstrap calls.
+    AC-3: retry is bounded — at most 3 bootstrap attempts total.
+    AC-4: post-bootstrap verify still runs; bootstrap=0 but print!=0 → retried.
+    AC-5: fresh daemon never bounced; successful first-attempt → exit 1,
+          exactly 1 bootstrap call (happy path unchanged).
+    AC-6: exit contract is still exactly 0/1/2 across all five paths.
+    """
+
+    EXIT_NOTHING_TO_DO = 0
+    EXIT_BOUNCHED = 1
+    EXIT_UNREACHABLE = 2
+
+    def test_retry_then_succeed(self, tmp_path):
+        """AC-1: bootstrap fails once, succeeds on retry → exit 1, 'bouncing:', no 'unreachable:'."""
+        state = {"pid": 1, "started_at": "x", "toolkit_head": "old"}
+        result = _run_bounce(
+            tmp_path,
+            state=state,
+            head_sha="new",
+            bootstrap_fail_times=1,
+        )
+        assert result.returncode == self.EXIT_BOUNCHED, (
+            f"Expected exit {self.EXIT_BOUNCHED} after retry-then-succeed, got {result.returncode}: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        assert "bouncing:" in result.stdout, (
+            f"Expected 'bouncing:' in stdout: {result.stdout!r}"
+        )
+        assert "unreachable" not in (result.stdout + result.stderr).lower(), (
+            f"Must not report 'unreachable' when retry succeeds: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        count = _read_bootstrap_count(tmp_path)
+        assert count == 2, (
+            f"Expected exactly 2 bootstrap calls (fail + succeed), got {count}"
+        )
+
+    def test_all_attempts_fail(self, tmp_path):
+        """AC-2: bootstrap fails on every attempt → 'unreachable:' + exit 2, exactly 3 calls."""
+        state = {"pid": 1, "started_at": "x", "toolkit_head": "old"}
+        result = _run_bounce(
+            tmp_path,
+            state=state,
+            head_sha="new",
+            bootstrap_fail_times=3,  # all 3 attempts fail
+        )
+        assert result.returncode == self.EXIT_UNREACHABLE, (
+            f"Expected exit {self.EXIT_UNREACHABLE} after all attempts fail, got {result.returncode}: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        assert "unreachable" in (result.stdout + result.stderr).lower(), (
+            f"Expected 'unreachable' when all attempts fail: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        count = _read_bootstrap_count(tmp_path)
+        assert count == 3, (
+            f"Expected exactly 3 bootstrap calls (bounded retry), got {count}"
+        )
+
+    def test_retry_bound_is_three(self, tmp_path):
+        """AC-3: at most 3 bootstrap attempts — not 2, not 4."""
+        state = {"pid": 1, "started_at": "x", "toolkit_head": "old"}
+        result = _run_bounce(
+            tmp_path,
+            state=state,
+            head_sha="new",
+            bootstrap_fail_times=100,  # would loop forever if unbounded
+        )
+        count = _read_bootstrap_count(tmp_path)
+        assert count == 3, (
+            f"Retry bound must be exactly 3, got {count} — "
+            f"unbounded retry would hang the upgrade"
+        )
+
+    def test_post_verify_still_retries(self, tmp_path):
+        """AC-4: bootstrap=0 but print!=0 → retried, then reported unreachable."""
+        state = {"pid": 1, "started_at": "x", "toolkit_head": "old"}
+        result = _run_bounce(
+            tmp_path,
+            state=state,
+            head_sha="new",
+            bootstrap_rc=0,
+            print_rc=1,  # print fails → daemon absent
+        )
+        assert result.returncode == self.EXIT_UNREACHABLE, (
+            f"Expected exit {self.EXIT_UNREACHABLE} when verify fails after bootstrap=0, "
+            f"got {result.returncode}: stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        assert "unreachable" in (result.stdout + result.stderr).lower(), (
+            f"Expected 'unreachable' when verify fails: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        # All 3 attempts should have been tried (bootstrap=0 but verify fails each time).
+        count = _read_bootstrap_count(tmp_path)
+        assert count == 3, (
+            f"Expected 3 bootstrap calls when verify keeps failing, got {count}"
+        )
+
+    def test_fresh_daemon_never_bounced(self, tmp_path):
+        """AC-5a: fresh daemon → exit 0, zero bootstrap calls."""
+        head = "abc123"
+        state = {"pid": 1, "started_at": "x", "toolkit_head": head}
+        result = _run_bounce(tmp_path, state=state, head_sha=head)
+        assert result.returncode == self.EXIT_NOTHING_TO_DO, (
+            f"Expected exit {self.EXIT_NOTHING_TO_DO} for fresh state, got {result.returncode}"
+        )
+        count = _read_bootstrap_count(tmp_path)
+        assert count == 0, (
+            f"Fresh daemon must not be bounced, got {count} bootstrap calls"
+        )
+
+    def test_successful_first_attempt_unchanged(self, tmp_path):
+        """AC-5b: successful first-attempt bounce → exit 1, exactly 1 bootstrap call."""
+        state = {"pid": 1, "started_at": "x", "toolkit_head": "old"}
+        result = _run_bounce(
+            tmp_path,
+            state=state,
+            head_sha="new",
+            bootstrap_fail_times=0,  # no failures
+        )
+        assert result.returncode == self.EXIT_BOUNCHED, (
+            f"Expected exit {self.EXIT_BOUNCHED} for first-attempt success, got {result.returncode}: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        count = _read_bootstrap_count(tmp_path)
+        assert count == 1, (
+            f"Happy path must have exactly 1 bootstrap call, got {count}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # AC-6 totality: exit contract is always in (0, 1, 2)
 # ---------------------------------------------------------------------------
 
 class TestExitContractTotality:
-    """AC-6: run all five paths and assert returncode is always in (0, 1, 2)."""
+    """AC-6: run all seven paths and assert returncode is always in (0, 1, 2)."""
 
     @pytest.mark.parametrize(
-        "label,state,head_sha,daemon_loaded,plist_exists,bootstrap_rc,print_rc",
+        "label,state,head_sha,daemon_loaded,plist_exists,bootstrap_rc,print_rc,bootstrap_fail_times",
         [
-            pytest.param("fresh", {"pid": 1, "started_at": "x", "toolkit_head": "h"}, "h", True, True, 0, 0, id="fresh"),
-            pytest.param("stale_ok", {"pid": 1, "started_at": "x", "toolkit_head": "old"}, "new", True, True, 0, 0, id="stale_ok"),
-            pytest.param("unreachable_noload", {"pid": 1, "started_at": "x", "toolkit_head": "old"}, "new", False, True, 0, 0, id="unreachable_noload"),
-            pytest.param("failed_bootstrap", {"pid": 1, "started_at": "x", "toolkit_head": "old"}, "new", True, True, 5, 0, id="failed_bootstrap"),
-            pytest.param("failed_verify", {"pid": 1, "started_at": "x", "toolkit_head": "old"}, "new", True, True, 0, 1, id="failed_verify"),
+            pytest.param("fresh", {"pid": 1, "started_at": "x", "toolkit_head": "h"}, "h", True, True, 0, 0, None, id="fresh"),
+            pytest.param("stale_ok", {"pid": 1, "started_at": "x", "toolkit_head": "old"}, "new", True, True, 0, 0, None, id="stale_ok"),
+            pytest.param("unreachable_noload", {"pid": 1, "started_at": "x", "toolkit_head": "old"}, "new", False, True, 0, 0, None, id="unreachable_noload"),
+            pytest.param("failed_bootstrap", {"pid": 1, "started_at": "x", "toolkit_head": "old"}, "new", True, True, 5, 0, None, id="failed_bootstrap"),
+            pytest.param("failed_verify", {"pid": 1, "started_at": "x", "toolkit_head": "old"}, "new", True, True, 0, 1, None, id="failed_verify"),
+            pytest.param("retry_then_succeed", {"pid": 1, "started_at": "x", "toolkit_head": "old"}, "new", True, True, 5, 0, 1, id="retry_then_succeed"),
+            pytest.param("all_attempts_fail", {"pid": 1, "started_at": "x", "toolkit_head": "old"}, "new", True, True, 5, 0, 3, id="all_attempts_fail"),
         ],
     )
-    def test_exit_code_in_range(self, tmp_path, label, state, head_sha, daemon_loaded, plist_exists, bootstrap_rc, print_rc):
+    def test_exit_code_in_range(self, tmp_path, label, state, head_sha, daemon_loaded, plist_exists, bootstrap_rc, print_rc, bootstrap_fail_times):
         """Every reachable path must exit 0, 1, or 2."""
         result = _run_bounce(
             tmp_path,
@@ -631,6 +809,7 @@ class TestExitContractTotality:
             plist_exists=plist_exists,
             bootstrap_rc=bootstrap_rc,
             print_rc=print_rc,
+            bootstrap_fail_times=bootstrap_fail_times,
         )
         assert result.returncode in (0, 1, 2), (
             f"[{label}] Exit code {result.returncode} is outside 0/1/2 contract: "
