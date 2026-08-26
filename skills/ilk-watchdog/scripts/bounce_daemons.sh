@@ -12,6 +12,12 @@
 # Options:
 #   --check   Detect-only: report staleness, bounce nothing.
 #
+# Environment:
+#   ILK_BOUNCE_ALLOW_FOREIGN_HOME=1  Bypass the foreign-HOME refusal.
+#                                     Set by test helpers that deliberately
+#                                     run under a tmp HOME with a fake
+#                                     launchctl on PATH.
+#
 # State file: ~/.ilk-data/scheduler.state.json
 #   { "pid": <int>, "started_at": "<ISO-8601>", "toolkit_head": "<sha>" }
 #
@@ -61,6 +67,20 @@ case "$PLATFORM" in
     exit 2
     ;;
 esac
+
+# ── Foreign HOME refusal ───────────────────────────────────────────────────
+# A test that sets HOME to a tmp dir must not reach the real launchctl.
+# Resolve the real home and refuse unless ILK_BOUNCE_ALLOW_FOREIGN_HOME=1.
+
+real_home="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+if [[ -z "$real_home" ]]; then
+  real_home="/Users/$(id -un)"
+fi
+
+if [[ "$HOME" != "$real_home" && "${ILK_BOUNCE_ALLOW_FOREIGN_HOME:-}" != "1" ]]; then
+  echo "foreign HOME: $HOME (real home: $real_home)" >&2
+  exit 2
+fi
 
 # ── Staleness decision ─────────────────────────────────────────────────────
 

@@ -98,6 +98,7 @@ def _run_bounce(
     platform: str = "Darwin",
     daemon_loaded: bool = True,
     plist_exists: bool = True,
+    allow_foreign_home: bool = True,
 ) -> subprocess.CompletedProcess:
     """Set up the hermetic environment and run bounce_daemons.sh.
 
@@ -149,6 +150,8 @@ def _run_bounce(
         "ILK_BOUNCE_PLATFORM": platform,
         "ILK_BOUNCE_DAEMON_LOADED": "1" if daemon_loaded else "0",
     }
+    if allow_foreign_home:
+        env["ILK_BOUNCE_ALLOW_FOREIGN_HOME"] = "1"
 
     cmd = ["bash", str(_BOUNCE_SH)]
     if extra_args:
@@ -463,7 +466,7 @@ class TestForeignHomeRefusal:
 
     def test_foreign_home_refuses_exit2(self, tmp_path):
         """AC-1: foreign HOME → exit 2, stdout names 'foreign HOME'."""
-        result = _run_bounce(tmp_path, state=None, head_sha="abc123")
+        result = _run_bounce(tmp_path, state=None, head_sha="abc123", allow_foreign_home=False)
         assert result.returncode == 2, (
             f"Expected exit 2 for foreign HOME, got {result.returncode}: "
             f"stdout={result.stdout!r} stderr={result.stderr!r}"
@@ -475,7 +478,7 @@ class TestForeignHomeRefusal:
 
     def test_foreign_home_refuses_before_launchctl(self, tmp_path):
         """AC-2: refusal is before any launchctl call — log must be empty."""
-        result = _run_bounce(tmp_path, state=None, head_sha="abc123")
+        result = _run_bounce(tmp_path, state=None, head_sha="abc123", allow_foreign_home=False)
         log = _read_launchctl_log(tmp_path)
         assert log == [], (
             f"Foreign HOME refusal must precede launchctl calls, but log has {len(log)} entry/entries: {log}"
@@ -485,6 +488,7 @@ class TestForeignHomeRefusal:
         """AC-5: --check under a foreign HOME still refuses (exit 2)."""
         result = _run_bounce(
             tmp_path, state=None, head_sha="abc123", extra_args=["--check"],
+            allow_foreign_home=False,
         )
         assert result.returncode == 2, (
             f"--check under foreign HOME must refuse, got exit {result.returncode}: "
