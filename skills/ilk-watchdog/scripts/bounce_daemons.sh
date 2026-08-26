@@ -8,7 +8,13 @@
 #   0 — nothing to do (all daemons fresh)
 #   1 — bounced at least one daemon (and verified it came back)
 #   2 — could not reach at least one daemon (plist missing, not loaded,
-#       bootstrap failed, or bounced but daemon still absent)
+#       bootstrap failed after retries, or bounced but daemon still absent)
+#
+# Retry: bootstrap is attempted up to 3 times with a 1s settle wait between
+# attempts.  The wait exists because launchctl bootstrap can return exit 5
+# immediately after bootout — the domain has not settled.  Observed on
+# chad-mbp 2026-08-26; a manual retry seconds later succeeded.  The bound is
+# not configurable — see design decisions in the sub-plan.
 #
 # Options:
 #   --check   Detect-only: report staleness, bounce nothing.
