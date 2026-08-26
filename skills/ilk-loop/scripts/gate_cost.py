@@ -123,6 +123,180 @@ def _calls(path: Path):
             yield d, cmd
 
 
+def _parse_test_files(cmd: str) -> list[str]:
+    """Extract test-file paths from a pytest command string.
+
+    Handles the forms this repo actually produces:
+      bare paths, -q/-v before or after paths, -k selections, pipes to
+      tail/grep.  Returns [] for non-pytest commands or commands with no
+      recognisable test-file arguments.
+    """
+    # Strip pipes — only the left side names test files
+    left = cmd.split("|")[0].strip()
+    tokens = left.split()
+    if not tokens:
+        return []
+
+    # Must be a pytest invocation (python -m pytest, or bare pytest)
+    pytest_idx = None
+    for i, t in enumerate(tokens):
+        if t == "pytest" or t.endswith("/pytest"):
+            pytest_idx = i
+            break
+    if pytest_idx is None:
+        return []
+
+    # Everything after the pytest binary is args
+    args = tokens[pytest_idx + 1:]
+    files = []
+    skip_next = False
+    for a in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if a.startswith("-"):
+            # -k, -m, --timeout, --timeout-method, etc. take a value
+            # unless they use = form
+            if "=" not in a and a in ("-k", "-m", "--timeout", "--timeout-method",
+                                      "-x", "--maxfail", "-p", "--override-ini"):
+                skip_next = True
+            continue
+        # Not a flag — treat as a path if it looks like a test path
+        if "/" in a or a.startswith("test") or a.endswith(".py"):
+            files.append(a)
+    return files
+
+
+def per_file_report(
+    root: Path,
+    since: str | None = None,
+    after: datetime | None = None,
+    before: datetime | None = None,
+    as_json: bool = False,
+) -> dict:
+    """Produce per-test-file wall-clock report.
+
+    Returns the data dict; prints text to stdout unless *as_json* is True.
+    """
+    per_project: dict[str, dict] = {}
+
+    for proj, run in _iter_runs(since, root=root):
+        p = per_project.setdefault(proj, {
+            "per_file": {},       # file -> {invocations, total_s, max_s}
+            "multi_file": {},     # frozenset(files) -> {invocations, total_s}
+            "total_pytest": 0,
+            "single_file_pytest": 0,
+            "iters_searched": 0,
+            "runs_searched": 0,
+        })
+        p["runs_searched"] += 1
+        for f in sorted(run.glob("iter-*.log.jsonl")):
+            if after is not None or before is not None:
+                start = _iter_start_ts(f)
+                if start is None:
+                    continue
+                if after is not None and start <= after:
+                    continue
+                if before is not None and start > before:
+                    continue
+            p["iters_searched"] += 1
+            for d, cmd in _calls(f):
+                files = _parse_test_files(cmd)
+                if not files:
+                    continue
+                p["total_pytest"] += 1
+                if len(files) == 1:
+                    p["single_file_pytest"] += 1
+                    entry = p["per_file"].setdefault(files[0], {
+                        "invocations": 0, "total_s": 0.0, "max_s": 0.0,
+                    })
+                    entry["invocations"] += 1
+                    entry["total_s"] += d
+                    entry["max_s"] = max(entry["max_s"], d)
+                else:
+                    key = frozenset(files)
+                    entry = p["multi_file"].setdefault(key, {
+                        "invocations": 0, "total_s": 0.0,
+                    })
+                    entry["invocations"] += 1
+                    entry["total_s"] += d
+
+    # Build output
+    out: dict = {
+        "schema": 1,
+        "since": since,
+        "after": after.isoformat() if after else None,
+        "before": before.isoformat() if before else None,
+        "per_project": {},
+    }
+
+    for proj_name, p in sorted(per_project.items()):
+        per_file_list = sorted(
+            [{"file": f, **v} for f, v in p["per_file"].items()],
+            key=lambda e: e["total_s"], reverse=True,
+        )
+        multi_list = sorted(
+            [{"files": sorted(k), **v} for k, v in p["multi_file"].items()],
+            key=lambda e: e["total_s"], reverse=True,
+        )
+        # Round floats
+        for entry in per_file_list:
+            entry["total_s"] = round(entry["total_s"], 1)
+            entry["max_s"] = round(entry["max_s"], 1)
+        for entry in multi_list:
+            entry["total_s"] = round(entry["total_s"], 1)
+        out["per_project"][proj_name] = {
+            "per_file": per_file_list,
+            "multi_file": multi_list,
+            "total_pytest_invocations": p["total_pytest"],
+            "single_file_invocations": p["single_file_pytest"],
+            "iters_searched": p["iters_searched"],
+            "runs_searched": p["runs_searched"],
+        }
+
+    if as_json:
+        print(json.dumps(out, indent=2))
+        return out
+
+    # Text output
+    window = (f"iterations starting at or before {before}" if before and not after
+              else f"iterations starting after {after}" if after
+              else f"runs since {since}" if since else "all runs")
+
+    any_data = any(p["per_file"] for p in out["per_project"].values())
+    if not any_data:
+        total_runs = sum(p["runs_searched"] for p in out["per_project"].values())
+        total_iters = sum(p["iters_searched"] for p in out["per_project"].values())
+        if not out["per_project"]:
+            print(f"no measurements ({window}; 0 runs searched)")
+        else:
+            print(f"no measurements ({window}; {total_runs} runs, "
+                  f"{total_iters} iterations searched)")
+        return out
+
+    for proj_name, proj in out["per_project"].items():
+        print(f"\n  {proj_name}  ({window})")
+        denom = proj["single_file_invocations"]
+        total = proj["total_pytest_invocations"]
+        print(f"  per-file cost from {denom} of {total} invocations")
+        print(f"  iters searched: {proj['iters_searched']}")
+        print()
+        if proj["per_file"]:
+            print(f"  {'file':<55} {'n':>4} {'total_s':>9} {'max_s':>9}")
+            for e in proj["per_file"]:
+                print(f"  {e['file']:<55} {e['invocations']:>4} "
+                      f"{e['total_s']:>9.1f} {e['max_s']:>9.1f}")
+        else:
+            print("  (no single-file invocations)")
+        if proj["multi_file"]:
+            print()
+            print("  multi-file invocations (not in per-file totals):")
+            for e in proj["multi_file"]:
+                print(f"  {' + '.join(e['files'])}  "
+                      f"({e['invocations']}x, {e['total_s']:.1f}s)")
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--since", help="only runs with id >= YYYYMMDD (run-level, coarse)")
@@ -134,7 +308,26 @@ def main() -> int:
                                      "needed to re-derive a BEFORE number once "
                                      "post-change data has entered the corpus.")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--by-test-file", action="store_true",
+                    help="report per-test-file wall-clock (single-file invocations only)")
     a = ap.parse_args()
+
+    if a.by_test_file:
+        after_ts = None
+        if a.after:
+            try:
+                after_ts = it._parse_ts(a.after)
+            except Exception:
+                raise SystemExit(f"gate_cost: --after {a.after!r} is not an ISO8601 timestamp")
+        before_ts = None
+        if a.before:
+            try:
+                before_ts = it._parse_ts(a.before)
+            except Exception:
+                raise SystemExit(f"gate_cost: --before {a.before!r} is not an ISO8601 timestamp")
+        per_file_report(root=DATA, since=a.since, after=after_ts, before=before_ts,
+                        as_json=a.json)
+        return 0
 
     after_ts = None
     if a.after:
