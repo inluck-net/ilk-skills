@@ -578,6 +578,10 @@ def _run_real_bouncer(
         **os.environ,
         "HOME": str(home),
         "PATH": f"{tmp_path / 'bin'}:{os.environ.get('PATH', '')}",
+        # Pin the data home: overriding HOME alone is not hermetic, because
+        # bounce_daemons.sh resolves ILK_DATA_HOME -> ILK_DATA_DIR -> $HOME/.ilk-data
+        # and three tests leak ILK_DATA_HOME via raw os.environ writes.
+        "ILK_DATA_HOME": str(ilk_data),
         "ILK_BOUNCE_PLATFORM": "Darwin",
         "ILK_BOUNCE_ALLOW_FOREIGN_HOME": "1",
         "ILK_BOUNCE_DAEMON_LOADED": "1" if daemon_loaded else "0",
