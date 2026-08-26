@@ -183,26 +183,30 @@ def test_fail_open_on_readonly_dir(tmp_path):
     data_dir = tmp_path / ".ilk-data"
     data_dir.mkdir(parents=True, exist_ok=True)
     state_file = data_dir / "scheduler.state.json"
-    # Make the directory read-only AFTER creating it (so mkdir in the script
-    # doesn't fail, but the write does).
-    data_dir.chmod(0o555)
+    # Create the state file first, then make it read-only so the write fails.
+    # The directory stays writable so the PID file can still be written.
+    state_file.write_text('{"stale": true}', encoding="utf-8")
+    state_file.chmod(0o444)
     try:
         res = _run_scheduler(tmp_path, timeout=30)
         # Scheduler must not crash — it should exit 0 (--once --dry-run).
         assert res.returncode == 0, (
-            f"scheduler crashed when state dir is read-only: "
+            f"scheduler crashed when state file is read-only: "
             f"rc={res.returncode}\nstdout={res.stdout[-500:]}\n"
             f"stderr={res.stderr[-500:]}"
         )
     finally:
-        data_dir.chmod(0o755)
+        state_file.chmod(0o644)
 
 
 def test_fail_open_logs_degradation(tmp_path):
     """AC-5: a write failure should be logged, not silent."""
     data_dir = tmp_path / ".ilk-data"
     data_dir.mkdir(parents=True, exist_ok=True)
-    data_dir.chmod(0o555)
+    state_file = data_dir / "scheduler.state.json"
+    # Create the state file first, then make it read-only so the write fails.
+    state_file.write_text('{"stale": true}', encoding="utf-8")
+    state_file.chmod(0o444)
     try:
         res = _run_scheduler(tmp_path, timeout=30)
         combined = res.stdout + res.stderr
@@ -211,7 +215,7 @@ def test_fail_open_logs_degradation(tmp_path):
             for word in ["state", "degraded", "warn", "could not"]
         ), "write failure should produce a log message"
     finally:
-        data_dir.chmod(0o755)
+        state_file.chmod(0o644)
 
 
 def test_fail_open_on_no_git(tmp_path):
