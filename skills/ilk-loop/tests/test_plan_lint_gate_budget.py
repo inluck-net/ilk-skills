@@ -242,3 +242,43 @@ def test_baseline_unchanged() -> None:
     for bf in baseline["findings"]:
         found = any(bf["message"] in af["message"] for af in actual_findings)
         assert found, f"Baseline finding lost: {bf}"
+
+
+# ── AC-9: the lint is reachable from the real pipeline ──────────────────────
+#
+# Added 2026-08-26 (/ilk-ship Phase 0).  lint_gate_budget was fully
+# implemented and unit-tested, but `grep -n lint_gate_budget plan_lint.py`
+# returned only the `def` line — it was never added to ALL_CHECKS.  A real
+# over-budget plan produced 0 budget findings.  That is exactly the
+# "orphaned model" shape plan_lint itself lints for: the model exists, its
+# unit tests pass, and nothing reaches it.
+
+def test_lint_gate_budget_is_registered_in_all_checks() -> None:
+    import plan_lint
+    assert plan_lint.lint_gate_budget in plan_lint.ALL_CHECKS, (
+        "lint_gate_budget is implemented and unit-tested but not wired into "
+        "ALL_CHECKS, so lint_file() never calls it"
+    )
+
+
+def test_pipeline_does_not_spam_a_no_data_note_per_subplan(tmp_path) -> None:
+    """Wiring it must not make every plan report 'no timing data'.
+
+    Calling it with timing_data=None takes the AC-4 branch, so a naive
+    registration would append that note to every sub-plan in every batch.
+    """
+    import plan_lint
+    sp = tmp_path / "some-plan.md"
+    sp.write_text(
+        "---\nplan: some-plan\nstatus: pending\nlocal_checks: []\n---\n\n"
+        "# some-plan\n\n### Step 0 — work\n\n"
+        "```yaml\nlocal_checks:\n  - command: python3 -m pytest tests/test_x.py -q\n"
+        "    timeout: 60\n```\n",
+        encoding="utf-8",
+    )
+    findings = plan_lint.lint_file(sp)
+    nodata = [f for f in findings if "no timing data available" in f]
+    assert not nodata, (
+        "the pipeline reported 'no timing data' — it is passing None instead "
+        f"of loading the measurements.  Findings: {nodata}"
+    )

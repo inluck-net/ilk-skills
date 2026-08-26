@@ -2377,6 +2377,42 @@ def _extract_gate_budget(text: str) -> int:
     return int(match.group(1)) if match else _DEFAULT_GATE_BUDGET_SECONDS
 
 
+# Memoised so lint_file() can call lint_gate_budget per sub-plan without
+# re-parsing the whole run corpus each time.  Fails open to "no data", which
+# lint_gate_budget reports as its own AC-4 note rather than silently passing.
+_TIMING_CACHE: dict | None = None
+
+
+def _load_timing_data() -> dict:
+    """Load per-test-file measurements from gate_cost --by-test-file --json."""
+    global _TIMING_CACHE
+    if _TIMING_CACHE is not None:
+        return _TIMING_CACHE
+    empty = {"schema": 1, "per_project": {}, "_auto_loaded": True}
+    try:
+        import json as _json
+        import subprocess as _sp
+        script = Path(__file__).resolve().parent / "gate_cost.py"
+        if not script.is_file():
+            _TIMING_CACHE = empty
+            return _TIMING_CACHE
+        out = _sp.run(
+            [sys.executable, str(script), "--by-test-file", "--json"],
+            capture_output=True, text=True, timeout=120, encoding="utf-8",
+        )
+        _TIMING_CACHE = _json.loads(out.stdout) if out.returncode == 0 else empty
+        # Mark as auto-loaded: in the pipeline we cannot tell a brand-new
+        # test file from one that was never measured, and an "unmeasured"
+        # note on every new file is noise that trains readers to ignore
+        # findings.  Callers that pass timing_data explicitly (the AC-3
+        # unit tests, and anyone auditing coverage) still get the note.
+        if isinstance(_TIMING_CACHE, dict):
+            _TIMING_CACHE = {**_TIMING_CACHE, "_auto_loaded": True}
+    except Exception:
+        _TIMING_CACHE = empty
+    return _TIMING_CACHE
+
+
 def lint_gate_budget(
     text: str, slug: str, timing_data: dict | None = None,
 ) -> list[str]:
@@ -2396,11 +2432,14 @@ def lint_gate_budget(
     findings: list[str] = []
 
     if timing_data is None:
-        timing_data = {"schema": 1, "per_project": {}}
+        timing_data = _load_timing_data()
 
     # AC-4: no timing data at all — say so once, naming what we searched.
+    auto = bool(timing_data.get("_auto_loaded"))
     per_project = timing_data.get("per_project", {})
     if not per_project:
+        if auto:
+            return findings  # nothing measured yet; not every plan's problem
         findings.append(
             f"{slug}: no timing data available for gate budget check — "
             f"no per-test-file measurements found in the corpus. "
@@ -2435,6 +2474,8 @@ def lint_gate_budget(
                 cost = file_costs.get(basename)
 
             if cost is None:
+                if auto:
+                    continue  # see _load_timing_data: no note on the auto path
                 # AC-3: unmeasured file — distinct note.
                 findings.append(
                     f"{slug}: gate command '{cmd.strip()[:80]}' runs test file "
@@ -2456,6 +2497,7 @@ def lint_gate_budget(
 
 
 ALL_CHECKS = (
+    lint_gate_budget,
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
     lint_contract_change_review,
