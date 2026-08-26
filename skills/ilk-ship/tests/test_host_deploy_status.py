@@ -1,17 +1,18 @@
-"""Red-first tests for host deploy status — three states, and a stale host is not ok.
+"""Tests for host deploy status — fail-closed resolver and real bouncer contract.
 
-Covers AC-1..AC-6 from sub-plan phase-4-refuses-a-stale-host:
+Covers AC-1..AC-7 from sub-plan the-resolver-fails-closed:
 
-  AC-1  Per-host deploy status resolves to exactly: ok / stale-daemon / unreachable.
-  AC-2  A host whose daemon reports stale resolves stale-daemon, not ok.
-  AC-3  A host that cannot be probed resolves unreachable, never ok.
-  AC-4  Detection uses SP1's --check mode and bounces nothing by default.
-  AC-5  An explicit flag (--bounce-hosts) permits the bounce; absent it, stale
-        host is reported and left alone.
-  AC-6  The Phase 4 summary lists every declared host with its state.
+  AC-1  Output with no recognised prefix resolves to unreachable.
+  AC-2  Empty stdout resolves to unreachable, whatever the exit code.
+  AC-3  Exit code outside {0, 1, 2} resolves to unreachable.
+  AC-4  A host whose every daemon line is fresh: still resolves ok.
+  AC-5  The recognised-prefix set is a single module-level constant.
+  AC-6  A contract test runs the real bounce_daemons.sh and asserts
+        resolve_host classifies its actual stdout correctly.
+  AC-7  The 15 pre-existing tests still pass unchanged.
 
-Drives the resolver as a function call with injected fake bouncer script.
-Never invokes the real launchctl or touches a real daemon.
+Drives the resolver as a function call with injected fake bouncer script,
+plus one contract test that runs the real script under a hermetic harness.
 """
 
 from __future__ import annotations
@@ -47,23 +48,15 @@ def _write_fake_bouncer(
     fake = tmp_path / "bin" / "bounce_daemons.sh"
     fake.parent.mkdir(parents=True, exist_ok=True)
 
-    output_block = ""
-    if output_lines:
-        for line in output_lines:
-            output_block += f'echo "{line}"\n'
+    lines = ['#!/usr/bin/env bash']
+    if log_invocations:
+        lines.append('echo "$@" >> "$BOUNCER_LOG"')
+    for line in (output_lines or []):
+        lines.append(f'echo "{line}"')
+    lines.append(f'exit {exit_code}')
+    lines.append('')  # trailing newline
 
-    log_line = 'echo "$@" >> "$BOUNCER_LOG"' if log_invocations else ""
-
-    fake.write_text(
-        textwrap.dedent(f"""\
-            #!/usr/bin/env bash
-            set -euo pipefail
-            {log_line}
-            {output_block}
-            exit {exit_code}
-        """),
-        encoding="utf-8",
-    )
+    fake.write_text('\n'.join(lines), encoding="utf-8")
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
     return fake
 
@@ -310,6 +303,257 @@ class TestSummaryListsEveryHost:
 
 
 # ---------------------------------------------------------------------------
+# AC-1: Unrecognised output → unreachable (fail closed)
+# ---------------------------------------------------------------------------
+
+class TestFailsClosed:
+    """The resolver must fail closed on output it cannot parse.
+
+    Unrecognised, empty, or malformed bouncer output must resolve to
+    'unreachable', not fall through to 'ok'.  Exit codes outside {0,1,2}
+    must also resolve 'unreachable' — the script aborted partway.
+    """
+
+    def test_unrecognised_output_resolves_unreachable(self, tmp_path: Path) -> None:
+        """AC-1: Output with no recognised prefix resolves to unreachable."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "some garbage output that doesn't match any prefix",
+            "another unknown line",
+        ], exit_code=0)
+        result = _resolve_host(fake, tmp_path)
+        assert result == "unreachable", (
+            "Unrecognised output must resolve 'unreachable', not 'ok'. "
+            "Failing open on unparseable output is the founding defect."
+        )
+
+    def test_empty_stdout_resolves_unreachable(self, tmp_path: Path) -> None:
+        """AC-2: Empty stdout resolves to unreachable, whatever the exit code."""
+        # exit 0 with no output — the script produced nothing
+        fake = _write_fake_bouncer(tmp_path, exit_code=0)
+        result = _resolve_host(fake, tmp_path)
+        assert result == "unreachable", (
+            "Empty stdout must resolve 'unreachable'. "
+            "A silent script is not a report of freshness."
+        )
+
+    def test_empty_stdout_exit_1_resolves_unreachable(self, tmp_path: Path) -> None:
+        """AC-2: Empty stdout with exit 1 still resolves unreachable."""
+        fake = _write_fake_bouncer(tmp_path, exit_code=1)
+        result = _resolve_host(fake, tmp_path)
+        assert result == "unreachable"
+
+    def test_unknown_exit_code_resolves_unreachable(self, tmp_path: Path) -> None:
+        """AC-3: Exit code outside {0,1,2} resolves unreachable even if stdout looks fine."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "fresh: scheduler — fresh (toolkit_head matches HEAD)"
+        ], exit_code=5)
+        result = _resolve_host(fake, tmp_path)
+        assert result == "unreachable", (
+            "Exit code 5 is outside {0,1,2}. "
+            "The script aborted partway; its output is not a complete report."
+        )
+
+    def test_exit_code_3_resolves_unreachable(self, tmp_path: Path) -> None:
+        """AC-3: Exit code 3 also resolves unreachable."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "fresh: scheduler — fresh (toolkit_head matches HEAD)"
+        ], exit_code=3)
+        result = _resolve_host(fake, tmp_path)
+        assert result == "unreachable"
+
+    def test_exit_code_127_resolves_unreachable(self, tmp_path: Path) -> None:
+        """AC-3: Exit code 127 (command not found) resolves unreachable."""
+        fake = _write_fake_bouncer(tmp_path, exit_code=127)
+        result = _resolve_host(fake, tmp_path)
+        assert result == "unreachable"
+
+    def test_fresh_host_still_resolves_ok(self, tmp_path: Path) -> None:
+        """AC-4: A host whose every daemon line is fresh: still resolves ok.
+
+        Failing closed must not break a healthy host.
+        """
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "fresh: scheduler — fresh (toolkit_head matches HEAD)"
+        ], exit_code=0)
+        result = _resolve_host(fake, tmp_path)
+        assert result == "ok", (
+            "A healthy host with all fresh daemons must still resolve 'ok'. "
+            "Fail-closed must not make healthy hosts unreachable."
+        )
+
+    def test_mixed_fresh_and_still_ok(self, tmp_path: Path) -> None:
+        """AC-4: Multiple fresh daemons still resolve ok."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "fresh: scheduler — fresh (toolkit_head matches HEAD)",
+            "fresh: tray — fresh (toolkit_head matches HEAD)",
+        ], exit_code=0)
+        result = _resolve_host(fake, tmp_path)
+        assert result == "ok"
+
+
+# ---------------------------------------------------------------------------
+# AC-6: Contract test against the real bounce_daemons.sh
+# ---------------------------------------------------------------------------
+
+import json
+import os
+
+
+def _write_contract_fake_launchctl(tmp_path: Path) -> Path:
+    """Create a minimal fake launchctl for the contract test.
+
+    The fake logs argv and exits 0 for all verbs.  Not imported from
+    test_bounce_daemons.py — cross-tree test imports are how the old host
+    guard ended up in the wrong tree.
+    """
+    fake = tmp_path / "bin" / "launchctl"
+    fake.parent.mkdir(parents=True, exist_ok=True)
+    fake.write_text(
+        textwrap.dedent("""\
+            #!/usr/bin/env bash
+            echo "$@" >> "$LAUNCHCTL_LOG"
+            exit 0
+        """),
+        encoding="utf-8",
+    )
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    return fake
+
+
+def _write_contract_fake_git(tmp_path: Path, head_sha: str) -> Path:
+    """Create a minimal fake git for the contract test.
+
+    Returns head_sha for rev-parse HEAD, handles -C <path>.
+    """
+    fake = tmp_path / "bin" / "git"
+    fake.parent.mkdir(parents=True, exist_ok=True)
+    fake.write_text(
+        textwrap.dedent(f"""\
+            #!/usr/bin/env bash
+            if [[ "$1" == "-C" ]]; then
+                shift 2
+            fi
+            if [[ "$1" == "rev-parse" && "$2" == "HEAD" ]]; then
+                echo "{head_sha}"
+                exit 0
+            fi
+            exit 1
+        """),
+        encoding="utf-8",
+    )
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    return fake
+
+
+def _run_real_bouncer(
+    tmp_path: Path,
+    *,
+    state: dict | None = None,
+    head_sha: str = "abc123",
+    daemon_loaded: bool = True,
+    plist_exists: bool = True,
+) -> str:
+    """Run the real bounce_daemons.sh under a hermetic harness and return resolve_host's result.
+
+    Sets up: Darwin platform, fake launchctl, fake git, tmp HOME,
+    ILK_BOUNCE_ALLOW_FOREIGN_HOME=1.
+
+    Temporarily replaces os.environ so resolve_host's subprocess sees
+    the hermetic environment.
+    """
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    ilk_data = home / ".ilk-data"
+    ilk_data.mkdir(exist_ok=True)
+
+    # Write state file
+    state_file = ilk_data / "scheduler.state.json"
+    if state is not None:
+        state_file.write_text(json.dumps(state), encoding="utf-8")
+
+    # Fake binaries
+    _write_contract_fake_launchctl(tmp_path)
+    _write_contract_fake_git(tmp_path, head_sha)
+
+    # Launchctl log
+    launchctl_log = tmp_path / "launchctl.log"
+    launchctl_log.write_text("", encoding="utf-8")
+
+    # Fake plist directory
+    plist_dir = home / "Library" / "LaunchAgents"
+    plist_dir.mkdir(parents=True)
+    if plist_exists:
+        (plist_dir / "net.inluck.ilk.scheduler.plist").write_text(
+            "<plist><!-- stub --></plist>", encoding="utf-8"
+        )
+
+    # Temporarily replace os.environ for the hermetic harness.
+    saved_environ = os.environ.copy()
+    os.environ.update({
+        "HOME": str(home),
+        "PATH": f"{tmp_path / 'bin'}:{saved_environ.get('PATH', '')}",
+        "ILK_BOUNCE_PLATFORM": "Darwin",
+        "ILK_BOUNCE_ALLOW_FOREIGN_HOME": "1",
+        "ILK_BOUNCE_DAEMON_LOADED": "1" if daemon_loaded else "0",
+        "LAUNCHCTL_LOG": str(launchctl_log),
+    })
+    try:
+        return _real_resolve_host(_BOUNCE_SH, tmp_path)
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_environ)
+
+
+class TestRealBouncerContract:
+    """AC-6: Contract test running the real bounce_daemons.sh.
+
+    Asserts resolve_host classifies the script's actual stdout correctly
+    for fresh, stale (--check), and unreachable scenarios.  This pins
+    both the producer and consumer at once — if bounce_daemons.sh's line
+    format changes, this test breaks.
+    """
+
+    def test_fresh_daemon_resolves_ok(self, tmp_path: Path) -> None:
+        """Real script with matching HEAD → fresh: → ok."""
+        result = _run_real_bouncer(
+            tmp_path,
+            state={"pid": 12345, "started_at": "2026-08-26T10:00:00Z", "toolkit_head": "abc123"},
+            head_sha="abc123",
+            daemon_loaded=True,
+            plist_exists=True,
+        )
+        assert result == "ok", (
+            "Real script with matching HEAD should produce 'fresh:' lines → 'ok'."
+        )
+
+    def test_stale_daemon_resolves_stale(self, tmp_path: Path) -> None:
+        """Real script with mismatched HEAD → stale: → stale-daemon."""
+        result = _run_real_bouncer(
+            tmp_path,
+            state={"pid": 12345, "started_at": "2026-08-26T10:00:00Z", "toolkit_head": "old_sha"},
+            head_sha="new_sha",
+            daemon_loaded=True,
+            plist_exists=True,
+        )
+        assert result == "stale-daemon", (
+            "Real script with mismatched HEAD should produce 'stale:' lines → 'stale-daemon'."
+        )
+
+    def test_daemon_not_loaded_resolves_unreachable(self, tmp_path: Path) -> None:
+        """Real script with daemon not loaded → unreachable: → unreachable."""
+        result = _run_real_bouncer(
+            tmp_path,
+            state={"pid": 12345, "started_at": "2026-08-26T10:00:00Z", "toolkit_head": "abc123"},
+            head_sha="abc123",
+            daemon_loaded=False,
+            plist_exists=True,
+        )
+        assert result == "unreachable", (
+            "Real script with daemon not loaded should produce 'unreachable:' → 'unreachable'."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Host resolver — delegates to host_deploy_status.resolve_host()
 # ---------------------------------------------------------------------------
 
@@ -334,5 +578,5 @@ def _resolve_host(
     Returns one of: 'ok', 'stale-daemon', 'unreachable'.
     """
     return _real_resolve_host(
-        bouncer_path, tmp_path, log_file=log_file, bounce_hosts=bounce_hosts
+        bouncer_path, tmp_path, log_file=log_file, bounce_hosts=bounce_hosts,
     )
