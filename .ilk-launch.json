@@ -21,6 +21,16 @@
         "as_of": "2026-08-19"
       },
       {
+        "node_id": "skills/ilk-watchdog/tests/test_label_action_totality.py",
+        "reason": "2 failed — Windows-only: spawns `powershell`, absent on macOS (FileNotFoundError). Platform-inherited, not a regression.",
+        "as_of": "2026-08-26"
+      },
+      {
+        "node_id": "skills/ilk-watchdog/tests/test_watchdog_log_utf8.py::TestUtf8RoundTrip::test_write_read_utf8_no_bom",
+        "reason": "1 failed — Windows-only: spawns `powershell`, absent on macOS. Platform-inherited, not a regression.",
+        "as_of": "2026-08-26"
+      },
+      {
         "node_id": "tests/test_subprocess_encoding_lint.py::test_toolkit_scan_clean",
         "reason": "1 failed — linter finds subprocess calls without explicit encoding= in the codebase",
         "as_of": "2026-08-19"

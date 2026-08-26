@@ -41,6 +41,12 @@ from typing import Optional
 
 REQUIRED_FIELDS = ("verdict", "head_sha", "invocation", "timestamp")
 
+# Side-channel for the CLI's report.  The record schema is fixed at four
+# fields and readers depend on it, so the excused/undeclared detail is
+# printed rather than persisted.
+_LAST_GATE_EXCUSED: list = []
+_LAST_GATE_UNDECLARED: list = []
+
 #: Poll bound used only when the caller passed none AND the project declared
 #: no ``ship.suite.timeout``.  Judgment call 2026-08-26: kept at 600 rather
 #: than the 300 ilk-ship/SKILL.md documents for a *missing* ship block —
@@ -392,6 +398,39 @@ def _skill_root() -> Path:
 
 # ── main entry point ─────────────────────────────────────────────────────────
 
+def _parse_failing_node_ids(output_path: Path) -> list[str]:
+    """Node ids from pytest's ``FAILED``/``ERROR`` summary lines."""
+    try:
+        text = output_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    ids: list[str] = []
+    for line in text.splitlines():
+        if line.startswith(("FAILED ", "ERROR ")):
+            rest = line.split(" ", 1)[1]
+            ids.append(rest.split(" - ", 1)[0].strip())
+    return ids
+
+
+def _undeclared_failures(node_ids: list[str], baseline_red: list) -> list[str]:
+    """Failures NOT covered by a baseline_red declaration.
+
+    A declaration matches its own node id exactly, or acts as a file-level
+    prefix when it names a file and the failure is a node inside it.  The
+    prefix must end at a ``::`` boundary so ``tests/test_known.py`` cannot
+    excuse ``tests/test_known_other.py`` — excusing a sibling by string
+    prefix is how a declaration would start covering regressions.
+    """
+    declared = [str(e.get("node_id", "")) for e in (baseline_red or [])
+                if isinstance(e, dict) and e.get("node_id")]
+    out: list[str] = []
+    for nid in node_ids:
+        if any(nid == d or nid.startswith(d + "::") for d in declared):
+            continue
+        out.append(nid)
+    return out
+
+
 def run_batch_gate(
     project_path: Path,
     runtime_dir: Path,
@@ -539,8 +578,26 @@ def _run_gate_inner(
 
     if exit_code == 0:
         verdict = "pass"
+        excused, undeclared = [], []
     else:
-        verdict = "fail"
+        # A non-zero suite is not automatically a failed batch: `baseline_red`
+        # declares known-red node ids with a reason and a date.  Until
+        # 2026-08-26 this module had ZERO references to it, so a project with
+        # any inherited failure could never record `pass` — and therefore
+        # /ilk-ship Phase 0 could never release it, whatever the batch did.
+        #
+        # The distinction is the whole value: an UNDECLARED failure still
+        # fails.  A declaration is a written claim, not an amnesty for
+        # whatever fails beside it.
+        failing = _parse_failing_node_ids(output_file)
+        undeclared = _undeclared_failures(failing, config.ship.get("baseline_red", []))
+        excused = [f for f in failing if f not in undeclared]
+        # No parsed failures at all + non-zero exit means the suite died for
+        # some other reason (collection error, crash, timeout) — fail, never
+        # excuse what we could not read.
+        verdict = "pass" if (failing and not undeclared) else "fail"
+    _LAST_GATE_EXCUSED[:] = excused
+    _LAST_GATE_UNDECLARED[:] = undeclared
 
     return BatchGateRecord(
         verdict=verdict,
@@ -591,6 +648,15 @@ def main() -> None:
         return
 
     print(f"[batch-gate] verdict={rec.verdict} head_sha={rec.head_sha[:12]}")
+    # A pass that hides declared failures must say so, or it reads as green.
+    if _LAST_GATE_EXCUSED:
+        print(f"[batch-gate] {len(_LAST_GATE_EXCUSED)} failure(s) excused by "
+              f"ship.baseline_red")
+    if _LAST_GATE_UNDECLARED:
+        print(f"[batch-gate] {len(_LAST_GATE_UNDECLARED)} UNDECLARED failure(s) "
+              f"— not covered by ship.baseline_red:")
+        for nid in _LAST_GATE_UNDECLARED:
+            print(f"[batch-gate]   {nid}")
 
     # The runner captures $? (run_ilk_loop_claude.sh:1333).  Exiting 0 on a
     # failing verdict is why a 32-failure suite printed under the runner's
