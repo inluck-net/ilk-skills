@@ -40,7 +40,13 @@ _BOUNCE_SH = _REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "bounce_daemon
 # ---------------------------------------------------------------------------
 
 def _write_fake_launchctl(tmp_path: Path) -> Path:
-    """Create a fake launchctl that logs argv and exits 0.
+    """Create a fake launchctl that logs argv and exits per-verb RC.
+
+    Reads exit codes from environment variables:
+      ``ILK_FAKE_LAUNCHCTL_BOOTSTRAP_RC`` — exit code for ``bootstrap`` verb
+      ``ILK_FAKE_LAUNCHCTL_PRINT_RC``     — exit code for ``print`` verb
+
+    Both default to 0 when unset, preserving the original behaviour.
 
     Returns the path to the fake binary.
     """
@@ -50,7 +56,19 @@ def _write_fake_launchctl(tmp_path: Path) -> Path:
         textwrap.dedent("""\
             #!/usr/bin/env bash
             echo "$@" >> "$LAUNCHCTL_LOG"
-            exit 0
+            # Determine exit code by verb.
+            verb="$1"
+            case "$verb" in
+                bootstrap)
+                    exit "${ILK_FAKE_LAUNCHCTL_BOOTSTRAP_RC:-0}"
+                    ;;
+                print)
+                    exit "${ILK_FAKE_LAUNCHCTL_PRINT_RC:-0}"
+                    ;;
+                *)
+                    exit 0
+                    ;;
+            esac
         """),
         encoding="utf-8",
     )
@@ -98,6 +116,8 @@ def _run_bounce(
     daemon_loaded: bool = True,
     plist_exists: bool = True,
     allow_foreign_home: bool = True,
+    bootstrap_rc: int | None = None,
+    print_rc: int | None = None,
 ) -> subprocess.CompletedProcess:
     """Set up the hermetic environment and run bounce_daemons.sh.
 
@@ -151,6 +171,10 @@ def _run_bounce(
     }
     if allow_foreign_home:
         env["ILK_BOUNCE_ALLOW_FOREIGN_HOME"] = "1"
+    if bootstrap_rc is not None:
+        env["ILK_FAKE_LAUNCHCTL_BOOTSTRAP_RC"] = str(bootstrap_rc)
+    if print_rc is not None:
+        env["ILK_FAKE_LAUNCHCTL_PRINT_RC"] = str(print_rc)
 
     cmd = ["bash", str(_BOUNCE_SH)]
     if extra_args:
@@ -454,6 +478,160 @@ class TestAc9ExitStatus:
 # ---------------------------------------------------------------------------
 # Foreign HOME refusal (AC-1, AC-2, AC-5) — SP1 of MASTER-2026-08-26d
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Bounce must verify restore — SP2 of MASTER-2026-08-26d
+# ---------------------------------------------------------------------------
+
+class TestBounceMustRestore:
+    """A bounce that does not restore the daemon must be reported as unreachable.
+
+    AC-1: bootstrap exit status is captured; non-zero does not abort.
+    AC-2: after successful bootstrap, daemon is verified via launchctl print.
+    AC-3: bootstrap fails → unreachable + exit 2, never exit 1.
+    AC-4: bootstrap succeeds (0) but daemon still absent → unreachable + exit 2.
+    AC-5: successful bounce unchanged: prints bouncing:, exits 1.
+    AC-6: exit contract is always in (0, 1, 2) for every reachable path.
+    """
+
+    EXIT_NOTHING_TO_DO = 0
+    EXIT_BOUNCED = 1
+    EXIT_UNREACHABLE = 2
+
+    def test_successful_bounce_still_works(self, tmp_path):
+        """AC-5: a normal stale→bounce with bootstrap=0 and print=0 → exit 1."""
+        state = {"pid": 1, "started_at": "x", "toolkit_head": "old"}
+        result = _run_bounce(
+            tmp_path,
+            state=state,
+            head_sha="new",
+            bootstrap_rc=0,
+            print_rc=0,
+        )
+        assert result.returncode == self.EXIT_BOUNCED, (
+            f"Expected exit {self.EXIT_BOUNCED}, got {result.returncode}: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        assert "bouncing:" in result.stdout, (
+            f"Expected 'bouncing:' in stdout: {result.stdout!r}"
+        )
+
+    def test_bootstrap_failure_is_unreachable(self, tmp_path):
+        """AC-3: bootstrap returns non-zero → unreachable + exit 2, not 1."""
+        state = {"pid": 1, "started_at": "x", "toolkit_head": "old"}
+        result = _run_bounce(
+            tmp_path,
+            state=state,
+            head_sha="new",
+            bootstrap_rc=5,  # launchctl's common I/O error code
+            print_rc=0,
+        )
+        assert result.returncode == self.EXIT_UNREACHABLE, (
+            f"Expected exit {self.EXIT_UNREACHABLE}, got {result.returncode}: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        combined = (result.stdout + result.stderr).lower()
+        assert "unreachable" in combined, (
+            f"Expected 'unreachable' in output: stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+
+    def test_bootstrap_succeeds_but_daemon_still_absent(self, tmp_path):
+        """AC-4: bootstrap=0 but print shows daemon absent → unreachable + exit 2."""
+        state = {"pid": 1, "started_at": "x", "toolkit_head": "old"}
+        result = _run_bounce(
+            tmp_path,
+            state=state,
+            head_sha="new",
+            bootstrap_rc=0,
+            print_rc=1,  # print fails → daemon not actually present
+        )
+        assert result.returncode == self.EXIT_UNREACHABLE, (
+            f"Expected exit {self.EXIT_UNREACHABLE}, got {result.returncode}: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        combined = (result.stdout + result.stderr).lower()
+        assert "unreachable" in combined, (
+            f"Expected 'unreachable' when daemon absent after bootstrap: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+
+    def test_bootstrap_failure_never_exits_1(self, tmp_path):
+        """AC-3 guard: a failed bootstrap must never produce exit 1 (bounced).
+
+        Exit 1 means 'I bounced the daemon successfully'.  A daemon that
+        failed to bootstrap is not bounced — it is down.
+        """
+        state = {"pid": 1, "started_at": "x", "toolkit_head": "old"}
+        result = _run_bounce(
+            tmp_path,
+            state=state,
+            head_sha="new",
+            bootstrap_rc=5,
+            print_rc=0,
+        )
+        assert result.returncode != self.EXIT_BOUNCED, (
+            f"A failed bootstrap must not exit {self.EXIT_BOUNCED} (bounced): "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+
+    def test_unreachable_mentions_reason(self, tmp_path):
+        """AC-3 detail: the unreachable line must include the failure reason."""
+        state = {"pid": 1, "started_at": "x", "toolkit_head": "old"}
+        result = _run_bounce(
+            tmp_path,
+            state=state,
+            head_sha="new",
+            bootstrap_rc=5,
+            print_rc=0,
+        )
+        assert "bounce failed to restore" in result.stdout.lower() or \
+               "unreachable" in result.stdout.lower(), (
+            f"Unreachable output should mention failure reason: {result.stdout!r}"
+        )
+
+    def test_fresh_state_still_exit_0(self, tmp_path):
+        """Sanity: fresh state is still exit 0 (nothing to do)."""
+        head = "abc123"
+        state = {"pid": 1, "started_at": "x", "toolkit_head": head}
+        result = _run_bounce(tmp_path, state=state, head_sha=head)
+        assert result.returncode == self.EXIT_NOTHING_TO_DO, (
+            f"Expected exit {self.EXIT_NOTHING_TO_DO}, got {result.returncode}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# AC-6 totality: exit contract is always in (0, 1, 2)
+# ---------------------------------------------------------------------------
+
+class TestExitContractTotality:
+    """AC-6: run all five paths and assert returncode is always in (0, 1, 2)."""
+
+    @pytest.mark.parametrize(
+        "label,state,head_sha,daemon_loaded,plist_exists,bootstrap_rc,print_rc",
+        [
+            pytest.param("fresh", {"pid": 1, "started_at": "x", "toolkit_head": "h"}, "h", True, True, 0, 0, id="fresh"),
+            pytest.param("stale_ok", {"pid": 1, "started_at": "x", "toolkit_head": "old"}, "new", True, True, 0, 0, id="stale_ok"),
+            pytest.param("unreachable_noload", {"pid": 1, "started_at": "x", "toolkit_head": "old"}, "new", False, True, 0, 0, id="unreachable_noload"),
+            pytest.param("failed_bootstrap", {"pid": 1, "started_at": "x", "toolkit_head": "old"}, "new", True, True, 5, 0, id="failed_bootstrap"),
+            pytest.param("failed_verify", {"pid": 1, "started_at": "x", "toolkit_head": "old"}, "new", True, True, 0, 1, id="failed_verify"),
+        ],
+    )
+    def test_exit_code_in_range(self, tmp_path, label, state, head_sha, daemon_loaded, plist_exists, bootstrap_rc, print_rc):
+        """Every reachable path must exit 0, 1, or 2."""
+        result = _run_bounce(
+            tmp_path,
+            state=state,
+            head_sha=head_sha,
+            daemon_loaded=daemon_loaded,
+            plist_exists=plist_exists,
+            bootstrap_rc=bootstrap_rc,
+            print_rc=print_rc,
+        )
+        assert result.returncode in (0, 1, 2), (
+            f"[{label}] Exit code {result.returncode} is outside 0/1/2 contract: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
 
 class TestForeignHomeRefusal:
     """A bounce must refuse under a foreign HOME unless explicitly overridden.
