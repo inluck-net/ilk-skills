@@ -1871,6 +1871,19 @@ def lint_shared_module_gate(text: str, slug: str) -> list[str]:
         # A caller with no tests is not a reason for silence: the finding's
         # own remedy — "add a gate that runs the callers' tests (or the full
         # suite)" — still applies, and the whole-suite option covers it.
+        #
+        # AND, not OR.  That one word reconciles two batches whose contracts
+        # looked contradictory but were each right about their own case:
+        #
+        #   neither side resolves  -> nothing to reason from   -> silent (SP5 AC-5)
+        #   module tests resolve   -> enough to judge coverage -> fire (parent AC-1)
+        #   caller tests resolve   -> enough to judge coverage -> fire (parent AC-2)
+        #
+        # SP5's OR silenced the two cases the lint exists for; requiring BOTH
+        # sides to be unresolvable keeps its false-positive guard and returns
+        # the finding.
+        if not module_test and not callers_test:
+            continue
 
         # Check if ANY gate covers both.
         any_covers = any(
