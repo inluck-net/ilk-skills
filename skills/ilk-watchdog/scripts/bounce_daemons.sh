@@ -186,16 +186,43 @@ for name in $NAMES; do
   # Bounce: bootout then bootstrap.  Never kill.
   echo "bouncing: $name — $reason"
   launchctl bootout "$gui_domain" 2>/dev/null || true
-  bootstrap_rc=0
-  launchctl bootstrap "gui/$(id -u)" "$plist" 2>/dev/null || bootstrap_rc=$?
-  if [[ "$bootstrap_rc" -ne 0 ]]; then
+
+  # Retry bootstrap up to 3 times with a 1s settle wait between attempts.
+  # Basis: observed failure recovered on first manual retry seconds later.
+  # Three attempts with 1s spacing covers roughly that window with margin.
+  # Wrong if bootstrap needs >~2s of settle time — then we report
+  # unreachable early (pessimistic), never silently succeed.
+  MAX_RETRIES=3
+  bounce_ok=0
+  attempt=0
+  while [[ "$attempt" -lt "$MAX_RETRIES" ]]; do
+    # Settle wait between attempts (not before the first).
+    if [[ "$attempt" -gt 0 ]]; then
+      sleep 1
+    fi
+    bootstrap_rc=0
+    launchctl bootstrap "gui/$(id -u)" "$plist" 2>/dev/null || bootstrap_rc=$?
+    if [[ "$bootstrap_rc" -ne 0 ]]; then
+      attempt=$((attempt + 1))
+      continue
+    fi
+    # bootstrap returned 0 — verify the daemon actually appeared.
+    if launchctl print "$gui_domain" >/dev/null 2>&1; then
+      bounce_ok=1
+      break
+    fi
+    # bootstrap said 0 but daemon still absent — retry.
+    attempt=$((attempt + 1))
+  done
+
+  if [[ "$bounce_ok" -eq 1 ]]; then
+    bounced=1
+  elif [[ "$bootstrap_rc" -ne 0 ]]; then
     echo "unreachable: $name (bounce failed to restore: bootstrap exit $bootstrap_rc)"
     unreachable=1
-  elif ! launchctl print "$gui_domain" >/dev/null 2>&1; then
+  else
     echo "unreachable: $name (bounce failed to restore: daemon still absent after bootstrap)"
     unreachable=1
-  else
-    bounced=1
   fi
   i=$((i + 1))
 done
