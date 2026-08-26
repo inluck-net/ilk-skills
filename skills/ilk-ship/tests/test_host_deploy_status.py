@@ -397,6 +397,7 @@ class TestFailsClosed:
 
 import json
 import os
+import subprocess
 
 
 def _write_contract_fake_launchctl(tmp_path: Path) -> Path:
@@ -578,3 +579,162 @@ def _resolve_host(
         bouncer_path, tmp_path, log_file=log_file, bounce_hosts=bounce_hosts,
         env_override=env_override,
     )
+
+
+# ---------------------------------------------------------------------------
+# AC-1..AC-4: CLI entry point (sub-plan phase-4-actually-calls-the-resolver)
+# ---------------------------------------------------------------------------
+
+_HOST_DEPLOY_STATUS_SCRIPT = _SCRIPTS_DIR / "host_deploy_status.py"
+
+
+class TestCliEntryPoint:
+    """AC-1..AC-4: The script must be invocable as a CLI.
+
+    Drives host_deploy_status.py as a subprocess with a fake bouncer.
+    """
+
+    def test_prints_bare_state_ok(self, tmp_path: Path) -> None:
+        """AC-1: --bouncer <path> prints exactly one line: 'ok'."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "fresh: scheduler — fresh (toolkit_head matches HEAD)"
+        ], exit_code=0)
+        result = subprocess.run(
+            [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT), "--bouncer", str(fake)],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "BOUNCER_LOG": "/dev/null"},
+        )
+        assert result.returncode == 0
+        assert result.stdout.strip() == "ok"
+
+    def test_prints_bare_state_stale(self, tmp_path: Path) -> None:
+        """AC-1: --bouncer <path> prints exactly one line: 'stale-daemon'."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "stale: scheduler — stale (recorded abc123, HEAD def456) (would bounce)"
+        ], exit_code=0)
+        result = subprocess.run(
+            [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT), "--bouncer", str(fake)],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "BOUNCER_LOG": "/dev/null"},
+        )
+        assert result.returncode == 1
+        assert result.stdout.strip() == "stale-daemon"
+
+    def test_prints_bare_state_unreachable(self, tmp_path: Path) -> None:
+        """AC-1: --bouncer <path> prints exactly one line: 'unreachable'."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "unreachable: scheduler (plist=0 loaded=0)"
+        ], exit_code=2)
+        result = subprocess.run(
+            [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT), "--bouncer", str(fake)],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "BOUNCER_LOG": "/dev/null"},
+        )
+        assert result.returncode == 2
+        assert result.stdout.strip() == "unreachable"
+
+    def test_bounce_hosts_flag_accepted(self, tmp_path: Path) -> None:
+        """AC-2: --bounce-hosts is accepted and threads through."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "stale: scheduler — stale (recorded abc123, HEAD def456)"
+        ], exit_code=1)
+        result = subprocess.run(
+            [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT),
+             "--bouncer", str(fake), "--bounce-hosts"],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "BOUNCER_LOG": "/dev/null"},
+        )
+        # With --bounce-hosts, the bouncer is invoked without --check.
+        # Exit 1 means bounced; state depends on output.
+        assert result.returncode in (0, 1, 2)
+        assert result.stdout.strip() in _VALID_STATES
+
+    def test_exit_code_maps_ok_to_zero(self, tmp_path: Path) -> None:
+        """AC-3: ok → exit 0."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "fresh: scheduler — fresh (toolkit_head matches HEAD)"
+        ], exit_code=0)
+        result = subprocess.run(
+            [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT), "--bouncer", str(fake)],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "BOUNCER_LOG": "/dev/null"},
+        )
+        assert result.returncode == 0
+
+    def test_exit_code_maps_stale_to_one(self, tmp_path: Path) -> None:
+        """AC-3: stale-daemon → exit 1."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "stale: scheduler — stale (recorded abc123, HEAD def456) (would bounce)"
+        ], exit_code=0)
+        result = subprocess.run(
+            [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT), "--bouncer", str(fake)],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "BOUNCER_LOG": "/dev/null"},
+        )
+        assert result.returncode == 1
+
+    def test_exit_code_maps_unreachable_to_two(self, tmp_path: Path) -> None:
+        """AC-3: unreachable → exit 2."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "unreachable: scheduler (plist=0 loaded=0)"
+        ], exit_code=2)
+        result = subprocess.run(
+            [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT), "--bouncer", str(fake)],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "BOUNCER_LOG": "/dev/null"},
+        )
+        assert result.returncode == 2
+
+    def test_help_exits_zero_and_names_flags(self) -> None:
+        """AC-4: --help exits 0 and names both flags."""
+        result = subprocess.run(
+            [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT), "--help"],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0
+        assert "--bouncer" in result.stdout
+        assert "--bounce-hosts" in result.stdout
+
+    def test_no_args_exits_with_usage(self) -> None:
+        """AC-4: No arguments exits 2 with a usage message, not a traceback."""
+        result = subprocess.run(
+            [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT)],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 2
+        # argparse writes usage to stderr on missing required args
+        assert "usage" in result.stderr.lower() or "usage" in result.stdout.lower()
+
+
+# ---------------------------------------------------------------------------
+# AC-6: SKILL.md Phase 4 names the script (anti-drift)
+# ---------------------------------------------------------------------------
+
+_SKILL_MD = _REPO_ROOT / "skills" / "ilk-ship" / "SKILL.md"
+_SCRIPT_REL_PATH = "skills/ilk-ship/scripts/host_deploy_status.py"
+
+
+class TestSkillDocNamesTheScript:
+    """AC-6: SKILL.md's Phase 4 section must name the resolver script.
+
+    This is the anti-drift gate: if someone rewrites Phase 4 back into
+    prose that doesn't mention the script, the suite goes red.
+    """
+
+    def test_phase4_section_contains_script_path(self) -> None:
+        """AC-5: SKILL.md Phase 4 names host_deploy_status.py."""
+        content = _SKILL_MD.read_text(encoding="utf-8")
+        # Find the Phase 4 section
+        phase4_start = content.find("### Phase 4")
+        assert phase4_start != -1, "SKILL.md missing '### Phase 4' section"
+        # Find the next Phase or end of file
+        phase5_start = content.find("### Phase 5", phase4_start + 1)
+        if phase5_start == -1:
+            phase5_start = content.find("## Missing", phase4_start + 1)
+        if phase5_start == -1:
+            phase5_start = len(content)
+        phase4_section = content[phase4_start:phase5_start]
+        assert _SCRIPT_REL_PATH in phase4_section, (
+            f"Phase 4 section does not contain '{_SCRIPT_REL_PATH}'. "
+            "The anti-drift gate requires Phase 4 to name the resolver script."
+        )
