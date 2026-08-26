@@ -93,9 +93,6 @@ release_scheduler_lock() {
 # Acquire lock immediately at source time.
 acquire_scheduler_lock
 
-# Release lock on exit (normal, error, or signal).
-trap release_scheduler_lock EXIT
-
 # --- skill root resolution ---------------------------------------------------
 
 source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_skill_root.sh"
@@ -107,7 +104,15 @@ SCAN_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/scheduler_scan.py"
 # Holds the most recent scan's stderr so the idle branch can tell
 # "no work" from "could not look". See invoke_scheduler_scan.
 _SCAN_STDERR_FILE="$(mktemp "${TMPDIR:-/tmp}/ilk-scan-stderr-XXXXXX")"
-trap 'rm -f "$_SCAN_STDERR_FILE"' EXIT
+
+# Combined cleanup: release the pidfile lock AND remove the scan-stderr tempfile.
+# WARNING: a second `trap ... EXIT` silently REPLACES the first in bash.
+# Register exactly once here; do not add another `trap ... EXIT` below.
+_scheduler_cleanup() {
+  rm -f "$SCHEDULER_PIDFILE" 2>/dev/null || true
+  rm -f "$_SCAN_STDERR_FILE" 2>/dev/null || true
+}
+trap _scheduler_cleanup EXIT
 PROMOTE_SCRIPT="${_SKILL_ROOT}/ilk-loop/scripts/promote_next_master.py"
 LAUNCH_SCRIPT="${_SKILL_ROOT}/ilk-launcher/scripts/launch.sh"
 BOOTSTRAP_SCRIPT="${_SKILL_ROOT}/../tools/claude-worker/bootstrap.sh"
