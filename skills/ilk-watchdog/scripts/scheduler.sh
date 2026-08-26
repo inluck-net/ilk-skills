@@ -27,7 +27,7 @@ write_scheduler_state() {
   local state_file="$SCHEDULER_STATE_FILE"
   local pid="$$"
   local started_at
-  started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" || started_at=""
+  started_at="$(date -u '+%Y-%m-%dT%H:%M:%S+00:00')" || started_at=""
 
   # Resolve toolkit_head from the script's own location, not $PWD (AC-2).
   # launchd starts the job in an arbitrary directory.
