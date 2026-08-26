@@ -6,8 +6,9 @@
 #
 # Exit codes:
 #   0 — nothing to do (all daemons fresh)
-#   1 — bounced at least one daemon
-#   2 — could not reach at least one daemon
+#   1 — bounced at least one daemon (and verified it came back)
+#   2 — could not reach at least one daemon (plist missing, not loaded,
+#       bootstrap failed, or bounced but daemon still absent)
 #
 # Options:
 #   --check   Detect-only: report staleness, bounce nothing.
