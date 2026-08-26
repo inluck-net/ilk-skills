@@ -185,8 +185,17 @@ for name in $NAMES; do
   # Bounce: bootout then bootstrap.  Never kill.
   echo "bouncing: $name — $reason"
   launchctl bootout "$gui_domain" 2>/dev/null || true
-  launchctl bootstrap "gui/$(id -u)" "$plist"
-  bounced=1
+  bootstrap_rc=0
+  launchctl bootstrap "gui/$(id -u)" "$plist" 2>/dev/null || bootstrap_rc=$?
+  if [[ "$bootstrap_rc" -ne 0 ]]; then
+    echo "unreachable: $name (bounce failed to restore: bootstrap exit $bootstrap_rc)"
+    unreachable=1
+  elif ! launchctl print "$gui_domain" >/dev/null 2>&1; then
+    echo "unreachable: $name (bounce failed to restore: daemon still absent after bootstrap)"
+    unreachable=1
+  else
+    bounced=1
+  fi
   i=$((i + 1))
 done
 
