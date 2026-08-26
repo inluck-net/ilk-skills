@@ -31,7 +31,22 @@ from batch_gate import BatchGateRecord, write_record
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _init_repo(path: Path) -> None:
-    """Create a git repo with an initial commit."""
+    """Create a git repo with an initial commit and a matching ship config.
+
+    The ship config is not incidental.  SP2 added invocation validation
+    after these tests were written: the audit compares the record's
+    ``invocation`` against what ``ship.suite`` builds, and a project with no
+    .ilk-launch.json resolves to "" — so every record here read as
+    ``stale_invocation`` and AC-1 could never be reached.  Declaring
+    command + flags that build "python3 -m pytest -q" matches the records
+    these tests write, so the tests exercise the verdict path they are about
+    rather than tripping on an unrelated validator.
+    """
+    (path / ".ilk-launch.json").write_text(
+        json.dumps({"ship": {"suite": {"command": "python3 -m pytest",
+                                       "flags": ["-q"]}}}),
+        encoding="utf-8",
+    )
     subprocess.run(["git", "init"], cwd=path, capture_output=True, check=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test"], cwd=path,

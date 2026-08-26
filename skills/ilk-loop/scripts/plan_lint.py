@@ -1855,10 +1855,22 @@ def lint_shared_module_gate(text: str, slug: str) -> list[str]:
                     scope_path=imp,
                 )
 
-        # AC-5: if tests for the module or all callers cannot be located,
-        # the oracle cannot run — report nothing rather than firing.
-        if not module_test or not callers_test:
-            continue
+        # NOTE (2026-08-26): this used to `continue` whenever module_test OR
+        # callers_test was empty.  That silenced the lint's two core cases —
+        # a shared module whose own tests do not exist, and a caller with no
+        # test file — which are exactly the situations the finding is about.
+        # It broke the parent batch's AC-1 and AC-2 and left 2 tests red for
+        # a day.
+        #
+        # The false positive SP5 was fixing (this repo keeps tests under
+        # skills/<skill>/tests/, so `tests/test_<m>.py` never resolved and the
+        # lint fired even when the gate DID cover them) is already fixed by
+        # the sibling-directory resolution in _resolve_test_paths.  The extra
+        # guard was belt-and-braces that cost more than it saved.
+        #
+        # A caller with no tests is not a reason for silence: the finding's
+        # own remedy — "add a gate that runs the callers' tests (or the full
+        # suite)" — still applies, and the whole-suite option covers it.
 
         # Check if ANY gate covers both.
         any_covers = any(

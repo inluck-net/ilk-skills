@@ -150,7 +150,7 @@ def _resolve_batch_record(
         if _scripts_dir not in sys.path:
             sys.path.insert(0, _scripts_dir)
         from batch_gate import (  # type: ignore[import-untyped]
-            record_path, validate_record,
+            record_path, validate_record, validate_record_detail,
         )
     except ImportError:
         return None, None
@@ -186,7 +186,13 @@ def _resolve_batch_record(
         return "fail", f"batch gate recorded: {verdict}"
 
     # AC-2: stale_head / stale_invocation / incomplete / absent — refuse.
-    return outcome, f"batch-gate record is {outcome}"
+    #
+    # The five-word outcome is the machine-readable verdict; the reason uses
+    # validate_record_detail so the operator is told WHICH field is missing or
+    # WHICH sha mismatched.  "batch-gate record is incomplete" names a class
+    # and leaves them to go find the instance.
+    detail = validate_record_detail(rp, current_head, expected_invocation)
+    return outcome, f"batch-gate record is {detail}"
 
 
 def _evaluate_gate(
