@@ -2364,6 +2364,19 @@ def _extract_gate_commands(text: str) -> list[str]:
     return commands
 
 
+_DEFAULT_GATE_BUDGET_SECONDS = 60
+
+
+def _extract_gate_budget(text: str) -> int:
+    """Return the gate budget from frontmatter, or the default."""
+    m = re.match(r"^---\n.*?\n---\n", text, re.S)
+    if not m:
+        return _DEFAULT_GATE_BUDGET_SECONDS
+    fm = text[m.start():m.end()]
+    match = re.search(r"^gate_budget_seconds:\s*(\d+)", fm, re.MULTILINE)
+    return int(match.group(1)) if match else _DEFAULT_GATE_BUDGET_SECONDS
+
+
 def lint_gate_budget(
     text: str, slug: str, timing_data: dict | None = None,
 ) -> list[str]:
@@ -2380,7 +2393,66 @@ def lint_gate_budget(
 
     AC-1..AC-6.
     """
-    raise NotImplementedError("stub — step 1 will implement")
+    findings: list[str] = []
+
+    if timing_data is None:
+        timing_data = {"schema": 1, "per_project": {}}
+
+    # AC-4: no timing data at all — say so once, naming what we searched.
+    per_project = timing_data.get("per_project", {})
+    if not per_project:
+        findings.append(
+            f"{slug}: no timing data available for gate budget check — "
+            f"no per-test-file measurements found in the corpus. "
+            f"Run gate_cost --by-test-file --json to populate."
+        )
+        return findings
+
+    # Build a lookup: file -> max_s across all projects.
+    file_costs: dict[str, float] = {}
+    for proj_data in per_project.values():
+        for entry in proj_data.get("per_file", []):
+            f = entry.get("file", "")
+            max_s = entry.get("max_s", 0.0)
+            if f:
+                file_costs[f] = max(file_costs.get(f, 0.0), max_s)
+
+    budget = _extract_gate_budget(text)
+
+    # Extract all local_checks commands.
+    commands = _extract_all_local_checks_commands(text)
+
+    for cmd in commands:
+        # Parse test file paths from the command.
+        test_files = _extract_test_file_tokens(cmd)
+        for tf in test_files:
+            # Normalize path for lookup.
+            norm = tf.replace("\\", "/")
+            # Try exact match, then filename-only match.
+            cost = file_costs.get(norm)
+            if cost is None:
+                basename = norm.rsplit("/", 1)[-1] if "/" in norm else norm
+                cost = file_costs.get(basename)
+
+            if cost is None:
+                # AC-3: unmeasured file — distinct note.
+                findings.append(
+                    f"{slug}: gate command '{cmd.strip()[:80]}' runs test file "
+                    f"'{tf}' which has no measurement data — cannot determine "
+                    f"whether it is over budget. Run gate_cost --by-test-file "
+                    f"--json to measure it."
+                )
+            elif cost > budget:
+                # AC-1: over-budget file — name the file, cost, budget, suggest -k.
+                findings.append(
+                    f"{slug}: gate command '{cmd.strip()[:80]}' runs test file "
+                    f"'{tf}' measured at {cost:.0f}s (budget: {budget}s). "
+                    f"Consider using -k to select specific tests instead of "
+                    f"running the whole file."
+                )
+            # AC-2: under-budget — no finding (silent pass).
+
+    return findings
 
 
 ALL_CHECKS = (
