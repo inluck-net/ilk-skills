@@ -132,15 +132,8 @@ check_live_pids() {
   local projects_dir="$data_dir/projects"
   local active_pids=()
 
-  # Also check the cross-project scheduler PID file (independent of projects dir)
-  local scheduler_pidfile="$data_dir/scheduler.pid"
-  if [[ -f "$scheduler_pidfile" ]]; then
-    local scheduler_pid
-    scheduler_pid="$(cat "$scheduler_pidfile" 2>/dev/null || true)"
-    if ilk_pid_alive "$scheduler_pid"; then
-      active_pids+=("scheduler (PID $scheduler_pid)")
-    fi
-  fi
+  # The scheduler is bounced, not blocked — see bounce_stale_daemons().
+  # Only loop/watchdog PIDs block the upgrade (they carry in-flight work).
 
   if [[ ! -d "$projects_dir" ]]; then
     if [[ ${#active_pids[@]} -gt 0 ]]; then
@@ -281,6 +274,26 @@ reconcile_links() {
   echo "Auto-plan block reconciled."
 }
 
+# --- scheduler bounce (delegates to bounce_daemons.sh, one implementation) ---
+
+bounce_stale_daemons() {
+  local bounce_script="$REPO_ROOT/skills/ilk-watchdog/scripts/bounce_daemons.sh"
+  if [[ ! -x "$bounce_script" ]]; then
+    echo "warning: bounce_daemons.sh not found or not executable — skipping daemon check" >&2
+    return 0
+  fi
+
+  local rc=0
+  ILK_BOUNCE_TOOLKIT_PATH="$REPO_ROOT" "$bounce_script" || rc=$?
+
+  case "$rc" in
+    0) ;;  # fresh — nothing to do
+    1) ;;  # bounced — daemon was stale, now restarted
+    2) echo "warning: some daemons could not be reached" >&2 ;;
+  esac
+  return "$rc"
+}
+
 # --- --apply: ff-only pull + changelog + conditional re-install --------------
 
 do_apply() {
@@ -349,6 +362,11 @@ do_apply() {
   fi
 
   reconcile_links "$diff_status"
+
+  # Bounce stale daemons (scheduler) now running old code.
+  # Must happen after pull + reconcile (new code is on disk and linked).
+  # Exit 0 regardless — a bounce is a successful upgrade, not an error.
+  bounce_stale_daemons || true
 }
 
 # --- mode dispatch -----------------------------------------------------------
