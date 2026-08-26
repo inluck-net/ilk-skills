@@ -37,12 +37,23 @@ SKILLS_DIR = REPO_ROOT / "skills"
 
 
 def _scheduler_env(home: Path, *, extra: dict | None = None) -> dict[str, str]:
-    """Build an isolated env: HOME overrides all scheduler paths."""
+    """Build an isolated env.
+
+    HOME alone is NOT enough: scheduler.sh resolves
+    ILK_DATA_HOME -> ILK_DATA_DIR -> $HOME/.ilk-data, so an inherited
+    ILK_DATA_HOME/ILK_DATA_DIR wins over HOME and the test reads the real
+    ~/.ilk-data (including the live scheduler's pidfile).  Three tests in
+    this repo leak ILK_DATA_HOME through raw os.environ writes; the same
+    gap broke the v0.9.74 batch gate and was fixed there in 33a2712.
+    Pin the data home explicitly, and clear the alias.
+    """
     env = {
         **os.environ,
         "HOME": str(home),
         "ILK_SKILL_HOME": str(SKILLS_DIR),
+        "ILK_DATA_HOME": str(home / ".ilk-data"),
     }
+    env.pop("ILK_DATA_DIR", None)
     if extra:
         env.update(extra)
     return env
