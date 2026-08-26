@@ -1312,6 +1312,35 @@ write_jsonl_record() {
 #
 # AC-6: a failure inside the gate is reported and the runner still terminates.
 #       Never hang, never continue as though it passed.
+# Resolve the per-iteration wall-clock bound, in seconds.
+#
+# Normally ITERATION_TIMEOUT_MIN * 60.  ILK_ITERATION_TIMEOUT_SEC overrides it
+# with a raw seconds value — a TEST AFFORDANCE, not an operator control, and
+# deliberately env-only: --iteration-timeout-min takes whole minutes, so 60s is
+# the floor, and two integration tests that wait one out cost 121s of a 300s
+# suite (measured 2026-08-26 from the batch gate's --durations=25; three tests
+# were 181s of 299s).  A sub-minute production iteration timeout is never
+# wanted, so this stays out of --help.
+#
+# Contract note (§7h — run_ilk_loop_claude.* is contract-governed): this adds a
+# new *reader* of configuration, not a new writer of runtime state.  Per
+# references/detached-component-contracts.md's "Adding a new reader or writer"
+# checklist, no sentinel, PID file, or record schema is touched, so no
+# contract-visible surface changes.  Per references/orchestration-collaboration.md
+# the L1-L4 invariants are unaffected: the timeout branch, its exit code, and
+# the WIP-preservation path behave identically at any bound.
+#
+# A malformed value (empty, zero, negative, non-integer) falls back to minutes
+# rather than producing a 0 bound that would time out every iteration instantly.
+resolve_iteration_timeout_sec() {
+  local override="${ILK_ITERATION_TIMEOUT_SEC:-}"
+  if [[ "$override" =~ ^[0-9]+$ ]] && (( override > 0 )); then
+    echo "$override"
+    return 0
+  fi
+  echo $((ITERATION_TIMEOUT_MIN * 60))
+}
+
 invoke_batch_gate() {
   local project_path="$1"
   local runtime_dir="$2"
@@ -1903,7 +1932,7 @@ main() {
     iter_log="${RUN_LOG_DIR}/iter-$(printf '%02d' $i).log"
 
     local timeout_sec
-    timeout_sec=$((ITERATION_TIMEOUT_MIN * 60))
+    timeout_sec=$(resolve_iteration_timeout_sec)
 
     # -- Prior suite result carry-forward (AC-5) --------------------------
     # If a previous iteration ran a broad suite, inject its result so this

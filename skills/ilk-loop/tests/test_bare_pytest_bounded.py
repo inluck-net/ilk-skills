@@ -11,7 +11,9 @@ from pathlib import Path
 
 import pytest
 
-FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "hanging_test"
+# The old fixtures/hanging_test (a 90s sleep) is no longer used: AC-2 now
+# builds its own 30s sleeper under tmp_path with a 5s bound.  Left on disk
+# because `norecursedirs = fixtures` keeps it uncollected either way.
 PYTEST_INI = Path(__file__).resolve().parents[3] / "pytest.ini"
 
 
@@ -44,23 +46,44 @@ def test_pytest_ini_addopts_has_timeout_and_signal_method():
 
 # ── AC-2: a hanging test is killed by config, not by CLI flags ───────────────
 
-@pytest.mark.timeout(120)  # subprocess sleeps 90s; killed at 60s by config
-def test_hanging_fixture_killed_by_config_timeout():
+@pytest.mark.timeout(60)
+def test_hanging_fixture_killed_by_config_timeout(tmp_path):
     """A bare pytest (no --timeout on CLI) on a sleeping test must timeout.
 
-    The fixture sleeps 90s.  If pytest.ini addopts carries --timeout=60,
-    pytest kills it at 60s.  We give the subprocess 120s hard wall-clock
-    so a regression fails loudly rather than hanging the suite.
+    The property under test is that the **config** bounds a hanging test —
+    not a CLI flag.  So the bound must come from a pytest.ini, and the run
+    must pass no --timeout of its own.
+
+    It used to assert that against the REPO's pytest.ini (--timeout=60) with
+    a fixture sleeping 90s, which cost a real 60 seconds every suite run —
+    60.21s of a 299.55s suite, one of the three tests that were 61% of it
+    (batch-gate --durations=25, 2026-08-26).
+
+    A throwaway pytest.ini with --timeout=5 proves exactly the same property
+    for 5s.  Overriding with `--timeout=5` on the command line would NOT:
+    that is the CLI path, which is precisely what this test exists to rule
+    out.  The repo's own value is covered by AC-1 above, which is free.
     """
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    (sandbox / "pytest.ini").write_text(
+        "[pytest]\naddopts = --timeout=5 --timeout-method=signal\n",
+        encoding="utf-8",
+    )
+    (sandbox / "test_sleeps.py").write_text(
+        "import time\n\n\ndef test_hangs():\n    time.sleep(30)\n",
+        encoding="utf-8",
+    )
+
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", str(FIXTURE_DIR), "-q"],
+        [sys.executable, "-m", "pytest", str(sandbox), "-q"],
         capture_output=True,
         text=True,
-        timeout=120,
-        cwd=str(PYTEST_INI.parent),
+        timeout=45,
+        cwd=str(sandbox),
+        encoding="utf-8",
     )
     combined = result.stdout + result.stderr
-    # A timeout failure shows "FAILED" or "Timeout >" or exit code 2
     timed_out = (
         "Timeout" in combined
         or "FAILED" in combined

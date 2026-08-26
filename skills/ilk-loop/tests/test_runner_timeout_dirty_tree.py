@@ -592,7 +592,7 @@ class TestLiveRunnerTimeout:
     preserve_dirty_tree_on_timeout → JSONL record.
     """
 
-    @pytest.mark.timeout(120)  # runner runs with 1-min iteration timeout
+    @pytest.mark.timeout(60)  # ILK_ITERATION_TIMEOUT_SEC=5 bounds the iteration
     def test_timeout_preserves_dirty_tree_via_real_cli(self, tmp_path: Path) -> None:
         """A real gtimeout kill preserves the dirty tree as a WIP commit.
 
@@ -617,6 +617,12 @@ class TestLiveRunnerTimeout:
         env = _isolated_env(tmp_path)
         env["PATH"] = f"{mock_bin}:{env.get('PATH', '')}"
         env["ILK_DOTSOURCE_ONLY"] = ""  # ensure main() runs
+        # 5s instead of the 60s floor --iteration-timeout-min imposes.
+        # These two tests were 121s of a 299s suite (batch-gate
+        # --durations=25, 2026-08-26).  The mechanism under test is
+        # unchanged: a real runner, the same gtimeout path, the same
+        # timeout branch — only the bound is smaller.
+        env["ILK_ITERATION_TIMEOUT_SEC"] = "5"
 
         result = subprocess.run(
             [
@@ -671,7 +677,7 @@ class TestLiveRunnerTimeout:
             assert record.get("wip_preserved", 0) > 0, \
                 f"JSONL wip_preserved should be > 0, got: {record.get('wip_preserved')}"
 
-    @pytest.mark.timeout(120)  # runner runs with 1-min iteration timeout
+    @pytest.mark.timeout(60)  # ILK_ITERATION_TIMEOUT_SEC=5 bounds the iteration
     def test_timeout_clean_tree_no_wip(self, tmp_path: Path) -> None:
         """A timeout with a clean tree produces no WIP commit.
 
@@ -708,6 +714,12 @@ class TestLiveRunnerTimeout:
         env = _isolated_env(tmp_path)
         env["PATH"] = f"{mock_bin}:{env.get('PATH', '')}"
         env["ILK_DOTSOURCE_ONLY"] = ""
+        # 5s instead of the 60s floor --iteration-timeout-min imposes.
+        # These two tests were 121s of a 299s suite (batch-gate
+        # --durations=25, 2026-08-26).  The mechanism under test is
+        # unchanged: a real runner, the same gtimeout path, the same
+        # timeout branch — only the bound is smaller.
+        env["ILK_ITERATION_TIMEOUT_SEC"] = "5"
 
         subprocess.run(
             [
