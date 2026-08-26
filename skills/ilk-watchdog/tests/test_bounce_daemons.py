@@ -30,6 +30,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import HostMutationBlocked
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _BOUNCE_SH = _REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "bounce_daemons.sh"
 
@@ -445,3 +447,75 @@ class TestAc9ExitStatus:
             f"Expected exit {self.EXIT_COULD_NOT_REACH} for unreachable daemon, got {result.returncode}: "
             f"stdout={result.stdout!r} stderr={result.stderr!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Foreign HOME refusal (AC-1, AC-2, AC-5) — SP1 of MASTER-2026-08-26d
+# ---------------------------------------------------------------------------
+
+class TestForeignHomeRefusal:
+    """A bounce must refuse under a foreign HOME unless explicitly overridden.
+
+    AC-1: exit 2, message contains 'foreign HOME'.
+    AC-2: refusal happens before any launchctl call (log is empty).
+    AC-5: --check mode is also refused under a foreign HOME.
+    """
+
+    def test_foreign_home_refuses_exit2(self, tmp_path):
+        """AC-1: foreign HOME → exit 2, stdout names 'foreign HOME'."""
+        result = _run_bounce(tmp_path, state=None, head_sha="abc123")
+        assert result.returncode == 2, (
+            f"Expected exit 2 for foreign HOME, got {result.returncode}: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        combined = (result.stdout + result.stderr).lower()
+        assert "foreign home" in combined, (
+            f"Expected 'foreign HOME' in output: stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+
+    def test_foreign_home_refuses_before_launchctl(self, tmp_path):
+        """AC-2: refusal is before any launchctl call — log must be empty."""
+        result = _run_bounce(tmp_path, state=None, head_sha="abc123")
+        log = _read_launchctl_log(tmp_path)
+        assert log == [], (
+            f"Foreign HOME refusal must precede launchctl calls, but log has {len(log)} entry/entries: {log}"
+        )
+
+    def test_foreign_home_check_mode_also_refuses(self, tmp_path):
+        """AC-5: --check under a foreign HOME still refuses (exit 2)."""
+        result = _run_bounce(
+            tmp_path, state=None, head_sha="abc123", extra_args=["--check"],
+        )
+        assert result.returncode == 2, (
+            f"--check under foreign HOME must refuse, got exit {result.returncode}: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Guard sees launchctl through a spawned shell (AC-4)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.expects_blocked_host
+def test_guard_catches_launchctl_through_bash(tmp_path):
+    """AC-4: a test spawning 'bash -c launchctl ...' without allow_launchctl fails.
+
+    The guard must catch launchctl reached through a spawned shell script,
+    not only through a direct Python subprocess call.  This test is marked
+    ``expects_blocked_host`` so its own guard recording is dropped.
+    """
+    try:
+        result = subprocess.run(
+            ["bash", "-c", f"launchctl print gui/{os.getuid()}/x"],
+            capture_output=True, text=True, timeout=5,
+        )
+        # If we get here, the guard did NOT catch launchctl through bash.
+        # That's the gap this sub-plan exists to close.
+        pytest.fail(
+            "Guard did not block launchctl reached through bash — "
+            "the host-mutation guard is blind to shell-spawned calls. "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+    except HostMutationBlocked:
+        # Guard caught it — this is the green path.
+        pass
