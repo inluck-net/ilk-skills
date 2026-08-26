@@ -182,16 +182,25 @@ _STATE_EXIT_CODES = {
 def main(argv: list[str] | None = None) -> None:
     """CLI entry point for host deploy status resolution.
 
-    Usage:
+    Usage (single host — legacy):
       python3 host_deploy_status.py --bouncer <path> [--bounce-hosts]
+
+    Usage (multi-host — AC-6):
+      python3 host_deploy_status.py --bouncer <path1> --bouncer <path2> ... --hosts h1,h2,...
     """
     parser = argparse.ArgumentParser(
-        description="Resolve a single host's deploy status via bounce_daemons.sh.",
+        description="Resolve deploy status via bounce_daemons.sh.",
     )
     parser.add_argument(
         "--bouncer",
-        required=True,
-        help="Path to bounce_daemons.sh (or a test fake).",
+        action="append",
+        default=[],
+        help="Path to bounce_daemons.sh (repeat for multi-host, one per host).",
+    )
+    parser.add_argument(
+        "--hosts",
+        default=None,
+        help="Comma-separated host list.  Omit for single-host mode.",
     )
     parser.add_argument(
         "--bounce-hosts",
@@ -201,10 +210,36 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    bouncer = Path(args.bouncer)
-    state = resolve_host(bouncer, Path("/tmp"), bounce_hosts=args.bounce_hosts)
-    print(state)
-    sys.exit(_STATE_EXIT_CODES.get(state, 2))
+    bounce = args.bounce_hosts
+
+    if args.hosts:
+        # Multi-host mode — resolve every declared host.
+        host_list = [h.strip() for h in args.hosts.split(",") if h.strip()]
+        bouncers = [Path(b) for b in args.bouncer]
+        if len(bouncers) != len(host_list):
+            print(
+                f"error: {len(host_list)} hosts but {len(bouncers)} --bouncer paths",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        bouncer_map = dict(zip(host_list, bouncers))
+        results = resolve_hosts(
+            host_list, lambda h: bouncer_map[h], Path("/tmp"), bounce_hosts=bounce,
+        )
+        for host in host_list:
+            print(f"{host}: {results[host]}")
+        # Exit non-zero if any host is not ok.
+        if any(s != "ok" for s in results.values()):
+            sys.exit(1)
+    else:
+        # Single-host mode — legacy behaviour.
+        if not args.bouncer:
+            print("error: --bouncer is required", file=sys.stderr)
+            sys.exit(2)
+        bouncer = Path(args.bouncer[0])
+        state = resolve_host(bouncer, Path("/tmp"), bounce_hosts=bounce)
+        print(state)
+        sys.exit(_STATE_EXIT_CODES.get(state, 2))
 
 
 if __name__ == "__main__":

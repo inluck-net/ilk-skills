@@ -786,14 +786,79 @@ class TestCliEntryPoint:
         assert "--bounce-hosts" in result.stdout
 
     def test_no_args_exits_with_usage(self) -> None:
-        """AC-4: No arguments exits 2 with a usage message, not a traceback."""
+        """AC-4: No arguments exits 2 with a usage/error message, not a traceback."""
         result = subprocess.run(
             [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT)],
             capture_output=True, text=True, timeout=30,
         )
         assert result.returncode == 2
-        # argparse writes usage to stderr on missing required args
-        assert "usage" in result.stderr.lower() or "usage" in result.stdout.lower()
+        combined = (result.stderr + result.stdout).lower()
+        assert "usage" in combined or "bouncer" in combined, (
+            f"Expected usage or error message, got: {combined!r}"
+        )
+
+    # --- Multi-host mode (AC-6: resolve_hosts reachable from CLI) ---
+
+    def _run_multi_host(
+        self, tmp_path: Path, hosts: list[str], states: dict[str, tuple[list[str], int]],
+    ) -> subprocess.CompletedProcess[str]:
+        """Run the CLI in multi-host mode with per-host fake bouncers."""
+        cmd = [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT)]
+        for host in hosts:
+            lines, code = states[host]
+            fake = _write_fake_bouncer(
+                tmp_path / host, output_lines=lines, exit_code=code,
+            )
+            cmd.extend(["--bouncer", str(fake)])
+        cmd.extend(["--hosts", ",".join(hosts)])
+        return subprocess.run(
+            cmd,
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "BOUNCER_LOG": "/dev/null"},
+        )
+
+    def test_multi_host_all_ok(self, tmp_path: Path) -> None:
+        """AC-6: all hosts ok → prints per-host lines, exits 0."""
+        hosts = ["chad-mbp", "rezmac"]
+        states = {
+            h: (["fresh: scheduler — fresh (toolkit_head matches HEAD)"], 0)
+            for h in hosts
+        }
+        result = self._run_multi_host(tmp_path, hosts, states)
+        assert result.returncode == 0, result.stderr
+        lines = result.stdout.strip().splitlines()
+        assert len(lines) == 2
+        assert lines[0] == "chad-mbp: ok"
+        assert lines[1] == "rezmac: ok"
+
+    def test_multi_host_mixed_states(self, tmp_path: Path) -> None:
+        """AC-6: mixed states → per-host lines, exits 1 (not all ok)."""
+        hosts = ["chad-mbp", "rezmac", "devbox"]
+        states = {
+            "chad-mbp": (["fresh: scheduler — fresh (toolkit_head matches HEAD)"], 0),
+            "rezmac": (["stale: scheduler — stale (recorded abc, HEAD def) (would bounce)"], 0),
+            "devbox": (["unreachable: scheduler (plist=0 loaded=0)"], 2),
+        }
+        result = self._run_multi_host(tmp_path, hosts, states)
+        assert result.returncode == 1
+        lines = result.stdout.strip().splitlines()
+        assert len(lines) == 3
+        assert "chad-mbp: ok" in lines[0]
+        assert "rezmac: stale-daemon" in lines[1]
+        assert "devbox: unreachable" in lines[2]
+
+    def test_multi_host_one_unreachable_exits_nonzero(self, tmp_path: Path) -> None:
+        """AC-6: one unreachable → exit 1, not 0."""
+        hosts = ["chad-mbp", "rezmac"]
+        states = {
+            "chad-mbp": (["fresh: scheduler — fresh (toolkit_head matches HEAD)"], 0),
+            "rezmac": (["unreachable: scheduler (plist=0 loaded=0)"], 2),
+        }
+        result = self._run_multi_host(tmp_path, hosts, states)
+        assert result.returncode == 1
+        lines = result.stdout.strip().splitlines()
+        assert len(lines) == 2
+        assert "rezmac: unreachable" in lines[1]
 
 
 # ---------------------------------------------------------------------------

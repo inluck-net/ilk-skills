@@ -234,13 +234,22 @@ host it did not reach, and a host with new code installed and an old
 daemon running is not deployed. Detection uses the resolver script:
 
 ```bash
+# Single-host (detect-only):
 python3 skills/ilk-ship/scripts/host_deploy_status.py \
   --bouncer skills/ilk-watchdog/scripts/bounce_daemons.sh
+
+# Multi-host (one --bouncer per host, same order as --hosts):
+python3 skills/ilk-ship/scripts/host_deploy_status.py \
+  --bouncer skills/ilk-watchdog/scripts/bounce_daemons.sh \
+  --bouncer skills/ilk-watchdog/scripts/bounce_daemons.sh \
+  --hosts chad-mbp,rezmac
 ```
 
 Add `--bounce-hosts` to permit actual bouncing (omit for detect-only).
-The script prints one line (`ok` / `stale-daemon` / `unreachable`) and
-exits 0 / 1 / 2 respectively. Iterate per host from `ship.hosts`.
+In single-host mode the script prints one line (`ok` / `stale-daemon` /
+`unreachable`) and exits 0 / 1 / 2 respectively. In multi-host mode it
+prints one `<host>: <state>` line per declared host and exits 0 only if
+every host is `ok`.
 
 The `hosts` field in the `ship:` block is declarative data — Phase 4
 acts on it. Every declared host appears in the summary; a host missing
