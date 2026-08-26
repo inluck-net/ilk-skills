@@ -60,7 +60,7 @@ class TestGuardRefusesHostMutatingBinary:
         with pytest.raises(BaseException, match="host-mutating binary"):
             subprocess.check_call(["launchctl", "list"])
 
-    def test_the_raise_is_not_an_Exception(self) -> None:
+    def test_baseexception_survives_broad_except(self) -> None:
         """AC-2: survives ``except Exception`` (the whole point of BaseException).
 
         Production code catches broadly; an Exception here would be swallowed
