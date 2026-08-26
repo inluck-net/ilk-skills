@@ -244,9 +244,17 @@ def _host_guard_active(request: pytest.FixtureRequest, tmp_path_factory):
     shim_log.write_text("", encoding="utf-8")
 
     shim_path = shim_dir / "launchctl"
+    # Report-only is honoured here too, not just in the Popen layer below.
+    # A shim that always exits 126 makes report-only mode a lie for anything
+    # reached through a spawned shell (measured 2026-08-26: it broke
+    # test_host_guard.py::TestReportOnlyMode with rc=126).
     shim_path.write_text(
         f"#!/usr/bin/env bash\n"
         f'echo "$@" >> "{shim_log}"\n'
+        f'if [[ -n "${{{_HOST_REPORT_ENV}:-}}" && "${{{_HOST_REPORT_ENV}}}" != "0" ]]; then\n'
+        f'  [[ -x /bin/launchctl ]] && exec /bin/launchctl "$@"\n'
+        f"  exit 0\n"
+        f"fi\n"
         f'echo "HostMutationBlocked: launchctl was reached through a spawned shell: $@" >&2\n'
         f"exit 126\n",
         encoding="utf-8",
