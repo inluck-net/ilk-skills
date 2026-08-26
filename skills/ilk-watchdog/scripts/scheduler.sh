@@ -19,6 +19,48 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_pid.sh"
 
 SCHEDULER_PIDFILE="${HOME}/.ilk-data/scheduler.pid"
+SCHEDULER_STATE_FILE="${HOME}/.ilk-data/scheduler.state.json"
+
+write_scheduler_state() {
+  # Write scheduler.state.json with {pid, started_at, toolkit_head}.
+  # Fail open: a write failure never prevents startup (AC-5).
+  local state_file="$SCHEDULER_STATE_FILE"
+  local pid="$$"
+  local started_at
+  started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" || started_at=""
+
+  # Resolve toolkit_head from the script's own location, not $PWD (AC-2).
+  # launchd starts the job in an arbitrary directory.
+  local toolkit_head=""
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || true
+  if [[ -n "$script_dir" ]]; then
+    # Walk up to find the repo root (the dir containing .git).
+    local repo_dir="$script_dir"
+    while [[ "$repo_dir" != "/" && ! -d "$repo_dir/.git" ]]; do
+      repo_dir="$(dirname "$repo_dir")"
+    done
+    if [[ -d "$repo_dir/.git" ]]; then
+      toolkit_head="$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null)" || toolkit_head=""
+    fi
+  fi
+
+  # Write the state file. If anything is missing, log and return (AC-5).
+  if [[ -z "$started_at" ]]; then
+    echo "[ilk-scheduler] WARNING: could not resolve timestamp for state file" >&2
+    return 0
+  fi
+  if [[ -z "$toolkit_head" ]]; then
+    echo "[ilk-scheduler] WARNING: could not resolve toolkit HEAD for state file (not a git clone?)" >&2
+    return 0
+  fi
+
+  mkdir -p "$(dirname "$state_file")"
+  if ! printf '{"pid":%d,"started_at":"%s","toolkit_head":"%s"}\n' \
+       "$pid" "$started_at" "$toolkit_head" > "$state_file"; then
+    echo "[ilk-scheduler] WARNING: could not write state file $state_file" >&2
+  fi
+}
 
 acquire_scheduler_lock() {
   # Use a pidfile with liveness check. Portable (no flock dependency).
@@ -40,6 +82,8 @@ acquire_scheduler_lock() {
   # Write our PID.
   mkdir -p "$(dirname "$pidfile")"
   echo $$ > "$pidfile"
+  # Write the state file with toolkit head (AC-1, AC-4, AC-6).
+  write_scheduler_state
 }
 
 release_scheduler_lock() {
