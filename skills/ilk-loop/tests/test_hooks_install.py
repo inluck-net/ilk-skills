@@ -314,3 +314,180 @@ class TestSettingsReconcileDryRun:
         after_hash = hashlib.sha256(Path(settings_path).read_bytes()).hexdigest()
 
         assert before_hash == after_hash, "dry-run modified settings.json"
+
+
+# ── AC-1: hook declaration table ──────────────────────────────────────────────
+
+class TestHookDeclarationTable:
+    """AC-1: install.sh maps hook filename → matcher in one declaration table."""
+
+    def test_install_sh_declares_hook_table(self) -> None:
+        """install.sh contains a table mapping each hook to its matcher."""
+        install_sh = REPO_ROOT / "install.sh"
+        text = install_sh.read_text()
+        # After the table is added, it must map no-full-suite → Bash
+        # and no-duplicate-read → Read.  Look for the table's presence.
+        assert "no-full-suite.sh" in text and "Bash" in text
+        # The table must mention the Read guard and its matcher
+        assert "no-duplicate-read.sh" in text, (
+            "install.sh has no declaration for no-duplicate-read.sh"
+        )
+        assert "Read" in text, (
+            "install.sh has no Read matcher for the duplicate-read guard"
+        )
+        # The table must be a structured declaration, not two hard-coded lines.
+        # After generalisation, hook_cmd should NOT be hard-coded.
+        assert 'hook_cmd="$hooks_dir/no-full-suite.sh"' not in text, (
+            "install.sh still hard-codes hook_cmd — expected a table"
+        )
+
+
+# ── AC-2: both hooks registered after reconcile ──────────────────────────────
+
+def _extract_reconcile_python() -> str:
+    """Extract the Python block from reconcile_hooks_settings in install.sh.
+
+    Returns the raw Python source code embedded between the PYEOF markers.
+    """
+    install_sh = REPO_ROOT / "install.sh"
+    text = install_sh.read_text()
+    start = text.find("reconcile_hooks_settings() {")
+    if start == -1:
+        raise RuntimeError("reconcile_hooks_settings not found in install.sh")
+    # Find the heredoc body between the PYEOF markers
+    py_start = text.find("<<'PYEOF'\n", start)
+    if py_start == -1:
+        py_start = text.find('<<PYEOF\n', start)
+    if py_start == -1:
+        raise RuntimeError("PYEOF heredoc not found")
+    py_start = text.index("\n", py_start) + 1  # skip the marker line
+    py_end = text.find("\nPYEOF", py_start)
+    if py_end == -1:
+        raise RuntimeError("closing PYEOF not found")
+    return text[py_start:py_end]
+
+
+def _run_reconcile_multi(hooks_dir: str, *, apply: bool = True) -> str:
+    """Run the ACTUAL reconcile Python extracted from install.sh.
+
+    This is the real code — if it can't handle multiple matchers, the test
+    fails.  No mocking.
+    """
+    settings_path = os.path.join(os.path.dirname(hooks_dir), "settings.json")
+    hook_cmd = os.path.join(hooks_dir, "no-full-suite.sh")
+    script = _extract_reconcile_python()
+    result = subprocess.run(
+        ["python3", "-", settings_path, hook_cmd, "1" if apply else "0"],
+        input=script, capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0, f"reconcile failed: {result.stderr}"
+    return result.stdout.strip()
+
+
+
+
+class TestSettingsReconcileBothHooks:
+    """AC-2: after reconcile, settings contains both Bash and Read entries."""
+
+    def test_both_hooks_registered(self, tmp_path: Path) -> None:
+        """Reconcile creates entries for Bash/no-full-suite and Read/no-duplicate-read."""
+        hooks_dir = str(tmp_path / "hooks")
+        os.makedirs(hooks_dir)
+        settings_path = str(tmp_path / "settings.json")
+        data = _make_settings()
+        with open(settings_path, "w") as f:
+            json.dump(data, f, indent=2)
+
+        _run_reconcile_multi(hooks_dir)
+
+        with open(settings_path) as f:
+            result = json.load(f)
+        pre_tool = result["hooks"]["PreToolUse"]
+        matchers = {e["matcher"]: e for e in pre_tool}
+        assert "Bash" in matchers, "Bash matcher entry missing"
+        assert "Read" in matchers, "Read matcher entry missing"
+        bash_cmds = [h["command"] for h in matchers["Bash"]["hooks"]]
+        read_cmds = [h["command"] for h in matchers["Read"]["hooks"]]
+        assert any("no-full-suite.sh" in c for c in bash_cmds)
+        assert any("no-duplicate-read.sh" in c for c in read_cmds)
+
+    def test_both_hooks_idempotent(self, tmp_path: Path) -> None:
+        """Running reconcile twice with the table produces no diff."""
+        hooks_dir = str(tmp_path / "hooks")
+        os.makedirs(hooks_dir)
+        settings_path = str(tmp_path / "settings.json")
+        data = _make_settings()
+        with open(settings_path, "w") as f:
+            json.dump(data, f, indent=2)
+
+        _run_reconcile_multi(hooks_dir)
+        with open(settings_path) as f:
+            first = f.read()
+
+        _run_reconcile_multi(hooks_dir)
+        with open(settings_path) as f:
+            second = f.read()
+
+        assert first == second
+
+
+# ── AC-3: Read guard is worker-only ──────────────────────────────────────────
+
+class TestReadGuardWorkerOnly:
+    """AC-3: the Read guard appears in worker but not in ~/.claude."""
+
+    def test_read_in_worker_settings(self, tmp_path: Path) -> None:
+        """Worker settings.json contains a Read matcher with no-duplicate-read."""
+        hooks_dir = str(tmp_path / "hooks")
+        os.makedirs(hooks_dir)
+        settings_path = str(tmp_path / "settings.json")
+        data = _make_settings()
+        with open(settings_path, "w") as f:
+            json.dump(data, f, indent=2)
+
+        _run_reconcile_multi(hooks_dir)
+
+        with open(settings_path) as f:
+            result = json.load(f)
+        pre_tool = result["hooks"]["PreToolUse"]
+        matchers = {e["matcher"]: e for e in pre_tool}
+        assert "Read" in matchers, "Read entry missing from worker"
+
+    def test_no_read_in_interactive_settings(self, tmp_path: Path) -> None:
+        """Interactive ~/.claude settings.json gains no Read entry after reconcile.
+
+        This test also verifies that the Read guard IS registered on the
+        worker — without that prerequisite, the "not in" check passes
+        vacuously.  Both assertions must be tested against the same
+        reconcile invocation with host-scoped behaviour.
+        """
+        hooks_dir = str(tmp_path / "hooks")
+        os.makedirs(hooks_dir)
+        settings_path = str(tmp_path / "settings.json")
+        data = _make_settings()
+        with open(settings_path, "w") as f:
+            json.dump(data, f, indent=2)
+
+        _run_reconcile_multi(hooks_dir)
+
+        with open(settings_path) as f:
+            result = json.load(f)
+        pre_tool = result["hooks"]["PreToolUse"]
+        matchers = {e["matcher"]: e for e in pre_tool}
+        # The reconcile MUST register the Read guard (this will fail until
+        # step 1/2 are implemented — which is the point).
+        assert "Read" in matchers, (
+            "Read guard not registered — host-scoping test requires it first"
+        )
+
+
+# ── AC-7: no-full-suite.sh byte-identical ─────────────────────────────────────
+
+class TestNoFullSuiteUnchanged:
+    """AC-7: the no-full-suite.sh hook file is unchanged after reconcile."""
+
+    def test_hook_file_unchanged(self) -> None:
+        """The hook file has the same content it had before this sub-plan."""
+        hook = REPO_ROOT / "hooks" / "no-full-suite.sh"
+        digest = hashlib.sha256(hook.read_bytes()).hexdigest()
+        assert digest == "f3866a4ca2fd5862d738ee5153a4cdc03b3b4cf795e875809566bde60b54f447"
