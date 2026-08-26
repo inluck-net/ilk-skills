@@ -19,7 +19,11 @@ from render_xbar import render_xbar  # noqa: E402
 
 
 # Fixed script paths for deterministic assertions.
-RUN_SCRIPT = "/opt/ilk/skills/ilk-runner/scripts/ilk-run.sh"
+# Must be a REAL file: render_xbar suppresses a clickable row whose target
+# is missing, so a fictional path would render the "unavailable" notice
+# instead of an action (see test_render_xbar_exec_independence.py).
+RUN_SCRIPT = str(Path(__file__).resolve().parents[3]
+                 / "skills" / "ilk-runner" / "scripts" / "ilk-run.sh")
 RESUME_SCRIPT = "/opt/ilk/skills/ilk-watchdog/scripts/blacklist_status.py"
 
 
@@ -115,9 +119,11 @@ class TestRunnableIdle:
         entry = _make_entry("proj", manually_runnable=True, path="/home/user/proj")
         text = _render(entry)
         starts = _start_now_lines(text)
-        # !r adds quotes: bash='<script>' param1='<path>'
-        assert f"bash='{RUN_SCRIPT}'" in starts[0]
-        assert "param1='/home/user/proj'" in starts[0]
+        # bash= is the interpreter; the script is param1, the path param2.
+        # Exec'ing the script directly is what broke "Start now" on 2026-08-26.
+        assert "bash='/bin/bash'" in starts[0]
+        assert f"param1='{RUN_SCRIPT}'" in starts[0]
+        assert "param2='/home/user/proj'" in starts[0]
 
     def test_start_now_path_in_line(self) -> None:
         entry = _make_entry("proj", manually_runnable=True, path="/home/user/proj")
@@ -253,8 +259,8 @@ class TestActionPath:
         entry = _make_entry("proj", manually_runnable=True, path="C:\\Users\\me\\proj")
         text = _render(entry)
         starts = _start_now_lines(text)
-        # !r repr doubles backslashes: param1='C:\\Users\\me\\proj'
-        assert "param1='C:\\\\Users\\\\me\\\\proj'" in starts[0]
+        # !r repr doubles backslashes; the project path is param2 now.
+        assert "param2='C:\\\\Users\\\\me\\\\proj'" in starts[0]
 
     def test_resume_uses_entry_path(self) -> None:
         entry = _make_entry("proj", parked=True, blocked=True, path="/home/me/proj")

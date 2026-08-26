@@ -23,6 +23,10 @@ _REPO_ROOT = _HERE.parent.parent
 _DEFAULT_RUN_SCRIPT = str(_REPO_ROOT / "skills" / "ilk-runner" / "scripts" / "ilk-run.sh")
 _DEFAULT_RESUME_SCRIPT = str(_REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "blacklist_status.py")
 
+# Interpreter used to launch shell actions.  Absolute so the row does not
+# depend on SwiftBar's PATH, which is not a login shell's PATH.
+_BASH = "/bin/bash"
+
 
 def render_xbar(
     entries: list[dict],
@@ -125,10 +129,29 @@ def render_xbar(
         data_path = e.get("path", "")
         run_path = e.get("repo_path") or data_path
         if e.get("manually_runnable"):
-            lines.append(
-                f"--Start now | bash={run_script!r}"
-                f" param1={run_path!r} terminal=false refresh=true"
-            )
+            # Invoke through an interpreter rather than exec'ing the script.
+            #
+            # SwiftBar's `bash=<path>` execs the target directly, so a script
+            # committed 0644 fails with 126 — and because the row carries
+            # `terminal=false`, that failure is invisible: no window, no error,
+            # the menu just refreshes.  Observed 2026-08-26: "Start now" did
+            # nothing at all, while `bash ilk-run.sh` from a shell worked,
+            # because reading a file as bash input needs no execute bit.
+            #
+            # This matches how the launchd plist already invokes scheduler.sh
+            # (`/bin/bash <script> --poll-min ...`), and how the Resume row
+            # below already invokes python3 — Resume was never affected.
+            if not os.path.isfile(run_script):
+                lines.append(
+                    f"--Start now unavailable (missing {os.path.basename(run_script)})"
+                    " | color=red"
+                )
+            else:
+                lines.append(
+                    f"--Start now | bash={_BASH!r}"
+                    f" param1={run_script!r} param2={run_path!r}"
+                    " terminal=false refresh=true"
+                )
         if e.get("parked"):
             lines.append(
                 f"--Resume | bash=python3"
