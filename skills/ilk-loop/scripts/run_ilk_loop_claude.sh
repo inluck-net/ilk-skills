@@ -1326,9 +1326,15 @@ invoke_batch_gate() {
   echo "[batch-gate] Running batch-end gate..."
   local gate_output
   local gate_exit=0
+  # NOTE: --runtime-dir is deliberately NOT passed.  $runtime_dir here is the
+  # *launcher* dir (get_ilk_runtime_dir → ilk_paths.external_launcher_dir),
+  # which is per-launch ephemera.  The record is project runtime state that
+  # ship_audit reads long after the run, so batch_gate resolves it itself via
+  # resolve_runtime_dir().  Passing the launcher dir is what made the gh-resolve
+  # verdict unreadable on 2026-08-25: marker and suite output landed in
+  # runtime/launcher/ while the audit looked in runtime/.  One resolver only.
   gate_output=$(python3 "$batch_gate_script" \
     --project "$project_path" \
-    --runtime-dir "$runtime_dir" \
     --run 2>&1) || gate_exit=$?
   if [[ $gate_exit -ne 0 ]]; then
     echo "[batch-gate] Gate exited with code $gate_exit — output:"

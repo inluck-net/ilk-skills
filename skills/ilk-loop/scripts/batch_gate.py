@@ -64,6 +64,36 @@ def record_path(runtime_dir: Path) -> Path:
     return runtime_dir / "batch-gate.json"
 
 
+def resolve_runtime_dir(project_path: Path) -> Optional[Path]:
+    """Resolve where this project's batch-gate record lives.
+
+    THE single resolver for the record's location.  Every writer and reader
+    must call this rather than resolving on its own — the 2026-08-25 defect
+    was two callers disagreeing: the runner passed
+    ``ilk_paths.external_launcher_dir`` (``<data>/runtime/launcher``) while
+    this module's own default was ``external_runtime_dir``
+    (``<data>/runtime``), so the gate wrote its marker and suite output in
+    one place and ``ship_audit`` looked for the verdict in another.
+
+    The record is *project* runtime state, not launcher state: it outlives
+    the run that produced it and is read by the audit long afterwards.  The
+    launcher dir holds per-launch ephemera (``running.pid``,
+    ``last-exit.json``), so the record does not belong there.
+
+    Returns None when the project key cannot be resolved.
+    """
+    try:
+        from ilk_paths import (  # type: ignore[import-untyped]
+            external_runtime_dir, resolve_project_key,
+        )
+    except ImportError:
+        return None
+    key = resolve_project_key(project_path)
+    if key is None:
+        return None
+    return external_runtime_dir(key)
+
+
 def write_record(record: BatchGateRecord, runtime_dir: Path) -> Path:
     """Write a batch-gate record to disk.  Returns the path written."""
     p = record_path(runtime_dir)
@@ -521,12 +551,12 @@ def main() -> None:
     if args.runtime_dir:
         runtime = args.runtime_dir.resolve()
     else:
-        from ilk_paths import external_runtime_dir, resolve_project_key  # type: ignore[import-untyped]
-        key = resolve_project_key(project)
-        if key is None:
-            print("[batch-gate] ERROR: cannot resolve project key", file=__import__("sys").stderr)
+        resolved = resolve_runtime_dir(project)
+        if resolved is None:
+            print("[batch-gate] ERROR: cannot resolve project key",
+                  file=__import__("sys").stderr)
             raise SystemExit(1)
-        runtime = external_runtime_dir(key)
+        runtime = resolved
 
     rec = run_batch_gate(project, runtime, _poll_timeout=args.poll_timeout)
     if rec is None:

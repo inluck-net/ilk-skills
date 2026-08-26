@@ -381,7 +381,41 @@ def _cli(argv: list[str]) -> int:
         default="unknown",
         help="scalar gate outcome (default: unknown)",
     )
+    ap.add_argument(
+        "--runtime-dir",
+        type=Path,
+        default=None,
+        help="where the batch-gate record lives (default: resolved from the "
+             "project via batch_gate.resolve_runtime_dir)",
+    )
+    ap.add_argument(
+        "--project",
+        type=Path,
+        default=None,
+        help="project root (default: cwd) — used to resolve the runtime dir "
+             "and to search git history for step commits",
+    )
     args = ap.parse_args(argv)
+
+    project = (args.project or Path.cwd()).resolve()
+
+    # D6: without this the CLI passed runtime_dir=None to audit_ship, so
+    # _resolve_batch_record short-circuited and EVERY shipped sub-plan read as
+    # "gate declared but no gate result recorded" — regardless of what the
+    # gate had actually written.  SP3 wired the library; the CLI never
+    # reached it.  Resolve through the same function the writer uses (D5).
+    runtime_dir = args.runtime_dir
+    if runtime_dir is None:
+        try:
+            _scripts_dir = str(Path(__file__).resolve().parent)
+            if _scripts_dir not in sys.path:
+                sys.path.insert(0, _scripts_dir)
+            from batch_gate import (  # type: ignore[import-untyped]
+                resolve_runtime_dir,
+            )
+            runtime_dir = resolve_runtime_dir(project)
+        except ImportError:
+            runtime_dir = None
 
     try:
         info = read_subplan_for_audit(args.subplan)
@@ -398,6 +432,8 @@ def _cli(argv: list[str]) -> int:
         declared_checks=info["declared_checks"],
         gate_passed=args.gate_passed,
         slug=info["slug"],
+        cwd=project,
+        runtime_dir=runtime_dir,
     )
 
     if result["proven"]:
