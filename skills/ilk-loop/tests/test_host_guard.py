@@ -27,16 +27,20 @@ class TestGuardRefusesHostMutatingBinary:
     default flips to enforcement and they go green.
     """
 
+    @pytest.mark.expects_blocked_host
     def test_popen_run_is_refused(self) -> None:
         """AC-2: ``subprocess.run`` funnels through Popen; raises BaseException."""
         with pytest.raises(BaseException, match="host-mutating binary"):
             subprocess.run(["launchctl", "list"], capture_output=True)
+
+    @pytest.mark.expects_blocked_host
 
     def test_basename_absolute_path_is_matched(self) -> None:
         """AC-1: basename matching — /bin/launchctl → launchctl."""
         with pytest.raises(BaseException, match="host-mutating binary"):
             subprocess.run(["/bin/launchctl", "list"], capture_output=True)
 
+    @pytest.mark.expects_blocked_host
     def test_shell_form_is_matched(self) -> None:
         """AC-1: ``shell=True`` string form — first token parsed."""
         with pytest.raises(BaseException, match="host-mutating binary"):
@@ -45,20 +49,26 @@ class TestGuardRefusesHostMutatingBinary:
                 shell=True, capture_output=True,
             )
 
+    @pytest.mark.expects_blocked_host
+
     def test_popen_call_is_refused(self) -> None:
         """AC-1: ``subprocess.call`` funnels through Popen."""
         with pytest.raises(BaseException, match="host-mutating binary"):
             subprocess.call(["launchctl", "list"])
 
+    @pytest.mark.expects_blocked_host
     def test_popen_check_output_is_refused(self) -> None:
         """AC-1: ``subprocess.check_output`` funnels through Popen."""
         with pytest.raises(BaseException, match="host-mutating binary"):
             subprocess.check_output(["launchctl", "list"])
 
+    @pytest.mark.expects_blocked_host
     def test_popen_check_call_is_refused(self) -> None:
         """AC-1: ``subprocess.check_call`` funnels through Popen."""
         with pytest.raises(BaseException, match="host-mutating binary"):
             subprocess.check_call(["launchctl", "list"])
+
+    @pytest.mark.expects_blocked_host
 
     def test_baseexception_survives_broad_except(self) -> None:
         """AC-2: survives ``except Exception`` (the whole point of BaseException).
@@ -103,6 +113,7 @@ class TestGuardLetsLocalBinariesThrough:
 class TestSessionLedger:
     """The guard records blocked calls and fails the session on unaccounted ones (AC-4)."""
 
+    @pytest.mark.expects_blocked_host
     def test_blocked_call_is_recorded_in_ledger(self, exempts_recorded_during) -> None:
         """AC-4: a blocked call appears in the session ledger.
 
@@ -153,6 +164,7 @@ class TestReportOnlyMode:
     Set ``ILK_TEST_GUARD_REPORT=1`` to make the guard raise instead.
     """
 
+    @pytest.mark.expects_blocked_host
     def test_report_only_allows_launchctl(self, monkeypatch, exempts_recorded_during) -> None:
         """AC-6: report-only mode does not raise — records and passes through.
 

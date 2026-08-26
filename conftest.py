@@ -64,6 +64,12 @@ def pytest_configure(config) -> None:
         "markers",
         "allow_launchctl: exempt this test from the host-mutation guard",
     )
+    config.addinivalue_line(
+        "markers",
+        "expects_blocked_host: this test deliberately trips the host-mutation "
+        "guard and catches the raise; drop its recordings from the session "
+        "ledger",
+    )
 
 
 def _ambiguous_module_names() -> set[str]:
@@ -250,14 +256,27 @@ def _host_guard_active(request: pytest.FixtureRequest):
 
 
 @pytest.fixture(autouse=True)
-def exempts_recorded_during() -> None:
-    """Drop guard recordings made during each test.
+def exempts_recorded_during(request: pytest.FixtureRequest):
+    """Drop guard recordings for tests that trip the guard ON PURPOSE.
 
-    Autouse so that every test that deliberately trips the guard and catches
-    the raise has its calls removed from the ledger before
-    ``pytest_sessionfinish`` runs.  Tests that never touch a deny-listed
-    binary add nothing; the slice is a no-op for them.
+    Scoped to the ``expects_blocked_host`` marker.  It used to clear
+    unconditionally for EVERY test, which emptied ``_host_blocked_calls``
+    before ``pytest_sessionfinish`` could ever read it — turning a narrow
+    exemption into a blanket amnesty and silently disabling the detection
+    half of testing-principles §5.  Measured 2026-08-26: a test doing
+    ``try: Popen(["launchctl", ...]) except BaseException: pass`` produced
+    exit 0 and zero violations.
+
+    The raise alone is not enough: a ``BaseException`` is still catchable,
+    and production code here converts subprocess failure into an
+    unanswerable verdict by design.  The ledger is what catches the swallow.
+
+    Only the slice recorded during THIS test is dropped, so a marked test
+    cannot clear a neighbour's recordings.
     """
+    if not request.node.get_closest_marker("expects_blocked_host"):
+        yield
+        return
     before = len(_host_blocked_calls)
     yield
     del _host_blocked_calls[before:]
@@ -281,7 +300,10 @@ def _enforce_no_host_mutations(session) -> None:
         f"host-mutating binary ({', '.join(sorted(_HOST_DENYLIST))}) in "
         f"{len(by_test)} test(s):\n"
         + "".join(f"  {n}  ({c} call(s))\n" for n, c in sorted(by_test.items()))
-        + "Stub the call or mark the test `@pytest.mark.allow_launchctl`.\n",
+        + "Stub the call, or mark the test:\n"
+          "  @pytest.mark.allow_launchctl      — it genuinely needs the real binary\n"
+          "  @pytest.mark.expects_blocked_host — it trips the guard on purpose "
+          "and catches the raise (guard self-checks)\n",
         file=sys.stderr,
     )
 

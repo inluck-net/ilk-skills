@@ -34,6 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # ── the guard reaches this directory ────────────────────────────────────────
 
+@pytest.mark.expects_blocked_host
 def test_guard_blocks_launchctl_from_outside_ilk_loop_tests() -> None:
     """A denied binary must raise here, in a sibling test tree."""
     with pytest.raises(BaseException) as excinfo:
@@ -44,6 +45,7 @@ def test_guard_blocks_launchctl_from_outside_ilk_loop_tests() -> None:
     )
 
 
+@pytest.mark.expects_blocked_host
 def test_guard_names_the_binary_and_the_test() -> None:
     with pytest.raises(BaseException) as excinfo:
         subprocess.Popen(["launchctl", "print", "gui/501/net.inluck.ilk.scheduler"])
