@@ -220,10 +220,23 @@ operator step — `/ilk-ship` prepares the release; it does not push.
 
 **Exit:** install attempted on each declared host.
 
-**Per-host reporting.** Phase 4 reports per host and never reports
-success for a host it did not reach. An unreachable host is
-`unreachable`, not `ok`. The `hosts` field in the `ship:` block is
-declarative data — Phase 4 acts on it.
+**Per-host reporting.** Phase 4 reports per host with one of exactly
+three states:
+
+| State | Meaning |
+|---|---|
+| `ok` | Install succeeded **and** all daemons are current. |
+| `stale-daemon` | Install succeeded but at least one daemon holds stale code. |
+| `unreachable` | Could not probe the host (ssh failed, launchctl absent, script missing). |
+
+**A stale daemon blocks `ok`.** Phase 4 never reports success for a
+host it did not reach, and a host with new code installed and an old
+daemon running is not deployed. Detection uses `bounce_daemons.sh
+--check`; bouncing a remote host requires `--bounce-hosts`.
+
+The `hosts` field in the `ship:` block is declarative data — Phase 4
+acts on it. Every declared host appears in the summary; a host missing
+from the report is indistinguishable from a passing one.
 
 **Post-deploy hook.** After installing on each host, the post-deploy
 hook runs (if configured). The `ILK_ALLOW_FULL_SUITE=1` environment
