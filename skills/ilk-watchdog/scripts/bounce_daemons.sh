@@ -48,13 +48,13 @@ PLISTS=""
 case "$PLATFORM" in
   Darwin)
     NAMES="scheduler"
-    LABELS="net.inluck.ilk-scheduler"
-    PLISTS="$HOME/Library/LaunchAgents/net.inluck.ilk-scheduler.plist"
+    LABELS="net.inluck.ilk.scheduler"
+    PLISTS="$HOME/Library/LaunchAgents/net.inluck.ilk.scheduler.plist"
     ;;
   MINGW*|MSYS*|CYGWIN*|Windows_NT)
     NAMES="scheduler tray"
-    LABELS="net.inluck.ilk-scheduler net.inluck.ilk-tray"
-    PLISTS="$HOME/Library/LaunchAgents/net.inluck.ilk-scheduler.plist $HOME/Library/LaunchAgents/net.inluck.ilk-tray.plist"
+    LABELS="net.inluck.ilk.scheduler net.inluck.ilk-tray"
+    PLISTS="$HOME/Library/LaunchAgents/net.inluck.ilk.scheduler.plist $HOME/Library/LaunchAgents/net.inluck.ilk-tray.plist"
     ;;
   *)
     echo "Unsupported platform: $PLATFORM" >&2

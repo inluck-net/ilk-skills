@@ -135,7 +135,7 @@ def _run_bounce(
     plist_dir = home / "Library" / "LaunchAgents"
     plist_dir.mkdir(parents=True)
     if plist_exists:
-        (plist_dir / "net.inluck.ilk-scheduler.plist").write_text(
+        (plist_dir / "net.inluck.ilk.scheduler.plist").write_text(
             "<plist><!-- stub --></plist>", encoding="utf-8"
         )
 
