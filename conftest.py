@@ -19,6 +19,7 @@ works when invoked one directory at a time.
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -211,8 +212,22 @@ def _describe_argv(args: object) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _host_guard_active(request: pytest.FixtureRequest):
-    """Patch ``subprocess.Popen`` to refuse host-mutating binaries.
+def _host_guard_active(request: pytest.FixtureRequest, tmp_path_factory):
+    """Patch ``subprocess.Popen`` and prepend a deny-shim to PATH.
+
+    Two layers, both needed:
+
+    1. **Popen patch** — catches direct Python ``subprocess`` calls whose
+       argv basename is in ``_HOST_DENYLIST``.  Produces the best message
+       because it sees the exact argv.
+    2. **PATH deny-shim** — a temp dir prepended to ``PATH`` containing a
+       fake ``launchctl`` that records its invocation and exits non-zero.
+       Catches ``launchctl`` reached through spawned shell scripts (the gap
+       that let the real daemon get booted out during
+       ``test_bounce_daemons.py``).
+
+    A test that installs its own fake earlier on ``PATH`` (as ``_run_bounce``
+    does) still wins — the deny-shim is a backstop, not the primary mechanism.
 
     Autouse: the leak is defined by what a test *forgot* to guard against.
     An opt-in guard is only consulted by the tests that did not need it.
@@ -222,6 +237,26 @@ def _host_guard_active(request: pytest.FixtureRequest):
         return
 
     nodeid = request.node.nodeid
+
+    # -- PATH deny-shim layer --
+    shim_dir = tmp_path_factory.mktemp("_guard_shim")
+    shim_log = shim_dir / "shim_invocations.log"
+    shim_log.write_text("", encoding="utf-8")
+
+    shim_path = shim_dir / "launchctl"
+    shim_path.write_text(
+        f"#!/usr/bin/env bash\n"
+        f'echo "$@" >> "{shim_log}"\n'
+        f'echo "HostMutationBlocked: launchctl was reached through a spawned shell: $@" >&2\n'
+        f"exit 126\n",
+        encoding="utf-8",
+    )
+    shim_path.chmod(shim_path.stat().st_mode | stat.S_IEXEC)
+
+    original_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = f"{shim_dir}:{original_path}"
+
+    # -- Popen patch layer --
     real_popen = subprocess.Popen
 
     class GuardedPopen(real_popen):  # type: ignore[misc,valid-type]
@@ -251,8 +286,24 @@ def _host_guard_active(request: pytest.FixtureRequest):
                     )
             super().__init__(*args, **kwargs)
 
-    with patch.object(subprocess, "Popen", GuardedPopen):
-        yield
+    try:
+        with patch.object(subprocess, "Popen", GuardedPopen):
+            yield
+    finally:
+        # -- Record deny-shim invocations to the session ledger --
+        os.environ["PATH"] = original_path
+        invocations = [
+            line for line in shim_log.read_text().splitlines() if line.strip()
+        ]
+        if invocations:
+            _host_blocked_calls.append(
+                (nodeid, f"launchctl via shell: {invocations[0]}")
+            )
+            # Drop this test's recording if it deliberately trips the guard.
+            # (The Popen-layer recording is dropped by exempts_recorded_during;
+            #  this PATH-layer recording needs the same courtesy.)
+            if request.node.get_closest_marker("expects_blocked_host"):
+                del _host_blocked_calls[-1]
 
 
 @pytest.fixture(autouse=True)

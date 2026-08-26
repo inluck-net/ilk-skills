@@ -30,7 +30,6 @@ from pathlib import Path
 
 import pytest
 
-from conftest import HostMutationBlocked
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _BOUNCE_SH = _REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "bounce_daemons.sh"
@@ -501,25 +500,25 @@ class TestForeignHomeRefusal:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.expects_blocked_host
-def test_guard_catches_launchctl_through_bash(tmp_path):
+def test_guard_catches_launchctl_through_bash():
     """AC-4: a test spawning 'bash -c launchctl ...' without allow_launchctl fails.
 
-    The guard must catch launchctl reached through a spawned shell script,
-    not only through a direct Python subprocess call.  This test is marked
-    ``expects_blocked_host`` so its own guard recording is dropped.
+    The PATH deny-shim intercepts ``launchctl`` at the shell level: bash
+    finds our shim first on PATH, the shim writes to a log and exits 126.
+    ``subprocess.run`` returns with a non-zero exit and the shim's message
+    on stderr — the call was blocked before it could reach the host.
     """
-    try:
-        result = subprocess.run(
-            ["bash", "-c", f"launchctl print gui/{os.getuid()}/x"],
-            capture_output=True, text=True, timeout=5,
-        )
-        # If we get here, the guard did NOT catch launchctl through bash.
-        # That's the gap this sub-plan exists to close.
-        pytest.fail(
-            "Guard did not block launchctl reached through bash — "
-            "the host-mutation guard is blind to shell-spawned calls. "
-            f"stdout={result.stdout!r} stderr={result.stderr!r}"
-        )
-    except HostMutationBlocked:
-        # Guard caught it — this is the green path.
-        pass
+    result = subprocess.run(
+        ["bash", "-c", f"launchctl print gui/{os.getuid()}/x"],
+        capture_output=True, text=True, timeout=5,
+    )
+    # The deny-shim exits 126; real launchctl would exit 0 or 1.
+    # Either way, non-zero + the shim's stderr message means it was caught.
+    assert result.returncode != 0, (
+        f"Guard did not block launchctl reached through bash — "
+        f"expected non-zero exit, got {result.returncode}. "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "launchctl was reached through a spawned shell" in result.stderr, (
+        f"Expected deny-shim message on stderr, got: {result.stderr!r}"
+    )
