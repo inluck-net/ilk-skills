@@ -175,10 +175,11 @@ tray/scheduler running and only warns that they hold stale in-memory code).
 > poll/concurrency). If you ran one with custom flags, re-launch it manually.
 
 > macOS/Linux (`upgrade.sh`) bounces stale daemons by delegating to
-> `bounce_daemons.sh` after the pull + reconcile. If the recorded
-> `toolkit_head` matches the tree's HEAD, the daemon is already current
-> and nothing restarts. There is no tray daemon on macOS (xbar re-execs
-> its plugin each interval, so it never skews).
+> `bounce_daemons.sh` after reconcile — both on the pull path and on the
+> already-current path. A daemon's staleness is independent of whether the
+> tree moved. If the recorded `toolkit_head` matches the tree's HEAD, the
+> daemon is already current and nothing restarts. There is no tray daemon
+> on macOS (xbar re-execs its plugin each interval, so it never skews).
 
 ## Guards
 
