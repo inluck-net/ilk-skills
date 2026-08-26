@@ -231,8 +231,16 @@ three states:
 
 **A stale daemon blocks `ok`.** Phase 4 never reports success for a
 host it did not reach, and a host with new code installed and an old
-daemon running is not deployed. Detection uses `bounce_daemons.sh
---check`; bouncing a remote host requires `--bounce-hosts`.
+daemon running is not deployed. Detection uses the resolver script:
+
+```bash
+python3 skills/ilk-ship/scripts/host_deploy_status.py \
+  --bouncer skills/ilk-watchdog/scripts/bounce_daemons.sh
+```
+
+Add `--bounce-hosts` to permit actual bouncing (omit for detect-only).
+The script prints one line (`ok` / `stale-daemon` / `unreachable`) and
+exits 0 / 1 / 2 respectively. Iterate per host from `ship.hosts`.
 
 The `hosts` field in the `ship:` block is declarative data — Phase 4
 acts on it. Every declared host appears in the summary; a host missing
