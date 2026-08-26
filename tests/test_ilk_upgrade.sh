@@ -7,7 +7,8 @@ set -euo pipefail
 # upgrade.sh into the right relative path, and exercises:
 #   - --check reports "behind" when remote is ahead
 #   - --apply fast-forwards and prints changelog
-#   - PID guard refuses --apply when a live PID file exists
+#   - PID guard refuses --apply when a live loop/watchdog PID file exists
+#   - scheduler bounce via bounce_daemons.sh (not a refusal)
 #   - dirty tree aborts --apply without --force
 #
 # HOME is redirected to a temp dir so the test never touches real
@@ -29,8 +30,8 @@ check() {
   local desc="$1" hay="$2" mode="$3" needle="$4"
   local found=0
   case "$hay" in *"$needle"*) found=1 ;; esac
-  if { [[ "$mode" == contains && $found -eq 1 ]] || \
-       [[ "$mode" == absent  && $found -eq 0 ]]; }; then
+  if { [[ "$mode" == "contains" && $found -eq 1 ]] || \
+       [[ "$mode" == "absent"  && $found -eq 0 ]]; }; then
     PASS=$((PASS + 1))
     echo "  PASS: ${desc}"
   else
@@ -88,10 +89,12 @@ git config user.name "Test"
 git checkout -b main >/dev/null 2>&1 || git switch -c main >/dev/null 2>&1 || true
 
 # Create minimal ilk-skills structure
-mkdir -p skills/ilk-upgrade/scripts skills/ilk-loop/scripts commands
+mkdir -p skills/ilk-upgrade/scripts skills/ilk-watchdog/scripts skills/ilk-loop/scripts commands
 
-# Carry the sourced data-dir resolver into the fixture (see DATA_DIR_SH above)
+# Carry the sourced helpers into the fixture — upgrade.sh sources both
+# _ilk_data_dir.sh and _ilk_pid.sh relative to its own location.
 cp "$DATA_DIR_SH" skills/ilk-loop/scripts/_ilk_data_dir.sh
+cp "$REPO_ROOT/skills/ilk-loop/scripts/_ilk_pid.sh" skills/ilk-loop/scripts/_ilk_pid.sh
 
 # Stub install.sh — just echoes what it would do
 cat > install.sh << 'INSTALL_EOF'
@@ -99,6 +102,76 @@ cat > install.sh << 'INSTALL_EOF'
 echo "[stub] install.sh called with: $*"
 INSTALL_EOF
 chmod +x install.sh
+
+# --- fake bounce_daemons.sh --------------------------------------------------
+# Logs invocations to a file and simulates bounce behaviour.  The real script
+# would call launchctl; our fake calls a fake launchctl on PATH so the test
+# can assert the command sequence (AC-6 from SP1).
+
+cat > skills/ilk-watchdog/scripts/bounce_daemons.sh << 'BOUNCE_EOF'
+#!/usr/bin/env bash
+# Fake bounce_daemons.sh for upgrade tests.
+# Logs: "bounce_daemons called: <args>"
+# Determines exit code from state file presence (simplified fake).
+
+BOUNCE_LOG="${BOUNCE_LOG:-/dev/null}"
+echo "bounce_daemons called: $*" >> "$BOUNCE_LOG"
+
+# Simulate: if state file is absent → stale (exit 1), if present with
+# matching head → fresh (exit 0).  We use ILK_BOUNCE_TOOLKIT_PATH to
+# find the state file, same as the real script.
+ILK_DATA="${ILK_DATA_HOME:-${ILK_DATA_DIR:-$HOME/.ilk-data}}"
+STATE_FILE="$ILK_DATA/scheduler.state.json"
+
+CHECK_ONLY=0
+for arg in "$@"; do
+  [[ "$arg" == "--check" ]] && CHECK_ONLY=1
+done
+
+if [[ ! -f "$STATE_FILE" ]]; then
+  # Absent state → stale → would bounce
+  if [[ "$CHECK_ONLY" -eq 1 ]]; then
+    echo "stale: scheduler — state file absent (would bounce)"
+  else
+    echo "bouncing: scheduler — state file absent"
+    # Call fake launchctl to record the bounce
+    if command -v launchctl >/dev/null 2>&1; then
+      id_u=$(id -u)
+      launchctl bootout "gui/$id_u/net.inluck.ilk.scheduler" 2>/dev/null || true
+      launchctl bootstrap "gui/$id_u" "$HOME/Library/LaunchAgents/net.inluck.ilk.scheduler.plist"
+    fi
+  fi
+  exit 1
+fi
+
+# Try to parse toolkit_head
+recorded_head=""
+if grep -q '"toolkit_head"' "$STATE_FILE" 2>/dev/null; then
+  recorded_head=$(sed -n 's/.*"toolkit_head"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$STATE_FILE")
+fi
+
+toolkit_path="${ILK_BOUNCE_TOOLKIT_PATH:-.}"
+current_head=$(git -C "$toolkit_path" rev-parse HEAD 2>/dev/null || echo "unknown")
+
+if [[ "$recorded_head" == "$current_head" ]]; then
+  echo "fresh: scheduler — toolkit_head matches HEAD"
+  exit 0
+fi
+
+# Stale
+if [[ "$CHECK_ONLY" -eq 1 ]]; then
+  echo "stale: scheduler — recorded $recorded_head, HEAD $current_head (would bounce)"
+else
+  echo "bouncing: scheduler — recorded $recorded_head, HEAD $current_head"
+  if command -v launchctl >/dev/null 2>&1; then
+    id_u=$(id -u)
+    launchctl bootout "gui/$id_u/net.inluck.ilk.scheduler" 2>/dev/null || true
+    launchctl bootstrap "gui/$id_u" "$HOME/Library/LaunchAgents/net.inluck.ilk.scheduler.plist"
+  fi
+fi
+exit 1
+BOUNCE_EOF
+chmod +x skills/ilk-watchdog/scripts/bounce_daemons.sh
 
 # Copy upgrade.sh into the fixture
 cp "$UPGRADE_SH" skills/ilk-upgrade/scripts/upgrade.sh
@@ -159,16 +232,29 @@ echo ""
 echo "=== Test 5: PID guard refuses --apply ==="
 advance_remote
 
-# Create a fake PID file with a live PID (use $$, which is always alive)
+# Create a fake PID file with a live PID whose command matches an ilk process
+# pattern (so ilk_pid_alive returns 0).  $$ won't work — its command is
+# "bash tests/test_ilk_upgrade.sh", which doesn't match the ilk patterns.
+# Spawn a background script whose name contains "run_ilk_loop" so the
+# command-pattern check in ilk_pid_alive recognises it.
 ILK_DATA_DIR="$FAKE_HOME/.ilk-data"
 pid_dir="$ILK_DATA_DIR/projects/test-proj/runtime/launcher"
 mkdir -p "$pid_dir"
-echo "$$" > "$pid_dir/running.pid"
+fake_loop="$TMP/run_ilk_loop_claude.sh"
+cat > "$fake_loop" << 'SLEEP_EOF'
+#!/usr/bin/env bash
+sleep 60
+SLEEP_EOF
+chmod +x "$fake_loop"
+"$fake_loop" &
+FAKE_PID=$!
+echo "$FAKE_PID" > "$pid_dir/running.pid"
 
 out="" exit_code=0
 out="$(HOME="$FAKE_HOME" ILK_DATA_DIR="$ILK_DATA_DIR" bash "$UPGRADE" --apply 2>&1)" || exit_code=$?
 check_exit "PID guard exit code" 1 "$exit_code"
 check "PID guard error message" "$out" contains "live loop/watchdog detected"
+kill "$FAKE_PID" 2>/dev/null || true
 
 # === Test 6: --force overrides PID guard ===================================
 
@@ -176,6 +262,8 @@ echo ""
 echo "=== Test 6: --force overrides PID guard ==="
 out="$(HOME="$FAKE_HOME" ILK_DATA_DIR="$ILK_DATA_DIR" bash "$UPGRADE" --apply --force 2>&1 || true)"
 check "force overrides PID guard" "$out" contains "Changelog:"
+# Clean up PID files so they don't interfere with later tests
+rm -rf "$ILK_DATA_DIR"
 
 # === Test 7: dirty tree aborts --apply =====================================
 
@@ -205,42 +293,75 @@ rm -f "$WORK/dirty_file.txt"
 out="$(HOME="$FAKE_HOME" bash "$UPGRADE" --apply --force 2>&1 || true)"
 check "force overrides dirty tree" "$out" contains "Changelog:"
 
-# === Test 9: scheduler.pid guard refuses --apply ============================
+# === Test 9: scheduler bounce via bounce_daemons.sh on --apply =============
 
 echo ""
-echo "=== Test 9: scheduler.pid guard refuses --apply ==="
+echo "=== Test 9: scheduler bounce via bounce_daemons.sh ==="
 advance_remote
 
-# Clean up any leftover PID files from earlier tests
-rm -rf "$ILK_DATA_DIR"
+# Set up bounce logging and fake launchctl
+BOUNCE_LOG="$TMP/bounce.log"
+: > "$BOUNCE_LOG"
+FAKE_BIN="$TMP/fakebin"
+mkdir -p "$FAKE_BIN"
+cat > "$FAKE_BIN/launchctl" << 'LAUNCHCTL_EOF'
+#!/usr/bin/env bash
+echo "launchctl $*" >> "${LAUNCHCTL_LOG:-/dev/null}"
+exit 0
+LAUNCHCTL_EOF
+chmod +x "$FAKE_BIN/launchctl"
 
-# Create a fake scheduler PID file with a live PID
-mkdir -p "$ILK_DATA_DIR"
-echo "$$" > "$ILK_DATA_DIR/scheduler.pid"
+LAUNCHCTL_LOG="$TMP/launchctl.log"
+: > "$LAUNCHCTL_LOG"
 
-out="" exit_code=0
-out="$(HOME="$FAKE_HOME" ILK_DATA_DIR="$ILK_DATA_DIR" bash "$UPGRADE" --apply 2>&1)" || exit_code=$?
-check_exit "scheduler.pid guard exit code" 1 "$exit_code"
-check "scheduler.pid guard error message" "$out" contains "live loop/watchdog detected"
-check "scheduler.pid listed in output" "$out" contains "scheduler (PID"
+# No scheduler.state.json in the fixture → bounce_daemons.sh treats as stale.
+# upgrade.sh should call bounce_daemons.sh and still exit 0 (successful upgrade).
+out="$(HOME="$FAKE_HOME" ILK_DATA_DIR="$ILK_DATA_DIR" \
+  BOUNCE_LOG="$BOUNCE_LOG" LAUNCHCTL_LOG="$LAUNCHCTL_LOG" \
+  PATH="$FAKE_BIN:$PATH" \
+  bash "$UPGRADE" --apply 2>&1 || true)"
+check "upgrade prints changelog" "$out" contains "Changelog:"
+check "upgrade calls bounce_daemons.sh" "$(cat "$BOUNCE_LOG")" contains "bounce_daemons called"
+check "fake launchctl bootstrap called" "$(cat "$LAUNCHCTL_LOG")" contains "bootstrap"
 
-# Clean up
-rm -f "$ILK_DATA_DIR/scheduler.pid"
-
-# === Test 10: guard error names stop_watchdog.sh =============================
+# === Test 10: idempotent — second --apply does not bounce ==================
 
 echo ""
-echo "=== Test 10: guard error names stop_watchdog.sh ==="
+echo "=== Test 10: idempotent — second --apply does not bounce ==="
+: > "$BOUNCE_LOG"
+: > "$LAUNCHCTL_LOG"
 
-# Re-create the scheduler PID to trigger the guard
-echo "$$" > "$ILK_DATA_DIR/scheduler.pid"
+out="$(HOME="$FAKE_HOME" ILK_DATA_DIR="$ILK_DATA_DIR" \
+  BOUNCE_LOG="$BOUNCE_LOG" LAUNCHCTL_LOG="$LAUNCHCTL_LOG" \
+  PATH="$FAKE_BIN:$PATH" \
+  bash "$UPGRADE" --apply 2>&1 || true)"
+check "already current on second run" "$out" contains "already current"
+check "bounce_daemons.sh not called" "$(cat "$BOUNCE_LOG")" absent "bounce_daemons called"
 
-out="" exit_code=0
-out="$(HOME="$FAKE_HOME" ILK_DATA_DIR="$ILK_DATA_DIR" bash "$UPGRADE" --apply 2>&1)" || exit_code=$?
-check "guard error names stop_watchdog.sh" "$out" contains "stop_watchdog.sh"
+# === Test 11: upgrade.sh contains no launchctl bounce logic (AC-3) =========
 
-# Clean up
-rm -f "$ILK_DATA_DIR/scheduler.pid"
+echo ""
+echo "=== Test 11: no launchctl in upgrade.sh source ==="
+upgrade_src="$(cat "$UPGRADE")"
+check "no bootout in upgrade.sh"  "$upgrade_src" absent "bootout"
+check "no bootstrap in upgrade.sh" "$upgrade_src" absent "bootstrap"
+check "no launchctl in upgrade.sh" "$upgrade_src" absent "launchctl"
+
+# === Test 12: --check does not bounce (AC-5) ===============================
+
+echo ""
+echo "=== Test 12: --check does not bounce ==="
+advance_remote
+: > "$BOUNCE_LOG"
+: > "$LAUNCHCTL_LOG"
+
+out="$(HOME="$FAKE_HOME" ILK_DATA_DIR="$ILK_DATA_DIR" \
+  BOUNCE_LOG="$BOUNCE_LOG" LAUNCHCTL_LOG="$LAUNCHCTL_LOG" \
+  PATH="$FAKE_BIN:$PATH" \
+  bash "$UPGRADE" --check 2>&1 || true)"
+check "--check reports behind" "$out" contains "behind"
+check "no bounce on --check" "$(cat "$BOUNCE_LOG")" absent "bounce_daemons called"
+check "no launchctl on --check" "$(cat "$LAUNCHCTL_LOG")" absent "launchctl"
 
 # === Results ================================================================
 
