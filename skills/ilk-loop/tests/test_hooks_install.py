@@ -367,17 +367,22 @@ def _extract_reconcile_python() -> str:
     return text[py_start:py_end]
 
 
-def _run_reconcile_multi(hooks_dir: str, *, apply: bool = True) -> str:
+def _run_reconcile_multi(hooks_dir: str, *, apply: bool = True,
+                         host: str = "worker") -> str:
     """Run the ACTUAL reconcile Python extracted from install.sh.
 
     This is the real code — if it can't handle multiple matchers, the test
-    fails.  No mocking.
+    fails.  No mocking.  ``host`` simulates the host-type detection that
+    install.sh does from the settings path.
     """
     settings_path = os.path.join(os.path.dirname(hooks_dir), "settings.json")
-    hook_cmd = os.path.join(hooks_dir, "no-full-suite.sh")
+    hook_cmds = json.dumps(["no-full-suite.sh", "no-duplicate-read.sh"])
+    matchers = json.dumps(["Bash", "Read"])
+    hosts = json.dumps(["all", "worker"])
     script = _extract_reconcile_python()
     result = subprocess.run(
-        ["python3", "-", settings_path, hook_cmd, "1" if apply else "0"],
+        ["python3", "-", settings_path, hook_cmds, matchers, hosts,
+         host, "1" if apply else "0"],
         input=script, capture_output=True, text=True, timeout=10,
     )
     assert result.returncode == 0, f"reconcile failed: {result.stderr}"
@@ -398,7 +403,7 @@ class TestSettingsReconcileBothHooks:
         with open(settings_path, "w") as f:
             json.dump(data, f, indent=2)
 
-        _run_reconcile_multi(hooks_dir)
+        _run_reconcile_multi(hooks_dir, host="worker")
 
         with open(settings_path) as f:
             result = json.load(f)
@@ -420,11 +425,11 @@ class TestSettingsReconcileBothHooks:
         with open(settings_path, "w") as f:
             json.dump(data, f, indent=2)
 
-        _run_reconcile_multi(hooks_dir)
+        _run_reconcile_multi(hooks_dir, host="worker")
         with open(settings_path) as f:
             first = f.read()
 
-        _run_reconcile_multi(hooks_dir)
+        _run_reconcile_multi(hooks_dir, host="worker")
         with open(settings_path) as f:
             second = f.read()
 
@@ -445,7 +450,7 @@ class TestReadGuardWorkerOnly:
         with open(settings_path, "w") as f:
             json.dump(data, f, indent=2)
 
-        _run_reconcile_multi(hooks_dir)
+        _run_reconcile_multi(hooks_dir, host="worker")
 
         with open(settings_path) as f:
             result = json.load(f)
@@ -454,13 +459,7 @@ class TestReadGuardWorkerOnly:
         assert "Read" in matchers, "Read entry missing from worker"
 
     def test_no_read_in_interactive_settings(self, tmp_path: Path) -> None:
-        """Interactive ~/.claude settings.json gains no Read entry after reconcile.
-
-        This test also verifies that the Read guard IS registered on the
-        worker — without that prerequisite, the "not in" check passes
-        vacuously.  Both assertions must be tested against the same
-        reconcile invocation with host-scoped behaviour.
-        """
+        """Interactive ~/.claude settings.json gains no Read entry after reconcile."""
         hooks_dir = str(tmp_path / "hooks")
         os.makedirs(hooks_dir)
         settings_path = str(tmp_path / "settings.json")
@@ -468,16 +467,14 @@ class TestReadGuardWorkerOnly:
         with open(settings_path, "w") as f:
             json.dump(data, f, indent=2)
 
-        _run_reconcile_multi(hooks_dir)
+        _run_reconcile_multi(hooks_dir, host="interactive")
 
         with open(settings_path) as f:
             result = json.load(f)
         pre_tool = result["hooks"]["PreToolUse"]
         matchers = {e["matcher"]: e for e in pre_tool}
-        # The reconcile MUST register the Read guard (this will fail until
-        # step 1/2 are implemented — which is the point).
-        assert "Read" in matchers, (
-            "Read guard not registered — host-scoping test requires it first"
+        assert "Read" not in matchers, (
+            "Read entry appeared in interactive settings — should be worker-only"
         )
 
 

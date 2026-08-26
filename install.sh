@@ -703,8 +703,9 @@ if [[ $blocked_any -eq 1 ]]; then
 fi
 
 # --- reconcile settings.json hooks block ------------------------------------
-# Ensures the no-full-suite guardrail hook is registered in settings.json
-# without disturbing foreign entries.  AC-3, AC-4, AC-5.
+# Ensures guardrail hooks are registered in settings.json without disturbing
+# foreign entries.  Each hook is declared once in HOOK_TABLE below; adding a
+# row is the only edit needed to register a new hook (AC-1).
 reconcile_hooks_settings() {
   [[ ${#TARGET_HOOKS[@]} -gt 0 ]] || return 0
 
@@ -714,16 +715,43 @@ reconcile_hooks_settings() {
   echo
   echo "=== hooks settings.json reconcile ($mode) ==="
 
+  # Declaration table — each row: "filename:matcher:hosts"
+  # hosts = "all" (both interactive and worker) or "worker" (worker only).
+  local HOOK_TABLE=(
+    "no-full-suite.sh:Bash:all"
+    "no-duplicate-read.sh:Read:worker"
+  )
+
+  # Serialise the table for the Python block.
+  local hook_cmds=() matchers=() hosts=()
+  for entry in "${HOOK_TABLE[@]}"; do
+    IFS=: read -r cmd mtr hst <<< "$entry"
+    hook_cmds+=("$cmd")
+    matchers+=("$mtr")
+    hosts+=("$hst")
+  done
+  local hook_cmds_json matchers_json hosts_json
+  hook_cmds_json=$(printf '%s\n' "${hook_cmds[@]}" | python3 -c "import sys,json; print(json.dumps([l.rstrip() for l in sys.stdin]))")
+  matchers_json=$(printf '%s\n' "${matchers[@]}" | python3 -c "import sys,json; print(json.dumps([l.rstrip() for l in sys.stdin]))")
+  hosts_json=$(printf '%s\n' "${hosts[@]}" | python3 -c "import sys,json; print(json.dumps([l.rstrip() for l in sys.stdin]))")
+
   for hooks_dir in "${TARGET_HOOKS[@]}"; do
     local settings="${hooks_dir%/hooks}/settings.json"
-    local hook_cmd="$hooks_dir/no-full-suite.sh"
+    # Detect host type from settings path.
+    local host_type="interactive"
+    if [[ "$settings" == *".claude-worker/"* ]]; then
+      host_type="worker"
+    fi
 
-    python3 - "$settings" "$hook_cmd" "$apply" <<'PYEOF'
+    python3 - "$settings" "$hook_cmds_json" "$matchers_json" "$hosts_json" "$host_type" "$apply" <<'PYEOF'
 import json, os, sys
 
 settings_path = sys.argv[1]
-hook_cmd = sys.argv[2]
-dry_run = sys.argv[3] != "1"
+hook_cmds = json.loads(sys.argv[2])
+matchers = json.loads(sys.argv[3])
+hosts = json.loads(sys.argv[4])
+host_type = sys.argv[5]
+dry_run = sys.argv[6] != "1"
 
 if os.path.isfile(settings_path):
     with open(settings_path) as f:
@@ -734,32 +762,50 @@ else:
 hooks = settings.get("hooks", {})
 pre_tool = hooks.get("PreToolUse", [])
 if not pre_tool:
-    pre_tool = [{"matcher": "Bash", "hooks": []}]
+    pre_tool = []
     hooks["PreToolUse"] = pre_tool
 
-bash_entry = pre_tool[0]
-existing = bash_entry.get("hooks", [])
-already = any(h.get("command") == hook_cmd for h in existing)
+entries_by_matcher = {e.get("matcher"): e for e in pre_tool}
+any_change = False
 
-if already:
-    print("skip: {} already has the hook".format(settings_path))
-    sys.exit(0)
+for hook_cmd, matcher, hook_hosts in zip(hook_cmds, matchers, hosts):
+    # Skip hooks scoped to a different host type (AC-3).
+    if hook_hosts == "worker" and host_type != "worker":
+        continue
 
-kept = [h for h in existing if h.get("command") != hook_cmd]
-hook_entry = {"type": "command", "command": hook_cmd}
-new_hooks = kept + [hook_entry]
-bash_entry["hooks"] = new_hooks
+    hook_path = os.path.join(os.path.dirname(settings_path), "hooks", hook_cmd)
+    entry = entries_by_matcher.get(matcher)
+    if entry is None:
+        entry = {"matcher": matcher, "hooks": []}
+        pre_tool.append(entry)
+        entries_by_matcher[matcher] = entry
+
+    existing = entry.get("hooks", [])
+    if any(h.get("command") == hook_path for h in existing):
+        continue
+
+    kept = [h for h in existing if h.get("command") != hook_path]
+    kept.append({"type": "command", "command": hook_path})
+    entry["hooks"] = kept
+    any_change = True
+
 hooks["PreToolUse"] = pre_tool
 settings["hooks"] = hooks
 
 if dry_run:
-    print("would update: {}".format(settings_path))
+    if any_change:
+        print("would update: {}".format(settings_path))
+    else:
+        print("skip: {} already up to date".format(settings_path))
 else:
-    os.makedirs(os.path.dirname(settings_path), exist_ok=True)
-    with open(settings_path, "w") as f:
-        json.dump(settings, f, indent=2)
-        f.write("\n")
-    print("updated: {}".format(settings_path))
+    if any_change:
+        os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+        with open(settings_path, "w") as f:
+            json.dump(settings, f, indent=2)
+            f.write("\n")
+        print("updated: {}".format(settings_path))
+    else:
+        print("skip: {} already up to date".format(settings_path))
 PYEOF
   done
 }
