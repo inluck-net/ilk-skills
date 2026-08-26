@@ -487,21 +487,17 @@ def _run_real_bouncer(
             "<plist><!-- stub --></plist>", encoding="utf-8"
         )
 
-    # Temporarily replace os.environ for the hermetic harness.
-    saved_environ = os.environ.copy()
-    os.environ.update({
+    env = {
+        **os.environ,
         "HOME": str(home),
-        "PATH": f"{tmp_path / 'bin'}:{saved_environ.get('PATH', '')}",
+        "PATH": f"{tmp_path / 'bin'}:{os.environ.get('PATH', '')}",
         "ILK_BOUNCE_PLATFORM": "Darwin",
         "ILK_BOUNCE_ALLOW_FOREIGN_HOME": "1",
         "ILK_BOUNCE_DAEMON_LOADED": "1" if daemon_loaded else "0",
         "LAUNCHCTL_LOG": str(launchctl_log),
-    })
-    try:
-        return _real_resolve_host(_BOUNCE_SH, tmp_path)
-    finally:
-        os.environ.clear()
-        os.environ.update(saved_environ)
+    }
+
+    return _real_resolve_host(_BOUNCE_SH, tmp_path, env_override=env)
 
 
 class TestRealBouncerContract:
@@ -572,6 +568,7 @@ def _resolve_host(
     *,
     log_file: Path | None = None,
     bounce_hosts: bool = False,
+    env_override: dict | None = None,
 ) -> str:
     """Resolve a single host's deploy status.
 
@@ -579,4 +576,5 @@ def _resolve_host(
     """
     return _real_resolve_host(
         bouncer_path, tmp_path, log_file=log_file, bounce_hosts=bounce_hosts,
+        env_override=env_override,
     )
