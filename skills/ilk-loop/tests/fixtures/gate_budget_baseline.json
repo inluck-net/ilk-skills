@@ -1,0 +1,44 @@
+{
+  "description": "Baseline plan_lint findings over the fixed corpus (AC-8). Run before any change to plan_lint.py. After the change, the set must be identical EXCEPT for new budget findings.",
+  "generated_at": "2026-08-26",
+  "corpus": [
+    "2026-08-26-a-reread-is-refused.md",
+    "2026-08-26-every-hook-is-registered.md",
+    "2026-08-26-a-slow-test-file-is-measured.md",
+    "2026-08-26-an-expensive-gate-is-flagged-at-plan-time.md",
+    "2026-08-25c-a-batch-with-no-suite-says-so.md",
+    "2026-08-25c-a-failed-gate-is-reported.md",
+    "2026-08-25c-a-gate-record-is-validated.md",
+    "2026-08-25c-ilk-ship-stops-prescribing-a-suite.md",
+    "2026-08-25c-the-caller-lint-resolves-real-test-paths.md",
+    "2026-08-25c-the-record-becomes-authoritative.md"
+  ],
+  "master": "MASTER-2026-08-26-cut-iteration-wall-clock-execution-plan.md",
+  "findings": [
+    {
+      "slug": "2026-08-26-a-reread-is-refused",
+      "check": "lint_balance_regression_flag",
+      "message": "sub-plan changes a core mechanic or tunable formula"
+    },
+    {
+      "slug": "2026-08-25c-a-batch-with-no-suite-says-so",
+      "check": "lint_vertical_slice_ac",
+      "message": "sub-plan adds a model/logic symbol"
+    },
+    {
+      "slug": "2026-08-25c-a-batch-with-no-suite-says-so",
+      "check": "lint_shared_module_gate",
+      "message": "scope_path 'skills/ilk-loop/scripts/batch_gate.py' changes module 'batch_gate'"
+    },
+    {
+      "slug": "2026-08-25c-a-gate-record-is-validated",
+      "check": "lint_balance_regression_flag",
+      "message": "sub-plan changes a core mechanic or tunable formula"
+    },
+    {
+      "slug": "2026-08-25c-the-record-becomes-authoritative",
+      "check": "lint_balance_regression_flag",
+      "message": "sub-plan changes a core mechanic or tunable formula"
+    }
+  ]
+}

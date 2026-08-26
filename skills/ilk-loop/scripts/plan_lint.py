@@ -2364,6 +2364,25 @@ def _extract_gate_commands(text: str) -> list[str]:
     return commands
 
 
+def lint_gate_budget(
+    text: str, slug: str, timing_data: dict | None = None,
+) -> list[str]:
+    """Flag a gate whose test file is measured over budget.
+
+    Consumes SP3's ``--by-test-file --json`` output via its ``schema: 1``
+    contract.  A file measured above budget produces a warning finding naming
+    the file, its measured seconds, the budget, and suggesting a ``-k``
+    selection.  An unmeasured file produces a distinct ``unmeasured`` note.
+    No timing data at all produces a single message naming the search space.
+
+    The budget is configurable per project via ``gate_budget_seconds``
+    frontmatter field; default 60s.
+
+    AC-1..AC-6.
+    """
+    raise NotImplementedError("stub — step 1 will implement")
+
+
 ALL_CHECKS = (
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
