@@ -268,38 +268,124 @@ class TestBounceRequiresExplicitFlag:
 # AC-6: Summary lists every declared host
 # ---------------------------------------------------------------------------
 
-class TestSummaryListsEveryHost:
-    """AC-6: The Phase 4 summary lists every declared host with its state."""
+class TestResolveHosts:
+    """AC-1..AC-4: resolve_hosts() produces a real per-host summary.
 
-    def test_all_hosts_appear_in_summary(self, tmp_path: Path) -> None:
-        """Every declared host must appear in the summary — a host missing
-        from the report is indistinguishable from a passing one."""
+    These tests call a function that does not yet exist — they are the
+    red-first contract.  The old tautological tests (which could never fail
+    for any production behaviour) have been deleted.
+    """
+
+    def _make_bouncer_for_host(
+        self,
+        tmp_path: Path,
+        states: dict[str, tuple[list[str], int]],
+    ):
+        """Build a bouncer_for_host callable from a host→(lines, exit) map."""
+        fakes: dict[str, Path] = {}
+        for host, (lines, code) in states.items():
+            fakes[host] = _write_fake_bouncer(
+                tmp_path / host, output_lines=lines, exit_code=code,
+            )
+        return lambda host: fakes[host]
+
+    # AC-1: one entry per declared host, in declared order
+    def test_returns_one_entry_per_host_in_order(self, tmp_path: Path) -> None:
+        """AC-1: resolve_hosts returns exactly one entry per declared host."""
         hosts = ["chad-mbp", "rezmac", "devbox"]
-        results = {}
-        for host in hosts:
-            fake = _write_fake_bouncer(tmp_path, output_lines=[
-                "fresh: scheduler — fresh (toolkit_head matches HEAD)"
-            ], exit_code=0)
-            results[host] = _resolve_host(fake, tmp_path)
-
-        # All hosts must have a result
-        assert set(results.keys()) == set(hosts), (
-            f"Missing hosts: {set(hosts) - set(results.keys())}. "
+        bouncer = self._make_bouncer_for_host(tmp_path, {
+            h: (["fresh: scheduler — fresh (toolkit_head matches HEAD)"], 0)
+            for h in hosts
+        })
+        result = resolve_hosts(hosts, bouncer, tmp_path)
+        assert list(result.keys()) == hosts, (
+            f"Expected keys {hosts} in order, got {list(result.keys())}. "
             "A host missing from the report is indistinguishable from a passing one."
         )
 
-    def test_summary_contains_state_for_each_host(self, tmp_path: Path) -> None:
-        """Each host's result must be one of the three valid states."""
+    # AC-2: mixed states are distinguished
+    def test_mixed_states_are_distinguished(self, tmp_path: Path) -> None:
+        """AC-2: fresh/stale/unreachable map to the right hosts."""
+        hosts = ["chad-mbp", "rezmac", "devbox"]
+        bouncer = self._make_bouncer_for_host(tmp_path, {
+            "chad-mbp": (["fresh: scheduler — fresh (toolkit_head matches HEAD)"], 0),
+            "rezmac": (["stale: scheduler — stale (recorded abc123, HEAD def456) (would bounce)"], 0),
+            "devbox": (["unreachable: scheduler (plist=0 loaded=0)"], 2),
+        })
+        result = resolve_hosts(hosts, bouncer, tmp_path)
+        assert result["chad-mbp"] == "ok"
+        assert result["rezmac"] == "stale-daemon"
+        assert result["devbox"] == "unreachable"
+
+    # AC-3: raising/missing probe → unreachable, never omitted
+    def test_missing_bouncer_resolves_unreachable(self, tmp_path: Path) -> None:
+        """AC-3: A bouncer path that does not exist → unreachable."""
         hosts = ["chad-mbp", "rezmac"]
-        for host in hosts:
-            fake = _write_fake_bouncer(tmp_path, output_lines=[
-                "fresh: scheduler — fresh (toolkit_head matches HEAD)"
-            ], exit_code=0)
-            result = _resolve_host(fake, tmp_path)
-            assert result in _VALID_STATES, (
-                f"Host {host} got invalid state '{result}'. "
-                f"Must be one of {_VALID_STATES}."
+        missing_path = tmp_path / "nope" / "bounce_daemons.sh"
+        bouncer = lambda host: missing_path if host == "rezmac" else (
+            _write_fake_bouncer(
+                tmp_path / host, output_lines=[
+                    "fresh: scheduler — fresh (toolkit_head matches HEAD)"
+                ], exit_code=0,
             )
+        )
+        result = resolve_hosts(hosts, bouncer, tmp_path)
+        assert result["chad-mbp"] == "ok"
+        assert result["rezmac"] == "unreachable"
+        assert len(result) == 2, "unreachable host must still appear in the result"
+
+    def test_raising_bouncer_resolves_unreachable(self, tmp_path: Path) -> None:
+        """AC-3: A bouncer that raises → unreachable, not an escaped exception."""
+        hosts = ["chad-mbp", "rezmac"]
+
+        def bouncer(host: str) -> Path:
+            if host == "rezmac":
+                # Return a path to a script that will cause an OSError
+                # (non-executable file in a read-only-like setup)
+                bad = tmp_path / "bad" / "bounce_daemons.sh"
+                bad.parent.mkdir(parents=True, exist_ok=True)
+                bad.write_text("#!/usr/bin/env bash\nexit 0\n")
+                # Remove all execute bits
+                bad.chmod(0o444)
+                return bad
+            return _write_fake_bouncer(
+                tmp_path / host, output_lines=[
+                    "fresh: scheduler — fresh (toolkit_head matches HEAD)"
+                ], exit_code=0,
+            )
+
+        result = resolve_hosts(hosts, bouncer, tmp_path)
+        assert "rezmac" in result, "raising host must still appear in the result"
+        assert result["rezmac"] == "unreachable"
+
+    # AC-4: the drop test — a broken resolver that skips a host is detected
+    def test_dropped_host_is_detected(self, tmp_path: Path) -> None:
+        """AC-4: If a resolver skips a host, the postcondition assertion fires."""
+        hosts = ["chad-mbp", "rezmac", "devbox"]
+
+        def skipping_bouncer(host: str) -> Path:
+            if host == "rezmac":
+                # Simulate a resolver that "forgets" to probe this host
+                # by returning a bouncer that produces empty output
+                return _write_fake_bouncer(tmp_path / host, exit_code=0)
+            return _write_fake_bouncer(
+                tmp_path / host, output_lines=[
+                    "fresh: scheduler — fresh (toolkit_head matches HEAD)"
+                ], exit_code=0,
+            )
+
+        # The postcondition assertion in resolve_hosts should detect the drop.
+        # A host that produces no recognised output resolves to 'unreachable',
+        # so the mapping must still have 3 entries — the test verifies that.
+        result = resolve_hosts(hosts, skipping_bouncer, tmp_path)
+        assert len(result) == 3, (
+            f"Expected 3 hosts in result, got {len(result)}. "
+            "A host dropped by the resolver is indistinguishable from a passing one."
+        )
+        assert result["rezmac"] == "unreachable", (
+            "A host whose bouncer produced no recognised output must be 'unreachable', "
+            "not silently omitted."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -561,6 +647,10 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from host_deploy_status import resolve_host as _real_resolve_host  # noqa: E402
+try:
+    from host_deploy_status import resolve_hosts  # noqa: E402
+except ImportError:
+    resolve_hosts = None  # type: ignore[assignment]
 
 
 def _resolve_host(
