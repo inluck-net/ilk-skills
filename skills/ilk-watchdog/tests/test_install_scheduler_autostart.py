@@ -126,9 +126,19 @@ def _read_scheduler_pid(home: Path) -> int | None:
 # on the first whole-suite run after the bound landed. 240 leaves ~4x headroom
 # over the declared sleeps. Wrong if launchd restart latency ever exceeds
 # ~3 min, in which case the test's own range(15) budget is the thing to fix.
+#
+# Skipped by default: this test installs into the real gui/$UID launchd
+# domain (HOME=tmp_path but launchctl bootstrap ignores HOME).  The cleanup
+# calls `launchctl bootout` on the real domain, which unloads the production
+# scheduler if it was running.  Set ILK_TEST_LIVE_LAUNCHCTL=1 to run it
+# explicitly (manual / CI with no live scheduler).
 @pytest.mark.allow_launchctl
 @pytest.mark.timeout(240)
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS launchctl required")
+@pytest.mark.skipif(
+    not os.environ.get("ILK_TEST_LIVE_LAUNCHCTL"),
+    reason="Set ILK_TEST_LIVE_LAUNCHCTL=1 to run live launchctl tests (unloads real scheduler)",
+)
 def test_restart_durability_keeps_agent_loaded(tmp_path):
     """AC-4: crash-kill → launchd restarts → agent still loaded.
 

@@ -54,7 +54,9 @@ if [[ "$ACTION" == "status" ]]; then
 fi
 
 if [[ "$ACTION" == "uninstall" ]]; then
-  launchctl bootout "${DOMAIN}/${LABEL}" 2>/dev/null || true
+  if [[ "${ILK_AUTOSTART_NO_LOAD:-}" != "1" ]]; then
+    launchctl bootout "${DOMAIN}/${LABEL}" 2>/dev/null || true
+  fi
   rm -f "$PLIST"
   echo "[ilk-scheduler] auto-start removed."
   exit 0
