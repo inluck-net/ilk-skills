@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 # Recognised prefixes from bounce_daemons.sh output lines.
@@ -131,6 +132,42 @@ def resolve_host(
 
     # All fresh.
     return "ok"
+
+
+def resolve_hosts(
+    hosts: list[str],
+    bouncer_for_host: Callable[[str], Path],
+    tmp_path: Path,
+    **kwargs: object,
+) -> dict[str, str]:
+    """Resolve every declared host and return an ordered mapping.
+
+    Args:
+        hosts: Declared host list (order is preserved in the result).
+        bouncer_for_host: Callable that returns the bouncer path for a host.
+        tmp_path: Scratch directory passed to resolve_host.
+        **kwargs: Forwarded to resolve_host (log_file, bounce_hosts, env_override).
+
+    Returns:
+        dict[str, str] with exactly one entry per declared host.
+        A host whose probe raises or is missing resolves to 'unreachable'.
+
+    Postcondition: every declared host appears in the result.  The assertion
+    is in production code so the CLI benefits from it (AC-4 design decision).
+    """
+    result: dict[str, str] = {}
+    for host in hosts:
+        try:
+            bouncer = bouncer_for_host(host)
+            result[host] = resolve_host(bouncer, tmp_path, **kwargs)  # type: ignore[arg-type]
+        except Exception:
+            result[host] = "unreachable"
+
+    # Postcondition — a host dropped by the resolver is indistinguishable
+    # from a passing one.  Assert rather than silently accept.
+    missing = set(hosts) - set(result.keys())
+    assert not missing, f"resolve_hosts dropped hosts: {missing}"
+    return result
 
 
 # Exit-code mapping — mirrors bounce_daemons.sh's contract so a caller
