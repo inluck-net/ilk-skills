@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -129,6 +130,90 @@ def read_subplan_status_and_checks(path: Path) -> tuple[str, list[dict[str, Any]
     return status, checks
 
 
+def _missing_step_reason(subplan: Path) -> str | None:
+    """Reason string when a *shipped* sub-plan lacks a commit for some step.
+
+    Returns None when the sub-plan is not shipped, when every authored step
+    has a commit, or when the check cannot run.
+
+    Delegates counting to ``ship_audit`` — ``count_authored_steps`` and
+    ``check_step_commits`` — which already handle the ``#ship`` allowance
+    correctly (it satisfies the LAST authored step only; a gap earlier in
+    the sequence is still a gap).  A second implementation of "which steps
+    are done" would drift from the release audit's, which is the
+    multiple-readers failure decomposition-principles §8 documents.
+
+    Fails OPEN on any internal error, but says so on stderr.  A guard that
+    blocks a legitimate ship because of its own parse bug is worse than the
+    gap it closes — and an over-broad ship-integrity enforcement is what
+    reverted 69 of 150 sub-plans on 2026-08-20.  Silent fail-open is the
+    thing being fixed here, so the degradation is announced.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from run_local_checks import (  # type: ignore[import-untyped]
+            read_text as _read_text,
+            split_frontmatter as _split_fm,
+        )
+        from ship_audit import (  # type: ignore[import-untyped]
+            check_step_commits,
+            count_authored_steps,
+        )
+
+        fm_text, body = _split_fm(_read_text(subplan))
+
+        status = ""
+        slug = ""
+        for line in fm_text.splitlines():
+            s = line.strip()
+            if s.startswith("status:") and not status:
+                status = s[len("status:"):].strip().strip("'\"")
+            elif s.startswith("plan:") and not slug:
+                slug = s[len("plan:"):].strip().strip("'\"")
+
+        if status != "shipped" or not slug:
+            return None
+
+        # `check_step_commits` collapses "git errored" into "every step is
+        # missing" — correct for the release audit, which always runs inside
+        # the repo, but as a LOOP gate it would block every ship wherever git
+        # cannot answer (no repo, git absent).  That is the over-broad
+        # enforcement shape that reverted 69 of 150 sub-plans on 2026-08-20,
+        # so confirm git can answer before trusting a "missing" verdict.
+        probe = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            capture_output=True, text=True, cwd=Path.cwd(), encoding="utf-8",
+        )
+        if probe.returncode != 0 or probe.stdout.strip() != "true":
+            print(
+                "warning: not inside a git work tree; step-commit check "
+                "skipped and ship-integrity fell back to the gate check alone",
+                file=sys.stderr,
+            )
+            return None
+
+        authored = count_authored_steps(body)
+        if not authored:
+            return None
+        _present, missing = check_step_commits(slug, authored, cwd=Path.cwd())
+        if not missing:
+            return None
+        word = "step" if len(missing) == 1 else "steps"
+        return (
+            f"missing commit for {word} "
+            f"{', '.join(str(s) for s in missing)} — `shipped` is not backed "
+            f"by the work ({len(authored) - len(missing)} of {len(authored)} "
+            f"authored steps committed)"
+        )
+    except Exception as exc:  # noqa: BLE001 - fail open, but loudly
+        print(
+            f"warning: step-commit check could not run ({exc}); "
+            "ship-integrity fell back to the gate check alone",
+            file=sys.stderr,
+        )
+        return None
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 def _cli(argv: list[str]) -> int:
@@ -203,12 +288,21 @@ def _cli(argv: list[str]) -> int:
             return 2
 
     verdict = evaluate_ship(status, checks, gate_result)
-    if verdict.ok:
-        print(f"OK: {verdict.reason}")
-        return 0
-    else:
-        print(f"VIOLATION: {verdict.reason}", file=sys.stderr)
+
+    # Step-commit half.  evaluate_ship only asks "was the gate green?", so a
+    # sub-plan that ran two of four steps and went green on the second was
+    # reported honest — measured on three sub-plans in the 2026-08-26 batch.
+    # Step counting already exists in ship_audit; reuse it rather than
+    # reimplement, so the loop and the release audit cannot disagree about
+    # which steps are done.
+    step_reason = _missing_step_reason(args.subplan) if args.subplan else None
+
+    reasons = [r for r in (step_reason, None if verdict.ok else verdict.reason) if r]
+    if reasons:
+        print(f"VIOLATION: {'; '.join(reasons)}", file=sys.stderr)
         return 1
+    print(f"OK: {verdict.reason}")
+    return 0
 
 
 if __name__ == "__main__":

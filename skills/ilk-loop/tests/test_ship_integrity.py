@@ -166,7 +166,11 @@ local_checks:
 
 ## Steps
 
-### Step 0
+<!-- No `### Step N` heading on purpose.  Since 2026-08-26 ship_integrity
+     also refuses a `shipped` sub-plan whose authored steps lack commits;
+     an authored step here would trip that half and obscure what these
+     tests are actually about, which is the GATE half.  The step half has
+     its own coverage in test_ship_integrity_step_commits.py. -->
 """
 
 _SUBPLAN_NO_GATE = """\
