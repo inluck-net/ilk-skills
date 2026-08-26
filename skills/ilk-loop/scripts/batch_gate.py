@@ -41,6 +41,14 @@ from typing import Optional
 
 REQUIRED_FIELDS = ("verdict", "head_sha", "invocation", "timestamp")
 
+#: Poll bound used only when the caller passed none AND the project declared
+#: no ``ship.suite.timeout``.  Judgment call 2026-08-26: kept at 600 rather
+#: than the 300 ilk-ship/SKILL.md documents for a *missing* ship block —
+#: lowering it would newly truncate suites that pass today, the opposite of
+#: the defect being fixed.  Wrong if a ship block without a timeout should
+#: inherit the missing-block default; that belongs in ship_config, not here.
+DEFAULT_POLL_TIMEOUT = 600
+
 
 @dataclass(frozen=True)
 class BatchGateRecord:
@@ -389,7 +397,7 @@ def run_batch_gate(
     runtime_dir: Path,
     *,
     _wait_helper: Optional[Path] = None,
-    _poll_timeout: int = 600,
+    _poll_timeout: Optional[int] = None,
 ) -> Optional[BatchGateRecord]:
     """Run the batch-end gate: resolve suite, execute, persist verdict.
 
@@ -443,7 +451,7 @@ def _run_gate_inner(
     runtime_dir: Path,
     *,
     _wait_helper: Optional[Path] = None,
-    _poll_timeout: int = 600,
+    _poll_timeout: Optional[int] = None,
 ) -> BatchGateRecord:
     """Core gate logic — separated for clean error wrapping."""
     # ── resolve suite invocation ─────────────────────────────────────────
@@ -476,6 +484,22 @@ def _run_gate_inner(
     flags = config.ship["suite"].get("flags", [])
     full_cmd = invocation if not flags else f"{invocation} {' '.join(flags)}"
 
+    # ── resolve the poll bound: explicit > declared > fallback ───────────
+    # gh-resolve declares ship.suite.timeout: 1800 and nothing read it: the
+    # runner passes no --poll-timeout and the default was 600, while its
+    # suite measures 925.79s.  The bound expired 325s before the suite could
+    # finish, so that project could never get a real verdict.
+    if _poll_timeout is not None:
+        poll_bound = _poll_timeout
+    else:
+        declared = config.ship["suite"].get("timeout")
+        poll_bound = (
+            int(declared)
+            if isinstance(declared, int) and not isinstance(declared, bool)
+            and declared > 0
+            else DEFAULT_POLL_TIMEOUT
+        )
+
     # ── run the suite backgrounded + polled ──────────────────────────────
     output_file = runtime_dir / "batch-gate-suite.output"
     wait = _wait_helper or (_skill_root() / "ilk-loop" / "scripts" /
@@ -502,9 +526,9 @@ def _run_gate_inner(
     try:
         result = subprocess.run(
             ["bash", str(wait), str(output_file),
-             "--timeout", str(_poll_timeout)],
+             "--timeout", str(poll_bound)],
             capture_output=True, text=True, encoding="utf-8",
-            timeout=_poll_timeout + 30,
+            timeout=poll_bound + 30,
         )
         exit_code = result.returncode
     except subprocess.TimeoutExpired:
@@ -539,8 +563,11 @@ def main() -> None:
                         help="Runtime dir (default: resolve from ilk_paths)")
     parser.add_argument("--run", action="store_true", required=True,
                         help="Actually run the gate")
-    parser.add_argument("--poll-timeout", type=int, default=600,
-                        help="Timeout for polling the background suite (seconds)")
+    parser.add_argument("--poll-timeout", type=int, default=None,
+                        help="Override the poll bound (seconds).  Unset by "
+                             "default so the project's declared "
+                             "ship.suite.timeout wins; falls back to "
+                             f"{DEFAULT_POLL_TIMEOUT}s when neither is given.")
     args = parser.parse_args()
 
     if not args.run:
