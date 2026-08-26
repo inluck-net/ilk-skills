@@ -126,6 +126,7 @@ def _read_scheduler_pid(home: Path) -> int | None:
 # on the first whole-suite run after the bound landed. 240 leaves ~4x headroom
 # over the declared sleeps. Wrong if launchd restart latency ever exceeds
 # ~3 min, in which case the test's own range(15) budget is the thing to fix.
+@pytest.mark.allow_launchctl
 @pytest.mark.timeout(240)
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS launchctl required")
 def test_restart_durability_keeps_agent_loaded(tmp_path):
