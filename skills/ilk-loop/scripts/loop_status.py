@@ -399,6 +399,21 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
     except Exception:
         _ship_audit_mod = None  # type: ignore[assignment]
 
+    # Resolve the runtime dir once so ship_audit can read the batch-gate
+    # record.  Uses the same single resolver as ship_audit's CLI
+    # (batch_gate.resolve_runtime_dir).  Degrade to None if the resolver
+    # is unavailable or the project key can't be resolved — ship_audit
+    # falls back to the legacy gate_passed path in that case.
+    _resolved_runtime_dir = None
+    if _ship_audit_available:
+        try:
+            from batch_gate import (  # type: ignore[import-untyped]
+                resolve_runtime_dir as _resolve_rt_dir,
+            )
+            _resolved_runtime_dir = _resolve_rt_dir(cwd)
+        except Exception:
+            _resolved_runtime_dir = None
+
     if _ship_audit_available:
         for sp in subplans:
             if sp["status"] != "shipped":
@@ -412,9 +427,10 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
                     status=info["status"],
                     body=info["body"],
                     declared_checks=info["declared_checks"],
-                    gate_passed="unknown",  # gate records not resolved here
+                    gate_passed="unknown",
                     slug=info["slug"],
                     cwd=cwd,
+                    runtime_dir=_resolved_runtime_dir,
                 )
                 sp["proven"] = result["proven"]
                 sp["unproven_reasons"] = result["reasons"]

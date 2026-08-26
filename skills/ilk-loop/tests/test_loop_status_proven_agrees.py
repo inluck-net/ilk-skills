@@ -140,33 +140,44 @@ def _run_ship_audit(subplan_path: Path, cwd: Path, runtime_dir: Path | None) -> 
     )
 
 
-def _run_loop_status_proven(subplan_path: Path, cwd: Path) -> bool:
-    """Extract the 'proven' value that loop_status would compute.
+def _run_loop_status_proven(
+    subplan_path: Path,
+    cwd: Path,
+    runtime_dir: Path | None = ...,  # sentinel: use resolver
+) -> bool:
+    """Extract the 'proven' value that loop_status.py computes.
 
-    This replicates the BROKEN code path from loop_status.py:402-423 —
-    the audit_ship call site that this sub-plan is fixing.  The bug:
-    loop_status does NOT pass runtime_dir to audit_ship, so
-    _resolve_batch_record(None) short-circuits and every shipped sub-plan
-    reads as ungated.
+    This replicates the FIXED code path from loop_status.py:392-430:
+    1. Resolve runtime_dir via batch_gate.resolve_runtime_dir (AC-1).
+    2. Pass it to audit_ship so it reads the batch-gate record (AC-2, AC-3).
+    3. Degrade to None if the resolver is unavailable (AC-5).
 
-    After step 1, loop_status.py will be fixed to resolve and pass
-    runtime_dir.  At that point, this helper should be updated to match
-    the fixed call site.
+    When *runtime_dir* is the sentinel ``...``, the resolver runs (the
+    production path).  When explicitly passed (a Path or None), that
+    value is used directly — for tests that write the record to a
+    non-standard location.
     """
     import ship_audit
+    if runtime_dir is ...:
+        # Production path: resolve via the single resolver.
+        resolved_runtime_dir = None
+        try:
+            from batch_gate import resolve_runtime_dir as _resolve_rt_dir
+            resolved_runtime_dir = _resolve_rt_dir(cwd)
+        except Exception:
+            resolved_runtime_dir = None
+    else:
+        resolved_runtime_dir = runtime_dir
+
     info = ship_audit.read_subplan_for_audit(subplan_path)
-    # This is the CURRENT (broken) call: no runtime_dir passed.
-    # loop_status.py:415 calls audit_ship with gate_passed="unknown"
-    # and NO runtime_dir — replicating that exactly.
     result = ship_audit.audit_ship(
         status=info["status"],
         body=info["body"],
         declared_checks=info["declared_checks"],
-        gate_passed="unknown",  # gate records not resolved here (the bug)
+        gate_passed="unknown",
         slug=info["slug"],
         cwd=cwd,
-        # runtime_dir is NOT passed — this is the bug.
-        # After step 1, this will be: runtime_dir=runtime_dir,
+        runtime_dir=resolved_runtime_dir,
     )
     return result["proven"]
 
@@ -183,7 +194,7 @@ def test_ac2_fresh_pass_both_proven(tmp_path):
     subplan_path = _write_subplan(plans_dir)
 
     ship_audit_result = _run_ship_audit(subplan_path, cwd=repo, runtime_dir=runtime_dir)
-    loop_status_result = _run_loop_status_proven(subplan_path, cwd=repo)
+    loop_status_result = _run_loop_status_proven(subplan_path, cwd=repo, runtime_dir=runtime_dir)
 
     assert ship_audit_result["proven"] is True, "ship_audit should report proven"
     assert loop_status_result is True, "loop_status should report proven"
@@ -200,7 +211,7 @@ def test_ac3_stale_head_both_unproven(tmp_path):
     subplan_path = _write_subplan(plans_dir)
 
     ship_audit_result = _run_ship_audit(subplan_path, cwd=repo, runtime_dir=runtime_dir)
-    loop_status_result = _run_loop_status_proven(subplan_path, cwd=repo)
+    loop_status_result = _run_loop_status_proven(subplan_path, cwd=repo, runtime_dir=runtime_dir)
 
     # ship_audit sees stale → proven=False
     assert ship_audit_result["proven"] is False, "ship_audit should report unproven for stale"
@@ -217,7 +228,7 @@ def test_ac3_absent_record_both_unproven(tmp_path):
     subplan_path = _write_subplan(plans_dir)
 
     ship_audit_result = _run_ship_audit(subplan_path, cwd=repo, runtime_dir=runtime_dir)
-    loop_status_result = _run_loop_status_proven(subplan_path, cwd=repo)
+    loop_status_result = _run_loop_status_proven(subplan_path, cwd=repo, runtime_dir=runtime_dir)
 
     assert ship_audit_result["proven"] is False, "ship_audit should report unproven for absent"
     assert loop_status_result is False, "loop_status should report unproven for absent"
@@ -232,7 +243,7 @@ def test_ac5_no_runtime_dir_degrades(tmp_path):
     subplan_path = _write_subplan(plans_dir)
 
     # Should not raise — degrades to today's behaviour.
-    result = _run_loop_status_proven(subplan_path, cwd=repo)
+    result = _run_loop_status_proven(subplan_path, cwd=repo, runtime_dir=None)
     # With runtime_dir=None, _resolve_batch_record short-circuits → gate_passed
     # stays "unknown" → ship_audit falls through to its no-gate-result path.
     # The important thing is it doesn't crash.
@@ -260,7 +271,7 @@ def test_ac4_both_readers_agree(tmp_path, gate_verdict, expected_proven):
     subplan_path = _write_subplan(plans_dir)
 
     ship_audit_proven = _run_ship_audit(subplan_path, cwd=repo, runtime_dir=runtime_dir)["proven"]
-    loop_status_proven = _run_loop_status_proven(subplan_path, cwd=repo)
+    loop_status_proven = _run_loop_status_proven(subplan_path, cwd=repo, runtime_dir=runtime_dir)
 
     assert ship_audit_proven == loop_status_proven, (
         f"readers disagree: ship_audit={ship_audit_proven}, "
@@ -273,16 +284,18 @@ def test_ac4_both_readers_agree(tmp_path, gate_verdict, expected_proven):
 
 # ── Red-first: demonstrate the CURRENT disagreement ─────────────────────────
 
-def test_red_first_loop_status_passes_no_runtime_dir(tmp_path):
-    """Red-first: show that loop_status with runtime_dir=None always says
-    proven — even when ship_audit (with the real record) says unproven.
+def test_fixed_loop_status_passes_runtime_dir(tmp_path):
+    """After the fix: loop_status resolves and passes runtime_dir, so both
+    readers agree on a fail-verdict record (both say unproven).
 
-    This is the disagreement that must NOT exist after step 1.
+    Before the fix, loop_status always said proven (no runtime_dir →
+    _resolve_batch_record short-circuited).  Now it resolves the dir and
+    passes it, so both readers see the same record.
     """
     repo = _make_git_repo(tmp_path)
     head = _current_head(repo)
     runtime_dir = tmp_path / "runtime"
-    # Write a FAIL record — ship_audit should say unproven.
+    # Write a FAIL record — both should say unproven.
     _write_gate_record(runtime_dir, "fail", head)
     plans_dir = tmp_path / "plans"
     subplan_path = _write_subplan(plans_dir)
@@ -290,17 +303,12 @@ def test_red_first_loop_status_passes_no_runtime_dir(tmp_path):
     # ship_audit with the real record → unproven
     ship_audit_proven = _run_ship_audit(subplan_path, cwd=repo, runtime_dir=runtime_dir)["proven"]
 
-    # loop_status with runtime_dir=None (the broken path) → proven
-    loop_status_proven_no_dir = _run_loop_status_proven(subplan_path, cwd=repo)
+    # loop_status (fixed) also resolves runtime_dir → unproven
+    loop_status_proven = _run_loop_status_proven(subplan_path, cwd=repo, runtime_dir=runtime_dir)
 
-    # This is the disagreement: ship_audit says unproven, loop_status says proven.
-    # After step 1, loop_status will pass runtime_dir and both should say unproven.
-    if ship_audit_proven != loop_status_proven_no_dir:
-        pytest.xfail(
-            "EXPECTED DISAGREEMENT (the bug): "
-            f"ship_audit={ship_audit_proven}, loop_status(no_dir)={loop_status_proven_no_dir}. "
-            "This test should pass after step 1 fixes loop_status to pass runtime_dir."
-        )
-    else:
-        # If they already agree, the bug might have been fixed already.
-        assert ship_audit_proven == loop_status_proven_no_dir
+    # Both must agree.
+    assert ship_audit_proven == loop_status_proven, (
+        f"readers disagree after fix: ship_audit={ship_audit_proven}, "
+        f"loop_status={loop_status_proven}"
+    )
+    assert ship_audit_proven is False, "fail record → both unproven"
