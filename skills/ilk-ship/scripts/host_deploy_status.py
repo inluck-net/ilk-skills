@@ -29,7 +29,9 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import subprocess
+import sys
 from pathlib import Path
 
 # Recognised prefixes from bounce_daemons.sh output lines.
@@ -129,3 +131,44 @@ def resolve_host(
 
     # All fresh.
     return "ok"
+
+
+# Exit-code mapping — mirrors bounce_daemons.sh's contract so a caller
+# can branch on either the printed line or the process exit code.
+_STATE_EXIT_CODES = {
+    "ok": 0,
+    "stale-daemon": 1,
+    "unreachable": 2,
+}
+
+
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point for host deploy status resolution.
+
+    Usage:
+      python3 host_deploy_status.py --bouncer <path> [--bounce-hosts]
+    """
+    parser = argparse.ArgumentParser(
+        description="Resolve a single host's deploy status via bounce_daemons.sh.",
+    )
+    parser.add_argument(
+        "--bouncer",
+        required=True,
+        help="Path to bounce_daemons.sh (or a test fake).",
+    )
+    parser.add_argument(
+        "--bounce-hosts",
+        action="store_true",
+        default=False,
+        help="Permit actual bouncing (omit --check). Without this flag, detect-only.",
+    )
+    args = parser.parse_args(argv)
+
+    bouncer = Path(args.bouncer)
+    state = resolve_host(bouncer, Path("/tmp"), bounce_hosts=args.bounce_hosts)
+    print(state)
+    sys.exit(_STATE_EXIT_CODES.get(state, 2))
+
+
+if __name__ == "__main__":
+    main()
