@@ -117,6 +117,11 @@ cat > skills/ilk-watchdog/scripts/bounce_daemons.sh << 'BOUNCE_EOF'
 BOUNCE_LOG="${BOUNCE_LOG:-/dev/null}"
 echo "bounce_daemons called: $*" >> "$BOUNCE_LOG"
 
+# Caller can force an exit code (e.g. BOUNCE_EXIT_CODE=2 for unreachable).
+if [[ -n "${BOUNCE_EXIT_CODE:-}" ]]; then
+  exit "$BOUNCE_EXIT_CODE"
+fi
+
 # Simulate: if state file is absent → stale (exit 1), if present with
 # matching head → fresh (exit 0).  We use ILK_BOUNCE_TOOLKIT_PATH to
 # find the state file, same as the real script.
@@ -362,6 +367,80 @@ out="$(HOME="$FAKE_HOME" ILK_DATA_DIR="$ILK_DATA_DIR" \
 check "--check reports behind" "$out" contains "behind"
 check "no bounce on --check" "$(cat "$BOUNCE_LOG")" absent "bounce_daemons called"
 check "no launchctl on --check" "$(cat "$LAUNCHCTL_LOG")" absent "launchctl"
+
+# === Test 13: --apply already-current calls bounce on stale daemon ===========
+
+echo ""
+echo "=== Test 13: already-current calls bounce on stale daemon ==="
+# Reset to origin/main so the tree is "already current"
+git -C "$WORK" reset --hard origin/main >/dev/null 2>&1
+: > "$BOUNCE_LOG"
+: > "$LAUNCHCTL_LOG"
+rm -rf "$ILK_DATA_DIR"
+
+out="$(HOME="$FAKE_HOME" ILK_DATA_DIR="$ILK_DATA_DIR" \
+  BOUNCE_LOG="$BOUNCE_LOG" LAUNCHCTL_LOG="$LAUNCHCTL_LOG" \
+  PATH="$FAKE_BIN:$PATH" \
+  bash "$UPGRADE" --apply 2>&1 || true)"
+check "already-current prints already current" "$out" contains "already current"
+check "already-current calls bounce_daemons.sh" "$(cat "$BOUNCE_LOG")" contains "bounce_daemons called"
+check "already-current stale output" "$out" contains "bouncing:"
+
+# === Test 14: already-current with fresh daemon ==============================
+
+echo ""
+echo "=== Test 14: already-current with fresh daemon ==="
+: > "$BOUNCE_LOG"
+: > "$LAUNCHCTL_LOG"
+
+# Write state file matching current HEAD so bounce reports fresh
+current_head="$(git -C "$WORK" rev-parse HEAD)"
+ILK_DATA="$ILK_DATA_DIR"
+mkdir -p "$ILK_DATA"
+cat > "$ILK_DATA/scheduler.state.json" << EOF
+{"toolkit_head": "$current_head"}
+EOF
+
+out="$(HOME="$FAKE_HOME" ILK_DATA_DIR="$ILK_DATA_DIR" \
+  BOUNCE_LOG="$BOUNCE_LOG" LAUNCHCTL_LOG="$LAUNCHCTL_LOG" \
+  PATH="$FAKE_BIN:$PATH" \
+  bash "$UPGRADE" --apply 2>&1 || true)"
+check "already-current fresh still calls bounce" "$(cat "$BOUNCE_LOG")" contains "bounce_daemons called"
+check "already-current fresh prints fresh" "$out" contains "fresh:"
+
+# === Test 15: already-current + stale daemon still exits 0 ===================
+
+echo ""
+echo "=== Test 15: already-current + stale daemon exits 0 ==="
+: > "$BOUNCE_LOG"
+: > "$LAUNCHCTL_LOG"
+rm -rf "$ILK_DATA_DIR"
+
+exit_code=0
+out="$(HOME="$FAKE_HOME" ILK_DATA_DIR="$ILK_DATA_DIR" \
+  BOUNCE_LOG="$BOUNCE_LOG" LAUNCHCTL_LOG="$LAUNCHCTL_LOG" \
+  PATH="$FAKE_BIN:$PATH" \
+  bash "$UPGRADE" --apply 2>&1)" || exit_code=$?
+check_exit "already-current + stale daemon exit 0" 0 "$exit_code"
+check "upgrade calls bounce on stale" "$(cat "$BOUNCE_LOG")" contains "bounce_daemons called"
+
+# === Test 16: already-current + unreachable daemon exits 0 ===================
+
+echo ""
+echo "=== Test 16: already-current + unreachable daemon exits 0 ==="
+: > "$BOUNCE_LOG"
+: > "$LAUNCHCTL_LOG"
+rm -rf "$ILK_DATA_DIR"
+
+exit_code=0
+out="$(HOME="$FAKE_HOME" ILK_DATA_DIR="$ILK_DATA_DIR" \
+  BOUNCE_LOG="$BOUNCE_LOG" LAUNCHCTL_LOG="$LAUNCHCTL_LOG" \
+  BOUNCE_EXIT_CODE=2 \
+  PATH="$FAKE_BIN:$PATH" \
+  bash "$UPGRADE" --apply 2>&1)" || exit_code=$?
+check_exit "already-current + unreachable daemon exit 0" 0 "$exit_code"
+check "unreachable warning on stderr" "$out" contains "could not be reached"
+unset BOUNCE_EXIT_CODE
 
 # === Results ================================================================
 
