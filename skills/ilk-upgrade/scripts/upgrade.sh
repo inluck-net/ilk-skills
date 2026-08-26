@@ -328,6 +328,7 @@ do_apply() {
   if [[ "$behind" -eq 0 ]]; then
     echo "already current"
     reconcile_links ""
+    bounce_stale_daemons || true
     return 0
   fi
 

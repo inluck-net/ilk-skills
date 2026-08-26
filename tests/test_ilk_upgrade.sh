@@ -329,19 +329,20 @@ check "upgrade prints changelog" "$out" contains "Changelog:"
 check "upgrade calls bounce_daemons.sh" "$(cat "$BOUNCE_LOG")" contains "bounce_daemons called"
 check "fake launchctl bootstrap called" "$(cat "$LAUNCHCTL_LOG")" contains "bootstrap"
 
-# === Test 10: idempotent — second --apply does not bounce ==================
+# === Test 10: idempotent — second --apply still bounces a stale daemon ======
 
 echo ""
-echo "=== Test 10: idempotent — second --apply does not bounce ==="
+echo "=== Test 10: idempotent — second --apply still bounces a stale daemon ==="
 : > "$BOUNCE_LOG"
 : > "$LAUNCHCTL_LOG"
+rm -rf "$ILK_DATA_DIR"
 
 out="$(HOME="$FAKE_HOME" ILK_DATA_DIR="$ILK_DATA_DIR" \
   BOUNCE_LOG="$BOUNCE_LOG" LAUNCHCTL_LOG="$LAUNCHCTL_LOG" \
   PATH="$FAKE_BIN:$PATH" \
   bash "$UPGRADE" --apply 2>&1 || true)"
 check "already current on second run" "$out" contains "already current"
-check "bounce_daemons.sh not called" "$(cat "$BOUNCE_LOG")" absent "bounce_daemons called"
+check "bounce_daemons.sh called on already-current" "$(cat "$BOUNCE_LOG")" contains "bounce_daemons called"
 
 # === Test 11: upgrade.sh contains no launchctl bounce logic (AC-3) =========
 
