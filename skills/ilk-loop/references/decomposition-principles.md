@@ -1259,6 +1259,46 @@ walks the test corpus and asserts every file which executes the shared
 component requests the sandbox fixture, so a new harness that forgets fails the
 suite rather than silently passing.
 
+### The environment a gate runs *in* is also state it does not own
+
+The rule above is about what a gate *reads*. The same failure has a second face:
+what the gate's own process **inherited**. It is easier to miss, because the
+harness looks hermetic and the sandbox is genuinely correct.
+
+**Signal disposition is inherited, and cannot always be undone.** A gate launched
+under a detached runner starts with signals already ignored: `nohup` sets SIGHUP
+to `SIG_IGN`, and a bash async list (`cmd &`) sets SIGINT and SIGQUIT to
+`SIG_IGN`. SIGTERM is untouched by both. Ignored dispositions survive `exec`, and
+Python's `Popen(..., restore_signals=True)` does **not** clear them. `bash(1)`
+then makes it unrecoverable in the child: *"Signals ignored upon entry to the
+shell cannot be trapped or reset"* — so a `trap ... INT` in a spawned script is a
+silent no-op while `trap ... TERM` installs normally. A test that signals a child
+and waits for it to die then hangs, and only for the ignored signals.
+
+The diagnostic signature is a **split within one parametrised test**: the SIGTERM
+case passes, the SIGINT and SIGHUP cases fail. When a subset of parametrisations
+fails and the subset lines up with something the process could have inherited,
+suspect ancestry before suspecting test order.
+
+**Available CPU is inherited too.** A gate that polls for a condition with a
+wall-clock deadline (`for i in $(seq 1 50); do ... sleep 0.1; done`) owns neither
+the machine's load nor the number of tests running beside it. It passes alone and
+under `--durations`-visible light load, and fails inside a full suite or under
+`-n`. A deadline is a guess about a machine, not an assertion about the code.
+Prefer waiting on the event (process exit, a file the subject writes and does not
+remove) over waiting on a clock.
+
+### Corollary: measure in the ancestry the gate will actually run in
+
+This is where the principle bites the *investigator*, not the author. An
+isolation run from an interactive shell is not evidence about a gate launched by
+a daemon — different parent, different inherited state, different answer. "It
+passes in isolation" is only a fact about isolation.
+
+So when a gate fails and a hand-run passes, that gap is the finding, not noise to
+explain away. Reproduce under the real launcher before forming a hypothesis about
+which *test* is at fault; the answer may be that no test is.
+
 ### Field record
 
 **2026-08-27 — ilk-skills v0.9.76 batch gate.** Six "undeclared failures" that
@@ -1268,11 +1308,38 @@ each. Fixed for one file in `7e8495f`; the audit that followed found the same
 split-brain in 9 more, of which 4 were in the gate suite and 5 were shell
 harnesses pytest never collected at all.
 
+**2026-08-27 (later, same batch) — the same six node ids, a different cause.**
+After the sandbox work shipped, the six `SIGINT`/`SIGHUP` parametrisations in
+`test_scheduler_exit_reason.py` failed the batch gate again while passing every
+hand-run. Two hypotheses were wrong and both cost time: "a regression from this
+batch" (the tests and `scheduler.sh` were unchanged since a gate that passed
+with them green) and "cross-directory test pollution" (it reproduces with an
+**empty prefix** — the file alone, 14 ids, fails 6 of 14 under the runner and
+passes 14 of 14 from a shell).
+
+The cause was ancestry, per the subsection above: the launcher's `nohup ... &`
+left SIGINT/SIGHUP ignored, the disposition reached the spawned `bash`, and
+`scheduler.sh`'s `trap ... INT`/`HUP` became no-ops while `TERM` installed —
+which is exactly why SIGTERM passed. The gate is spawned by the driver shell and
+inherits that; the agent's own pytest sits behind a Node parent that reinstalls
+handlers and gets `SIG_DFL` back. "Only fails in company" meant *run by the
+driver rather than by the agent*. Fixed in the shared fixture with a
+`preexec_fn` restoring `SIG_DFL`, and proven by re-running the reproduction under
+the runner rather than under a shell.
+
+Both hypotheses were built on isolation runs — the exact evidence the corollary
+above says proves nothing. The plan file even listed those runs as ruling the
+cause out; the investigation had to falsify its own premise to get anywhere.
+
 ### Cross-references
 
 - §8 (`local_checks` anti-patterns) — this is the isolation axis of the same
   concern; §8's shared-module rule covers gate *scope*, this covers gate
-  *inputs*.
+  *inputs* and the environment the gate inherits.
 - §10 (environment-reachability prereqs) — what to do about a dependency you
   legitimately cannot own.
+- §11 (shipped ≠ verified) — a gate that reads state it does not own is the
+  mechanism by which a green result stops meaning anything.
 - §16 (gate-scoping) — narrow gates are cheap only when they are also honest.
+- §21 (never launch the loop from a model session) — the same ancestry
+  distinction, seen from the launching side rather than the measuring side.
