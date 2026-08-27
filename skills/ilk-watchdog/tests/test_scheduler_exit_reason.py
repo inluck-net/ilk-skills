@@ -41,6 +41,7 @@ def _run_scheduler_once(sandbox, timeout: int = 30) -> subprocess.CompletedProce
         ["bash", str(SCHEDULER), "--once", "--dry-run"],
         capture_output=True, text=True, timeout=timeout,
         env=sandbox.env, encoding="utf-8",
+        preexec_fn=sandbox.preexec,
     )
 
 
@@ -50,6 +51,7 @@ def _start_scheduler_poll(sandbox, poll_min: int = 60) -> subprocess.Popen:
         ["bash", str(SCHEDULER), "--poll-min", str(poll_min)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         env=sandbox.env, encoding="utf-8",
+        preexec_fn=sandbox.preexec,
     )
 
 
@@ -297,6 +299,7 @@ def test_normal_exit_logs_reason(scheduler_sandbox):
         ["bash", str(SCHEDULER), "--once", "--dry-run"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         env=scheduler_sandbox.env, encoding="utf-8",
+        preexec_fn=scheduler_sandbox.preexec,
     )
     proc.wait(timeout=30)
 
@@ -329,6 +332,7 @@ def test_already_running_still_logs(scheduler_sandbox):
             ["bash", str(SCHEDULER), "--once", "--dry-run"],
             capture_output=True, text=True, timeout=30,
             env=scheduler_sandbox.env, encoding="utf-8",
+            preexec_fn=scheduler_sandbox.preexec,
         )
     finally:
         proc1.kill()
@@ -338,4 +342,61 @@ def test_already_running_still_logs(scheduler_sandbox):
     assert "already running" in combined, (
         f"'already running' message missing from second scheduler output:\n"
         f"{combined[-500:]}"
+    )
+
+
+# ── Regression: an ancestor's ignored signal must not disarm the scheduler ────
+#
+# The six SIGINT/SIGHUP cases above failed for a whole batch because the ilk
+# launcher detaches with `nohup ... &` (launch.sh:75), which leaves SIGINT and
+# SIGHUP at SIG_IGN for every descendant including pytest.  bash cannot trap a
+# signal that was ignored on entry, so scheduler.sh's INT/HUP traps became
+# silent no-ops -- while SIGTERM, which neither `nohup` nor `&` touches, kept
+# working.  Full mechanism: tests/baselines/sp5-repro-2026-08-27.md
+#
+# This test does not depend on how pytest was launched: it CREATES the hostile
+# disposition in the pytest process, so it fails whenever the sandbox stops
+# defending against it, in any ancestry.
+
+@pytest.mark.parametrize("signo,name", [
+    (signal.SIGINT, "SIGINT"),
+    (signal.SIGHUP, "SIGHUP"),
+])
+def test_ignored_ancestry_does_not_disarm_signal(scheduler_sandbox, signo, name):
+    """A {name} ignored in the pytest process must still stop the child.
+
+    Regression guard for the SP5 defect.  Remove
+    ``preexec_fn=sandbox.preexec`` from ``_start_scheduler_poll`` and this
+    fails with ``subprocess.TimeoutExpired`` -- observed 2026-08-27.
+    """
+    previous = signal.signal(signo, signal.SIG_IGN)
+    try:
+        assert signal.getsignal(signo) is signal.SIG_IGN, (
+            f"could not ignore {name} in the pytest process; "
+            f"the hostile condition was not created, so this test proves nothing"
+        )
+        proc = _start_scheduler_poll(scheduler_sandbox)
+        try:
+            pf = _pidfile(scheduler_sandbox)
+            deadline = time.monotonic() + 15
+            while not pf.exists() and time.monotonic() < deadline:
+                time.sleep(0.1)
+            assert pf.exists(), "scheduler never created pidfile"
+
+            proc.send_signal(signo)
+            proc.wait(timeout=10)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=5)
+    finally:
+        signal.signal(signo, previous)
+
+    assert proc.returncode == 128 + signo, (
+        f"{name} exit should be {128 + signo}, got {proc.returncode} -- the "
+        f"child inherited SIG_IGN for {name} and could not trap it"
+    )
+    assert not pf.exists(), (
+        f"scheduler.pid still exists after {name} was sent from a process "
+        f"that ignores {name}"
     )

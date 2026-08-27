@@ -19,6 +19,7 @@ works when invoked one directory at a time.
 from __future__ import annotations
 
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -329,28 +330,76 @@ def _host_guard_active(request: pytest.FixtureRequest, tmp_path_factory):
 # because without it the skill-root fallback probes $HOME/.codex|.cursor|.claude
 # under the temp HOME, none exist, and the run hangs.
 #
+# The env is not the only thing a spawned scheduler inherits: SIGNAL
+# DISPOSITIONS come in too, and an inherited SIG_IGN is not overridable from
+# inside the child.  `sandbox.preexec` is the fixture's answer -- see
+# `_reset_inherited_signal_ignores`.
+#
 # Not autouse — a test must request it explicitly.  AC-6 (the meta-test)
 # catches harnesses that forget.
 # ───────────────────────────────────────────────────────────────────────────
 
 
+# Signals that an ancestor may have set to SIG_IGN before pytest ever started.
+# SIGTERM is absent on purpose: neither `nohup` nor `&` ignores it, which is
+# exactly why the SIGTERM tests never failed while their SIGINT/SIGHUP siblings
+# did.  SIGQUIT is included because `&` ignores it alongside SIGINT.
+_INHERITABLE_IGNORES = ("SIGINT", "SIGHUP", "SIGQUIT")
+
+
+def _reset_inherited_signal_ignores() -> None:
+    """Restore SIG_DFL for signals an ancestor may have ignored (child-side).
+
+    Runs post-fork / pre-exec as ``Popen(preexec_fn=...)``.
+
+    Why this is needed at all: the ilk launcher detaches with
+    ``nohup ... &`` (``skills/ilk-launcher/scripts/launch.sh:75``).  ``nohup``
+    sets SIGHUP to SIG_IGN and an async list sets SIGINT + SIGQUIT to SIG_IGN,
+    an ignore survives every ``exec`` down to pytest, and ``bash(1)`` is
+    explicit that *"signals ignored upon entry to the shell cannot be trapped
+    or reset"*.  So ``scheduler.sh``'s ``trap ... INT`` / ``trap ... HUP``
+    become silent no-ops -- ``trap`` still returns success -- and a signalled
+    scheduler never exits.
+
+    ``Popen``'s own ``restore_signals=True`` does not cover this: it resets
+    only the handlers *Python* set to SIG_IGN (SIGPIPE, SIGXFZ, SIGXFSZ), not
+    dispositions inherited from the parent.
+
+    Measured 2026-08-27: without this, the six SIGINT/SIGHUP cases in
+    ``test_scheduler_exit_reason.py`` fail under the launcher's detached tree
+    and pass from an operator shell.  Reproduction:
+    ``tests/baselines/sp5-repro-2026-08-27.md``.
+    """
+    for name in _INHERITABLE_IGNORES:
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            signal.signal(sig, signal.SIG_DFL)
+
+
 class _SchedulerSandbox:
     """Value object returned by the ``scheduler_sandbox`` fixture."""
 
-    __slots__ = ("root", "env")
+    __slots__ = ("root", "env", "preexec")
 
     def __init__(self, root: Path, env: dict[str, str]) -> None:
         self.root = root
         self.env = env
+        #: Pass as ``Popen``/``run``'s ``preexec_fn`` so the child starts with
+        #: SIGINT/SIGHUP/SIGQUIT at SIG_DFL regardless of how pytest was
+        #: launched.  A sandbox that isolates the filesystem but not the
+        #: signal mask is not isolated.
+        self.preexec = _reset_inherited_signal_ignores
 
 
 @pytest.fixture()
 def scheduler_sandbox(tmp_path: Path) -> _SchedulerSandbox:
     """Isolated data-home root for scheduler-driving tests.
 
-    Returns an object with ``root`` (the temp HOME) and ``env`` (a dict
-    ready to pass as ``subprocess``'s ``env`` kwarg).  The env pins both
-    HOME and ILK_DATA_HOME to the same root and strips ILK_DATA_DIR.
+    Returns an object with ``root`` (the temp HOME), ``env`` (a dict ready to
+    pass as ``subprocess``'s ``env`` kwarg) and ``preexec`` (ready to pass as
+    ``preexec_fn``).  The env pins both HOME and ILK_DATA_HOME to the same root
+    and strips ILK_DATA_DIR; ``preexec`` un-ignores the signals an ancestor may
+    have ignored.  A harness that spawns a scheduler should pass both.
     """
     data_home = tmp_path / ".ilk-data"
     logs_dir = data_home / "logs"
