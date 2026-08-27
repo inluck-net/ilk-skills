@@ -319,6 +319,54 @@ def _host_guard_active(request: pytest.FixtureRequest, tmp_path_factory):
                 del _host_blocked_calls[-1]
 
 
+# ───────────────────────────────────────────────────────────────────────────
+# Scheduler sandbox — data-home isolation for scheduler-driving harnesses.
+#
+# Pins HOME and ILK_DATA_HOME to the same temporary root so that
+# scheduler.sh, ilk_paths.py, and every subprocess they spawn resolve
+# inside the sandbox.  ILK_DATA_DIR is stripped (AC-2) so the back-compat
+# alias cannot override.  ILK_SKILL_HOME is set to the repo's skills/ dir
+# because without it the skill-root fallback probes $HOME/.codex|.cursor|.claude
+# under the temp HOME, none exist, and the run hangs.
+#
+# Not autouse — a test must request it explicitly.  AC-6 (the meta-test)
+# catches harnesses that forget.
+# ───────────────────────────────────────────────────────────────────────────
+
+
+class _SchedulerSandbox:
+    """Value object returned by the ``scheduler_sandbox`` fixture."""
+
+    __slots__ = ("root", "env")
+
+    def __init__(self, root: Path, env: dict[str, str]) -> None:
+        self.root = root
+        self.env = env
+
+
+@pytest.fixture()
+def scheduler_sandbox(tmp_path: Path) -> _SchedulerSandbox:
+    """Isolated data-home root for scheduler-driving tests.
+
+    Returns an object with ``root`` (the temp HOME) and ``env`` (a dict
+    ready to pass as ``subprocess``'s ``env`` kwarg).  The env pins both
+    HOME and ILK_DATA_HOME to the same root and strips ILK_DATA_DIR.
+    """
+    data_home = tmp_path / ".ilk-data"
+    logs_dir = data_home / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "ILK_DATA_HOME": str(data_home),
+        "ILK_SKILL_HOME": str(_ROOT / "skills"),
+    }
+    env.pop("ILK_DATA_DIR", None)
+
+    return _SchedulerSandbox(root=tmp_path, env=env)
+
+
 @pytest.fixture(autouse=True)
 def exempts_recorded_during(request: pytest.FixtureRequest):
     """Drop guard recordings for tests that trip the guard ON PURPOSE.
