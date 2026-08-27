@@ -1206,3 +1206,73 @@ only on an open PR's branch (`fix/watchdog-bash32-uppercase`), not on
 `main`. A human caught it during proposal review. The lint now catches
 this mechanically — the corpus scan (376 sub-plan files) found 2 HARD
 findings on the exact defect family, zero false positives.
+
+## 23. A gate must not read state it does not own
+
+A `local_check` exists to answer one question: did this step do what it
+claimed? It can only answer that if its result depends on the change and
+nothing else. A gate that reads mutable state belonging to something else —
+the operator's home directory, a live daemon's pidfile, a shared database, a
+service another test is also using — is not a weaker gate. It is **not a gate**,
+because a red result no longer distinguishes "the code is wrong" from "the
+environment moved".
+
+### The rule
+
+For every `local_check`, ask what the command reads that the sub-plan does not
+create. Anything on that list must be either pinned to a sandbox the check owns
+or declared an `env_prereq` (§10). "It passes on my machine right now" is not a
+third option.
+
+Two traps worth naming, because both shipped:
+
+1. **Half-pinned isolation.** Pinning one variable and inheriting a second that
+   resolves the same concept is worse than pinning neither, because it *looks*
+   isolated. `scheduler.sh` derives its own pidfile/state/log from `${HOME}`,
+   while the scan child it spawns resolves `$ILK_DATA_HOME` → `$ILK_DATA_DIR` →
+   `~/.ilk-data`. A harness that set only `HOME` isolated the daemon's files and
+   left its project scan pointed at 20 real projects.
+2. **Isolation that is guarded but not owned.** Blocking a test from *mutating*
+   shared state (the `conftest.py` host guard) does not stop it *reading* shared
+   state. Both are needed and they are different mechanisms.
+
+### Why this outranks making the gate faster
+
+A slow gate costs wall-clock. A non-hermetic gate costs trust in every result
+it ever produced, including the green ones — and it is usually also the slow
+one, because reading real shared state means doing real work. Fixing
+hermeticity is not a prerequisite *for* the speed work; it is most of the speed
+work. Measured: one harness cost 43-103s per run while reading the real data
+home, and 12.21s once pinned.
+
+This is also why hermeticity must land before parallelism. Tests that read
+shared state are exactly the ones that collide when run concurrently, so
+turning on `-n` first produces failures that are artifacts of the change rather
+than signal — and the natural response to that noise is to distrust the
+parallelism, not the isolation.
+
+### Enforcement
+
+Prose is not enough here — the same gap was re-introduced across several
+harnesses after being fixed in one. Prefer a mechanical check: a meta-test that
+walks the test corpus and asserts every file which executes the shared
+component requests the sandbox fixture, so a new harness that forgets fails the
+suite rather than silently passing.
+
+### Field record
+
+**2026-08-27 — ilk-skills v0.9.76 batch gate.** Six "undeclared failures" that
+were not defects: harnesses spawning `scheduler.sh` saw the live launchd
+daemon's pidfile and took a path the test did not expect, timing out at 10s
+each. Fixed for one file in `7e8495f`; the audit that followed found the same
+split-brain in 9 more, of which 4 were in the gate suite and 5 were shell
+harnesses pytest never collected at all.
+
+### Cross-references
+
+- §8 (`local_checks` anti-patterns) — this is the isolation axis of the same
+  concern; §8's shared-module rule covers gate *scope*, this covers gate
+  *inputs*.
+- §10 (environment-reachability prereqs) — what to do about a dependency you
+  legitimately cannot own.
+- §16 (gate-scoping) — narrow gates are cheap only when they are also honest.

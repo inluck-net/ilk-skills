@@ -96,6 +96,39 @@ the lint without changing behavior.
   everywhere — there are ~10 call sites across `run_ilk_loop_claude.sh` and
   `skills/ilk-launcher/scripts/stop.sh`, plus tests that stub `gtimeout`.
 
+## How we decide
+
+When two good things pull against each other, this is the order:
+
+1. **Stable** — it keeps running.
+2. **Accurate** — it does the right thing, and never claims more than it proved.
+3. **Fast** — it costs less wall-clock.
+
+Two clarifications, without which the ordering misleads:
+
+- **Reproducible is a precondition, not a rank.** "Stable" above means
+  *liveness* — the daemon stays up, the loop keeps moving. It does **not** mean
+  *deterministic*, which is not a competitor to accuracy but a prerequisite for
+  it. A gate that reads state it does not own doesn't produce a less accurate
+  answer; it produces an answer that cannot be checked at all. Fix determinism
+  before you argue about a result. (Field record: v0.9.76's batch gate reported
+  6 undeclared failures that were artifacts of test harnesses reading the live
+  daemon's `~/.ilk-data`, not defects — `7e8495f`, and the 2026-08-27 batch that
+  generalised it.)
+
+- **A proof beats a priority.** The ordering says which good to *sacrifice*; it
+  is the fallback, not the first move. Prefer making the constraint
+  mechanically checkable so you can have both. Parallelising the batch gate is
+  a speed change that risks accuracy — it was taken by proving the pass/fail
+  node-id set was byte-identical before and after, not by ranking. Reach for
+  the ordering only when no such proof is available.
+
+Corollary, and the one most often skipped: **a speed change is a claim like any
+other — it needs a number and a falsifier.** v0.9.71 added a per-test
+`--timeout` to cut gate wall-clock and made `gh-resolve` worse (two ceiling hits
+per iteration instead of one); a per-test timeout cannot bound total suite
+wall-clock. State what you measured and what would prove you wrong.
+
 ## Conventions
 
 - **Cross-platform parity.** Most runtime logic exists as both `*.sh` and
