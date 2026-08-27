@@ -29,13 +29,12 @@ plain_pid=""
 # shellcheck disable=SC2064
 trap 'rm -rf "$TMPDIR_TEST"; kill "$sched_pid" "$plain_pid" 2>/dev/null || true' EXIT
 
+# Sandbox: pin HOME + ILK_DATA_HOME to a temp root (AC-1..AC-3).
+source "$REPO_ROOT/skills/ilk-loop/scripts/_ilk_test_sandbox.sh"
+ilk_test_sandbox "$TMPDIR_TEST"
+
 pid_file="$TMPDIR_TEST/.ilk-data/scheduler.pid"
 mkdir -p "$(dirname "$pid_file")"
-
-# ILK_SKILL_HOME is required alongside the temp HOME: without it the skill-root
-# fallback probes $HOME/.codex|.cursor|.claude, none of which exist under the
-# temp HOME, and the run hangs instead of failing.
-export ILK_SKILL_HOME="$REPO_ROOT/skills"
 
 # --- case 1: a genuine scheduler holds the lock -------------------------------
 # The stand-in must be named scheduler.sh: the guard verifies the command line,
@@ -47,7 +46,7 @@ bash "$stub_dir/scheduler.sh" &
 sched_pid=$!
 echo "$sched_pid" > "$pid_file"
 
-output=$(HOME="$TMPDIR_TEST" bash "$SCHEDULER" --once --dry-run 2>&1) && rc=0 || rc=$?
+output=$(timeout 60 bash "$SCHEDULER" --once --dry-run 2>&1) && rc=0 || rc=$?
 
 if [[ "$rc" -ne 0 ]]; then
   fail "case 1: expected exit 0 on lock contention, got exit $rc"
@@ -67,7 +66,7 @@ sleep 300 &
 plain_pid=$!
 echo "$plain_pid" > "$pid_file"
 
-out2=$(HOME="$TMPDIR_TEST" timeout 60 bash "$SCHEDULER" --once --dry-run 2>&1) && rc2=0 || rc2=$?
+out2=$(timeout 60 bash "$SCHEDULER" --once --dry-run 2>&1) && rc2=0 || rc2=$?
 
 if [[ "$out2" == *"already running"* ]]; then
   fail "case 2: recycled PID $plain_pid read as lock contention — the scheduler would stay dead (got: $out2)"

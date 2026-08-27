@@ -40,9 +40,7 @@ assert_exit_code() {
 }
 
 # --- Setup: isolated environment ---
-FAKE_HOME="$REPO_ROOT/scratch/clone-log-test/home"
-rm -rf "$REPO_ROOT/scratch/clone-log-test"
-mkdir -p "$FAKE_HOME"
+FAKE_HOME="$(mktemp -d)"
 
 # Create a mock bootstrap script that always fails.
 MOCK_BOOTSTRAP="$FAKE_HOME/mock-bootstrap.sh"
@@ -53,14 +51,14 @@ exit 1
 EOF
 chmod +x "$MOCK_BOOTSTRAP"
 
-# Set up isolated scheduler log.
-export HOME="$FAKE_HOME"
+# Set up isolated scheduler log via the shared sandbox helper (AC-1..AC-3).
+source "$REPO_ROOT/skills/ilk-loop/scripts/_ilk_test_sandbox.sh"
+ilk_test_sandbox "$FAKE_HOME"
 SCHEDULER_LOG_DIR="$FAKE_HOME/.ilk-data/logs"
 SCHEDULER_LOG_FILE="$SCHEDULER_LOG_DIR/scheduler.log"
-mkdir -p "$SCHEDULER_LOG_DIR"
 
 cleanup() {
-  rm -rf "$REPO_ROOT/scratch/clone-log-test"
+  rm -rf "$FAKE_HOME"
 }
 trap cleanup EXIT
 

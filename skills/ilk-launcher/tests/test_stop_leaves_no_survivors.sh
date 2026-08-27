@@ -18,6 +18,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STOP_SCRIPT="${SCRIPT_DIR}/../scripts/stop.sh"
 SKILL_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
+# Sandbox: pin HOME + ILK_DATA_HOME to a temp root (AC-1..AC-3).
+source "${SKILL_ROOT}/ilk-loop/scripts/_ilk_test_sandbox.sh"
+
 PASS=0
 FAIL=0
 TESTS=()

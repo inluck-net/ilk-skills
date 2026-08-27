@@ -32,8 +32,9 @@ plain_pid=""
 # shellcheck disable=SC2064
 trap 'rm -rf "$TMPDIR_TEST"; kill "$fake_runner_pid" "$plain_pid" 2>/dev/null || true' EXIT
 
-export HOME="$TMPDIR_TEST"
-export ILK_SKILL_HOME="$REPO_ROOT/skills"
+# Sandbox: pin HOME + ILK_DATA_HOME to a temp root (AC-1..AC-3).
+source "$REPO_ROOT/skills/ilk-loop/scripts/_ilk_test_sandbox.sh"
+ilk_test_sandbox "$TMPDIR_TEST"
 
 # Replicate the pid-file path the dispatch sites use:
 #   ~/.ilk-data/projects/<key>/runtime/launcher/running.pid
