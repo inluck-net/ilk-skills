@@ -28,6 +28,51 @@ _DEFAULT_RESUME_SCRIPT = str(_REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" 
 _BASH = "/bin/bash"
 
 
+# ── heartbeat fragment ───────────────────────────────────────────────
+# Every other progress field on the row bottoms out at a git commit, so
+# inside a step the panel is blind by construction.  status_all derives
+# these four fields from the run dir; the renderer stays pure and merely
+# formats them.  A renderer that stats files is a renderer that can fail,
+# and it fails inside a 10-second refresh where nobody sees the traceback.
+
+_HEARTBEAT_FIELDS = ("run_id", "iteration", "iteration_elapsed_s", "heartbeat_s")
+
+
+def _fmt_elapsed(seconds: int) -> str:
+    """Format an elapsed duration compactly: ``42s`` / ``12m`` / ``3h25m``."""
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}m"
+
+
+def _heartbeat_fragment(entry: dict) -> str:
+    """Return ``  iter N · Xm · ♥Ys``, or ``""`` when unavailable.
+
+    Silent unless **all four** fields arrive as real integers.  Absent is the
+    pre-SP4 payload shape, null is a dead run (status_all suppresses a stale
+    heartbeat deliberately — a small number there reads as "working right
+    now"), and a partial or malformed subset can arrive because the renderer
+    and status_all are installed separately, through a symlinked plugin, and
+    a stale checkout can pair a new one with an old one.
+    """
+    vals = {}
+    for f in _HEARTBEAT_FIELDS:
+        v = entry.get(f)
+        if f == "run_id":
+            if not isinstance(v, str) or not v:
+                return ""
+        elif not isinstance(v, int) or isinstance(v, bool) or v < 0:
+            return ""
+        vals[f] = v
+    return (
+        f"  iter {vals['iteration']}"
+        f" \u00b7 {_fmt_elapsed(vals['iteration_elapsed_s'])}"
+        f" \u00b7 \u2665{vals['heartbeat_s']}s"
+    )
+
+
 def render_xbar(
     entries: list[dict],
     *,
@@ -115,6 +160,10 @@ def render_xbar(
             row += f"  running on {model}"
         elif state not in ("running", "none"):
             row += f"  ({state})"
+
+        # Sub-step liveness, last: it is the fastest-changing part of the row
+        # and the eye tracks a trailing field better than an interior one.
+        row += _heartbeat_fragment(e)
 
         lines.append(row)
 
