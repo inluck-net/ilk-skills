@@ -71,6 +71,11 @@ def pytest_configure(config) -> None:
         "guard and catches the raise; drop its recordings from the session "
         "ledger",
     )
+    config.addinivalue_line(
+        "markers",
+        "allow_real_data_home: exempt this test from the scheduler_sandbox "
+        "meta-test (AC-6); requires a reason",
+    )
 
 
 def _ambiguous_module_names() -> set[str]:
