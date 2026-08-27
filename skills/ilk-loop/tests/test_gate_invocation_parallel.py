@@ -1,16 +1,16 @@
-"""The batch gate invocation must declare its parallelism flag.
+"""The batch gate's parallelism decision is recorded and guarded.
 
-AC-1, AC-3, AC-6 from sub-plan the-batch-gate-runs-in-parallel.  The gate's
-invocation is composed from `.ilk-launch.json`'s `ship.suite.command` plus
-`ship.suite.flags` at `batch_gate.py:522-524`.  This test loads the config
-through `ship_config.load_ship_config` (the same resolution order the gate
-uses) and asserts:
+AC-3, AC-6 from sub-plan the-batch-gate-runs-in-parallel (re-scoped to a
+rejection after measurement).  The gate's invocation is composed from
+`.ilk-launch.json`'s `ship.suite.command` plus `ship.suite.flags` at
+`batch_gate.py:522-524`.  This test loads the config through
+`ship_config.load_ship_config` (the same resolution order the gate uses) and
+asserts:
 
-  1. The composed invocation contains an `-n` flag (AC-1).
-  2. Every `ship.baseline_red` node_id names a file that exists on disk,
+  1. Every `ship.baseline_red` node_id names a file that exists on disk,
      or a `::` prefix that resolves to one (AC-3 — plausible node ids).
-  3. A regression test so a later config edit cannot silently drop the flag
-     (AC-6).
+  2. A tripwire so a later config edit cannot silently add `-n` without a
+     measurement that justifies it (AC-6 inverted).
 """
 from __future__ import annotations
 
@@ -45,29 +45,43 @@ def _composed_invocation(cfg) -> str:
     return cmd if not flags else f"{cmd} {' '.join(flags)}"
 
 
-# ── AC-1: the invocation carries a parallelism flag ────────────────────────
+# ── AC-6 inverted: parallelism must not be silently re-adopted ─────────────
 
-class TestInvocationDeclaresParallelism:
-    """The composed invocation must contain an `-n` flag."""
+_TIMING_ARTIFACT = PROJECT_ROOT / "tests" / "baselines" / "gate-timing-2026-08-27.md"
 
-    def test_invocation_contains_n_flag(self, ship_cfg):
-        inv = _composed_invocation(ship_cfg)
-        tokens = inv.split()
-        has_n = any(
-            t == "-n" or t.startswith("-n") and len(t) > 2
-            for t in tokens
-        )
-        # Also accept `--dist=loadscope` or similar xdist patterns,
-        # but the expected form is `-n <N>` or `-n auto`.
-        assert has_n, (
-            f"composed invocation has no -n flag: {inv!r}"
-        )
 
-    def test_flags_list_has_n_entry(self, ship_cfg):
-        """Direct check on the flags list, not the composed string."""
+class TestParallelismRejected:
+    """Tripwire: if `-n` is added to flags, the timing artifact must justify it.
+
+    After measurement (2026-08-27), all parallel variants were slower than
+    serial and broke AC-2.  If someone re-adds `-n`, this test forces them to
+    produce a measurement where that N beats serial — otherwise it fails.
+    With no `-n` present the test passes trivially.
+    """
+
+    def test_n_flag_requires_timing_evidence(self, ship_cfg):
         flags = ship_cfg.ship["suite"].get("flags", [])
-        has_n = any(f == "-n" or f.startswith("-n") for f in flags)
-        assert has_n, f"flags list has no -n entry: {flags}"
+        n_flags = [f for f in flags if f == "-n" or (f.startswith("-n") and len(f) > 2)]
+        if not n_flags:
+            return  # no `-n` present — guard passes trivially
+
+        # An `-n` flag is present.  The timing artifact must record a variant
+        # for that N that beat serial, or the flag is unjustified.
+        assert _TIMING_ARTIFACT.is_file(), (
+            f"ship.suite.flags contains {n_flags} but {_TIMING_ARTIFACT} "
+            f"does not exist — add a measurement showing that N beats serial"
+        )
+
+        text = _TIMING_ARTIFACT.read_text(encoding="utf-8")
+        for flag in n_flags:
+            # Normalize: `-n 4` → `4`, `-n4` → `4`, `-nauto` → `auto`
+            n_value = flag.removeprefix("-n").strip() or "auto"
+            pattern = f"-n {n_value}" if len(flag) > 2 else flag
+            # The artifact must have a row for this N marked as beating serial
+            assert f"| {pattern}" in text or f"|  `-n {n_value}`" in text, (
+                f"ship.suite.flags contains '{flag}' but gate-timing artifact "
+                f"has no row for that N — add a measurement where it beats serial"
+            )
 
 
 # ── AC-3: baseline_red node_ids are plausible ─────────────────────────────
