@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import sys
+import time
 from pathlib import Path
 
 # ── sibling imports ──────────────────────────────────────────────────
@@ -120,6 +123,94 @@ def _latest_jsonl_model(logs_dir: Path) -> str:
         return rec.get("model") or ""
     except (json.JSONDecodeError, OSError):
         return ""
+
+
+# ── run-dir liveness (the panel's heartbeat) ────────────────────────
+# Every other progress field on this payload bottoms out at a git commit:
+# the sub-plan's `current_step` is bumped *in a commit*, and
+# `status_progress.collect_step_commit_timestamps` derives pace from commit
+# timestamps.  Inside a step the panel is therefore blind by construction —
+# measured 2026-08-27, a row sat unchanged for 12 minutes while the loop was
+# healthy (54 tool calls, log written 2 seconds earlier).
+#
+# The current iteration log's mtime is the cheap signal that fixes it, and it
+# needs nothing from the worker.
+
+NULL_LIVENESS = {
+    "run_id": None,
+    "iteration": None,
+    "iteration_elapsed_s": None,
+    "heartbeat_s": None,
+}
+
+_ITER_LOG_RE = re.compile(r"^iter-(\d+)\.log$")
+
+
+def _run_dir_liveness(logs_dir: Path) -> dict:
+    """Derive per-iteration liveness from the newest run dir.
+
+    Returns ``run_id`` (the run dir name), ``iteration`` (count of
+    ``iter-NN.log`` files, which is also the current iteration number),
+    ``iteration_elapsed_s`` (age of the current iteration log's creation) and
+    ``heartbeat_s`` (seconds since it was last written).  Any of those being
+    underivable yields :data:`NULL_LIVENESS` — all four null, never a partial
+    dict, because a half-populated heartbeat reads as liveness too.
+
+    **Cost bound.** Two directory listings (``logs/runs/`` and the newest run
+    dir) plus **one** ``stat`` of one ``iter-NN.log``.  It opens no file at
+    all.  That is deliberate: the ``iter-NN.log.jsonl`` transcripts sitting
+    beside those logs were measured at 981198 / 844913 / 634238 bytes for
+    three iterations of a single run, and this payload is recomputed for
+    every registered project on a 10-second menu-bar refresh.  `os.scandir`
+    rather than `Path.iterdir` so ``is_dir()`` is answered from the cached
+    dirent instead of a stat per entry.
+
+    Never raises: `status_all` feeds a plugin that refreshes every 10s, and an
+    exception here blanks the panel for *every* project, not just this one.
+    """
+    try:
+        runs_dir = logs_dir / "runs"
+        with os.scandir(runs_dir) as it:
+            run_names = sorted(
+                (e.name for e in it if e.is_dir()), reverse=True
+            )
+        if not run_names:
+            return dict(NULL_LIVENESS)
+        run_id = run_names[0]
+
+        # Highest-numbered iter-NN.log.  Matched on the numeric group rather
+        # than lexically so a 3-digit iteration cannot sort below iter-99, and
+        # so `iter-NN.log.jsonl` — which does not match — can neither be
+        # stat'ed nor counted as an iteration.
+        best_n, best_path, count = -1, None, 0
+        with os.scandir(runs_dir / run_id) as it:
+            for e in it:
+                m = _ITER_LOG_RE.match(e.name)
+                if not m:
+                    continue
+                count += 1
+                n = int(m.group(1))
+                if n > best_n:
+                    best_n, best_path = n, e.path
+        if best_path is None:
+            # A run dir that exists but has not written its first iteration
+            # log yet has no heartbeat to report.
+            return dict(NULL_LIVENESS)
+
+        st = os.stat(best_path)
+        now = time.time()
+        # st_birthtime where the platform has it (macOS/BSD); st_ctime is the
+        # closest portable stand-in on Linux, where it is the inode-change
+        # time and so still a lower bound on the iteration's age.
+        started = getattr(st, "st_birthtime", st.st_ctime)
+        return {
+            "run_id": run_id,
+            "iteration": count,
+            "iteration_elapsed_s": max(0, int(now - started)),
+            "heartbeat_s": max(0, int(now - st.st_mtime)),
+        }
+    except (OSError, ValueError):
+        return dict(NULL_LIVENESS)
 
 
 def _blocked_info(
@@ -390,6 +481,14 @@ def resolve_project_status(project_dir: Path) -> dict:
     logs_dir = external_logs_dir(key)
     model = _latest_jsonl_model(logs_dir)
 
+    # Run-dir liveness, gated on sentinel.alive.  Nothing is computed for a
+    # dead project: a stale heartbeat from a finished run is worse than none,
+    # because a small number in that field reads as "working right now".
+    liveness = (
+        _run_dir_liveness(logs_dir) if sentinel.get("alive")
+        else dict(NULL_LIVENESS)
+    )
+
     # Needs-human blocked classification (blacklist / stale-running / stalled).
     # `master_is_active`, not `active_master`: the `stalled` rule means "an
     # ACTIVE master has no runnable sub-plan".  A queued master that cannot
@@ -439,6 +538,7 @@ def resolve_project_status(project_dir: Path) -> dict:
         "runnable": runnable,
         "parked": parked,
         "manually_runnable": manually_runnable,
+        **liveness,
         **blocked,
     }
 
