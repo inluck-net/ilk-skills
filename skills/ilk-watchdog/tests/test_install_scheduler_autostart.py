@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import _SchedulerSandbox
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 INSTALLER = REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "install-scheduler-autostart.sh"
 SCHEDULER = REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "scheduler.sh"
@@ -23,8 +25,10 @@ HEALTH_LABEL = "net.inluck.ilk.scheduler-health"
 pytestmark = pytest.mark.skipif(sys.platform != "darwin", reason="macOS LaunchAgent installer")
 
 
-def _run(args, home: Path):
-    env = {**os.environ, "HOME": str(home), "ILK_AUTOSTART_NO_LOAD": "1"}
+def _run(args, sandbox: _SchedulerSandbox, *, env_override: dict | None = None):
+    env = {**sandbox.env, "ILK_AUTOSTART_NO_LOAD": "1"}
+    if env_override:
+        env.update(env_override)
     return subprocess.run(
         ["bash", str(INSTALLER), *args],
         capture_output=True, text=True, timeout=30, env=env, encoding="utf-8",
@@ -36,8 +40,8 @@ def test_installer_exists_and_executable():
     assert os.access(INSTALLER, os.X_OK), "installer should be executable"
 
 
-def test_install_writes_valid_plist(tmp_path):
-    res = _run([], tmp_path)
+def test_install_writes_valid_plist(tmp_path, scheduler_sandbox):
+    res = _run([], scheduler_sandbox)
     assert res.returncode == 0, res.stderr
     plist = tmp_path / "Library" / "LaunchAgents" / f"{LABEL}.plist"
     assert plist.is_file(), f"plist not written: {res.stdout}\n{res.stderr}"
@@ -62,9 +66,9 @@ def test_install_writes_valid_plist(tmp_path):
     assert str(tmp_path / ".local" / "bin") in agent_path
 
 
-def test_install_writes_health_check_plist(tmp_path):
+def test_install_writes_health_check_plist(tmp_path, scheduler_sandbox):
     """AC-7: the installer also writes a health check agent plist."""
-    res = _run([], tmp_path)
+    res = _run([], scheduler_sandbox)
     assert res.returncode == 0, res.stderr
     plist = tmp_path / "Library" / "LaunchAgents" / f"{HEALTH_LABEL}.plist"
     assert plist.is_file(), f"health check plist not written: {res.stdout}\n{res.stderr}"
@@ -82,9 +86,9 @@ def test_install_writes_health_check_plist(tmp_path):
     assert "scheduler_health" in argv[1]
 
 
-def test_install_is_idempotent(tmp_path):
-    first = _run([], tmp_path)
-    second = _run([], tmp_path)
+def test_install_is_idempotent(tmp_path, scheduler_sandbox):
+    first = _run([], scheduler_sandbox)
+    second = _run([], scheduler_sandbox)
     assert first.returncode == 0 and second.returncode == 0
     plist = tmp_path / "Library" / "LaunchAgents" / f"{LABEL}.plist"
     assert plist.is_file()
@@ -93,30 +97,30 @@ def test_install_is_idempotent(tmp_path):
     assert health_plist.is_file()
 
 
-def test_uninstall_removes_plist(tmp_path):
-    _run([], tmp_path)
+def test_uninstall_removes_plist(tmp_path, scheduler_sandbox):
+    _run([], scheduler_sandbox)
     plist = tmp_path / "Library" / "LaunchAgents" / f"{LABEL}.plist"
     health_plist = tmp_path / "Library" / "LaunchAgents" / f"{HEALTH_LABEL}.plist"
     assert plist.is_file()
     assert health_plist.is_file()
-    res = _run(["--uninstall"], tmp_path)
+    res = _run(["--uninstall"], scheduler_sandbox)
     assert res.returncode == 0, res.stderr
     assert not plist.exists(), "uninstall should remove the scheduler plist"
     assert not health_plist.exists(), "uninstall should remove the health check plist"
 
 
-def test_plist_passes_plutil_lint(tmp_path):
+def test_plist_passes_plutil_lint(tmp_path, scheduler_sandbox):
     if not shutil.which("plutil"):
         pytest.skip("plutil not available")
-    _run([], tmp_path)
+    _run([], scheduler_sandbox)
     plist = tmp_path / "Library" / "LaunchAgents" / f"{LABEL}.plist"
     res = subprocess.run(["plutil", "-lint", str(plist)], capture_output=True, text=True, encoding="utf-8")
     assert res.returncode == 0, res.stdout + res.stderr
 
 
-def _run_real(args, home: Path, timeout: int = 120):
+def _run_real(args, sandbox: _SchedulerSandbox, timeout: int = 120):
     """Run the installer WITHOUT ILK_AUTOSTART_NO_LOAD (touches real launchd)."""
-    env = {**os.environ, "HOME": str(home)}
+    env = {**sandbox.env}
     env.pop("ILK_AUTOSTART_NO_LOAD", None)
     return subprocess.run(
         ["bash", str(INSTALLER), *args],
@@ -166,7 +170,7 @@ def _read_scheduler_pid(home: Path) -> int | None:
     not os.environ.get("ILK_TEST_LIVE_LAUNCHCTL"),
     reason="Set ILK_TEST_LIVE_LAUNCHCTL=1 to run live launchctl tests (unloads real scheduler)",
 )
-def test_restart_durability_keeps_agent_loaded(tmp_path):
+def test_restart_durability_keeps_agent_loaded(tmp_path, scheduler_sandbox):
     """AC-4: crash-kill → launchd restarts → agent still loaded.
 
     Exercises KeepAlive={SuccessfulExit:false}: after a SIGKILL crash,
@@ -190,14 +194,14 @@ def test_restart_durability_keeps_agent_loaded(tmp_path):
         pytest.skip(f"{LABEL} already loaded — skipping to avoid disruption")
 
     # Install for real (no ILK_AUTOSTART_NO_LOAD).
-    res = _run_real([], tmp_path)
+    res = _run_real([], scheduler_sandbox)
     assert res.returncode == 0, f"install failed: {res.stdout}\n{res.stderr}"
 
     try:
         # Wait for the daemon to start and write its pidfile.
         pid1 = None
         for _ in range(30):
-            pid1 = _read_scheduler_pid(tmp_path)
+            pid1 = _read_scheduler_pid(scheduler_sandbox.root)
             if pid1 is not None:
                 break
             import time
@@ -216,7 +220,7 @@ def test_restart_durability_keeps_agent_loaded(tmp_path):
         for _ in range(15):
             import time
             time.sleep(2)
-            pid2 = _read_scheduler_pid(tmp_path)
+            pid2 = _read_scheduler_pid(scheduler_sandbox.root)
             if pid2 is not None and pid2 != pid1:
                 break
             # pidfile might still be the dead PID; wait for it to change.
@@ -237,5 +241,5 @@ def test_restart_durability_keeps_agent_loaded(tmp_path):
 
     finally:
         # Always uninstall to clean up, then kill any lingering daemon.
-        _run_real(["--uninstall"], tmp_path)
+        _run_real(["--uninstall"], scheduler_sandbox)
         _kill_scheduler_daemon()
