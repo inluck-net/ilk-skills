@@ -95,43 +95,17 @@ class TestSubprocessResolvesInsideSandbox:
 # ── AC-4  Scheduler writes to sandbox ────────────────────────────────────────
 
 class TestSchedulerWritesToSandbox:
-    """AC-4: ``scheduler.sh`` under the fixture writes pidfile and logs inside.
+    """AC-4: ``scheduler.sh`` under the fixture writes state and logs inside.
 
     The pidfile is a lock — scheduler.sh's EXIT trap (``_scheduler_cleanup``,
     line 111) removes it on exit, so we cannot check existence *after* the
-    process.  Instead, a wrapper script snapshots the pidfile while the
-    scheduler is still running and reports whether it landed inside the sandbox.
-    """
+    process.  ``scheduler.state.json`` is written at startup and never removed
+    (scheduler.sh:22-27; no ``rm -f`` targets it).  A completed run also
+    leaves ``logs/scheduler.log``.  Both are durable evidence that the
+    scheduler ran inside the sandbox.
 
-    def test_pidfile_in_sandbox(self, scheduler_sandbox):
-        wrapper = (
-            f'bash "{SCHEDULER}" --once --dry-run >/dev/null 2>&1 &\n'
-            "spid=$!\n"
-            # Busy-wait up to 5s for the pidfile to appear.
-            f'pidfile="{scheduler_sandbox.root}/.ilk-data/scheduler.pid"\n'
-            "for i in $(seq 1 50); do\n"
-            '  if [[ -f "$pidfile" ]]; then\n'
-            '    head -1 "$pidfile"\n'
-            "    wait $spid 2>/dev/null || true\n"
-            "    exit 0\n"
-            "  fi\n"
-            "  sleep 0.1\n"
-            "done\n"
-            "wait $spid 2>/dev/null || true\n"
-            "echo PIDFILE_NOT_FOUND >&2\n"
-            "exit 1\n"
-        )
-        result = subprocess.run(
-            ["bash", "-c", wrapper],
-            capture_output=True, text=True, timeout=30,
-            env=scheduler_sandbox.env,
-        )
-        assert result.returncode == 0, (
-            f"pidfile not found in sandbox: {result.stderr.strip()}"
-        )
-        # The wrapper printed the pidfile contents — sanity-check it is a PID.
-        pid_text = result.stdout.strip()
-        assert pid_text.isdigit(), f"pidfile contents not a PID: {pid_text!r}"
+    See tests/baselines/sp6-flake-evidence-2026-08-27.md for the measurement.
+    """
 
     def test_sandbox_receives_scheduler_state(self, scheduler_sandbox):
         """AC-4 (deterministic): run --once --dry-run to completion in foreground.
