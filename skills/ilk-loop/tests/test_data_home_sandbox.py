@@ -133,6 +133,44 @@ class TestSchedulerWritesToSandbox:
         pid_text = result.stdout.strip()
         assert pid_text.isdigit(), f"pidfile contents not a PID: {pid_text!r}"
 
+    def test_sandbox_receives_scheduler_state(self, scheduler_sandbox):
+        """AC-4 (deterministic): run --once --dry-run to completion in foreground.
+
+        The pidfile is removed by the EXIT trap, so catching it mid-life requires
+        a race.  ``scheduler.state.json`` is written at startup and never removed
+        (scheduler.sh:22-27; no ``rm -f`` targets it).  A completed run also
+        leaves ``logs/scheduler.log``.  Both are durable evidence that the
+        scheduler ran inside the sandbox.
+
+        See tests/baselines/sp6-flake-evidence-2026-08-27.md for the measurement.
+        """
+        result = subprocess.run(
+            ["bash", str(SCHEDULER), "--once", "--dry-run"],
+            capture_output=True, text=True, timeout=30,
+            env=scheduler_sandbox.env,
+        )
+        assert result.returncode == 0, (
+            f"--once --dry-run failed: rc={result.returncode} "
+            f"stderr={result.stderr.strip()!r}"
+        )
+
+        # State file written at startup, never removed.
+        state_path = scheduler_sandbox.root / ".ilk-data" / "scheduler.state.json"
+        assert state_path.exists(), (
+            f"scheduler.state.json missing from sandbox: {state_path}"
+        )
+        import json
+        state = json.loads(state_path.read_text())
+        assert isinstance(state.get("pid"), int), (
+            f"scheduler.state.json pid not an int: {state!r}"
+        )
+
+        # Log file written during the run.
+        log_path = scheduler_sandbox.root / ".ilk-data" / "logs" / "scheduler.log"
+        assert log_path.exists(), (
+            f"scheduler.log missing from sandbox: {log_path}"
+        )
+
     def test_logs_in_sandbox(self, scheduler_sandbox):
         result = subprocess.run(
             ["bash", str(SCHEDULER), "--once", "--dry-run"],
