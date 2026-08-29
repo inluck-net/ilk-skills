@@ -306,6 +306,7 @@ class TestSupervisedOnlyUnaffected:
         p = _HERE / "test_plan_lint_supervised_only.py"
         assert p.exists(), "test_plan_lint_supervised_only.py must exist"
 
+    @pytest.mark.timeout(180)
     def test_supervised_only_tests_still_pass(self) -> None:
         r = subprocess.run(
             [sys.executable, "-m", "pytest",
