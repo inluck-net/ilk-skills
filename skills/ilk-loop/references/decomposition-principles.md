@@ -907,6 +907,21 @@ planner must still verify baseline-green. The rule is "prefer
 change-scoped; if whole-project, verify baseline", not "never
 whole-project".
 
+### Runner-prefix stripping (2026-08-29)
+
+`_is_whole_suite_command` now strips leading runner prefixes before
+classifying a gate command. Previously, `bunx vitest run`,
+`pnpm dlx vitest run`, and `bun run test:non-ui:convex` were all
+classified as "scoped" because the runner prefix (`bunx`, `pnpm dlx`,
+`bun run`) landed in the positional list and the real program was
+hidden. This created pressure to edit a gate command to satisfy the
+linter rather than to be correct.
+
+The fix strips `bunx`, `npx`, `pnpm dlx`, `yarn dlx`, and the
+`<pm> run <script>` forms before parsing positionals. For script forms
+(`bun run <script>`), the remaining token is a script name, not a path
+— the command is classified as BROAD (the script could do anything).
+
 ### Budget-vs-gate-timeout warning
 
 A sub-plan's per-step `local_checks` declare `timeout:` values that sum to the
@@ -1197,6 +1212,22 @@ The plan-time gate catches the defect at proposal review — the cheaper
 interception point. Runtime enforcement (the runner checking
 `base_branch` before committing) is a possible follow-up but not
 implemented here.
+
+### Base-ref resolution (2026-08-29)
+
+The per-path check (`lint_scope_path_off_base_branch`) now honours the
+master's declared `base_branch:` and resolves against `origin/<base>`
+when a remote-tracking ref exists, falling back to the local `<base>`.
+Previously it always validated against the literal `"main"` using the
+local ref, which misfired on any repo whose integration branch is not
+`main` or whose local `main` is stale.
+
+**Field record:** A master declaring `base_branch: dev` on a repo where
+local `main` was 2511 commits behind `origin/main` produced a HARD
+finding on every batch because the check validated against the stale
+local `main` instead of `origin/dev`. Both lints now use the same
+resolver (`_resolve_base_ref`) so they cannot disagree about what
+`base_branch:` means.
 
 ### Field record
 
