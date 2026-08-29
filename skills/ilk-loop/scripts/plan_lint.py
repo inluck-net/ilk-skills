@@ -2521,6 +2521,194 @@ def lint_gate_budget(
     return findings
 
 
+# ── Gate PATH portability check ───────────────────────────────────────────
+
+# Shell builtins and keywords that are never "executables" to resolve.
+_SHELL_BUILTINS_AND_KEYWORDS = frozenset({
+    "cd", "echo", "export", "set", "unset", "shift", "source", ".",
+    "eval", "exec", "exit", "return", "trap", "wait", "read", "declare",
+    "typeset", "local", "readonly", "true", "false", "test", "[", "[[",
+    "for", "while", "until", "if", "then", "else", "elif", "fi", "do",
+    "done", "case", "esac", "in", "function", "select", "time", "coproc",
+})
+
+# Pattern for VAR=value prefix tokens.
+_VAR_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _parse_path_prelude_dirs(prelude: str) -> list[str]:
+    """Extract directory list from a ``export PATH="dir1:dir2:$PATH"`` prelude.
+
+    Returns a list of directories added by the prelude, in order.
+    Handles both single and double quotes, and ``$PATH`` at start or end.
+    """
+    if not prelude:
+        return []
+    # Match: export PATH="..." or export PATH='...'
+    m = re.search(r'export\s+PATH=["\']([^"\']+)["\']', prelude)
+    if not m:
+        return []
+    raw = m.group(1)
+    dirs = []
+    for part in raw.split(":"):
+        part = part.strip()
+        if part and part != "$PATH":
+            # Expand ~ to the user's home.
+            if part.startswith("~"):
+                part = str(Path.home()) + part[1:]
+            dirs.append(part)
+    return dirs
+
+
+def _get_effective_path_dirs(project: Path) -> tuple[list[str] | None, str]:
+    """Compute the effective PATH directories a gate will resolve against.
+
+    Returns (dirs, error_message).  On success, ``dirs`` is a list of
+    directories and ``error_message`` is "".  On failure, ``dirs`` is None
+    and ``error_message`` names what failed (AC-7).
+    """
+    # 1. getconf PATH — the POSIX-guaranteed floor.
+    try:
+        result = subprocess.run(
+            ["getconf", "PATH"], capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            return None, f"getconf PATH exited {result.returncode}"
+        posix_path = result.stdout.strip()
+        if not posix_path:
+            return None, "getconf PATH returned empty"
+        dirs = [d for d in posix_path.split(":") if d]
+    except FileNotFoundError:
+        return None, "getconf not found"
+    except subprocess.TimeoutExpired:
+        return None, "getconf PATH timed out"
+
+    # 2. Append directories from path_prelude.
+    try:
+        from run_local_checks import _read_path_prelude  # noqa: E402
+        prelude = _read_path_prelude(project)
+    except Exception:
+        prelude = ""
+    prelude_dirs = _parse_path_prelude_dirs(prelude)
+    dirs.extend(prelude_dirs)
+
+    return dirs, ""
+
+
+def _leading_executable(cmd: str) -> str | None:
+    """Find the leading executable token in a shell command.
+
+    Skips VAR=value prefixes and shell builtins/keywords (AC-6).
+    Returns None if no executable is found (pure builtin/keyword command).
+    """
+    # Strip surrounding quotes that the YAML parser may leave.
+    cmd = cmd.strip()
+    # Remove outer quotes if present (from YAML extraction).
+    if len(cmd) >= 2 and cmd[0] == cmd[-1] and cmd[0] in ('"', "'"):
+        cmd = cmd[1:-1]
+    tokens = cmd.split()
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        # Strip any leading quotes or path components for comparison.
+        bare = token.split("/")[-1].strip("'\"")
+        # Skip shell separators.
+        if token in ("&&", "||", ";", "|", ";;", ";&", ";;&"):
+            i += 1
+            continue
+        if _VAR_ASSIGN_RE.match(token):
+            i += 1
+            continue
+        if bare in _SHELL_BUILTINS_AND_KEYWORDS:
+            # Skip the builtin/keyword and its arguments until a separator.
+            i += 1
+            # Skip arguments to builtins (tokens that don't look like separators).
+            while i < len(tokens):
+                arg = tokens[i]
+                # Shell separators start a new command.
+                if arg in ("&&", "||", ";", "|", ";;", ";&", ";;&"):
+                    break
+                i += 1
+            continue
+        # This is the leading executable.
+        return bare
+    return None
+
+
+def _cmd_for_display(cmd: str) -> str:
+    """Strip VAR=value prefixes from command for display in findings."""
+    cmd = cmd.strip()
+    # Remove outer quotes if present (from YAML extraction).
+    if len(cmd) >= 2 and cmd[0] == cmd[-1] and cmd[0] in ('"', "'"):
+        cmd = cmd[1:-1]
+    tokens = cmd.split()
+    # Skip VAR=value prefixes.
+    i = 0
+    while i < len(tokens) and _VAR_ASSIGN_RE.match(tokens[i]):
+        i += 1
+    return " ".join(tokens[i:]) if i > 0 else cmd
+
+
+def lint_gate_executable_on_driver_path(text: str, slug: str) -> list[str]:
+    """Flag a gate command whose leading executable cannot resolve on the driver's PATH.
+
+    AC-4: Finding names the executable AND the search space.
+    AC-5: bunx produces a finding with no prelude; silenced with prelude.
+    AC-6: Shell builtins and VAR=value prefixes are not reported.
+    AC-7: Undeterminable PATH ⇒ ``unknown``, never silent pass.
+    AC-8: Registered in ALL_CHECKS.
+    """
+    findings: list[str] = []
+    commands = _extract_all_local_checks_commands(text)
+
+    if not commands:
+        return findings
+
+    # Resolve project root for reading path_prelude.
+    project = _resolve_project_root()
+
+    # Get the effective PATH once.
+    path_dirs, path_error = _get_effective_path_dirs(project)
+
+    for cmd in commands:
+        exe = _leading_executable(cmd)
+        if exe is None:
+            continue  # pure builtin/keyword command (AC-6)
+
+        # If PATH cannot be determined, report unknown (AC-7).
+        if path_dirs is None:
+            display_cmd = _cmd_for_display(cmd)[:80]
+            findings.append(
+                f"WARN {slug}: gate command '{display_cmd}' starts with "
+                f"'{exe}' but effective PATH is unknown — {path_error}. "
+                f"Cannot verify portability."
+            )
+            continue
+
+        # Check if the executable resolves on the effective PATH.
+        found = False
+        for d in path_dirs:
+            candidate = Path(d) / exe
+            if candidate.exists() and (candidate.is_file() or candidate.is_symlink()):
+                # Check execute permission (POSIX).
+                import os
+                if os.access(candidate, os.X_OK):
+                    found = True
+                    break
+
+        if not found:
+            # AC-4: name both the executable and the search space.
+            search_space = ":".join(path_dirs)
+            display_cmd = _cmd_for_display(cmd)[:80]
+            findings.append(
+                f"WARN {slug}: gate command '{display_cmd}' starts with "
+                f"'{exe}' which was not found on the driver's PATH. "
+                f"Searched: {search_space}"
+            )
+
+    return findings
+
+
 ALL_CHECKS = (
     lint_gate_budget,
     lint_envprereq_fallback_contradiction,
@@ -2545,6 +2733,7 @@ ALL_CHECKS = (
     lint_scope_path_off_base_branch,
     lint_shared_module_gate,
     lint_gate_extractable,
+    lint_gate_executable_on_driver_path,
     lint_redfirst_step0_under_frontmatter_gate,
     lint_exit_status_discarded,
     lint_broken_process_wait,
