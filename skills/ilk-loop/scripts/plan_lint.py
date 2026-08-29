@@ -3483,8 +3483,9 @@ def lint_batch_has_no_suite(
 def lint_file(path: str | Path, master_text: str = "") -> list[str]:
     """Run all checks against one sub-plan file. Returns finding messages.
 
-    When *master_text* is provided, the slug-collision check and the
-    base-ref resolution check are also run.
+    When *master_text* is provided, the slug-collision check is also run,
+    and the base-ref resolution check uses the master's declared
+    ``base_branch:``.
     """
     p = Path(path)
     slug = p.stem
@@ -3492,7 +3493,7 @@ def lint_file(path: str | Path, master_text: str = "") -> list[str]:
     findings: list[str] = []
     for check in ALL_CHECKS:
         findings.extend(check(text, slug))
-    # Slug-collision and base-ref checks require master_text context.
+    # Slug-collision check requires master_text context.
     if master_text:
         master_plan_slug = ""
         m = _MASTER_PLAN_RE.search(master_text)
@@ -3507,6 +3508,9 @@ def lint_file(path: str | Path, master_text: str = "") -> list[str]:
             base_ref=base_branch or "main",
             _is_default_base=is_default,
         ))
+    else:
+        # No master_text — run the off-base check with default "main".
+        findings.extend(lint_scope_path_off_base_branch(text, slug))
     return findings
 
 
