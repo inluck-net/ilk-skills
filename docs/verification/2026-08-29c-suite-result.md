@@ -91,3 +91,56 @@ harnesses are in neither the 2492-test suite nor the baseline:
 - `test_scheduler_scan_error_reason.sh` — **PASS**
 - `test_scheduler.sh` — **FAIL**, and fails identically at `6aaf28b` in a clean
   worktree. Pre-existing, not attributed.
+
+---
+
+# AC-5 — the two behavioural claims, proven end to end
+
+A green suite does not prove either of the things this batch exists to deliver.
+Both were exercised for real.
+
+## Claim 1 — a `gtimeout`-killed iteration produces a postmortem
+
+Real runner, stub agent on `PATH`, real `gtimeout` bound, dirty tree at kill
+(the condition that used to destroy the record):
+
+```
+sentinel state:   timeout
+.ilk-loop.log:    720 bytes          (start record + summary)
+postmortems/:     absent before collect.py
+collect.py  ->    postmortems/20260829-203015.md
+                  classification: "timeout-bound"
+```
+
+The full chain the batch exists to deliver: killed iteration → record →
+classifiable → postmortem, which is the artifact `scheduler.sh:510` reads.
+
+## Claim 2 — three no-progress launches stop being dispatched, no postmortem present
+
+`postmortems/` absent throughout, verified before and after.
+
+**A project the scheduler has already seen** — the observed rezmac scenario:
+
+```
+launch 1 (12:01)  count=1  allow
+launch 2 (12:37)  count=2  allow
+launch 3 (13:12)  count=3  BLOCK   <- the relaunch that actually happened
+```
+
+**A project never seen before** gets one free launch first, per invariant 5
+(nothing may be bounded for never having been seen), so it blocks on the 4th:
+
+```
+launch 1  progressed=true (first sight)  count=0  allow
+launch 2  count=1  allow
+launch 3  count=2  allow
+launch 4  count=3  BLOCK
+```
+
+Both are correct and are stated here because "three launches" is true of the
+observed case and off by one for a brand-new project — worth knowing before
+someone reads a 4th dispatch as a bug.
+
+**The ack clears it** (AC-8): writing
+`runtime/launcher/blacklist-cleared.json` — the same file `/ilk-resume` and
+`blacklist_status.py` use — yields `cleared=true`. One gesture, both bounds.
