@@ -166,6 +166,62 @@ The summary log (`.ilk-loop.log`) records one line per iteration:
 
 Per-iteration logs (`iter-NNN.jsonl`) contain finer-grained events.
 
+**Separators are spaced (`", "` / `": "`), not compact.** Verified against a
+real `.ilk-loop.log` before this section was written. Readers `json.loads` each
+line, so the spacing is not load-bearing — but a *new* writer must match it, and
+the compact-separator rule that F2 pinned belongs to **Contract 2b**, not here.
+Applying 2b's rule to this file is an easy and wrong inference.
+
+### Two records per iteration: `started`, then the summary (2026-08-29)
+
+A record is appended **before** the agent is invoked:
+
+```json
+{"run_id": "20260829-193429", "cli": "claude", "iteration": 1, "timestamp": "2026-08-29T19:34:29+0800", "project": "/path/to/proj", "model": "test-model", "status": "started"}
+```
+
+Then, on completion, the full summary line as before. The two pair on
+`(run_id, iteration)`. **A `status: "started"` record with no matching summary
+means the iteration was killed.**
+
+Why it exists — and what it does *not* fix. `gtimeout` kills the **agent**; the
+runner survives and writes the summary normally. Measured 2026-08-29 across
+four real runs:
+
+| runner | tree at kill | `.ilk-loop.log` |
+|---|---|---|
+| HEAD | clean / dirty | 415 / 423 bytes, `stop_reason=timeout` |
+| `f5674c6^` | clean | 396 bytes, `stop_reason=timeout` |
+| `f5674c6^` | dirty | **0 bytes** |
+
+The 0-byte case is `f5674c6`'s defect (the WIP commit's stdout joining
+`preserve_dirty_tree_on_timeout`'s return value, `int()` raising, the python
+block dying before `print`), and it reproduces only with a dirty tree. It is
+fixed. **A `gtimeout` kill was never the gap.**
+
+The gap is a SIGKILL to the **runner** — `stop.sh`, a `launchctl bootout`, the
+machine dying. Measured at HEAD before the start record:
+
+```
+.ilk-loop.log   NO-FILE  (zero records)
+sentinel        state: running    <- stale-running crash artifact
+orphaned        gtimeout ... claude -p   survived, reparented
+```
+
+and after:
+
+```
+.ilk-loop.log   301 bytes   {"run_id": ..., "status": "started"}
+```
+
+This matters because `.ilk-loop.log` is `collect.py`'s only input and
+`scheduler.sh:510` builds its blacklist from postmortems derived from it. No
+records ⇒ no postmortem ⇒ dispatchable forever.
+
+> Note the sentinel is still left at `state: "running"` by a runner SIGKILL.
+> That is invariant 4 of Contract 1 (a crash artifact the watchdog must catch),
+> and it is **not** fixed here.
+
 ### Dedup key
 
 `(run_id, iteration)` — a given run should have at most one summary line
@@ -174,7 +230,9 @@ per iteration. Readers should dedup if re-processing.
 ### Who writes
 
 - **`run_ilk_loop_claude.ps1`** — appends to `$JsonlLog` (~line 799).
-- **`run_ilk_loop_claude.sh`** — appends via `>>` (shell redirect).
+- **`run_ilk_loop_claude.sh`** — appends via `>>` (shell redirect). Since
+  2026-08-29 it writes **twice** per iteration: the `status: "started"` record
+  before `invoke_claude_iteration`, and the summary after.
 
 ### Who reads
 
@@ -201,6 +259,16 @@ per iteration. Readers should dedup if re-processing.
 4. **Each iteration produces exactly one summary record.** The
    `(run_id, iteration)` pair is the dedup key. A missing record means
    the iteration was interrupted before writing.
+
+5. **A reader MUST tolerate a `status: "started"` record with no summary.**
+   That is a killed iteration, not corruption. `collect.py` classifies it
+   `timeout-bound` when the sentinel says `timeout`.
+
+6. **"Started then killed" and "never ran" are different labels.** A run with
+   **no** records degrades to `no-evidence`/`never-ran`; a run with a start
+   record does not. They call for different actions — `never-ran` points at an
+   environment fault, `timeout-bound` at the work itself — so the sentinel's
+   `timeout` state is authoritative only when records exist.
 
 ### Bug reference (20260616-175453)
 
