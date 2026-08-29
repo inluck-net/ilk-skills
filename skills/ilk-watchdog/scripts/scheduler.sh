@@ -425,6 +425,157 @@ get_rapid_terminal_backoff() {
   echo "0 0"
 }
 
+# --- no-progress dispatch bound (2026-08-29) ---------------------------------
+#
+# read_blacklist_from_postmortems below builds the blacklist from postmortem
+# FILES.  No postmortem => no entry => dispatchable forever.  That is how three
+# launches ran on rezmac on 2026-08-29 (12:01, 12:37, 13:12) with the scheduler
+# log reading promote: / dispatch: / skip-busy throughout.
+#
+#   A bound that requires a successful postmortem is a bound that switches off
+#   exactly when things are worst.
+#
+# This bound is ADDITIVE and deliberately depends on nothing but launch history:
+# consecutive launches that each ended non-clean with no plan progress.
+# read_blacklist_from_postmortems is unchanged (AC-7) and remains the richer
+# signal when a postmortem does exist.
+#
+# GAP, recorded rather than left implied (AC-6): a project driven by a manual
+# `/ilk-run` plus a watchdog, with NO scheduler, has no such bound.  The
+# scheduler owns the dispatch decision, so that is where the bound lives; a
+# second copy in the watchdog would mean two components with independent,
+# drifting notions of "no progress".
+
+#: Consecutive non-clean, no-progress launches before dispatch stops.
+#: Three, on three grounds: the observed launch count on 2026-08-29;
+#: run_ilk_loop_claude.sh:2193 already uses `no_progress_streak -ge 3`; and
+#: collect.py splits its local_checks_failed narrowing on `iter_count < 3`.
+#: A fourth threshold would be one more number to reconcile.
+NO_PROGRESS_THRESHOLD="${ILK_NO_PROGRESS_THRESHOLD:-3}"
+
+get_no_progress_verdict() {
+  # Pure helper: decide whether to dispatch, given launch history.
+  # Usage: read -r new_count decision <<< "$(get_no_progress_verdict ...)"
+  #   <current_count> <progressed:true|false> <clean_exit:true|false> [threshold]
+  # Echoes "<new_count> <decision>", decision = allow | block.
+  #
+  # Contract 6 (detached-component-contracts.md): this function's stdout is its
+  # return value, so it must not log.  Diagnostics belong to the caller.
+  local current_count="$1"
+  local progressed="$2"
+  local clean_exit="$3"
+  local threshold="${4:-$NO_PROGRESS_THRESHOLD}"
+
+  # Progress resets, whatever else happened: a slow batch that is advancing
+  # must never be blocked by this.
+  if [[ "$progressed" == "true" ]]; then
+    echo "0 allow"
+    return
+  fi
+  # A clean exit resets, whatever the plan state: a run can finish cleanly with
+  # no step advance (everything already shipped).  That is success, not a stall.
+  if [[ "$clean_exit" == "true" ]]; then
+    echo "0 allow"
+    return
+  fi
+
+  local n=$((current_count + 1))
+  if [[ "$n" -ge "$threshold" ]]; then
+    echo "$n block"
+  else
+    echo "$n allow"
+  fi
+}
+
+no_progress_cleared_by_ack() {
+  # Pure helper: has an operator acknowledged this bound?
+  # Usage: no_progress_cleared_by_ack <counter_epoch> <ack_epoch>
+  # Echoes "true" when ack_epoch >= counter_epoch.
+  #
+  # `>=`, not `>`, deliberately: blacklist_status.py clears a postmortem
+  # blacklist on `cleared_at >= generated_at`, and an operator must have ONE
+  # way to say "I looked at it, carry on" (AC-8).  Two bounds that disagree on
+  # the boundary would mean /ilk-resume clears one and silently leaves the
+  # other in force.
+  local counter_epoch="${1:-0}"
+  local ack_epoch="${2:-0}"
+  [[ -z "$counter_epoch" ]] && counter_epoch=0
+  [[ -z "$ack_epoch" ]] && ack_epoch=0
+  if [[ "$ack_epoch" -ge "$counter_epoch" && "$ack_epoch" -gt 0 ]]; then
+    echo "true"
+  else
+    echo "false"
+  fi
+}
+
+no_progress_state_file() {
+  # Pure helper: path to a project's no-progress counter sidecar.
+  # Kept beside the sentinel, NOT in postmortems/ -- the whole point is that
+  # this bound does not live in a directory that may not exist.
+  local project_data_dir="$1"
+  echo "${project_data_dir}/runtime/launcher/no-progress.json"
+}
+
+progress_signature_for_project() {
+  # Echo a signature of the project's plan progress.  Two launches with the
+  # same signature made no progress between them.
+  #
+  # Derived from every sub-plan's status + current_step, so a step advance OR a
+  # ship changes it.  Reads the plans dir directly: no dependency on a
+  # postmortem, a JSONL log, or a successful classification.
+  local project_data_dir="$1"
+  PLANS_DIR="${project_data_dir}/plans" $PYTHON -c "
+import hashlib, os, re, pathlib
+d = pathlib.Path(os.environ['PLANS_DIR'])
+parts = []
+if d.is_dir():
+    for f in sorted(d.glob('*.md')):
+        try:
+            head = f.read_text(encoding='utf-8-sig', errors='replace')[:2000]
+        except OSError:
+            continue
+        st = re.search(r'^status:\s*(\S+)', head, re.M)
+        cs = re.search(r'^current_step:\s*(\S+)', head, re.M)
+        parts.append(f'{f.name}:{st.group(1) if st else \"?\"}:{cs.group(1) if cs else \"?\"}')
+print(hashlib.sha1('|'.join(parts).encode()).hexdigest()[:12] if parts else 'no-plans')
+" 2>/dev/null || echo "unknown"
+}
+
+read_no_progress_state() {
+  # Echo "<count> <signature> <updated_epoch>" for a project, or "0 none 0".
+  local state_file="$1"
+  [[ -f "$state_file" ]] || { echo "0 none 0"; return; }
+  STATE_FILE="$state_file" $PYTHON -c "
+import json, os
+try:
+    d = json.load(open(os.environ['STATE_FILE'], encoding='utf-8-sig'))
+except Exception:
+    print('0 none 0'); raise SystemExit
+print(f\"{int(d.get('count', 0))} {d.get('signature', 'none')} {int(d.get('updated_epoch', 0))}\")
+" 2>/dev/null || echo "0 none 0"
+}
+
+write_no_progress_state() {
+  # Persist the counter.  Survives a scheduler restart -- launchd KeepAlive
+  # bounces this daemon, and an in-memory counter would reset the bound every
+  # time, which is the failure mode being fixed.
+  local state_file="$1" count="$2" signature="$3" now_epoch="${4:-$(date +%s)}"
+  mkdir -p "$(dirname "$state_file")" 2>/dev/null || true
+  printf '{"count":%d,"signature":"%s","updated_epoch":%d}\n' \
+    "$count" "$signature" "$now_epoch" > "$state_file" 2>/dev/null || true
+}
+
+write_no_progress_refusal() {
+  # AC-5: the refusal must be LOUD.  The defining property of the observed
+  # failure was a scheduler log that looked healthy throughout; a silent
+  # refusal would repeat that in the other direction.
+  local key="$1" count="$2" threshold="${3:-$NO_PROGRESS_THRESHOLD}"
+  # Structured (decision, key, reason) form, matching every other decision line
+  # so the log stays greppable by decision.
+  write_scheduler_log "no-progress-bound" "$key" \
+    "$count consecutive launches ended non-clean with no plan progress (threshold $threshold); dispatch stopped -- clear with /ilk-resume once triaged"
+}
+
 within_dispatch_cooldown() {
   # Pure helper: check whether a project was dispatched recently enough to
   # skip re-dispatch (guards the window before running.pid appears).

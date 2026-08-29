@@ -41,7 +41,8 @@ _BASE_COMMIT = "6aaf28b"
 _OBSERVED_LAUNCHES = 3
 
 
-def _sh(body: str, *, funcs: tuple[str, ...]) -> subprocess.CompletedProcess:
+def _sh(body: str, *, funcs: tuple[str, ...],
+        cwd: Path | None = None) -> subprocess.CompletedProcess:
     """Run `body` with the named scheduler.sh functions in scope."""
     prelude = f'SCHEDULER_SH="{_SCHEDULER_SH}"\n'
     for fn in funcs:
@@ -49,6 +50,7 @@ def _sh(body: str, *, funcs: tuple[str, ...]) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["/bin/bash", "-c", prelude + body],
         capture_output=True, text=True, timeout=30,
+        cwd=str(cwd) if cwd else None,
     )
 
 
@@ -141,7 +143,7 @@ def test_a_clean_exit_resets_the_counter() -> None:
 # AC-5
 # ---------------------------------------------------------------------------
 
-def test_the_refusal_names_the_project_the_count_and_the_reason() -> None:
+def test_the_refusal_names_the_project_the_count_and_the_reason(tmp_path: Path) -> None:
     """AC-5: the defining property of the failure was a healthy-looking log.
 
     The scheduler logged `promote:` / `dispatch:` / `skip-busy` throughout
@@ -149,9 +151,12 @@ def test_the_refusal_names_the_project_the_count_and_the_reason() -> None:
     that in the other direction.
     """
     proc = _sh(
-        'SCHEDULER_LOG=/dev/stdout\n'
-        'write_no_progress_refusal "my-project-key" 3 3\n',
+        'export SCHEDULER_LOG_DIR="$PWD/sched-log-dir"\n'
+        'export SCHEDULER_LOG_FILE="$SCHEDULER_LOG_DIR/scheduler.log"\n'
+        'write_no_progress_refusal "my-project-key" 3 3\n'
+        'cat "$SCHEDULER_LOG_FILE"\n',
         funcs=("write_scheduler_log", "write_no_progress_refusal"),
+        cwd=tmp_path,
     )
     assert proc.returncode == 0, (
         f"write_no_progress_refusal failed: {proc.stderr!r}"
