@@ -1716,7 +1716,12 @@ preserve_dirty_tree_on_timeout() {
 Preserved by ilk-runner on timeout.  This commit is NOT a gate pass —
 the next iteration will re-run verification.
 
-[wip:timeout] files=$file_count $diff_stat" 2>/dev/null
+[wip:timeout] files=$file_count $diff_stat" >/dev/null 2>&1
+      # stdout MUST be redirected, not just stderr: this function ends with
+      # `echo "$wip_count"`, so its stdout is the return value that :2182
+      # captures into _WIP_PRESERVED.  A successful `git commit` prints
+      # "[main abc1234] WIP: ...", which made int() raise in the JSONL
+      # builder and lost the whole iteration record (run 20260829-163114).
       local rc=$?
       if [[ "$rc" -eq 0 ]]; then
         echo "[runner] WIP commit: preserved $file_count files in $repo" >&2
@@ -2435,8 +2440,17 @@ sr = os.environ.get('_STOP_REASON', '')
 if sr:
   d['stop_reason'] = sr
 wp = os.environ.get('_WIP_PRESERVED', '0')
-if int(wp) > 0:
-  d['wip_preserved'] = int(wp)
+# Defensive: a non-integer here means some command leaked into a captured
+# function's stdout.  Degrade to 0 and record the raw value rather than raising
+# -- an unparseable field must not cost the whole iteration record, which is the
+# classifier's only input (run 20260829-163114).
+try:
+  wp_n = int(str(wp).strip())
+except (TypeError, ValueError):
+  wp_n = 0
+  d['wip_preserved_raw'] = str(wp)[:200]
+if wp_n > 0:
+  d['wip_preserved'] = wp_n
 tc = int(os.environ.get('_TOOL_CALLS', '0'))
 ti = int(os.environ.get('_TEST_INVOCATIONS', '0'))
 if tc > 0:

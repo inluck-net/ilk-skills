@@ -923,3 +923,68 @@ class TestAC13OrphanReaping:
         )
         assert result.returncode == 0, "function should not abort"
         assert "returned: 0" in result.stdout
+
+
+# ── AC-13: the function's stdout is its return value ─────────────────────────
+#
+# Regression for the 2026-08-29 crash in run `20260829-163114`.
+#
+# `preserve_dirty_tree_on_timeout` ends with `echo "$wip_count"`, so its stdout
+# IS the return channel -- both of its diagnostics correctly use `>&2`.  But the
+# `git commit` at run_ilk_loop_claude.sh:1714-1719 redirected only stderr, so on
+# a SUCCESSFUL WIP commit git's stdout ("[main abc1234] WIP: ...\n N files
+# changed, ...") joined the return value.
+#
+# The caller captures it (`wip_preserved=$(preserve_dirty_tree_on_timeout ...)`,
+# :2182) into `_WIP_PRESERVED`, and the JSONL builder does `int(wp)` -- which
+# raised ValueError and killed the python block BEFORE `print(json.dumps(d))`.
+# The whole iteration record was lost, making a timed-out iteration
+# unclassifiable.  Observed: `.ilk-loop.log` gained 0 records for that run.
+#
+# NOTE: `_run_preservation` above reads `stdout_lines[-1]`, so it tolerates the
+# leak -- which is why every existing test in this file passed while production
+# crashed.  These tests read the WHOLE stream on purpose.
+
+def _raw_preservation_stdout(repo: Path, env: dict) -> str:
+    """Return the function's COMPLETE stdout, unparsed."""
+    env_copy = dict(env)
+    env_copy["ILK_DOTSOURCE_ONLY"] = "1"
+    env_copy["REPOS"] = str(repo)
+    env_copy["PROJECT_PATH"] = str(repo.parent)
+    script = textwrap.dedent(f"""
+        export ILK_DOTSOURCE_ONLY=1
+        source '{RUNNER}' 2>/dev/null
+        REPOS=('{repo}')
+        PROJECT_PATH='{repo.parent}'
+        preserve_dirty_tree_on_timeout
+    """)
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True, text=True, timeout=30, env=env_copy,
+    )
+    return result.stdout
+
+
+def test_stdout_is_only_the_count_after_a_successful_commit(repo: Path, env: dict) -> None:
+    """AC-13: a successful WIP commit must not leak git's stdout into the count."""
+    (repo / "work.txt").write_text("uncommitted work\n")
+    raw = _raw_preservation_stdout(repo, env)
+    assert raw.strip() == "1", (
+        "preserve_dirty_tree_on_timeout must emit ONLY the wip_count on stdout; "
+        f"got {raw!r}. git commit's stdout is leaking into the return value."
+    )
+
+
+def test_captured_value_survives_int_conversion(repo: Path, env: dict) -> None:
+    """AC-13: the captured value must parse as int, as the JSONL builder does."""
+    (repo / "work.txt").write_text("uncommitted work\n")
+    raw = _raw_preservation_stdout(repo, env)
+    try:
+        parsed = int(raw.strip())
+    except ValueError as exc:  # pragma: no cover - the regression itself
+        raise AssertionError(
+            "int() on the captured stdout raised, exactly as the JSONL builder "
+            f"does at run_ilk_loop_claude.sh:2439 -- the iteration record is "
+            f"lost when this happens. Value was {raw!r}"
+        ) from exc
+    assert parsed == 1
