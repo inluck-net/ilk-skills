@@ -55,6 +55,10 @@ export COLLECT_PY="{collect_py}"
 # _py_path is a one-liner, not a brace block -- extract by line, not by range.
 eval "$(sed -n '/^_py_path()/p' "$WATCHDOG_SH")"
 eval "$(sed -n '/^write_log()/,/^}}/p' "$WATCHDOG_SH")"
+# write_log_quiet is the stderr-console twin used by the value-returning
+# failure paths.  Extracted too, or the harness reports "command not found"
+# and the real behaviour is never exercised.
+eval "$(sed -n '/^write_log_quiet()/,/^}}/p' "$WATCHDOG_SH")"
 eval "$(sed -n '/^invoke_postmortem_collect()/,/^}}/p' "$WATCHDOG_SH")"
 """
 

@@ -320,9 +320,25 @@ classify_action() {
       # Toolkit self-edit drift; human review required.
       echo "needs-human"
       ;;
-    no-evidence|never-ran)
+    no-evidence|never-ran|timeout)
       # Run started but left no usable records, or never invoked the
       # model (environment/startup fault) — triage.
+      #
+      # `timeout` is the RAW SENTINEL STATE, not a collect.py label:
+      # run_ilk_loop_claude.sh:2184 sets iter_stop_reason="timeout" and :2504
+      # promotes it to the sentinel's terminal stop_reason.  It reaches
+      # classify_action only via the raw-state fallback at :933-934, i.e. only
+      # when collect.py produced no classification at all -- which is exactly
+      # the no-evidence situation, so it belongs on this arm.
+      #
+      # Enumerated deliberately rather than left to the `*` fail-safe.  Both
+      # routes decline to relaunch, so relaunch policy is unchanged; the
+      # difference is that `*` cannot distinguish "we decided" from "we have
+      # never heard of this label", and the banner it produces asserts
+      # "restart will not help this kind of stop" -- untrue of a timeout.
+      #
+      # NOT the same label as `timeout-bound`, which collect.py emits when it
+      # HAS records for a timed-out run; that one relaunches.
       echo "triage"
       ;;
     timeout-bound|max-iter-bound|api-flaky|interrupted|throttled)
@@ -398,7 +414,7 @@ invoke_postmortem_collect() {
   local run_id="$2"
 
   if [[ ! -f "$COLLECT_PY" ]]; then
-    write_log "collect.py not found at $COLLECT_PY"
+    write_log_quiet "collect.py not found at $COLLECT_PY"
     echo ""
     return
   fi
@@ -409,7 +425,7 @@ invoke_postmortem_collect() {
   local report_path
   report_path=$($PYTHON "$COLLECT_PY" "${collect_args[@]}" 2>/dev/null) || true
   if [[ -z "$report_path" || ! -f "$report_path" ]]; then
-    write_log "collect.py produced no valid report path: '$report_path'"
+    write_log_quiet "collect.py produced no valid report path: '$report_path'"
     echo ""
     return
   fi
@@ -578,6 +594,32 @@ write_log() {
   ts=$(date '+%Y-%m-%d %H:%M:%S')
   local line="[$ts] $msg"
   echo "$line"
+  if [[ -n "$ACTIVITY_LOG" ]]; then
+    echo "$line" >> "$ACTIVITY_LOG" 2>/dev/null || true
+  fi
+}
+
+# write_log's twin for functions whose stdout is a RETURN VALUE.
+#
+# write_log ends with a bare `echo`, i.e. stdout.  That is correct for the ~35
+# call sites that run for their side effect, and wrong for any function whose
+# caller writes `x=$(fn ...)` -- there the log line IS the returned value.
+#
+# Field record (rezmac, 2026-08-29): invoke_postmortem_collect logged
+# "collect.py produced no valid report path" on its failure path, and :929
+# captured it as the classification.  The -n guard at :930 then passed, so the
+# raw-state fallback at :933-934 -- which would have produced a real label --
+# was unreachable by construction.  Three relaunches, no plan progress, and the
+# watchdog log read `classification: [13:12:07] collect.py produced no ...`.
+#
+# Same content, same log file, same visibility to an operator watching the run;
+# only the console channel moves from stdout to stderr.
+write_log_quiet() {
+  local msg="$1"
+  local ts
+  ts=$(date '+%Y-%m-%d %H:%M:%S')
+  local line="[$ts] $msg"
+  echo "$line" >&2
   if [[ -n "$ACTIVITY_LOG" ]]; then
     echo "$line" >> "$ACTIVITY_LOG" 2>/dev/null || true
   fi
