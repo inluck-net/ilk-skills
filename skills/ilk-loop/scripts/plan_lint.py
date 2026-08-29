@@ -564,6 +564,11 @@ def _strip_runner_prefix(cmd: str) -> str:
     test-runner invocation — callers must re-check against
     ``_WHOLE_SUITE_CMD_RE``.
     """
+    # Strip surrounding quotes that YAML extraction may leave on the command.
+    if (cmd.startswith('"') and cmd.endswith('"')) or (
+        cmd.startswith("'") and cmd.endswith("'")
+    ):
+        cmd = cmd[1:-1]
     tokens = cmd.split()
     _RUNNER_PREFIXES = {"bunx", "npx"}
     _RUNNER_DLX = {"pnpm", "yarn"}  # followed by "dlx"
@@ -2802,6 +2807,33 @@ def lint_gate_executable_on_driver_path(text: str, slug: str) -> list[str]:
     return findings
 
 
+def lint_wholesuite_gate_outside_verification_subplan(text: str, slug: str) -> list[str]:
+    """Flag a whole-suite gate in a sub-plan that is NOT the batch-verification sub-plan.
+
+    AC-5: a sub-plan without ``batch_verification: true`` that declares a
+          whole-suite gate gets a finding.
+    AC-6: uses the F6-corrected ``_is_whole_suite_command`` so runner-prefix
+          forms (``bun run <script>``, ``bunx vitest run``) are caught.
+    """
+    findings: list[str] = []
+    if _has_batch_verification_marker(text):
+        return findings  # verification sub-plans are allowed whole-suite gates
+    commands = _extract_all_local_checks_commands(text)
+    broad_cmds = [cmd for cmd in commands if _is_whole_suite_command(cmd)]
+    if not broad_cmds:
+        return findings
+    findings.append(
+        f"{slug}: whole-suite gate(s) found outside the batch-verification "
+        f"sub-plan: {broad_cmds!r}. The full-suite obligation belongs to the "
+        f"verification sub-plan (``batch_verification: true``) — no other "
+        f"sub-plan should run the full suite "
+        f"(decomposition-principles.md §12, §16). "
+        f"Move the broad gate to the batch-verification sub-plan or scope "
+        f"this gate to specific test files."
+    )
+    return findings
+
+
 ALL_CHECKS = (
     lint_gate_budget,
     lint_envprereq_fallback_contradiction,
@@ -2829,6 +2861,7 @@ ALL_CHECKS = (
     lint_redfirst_step0_under_frontmatter_gate,
     lint_exit_status_discarded,
     lint_broken_process_wait,
+    lint_wholesuite_gate_outside_verification_subplan,
 )
 
 
@@ -3409,17 +3442,13 @@ def lint_one_batch_one_branch(
 #
 # A batch whose every sub-plan has no broad-suite gate AND whose project
 # config resolves to ``NotConfigured`` means the full suite will never run
-# — not per sub-plan, not at batch end.  Every existing suite lint opens
-# with ``if not has_broad: return findings``, so removing the gates also
-# removed the trigger for the checks that would have caught the missing
-# ``ship.suite``.
+# — not per sub-plan, not at batch end.
 #
 # This is a **master-level** check because the condition is a property of
 # the batch plus project config — no single sub-plan has scope over it.
 #
-# AC-1: finding when no broad gates + NotConfigured.
+# AC-1: finding when NotConfigured (regardless of what sub-plan gates exist).
 # AC-2: no finding when ship.suite is declared.
-# AC-3: no finding when a broad gate is present.
 # AC-4: master-level only (not fired for per-sub-plan linting).
 
 
@@ -3441,16 +3470,6 @@ def lint_batch_has_no_suite(
     AC-4: this function is only called from the ``--master`` path.
     """
     findings: list[str] = []
-
-    # Check if ANY sub-plan declares a broad-suite gate (AC-3).
-    has_broad = False
-    for text in subplan_texts:
-        commands = _extract_all_local_checks_commands(text)
-        if any(_is_whole_suite_command(cmd) for cmd in commands):
-            has_broad = True
-            break
-    if has_broad:
-        return findings  # AC-3: broad gate present — old route covers it.
 
     # Resolve the project's ship config — the same reader batch_gate uses.
     # Use _SHIP_CONFIG_SCRIPT (already defined at module level) to locate it.
