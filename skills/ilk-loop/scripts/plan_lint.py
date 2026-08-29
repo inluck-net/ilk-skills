@@ -3480,6 +3480,112 @@ def lint_batch_has_no_suite(
     return findings
 
 
+# ── Batch-verification sub-plan lint (SP6, decomposition-principles §12/§16) ──
+
+_SUBPLAN_FILENAME_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2}-[a-z0-9-]+\.md)")
+
+
+def _extract_registry_order(master_text: str) -> list[str]:
+    """Return ordered sub-plan filenames as they appear in the master body.
+
+    Strips YAML frontmatter first so ``slug:`` fields are not misread as
+    registry entries.  The rule is the same one ``loop_status.py`` uses:
+    appearance order of ``YYYY-MM-DD-*.md`` references in the body.
+    """
+    body = master_text
+    lines = body.split("\n")
+    if lines and lines[0].strip() == "---":
+        for i in range(1, len(lines)):
+            if lines[i].strip() == "---":
+                body = "\n".join(lines[i + 1:])
+                break
+    seen: list[str] = []
+    for m in _SUBPLAN_FILENAME_RE.finditer(body):
+        fname = m.group(1)
+        if fname not in seen:
+            seen.append(fname)
+    return seen
+
+
+def _has_batch_verification_marker(text: str) -> bool:
+    """True if *text*'s frontmatter declares ``batch_verification: true``."""
+    lines = text.split("\n")
+    in_fm = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "---":
+            if in_fm:
+                break  # end of frontmatter
+            in_fm = True
+            continue
+        if in_fm and stripped.lower().startswith("batch_verification:"):
+            val = stripped.split(":", 1)[1].strip().strip("\"'").lower()
+            return val in _TRUTHY
+    return False
+
+
+def lint_master_has_verification_subplan(
+    master_text: str,
+    subplans: list[tuple[str, str]],
+) -> list[str]:
+    """Master-level check: every batch ends with a verification sub-plan.
+
+    *subplans* is a list of ``(slug, text)`` pairs for the batch's sub-plans.
+
+    AC-2: no sub-plan declares ``batch_verification: true`` → HARD finding.
+    AC-3: a verification sub-plan exists but is not last in registry order
+          → HARD finding.
+    AC-4: last registry entry has the marker → 0 findings.
+    """
+    findings: list[str] = []
+    if not master_text:
+        return findings
+
+    registry_order = _extract_registry_order(master_text)
+    if not registry_order:
+        return findings  # no registry — nothing to check
+
+    # Build slug → has-marker lookup from the subplan texts.
+    marker_slugs: set[str] = set()
+    for slug, text in subplans:
+        if _has_batch_verification_marker(text):
+            marker_slugs.add(slug)
+
+    # Map filenames to stems for matching against the slug-based subplans.
+    registry_stems = [fname.removesuffix(".md") for fname in registry_order]
+
+    # AC-2: no verification sub-plan at all.
+    if not marker_slugs:
+        findings.append(
+            "MASTER: no sub-plan declares `batch_verification: true`. "
+            "Every batch must end with a verification sub-plan whose job "
+            "is the full suite for that batch — otherwise the batch gate "
+            "is the only run, and a NotConfigured project ships without "
+            "running anything (decomposition-principles.md §12, §16). "
+            "HARD FINDING: add a batch-verification sub-plan as the last "
+            "entry in the registry."
+        )
+        return findings
+
+    # AC-3: verification sub-plan exists but is not last in registry order.
+    last_stem = registry_stems[-1] if registry_stems else None
+    if last_stem and last_stem not in marker_slugs:
+        # Find which sub-plan IS the verification one.
+        verify_slugs = [s for s in registry_stems if s in marker_slugs]
+        offenders = ", ".join(verify_slugs) if verify_slugs else "(unknown)"
+        findings.append(
+            f"MASTER: batch-verification sub-plan ({offenders}) is not last "
+            f"in registry order. The verification sub-plan must run after "
+            f"all other sub-plans ship — running the suite before the last "
+            f"sub-plan ships proves nothing about the batch "
+            f"(decomposition-principles.md §12). "
+            f"HARD FINDING: move the batch-verification sub-plan to the "
+            f"last row in the registry."
+        )
+
+    return findings
+
+
 def lint_file(path: str | Path, master_text: str = "") -> list[str]:
     """Run all checks against one sub-plan file. Returns finding messages.
 
@@ -3603,6 +3709,9 @@ def main() -> int:
             print(f"WARN: {msg}")
             total += 1
         for msg in lint_one_batch_one_branch(master_text, subplans):
+            print(f"WARN: {msg}")
+            total += 1
+        for msg in lint_master_has_verification_subplan(master_text, subplans):
             print(f"WARN: {msg}")
             total += 1
         # Batch-has-no-suite check (AC-4: master-level only).
