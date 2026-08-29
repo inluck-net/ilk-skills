@@ -42,12 +42,19 @@ def check_step_commits(
     slug: str,
     expected_steps: list[int],
     cwd: Path | None = None,
+    ledger_records: list[dict[str, Any]] | None = None,
 ) -> tuple[list[int], list[int]]:
-    """Check which steps have a commit trailer in git history.
+    """Check which steps have a commit trailer in git history **or** are
+    covered by a ledger record.
 
     Searches the **full** commit message (``%s%n%b``) so body-placed trailers
     count — a subject-only predicate is the one failure mode that would revert
     correct work (AC-6).
+
+    When *ledger_records* is supplied, a step is also considered committed if
+    any record for the same slug covers it in its ``[step_from, step_to)``
+    half-open range (AC-3 — union semantics).  Trailer matching is unchanged;
+    the ledger only ever *adds* attribution.
 
     Returns ``(present, missing)`` — both lists of step numbers.
     """
@@ -92,6 +99,24 @@ def check_step_commits(
     ship_re = re.compile(rf"\[plan:{re.escape(slug)}#ship\]")
     if ship_re.search(result.stdout):
         committed.add(max(expected_steps))
+
+    # AC-3: union with ledger records.  A step covered by a ledger record
+    # for the same slug is also committed.  The ledger is supplementary —
+    # trailer matching (above) is unchanged.
+    if ledger_records:
+        for rec in ledger_records:
+            if not isinstance(rec, dict):
+                continue
+            if rec.get("slug") != slug:
+                continue
+            try:
+                r_from = int(rec["step_from"])
+                r_to = int(rec["step_to"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            for s in expected_steps:
+                if r_from <= s < r_to:
+                    committed.add(s)
 
     present = [s for s in expected_steps if s in committed]
     missing = [s for s in expected_steps if s not in committed]
@@ -260,6 +285,7 @@ def audit_ship(
     slug: str,
     cwd: Path | None = None,
     runtime_dir: Path | None = None,
+    ledger_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Audit a shipped sub-plan: step commits + gate outcome.
 
@@ -281,6 +307,10 @@ def audit_ship(
         Path to the project's runtime directory.  When provided,
         ``ship_audit`` reads the persisted batch-gate verdict from it
         instead of relying on the ``gate_passed`` argument.
+    ledger_records : list[dict] | None
+        Ship-proof ledger records for attribution when trailers are
+        absent (the shared-remote case).  Passed through to
+        ``check_step_commits``.
 
     Returns
     -------
@@ -297,7 +327,9 @@ def audit_ship(
         }
 
     authored = count_authored_steps(body)
-    present, missing = check_step_commits(slug, authored, cwd=cwd)
+    present, missing = check_step_commits(
+        slug, authored, cwd=cwd, ledger_records=ledger_records,
+    )
 
     # Gate half (AC-8: exempt no-gate sub-plans from gate check only).
     gate_verdict, gate_reason = _evaluate_gate(
@@ -423,6 +455,30 @@ def _cli(argv: list[str]) -> int:
         except ImportError:
             runtime_dir = None
 
+    # Resolve the ship-proof ledger (AC-3, AC-4).  The ledger lives at
+    # <external_launcher_dir>/ship-proof.jsonl.  An absent or unreadable
+    # ledger degrades to trailer-only attribution (AC-6).
+    ledger_records: list[dict[str, Any]] | None = None
+    try:
+        _scripts_dir = str(Path(__file__).resolve().parent)
+        if _scripts_dir not in sys.path:
+            sys.path.insert(0, _scripts_dir)
+        from ship_proof_ledger import read_records  # type: ignore[import-untyped]
+        # Resolve launcher dir the same way the runner does.
+        proc = subprocess.run(
+            ["python3", str(Path(_scripts_dir) / "ilk_paths.py"),
+             "--start", str(project)],
+            capture_output=True, text=True, timeout=30,
+        )
+        if proc.returncode == 0:
+            paths = json.loads(proc.stdout)
+            launcher_dir = paths.get("external_launcher_dir")
+            if launcher_dir:
+                ledger_path = Path(launcher_dir) / "ship-proof.jsonl"
+                ledger_records = read_records(ledger_path)
+    except (ImportError, OSError, KeyError, json.JSONDecodeError):
+        ledger_records = None
+
     try:
         info = read_subplan_for_audit(args.subplan)
     except FileNotFoundError:
@@ -440,6 +496,7 @@ def _cli(argv: list[str]) -> int:
         slug=info["slug"],
         cwd=project,
         runtime_dir=runtime_dir,
+        ledger_records=ledger_records,
     )
 
     if result["proven"]:
