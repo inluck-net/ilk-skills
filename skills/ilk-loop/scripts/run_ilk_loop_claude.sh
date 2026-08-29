@@ -827,7 +827,11 @@ get_ledger_check_targets() {
   local run_id="$1" iteration="$2"
 
   local ledger_dir
-  ledger_dir=$(get_ilk_runtime_dir 2>/dev/null) || return 0
+  # Do NOT silence stderr: get_ilk_runtime_dir reports a missing resolver or a
+  # failed resolve there, and a swallowed probe failure is not data -- it reads
+  # identically to "no ledger dir configured". AC-4 of
+  # test_sentinel_path_agreement.py asserts this.
+  ledger_dir=$(get_ilk_runtime_dir) || return 0
   [[ -n "$ledger_dir" ]] || return 0
   local ledger="${ledger_dir}/ship-proof.jsonl"
   [[ -f "$ledger" ]] || return 0
@@ -918,7 +922,11 @@ for sp in (d.get('subplans') or []):
 
   # Resolve the ledger path once.
   local ledger_dir
-  ledger_dir=$(get_ilk_runtime_dir 2>/dev/null) || return 0
+  # Do NOT silence stderr: get_ilk_runtime_dir reports a missing resolver or a
+  # failed resolve there, and a swallowed probe failure is not data -- it reads
+  # identically to "no ledger dir configured". AC-4 of
+  # test_sentinel_path_agreement.py asserts this.
+  ledger_dir=$(get_ilk_runtime_dir) || return 0
   [[ -n "$ledger_dir" ]] || return 0
   local ledger="${ledger_dir}/ship-proof.jsonl"
   mkdir -p "$ledger_dir" 2>/dev/null || return 0

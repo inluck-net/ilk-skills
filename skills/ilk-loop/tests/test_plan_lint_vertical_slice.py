@@ -50,7 +50,7 @@ plan: test-model-only-python
 scope_paths:
   - "src/game/towers/tower.py"
 local_checks:
-  - command: python -m pytest tests/test_tower.py -q
+  - command: python3 -m pytest tests/test_tower.py -q
     timeout: 60
 ---
 
@@ -67,7 +67,7 @@ plan: test-model-only-ts
 scope_paths:
   - "src/game/stages/registry.ts"
 local_checks:
-  - command: npx vitest run tests/registry.spec.ts
+  - command: /opt/homebrew/bin/npx vitest run tests/registry.spec.ts
     timeout: 60
 ---
 
@@ -84,7 +84,7 @@ plan: test-model-class
 scope_paths:
   - "src/game/enemy.py"
 local_checks:
-  - command: python -m pytest tests/test_enemy.py -q
+  - command: python3 -m pytest tests/test_enemy.py -q
     timeout: 60
 ---
 
@@ -121,7 +121,7 @@ plan: test-has-click
 scope_paths:
   - "src/game/towers/tower.py"
 local_checks:
-  - command: python -m pytest tests/test_tower.py -q
+  - command: python3 -m pytest tests/test_tower.py -q
     timeout: 60
 ---
 
@@ -138,7 +138,7 @@ plan: test-has-curl
 scope_paths:
   - "src/api/leaderboard.py"
 local_checks:
-  - command: python -m pytest tests/test_leaderboard.py -q
+  - command: python3 -m pytest tests/test_leaderboard.py -q
     timeout: 60
 ---
 
@@ -155,7 +155,7 @@ plan: test-has-cli
 scope_paths:
   - "src/cli/export.py"
 local_checks:
-  - command: python -m pytest tests/test_export.py -q
+  - command: python3 -m pytest tests/test_export.py -q
     timeout: 60
 ---
 
@@ -189,7 +189,7 @@ plan: test-has-integration
 scope_paths:
   - "src/game/stages/registry.ts"
 local_checks:
-  - command: python -m pytest tests/test_stage_integration.py -q
+  - command: python3 -m pytest tests/test_stage_integration.py -q
     timeout: 60
 ---
 
@@ -226,7 +226,7 @@ scope_paths:
   - "src/ui/hud.ts"
   - "src/ui/inspector.ts"
 local_checks:
-  - command: npx vitest run tests/test_hud.ts
+  - command: /opt/homebrew/bin/npx vitest run tests/test_hud.ts
     timeout: 60
 ---
 
@@ -240,7 +240,7 @@ _NO_SCOPE_PATHS = """\
 ---
 plan: test-no-scope
 local_checks:
-  - command: python -m pytest tests/test_misc.py -q
+  - command: python3 -m pytest tests/test_misc.py -q
     timeout: 60
 ---
 
@@ -269,7 +269,7 @@ plan: test-no-symbol
 scope_paths:
   - "src/game/towers/tower.py"
 local_checks:
-  - command: python -m pytest tests/test_tower.py -q
+  - command: python3 -m pytest tests/test_tower.py -q
     timeout: 60
 ---
 

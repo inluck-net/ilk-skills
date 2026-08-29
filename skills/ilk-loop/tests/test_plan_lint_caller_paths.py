@@ -103,7 +103,7 @@ plan: test-skills-layout-pass
 scope_paths:
   - "skills/ilk-loop/scripts/shared_module.py"
 local_checks:
-  - command: pytest skills/ilk-loop/tests/test_shared_module.py skills/ilk-loop/tests/test_caller.py -q
+  - command: python3 -m pytest skills/ilk-loop/tests/test_shared_module.py skills/ilk-loop/tests/test_caller.py -q
     timeout: 120
 ---
 
@@ -136,7 +136,7 @@ plan: test-skills-layout-fail
 scope_paths:
   - "skills/ilk-loop/scripts/shared_module.py"
 local_checks:
-  - command: pytest skills/ilk-loop/tests/test_shared_module.py -q
+  - command: python3 -m pytest skills/ilk-loop/tests/test_shared_module.py -q
     timeout: 60
 ---
 
@@ -179,7 +179,7 @@ plan: test-toplevel-pass
 scope_paths:
   - "src/shared_module.py"
 local_checks:
-  - command: pytest tests/test_shared_module.py tests/test_caller.py -q
+  - command: python3 -m pytest tests/test_shared_module.py tests/test_caller.py -q
     timeout: 120
 ---
 
@@ -221,7 +221,7 @@ plan: test-unresolvable
 scope_paths:
   - "src/shared_module.py"
 local_checks:
-  - command: pytest tests/test_shared_module.py -q
+  - command: python3 -m pytest tests/test_shared_module.py -q
     timeout: 60
 ---
 

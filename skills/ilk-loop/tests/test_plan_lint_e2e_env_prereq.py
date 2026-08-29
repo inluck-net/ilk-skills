@@ -165,7 +165,7 @@ env_prereqs:
   - description: dev server reachable
     verify_cmd: curl -sf http://localhost:3000
 local_checks:
-  - command: node e2e/home-routing.mjs
+  - command: /opt/homebrew/bin/node e2e/home-routing.mjs
     timeout: 300
 ---
 
@@ -190,7 +190,7 @@ _SUBPLAN_E2E_PREFLIGHT = """\
 ---
 plan: test-e2e-preflight
 local_checks:
-  - command: node e2e/home-routing.mjs
+  - command: /opt/homebrew/bin/node e2e/home-routing.mjs
     timeout: 300
 ---
 
@@ -215,7 +215,7 @@ _SUBPLAN_PLAIN_PYTEST = """\
 ---
 plan: test-plain-pytest
 local_checks:
-  - command: python -m pytest tests/test_x.py -q
+  - command: python3 -m pytest tests/test_x.py -q
     timeout: 60
 ---
 
@@ -238,7 +238,7 @@ _SUBPLAN_VITEST = """\
 ---
 plan: test-vitest
 local_checks:
-  - command: npx vitest run
+  - command: /opt/homebrew/bin/npx vitest run
     timeout: 60
 ---
 
@@ -259,7 +259,7 @@ _SUBPLAN_TSC = """\
 ---
 plan: test-tsc
 local_checks:
-  - command: npx tsc --noEmit
+  - command: /opt/homebrew/bin/npx tsc --noEmit
     timeout: 60
 ---
 

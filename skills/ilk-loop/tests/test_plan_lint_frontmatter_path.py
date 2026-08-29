@@ -50,7 +50,7 @@ plan: test-fm-missing-path
 scope_paths:
   - "tools/xbar/tests/"
 local_checks:
-  - command: python -m pytest tools/xbar/tests/ -q
+  - command: python3 -m pytest tools/xbar/tests/ -q
     timeout: 60
 ---
 
@@ -92,7 +92,7 @@ plan: test-fm-existing-path
 scope_paths:
   - "existing_dir"
 local_checks:
-  - command: python -m pytest existing_dir -q
+  - command: python3 -m pytest existing_dir -q
     timeout: 60
 ---
 
@@ -130,7 +130,7 @@ scope_paths:
 ### Step 0 -- Create the directory
 ```yaml
 local_checks:
-  - command: python -m pytest tools/xbar/tests/ -q
+  - command: python3 -m pytest tools/xbar/tests/ -q
     timeout: 60
 ```
 
@@ -216,7 +216,7 @@ plan: test-fm-file-token
 scope_paths:
   - "src/utils/helper.py"
 local_checks:
-  - command: python -m pytest src/utils/helper.py -q
+  - command: python3 -m pytest src/utils/helper.py -q
     timeout: 60
 ---
 
@@ -245,7 +245,7 @@ plan: test-not-in-scope
 scope_paths:
   - "other/path"
 local_checks:
-  - command: python -m pytest tools/xbar/tests/ -q
+  - command: python3 -m pytest tools/xbar/tests/ -q
     timeout: 60
 ---
 
@@ -280,7 +280,7 @@ scope_paths:
   - "python"
   - "-q"
 local_checks:
-  - command: python -m pytest -q
+  - command: python3 -m pytest tests/test_something.py -q
     timeout: 60
 ---
 
@@ -313,7 +313,7 @@ plan: test-fm-dir-scope-file
 scope_paths:
   - "tools/zzz_nope/tests/test_render_xbar_actions.py"
 local_checks:
-  - command: python -m pytest tools/zzz_nope/tests/ -q
+  - command: python3 -m pytest tools/zzz_nope/tests/ -q
     timeout: 60
 ---
 

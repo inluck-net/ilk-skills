@@ -50,7 +50,7 @@ plan: test-press-key-no-wire
 scope_paths:
   - "src/ui/level_select.py"
 local_checks:
-  - command: python -m pytest tests/test_level_select.py -q
+  - command: python3 -m pytest tests/test_level_select.py -q
     timeout: 60
 ---
 
@@ -67,7 +67,7 @@ plan: test-button-tooltip
 scope_paths:
   - "src/ui/settings.py"
 local_checks:
-  - command: python -m pytest tests/test_settings.py -q
+  - command: python3 -m pytest tests/test_settings.py -q
     timeout: 60
 ---
 
@@ -84,7 +84,7 @@ plan: test-indicator
 scope_paths:
   - "src/ui/hud.py"
 local_checks:
-  - command: python -m pytest tests/test_hud.py -q
+  - command: python3 -m pytest tests/test_hud.py -q
     timeout: 60
 ---
 
@@ -101,7 +101,7 @@ plan: test-chinese-press
 scope_paths:
   - "src/ui/inventory.py"
 local_checks:
-  - command: python -m pytest tests/test_inventory.py -q
+  - command: python3 -m pytest tests/test_inventory.py -q
     timeout: 60
 ---
 
@@ -140,7 +140,7 @@ plan: test-has-press-key
 scope_paths:
   - "src/ui/level_select.py"
 local_checks:
-  - command: python -m pytest tests/test_level_select.py -q
+  - command: python3 -m pytest tests/test_level_select.py -q
     timeout: 60
 ---
 
@@ -157,7 +157,7 @@ plan: test-has-click
 scope_paths:
   - "src/ui/settings.py"
 local_checks:
-  - command: python -m pytest tests/test_settings.py -q
+  - command: python3 -m pytest tests/test_settings.py -q
     timeout: 60
 ---
 
@@ -174,7 +174,7 @@ plan: test-has-handler
 scope_paths:
   - "src/ui/hud.py"
 local_checks:
-  - command: python -m pytest tests/test_hud.py -q
+  - command: python3 -m pytest tests/test_hud.py -q
     timeout: 60
 ---
 
@@ -191,7 +191,7 @@ plan: test-chinese-wire
 scope_paths:
   - "src/ui/inventory.py"
 local_checks:
-  - command: python -m pytest tests/test_inventory.py -q
+  - command: python3 -m pytest tests/test_inventory.py -q
     timeout: 60
 ---
 
@@ -238,7 +238,7 @@ plan: test-no-ad
 scope_paths:
   - "src/ui/hud.py"
 local_checks:
-  - command: python -m pytest tests/test_hud.py -q
+  - command: python3 -m pytest tests/test_hud.py -q
     timeout: 60
 ---
 

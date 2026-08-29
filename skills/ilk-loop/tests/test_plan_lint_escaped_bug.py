@@ -71,7 +71,7 @@ _SUBPLAN_REGRESSION_WITH_FM_CHECKS = """\
 plan: test-escaped-fm-checks
 regression_for: T-2026-0042
 local_checks:
-  - command: python -m pytest tests/test_repro.py -q
+  - command: python3 -m pytest tests/test_repro.py -q
     timeout: 60
 ---
 
@@ -105,7 +105,7 @@ regression_for: T-2026-0042
 ### Step 0 -- Fix the bug
 ```yaml
 local_checks:
-  - command: python -m pytest tests/test_repro.py -q
+  - command: python3 -m pytest tests/test_repro.py -q
     timeout: 60
 ```
 """
@@ -152,7 +152,7 @@ _SUBPLAN_NO_REGRESSION_WITH_CHECKS = """\
 ---
 plan: test-no-regression-with-checks
 local_checks:
-  - command: python -m pytest tests/test_something.py -q
+  - command: python3 -m pytest tests/test_something.py -q
     timeout: 60
 ---
 
