@@ -399,6 +399,17 @@ fi
 git commit -m "$commit_msg"
 ```
 
+**Attribution on shared remotes:** Without trailers, `ship_audit` cannot
+match commits to steps by message alone.  The runner writes a
+**ship-proof ledger** at `runtime/launcher/ship-proof.jsonl` — one record
+per productive iteration per sub-plan, carrying `step_from`, `step_to`,
+and the commit SHAs.  `ship_audit.check_step_commits` reads the ledger
+when trailers are absent and attributes steps from the
+`[step_from, step_to)` range.  Gate targeting also uses the ledger to
+resolve the step the iteration actually reached (not the pre-iteration
+step), so a gate declared on the last step runs on a shared remote.
+See `detached-component-contracts.md` Contract 5.
+
 ## PR / issue body hygiene (shared repos)
 
 When authoring a PR or issue body for a **shared repo** (any repo that is

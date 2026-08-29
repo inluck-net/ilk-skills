@@ -412,6 +412,99 @@ earlier layers. This contract closes that gap mechanically.
 
 ---
 
+## Contract 5: Ship-proof ledger (`runtime/launcher/ship-proof.jsonl`)
+
+### Purpose
+
+On a shared remote, `[plan:<slug>#step-N]` trailers are stripped from commit
+messages by policy (`SKILL.md` → "Shared remote trailer policy").  Two
+mechanisms break there: `ship_audit.check_step_commits` (which matches only
+by trailer) and gate targeting (which resolves the pre-iteration step, not the
+step the iteration reached).  The ledger is a trailer-independent record of
+which commits belong to which step range.
+
+### Format
+
+One JSON object per line, written **compact** — `separators=(",", ":")`:
+
+```json
+{"run_id":"20260829-120000","iteration":4,"slug":"gate-work","repo":"/path/to/project","step_from":0,"step_to":3,"commits":["abc1234","def5678"]}
+```
+
+Fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `run_id` | string | The runner's run identifier |
+| `iteration` | int | The iteration number (0-indexed) |
+| `slug` | string | The sub-plan slug |
+| `repo` | string | Absolute path to the repository |
+| `step_from` | int | The step the iteration **started** on (from `PRE_ITER_TARGET`) |
+| `step_to` | int | The step the iteration **reached** (the sub-plan's `current_step` after the agent ran) |
+| `commits` | list[str] | SHAs in the iteration's `before..after` range |
+
+The step range is **half-open**: `[step_from, step_to)`.  A record with
+`step_from=0, step_to=3` proves steps 0, 1, and 2.
+
+### Who writes
+
+- **`run_ilk_loop_claude.sh`** — `write_ship_proof_records`, called after
+  the post-iteration head capture and new-commit count.  Only writes when
+  `total_new > 0` (an unproductive iteration claims no steps).
+
+### Who reads
+
+- **`ship_audit.py`** — `check_step_commits` accepts an optional
+  `ledger_records` parameter.  Union semantics: a step is committed if
+  the trailer regex matches **or** a ledger record covers it.  Trailer
+  matching is unchanged; the ledger only ever *adds* attribution.
+- **`ship_audit.py` CLI** — resolves the ledger path via `ilk_paths.py`
+  and reads it automatically.
+
+### Invariants
+
+1. **The ledger is supplementary.** Where trailers exist, they are the
+   stronger evidence (they are in the commit itself).  The ledger must
+   never override a trailer match.
+
+2. **An unreadable ledger degrades to trailer-only.** An absent, empty,
+   truncated, or malformed ledger must never raise or downgrade a ship
+   that trailers already prove.  `ship_proof_ledger.read_records` skips
+   unparseable lines rather than raising.
+
+3. **One record per slug per iteration.** A runner that commits for more
+   than one slug in a single iteration writes one record per slug (not a
+   schema change).  Readers must tolerate multiple records per
+   `(run_id, iteration)`.
+
+4. **No record for unproductive iterations.** An iteration that produced
+   no commits must not write a ledger record — a record with an empty
+   `commits` list would prove a step that has no commit.
+
+5. **Compact separators.** Same contract as Contract 2b (local_checks
+   JSONL): `separators=(",", ":")`.
+
+### Bug reference (kira-cloudflare 20260828-211346 + 20260829-001901)
+
+Two symptoms, one cause — the shared-remote trailer policy:
+
+1. **Ship-proof is structurally unobtainable.** `ship_audit.py:70-92`
+   matches a step's commit only by trailer.  On a shared remote, every
+   sub-plan ships `(!) unproven` regardless of how many real commits it
+   has.  The always-on warning became an ignored warning — the worker
+   dismissed it as "cosmetic" while 3 of 3 declared gates were red.
+
+2. **The last step's gate never runs.** Gate targeting on a shared remote
+   uses `PRE_ITER_TARGET` (the pre-iteration step), not the step the
+   iteration reached.  When an agent advances several steps in one
+   iteration, the broadest gate (declared on the last step) is
+   structurally unreachable.  Measured on run `20260829-001901`: two
+   sub-plans, both shipped, neither directory gate was ever a target.
+
+Both fixed in sub-plan `a-shared-remote-ship-can-be-proven` (2026-08-29).
+
+---
+
 ## Adding a new reader or writer
 
 When adding a component that reads or writes any of the three artifact
