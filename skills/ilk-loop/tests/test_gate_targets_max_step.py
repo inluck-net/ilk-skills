@@ -204,7 +204,7 @@ declare -F {LEDGER_FUNC} >/dev/null || {{ echo "LEDGER_FUNC_MISSING"; exit 90; }
     # place.  The call must sit inside the trailerless fallback branch, i.e.
     # after the `! -s "$all_targets_file"` test and before the slug merge.
     branch = _line_of(r'if \[\[ ! -s "\$all_targets_file" \]\]')
-    merge = _line_of(r'# Merge by slug')
+    merge = _line_of(r'sort.*all_targets_file.*merged_targets_file')
     call = _line_of(rf'{LEDGER_FUNC}\b.*>>')
     assert branch < call < merge, (
         f"{LEDGER_FUNC} is called at line {call}, outside the trailerless "

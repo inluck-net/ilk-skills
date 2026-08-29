@@ -815,6 +815,51 @@ get_local_check_targets() {
     awk '!seen[$1]++ {print $1, $2}'
 }
 
+get_ledger_check_targets() {
+  # Emit "<slug> <max_step>" from the ship-proof ledger for a given iteration.
+  #
+  # On a shared remote, trailer scanning returns nothing and the pre-iteration
+  # capture (PRE_ITER_TARGET) gives the step the iteration STARTED on — not the
+  # step it REACHED.  The ledger records the actual step_to, so this function
+  # resolves the highest step the iteration committed for each slug.
+  #
+  # $1 = run_id   $2 = iteration
+  local run_id="$1" iteration="$2"
+
+  local ledger_dir
+  ledger_dir=$(get_ilk_runtime_dir 2>/dev/null) || return 0
+  [[ -n "$ledger_dir" ]] || return 0
+  local ledger="${ledger_dir}/ship-proof.jsonl"
+  [[ -f "$ledger" ]] || return 0
+
+  python3 -c "
+import json, sys
+run_id, iteration = sys.argv[1], int(sys.argv[2])
+by_slug = {}
+for line in open(sys.argv[3], encoding='utf-8-sig'):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        rec = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        continue
+    if not isinstance(rec, dict):
+        continue
+    if rec.get('run_id') != run_id or rec.get('iteration') != iteration:
+        continue
+    slug = rec.get('slug')
+    try:
+        step_to = int(rec['step_to'])
+    except (KeyError, TypeError, ValueError):
+        continue
+    if slug and slug != 'null':
+        by_slug[slug] = max(by_slug.get(slug, 0), step_to - 1)
+for slug, step in sorted(by_slug.items()):
+    print(f'{slug} {step}')
+" "$run_id" "$iteration" "$ledger" 2>/dev/null || true
+}
+
 write_ship_proof_records() {
   # Write one ship-proof ledger record per worked sub-plan for this iteration.
   #
@@ -2158,13 +2203,18 @@ ${PROMPT}"
       # Without this fallback the declared gate silently never runs and the
       # sub-plan ships as loop-verified on the strength of nothing.
       if [[ ! -s "$all_targets_file" ]]; then
-        # Prefer the pre-iteration capture: the sub-plan is `shipped` by now, so
-        # a fresh lookup finds nothing. Fall back to a live lookup only when the
-        # capture is empty (e.g. the iteration started with nothing active).
-        if [[ -n "${PRE_ITER_TARGET:-}" ]]; then
-          printf '%s\n' "$PRE_ITER_TARGET" >> "$all_targets_file"
-        else
-          get_active_subplan_targets >> "$all_targets_file"
+        # Prefer the ledger: it records the step the iteration REACHED, not
+        # the step it started on.  On a shared remote the ledger is the only
+        # source that can resolve the last step's gate (AC-7).
+        get_ledger_check_targets "$RUN_ID" "$i" >> "$all_targets_file"
+        # Fall back to the pre-iteration capture when the ledger is empty
+        # (e.g. the iteration produced no commits, or the ledger write failed).
+        if [[ ! -s "$all_targets_file" ]]; then
+          if [[ -n "${PRE_ITER_TARGET:-}" ]]; then
+            printf '%s\n' "$PRE_ITER_TARGET" >> "$all_targets_file"
+          else
+            get_active_subplan_targets >> "$all_targets_file"
+          fi
         fi
         if [[ -s "$all_targets_file" ]]; then
           echo "  [local_checks] no commit trailers found; gating the active sub-plan instead ($(tr '\n' ' ' < "$all_targets_file"))"
