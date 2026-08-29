@@ -815,6 +815,106 @@ get_local_check_targets() {
     awk '!seen[$1]++ {print $1, $2}'
 }
 
+write_ship_proof_records() {
+  # Write one ship-proof ledger record per worked sub-plan for this iteration.
+  #
+  # The ledger is a JSONL sidecar at <external_launcher_dir>/ship-proof.jsonl.
+  # Each record attributes a range of commits [step_from, step_to) to a slug,
+  # so ship_audit can prove steps even when commit trailers are absent (the
+  # shared-remote case).  See detached-component-contracts.md.
+  #
+  # $1 = heads_before_file   $2 = heads_after_file   $3 = iteration
+  local heads_before="$1" heads_after="$2" iteration="$3"
+
+  # Parse PRE_ITER_TARGET: one "<slug> <step>" per line.  Use parallel
+  # arrays (slug_list / step_list) because macOS bash 3.2 lacks declare -A.
+  local slug_list=() step_list=()
+  local line
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    local s="${line%% *}"
+    local st="${line#* }"
+    [[ -n "$s" && "$s" != "null" ]] || continue
+    [[ "$st" =~ ^[0-9]+$ ]] || st=0
+    slug_list+=("$s")
+    step_list+=("$st")
+  done <<< "${PRE_ITER_TARGET:-}"
+
+  [[ ${#slug_list[@]} -gt 0 ]] || return 0
+
+  # Resolve current_step for each slug from loop_status (the post-iteration
+  # state — the agent may have advanced the sub-plan during this iteration).
+  local status_json to_list=()
+  status_json=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null) || true
+  local si
+  for (( si=0; si<${#slug_list[@]}; si++ )); do
+    local s="${slug_list[$si]}"
+    local to_val="${step_list[$si]}"
+    if [[ -n "$status_json" ]]; then
+      local looked
+      looked=$(echo "$status_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+for sp in (d.get('subplans') or []):
+    if sp.get('slug') == sys.argv[1]:
+        cs = sp.get('current_step')
+        try:
+            print(int(cs))
+        except (TypeError, ValueError):
+            pass
+        break
+" "$s" 2>/dev/null) || true
+      if [[ -n "$looked" && "$looked" =~ ^[0-9]+$ ]]; then
+        to_val="$looked"
+      fi
+    fi
+    to_list+=("$to_val")
+  done
+
+  # Resolve the ledger path once.
+  local ledger_dir
+  ledger_dir=$(get_ilk_runtime_dir 2>/dev/null) || return 0
+  [[ -n "$ledger_dir" ]] || return 0
+  local ledger="${ledger_dir}/ship-proof.jsonl"
+  mkdir -p "$ledger_dir" 2>/dev/null || return 0
+
+  local r
+  for r in "${REPOS[@]}"; do
+    local before after
+    before=$(grep -F "$r=" "$heads_before" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
+    after=$(grep -F "$r=" "$heads_after" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
+    [[ -n "$before" && -n "$after" && "$before" != "$after" ]] || continue
+
+    local new_shas
+    new_shas=$(git -C "$r" rev-list "${before}..${after}" 2>/dev/null) || continue
+    [[ -n "$new_shas" ]] || continue
+
+    local si
+    for (( si=0; si<${#slug_list[@]}; si++ )); do
+      local slug="${slug_list[$si]}"
+      local step_from="${step_list[$si]}"
+      local step_to="${to_list[$si]}"
+      local shas_json
+      shas_json=$(printf '%s\n' "$new_shas" | jq -R . | jq -sc .)
+
+      local record
+      record=$(python3 -c "
+import json, sys
+print(json.dumps({
+    'run_id': sys.argv[1],
+    'iteration': int(sys.argv[2]),
+    'slug': sys.argv[3],
+    'repo': sys.argv[4],
+    'step_from': int(sys.argv[5]),
+    'step_to': int(sys.argv[6]),
+    'commits': json.loads(sys.argv[7]),
+}, separators=(',', ':')))" "$RUN_ID" "$iteration" "$slug" "$r" "$step_from" "$step_to" "$shas_json" 2>/dev/null) || continue
+
+      printf '%s\n' "$record" >> "$ledger"
+    done
+  done
+}
+
 get_ilk_runtime_dir() {
   local resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ ! -f "$resolver" ]]; then
@@ -2010,6 +2110,13 @@ ${PROMPT}"
       while read -r repo_line count_line; do
         echo "    $repo_line : +$count_line"
       done < "$new_commits_file"
+    fi
+
+    # Ship-proof ledger: record which commits belong to which step range.
+    # Only writes when there are new commits (total_new > 0) — an
+    # unproductive iteration claims no steps (AC-2).
+    if [[ "$total_new" -gt 0 ]]; then
+      write_ship_proof_records "$heads_before_file" "$heads_after_file" "$i"
     fi
 
     # Stall detection
