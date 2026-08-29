@@ -78,6 +78,7 @@ about the same file — this doc makes the implicit contracts explicit.
 | `"max-iterations"` | Hit iteration budget | Terminal |
 | `"budget_exhausted"` | Hit token budget | Terminal |
 | `"startup-hang"` | Pre-iteration-1 hang detected | Terminal |
+| `"timeout"` | `gtimeout` killed the iteration before it completed | Terminal |
 | `"ship_integrity_violation"` | A sub-plan was `shipped` with its declared gate red; the driver reverted it to `in-progress` | Terminal |
 
 **Sentinel state → postmortem label.** `collect.py`'s `_SENTINEL_FAILURE_MAP`
@@ -92,10 +93,35 @@ through to the generic heuristics, which is how a failed run gets classified
 | `"interrupted"` | `interrupted` | `relaunch` |
 | `"local_checks_failed"` | `local-checks-broken` (<3 iters) / `local-checks-stuck` | `block` |
 | `"ship_integrity_violation"` | `shipped-unverified` | `needs-human` |
+| `"timeout"` | *(none — falls through)* | `triage` |
 
 `ship_integrity_violation` is written by `run_ilk_loop_claude.sh` and
 `run_ilk_loop_claude.ps1` only. It was in **0** classifier files until
 2026-08-29 — see the bug reference under Contract 2b.
+
+`timeout` was added to this table on 2026-08-29, having been a terminal state
+**no classifier knew**. `run_ilk_loop_claude.sh:2184` sets
+`iter_stop_reason="timeout"` and `:2504` promotes it to the sentinel's
+`stop_reason`, but it appears in neither `_SENTINEL_FAILURE_MAP` nor (until
+that date) `classify_action`'s arms, so it reached the `*` unknown-label
+fail-safe. `watchdog.sh` now enumerates it on the `no-evidence|never-ran` arm.
+
+**The mismatch is wider than `timeout` and is not yet fixed.** The raw-state
+fallback at `watchdog.sh:933-934` assigns a *sentinel state* into a variable
+`classify_action` reads as a *taxonomy label*, and the two vocabularies differ
+in spelling as well as membership:
+
+| raw state | `classify_action` arm | result |
+|---|---|---|
+| `local_checks_failed` | arms are `local-checks-stuck` / `local-checks-broken` | `*` → block |
+| `max-iterations` | arm is `max-iter-bound` | `*` → block |
+| `budget_exhausted` | arm is `budget-exhausted` | `*` → block |
+| `no-progress`, `error`, `startup-hang` | absent | `*` → block |
+
+Each action is defensible, but each is a **default rather than a decision** —
+the same defect fixed for `timeout`. The likely correct repair is to map the
+raw state through `_SENTINEL_FAILURE_MAP` at the fallback site rather than
+enumerate six more arms.
 
 ### Invariants
 
@@ -505,6 +531,80 @@ Both fixed in sub-plan `a-shared-remote-ship-can-be-proven` (2026-08-29).
 
 ---
 
+## Contract 6: A captured function's stdout is its return value
+
+### The rule
+
+When a caller writes `x=$(fn ...)`, **stdout is `fn`'s return channel**.
+Anything else printed there is concatenated into the value. Bash issues no
+warning, and the corrupted value usually still satisfies an `-n` guard, so the
+failure surfaces far from its cause.
+
+Diagnostics from such a function belong on **stderr** or in a log file —
+never on stdout.
+
+### Who this binds
+
+Every shell function whose stdout a caller captures. Measured 2026-08-29:
+**32** such functions across `watchdog.sh` (12), `scheduler.sh` (9) and
+`run_ilk_loop_claude.sh` (11).
+
+### Field records — two instances, three months apart
+
+**1. `watchdog.sh` / `invoke_postmortem_collect` (rezmac, 2026-08-29).**
+`write_log()` ends with a bare `echo "$line"`. The failure paths called it and
+then `echo ""`, so the captured value was the log line plus a blank line —
+non-empty. The `-n` guard at `:930` passed and the raw-state fallback at
+`:933-934` was **unreachable by construction**. The watchdog logged:
+
+```
+[13:12:07] classification: [13:12:07] collect.py produced no valid report path: ''
+```
+
+The embedded timestamp is `write_log`'s signature and is how it was found.
+Three relaunches (12:01 / 12:37 / 13:12), no plan progress, nothing declining
+to relaunch. Fixed by `write_log_quiet`, whose console copy goes to stderr;
+`write_log` itself is unchanged for its other 33 call sites.
+
+**2. `run_ilk_loop_claude.sh` / `preserve_dirty_tree_on_timeout` (`f5674c6`).**
+The function ends with `echo "$wip_count"`. Its own diagnostics *correctly*
+used `>&2` — but its `git commit` redirected only stderr, so on a **successful**
+commit git's `[main abc1234] WIP: ...` joined the return value, `int()` raised
+in the JSONL builder, and the entire iteration record was lost (run
+`20260829-163114`: 0 records in `.ilk-loop.log`). Fixed by redirecting the
+commit's stdout.
+
+> Note the asymmetry: instance 2's function had *correct* logging discipline
+> and still leaked, because a **subcommand** printed. The rule is about the
+> channel, not about loggers.
+
+### A related but distinct sub-family: wrong *format*, not wrong channel
+
+`emit_jsonl_record.py` (F2) wrote spaced JSON while the runner grepped for the
+compact form. Same outcome — a broken contract on a function's output — but it
+is a Python format contract, not a stdout-channel violation, and no channel
+detector can catch it. Pinned separately by
+`skills/ilk-loop/tests/test_gate_record_format_contract.py`.
+
+### Enforcement
+
+`skills/ilk-watchdog/tests/test_captured_fn_logging.py` parses all three shell
+scripts, resolves every `x=$(fn ...)` capture, and flags a captured function
+that either calls a stdout-writing logger or runs a `git` subcommand that
+prints on success without redirecting stdout.
+
+Two properties that keep it honest:
+
+- **It is proven to fire.** Run against `f5674c6^` it reports exactly the
+  `preserve_dirty_tree_on_timeout` violation; against HEAD, zero. A meta-test
+  with no demonstration that it *can* fail is decorative.
+- **The fd number is load-bearing.** An early draft matched any `>/dev/null`
+  substring and so read `2>/dev/null` as a stdout redirect — which would have
+  scored instance 2 as already-fixed, that instance being precisely "stderr
+  redirected, stdout not". The matcher pins fd 1 explicitly.
+
+---
+
 ## Adding a new reader or writer
 
 When adding a component that reads or writes any of the three artifact
@@ -547,6 +647,17 @@ types above, follow this checklist:
 - [ ] **Check `status: shipped` first.** The marker is only meaningful on a
       shipped sub-plan. Ignore it on pending/in-progress sub-plans.
 
+### For a shell function whose stdout is captured
+
+- [ ] **Log to stderr or a file, never stdout.** In `watchdog.sh` use
+      `write_log_quiet`, not `write_log`.
+- [ ] **Redirect subcommands that print on success** — `git commit`,
+      `git checkout`, `git push` and friends. `2>/dev/null` is **not** enough;
+      it silences stderr and leaves stdout on the return channel.
+- [ ] **Run the detector**:
+      `python3 -m pytest skills/ilk-watchdog/tests/test_captured_fn_logging.py -q`
+      Add the script to its `_SCRIPTS` tuple if you introduced a new one.
+
 ### General
 
 - [ ] **Read with `utf-8-sig` for any file the PowerShell side may write.**
@@ -567,6 +678,8 @@ types above, follow this checklist:
   "gated", the tier table's measured behaviour, and its open limits
   (BOM reads, git stderr, branch policy, hung-alive detection).
 - `skills/ilk-loop/SKILL.md` — the loop convention itself.
+- Sub-plan `a-failed-classification-cannot-be-the-classification` (2026-08-29)
+  — Contract 6, the captured-stdout rule.
 - Sub-plan #1 (`collect-bom-tolerant-reads`) — the BOM fix.
 - Sub-plan #2 (`runner-trust-allpassed`) — the all_passed fix.
 - Sub-plan #3 (`status-terminal-sentinel-alive`) — the liveness fix.
