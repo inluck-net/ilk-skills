@@ -43,7 +43,7 @@ PROJECTS_JSON = LAUNCHER_DIR / "projects.json"
 # Reuse loop_status.py's helpers to guarantee identical discovery + ordering.
 sys.path.insert(0, str(LOOP_SCRIPTS))
 from loop_status import find_plans_dir, parse_frontmatter, extract_master_order, pick_active_master  # type: ignore
-from ilk_paths import find_project_root  # type: ignore
+from ilk_paths import find_project_root, project_key, sentinel_path  # type: ignore
 from pid_health import ilk_pid_alive  # type: ignore
 from plan_slug import DATE_PREFIX  # type: ignore
 
@@ -454,8 +454,10 @@ def build_json(
             "is_current": r["slug"] == cur_slug and r["status"] != "shipped",
         })
 
-    runtime_dir = plans_dir.parent / "runtime"
-    launcher_dir = runtime_dir / "launcher"
+    _key = project_key(project_root)
+    _sentinel_file = sentinel_path(_key)
+    launcher_dir = _sentinel_file.parent
+    runtime_dir = launcher_dir.parent
     launcher_pid = _read_pid(launcher_dir / "running.pid")
     watchdog_pid = _read_pid(runtime_dir / "watchdog" / "watchdog.pid")
     sentinel = detect_sentinel_health(launcher_dir, launcher_pid)
@@ -535,8 +537,10 @@ def main() -> int:
     timestamps, scan_failed = collect_step_commit_timestamps(repos)
     pace_min = compute_pace_min_per_step(timestamps, PACE_WINDOW)
 
-    runtime_dir = plans_dir.parent / "runtime"
-    launcher_dir = runtime_dir / "launcher"
+    _key = project_key(project_root)
+    _sentinel_file = sentinel_path(_key)
+    launcher_dir = _sentinel_file.parent
+    runtime_dir = launcher_dir.parent
     launcher_pid = _read_pid(launcher_dir / "running.pid")
     sentinel = detect_sentinel_health(launcher_dir, launcher_pid)
 

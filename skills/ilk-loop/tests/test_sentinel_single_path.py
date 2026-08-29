@@ -16,6 +16,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -24,9 +25,13 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[3]  # ilk-skills repo root
 _SKILL_ROOT = _REPO_ROOT / "skills"
 _RESOLVER = _SKILL_ROOT / "ilk-loop" / "scripts" / "ilk_paths.py"
-_STATUS_PROGRESS = _SKILL_ROOT / "ilk-launcher" / "scripts" / "status_progress.py"
 _ILK_STATUS_DOC = _REPO_ROOT / "commands" / "ilk-status.md"
 _SKILL_DOC = _SKILL_ROOT / "ilk-loop" / "SKILL.md"
+
+# Import status_progress directly (avoids subprocess sys.path issues)
+_SCRIPTS = _SKILL_ROOT / "ilk-launcher" / "scripts"
+sys.path.insert(0, str(_SCRIPTS))
+import status_progress  # noqa: E402
 
 
 # ── AC-1: sentinel_path accessor exists and returns launcher dir ─────────────
@@ -83,70 +88,110 @@ def test_sentinel_path_in_json_payload():
 
 # ── AC-2: status_progress reads what the accessor returns ────────────────────
 
+MASTER_FM = """\
+---
+master_plan: 2026-08-29-test
+batch_date: 2026-08-29
+source_status: test
+total_tickets: 1
+status: active
+current_subplan: 2026-08-29-example
+---
 
-def test_status_progress_uses_accessor_path():
+# MASTER — test
+
+## Sub-plan registry
+
+| # | Sub-plan | Steps |
+|---|---|---|
+| 1 | [2026-08-29-example.md](./2026-08-29-example.md) | 2 |
+"""
+
+SUBPLAN_FM = """\
+---
+plan: 2026-08-29-example
+status: shipped
+current_step: 2
+estimated_steps: 2
+last_updated: 2026-08-29
+---
+
+# Sub-plan: example
+
+## Steps
+
+### Step 0 — Do the thing
+- Did the thing.
+
+### Step 1 — Do another
+- Did another.
+"""
+
+
+def test_status_progress_uses_accessor_path(tmp_path: Path):
     """AC-2: status_progress reads the sentinel from the accessor path.
 
     Build a sandbox data home with a sentinel at runtime/launcher/last-exit.json,
-    then run status_progress --json and assert the reported sentinel path
-    matches what sentinel_path() would return — not a hardcoded join.
+    then call build_json and assert the reported sentinel path is under
+    runtime/launcher/ — not a hardcoded join from plans_dir.parent / "runtime".
 
     On this commit, status_progress manually joins 'runtime' → FAIL.
     """
-    # Use scheduler_sandbox-style isolation via env vars
-    import tempfile
-    with tempfile.TemporaryDirectory() as tmpdir:
-        data_home = Path(tmpdir) / ".ilk-data"
-        project_key = "test-project"
-        plans_dir = data_home / "projects" / project_key / "plans"
-        plans_dir.mkdir(parents=True)
-        launcher_dir = data_home / "projects" / project_key / "runtime" / "launcher"
-        launcher_dir.mkdir(parents=True)
+    import ilk_paths
 
-        # Write a minimal sentinel
-        sentinel = {"state": "shipped", "run_id": "test-001"}
-        (launcher_dir / "last-exit.json").write_text(
-            json.dumps(sentinel), encoding="utf-8"
-        )
+    # Create a git repo for the project root
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=str(repo), capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=str(repo), capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=str(repo), capture_output=True, check=True)
+    (repo / "README.md").write_text("x\n")
+    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), capture_output=True, check=True)
 
-        # Write a minimal MASTER so find_plans_dir works
-        master = plans_dir / "MASTER-2026-08-29-test.md"
-        master.write_text("---\nmaster_plan: 2026-08-29-test\nstatus: shipped\n---\n# Test\n", encoding="utf-8")
+    key = ilk_paths.project_key(repo)
+    data_home = tmp_path / ".ilk-data"
+    plans_dir = data_home / "projects" / key / "plans"
+    plans_dir.mkdir(parents=True)
+    launcher_dir = data_home / "projects" / key / "runtime" / "launcher"
+    launcher_dir.mkdir(parents=True)
 
-        # Invoke status_progress.py --json
-        result = subprocess.run(
-            [sys.executable, str(_STATUS_PROGRESS),
-             "--project-path", str(plans_dir)],
-            capture_output=True, text=True, timeout=30,
-            env={
-                **__import__("os").environ,
-                "ILK_DATA_HOME": str(data_home),
-                "HOME": str(tmpdir),
-            },
-        )
-        # The test passes if the sentinel path in the JSON matches
-        # what the accessor would give. Currently status_progress
-        # builds it manually, so the assertion will fail because
-        # there is no accessor call — the path is built inline.
-        if result.returncode != 0:
-            pytest.fail(
-                f"status_progress --json failed (exit {result.returncode}):\n"
-                f"stdout={result.stdout}\nstderr={result.stderr}"
+    # Write a minimal sentinel
+    sentinel = {"state": "shipped", "run_id": "test-001"}
+    (launcher_dir / "last-exit.json").write_text(
+        json.dumps(sentinel), encoding="utf-8"
+    )
+
+    # Write MASTER + sub-plan
+    (plans_dir / "MASTER-2026-08-29-test.md").write_text(MASTER_FM, encoding="utf-8")
+    (plans_dir / "2026-08-29-example.md").write_text(SUBPLAN_FM, encoding="utf-8")
+
+    # Patch ILK_DATA_HOME and find_plans_dir
+    import os
+    with patch.dict(os.environ, {"ILK_DATA_HOME": str(data_home)}):
+        with patch.object(status_progress, "find_plans_dir", return_value=plans_dir):
+            result = status_progress.build_json(
+                project_name="test",
+                project_root=repo,
+                plans_dir=plans_dir,
+                master_name="MASTER-2026-08-29-test.md",
+                rows=[],
+                pace_min=None,
+                repos=[repo],
+                step_commit_count=0,
             )
-        data = json.loads(result.stdout)
-        reported_path = Path(data["sentinel"]["last_exit_path"])
-        # The accessor path (once it exists) should equal reported_path.
-        # For now, assert the reported path is under runtime/launcher/.
-        assert "launcher" in reported_path.parts, (
-            f"Sentinel path {reported_path} is not under runtime/launcher/. "
-            f"status_progress must use the accessor."
-        )
+
+    reported_path = Path(result["sentinel"]["last_exit_path"])
+    assert "launcher" in reported_path.parts, (
+        f"Sentinel path {reported_path} is not under runtime/launcher/. "
+        f"status_progress must use the accessor."
+    )
 
 
 # ── AC-4: stale runtime/last-exit.json doesn't mislead ──────────────────────
 
 
-def test_stale_orphan_does_not_change_report():
+def test_stale_orphan_does_not_change_report(tmp_path: Path):
     """AC-4: A stale runtime/last-exit.json sitting beside a fresh
     runtime/launcher/last-exit.json does not change what /ilk-status reports.
 
@@ -156,57 +201,70 @@ def test_stale_orphan_does_not_change_report():
     On this commit, status_progress resolves via plans_dir.parent / "runtime"
     which IS runtime/ — so it reads the stale file → FAIL.
     """
-    import tempfile
-    with tempfile.TemporaryDirectory() as tmpdir:
-        data_home = Path(tmpdir) / ".ilk-data"
-        project_key = "test-project"
-        plans_dir = data_home / "projects" / project_key / "plans"
-        plans_dir.mkdir(parents=True)
+    import ilk_paths
 
-        # Stale orphan at runtime/last-exit.json
-        runtime_dir = data_home / "projects" / project_key / "runtime"
-        runtime_dir.mkdir(parents=True)
-        stale = {"state": "local_checks_failed", "run_id": "20260813-182937"}
-        (runtime_dir / "last-exit.json").write_text(
-            json.dumps(stale), encoding="utf-8"
-        )
+    # Create a git repo for the project root
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=str(repo), capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=str(repo), capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=str(repo), capture_output=True, check=True)
+    (repo / "README.md").write_text("x\n")
+    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), capture_output=True, check=True)
 
-        # Fresh sentinel at runtime/launcher/last-exit.json
-        launcher_dir = runtime_dir / "launcher"
-        launcher_dir.mkdir(parents=True)
-        fresh = {"state": "shipped", "run_id": "20260828-211346"}
-        (launcher_dir / "last-exit.json").write_text(
-            json.dumps(fresh), encoding="utf-8"
-        )
+    # Compute the key the way build_json does
+    key = ilk_paths.project_key(repo)
 
-        # Minimal MASTER
-        master = plans_dir / "MASTER-2026-08-29-test.md"
-        master.write_text("---\nmaster_plan: 2026-08-29-test\nstatus: shipped\n---\n# Test\n", encoding="utf-8")
+    # Override ILK_DATA_HOME so sentinel_path resolves into our sandbox
+    data_home = tmp_path / ".ilk-data"
+    plans_dir = data_home / "projects" / key / "plans"
+    plans_dir.mkdir(parents=True)
 
-        result = subprocess.run(
-            [sys.executable, str(_STATUS_PROGRESS),
-             "--project-path", str(plans_dir)],
-            capture_output=True, text=True, timeout=30,
-            env={
-                **__import__("os").environ,
-                "ILK_DATA_HOME": str(data_home),
-                "HOME": str(tmpdir),
-            },
-        )
-        if result.returncode != 0:
-            pytest.fail(
-                f"status_progress --json failed:\n"
-                f"stdout={result.stdout}\nstderr={result.stderr}"
+    # Stale orphan at runtime/last-exit.json
+    runtime_dir = data_home / "projects" / key / "runtime"
+    runtime_dir.mkdir(parents=True)
+    stale = {"state": "local_checks_failed", "run_id": "20260813-182937"}
+    (runtime_dir / "last-exit.json").write_text(
+        json.dumps(stale), encoding="utf-8"
+    )
+
+    # Fresh sentinel at runtime/launcher/last-exit.json
+    launcher_dir = runtime_dir / "launcher"
+    launcher_dir.mkdir(parents=True)
+    fresh = {"state": "shipped", "run_id": "20260828-211346"}
+    (launcher_dir / "last-exit.json").write_text(
+        json.dumps(fresh), encoding="utf-8"
+    )
+
+    # Write MASTER + sub-plan
+    (plans_dir / "MASTER-2026-08-29-test.md").write_text(MASTER_FM, encoding="utf-8")
+    (plans_dir / "2026-08-29-example.md").write_text(SUBPLAN_FM, encoding="utf-8")
+
+    # Patch ILK_DATA_HOME so ilk_paths.sentinel_path resolves into sandbox
+    import os
+    env_patch = {"ILK_DATA_HOME": str(data_home)}
+    with patch.dict(os.environ, env_patch):
+        with patch.object(status_progress, "find_plans_dir", return_value=plans_dir):
+            result = status_progress.build_json(
+                project_name="test",
+                project_root=repo,
+                plans_dir=plans_dir,
+                master_name="MASTER-2026-08-29-test.md",
+                rows=[],
+                pace_min=None,
+                repos=[repo],
+                step_commit_count=0,
             )
-        data = json.loads(result.stdout)
-        sentinel_state = data["sentinel"]["state"]
-        # The fresh sentinel says "shipped". If status_progress reads
-        # the stale orphan, it would report "local_checks_failed".
-        assert sentinel_state == "shipped", (
-            f"Expected state='shipped' from fresh launcher sentinel, "
-            f"got '{sentinel_state}' — likely reading the stale orphan "
-            f"at runtime/last-exit.json instead of runtime/launcher/last-exit.json"
-        )
+
+    sentinel_state = result["sentinel"]["state"]
+    # The fresh sentinel says "shipped". If status_progress reads
+    # the stale orphan, it would report "local_checks_failed".
+    assert sentinel_state == "shipped", (
+        f"Expected state='shipped' from fresh launcher sentinel, "
+        f"got '{sentinel_state}' — likely reading the stale orphan "
+        f"at runtime/last-exit.json instead of runtime/launcher/last-exit.json"
+    )
 
 
 # ── AC-5: docs name the correct path ────────────────────────────────────────

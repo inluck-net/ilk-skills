@@ -338,6 +338,16 @@ def external_launcher_dir(key: str) -> Path:
     return external_runtime_dir(key) / "launcher"
 
 
+def sentinel_path(key: str) -> Path:
+    """Canonical path to the exit sentinel: <external_launcher_dir>/last-exit.json.
+
+    Every reader of last-exit.json MUST resolve it through this accessor.
+    A bare ``runtime / "last-exit.json"`` join is a bug — the sentinel
+    lives under ``runtime/launcher/`` since commit 736d6d5.
+    """
+    return external_launcher_dir(key) / "last-exit.json"
+
+
 def external_watchdog_dir(key: str) -> Path:
     return external_runtime_dir(key) / "watchdog"
 
@@ -420,12 +430,21 @@ def _selftest() -> int:
     ap.add_argument("--start", type=Path, default=Path.cwd())
     ap.add_argument("--where", action="store_true",
                     help="Print human-readable state paths (one per line) instead of JSON.")
+    ap.add_argument("--sentinel-path", action="store_true",
+                    help="Print the canonical sentinel path and exit.")
     args = ap.parse_args()
     g_root = git_root(args.start)
     m_root = meta_root(args.start)
     root, kind = find_project_root(args.start)
     key = project_key(root) if root else None
     plans, src = find_plans_dir(args.start)
+
+    if args.sentinel_path:
+        if key is None:
+            print(f"error: no project root for {args.start.resolve()}", file=__import__("sys").stderr)
+            return 1
+        print(sentinel_path(key))
+        return 0
 
     member: dict | None = None
     members: list[dict] = []
@@ -448,6 +467,7 @@ def _selftest() -> int:
         print(f"plans: {external_plans_dir(key)}")
         print(f"runtime: {external_runtime_dir(key)}")
         print(f"launcher: {external_launcher_dir(key)}")
+        print(f"sentinel: {sentinel_path(key)}")
         print(f"watchdog: {external_watchdog_dir(key)}")
         print(f"logs: {external_logs_dir(key)}")
         print(f"logs-launcher: {logs_launcher_dir(key)}")
@@ -469,6 +489,7 @@ def _selftest() -> int:
         "logs_launcher_dir": str(logs_launcher_dir(key)) if key else None,
         "jsonl_summary_path": str(jsonl_summary_path(key)) if key else None,
         "external_launcher_dir": str(external_launcher_dir(key)) if key else None,
+        "sentinel_path": str(sentinel_path(key)) if key else None,
         "external_watchdog_dir": str(external_watchdog_dir(key)) if key else None,
         "archive_base": str(external_logs_dir(key) / "archive") if key else None,
         "resolved_plans_dir": str(plans) if plans else None,
