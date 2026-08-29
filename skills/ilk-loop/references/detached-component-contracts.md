@@ -599,6 +599,94 @@ Both fixed in sub-plan `a-shared-remote-ship-can-be-proven` (2026-08-29).
 
 ---
 
+## Contract 7: The no-progress dispatch bound (`no-progress.json`)
+
+### The rule
+
+The scheduler stops dispatching a project after **N consecutive launches that
+each ended non-clean with no plan progress**. It depends on nothing but launch
+history — specifically **not** on a postmortem existing.
+
+### Why it cannot depend on postmortems
+
+`read_blacklist_from_postmortems` (`scheduler.sh`) builds the blacklist from
+postmortem **files**. No postmortem ⇒ no entry ⇒ dispatchable forever.
+
+Field record (rezmac, 2026-08-29): three launches at 12:01, 12:37 and 13:12,
+each killed, each leaving no postmortem. The scheduler log read `promote:` /
+`dispatch:` / `skip-busy` throughout and never indicated anything was wrong; it
+was found only by reading `activity.log`. The watchdog was **not** the component
+that needed convincing — it declined to relaunch and exited. The scheduler
+re-dispatches independently.
+
+> A bound that requires a successful postmortem is a bound that switches off
+> exactly when things are worst.
+
+### Format
+
+`<project_data_dir>/runtime/launcher/no-progress.json` — beside the sentinel,
+deliberately **not** under `postmortems/`:
+
+```json
+{"count":2,"signature":"34fdde416ede","updated_epoch":1700000000}
+```
+
+`signature` is a sha1 prefix over every sub-plan's `status` + `current_step`, so
+a step advance **or** a ship changes it.
+
+### N = 3
+
+Declared as `NO_PROGRESS_THRESHOLD`, overridable via
+`ILK_NO_PROGRESS_THRESHOLD`. Three, on three grounds:
+
+1. the observed launch count on 2026-08-29;
+2. `run_ilk_loop_claude.sh` already uses `no_progress_streak -ge 3`;
+3. `collect.py` splits its `local_checks_failed` narrowing on `iter_count < 3`.
+
+A fourth threshold would be one more number to reconcile.
+
+### Invariants
+
+1. **The counter advances once per DISPATCH, not per poll.** The check sits past
+   every skip gate (blacklist, backoff, rapid-terminal, cooldown, busy), so
+   reaching it means the project is genuinely about to launch. Counting per poll
+   would trip the bound within minutes regardless of how many launches occurred.
+2. **The counter is persisted.** launchd `KeepAlive` bounces the scheduler; an
+   in-memory counter would reset the bound on every bounce — the failure mode
+   being fixed.
+3. **Progress resets it, whatever else happened.** A slow batch that is
+   advancing must never be blocked. This is the bound's main false-positive risk.
+4. **A clean exit resets it, whatever the plan state.** A run can finish cleanly
+   with no step advance (everything already shipped). That is success.
+5. **First sight is not evidence.** A project whose stored signature is `none`
+   counts as progress. Nothing may be bounded for never having been seen.
+6. **The refusal is loud.** Logged through the structured
+   `(decision, key, reason)` form as `no-progress-bound`, naming the project,
+   the count, the threshold, and how to clear it. The observed failure's
+   defining property was a log that looked healthy.
+7. **One acknowledgement gesture, not two.** The bound is cleared by
+   `<project_data_dir>/runtime/launcher/blacklist-cleared.json` — the same
+   resolve-ack `blacklist_status.py` reads, on the same `cleared_at >=` rule.
+   A second ack file would mean `/ilk-resume` clears one bound and silently
+   leaves the other.
+8. **Additive.** `read_blacklist_from_postmortems` is unchanged and remains the
+   richer signal when a postmortem exists. Pinned by a byte-comparison test
+   against `6aaf28b`.
+
+### Known gap (recorded, not fixed)
+
+**A project driven by a manual `/ilk-run` plus a watchdog, with no scheduler,
+has no such bound.** The scheduler owns the dispatch decision, so that is where
+the bound lives; a second copy in the watchdog would mean two components with
+independent, drifting notions of "no progress", and the watchdog already
+declined to relaunch in the observed failure. It was not the one that needed
+convincing.
+
+An unrecorded gap is one somebody rediscovers the expensive way, so it is
+written here rather than left implied.
+
+---
+
 ## Contract 6: A captured function's stdout is its return value
 
 ### The rule
