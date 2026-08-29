@@ -104,9 +104,17 @@ def main() -> int:
 
     rec = build_record(slug, step, outcome, check_exit, failing_check, data=data)
 
-    # Append to results file
+    # Append to results file.
+    #
+    # `separators=(",", ":")` is the documented contract
+    # (references/detached-component-contracts.md, "local_checks results
+    # file"), and is what the hand-interpolated echo this script replaced
+    # emitted.  Readers parse JSON now (blocking_checks.py), so the separator
+    # cannot break them -- but a file that does not match its own contract is
+    # a trap for the next reader, and this one already sprung once
+    # (kira-cloudflare 20260828-211346).
     with open(results_file, "a", encoding="utf-8") as f:
-        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        f.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n")
 
     return 0
 

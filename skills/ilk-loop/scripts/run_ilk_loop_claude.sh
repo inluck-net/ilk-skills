@@ -2087,18 +2087,19 @@ ${PROMPT}"
       # B2 confirm-before-block (2026-06-17): a transient `error` (flaky exit,
       # missing shell builtin) must be CONFIRMED by re-running the blocking
       # checks once before committing to local_checks_failed.
+      # One JSON reader for every question asked of this file. It used to be
+      # four `grep -qE '"outcome":"(error|fail)"'` calls, which the writer's
+      # `json.dumps` (a space after every colon) never matched -- so the whole
+      # of B2 was dead code. See blocking_checks.py's module docstring and
+      # references/detached-component-contracts.md.
+      local blocking_checks_script="${_SKILL_ROOT}/ilk-loop/scripts/blocking_checks.py"
       if [[ -s "$local_checks_results" ]]; then
-        if grep -qE '"outcome":"(error|fail)"' "$local_checks_results"; then
+        if python3 "$blocking_checks_script" "$local_checks_results" --any; then
           # Extract blocking slug/step pairs and re-run them
           local blocking_targets
           blocking_targets=$(mktemp)
-          grep -E '"outcome":"(error|fail)"' "$local_checks_results" | \
-            python3 -c "
-import json, sys
-for line in sys.stdin:
-    d = json.loads(line.strip())
-    print(d['slug'], d.get('step', 0))
-" > "$blocking_targets" 2>/dev/null
+          python3 "$blocking_checks_script" "$local_checks_results" --targets \
+            > "$blocking_targets" 2>/dev/null
 
           local rerun_results=""
           if [[ -s "$blocking_targets" ]]; then
@@ -2161,26 +2162,9 @@ print('false' if not d.get('blocked', True) else 'true')
               if [[ -n "$q_plans_dir" && -d "$q_plans_dir" ]]; then
                 # Extract slugs from blocking results
                 local q_slugs
-                q_slugs=$(grep -E '"outcome":"(error|fail)"' "$local_checks_results" | \
-                  python3 -c "
-import json, sys
-slugs = set()
-for line in sys.stdin:
-    d = json.loads(line.strip())
-    slugs.add(d.get('slug', ''))
-for s in sorted(slugs):
-    if s: print(s)
-" 2>/dev/null)
+                q_slugs=$(python3 "$blocking_checks_script" "$local_checks_results" --slugs 2>/dev/null)
                 local failing_desc
-                failing_desc=$(grep -E '"outcome":"(error|fail)"' "$local_checks_results" | \
-                  python3 -c "
-import json, sys
-parts = []
-for line in sys.stdin:
-    d = json.loads(line.strip())
-    parts.append(f\"{d.get('slug','')}#{d.get('step',0)}\")
-print(', '.join(parts))
-" 2>/dev/null)
+                failing_desc=$(python3 "$blocking_checks_script" "$local_checks_results" --describe 2>/dev/null)
                 while IFS= read -r q_slug; do
                   [[ -z "$q_slug" ]] && continue
                   local q_out
