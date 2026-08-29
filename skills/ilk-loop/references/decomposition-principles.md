@@ -1288,6 +1288,27 @@ under `--durations`-visible light load, and fails inside a full suite or under
 Prefer waiting on the event (process exit, a file the subject writes and does not
 remove) over waiting on a clock.
 
+**The leading executable is inherited state.** `bunx`, `npx`, `pnpm`, and
+other toolchain binaries live on the authoring shell's interactive PATH
+(`~/.bun/bin`, `~/.nvm/versions/...`) and nowhere in the driver's. The
+scheduler on this Mac inherits:
+
+```
+PATH = /Users/chad/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+```
+
+No `~/.bun/bin`. `bunx` resolves from an interactive profile the driver never
+loads. The result is `/bin/bash: bunx: command not found` on **every** iteration
+— a gate that was measured green from a shell and declared in a sub-plan,
+producing 3 of 3 red results that the enforcement mechanism then ignored (the
+format-contract break that surfaced this batch).
+
+The check is now mechanical: `plan_lint.py` resolves each gate command's leading
+executable against the effective PATH (getconf PATH + the project's
+`path_prelude`) and flags what cannot resolve. A project whose driver PATH
+legitimately contains a directory declared nowhere gets a finding that names
+exactly what was searched — the fix is one config line.
+
 ### Corollary: measure in the ancestry the gate will actually run in
 
 This is where the principle bites the *investigator*, not the author. An
@@ -1330,6 +1351,20 @@ the runner rather than under a shell.
 Both hypotheses were built on isolation runs — the exact evidence the corollary
 above says proves nothing. The plan file even listed those runs as ruling the
 cause out; the investigation had to falsify its own premise to get anywhere.
+
+**2026-08-28 — kira-cloudflare run 20260828-211346.** A sub-plan declared
+`bunx vitest run -c tests/convex-tests/vitest.config.ts convex/__tests__/issueReports.test.ts`
+as its gate. The scheduler's launchd plist exports
+`PATH=/Users/chad/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`.
+No `~/.bun/bin`. Result: `/bin/bash: bunx: command not found` on **3 of 3**
+iterations. The enforcement mechanism was also broken (format-contract break
+in `emit_jsonl_record.py`), so the red gate did not stop the ship — the
+sub-plan reported `all-shipped` with every declared gate red.
+
+The planner had read this section during QC and shipped the gate anyway, because
+every baseline had been measured from an interactive shell. The same gap was
+re-introduced across several harnesses after being fixed in one. Now mechanical:
+`plan_lint.py` resolves the leading executable against the effective PATH.
 
 ### Cross-references
 

@@ -849,6 +849,11 @@ surface counts in the step-9 report; fix before launching):
   `from <mod> import` / `import <mod>`, excluding test files); if the oracle
   cannot run, it reports nothing rather than firing. See
   decomposition-principles.md §8.
+- **gate executable off driver PATH** — a `local_checks` command's leading
+  executable cannot resolve on the effective PATH (getconf PATH + the project's
+  `path_prelude`). The finding names both the executable and the searched
+  directory list. Shell builtins, keywords, and `VAR=value` prefixes are
+  skipped. See decomposition-principles.md §23.
 - **supervised_only scope guard** (**hard finding**, needs `--master`) — fires
   in both directions: (a) the MASTER sets `supervised_only: true` but no
   sub-plan's `scope_paths` modifies loop infra — the flag is unwarranted, set it

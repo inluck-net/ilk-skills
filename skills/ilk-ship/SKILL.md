@@ -276,6 +276,13 @@ hard-blocks. The default is:
 
 This default is stated here and enforced in `ship_config.py`.
 
+**What reads `path_prelude`:** `run_local_checks.py` prepends the prelude to
+each gate command's shell invocation (`run_local_checks.py:372-374`). The
+prelude is typically `export PATH="/some/dir:$PATH"` to add toolchain
+directories that the driver's environment lacks (e.g. `~/.bun/bin` for
+`bunx`). `plan_lint.py`'s `lint_gate_executable_on_driver_path` also reads it
+to verify that gate executables resolve on the effective PATH.
+
 ## No phase claims a skipped step
 
 Each phase's output states what it ran and what it did not. This is
