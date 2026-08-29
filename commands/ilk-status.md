@@ -169,7 +169,8 @@ on Windows), the sentinel is stale. This typically happens when:
 
 Report these details to the user:
 - **PID** and the fact it is dead
-- **Sentinel path:** `~/.ilk-data/projects/<key>/runtime/last-exit.json`
+- **Sentinel path:** `~/.ilk-data/projects/<key>/runtime/launcher/last-exit.json`
+  (resolve with `python3 ilk_paths.py --start <project> --sentinel-path`)
 - **Log candidates:** paths that `collect.py` would search
   (external logs dir, legacy skill-root logs)
 

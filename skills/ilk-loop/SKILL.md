@@ -120,11 +120,16 @@ All per-project runtime artifacts live outside the project tree under:
 ```
 ~/.ilk-data/projects/<project-key>/
     plans/         # MASTER-*.md and sub-plans
-    runtime/       # last-exit.json, queue cursors
-    runtime/launcher/   # PID files, launch metadata, MCP worker configs
+    runtime/       # queue cursors
+    runtime/launcher/   # last-exit.json (sentinel), PID files, launch metadata
     runtime/watchdog/   # watchdog PID, activity log
     logs/          # per-project loop output
 ```
+
+A `runtime/last-exit.json` may exist from before commit `736d6d5` or from
+the PowerShell runner. It is **not** authoritative on this platform — the
+canonical sentinel lives at `runtime/launcher/last-exit.json`. Resolve it
+with `ilk_paths.py --sentinel-path`.
 
 To discover the exact paths for the project in the current directory:
 
