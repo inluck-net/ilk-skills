@@ -76,6 +76,7 @@ def _run_harness(body: str, *, tmp_path: Path, collect_py: str) -> subprocess.Co
         ["/bin/bash", "-c", script],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     proc.activity_log = activity_log.read_text() if activity_log.exists() else ""  # type: ignore[attr-defined]
@@ -271,7 +272,8 @@ def _classify_action(label: str) -> str:
         f'classify_action "{label}"\n'
     )
     proc = subprocess.run(
-        ["/bin/bash", "-c", script], capture_output=True, text=True, timeout=30
+        ["/bin/bash", "-c", script], capture_output=True, text=True,
+        encoding="utf-8", timeout=30,
     )
     return proc.stdout.strip()
 

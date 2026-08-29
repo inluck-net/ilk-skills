@@ -106,7 +106,8 @@ class RunnerSandbox:
         self.bin.mkdir()
 
     def _git(self, *args: str) -> None:
-        subprocess.run(["git", *args], cwd=self.proj, check=True, capture_output=True)
+        subprocess.run(["git", *args], cwd=self.proj, check=True,
+                       capture_output=True, encoding="utf-8")
 
     def stub_agent(self, body: str) -> None:
         agent = self.bin / "claude"
@@ -114,13 +115,30 @@ class RunnerSandbox:
         agent.chmod(0o755)
 
     def env(self, **extra: str) -> dict[str, str]:
-        return {
+        """Environment for the runner subprocess.
+
+        ILK_DATA_HOME is pinned explicitly, not merely inherited. Setting HOME
+        alone is not enough: ILK_DATA_HOME wins over HOME when resolving the
+        data root, so a value left in ``os.environ`` by an earlier test sends
+        the runner's artifacts somewhere this sandbox never looks -- and the
+        test then reports "no record was written" when a record was written
+        perfectly well, somewhere else.
+
+        Measured: these tests passed alone and in every subset, and all five
+        failed in the full suite, which is the signature of exactly this leak.
+        ILK_DATA_DIR is stripped for the same reason, matching conftest's
+        ``scheduler_sandbox``.
+        """
+        env = {
             **os.environ,
             "PATH": f"{self.bin}:{os.environ.get('PATH', '')}",
             "HOME": str(self.root),
+            "ILK_DATA_HOME": str(self.root / ".ilk-data"),
             "ILK_DOTSOURCE_ONLY": "",
             **extra,
         }
+        env.pop("ILK_DATA_DIR", None)
+        return env
 
     def argv(self, *extra: str) -> list[str]:
         return [
@@ -171,7 +189,7 @@ def _reap(sandbox: RunnerSandbox) -> None:
     creates that state must clean it up or it leaks a sleeping process per run.
     """
     subprocess.run(["pkill", "-9", "-f", str(sandbox.bin / "claude")],
-                   capture_output=True)
+                   capture_output=True, encoding="utf-8")
 
 
 @pytest.fixture()
@@ -200,11 +218,15 @@ def test_a_started_record_exists_before_the_agent_runs(sandbox: RunnerSandbox) -
         [ -n "$log" ] && cp "$log" "{probe}"
         exit 0
     """)
-    subprocess.run(sandbox.argv(), env=sandbox.env(), cwd=str(sandbox.proj),
-                   capture_output=True, text=True, timeout=110)
+    proc = subprocess.run(sandbox.argv(), env=sandbox.env(), cwd=str(sandbox.proj),
+                          capture_output=True, text=True, encoding="utf-8",
+                          timeout=110)
 
     assert probe.exists(), (
-        "the agent saw no .ilk-loop.log at all: no record precedes the work"
+        "the agent saw no .ilk-loop.log at all: no record precedes the work.\n"
+        f"runner rc={proc.returncode}\n"
+        f"runner stdout tail:\n{proc.stdout[-2500:]}\n"
+        f"runner stderr tail:\n{proc.stderr[-2500:]}"
     )
     seen = [json.loads(x) for x in probe.read_text().splitlines() if x.strip()]
     started = [r for r in seen if r.get("status") == "started"]
@@ -228,7 +250,7 @@ def test_start_and_completion_records_pair_by_run_id_and_iteration(
     """AC-2: a clean run still writes the full record, pairable with the start."""
     sandbox.stub_agent("exit 0\n")
     subprocess.run(sandbox.argv(), env=sandbox.env(), cwd=str(sandbox.proj),
-                   capture_output=True, text=True, timeout=110)
+                   capture_output=True, text=True, encoding="utf-8", timeout=110)
 
     recs = sandbox.records()
     assert recs, "a clean run wrote no records at all"
@@ -267,6 +289,7 @@ def test_a_killed_runner_still_leaves_the_started_record(sandbox: RunnerSandbox)
         env=sandbox.env(ILK_ITERATION_TIMEOUT_SEC="120"),
         cwd=str(sandbox.proj),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        encoding="utf-8",
     )
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
@@ -310,7 +333,8 @@ def test_a_gtimeout_child_kill_still_yields_a_complete_record(
     """)
     subprocess.run(
         sandbox.argv(), env=sandbox.env(ILK_ITERATION_TIMEOUT_SEC="5"),
-        cwd=str(sandbox.proj), capture_output=True, text=True, timeout=110,
+        cwd=str(sandbox.proj), capture_output=True, text=True,
+        encoding="utf-8", timeout=110,
     )
 
     recs = sandbox.records()
@@ -345,7 +369,7 @@ def test_ship_proof_ledger_is_written_by_a_real_run(sandbox: RunnerSandbox) -> N
         exit 0
     """)
     subprocess.run(sandbox.argv(), env=sandbox.env(), cwd=str(sandbox.proj),
-                   capture_output=True, text=True, timeout=110)
+                   capture_output=True, text=True, encoding="utf-8", timeout=110)
 
     ledger = sandbox.ship_proof()
     assert ledger, (

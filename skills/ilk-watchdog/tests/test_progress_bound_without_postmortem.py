@@ -42,23 +42,35 @@ _OBSERVED_LAUNCHES = 3
 
 
 def _sh(body: str, *, funcs: tuple[str, ...],
-        cwd: Path | None = None) -> subprocess.CompletedProcess:
-    """Run `body` with the named scheduler.sh functions in scope."""
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    """Run `body` with the named scheduler.sh functions in scope.
+
+    Callers pass ``scheduler_sandbox``'s env, which pins HOME and
+    ILK_DATA_HOME to a temp root and strips ILK_DATA_DIR. These helpers are
+    pure and touch no data home today, but a harness that evals scheduler.sh
+    and does NOT isolate the data root is one edit away from writing to the
+    live ``~/.ilk-data`` -- the §23 defect this repo has hit repeatedly, and
+    what ``test_data_home_sandbox.py``'s meta-test exists to prevent.
+    """
     prelude = f'SCHEDULER_SH="{_SCHEDULER_SH}"\n'
     for fn in funcs:
         prelude += f"eval \"$(sed -n '/^{fn}()/,/^}}/p' \"$SCHEDULER_SH\")\"\n"
     return subprocess.run(
         ["/bin/bash", "-c", prelude + body],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, timeout=30, encoding="utf-8",
         cwd=str(cwd) if cwd else None,
+        env=env,
     )
 
 
-def _verdict(count: int, progressed: str, clean: str, threshold: int = 3) -> str:
+def _verdict(count: int, progressed: str, clean: str, threshold: int = 3,
+             *, env: dict[str, str] | None = None) -> str:
     """Call get_no_progress_verdict and return its stdout, stripped."""
     proc = _sh(
         f'get_no_progress_verdict {count} {progressed} {clean} {threshold}\n',
         funcs=("get_no_progress_verdict",),
+        env=env,
     )
     assert proc.returncode == 0, (
         f"get_no_progress_verdict failed: rc={proc.returncode} "
@@ -71,7 +83,7 @@ def _verdict(count: int, progressed: str, clean: str, threshold: int = 3) -> str
 # AC-1
 # ---------------------------------------------------------------------------
 
-def test_consecutive_no_progress_launches_stop_dispatch_with_no_postmortem() -> None:
+def test_consecutive_no_progress_launches_stop_dispatch_with_no_postmortem(scheduler_sandbox) -> None:
     """AC-1: the bound fires on launch history alone.
 
     Nothing here creates a postmortems directory. That is the point: the
@@ -81,7 +93,7 @@ def test_consecutive_no_progress_launches_stop_dispatch_with_no_postmortem() -> 
     count = 0
     decisions = []
     for _ in range(_OBSERVED_LAUNCHES):
-        out = _verdict(count, "false", "false")
+        out = _verdict(count, "false", "false", env=scheduler_sandbox.env)
         parts = out.split()
         assert len(parts) == 2, f"expected '<count> <decision>', got {out!r}"
         count = int(parts[0])
@@ -125,19 +137,19 @@ def test_consecutive_no_progress_launches_stop_dispatch_with_no_postmortem() -> 
 # AC-3
 # ---------------------------------------------------------------------------
 
-def test_plan_progress_resets_the_counter() -> None:
+def test_plan_progress_resets_the_counter(scheduler_sandbox) -> None:
     """AC-3: a batch that is advancing must never be blocked by this.
 
     This is the bound's main false-positive risk: a legitimately slow batch
     that commits steadily would otherwise trip it.
     """
-    out = _verdict(_OBSERVED_LAUNCHES - 1, "true", "false")
+    out = _verdict(_OBSERVED_LAUNCHES - 1, "true", "false", env=scheduler_sandbox.env)
     assert out.split() == ["0", "allow"], (
         f"plan progress did not reset the counter; got {out!r}"
     )
 
     # And a reset must be durable: the next no-progress launch starts from 0.
-    after = _verdict(0, "false", "false")
+    after = _verdict(0, "false", "false", env=scheduler_sandbox.env)
     assert after.split() == ["1", "allow"], (
         f"counting did not resume from zero after a reset; got {after!r}"
     )
@@ -147,13 +159,13 @@ def test_plan_progress_resets_the_counter() -> None:
 # AC-4
 # ---------------------------------------------------------------------------
 
-def test_a_clean_exit_resets_the_counter() -> None:
+def test_a_clean_exit_resets_the_counter(scheduler_sandbox) -> None:
     """AC-4: a clean exit resets, whatever the plan state.
 
     A run can finish cleanly with no step advance (everything already
     shipped). That is success, not a stall.
     """
-    out = _verdict(_OBSERVED_LAUNCHES - 1, "false", "true")
+    out = _verdict(_OBSERVED_LAUNCHES - 1, "false", "true", env=scheduler_sandbox.env)
     assert out.split() == ["0", "allow"], (
         f"a clean exit did not reset the counter; got {out!r}"
     )
@@ -163,7 +175,7 @@ def test_a_clean_exit_resets_the_counter() -> None:
 # AC-5
 # ---------------------------------------------------------------------------
 
-def test_the_refusal_names_the_project_the_count_and_the_reason(tmp_path: Path) -> None:
+def test_the_refusal_names_the_project_the_count_and_the_reason(tmp_path: Path, scheduler_sandbox) -> None:
     """AC-5: the defining property of the failure was a healthy-looking log.
 
     The scheduler logged `promote:` / `dispatch:` / `skip-busy` throughout
@@ -177,6 +189,7 @@ def test_the_refusal_names_the_project_the_count_and_the_reason(tmp_path: Path) 
         'cat "$SCHEDULER_LOG_FILE"\n',
         funcs=("write_scheduler_log", "write_no_progress_refusal"),
         cwd=tmp_path,
+        env=scheduler_sandbox.env,
     )
     assert proc.returncode == 0, (
         f"write_no_progress_refusal failed: {proc.stderr!r}"
@@ -213,6 +226,7 @@ def test_read_blacklist_from_postmortems_is_unchanged() -> None:
     base = subprocess.run(
         ["git", "show", f"{_BASE_COMMIT}:skills/ilk-watchdog/scripts/scheduler.sh"],
         cwd=_REPO_ROOT, capture_output=True, text=True, timeout=30,
+        encoding="utf-8",
     )
     assert base.returncode == 0, f"could not read base commit: {base.stderr!r}"
 
@@ -229,7 +243,7 @@ def test_read_blacklist_from_postmortems_is_unchanged() -> None:
 # AC-8
 # ---------------------------------------------------------------------------
 
-def test_a_resolve_ack_clears_the_new_bound() -> None:
+def test_a_resolve_ack_clears_the_new_bound(scheduler_sandbox) -> None:
     """AC-8: one way for an operator to say "I looked at it, carry on".
 
     The postmortem blacklist is cleared by a resolve-ack whose `cleared_at` is
@@ -241,6 +255,7 @@ def test_a_resolve_ack_clears_the_new_bound() -> None:
     proc = _sh(
         'no_progress_cleared_by_ack 1000 2000\n',
         funcs=("no_progress_cleared_by_ack",),
+        env=scheduler_sandbox.env,
     )
     assert proc.returncode == 0, f"helper failed: {proc.stderr!r}"
     assert proc.stdout.strip() == "true", (
@@ -249,7 +264,7 @@ def test_a_resolve_ack_clears_the_new_bound() -> None:
 
     # ack exactly equal → cleared (same >= rule as blacklist_status.py)
     same = _sh('no_progress_cleared_by_ack 1500 1500\n',
-               funcs=("no_progress_cleared_by_ack",))
+               funcs=("no_progress_cleared_by_ack",), env=scheduler_sandbox.env)
     assert same.stdout.strip() == "true", (
         "an ack with the same timestamp did not clear the bound; "
         "blacklist_status.py uses cleared_at >= generated_at and the two "
@@ -258,7 +273,7 @@ def test_a_resolve_ack_clears_the_new_bound() -> None:
 
     # stale ack → still bound
     stale = _sh('no_progress_cleared_by_ack 2000 1000\n',
-                funcs=("no_progress_cleared_by_ack",))
+                funcs=("no_progress_cleared_by_ack",), env=scheduler_sandbox.env)
     assert stale.stdout.strip() == "false", (
         f"a stale ack cleared the bound; got {stale.stdout!r}"
     )
