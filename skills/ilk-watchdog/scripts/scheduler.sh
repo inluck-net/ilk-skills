@@ -565,6 +565,40 @@ write_no_progress_state() {
     "$count" "$signature" "$now_epoch" > "$state_file" 2>/dev/null || true
 }
 
+read_resolve_ack_epoch() {
+  # Echo the epoch of a project's resolve-ack, or 0.
+  # The ack sentinel is <project_data_dir>/runtime/launcher/blacklist-cleared.json
+  # with an ISO `cleared_at` -- the SAME file blacklist_status.py reads, so
+  # /ilk-resume clears both bounds with one gesture (AC-8).
+  local ack="${1}/runtime/launcher/blacklist-cleared.json"
+  [[ -f "$ack" ]] || { echo 0; return; }
+  ACK_FILE="$ack" $PYTHON -c "
+import json, os
+from datetime import datetime
+try:
+    d = json.load(open(os.environ['ACK_FILE'], encoding='utf-8-sig'))
+    print(int(datetime.fromisoformat(d['cleared_at']).timestamp()))
+except Exception:
+    print(0)
+" 2>/dev/null || echo 0
+}
+
+sentinel_exit_was_clean() {
+  # Echo "true" when a project's last run ended cleanly.
+  # Clean means the batch finished, not merely that it exited: a killed or
+  # timed-out run is NOT clean, which is the whole point of the bound.
+  local sentinel="${1}/runtime/launcher/last-exit.json"
+  [[ -f "$sentinel" ]] || { echo "false"; return; }
+  SENTINEL="$sentinel" $PYTHON -c "
+import json, os
+try:
+    st = (json.load(open(os.environ['SENTINEL'], encoding='utf-8-sig')).get('state') or '').strip()
+except Exception:
+    print('false'); raise SystemExit
+print('true' if st in ('shipped', 'all-shipped', 'already-shipped', 'clean-success') else 'false')
+" 2>/dev/null || echo "false"
+}
+
 write_no_progress_refusal() {
   # AC-5: the refusal must be LOUD.  The defining property of the observed
   # failure was a scheduler log that looked healthy throughout; a silent
@@ -993,6 +1027,41 @@ print(int((ea-sa).total_seconds()))
           write_scheduler_log "skip-busy" "$key"
         fi
         continue
+      fi
+
+      # --- no-progress dispatch bound (independent of postmortems) -------
+      # Placed past every skip gate, so it advances ONCE PER DISPATCH rather
+      # than once per poll: reaching this point means the project is genuinely
+      # about to be launched (not busy, not cooling down, not blacklisted).
+      # Counting per poll would trip the bound within minutes regardless of
+      # how many launches actually happened.
+      local _np_file _np_count _np_sig _np_updated _np_cur _np_ack
+      local _np_progressed="false" _np_clean="false" _np_new _np_decision
+      _np_file="$(no_progress_state_file "$path")"
+      read -r _np_count _np_sig _np_updated <<<"$(read_no_progress_state "$_np_file")"
+      _np_cur="$(progress_signature_for_project "$path")"
+      _np_ack="$(read_resolve_ack_epoch "$path")"
+      _np_clean="$(sentinel_exit_was_clean "$path")"
+      # First sight of a project ("none") is not evidence of no progress.
+      if [[ "$_np_sig" == "none" || "$_np_cur" != "$_np_sig" ]]; then
+        _np_progressed="true"
+      fi
+
+      if [[ "$(no_progress_cleared_by_ack "$_np_updated" "$_np_ack")" == "true" ]]; then
+        # An operator vouched for it — reset and let it through (AC-8).
+        write_no_progress_state "$_np_file" 0 "$_np_cur" "$now_epoch"
+      else
+        read -r _np_new _np_decision <<<"$(get_no_progress_verdict "$_np_count" "$_np_progressed" "$_np_clean")"
+        write_no_progress_state "$_np_file" "$_np_new" "$_np_cur" "$now_epoch"
+        if [[ "$_np_decision" == "block" ]]; then
+          write_no_progress_refusal "$key" "$_np_new"
+          if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+            echo "{\"decision\":\"no-progress-bound\",\"key\":\"$key\",\"count\":$_np_new}"
+          else
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] no-progress-bound: $key (count=$_np_new)"
+          fi
+          continue
+        fi
       fi
 
       # Cannot dispatch a project whose source repo path is unknown

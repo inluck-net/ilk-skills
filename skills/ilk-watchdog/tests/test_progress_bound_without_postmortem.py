@@ -100,6 +100,26 @@ def test_consecutive_no_progress_launches_stop_dispatch_with_no_postmortem() -> 
         f"get started. decisions={decisions}"
     )
 
+    # Wiring pin. The helper being correct proves nothing if run_scheduler
+    # never calls it, and a pure-helper test cannot tell the difference.
+    src = _SCHEDULER_SH.read_text()
+    for needed in (
+        "get_no_progress_verdict",
+        "write_no_progress_refusal",
+        "progress_signature_for_project",
+    ):
+        # once as the definition, at least once as a call
+        assert src.count(needed) >= 2, (
+            f"{needed} is defined but never called: the bound is dead code"
+        )
+    dispatch_region = src.split("# Check if project is busy", 1)
+    assert len(dispatch_region) == 2, "could not locate the dispatch loop"
+    assert "no_progress_state_file" in dispatch_region[1], (
+        "the no-progress bound is not wired into the dispatch path (it must "
+        "sit past the skip gates, so it advances once per DISPATCH rather "
+        "than once per poll)"
+    )
+
 
 # ---------------------------------------------------------------------------
 # AC-3
