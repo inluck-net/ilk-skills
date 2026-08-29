@@ -2115,6 +2115,50 @@ ${PROMPT}"
       echo "[steer] interjection injected (${#STEER_INTERJECTION_TEXT} chars)"
     fi
 
+    # ── Pre-iteration record ──────────────────────────────────────────
+    # Written BEFORE the agent runs, so a killed runner still leaves a
+    # classifiable trace.
+    #
+    # `gtimeout` kills the AGENT and the runner survives to write the
+    # completion record -- verified 2026-08-29 across four real runs, and not
+    # the defect it looked like (the 0-byte .ilk-loop.log on rezmac was
+    # f5674c6's int() crash, which needs a dirty tree).  The open gap is a
+    # SIGKILL to the RUNNER: stop.sh, a `launchctl bootout`, or the machine
+    # dying mid-iteration leaves ZERO records, a sentinel stuck at `running`,
+    # and an orphaned `gtimeout ... claude -p`.
+    #
+    # That matters because this file is collect.py's only input, and
+    # scheduler.sh:510 builds its blacklist from postmortems derived from it.
+    # No records => no postmortem => dispatchable forever, which is how three
+    # relaunches ran unbounded on 2026-08-29.
+    #
+    # Spaced separators, matching every other line in .ilk-loop.log; readers
+    # json.loads per line.  (The compact-separator contract F2 pinned governs
+    # the gate-results file -- Contract 2b -- not this one.)
+    #
+    # `|| true`: set -e is active here, and a bookkeeping write must never
+    # abort the batch.
+    local _start_ts
+    _start_ts=$(date +%Y-%m-%dT%H:%M:%S%z)
+    RUN_ID="$RUN_ID" \
+    _ITER="$i" \
+    _TS="$_start_ts" \
+    PROJECT_PATH="$PROJECT_PATH" \
+    MODEL="$MODEL" \
+    _RESOLVED_MODEL="${RESOLVED_MODEL:-}" \
+    python3 -c "
+import json, os
+print(json.dumps({
+  'run_id': os.environ['RUN_ID'],
+  'cli': 'claude',
+  'iteration': int(os.environ['_ITER']),
+  'timestamp': os.environ['_TS'],
+  'project': os.environ['PROJECT_PATH'],
+  'model': os.environ.get('_RESOLVED_MODEL', '') or os.environ.get('MODEL', '') or os.environ.get('ANTHROPIC_MODEL', ''),
+  'status': 'started',
+}))
+" >> "$JSONL_LOG" || true
+
     invoke_claude_iteration "$PROJECT_PATH" "$iter_log" "$iter_prompt" "$timeout_sec" "$MAX_BUDGET_USD" "$MODEL"
 
     local iter_end iter_dur_sec
