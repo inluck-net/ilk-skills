@@ -46,6 +46,7 @@ that span more than 3 sub-plans>
 |---|---|---|---|---|---|
 | 1 | 1 | [YYYY-MM-DD-<slug-1>.md](./YYYY-MM-DD-<slug-1>.md) | <list> | <N> | pending |
 | 2 | 2 | [YYYY-MM-DD-<slug-2>.md](./YYYY-MM-DD-<slug-2>.md) | <list> | <N> | pending |
+| 3 | 3 | [YYYY-MM-DD-<slug>-verify.md](./YYYY-MM-DD-<slug>-verify.md) | batch verification — full suite | 2 | pending |
 
 <!--
 META PROJECTS ONLY — delete this block in single-repo projects.

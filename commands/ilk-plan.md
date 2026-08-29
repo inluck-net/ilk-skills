@@ -366,6 +366,17 @@ Meta mode (`Repo` column required; values must come from `meta_members`):
 | ... |
 ```
 
+**Every master MUST end with a batch-verification sub-plan** — the last row
+in the table. It declares `batch_verification: true` (from
+`templates/batch-verification-subplan.md`) and runs the full test suite
+for the batch. No other sub-plan runs the full suite; they stay
+change-scoped. A master without one is a HARD lint finding. Add it as
+the last row in your grouping table:
+
+```
+| N+1 | <slug>-verify | batch verification — full suite | loop-verified | P0 | not optional; every batch ends with a verified suite | 2 |
+```
+
 Plus:
 - Suggested execution order (with a brief 1-2 sentence rationale per
   position).
@@ -442,6 +453,14 @@ Once approved, write all files in one batch under the
     (loop-verified) vs supervised/human-paired (compile-only, device-manual),
     and the recommended run order per tier.
   - "Progress log" table (1 row: the creation entry)
+
+- **The last sub-plan MUST be the batch-verification sub-plan**, derived from
+  `<skill-root>/ilk-loop/templates/batch-verification-subplan.md`. It declares
+  `batch_verification: true` and runs the full test suite for the batch. No
+  other sub-plan may run the full suite — they stay change-scoped. A master
+  without this sub-plan as the last registry entry is a HARD lint finding.
+  See the template for the step-0 / step-1 shape and the attributed-failure
+  exit condition.
 
 - One file per sub-plan: `<external_plans_dir>/YYYY-MM-DD-<slug>.md`, derived from
   `<skill-root>/ilk-loop/templates/subplan-template.md`. Fill in
