@@ -1282,6 +1282,14 @@ def classify(
         "budget_exhausted": "budget-exhausted",
         "max-iterations": "max-iter-bound",
         "interrupted": "interrupted",
+        # A sub-plan was marked `shipped` while its declared gate was red, and
+        # the driver reverted it.  Without this entry the state fell through
+        # to the generic heuristics, which see productive iterations and a
+        # zero exit and say `clean-success` -- laundering the one signal that
+        # a ship was unproven (kira-cloudflare 20260828-211346).  No new
+        # label: `shipped-unverified` is already in CLASSIFICATION_LABELS,
+        # and watchdog.sh routes it to needs-human, never to relaunch.
+        "ship_integrity_violation": "shipped-unverified",
     }
     if sentinel is not None:
         sentinel_state = (sentinel.get("state") or "").strip()

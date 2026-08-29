@@ -2290,13 +2290,19 @@ print(json.dumps(d))
     # Quality gates
     # TODO: step 6+ (invoke_quality_gates_if_needed)
 
-    if [[ -n "$iter_stop_reason" ]]; then
-      stop_reason="$iter_stop_reason"
-      break
-    fi
-
-    # Ship-integrity enforcement: a sub-plan must not be "shipped" while its
-    # declared local_checks gate is red.
+    # Ship-integrity enforcement runs BEFORE the early break on
+    # iter_stop_reason, not after it.  A red gate sets
+    # iter_stop_reason="local_checks_failed" a few lines up, so the one case
+    # where enforcement is most needed -- a sub-plan marked `shipped` while
+    # its gate is red -- was the one case that broke past it untouched
+    # (kira-cloudflare 20260828-211346).  The status revert has to happen
+    # regardless of WHY the iteration stopped.
+    #
+    # Precedence: ship_integrity_violation wins over any iter_stop_reason
+    # already set.  A sub-plan wrongly marked `shipped` is the condition that
+    # needs a human; the red gate is merely how we noticed.  This is judgment
+    # call 2 in MASTER-2026-08-29 -- read it before flipping the precedence,
+    # and flip it HERE if you disagree.
     #
     # An empty $local_checks_results is legitimate -- the file is only
     # mktemp'd when this iteration had gate targets (:2076) -- but it is NOT
@@ -2311,11 +2317,14 @@ print(json.dumps(d))
     if ! test_ship_integrity "$(get_plans_dir)" "$local_checks_results"; then
       stop_reason="ship_integrity_violation"
       iter_stop_reason="ship_integrity_violation"
-      rm -f "$local_checks_results"
-      break
     fi
     # Every reader in this iteration is done with it.
     rm -f "$local_checks_results"
+
+    if [[ -n "$iter_stop_reason" ]]; then
+      stop_reason="$iter_stop_reason"
+      break
+    fi
 
     if test_all_shipped; then
       stop_reason="all-shipped"
