@@ -78,6 +78,24 @@ about the same file — this doc makes the implicit contracts explicit.
 | `"max-iterations"` | Hit iteration budget | Terminal |
 | `"budget_exhausted"` | Hit token budget | Terminal |
 | `"startup-hang"` | Pre-iteration-1 hang detected | Terminal |
+| `"ship_integrity_violation"` | A sub-plan was `shipped` with its declared gate red; the driver reverted it to `in-progress` | Terminal |
+
+**Sentinel state → postmortem label.** `collect.py`'s `_SENTINEL_FAILURE_MAP`
+is the only place this mapping lives; a terminal state missing from it falls
+through to the generic heuristics, which is how a failed run gets classified
+`clean-success`.
+
+| Sentinel `state` | `collect.py` label | `watchdog.sh` action |
+|---|---|---|
+| `"budget_exhausted"` | `budget-exhausted` | `block` |
+| `"max-iterations"` | `max-iter-bound` | `relaunch` |
+| `"interrupted"` | `interrupted` | `relaunch` |
+| `"local_checks_failed"` | `local-checks-broken` (<3 iters) / `local-checks-stuck` | `block` |
+| `"ship_integrity_violation"` | `shipped-unverified` | `needs-human` |
+
+`ship_integrity_violation` is written by `run_ilk_loop_claude.sh` and
+`run_ilk_loop_claude.ps1` only. It was in **0** classifier files until
+2026-08-29 — see the bug reference under Contract 2b.
 
 ### Invariants
 
@@ -165,6 +183,100 @@ BOM. `collect.py` read with `utf-8` (not `utf-8-sig`), `json.loads` choked
 on the BOM, the record was swallowed by a bare `except json.JSONDecodeError`,
 and the watchdog printed "POSTMORTEM FAILED" and blocked. Fixed in sub-plan
 #1 (`collect-bom-tolerant-reads`).
+
+---
+
+## Contract 2b: local_checks results file (per-iteration gate verdicts)
+
+The temp file `run_ilk_loop_claude.sh` mktemps at `:2076` for one iteration's
+gate results. Distinct from Contract 2: it is per-iteration, short-lived, and
+it is the **only** carrier of "did this sub-plan's declared gate pass?" from
+the gate runner to ship-integrity enforcement.
+
+### Format
+
+One JSON object per line, written **compact** — `separators=(",", ":")`:
+
+```json
+{"slug":"issue-sync-schema-widen","step":2,"outcome":"fail","exit_code":1,"command":"bunx vitest run"}
+```
+
+`outcome` is one of `pass` / `fail` / `error` / `inconclusive`. `fail` and
+`error` are **blocking**. `command` is present for every outcome, so a passing
+gate is distinguishable from a gate that never ran.
+
+### Who writes
+
+- **`emit_jsonl_record.py`** — `build_record` + the append in `main`. The one
+  writer. It replaced a hand-interpolated `echo` in the runner.
+
+### Who reads
+
+- **`blocking_checks.py`** — `--any` / `--targets` / `--slugs` / `--describe`.
+  The one reader for the runner's B2 path (blocking test, confirm re-run,
+  auto-quarantine, the human-readable failing-check line).
+- **`test_ship_integrity`** in `run_ilk_loop_claude.sh` — its gate lookup
+  matches `rec["slug"]` against each `shipped` sub-plan and turns `outcome`
+  into `gate_passed` = `true` / `false` / `skip`.
+- The runner's `.ilk-loop.log` record build, which embeds the parsed array as
+  `local_checks`.
+
+### Invariants
+
+1. **Readers MUST parse JSON. Pattern-matching the serialised text is
+   forbidden.** A regex over the wire format encodes a *formatting* choice as
+   a *semantic* one, and the two drift the moment a writer changes
+   `json.dumps` arguments. Ask `blocking_checks.py`, or `json.loads` the line
+   yourself — never `grep` for `"outcome":"fail"`.
+
+2. **The writer MUST emit compact separators.** Readers parse JSON, so this
+   cannot break them; it keeps the file honest about its own contract, and
+   `grep`-based *diagnosis* by a human at 3am is the realistic consumer of
+   that honesty.
+
+3. **The file MUST live until ship-integrity enforcement has run.** Its
+   lifetime is the whole post-iteration region, not just the `.ilk-loop.log`
+   record build. Cleanup belongs after the `test_ship_integrity` call.
+
+4. **An absent result is not a failed result.** A sub-plan with no record in
+   this iteration's file is `skip`, never `unknown` — `ship_integrity.py`
+   counts `unknown` as a violation, and the caller's guard
+   (`run_ilk_loop_claude.sh`, `!= "true" && != "false" -> continue`) is the
+   2026-08-20 cross-run scoping fix. Do not loosen it; keep the file alive
+   instead.
+
+5. **A malformed line MUST NOT blind the reader to the rest.** The file is
+   appended to once per gate by a subprocess, so a truncated tail is possible;
+   `blocking_checks.read_records` skips unparseable lines rather than raising.
+
+### Bug reference (kira-cloudflare 20260828-211346)
+
+Three defects, one silent ship. The driver log's two consecutive lines:
+
+```
+478:  [local_checks FAIL] issue-sync-schema-widen step 2 -> fail  cmd: bunx vitest run ...
+480: === Loop ended: all-shipped ===
+```
+
+1. **The format contract broke in a refactor.** `emit_jsonl_record.py` wrote
+   `json.dumps(rec)` — a space after every colon — while four readers in
+   `run_ilk_loop_claude.sh` used `grep -qE '"outcome":"(error|fail)"'`, which
+   forbids that space. The match never fired, so the entire B2 block was dead
+   code. Fixed by invariants 1 and 2.
+
+2. **The file was deleted before enforcement read it.** `rm -f` ran during the
+   `.ilk-loop.log` build, ~90 lines before `test_ship_integrity` was handed
+   the same path. The lookup hit `OSError`, `gate_passed` stayed `skip`, and
+   the scoping guard skipped the sub-plan. Fixed by invariant 3 — *not* by
+   loosening the guard (invariant 4).
+
+3. **The stop reason had no classifier.** `ship_integrity_violation` was in 2
+   of 532 tracked files (both runners) and 0 classifier files, so even a
+   firing gate would have been laundered into `clean-success`. Fixed by the
+   sentinel-state table under Contract 1.
+
+Each defect alone was sufficient to ship a red gate as verified. Fixed in
+sub-plan `a-red-gate-cannot-ship-a-subplan` (2026-08-29).
 
 ---
 
