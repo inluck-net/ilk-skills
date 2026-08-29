@@ -143,7 +143,7 @@ plan: test-shared-module-gate
 scope_paths:
   - "src/shared_module.py"
 local_checks:
-  - command: pytest tests/test_shared_module.py -q
+  - command: python3 -m pytest tests/test_shared_module.py -q
     timeout: 60
 ---
 
@@ -160,7 +160,7 @@ plan: seen-set-is-a-cache
 scope_paths:
   - "src/shared_module.py"
 local_checks:
-  - command: pytest tests/test_watch.py -q
+  - command: python3 -m pytest tests/test_watch.py -q
     timeout: 120
 ---
 
@@ -181,7 +181,7 @@ plan: test-wider-gate
 scope_paths:
   - "src/shared_module.py"
 local_checks:
-  - command: pytest tests/test_shared_module.py -q
+  - command: python3 -m pytest tests/test_shared_module.py -q
     timeout: 60
 ---
 
@@ -191,7 +191,7 @@ Change shared_module.
 
 ```yaml
 local_checks:
-  - command: pytest tests/ -q
+  - command: python3 -m pytest tests/ -q
     timeout: 300
 ```
 
@@ -207,7 +207,7 @@ plan: test-leaf-module
 scope_paths:
   - "src/leaf_module.py"
 local_checks:
-  - command: pytest tests/test_leaf_module.py -q
+  - command: python3 -m pytest tests/test_leaf_module.py -q
     timeout: 60
 ---
 

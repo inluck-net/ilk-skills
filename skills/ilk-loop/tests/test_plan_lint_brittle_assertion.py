@@ -53,7 +53,7 @@ _SUBPLAN_BRITTLE_ASSERT_SET = """\
 ---
 plan: test-brittle-assert-set
 local_checks:
-  - command: python -c "assert list_active_types() == ['area', 'perimeter']"
+  - command: python3 -c "assert list_active_types() == ['area', 'perimeter']"
     timeout: 30
 ---
 
@@ -112,7 +112,7 @@ _SUBPLAN_SUPERSET_PYTHON = """\
 ---
 plan: test-superset-python
 local_checks:
-  - command: python -c "assert set(list_active_types()) >= {'area', 'perimeter'}"
+  - command: python3 -c "assert set(list_active_types()) >= {'area', 'perimeter'}"
     timeout: 30
 ---
 
@@ -144,7 +144,7 @@ _SUBPLAN_PYTEST = """\
 ---
 plan: test-pytest
 local_checks:
-  - command: python -m pytest tests/ -q
+  - command: python3 -m pytest tests/ -q
     timeout: 180
 ---
 

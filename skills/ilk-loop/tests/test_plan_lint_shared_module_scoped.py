@@ -112,7 +112,7 @@ plan: test-change-scoped-pass
 scope_paths:
   - "src/shared_module.py"
 local_checks:
-  - command: pytest tests/test_shared_module.py tests/test_caller.py -q
+  - command: python3 -m pytest tests/test_shared_module.py tests/test_caller.py -q
     timeout: 120
 ---
 
@@ -132,7 +132,7 @@ plan: test-change-scoped-fail
 scope_paths:
   - "src/shared_module.py"
 local_checks:
-  - command: pytest tests/test_shared_module.py -q
+  - command: python3 -m pytest tests/test_shared_module.py -q
     timeout: 60
 ---
 

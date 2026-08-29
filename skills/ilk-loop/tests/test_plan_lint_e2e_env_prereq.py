@@ -141,7 +141,7 @@ _SUBPLAN_DEVTOOLS = """\
 ---
 plan: test-devtools
 local_checks:
-  - command: python check_devtools.py --browserUrl http://127.0.0.1:9222
+  - command: python3 check_devtools.py --browserUrl http://127.0.0.1:9222
     timeout: 30
 ---
 
@@ -165,7 +165,7 @@ env_prereqs:
   - description: dev server reachable
     verify_cmd: curl -sf http://localhost:3000
 local_checks:
-  - command: /opt/homebrew/bin/node e2e/home-routing.mjs
+  - command: python3 e2e/home-routing.py
     timeout: 300
 ---
 
@@ -190,7 +190,7 @@ _SUBPLAN_E2E_PREFLIGHT = """\
 ---
 plan: test-e2e-preflight
 local_checks:
-  - command: /opt/homebrew/bin/node e2e/home-routing.mjs
+  - command: python3 e2e/home-routing.py
     timeout: 300
 ---
 

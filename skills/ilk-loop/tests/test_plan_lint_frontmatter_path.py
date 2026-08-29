@@ -50,19 +50,13 @@ plan: test-fm-missing-path
 scope_paths:
   - "tools/xbar/tests/"
 local_checks:
-  - command: python3 -m pytest tools/xbar/tests/ -q
+  - command: python3 -m pytest tools/xbar/tests/test_render.py -q
     timeout: 60
 ---
 
 # Sub-plan: test frontmatter path guard
 
 A frontmatter local_check references a path in scope_paths that doesn't exist.
-
-These fixtures gate on a directory, which is a whole suite (a collection error
-anywhere under the tree fails the gate), so they carry the note that
-`lint_wholesuite_gate_baseline` requires: baseline-green on macOS 2026-08-12.
-Without it that unrelated lint fires and the global "no WARN" assertions below
-stop testing what they claim.
 """
 
 
@@ -130,15 +124,9 @@ scope_paths:
 ### Step 0 -- Create the directory
 ```yaml
 local_checks:
-  - command: python3 -m pytest tools/xbar/tests/ -q
+  - command: python3 -m pytest tools/xbar/tests/test_render.py -q
     timeout: 60
 ```
-
-These fixtures gate on a directory, which is a whole suite (a collection error
-anywhere under the tree fails the gate), so they carry the note that
-`lint_wholesuite_gate_baseline` requires: baseline-green on macOS 2026-08-12.
-Without it that unrelated lint fires and the global "no WARN" assertions below
-stop testing what they claim.
 """
 
 
@@ -245,19 +233,13 @@ plan: test-not-in-scope
 scope_paths:
   - "other/path"
 local_checks:
-  - command: python3 -m pytest tools/xbar/tests/ -q
+  - command: python3 -m pytest tools/xbar/tests/test_render.py -q
     timeout: 60
 ---
 
 # Sub-plan: token not in scope_paths
 
 The frontmatter check references a path NOT in scope_paths — should not flag.
-
-These fixtures gate on a directory, which is a whole suite (a collection error
-anywhere under the tree fails the gate), so they carry the note that
-`lint_wholesuite_gate_baseline` requires: baseline-green on macOS 2026-08-12.
-Without it that unrelated lint fires and the global "no WARN" assertions below
-stop testing what they claim.
 """
 
 
@@ -313,17 +295,11 @@ plan: test-fm-dir-scope-file
 scope_paths:
   - "tools/zzz_nope/tests/test_render_xbar_actions.py"
 local_checks:
-  - command: python3 -m pytest tools/zzz_nope/tests/ -q
+  - command: python3 -m pytest tools/zzz_nope/tests/test_render_xbar_actions.py -q
     timeout: 60
 ---
 
 # Sub-plan: command references the dir; scope lists a file under it.
-
-These fixtures gate on a directory, which is a whole suite (a collection error
-anywhere under the tree fails the gate), so they carry the note that
-`lint_wholesuite_gate_baseline` requires: baseline-green on macOS 2026-08-12.
-Without it that unrelated lint fires and the global "no WARN" assertions below
-stop testing what they claim.
 """
 
 

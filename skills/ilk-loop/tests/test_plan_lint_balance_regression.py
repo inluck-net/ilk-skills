@@ -49,7 +49,7 @@ plan: test-damage-formula
 scope_paths:
   - "src/game/combat.py"
 local_checks:
-  - command: python -m pytest tests/test_combat.py -q
+  - command: python3 -m pytest tests/test_combat.py -q
     timeout: 60
 ---
 
@@ -66,7 +66,7 @@ plan: test-pricing
 scope_paths:
   - "src/billing/pricing.py"
 local_checks:
-  - command: python -m pytest tests/test_pricing.py -q
+  - command: python3 -m pytest tests/test_pricing.py -q
     timeout: 60
 ---
 
@@ -82,7 +82,7 @@ plan: test-scoring
 scope_paths:
   - "src/game/scoring.py"
 local_checks:
-  - command: python -m pytest tests/test_scoring.py -q
+  - command: python3 -m pytest tests/test_scoring.py -q
     timeout: 60
 ---
 
@@ -98,7 +98,7 @@ plan: test-rate-weight
 scope_paths:
   - "src/game/drops.py"
 local_checks:
-  - command: python -m pytest tests/test_drops.py -q
+  - command: python3 -m pytest tests/test_drops.py -q
     timeout: 60
 ---
 
@@ -136,7 +136,7 @@ plan: test-has-baseline
 scope_paths:
   - "src/game/combat.py"
 local_checks:
-  - command: python -m pytest tests/test_combat.py -q
+  - command: python3 -m pytest tests/test_combat.py -q
     timeout: 60
 ---
 
@@ -153,7 +153,7 @@ plan: test-has-before-after
 scope_paths:
   - "src/billing/pricing.py"
 local_checks:
-  - command: python -m pytest tests/test_pricing.py -q
+  - command: python3 -m pytest tests/test_pricing.py -q
     timeout: 60
 ---
 
@@ -170,7 +170,7 @@ plan: test-has-golden
 scope_paths:
   - "src/game/scoring.py"
 local_checks:
-  - command: python -m pytest tests/test_scoring.py -q
+  - command: python3 -m pytest tests/test_scoring.py -q
     timeout: 60
 ---
 
@@ -187,7 +187,7 @@ plan: test-has-regression
 scope_paths:
   - "src/game/drops.py"
 local_checks:
-  - command: python -m pytest tests/test_drops.py -q
+  - command: python3 -m pytest tests/test_drops.py -q
     timeout: 60
 ---
 
@@ -234,7 +234,7 @@ plan: test-no-verb
 scope_paths:
   - "src/game/combat.py"
 local_checks:
-  - command: python -m pytest tests/test_combat.py -q
+  - command: python3 -m pytest tests/test_combat.py -q
     timeout: 60
 ---
 

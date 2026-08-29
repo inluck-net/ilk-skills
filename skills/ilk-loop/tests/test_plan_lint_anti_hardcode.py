@@ -72,7 +72,7 @@ scope_paths:
   - "src/config/tenants.py"
   - "src/handlers/request.py"
 local_checks:
-  - command: python -m pytest tests/test_tenants.py -q
+  - command: python3 -m pytest tests/test_tenants.py -q
     timeout: 60
 ---
 
@@ -90,7 +90,7 @@ plan: test-level-rails
 scope_paths:
   - "src/game/levels/registry.py"
 local_checks:
-  - command: python -m pytest tests/test_levels.py -q
+  - command: python3 -m pytest tests/test_levels.py -q
     timeout: 60
 ---
 
@@ -174,7 +174,7 @@ plan: test-no-per-instance
 scope_paths:
   - "src/game/enemy.py"
 local_checks:
-  - command: python -m pytest tests/test_enemy.py -q
+  - command: python3 -m pytest tests/test_enemy.py -q
     timeout: 60
 ---
 
@@ -191,7 +191,7 @@ plan: test-no-consumer
 scope_paths:
   - "src/game/stages/registry.py"
 local_checks:
-  - command: python -m pytest tests/test_registry.py -q
+  - command: python3 -m pytest tests/test_registry.py -q
     timeout: 60
 ---
 
@@ -208,7 +208,7 @@ plan: test-data-only
 scope_paths:
   - "src/config/settings.py"
 local_checks:
-  - command: python -m pytest tests/test_settings.py -q
+  - command: python3 -m pytest tests/test_settings.py -q
     timeout: 60
 ---
 

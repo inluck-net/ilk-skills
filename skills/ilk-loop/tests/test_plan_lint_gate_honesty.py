@@ -50,7 +50,7 @@ _WHOLE_SUITE_BARE_PYTEST = """\
 ---
 plan: test-whole-suite-pytest
 local_checks:
-  - command: python -m pytest -q
+  - command: python3 -m pytest -q
     timeout: 180
 ---
 
@@ -78,7 +78,7 @@ _WHOLE_SUITE_WITH_BASELINE = """\
 ---
 plan: test-whole-suite-baseline
 local_checks:
-  - command: python -m pytest -q
+  - command: python3 -m pytest -q
     timeout: 180
 ---
 
@@ -92,7 +92,7 @@ _SCOPED_PYTEST = """\
 ---
 plan: test-scoped-pytest
 local_checks:
-  - command: python -m pytest tests/test_foo.py -q
+  - command: python3 -m pytest tests/test_foo.py -q
     timeout: 60
 ---
 
@@ -168,7 +168,7 @@ _MOCK_ONLY_GATE = """\
 ---
 plan: test-mock-only
 local_checks:
-  - command: python -m pytest tests/test_draw.py -q
+  - command: python3 -m pytest tests/test_draw.py -q
     timeout: 60
 ---
 
@@ -183,9 +183,9 @@ _INTEGRATION_GATE = """\
 ---
 plan: test-integration-gate
 local_checks:
-  - command: python -c "from draw import _load_minimax_token; _load_minimax_token()"
+  - command: python3 -c "from draw import _load_minimax_token; _load_minimax_token()"
     timeout: 30
-  - command: python -m pytest tests/test_draw.py -q
+  - command: python3 -m pytest tests/test_draw.py -q
     timeout: 60
 ---
 
@@ -200,7 +200,7 @@ _NON_NETWORK_TOOL = """\
 ---
 plan: test-non-network
 local_checks:
-  - command: python -m pytest tests/test_parser.py -q
+  - command: python3 -m pytest tests/test_parser.py -q
     timeout: 60
 ---
 
