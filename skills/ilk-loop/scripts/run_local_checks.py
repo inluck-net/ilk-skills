@@ -45,6 +45,12 @@ from ilk_paths import (  # noqa: E402
     MetaManifestError,
 )
 
+# ship_config lives under ilk-ship/scripts/ — add to path so we can read
+# path_prelude from the project's .ilk-launch.json.
+_SHIP_SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "ilk-ship" / "scripts"
+if str(_SHIP_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SHIP_SCRIPTS_DIR))
+
 
 # ── front-matter / yaml helpers (tiny stdlib parser, schema-specific) ────────
 
@@ -334,6 +340,23 @@ def _resolve_bash() -> str | None:
     return None
 
 
+def _read_path_prelude(project: Path) -> str:
+    """Read ship.suite.path_prelude from .ilk-launch.json.
+
+    Returns the prelude string, or "" if not configured / not readable.
+    Does NOT validate — ship_config.load_ship_config owns validation.
+    This is a targeted reader for the hot path (every gate invocation).
+    """
+    try:
+        from ship_config import load_ship_config, ShipConfig  # noqa: E402
+        result = load_ship_config(project)
+        if isinstance(result, ShipConfig):
+            return result.ship.get("suite", {}).get("path_prelude", "")
+    except Exception:
+        pass
+    return ""
+
+
 def run_one(check: dict, scope: str, project: Path, default_timeout: int = 120) -> CheckResult:
     cmd = check.get("command", "")
     timeout = int(check.get("timeout", default_timeout))
@@ -346,6 +369,9 @@ def run_one(check: dict, scope: str, project: Path, default_timeout: int = 120) 
         return CheckResult(command=cmd, scope=scope, timeout=timeout,
                            exit_code=None, duration_sec=0.0, passed=False,
                            error="bash not found (need git-bash; the WSL shim is unusable)")
+    # Apply path_prelude if configured (AC-1, AC-2)
+    path_prelude = _read_path_prelude(project)
+    effective_cmd = f"{path_prelude}; {cmd}" if path_prelude else cmd
     import time
     t0 = time.monotonic()
     try:
@@ -354,7 +380,7 @@ def run_one(check: dict, scope: str, project: Path, default_timeout: int = 120) 
         # every gate errored and the loop shipped unverified. See the memory
         # autonomous-gates-not-enforced-windows.
         cp = subprocess.run(
-            [bash, "-c", cmd], cwd=str(project),
+            [bash, "-c", effective_cmd], cwd=str(project),
             capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=timeout,
         )

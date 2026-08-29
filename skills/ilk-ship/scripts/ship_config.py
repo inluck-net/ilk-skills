@@ -114,6 +114,17 @@ def _validate_ship_block(ship: Any, resolved_path: Path, location: Location,
             location=location,
         )
 
+    # Validate path_prelude as optional string (AC-3)
+    path_prelude = suite.get("path_prelude")
+    if path_prelude is None:
+        suite["path_prelude"] = ""
+    elif not isinstance(path_prelude, str):
+        return MalformedConfig(
+            detail=f"'ship.suite.path_prelude' must be a string, got {type(path_prelude).__name__}",
+            resolved_path=resolved_path,
+            location=location,
+        )
+
     # Validate baseline_red entries (AC-5, AC-6)
     baseline_red = ship.get("baseline_red", [])
     if not isinstance(baseline_red, list):
@@ -326,6 +337,9 @@ def main() -> None:
         flags = result.ship['suite'].get('flags', [])
         if flags:
             print(f"  suite.flags: {flags}")
+        pp = result.ship['suite'].get('path_prelude', '')
+        if pp:
+            print(f"  suite.path_prelude: {pp}")
         br = result.ship.get('baseline_red', [])
         if br:
             print(f"  baseline_red: {len(br)} entries")
