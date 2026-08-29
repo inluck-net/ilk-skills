@@ -180,10 +180,23 @@ class TestAc2ShipSuiteDeclared:
 
 
 class TestAc3BroadGatePresent:
-    """When a sub-plan declares a broad gate, the old route covers it."""
+    """A sub-plan gate does NOT substitute for a configured batch gate.
 
-    def test_no_finding_with_broad_gate(self, tmp_path: Path) -> None:
-        """AC-3: a sub-plan with a broad-suite gate → no finding."""
+    Superseded contract (pre-2026-08-29): ``lint_batch_has_no_suite`` returned
+    early if any sub-plan declared a whole-suite gate, without ever reading the
+    ship config.  That conflated two different guarantees -- a sub-plan gate
+    runs after one step of one sub-plan, while only the batch-wide run happens
+    once after everything ships.
+
+    Field record: kira-cloudflare batch-b (2026-08-29) had a
+    ``convex/__tests__/`` directory gate AND no ``.ilk-launch.json`` at all.
+    The lint returned 0 findings, ``batch_gate`` recorded
+    ``verdict: not_configured``, and the batch shipped with nothing having run
+    the suite.  The short-circuit was removed; these tests pin the new contract.
+    """
+
+    def test_finding_with_broad_gate_when_not_configured(self, tmp_path: Path) -> None:
+        """A NotConfigured project is reported even when a sub-plan gate is broad."""
         lint = _import_lint()
         assert lint is not None, (
             "lint_batch_has_no_suite does not exist yet — "
@@ -201,9 +214,27 @@ class TestAc3BroadGatePresent:
             subplan_texts=[SUBPLAN_WITH_BROAD_GATE],
             project_root=tmp_path,
         )
+        assert len(findings) == 1, (
+            f"A NotConfigured project must be reported regardless of sub-plan "
+            f"gates -- the batch gate will still run nothing. Got: {findings}"
+        )
+        assert "not_configured" in findings[0] or "NotConfigured" in findings[0]
+
+    def test_no_finding_when_ship_suite_is_configured(self, tmp_path: Path) -> None:
+        """The other half: a configured project yields no finding."""
+        lint = _import_lint()
+        assert lint is not None
+        (tmp_path / ".ilk-launch.json").write_text(
+            '{"ship": {"suite": {"command": "python3 -m pytest", "flags": []}}}',
+            encoding="utf-8",
+        )
+        findings = lint(
+            master_text=BATCH_NO_BROAD_GATE,
+            subplan_texts=[SUBPLAN_WITH_BROAD_GATE],
+            project_root=tmp_path,
+        )
         assert findings == [], (
-            f"Expected no findings when a sub-plan declares a broad gate. "
-            f"Got: {findings}"
+            f"A configured ship.suite means the batch gate WILL run. Got: {findings}"
         )
 
 

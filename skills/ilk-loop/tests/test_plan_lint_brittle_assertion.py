@@ -144,7 +144,7 @@ _SUBPLAN_PYTEST = """\
 ---
 plan: test-pytest
 local_checks:
-  - command: python3 -m pytest tests/ -q
+  - command: python3 -m pytest tests/test_thing.py -q
     timeout: 180
 ---
 
@@ -152,11 +152,11 @@ local_checks:
 
 A sub-plan with a normal pytest check.
 
-The gate names a directory, which is a whole suite (pytest collects the whole
-tree, so a collection error anywhere under it fails the gate). It therefore
-carries the note `lint_wholesuite_gate_baseline` requires: baseline-green on
-macOS 2026-08-12. Without it that unrelated lint fires and the "no WARN"
-assertion below stops testing the brittle-assertion lint it is written for.
+The gate names a single FILE, not a directory.  A directory arg reads as a
+whole suite, which trips two unrelated lints (`lint_wholesuite_gate_baseline`
+and, since 2026-08-29, `lint_wholesuite_gate_outside_verification_subplan`) and
+stops the "no WARN" assertion below from testing the brittle-assertion lint it
+is written for.
 """
 
 _SUBPLAN_CURL = """\

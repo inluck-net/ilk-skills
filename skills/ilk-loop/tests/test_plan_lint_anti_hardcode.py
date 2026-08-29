@@ -52,7 +52,7 @@ scope_paths:
   - "src/game/stages/registry.ts"
   - "src/game/enemy.ts"
 local_checks:
-  - command: npx vitest run tests/test_registry.ts
+  - command: python3 -m pytest tests/test_registry.ts
     timeout: 60
 ---
 
@@ -126,7 +126,7 @@ scope_paths:
   - "src/game/stages/registry.ts"
   - "src/game/enemy.ts"
 local_checks:
-  - command: npx vitest run tests/test_registry.ts
+  - command: python3 -m pytest tests/test_registry.ts
     timeout: 60
 ---
 
@@ -146,7 +146,7 @@ scope_paths:
   - "src/game/stages/registry.ts"
   - "src/game/enemy.ts"
 local_checks:
-  - command: npx vitest run tests/test_stage_integration.ts
+  - command: python3 -m pytest tests/test_stage_integration.ts
     timeout: 60
 ---
 

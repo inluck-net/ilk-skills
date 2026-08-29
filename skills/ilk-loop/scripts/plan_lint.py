@@ -34,6 +34,7 @@ Reads files with ``utf-8-sig`` (zh-CN Windows configs may carry a BOM).
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -163,6 +164,15 @@ def _extract_scope_paths(text: str) -> list[str]:
     if not sm:
         return []
     after = fm[sm.end():]
+    # Stop at the next top-level key (or the closing ---).  _LIST_ITEM_RE is
+    # permissive enough to swallow the following block otherwise: on a sub-plan
+    # whose `local_checks:` follows `scope_paths:`, it returned the whole
+    # local_checks body as a second "scope path" (measured 2026-08-29).  Every
+    # consumer of scope_paths then reasons over that garbage -- including the
+    # off-base branch check, which resolves each entry against git.
+    stop = re.search(r"^(?:[A-Za-z_][A-Za-z0-9_]*:|---\s*$)", after, re.M)
+    if stop:
+        after = after[:stop.start()]
     return _LIST_ITEM_RE.findall(after)
 
 
@@ -378,8 +388,15 @@ def lint_frontmatter_path_created_later(text: str, slug: str) -> list[str]:
             # tray-actions shape: command refs `tools/xbar/tests/` while
             # scope_paths lists `tools/xbar/tests/test_*.py` (esc d400d9e7).
             nt = norm.replace("\\", "/")
+            # Both directions are real:
+            #   command names the DIR, scope_paths lists files under it
+            #     (tray-actions shape, esc d400d9e7); and
+            #   scope_paths names the DIR, command names a file under it.
+            # Matching only the first let the second ship unflagged.
             covered = any(
-                sp.replace("\\", "/") == nt or sp.replace("\\", "/").startswith(nt + "/")
+                (spn := sp.replace("\\", "/")) == nt
+                or spn.startswith(nt + "/")
+                or nt.startswith(spn.rstrip("/") + "/")
                 for sp in normalized_scope
             )
             if not covered:
@@ -2108,6 +2125,17 @@ def lint_scope_path_off_base_branch(
             # Present on base — OK.
             continue
 
+        # A path absent from the base ref but present on the CHECKED-OUT branch
+        # is not off-base: the loop commits to HEAD, and HEAD has it.  This is
+        # the normal state during any batch whose commits are not yet pushed.
+        # Resolving against a single ref is wrong in both directions -- a stale
+        # local base false-fired before (2026-08-29, 2511 commits behind), and
+        # preferring origin/<base> false-fired after (2026-08-29, 30 unpushed
+        # commits).  Off-base means absent from the base AND from HEAD.
+        rc_head, _, _ = _run_git(["cat-file", "-e", f"HEAD:{p}"], cwd)
+        if rc_head == 0:
+            continue
+
         # rc=128 "path 'X' does not exist in 'Y'" = genuine absence → HARD.
         # rc=128 "exists on disk, but not in 'Y'" (macOS git) = same.
         # rc=128 "invalid object name" / "Not a valid object" = bad ref → unknown.
@@ -2129,7 +2157,7 @@ def lint_scope_path_off_base_branch(
             )
             findings.append(
                 f"HARD {slug}: scope_path '{p}' is absent on "
-                f"base ref '{ref_label}' but exists on: "
+                f"base ref '{ref_label}' AND on HEAD, but exists on: "
                 f"{', '.join(ref_names)}. "
                 f"This would route commits to the wrong branch."
             )
@@ -2728,8 +2756,11 @@ def _leading_executable(cmd: str) -> str | None:
                     break
                 i += 1
             continue
-        # This is the leading executable.
-        return bare
+        # This is the leading executable.  Return the FULL token, not `bare`:
+        # a command may name an interpreter by absolute or relative path
+        # (`/opt/homebrew/bin/npx vitest run`), which needs no PATH lookup at
+        # all.  `bare` exists only for the builtin/keyword comparison above.
+        return token.strip("'\"")
     return None
 
 
@@ -2777,9 +2808,24 @@ def lint_gate_executable_on_driver_path(text: str, slug: str) -> list[str]:
         if path_dirs is None:
             display_cmd = _cmd_for_display(cmd)[:80]
             findings.append(
-                f"WARN {slug}: gate command '{display_cmd}' starts with "
+                f"{slug}: gate command '{display_cmd}' starts with "
                 f"'{exe}' but effective PATH is unknown — {path_error}. "
                 f"Cannot verify portability."
+            )
+            continue
+
+        # An executable named by path (absolute or relative) is not a PATH
+        # lookup -- it either exists and is executable, or it does not.  Reading
+        # it as a PATH search made the lint flag `/opt/homebrew/bin/npx`, i.e.
+        # the very remedy it recommends for an unresolvable bare command.
+        if "/" in exe:
+            cand = Path(exe) if exe.startswith("/") else (project / exe if project else Path(exe))
+            if cand.exists() and os.access(cand, os.X_OK):
+                continue
+            display_cmd = _cmd_for_display(cmd)[:80]
+            findings.append(
+                f"{slug}: gate command '{display_cmd}' names "
+                f"'{exe}' by path, which is not an executable file on this host."
             )
             continue
 
@@ -2789,7 +2835,6 @@ def lint_gate_executable_on_driver_path(text: str, slug: str) -> list[str]:
             candidate = Path(d) / exe
             if candidate.exists() and (candidate.is_file() or candidate.is_symlink()):
                 # Check execute permission (POSIX).
-                import os
                 if os.access(candidate, os.X_OK):
                     found = True
                     break
@@ -2799,7 +2844,7 @@ def lint_gate_executable_on_driver_path(text: str, slug: str) -> list[str]:
             search_space = ":".join(path_dirs)
             display_cmd = _cmd_for_display(cmd)[:80]
             findings.append(
-                f"WARN {slug}: gate command '{display_cmd}' starts with "
+                f"{slug}: gate command '{display_cmd}' starts with "
                 f"'{exe}' which was not found on the driver's PATH. "
                 f"Searched: {search_space}"
             )
@@ -3399,6 +3444,10 @@ def lint_one_batch_one_branch(
             )
             if rc_base == 0:
                 continue  # present on base — OK
+            # Same rule as the per-path check: present on HEAD is not off-base.
+            rc_head_m, _, _ = _run_git(["cat-file", "-e", f"HEAD:{p}"], cwd)
+            if rc_head_m == 0:
+                continue
 
             is_absent = rc_base == 1 or (
                 rc_base == 128
@@ -3501,7 +3550,17 @@ def lint_batch_has_no_suite(
 
 # ── Batch-verification sub-plan lint (SP6, decomposition-principles §12/§16) ──
 
-_SUBPLAN_FILENAME_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2}-[a-z0-9-]+\.md)")
+# Sub-plan filenames carry an OPTIONAL same-day letter (`2026-08-29b-...`).
+# Import the shape from plan_slug rather than re-inlining it: a hand-written
+# `\d{4}-\d{2}-\d{2}` misses every same-day batch, which is exactly what
+# test_plan_slug_same_day.py guards -- and this master is itself a `b` batch.
+try:  # plan_slug lives beside this script
+    from plan_slug import DATE_PREFIX  # type: ignore[import-untyped]
+except ImportError:  # pragma: no cover - direct-script invocation
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from plan_slug import DATE_PREFIX  # type: ignore[import-untyped]
+
+_SUBPLAN_FILENAME_RE = re.compile(rf"\b({DATE_PREFIX}-[a-z0-9-]+\.md)")
 
 
 def _extract_registry_order(master_text: str) -> list[str]:
