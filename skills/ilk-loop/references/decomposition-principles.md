@@ -538,12 +538,18 @@ When a sub-plan's changes touch a shared/imported module (not just a
 leaf file), the sub-plan's last step gates **change-scoped** — its own
 module's tests plus the resolved callers' tests (the importer oracle
 from `plan_lint.py:lint_shared_module_gate`). The **whole-suite
-obligation** belongs to the **batch gate** — the gate that runs once
-after every sub-plan in a batch ships, before the master is marked
-shipped. Per-file-only gates (module tests without caller tests) still
-hide integration bugs (WeChatRelay bugs #1/#2). See also §8
-anti-pattern "per-file-only gate on a shared module", and §16 which
-this rule now aligns with rather than overriding.
+obligation** belongs to the **batch-verification sub-plan** — the last
+sub-plan in every master, marked `batch_verification: true`, whose job
+is the full suite for that batch. No other sub-plan runs the full suite.
+Per-file-only gates (module tests without caller tests) still hide
+integration bugs (WeChatRelay bugs #1/#2). See also §8 anti-pattern
+"per-file-only gate on a shared module", and §16 which this rule now
+aligns with rather than overriding.
+
+Field evidence: `kira-cloudflare` run `20260829-001901` — a batch shipped
+with `verdict: not_configured` because no `.ilk-launch.json` existed, four
+gate invocations all targeted the same single test file, and two directory
+gates declared on last steps were never targeted on the shared remote.
 
 ---
 
@@ -938,6 +944,22 @@ not zero.
 The warning reads `recommended_iteration_timeout_min` from the sub-plan's
 frontmatter (default 30) so projects with longer-running gates can raise the
 budget per sub-plan without changing the lint.
+
+### Batch-verification sub-plan placement
+
+The whole-suite obligation belongs to a **named sub-plan** marked
+`batch_verification: true`, not to "the batch gate". This sub-plan must be
+**last** in registry order — running the suite before the last sub-plan ships
+proves nothing about the batch. A master without a batch-verification sub-plan
+is a HARD finding (`lint_master_has_verification_subplan`). A whole-suite gate
+in any other sub-plan is reported (`lint_wholesuite_gate_outside_verification_subplan`).
+
+The verification sub-plan's exit condition is **"no failure attributed to this
+batch"**, not "zero failures": attributed = fails now, passed at the base
+commit, and not in `.ilk-launch.json`'s `baseline_red`. The fix loop is bounded
+by `quarantine_subplan.py`'s threshold (default 2) — two confirmed reds flip the
+sub-plan to `status: blocked` with the failures named, which is the right
+terminal state for a suite that will not go green.
 
 ### Cross-references
 
