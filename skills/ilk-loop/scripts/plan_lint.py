@@ -555,10 +555,56 @@ def _is_directory_arg(token: str) -> bool:
     return token.endswith("/") or "/" in token or token in {"tests", "test", "src"}
 
 
+def _strip_runner_prefix(cmd: str) -> str:
+    """Strip a package-runner prefix (``bunx``, ``npx``, ``pnpm dlx``,
+    ``yarn dlx``, or the ``<pm> run <script>`` forms) from *cmd*.
+
+    Returns the command after the prefix.  For script forms
+    (``bun run test:e2e``) the remaining token is a script name, not a
+    test-runner invocation — callers must re-check against
+    ``_WHOLE_SUITE_CMD_RE``.
+    """
+    tokens = cmd.split()
+    _RUNNER_PREFIXES = {"bunx", "npx"}
+    _RUNNER_DLX = {"pnpm", "yarn"}  # followed by "dlx"
+    _SCRIPT_RUNNERS = {"bun", "npm", "pnpm", "yarn"}  # followed by "run"
+
+    if not tokens:
+        return cmd
+
+    head = tokens[0].lower()
+
+    # ``bunx vitest run …`` / ``npx vitest run …``
+    if head in _RUNNER_PREFIXES and len(tokens) > 1:
+        return " ".join(tokens[1:])
+
+    # ``pnpm dlx vitest run …`` / ``yarn dlx vitest run …``
+    if head in _RUNNER_DLX and len(tokens) > 2 and tokens[1].lower() == "dlx":
+        return " ".join(tokens[2:])
+
+    # ``bun run test:e2e`` / ``npm run test:unit`` / etc.
+    if head in _SCRIPT_RUNNERS and len(tokens) > 2 and tokens[1].lower() == "run":
+        return " ".join(tokens[2:])
+
+    return cmd
+
+
 def _is_whole_suite_command(cmd: str) -> bool:
     """True if *cmd* runs a pre-existing whole test suite (no file scope)."""
     cmd_stripped = cmd.strip()
+    # Strip runner prefixes (bunx, npx, pnpm dlx, yarn dlx, pm run <script>)
+    # BEFORE the regex check — ``bun run test:e2e`` doesn't match the bare
+    # ``bun test`` pattern, but after stripping the prefix it's a script form
+    # that should be classified BROAD.
+    original = cmd_stripped
+    cmd_stripped = _strip_runner_prefix(cmd_stripped)
+    prefix_stripped = (cmd_stripped != original)
     if not _WHOLE_SUITE_CMD_RE.search(cmd_stripped):
+        # A script-form command (``bun run test:e2e``) left only a script name
+        # — not a test-runner invocation.  The script could do anything, so
+        # treat it as a whole-suite gate (BROAD).
+        if prefix_stripped:
+            return True  # prefix was stripped → script form → BROAD
         return False
     # For pytest/vitest/jest, decide from the positional args: a single file or
     # node id scopes the run; a DIRECTORY does not (it runs the whole tree).
