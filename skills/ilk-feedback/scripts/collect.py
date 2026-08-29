@@ -1293,8 +1293,29 @@ def classify(
     }
     if sentinel is not None:
         sentinel_state = (sentinel.get("state") or "").strip()
-        if sentinel_state in _SENTINEL_FAILURE_MAP or sentinel_state == "local_checks_failed":
-            if sentinel_state == "local_checks_failed":
+        # `timeout` is a terminal sentinel state written by
+        # run_ilk_loop_claude.sh (:2184 sets iter_stop_reason, :2504 promotes
+        # it) that NO classifier knew until 2026-08-29.  It reached neither
+        # this map nor watchdog.sh's classify_action arms, so a timed-out run
+        # produced no report and the watchdog fell back to a raw state that
+        # then hit its `*` unknown-label fail-safe.
+        #
+        # It is authoritative ONLY when the run left records.  A run with no
+        # records at all never got far enough to say anything about its own
+        # timeout, and "started then killed" must not collapse into "never
+        # ran" -- the two call for different actions (never-ran points at an
+        # environment fault, timeout-bound at the work itself).  An empty run
+        # therefore falls through to the generic no-evidence/never-ran
+        # heuristics below, exactly as before.
+        _timeout_authoritative = sentinel_state == "timeout" and bool(iters)
+        if (
+            sentinel_state in _SENTINEL_FAILURE_MAP
+            or sentinel_state == "local_checks_failed"
+            or _timeout_authoritative
+        ):
+            if sentinel_state == "timeout":
+                label = "timeout-bound"
+            elif sentinel_state == "local_checks_failed":
                 iter_count = len(iters)
                 last_iter = iters[-1] if iters else {}
                 if iter_count < 3 and last_iter.get("exit_code", 1) == 0:
