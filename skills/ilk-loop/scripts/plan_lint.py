@@ -2004,8 +2004,28 @@ def _is_validatable_scope_path(p: str) -> bool:
     return True
 
 
+def _resolve_base_ref(base: str, cwd: Path) -> tuple[str | None, bool]:
+    """Resolve *base* to a git ref, preferring ``origin/<base>``.
+
+    Returns ``(resolved_ref, is_remote)`` where *resolved_ref* is the
+    ref to validate against (or ``None`` if unresolvable) and *is_remote*
+    is True when the resolved ref is ``origin/<base>``.
+    """
+    # Try origin/<base> first.
+    rc, _, _ = _run_git(["rev-parse", "--verify", f"origin/{base}"], cwd)
+    if rc == 0:
+        return f"origin/{base}", True
+    # Fall back to local <base>.
+    rc, _, _ = _run_git(["rev-parse", "--verify", base], cwd)
+    if rc == 0:
+        return base, False
+    return None, False
+
+
 def lint_scope_path_off_base_branch(
     text: str, slug: str, base_ref: str = "main",
+    *,
+    _is_default_base: bool = False,
 ) -> list[str]:
     """Flag a scope_path that exists only off the base branch.
 
@@ -2021,6 +2041,9 @@ def lint_scope_path_off_base_branch(
     absent), reports ``unknown`` — never a pass.
 
     *base_ref* is explicit (AC-8) with documented default ``"main"``.
+    *_is_default_base* is True when no ``base_branch:`` was declared in the
+    master — the finding text names this so the reader knows the check
+    didn't silently pick a wrong ref.
     """
     findings: list[str] = []
     scope_paths = _extract_scope_paths(text)
@@ -2031,6 +2054,30 @@ def lint_scope_path_off_base_branch(
     if not (cwd / ".git").exists():
         # Not a git repo — no branches to confuse, nothing to validate.
         return findings
+
+    # Resolve base_ref: prefer origin/<base>, fall back to local <base>.
+    resolved_ref, is_remote = _resolve_base_ref(base_ref, cwd)
+    # Detect if this is the default "main" (no explicit base_branch declared).
+    is_default = _is_default_base or base_ref == "main"
+    if resolved_ref is None:
+        # Unresolvable — report unknown with the ref name.
+        ref_label = base_ref if is_default else f"origin/{base_ref}"
+        for p in scope_paths:
+            if not _is_validatable_scope_path(p):
+                continue
+            findings.append(
+                f"{slug}: scope_path '{p}': unknown — "
+                f"base ref '{ref_label}' could not be resolved"
+            )
+        return findings
+
+    # Build a human-readable label for the resolved ref.
+    if is_default:
+        ref_label = f"{resolved_ref} (default)"
+    elif is_remote:
+        ref_label = resolved_ref
+    else:
+        ref_label = f"{resolved_ref} (no remote-tracking ref)"
 
     for p in scope_paths:
         if not _is_validatable_scope_path(p):
@@ -2050,7 +2097,7 @@ def lint_scope_path_off_base_branch(
             continue
 
         rc_base, _, err_base = _run_git(
-            ["cat-file", "-e", f"{base_ref}:{p}"], cwd,
+            ["cat-file", "-e", f"{resolved_ref}:{p}"], cwd,
         )
         if rc_base == 0:
             # Present on base — OK.
@@ -2077,7 +2124,7 @@ def lint_scope_path_off_base_branch(
             )
             findings.append(
                 f"HARD {slug}: scope_path '{p}' is absent on "
-                f"base ref '{base_ref}' but exists on: "
+                f"base ref '{ref_label}' but exists on: "
                 f"{', '.join(ref_names)}. "
                 f"This would route commits to the wrong branch."
             )
@@ -2776,7 +2823,6 @@ ALL_CHECKS = (
     lint_unverifiable_test_selector,
     lint_budget_vs_gate_timeout,
     lint_redundant_gate,
-    lint_scope_path_off_base_branch,
     lint_shared_module_gate,
     lint_gate_extractable,
     lint_gate_executable_on_driver_path,
@@ -3289,11 +3335,11 @@ def lint_one_batch_one_branch(
         # Not a git repo — nothing to validate.
         return findings
 
-    rc, out, err = _run_git(["rev-parse", "--verify", base_branch], cwd)
-    if rc != 0:
+    resolved_ref, is_remote = _resolve_base_ref(base_branch, cwd)
+    if resolved_ref is None:
         findings.append(
             f"MASTER: `base_branch: {base_branch}` does not resolve "
-            f"(git rev-parse rc={rc}): {err.strip() or out.strip()}. "
+            f"(tried origin/{base_branch} and {base_branch}). "
             f"HARD FINDING: fix the ref or add the branch."
         )
         return findings
@@ -3316,7 +3362,7 @@ def lint_one_batch_one_branch(
                 continue  # new file, nowhere in history — OK
 
             rc_base, _, err_base = _run_git(
-                ["cat-file", "-e", f"{base_branch}:{p}"], cwd,
+                ["cat-file", "-e", f"{resolved_ref}:{p}"], cwd,
             )
             if rc_base == 0:
                 continue  # present on base — OK
@@ -3437,7 +3483,8 @@ def lint_batch_has_no_suite(
 def lint_file(path: str | Path, master_text: str = "") -> list[str]:
     """Run all checks against one sub-plan file. Returns finding messages.
 
-    When *master_text* is provided, the slug-collision check is also run.
+    When *master_text* is provided, the slug-collision check and the
+    base-ref resolution check are also run.
     """
     p = Path(path)
     slug = p.stem
@@ -3445,13 +3492,21 @@ def lint_file(path: str | Path, master_text: str = "") -> list[str]:
     findings: list[str] = []
     for check in ALL_CHECKS:
         findings.extend(check(text, slug))
-    # Slug-collision check requires master_text context.
+    # Slug-collision and base-ref checks require master_text context.
     if master_text:
         master_plan_slug = ""
         m = _MASTER_PLAN_RE.search(master_text)
         if m:
             master_plan_slug = m.group(1).strip()
         findings.extend(lint_slug_collision(text, slug, master_plan_slug))
+        # Thread base_branch into the off-base check.
+        base_branch = _extract_base_branch(master_text)
+        is_default = base_branch is None
+        findings.extend(lint_scope_path_off_base_branch(
+            text, slug,
+            base_ref=base_branch or "main",
+            _is_default_base=is_default,
+        ))
     return findings
 
 
