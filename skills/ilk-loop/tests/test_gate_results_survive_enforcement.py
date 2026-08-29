@@ -106,9 +106,13 @@ def test_results_file_outlives_the_ship_integrity_call(tmp_path: Path) -> None:
     )
 
     call_line = _line_of(r'test_ship_integrity "\$\(get_plans_dir\)"')
+    # Comment lines are skipped: the invariant is about executable cleanup,
+    # and the runner now explains the ordering in prose right where the delete
+    # used to be.
     rm_lines = [
         n for n, line in enumerate(_runner_lines(), start=1)
         if re.search(r'rm -f "\$local_checks_results"', line)
+        and not line.lstrip().startswith("#")
     ]
     assert rm_lines, (
         "no `rm -f \"$local_checks_results\"` found — if the cleanup moved, "

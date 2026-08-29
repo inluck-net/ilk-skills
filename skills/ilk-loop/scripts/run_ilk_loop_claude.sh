@@ -2214,14 +2214,18 @@ print(json.dumps(d))
     fi
     rm -f "$new_commits_file"
 
-    # Build local_checks JSON
+    # Build local_checks JSON.  The results file is NOT deleted here: it is
+    # still needed by test_ship_integrity below, which looks this iteration's
+    # gate verdict up in it by slug.  Deleting it here made that lookup hit
+    # OSError, leave gate_passed at 'skip', and fall through the :1259 scoping
+    # guard -- so a red gate shipped as verified (20260828-211346).  Cleanup
+    # now happens after enforcement; see `rm -f "$local_checks_results"` below.
     local local_checks_json="[]"
     if [[ -n "$local_checks_results" && -s "$local_checks_results" ]]; then
       local_checks_json=$(python3 -c "
 import json, sys
 print(json.dumps([json.loads(l) for l in sys.stdin]))
 " < "$local_checks_results")
-      rm -f "$local_checks_results"
     fi
 
     # Write JSONL record via Python to avoid bash JSON escaping issues
@@ -2293,11 +2297,25 @@ print(json.dumps(d))
 
     # Ship-integrity enforcement: a sub-plan must not be "shipped" while its
     # declared local_checks gate is red.
+    #
+    # An empty $local_checks_results is legitimate -- the file is only
+    # mktemp'd when this iteration had gate targets (:2076) -- but it is NOT
+    # the same thing as a file that went missing, and the two used to arrive
+    # here looking identical. Say which one this is, so a future "enforcement
+    # silently skipped everything" is diagnosable from the log alone.
+    if [[ -z "$local_checks_results" ]]; then
+      echo "  [ship-integrity] no gate ran this iteration; enforcing without gate data"
+    elif [[ ! -s "$local_checks_results" ]]; then
+      echo "  ! [ship-integrity] gate results at $local_checks_results are missing or empty — enforcing without gate data" >&2
+    fi
     if ! test_ship_integrity "$(get_plans_dir)" "$local_checks_results"; then
       stop_reason="ship_integrity_violation"
       iter_stop_reason="ship_integrity_violation"
+      rm -f "$local_checks_results"
       break
     fi
+    # Every reader in this iteration is done with it.
+    rm -f "$local_checks_results"
 
     if test_all_shipped; then
       stop_reason="all-shipped"
