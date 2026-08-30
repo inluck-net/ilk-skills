@@ -25,6 +25,7 @@ Environment: requires Python 3.8+. Uses stdlib only.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -420,6 +421,142 @@ def _tail(s: str | None, n: int) -> str:
     if len(s) <= n:
         return s
     return "...[truncated]...\n" + s[-n:]
+
+
+# ── Tree isolation ───────────────────────────────────────────────────────────
+
+@dataclass
+class IsolationState:
+    """Result of isolating the working tree to HEAD for gate execution."""
+    head_sha: str | None = None
+    dirty_paths: int = 0
+    isolated: bool = False
+    restore_error: str | None = None
+
+
+@contextlib.contextmanager
+def isolate_to_head(project: Path):
+    """Context manager that pins the working tree to HEAD for gate execution.
+
+    The driver runs the gate *after* the step's commit —
+    ``run_ilk_loop_claude.sh:2247``, inside the ``total_new > 0`` branch.
+    So by the time this runs, everything the iteration authored is already
+    committed, and everything still uncommitted is by construction not this
+    step's work.
+
+    Behaviour:
+      - **Tree already clean** (``dirty_paths == 0``) — the common case.
+        Do nothing at all: no stash, no subprocess beyond the two probes.
+        ``isolated=True``.
+      - **Tree dirty** — ``git stash push -u -m "ilk-gate-isolation <sha>"``,
+        run the checks, then ``git stash pop``.  ``isolated=True`` iff both
+        the push and the pop succeeded.
+      - **Not a git repo / git absent** — ``isolated=False``, ``head_sha=None``,
+        gate still runs.  Do not crash; a non-git project must still be
+        gateable.
+
+    Safety rules (all non-negotiable):
+      - **Never ``git stash drop``.**  On a pop conflict the stash entry stays
+        on the stack and its ref goes into ``restore_error``, so the work is
+        recoverable by hand.
+      - **Restore runs in a ``finally``.**  A check that raises, times out, or
+        is killed must still un-stash.
+      - **Do not ``stash --keep-index``.**  The index is part of "not committed".
+      - The stash message carries a fixed ``ilk-gate-isolation`` prefix so an
+        orphaned entry is identifiable in ``git stash list``.
+    """
+    state = IsolationState()
+
+    # Probe: is this a git repo?
+    try:
+        cp = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=str(project), capture_output=True, text=True, timeout=5,
+        )
+        is_git = cp.returncode == 0 and cp.stdout.strip() == "true"
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        is_git = False
+
+    if not is_git:
+        # Not a git repo — gate still runs, just not isolated
+        state.isolated = False
+        yield state
+        return
+
+    # Get HEAD sha
+    try:
+        cp = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(project), capture_output=True, text=True, timeout=5,
+        )
+        if cp.returncode == 0:
+            state.head_sha = cp.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    # Count dirty paths (uncommitted + untracked)
+    try:
+        # Uncommitted tracked changes
+        cp_diff = subprocess.run(
+            ["git", "diff", "--name-only"],
+            cwd=str(project), capture_output=True, text=True, timeout=10,
+        )
+        # Staged changes
+        cp_cached = subprocess.run(
+            ["git", "diff", "--cached", "--name-only"],
+            cwd=str(project), capture_output=True, text=True, timeout=10,
+        )
+        # Untracked files
+        cp_untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            cwd=str(project), capture_output=True, text=True, timeout=10,
+        )
+        dirty = set()
+        for out in (cp_diff.stdout, cp_cached.stdout, cp_untracked.stdout):
+            for line in out.splitlines():
+                line = line.strip()
+                if line:
+                    dirty.add(line)
+        state.dirty_paths = len(dirty)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        state.dirty_paths = 0
+
+    if state.dirty_paths == 0:
+        # Clean tree — no-op, just mark isolated
+        state.isolated = True
+        yield state
+        return
+
+    # Dirty tree — stash, run checks, restore
+    stash_msg = f"ilk-gate-isolation {state.head_sha or 'unknown'}"
+    stashed = False
+    try:
+        cp = subprocess.run(
+            ["git", "stash", "push", "-u", "-m", stash_msg],
+            cwd=str(project), capture_output=True, text=True, timeout=30,
+        )
+        if cp.returncode == 0:
+            stashed = True
+            state.isolated = True
+        else:
+            # Stash failed — gate runs against dirty tree, not isolated
+            state.isolated = False
+            state.restore_error = f"stash push failed: {cp.stderr.strip()}"
+
+        yield state
+
+    finally:
+        if stashed:
+            try:
+                cp = subprocess.run(
+                    ["git", "stash", "pop"],
+                    cwd=str(project), capture_output=True, text=True, timeout=30,
+                )
+                if cp.returncode != 0:
+                    # Pop conflict — stash entry stays on stack (never drop)
+                    state.restore_error = f"stash pop failed: {cp.stderr.strip()}"
+            except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+                state.restore_error = f"stash pop error: {e}"
 
 
 # ── B2 confirm-before-block decision ─────────────────────────────────────────

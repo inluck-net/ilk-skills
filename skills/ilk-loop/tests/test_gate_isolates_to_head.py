@@ -13,9 +13,14 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+# Add the scripts dir so we can import isolate_to_head directly
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+from run_local_checks import isolate_to_head, IsolationState  # noqa: E402
 
 
 def _make_git_repo(tmp_path: Path) -> Path:
@@ -143,7 +148,7 @@ class TestGateReadsWorkingTree:
 
         assert output.get("head_sha") == expected_sha
 
-    def test_clean_tree_reports_isolated(self, tmp_path: Path) -> None:
+    def test_isolated_when_clean(self, tmp_path: Path) -> None:
         """On a clean tree, isolated=True and dirty_paths=0."""
         repo = _make_git_repo(tmp_path)
 
@@ -154,3 +159,98 @@ class TestGateReadsWorkingTree:
 
         assert output.get("isolated") is True
         assert output.get("dirty_paths") == 0
+
+
+class TestIsolateToHead:
+    """Direct tests of the isolate_to_head context manager."""
+
+    def test_clean_tree_no_op(self, tmp_path: Path) -> None:
+        """AC-3: on a clean tree, isolated=True, dirty_paths=0, no stash."""
+        repo = _make_git_repo(tmp_path)
+        with isolate_to_head(repo) as iso:
+            assert iso.isolated is True
+            assert iso.dirty_paths == 0
+            assert iso.head_sha is not None
+            assert iso.restore_error is None
+
+    def test_non_git_dir(self, tmp_path: Path) -> None:
+        """AC-6: in a non-git directory, isolated=False, head_sha=None, no crash."""
+        not_git = tmp_path / "not-a-repo"
+        not_git.mkdir()
+        with isolate_to_head(not_git) as iso:
+            assert iso.isolated is False
+            assert iso.head_sha is None
+            assert iso.restore_error is None
+
+    def test_dirty_tree_restores(self, tmp_path: Path) -> None:
+        """AC-2: after a gate run on a dirty tree, git status is restored."""
+        repo = _make_git_repo(tmp_path)
+        marker = repo / "marker.txt"
+        marker.write_text("dirty", encoding="utf-8")
+        # Also add an untracked file
+        untracked = repo / "untracked.txt"
+        untracked.write_text("untracked", encoding="utf-8")
+
+        # Record pre-isolation status
+        pre_status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout
+
+        with isolate_to_head(repo) as iso:
+            assert iso.isolated is True
+            assert iso.dirty_paths > 0
+
+        # Post-restore: status should be byte-identical
+        post_status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout
+        assert post_status == pre_status, "dirty tree not restored after isolation"
+
+    def test_restore_on_exception(self, tmp_path: Path) -> None:
+        """AC-4: when a check raises, the tree is still restored."""
+        repo = _make_git_repo(tmp_path)
+        marker = repo / "marker.txt"
+        marker.write_text("dirty", encoding="utf-8")
+
+        pre_status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout
+
+        with pytest.raises(RuntimeError, match="simulated failure"):
+            with isolate_to_head(repo) as iso:
+                assert iso.isolated is True
+                raise RuntimeError("simulated failure")
+
+        # Post-restore: status should be byte-identical
+        post_status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout
+        assert post_status == pre_status, "dirty tree not restored after exception"
+
+    def test_stash_message_has_prefix(self, tmp_path: Path) -> None:
+        """The stash message carries the ilk-gate-isolation prefix."""
+        repo = _make_git_repo(tmp_path)
+        marker = repo / "marker.txt"
+        marker.write_text("dirty", encoding="utf-8")
+
+        # Force a pop conflict by committing a change during isolation
+        with isolate_to_head(repo) as iso:
+            assert iso.isolated is True
+            # Create a conflicting committed change
+            marker.write_text("conflict", encoding="utf-8")
+            subprocess.run(["git", "add", "marker.txt"], cwd=repo, check=True, capture_output=True)
+            subprocess.run(
+                ["git", "commit", "-m", "conflict"],
+                cwd=repo, check=True, capture_output=True,
+            )
+
+        # The stash entry should still exist (never dropped)
+        stash_list = subprocess.run(
+            ["git", "stash", "list"],
+            cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout
+        assert "ilk-gate-isolation" in stash_list, "stash entry should still exist after pop conflict"
