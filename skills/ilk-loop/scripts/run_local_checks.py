@@ -17,8 +17,12 @@ This script is a pure observer. It does NOT mutate any file, commit
 anything, or signal the loop driver to stop. Callers (the loop driver
 or an interactive agent) decide what to do with the results.
 
+By default the working tree is isolated to HEAD before running checks
+(stashing uncommitted changes, restoring them afterwards). Use --no-isolate
+to skip this for debugging; results then say nothing about what will ship.
+
 Usage:
-  run_local_checks.py --project <path> --slug <subplan-slug> [--step N]
+  run_local_checks.py --project <path> --slug <subplan-slug> [--step N] [--no-isolate]
 
 Environment: requires Python 3.8+. Uses stdlib only.
 """
@@ -701,6 +705,9 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--slug", required=True)
     ap.add_argument("--step", type=int, default=None,
                     help="if given, also run that step's per-step local_checks")
+    ap.add_argument("--no-isolate", action="store_true",
+                    help="skip tree isolation to HEAD; for debugging only — "
+                         "results say nothing about what will ship")
     args = ap.parse_args(argv)
 
     project = args.project.resolve()
@@ -727,10 +734,12 @@ def main(argv: list[str]) -> int:
         step_checks = extract_step_local_checks(body, step)
 
     results: list[CheckResult] = []
-    for c in subplan_checks:
-        results.append(run_one(c, "subplan", run_cwd))
-    for c in step_checks:
-        results.append(run_one(c, "step", run_cwd))
+    iso_ctx = contextlib.nullcontext(IsolationState()) if args.no_isolate else isolate_to_head(project)
+    with iso_ctx as iso:
+        for c in subplan_checks:
+            results.append(run_one(c, "subplan", run_cwd))
+        for c in step_checks:
+            results.append(run_one(c, "step", run_cwd))
 
     passed = all(r.passed for r in results)
     out = {
@@ -742,6 +751,10 @@ def main(argv: list[str]) -> int:
         "step_check_count": len(step_checks),
         "all_passed": passed,
         "results": [asdict(r) for r in results],
+        "head_sha": iso.head_sha,
+        "dirty_paths": iso.dirty_paths,
+        "isolated": iso.isolated,
+        "restore_error": iso.restore_error,
     }
     print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0 if passed else 1

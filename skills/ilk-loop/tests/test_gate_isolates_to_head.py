@@ -154,6 +154,9 @@ class TestGateReadsWorkingTree:
 
         slug = "test-clean-tree"
         _make_subplan(tmp_path, repo, slug, "true")
+        # Commit so the tree is actually clean
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-m", "add plan"], cwd=repo, check=True)
 
         output = _run_gate(repo, slug)
 
