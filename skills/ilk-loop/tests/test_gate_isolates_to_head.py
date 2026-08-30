@@ -257,3 +257,86 @@ class TestIsolateToHead:
             cwd=repo, capture_output=True, text=True, check=True,
         ).stdout
         assert "ilk-gate-isolation" in stash_list, "stash entry should still exist after pop conflict"
+
+    def test_stash_pop_conflict_sets_restore_error(self, tmp_path: Path) -> None:
+        """AC-5: pop conflict populates restore_error, stash entry preserved."""
+        repo = _make_git_repo(tmp_path)
+        marker = repo / "marker.txt"
+        marker.write_text("dirty", encoding="utf-8")
+
+        iso_state = None
+        with isolate_to_head(repo) as iso:
+            # Create a conflicting committed change
+            marker.write_text("conflict", encoding="utf-8")
+            subprocess.run(["git", "add", "marker.txt"], cwd=repo, check=True, capture_output=True)
+            subprocess.run(
+                ["git", "commit", "-m", "conflict"],
+                cwd=repo, check=True, capture_output=True,
+            )
+            iso_state = iso
+
+        assert iso_state.restore_error is not None, "restore_error should be set on pop conflict"
+        assert "stash pop failed" in iso_state.restore_error
+
+        # Stash entry must still be on the stack (never dropped)
+        stash_list = subprocess.run(
+            ["git", "stash", "list"],
+            cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout
+        assert "ilk-gate-isolation" in stash_list
+
+    def test_untracked_files_survive(self, tmp_path: Path) -> None:
+        """Untracked files survive a full isolate/restore cycle."""
+        repo = _make_git_repo(tmp_path)
+        # Create some untracked files
+        untracked = repo / "untracked.txt"
+        untracked.write_text("untracked content", encoding="utf-8")
+        subdir = repo / "subdir"
+        subdir.mkdir()
+        (subdir / "nested.txt").write_text("nested", encoding="utf-8")
+
+        pre_status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout
+
+        with isolate_to_head(repo) as iso:
+            assert iso.isolated is True
+            assert iso.dirty_paths >= 2
+
+        # Untracked files must still exist
+        assert untracked.exists(), "untracked file disappeared after isolation"
+        assert (subdir / "nested.txt").exists(), "nested untracked file disappeared"
+        assert untracked.read_text(encoding="utf-8") == "untracked content"
+
+        # Status must be identical
+        post_status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout
+        assert post_status == pre_status
+
+    def test_no_destructive_git_commands(self) -> None:
+        """Structural guard: source contains no stash-drop / checkout -- / reset --hard / clean -fd."""
+        import pathlib
+        import re
+        src = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "run_local_checks.py"
+        text = src.read_text(encoding="utf-8")
+
+        # Check for actual subprocess.run calls with destructive git commands.
+        # Match patterns like: "stash", "drop" in a list literal passed to subprocess.run
+        # or direct string mentions in command-building code.
+        # Exclude docstrings/comments by checking for subprocess context.
+        destructive = [
+            r'\[\s*"git"\s*,\s*"stash"\s*,\s*"drop"',
+            r'\[\s*"git"\s*,\s*"checkout"\s*,\s*"--"',
+            r'\[\s*"git"\s*,\s*"reset"\s*,\s*"--hard"',
+            r'\[\s*"git"\s*,\s*"clean"\s*,\s*"-fd"',
+            r'\[\s*"git"\s*,\s*"clean"\s*,\s*"-f"\s*,\s*"-d"',
+        ]
+        for pattern in destructive:
+            match = re.search(pattern, text)
+            assert match is None, (
+                f"source contains destructive git command matching '{pattern}' — "
+                "isolate_to_head must never destroy uncommitted work"
+            )
