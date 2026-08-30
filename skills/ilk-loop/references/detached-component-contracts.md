@@ -372,6 +372,29 @@ Three defects, one silent ship. The driver log's two consecutive lines:
 Each defect alone was sufficient to ship a red gate as verified. Fixed in
 sub-plan `a-red-gate-cannot-ship-a-subplan` (2026-08-29).
 
+### Gate-result isolation fields (added 2026-08-30)
+
+`run_local_checks.py` emits four fields in its output JSON that describe
+the isolation state of the working tree when the gate ran:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `head_sha` | `string \| null` | HEAD commit SHA at gate time; `null` if not a git repo |
+| `dirty_paths` | `int` | Count of uncommitted + untracked paths before isolation |
+| `isolated` | `bool` | `true` iff the tree was successfully pinned to HEAD |
+| `restore_error` | `string \| null` | Error from stash pop; `null` on success |
+
+**Readers:**
+
+- **`ship_integrity.py`** (`evaluate_ship`) — when `isolated=false` and
+  `dirty_paths > 0`, the ship verdict is `ok=false` with reason
+  `unisolated`.
+- **`blocking_checks.py`** — indirectly, via the `error` field that
+  `run_local_checks.py` sets when isolation fails (the `error` outcome
+  is blocking per Contract 2b).
+- **`ship_gap.py`** (SP3) — reads `head_sha` and `isolated` to detect the
+  verify-more-than-commit gap.
+
 ---
 
 ## Contract 3: Liveness (PID + sentinel cross-check)

@@ -77,7 +77,15 @@ def evaluate_ship(
             reason="gate declared but no gate result recorded — ship is dishonest",
         )
 
-    # Gate declared + result recorded → check all_passed.
+    # Gate declared + result recorded → check isolation first.
+    if not last_gate_result.get("isolated", True) and last_gate_result.get("dirty_paths", 0) > 0:
+        n = last_gate_result["dirty_paths"]
+        return ShipVerdict(
+            ok=False,
+            reason=f"unisolated gate — {n} uncommitted paths, result does not describe the commit",
+        )
+
+    # Then check all_passed.
     if not last_gate_result.get("all_passed", False):
         # Try to name the failing checks for a clearer message.
         failing = [
