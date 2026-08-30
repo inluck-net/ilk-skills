@@ -2206,12 +2206,40 @@ print(json.dumps({
       fi
     done
 
+    # Ship-gap: committed-vs-changed path accounting
+    local _SHIP_GAP_JSON=""
+    local _SHIP_GAP_UNEXPLAINED=0
+    for r in "${REPOS[@]}"; do
+      local h_before h_after gap_json
+      h_before=$(head_before_sha "$r" "$heads_before_file")
+      h_after=$(head_after_sha "$r" "$heads_after_file")
+      if [[ -n "$h_before" && -n "$h_after" ]]; then
+        gap_json=$(python3 "$SKILLS_DIR/scripts/ship_gap.py" \
+          --repo "$r" --head-before "$h_before" --head-after "$h_after" --json 2>/dev/null) || gap_json=""
+        if [[ -n "$gap_json" ]]; then
+          _SHIP_GAP_JSON="$gap_json"
+          local unexplained
+          unexplained=$(echo "$gap_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(1 if d.get('unexplained') else 0)" 2>/dev/null) || unexplained=0
+          if [[ "$unexplained" -eq 1 ]]; then
+            _SHIP_GAP_UNEXPLAINED=1
+          fi
+        fi
+      fi
+    done
+
     echo ""
     echo "  duration: ${iter_dur_sec}s  exit: $ITER_EXIT_CODE  new commits: $total_new"
     if [[ -s "$new_commits_file" ]]; then
       while read -r repo_line count_line; do
         echo "    $repo_line : +$count_line"
       done < "$new_commits_file"
+    fi
+    if [[ "$_SHIP_GAP_UNEXPLAINED" -eq 1 ]]; then
+      local gap_paths gap_committed gap_gap
+      gap_paths=$(echo "$_SHIP_GAP_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['tree_paths'])" 2>/dev/null) || gap_paths=0
+      gap_committed=$(echo "$_SHIP_GAP_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['committed_paths'])" 2>/dev/null) || gap_committed=0
+      gap_gap=$(echo "$_SHIP_GAP_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['gap'])" 2>/dev/null) || gap_gap=0
+      echo "  ! [ship-gap] verified $gap_paths changed paths, committed $gap_committed — $gap_gap uncommitted at iteration end"
     fi
 
     # Ship-proof ledger: record which commits belong to which step range.

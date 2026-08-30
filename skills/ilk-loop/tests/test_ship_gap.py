@@ -154,3 +154,20 @@ class TestCLI:
         assert "tree_paths" in data
         assert "gap" in data
         assert "unexplained" in data
+
+
+class TestDriverParses:
+    """AC-8: bash -n on the driver exits 0 after every step."""
+
+    def test_driver_parses(self) -> None:
+        """The driver script has no syntax errors."""
+        driver = Path(__file__).resolve().parent.parent / "scripts" / "run_ilk_loop_claude.sh"
+        if not driver.exists():
+            pytest.skip("driver script not found")
+        result = subprocess.run(
+            ["bash", "-n", str(driver)],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 0, (
+            f"bash -n failed on {driver}:\n{result.stderr}"
+        )
