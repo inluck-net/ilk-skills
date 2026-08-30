@@ -171,3 +171,19 @@ class TestDriverParses:
         assert result.returncode == 0, (
             f"bash -n failed on {driver}:\n{result.stderr}"
         )
+
+    def test_no_echo_zero_fabrication(self) -> None:
+        """Structural guard: no || echo 0 / || true on the ship-gap path."""
+        driver = Path(__file__).resolve().parent.parent / "scripts" / "run_ilk_loop_claude.sh"
+        if not driver.exists():
+            pytest.skip("driver script not found")
+        text = driver.read_text(encoding="utf-8")
+        # Check for fabrication patterns on ship_gap lines
+        for line in text.splitlines():
+            if "ship_gap" in line.lower() or "_SHIP_GAP" in line:
+                assert "|| echo 0" not in line, (
+                    f"ship-gap line has || echo 0 fabrication: {line.strip()}"
+                )
+                assert "|| true" not in line, (
+                    f"ship-gap line has || true fabrication: {line.strip()}"
+                )
