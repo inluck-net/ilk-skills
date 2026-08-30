@@ -742,6 +742,16 @@ def main(argv: list[str]) -> int:
             results.append(run_one(c, "step", run_cwd))
 
     passed = all(r.passed for r in results)
+
+    # AC-1/AC-3: unisolated dirty tree is not a pass; non-git is fine.
+    isolation_error = None
+    if not iso.isolated and iso.dirty_paths > 0:
+        passed = False
+        isolation_error = (
+            f"gate ran against an unisolated tree ({iso.dirty_paths} uncommitted "
+            "paths) — result does not describe the commit"
+        )
+
     out = {
         "slug": slug,
         "step": step,
@@ -756,6 +766,8 @@ def main(argv: list[str]) -> int:
         "isolated": iso.isolated,
         "restore_error": iso.restore_error,
     }
+    if isolation_error:
+        out["error"] = isolation_error
     print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0 if passed else 1
 
