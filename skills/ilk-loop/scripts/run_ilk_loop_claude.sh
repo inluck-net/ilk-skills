@@ -2487,6 +2487,7 @@ print(json.dumps([json.loads(l) for l in sys.stdin]))
     _STOP_REASON="$iter_stop_reason" \
     _NEW_COMMITS_JSON="$new_commits_json" \
     _LOCAL_CHECKS_JSON="$local_checks_json" \
+    _SHIP_GAP_JSON="$_SHIP_GAP_JSON" \
     _WIP_PRESERVED="$wip_preserved" \
     _TOOL_CALLS="$iter_tool_calls" \
     _TEST_INVOCATIONS="$iter_test_invocations" \
@@ -2532,6 +2533,14 @@ if ti > 0:
 lc = os.environ.get('_LOCAL_CHECKS_JSON', '')
 if lc and lc != '[]':
   d['local_checks'] = json.loads(lc)
+sg = os.environ.get('_SHIP_GAP_JSON', '')
+if sg:
+  try:
+    sg_d = json.loads(sg)
+    if sg_d.get('unexplained'):
+      d['ship_gap'] = sg_d
+  except (json.JSONDecodeError, ValueError):
+    pass
 print(json.dumps(d))
 " >> "$JSONL_LOG"
 

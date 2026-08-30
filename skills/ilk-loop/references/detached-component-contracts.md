@@ -395,6 +395,29 @@ the isolation state of the working tree when the gate ran:
 - **`ship_gap.py`** (SP3) — reads `head_sha` and `isolated` to detect the
   verify-more-than-commit gap.
 
+### JSONL iteration-record `ship_gap` field (added 2026-08-30)
+
+When an iteration commits fewer paths than it verified, the JSONL record
+carries a `ship_gap` object:
+
+```json
+{
+  "ship_gap": {
+    "committed_paths": 2,
+    "tree_paths": 170,
+    "gap": 168,
+    "unexplained": true
+  }
+}
+```
+
+**Writer:** `run_ilk_loop_claude.sh` — the env-block record builder,
+guarded like `new_commits`. Absent when `unexplained` is false or the
+probe fails.
+
+**Readers:** `collect.py`, `ilk-feedback` — post-hoc analysis of the
+gap. Absence is normal and means no gap was detected.
+
 ---
 
 ## Contract 3: Liveness (PID + sentinel cross-check)
