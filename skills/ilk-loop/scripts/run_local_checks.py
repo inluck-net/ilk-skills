@@ -476,6 +476,7 @@ def isolate_to_head(project: Path):
         cp = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
             cwd=str(project), capture_output=True, text=True, timeout=5,
+        encoding="utf-8", errors="replace",
         )
         is_git = cp.returncode == 0 and cp.stdout.strip() == "true"
     except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -492,6 +493,7 @@ def isolate_to_head(project: Path):
         cp = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=str(project), capture_output=True, text=True, timeout=5,
+        encoding="utf-8", errors="replace",
         )
         if cp.returncode == 0:
             state.head_sha = cp.stdout.strip()
@@ -504,16 +506,19 @@ def isolate_to_head(project: Path):
         cp_diff = subprocess.run(
             ["git", "diff", "--name-only"],
             cwd=str(project), capture_output=True, text=True, timeout=10,
+        encoding="utf-8", errors="replace",
         )
         # Staged changes
         cp_cached = subprocess.run(
             ["git", "diff", "--cached", "--name-only"],
             cwd=str(project), capture_output=True, text=True, timeout=10,
+        encoding="utf-8", errors="replace",
         )
         # Untracked files
         cp_untracked = subprocess.run(
             ["git", "ls-files", "--others", "--exclude-standard"],
             cwd=str(project), capture_output=True, text=True, timeout=10,
+        encoding="utf-8", errors="replace",
         )
         dirty = set()
         for out in (cp_diff.stdout, cp_cached.stdout, cp_untracked.stdout):
@@ -538,6 +543,7 @@ def isolate_to_head(project: Path):
         cp = subprocess.run(
             ["git", "stash", "push", "-u", "-m", stash_msg],
             cwd=str(project), capture_output=True, text=True, timeout=30,
+        encoding="utf-8", errors="replace",
         )
         if cp.returncode == 0:
             stashed = True
@@ -555,6 +561,7 @@ def isolate_to_head(project: Path):
                 cp = subprocess.run(
                     ["git", "stash", "pop"],
                     cwd=str(project), capture_output=True, text=True, timeout=30,
+                encoding="utf-8", errors="replace",
                 )
                 if cp.returncode != 0:
                     # Pop conflict — stash entry stays on stack (never drop)

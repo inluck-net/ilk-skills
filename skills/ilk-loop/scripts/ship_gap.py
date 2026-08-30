@@ -58,6 +58,7 @@ def _committed_paths(repo: Path, head_before: str, head_after: str) -> set[str]:
             ["git", "diff-tree", "--no-commit-id", "--name-only", "-r",
              f"{head_before}..{head_after}"],
             cwd=str(repo), capture_output=True, text=True, timeout=10,
+        encoding="utf-8", errors="replace",
         )
         if cp.returncode != 0:
             return set()
@@ -73,15 +74,18 @@ def _tree_paths(repo: Path) -> set[str]:
         cp_diff = subprocess.run(
             ["git", "diff", "--name-only"],
             cwd=str(repo), capture_output=True, text=True, timeout=10,
+        encoding="utf-8", errors="replace",
         )
         cp_cached = subprocess.run(
             ["git", "diff", "--cached", "--name-only"],
             cwd=str(repo), capture_output=True, text=True, timeout=10,
+        encoding="utf-8", errors="replace",
         )
         # Untracked files
         cp_untracked = subprocess.run(
             ["git", "ls-files", "--others", "--exclude-standard"],
             cwd=str(repo), capture_output=True, text=True, timeout=10,
+        encoding="utf-8", errors="replace",
         )
         paths = set()
         for out in (cp_diff.stdout, cp_cached.stdout, cp_untracked.stdout):
