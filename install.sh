@@ -17,8 +17,8 @@
 # Pass --apply to execute.
 #
 # PATH entry (opt-in):
-#   --install-path       also install claude-worker onto PATH
-#   --only-path          install ONLY the claude-worker PATH entry (skip skills)
+#   --install-path       also install claude-worker + claude-worker-switch onto PATH
+#   --only-path          install ONLY the PATH entries (skip skills)
 #   --path-bin-dir <dir> target bin directory (default: ~/.local/bin)
 #
 # macOS entry points installed via directory symlinks (all scripts
@@ -41,9 +41,9 @@
 #                        targets <dir>/skills, <dir>/commands, <dir>/tools
 #   --force              back up real (non-symlink) targets to
 #                        <link>.pre-ilk-<timestamp> before linking
-#   --install-path       also install claude-worker onto PATH (in addition
+#   --install-path       also install claude-worker + claude-worker-switch onto PATH (in addition
 #                        to the normal skill/command install)
-#   --only-path          install ONLY the claude-worker PATH entry; skip
+#   --only-path          install ONLY the PATH entries; skip
 #                        all skill/command linking
 #   --path-bin-dir <dir> target bin directory for the PATH entry
 #                        (default: ~/.local/bin)
@@ -462,6 +462,14 @@ apply_action() {
 # pointing to tools/claude-worker/claude-worker.sh. Idempotent.
 
 CLAUDE_WORKER_SRC="$REPO_ROOT/tools/claude-worker/claude-worker.sh"
+CLAUDE_WORKER_SWITCH_SRC="$REPO_ROOT/tools/claude-worker/switch.sh"
+
+# Every command this installer puts on PATH, as "name=source" pairs. Adding a
+# command here is all it takes for a fresh host to get it via --only-path.
+PATH_ENTRIES=(
+  "claude-worker=$CLAUDE_WORKER_SRC"
+  "claude-worker-switch=$CLAUDE_WORKER_SWITCH_SRC"
+)
 
 # Create or replace the PATH entry (symlink preferred, copy as fallback for
 # environments where ln -s silently copies, e.g. Windows Git Bash without
@@ -476,19 +484,20 @@ create_path_entry() {
   fi
 }
 
-install_path_entry() {
-  local bin_dir="$1"
-  local link="$bin_dir/claude-worker"
+# Install a single PATH entry: <bin_dir>/<name> -> <source>. Idempotent.
+install_one_path_entry() {
+  local bin_dir="$1" name="$2" src="$3"
+  local link="$bin_dir/$name"
 
-  if [[ ! -f "$CLAUDE_WORKER_SRC" ]]; then
-    echo "error: claude-worker source not found: $CLAUDE_WORKER_SRC" >&2
+  if [[ ! -f "$src" ]]; then
+    echo "error: $name source not found: $src" >&2
     return 1
   fi
 
   local entry_mode="DRY-RUN"
   [[ $apply -eq 1 ]] && entry_mode="APPLY"
-  echo "=== claude-worker PATH entry ($entry_mode) ==="
-  echo "source:    $CLAUDE_WORKER_SRC"
+  echo "=== $name PATH entry ($entry_mode) ==="
+  echo "source:    $src"
   echo "target:    $link"
 
   if [[ $apply -eq 0 ]]; then
@@ -505,18 +514,18 @@ install_path_entry() {
     else
       current_abs="$(cd "$(dirname "$link")" && cd "$(dirname "$current")" 2>/dev/null && pwd)/$(basename "$current")"
     fi
-    if [[ "$current_abs" == "$CLAUDE_WORKER_SRC" ]]; then
+    if [[ "$current_abs" == "$src" ]]; then
       echo "noop: $link already points to the correct source"
     else
       echo "action:  replace-stale-link"
       rm -f -- "$link"
-      create_path_entry "$link" "$CLAUDE_WORKER_SRC"
+      create_path_entry "$link" "$src"
       echo "updated: $link"
     fi
   elif [[ -f "$link" ]]; then
     # Regular file — could be a previous copy (Windows fallback).  Compare
     # contents to decide whether we need to refresh.
-    if cmp -s "$CLAUDE_WORKER_SRC" "$link"; then
+    if cmp -s "$src" "$link"; then
       echo "noop: $link already has the correct content"
     else
       if [[ $force -eq 1 ]]; then
@@ -524,7 +533,7 @@ install_path_entry() {
         stamp="$(date +%Y%m%d-%H%M%S)"
         backup="${link}.pre-ilk-${stamp}"
         mv -- "$link" "$backup"
-        create_path_entry "$link" "$CLAUDE_WORKER_SRC"
+        create_path_entry "$link" "$src"
         echo "backed up + updated: $link"
       else
         echo "BLOCKED: $link exists and is not a symlink (re-run with --force to back up)" >&2
@@ -534,9 +543,22 @@ install_path_entry() {
   else
     echo "action:  create"
     mkdir -p "$bin_dir"
-    create_path_entry "$link" "$CLAUDE_WORKER_SRC"
+    create_path_entry "$link" "$src"
     echo "created: $link"
   fi
+}
+
+# Install every PATH entry, then warn once if the bin dir is not on PATH.
+install_path_entry() {
+  local bin_dir="$1"
+  local rc=0 entry name src
+
+  for entry in "${PATH_ENTRIES[@]}"; do
+    name="${entry%%=*}"
+    src="${entry#*=}"
+    install_one_path_entry "$bin_dir" "$name" "$src" || rc=1
+    echo
+  done
 
   # Warn if bin_dir is not on PATH
   local on_path=0
@@ -559,6 +581,8 @@ install_path_entry() {
     echo
     echo "To make it permanent, add that line to your shell rc file (~/.bashrc, ~/.zshrc, etc.)."
   fi
+
+  return $rc
 }
 
 # Default bin dir for PATH entry

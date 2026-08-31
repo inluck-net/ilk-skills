@@ -130,6 +130,43 @@ Recommended behavior:
 This removes the race where switching the planner provider changes the active
 provider of a worker loop.
 
+### Switching the worker's provider
+
+`tools/claude-worker/switch.sh` (on PATH as `claude-worker-switch`) is the
+worker-side equivalent of the CCSwitch picker. It reads the CCSwitch provider
+list — so keys are stored once — but writes only the worker home, never
+`~/.claude`:
+
+```
+claude-worker-switch              # interactive picker
+claude-worker-switch "GLM en"     # by id, name, unique substring, or row number
+claude-worker-switch --list       # table; * marks the worker's current provider
+claude-worker-switch --current    # print the active base_url + model
+claude-worker-switch -n <name>    # dry-run
+```
+
+It is a front-end only: every write goes through `bootstrap.sh
+--from-ccswitch --apply`, which keeps the backup, merge, and fail-closed
+checks in one place.
+
+**`settings.json` is merged, not replaced.** The worker's `settings.json`
+carries hooks, theme, and permission flags alongside the provider env. An
+early version of `write_worker_config` wrote the file whole and silently
+disarmed the worker's `PreToolUse` guards. The write now replaces every
+`ANTHROPIC_*` key (so no stale model alias or base URL outlives a switch) and
+preserves everything else. The merge needs `python3`; without it, a write
+that would discard an existing file's other settings is refused rather than
+performed.
+
+**Hosts without CCSwitch.** The picker needs the CCSwitch database. On a host
+that has no CCSwitch (a headless runner, for example), set the worker
+provider directly — no picker, same safe merge:
+
+```
+bash tools/claude-worker/bootstrap.sh --apply \
+  --base-url <url> --auth-token <token> --model <id>
+```
+
 ## MCP Isolation
 
 MCP state is file-based and follows `CLAUDE_CONFIG_DIR`.

@@ -74,6 +74,9 @@ allow_official=0
 force=0
 clone_slot=""
 clone_from=""
+# Full provider env block (JSON object) when imported from CCSwitch; empty for
+# the flag/env path, where it is synthesized from base_url/auth_token/model.
+provider_env_json=""
 
 usage() {
   sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -357,6 +360,17 @@ print(f'auth_token={json.dumps(d[\"ANTHROPIC_AUTH_TOKEN\"])}')
 print(f'model={json.dumps(d[\"ANTHROPIC_MODEL\"])}')
 " "$export_json")"
 
+  # Keep every ANTHROPIC_* key the provider carries (e.g. the DEFAULT_SONNET /
+  # HAIKU / OPUS aliases Claude Code requests for subagent and background
+  # work). Dropping them left those requests pointed at model ids the
+  # provider does not serve.
+  provider_env_json="$(python3 -c "
+import json, sys
+d = json.loads(sys.argv[1])
+print(json.dumps({k: v for k, v in d.items()
+                  if k.startswith('ANTHROPIC_') and isinstance(v, str) and v}))
+" "$export_json")"
+
   echo "Imported provider '$ccswitch_provider' from CCSwitch."
   echo
 fi
@@ -427,18 +441,75 @@ write_worker_config() {
   # owner-only perms from the start (umask scoped to the subshell) and
   # back up any existing file first.
   backup_if_present "$settings_file"
-  (
-    umask 077
-    cat > "$settings_file" <<EOF
+
+  # The env block to install. When imported from CCSwitch this carries every
+  # ANTHROPIC_* key the provider defines; otherwise just the three flag values.
+  local env_json="$provider_env_json"
+  if [[ -z "$env_json" ]]; then
+    env_json="$(cat <<ENVEOF
 {
-  "env": {
-    "ANTHROPIC_BASE_URL": "$(json_escape "$base_url")",
-    "ANTHROPIC_AUTH_TOKEN": "$(json_escape "$auth_token")",
-    "ANTHROPIC_MODEL": "$(json_escape "$model")"
-  }
+  "ANTHROPIC_BASE_URL": "$(json_escape "$base_url")",
+  "ANTHROPIC_AUTH_TOKEN": "$(json_escape "$auth_token")",
+  "ANTHROPIC_MODEL": "$(json_escape "$model")"
 }
-EOF
-  )
+ENVEOF
+)"
+  fi
+
+  # MERGE, never replace. settings.json is not provider state alone -- it also
+  # carries the worker's hooks, theme, and permission flags, and a full
+  # overwrite silently disarmed the PreToolUse guards. Provider keys are
+  # replaced wholesale (no stale ANTHROPIC_* may outlive a switch); every
+  # other key, in env or top level, is preserved.
+  if command -v python3 >/dev/null 2>&1; then
+    (
+      umask 077
+      export WORKER_ENV_JSON="$env_json"
+      python3 - "$settings_file" <<'PYMERGE'
+import json, os, sys, tempfile
+
+path = sys.argv[1]
+new_env = json.loads(os.environ["WORKER_ENV_JSON"])
+
+try:
+    with open(path) as fh:
+        settings = json.load(fh)
+    if not isinstance(settings, dict):
+        settings = {}
+except (FileNotFoundError, ValueError):
+    settings = {}
+
+env = settings.get("env")
+if not isinstance(env, dict):
+    env = {}
+env = {k: v for k, v in env.items() if not k.startswith("ANTHROPIC_")}
+env.update(new_env)
+settings["env"] = env
+
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".")
+with os.fdopen(fd, "w") as fh:
+    json.dump(settings, fh, indent=2)
+    fh.write("\n")
+os.chmod(tmp, 0o600)
+os.replace(tmp, path)
+PYMERGE
+    ) || { echo "ERROR: failed to merge provider env into $settings_file" >&2; exit 3; }
+    echo "  merged provider env into $settings_file (other settings preserved)"
+  else
+    # No python3: fall back to a full write, but refuse to silently discard an
+    # existing file's non-provider settings.
+    if [[ -s "$settings_file" ]]; then
+      echo "ERROR: python3 not found -- cannot merge into the existing" >&2
+      echo "$settings_file without discarding its other settings (hooks, theme," >&2
+      echo "permissions). Install python3, or edit the env block by hand." >&2
+      exit 3
+    fi
+    (
+      umask 077
+      printf '{\n  "env": %s\n}\n' "$env_json" > "$settings_file"
+    )
+    echo "  wrote $settings_file"
+  fi
   chmod 600 "$settings_file"
   echo "  wrote $settings_file (auth token $(mask_secret "$auth_token"), mode 600)"
 
