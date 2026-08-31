@@ -86,14 +86,31 @@ print(f"current: {model}  @  {url}")
 PYCUR
 }
 
+# Fetch the CCSwitch provider list as JSON, or fail with a message that names
+# the fallback. A host without CCSwitch (a headless runner) is an expected
+# state, so it must not surface as a traceback.
+providers_json() {
+  local out
+  if ! out="$(python3 "$HELPER" list --format json 2>&1)"; then
+    echo "error: cannot read the CCSwitch provider list on this host." >&2
+    echo "$out" | sed 's/^/  /' >&2
+    echo >&2
+    echo "This host has no CCSwitch. Set the worker provider directly:" >&2
+    echo "  bash \"$BOOTSTRAP\" --apply \\" >&2
+    echo "    --home \"$worker_home\" \\" >&2
+    echo "    --base-url <url> --auth-token <token> --model <id>" >&2
+    return 2
+  fi
+  printf '%s' "$out"
+}
+
 # Render the provider table, marking the one the worker is on.
 list_providers() {
-  python3 - "$settings_file" <<'PYLIST'
-import json, subprocess, sys, os
-here = os.environ["CW_SCRIPT_DIR"]
-rows = json.loads(subprocess.run(
-    [sys.executable, os.path.join(here, "ccswitch_import.py"), "list", "--format", "json"],
-    capture_output=True, text=True, check=True).stdout)
+  local rows_json
+  rows_json="$(providers_json)" || return 2
+  CW_ROWS="$rows_json" python3 - "$settings_file" <<'PYLIST'
+import json, os, sys
+rows = json.loads(os.environ["CW_ROWS"])
 rows = [r for r in rows if r.get("base_url") and r.get("model")]
 try:
     cur = (json.load(open(sys.argv[1])).get("env") or {}).get("ANTHROPIC_BASE_URL", "")
@@ -110,13 +127,12 @@ PYLIST
 # name, then unique case-insensitive substring; ambiguity is an error rather
 # than a guess.
 resolve_target() {
-  CW_TARGET="$1" python3 - <<'PYRES'
-import json, os, subprocess, sys
-here = os.environ["CW_SCRIPT_DIR"]
+  local rows_json
+  rows_json="$(providers_json)" || return 2
+  CW_TARGET="$1" CW_ROWS="$rows_json" python3 - <<'PYRES'
+import json, os, sys
 q = os.environ["CW_TARGET"]
-rows = json.loads(subprocess.run(
-    [sys.executable, os.path.join(here, "ccswitch_import.py"), "list", "--format", "json"],
-    capture_output=True, text=True, check=True).stdout)
+rows = json.loads(os.environ["CW_ROWS"])
 rows = [r for r in rows if r.get("base_url") and r.get("model")]
 
 if q.isdigit():
@@ -153,7 +169,7 @@ if [[ "$mode" == "current" ]]; then
 fi
 
 if [[ "$mode" != "direct" ]]; then
-  list_providers
+  list_providers || exit 2
   echo
 fi
 

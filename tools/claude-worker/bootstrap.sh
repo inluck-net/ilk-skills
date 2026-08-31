@@ -360,15 +360,17 @@ print(f'auth_token={json.dumps(d[\"ANTHROPIC_AUTH_TOKEN\"])}')
 print(f'model={json.dumps(d[\"ANTHROPIC_MODEL\"])}')
 " "$export_json")"
 
-  # Keep every ANTHROPIC_* key the provider carries (e.g. the DEFAULT_SONNET /
-  # HAIKU / OPUS aliases Claude Code requests for subagent and background
-  # work). Dropping them left those requests pointed at model ids the
-  # provider does not serve.
+  # Keep every ANTHROPIC_* and CLAUDE_CODE_* key the provider carries -- the
+  # DEFAULT_SONNET / HAIKU / OPUS aliases Claude Code requests for subagent and
+  # background work, and per-provider harness settings like
+  # CLAUDE_CODE_MAX_CONTEXT_TOKENS. Dropping them left those requests pointed
+  # at model ids the provider does not serve.
   provider_env_json="$(python3 -c "
 import json, sys
 d = json.loads(sys.argv[1])
+keep = ('ANTHROPIC_', 'CLAUDE_CODE_')
 print(json.dumps({k: v for k, v in d.items()
-                  if k.startswith('ANTHROPIC_') and isinstance(v, str) and v}))
+                  if k.startswith(keep) and isinstance(v, str) and v}))
 " "$export_json")"
 
   echo "Imported provider '$ccswitch_provider' from CCSwitch."
@@ -459,8 +461,8 @@ ENVEOF
   # MERGE, never replace. settings.json is not provider state alone -- it also
   # carries the worker's hooks, theme, and permission flags, and a full
   # overwrite silently disarmed the PreToolUse guards. Provider keys are
-  # replaced wholesale (no stale ANTHROPIC_* may outlive a switch); every
-  # other key, in env or top level, is preserved.
+  # replaced wholesale (no stale ANTHROPIC_* or CLAUDE_CODE_* may outlive a
+  # switch); every other key, in env or top level, is preserved.
   if command -v python3 >/dev/null 2>&1; then
     (
       umask 077
@@ -482,7 +484,10 @@ except (FileNotFoundError, ValueError):
 env = settings.get("env")
 if not isinstance(env, dict):
     env = {}
-env = {k: v for k, v in env.items() if not k.startswith("ANTHROPIC_")}
+# Both prefixes are provider-scoped: a context window or model alias from the
+# previous provider is wrong for the next one, so neither may survive.
+env = {k: v for k, v in env.items()
+       if not k.startswith(("ANTHROPIC_", "CLAUDE_CODE_"))}
 env.update(new_env)
 settings["env"] = env
 
