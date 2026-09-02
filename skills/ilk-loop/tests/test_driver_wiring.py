@@ -325,8 +325,8 @@ class TestShipGapWiring:
             body_lines=[
                 f'printf "B=%s\\n" "$(head_before_sha "{repo}" "$BEFORE")"',
                 f'printf "A=%s\\n" "$(head_after_sha "{repo}" "$AFTER")"',
-                f'printf "UB=[%s]\\n" "$(head_before_sha "{ghost}" "$BEFORE")"',
-                f'printf "UA=[%s]\\n" "$(head_after_sha "{ghost}" "$AFTER")"',
+                f'printf "UB=%s\\n" "$(head_before_sha "{ghost}" "$BEFORE")"',
+                f'printf "UA=%s\\n" "$(head_after_sha "{ghost}" "$AFTER")"',
             ],
         )
         assert proc.returncode == 0, (
@@ -364,15 +364,23 @@ class TestShipGapWiring:
                 'printf "__SHIP_GAP_JSON=%s\\n" "$_SHIP_GAP_JSON"',
             ],
         )
-        payload = [
-            line for line in proc.stdout.splitlines()
-            if line.startswith("__SHIP_GAP_JSON=")
-        ]
-        assert payload, (
+        lines = proc.stdout.splitlines()
+        payload_start = next(
+            (i for i, line in enumerate(lines)
+             if line.startswith("__SHIP_GAP_JSON=")),
+            None,
+        )
+        assert payload_start is not None, (
             "the ship-gap block never reached ship_gap.py — _SHIP_GAP_JSON is "
             f"empty. probe rc={proc.returncode}; stderr: {proc.stderr.strip()!r}"
         )
-        raw = payload[0].split("=", 1)[1]
+        # ship_gap.py --json pretty-prints (indent=2), so the payload spans
+        # lines. The printf is the probe's last statement, so everything from
+        # the marker line onward is the JSON.
+        raw = "\n".join(
+            [lines[payload_start][len("__SHIP_GAP_JSON="):]]
+            + lines[payload_start + 1:]
+        )
         assert raw.strip(), f"_SHIP_GAP_JSON is empty; stderr: {proc.stderr.strip()!r}"
         parsed = json.loads(raw)
         assert isinstance(parsed, dict) and "unexplained" in parsed

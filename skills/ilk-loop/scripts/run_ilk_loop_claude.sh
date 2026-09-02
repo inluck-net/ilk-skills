@@ -763,6 +763,24 @@ get_new_commit_count() {
   git -C "$repo" rev-list --count "${before}..${after}" 2>/dev/null || echo 0
 }
 
+head_before_sha() {
+  local repo="$1" before_file="$2" sha
+  sha=$(grep -F "$repo=" "$before_file" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
+  if [[ "$sha" == "(unknown)" ]]; then
+    sha=""
+  fi
+  echo "$sha"
+}
+
+head_after_sha() {
+  local repo="$1" after_file="$2" sha
+  sha=$(grep -F "$repo=" "$after_file" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
+  if [[ "$sha" == "(unknown)" ]]; then
+    sha=""
+  fi
+  echo "$sha"
+}
+
 get_active_subplan_targets() {
   # Emit "<slug> <step>" for the sub-plan the loop is currently executing.
   #
@@ -2214,7 +2232,7 @@ print(json.dumps({
       h_before=$(head_before_sha "$r" "$heads_before_file")
       h_after=$(head_after_sha "$r" "$heads_after_file")
       if [[ -n "$h_before" && -n "$h_after" ]]; then
-        gap_json=$(python3 "$SKILLS_DIR/scripts/ship_gap.py" \
+        gap_json=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/ship_gap.py" \
           --repo "$r" --head-before "$h_before" --head-after "$h_after" --json 2>/dev/null) || gap_json=""
         if [[ -n "$gap_json" ]]; then
           _SHIP_GAP_JSON="$gap_json"
