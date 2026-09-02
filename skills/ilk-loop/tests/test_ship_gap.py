@@ -157,7 +157,18 @@ class TestCLI:
 
 
 class TestDriverParses:
-    """AC-8: bash -n on the driver exits 0 after every step."""
+    """AC-8: bash -n on the driver exits 0 after every step.
+
+    bash -n validates SYNTAX ONLY. It cannot detect an unresolved function
+    name or an unset variable — which is how the 2026-08-30 batch shipped
+    two live call sites (head_before_sha/head_after_sha at driver :2232-2233)
+    for helpers that were never written, plus a `$SKILLS_DIR` path with 0
+    assignments. test_driver_wiring.py is the resolution-level gate: it
+    dot-sources the driver under ILK_DOTSOURCE_ONLY=1 and asserts the names
+    resolve and the ship-gap block actually reaches ship_gap.py. This
+    bash -n test stays — it remains the cheapest guard against a syntax
+    error in the script a running loop is executing.
+    """
 
     def test_driver_parses(self) -> None:
         """The driver script has no syntax errors."""
