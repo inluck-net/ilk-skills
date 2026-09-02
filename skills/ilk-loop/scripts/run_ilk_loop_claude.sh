@@ -2612,7 +2612,7 @@ print(json.dumps(d))
   echo "JSONL:    $JSONL_LOG"
   echo ""
   echo "Final loop_status:"
-  python3 "$LOOP_STATUS_SCRIPT" 2>&1 || true
+  (cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" 2>&1) || true
 
   if [[ "$stop_reason" == "all-shipped" ]]; then
     # Batch-end gate: run the suite once before the master is done (SP1)
