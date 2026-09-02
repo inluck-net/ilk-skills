@@ -6,7 +6,11 @@ to the results file. This replaces the hand-interpolated echo in
 run_ilk_loop_claude.sh:1022.
 
 Usage:
-    python3 emit_jsonl_record.py <results_file> <tmp_out> <outcome> <check_exit>
+    python3 emit_jsonl_record.py <results_file> <tmp_out> <outcome> <check_exit> [<slug> <step>]
+
+``<slug> <step>`` is the identity of the target the invoker chose to gate.
+When supplied it is authoritative: the checked process's own stdout may fill
+a blank but never override it (see main()).
 """
 from __future__ import annotations
 
@@ -76,8 +80,8 @@ def build_record(
 
 
 def main() -> int:
-    if len(sys.argv) < 5:
-        print(f"Usage: {sys.argv[0]} <results_file> <tmp_out> <outcome> <check_exit>",
+    if len(sys.argv) < 5 or len(sys.argv) > 7:
+        print(f"Usage: {sys.argv[0]} <results_file> <tmp_out> <outcome> <check_exit> [<slug> <step>]",
               file=sys.stderr)
         return 1
 
@@ -100,6 +104,23 @@ def main() -> int:
 
     slug = data.get("slug", "")
     step = data.get("step")
+
+    # Identity comes from the invoker, never from the checked process's own
+    # stdout (Contract 2b invariant 6). The runner knows the target it chose
+    # to gate ($slug/$step at run_ilk_loop_claude.sh:1119); the helper's
+    # stdout is absent exactly when the gate failed, so taking identity from
+    # it produced the anonymous record behind the phantom B2 target " 0" ->
+    # slug="0" (gh-resolve resolver run, kira-cloudflare launcher
+    # 20260902-183120). Explicit argv is authoritative; a blank explicit
+    # value may only fall back to the helper's, never the reverse.
+    if len(sys.argv) >= 6 and sys.argv[5]:
+        slug = sys.argv[5]
+    if len(sys.argv) >= 7 and sys.argv[6]:
+        try:
+            step = int(sys.argv[6])
+        except ValueError:
+            pass
+
     failing_check = extract_failing_check(data)
 
     rec = build_record(slug, step, outcome, check_exit, failing_check, data=data)
