@@ -41,7 +41,7 @@ def _resolve_writer_dir() -> str:
     """
     result = subprocess.run(
         [sys.executable, str(_RESOLVER), "--start", _PROJECT_PATH],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
     )
     assert result.returncode == 0, (
         f"ilk_paths.py --start {_PROJECT_PATH} failed:\n"
@@ -55,7 +55,7 @@ def _resolve_reader_dir() -> str:
     """Call external_launcher_dir via the same resolver JSON output."""
     result = subprocess.run(
         [sys.executable, str(_RESOLVER), "--start", _PROJECT_PATH],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
     )
     assert result.returncode == 0, (
         f"ilk_paths.py --start {_PROJECT_PATH} failed:\n"
@@ -88,13 +88,31 @@ def test_writer_and_reader_resolve_same_dir():
 # ── AC-4: neither get_ilk_runtime_dir swallows stderr ───────────────────────
 
 
-def _grep_file_for_pattern(path: Path, pattern: str) -> list[tuple[int, str]]:
-    """Return (line_number, line_text) for every match of *pattern* in *path*."""
-    matches = []
-    for i, line in enumerate(path.read_text().splitlines(), start=1):
-        if pattern in line:
-            matches.append((i, line))
-    return matches
+def _function_body(path: Path, fn_name: str) -> list[tuple[int, str]]:
+    """Return (line_number, line_text) for the body of `fn_name() {` ... `}`.
+
+    Locates the function by name, not by line number.  The gate-identity
+    batch inserted ~170 lines above get_ilk_runtime_dir in the runner, which
+    silently moved the previous hard-coded 818-835 window onto a different
+    function (get_local_check_targets) and false-failed this test.
+    """
+    lines = path.read_text().splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if line.startswith(f"{fn_name}() {{"):
+            start = i
+            break
+    assert start is not None, f"{fn_name}() not found in {path.name}"
+    body = []
+    for i in range(start + 1, len(lines)):
+        # A column-0 `}` closes the function; a column-0 `name() {` opens the
+        # next one.  Both files indent nested blocks, so neither appears inside.
+        if lines[i] == "}" or (
+            lines[i].endswith("() {") and lines[i][:-4].isidentifier()
+        ):
+            break
+        body.append((i + 1, lines[i]))
+    return body
 
 
 def test_no_stderr_suppression_in_get_ilk_runtime_dir():
@@ -104,28 +122,27 @@ def test_no_stderr_suppression_in_get_ilk_runtime_dir():
     A broader grep is acceptable if no other legitimate uses exist;
     if they do, narrow the assertion and document in Findings.
     """
-    runner_matches = _grep_file_for_pattern(_RUNNER, "2>/dev/null")
-    watchdog_matches = _grep_file_for_pattern(_WATCHDOG, "2>/dev/null")
-
-    # Filter to lines inside get_ilk_runtime_dir (approximate: lines 818-835
-    # for runner, 169-190 for watchdog).  If the grep is clean, this is empty.
-    runner_in_fn = [
-        (ln, text) for ln, text in runner_matches if 818 <= ln <= 835
+    runner_matches = [
+        (ln, text)
+        for ln, text in _function_body(_RUNNER, "get_ilk_runtime_dir")
+        if "2>/dev/null" in text
     ]
-    watchdog_in_fn = [
-        (ln, text) for ln, text in watchdog_matches if 169 <= ln <= 190
+    watchdog_matches = [
+        (ln, text)
+        for ln, text in _function_body(_WATCHDOG, "get_ilk_runtime_dir")
+        if "2>/dev/null" in text
     ]
 
     problems = []
-    if runner_in_fn:
+    if runner_matches:
         problems.append(
             f"run_ilk_loop_claude.sh get_ilk_runtime_dir suppresses stderr:\n"
-            + "\n".join(f"  :{ln}: {text.strip()}" for ln, text in runner_in_fn)
+            + "\n".join(f"  :{ln}: {text.strip()}" for ln, text in runner_matches)
         )
-    if watchdog_in_fn:
+    if watchdog_matches:
         problems.append(
             f"watchdog.sh get_ilk_runtime_dir suppresses stderr:\n"
-            + "\n".join(f"  :{ln}: {text.strip()}" for ln, text in watchdog_in_fn)
+            + "\n".join(f"  :{ln}: {text.strip()}" for ln, text in watchdog_matches)
         )
 
     assert not problems, (

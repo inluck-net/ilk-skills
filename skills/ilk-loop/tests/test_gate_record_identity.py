@@ -115,7 +115,7 @@ def _emit(
     proc = subprocess.run(
         [sys.executable, str(EMIT), str(results), str(tmp_out), outcome,
          str(check_exit), *identity],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
     assert proc.returncode == 0, (
         f"emit_jsonl_record.py exited {proc.returncode}: {proc.stderr}"
@@ -144,7 +144,7 @@ def _anon_results(tmp_path: Path) -> Path:
 def _blocking(results: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(BLOCKING_CHECKS), str(results), *args],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
 
 
@@ -346,7 +346,8 @@ def test_driver_reports_unattributable_results(tmp_path: Path) -> None:
         "ILK_SKILL_HOME": str(SCRIPTS.parent.parent),
     }
     proc = subprocess.run(
-        ["bash", "-c", script], env=env, capture_output=True, text=True, timeout=60,
+        ["bash", "-c", script], env=env,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
     assert proc.returncode == 0, (
         f"probe rc={proc.returncode}; stderr: {proc.stderr.strip()}"

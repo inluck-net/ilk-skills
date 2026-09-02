@@ -65,7 +65,8 @@ def _make_project(tmp_path: Path) -> tuple[Path, Path]:
     project = tmp_path / "proj"
     project.mkdir()
     subprocess.run(
-        ["git", "init", "-q"], cwd=project, check=True, capture_output=True,
+        ["git", "init", "-q"], cwd=project, check=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
     data_home = tmp_path / ".ilk-data"
     plans = data_home / "projects" / ilk_paths.project_key(project) / "plans"
@@ -90,7 +91,8 @@ def _hermetic_env(data_home: Path) -> dict[str, str]:
 def _run_status(cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(_LOOP_STATUS)],
-        cwd=cwd, env=env, capture_output=True, text=True, timeout=30,
+        cwd=cwd, env=env, capture_output=True, text=True,
+        encoding="utf-8", timeout=30,
     )
 
 
@@ -139,7 +141,8 @@ def _make_two_commit_repo(tmp_path: Path) -> tuple[Path, str, str]:
     repo.mkdir()
 
     def git(*args: str) -> None:
-        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", *args], cwd=repo, check=True,
+                       capture_output=True, text=True, encoding="utf-8")
 
     git("init", "-q")
     git("config", "user.email", "test@test")
@@ -149,13 +152,13 @@ def _make_two_commit_repo(tmp_path: Path) -> tuple[Path, str, str]:
     git("commit", "-q", "-m", "init")
     sha_before = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=repo,
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", check=True,
     ).stdout.strip()
     (repo / "a.txt").write_text("changed\n", encoding="utf-8")
     git("commit", "-q", "-am", "change a")
     sha_after = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=repo,
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", check=True,
     ).stdout.strip()
     return repo, sha_before, sha_after
 
@@ -194,7 +197,8 @@ def _dotsource(setup_lines: list[str], body_lines: list[str]) -> subprocess.Comp
     )
     return subprocess.run(
         ["bash", "-c", script],
-        env=_dotsource_env(), capture_output=True, text=True, timeout=60,
+        env=_dotsource_env(), capture_output=True, text=True,
+        encoding="utf-8", timeout=60,
     )
 
 
@@ -269,7 +273,7 @@ class TestLoopStatusCwd:
                 "LOOP_STATUS_SCRIPT": str(_LOOP_STATUS),
                 "PROJECT_PATH": str(project),
             },
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", timeout=30,
         )
         assert "no plans dir found" not in proc.stdout + proc.stderr, (
             "the driver's final-status line resolved from the launcher's cwd "
@@ -290,7 +294,8 @@ class TestShipGapWiring:
         proc = subprocess.run(
             ["bash", "-c",
              f'source "{_DRIVER}"\ndeclare -F head_before_sha head_after_sha'],
-            env=_dotsource_env(), capture_output=True, text=True, timeout=60,
+            env=_dotsource_env(), capture_output=True, text=True,
+            encoding="utf-8", timeout=60,
         )
         assert proc.returncode == 0, (
             f"declare -F failed rc={proc.returncode}; stderr: {proc.stderr.strip()}"

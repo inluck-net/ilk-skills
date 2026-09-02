@@ -84,9 +84,15 @@ Per file (all in `scope_paths`, all files this batch created or edited):
 | `skills/ilk-loop/tests/test_gate_record_format_contract.py` | 2 → 5 (+3) |
 | `skills/ilk-loop/tests/test_ship_gap.py` | +0 (its 7 hits pre-date the batch) |
 
-**Fix (step 1):** add `encoding="utf-8"` to the 14 flagged capture calls.
-`test_toolkit_scan_clean` stays red (272 remaining ≠ 0) — the fixes remove the
-batch's contribution, they do not repair the pre-existing noise.
+**Fix (step 1):** add `encoding="utf-8"` to the flagged capture calls —
+16 in the three files above (the 14 attributed, plus 2 pre-existing in
+`test_gate_record_format_contract.py`, indistinguishable by line and swept by
+the same one-line replace), plus 2 pre-existing in
+`test_sentinel_path_agreement.py` (a labelled choice: the file was already
+open for the locator fix; one token each). 286 → **268**; 0 violations remain
+in any touched file. `test_toolkit_scan_clean` stays red (268 ≠ 0) — the
+fixes remove this batch's contribution, they do not repair the pre-existing
+noise. The scanner pinning a count instead of a node id remains open.
 
 ## Gate regex for step 1 (authored from this measurement)
 
@@ -108,7 +114,21 @@ python3 -m pytest --timeout=60 --timeout-method=signal -q 2>&1 | tail -3 | grep 
 ## Conclusion
 
 Two attributed regressions: the stale-line-range sentinel test, and 14 new
-`encoding=` lint violations invisible to the attribution rule. Both are step-1
-work. No other drift: the batch's 8 changed files are exactly the declared
+`encoding=` lint violations invisible to the attribution rule. Both fixed in
+step 1. No other drift: the batch's 8 changed files are exactly the declared
 `scope_paths`, and every other failure is baseline-red or environmental
 (`test_vl_describe`, red at base).
+
+## Post-fix verification (step 1 gate)
+
+Full suite re-run with the gate's own flags (`-q`), 2026-09-03:
+
+```
+25 failed, 2493 passed, 21 skipped, 3 xfailed, 1 warning, 7 errors in 229.88s (0:03:49)
+```
+
+Matches the authored regex `^25 failed, 2493 passed, 21 skipped, 3 xfailed,
+1 warning, 7 errors in ` — GREEN. Counts moved exactly as predicted: the
+sentinel fix moved 1 failed → passed (26 → 25 failed, 2492 → 2493 passed);
+the lint fixes changed no test outcome. No failure appeared and none silently
+disappeared.

@@ -93,7 +93,7 @@ def _emit(tmp_path: Path, payload: dict, outcome: str = "fail",
     proc = subprocess.run(
         [sys.executable, str(EMIT), str(results), str(tmp_out), outcome,
          str(check_exit)],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
     assert proc.returncode == 0, (
         f"emit_jsonl_record.py exited {proc.returncode}: {proc.stderr}"
@@ -115,7 +115,7 @@ def _blocking(results: Path, *args: str) -> subprocess.CompletedProcess:
     )
     return subprocess.run(
         [sys.executable, str(BLOCKING_CHECKS), str(results), *args],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
 
 
@@ -204,7 +204,7 @@ def test_slugless_errored_gate_is_reported_unattributable(tmp_path: Path) -> Non
     results = tmp_path / "local_checks_results.jsonl"
     proc = subprocess.run(
         [sys.executable, str(EMIT), str(results), str(tmp_out), "error", "1"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
     rec = json.loads(results.read_text(encoding="utf-8").strip())
@@ -238,14 +238,14 @@ def test_describe_reports_unattributable_beside_attributable(tmp_path: Path) -> 
     tmp_out.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     proc = subprocess.run(
         [sys.executable, str(EMIT), str(results), str(tmp_out), "fail", "1"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
     anon_out = tmp_path / "anon.out"
     anon_out.write_text("", encoding="utf-8")
     proc = subprocess.run(
         [sys.executable, str(EMIT), str(results), str(anon_out), "error", "1"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
 
