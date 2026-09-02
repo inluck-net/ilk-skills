@@ -9,6 +9,7 @@ exact snippets the driver executes — rather than by parsing tokens.
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -111,6 +112,92 @@ def _final_status_snippet() -> str:
     )
 
 
+def _ship_gap_block() -> str:
+    """The driver's ship-gap accounting block, extracted verbatim: from the
+    `local _SHIP_GAP_JSON=""` declaration right after the `# Ship-gap:`
+    comment through the for-loop's closing `done` (driver :2210-2231)."""
+    lines = _DRIVER.read_text(encoding="utf-8").splitlines()
+    for i, line in enumerate(lines):
+        if "# Ship-gap: committed-vs-changed path accounting" not in line:
+            continue
+        block: list[str] = []
+        for follow in lines[i + 1:]:
+            if not block and "_SHIP_GAP_JSON" not in follow:
+                continue  # skip blank/comment lines before the declaration
+            block.append(follow)
+            if follow.strip() == "done":
+                return "\n".join(block)
+        raise AssertionError("ship-gap block has no closing done")
+    raise AssertionError(
+        "driver no longer carries the '# Ship-gap:' block — update this test"
+    )
+
+
+def _make_two_commit_repo(tmp_path: Path) -> tuple[Path, str, str]:
+    """A git repo with two commits and a clean tree; returns (repo, sha1, sha2)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+    git("init", "-q")
+    git("config", "user.email", "test@test")
+    git("config", "user.name", "Test")
+    (repo / "a.txt").write_text("init\n", encoding="utf-8")
+    git("add", "a.txt")
+    git("commit", "-q", "-m", "init")
+    sha_before = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo,
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    (repo / "a.txt").write_text("changed\n", encoding="utf-8")
+    git("commit", "-q", "-am", "change a")
+    sha_after = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo,
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    return repo, sha_before, sha_after
+
+
+def _write_heads_file(path: Path, repo: Path, sha: str) -> None:
+    """`get_repo_heads`' exact `repo=sha` format, one line per repo."""
+    path.write_text(f"{repo}={sha}\n", encoding="utf-8")
+
+
+def _dotsource_env() -> dict[str, str]:
+    """Env for dot-sourcing the driver: ILK_DOTSOURCE_ONLY defines the
+    functions without running main(); ILK_SKILL_HOME pins skill-root
+    resolution to THIS repo's skills dir, not an installed copy."""
+    return {
+        **os.environ,
+        "ILK_DOTSOURCE_ONLY": "1",
+        "ILK_SKILL_HOME": str(_SCRIPTS.parent.parent),
+    }
+
+
+def _dotsource(setup_lines: list[str], body_lines: list[str]) -> subprocess.CompletedProcess:
+    """Source the driver, run `setup_lines`, then execute `body_lines` inside
+    a probe function (the block under test uses `local`, which is
+    function-scoped). `set +e` mirrors the driver's own bookkeeping context
+    (:2191) — the ship-gap block only ever runs under it."""
+    script = "\n".join(
+        [
+            f'source "{_DRIVER}"',
+            "set +e",
+            *setup_lines,
+            "probe() {",
+            *body_lines,
+            "}",
+            "probe",
+        ]
+    )
+    return subprocess.run(
+        ["bash", "-c", script],
+        env=_dotsource_env(), capture_output=True, text=True, timeout=60,
+    )
+
+
 class TestLoopStatusCwd:
     """AC-4 + AC-5: every loop_status invocation resolves the project, not
     the launcher's cwd."""
@@ -188,3 +275,104 @@ class TestLoopStatusCwd:
             "the driver's final-status line resolved from the launcher's cwd "
             "and could not see the project's plans dir (defect C)"
         )
+
+
+class TestShipGapWiring:
+    """AC-1 + AC-2 + AC-3: the ship-gap block's helpers resolve, read the
+    heads files, and actually reach ship_gap.py."""
+
+    def test_head_sha_helpers_resolve(self) -> None:
+        """AC-1: after `ILK_DOTSOURCE_ONLY=1 source <driver>`, both helpers
+        are declared functions. This is the assertion `bash -n` structurally
+        cannot make — a syntax check passes on an unresolved name."""
+        if not _DRIVER.exists():
+            pytest.skip("driver script not found")
+        proc = subprocess.run(
+            ["bash", "-c",
+             f'source "{_DRIVER}"\ndeclare -F head_before_sha head_after_sha'],
+            env=_dotsource_env(), capture_output=True, text=True, timeout=60,
+        )
+        assert proc.returncode == 0, (
+            f"declare -F failed rc={proc.returncode}; stderr: {proc.stderr.strip()}"
+        )
+        declared = proc.stdout.split()
+        assert "head_before_sha" in declared and "head_after_sha" in declared, (
+            f"expected both helpers declared; declared matching: {declared}"
+        )
+
+    def test_head_sha_helpers_read_the_heads_file(self, tmp_path: Path) -> None:
+        """AC-2 + AC-3: both helpers return the recorded sha in
+        `get_repo_heads`' exact `repo=sha` format, and a repo recorded as
+        `(unknown)` yields empty so the existing `[[ -n ... ]]` guard skips
+        it — exactly as `get_new_commit_count` treats `(unknown)` as 0."""
+        repo, sha_before, sha_after = _make_two_commit_repo(tmp_path)
+        ghost = tmp_path / "ghost"
+        before_file = tmp_path / "heads-before"
+        after_file = tmp_path / "heads-after"
+        _write_heads_file(before_file, repo, sha_before)
+        _write_heads_file(after_file, repo, sha_after)
+        # A second repo line, as get_repo_heads writes one line per repo.
+        with before_file.open("a", encoding="utf-8") as fh:
+            fh.write(f"{ghost}=(unknown)\n")
+        with after_file.open("a", encoding="utf-8") as fh:
+            fh.write(f"{ghost}=(unknown)\n")
+
+        proc = _dotsource(
+            setup_lines=[
+                f'BEFORE="{before_file}"',
+                f'AFTER="{after_file}"',
+            ],
+            body_lines=[
+                f'printf "B=%s\\n" "$(head_before_sha "{repo}" "$BEFORE")"',
+                f'printf "A=%s\\n" "$(head_after_sha "{repo}" "$AFTER")"',
+                f'printf "UB=[%s]\\n" "$(head_before_sha "{ghost}" "$BEFORE")"',
+                f'printf "UA=[%s]\\n" "$(head_after_sha "{ghost}" "$AFTER")"',
+            ],
+        )
+        assert proc.returncode == 0, (
+            f"probe rc={proc.returncode}; stderr: {proc.stderr.strip()}"
+        )
+        values = dict(
+            line.split("=", 1) for line in proc.stdout.splitlines() if "=" in line
+        )
+        assert values.get("B") == sha_before, f"B={values.get('B')!r} in {proc.stdout!r}"
+        assert values.get("A") == sha_after, f"A={values.get('A')!r} in {proc.stdout!r}"
+        assert values.get("UB") == "", f"UB={values.get('UB')!r} (want empty)"
+        assert values.get("UA") == "", f"UA={values.get('UA')!r} (want empty)"
+
+    def test_ship_gap_block_reaches_ship_gap_py(self, tmp_path: Path) -> None:
+        """AC-2, end-to-end: the consumer-entry-point assertion — the block
+        that actually matters. Extract the driver's own ship-gap block,
+        point REPOS at a hermetic two-commit repo, write the two heads
+        files, execute the block verbatim, and require `_SHIP_GAP_JSON` to
+        be non-empty and parse. Helper resolution (the tests above) is
+        necessary; ship_gap.py actually being reached is the thing."""
+        repo, sha_before, sha_after = _make_two_commit_repo(tmp_path)
+        before_file = tmp_path / "heads-before"
+        after_file = tmp_path / "heads-after"
+        _write_heads_file(before_file, repo, sha_before)
+        _write_heads_file(after_file, repo, sha_after)
+
+        proc = _dotsource(
+            setup_lines=[
+                f'REPOS=("{repo}")',
+                f'heads_before_file="{before_file}"',
+                f'heads_after_file="{after_file}"',
+            ],
+            body_lines=[
+                _ship_gap_block(),
+                'printf "__SHIP_GAP_JSON=%s\\n" "$_SHIP_GAP_JSON"',
+            ],
+        )
+        payload = [
+            line for line in proc.stdout.splitlines()
+            if line.startswith("__SHIP_GAP_JSON=")
+        ]
+        assert payload, (
+            "the ship-gap block never reached ship_gap.py — _SHIP_GAP_JSON is "
+            f"empty. probe rc={proc.returncode}; stderr: {proc.stderr.strip()!r}"
+        )
+        raw = payload[0].split("=", 1)[1]
+        assert raw.strip(), f"_SHIP_GAP_JSON is empty; stderr: {proc.stderr.strip()!r}"
+        parsed = json.loads(raw)
+        assert isinstance(parsed, dict) and "unexplained" in parsed
