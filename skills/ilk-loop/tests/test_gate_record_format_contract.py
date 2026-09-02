@@ -188,3 +188,68 @@ def test_blocking_detection_parses_json_not_text(tmp_path: Path) -> None:
             f"[{style}] --slugs feeds auto-quarantine at "
             f"run_ilk_loop_claude.sh:2164; got {slugs.stdout!r}"
         )
+
+
+# ── AC-6: the slugless path the payload helper structurally could not make ──
+
+def test_slugless_errored_gate_is_reported_unattributable(tmp_path: Path) -> None:
+    """AC-6 — every fixture above is built through
+    ``_run_local_checks_payload(slug, step)``, which always carries a slug.
+    The record that actually fires in the field does not: a gate that errors
+    emits no parsable JSON, so the writer's back-compat path produces the
+    anonymous record (gh-resolve resolver run, 20260902-183120). The reader
+    must REPORT it, and must never turn it into a target or a verdict."""
+    tmp_out = tmp_path / "empty.out"
+    tmp_out.write_text("", encoding="utf-8")
+    results = tmp_path / "local_checks_results.jsonl"
+    proc = subprocess.run(
+        [sys.executable, str(EMIT), str(results), str(tmp_out), "error", "1"],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    rec = json.loads(results.read_text(encoding="utf-8").strip())
+    assert rec == {"slug": "", "step": None, "outcome": "error", "exit_code": 1}, (
+        f"the anonymous record's shape drifted: {rec}"
+    )
+
+    targets = _blocking(results, "--targets")
+    assert targets.stdout == "", (
+        f"an anonymous record became a B2 target: {targets.stdout!r}"
+    )
+
+    describe = _blocking(results, "--describe")
+    assert describe.stdout.strip() == "1 unattributable (no slug)", (
+        "--describe must reach the operator with the unattributable count "
+        f"(the field log showed only the useless '#0'); got {describe.stdout!r}"
+    )
+
+    count = _blocking(results, "--unattributable-count")
+    assert count.stdout.strip() == "1", (
+        f"--unattributable-count (the driver's warning input): {count.stdout!r}"
+    )
+
+
+def test_describe_reports_unattributable_beside_attributable(tmp_path: Path) -> None:
+    """AC-6 — on a mixed file the attributable verdict keeps its name and the
+    anonymous records are reported separately, not folded into the list."""
+    results = tmp_path / "local_checks_results.jsonl"
+    payload = _run_local_checks_payload("real-slug", 2)
+    tmp_out = tmp_path / "run_local_checks.out.json"
+    tmp_out.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, str(EMIT), str(results), str(tmp_out), "fail", "1"],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    anon_out = tmp_path / "anon.out"
+    anon_out.write_text("", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, str(EMIT), str(results), str(anon_out), "error", "1"],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    describe = _blocking(results, "--describe")
+    assert describe.stdout.strip() == (
+        "real-slug#2, 1 unattributable (no slug)"
+    ), f"mixed-file --describe: {describe.stdout!r}"

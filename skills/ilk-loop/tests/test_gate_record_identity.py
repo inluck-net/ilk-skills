@@ -27,15 +27,17 @@ exactly when the gate failed.
 These tests pin the fix's contract: identity flows from the invoker (AC-1,
 AC-2), the reader never invents a target it cannot name (AC-3), the field
 scenario end to end (AC-4), and an unattributable record does not block
-(AC-7's ``--any`` half — the driver's loud-warning half is asserted by the
-step-2 extension of ``test_gate_record_format_contract.py``, since a step-0
-test asserting Change-4 output could never satisfy step 1's plain-green gate).
+(AC-7's ``--any`` half — its loud-warning half is
+``test_driver_reports_unattributable_results`` below, landed with Change 4
+in step 2: a step-0 test asserting Change-4 output could never have
+satisfied step 1's plain-green gate).
 
 AC-1..AC-4, AC-7 of sub-plan ``a-gate-result-carries-its-identity``.
 """
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -45,6 +47,7 @@ from typing import Union
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 EMIT = SCRIPTS / "emit_jsonl_record.py"
 BLOCKING_CHECKS = SCRIPTS / "blocking_checks.py"
+DRIVER = SCRIPTS / "run_ilk_loop_claude.sh"
 
 #: The sub-plan and step the field run's gate was actually judging — the
 #: identity the invoker held and the writer dropped.
@@ -281,8 +284,8 @@ def test_anonymous_record_does_not_block(tmp_path: Path) -> None:
     anonymous key against itself and can never clear it).
 
     The second half of AC-7 — the driver's loud unattributable warning — is
-    asserted by the step-2 extension of ``test_gate_record_format_contract.py``:
-    it is Change 4's output, and a step-0 test asserting it would leave
+    asserted by ``test_driver_reports_unattributable_results`` below: it is
+    Change 4's output, and a step-0 test asserting it would have left
     step 1's plain-green gate unsatisfiable."""
     results = _anon_results(tmp_path)
     proc = _blocking(results, "--any")
@@ -291,4 +294,72 @@ def test_anonymous_record_does_not_block(tmp_path: Path) -> None:
         "sub-plan identity is not a verdict about any sub-plan, and B2's "
         "confirm re-run matches it against itself (deterministically "
         "blocking) instead of quarantining anything"
+    )
+
+
+# ── AC-7 (second half): the driver reports the unattributable, loudly ───────
+
+def _b2_guard_region() -> str:
+    """The driver's B2 guard, verbatim: from the
+    `local blocking_checks_script=` declaration through the 6-space `fi`
+    that closes the results-file `[[ -s ]]` check (deeper closes are
+    indented further, so the first exact `      fi` after the declaration
+    is the right one)."""
+    lines = DRIVER.read_text(encoding="utf-8").splitlines()
+    start = next(
+        (i for i, l in enumerate(lines) if "local blocking_checks_script=" in l),
+        None,
+    )
+    assert start is not None, (
+        "driver no longer declares blocking_checks_script — update this test"
+    )
+    region: list[str] = []
+    for line in lines[start:]:
+        region.append(line)
+        if line == "      fi":
+            return "\n".join(region)
+    raise AssertionError("B2 guard block never closes at '      fi' — update this test")
+
+
+def test_driver_reports_unattributable_results(tmp_path: Path) -> None:
+    """AC-7 — with an anonymous record present and no attributable one, the
+    driver's B2 guard takes the `--any`-false path, prints the
+    unattributable warning to stderr, and does NOT stop the loop. The guard
+    region is extracted verbatim and executed against an anonymous-only
+    results file (the same dot-source pattern test_driver_wiring.py uses):
+    at HEAD this printed nothing while stopping the batch — the loud report
+    is the operator-visible half of the downgrade."""
+    results = _anon_results(tmp_path)
+    script = "\n".join([
+        f'source "{DRIVER}"',
+        "set +e",
+        "probe() {",
+        f'  local local_checks_results="{results}"',
+        _b2_guard_region(),
+        "}",
+        "probe",
+        'printf "STOP_REASON=[%s]\\n" "${iter_stop_reason:-}"',
+    ])
+    env = {
+        **os.environ,
+        "ILK_DOTSOURCE_ONLY": "1",
+        "ILK_SKILL_HOME": str(SCRIPTS.parent.parent),
+    }
+    proc = subprocess.run(
+        ["bash", "-c", script], env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert proc.returncode == 0, (
+        f"probe rc={proc.returncode}; stderr: {proc.stderr.strip()}"
+    )
+    assert "carried no sub-plan identity" in proc.stderr, (
+        "the driver stayed silent about an unattributable gate result — the "
+        "downgrade to non-blocking is only safe while the harness defect is "
+        f"loud. stderr: {proc.stderr!r}"
+    )
+    assert "1 gate result(s)" in proc.stderr, proc.stderr
+    assert "local_checks_failed" not in proc.stderr, (
+        "the unattributable record still stopped the loop"
+    )
+    assert "STOP_REASON=[]" in proc.stdout, (
+        f"iter_stop_reason was set on an unattributable-only file: {proc.stdout!r}"
     )

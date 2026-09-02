@@ -2437,6 +2437,17 @@ print('true' if d.get('blocked') else 'false')
               echo "Loop stopped: local_checks not passing (B2 confirmed)" >&2
             fi
           fi
+        else
+          # --any is false, so nothing attributable blocked. A record with no
+          # identity is not a verdict about any sub-plan (Contract 2b
+          # invariant 6): it means the invoker lost its own target — a harness
+          # defect — so report loudly and continue instead of blocking the
+          # batch on the harness.
+          local unattr_count
+          unattr_count=$(python3 "$blocking_checks_script" "$local_checks_results" --unattributable-count 2>/dev/null || true)
+          if [[ "${unattr_count:-0}" -gt 0 ]]; then
+            echo "  ! [local_checks] ${unattr_count} gate result(s) carried no sub-plan identity — harness defect, those gates verified nothing. See Contract 2b invariant 6." >&2
+          fi
         fi
       fi
     fi

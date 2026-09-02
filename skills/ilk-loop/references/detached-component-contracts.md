@@ -306,9 +306,10 @@ gate is distinguishable from a gate that never ran.
 
 ### Who reads
 
-- **`blocking_checks.py`** — `--any` / `--targets` / `--slugs` / `--describe`.
-  The one reader for the runner's B2 path (blocking test, confirm re-run,
-  auto-quarantine, the human-readable failing-check line).
+- **`blocking_checks.py`** — `--any` / `--targets` / `--slugs` / `--describe` /
+  `--unattributable-count`. The one reader for the runner's B2 path (blocking
+  test, confirm re-run, auto-quarantine, the human-readable failing-check
+  line). Its modes count only *attributable* records — see invariant 6.
 - **`test_ship_integrity`** in `run_ilk_loop_claude.sh` — its gate lookup
   matches `rec["slug"]` against each `shipped` sub-plan and turns `outcome`
   into `gate_passed` = `true` / `false` / `skip`.
@@ -343,6 +344,16 @@ gate is distinguishable from a gate that never ran.
    appended to once per gate by a subprocess, so a truncated tail is possible;
    `blocking_checks.read_records` skips unparseable lines rather than raising.
 
+6. **A record's identity MUST come from the invoker.** `slug` and `step` name
+   the target the runner chose to gate — never the checked process's own
+   output, which is absent exactly when the gate failed. A record with no
+   `slug` is **unattributable**: it is not a verdict about any sub-plan, it
+   does not block, and it MUST be reported (`--describe` carries an
+   `N unattributable (no slug)` segment; the driver echoes the count to
+   stderr and continues). The writer takes identity as trailing argv from
+   `invoke_local_checks`; the helper's stdout may fill a blank but never
+   override.
+
 ### Bug reference (kira-cloudflare 20260828-211346)
 
 Three defects, one silent ship. The driver log's two consecutive lines:
@@ -371,6 +382,28 @@ Three defects, one silent ship. The driver log's two consecutive lines:
 
 Each defect alone was sufficient to ship a red gate as verified. Fixed in
 sub-plan `a-red-gate-cannot-ship-a-subplan` (2026-08-29).
+
+### Bug reference (gh-resolve resolver run, kira-cloudflare launcher 20260902-183120)
+
+One defect (invariant 6), a finished fix stranded. The gate errored; the
+writer, taking identity from the checked process's own stdout, recorded an
+anonymous record; the driver printed `[local_checks ERR] 0 step  -> error`;
+B2 confirmed the phantom target `slug="0"` against itself and stopped the
+loop; the batch's second sub-plan never ran, and gh-resolve's `reap` refused
+the run (`refused:plan-not-shipped`) until an operator landed it by hand.
+Reproduced byte-exactly 2026-09-03 against HEAD `21e846d`
+(sub-plan `a-gate-result-carries-its-identity`):
+
+```
+record:            {"slug":"","step":null,"outcome":"error","exit_code":1}
+--targets output:  " 0"            (leading space; _step_of maps None -> 0)
+read -r slug step: slug="0" step=""
+driver printed:    [local_checks ERR] 0 step  -> error
+```
+
+Fixed in sub-plan `a-gate-result-carries-its-identity` (2026-09-03) by
+invariant 6: identity from the invoker, unattributable records reported
+instead of enforced.
 
 ### Gate-result isolation fields (added 2026-08-30)
 
