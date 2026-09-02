@@ -34,9 +34,17 @@
         "node_id": "tests/test_subprocess_encoding_lint.py::test_toolkit_scan_clean",
         "reason": "1 failed — linter finds subprocess calls without explicit encoding= in the codebase",
         "as_of": "2026-08-19"
+      },
+      {
+        "node_id": "skills/ilk-loop/tests/test_vl_describe.py::TestSmokeGateway::test_hello_image_returns_answer",
+        "reason": "1 failed - live VL-gateway smoke test; the service returns a '...does not exist' error with its own request_id echoed, so the failure is service-side, not code. Verified failing at base 21e846d in a detached worktree on 2026-09-03 (before MASTER-2026-09-03-gate-identity landed), and that batch's 10 changed files do not include vl_describe.py or its test. Environment-dependent, not a regression.",
+        "as_of": "2026-09-03"
       }
     ],
-    "hosts": ["chad-mbp", "rezmac"],
+    "hosts": [
+      "chad-mbp",
+      "rezmac"
+    ],
     "path_prelude": "export PATH=\"/opt/homebrew/bin:$PATH\""
   }
 }
