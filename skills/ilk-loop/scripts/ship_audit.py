@@ -205,10 +205,16 @@ def _resolve_batch_record(
             data = json.loads(rp.read_text(encoding="utf-8"))
             verdict = data.get("verdict", "fail") if isinstance(data, dict) else "fail"
         except (OSError, json.JSONDecodeError):
-            verdict = "fail"
+            data, verdict = {}, "fail"
         if verdict == "pass":
             return "pass", None
-        return "fail", f"batch gate recorded: {verdict}"
+        # Name the blockers, not just the verdict: format_verdict_reason
+        # renders the undeclared failures and the excused count the gate
+        # computed, or says attribution was not recorded when the writing
+        # gate predates v0.9.81.  The one-line "batch gate recorded: fail"
+        # is what made the 2026-09-03 refusal misdiagnosable.
+        from batch_gate import format_verdict_reason  # type: ignore[import-untyped]
+        return "fail", format_verdict_reason(data)
 
     # AC-2: stale_head / stale_invocation / incomplete / absent — refuse.
     #

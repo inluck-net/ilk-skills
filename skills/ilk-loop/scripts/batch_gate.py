@@ -13,8 +13,14 @@ Record format (JSON):
   "verdict":    "pass" | "fail" | "not_configured" | "error",
   "head_sha":   "<40-char hex>",
   "invocation": "<the command that was run>",
-  "timestamp":  "<ISO-8601>"
+  "timestamp":  "<ISO-8601>",
+
+  // optional, written only when computed (v0.9.81+):
+  "undeclared":     ["<node id>", ...],   // failures no baseline_red covered
+  "excused_count":  <int>                  // failures baseline_red excused
 }
+// A record without the two optional fields was written by a gate that did
+// not record attribution — absence means "not recorded", never "none".
 
 Running-marker format (JSON):
 {
@@ -41,9 +47,9 @@ from typing import Optional
 
 REQUIRED_FIELDS = ("verdict", "head_sha", "invocation", "timestamp")
 
-# Side-channel for the CLI's report.  The record schema is fixed at four
-# fields and readers depend on it, so the excused/undeclared detail is
-# printed rather than persisted.
+# Side-channel for the CLI's report, retained while main()'s printing path
+# still reads it.  Since v0.9.81 the record itself carries the attribution;
+# these globals are a step-2 removal candidate, not the transport.
 _LAST_GATE_EXCUSED: list = []
 _LAST_GATE_UNDECLARED: list = []
 
@@ -58,19 +64,39 @@ DEFAULT_POLL_TIMEOUT = 600
 
 @dataclass(frozen=True)
 class BatchGateRecord:
-    """A validated batch-gate verdict record."""
+    """A validated batch-gate verdict record.
+
+    The two optional fields carry the verdict's *attribution* — which
+    failures the gate could not excuse.  They exist because the gate has
+    always computed this split (2026-08-26) but only printed it: the
+    2026-09-03 Phase 0 refusal reduced a 31-excused/1-undeclared suite to
+    the single word ``fail`` and the cause had to be re-derived by hand.
+
+    ``None`` means the gate that wrote this record did not record
+    attribution — an older writer, or a verdict for which attribution was
+    never computed (``not_configured``, ``error``).  It does NOT mean "no
+    undeclared failures"; that is the computed-empty case, ``[]``.
+    """
     verdict: str
     head_sha: str
     invocation: str
     timestamp: str
+    undeclared: Optional[list] = None
+    excused_count: Optional[int] = None
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "verdict": self.verdict,
             "head_sha": self.head_sha,
             "invocation": self.invocation,
             "timestamp": self.timestamp,
         }
+        # Written only when recorded, so absence in the JSON stays meaningful.
+        if self.undeclared is not None:
+            d["undeclared"] = list(self.undeclared)
+        if self.excused_count is not None:
+            d["excused_count"] = int(self.excused_count)
+        return d
 
 
 def record_path(runtime_dir: Path) -> Path:
@@ -123,6 +149,10 @@ def read_record(runtime_dir: Path) -> Optional[BatchGateRecord]:
     Returns None when the file is missing, has missing fields, or is
     unreadable.  A record missing any REQUIRED_FIELDS is invalid — the
     reader must say so rather than assume a pass.
+
+    The attribution fields are optional: a four-field record from a
+    pre-v0.9.81 gate still loads, and reads ``undeclared=None`` /
+    ``excused_count=None`` — "not recorded", not "none recorded".
     """
     p = record_path(runtime_dir)
     if not p.is_file():
@@ -141,7 +171,68 @@ def read_record(runtime_dir: Path) -> Optional[BatchGateRecord]:
         head_sha=data["head_sha"],
         invocation=data["invocation"],
         timestamp=data["timestamp"],
+        undeclared=_optional_str_list(data.get("undeclared")),
+        excused_count=_optional_int(data.get("excused_count")),
     )
+
+
+def _optional_str_list(value) -> Optional[list]:
+    """Attribution list from JSON, or None when absent/malformed.
+
+    A present-but-empty list is the computed-empty case and is preserved —
+    only absence and wrong types collapse to None.
+    """
+    if not isinstance(value, list):
+        return None
+    return [str(item) for item in value]
+
+
+def _optional_int(value) -> Optional[int]:
+    """Attribution count from JSON, or None when absent/malformed."""
+    # bool is an int subclass; "excused_count": true is malformed, not 1.
+    if not isinstance(value, int) or isinstance(value, bool):
+        return None
+    return value
+
+
+def format_verdict_reason(data: dict) -> str:
+    """The refusal sentence for a non-pass verdict, naming its blockers.
+
+    The one-line replacement for the 2026-09-03 defect, where a 31-excused /
+    1-undeclared suite reached /ilk-ship Phase 0 as ``batch gate recorded:
+    fail`` and the cause had to be re-derived from the launcher log by hand.
+
+    Absence is the invariant: a record with no attribution fields says
+    "not recorded", never "0 undeclared" — rendering absence as a count of
+    zero would reproduce the original defect with more fields.
+    """
+    verdict = data.get("verdict", "unknown") if isinstance(data, dict) else "unknown"
+    undeclared = _optional_str_list(
+        data.get("undeclared") if isinstance(data, dict) else None)
+    excused = _optional_int(
+        data.get("excused_count") if isinstance(data, dict) else None)
+
+    if undeclared is None:
+        return (
+            f"batch gate recorded: {verdict} — attribution not recorded by "
+            "the gate that wrote this record (records written before v0.9.81 "
+            "carry none); re-run the batch gate to get it"
+        )
+
+    lines = [f"batch gate recorded: {verdict}"]
+    if undeclared:
+        plural = "failure" if len(undeclared) == 1 else "failures"
+        lines.append(f"— {len(undeclared)} undeclared {plural}:")
+        lines.extend(f"  {nid}" for nid in undeclared)
+    else:
+        # Computed-empty: the suite exited non-zero without parseable
+        # per-test failures.  Never phrase this as a count of zero.
+        lines.append(
+            "— no undeclared failures parsed; the suite exited non-zero "
+            "without per-test failures (see the gate's suite output)")
+    if excused:
+        lines.append(f"  ({excused} excused by baseline_red)")
+    return "\n".join(lines)
 
 
 # ── record validation ───────────────────────────────────────────────────────
@@ -604,6 +695,9 @@ def _run_gate_inner(
         head_sha=head_sha,
         invocation=full_cmd,
         timestamp=_now_iso(),
+        # Computed above; persisting it is the whole point of v0.9.81.
+        undeclared=list(undeclared),
+        excused_count=len(excused),
     )
 
 
