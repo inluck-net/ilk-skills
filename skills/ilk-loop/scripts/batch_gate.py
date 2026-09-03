@@ -47,12 +47,6 @@ from typing import Optional
 
 REQUIRED_FIELDS = ("verdict", "head_sha", "invocation", "timestamp")
 
-# Side-channel for the CLI's report, retained while main()'s printing path
-# still reads it.  Since v0.9.81 the record itself carries the attribution;
-# these globals are a step-2 removal candidate, not the transport.
-_LAST_GATE_EXCUSED: list = []
-_LAST_GATE_UNDECLARED: list = []
-
 #: Poll bound used only when the caller passed none AND the project declared
 #: no ``ship.suite.timeout``.  Judgment call 2026-08-26: kept at 600 rather
 #: than the 300 ilk-ship/SKILL.md documents for a *missing* ship block —
@@ -687,9 +681,6 @@ def _run_gate_inner(
         # some other reason (collection error, crash, timeout) — fail, never
         # excuse what we could not read.
         verdict = "pass" if (failing and not undeclared) else "fail"
-    _LAST_GATE_EXCUSED[:] = excused
-    _LAST_GATE_UNDECLARED[:] = undeclared
-
     return BatchGateRecord(
         verdict=verdict,
         head_sha=head_sha,
@@ -743,13 +734,18 @@ def main() -> None:
 
     print(f"[batch-gate] verdict={rec.verdict} head_sha={rec.head_sha[:12]}")
     # A pass that hides declared failures must say so, or it reads as green.
-    if _LAST_GATE_EXCUSED:
-        print(f"[batch-gate] {len(_LAST_GATE_EXCUSED)} failure(s) excused by "
+    # Read from the record, not module state: the record carries exactly
+    # what this run computed, whereas mutable globals survive across calls
+    # in-process and would let a second gate print the first gate's split.
+    undeclared = rec.undeclared if rec.undeclared is not None else []
+    excused_count = rec.excused_count if rec.excused_count is not None else 0
+    if excused_count:
+        print(f"[batch-gate] {excused_count} failure(s) excused by "
               f"ship.baseline_red")
-    if _LAST_GATE_UNDECLARED:
-        print(f"[batch-gate] {len(_LAST_GATE_UNDECLARED)} UNDECLARED failure(s) "
+    if undeclared:
+        print(f"[batch-gate] {len(undeclared)} UNDECLARED failure(s) "
               f"— not covered by ship.baseline_red:")
-        for nid in _LAST_GATE_UNDECLARED:
+        for nid in undeclared:
             print(f"[batch-gate]   {nid}")
 
     # The runner captures $? (run_ilk_loop_claude.sh:1333).  Exiting 0 on a

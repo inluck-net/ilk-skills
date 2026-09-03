@@ -840,6 +840,100 @@ Two properties that keep it honest:
 
 ---
 
+## Contract 8: Batch-gate verdict record (`runtime/batch-gate.json`)
+
+The batch-end gate's verdict, persisted once per batch HEAD. This is
+project runtime state, not launcher state: it outlives the run that
+produced it and `/ilk-ship` Phase 0 reads it long afterwards, so both
+sides resolve its location through `batch_gate.resolve_runtime_dir` —
+the one resolver. Two writers resolving it differently is how the
+2026-08-25 defect wrote its marker in one directory and its verdict in
+another.
+
+### Format
+
+```json
+{
+  "verdict":    "pass" | "fail" | "not_configured" | "error",
+  "head_sha":   "<40-char hex>",
+  "invocation": "<the command that was run>",
+  "timestamp":  "<ISO-8601>",
+
+  "undeclared":     ["<node id>", ...],
+  "excused_count":  31
+}
+```
+
+The first four fields are `REQUIRED_FIELDS` and are **fixed** — a record
+carrying exactly those four, written by any older version of the gate,
+must keep loading. The last two are the **attribution fields** (added
+v0.9.81): `undeclared` lists the failing node ids no `baseline_red`
+declaration covered, and `excused_count` counts the ones a declaration
+did cover.
+
+### Who writes
+
+- **`batch_gate.py`** — `_run_gate_inner` computes the split
+  (`_undeclared_failures`) and carries it on the returned
+  `BatchGateRecord`; `run_batch_gate` persists it on every path,
+  including `error`. The attribution fields are written only when
+  computed: `not_configured` and `error` records carry none.
+
+### Who reads
+
+- **`ship_audit.py`** (`_resolve_batch_record`) — after
+  `validate_record` says the record is fresh, renders the refusal via
+  `batch_gate.format_verdict_reason`, naming each undeclared node id and
+  the excused count.
+- **`batch_gate.py` `main()`** — prints the `[batch-gate]` excused /
+  undeclared lines from the record it just wrote, not from module state.
+
+### Invariants
+
+1. **`REQUIRED_FIELDS` never grows.** Optional fields are added around
+   it, never into it; the three validation paths that iterate it must
+   keep accepting a four-field record. Guarded by
+   `test_batch_gate_attribution.py::test_legacy_four_field_record_still_loads`,
+   which builds such a record by hand and must never be deleted.
+
+2. **Absence means "not recorded", never "none".** A record without the
+   attribution fields was written by a gate that did not record
+   attribution (older version, or a verdict for which attribution was
+   never computed). It MUST be reported as such, and MUST NOT render as
+   "0 undeclared" — absence rendered as a count of zero is the original
+   defect with more fields. This is the batch-level twin of Contract 2b
+   invariant 6: a result that cannot name what it is about must be
+   reported as such, not silently interpreted.
+
+3. **The verdict rule is not part of this contract.**
+   `verdict = "pass" if (failing and not undeclared) else "fail"` is
+   correct as of 2026-08-26 and explicitly out of scope; this contract
+   only governs how the already-computed verdict and its attribution
+   travel.
+
+### Bug reference (v0.9.80 Phase 0 refusal, 2026-09-03)
+
+The gate computed a 31-excused / 1-undeclared split, printed it to the
+launcher log at gate time, and persisted four fields — none of them the
+attribution:
+
+```
+2097: [batch-gate] 31 failure(s) excused by ship.baseline_red
+2098: [batch-gate] 1 UNDECLARED failure(s) — not covered by ship.baseline_red:
+2099: [batch-gate]   skills/ilk-loop/tests/test_vl_describe.py::TestSmokeGateway::test_hello_image_returns_answer
+```
+
+`/ilk-ship` Phase 0 then refused the batch with one line — `batch gate
+recorded: fail` (`ship_audit.py` could say nothing else). The refusal was
+re-derived by hand, the cause was misattributed to the verdict rule
+itself, and the recommended fix was backwards — rebuilding a
+`baseline_red`-awareness that had existed since 2026-08-26 — while the
+correct one-line fix (declare the node id) was dismissed as useless.
+Fixed in sub-plan `a-batch-verdict-names-its-blockers` (2026-09-03) by
+invariants 1 and 2.
+
+---
+
 ## Adding a new reader or writer
 
 When adding a component that reads or writes any of the three artifact
