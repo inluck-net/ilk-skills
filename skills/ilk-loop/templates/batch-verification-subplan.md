@@ -87,11 +87,19 @@ local_checks:
   tests that fail now but passed at the base commit.
 - Compare against `.ilk-launch.json`'s `baseline_red` list to exclude
   pre-existing platform failures.
-- Commit the record (test output + attribution analysis).
-- The gate asserts **the record exists and is well-formed**, not that the
+- **Write the record to the external logs directory** (not into the project tree):
+  ```python
+  from skills.ilk_loop.scripts.ilk_paths import external_logs_dir, resolve_project_key
+  key = resolve_project_key(Path.cwd())
+  verification_dir = external_logs_dir(key) / "verification"
+  verification_dir.mkdir(parents=True, exist_ok=True)
+  ```
+  Write `<batch-slug>-baseline.md` and `<batch-slug>-batch.md` to that directory.
+- **Commit an empty marker** (the record lives outside the repo):
+  `git commit --allow-empty -m "test(verify): record full suite result for <batch-slug> [plan:<slug>#step-0]"`
+- The gate asserts **the external record exists and is non-empty**, not that the
   suite is green — otherwise step 0 can never pass when there is something
   to fix.
-- Commit: `test(verify): record full suite result for <batch-slug> [plan:<slug>#step-0]`
 
 ### Step 1 — Fix every attributed failure
 
