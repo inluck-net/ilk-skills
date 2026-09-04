@@ -374,6 +374,17 @@ def run_one(check: dict, scope: str, project: Path, default_timeout: int = 120) 
         return CheckResult(command=cmd, scope=scope, timeout=timeout,
                            exit_code=None, duration_sec=0.0, passed=False,
                            error="bash not found (need git-bash; the WSL shim is unusable)")
+    # Fail closed: a bare YAML block-scalar indicator is not a real command.
+    # ``>-`` as a bash command redirects to a file named ``-`` and exits 0,
+    # so a gate using it passes vacuously.  Refuse rather than run blind.
+    _BARE_BLOCK_SCALAR_INDICATORS = {">", ">-", "|", "|-"}
+    if cmd.strip() in _BARE_BLOCK_SCALAR_INDICATORS:
+        return CheckResult(
+            command=cmd, scope=scope, timeout=timeout,
+            exit_code=None, duration_sec=0.0, passed=False,
+            error=f"refusing to execute bare block-scalar indicator {cmd!r} — "
+                  f"the gate command could not be parsed",
+        )
     # Apply path_prelude if configured (AC-1, AC-2)
     path_prelude = _read_path_prelude(project)
     effective_cmd = f"{path_prelude}; {cmd}" if path_prelude else cmd
