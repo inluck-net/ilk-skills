@@ -10,11 +10,15 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Resolve ilk_paths from the sibling scripts directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ilk_paths import external_launcher_dir, resolve_project_key
+
 VERDICT_RANK = {"GREEN": 0, "YELLOW": 1, "RED": 2}
 FLAG_VERDICT_RANK = {"OK": 0, "WARN": 1, "FAIL": 2}
 FLAG_ICON = {"OK": "[OK]", "WARN": "[WARN]", "FAIL": "[FAIL]"}
 
-SHIP_REPORTS_WHITELIST_PREFIX = "docs/plans/ship-reports/"
+SHIP_REPORTS_WHITELIST_PREFIX = "runtime/launcher/ship-reports/"
 DOC_EXTENSIONS = (".md", ".txt", ".rst")
 
 DEFAULT_DANGEROUS_PATHS_TEMPLATE = (
@@ -810,9 +814,11 @@ def main() -> int:
 
     ts = datetime.now().strftime("%Y-%m-%d-%H%M")
     default_name = f"{slug}-{ts}.md"
-    output_path = Path(args.output).resolve() if args.output else (
-        project / "docs" / "plans" / "ship-reports" / default_name
-    )
+    if args.output:
+        output_path = Path(args.output).resolve()
+    else:
+        key = resolve_project_key(project)
+        output_path = external_launcher_dir(key) / "ship-reports" / default_name
 
     report = build_report(
         project=project,
