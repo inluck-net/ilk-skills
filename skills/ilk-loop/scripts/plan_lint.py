@@ -664,6 +664,14 @@ def _strip_runner_prefix(cmd: str) -> str:
 def _is_whole_suite_command(cmd: str) -> bool:
     """True if *cmd* runs a pre-existing whole test suite (no file scope)."""
     cmd_stripped = cmd.strip()
+    # Strip surrounding quotes BEFORE capturing ``original`` so that
+    # ``prefix_stripped`` reflects only a runner prefix, not quote removal.
+    # YAML extraction may leave quotes on the command; those are a
+    # serialisation detail and must never change classification.
+    if (cmd_stripped.startswith('"') and cmd_stripped.endswith('"')) or (
+        cmd_stripped.startswith("'") and cmd_stripped.endswith("'")
+    ):
+        cmd_stripped = cmd_stripped[1:-1]
     # Strip runner prefixes (bunx, npx, pnpm dlx, yarn dlx, pm run <script>)
     # BEFORE the regex check — ``bun run test:e2e`` doesn't match the bare
     # ``bun test`` pattern, but after stripping the prefix it's a script form
