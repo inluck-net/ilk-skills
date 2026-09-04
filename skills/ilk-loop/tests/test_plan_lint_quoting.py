@@ -20,7 +20,7 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from plan_lint import _is_whole_suite_command
+from plan_lint import _extract_all_local_checks_commands, _is_whole_suite_command
 
 
 # ── AC-1: quoting must never change classification ─────────────────────
@@ -90,4 +90,60 @@ def test_ac2_runner_prefix_quoted_still_scoped() -> None:
     cmd = '"bunx vitest run f.test.ts"'
     assert _is_whole_suite_command(cmd) is False, (
         f"'{cmd}' should be scoped (runner prefix + file, quoted)"
+    )
+
+
+# ── AC-3: real corpus has zero quote-only misclassifications ────────────
+
+def _strip_surrounding_quotes(s: str) -> str:
+    """Strip one layer of surrounding single or double quotes."""
+    if (s.startswith('"') and s.endswith('"')) or (
+        s.startswith("'") and s.endswith("'")
+    ):
+        return s[1:-1]
+    return s
+
+
+def test_ac3_corpus_no_quote_only_misclassifications() -> None:
+    """Scan the real plan corpus and assert no command's classification
+    depends only on surrounding quotes.
+
+    Before the fix (at ``5cb36f7``): 194 misclassified across 86 files.
+    After: expected 0.
+
+    Skips cleanly when ``~/.ilk-data/projects/`` holds no plan files.
+    """
+    import os
+
+    ilk_data = Path(os.path.expanduser("~")) / ".ilk-data" / "projects"
+    if not ilk_data.is_dir():
+        pytest.skip("No ~/.ilk-data/projects/ directory on this host")
+
+    plan_files = sorted(ilk_data.glob("*/plans/*.md"))
+    if not plan_files:
+        pytest.skip("No plan files found in ~/.ilk-data/projects/*/plans/")
+
+    misclassified: list[str] = []
+    total_cmds = 0
+
+    for plan_file in plan_files:
+        text = plan_file.read_text(encoding="utf-8", errors="replace")
+        commands = _extract_all_local_checks_commands(text)
+        for cmd in commands:
+            total_cmds += 1
+            stripped = _strip_surrounding_quotes(cmd)
+            if stripped == cmd:
+                continue  # no surrounding quotes — nothing to test
+            as_is = _is_whole_suite_command(cmd)
+            unquoted = _is_whole_suite_command(stripped)
+            if as_is != unquoted:
+                misclassified.append(
+                    f"  {plan_file.name}: '{cmd[:60]}' "
+                    f"as_is={'BROAD' if as_is else 'scoped'} "
+                    f"unquoted={'BROAD' if unquoted else 'scoped'}"
+                )
+
+    assert not misclassified, (
+        f"{len(misclassified)} commands across the corpus have quote-dependent "
+        f"classification (of {total_cmds} total):\n" + "\n".join(misclassified[:20])
     )
