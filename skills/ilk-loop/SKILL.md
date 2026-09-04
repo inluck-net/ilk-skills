@@ -23,7 +23,7 @@ the agent never grows past its context window.
   "ship the next sub-plan", "where are we", "loop status".
 - The user asks to **plan** something (turn a task description or batch of
   tickets into master + sub-plans).
-- The user asks to set up `docs/plans/` in a new project.
+- The user asks to set up ilk-loop in a new project.
 - The user asks to add a new sub-plan to an existing master.
 - Codex users may say: "continue the ilk loop", "run the next step",
   "plan this task", or "ilk plan" without a slash prefix.
@@ -40,8 +40,9 @@ the agent never grows past its context window.
   SKILL.md                            ← this file
   scripts/
     loop_status.py                    ← universal status checker
+    ilk_paths.py                      ← path resolver (external plans dir)
   templates/
-    README.md                         ← scaffold for <project>/docs/plans/README.md
+    README.md                         ← scaffold for external plans dir README
     subplan-template.md               ← starter sub-plan body
 
 <skill-root>/../commands/
@@ -49,14 +50,18 @@ the agent never grows past its context window.
   ilk-plan.md                       ← /ilk-plan         -- plan from a task description
   ilk-lark.md                       ← /ilk-lark         -- plan from Lark 可执行 tickets
 
-<project>/docs/plans/
+~/.ilk-data/projects/<project-key>/plans/   ← external plans (preferred)
   README.md                           ← convention reference (copied from template)
   MASTER-YYYY-MM-DD-execution-plan.md ← strategic index for one batch
   YYYY-MM-DD-<short-slug>.md          ← one sub-plan per workstream
+
+<project>/docs/plans/                 ← legacy in-tree fallback (read-only)
 ```
 
-The skill is project-agnostic: `loop_status.py` walks up from cwd looking
-for `docs/plans/MASTER-*.md`, the same way `git` walks up looking for `.git`.
+The skill is project-agnostic: `loop_status.py` resolves the active plans
+directory via `ilk_paths.py`, preferring the external layout under
+`~/.ilk-data/projects/<key>/plans/`. The in-tree `docs/plans/` is a legacy
+read-only fallback.
 
 ## Front-matter conventions
 
@@ -233,20 +238,29 @@ You should:
 When the user says "set up ilk-loop here" or similar:
 
 1. Verify cwd is inside a git repo (or `<project>/`).
-2. Create `<project>/docs/plans/` if missing.
+2. Create the **external** plans directory if missing:
+   `~/.ilk-data/projects/<project-key>/plans/`. Use `ilk_paths.py` to
+   resolve the path:
+   ```bash
+   python3 <skill-root>/ilk-loop/scripts/ilk_paths.py --start . --where
+   ```
 3. Copy `<skill-root>/ilk-loop/templates/README.md` to
-   `<project>/docs/plans/README.md` (the in-repo copy is intentional — it
-   makes the convention discoverable to anyone browsing the repo).
+   `<external-plans-dir>/README.md`.
 4. Ask the user what tickets / scope this first batch covers, then create a
    `MASTER-YYYY-MM-DD-execution-plan.md` from skeleton.
 5. Create one or more sub-plan files using
    `<skill-root>/ilk-loop/templates/subplan-template.md`.
 
+**Legacy in-tree fallback:** `<project>/docs/plans/` is a read-only
+fallback for projects that haven't migrated yet. Do NOT create it during
+setup — all new projects use the external layout.
+
 ### 3. Add a new sub-plan to an existing master
 
 1. Read existing `MASTER-*.md` to understand the workstream layout.
-2. Copy `templates/subplan-template.md` to
-   `docs/plans/YYYY-MM-DD-<slug>.md`, fill in front-matter and steps.
+2. Copy `templates/subplan-template.md` to the external plans dir
+   (`~/.ilk-data/projects/<key>/plans/YYYY-MM-DD-<slug>.md`), fill in
+   front-matter and steps.
 3. Add a row to the master's "Sub-plan registry" table.
 4. Increment master's `total_tickets` if applicable.
 
@@ -263,11 +277,12 @@ like `/ilk-lark`.
 The agent's job:
 
 1. **Confirm cwd has a project root** (walk up looking for `docs/` or `.git`).
-   If `docs/plans/` doesn't exist, scaffold it from the templates first
-   (workflow #2 above), then continue.
+   Resolve the external plans directory via `ilk_paths.py`. If it doesn't
+   exist, scaffold it from the templates first (workflow #2 above), then
+   continue.
 2. **Read the task description**. If empty, ask the user what to plan.
-3. **Read existing plans** in `docs/plans/` (if any) so new work doesn't
-   collide with sub-plans already in flight.
+3. **Read existing plans** in the external plans dir (if any) so new work
+   doesn't collide with sub-plans already in flight.
 4. **Propose a workstream grouping** as a markdown table to the user:
    - Columns: `# | Sub-plan slug | Items | Priority | Why grouped`
    - Show estimated step count per sub-plan
@@ -280,10 +295,10 @@ The agent's job:
      rationale + workstream map
    - One sub-plan file per workstream, using `templates/subplan-template.md`
      as the skeleton. Fill in real per-step bullets, not placeholders.
-7. **Commit and push** the new plans:
+7. **Commit and push** the new plans (plans are external, so this is an
+   empty marker commit):
    ```powershell
-   git add docs/plans/
-   git commit -m "chore(plans): scaffold <batch-date> master + N sub-plans"
+   git commit --allow-empty -m "chore(plans): scaffold <batch-date> master + N sub-plans"
    git push
    ```
 8. **Print loop_status.py output** so the user can immediately `/ilk`.
@@ -340,9 +355,9 @@ The agent's job:
    moved.
 8. **Print final summary** + `loop_status.py` output.
 
-Tip: for batches of 10+ tickets, write a one-off helper script in
-`docs/plans/_update_tickets.py` (delete after use) rather than calling
-`cli.py update` 10 times manually. Pattern in `/ilk-lark.md`.
+Tip: for batches of 10+ tickets, write a one-off helper script in the
+external plans dir (`_update_tickets.py`, delete after use) rather than
+calling `cli.py update` 10 times manually. Pattern in `/ilk-lark.md`.
 
 ## Integration with ilk-lark-tickets skill
 
