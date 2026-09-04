@@ -76,10 +76,21 @@ about the same file — this doc makes the implicit contracts explicit.
 | `"interrupted"` | User or watchdog killed the run | Terminal |
 | `"error"` | Unexpected runner error | Terminal |
 | `"max-iterations"` | Hit iteration budget | Terminal |
-| `"budget_exhausted"` | Hit token budget | Terminal |
+| `"budget-exhausted"` | Hit `--max-budget-usd` cap | Terminal |
 | `"startup-hang"` | Pre-iteration-1 hang detected | Terminal |
 | `"timeout"` | `gtimeout` killed the iteration before it completed | Terminal |
 | `"ship_integrity_violation"` | A sub-plan was `shipped` with its declared gate red; the driver reverted it to `in-progress` | Terminal |
+| `"no-progress"` | 3 consecutive iterations with zero new commits | Terminal |
+| `"all-shipped"` | Every registered sub-plan is shipped; loop ended naturally | Terminal |
+| `"blocked-no-runnable"` | All remaining sub-plans are `blocked`; nothing to dispatch | Terminal |
+| `"already-shipped"` | Nothing to do at launch time (all sub-plans already shipped) | Terminal |
+
+**Naming conventions are intentional.** The hyphenated states (`no-progress`,
+`all-shipped`, `timeout`, `budget-exhausted`, `blocked-no-runnable`,
+`already-shipped`) and the underscored states (`local_checks_failed`,
+`ship_integrity_violation`) come from two writers in two languages (bash and
+PowerShell). A consumer already reads the underscore forms; do not normalise
+them to one convention.
 
 **Sentinel state → postmortem label.** `collect.py`'s `_SENTINEL_FAILURE_MAP`
 is the only place this mapping lives; a terminal state missing from it falls
