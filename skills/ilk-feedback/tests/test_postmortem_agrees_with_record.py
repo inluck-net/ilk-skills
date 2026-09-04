@@ -211,3 +211,106 @@ def test_per_iter_table_shows_real_values(scratch_env):
     assert "local_checks_failed" in stop_cell, (
         f"Stop reason should contain 'local_checks_failed'. Row: {iter_row}"
     )
+
+
+# ── AC-3: narrative does not assert unmeasured convergence failure ─────────
+
+
+def test_narrative_does_not_assert_convergence_failure_when_gate_was_green(scratch_env):
+    """When the gate was green (local_checks passed) and the agent committed,
+    the narrative must NOT assert a convergence failure.
+
+    The original defect: the narrative said the agent "kept making commits,
+    but the machine-checkable acceptance criteria did not converge" for a
+    run whose gate was green. The narrative asserted a cause it never measured.
+    """
+    project_path, env, key = scratch_env
+    data_home = Path(env["ILK_DATA_HOME"])
+    run_id = "20260904-103214"
+
+    # Write 5 iterations: first 3 fail, last 2 pass, last iter passes.
+    # This matches the classification window: fail_iters=3, pass_iters=2.
+    # The gate was green at the end.
+    for i in range(1, 6):
+        outcome = "fail" if i <= 3 else "pass"
+        logs_dir = _logs_dir(data_home, key)
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        jsonl_path = logs_dir / ".ilk-loop.log"
+        record = {
+            "project": str(project_path),
+            "run_id": run_id,
+            "iteration": i,
+            "exit_code": 0,
+            "new_commits_total": 1,
+            "duration_sec": 120,
+            "stop_reason": "local_checks_failed" if i <= 3 else "timeout",
+            "local_checks": {"outcome": outcome},
+        }
+        with jsonl_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+
+    result = subprocess.run(
+        [sys.executable, str(_COLLECT_PY), "-ProjectPath", str(project_path), "--quiet"],
+        capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
+    )
+    assert result.returncode == 0
+
+    pm_path = _launcher_dir(data_home, key) / "postmortems" / f"{run_id}.md"
+    assert pm_path.exists()
+    text = pm_path.read_text(encoding="utf-8")
+
+    # The narrative must NOT assert convergence failure when the gate was
+    # green at the end. It should describe what was measured instead.
+    assert "did not converge" not in text.lower() or "pass" in text.lower(), (
+        f"Narrative should not assert convergence failure when gate was green.\n"
+        f"Body:\n{text[600:]}"
+    )
+
+
+# ── AC-4: relaunch recommendation is not "do not auto-relaunch" when gate was green ──
+
+
+def test_relaunch_not_blocked_when_gate_was_green(scratch_env):
+    """When the gate was green and the agent committed, the relaunch
+    recommendation must NOT be "do not auto-relaunch".
+    """
+    project_path, env, key = scratch_env
+    data_home = Path(env["ILK_DATA_HOME"])
+    run_id = "20260904-103214"
+
+    # Same scenario: 3 fail, 2 pass, last passes
+    for i in range(1, 6):
+        outcome = "fail" if i <= 3 else "pass"
+        logs_dir = _logs_dir(data_home, key)
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        jsonl_path = logs_dir / ".ilk-loop.log"
+        record = {
+            "project": str(project_path),
+            "run_id": run_id,
+            "iteration": i,
+            "exit_code": 0,
+            "new_commits_total": 1,
+            "duration_sec": 120,
+            "stop_reason": "local_checks_failed" if i <= 3 else "timeout",
+            "local_checks": {"outcome": outcome},
+        }
+        with jsonl_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+
+    result = subprocess.run(
+        [sys.executable, str(_COLLECT_PY), "-ProjectPath", str(project_path), "--quiet"],
+        capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
+    )
+    assert result.returncode == 0
+
+    pm_path = _launcher_dir(data_home, key) / "postmortems" / f"{run_id}.md"
+    text = pm_path.read_text(encoding="utf-8")
+
+    # The relaunch recommendation must NOT be "do not auto-relaunch" when
+    # the gate was green.
+    assert "do not auto-relaunch" not in text.lower(), (
+        f"Relaunch should not be blocked when gate was green.\n"
+        f"Body:\n{text[600:]}"
+    )
