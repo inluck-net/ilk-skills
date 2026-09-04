@@ -75,6 +75,9 @@ def split_frontmatter(body: str) -> tuple[str, str]:
     return m.group(1), body[m.end():]
 
 
+_BLOCK_SCALAR_INDICATORS = {">", ">-", "|", "|-"}
+
+
 def parse_local_checks_block(yaml_text: str) -> list[dict]:
     """
     Parse a `local_checks:` list out of a yaml-ish text block.
@@ -93,6 +96,11 @@ def parse_local_checks_block(yaml_text: str) -> list[dict]:
     in_block = False
     indent = None
     cur: dict | None = None
+    # Block-scalar collection state: when a command value is a YAML block
+    # scalar indicator (>, >-, |, |-), continuation lines are collected here.
+    _collecting_bs = False  # True while collecting block-scalar body lines
+    _bs_lines: list[str] = []
+    _bs_indent: int = 0     # indentation of the first body line (content indent)
 
     for raw in lines:
         # Strip trailing newline; preserve leading whitespace for indent detection
@@ -108,6 +116,30 @@ def parse_local_checks_block(yaml_text: str) -> list[dict]:
                 in_block = True
                 continue
             continue
+
+        # --- Block-scalar continuation collection ---
+        if _collecting_bs:
+            if line.strip() == "":
+                _bs_lines.append("")
+                continue
+            leading = len(line) - len(line.lstrip(" "))
+            # First non-empty body line sets the content indent.
+            if not _bs_lines or (len(_bs_lines) == 1 and _bs_lines[-1] == ""):
+                _bs_indent = leading
+            if leading < _bs_indent and line.strip():
+                # End of block scalar — fold collected lines into the command.
+                _collecting_bs = False
+                body_lines = [l[_bs_indent:] if len(l) > _bs_indent else ""
+                              for l in _bs_lines]
+                # Drop trailing blank lines, then join with spaces (folded).
+                while body_lines and body_lines[-1] == "":
+                    body_lines.pop()
+                if cur is not None:
+                    cur["command"] = " ".join(body_lines)
+                # Fall through to process this line normally.
+            else:
+                _bs_lines.append(line)
+                continue
 
         # In the local_checks block. Detect end-of-block: a non-empty line that
         # is no longer indented under it.
@@ -133,11 +165,30 @@ def parse_local_checks_block(yaml_text: str) -> list[dict]:
             inner = s[2:]
             if ":" in inner:
                 k, _, v = inner.partition(":")
-                cur[k.strip()] = _coerce(v.strip())
+                val = v.strip()
+                cur[k.strip()] = _coerce(val)
+                if k.strip() == "command" and val in _BLOCK_SCALAR_INDICATORS:
+                    _collecting_bs = True
+                    _bs_lines = []
+                    _bs_indent = 0  # will be set from first body line
         elif ":" in s and cur is not None:
             k, _, v = s.partition(":")
-            cur[k.strip()] = _coerce(v.strip())
+            val = v.strip()
+            cur[k.strip()] = _coerce(val)
+            if k.strip() == "command" and val in _BLOCK_SCALAR_INDICATORS:
+                _collecting_bs = True
+                _bs_lines = []
+                _bs_indent = 0
         # else: ignore (comments, malformed lines)
+
+    # Flush any pending block scalar at end of input
+    if _collecting_bs and cur is not None:
+        body_lines = [l[_bs_indent:] if len(l) > _bs_indent else ""
+                      for l in _bs_lines]
+        while body_lines and body_lines[-1] == "":
+            body_lines.pop()
+        cur["command"] = " ".join(body_lines)
+
     if cur is not None:
         out.append(cur)
     # Filter to only entries that have a command

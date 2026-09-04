@@ -238,6 +238,56 @@ _CONTAINMENT_RE = re.compile(
 )
 
 
+_BLOCK_SCALAR_INDICATORS = {">", ">-", "|", "|-"}
+
+
+def _collect_commands_from_yaml_block(block_text: str) -> list[str]:
+    """Extract command values from a YAML local_checks block, handling block scalars.
+
+    When a command value is a YAML block-scalar indicator (>, >-, |, |-),
+    the following indented lines are the body.  This function folds them into
+    a single command string so that ``command: >-\\n    echo hello`` yields
+    ``echo hello``, not ``>-``.
+    """
+    commands: list[str] = []
+    lines = block_text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m = re.match(r"\s*(?:-\s+)?command:\s*(.+)", line)
+        if m:
+            val = m.group(1).strip()
+            if val in _BLOCK_SCALAR_INDICATORS:
+                # Collect continuation lines (more indented than this line).
+                cmd_indent = len(line) - len(line.lstrip(" "))
+                body_lines: list[str] = []
+                j = i + 1
+                content_indent: int | None = None
+                while j < len(lines):
+                    cline = lines[j]
+                    if cline.strip() == "":
+                        body_lines.append("")
+                        j += 1
+                        continue
+                    cleading = len(cline) - len(cline.lstrip(" "))
+                    if content_indent is None:
+                        content_indent = cleading
+                    if cleading < content_indent:
+                        break
+                    body_lines.append(cline[content_indent:])
+                    j += 1
+                # Drop trailing blanks and fold.
+                while body_lines and body_lines[-1] == "":
+                    body_lines.pop()
+                commands.append(" ".join(body_lines))
+                i = j
+                continue
+            else:
+                commands.append(val)
+        i += 1
+    return commands
+
+
 def _extract_local_checks_commands(text: str) -> list[str]:
     """Extract command values from the local_checks list in frontmatter."""
     m = re.match(r"^---\n.*?\n---\n", text, re.S)
@@ -248,7 +298,7 @@ def _extract_local_checks_commands(text: str) -> list[str]:
     if not lc:
         return []
     after = fm[lc.end():]
-    return re.findall(r"command:\s*(.+)", after)
+    return _collect_commands_from_yaml_block(after)
 
 
 def lint_brittle_exact_list_assertion(text: str, slug: str) -> list[str]:
@@ -1375,7 +1425,7 @@ def _extract_all_local_checks_commands(text: str) -> list[str]:
     commands = list(_extract_local_checks_commands(text))
     body = _strip_frontmatter(text)
     for block_match in _STEP_LOCAL_CHECKS_BLOCK_RE.finditer(body):
-        commands.extend(re.findall(r"command:\s*(.+)", block_match.group(1)))
+        commands.extend(_collect_commands_from_yaml_block(block_match.group(1)))
     return commands
 
 
