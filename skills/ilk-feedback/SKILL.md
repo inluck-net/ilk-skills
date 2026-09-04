@@ -296,6 +296,23 @@ Invocation on each platform:
   possible (two launches in the same second). In practice this hasn't
   happened; if it does, `--run-id` lets you disambiguate.
 
+## generation trigger
+
+Postmortem generation is **lazy**, not eager. `collect.py` is never
+called by the runner (`run_ilk_loop_claude.sh` / `.ps1`) or the
+launcher (`launch.sh` / `launch.ps1`). A postmortem is generated only
+when:
+
+1. The user (or agent) explicitly invokes `/ilk-feedback` or calls
+   `collect.py` directly, OR
+2. The agent invokes this skill after a run exits (see "When to use"
+   above — "A ilk window just exited").
+
+The runner writes the JSONL log and sentinel; the launcher writes
+`last-launch.json`. Neither triggers postmortem generation. A run
+that ends without anyone requesting feedback will have no postmortem
+file — only the JSONL records and sentinel.
+
 ## Relationship to other skills
 
 | Concern | Owner |
