@@ -2682,14 +2682,25 @@ def _spread_note(stats: dict | None, budget: int) -> str:
     age = stats.get("max_age_days")
     if p50 is None or not n:
         return ""
-    bits = [f"median {p50:.1f}s over {n} run{'s' if n != 1 else ''}"]
+    mx = stats.get("max_s")
+    bits = [f"median of {n} whole run{'s' if n != 1 else ''}"]
+    if mx is not None:
+        bits.append(f"peak {mx:.0f}s")
     if age is not None:
-        bits.append(f"peak is {age}d old")
+        bits.append(f"peak {age}d old")
     note = f" — {', '.join(bits)}."
-    if p50 <= budget:
+    if mx is not None and mx > budget >= p50:
+        # Reachable only on schema <=3 data, where the decision falls back to
+        # the peak.  On schema 4+ a median at or under budget does not reach
+        # this branch at all -- that is the 2026-09-06 threshold change.
         note += (
-            f" The median is UNDER budget, so this is one slow run, not a "
-            f"slow file: budget from the peak only if you must not exceed it."
+            f" The median is UNDER budget: this is one slow run, not a slow "
+            f"file. Budget from the peak only if you must not exceed it."
+        )
+    elif mx is not None and mx > p50 * 3:
+        note += (
+            f" The peak is far above the median, so a gate timeout sized to "
+            f"the median will occasionally be exceeded."
         )
     return note
 
@@ -2756,26 +2767,45 @@ def lint_gate_budget(
     # any concurrently backgrounded call, which is exactly how a 0.06s guard
     # came to be published at 158.4s.  An untimed file is treated as
     # unmeasured, which is what it is.
-    # schema 3 adds the spread (p50_s, max_run, max_age_days).  Keep the
-    # WARN keyed on max_s -- judgment call: max over p50 because a ceiling
-    # under-warns nobody, while a median would silently drop a genuinely
-    # slow file whose samples are mostly cheap partial runs.  Wrong if the
-    # ceiling turns out to be so consistently stale that planners learn to
-    # skim the class, which is the failure this lint already had once.
-    # What changes is the FINDING: it now carries n / median / age so the
-    # reader can tell "slow now" from "was slow once".  Measured on
-    # gh-resolve 2026-09-05: of 12 files whose max exceeds a 60s budget,
-    # 10 have a median under it.
+    # The WARN fires on the MEDIAN (p50_s), not the peak.
+    #
+    # It fired on the peak from schema 3 until 2026-09-06, on this reasoning:
+    # "a ceiling under-warns nobody, while a median would silently drop a
+    # genuinely slow file whose samples are mostly cheap partial runs."  That
+    # basis is gone.  Schema 4 excludes partial runs (-k / deselected) and
+    # censored ones (pytest-timeout kills) from the statistics, so p50_s is
+    # now a median over WHOLE runs only and is no longer depressed by them.
+    # The falsifier written into the original decision -- "wrong if the
+    # ceilings prove so consistently stale that planners learn to skim the
+    # class" -- then fired: 8 hand-dismissed WARNs on one batch.
+    #
+    # Measured 2026-09-06, at a 60s budget, peak-basis vs median-basis:
+    #     gh-resolve   7 findings -> 1
+    #     ilk-skills   4 findings -> 3
+    # The second number is the point.  This is not "warn less": on
+    # ilk-skills 3 of 4 survive because those files are consistently slow
+    # (p50 122.5 vs max 123.0; 60.5 vs 60.5; 60.2 vs 60.2).  What drops is
+    # the class where one stale peak stood in for a fast file.
+    #
+    # Wrong if a file that is usually fast but reliably spikes past the
+    # budget stops warning and a gate starts timing out on it.  The peak is
+    # still reported in the finding, so that case is visible rather than
+    # hidden -- it just no longer raises the alarm on its own.
     file_costs: dict[str, float] = {}
     file_stats: dict[str, dict] = {}
     for proj_data in per_project.values():
         for entry in proj_data.get("per_file", []):
             f = entry.get("file", "")
             max_s = entry.get("max_s")
-            if f and max_s is not None:
-                if float(max_s) >= file_costs.get(f, -1.0):
+            # Decide on the median when the producer supplies one (schema 4+),
+            # else fall back to the peak so schema <=3 data behaves as before
+            # rather than silently reading as "no cost".
+            p50 = entry.get("p50_s")
+            decide = p50 if p50 is not None else max_s
+            if f and decide is not None:
+                if float(decide) >= file_costs.get(f, -1.0):
                     file_stats[f] = entry
-                file_costs[f] = max(file_costs.get(f, 0.0), float(max_s))
+                file_costs[f] = max(file_costs.get(f, 0.0), float(decide))
 
     budget = _extract_gate_budget(text)
 
@@ -2812,10 +2842,13 @@ def lint_gate_budget(
                 # planner setting a gate timeout needs to see which it is.
                 findings.append(
                     f"{slug}: gate command '{cmd.strip()[:80]}' runs test file "
-                    f"'{tf}' with a measured PEAK of {cost:.0f}s "
-                    f"(budget: {budget}s){_spread_note(stats, budget) or '.'} "
-                    f"Consider using -k to select specific tests instead of "
-                    f"running the whole file."
+                    f"'{tf}' measured at {cost:.0f}s (budget: {budget}s)"
+                    f"{_spread_note(stats, budget) or '.'} "
+                    f"Give the gate a timeout that fits, or split the file. "
+                    f"Do NOT reach for -k without checking the tests it "
+                    f"selects already exist: a selector matching nothing "
+                    f"collects zero and passes silently, which "
+                    f"lint_unverifiable_test_selector flags separately."
                 )
             # AC-2: under-budget — no finding (silent pass).
 

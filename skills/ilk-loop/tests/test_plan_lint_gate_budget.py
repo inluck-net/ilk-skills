@@ -342,13 +342,26 @@ class TestLoadFailureIsNotSilence:
 
 # -- the finding carries the spread, so a peak is not read as a cost ----------
 
-class TestFindingCarriesSpread:
-    """A WARN must let the reader tell "slow now" from "was slow once".
+# -- the budget WARN fires on the MEDIAN, not the peak ------------------------
 
-    Measured on gh-resolve 2026-09-05: of 12 files whose max exceeds a 60s
-    budget, 10 have a median under it.  A finding that shows only the peak
-    sends a planner to set a gate timeout from an artifact — which is how a
-    0.29s guard nearly got a 120s gate woven into 7 sub-plans.
+class TestFiresOnMedianNotPeak:
+    """The threshold moved from peak to median on 2026-09-06.
+
+    It fired on the peak from schema 3, on this basis: "a ceiling under-warns
+    nobody, while a median would silently drop a genuinely slow file whose
+    samples are mostly cheap partial runs."  That basis is gone — schema 4
+    excludes partial (-k / deselected) and censored (timeout-killed) runs, so
+    p50_s is a median over WHOLE runs and is no longer depressed by them.
+
+    The falsifier written into the original decision then fired: 8
+    hand-dismissed WARNs on one batch, which is the "planners learn to skim
+    the class" failure it named.
+
+    Measured at a 60s budget, peak-basis vs median-basis:
+        gh-resolve   7 -> 1
+        ilk-skills   4 -> 3
+    The second number is the point: this is not "warn less".  On ilk-skills
+    3 of 4 survive because those files are consistently slow.
     """
 
     def _data(self, **over) -> dict:
@@ -356,43 +369,72 @@ class TestFindingCarriesSpread:
                  "measured_invocations": 44, "max_run": "20260825-234253",
                  "max_age_days": 11}
         entry.update(over)
-        return {"schema": 3, "_auto_loaded": True,
+        return {"schema": 4, "_auto_loaded": True,
                 "per_project": {"p": {"per_file": [entry]}}}
 
-    def test_stale_ceiling_is_labelled(self) -> None:
-        f = lint_gate_budget(OVER_BUDGET, "sp1", timing_data=self._data())[0]
-        assert "PEAK" in f
-        assert "median 1.0s over 44 runs" in f
-        assert "11d old" in f
-        assert "one slow run, not a slow file" in f
+    def test_stale_peak_no_longer_warns(self) -> None:
+        """198.6s peak, 0.96s median: the file is fast and must not warn."""
+        assert lint_gate_budget(OVER_BUDGET, "sp1", timing_data=self._data()) == [], (
+            "a file with a median far under budget still raised a budget WARN"
+        )
 
-    def test_genuinely_slow_file_is_not_explained_away(self) -> None:
-        """When the median is also over budget, no reassuring caveat."""
+    def test_consistently_slow_file_still_warns(self) -> None:
+        """p50 122.5 / max 123.0 — the ilk-skills shape that must survive."""
         f = lint_gate_budget(
             OVER_BUDGET, "sp1",
-            timing_data=self._data(max_s=113.81, p50_s=103.41,
-                                   measured_invocations=12, max_age_days=1),
+            timing_data=self._data(max_s=123.02, p50_s=122.48,
+                                   measured_invocations=8, max_age_days=2),
+        )
+        assert len(f) == 1
+        assert "122" in f[0] or "123" in f[0]
+        assert "median of 8 whole runs" in f[0]
+
+    def test_finding_reports_the_median_as_its_basis(self) -> None:
+        f = lint_gate_budget(
+            OVER_BUDGET, "sp1",
+            timing_data=self._data(max_s=123.02, p50_s=122.48,
+                                   measured_invocations=8, max_age_days=2),
         )[0]
-        assert "median 103.4s" in f
-        assert "one slow run" not in f, (
-            "a file whose median is over budget must not be excused"
-        )
+        assert "measured at 122s" in f, f
+        assert "peak 123s" in f
 
-    def test_still_fires_on_the_peak(self) -> None:
-        """Judgment call pinned: the WARN keys on max, not median.
+    def test_does_not_recommend_bare_k(self) -> None:
+        """-k was the old remedy; lint_unverifiable_test_selector flags it.
 
-        A median would drop a genuinely slow file whose samples are mostly
-        cheap partial runs.  If this is ever changed to fire on p50, that is
-        a deliberate decision and this test should change with it.
+        A selector matching no existing test collects zero and passes
+        silently, so the two lints were giving opposite advice on one gate.
         """
-        assert lint_gate_budget(OVER_BUDGET, "sp1", timing_data=self._data()), (
-            "a peak over budget must still warn even with a tiny median"
+        f = lint_gate_budget(
+            OVER_BUDGET, "sp1",
+            timing_data=self._data(max_s=123.02, p50_s=122.48,
+                                   measured_invocations=8),
+        )[0]
+        assert "Consider using -k" not in f
+        assert "lint_unverifiable_test_selector" in f, (
+            "the -k hazard must be named, not merely omitted"
         )
+
+    def test_peak_far_above_median_is_called_out(self) -> None:
+        """Under-warning is the new risk; make the spike visible when it warns."""
+        f = lint_gate_budget(
+            OVER_BUDGET, "sp1",
+            timing_data=self._data(max_s=400.0, p50_s=90.0,
+                                   measured_invocations=10),
+        )[0]
+        assert "peak is far above the median" in f
+
+    def test_schema_3_producer_falls_back_to_peak(self) -> None:
+        """Old data has no p50_s; it must behave as it did, not read as free."""
+        data = {"schema": 3, "_auto_loaded": True, "per_project": {"p": {"per_file": [
+            {"file": "tests/test_drain.py", "max_s": 198.57,
+             "measured_invocations": 44, "max_age_days": 11}]}}}
+        f = lint_gate_budget(OVER_BUDGET, "sp1", timing_data=data)
+        assert len(f) == 1, "schema-3 data stopped warning entirely"
+        assert "199s" in f[0], "198.57 renders as 199s under :.0f"
 
     def test_schema_2_producer_degrades_cleanly(self) -> None:
-        """No spread fields — the finding reads as before, asserting nothing."""
         data = {"schema": 2, "_auto_loaded": True, "per_project": {"p": {"per_file": [
             {"file": "tests/test_drain.py", "max_s": 198.57}]}}}
         f = lint_gate_budget(OVER_BUDGET, "sp1", timing_data=data)[0]
-        assert "median" not in f and "old" not in f
-        assert "(budget: 60s). Consider" in f, "separator lost on the no-spread path"
+        assert "median" not in f
+        assert "(budget: 60s). " in f, "separator lost on the no-spread path"
