@@ -419,14 +419,23 @@ class TestTargetTokenisation:
 
 # -- schema ------------------------------------------------------------------
 
-def test_schema_is_2_now_that_max_s_changed_meaning(corpus_multiple_files: Path) -> None:
-    """max_s changed from gap seconds to pytest seconds, and can be null.
+def test_schema_version_tracks_meaning_changes(corpus_multiple_files: Path) -> None:
+    """The version moves when a field's MEANING moves, not on every edit.
 
-    A consumer keyed on schema 1 was reading a different quantity under the
-    same name; the version is how it can tell.
+      1 -> 2  max_s went from transcript-gap seconds to pytest's own
+              reported seconds, and became nullable.  A consumer keyed on
+              schema 1 was reading a different quantity under the same name.
+      2 -> 3  added p50_s / max_run / max_age_days, so max_s can be read as
+              the ceiling it is rather than as the cost.
+
+    Additive fields alone would not need the bump; it is here because a
+    reader of schema 2 has no way to know max_s was un-typical.
     """
     result = gate_cost.per_file_report(root=corpus_multiple_files)
-    assert result["schema"] == 2
+    assert result["schema"] == 3
+    entry = result["per_project"]["proj-b"]["per_file"][0]
+    for field in ("max_s", "p50_s", "max_run", "max_age_days", "max_gap_s"):
+        assert field in entry, f"schema 3 must carry {field}"
 
 
 def test_chained_command_uses_the_first_summary() -> None:
@@ -504,3 +513,78 @@ class TestProjectScoping:
             gate_cost.per_file_report(root=two_projects, project="proj-typo")
         assert "proj-typo" in str(exc.value)
         assert "2 projects present" in str(exc.value)
+
+
+# -- dispersion: a summary statistic carries its own spread --------------------
+
+class TestDispersion:
+    """max_s is a ceiling, not a cost — the report must show the spread.
+
+    Measured on the real corpus 2026-09-05: tests/test_drain.py had max
+    198.6s against a median of 1.2s over 44 samples, max 11 days old, and a
+    fresh whole-file measurement of 14.0s.  Given only the max, a planner
+    cannot tell "slow now" from "was slow once".
+    """
+
+    @pytest.fixture
+    def corpus_one_slow_outlier(self, tmp_path: Path) -> Path:
+        """One 200s run long ago; a cluster near 1s since."""
+        root = tmp_path / "projects"
+        runs = root / "proj-h" / "logs" / "runs"
+        _write_iter(runs / "20260801-100000", "iter-01.log.jsonl",
+                    "2026-08-01T10:00:00+08:00",
+                    [("python3 -m pytest tests/test_drain.py -q", 200.0)])
+        for i, day in enumerate(("20260903", "20260904", "20260905")):
+            _write_iter(runs / f"{day}-100000", "iter-01.log.jsonl",
+                        f"2026-09-0{3+i}T10:00:00+08:00",
+                        [("python3 -m pytest tests/test_drain.py -q", 1.0)])
+        return root
+
+    def _entry(self, root: Path) -> dict:
+        now = datetime(2026, 9, 5, 12, 0, 0)
+        r = gate_cost.per_file_report(root=root, now=now)
+        return r["per_project"]["proj-h"]["per_file"][0]
+
+    def test_max_is_still_the_ceiling(self, corpus_one_slow_outlier: Path) -> None:
+        assert self._entry(corpus_one_slow_outlier)["max_s"] == pytest.approx(200.0)
+
+    def test_median_reveals_the_outlier(self, corpus_one_slow_outlier: Path) -> None:
+        e = self._entry(corpus_one_slow_outlier)
+        assert e["p50_s"] == pytest.approx(1.0), (
+            "one 200s run should not set the typical cost"
+        )
+        assert e["measured_invocations"] == 4
+
+    def test_max_carries_the_run_that_produced_it(self, corpus_one_slow_outlier: Path) -> None:
+        assert self._entry(corpus_one_slow_outlier)["max_run"] == "20260801-100000"
+
+    def test_max_carries_its_age(self, corpus_one_slow_outlier: Path) -> None:
+        """A ceiling from 35 days ago and one from today are not the same claim."""
+        assert self._entry(corpus_one_slow_outlier)["max_age_days"] == 35
+
+    def test_age_is_none_for_an_undatable_run(self, tmp_path: Path) -> None:
+        root = tmp_path / "projects"
+        _write_iter(root / "proj-i" / "logs" / "runs" / "not-a-date",
+                    "iter-01.log.jsonl", "2026-09-05T10:00:00+08:00",
+                    [("python3 -m pytest tests/test_a.py -q", 1.0)])
+        r = gate_cost.per_file_report(root=root, now=datetime(2026, 9, 5))
+        e = r["per_project"]["proj-i"]["per_file"][0]
+        assert e["max_age_days"] is None, "an unparseable run id is not age zero"
+
+    def test_unmeasured_file_has_no_median(self, tmp_path: Path) -> None:
+        root = tmp_path / "projects"
+        _write_iter(root / "proj-j" / "logs" / "runs" / "20260905-100000",
+                    "iter-01.log.jsonl", "2026-09-05T10:00:00+08:00",
+                    [("python3 -m pytest tests/test_a.py -q", 600.0, None)])
+        r = gate_cost.per_file_report(root=root, now=datetime(2026, 9, 5))
+        e = r["per_project"]["proj-j"]["per_file"][0]
+        assert e["p50_s"] is None and e["max_s"] is None
+
+    def test_samples_are_not_leaked_into_the_output(self, corpus_one_slow_outlier: Path) -> None:
+        """Working state stays internal — consumers get the summary."""
+        assert "samples" not in self._entry(corpus_one_slow_outlier)
+
+    def test_schema_is_3(self, corpus_one_slow_outlier: Path) -> None:
+        now = datetime(2026, 9, 5, 12, 0, 0)
+        r = gate_cost.per_file_report(root=corpus_one_slow_outlier, now=now)
+        assert r["schema"] == 3

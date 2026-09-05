@@ -20,6 +20,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+import plan_lint  # noqa: E402
 from plan_lint import lint_gate_budget  # noqa: E402
 
 
@@ -282,3 +283,116 @@ def test_pipeline_does_not_spam_a_no_data_note_per_subplan(tmp_path) -> None:
         "the pipeline reported 'no timing data' — it is passing None instead "
         f"of loading the measurements.  Findings: {nodata}"
     )
+
+
+# -- a dead instrument must not read as a clean result ------------------------
+
+class TestLoadFailureIsNotSilence:
+    """A crashed gate_cost must not make a plan lint CLEAN on budget.
+
+    Before this, `_load_timing_data` returned the same empty dict for "the
+    corpus has no measurements yet" and "the measurement tool crashed", and
+    `lint_gate_budget` returns no findings for that dict on the auto path.
+    So a broken instrument produced silence, and silence is indistinguishable
+    from "no budget problems" — the same defect class as a gate reporting
+    green because it could not parse its own command.
+    """
+
+    # A REAL sub-plan: local_checks must sit in a ```yaml fence or the
+    # command never parses, and then these tests would pass on an early
+    # return rather than on the behaviour they claim to check.
+    _PLAN = OVER_BUDGET
+
+    def test_failed_load_reports(self) -> None:
+        data = {"schema": None, "per_project": {}, "_auto_loaded": True,
+                "_load_failed": "gate_cost exited 1: boom"}
+        findings = plan_lint.lint_gate_budget(self._PLAN, "sp1", timing_data=data)
+        assert len(findings) == 1
+        assert "NOT CHECKED" in findings[0]
+        assert "gate_cost exited 1" in findings[0], "the reason must survive"
+
+    def test_empty_corpus_stays_silent_on_the_auto_path(self) -> None:
+        """The benign case must not become noisy — a new project has no data."""
+        data = {"schema": 3, "per_project": {}, "_auto_loaded": True}
+        assert plan_lint.lint_gate_budget(self._PLAN, "sp1", timing_data=data) == []
+
+    def test_the_two_are_distinguishable(self) -> None:
+        failed = {"schema": None, "per_project": {}, "_auto_loaded": True,
+                  "_load_failed": "TimeoutExpired"}
+        empty = {"schema": 3, "per_project": {}, "_auto_loaded": True}
+        assert plan_lint.lint_gate_budget(self._PLAN, "sp1", timing_data=failed) != \
+               plan_lint.lint_gate_budget(self._PLAN, "sp1", timing_data=empty)
+
+    def test_loader_marks_a_nonzero_exit_as_failed(self, monkeypatch) -> None:
+        """End-to-end through the loader, not just the consumer's contract."""
+        import subprocess as _sp
+
+        class _R:
+            returncode = 2
+            stdout = ""
+            stderr = "gate_cost: --project 'typo' not found under /x (23 projects present)."
+
+        monkeypatch.setattr(plan_lint, "_TIMING_CACHE", None)
+        monkeypatch.setattr(_sp, "run", lambda *a, **k: _R())
+        data = plan_lint._load_timing_data()
+        assert data.get("_load_failed"), "a non-zero exit must be recorded as a failure"
+        assert "not found" in data["_load_failed"]
+        monkeypatch.setattr(plan_lint, "_TIMING_CACHE", None)
+
+
+# -- the finding carries the spread, so a peak is not read as a cost ----------
+
+class TestFindingCarriesSpread:
+    """A WARN must let the reader tell "slow now" from "was slow once".
+
+    Measured on gh-resolve 2026-09-05: of 12 files whose max exceeds a 60s
+    budget, 10 have a median under it.  A finding that shows only the peak
+    sends a planner to set a gate timeout from an artifact — which is how a
+    0.29s guard nearly got a 120s gate woven into 7 sub-plans.
+    """
+
+    def _data(self, **over) -> dict:
+        entry = {"file": "tests/test_drain.py", "max_s": 198.57, "p50_s": 0.96,
+                 "measured_invocations": 44, "max_run": "20260825-234253",
+                 "max_age_days": 11}
+        entry.update(over)
+        return {"schema": 3, "_auto_loaded": True,
+                "per_project": {"p": {"per_file": [entry]}}}
+
+    def test_stale_ceiling_is_labelled(self) -> None:
+        f = lint_gate_budget(OVER_BUDGET, "sp1", timing_data=self._data())[0]
+        assert "PEAK" in f
+        assert "median 1.0s over 44 runs" in f
+        assert "11d old" in f
+        assert "one slow run, not a slow file" in f
+
+    def test_genuinely_slow_file_is_not_explained_away(self) -> None:
+        """When the median is also over budget, no reassuring caveat."""
+        f = lint_gate_budget(
+            OVER_BUDGET, "sp1",
+            timing_data=self._data(max_s=113.81, p50_s=103.41,
+                                   measured_invocations=12, max_age_days=1),
+        )[0]
+        assert "median 103.4s" in f
+        assert "one slow run" not in f, (
+            "a file whose median is over budget must not be excused"
+        )
+
+    def test_still_fires_on_the_peak(self) -> None:
+        """Judgment call pinned: the WARN keys on max, not median.
+
+        A median would drop a genuinely slow file whose samples are mostly
+        cheap partial runs.  If this is ever changed to fire on p50, that is
+        a deliberate decision and this test should change with it.
+        """
+        assert lint_gate_budget(OVER_BUDGET, "sp1", timing_data=self._data()), (
+            "a peak over budget must still warn even with a tiny median"
+        )
+
+    def test_schema_2_producer_degrades_cleanly(self) -> None:
+        """No spread fields — the finding reads as before, asserting nothing."""
+        data = {"schema": 2, "_auto_loaded": True, "per_project": {"p": {"per_file": [
+            {"file": "tests/test_drain.py", "max_s": 198.57}]}}}
+        f = lint_gate_budget(OVER_BUDGET, "sp1", timing_data=data)[0]
+        assert "median" not in f and "old" not in f
+        assert "(budget: 60s). Consider" in f, "separator lost on the no-spread path"

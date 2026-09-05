@@ -2597,13 +2597,21 @@ def _load_timing_data() -> dict:
     global _TIMING_CACHE
     if _TIMING_CACHE is not None:
         return _TIMING_CACHE
-    empty = {"schema": 1, "per_project": {}, "_auto_loaded": True}
+    # A FAILED load and an EMPTY corpus are different facts and must not
+    # share a return value.  Both used to produce this dict, and the auto
+    # path returns no findings for it — so a gate_cost that crashed, timed
+    # out or emitted unparseable JSON made every plan lint CLEAN on budget,
+    # indistinguishable from "no budget problems".  `_load_failed` carries
+    # the reason so lint_gate_budget can say which happened.
+    def _failed(reason: str) -> dict:
+        return {"schema": None, "per_project": {}, "_auto_loaded": True,
+                "_load_failed": reason}
     try:
         import json as _json
         import subprocess as _sp
         script = Path(__file__).resolve().parent / "gate_cost.py"
         if not script.is_file():
-            _TIMING_CACHE = empty
+            _TIMING_CACHE = _failed(f"gate_cost.py not found at {script}")
             return _TIMING_CACHE
         # Scope the scan to THIS project.  Two reasons, and the second is a
         # correctness one:
@@ -2636,7 +2644,18 @@ def _load_timing_data() -> dict:
         out = _sp.run(
             cmd, capture_output=True, text=True, timeout=120, encoding="utf-8",
         )
-        _TIMING_CACHE = _json.loads(out.stdout) if out.returncode == 0 else empty
+        if out.returncode != 0:
+            err = (out.stderr or out.stdout or "").strip().splitlines()
+            _TIMING_CACHE = _failed(
+                f"gate_cost exited {out.returncode}"
+                + (f": {err[-1][:160]}" if err else "")
+            )
+            return _TIMING_CACHE
+        try:
+            _TIMING_CACHE = _json.loads(out.stdout)
+        except ValueError as exc:
+            _TIMING_CACHE = _failed(f"gate_cost emitted unparseable JSON: {exc}")
+            return _TIMING_CACHE
         # Mark as auto-loaded: in the pipeline we cannot tell a brand-new
         # test file from one that was never measured, and an "unmeasured"
         # note on every new file is noise that trains readers to ignore
@@ -2644,9 +2663,35 @@ def _load_timing_data() -> dict:
         # unit tests, and anyone auditing coverage) still get the note.
         if isinstance(_TIMING_CACHE, dict):
             _TIMING_CACHE = {**_TIMING_CACHE, "_auto_loaded": True}
-    except Exception:
-        _TIMING_CACHE = empty
+    except Exception as exc:  # subprocess timeout, OSError, ...
+        _TIMING_CACHE = _failed(f"{type(exc).__name__}: {exc}"[:200])
     return _TIMING_CACHE
+
+
+def _spread_note(stats: dict | None, budget: int) -> str:
+    """Describe a peak's spread, so a reader can judge whether it is the cost.
+
+    Returns "" when schema 3 fields are absent (a schema 2 producer, or an
+    explicitly-passed fixture) — the finding then reads as it did before
+    rather than asserting a spread nobody measured.
+    """
+    if not stats:
+        return ""
+    n = stats.get("measured_invocations")
+    p50 = stats.get("p50_s")
+    age = stats.get("max_age_days")
+    if p50 is None or not n:
+        return ""
+    bits = [f"median {p50:.1f}s over {n} run{'s' if n != 1 else ''}"]
+    if age is not None:
+        bits.append(f"peak is {age}d old")
+    note = f" — {', '.join(bits)}."
+    if p50 <= budget:
+        note += (
+            f" The median is UNDER budget, so this is one slow run, not a "
+            f"slow file: budget from the peak only if you must not exceed it."
+        )
+    return note
 
 
 def lint_gate_budget(
@@ -2654,8 +2699,10 @@ def lint_gate_budget(
 ) -> list[str]:
     """Flag a gate whose test file is measured over budget.
 
-    Consumes SP3's ``--by-test-file --json`` output via its ``schema: 1``
-    contract.  A file measured above budget produces a warning finding naming
+    Consumes ``gate_cost --by-test-file --json``.  Written against schema 1,
+    now reads schema 3 and degrades cleanly to either: it takes ``max_s``
+    when present and non-null, and adds the spread (``p50_s``,
+    ``max_age_days``) to the finding only when those fields exist.  A file measured above budget produces a warning finding naming
     the file, its measured seconds, the budget, and suggesting a ``-k``
     selection.  An unmeasured file produces a distinct ``unmeasured`` note.
     No timing data at all produces a single message naming the search space.
@@ -2669,6 +2716,21 @@ def lint_gate_budget(
 
     if timing_data is None:
         timing_data = _load_timing_data()
+
+    # The instrument failed — report it on EVERY path, auto included.  This
+    # is not "nothing measured yet": a budget check that silently passes
+    # because its measurement tool crashed is the same defect class as a
+    # gate that reports green because it could not parse its own command.
+    # Silence here is indistinguishable from "no budget problems".
+    load_failed = timing_data.get("_load_failed")
+    if load_failed:
+        findings.append(
+            f"{slug}: gate budget NOT CHECKED — the measurement tool failed "
+            f"({load_failed}). This is not a clean result: no gate in this "
+            f"sub-plan was compared against a budget. Run "
+            f"'gate_cost.py --by-test-file --json' directly to see the error."
+        )
+        return findings
 
     # AC-4: no timing data at all — say so once, naming what we searched.
     auto = bool(timing_data.get("_auto_loaded"))
@@ -2694,12 +2756,25 @@ def lint_gate_budget(
     # any concurrently backgrounded call, which is exactly how a 0.06s guard
     # came to be published at 158.4s.  An untimed file is treated as
     # unmeasured, which is what it is.
+    # schema 3 adds the spread (p50_s, max_run, max_age_days).  Keep the
+    # WARN keyed on max_s -- judgment call: max over p50 because a ceiling
+    # under-warns nobody, while a median would silently drop a genuinely
+    # slow file whose samples are mostly cheap partial runs.  Wrong if the
+    # ceiling turns out to be so consistently stale that planners learn to
+    # skim the class, which is the failure this lint already had once.
+    # What changes is the FINDING: it now carries n / median / age so the
+    # reader can tell "slow now" from "was slow once".  Measured on
+    # gh-resolve 2026-09-05: of 12 files whose max exceeds a 60s budget,
+    # 10 have a median under it.
     file_costs: dict[str, float] = {}
+    file_stats: dict[str, dict] = {}
     for proj_data in per_project.values():
         for entry in proj_data.get("per_file", []):
             f = entry.get("file", "")
             max_s = entry.get("max_s")
             if f and max_s is not None:
+                if float(max_s) >= file_costs.get(f, -1.0):
+                    file_stats[f] = entry
                 file_costs[f] = max(file_costs.get(f, 0.0), float(max_s))
 
     budget = _extract_gate_budget(text)
@@ -2715,9 +2790,11 @@ def lint_gate_budget(
             norm = tf.replace("\\", "/")
             # Try exact match, then filename-only match.
             cost = file_costs.get(norm)
+            stats = file_stats.get(norm)
             if cost is None:
                 basename = norm.rsplit("/", 1)[-1] if "/" in norm else norm
                 cost = file_costs.get(basename)
+                stats = file_stats.get(basename)
 
             if cost is None:
                 if auto:
@@ -2731,9 +2808,12 @@ def lint_gate_budget(
                 )
             elif cost > budget:
                 # AC-1: over-budget file — name the file, cost, budget, suggest -k.
+                # The spread comes with it: a peak is not a cost, and a
+                # planner setting a gate timeout needs to see which it is.
                 findings.append(
                     f"{slug}: gate command '{cmd.strip()[:80]}' runs test file "
-                    f"'{tf}' measured at {cost:.0f}s (budget: {budget}s). "
+                    f"'{tf}' with a measured PEAK of {cost:.0f}s "
+                    f"(budget: {budget}s){_spread_note(stats, budget) or '.'} "
                     f"Consider using -k to select specific tests instead of "
                     f"running the whole file."
                 )

@@ -305,6 +305,32 @@ def _parse_test_files(cmd: str) -> list[str]:
     return _parse_pytest_targets(cmd)[0]
 
 
+def _run_date(run_id: str) -> datetime | None:
+    """The date encoded in a run id (``20260825-234253``), or None."""
+    try:
+        return datetime.strptime(run_id[:8], "%Y%m%d")
+    except (ValueError, TypeError):
+        return None
+
+
+def _age_days(run_id: str | None, now: datetime) -> int | None:
+    """Whole days between *run_id*'s date and *now*, or None if undatable."""
+    d = _run_date(run_id) if run_id else None
+    if d is None:
+        return None
+    return max(0, (now.date() - d.date()).days)
+
+
+def _median(xs: list[float]) -> float | None:
+    """Median of *xs*, or None when empty. Stdlib-only, no statistics import."""
+    if not xs:
+        return None
+    s = sorted(xs)
+    n = len(s)
+    mid = n // 2
+    return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2.0
+
+
 def per_file_report(
     root: Path,
     since: str | None = None,
@@ -312,11 +338,27 @@ def per_file_report(
     before: datetime | None = None,
     as_json: bool = False,
     project: str | None = None,
+    now: datetime | None = None,
 ) -> dict:
-    """Produce per-test-file wall-clock report.
+    """Produce per-test-file cost report.
 
     Returns the data dict; prints text to stdout unless *as_json* is True.
+
+    Each file carries its own dispersion, not just a single number.  `max_s`
+    is a conservative CEILING and a poor summary of what a gate costs: on the
+    real corpus 2026-09-05, tests/test_drain.py had max 198.6s against a
+    median of 1.2s over 44 samples, with the max 11 days old and a fresh
+    whole-file measurement of 14.0s.  A reader given only the max cannot tell
+    "slow now" from "was slow once".  A percentile ALONE would not fix that
+    either — the samples span different commits with different test counts
+    ("26 passed in 0.06s" and "79 passed in 24.35s" are the same file), so no
+    single statistic is the answer.  Reporting n, median, max and the max's
+    age lets the reader see the spread and judge.
+
+    *now* is injectable so the age fields are deterministic under test.
     """
+    if now is None:
+        now = datetime.now()
     per_project: dict[str, dict] = {}
 
     for proj, run in _iter_runs(since, root=root, project=project):
@@ -353,6 +395,7 @@ def per_file_report(
                     entry = p["per_file"].setdefault(files[0], {
                         "invocations": 0, "measured_invocations": 0,
                         "total_s": 0.0, "max_s": None, "max_gap_s": 0.0,
+                        "max_run": None, "samples": [],
                     })
                     entry["invocations"] += 1
                     entry["max_gap_s"] = max(entry["max_gap_s"], d)
@@ -365,10 +408,13 @@ def per_file_report(
                     else:
                         entry["measured_invocations"] += 1
                         entry["total_s"] += self_s
-                        entry["max_s"] = (
-                            self_s if entry["max_s"] is None
-                            else max(entry["max_s"], self_s)
-                        )
+                        entry["samples"].append(self_s)
+                        if entry["max_s"] is None or self_s > entry["max_s"]:
+                            entry["max_s"] = self_s
+                            # Which run produced the max is the whole point of
+                            # keeping it: a ceiling from months ago and one
+                            # from this morning are not the same claim.
+                            entry["max_run"] = run.name
                 else:
                     key = frozenset(files) | frozenset(other)
                     entry = p["multi_file"].setdefault(key, {
@@ -383,8 +429,9 @@ def per_file_report(
     # invocation of which was timed.  Consumers keyed on schema 1 were
     # reading gap seconds under these names — see _calls_detailed.
     out: dict = {
-        "schema": 2,
+        "schema": 3,
         "project": project,
+        "measured_at": now.strftime("%Y-%m-%d %H:%M"),
         "since": since,
         "after": after.isoformat() if after else None,
         "before": before.isoformat() if before else None,
@@ -400,8 +447,14 @@ def per_file_report(
             [{"files": sorted(k), **v} for k, v in p["multi_file"].items()],
             key=lambda e: e["total_s"], reverse=True,
         )
-        # Round floats
+        # Derive dispersion, then round.  `samples` is working state and is
+        # dropped: a consumer that wants the distribution should get the
+        # summary, not re-derive one from a list whose length is unbounded.
         for entry in per_file_list:
+            samples = entry.pop("samples", [])
+            p50 = _median(samples)
+            entry["p50_s"] = None if p50 is None else round(p50, 2)
+            entry["max_age_days"] = _age_days(entry.get("max_run"), now)
             entry["total_s"] = round(entry["total_s"], 2)
             entry["max_gap_s"] = round(entry["max_gap_s"], 1)
             if entry["max_s"] is not None:
@@ -449,16 +502,24 @@ def per_file_report(
         print(f"  iters searched: {proj['iters_searched']}")
         print()
         if proj["per_file"]:
-            print(f"  {'file':<55} {'n':>4} {'total_s':>9} {'max_s':>9} {'gap_s':>9}")
+            print(f"  {'file':<50} {'n':>4} {'p50_s':>8} {'max_s':>9} "
+                  f"{'age':>6} {'gap_s':>8}")
             for e in proj["per_file"]:
-                max_s = "  unmeas." if e["max_s"] is None else f"{e['max_s']:>9.2f}"
-                print(f"  {e['file']:<55} {e['invocations']:>4} "
-                      f"{e['total_s']:>9.2f} {max_s} {e['max_gap_s']:>9.1f}")
+                max_s = " unmeas." if e["max_s"] is None else f"{e['max_s']:>9.2f}"
+                p50 = "       -" if e["p50_s"] is None else f"{e['p50_s']:>8.2f}"
+                age = ("     -" if e["max_age_days"] is None
+                       else f"{e['max_age_days']:>4}d ")
+                print(f"  {e['file'][:50]:<50} {e['measured_invocations']:>4} "
+                      f"{p50} {max_s} {age} {e['max_gap_s']:>8.1f}")
             print()
-            print("  max_s is pytest's own reported duration. gap_s is the "
-                  "transcript gap (an upper bound,")
-            print("  inflated by any concurrent backgrounded call) — shown for "
-                  "contrast, never for budgeting.")
+            print("  n is measured invocations. max_s is a CEILING, not the "
+                  "cost — compare it against")
+            print("  p50_s and age before budgeting from it: a 199s max at a "
+                  "1.2s median over 44 samples,")
+            print("  11 days old, describes one slow run, not a slow file. "
+                  "gap_s is the transcript gap")
+            print("  (inflated by any concurrent backgrounded call) — shown "
+                  "for contrast, never for budgeting.")
         else:
             print("  (no single-file invocations)")
         if proj["multi_file"]:
