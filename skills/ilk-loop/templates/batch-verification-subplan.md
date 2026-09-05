@@ -90,9 +90,36 @@ local_checks:
   scratch each batch pays a full suite run to learn something already known.
   Look for `<external logs>/verification/baseline-<base-sha>.json` first; only
   measure when it is absent, and write it back at that sha-keyed path:
+  **Resolve the base from where the BATCH began, not from the branch it
+  commits onto.** `git merge-base HEAD <base_branch>` is WRONG here and fails
+  silently: when the loop commits onto `base_branch` — the normal case for a
+  project whose loop commits to `main` — merge-base returns HEAD itself, so
+  the "baseline" is measured on the batch tree and the attribution compares
+  HEAD against HEAD. Verified in ilk-skills 2026-09-06: `merge-base HEAD main`
+  == HEAD exactly. Observed on gh-resolve batch-2026-09-06 as byte-identical
+  baseline and batch records (4382 passed / 192.70s in both) — one suite run
+  filed under two names.
+
+  A green suite hides this completely. "0 attributed regressions" comes out
+  correct from an empty method, and the step only bites on the run where
+  something actually fails, which is the run it exists for.
+
+  Take the base from the master's recorded base sha, or the tag the batch
+  started from — some value fixed BEFORE the batch's commits existed. Then
+  assert it, because any resolution scheme can go degenerate the same way:
+
   ```python
-  base_sha = subprocess.run(["git", "merge-base", "HEAD", base_branch],
+  base_sha = resolve_batch_base_sha()   # master's recorded base / start tag
+  head_sha = subprocess.run(["git", "rev-parse", "HEAD"],
                             capture_output=True, text=True).stdout.strip()
+  # Fail loudly rather than silently self-comparing. This assert is the
+  # load-bearing half: it catches every future base-resolution mistake,
+  # not just the merge-base one.
+  assert base_sha and base_sha != head_sha, (
+      f"degenerate base resolution: base {base_sha} == HEAD {head_sha}; "
+      f"the comparison would be HEAD against itself and could not detect "
+      f"an attributed regression"
+  )
   cached = verification_dir / f"baseline-{base_sha}.json"
   if cached.is_file():
       baseline = json.loads(cached.read_text())   # no suite run needed
