@@ -198,7 +198,11 @@ class TestAgreementMatrix:
         assert promote_data["promoted"] is None, "promote should have nothing to do"
 
     def test_active_with_pending_work(self, tmp_path):
-        """Active master with pending sub-plan → all agree: run it."""
+        """Active master with pending sub-plan → all three agree: run it.
+
+        "All agree" is the whole point of this matrix, so promote must not be
+        the one selector that wants to park it.  See the assertion below.
+        """
         plans = tmp_path / "projects" / "test-proj" / "plans"
         _write_master(plans, "MASTER-active.md", status="active",
                       subplans=["2026-06-08-work.md"])
@@ -214,9 +218,23 @@ class TestAgreementMatrix:
         assert _selected_from_scan(scan_results, "test-proj")
 
         promote_data = _run_promote(plans)
-        # promote demotes active → shipped, promotes next queued.
-        # With only one active and no queued, demoted is set, promoted is None.
-        assert promote_data["demoted"] == "MASTER-active.md"
+        # This assertion used to read `demoted == "MASTER-active.md"`, with a
+        # comment saying promote demotes active -> shipped.  It did not: on a
+        # non-shipped master the status written was `blocked`, so this test
+        # was pinning the demotion of a HEALTHY active master — the one whose
+        # sub-plan is `pending` and which the two assertions above just
+        # established that loop_status and scheduler_scan both want to RUN.
+        # That is the opposite of agreement, in a test named for it.
+        #
+        # promote_next_master now shields a drainable active: it neither
+        # demotes it nor promotes underneath it (which would leave two
+        # actives).  All three selectors now genuinely agree — run it, do not
+        # park it.
+        assert promote_data["demoted"] is None, (
+            "a healthy active master was selected for demotion"
+        )
+        assert promote_data["promoted"] is None
+        assert promote_data["skipped_healthy_active"] == ["MASTER-active.md"]
 
     def test_queued_only_with_pending(self, tmp_path):
         """Queued master with pending sub-plan → scan sees it as runnable."""

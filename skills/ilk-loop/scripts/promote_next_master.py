@@ -41,7 +41,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ilk_paths import find_plans_dir as _resolve_plans_dir  # noqa: E402
 from plan_slug import has_date_prefix, strip_date_prefix  # noqa: E402
-from plan_status import master_has_nonshipped, master_is_drainable  # noqa: E402
+from plan_status import (  # noqa: E402
+    extract_subplan_files,
+    master_has_nonshipped,
+    master_is_drainable,
+)
 
 FRONTMATTER_RE = re.compile(r"^(---\s*\n)(.*?)(\n---\s*\n)", re.DOTALL)
 STATUS_LINE_RE = re.compile(r"^(\s*)status\s*:\s*(\S+)\s*$", re.MULTILINE)
@@ -247,6 +251,37 @@ def main(argv: list[str]) -> int:
     actives = [(p, fm) for p, fm in actives if master_has_nonshipped(p, plans_dir)]
     queued = [(p, fm) for p, fm in queued if master_is_drainable(p, plans_dir)]
 
+    # Split the non-shipped actives by the definition the comment above and
+    # the demote_status comment below both already state: STALLED means
+    # non-shipped AND non-drainable.  Only the stalled ones are demotion
+    # candidates.  Filtering on non-shipped alone parked a HEALTHY, drainable
+    # active as `blocked` -- observed on gh-resolve 2026-09-05 via --dry-run
+    # against a live loop mid-flight at step 1/2:
+    #   {"demoted": "MASTER-2026-09-04-...", "demote_status": "blocked", ...}
+    # It does not fire in production only because scheduler.sh gates the call
+    # on the project having no active master; a direct invocation, which the
+    # docs present as an operator action, hits it.
+    def _work_in_flight(p: Path) -> bool:
+        """Drainable AND actually has registered sub-plans.
+
+        The registered-sub-plans half matters: master_is_drainable returns
+        True for a master with ZERO registered sub-plans, deliberately, so
+        legacy/empty masters stay promotable.  Such a master has no in-flight
+        work to protect, and demoting it is long-standing behaviour
+        (test_promote_pending_alias AC-3).  Shield only masters with real
+        sub-plans, or that AC breaks and empty masters wedge the queue.
+        """
+        try:
+            text = p.read_text(encoding="utf-8-sig")
+        except OSError:
+            return False
+        if not extract_subplan_files(text):
+            return False
+        return master_is_drainable(p, plans_dir)
+
+    healthy_actives = [(p, fm) for p, fm in actives if _work_in_flight(p)]
+    actives = [(p, fm) for p, fm in actives if not _work_in_flight(p)]
+
     # Compile-only carry-forward enforcement (decomposition-principles §12):
     # Don't promote a master that builds on an unverified compile-only or
     # device-manual sub-plan.  The human-verify marker (detached-component-
@@ -270,12 +305,27 @@ def main(argv: list[str]) -> int:
     demoted = actives[0][0] if actives else None
     promoted = queued[0][0] if queued else None
 
+    # A healthy active is not a promotion situation at all.  Demoting it is
+    # wrong (it has runnable work), and promoting UNDERNEATH it is worse than
+    # the bug this replaces: it would leave two active masters. Refuse both
+    # and say why.
+    healthy_block: list[str] = []
+    if healthy_actives:
+        healthy_block = [p.name for p, _ in healthy_actives]
+        demoted = None
+        promoted = None
+
     # Determine demotion target: stalled masters are parked `blocked`, not
     # `shipped`.  A master is stalled iff it has non-shipped sub-plans but
     # is non-drainable (zero runnable sub-plans).
+    # `actives` is stalled-only now, so a demotion target is by construction
+    # non-shipped and non-drainable -> `blocked`.  The predicate is kept
+    # explicit rather than hardcoded so the invariant is visible where it is
+    # relied on.
     demote_status = "shipped"
     if demoted is not None:
-        if master_has_nonshipped(demoted, plans_dir):
+        if (master_has_nonshipped(demoted, plans_dir)
+                and not _work_in_flight(demoted)):
             demote_status = "blocked"
 
     plan = {
@@ -291,6 +341,12 @@ def main(argv: list[str]) -> int:
     }
     if skip_reasons:
         plan["skipped_unverified"] = skip_reasons
+    if healthy_block:
+        plan["skipped_healthy_active"] = healthy_block
+        plan["reason"] = (
+            "active master(s) still drainable - nothing to promote: "
+            + ", ".join(healthy_block)
+        )
 
     if not args.dry_run:
         if demoted is not None:
