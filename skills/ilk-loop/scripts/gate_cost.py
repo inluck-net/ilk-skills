@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -45,8 +46,16 @@ CEILING_S = 590.0  # harness auto-backgrounds at 600s; allow jitter
 DATA = ilk_data_root() / "projects"
 
 
-def _iter_runs(since: str | None, root: Path | None = None):
-    """Yield (project_name, run_dir). *root* overrides DATA for tests."""
+def _iter_runs(since: str | None, root: Path | None = None,
+               project: str | None = None):
+    """Yield (project_name, run_dir). *root* overrides DATA for tests.
+
+    *project* restricts the scan to one project key.  Scanning every
+    project is right for the cross-project diagnostic and wrong for a
+    per-project consumer: measured 2026-09-05, the unscoped scan reads
+    the whole corpus in ~11.9s and grows with it, and plan_lint pays that
+    on every invocation.
+    """
     data = root if root is not None else DATA
     # A missing data root is a fact about the environment, not an empty
     # corpus — say so instead of raising, and never report it as "0 found".
@@ -55,7 +64,16 @@ def _iter_runs(since: str | None, root: Path | None = None):
             f"gate_cost: no project data at {data} — "
             f"check $ILK_DATA_HOME / $ILK_DATA_DIR (resolved via ilk_paths)."
         )
+    if project is not None and not (data / project).is_dir():
+        # An unknown key would otherwise scan nothing and report an empty
+        # corpus, which is indistinguishable from a project with no runs.
+        raise SystemExit(
+            f"gate_cost: --project {project!r} not found under {data} "
+            f"({len(list(data.iterdir()))} projects present)."
+        )
     for proj in sorted(data.iterdir()):
+        if project is not None and proj.name != project:
+            continue
         runs = proj / "logs" / "runs"
         if not runs.is_dir():
             continue
@@ -91,8 +109,22 @@ def _iter_start_ts(path: Path):
     return None
 
 
-def _calls(path: Path):
-    """Yield (duration_sec, command) for every paired Bash call."""
+def _calls_detailed(path: Path):
+    """Yield (gap_sec, command, result_text) for every paired Bash call.
+
+    *gap_sec* is the transcript gap: assistant record timestamp -> tool_result
+    record timestamp.  It is an UPPER BOUND on the command's runtime, not a
+    measurement of it — anything that delays the result record being written
+    is inside it.  The dominant contaminant is a concurrently running
+    backgrounded tool call: the transcript serialises, so a 0.06s command
+    issued while a 158s background suite is in flight gets the background
+    task's elapsed time stamped on it.  Measured 2026-09-05 on the real
+    corpus: 342 of 2668 single-file pytest invocations had a gap >= 10x the
+    duration pytest itself reported, worst case 3912x.
+
+    *result_text* carries pytest's own summary line, which is the actual
+    instrument — see _pytest_reported_seconds.
+    """
     starts, res = {}, {}
     try:
         text = path.read_text(errors="replace")
@@ -113,29 +145,114 @@ def _calls(path: Path):
             if b.get("type") == "tool_use" and b.get("name") == "Bash":
                 starts[b["id"]] = (ts, (b.get("input") or {}).get("command", ""))
             elif b.get("type") == "tool_result":
-                res[b.get("tool_use_id")] = ts
+                body = b.get("content")
+                if isinstance(body, list):
+                    body = "\n".join(
+                        x.get("text", "") for x in body if isinstance(x, dict)
+                    )
+                res[b.get("tool_use_id")] = (ts, body if isinstance(body, str) else "")
     for tid, (ts, cmd) in starts.items():
         if tid in res:
+            rts, body = res[tid]
             try:
-                d = (it._parse_ts(res[tid]) - it._parse_ts(ts)).total_seconds()
+                d = (it._parse_ts(rts) - it._parse_ts(ts)).total_seconds()
             except Exception:
                 continue
-            yield d, cmd
+            yield d, cmd, body
 
 
-def _parse_test_files(cmd: str) -> list[str]:
-    """Extract test-file paths from a pytest command string.
+def _calls(path: Path):
+    """Yield (gap_sec, command) for every paired Bash call.
 
-    Handles the forms this repo actually produces:
-      bare paths, -q/-v before or after paths, -k selections, pipes to
-      tail/grep.  Returns [] for non-pytest commands or commands with no
-      recognisable test-file arguments.
+    Retained for the broad-gate report in main(), whose headline (ceiling
+    hits) is a claim about the harness boundary — the gap is the right
+    quantity there.  Per-file cost must not use it; see _calls_detailed.
     """
-    # Strip pipes — only the left side names test files
-    left = cmd.split("|")[0].strip()
-    tokens = left.split()
+    for d, cmd, _ in _calls_detailed(path):
+        yield d, cmd
+
+
+# pytest's own summary line: "3 passed in 0.06s", "1 failed, 2 passed in 12.34s",
+# "no tests ran in 0.31s", "2 passed, 1 skipped in 1.02s (0:00:01)".
+_PYTEST_SUMMARY = re.compile(
+    r"\b(?:passed|failed|error|errors|skipped|xfailed|xpassed|deselected|"
+    r"no tests ran)\b[^\n]*?\bin\s+([0-9]+(?:\.[0-9]+)?)s",
+    re.IGNORECASE,
+)
+
+
+def _pytest_reported_seconds(result_text: str) -> float | None:
+    """Seconds pytest reported for itself, or None if it did not report.
+
+    This is the measurement.  Unlike the transcript gap it is produced by the
+    process being measured, so it cannot absorb harness queueing or an
+    unrelated background task's elapsed time.  None means "this invocation
+    was not measured" — a ceiling-hit call returns zero output and lands
+    here — and a None must never be silently replaced by the gap.
+    """
+    if not result_text:
+        return None
+    # Take the FIRST summary.  A chained command (`pytest a.py && pytest
+    # tests/`) prints one per run, and the target we parsed is the first
+    # pytest in the string — _parse_pytest_targets stops at the separator.
+    # The later summaries belong to the later commands.  Measured on the
+    # real corpus 2026-09-05: 15 of 2369 single-target result bodies carry
+    # more than one summary, and in each the first is the parsed target's.
+    m = _PYTEST_SUMMARY.search(result_text)
+    if m is None:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
+
+
+# Tokens that end the pytest invocation.  Everything after one of these
+# belongs to a DIFFERENT command and must not be read as a pytest target:
+# `pytest a.py; cat b.py` names one test file, not two.
+_SHELL_BREAK = re.compile(r"[;&|<>]")
+
+# A token carrying any of these is shell syntax, a glob, or a variable — never
+# a path pytest was handed literally.  `2>/dev/null;`, `tests/test_*.py` and
+# `"$D/run.txt"` all reached the per-file report through the old parser.
+_SHELL_CHARS = re.compile(r"[;&|<>$`(){}*?\[\]!\\]")
+
+
+def _is_test_target(tok: str) -> bool:
+    """True if *tok* is a pytest target naming a FILE (optionally a node id).
+
+    Deliberately narrow.  The old rule ("has a slash, or starts with 'test',
+    or ends with .py") admitted directories, globs, redirections and a gate's
+    own output file as "test files"; measured 2026-09-05, 44 of gh-resolve's
+    547 per-file entries were not files at all.  A per-FILE report may only
+    contain things that are files.
+    """
+    if not tok or tok.startswith("-"):
+        return False
+    if _SHELL_CHARS.search(tok):
+        return False
+    path = tok.split("::", 1)[0]  # tests/test_x.py::Class::test_y -> tests/test_x.py
+    return path.endswith(".py") and not path.endswith("/")
+
+
+def _parse_pytest_targets(cmd: str) -> tuple[list[str], list[str]]:
+    """Split a pytest command's positional targets into (files, other).
+
+    *files* are targets naming a .py file (optionally a node id).  *other* is
+    every remaining positional — a directory, a glob, `.`.  Both are needed:
+    a duration may only be attributed to a file when that file was the SOLE
+    target of the invocation, so a caller must be able to see that
+    `pytest a.py tests/ -q` had a second target even though the second one is
+    not a file.  Dropping the non-file target and calling the rest a
+    single-file measurement is the attribution bug in a new place — measured:
+    it moved test_data_home_sandbox.py from 4.6s to 86.8s by claiming a
+    two-target run's time for one file.
+
+    Returns ([], []) for non-pytest commands.
+    """
+    tokens = cmd.strip().split()
     if not tokens:
-        return []
+        return [], []
 
     # Must be a pytest invocation (python -m pytest, or bare pytest)
     pytest_idx = None
@@ -144,13 +261,18 @@ def _parse_test_files(cmd: str) -> list[str]:
             pytest_idx = i
             break
     if pytest_idx is None:
-        return []
+        return [], []
 
-    # Everything after the pytest binary is args
+    # Args run from the pytest binary to the end of THIS command
     args = tokens[pytest_idx + 1:]
-    files = []
+    files: list[str] = []
+    other: list[str] = []
     skip_next = False
     for a in args:
+        # A separator anywhere in the token ends this command: `-q;`, `2>&1`
+        # and `2>/dev/null;` all mean the pytest invocation is over.
+        if _SHELL_BREAK.search(a):
+            break
         if skip_next:
             skip_next = False
             continue
@@ -158,13 +280,29 @@ def _parse_test_files(cmd: str) -> list[str]:
             # -k, -m, --timeout, --timeout-method, etc. take a value
             # unless they use = form
             if "=" not in a and a in ("-k", "-m", "--timeout", "--timeout-method",
-                                      "-x", "--maxfail", "-p", "--override-ini"):
+                                      "-x", "--maxfail", "-p", "--override-ini",
+                                      "-n", "--dist", "--rootdir", "-c"):
                 skip_next = True
             continue
-        # Not a flag — treat as a path if it looks like a test path
-        if "/" in a or a.startswith("test") or a.endswith(".py"):
+        # Strip shell quoting before judging the token: a quoted duplicate of
+        # a real path is the tell that quoting was never stripped.
+        a = a.strip("'\"")
+        if not a:
+            continue
+        if _is_test_target(a):
             files.append(a)
-    return files
+        else:
+            other.append(a)
+    return files, other
+
+
+def _parse_test_files(cmd: str) -> list[str]:
+    """The .py-file targets of a pytest command, ignoring any others.
+
+    Callers that attribute a duration must use _parse_pytest_targets instead
+    and check that `other` is empty — see its docstring.
+    """
+    return _parse_pytest_targets(cmd)[0]
 
 
 def per_file_report(
@@ -173,6 +311,7 @@ def per_file_report(
     after: datetime | None = None,
     before: datetime | None = None,
     as_json: bool = False,
+    project: str | None = None,
 ) -> dict:
     """Produce per-test-file wall-clock report.
 
@@ -180,12 +319,14 @@ def per_file_report(
     """
     per_project: dict[str, dict] = {}
 
-    for proj, run in _iter_runs(since, root=root):
+    for proj, run in _iter_runs(since, root=root, project=project):
         p = per_project.setdefault(proj, {
-            "per_file": {},       # file -> {invocations, total_s, max_s}
+            "per_file": {},       # file -> {invocations, measured_invocations,
+                                  #          total_s, max_s, max_gap_s}
             "multi_file": {},     # frozenset(files) -> {invocations, total_s}
             "total_pytest": 0,
             "single_file_pytest": 0,
+            "unmeasured": 0,      # single-file calls pytest did not time
             "iters_searched": 0,
             "runs_searched": 0,
         })
@@ -200,30 +341,50 @@ def per_file_report(
                 if before is not None and start > before:
                     continue
             p["iters_searched"] += 1
-            for d, cmd in _calls(f):
-                files = _parse_test_files(cmd)
+            for d, cmd, body in _calls_detailed(f):
+                files, other = _parse_pytest_targets(cmd)
                 if not files:
                     continue
                 p["total_pytest"] += 1
-                if len(files) == 1:
+                # A non-file target (a directory, a glob) makes this a
+                # multi-target run even when only one .py is named.
+                if len(files) == 1 and not other:
                     p["single_file_pytest"] += 1
                     entry = p["per_file"].setdefault(files[0], {
-                        "invocations": 0, "total_s": 0.0, "max_s": 0.0,
+                        "invocations": 0, "measured_invocations": 0,
+                        "total_s": 0.0, "max_s": None, "max_gap_s": 0.0,
                     })
                     entry["invocations"] += 1
-                    entry["total_s"] += d
-                    entry["max_s"] = max(entry["max_s"], d)
+                    entry["max_gap_s"] = max(entry["max_gap_s"], d)
+                    # The duration comes from pytest, never from the gap.
+                    # An invocation pytest did not time is NOT a measurement
+                    # of zero — it is counted and excluded.
+                    self_s = _pytest_reported_seconds(body)
+                    if self_s is None:
+                        p["unmeasured"] += 1
+                    else:
+                        entry["measured_invocations"] += 1
+                        entry["total_s"] += self_s
+                        entry["max_s"] = (
+                            self_s if entry["max_s"] is None
+                            else max(entry["max_s"], self_s)
+                        )
                 else:
-                    key = frozenset(files)
+                    key = frozenset(files) | frozenset(other)
                     entry = p["multi_file"].setdefault(key, {
                         "invocations": 0, "total_s": 0.0,
                     })
                     entry["invocations"] += 1
-                    entry["total_s"] += d
+                    self_s = _pytest_reported_seconds(body)
+                    entry["total_s"] += self_s if self_s is not None else 0.0
 
-    # Build output
+    # Build output.  schema 2: `total_s`/`max_s` are pytest's own reported
+    # seconds, not the transcript gap, and `max_s` is null for a file no
+    # invocation of which was timed.  Consumers keyed on schema 1 were
+    # reading gap seconds under these names — see _calls_detailed.
     out: dict = {
-        "schema": 1,
+        "schema": 2,
+        "project": project,
         "since": since,
         "after": after.isoformat() if after else None,
         "before": before.isoformat() if before else None,
@@ -241,15 +402,18 @@ def per_file_report(
         )
         # Round floats
         for entry in per_file_list:
-            entry["total_s"] = round(entry["total_s"], 1)
-            entry["max_s"] = round(entry["max_s"], 1)
+            entry["total_s"] = round(entry["total_s"], 2)
+            entry["max_gap_s"] = round(entry["max_gap_s"], 1)
+            if entry["max_s"] is not None:
+                entry["max_s"] = round(entry["max_s"], 2)
         for entry in multi_list:
-            entry["total_s"] = round(entry["total_s"], 1)
+            entry["total_s"] = round(entry["total_s"], 2)
         out["per_project"][proj_name] = {
             "per_file": per_file_list,
             "multi_file": multi_list,
             "total_pytest_invocations": p["total_pytest"],
             "single_file_invocations": p["single_file_pytest"],
+            "unmeasured_invocations": p["unmeasured"],
             "iters_searched": p["iters_searched"],
             "runs_searched": p["runs_searched"],
         }
@@ -279,13 +443,22 @@ def per_file_report(
         denom = proj["single_file_invocations"]
         total = proj["total_pytest_invocations"]
         print(f"  per-file cost from {denom} of {total} invocations")
+        unmeasured = proj["unmeasured_invocations"]
+        print(f"  of those, {denom - unmeasured} were timed by pytest itself; "
+              f"{unmeasured} returned no summary line and are excluded")
         print(f"  iters searched: {proj['iters_searched']}")
         print()
         if proj["per_file"]:
-            print(f"  {'file':<55} {'n':>4} {'total_s':>9} {'max_s':>9}")
+            print(f"  {'file':<55} {'n':>4} {'total_s':>9} {'max_s':>9} {'gap_s':>9}")
             for e in proj["per_file"]:
+                max_s = "  unmeas." if e["max_s"] is None else f"{e['max_s']:>9.2f}"
                 print(f"  {e['file']:<55} {e['invocations']:>4} "
-                      f"{e['total_s']:>9.1f} {e['max_s']:>9.1f}")
+                      f"{e['total_s']:>9.2f} {max_s} {e['max_gap_s']:>9.1f}")
+            print()
+            print("  max_s is pytest's own reported duration. gap_s is the "
+                  "transcript gap (an upper bound,")
+            print("  inflated by any concurrent backgrounded call) — shown for "
+                  "contrast, never for budgeting.")
         else:
             print("  (no single-file invocations)")
         if proj["multi_file"]:
@@ -308,6 +481,9 @@ def main() -> int:
                                      "needed to re-derive a BEFORE number once "
                                      "post-change data has entered the corpus.")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--project", help="restrict the scan to one project key "
+                                     "(as under <data root>/projects/). Without "
+                                     "it every project is scanned.")
     ap.add_argument("--by-test-file", action="store_true",
                     help="report per-test-file wall-clock (single-file invocations only)")
     a = ap.parse_args()
@@ -326,7 +502,7 @@ def main() -> int:
             except Exception:
                 raise SystemExit(f"gate_cost: --before {a.before!r} is not an ISO8601 timestamp")
         per_file_report(root=DATA, since=a.since, after=after_ts, before=before_ts,
-                        as_json=a.json)
+                        as_json=a.json, project=a.project)
         return 0
 
     after_ts = None
@@ -348,7 +524,7 @@ def main() -> int:
     tot = dict(iters=0, gate_iters=0, broad_s=0.0, ceiling_hits=0,
                repeats=0, broad_calls=0)
 
-    for proj, run in _iter_runs(a.since):
+    for proj, run in _iter_runs(a.since, project=a.project):
         p = per_project.setdefault(proj, dict(iters=0, gate_iters=0, broad_s=0.0,
                                               ceiling_hits=0, repeats=0,
                                               broad_calls=0, runs=0))

@@ -2605,9 +2605,36 @@ def _load_timing_data() -> dict:
         if not script.is_file():
             _TIMING_CACHE = empty
             return _TIMING_CACHE
+        # Scope the scan to THIS project.  Two reasons, and the second is a
+        # correctness one:
+        #   1. Cost.  Unscoped, gate_cost reads every project's whole run
+        #      corpus — measured 2026-09-05 at ~11.9s and growing with the
+        #      corpus.  _TIMING_CACHE memoises within a process, but every
+        #      plan_lint subprocess pays it again; that is what pushed
+        #      test_plan_lint_supervised_only.py to 132.7s against a 120s
+        #      subprocess timeout.
+        #   2. Attribution.  lint_gate_budget merges file_costs across every
+        #      project and falls back to a BASENAME match, so another repo's
+        #      tests/test_drain.py could supply the budget for this repo's.
+        # A key we cannot resolve degrades to the unscoped scan rather than
+        # to an empty corpus: slow is recoverable, silently-no-data is not.
+        cmd = [sys.executable, str(script), "--by-test-file", "--json"]
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from ilk_paths import ilk_data_root as _data_root
+            from ilk_paths import project_key as _project_key
+            key = _project_key(_resolve_project_root())
+            # Only scope to a key that actually has data.  gate_cost exits
+            # non-zero on an unknown --project (deliberately: an unknown key
+            # must not read as an empty corpus), and a non-zero here would
+            # land in the `empty` branch below — so a project with no runs
+            # yet must go unscoped, not scoped-and-failed.
+            if key and (_data_root() / "projects" / key).is_dir():
+                cmd += ["--project", key]
+        except Exception:
+            pass  # unscoped: correct, just slower
         out = _sp.run(
-            [sys.executable, str(script), "--by-test-file", "--json"],
-            capture_output=True, text=True, timeout=120, encoding="utf-8",
+            cmd, capture_output=True, text=True, timeout=120, encoding="utf-8",
         )
         _TIMING_CACHE = _json.loads(out.stdout) if out.returncode == 0 else empty
         # Mark as auto-loaded: in the pipeline we cannot tell a brand-new
@@ -2656,14 +2683,24 @@ def lint_gate_budget(
         )
         return findings
 
-    # Build a lookup: file -> max_s across all projects.
+    # Build a lookup: file -> max_s over whatever projects the data holds.
+    # On the auto path that is one project (_load_timing_data passes
+    # --project), so the basename fallback below cannot cross repos; a
+    # caller passing timing_data explicitly may still supply several.
+    #
+    # schema 2 made max_s pytest's OWN reported duration and null for a file
+    # no invocation of which pytest timed.  A null is not a zero and not a
+    # licence to fall back to max_gap_s: the gap absorbs the elapsed time of
+    # any concurrently backgrounded call, which is exactly how a 0.06s guard
+    # came to be published at 158.4s.  An untimed file is treated as
+    # unmeasured, which is what it is.
     file_costs: dict[str, float] = {}
     for proj_data in per_project.values():
         for entry in proj_data.get("per_file", []):
             f = entry.get("file", "")
-            max_s = entry.get("max_s", 0.0)
-            if f:
-                file_costs[f] = max(file_costs.get(f, 0.0), max_s)
+            max_s = entry.get("max_s")
+            if f and max_s is not None:
+                file_costs[f] = max(file_costs.get(f, 0.0), float(max_s))
 
     budget = _extract_gate_budget(text)
 
