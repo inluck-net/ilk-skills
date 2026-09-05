@@ -462,6 +462,29 @@ Once approved, write all files in one batch under the
   See the template for the step-0 / step-1 shape and the attributed-failure
   exit condition.
 
+  **Carry the template's two cost controls into the sub-plan you author.**
+  Naively written, this sub-plan costs THREE full suite runs — the batch run,
+  a base-commit run on a detached worktree, and step 1's gate re-run.
+  Measured on gh-resolve 2026-09-05b: all three inside a single iteration of
+  41m38s. Two are recoverable and the template already specifies how:
+
+  1. **Base-commit baseline cached by sha** at
+     `<external logs>/verification/baseline-<base-sha>.json`. The base sha is
+     fixed for the batch and identical on every host, so measuring it again
+     pays a full suite to learn something already on disk. Key it on the SHA,
+     never on the batch slug or tag — two batches off the same base must hit
+     the same entry.
+  2. **Step 1 is a no-op when step 0 attributed nothing.** Step 0 already ran
+     the suite on this same tree. The step-1 gate must still READ step 0's
+     record and assert it says zero — skipping without checking is an
+     unverified pass, not a no-op, and "no record found" must fail.
+
+  A verification sub-plan that re-measures a cached baseline, or re-runs the
+  suite in step 1 after a clean step 0, is a lint-worthy waste even though it
+  is not wrong. Iteration count is the real budget: on that batch a single
+  avoided iteration was worth roughly four full-suite runs, because wall
+  clock was dominated by model latency, not tests.
+
 - One file per sub-plan: `<external_plans_dir>/YYYY-MM-DD-<slug>.md`, derived from
   `<skill-root>/ilk-loop/templates/subplan-template.md`. Fill in
   REAL content, not placeholders:
