@@ -207,6 +207,64 @@ def _pytest_reported_seconds(result_text: str) -> float | None:
         return None
 
 
+# A run killed by pytest-timeout: `E  Failed: Timeout (>60.0s) from pytest-timeout.`
+# Its duration is the TIMEOUT, not the work.
+_TIMEOUT_RE = re.compile(r"from pytest-timeout|Timeout \(>[0-9.]+s\)", re.IGNORECASE)
+# A run that selected a subset of its target: `9 passed, 57 deselected in 42.37s`.
+_DESELECTED_RE = re.compile(r"\b\d+\s+deselected\b", re.IGNORECASE)
+# Selector flags, recognised only AFTER the pytest binary.  A regex over the
+# whole command string cannot be used here: `python3 -m pytest` contains `-m`,
+# which is Python's module flag, not pytest's marker selector.  Matching it
+# naively classified 1958 of 2169 samples as partial -- nearly the whole
+# corpus -- which is how this was caught.
+_SELECTOR_FLAGS = ("-k", "-m", "--deselect")
+
+
+def _has_selector(cmd: str) -> bool:
+    """True if the pytest invocation carries a subset selector."""
+    tokens = (cmd or "").split()
+    idx = None
+    for i, t in enumerate(tokens):
+        if t == "pytest" or t.endswith("/pytest"):
+            idx = i
+            break
+    if idx is None:
+        return False
+    for a in tokens[idx + 1:]:
+        if _SHELL_BREAK.search(a):
+            break
+        if a in _SELECTOR_FLAGS or any(
+                a.startswith(f + "=") for f in _SELECTOR_FLAGS):
+            return True
+    return False
+
+WHOLE, PARTIAL, CENSORED = "whole", "partial", "censored"
+
+
+def _sample_kind(cmd: str, result_text: str) -> str:
+    """Classify what a timed invocation actually measured.
+
+    Only WHOLE samples are measurements of the named target.
+
+    PARTIAL -- the run selected a subset (`-k`/`-m`, or pytest reported a
+    `deselected` count), so its duration is the cost of that subset, not of
+    the file.  Measured on gh-resolve 2026-09-05: 109 of 1963 timed samples
+    were partial, and they are why tests/test_doctor.py showed a 4.66s
+    median against a 588s peak -- half its runs were not running the file.
+
+    CENSORED -- pytest-timeout killed it.  The duration is the timeout value,
+    so the true cost is >= it, unknown.  Recording 60.10s as a measurement
+    records the bound, not the work.  Kept as a LOWER BOUND rather than
+    dropped, because dropping it could make a genuinely slow file look
+    cheap, which is the dangerous direction.
+    """
+    if _TIMEOUT_RE.search(result_text or ""):
+        return CENSORED
+    if _DESELECTED_RE.search(result_text or "") or _has_selector(cmd):
+        return PARTIAL
+    return WHOLE
+
+
 # Tokens that end the pytest invocation.  Everything after one of these
 # belongs to a DIFFERENT command and must not be read as a pytest target:
 # `pytest a.py; cat b.py` names one test file, not two.
@@ -369,6 +427,8 @@ def per_file_report(
             "total_pytest": 0,
             "single_file_pytest": 0,
             "unmeasured": 0,      # single-file calls pytest did not time
+            "partial": 0,         # ran a subset of the target (-k / deselected)
+            "censored": 0,        # killed by pytest-timeout: a bound, not a cost
             "iters_searched": 0,
             "runs_searched": 0,
         })
@@ -396,6 +456,8 @@ def per_file_report(
                         "invocations": 0, "measured_invocations": 0,
                         "total_s": 0.0, "max_s": None, "max_gap_s": 0.0,
                         "max_run": None, "samples": [],
+                        "partial_invocations": 0, "censored_invocations": 0,
+                        "censored_max_s": None,
                     })
                     entry["invocations"] += 1
                     entry["max_gap_s"] = max(entry["max_gap_s"], d)
@@ -403,8 +465,20 @@ def per_file_report(
                     # An invocation pytest did not time is NOT a measurement
                     # of zero — it is counted and excluded.
                     self_s = _pytest_reported_seconds(body)
+                    kind = _sample_kind(cmd, body)
                     if self_s is None:
                         p["unmeasured"] += 1
+                    elif kind == CENSORED:
+                        # A bound, not a measurement -- see _sample_kind.
+                        entry["censored_invocations"] += 1
+                        p["censored"] += 1
+                        entry["censored_max_s"] = (
+                            self_s if entry["censored_max_s"] is None
+                            else max(entry["censored_max_s"], self_s)
+                        )
+                    elif kind == PARTIAL:
+                        entry["partial_invocations"] += 1
+                        p["partial"] += 1
                     else:
                         entry["measured_invocations"] += 1
                         entry["total_s"] += self_s
@@ -429,7 +503,7 @@ def per_file_report(
     # invocation of which was timed.  Consumers keyed on schema 1 were
     # reading gap seconds under these names — see _calls_detailed.
     out: dict = {
-        "schema": 3,
+        "schema": 4,
         "project": project,
         "measured_at": now.strftime("%Y-%m-%d %H:%M"),
         "since": since,
@@ -459,6 +533,8 @@ def per_file_report(
             entry["max_gap_s"] = round(entry["max_gap_s"], 1)
             if entry["max_s"] is not None:
                 entry["max_s"] = round(entry["max_s"], 2)
+            if entry["censored_max_s"] is not None:
+                entry["censored_max_s"] = round(entry["censored_max_s"], 2)
         for entry in multi_list:
             entry["total_s"] = round(entry["total_s"], 2)
         out["per_project"][proj_name] = {
@@ -467,6 +543,8 @@ def per_file_report(
             "total_pytest_invocations": p["total_pytest"],
             "single_file_invocations": p["single_file_pytest"],
             "unmeasured_invocations": p["unmeasured"],
+            "partial_invocations": p["partial"],
+            "censored_invocations": p["censored"],
             "iters_searched": p["iters_searched"],
             "runs_searched": p["runs_searched"],
         }

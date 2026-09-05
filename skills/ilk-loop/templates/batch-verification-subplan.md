@@ -85,6 +85,26 @@ local_checks:
 - Record the result: which tests failed, which passed, which were skipped.
 - Compare against the batch's base commit to identify attributed regressions:
   tests that fail now but passed at the base commit.
+- **Reuse the base-commit baseline when it already exists.** The base sha is
+  fixed for the batch and identical on every host, so re-measuring it from
+  scratch each batch pays a full suite run to learn something already known.
+  Look for `<external logs>/verification/baseline-<base-sha>.json` first; only
+  measure when it is absent, and write it back at that sha-keyed path:
+  ```python
+  base_sha = subprocess.run(["git", "merge-base", "HEAD", base_branch],
+                            capture_output=True, text=True).stdout.strip()
+  cached = verification_dir / f"baseline-{base_sha}.json"
+  if cached.is_file():
+      baseline = json.loads(cached.read_text())   # no suite run needed
+  else:
+      baseline = measure_base_commit()            # detached worktree, full suite
+      cached.write_text(json.dumps(baseline, indent=2))
+  ```
+  Key it on the **sha**, never on the batch slug or the tag — two batches off
+  the same base must hit the same entry, and a cache keyed on anything that
+  moves independently of the tree silently returns another commit's results.
+  A cache miss is normal and costs exactly what today costs; state which
+  happened in the record.
 - Compare against `.ilk-launch.json`'s `baseline_red` list to exclude
   pre-existing platform failures.
 - **Write the record to the external logs directory** (not into the project tree):
@@ -105,13 +125,25 @@ local_checks:
 
 ```yaml
 local_checks:
-  - command: "<run the full test suite; assert zero attributed failures>"
+  - command: "<assert zero attributed failures; see the no-op rule below>"
     timeout: <suite timeout>
 ```
 
-- Fix every failure attributed to this batch (fails now, passed at base
-  commit, not in `baseline_red`).
-- The gate re-runs the full suite and asserts **zero attributed failures**.
+- **When step 0 recorded zero attributed failures, this step is a NO-OP.**
+  Do not re-run the suite. Step 0 already ran it, on this same tree, and
+  recorded the result; a second identical run answers no new question and is
+  a third full suite for the batch. Assert against step 0's record instead,
+  commit the empty marker, and move on:
+  ```
+  git commit --allow-empty -m "fix(verify): no attributed regressions [plan:<slug>#step-1]"
+  ```
+  The gate must still READ the step-0 record and assert it says zero — a step
+  that skips without checking anything is not a no-op, it is an unverified
+  pass, and "no record found" must fail rather than skip.
+- Otherwise — step 0 attributed at least one failure — fix every failure
+  attributed to this batch (fails now, passed at base commit, not in
+  `baseline_red`), and the gate re-runs the full suite asserting **zero
+  attributed failures**.
 - Red gate ⇒ retried next iteration (current_step stays at 1).
 - Two confirmed reds ⇒ `status: blocked`, naming the failures.
 - Commit: `fix(verify): resolve attributed regressions [plan:<slug>#step-1]`

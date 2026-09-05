@@ -47,7 +47,10 @@ def _write_iter(run: Path, name: str, ts: str, commands: list[tuple]) -> None:
         cmd, gap = spec[0], spec[1]
         reported = spec[2] if len(spec) > 2 else gap
         tid = f"call_{i}"
-        body = "" if reported is None else f"1 passed in {reported:.2f}s"
+        if len(spec) > 3 and spec[3] is not None:
+            body = spec[3]          # explicit result body (timeout / deselected)
+        else:
+            body = "" if reported is None else f"1 passed in {reported:.2f}s"
         lines.append(json.dumps({
             "timestamp": (base + timedelta(seconds=i)).isoformat(),
             "message": {"content": [
@@ -427,15 +430,20 @@ def test_schema_version_tracks_meaning_changes(corpus_multiple_files: Path) -> N
               schema 1 was reading a different quantity under the same name.
       2 -> 3  added p50_s / max_run / max_age_days, so max_s can be read as
               the ceiling it is rather than as the cost.
+      3 -> 4  max_s/p50_s now cover WHOLE runs only: a partial run (-k, or a
+              deselected count) measured a subset, and a pytest-timeout kill
+              measured the timeout.  A schema-3 reader was getting both
+              folded into the same numbers.
 
-    Additive fields alone would not need the bump; it is here because a
-    reader of schema 2 has no way to know max_s was un-typical.
+    Additive fields alone would not need a bump; each of these moved what an
+    existing field MEANS, which a reader has no other way to detect.
     """
     result = gate_cost.per_file_report(root=corpus_multiple_files)
-    assert result["schema"] == 3
+    assert result["schema"] == 4
     entry = result["per_project"]["proj-b"]["per_file"][0]
-    for field in ("max_s", "p50_s", "max_run", "max_age_days", "max_gap_s"):
-        assert field in entry, f"schema 3 must carry {field}"
+    for field in ("max_s", "p50_s", "max_run", "max_age_days", "max_gap_s",
+                  "partial_invocations", "censored_invocations", "censored_max_s"):
+        assert field in entry, f"schema 4 must carry {field}"
 
 
 def test_chained_command_uses_the_first_summary() -> None:
@@ -584,7 +592,146 @@ class TestDispersion:
         """Working state stays internal — consumers get the summary."""
         assert "samples" not in self._entry(corpus_one_slow_outlier)
 
-    def test_schema_is_3(self, corpus_one_slow_outlier: Path) -> None:
+    def test_dispersion_fields_are_present(self, corpus_one_slow_outlier: Path) -> None:
+        """The version itself is pinned by test_schema_version_tracks_meaning_changes;
+        here we care that the dispersion fields actually arrive."""
         now = datetime(2026, 9, 5, 12, 0, 0)
-        r = gate_cost.per_file_report(root=corpus_one_slow_outlier, now=now)
-        assert r["schema"] == 3
+        e = gate_cost.per_file_report(
+            root=corpus_one_slow_outlier, now=now
+        )["per_project"]["proj-h"]["per_file"][0]
+        assert e["p50_s"] is not None and e["max_run"] and e["max_age_days"] == 35
+
+
+# -- a duration names what it measured ----------------------------------------
+
+TIMEOUT_BODY = (
+    "E   Failed: Timeout (>60.0s) from pytest-timeout.\n"
+    "1 failed in 60.10s (0:01:00)\n"
+)
+DESELECTED_BODY = "9 passed, 57 deselected in 42.37s\n"
+
+
+class TestSampleKind:
+    """Classify what an invocation actually measured."""
+
+    def test_plain_run_is_whole(self) -> None:
+        assert gate_cost._sample_kind(
+            "python3 -m pytest tests/test_a.py -q", "3 passed in 1.20s"
+        ) == gate_cost.WHOLE
+
+    def test_module_flag_is_not_a_selector(self) -> None:
+        """`python3 -m pytest` contains -m: Python's module flag, not pytest's.
+
+        A regex over the whole command string classified 1958 of 2169 real
+        samples as partial -- nearly the entire corpus -- because every
+        invocation starts `python3 -m pytest`.
+        """
+        assert gate_cost._sample_kind(
+            "python3 -m pytest tests/test_a.py -q", "3 passed in 1.20s"
+        ) == gate_cost.WHOLE
+        assert not gate_cost._has_selector("python3 -m pytest tests/test_a.py -q")
+
+    @pytest.mark.parametrize("cmd", [
+        "python3 -m pytest tests/test_a.py -k slow",
+        "python3 -m pytest tests/test_a.py -m integration",
+        "python3 -m pytest tests/test_a.py -k=slow",
+        "python3 -m pytest tests/test_a.py --deselect tests/test_a.py::x",
+    ])
+    def test_selector_after_pytest_is_partial(self, cmd: str) -> None:
+        assert gate_cost._sample_kind(cmd, "1 passed in 1.0s") == gate_cost.PARTIAL
+
+    def test_deselected_count_is_partial(self) -> None:
+        """Even with no selector on the line, pytest says it ran a subset."""
+        assert gate_cost._sample_kind(
+            "python3 -m pytest tests/test_a.py -q", DESELECTED_BODY
+        ) == gate_cost.PARTIAL
+
+    def test_timeout_is_censored(self) -> None:
+        assert gate_cost._sample_kind(
+            "python3 -m pytest tests/test_a.py -q", TIMEOUT_BODY
+        ) == gate_cost.CENSORED
+
+    def test_timeout_outranks_partial(self) -> None:
+        """A killed run tells you nothing about the subset either."""
+        assert gate_cost._sample_kind(
+            "python3 -m pytest tests/test_a.py -k slow", TIMEOUT_BODY
+        ) == gate_cost.CENSORED
+
+
+class TestPartialExcluded:
+    """A subset's duration is not the file's cost."""
+
+    @pytest.fixture
+    def corpus(self, tmp_path: Path) -> Path:
+        root = tmp_path / "projects"
+        _write_iter(root / "proj-k" / "logs" / "runs" / "20260906-100000",
+                    "iter-01.log.jsonl", "2026-09-06T10:00:00+08:00", [
+                        ("python3 -m pytest tests/test_a.py -q", 100.0, 100.0),
+                        ("python3 -m pytest tests/test_a.py -k fast", 0.5, 0.5),
+                        ("python3 -m pytest tests/test_a.py -q", 0.4, 0.4,
+                         DESELECTED_BODY),
+                    ])
+        return root
+
+    def _entry(self, root: Path) -> dict:
+        r = gate_cost.per_file_report(root=root, now=datetime(2026, 9, 6))
+        return r["per_project"]["proj-k"]["per_file"][0]
+
+    def test_partial_runs_do_not_enter_the_median(self, corpus: Path) -> None:
+        e = self._entry(corpus)
+        assert e["measured_invocations"] == 1
+        assert e["p50_s"] == pytest.approx(100.0), (
+            "a -k run and a deselected run were counted as measuring the file"
+        )
+
+    def test_partial_runs_are_counted(self, corpus: Path) -> None:
+        """Excluded, not hidden -- the denominator stays visible."""
+        e = self._entry(corpus)
+        assert e["partial_invocations"] == 2
+
+    def test_project_totals_report_partials(self, corpus: Path) -> None:
+        r = gate_cost.per_file_report(root=corpus, now=datetime(2026, 9, 6))
+        assert r["per_project"]["proj-k"]["partial_invocations"] == 2
+
+
+class TestCensoredIsABoundNotACost:
+    """A timed-out run records the timeout, not the work."""
+
+    @pytest.fixture
+    def corpus(self, tmp_path: Path) -> Path:
+        root = tmp_path / "projects"
+        _write_iter(root / "proj-l" / "logs" / "runs" / "20260906-100000",
+                    "iter-01.log.jsonl", "2026-09-06T10:00:00+08:00", [
+                        ("python3 -m pytest tests/test_b.py -q", 35.0, 35.16),
+                        ("python3 -m pytest tests/test_b.py -q", 60.2, 60.10,
+                         TIMEOUT_BODY),
+                    ])
+        return root
+
+    def _entry(self, root: Path) -> dict:
+        r = gate_cost.per_file_report(root=root, now=datetime(2026, 9, 6))
+        return r["per_project"]["proj-l"]["per_file"][0]
+
+    def test_timeout_does_not_raise_the_peak(self, corpus: Path) -> None:
+        e = self._entry(corpus)
+        assert e["max_s"] == pytest.approx(35.16), (
+            "the timeout value was recorded as the file's cost"
+        )
+
+    def test_timeout_is_kept_as_a_lower_bound(self, corpus: Path) -> None:
+        """Dropped entirely, a genuinely slow file could read as cheap."""
+        e = self._entry(corpus)
+        assert e["censored_invocations"] == 1
+        assert e["censored_max_s"] == pytest.approx(60.10)
+
+    def test_timeout_does_not_enter_the_median(self, corpus: Path) -> None:
+        assert self._entry(corpus)["measured_invocations"] == 1
+
+
+def test_schema_is_4_now_that_samples_are_classified(corpus_multiple_files: Path) -> None:
+    """3 -> 4: max_s/p50_s now cover WHOLE runs only, and two counts are new."""
+    r = gate_cost.per_file_report(root=corpus_multiple_files)
+    assert r["schema"] == 4
+    e = r["per_project"]["proj-b"]["per_file"][0]
+    for field in ("partial_invocations", "censored_invocations", "censored_max_s"):
+        assert field in e, f"schema 4 must carry {field}"
