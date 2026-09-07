@@ -462,6 +462,14 @@ Once approved, write all files in one batch under the
   See the template for the step-0 / step-1 shape and the attributed-failure
   exit condition.
 
+  **Resolve the suite command, never hand-type it.** The step-0 gate uses
+  ``ship_audit._resolve_expected_invocation(Path('.'))`` to compose the one
+  true invocation from ``ship.suite.command + flags``. A hand-typed command is
+  a copy that can drift — the defect that produced two wrong full-suite runs on
+  2026-09-07. ``plan_lint.py``'s ``lint_verification_subplan_hardcodes_suite``
+  flags any ``batch_verification: true`` sub-plan that contains a pytest
+  invocation without referencing the resolver.
+
   **Carry the template's two cost controls into the sub-plan you author.**
   Naively written, this sub-plan costs THREE full suite runs — the batch run,
   a base-commit run on a detached worktree, and step 1's gate re-run.

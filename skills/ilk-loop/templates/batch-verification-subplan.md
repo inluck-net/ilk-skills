@@ -140,12 +140,20 @@ section headed "exit 1 with zero failures is not a regression", the run recorded
 
 ```yaml
 local_checks:
-  - command: "<run the full test suite per .ilk-launch.json ship.suite>"
+  - command: "python3 -c \"import sys; sys.path.insert(0,'<skill-root>/ilk-loop/scripts'); from ship_audit import _resolve_expected_invocation; from pathlib import Path; cmd=_resolve_expected_invocation(Path('.')); assert cmd, 'ship.suite not configured'; import subprocess; sys.exit(subprocess.run(cmd,shell=True).returncode)\""
     timeout: <suite timeout>
 ```
 
-- Run the project's full test suite (from `.ilk-launch.json` → `ship.suite`,
-  or `python3 -m pytest --timeout=60 --timeout-method=signal` if unconfigured).
+**Resolve the suite command, never hand-type it.** The command above uses
+`ship_audit._resolve_expected_invocation(Path('.'))` to compose the one true
+invocation from `.ilk-launch.json` → `ship.suite.command + flags`. A hand-typed
+command is a copy that can drift — the defect that produced two wrong full-suite
+runs on 2026-09-07 (gh-resolve's `--dist loadfile` carried into a repo whose
+own baseline measures xdist slower at every worker count).
+
+- Run the project's full test suite (resolved from `.ilk-launch.json` →
+  `ship.suite` via the gate above, or `python3 -m pytest --timeout=60
+  --timeout-method=signal` if unconfigured).
 - Record the result: which tests failed, which passed, which were skipped.
 - **Re-run every failing node id at the base commit** and write the
   `## At-base rerun` table — see "The at-base rerun" above. Do this even when
