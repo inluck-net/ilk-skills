@@ -149,6 +149,41 @@ floor, and baseline-diffs. Phase 1 **refuses to release** on a
 **missing**, **failed**, or **stale** verdict. A verify step that
 proceeds anyway is the rubber-stamp failure mode.
 
+**The refusal contract.** Phase 1 **refuses rather than substitutes**. A
+missing, stale or failed verdict, or a `could_not_compare` baseline, **halts
+and files**. It does not ship, and it does not accept an assembled
+alternative.
+
+This is deliberately stricter than what a human release does today. A human
+may knowingly proceed on substitute evidence and label it; that judgment is
+not available to an unattended run. The design doc
+(`docs/future-work/unattended-self-improvement.md`, blocker 2) states this
+explicitly.
+
+**Implementation:** `phase1_verify.py` implements the refusal check. It
+validates the batch-gate record (absent / stale_head / stale_invocation /
+fail / error → refuse) and then checks the baseline report (could_not_compare
+→ refuse). On any refusal, it writes a `phase1-refusal.json` artifact to
+the runtime dir so the unattended pipeline has a file to act on.
+
+**Why this is not caution — the dated reason.** Both v0.9.86 and v0.9.87
+shipped on substitute evidence assembled and labelled by the same agent doing
+the release:
+
+- **v0.9.86** — batch verdict `stale_head`: `batch-gate.json` held the tip of
+  a batch released five tags earlier. Baseline `could_not_compare`: no
+  baseline for the previous tag on that host (newest was v0.9.81 against a
+  v0.9.86 HEAD).
+- **v0.9.87** — same condition on both engines. Each release proceeded on
+  evidence the agent assembled for itself, which is the exact shape of the
+  defect the batch-gate exists to prevent.
+
+**The `regression_count` trap.** When `could_not_compare` is true,
+`baseline_diff`'s payload still carries `regression_count: 0`. That field
+is **meaningless** in that state — it is exactly the number an unattended
+caller would read as success. Phase 1 checks `could_not_compare` first,
+never reads `regression_count` in that state.
+
 ### Measured behaviour and known limits
 
 Measured 2026-08-19 by replaying `select_tier` over v0.9.57..v0.9.67 with a
