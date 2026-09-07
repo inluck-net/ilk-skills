@@ -39,6 +39,8 @@ class ConfigResult:
     wall_clock: float      # seconds
     outcomes: frozenset[tuple[str, bool]]  # (node_id, passed) pairs
     invocations: tuple[str, ...]  # the pytest invocations used
+    load_start: dict[str, float] | None = None  # load avg at run start
+    load_end: dict[str, float] | None = None    # load avg at run end
 
     @classmethod
     def from_outcomes(
@@ -47,12 +49,16 @@ class ConfigResult:
         wall_clock: float,
         outcomes: Sequence[RunOutcome],
         invocations: Sequence[str] = (),
+        load_start: dict[str, float] | None = None,
+        load_end: dict[str, float] | None = None,
     ) -> "ConfigResult":
         return cls(
             name=name,
             wall_clock=wall_clock,
             outcomes=frozenset((o.node_id, o.passed) for o in outcomes),
             invocations=tuple(invocations),
+            load_start=load_start,
+            load_end=load_end,
         )
 
 
@@ -349,6 +355,15 @@ def _default_runner(invocation: str, cwd: Path) -> tuple[int, str, float]:
         return -1, "", elapsed
 
 
+def _capture_load() -> dict[str, float] | None:
+    """Capture current load average."""
+    try:
+        load1, load5, load15 = [round(x, 2) for x in platform.getloadavg()]
+        return {"1m": load1, "5m": load5, "15m": load15}
+    except OSError:
+        return None
+
+
 def parse_outcomes(stdout: str) -> list[RunOutcome]:
     """Parse pytest -v output into RunOutcome objects.
 
@@ -380,7 +395,9 @@ def run_config(
     if extra_args:
         invocation = f"{base_invocation} {' '.join(extra_args)}"
 
+    load_start = _capture_load()
     exit_code, stdout, wall_clock = runner(invocation, cwd)
+    load_end = _capture_load()
     outcomes = parse_outcomes(stdout)
 
     return ConfigResult.from_outcomes(
@@ -388,6 +405,8 @@ def run_config(
         wall_clock=wall_clock,
         outcomes=outcomes,
         invocations=[invocation],
+        load_start=load_start,
+        load_end=load_end,
     )
 
 
@@ -427,8 +446,8 @@ def write_artifact(
         "",
         "## Results",
         "",
-        "| config | wall-clock (s) | vs serial | outcome set |",
-        "|---|---|---|---|",
+        "| config | wall-clock (s) | vs serial | outcome set | load start (1m/5m/15m) | load end (1m/5m/15m) |",
+        "|---|---|---|---|---|---|",
     ])
 
     serial_wc = results[0].wall_clock if results else 0
@@ -439,7 +458,11 @@ def write_artifact(
         if r.name == "serial":
             ratio = "—"
         eq = "identical" if r.outcomes == serial_outcomes else "DIFFERS"
-        lines.append(f"| {r.name} | {r.wall_clock:.2f} | {ratio} | {eq} |")
+        ls = r.load_start
+        le = r.load_end
+        ls_str = f"{ls['1m']}/{ls['5m']}/{ls['15m']}" if ls else "—"
+        le_str = f"{le['1m']}/{le['5m']}/{le['15m']}" if le else "—"
+        lines.append(f"| {r.name} | {r.wall_clock:.2f} | {ratio} | {eq} | {ls_str} | {le_str} |")
 
     lines.extend([
         "",

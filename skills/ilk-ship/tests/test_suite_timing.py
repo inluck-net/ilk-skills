@@ -368,3 +368,66 @@ class TestRecommendMixed:
         result = recommend([serial, n_auto])
 
         assert result.config.name == "serial"
+
+
+# ── Environment fields in artifact ──────────────────────────────────────────
+
+class TestArtifactEnvironment:
+    """The artifact must carry host, ncpu, pytest/xdist versions, HEAD,
+    and load average at start AND end of each run."""
+
+    def test_config_result_carries_load_fields(self) -> None:
+        """ConfigResult has load_start and load_end fields."""
+        cfg = ConfigResult.from_outcomes(
+            name="serial",
+            wall_clock=263.31,
+            outcomes=_make_serial_outcomes(),
+            load_start={"1m": 1.5, "5m": 2.0, "15m": 1.8},
+            load_end={"1m": 3.0, "5m": 2.5, "15m": 2.0},
+        )
+        assert cfg.load_start is not None
+        assert cfg.load_end is not None
+        assert cfg.load_start["1m"] == 1.5
+        assert cfg.load_end["1m"] == 3.0
+
+    def test_artifact_contains_required_fields(self, tmp_path: Path) -> None:
+        """write_artifact produces output with all required environment fields."""
+        from suite_timing import write_artifact, Recommendation
+
+        results = [
+            ConfigResult.from_outcomes(
+                name="serial",
+                wall_clock=263.31,
+                outcomes=_make_serial_outcomes(),
+                load_start={"1m": 1.5, "5m": 2.0, "15m": 1.8},
+                load_end={"1m": 3.0, "5m": 2.5, "15m": 2.0},
+            ),
+        ]
+        rec = Recommendation(
+            config=results[0],
+            reason="only config",
+            disqualified=(),
+        )
+        env = {
+            "host": "test-host",
+            "platform": "Darwin 25.6.0",
+            "ncpu": 10,
+            "python": "3.9.6",
+            "pytest_version": "8.4.2",
+            "xdist_version": "3.8.0",
+            "head": "abc1234",
+            "load_avg": {"1m": 1.5, "5m": 2.0, "15m": 1.8},
+        }
+
+        output = tmp_path / "timing.md"
+        write_artifact(results, rec, env, output)
+
+        content = output.read_text()
+        assert "host" in content
+        assert "ncpu" in content
+        assert "pytest" in content
+        assert "HEAD" in content
+        assert "load start" in content
+        assert "load end" in content
+        assert "1.5/2.0/1.8" in content  # load_start values
+        assert "3.0/2.5/2.0" in content  # load_end values
