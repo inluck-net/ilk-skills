@@ -27,7 +27,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _BOUNCE_SH = _REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "bounce_daemons.sh"
 
 # The three valid states — AC-1
-_VALID_STATES = {"ok", "stale-daemon", "unreachable"}
+_VALID_STATES = {"ok", "stale-daemon", "tag-mismatch", "unreachable"}
 
 
 # ---------------------------------------------------------------------------
@@ -62,14 +62,18 @@ def _write_fake_bouncer(
 
 
 def _assert_distinct_states(results: dict[str, str]) -> None:
-    """Assert that the three states are distinguishable — AC-1.
+    """Assert that the three base states are distinguishable — AC-1.
 
     A test that only checks ok-vs-not-ok cannot catch the failure this
     sub-plan guards against (rezmac was "not ok" but reported "ok").
+
+    Note: ``tag-mismatch`` is a fourth state added by --require-tag; it is
+    tested separately in TestRequireTag and is not required here.
     """
+    _BASE_STATES = {"ok", "stale-daemon", "unreachable"}
     states = set(results.values())
-    assert states == _VALID_STATES, (
-        f"Expected exactly {_VALID_STATES}, got {states}. "
+    assert states == _BASE_STATES, (
+        f"Expected exactly {_BASE_STATES}, got {states}. "
         "A two-state result cannot distinguish 'checked and current' "
         "from 'could not check'."
     )
@@ -666,14 +670,17 @@ def _resolve_host(
     log_file: Path | None = None,
     bounce_hosts: bool = False,
     env_override: dict | None = None,
+    require_tag: str | None = None,
+    tag_resolver=None,
 ) -> str:
     """Resolve a single host's deploy status.
 
-    Returns one of: 'ok', 'stale-daemon', 'unreachable'.
+    Returns one of: 'ok', 'stale-daemon', 'tag-mismatch', 'unreachable'.
     """
     return _real_resolve_host(
         bouncer_path, tmp_path, log_file=log_file, bounce_hosts=bounce_hosts,
-        env_override=env_override,
+        env_override=env_override, require_tag=require_tag,
+        tag_resolver=tag_resolver,
     )
 
 
@@ -1212,3 +1219,154 @@ class TestAC12CliNamesTheTransport:
             f"the remote line must come from ssh and name that transport: {out!r}"
         )
         assert result.returncode == 1
+
+
+# ---------------------------------------------------------------------------
+# --require-tag: release-conformance check (sub-plan a-deploy-state-names-its-release)
+# ---------------------------------------------------------------------------
+
+
+class TestRequireTag:
+    """--require-tag: a host whose daemon code does not resolve to the
+    required tag reports 'tag-mismatch', not 'ok'.
+
+    AC-1  Tag matches → 'ok' (happy path).
+    AC-2  Tag does not match → 'tag-mismatch'.
+    AC-3  SHA resolves to no tag → 'tag-mismatch' (fail closed).
+    AC-4  Bouncer output has no sha (unknown) → 'tag-mismatch' (fail closed).
+    AC-5  Absent --require-tag → behaviour unchanged (no tag check).
+    AC-6  tag-mismatch exits 1, not 0.
+    AC-7  Fresh daemon + matching tag → 'ok'.
+    """
+
+    def test_matching_tag_resolves_ok(self, tmp_path: Path) -> None:
+        """AC-1: recorded sha resolves to the required tag → 'ok'."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "recorded_sha: abc123",
+            "fresh: scheduler — fresh (toolkit_head matches HEAD)",
+        ], exit_code=0)
+        tag_resolver = lambda sha: "v1.0.0" if sha == "abc123" else None
+        result = _resolve_host(fake, tmp_path, require_tag="v1.0.0", tag_resolver=tag_resolver)
+        assert result == "ok"
+
+    def test_mismatched_tag_resolves_tag_mismatch(self, tmp_path: Path) -> None:
+        """AC-2: recorded sha resolves to a different tag → 'tag-mismatch'."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "recorded_sha: abc123",
+            "stale: scheduler — stale (recorded abc123, HEAD def456) (would bounce)",
+        ], exit_code=0)
+        tag_resolver = lambda sha: "v0.9.0" if sha == "abc123" else None
+        result = _resolve_host(fake, tmp_path, require_tag="v1.0.0", tag_resolver=tag_resolver)
+        assert result == "tag-mismatch"
+
+    def test_sha_with_no_tag_resolves_tag_mismatch(self, tmp_path: Path) -> None:
+        """AC-3: sha resolves to NO tag → 'tag-mismatch' (fail closed)."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "recorded_sha: abc123",
+            "fresh: scheduler — fresh (toolkit_head matches HEAD)",
+        ], exit_code=0)
+        tag_resolver = lambda sha: None  # no tag points at this sha
+        result = _resolve_host(fake, tmp_path, require_tag="v1.0.0", tag_resolver=tag_resolver)
+        assert result == "tag-mismatch"
+
+    def test_unknown_sha_resolves_tag_mismatch(self, tmp_path: Path) -> None:
+        """AC-4: bouncer reports sha as 'unknown' → 'tag-mismatch' (fail closed)."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "recorded_sha: unknown",
+            "stale: scheduler — stale (state file missing toolkit_head or non-JSON)",
+        ], exit_code=0)
+        tag_resolver = lambda sha: "v1.0.0"
+        result = _resolve_host(fake, tmp_path, require_tag="v1.0.0", tag_resolver=tag_resolver)
+        assert result == "tag-mismatch"
+
+    def test_absent_require_tag_skips_check(self, tmp_path: Path) -> None:
+        """AC-5: without --require-tag, no tag check happens → 'ok'."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "recorded_sha: abc123",
+            "fresh: scheduler — fresh (toolkit_head matches HEAD)",
+        ], exit_code=0)
+        # tag_resolver that would FAIL if called — proves it wasn't called.
+        tag_resolver = lambda sha: (_ for _ in ()).throw(RuntimeError("should not be called"))
+        result = _resolve_host(fake, tmp_path, require_tag=None, tag_resolver=tag_resolver)
+        assert result == "ok"
+
+    def test_tag_mismatch_exit_code_is_one(self, tmp_path: Path) -> None:
+        """AC-6: tag-mismatch → exit 1 (same as stale-daemon)."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "recorded_sha: abc123",
+            "fresh: scheduler — fresh (toolkit_head matches HEAD)",
+        ], exit_code=0)
+        tag_resolver = lambda sha: "v0.9.0"
+        result = _resolve_host(fake, tmp_path, require_tag="v1.0.0", tag_resolver=tag_resolver)
+        assert result == "tag-mismatch"
+        # The exit code mapping should be 1.
+        from host_deploy_status import _STATE_EXIT_CODES
+        assert _STATE_EXIT_CODES["tag-mismatch"] == 1
+
+    def test_fresh_daemon_matching_tag_resolves_ok(self, tmp_path: Path) -> None:
+        """AC-7: fresh daemon + recorded sha matches required tag → 'ok'."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "recorded_sha: abc123",
+            "fresh: scheduler — fresh (toolkit_head matches HEAD)",
+        ], exit_code=0)
+        tag_resolver = lambda sha: "v1.0.0" if sha == "abc123" else None
+        result = _resolve_host(fake, tmp_path, require_tag="v1.0.0", tag_resolver=tag_resolver)
+        assert result == "ok"
+
+    def test_stale_daemon_with_matching_tag_is_stale(self, tmp_path: Path) -> None:
+        """Stale daemon + matching tag → 'stale-daemon'.
+
+        The daemon is stale (HEAD mismatch) but the recorded code is on the
+        right release — the bounce hasn't happened yet.
+        """
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "recorded_sha: abc123",
+            "stale: scheduler — stale (recorded abc123, HEAD def456) (would bounce)",
+        ], exit_code=0)
+        tag_resolver = lambda sha: "v1.0.0" if sha == "abc123" else None
+        result = _resolve_host(fake, tmp_path, require_tag="v1.0.0", tag_resolver=tag_resolver)
+        assert result == "stale-daemon"
+
+    def test_stale_daemon_with_mismatched_tag_is_tag_mismatch(self, tmp_path: Path) -> None:
+        """Stale daemon + mismatched tag → 'tag-mismatch'.
+
+        Tag conformance is a higher-priority signal: the host is on the wrong
+        release, which is WHY the daemon is stale.
+        """
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "recorded_sha: abc123",
+            "stale: scheduler — stale (recorded abc123, HEAD def456) (would bounce)",
+        ], exit_code=0)
+        tag_resolver = lambda sha: "v0.9.0"
+        result = _resolve_host(fake, tmp_path, require_tag="v1.0.0", tag_resolver=tag_resolver)
+        assert result == "tag-mismatch"
+
+
+class TestRequireTagCli:
+    """CLI --require-tag flag is accepted and threads through to the resolver."""
+
+    def test_require_tag_flag_accepted(self, tmp_path: Path) -> None:
+        """--require-tag is accepted by the CLI."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "recorded_sha: abc123",
+            "fresh: scheduler — fresh (toolkit_head matches HEAD)",
+        ], exit_code=0)
+        result = subprocess.run(
+            [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT),
+             "--bouncer", str(fake), "--require-tag", "v1.0.0"],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "BOUNCER_LOG": "/dev/null"},
+        )
+        # The CLI should accept the flag without error.
+        assert result.returncode in (0, 1, 2), (
+            f"--require-tag should be accepted: {result.stderr}"
+        )
+
+    def test_require_tag_in_help(self) -> None:
+        """--require-tag appears in --help output."""
+        result = subprocess.run(
+            [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT), "--help"],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0
+        assert "--require-tag" in result.stdout

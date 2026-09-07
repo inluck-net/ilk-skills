@@ -109,6 +109,25 @@ def is_local_host(host: str, local_hosts: Sequence[str] | None = None) -> bool:
     return needle in _local_aliases()
 
 
+def _default_tag_resolver(sha: str) -> str | None:
+    """Resolve a commit SHA to a tag name, or None if it points to no tag.
+
+    Uses ``git tag --points-at <sha>`` — the first tag found wins.
+    Returns None when the sha resolves to no tag (fail closed: not-conformant).
+    """
+    try:
+        result = subprocess.run(
+            ["git", "tag", "--points-at", sha],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    tags = [t.strip() for t in result.stdout.splitlines() if t.strip()]
+    return tags[0] if tags else None
+
+
 def resolve_host(
     bouncer_path: Path,
     tmp_path: Path,
@@ -118,6 +137,8 @@ def resolve_host(
     env_override: dict | None = None,
     remote_host: str | None = None,
     ssh_program: str = "ssh",
+    require_tag: str | None = None,
+    tag_resolver: Callable[[str], str | None] | None = None,
 ) -> str:
     """Resolve a single host's deploy status.
 
@@ -143,9 +164,15 @@ def resolve_host(
         ssh_program: ssh executable.  Overridden by tests with a fake that
                      records its argv, so the remote path is asserted without
                      a network.
+        require_tag: If set, the host's recorded toolkit_head must resolve to
+                     this tag.  A mismatch returns 'tag-mismatch' instead of
+                     'ok'.  A sha that resolves to NO tag is not-conformant
+                     (fail closed).  Absent (default): behaviour unchanged.
+        tag_resolver: Callable ``(sha) -> tag | None``.  Default uses
+                      ``git tag --points-at``.  Injected by tests.
 
     Returns:
-        One of 'ok', 'stale-daemon', 'unreachable'.
+        One of 'ok', 'stale-daemon', 'unreachable', 'tag-mismatch'.
     """
     if remote_host is None:
         # A missing bouncer script means the host is unreachable.
@@ -236,6 +263,18 @@ def resolve_host(
     if exit_code == 2 or has_unreachable:
         return "unreachable"
 
+    # Release conformance check (before stale-daemon: a host on the wrong
+    # release is a higher-priority signal than a daemon that hasn't bounced
+    # yet — the daemon is stale *because* it's on the wrong release).
+    if require_tag is not None:
+        resolver = tag_resolver or _default_tag_resolver
+        recorded_head = _extract_recorded_head(output)
+        if recorded_head is None:
+            return "tag-mismatch"
+        actual_tag = resolver(recorded_head)
+        if actual_tag != require_tag:
+            return "tag-mismatch"
+
     # Any stale line (exit 0 in --check mode) → stale-daemon.
     if has_stale:
         return "stale-daemon"
@@ -244,12 +283,44 @@ def resolve_host(
     return "ok"
 
 
+def _extract_recorded_head(bouncer_output: str) -> str | None:
+    """Extract the recorded toolkit_head sha from bounce_daemons.sh output.
+
+    The bouncer always prints a ``recorded_sha: <sha>`` line (added for
+    release-conformance checking).  It also embeds the sha in stale lines:
+      stale: scheduler — stale (recorded abc123..., HEAD def456...)
+
+    The dedicated line is preferred; the stale-line regex is a fallback.
+
+    Returns the sha string, or None if not found.
+    """
+    import re as _re
+
+    for line in bouncer_output.splitlines():
+        line = line.strip()
+        # Dedicated sha line (always present in updated bouncer).
+        if line.startswith("recorded_sha:"):
+            sha = line.split(":", 1)[1].strip()
+            if sha and sha != "unknown":
+                return sha
+    # Fallback: extract from stale line.
+    for line in bouncer_output.splitlines():
+        line = line.strip()
+        if "recorded " in line:
+            m = _re.search(r'recorded\s+([0-9a-f]+)', line)
+            if m:
+                return m.group(1)
+    return None
+
+
 def resolve_hosts(
     hosts: list[str],
     bouncer_for_host: Callable[[str], Path],
     tmp_path: Path,
     *,
     local_hosts: Sequence[str] | None = None,
+    require_tag: str | None = None,
+    tag_resolver: Callable[[str], str | None] | None = None,
     **kwargs: object,
 ) -> dict[str, str]:
     """Resolve every declared host and return an ordered mapping.
@@ -284,7 +355,9 @@ def resolve_hosts(
             bouncer = bouncer_for_host(host)
             remote = None if is_local_host(host, local_hosts) else host
             result[host] = resolve_host(  # type: ignore[arg-type]
-                bouncer, tmp_path, remote_host=remote, **kwargs,
+                bouncer, tmp_path, remote_host=remote,
+                require_tag=require_tag, tag_resolver=tag_resolver,
+                **kwargs,
             )
         except Exception:
             result[host] = "unreachable"
@@ -301,6 +374,7 @@ def resolve_hosts(
 _STATE_EXIT_CODES = {
     "ok": 0,
     "stale-daemon": 1,
+    "tag-mismatch": 1,
     "unreachable": 2,
 }
 
@@ -353,6 +427,17 @@ def main(argv: list[str] | None = None) -> None:
             "not, and an unmatched name is ssh'd and fails to 'unreachable'."
         ),
     )
+    parser.add_argument(
+        "--require-tag",
+        default=None,
+        metavar="TAG",
+        help=(
+            "Release tag every host must be running. When set, a host whose "
+            "daemon code does not resolve to this tag reports 'tag-mismatch' "
+            "instead of 'ok'. A sha that resolves to no tag is not-conformant. "
+            "Omit for the default three-state check."
+        ),
+    )
     args = parser.parse_args(argv)
 
     bounce = args.bounce_hosts
@@ -375,6 +460,7 @@ def main(argv: list[str] | None = None) -> None:
             Path("/tmp"),
             local_hosts=local_declared,
             bounce_hosts=bounce,
+            require_tag=args.require_tag,
         )
         for host in host_list:
             transport = "local" if is_local_host(host, local_declared) else "ssh"
@@ -388,7 +474,10 @@ def main(argv: list[str] | None = None) -> None:
             print("error: --bouncer is required", file=sys.stderr)
             sys.exit(2)
         bouncer = Path(args.bouncer[0])
-        state = resolve_host(bouncer, Path("/tmp"), bounce_hosts=bounce)
+        state = resolve_host(
+            bouncer, Path("/tmp"), bounce_hosts=bounce,
+            require_tag=args.require_tag,
+        )
         print(state)
         sys.exit(_STATE_EXIT_CODES.get(state, 2))
 

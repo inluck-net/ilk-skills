@@ -144,6 +144,10 @@ else
   fi
 fi
 
+# Always emit the recorded sha so the resolver can verify release
+# conformance even when the daemon is fresh (no stale line to parse).
+echo "recorded_sha: ${recorded_head:-unknown}"
+
 # ── Report ──────────────────────────────────────────────────────────────────
 
 bounced=0
