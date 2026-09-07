@@ -114,8 +114,24 @@ else
     stale=1
     reason="state file missing toolkit_head or non-JSON"
   else
-    # Get the tree's HEAD.  Use ILK_BOUNCE_TOOLKIT_PATH if set, else cwd.
-    toolkit_path="${ILK_BOUNCE_TOOLKIT_PATH:-.}"
+    # Get the tree's HEAD.  Resolve the repo from the script's own location,
+    # not $PWD — ssh lands in $HOME, and launchd starts in an arbitrary dir.
+    # Mirrors scheduler.sh's write_scheduler_state (AC-2).
+    toolkit_path="${ILK_BOUNCE_TOOLKIT_PATH:-}"
+    if [[ -z "$toolkit_path" ]]; then
+      script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || true
+      if [[ -n "$script_dir" ]]; then
+        toolkit_path="$script_dir"
+        while [[ "$toolkit_path" != "/" && ! -d "$toolkit_path/.git" ]]; do
+          toolkit_path="$(dirname "$toolkit_path")"
+        done
+        if [[ ! -d "$toolkit_path/.git" ]]; then
+          toolkit_path="."
+        fi
+      else
+        toolkit_path="."
+      fi
+    fi
     current_head=$(git -C "$toolkit_path" rev-parse HEAD 2>/dev/null || echo "unknown")
 
     if [[ "$recorded_head" == "$current_head" ]]; then
