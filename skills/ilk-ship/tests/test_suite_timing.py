@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+import subprocess
+
 import pytest
 
 # ── Path setup ──────────────────────────────────────────────────────────────
@@ -431,3 +433,98 @@ class TestArtifactEnvironment:
         assert "load end" in content
         assert "1.5/2.0/1.8" in content  # load_start values
         assert "3.0/2.5/2.0" in content  # load_end values
+
+
+# ── Idle-box check ──────────────────────────────────────────────────────────
+
+class TestIdleBoxCheck:
+    """The script refuses to measure on a busy box."""
+
+    def test_refuses_on_high_load(self) -> None:
+        """Load above 2.0 × ncpu → BusyBoxError."""
+        from suite_timing import check_idle, BusyBoxError
+
+        # Monkey-patch _capture_load to return high load
+        import suite_timing
+        original = suite_timing._capture_load
+        suite_timing._capture_load = lambda: {"1m": 25.0, "5m": 20.0, "15m": 15.0}
+        try:
+            with pytest.raises(BusyBoxError) as exc_info:
+                check_idle(ncpu=10)
+            assert "25.0" in str(exc_info.value)
+            assert "threshold" in str(exc_info.value).lower()
+        finally:
+            suite_timing._capture_load = original
+
+    def test_refuses_on_loop_process(self) -> None:
+        """Live loop process → BusyBoxError."""
+        from suite_timing import check_idle, BusyBoxError, LOOP_PROCESS_NAMES
+
+        # Monkey-patch _capture_load to return low load (so load check passes)
+        import suite_timing
+        original_load = suite_timing._capture_load
+        suite_timing._capture_load = lambda: {"1m": 1.5, "5m": 1.0, "15m": 0.8}
+
+        # Monkey-patch subprocess.run to return a ps output with a loop process
+        original_run = subprocess.run
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:2] == ["ps", "-eo"]:
+                # Return a fake ps output with a loop process
+                class FakeResult:
+                    returncode = 0
+                    stdout = "  PID COMM\n 1234 run_ilk_loop_claude.sh\n"
+                return FakeResult()
+            return original_run(cmd, **kwargs)
+
+        subprocess.run = fake_run  # type: ignore[assignment]
+        try:
+            with pytest.raises(BusyBoxError) as exc_info:
+                check_idle(ncpu=10)
+            assert "1234" in str(exc_info.value)
+            assert "loop" in str(exc_info.value).lower()
+        finally:
+            suite_timing._capture_load = original_load
+            subprocess.run = original_run  # type: ignore[assignment]
+
+    def test_passes_on_idle_box(self) -> None:
+        """Low load and no loop processes → no error."""
+        from suite_timing import check_idle
+
+        # Monkey-patch _capture_load to return low load
+        import suite_timing
+        original_load = suite_timing._capture_load
+        suite_timing._capture_load = lambda: {"1m": 1.5, "5m": 1.0, "15m": 0.8}
+
+        # Monkey-patch subprocess.run to return empty ps output
+        original_run = subprocess.run
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:2] == ["ps", "-eo"]:
+                class FakeResult:
+                    returncode = 0
+                    stdout = "  PID COMM\n"
+                return FakeResult()
+            return original_run(cmd, **kwargs)
+
+        subprocess.run = fake_run  # type: ignore[assignment]
+        try:
+            # Should not raise
+            check_idle(ncpu=10)
+        finally:
+            suite_timing._capture_load = original_load
+            subprocess.run = original_run  # type: ignore[assignment]
+
+    def test_busy_box_error_carrying_context(self) -> None:
+        """BusyBoxError carries load, ncpu, and loop_pids."""
+        from suite_timing import BusyBoxError
+
+        err = BusyBoxError(
+            reason="test",
+            load={"1m": 25.0, "5m": 20.0, "15m": 15.0},
+            ncpu=10,
+            loop_pids=[1234, 5678],
+        )
+        assert err.load == {"1m": 25.0, "5m": 20.0, "15m": 15.0}
+        assert err.ncpu == 10
+        assert err.loop_pids == [1234, 5678]

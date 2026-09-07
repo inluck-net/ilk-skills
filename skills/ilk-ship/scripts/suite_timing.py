@@ -364,6 +364,137 @@ def _capture_load() -> dict[str, float] | None:
         return None
 
 
+# ── Idle-box check ──────────────────────────────────────────────────────────
+
+# judgment call: threshold = 2.0 × ncpu for 1m load average
+#
+# Basis: a serial pytest run on this repo takes ~263s on a 10-core box at
+# load ~1.5.  At 2.0 × ncpu (20 on a 10-core box), the machine is already
+# saturated — every core has a runnable process, and wall-clock measurements
+# reflect contention rather than the configuration under test.  The 2026-09-07
+# measurement that produced unusable data started at load 7.39 on 10 cores
+# with another project's loop live — well below 2.0 × ncpu but already
+# contended.
+#
+# Falsifier: if a measurement at load 3.0 × ncpu produces an artifact whose
+# wall-clock ratio between serial and -n 4 matches the idle-box measurement
+# within 5%, the threshold is too conservative and should be raised.
+#
+# The threshold is per-config: we check load before each run, not just once.
+# A box that was idle at the start but became busy mid-run will be caught
+# by the load_end field in the artifact.
+
+# judgment call: also check for live loop processes
+#
+# Basis: a running `run_ilk_loop_claude.sh` or `scheduler.sh` process means
+# another project's improvement loop is executing.  Even at low load, these
+# processes spawn subprocesses that compete for CPU and I/O, and their
+# presence means the box is not truly idle.
+#
+# Falsifier: if a measurement with a live loop process produces an artifact
+# whose outcome set matches an idle-box measurement, the check is too
+# conservative.
+
+LOOP_PROCESS_NAMES = {
+    "run_ilk_loop_claude.sh",
+    "scheduler.sh",
+    "run_ilk_loop_claude.ps1",
+}
+
+
+class BusyBoxError(Exception):
+    """The box is not idle enough for reliable timing."""
+
+    def __init__(
+        self,
+        reason: str,
+        load: dict[str, float] | None = None,
+        ncpu: int | None = None,
+        loop_pids: list[int] | None = None,
+    ):
+        self.reason = reason
+        self.load = load
+        self.ncpu = ncpu
+        self.loop_pids = loop_pids
+        super().__init__(reason)
+
+
+def check_idle(ncpu: int | None = None) -> None:
+    """Check that the box is idle enough for reliable timing.
+
+    Raises BusyBoxError if:
+    - Load average exceeds 2.0 × ncpu (threshold documented above)
+    - Live loop processes are detected
+
+    Parameters
+    ----------
+    ncpu : int, optional
+        Number of CPUs.  If None, resolved from sysctl/nproc.
+    """
+    # Resolve ncpu if not provided
+    if ncpu is None:
+        try:
+            if platform.system() == "Darwin":
+                result = subprocess.run(
+                    ["sysctl", "-n", "hw.ncpu"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                ncpu = int(result.stdout.strip()) if result.returncode == 0 else None
+            else:
+                result = subprocess.run(
+                    ["nproc"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                ncpu = int(result.stdout.strip()) if result.returncode == 0 else None
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            ncpu = None
+
+    # Check load average
+    load = _capture_load()
+    if load and ncpu:
+        threshold = 2.0 * ncpu
+        if load["1m"] > threshold:
+            raise BusyBoxError(
+                reason=(
+                    f"load average {load['1m']} exceeds threshold {threshold} "
+                    f"(2.0 × {ncpu} CPUs).  The box is not idle enough for "
+                    f"reliable timing."
+                ),
+                load=load,
+                ncpu=ncpu,
+            )
+
+    # Check for live loop processes
+    try:
+        result = subprocess.run(
+            ["ps", "-eo", "pid,comm"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            loop_pids: list[int] = []
+            for line in result.stdout.splitlines()[1:]:  # skip header
+                parts = line.strip().split(None, 1)
+                if len(parts) == 2:
+                    pid_str, comm = parts
+                    if comm in LOOP_PROCESS_NAMES:
+                        try:
+                            loop_pids.append(int(pid_str))
+                        except ValueError:
+                            pass
+            if loop_pids:
+                raise BusyBoxError(
+                    reason=(
+                        f"live loop processes detected (PIDs: {loop_pids}).  "
+                        f"Another project's improvement loop is running."
+                    ),
+                    load=load,
+                    ncpu=ncpu,
+                    loop_pids=loop_pids,
+                )
+    except (subprocess.TimeoutExpired, OSError):
+        pass  # can't check — proceed with load-only check
+
+
 def parse_outcomes(stdout: str) -> list[RunOutcome]:
     """Parse pytest -v output into RunOutcome objects.
 
@@ -509,9 +640,26 @@ def _cli(argv: list[str]) -> int:
         action="store_true",
         help="print what would be run without running it",
     )
+    ap.add_argument(
+        "--force",
+        action="store_true",
+        help="skip the idle-box check (for testing or known-idle boxes)",
+    )
     args = ap.parse_args(argv)
 
     project = args.project.resolve()
+
+    # Check idle unless --force or --dry-run
+    if not args.force and not args.dry_run:
+        try:
+            check_idle()
+        except BusyBoxError as e:
+            print(f"REFUSED: {e.reason}", file=sys.stderr)
+            if e.load:
+                print(f"  load: {e.load}", file=sys.stderr)
+            if e.loop_pids:
+                print(f"  loop PIDs: {e.loop_pids}", file=sys.stderr)
+            return 1
 
     # Resolve serial invocation
     serial_invocation = resolve_serial_invocation(project)
