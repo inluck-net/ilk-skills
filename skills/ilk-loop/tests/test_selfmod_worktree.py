@@ -15,6 +15,13 @@ from unittest.mock import patch
 
 import pytest
 
+# Resolve paths relative to this test file.
+_HERE = Path(__file__).resolve()
+_SCRIPTS = _HERE.parent.parent / "scripts"
+
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -166,3 +173,102 @@ class TestLiveLoopBlocksMerge:
             # Merge must be blocked (fail closed)
             with pytest.raises(MergeBlockedError):
                 sw.merge_back()
+
+
+# ── Step 1: Worktree lifecycle ──────────────────────────────────────────────
+
+class TestWorktreeLifecycle:
+    """Create, reuse, and remove worktrees cleanly."""
+
+    def test_create_worktree(self, tmp_path: Path) -> None:
+        """Creating a worktree produces a valid git worktree directory."""
+        from selfmod_worktree import SelfmodWorktree
+
+        repo = _create_throwaway_repo(tmp_path)
+        worktree_path = tmp_path / "selfmod-worktree"
+
+        sw = SelfmodWorktree(repo, worktree_path)
+        sw.create()
+
+        assert worktree_path.exists()
+        assert (worktree_path / ".git").exists()  # worktree marker
+
+    def test_create_idempotent(self, tmp_path: Path) -> None:
+        """Creating a worktree twice is a no-op (idempotent)."""
+        from selfmod_worktree import SelfmodWorktree
+
+        repo = _create_throwaway_repo(tmp_path)
+        worktree_path = tmp_path / "selfmod-worktree"
+
+        sw = SelfmodWorktree(repo, worktree_path)
+        sw.create()
+
+        # Make a change so we can verify it survives the second create.
+        (worktree_path / "marker.txt").write_text("survives", encoding="utf-8")
+
+        sw.create()
+
+        assert (worktree_path / "marker.txt").read_text(encoding="utf-8") == "survives"
+
+    def test_remove_clean_worktree(self, tmp_path: Path) -> None:
+        """Removing a clean worktree succeeds without force."""
+        from selfmod_worktree import SelfmodWorktree
+
+        repo = _create_throwaway_repo(tmp_path)
+        worktree_path = tmp_path / "selfmod-worktree"
+
+        sw = SelfmodWorktree(repo, worktree_path)
+        sw.create()
+
+        sw.remove()
+
+        assert not worktree_path.exists()
+
+    def test_remove_dirty_worktree_without_force_raises(
+        self, tmp_path: Path
+    ) -> None:
+        """Removing a dirty worktree without force raises WorktreeDirtyError."""
+        from selfmod_worktree import SelfmodWorktree, WorktreeDirtyError
+
+        repo = _create_throwaway_repo(tmp_path)
+        worktree_path = tmp_path / "selfmod-worktree"
+
+        sw = SelfmodWorktree(repo, worktree_path)
+        sw.create()
+
+        # Make an uncommitted change.
+        (worktree_path / "dirty.txt").write_text("uncommitted", encoding="utf-8")
+
+        with pytest.raises(WorktreeDirtyError) as exc_info:
+            sw.remove()
+
+        assert worktree_path in [exc_info.value.worktree_path]
+        assert "dirty.txt" in exc_info.value.dirty_files
+
+    def test_remove_dirty_worktree_with_force(self, tmp_path: Path) -> None:
+        """Force-removing a dirty worktree succeeds and discards changes."""
+        from selfmod_worktree import SelfmodWorktree
+
+        repo = _create_throwaway_repo(tmp_path)
+        worktree_path = tmp_path / "selfmod-worktree"
+
+        sw = SelfmodWorktree(repo, worktree_path)
+        sw.create()
+
+        # Make an uncommitted change.
+        (worktree_path / "dirty.txt").write_text("uncommitted", encoding="utf-8")
+
+        sw.remove(force=True)
+
+        assert not worktree_path.exists()
+
+    def test_remove_nonexistent_worktree_is_noop(self, tmp_path: Path) -> None:
+        """Removing a worktree that doesn't exist is a no-op."""
+        from selfmod_worktree import SelfmodWorktree
+
+        repo = _create_throwaway_repo(tmp_path)
+        worktree_path = tmp_path / "selfmod-worktree"
+
+        sw = SelfmodWorktree(repo, worktree_path)
+        # Don't create — just remove.
+        sw.remove()  # Should not raise.
