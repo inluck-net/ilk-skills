@@ -221,12 +221,13 @@ operator step — `/ilk-ship` prepares the release; it does not push.
 **Exit:** install attempted on each declared host.
 
 **Per-host reporting.** Phase 4 reports per host with one of exactly
-three states:
+four states:
 
 | State | Meaning |
 |---|---|
-| `ok` | Install succeeded **and** all daemons are current. |
-| `stale-daemon` | Install succeeded but at least one daemon holds stale code. |
+| `ok` | Install succeeded, all daemons are current, **and** (when `--require-tag` is set) the daemon code resolves to the required release tag. |
+| `tag-mismatch` | The daemon's recorded sha does not resolve to the required release tag (when `--require-tag` is set). A sha that resolves to no tag at all is not-conformant (fail closed). |
+| `stale-daemon` | Install succeeded but at least one daemon holds stale code (and the tag matches, if checked). |
 | `unreachable` | Could not probe the host (ssh failed, launchctl absent, script missing). |
 
 **A stale daemon blocks `ok`.** Phase 4 never reports success for a
@@ -234,9 +235,10 @@ host it did not reach, and a host with new code installed and an old
 daemon running is not deployed. Detection uses the resolver script:
 
 ```bash
-# Single-host (detect-only):
+# Single-host (detect-only, release-conformance check):
 python3 skills/ilk-ship/scripts/host_deploy_status.py \
-  --bouncer skills/ilk-watchdog/scripts/bounce_daemons.sh
+  --bouncer skills/ilk-watchdog/scripts/bounce_daemons.sh \
+  --require-tag v0.9.87
 
 # Multi-host. --local-host names the declared host that IS this machine;
 # every other host is reached over ssh, so ITS --bouncer path is the path on
@@ -244,14 +246,20 @@ python3 skills/ilk-ship/scripts/host_deploy_status.py \
 python3 skills/ilk-ship/scripts/host_deploy_status.py \
   --bouncer skills/ilk-watchdog/scripts/bounce_daemons.sh \
   --bouncer /Users/chad/Projects/github/inluck-net/ilk-skills/skills/ilk-watchdog/scripts/bounce_daemons.sh \
-  --hosts chad-mbp,rezmac --local-host chad-mbp
+  --hosts chad-mbp,rezmac --local-host chad-mbp \
+  --require-tag v0.9.87
 ```
 
 Add `--bounce-hosts` to permit actual bouncing (omit for detect-only).
+Add `--require-tag <tag>` to enforce release conformance — a host whose
+daemon code does not resolve to the given tag reports `tag-mismatch`
+instead of `ok`. A sha that resolves to no tag is not-conformant (fail
+closed). Omit for the default three-state check.
+
 In single-host mode the script prints one line (`ok` / `stale-daemon` /
-`unreachable`) and exits 0 / 1 / 2 respectively. In multi-host mode it
-prints one `<host>: <state> (<transport>)` line per declared host and exits 0
-only if every host is `ok`.
+`tag-mismatch` / `unreachable`) and exits 0 / 1 / 1 / 2 respectively.
+In multi-host mode it prints one `<host>: <state> (<transport>)` line per
+declared host and exits 0 only if every host is `ok`.
 
 **`--local-host` is not optional in practice.** A deploy label rarely matches
 a hostname — on this Mac the declared hosts are `chad-mbp` and `rezmac` while
@@ -265,9 +273,18 @@ that from a real deploy; it was caught only because rezmac's scheduler pid was
 unchanged from two days earlier. Each line now names its transport so the
 report can be audited.
 
-This is the second false-`ok` in this resolver — see v0.9.74, where a failed
-`bootstrap` also read as `ok`. Both had the same shape: a state that asserts
-"checked and current" returned on a path that checked nothing.
+This is the third false-`ok` in this resolver — the family:
+
+| release | what returned `ok` | what it had not checked |
+|---|---|---|
+| v0.9.74 | a host whose `bootstrap` had failed | that the daemon came back |
+| v0.9.87 | a host that was never contacted | that ssh happened at all |
+| this one | a host at an older tag | that the host is on the release |
+
+Same shape each time: a state meaning "checked and current" returned on a
+path that did not check the thing that matters. The regression test
+(`test_false_ok_family.py`) names the family, not the instance — the next
+false-`ok` should be recognised as a fourth member, not a novelty.
 
 The `hosts` field in the `ship:` block is declarative data — Phase 4
 acts on it. Every declared host appears in the summary; a host missing
