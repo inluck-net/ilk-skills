@@ -1,9 +1,9 @@
 # Unattended self-improvement (future work)
 
-**Status**: **not built.** Every stage exists in some form; the pipeline is
-gated at two deliberate human points (`draft`, `supervised_only`) and blocked
-at one structural point (the self-modification race, below).
-**Last touched**: 2026-09-07
+**Status**: **partially built.** Every stage exists in some form; the pipeline is
+gated at two deliberate human points (`draft`, `supervised_only`). Blocker 1
+(self-modification race) has machinery built but not wired; blockers 2-3 remain.
+**Last touched**: 2026-09-08
 **Origin**: asked directly after a session that carried an ilk-skills defect
 from discovery through two releases and a two-host deploy, entirely by hand —
 v0.9.86 (verification attribution) and v0.9.87 (Phase 4 ssh). The question was
@@ -91,6 +91,15 @@ consumer loop is live; otherwise queue the merge.
 
 Note this also changes what "deploy" means for the toolkit: the merge to the
 clone *is* the deploy on the host holding it, which is why Blocker 3 matters.
+
+**Machinery status (2026-09-08):** `selfmod_worktree.py` implements the
+worktree lifecycle (create/reuse/remove), liveness detection via `pgrep`
+(fail-closed: unknown liveness ⇒ do not merge), merge under an exclusive
+lock with branch-movement detection, and `MergeBlockedError` /
+`BranchMovedError` / `WorktreeDirtyError` for every failure mode.
+The module is tested (14 tests, `test_selfmod_worktree.py`), but **the loop
+is not yet wired to it** — the cutover is a separate step taken when no
+batch is in flight. See sub-plan `a-selfmod-batch-runs-in-a-worktree`.
 
 **The lock is only half of it: the exclusivity mechanism must not mistake a
 collaborator for an intruder.** A worktree plus a merge lock answers "is anyone
@@ -208,7 +217,7 @@ rather than a matter of confidence.
 3. `suite_timing.py` — serial vs `-n N` with **outcome-set equality gating
    speed**, writing a dated artifact. Settles whether the declared invocations
    on both projects are correct at all.
-4. Worktree isolation + merge lock for self-modifying batches (Blocker 1).
+4. Worktree isolation + merge lock for self-modifying batches (Blocker 1). **Machinery built; cutover still open.**
 5. A deploy state that names the tag, not just daemon freshness (Blocker 3).
 
 ## See also
