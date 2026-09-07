@@ -92,6 +92,39 @@ consumer loop is live; otherwise queue the merge.
 Note this also changes what "deploy" means for the toolkit: the merge to the
 clone *is* the deploy on the host holding it, which is why Blocker 3 matters.
 
+**The lock is only half of it: the exclusivity mechanism must not mistake a
+collaborator for an intruder.** A worktree plus a merge lock answers "is anyone
+else running". It does not answer "did someone else legitimately touch this
+branch while I was working". A consumer project supplied the first measured
+instance on 2026-09-07: its resolver flags any branch commit whose author email
+differs from the single identity it resolves for itself, and the automation and
+the human behind it commit under two different addresses of the *same* account
+(a noreply address and a work address). A human resolving a merge conflict
+therefore read as a hostile takeover — and the stand-down path was wired to an
+irreversible outward action, which closed a green ten-commit PR.
+
+Two rules fall out, and they generalise past that project:
+
+- **A collaborator is not an intruder.** Any guard that decides ownership from a
+  single identity is wrong the moment a second legitimate actor exists, and
+  "another agent will resolve it anyway" is the standing expectation here.
+  Ownership needs a *set* of trusted identities, or a marker that does not
+  depend on authorship at all.
+- **Never wire an uncertain verdict to an irreversible action.** A wrong
+  takeover verdict is survivable; a wrong verdict that closes a PR is not. Make
+  the stand-down reversible before making the guard smarter — the ordering
+  matters, because a smarter guard still has a failure rate.
+
+Whether the toolkit should own a trusted-identity model is **open and not
+decided here.** Measured 2026-09-07: 0 of 412 `.py`/`.md`/`.sh` files under
+`skills/`, `commands/` and `docs/` carry any commit-author-identity concept, and
+0 carry a takeover or foreign-claim concept — claim/stand-down is a consumer
+product concept, and the toolkit's own exclusivity is process-level
+(`ilk_run_lock.py`, an flock held across exec, plus the scheduler's per-project
+sentinel mutex). Building a toolkit-level identity model on one instance would
+be abstracting ahead of the second consumer. Recorded here so that when a second
+one appears, the promotion is a decision with prior art rather than a rediscovery.
+
 ## Blocker 2 — Phase 1 must actually run
 
 Both Phase 1 engines were unavailable for **both** releases that day:
