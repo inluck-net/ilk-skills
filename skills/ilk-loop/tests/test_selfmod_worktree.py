@@ -272,3 +272,136 @@ class TestWorktreeLifecycle:
         sw = SelfmodWorktree(repo, worktree_path)
         # Don't create — just remove.
         sw.remove()  # Should not raise.
+
+
+# ── Step 3: Merge under a lock, or queue ────────────────────────────────────
+
+import fcntl
+
+
+class TestMergeUnderLock:
+    """Merge acquires an exclusive lock; contention queues, not spins."""
+
+    def test_merge_acquires_lock(self, tmp_path: Path) -> None:
+        """Merge with a lock path acquires the lock before merging."""
+        from selfmod_worktree import SelfmodWorktree
+
+        repo = _create_throwaway_repo(tmp_path)
+        worktree_path = tmp_path / "selfmod-worktree"
+        lock_path = tmp_path / "merge.lock"
+
+        sw = SelfmodWorktree(repo, worktree_path)
+        sw.create()
+
+        # Make a commit in the worktree.
+        (worktree_path / "new.txt").write_text("locked merge", encoding="utf-8")
+        subprocess.run(["git", "add", "new.txt"], cwd=worktree_path,
+                      check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "add new"],
+                      cwd=worktree_path, check=True, capture_output=True)
+
+        with patch("selfmod_worktree._find_live_ilk_pids", return_value=[]):
+            sw.merge_back(lock_path=lock_path)
+
+        # Verify the lock was released (file not held).
+        fd = open(lock_path, "w")  # noqa: SIM115
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # If we get here, the lock was released.
+        finally:
+            fd.close()
+
+    def test_merge_blocked_when_lock_held(self, tmp_path: Path) -> None:
+        """If another process holds the lock, merge raises instead of spinning."""
+        from selfmod_worktree import SelfmodWorktree
+
+        repo = _create_throwaway_repo(tmp_path)
+        worktree_path = tmp_path / "selfmod-worktree"
+        lock_path = tmp_path / "merge.lock"
+
+        sw = SelfmodWorktree(repo, worktree_path)
+        sw.create()
+
+        # Make a commit in the worktree.
+        (worktree_path / "new.txt").write_text("locked merge", encoding="utf-8")
+        subprocess.run(["git", "add", "new.txt"], cwd=worktree_path,
+                      check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "add new"],
+                      cwd=worktree_path, check=True, capture_output=True)
+
+        # Hold the lock from "another process".
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        held_fd = open(lock_path, "w")  # noqa: SIM115
+        fcntl.flock(held_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        try:
+            with patch("selfmod_worktree._find_live_ilk_pids", return_value=[]):
+                with pytest.raises(RuntimeError, match="Could not acquire lock"):
+                    sw.merge_back(lock_path=lock_path)
+        finally:
+            held_fd.close()
+
+
+class TestBranchMovement:
+    """Merge detects when the target branch moved since worktree creation."""
+
+    def test_merge_blocked_when_branch_moved(self, tmp_path: Path) -> None:
+        """If HEAD moved since worktree creation, merge raises BranchMovedError."""
+        from selfmod_worktree import SelfmodWorktree, BranchMovedError
+
+        repo = _create_throwaway_repo(tmp_path)
+        worktree_path = tmp_path / "selfmod-worktree"
+
+        sw = SelfmodWorktree(repo, worktree_path)
+        sw.create()
+
+        # Make a commit in the worktree.
+        (worktree_path / "wt-file.txt").write_text("worktree", encoding="utf-8")
+        subprocess.run(["git", "add", "wt-file.txt"], cwd=worktree_path,
+                      check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "worktree commit"],
+                      cwd=worktree_path, check=True, capture_output=True)
+
+        # Move HEAD in the main repo (simulating another process).
+        (repo / "main-file.txt").write_text("main", encoding="utf-8")
+        subprocess.run(["git", "add", "main-file.txt"], cwd=repo,
+                      check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "main repo commit"],
+                      cwd=repo, check=True, capture_output=True)
+
+        with patch("selfmod_worktree._find_live_ilk_pids", return_value=[]):
+            with pytest.raises(BranchMovedError) as exc_info:
+                sw.merge_back()
+
+            assert exc_info.value.branch == "selfmod-batch"
+
+    def test_merge_skips_branch_check_when_disabled(self, tmp_path: Path) -> None:
+        """With check_branch=False, merge proceeds even if HEAD moved."""
+        from selfmod_worktree import SelfmodWorktree
+
+        repo = _create_throwaway_repo(tmp_path)
+        worktree_path = tmp_path / "selfmod-worktree"
+
+        sw = SelfmodWorktree(repo, worktree_path)
+        sw.create()
+
+        # Make a commit in the worktree.
+        (worktree_path / "wt-file.txt").write_text("worktree", encoding="utf-8")
+        subprocess.run(["git", "add", "wt-file.txt"], cwd=worktree_path,
+                      check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "worktree commit"],
+                      cwd=worktree_path, check=True, capture_output=True)
+
+        # Move HEAD in the main repo.
+        (repo / "main-file.txt").write_text("main", encoding="utf-8")
+        subprocess.run(["git", "add", "main-file.txt"], cwd=repo,
+                      check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "main repo commit"],
+                      cwd=repo, check=True, capture_output=True)
+
+        with patch("selfmod_worktree._find_live_ilk_pids", return_value=[]):
+            # Should succeed because branch check is disabled.
+            sw.merge_back(check_branch=False)
+
+        # The worktree change landed via cherry-pick.
+        assert (repo / "wt-file.txt").exists()
