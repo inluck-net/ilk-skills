@@ -3177,6 +3177,41 @@ def lint_verification_attribution_unmeasured(text: str, slug: str) -> list[str]:
     return findings
 
 
+# -- Batch verification: suite command resolved, not restated ----------------
+#
+# Both wrong full-suite runs on 2026-09-07 came from hand-typing a pytest
+# invocation.  ``ship_audit._resolve_expected_invocation`` composes the one
+# true command from ``ship.suite.command + flags``.  A verification sub-plan
+# that restates a command in prose or a gate is a copy that can drift.
+#
+# Fires ONLY on sub-plans declaring ``batch_verification: true``; change-scoped
+# sub-plans legitimately name specific test files.
+
+_PYTEST_INVOCATION_RE = re.compile(r"\bpy\.?test\b", re.I)
+_RESOLVER_REFERENCE_RE = re.compile(r"_resolve_expected_invocation")
+
+
+def lint_verification_subplan_hardcodes_suite(text: str, slug: str) -> list[str]:
+    """Flag a batch-verification sub-plan that hand-types a pytest invocation."""
+    findings: list[str] = []
+    if not _has_batch_verification_marker(text):
+        return findings
+    if not _PYTEST_INVOCATION_RE.search(text):
+        return findings
+    if _RESOLVER_REFERENCE_RE.search(text):
+        return findings
+    findings.append(
+        f"HARD {slug}: batch-verification sub-plan contains a pytest "
+        f"invocation that is not resolved via "
+        f"``ship_audit._resolve_expected_invocation``.  A hand-typed "
+        f"command is a copy that can drift from the project's declared "
+        f"``ship.suite`` — the defect that produced two wrong full-suite "
+        f"runs on 2026-09-07.  Resolve the invocation instead of restating "
+        f"it; see ``ship_audit._resolve_expected_invocation``."
+    )
+    return findings
+
+
 ALL_CHECKS = (
     lint_gate_budget,
     lint_verification_attribution_unmeasured,
@@ -3206,6 +3241,7 @@ ALL_CHECKS = (
     lint_exit_status_discarded,
     lint_broken_process_wait,
     lint_wholesuite_gate_outside_verification_subplan,
+    lint_verification_subplan_hardcodes_suite,
 )
 
 
