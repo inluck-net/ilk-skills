@@ -64,10 +64,74 @@ Findings, and the next iteration retries. The bound is
 `quarantine_subplan.py`'s threshold of 2 — two confirmed reds flip the
 sub-plan to `status: blocked` with the failures named.
 
+## The at-base rerun — the only thing that exonerates a failure
+
+The attribution rule has three terms, and two of them are free: "fails now"
+comes from the suite output and `baseline_red` is a list on disk. **The middle
+term — "passed at the batch's base commit" — is the only one that requires an
+act, and it is the one that gets skipped.** Skipping it does not leave the
+question open; it leaves it to be answered by argument, and an agent asked to
+argue about its own batch will find a reason.
+
+So: **a failure is exonerated by a measurement, never by an explanation.** For
+every failing node id, re-run *that node id* at `base_sha` in a detached
+worktree:
+
+```bash
+BASE_SHA=<the master's recorded base_sha>
+WT="$(mktemp -d)/base-wt"
+git worktree add --detach "$WT" "$BASE_SHA"
+( cd "$WT" && <suite runner> <failing node id> [<failing node id> ...] )
+git worktree remove --force "$WT"
+```
+
+This is cheap — it is the failing selection, not the suite. Measured on
+gh-resolve batch-2026-09-07: **2 failing node ids, 0.14s at base.** The
+narrative that replaced it that day cost 43s of reasoning and five greps, and
+was wrong on both failures.
+
+Record the outcome as a table in the record file, one row per failing node id,
+under the exact heading `## At-base rerun` (step 1's gate parses it):
+
+```markdown
+## At-base rerun
+
+Base: <base_sha> · worktree: detached · command: <suite runner> <node ids>
+
+| node id | at base | in baseline_red | attributed |
+|---|---|---|---|
+| tests/test_foo.py::test_bar | passed | no | YES |
+| tests/test_baz.py::test_qux | failed | no | no |
+```
+
+- `at base: passed` and not in `baseline_red` ⇒ **attributed**. There is no
+  third column that makes it not-attributed.
+- `at base: failed` ⇒ not attributed, and the row is its own evidence. Add it
+  to `baseline_red` if it will keep failing.
+- **The table must have exactly one row per failure.** Step 1's gate asserts
+  `rows == failed`, so a record that reports 2 failures and explains them in
+  prose cannot pass.
+
+**No prose overturns a row.** "Environmental", "pre-existing", "flaky",
+"a line-number shift", "the batch did not touch that file" are hypotheses about
+*why* a test broke — they are the beginning of the fix, not grounds to set the
+count to zero. If one of them is true, the rerun says so: the test fails at base
+too. If the rerun says it passed at base, the batch broke it, and which commit
+did it is found by `git bisect`, not by reading the diff and forming a view.
+
+**A project-specific amnesty binds to `failed == 0`, never to the exit code
+alone.** Some projects have a known non-zero exit with an empty failure list — a
+host-level guard tripping on a live mutation, say. Where this sub-plan documents
+one, it must say so as `exit != 0 AND failed == 0`, because an amnesty written
+about the exit code is an amnesty an agent will apply to a run with real
+failures. That happened on gh-resolve batch-2026-09-07: the sub-plan carried a
+section headed "exit 1 with zero failures is not a regression", the run recorded
+`Failed | 2`, and the section was invoked anyway.
+
 ## Objectives
 
 1. Run the full test suite for this batch.
-2. Record the result and the base-commit comparison.
+2. Re-run every failing node id at `base_sha` and record the verdicts.
 3. Fix every attributed failure until zero remain.
 
 ## Steps
@@ -83,11 +147,20 @@ local_checks:
 - Run the project's full test suite (from `.ilk-launch.json` → `ship.suite`,
   or `python3 -m pytest --timeout=60 --timeout-method=signal` if unconfigured).
 - Record the result: which tests failed, which passed, which were skipped.
-- Compare against the batch's base commit to identify attributed regressions:
-  tests that fail now but passed at the base commit.
+- **Re-run every failing node id at the base commit** and write the
+  `## At-base rerun` table — see "The at-base rerun" above. Do this even when
+  the failure looks obviously unrelated; that judgment is exactly what the
+  rerun exists to replace. When the suite is green the table is empty and says
+  so (`_(no failures)_`).
 - **Reuse the base-commit baseline when it already exists.** The base sha is
   fixed for the batch and identical on every host, so re-measuring it from
   scratch each batch pays a full suite run to learn something already known.
+  **This cached baseline does not replace the at-base rerun.** It is the
+  aggregate — counts, and a failure list that is normally empty. An empty
+  baseline failure list is not evidence that a failing test passed at base; it
+  is the reason every failure is attributed by default, and the rerun is what
+  confirms it per node id. Reading `failed: 0` out of the cache and reasoning
+  from there is the shortcut that shipped gh-resolve batch-2026-09-07 green.
   Look for `<external logs>/verification/baseline-<base-sha>.json` first; only
   measure when it is absent, and write it back at that sha-keyed path:
   **Resolve the base from where the BATCH began, not from the branch it
@@ -142,6 +215,14 @@ local_checks:
   verification_dir.mkdir(parents=True, exist_ok=True)
   ```
   Write `<batch-slug>-baseline.md` and `<batch-slug>-batch.md` to that directory.
+- **Write the record with `Path.write_text`, never a shell heredoc.** An
+  unquoted heredoc command-substitutes every backtick in the prose, and a
+  verification record is nothing but backticked file paths and test names. On
+  gh-resolve batch-2026-09-07 this silently emptied every `**File:**` field and
+  spliced the whole of `gh --help` into an error field, because the prose said
+  "the monkeypatch captures `gh` calls". The one artifact a human reads was
+  mangled precisely where its evidence belonged. If a heredoc is unavoidable,
+  quote the delimiter (`<<'EOF'`).
 - **Commit an empty marker** (the record lives outside the repo):
   `git commit --allow-empty -m "test(verify): record full suite result for <batch-slug> [plan:<slug>#step-0]"`
 - The gate asserts **the external record exists and is non-empty**, not that the
@@ -152,25 +233,38 @@ local_checks:
 
 ```yaml
 local_checks:
-  - command: "<assert zero attributed failures; see the no-op rule below>"
+  - command: "python3 <path>/verify_attribution.py <record path>"
     timeout: <suite timeout>
 ```
 
-- **When step 0 recorded zero attributed failures, this step is a NO-OP.**
-  Do not re-run the suite. Step 0 already ran it, on this same tree, and
-  recorded the result; a second identical run answers no new question and is
-  a third full suite for the batch. Assert against step 0's record instead,
-  commit the empty marker, and move on:
+The gate **re-derives** the verdict from step 0's `## At-base rerun` table. It
+must NOT grep the record for a sentence like `Attributed regressions: 0` — that
+number is a conclusion the same agent wrote in the same breath as the failures
+it was excusing, so a gate that reads it is a self-graded exam. Assert three
+things, all of them measurements:
+
+1. The record exists and is non-empty. **Missing ⇒ fail**, never skip.
+2. It carries an `## At-base rerun` section, and that section has **exactly one
+   row per failure** the record reports (`rows == failed`). This is the load-
+   bearing assertion: it is what makes "2 failures, explained in prose, count 0"
+   impossible.
+3. **No row is marked attributed.** A row reading `passed | no | YES` is red.
+
+- **When the table attributes nothing, this step is a NO-OP.** Do not re-run the
+  suite — step 0 already ran it on this same tree, and a second identical run
+  answers no new question. Commit the empty marker and move on:
   ```
   git commit --allow-empty -m "fix(verify): no attributed regressions [plan:<slug>#step-1]"
   ```
-  The gate must still READ the step-0 record and assert it says zero — a step
-  that skips without checking anything is not a no-op, it is an unverified
-  pass, and "no record found" must fail rather than skip.
-- Otherwise — step 0 attributed at least one failure — fix every failure
-  attributed to this batch (fails now, passed at base commit, not in
-  `baseline_red`), and the gate re-runs the full suite asserting **zero
-  attributed failures**.
+- Otherwise — the table attributes at least one failure — fix each one, re-run
+  the suite, re-run the failing selection at base, and update the table. Find
+  the culprit commit with `git bisect` over the batch's own commits; on
+  gh-resolve batch-2026-09-07 that was four reruns of one 0.07s test and it
+  named the commit exactly. Do not infer it from the diff.
+- **Never make a test pass by weakening it.** If a test from this batch blocks a
+  correct fix, read it — it may be the test that is wrong, in which case update
+  it to the new contract with a comment saying why. That judgment goes in
+  Findings.
 - Red gate ⇒ retried next iteration (current_step stays at 1).
 - Two confirmed reds ⇒ `status: blocked`, naming the failures.
 - Commit: `fix(verify): resolve attributed regressions [plan:<slug>#step-1]`
@@ -184,3 +278,7 @@ _(filled by the loop during execution)_
 - `skills/ilk-ship/SKILL.md` Phase 1-2 — baseline-diff and attributed regressions.
 - `skills/ilk-loop/scripts/quarantine_subplan.py` — the bound on the fix loop.
 - `.ilk-launch.json` — `ship.suite` command and `baseline_red` list.
+- `skills/ilk-loop/scripts/wait_for_background_output.sh` — how to read a long
+  gate's output without re-launching it.
+- `plan_lint.py` → `lint_verification_attribution_unmeasured` — the HARD finding
+  that rejects this sub-plan if the at-base rerun is dropped when it is authored.

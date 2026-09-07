@@ -476,14 +476,39 @@ Once approved, write all files in one batch under the
      the same entry.
   2. **Step 1 is a no-op when step 0 attributed nothing.** Step 0 already ran
      the suite on this same tree. The step-1 gate must still READ step 0's
-     record and assert it says zero — skipping without checking is an
-     unverified pass, not a no-op, and "no record found" must fail.
+     record — skipping without checking is an unverified pass, not a no-op,
+     and "no record found" must fail.
 
   A verification sub-plan that re-measures a cached baseline, or re-runs the
   suite in step 1 after a clean step 0, is a lint-worthy waste even though it
   is not wrong. Iteration count is the real budget: on that batch a single
   avoided iteration was worth roughly four full-suite runs, because wall
   clock was dominated by model latency, not tests.
+
+  **But carry the template's at-base rerun too, and do not let cost control
+  eat it.** The two items above are about not paying for a suite twice. The
+  rerun is not a suite: it is the failing node ids only, and it is the one
+  thing that makes the verdict a measurement. What the sub-plan must contain:
+
+  3. **An `## At-base rerun` section**, with `git worktree add --detach` and a
+     one-row-per-failure table (`node id | at base | in baseline_red |
+     attributed`). Absent ⇒ HARD finding
+     (`lint_verification_attribution_unmeasured`).
+  4. **A step-1 gate that re-derives the verdict from that table** —
+     `rows == failed` and no row attributed. It must NOT grep the record for a
+     rendered `Attributed regressions: N` count. That count is a sentence the
+     same agent wrote while excusing the failures, so a gate that reads it is
+     a self-graded exam ⇒ HARD finding.
+
+  Measured on gh-resolve batch-2026-09-07, which had items 1 and 2 and neither
+  3 nor 4: the suite came back 2 failed of 4454, the record argued both
+  failures were "environmental" and "pre-existing", the gate read back its own
+  `Attributed regressions: 0`, and the batch shipped green. Both node ids pass
+  at the base commit — 2 passed in 0.14s in a detached worktree — so both were
+  attributed under the sub-plan's own stated rule. The rerun that would have
+  caught it cost less than a second; the reasoning that replaced it cost 43s
+  and was wrong on both. Cost control is why the rerun is scoped to the
+  failing selection, not a reason to skip it.
 
 - One file per sub-plan: `<external_plans_dir>/YYYY-MM-DD-<slug>.md`, derived from
   `<skill-root>/ilk-loop/templates/subplan-template.md`. Fill in

@@ -3087,8 +3087,99 @@ def lint_wholesuite_gate_outside_verification_subplan(text: str, slug: str) -> l
     return findings
 
 
+# -- Batch verification: attribution asserted rather than measured -----------
+#
+# The attribution rule has three terms.  "fails now" comes free from the suite
+# output; "not in baseline_red" is a list on disk.  The middle term -- "passed
+# at the batch's base commit" -- is the only one that costs an action, and it
+# is therefore the one that gets dropped.  Dropping it does not leave the
+# question open: it leaves it to be settled by argument, and an agent arguing
+# about its own batch finds a reason.
+#
+# Measured on gh-resolve batch-2026-09-07.  The authored verification sub-plan
+# stated the rule in prose and required no rerun.  The suite came back 2 failed
+# / 4450 passed of 4454; the record said "Attributed regressions: 0" and the
+# batch shipped.  Both node ids pass at the base commit -- 2 passed in 0.14s in
+# a detached worktree -- so both were attributed under the sub-plan's own rule.
+# The exonerating prose was falsifiable from the assertion output it quoted:
+# one failure's paired stale/undocumented line lists were offset by exactly the
+# batch's own per-file line delta (claim.py +145, reap.py +11), and the other
+# was bisected to the batch's first work commit in four 0.07s runs.
+#
+# Two findings, both HARD:
+#   (a) no at-base rerun -- the sub-plan carries no ``## At-base rerun``
+#       section, or no worktree mechanism to produce one.
+#   (b) a self-graded gate -- a local_check that greps the record for the
+#       rendered prose count (``Attributed regressions: N``) instead of
+#       re-deriving from the rerun table.  That number is a conclusion the same
+#       agent wrote in the same breath as the failures it was excusing.
+#
+# Fires ONLY on sub-plans declaring ``batch_verification: true``; every other
+# sub-plan stays change-scoped and owes no baseline comparison.
+
+_AT_BASE_RERUN_HEADING_RE = re.compile(r"^#{2,4}\s+At-base rerun\b", re.M | re.I)
+_AT_BASE_WORKTREE_RE = re.compile(r"git\s+worktree\s+add", re.I)
+# The rendered prose count in a record file -- note the colon.  Does not match
+# a script named check_attributed_regressions.py (underscore, no colon).
+#
+# The leading "a" is deliberately omitted from the pattern: the gate this
+# catches is itself a regex, and the real one on gh-resolve batch-2026-09-07
+# spelled it "[Aa]ttributed regressions?:" to be case-insensitive, so a literal
+# ``attributed`` never matched. Anchoring on "ttributed" covers "attributed",
+# "Attributed", "[Aa]ttributed" and "[aA]ttributed" alike. ``\??`` likewise
+# absorbs the literal "?" in the caught gate's own ``regressions?`` quantifier.
+_PROSE_ATTRIBUTION_COUNT_RE = re.compile(r"ttributed\s+regressions?\??\s*:", re.I)
+
+
+def lint_verification_attribution_unmeasured(text: str, slug: str) -> list[str]:
+    """Flag a batch-verification sub-plan whose attribution is argued, not measured."""
+    findings: list[str] = []
+    if not _has_batch_verification_marker(text):
+        return findings
+
+    body = _strip_frontmatter(text)
+    has_heading = bool(_AT_BASE_RERUN_HEADING_RE.search(body))
+    has_worktree = bool(_AT_BASE_WORKTREE_RE.search(body))
+    if not (has_heading and has_worktree):
+        missing = []
+        if not has_heading:
+            missing.append("no `## At-base rerun` section")
+        if not has_worktree:
+            missing.append("no `git worktree add` rerun mechanism")
+        findings.append(
+            f"HARD {slug}: batch-verification sub-plan does not MEASURE "
+            f"attribution ({'; '.join(missing)}). The attribution rule's middle "
+            f"term -- 'passed at the batch's base commit' -- is the only one "
+            f"that costs an action, so it is the one that gets replaced by "
+            f"reasoning about whether a failure 'looks related'. Re-run every "
+            f"failing node id at `base_sha` in a detached worktree "
+            f"(`git worktree add --detach`) and record one row per failure "
+            f"under a `## At-base rerun` heading. On gh-resolve "
+            f"batch-2026-09-07 the missing rerun was 0.14s for 2 node ids, and "
+            f"the prose that replaced it shipped a batch with 2 real "
+            f"regressions marked green. See "
+            f"templates/batch-verification-subplan.md."
+        )
+
+    for cmd in _extract_all_local_checks_commands(text):
+        if _PROSE_ATTRIBUTION_COUNT_RE.search(cmd):
+            findings.append(
+                f"HARD {slug}: local_check '{cmd.strip()[:80]}' asserts the "
+                f"batch verdict by reading the record's rendered "
+                f"'Attributed regressions: N' count. That number is a "
+                f"conclusion the same agent wrote, so the gate is a "
+                f"self-graded exam and passes whenever the agent talked itself "
+                f"into zero. Re-derive instead: assert the `## At-base rerun` "
+                f"table has exactly one row per reported failure "
+                f"(`rows == failed`) and that no row is marked attributed."
+            )
+
+    return findings
+
+
 ALL_CHECKS = (
     lint_gate_budget,
+    lint_verification_attribution_unmeasured,
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
     lint_contract_change_review,
