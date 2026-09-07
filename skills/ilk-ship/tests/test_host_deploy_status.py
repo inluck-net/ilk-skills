@@ -297,7 +297,7 @@ class TestResolveHosts:
             h: (["fresh: scheduler — fresh (toolkit_head matches HEAD)"], 0)
             for h in hosts
         })
-        result = resolve_hosts(hosts, bouncer, tmp_path)
+        result = resolve_hosts(hosts, bouncer, tmp_path, local_hosts=hosts)
         assert list(result.keys()) == hosts, (
             f"Expected keys {hosts} in order, got {list(result.keys())}. "
             "A host missing from the report is indistinguishable from a passing one."
@@ -312,7 +312,7 @@ class TestResolveHosts:
             "rezmac": (["stale: scheduler — stale (recorded abc123, HEAD def456) (would bounce)"], 0),
             "devbox": (["unreachable: scheduler (plist=0 loaded=0)"], 2),
         })
-        result = resolve_hosts(hosts, bouncer, tmp_path)
+        result = resolve_hosts(hosts, bouncer, tmp_path, local_hosts=hosts)
         assert result["chad-mbp"] == "ok"
         assert result["rezmac"] == "stale-daemon"
         assert result["devbox"] == "unreachable"
@@ -329,7 +329,7 @@ class TestResolveHosts:
                 ], exit_code=0,
             )
         )
-        result = resolve_hosts(hosts, bouncer, tmp_path)
+        result = resolve_hosts(hosts, bouncer, tmp_path, local_hosts=hosts)
         assert result["chad-mbp"] == "ok"
         assert result["rezmac"] == "unreachable"
         assert len(result) == 2, "unreachable host must still appear in the result"
@@ -354,7 +354,7 @@ class TestResolveHosts:
                 ], exit_code=0,
             )
 
-        result = resolve_hosts(hosts, bouncer, tmp_path)
+        result = resolve_hosts(hosts, bouncer, tmp_path, local_hosts=hosts)
         assert "rezmac" in result, "raising host must still appear in the result"
         assert result["rezmac"] == "unreachable"
 
@@ -377,7 +377,9 @@ class TestResolveHosts:
         # The postcondition assertion in resolve_hosts should detect the drop.
         # A host that produces no recognised output resolves to 'unreachable',
         # so the mapping must still have 3 entries — the test verifies that.
-        result = resolve_hosts(hosts, skipping_bouncer, tmp_path)
+        result = resolve_hosts(
+            hosts, skipping_bouncer, tmp_path, local_hosts=hosts,
+        )
         assert len(result) == 3, (
             f"Expected 3 hosts in result, got {len(result)}. "
             "A host dropped by the resolver is indistinguishable from a passing one."
@@ -815,6 +817,11 @@ class TestCliEntryPoint:
             )
             cmd.extend(["--bouncer", str(fake)])
         cmd.extend(["--hosts", ",".join(hosts)])
+        # The fakes are local scripts, so every host must be declared local --
+        # otherwise the CLI correctly ssh's them and every state is
+        # 'unreachable'.
+        for host in hosts:
+            cmd.extend(["--local-host", host])
         return subprocess.run(
             cmd,
             capture_output=True, text=True, timeout=30,
@@ -832,8 +839,8 @@ class TestCliEntryPoint:
         assert result.returncode == 0, result.stderr
         lines = result.stdout.strip().splitlines()
         assert len(lines) == 2
-        assert lines[0] == "chad-mbp: ok"
-        assert lines[1] == "rezmac: ok"
+        assert lines[0] == "chad-mbp: ok (local)"
+        assert lines[1] == "rezmac: ok (local)"
 
     def test_multi_host_mixed_states(self, tmp_path: Path) -> None:
         """AC-6: mixed states → per-host lines, exits 1 (not all ok)."""
@@ -847,9 +854,9 @@ class TestCliEntryPoint:
         assert result.returncode == 1
         lines = result.stdout.strip().splitlines()
         assert len(lines) == 3
-        assert "chad-mbp: ok" in lines[0]
-        assert "rezmac: stale-daemon" in lines[1]
-        assert "devbox: unreachable" in lines[2]
+        assert "chad-mbp: ok (local)" in lines[0]
+        assert "rezmac: stale-daemon (local)" in lines[1]
+        assert "devbox: unreachable (local)" in lines[2]
 
     def test_multi_host_one_unreachable_exits_nonzero(self, tmp_path: Path) -> None:
         """AC-6: one unreachable → exit 1, not 0."""
@@ -897,3 +904,311 @@ class TestSkillDocNamesTheScript:
             f"Phase 4 section does not contain '{_SCRIPT_REL_PATH}'. "
             "The anti-drift gate requires Phase 4 to name the resolver script."
         )
+
+
+# ---------------------------------------------------------------------------
+# AC-8..AC-13: a remote host is actually reached
+#
+# Until 2026-09-07 this module contained no ssh -- 0 occurrences in its 246
+# lines, and 0 in bounce_daemons.sh's 244 -- so resolve_hosts ran the LOCAL
+# bouncer once per declared host.  `--hosts chad-mbp,rezmac --bounce-hosts`
+# bounced this machine twice and printed `rezmac: ok`, the state that asserts
+# "install succeeded AND all daemons are current", for a host it never
+# contacted.  Detected only because rezmac's scheduler pid was unchanged from
+# two days earlier; running the bouncer there over ssh said `scheduler --
+# stale (recorded ac1d091, HEAD 0231718)`.
+#
+# The old suite could not catch it: every test injected a LOCAL fake bouncer,
+# so "ran the local script" was indistinguishable from "reached the host".
+# These tests inject a fake ssh instead and assert the transport itself.
+# ---------------------------------------------------------------------------
+
+from host_deploy_status import (  # noqa: E402
+    is_local_host,
+    resolve_hosts as _real_resolve_hosts,
+)
+
+
+def _write_fake_ssh(
+    tmp_path: Path,
+    *,
+    output_lines: list[str] | None = None,
+    exit_code: int = 0,
+    argv_log: Path | None = None,
+) -> Path:
+    """Fake ssh: records its argv, emits fixed output, returns a fixed code.
+
+    Stands in for the transport so the remote path is asserted with no
+    network and no second machine.
+    """
+    fake = tmp_path / "fakessh" / "ssh"
+    fake.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["#!/usr/bin/env bash"]
+    if argv_log is not None:
+        lines.append(f'printf "%s\n" "$*" >> {argv_log}')
+    for line in (output_lines or []):
+        lines.append(f'echo "{line}"')
+    lines.append(f"exit {exit_code}")
+    lines.append("")
+    fake.write_text("\n".join(lines), encoding="utf-8")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    return fake
+
+
+class TestAC8LocalHostDetermination:
+    """is_local_host: the explicit list wins; an unknown label is remote."""
+
+    def test_explicit_local_hosts_wins(self):
+        assert is_local_host("chad-mbp", ["chad-mbp"]) is True
+
+    def test_explicit_is_case_and_space_insensitive(self):
+        assert is_local_host(" CHAD-MBP ", ["chad-mbp"]) is True
+
+    def test_loopback_names_are_local(self):
+        for name in ("localhost", "127.0.0.1", "::1"):
+            assert is_local_host(name) is True, name
+
+    def test_unknown_deploy_label_is_remote(self):
+        """The bug's root cause: 'chad-mbp' matches no hostname on that Mac.
+
+        `hostname` returned Chads-MacBook-Pro.local and `ssh chad-mbp` could
+        not resolve, so neither inference nor ssh works for a bare deploy
+        label -- it has to be declared.  Defaulting it to REMOTE is the
+        fail-closed direction: the ssh attempt fails to 'unreachable', which
+        is honest, rather than silently running here and reporting 'ok'.
+        """
+        assert is_local_host("rezmac") is False
+        assert is_local_host("chad-mbp") is False
+
+    def test_declared_local_does_not_leak_to_other_hosts(self):
+        assert is_local_host("rezmac", ["chad-mbp"]) is False
+
+
+class TestAC9RemoteHostIsSshd:
+    """A host not declared local is reached over ssh, with the right argv."""
+
+    def test_ssh_is_invoked_with_host_and_bouncer(self, tmp_path: Path):
+        argv_log = tmp_path / "argv.txt"
+        fake_ssh = _write_fake_ssh(
+            tmp_path,
+            output_lines=["fresh: scheduler — fresh (toolkit_head matches HEAD)"],
+            exit_code=0,
+            argv_log=argv_log,
+        )
+        state = _real_resolve_host(
+            Path("/remote/clone/skills/ilk-watchdog/scripts/bounce_daemons.sh"),
+            tmp_path,
+            remote_host="rezmac",
+            ssh_program=str(fake_ssh),
+        )
+        assert state == "ok"
+        recorded = argv_log.read_text(encoding="utf-8")
+        assert "rezmac" in recorded, f"ssh was not given the host: {recorded!r}"
+        assert "BatchMode=yes" in recorded, (
+            "BatchMode is what makes an unusable host fail fast instead of "
+            f"blocking on an auth prompt: {recorded!r}"
+        )
+        assert "/remote/clone/skills/ilk-watchdog/scripts/bounce_daemons.sh" in recorded
+        assert "--check" in recorded, "detect-only must still pass --check"
+        assert "cd /remote/clone/skills/ilk-watchdog/scripts" in recorded, (
+            "the remote invocation must cd into the bouncer's directory: "
+            "bounce_daemons.sh derives the tree HEAD it compares against from "
+            "the CWD, and ssh lands in $HOME. Measured on rezmac 2026-09-07 -- "
+            "the identical script said `fresh` from the clone and `stale "
+            "(recorded 0231718..., HEAD unknown)` from $HOME, so a remote "
+            f"check from the wrong directory reports every host stale: {recorded!r}"
+        )
+
+    def test_remote_path_is_not_stat_ed_locally(self, tmp_path: Path):
+        """A local stat of a remote path is a negative from the wrong machine.
+
+        The bouncer path below does not exist here and must not be treated as
+        a missing script.
+        """
+        fake_ssh = _write_fake_ssh(
+            tmp_path,
+            output_lines=["fresh: scheduler — fresh (toolkit_head matches HEAD)"],
+            exit_code=0,
+        )
+        missing_here = tmp_path / "definitely" / "not" / "here.sh"
+        assert not missing_here.exists()
+        state = _real_resolve_host(
+            missing_here, tmp_path, remote_host="rezmac", ssh_program=str(fake_ssh),
+        )
+        assert state == "ok", (
+            "a remote bouncer path must be resolved on the remote host, not "
+            "stat-ed locally"
+        )
+
+    def test_bounce_flag_drops_check_on_remote(self, tmp_path: Path):
+        argv_log = tmp_path / "argv.txt"
+        fake_ssh = _write_fake_ssh(
+            tmp_path,
+            output_lines=["bouncing: scheduler — stale"],
+            exit_code=0,
+            argv_log=argv_log,
+        )
+        _real_resolve_host(
+            Path("/remote/bounce_daemons.sh"), tmp_path,
+            remote_host="rezmac", ssh_program=str(fake_ssh), bounce_hosts=True,
+        )
+        assert "--check" not in argv_log.read_text(encoding="utf-8")
+
+
+class TestAC10SshFailureNeverOk:
+    """Transport failure resolves unreachable — never ok."""
+
+    def test_ssh_exit_255_is_unreachable(self, tmp_path: Path):
+        """255 is ssh's own failure code (cannot resolve / refused / auth).
+
+        It is outside the bouncer's {0,1,2} contract, so the pre-existing
+        fail-closed rule already covers it. Pinned because that is the exact
+        path a genuinely unreachable host takes.
+        """
+        fake_ssh = _write_fake_ssh(
+            tmp_path,
+            output_lines=["ssh: Could not resolve hostname rezmac"],
+            exit_code=255,
+        )
+        state = _real_resolve_host(
+            Path("/remote/bounce_daemons.sh"), tmp_path,
+            remote_host="rezmac", ssh_program=str(fake_ssh),
+        )
+        assert state == "unreachable"
+
+    def test_ssh_silent_success_is_unreachable_not_ok(self, tmp_path: Path):
+        """Exit 0 with no recognised prefix must not read as ok.
+
+        This is the shape of the original false report: a green exit and
+        nothing that proves a daemon was inspected.
+        """
+        fake_ssh = _write_fake_ssh(tmp_path, output_lines=[], exit_code=0)
+        state = _real_resolve_host(
+            Path("/remote/bounce_daemons.sh"), tmp_path,
+            remote_host="rezmac", ssh_program=str(fake_ssh),
+        )
+        assert state == "unreachable"
+
+    def test_missing_ssh_program_is_unreachable(self, tmp_path: Path):
+        state = _real_resolve_host(
+            Path("/remote/bounce_daemons.sh"), tmp_path,
+            remote_host="rezmac",
+            ssh_program=str(tmp_path / "no-such-ssh"),
+        )
+        assert state == "unreachable"
+
+
+class TestAC11EachHostGetsItsOwnTransport:
+    """THE regression test — the local bouncer must not answer for a remote host."""
+
+    def test_remote_host_is_not_resolved_by_the_local_bouncer(self, tmp_path: Path):
+        """One local host, one remote, with deliberately opposite verdicts.
+
+        The local fake says fresh; the remote (over fake ssh) says stale. If
+        the resolver ran the local bouncer for both -- the pre-2026-09-07
+        behaviour -- rezmac would come back 'ok'. That is precisely the false
+        report this test exists to make impossible.
+        """
+        local_fake = _write_fake_bouncer(
+            tmp_path / "local",
+            output_lines=["fresh: scheduler — fresh (toolkit_head matches HEAD)"],
+            exit_code=0,
+        )
+        fake_ssh = _write_fake_ssh(
+            tmp_path,
+            output_lines=[
+                "stale: scheduler — stale (recorded abc123, HEAD def456) (would bounce)"
+            ],
+            exit_code=0,
+        )
+        results = _real_resolve_hosts(
+            ["chad-mbp", "rezmac"],
+            lambda h: local_fake,
+            tmp_path,
+            local_hosts=["chad-mbp"],
+            ssh_program=str(fake_ssh),
+        )
+        assert results["chad-mbp"] == "ok"
+        assert results["rezmac"] == "stale-daemon", (
+            "the remote host was resolved by running the LOCAL bouncer — the "
+            "2026-09-07 defect: a two-host deploy bounced this machine twice "
+            "and reported the remote host from local output"
+        )
+
+    def test_unreachable_remote_does_not_borrow_local_ok(self, tmp_path: Path):
+        local_fake = _write_fake_bouncer(
+            tmp_path / "local",
+            output_lines=["fresh: scheduler — fresh (toolkit_head matches HEAD)"],
+            exit_code=0,
+        )
+        fake_ssh = _write_fake_ssh(tmp_path, output_lines=[], exit_code=255)
+        results = _real_resolve_hosts(
+            ["chad-mbp", "rezmac"],
+            lambda h: local_fake,
+            tmp_path,
+            local_hosts=["chad-mbp"],
+            ssh_program=str(fake_ssh),
+        )
+        assert results["chad-mbp"] == "ok"
+        assert results["rezmac"] == "unreachable", (
+            "Phase 4 must never report success for a host it did not reach"
+        )
+
+    def test_undeclared_local_host_is_remote_and_fails_closed(self, tmp_path: Path):
+        """With no --local-host, a deploy label is ssh'd rather than run here."""
+        local_fake = _write_fake_bouncer(
+            tmp_path / "local",
+            output_lines=["fresh: scheduler — fresh (toolkit_head matches HEAD)"],
+            exit_code=0,
+        )
+        fake_ssh = _write_fake_ssh(tmp_path, output_lines=[], exit_code=255)
+        results = _real_resolve_hosts(
+            ["chad-mbp"], lambda h: local_fake, tmp_path,
+            ssh_program=str(fake_ssh),
+        )
+        assert results["chad-mbp"] == "unreachable", (
+            "an undeclared label must not silently resolve from this machine"
+        )
+
+
+class TestAC12CliNamesTheTransport:
+    """The CLI says how each host was reached, so a report is auditable."""
+
+    def test_local_and_ssh_are_labelled(self, tmp_path: Path):
+        local_fake = _write_fake_bouncer(
+            tmp_path / "local",
+            output_lines=["fresh: scheduler — fresh (toolkit_head matches HEAD)"],
+            exit_code=0,
+        )
+        cmd = [
+            sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT),
+            "--bouncer", str(local_fake),
+            "--bouncer", str(local_fake),
+            "--hosts", "chad-mbp,rezmac",
+            "--local-host", "chad-mbp",
+        ]
+        # Put a fake ssh FIRST on PATH rather than breaking PATH outright --
+        # the local fake bouncer is `#!/usr/bin/env bash` and needs a working
+        # PATH to start at all. The fake reports STALE, so its output cannot
+        # be confused with the local bouncer's fresh.
+        fake_ssh = _write_fake_ssh(
+            tmp_path,
+            output_lines=[
+                "stale: scheduler — stale (recorded abc123, HEAD def456) (would bounce)"
+            ],
+            exit_code=0,
+        )
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=60,
+            env={
+                **os.environ,
+                "BOUNCER_LOG": "/dev/null",
+                "PATH": f"{fake_ssh.parent}:{os.environ.get('PATH', '')}",
+            },
+        )
+        out = result.stdout
+        assert "chad-mbp: ok (local)" in out, out
+        assert "rezmac: stale-daemon (ssh)" in out, (
+            f"the remote line must come from ssh and name that transport: {out!r}"
+        )
+        assert result.returncode == 1

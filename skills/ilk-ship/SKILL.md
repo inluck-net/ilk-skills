@@ -238,18 +238,36 @@ daemon running is not deployed. Detection uses the resolver script:
 python3 skills/ilk-ship/scripts/host_deploy_status.py \
   --bouncer skills/ilk-watchdog/scripts/bounce_daemons.sh
 
-# Multi-host (one --bouncer per host, same order as --hosts):
+# Multi-host. --local-host names the declared host that IS this machine;
+# every other host is reached over ssh, so ITS --bouncer path is the path on
+# that host (same order as --hosts).
 python3 skills/ilk-ship/scripts/host_deploy_status.py \
   --bouncer skills/ilk-watchdog/scripts/bounce_daemons.sh \
-  --bouncer skills/ilk-watchdog/scripts/bounce_daemons.sh \
-  --hosts chad-mbp,rezmac
+  --bouncer /Users/chad/Projects/github/inluck-net/ilk-skills/skills/ilk-watchdog/scripts/bounce_daemons.sh \
+  --hosts chad-mbp,rezmac --local-host chad-mbp
 ```
 
 Add `--bounce-hosts` to permit actual bouncing (omit for detect-only).
 In single-host mode the script prints one line (`ok` / `stale-daemon` /
 `unreachable`) and exits 0 / 1 / 2 respectively. In multi-host mode it
-prints one `<host>: <state>` line per declared host and exits 0 only if
-every host is `ok`.
+prints one `<host>: <state> (<transport>)` line per declared host and exits 0
+only if every host is `ok`.
+
+**`--local-host` is not optional in practice.** A deploy label rarely matches
+a hostname — on this Mac the declared hosts are `chad-mbp` and `rezmac` while
+`hostname` returns `Chads-MacBook-Pro.local`, and `ssh chad-mbp` does not
+resolve. An undeclared host is therefore ssh'd and reports `unreachable`. That
+is the fail-closed direction and is deliberate: the alternative, which shipped
+until 2026-09-07, was that **every** declared host ran the local bouncer, so
+`--hosts chad-mbp,rezmac --bounce-hosts` bounced this machine twice and printed
+`rezmac: ok` for a host it never contacted. Nothing in the output distinguished
+that from a real deploy; it was caught only because rezmac's scheduler pid was
+unchanged from two days earlier. Each line now names its transport so the
+report can be audited.
+
+This is the second false-`ok` in this resolver — see v0.9.74, where a failed
+`bootstrap` also read as `ok`. Both had the same shape: a state that asserts
+"checked and current" returned on a path that checked nothing.
 
 The `hosts` field in the `ship:` block is declarative data — Phase 4
 acts on it. Every declared host appears in the summary; a host missing
