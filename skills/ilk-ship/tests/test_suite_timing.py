@@ -169,9 +169,9 @@ class TestFasterButFlipsIsDisqualified:
 
         result = recommend([serial, fast_parallel])
 
-        assert result.name == "serial", (
+        assert result.config.name == "serial", (
             f"serial must be recommended over a faster config that flips tests, "
-            f"got {result.name}"
+            f"got {result.config.name}"
         )
 
     def test_slower_with_flips_also_disqualified(self) -> None:
@@ -191,8 +191,8 @@ class TestFasterButFlipsIsDisqualified:
 
         result = recommend([serial, n4])
 
-        assert result.name == "serial", (
-            f"serial must be recommended over -n 4 (slower + flips), got {result.name}"
+        assert result.config.name == "serial", (
+            f"serial must be recommended over -n 4 (slower + flips), got {result.config.name}"
         )
 
 
@@ -219,8 +219,8 @@ class TestIdenticalOutcomesFasterWins:
 
         result = recommend([config_a, config_b])
 
-        assert result.name == "serial", (
-            f"among identical outcome sets, fastest must win, got {result.name}"
+        assert result.config.name == "serial", (
+            f"among identical outcome sets, fastest must win, got {result.config.name}"
         )
 
     def test_three_identical_outcomes_fastest_wins(self) -> None:
@@ -243,8 +243,8 @@ class TestIdenticalOutcomesFasterWins:
 
         result = recommend([slow, medium, fast])
 
-        assert result.name == "fast", (
-            f"fastest of three identical-outcome configs must win, got {result.name}"
+        assert result.config.name == "fast", (
+            f"fastest of three identical-outcome configs must win, got {result.config.name}"
         )
 
 
@@ -318,8 +318,14 @@ class TestOutcomeSetEquality:
 class TestRecommendMixed:
     """recommend() must handle a mix of clean and dirty configs."""
 
-    def test_all_dirty_picks_fastest(self) -> None:
-        """If every config flips tests, pick the fastest (least damage)."""
+    def test_all_dirty_picks_consensus_fastest(self) -> None:
+        """If every config flips tests and no serial baseline is present,
+        pick the fastest among the most common outcome set (consensus).
+
+        Without serial in the list, the algorithm can't determine absolute
+        flip counts — it uses the most common outcome set as the consensus
+        and picks the fastest member of that group.
+        """
         n2 = ConfigResult.from_outcomes(
             name="-n 2",
             wall_clock=616.66,
@@ -338,13 +344,12 @@ class TestRecommendMixed:
             }),
         )
 
-        # When all configs have flips, recommend should still pick one —
-        # the fastest among those with the fewest flips.
         result = recommend([n2, n4, n_auto])
 
-        # n_auto has 4 flips vs n2/n4's 5, and is faster than both
-        assert result.name == "-n auto", (
-            f"expected -n auto (fewest flips, fastest among them), got {result.name}"
+        # n2 and n4 share the most common outcome set (identical flips).
+        # Among them, n4 is faster (430.52 vs 616.66).
+        assert result.config.name == "-n 4", (
+            f"expected -n 4 (fastest in consensus group), got {result.config.name}"
         )
 
     def test_mixed_clean_and_dirty_picks_clean(self) -> None:
@@ -362,4 +367,4 @@ class TestRecommendMixed:
 
         result = recommend([serial, n_auto])
 
-        assert result.name == "serial"
+        assert result.config.name == "serial"
