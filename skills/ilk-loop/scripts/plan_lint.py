@@ -1314,6 +1314,14 @@ _CHANGE_VERB_RE = re.compile(
 )
 
 # Mechanic/formula noun: signals a core mechanic or tunable formula.
+#
+# NOTE (2026-09-08): ``\bpath\b`` was removed. It shipped in the original
+# commit alongside twelve game/economy tunables, but "path" is overwhelmingly
+# a filesystem/control-flow noun ("scope_paths", "the write path", "rollback
+# path"). Measured over 613 sub-plans across every project: 64 balance-drift
+# fires, 54 of them (84%) triggered by path/paths alone — all false positives.
+# Do not re-add it without a qualifier ("path array", "waypoint", "per-stage
+# path"); a lint wrong five times in six is one planners learn to skim.
 _MECHANIC_NOUN_RE = re.compile(
     r"""
     \bformula\b
@@ -1328,7 +1336,6 @@ _MECHANIC_NOUN_RE = re.compile(
     |\bcore\s+mechanic\b
     |\btuning\b
     |\bbalance\b
-    |\bpath\b
     """,
     re.VERBOSE | re.IGNORECASE,
 )

@@ -22,7 +22,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from plan_lint import lint_balance_regression_flag  # noqa: E402
+from plan_lint import _MECHANIC_NOUN_RE, lint_balance_regression_flag  # noqa: E402
 
 _PLAN_LINT = SCRIPTS_DIR / "plan_lint.py"
 
@@ -262,6 +262,27 @@ Modifies the component structure.
 """
 
 
+# Filesystem/control-flow "path" only — the word that used to be in
+# _MECHANIC_NOUN_RE.  Has commands, has change verbs, has no baseline
+# assertion: everything the lint needs EXCEPT a real tunable formula.
+_CODE_PATH_ONLY = """\
+---
+plan: test-code-path
+scope_paths:
+  - "skills/ilk-loop/scripts/writer.py"
+local_checks:
+  - command: python3 -m pytest tests/test_writer.py -q
+    timeout: 60
+---
+
+# Sub-plan: the write path records what happened
+
+Changes the write path so the rollback path and the failure path both
+resolve the destination through ilk_paths rather than a conventional path.
+Modifies scope_paths handling; adjusts which path the reader is given.
+"""
+
+
 class TestBalanceRegressionStructural:
     def test_no_commands_not_flagged(self):
         assert lint_balance_regression_flag(_NO_COMMANDS, "test-no-cmds") == []
@@ -271,6 +292,24 @@ class TestBalanceRegressionStructural:
 
     def test_no_mechanic_noun_not_flagged(self):
         assert lint_balance_regression_flag(_NO_MECHANIC_NOUN, "test-no-noun") == []
+
+    def test_code_path_prose_not_flagged(self):
+        """Regression (2026-09-08): \\bpath\\b was in _MECHANIC_NOUN_RE.
+
+        A sub-plan about filesystem/control-flow paths changes no tunable
+        formula, so demanding a before/after baseline of it is a false
+        positive.  Measured over 613 sub-plans, path/paths alone accounted
+        for 54 of 64 fires (84%).
+        """
+        assert lint_balance_regression_flag(_CODE_PATH_ONLY, "test-code-path") == []
+
+    def test_path_is_not_a_mechanic_noun(self):
+        """Pin the vocabulary directly, so a re-add fails here first."""
+        assert _MECHANIC_NOUN_RE.search("the rollback path and the write paths") is None
+        # Control: the genuine tunables still match.
+        for word in ("formula", "coefficient", "multiplier", "threshold",
+                     "rate", "weight", "damage", "pricing", "scoring"):
+            assert _MECHANIC_NOUN_RE.search(f"adjusts the {word}") is not None, word
 
 
 # ── CLI main() entrypoint ───────────────────────────────────────────────
