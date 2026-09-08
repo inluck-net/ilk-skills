@@ -60,6 +60,28 @@ def _commit_with_trailer(repo: Path, filename: str, content: str, trailer: str) 
     return result.stdout.strip()
 
 
+def _commit_with_subject_trailer(repo: Path, filename: str, content: str,
+                                 trailer: str) -> str:
+    """Create a commit whose trailer is in the SUBJECT, not the body.
+
+    This is the dominant real-world placement: 225 of the last 300 commits
+    in this repo carry ``[plan:…]`` in the subject, only 18 in a body line.
+    ``_commit_with_trailer`` above uses the body form, which is why the
+    near-miss diagnostic could regress without any test noticing.
+    """
+    (repo / filename).write_text(content)
+    subprocess.run(["git", "add", filename], cwd=repo, check=True, capture_output=True)
+    msg = f"feat({filename}): change {trailer}"
+    subprocess.run(
+        ["git", "commit", "-m", msg], cwd=repo, check=True, capture_output=True,
+    )
+    result = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"], cwd=repo, check=True,
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    return result.stdout.strip()
+
+
 def _make_subplan(plans_dir: Path, slug: str, steps: list[int]) -> Path:
     """Create a sub-plan file with the given slug and step headings."""
     step_headings = "\n".join(f"### Step {s}" for s in steps)
@@ -102,6 +124,23 @@ def typo_repo(tmp_path: Path) -> tuple[Path, Path]:
                          f"[plan:{MANGLED_SLUG}#step-2]")
     _commit_with_trailer(repo, "d.txt", "d\n",
                          f"[plan:{MANGLED_SLUG}#step-3]")
+
+    return repo, plans_dir
+
+
+@pytest.fixture
+def typo_repo_subject_trailers(tmp_path: Path) -> tuple[Path, Path]:
+    """Same as ``typo_repo`` but the trailers live in the commit SUBJECT."""
+    repo = _init_repo(tmp_path)
+    plans_dir = repo / "docs" / "plans"
+    plans_dir.mkdir(parents=True)
+
+    _make_subplan(plans_dir, CORRECT_SLUG, [0, 1, 2, 3])
+
+    for name, step in (("a.txt", 0), ("b.txt", 1), ("c.txt", 2), ("d.txt", 3)):
+        _commit_with_subject_trailer(
+            repo, name, f"{name[0]}\n", f"[plan:{MANGLED_SLUG}#step-{step}]",
+        )
 
     return repo, plans_dir
 
@@ -187,6 +226,69 @@ class TestPin1Refusal:
         )
         assert present == [0, 1, 2, 3]
         assert missing == []
+
+
+# ── Pin 2b: near-miss detection must see SUBJECT-line trailers ──────────────
+#
+# Regression added 2026-09-08.  ``_find_near_miss_slugs`` matched a 40-char
+# SHA at the start of a line and then ``continue``d, discarding the rest of
+# that line.  Under ``--format=%H %s%n%b`` the SUBJECT shares the SHA line,
+# so every subject-placed trailer was invisible to the diagnostic — 225 of
+# the last 300 commits in this repo.  The pre-existing fixtures all use the
+# body form, so the whole suite stayed green over the blind spot.
+
+class TestPin2bSubjectLineTrailers:
+    def _helper(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+        from ship_audit import _find_near_miss_slugs
+        return _find_near_miss_slugs
+
+    def test_subject_line_trailer_is_found(self) -> None:
+        """A trailer on the SHA line must yield the near-miss slug and SHA."""
+        find = self._helper()
+        sha = "a" * 40
+        git_output = f"{sha} feat: change [plan:{MANGLED_SLUG}#step-0]\n"
+        assert find(CORRECT_SLUG, git_output) == [(MANGLED_SLUG, ["aaaaaaa"])]
+
+    def test_body_line_trailer_still_found(self) -> None:
+        """Control: the body placement must keep working."""
+        find = self._helper()
+        sha = "a" * 40
+        git_output = f"{sha} feat: change\n\n[plan:{MANGLED_SLUG}#step-0]\n"
+        assert find(CORRECT_SLUG, git_output) == [(MANGLED_SLUG, ["aaaaaaa"])]
+
+    def test_target_slug_on_subject_line_is_not_a_near_miss(self) -> None:
+        """The correct slug must never report itself as a near-miss."""
+        find = self._helper()
+        sha = "a" * 40
+        git_output = f"{sha} feat: change [plan:{CORRECT_SLUG}#step-0]\n"
+        assert find(CORRECT_SLUG, git_output) == []
+
+    def test_audit_reasons_name_near_miss_from_subject_trailers(
+        self, typo_repo_subject_trailers: tuple[Path, Path],
+    ) -> None:
+        """End-to-end: a repo whose typo trailers are all in subjects must
+        still produce the actionable near-miss reason."""
+        repo, _ = typo_repo_subject_trailers
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+        from ship_audit import audit_ship
+
+        result = audit_ship(
+            status="shipped",
+            body="### Step 0\n### Step 1\n### Step 2\n### Step 3\n",
+            declared_checks=[],
+            gate_passed="unknown",
+            slug=CORRECT_SLUG,
+            cwd=repo,
+        )
+        assert result["proven"] is False
+        all_reasons = " ".join(result["reasons"])
+        assert MANGLED_SLUG in all_reasons, (
+            f"Subject-placed trailers must still surface the near-miss slug; "
+            f"got: {result['reasons']}"
+        )
 
 
 # ── Pin 2: the report names near-miss slugs ─────────────────────────────────

@@ -41,7 +41,9 @@ def _find_near_miss_slugs(
     was written as ``a-collaborator-is-not-antruder`` (one character removed).
 
     *git_output* is ``git log --format=%H %s%n%b``: each commit's full SHA
-    on the subject line, then the body on subsequent lines.
+    on the subject line, then the body on subsequent lines.  Trailers are
+    matched in **both** positions — the subject shares the SHA line, and
+    that is where most trailers actually are.
 
     Returns a list of ``(slug, [commit_shas])`` tuples.  Each slug appears
     at most once; the SHAs are the commits carrying it.
@@ -56,7 +58,13 @@ def _find_near_miss_slugs(
         sha_match = re.match(r"^([0-9a-f]{40})\s", line)
         if sha_match:
             current_sha = sha_match.group(1)[:7]
-            continue
+            # The SUBJECT shares this line (``--format=%H %s%n%b``), and the
+            # subject is where trailers usually live: 225 of the last 300
+            # commits in this repo carry ``[plan:…]`` in the subject, only 18
+            # in a body line.  Skipping the rest of this line made the
+            # near-miss diagnostic blind to ~93% of real trailers, so strip
+            # the SHA and scan the remainder instead of continuing.
+            line = line[sha_match.end():]
         for m in all_trailer_re.finditer(line):
             found_slug = m.group(1)
             if found_slug == target_slug:
@@ -140,6 +148,8 @@ def check_step_commits(
             ["git", "log", "--format=%s%n%b", "--all"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=cwd,
         )
         if result.returncode != 0:
@@ -275,6 +285,7 @@ def _resolve_batch_record(
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             capture_output=True, text=True, timeout=10,
+            encoding="utf-8", errors="replace",
             cwd=cwd,
         )
         current_head = result.stdout.strip() if result.returncode == 0 else ""
@@ -446,6 +457,7 @@ def audit_ship(
                 result = subprocess.run(
                     ["git", "log", "--format=%H %s%n%b", "--all"],
                     capture_output=True, text=True, cwd=cwd,
+                    encoding="utf-8", errors="replace",
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     near = _find_near_miss_slugs(slug, result.stdout)
@@ -583,6 +595,7 @@ def _cli(argv: list[str]) -> int:
             ["python3", str(Path(_scripts_dir) / "ilk_paths.py"),
              "--start", str(project)],
             capture_output=True, text=True, timeout=30,
+            encoding="utf-8", errors="replace",
         )
         if proc.returncode == 0:
             paths = json.loads(proc.stdout)

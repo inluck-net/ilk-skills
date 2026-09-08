@@ -127,6 +127,7 @@ class ShipResult:
 def _git(repo: Path, *args: str, check: bool = True) -> str:
     cp = subprocess.run(
         ["git", *args], cwd=str(repo), capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
     )
     if check and cp.returncode != 0:
         raise ShipTransitionError(
