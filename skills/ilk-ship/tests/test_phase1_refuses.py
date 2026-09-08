@@ -417,3 +417,91 @@ class TestFreshVerdictProceeds:
 
         assert result.action == "proceed"
         assert result.reason == "" or "fresh" in result.reason.lower()
+
+
+class TestAbsentBaselineReportIsNotAPass:
+    """A baseline engine that was never RUN must not read as one that passed.
+
+    Engine 2 was guarded by ``if baseline_report is not None and
+    baseline_report.diff.could_not_compare``, so a caller supplying no report
+    at all reached the same ``proceed`` as one whose baseline compared clean.
+    Two different states -- "compared, no regressions" and "never compared" --
+    with one observable outcome.
+
+    Found 2026-09-09 while running /ilk-ship on this repo: the first
+    verification returned ``proceed`` having only run engine 1, and would have
+    been reported as a verified Phase 1. That is the v0.9.86 / v0.9.87 failure
+    this module exists to prevent, reproduced inside the module itself.
+
+    The fix is fail-closed, matching the batch-verdict engine directly above
+    it: no report supplied ⇒ the baseline engine did not run ⇒ refuse and file.
+    """
+
+    def test_none_baseline_report_refuses(self, tmp_path: Path) -> None:
+        """No baseline report ⇒ refuse, naming the baseline engine."""
+        from phase1_verify import verify_phase1
+
+        runtime = tmp_path / "runtime"
+        runtime.mkdir()
+        _write_verdict(runtime, _make_verdict())
+
+        result = verify_phase1(
+            runtime_dir=runtime,
+            expected_head_sha="abc1234" + "0" * 33,
+            expected_invocation="python3 -m pytest",
+            # No baseline_report: the engine never ran.
+        )
+
+        assert result.action == "refuse", (
+            "a Phase 1 that never ran the baseline engine must not report "
+            f"proceed -- that is a half-run phase claiming a whole one; got "
+            f"{result.action!r} (reason: {result.reason!r})"
+        )
+        assert result.engine == "baseline", (
+            f"the refusal must name the engine that did not run; got {result.engine!r}"
+        )
+
+    def test_none_baseline_report_files_an_artifact(self, tmp_path: Path) -> None:
+        """The refusal is filed, so an unattended pipeline has a file to act on."""
+        from phase1_verify import verify_phase1
+
+        runtime = tmp_path / "runtime"
+        runtime.mkdir()
+        _write_verdict(runtime, _make_verdict())
+
+        result = verify_phase1(
+            runtime_dir=runtime,
+            expected_head_sha="abc1234" + "0" * 33,
+            expected_invocation="python3 -m pytest",
+        )
+
+        assert result.filed is True, "refusal must be filed like every other refusal"
+        assert (runtime / "phase1-refusal.json").is_file(), (
+            "phase1-refusal.json must exist so the pipeline has an artifact"
+        )
+
+    def test_batch_verdict_refusal_still_takes_precedence(
+        self, tmp_path: Path,
+    ) -> None:
+        """Engine order is unchanged: a stale verdict still reports engine 1.
+
+        Guards against the fix inverting the order and masking the more
+        specific failure behind the new one.
+        """
+        from phase1_verify import verify_phase1
+
+        runtime = tmp_path / "runtime"
+        runtime.mkdir()
+        _write_verdict(runtime, _make_verdict())
+
+        result = verify_phase1(
+            runtime_dir=runtime,
+            expected_head_sha="different" + "0" * 31,
+            expected_invocation="python3 -m pytest",
+        )
+
+        assert result.action == "refuse"
+        assert result.engine == "batch_verdict", (
+            "a stale batch verdict must still be reported as the batch_verdict "
+            f"engine, not masked by the absent baseline; got {result.engine!r}"
+        )

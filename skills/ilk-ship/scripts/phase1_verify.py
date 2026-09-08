@@ -143,7 +143,37 @@ def verify_phase1(
             pass  # validate_record_detail already checked this
 
     # ── Engine 2: baseline diff ──────────────────────────────────────────
-    if baseline_report is not None and baseline_report.diff.could_not_compare:
+    #
+    # An engine that never RAN is not an engine that passed.  This guard read
+    # `if baseline_report is not None and ...`, so a caller supplying no report
+    # reached the same `proceed` as one whose baseline compared clean -- two
+    # different states with one observable outcome, and the benign-looking one
+    # was the default.
+    #
+    # Found 2026-09-09 by running /ilk-ship on this repo: the first
+    # verification returned `proceed` having run engine 1 only, and would have
+    # been reported as a verified Phase 1.  That is precisely the v0.9.86 /
+    # v0.9.87 shape this module was written to prevent -- a release proceeding
+    # on evidence that was never gathered -- reproduced inside the preventer.
+    #
+    # Fail closed, matching the batch-verdict engine above: no report means the
+    # baseline engine did not run, which is a refusal, not a pass.  The caller
+    # that wants to proceed must supply a report that compared.
+    if baseline_report is None:
+        reason = (
+            "baseline engine did not run: no baseline report supplied — "
+            "refusing rather than treating an ungathered engine as a passing "
+            "one (a half-run Phase 1 must not report a whole one)"
+        )
+        _file_refusal(runtime_dir, reason, "baseline")
+        return Phase1Verdict(
+            action="refuse",
+            reason=reason,
+            engine="baseline",
+            filed=True,
+        )
+
+    if baseline_report.diff.could_not_compare:
         reason = (
             f"baseline could_not_compare: no baseline for "
             f"{baseline_report.diff.ref.tag} — refusing rather than "
