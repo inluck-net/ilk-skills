@@ -2638,7 +2638,17 @@ print('false' if not d.get('blocked', True) else 'true')
             local quarantined="false"
             if [[ -f "$quarantine_script" ]]; then
               local q_plans_dir
-              q_plans_dir=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py" --start "$PROJECT_PATH" --plans-dir 2>/dev/null)
+              # Resolve via the driver's own helper. `ilk_paths.py --plans-dir`
+              # is NOT a flag ilk_paths has (it accepts --start, --where,
+              # --sentinel-path): argparse rejected it, exited 2, and wrote its
+              # usage to stderr -- which `2>/dev/null` discarded. So this
+              # resolved to the empty string, the guard below was false at
+              # EVERY failure count, and quarantine_subplan.py was never
+              # invoked at all. The `auto_block_fails` counter therefore never
+              # reached even 1, which is why the threshold looked like the
+              # culprit and was not. Established 2026-09-08, sub-plan
+              # quarantine-is-reachable step 0.
+              q_plans_dir=$(get_plans_dir 2>/dev/null) || q_plans_dir=""
               if [[ -n "$q_plans_dir" && -d "$q_plans_dir" ]]; then
                 # Extract slugs from blocking results
                 local q_slugs

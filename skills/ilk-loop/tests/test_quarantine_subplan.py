@@ -138,8 +138,16 @@ def test_the_driver_resolves_a_real_plans_dir_for_quarantine(tmp_path: Path) -> 
 
     # Build a project whose plans live at the external, resolver-known path.
     project = tmp_path / "proj"
-    (project / "docs" / "plans").mkdir(parents=True)
-    _write_subplan(project / "docs" / "plans", "alpha")
+    plans = project / "docs" / "plans"
+    plans.mkdir(parents=True)
+    _write_subplan(plans, "alpha")
+    # A MASTER-*.md is required: get_plans_dir's legacy walk-up only accepts a
+    # docs/plans that contains one, and a temp project has no external
+    # ~/.ilk-data plans dir for the resolver to find.
+    (plans / "MASTER-2026-09-08-quarantine-probe.md").write_text(
+        "---\nmaster_plan: 2026-09-08-quarantine-probe\nstatus: active\n---\n"
+        "# quarantine probe\n", encoding="utf-8",
+    )
     subprocess.run(["git", "init"], cwd=project, capture_output=True, check=True)
 
     # Source the driver so the resolution runs in its real context (it may
