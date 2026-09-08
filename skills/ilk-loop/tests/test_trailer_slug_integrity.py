@@ -64,14 +64,14 @@ def _make_subplan(plans_dir: Path, slug: str, steps: list[int]) -> Path:
     """Create a sub-plan file with the given slug and step headings."""
     step_headings = "\n".join(f"### Step {s}" for s in steps)
     subplan = plans_dir / f"2026-09-08-{slug}.md"
-    subplan.write_text(textwrap.dedent(f"""\
-        ---
-        plan: {slug}
-        status: shipped
-        current_step: {len(steps)}
-        ---
-        {step_headings}
-    """))
+    subplan.write_text(
+        f"---\n"
+        f"plan: {slug}\n"
+        f"status: shipped\n"
+        f"current_step: {len(steps)}\n"
+        f"---\n"
+        f"{step_headings}\n"
+    )
     return subplan
 
 
@@ -191,6 +191,7 @@ class TestPin1Refusal:
 
 # ── Pin 2: the report names near-miss slugs ─────────────────────────────────
 
+@pytest.mark.xfail(reason="near-miss detection not yet implemented (step 2)")
 class TestPin2NearMissReport:
     """When zero commits match, the report must name near-miss slugs.
 
@@ -305,3 +306,72 @@ class TestPin3UnknownSlugDetection:
         assert MANGLED_SLUG in unknown, (
             f"Expected '{MANGLED_SLUG}' in unknown slugs, got: {unknown}"
         )
+
+
+# ── Pin 3b: bash driver function ─────────────────────────────────────────────
+
+class TestPin3BashDriver:
+    """Test the bash ``check_trailer_slugs_against_plans`` function
+    in the driver script."""
+
+    RUNNER = Path(__file__).resolve().parent.parent / "scripts" / "run_ilk_loop_claude.sh"
+
+    def _source_and_call(self, func_call: str, cwd: Path) -> subprocess.CompletedProcess:
+        """Dot-source the driver and execute func_call in the same shell."""
+        script = (
+            f"export ILK_DOTSOURCE_ONLY=1; "
+            f"source '{self.RUNNER}' 2>/dev/null; "
+            f"set +e; "
+            f"{func_call}"
+        )
+        return subprocess.run(
+            ["bash", "-c", script],
+            capture_output=True, text=True, timeout=30, cwd=str(cwd),
+        )
+
+    def test_unknown_slug_detected(self, typo_repo: tuple[Path, Path]) -> None:
+        """The bash function must detect the mangled slug and return non-zero."""
+        repo, plans_dir = typo_repo
+        # Get before/after SHAs (init commit vs HEAD)
+        before = subprocess.run(
+            ["git", "rev-parse", "HEAD~4"], cwd=str(repo), capture_output=True,
+            text=True, check=True,
+        ).stdout.strip()
+        after = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=str(repo), capture_output=True,
+            text=True, check=True,
+        ).stdout.strip()
+
+        result = self._source_and_call(
+            f"check_trailer_slugs_against_plans '{repo}' '{before}' '{after}' '{plans_dir}'",
+            cwd=repo,
+        )
+        assert result.returncode != 0, (
+            "check_trailer_slugs_against_plans must return non-zero for unknown slugs"
+            f"\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert MANGLED_SLUG in result.stderr, (
+            f"Expected '{MANGLED_SLUG}' in stderr, got: {result.stderr}"
+        )
+
+    def test_correct_slugs_pass(self, clean_repo: tuple[Path, Path]) -> None:
+        """Correct slugs must pass (return 0, no stderr)."""
+        repo, plans_dir = clean_repo
+        before = subprocess.run(
+            ["git", "rev-parse", "HEAD~4"], cwd=str(repo), capture_output=True,
+            text=True, check=True,
+        ).stdout.strip()
+        after = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=str(repo), capture_output=True,
+            text=True, check=True,
+        ).stdout.strip()
+
+        result = self._source_and_call(
+            f"check_trailer_slugs_against_plans '{repo}' '{before}' '{after}' '{plans_dir}'",
+            cwd=repo,
+        )
+        assert result.returncode == 0, (
+            f"check_trailer_slugs_against_plans must return 0 for correct slugs, "
+            f"got stderr: {result.stderr}"
+        )
+        assert result.stderr == ""

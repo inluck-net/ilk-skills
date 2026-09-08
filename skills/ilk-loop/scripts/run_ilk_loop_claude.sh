@@ -1303,6 +1303,93 @@ get_plans_dir() {
   done
 }
 
+get_plan_slugs() {
+  # Emit one slug per line from all sub-plan files in the given plans dir.
+  # Args: $1 = plans_dir (optional, defaults to get_plans_dir)
+  local plans_dir="${1:-}"
+  if [[ -z "$plans_dir" || ! -d "$plans_dir" ]]; then
+    plans_dir=$(get_plans_dir) || return 0
+  fi
+  [[ -z "$plans_dir" || ! -d "$plans_dir" ]] && return 0
+
+  for f in "$plans_dir"/*.md; do
+    [[ "$(basename "$f")" == MASTER* ]] && continue
+    local slug
+    slug=$(sed -n 's/^plan:\s*//p' "$f" 2>/dev/null | head -1 | sed "s/['\"]//g" | xargs)
+    [[ -n "$slug" ]] && echo "$slug"
+  done
+}
+
+check_trailer_slugs_against_plans() {
+  # Compare trailer slugs from the iteration's commits against the plans dir.
+  # Report unknown slugs loudly — a trailer naming a slug that has no
+  # corresponding sub-plan file is a typo, not missing work.
+  #
+  # Args: $1 = repo   $2 = before SHA   $3 = after SHA   $4 = plans_dir
+  # Returns 0 if all slugs are known, 1 if unknown slugs found.
+  local repo="$1" before="$2" after="$3" plans_dir="$4"
+
+  if [[ "$before" == "$after" || "$before" == "(unknown)" || "$after" == "(unknown)" ]]; then
+    return 0
+  fi
+
+  local msgs
+  msgs=$(git -C "$repo" log "${before}..${after}" --pretty=format:"%s%n%b" 2>/dev/null) || return 0
+  [[ -z "$msgs" ]] && return 0
+
+  # Extract unique slugs from trailers
+  local trailer_slugs
+  trailer_slugs=$(echo "$msgs" | grep -oE '\[plan:[^#]+#(step-[0-9]+|ship)\]' | \
+    sed -E 's/\[plan:([^#]+)#.*/\1/' | sort -u)
+  [[ -z "$trailer_slugs" ]] && return 0
+
+  # Get known plan slugs
+  local plan_slugs
+  plan_slugs=$(get_plan_slugs "$plans_dir")
+  [[ -z "$plan_slugs" ]] && return 0
+
+  # Find unknown slugs (in trailers but not in plans)
+  local unknown_slugs
+  unknown_slugs=$(comm -23 <(echo "$trailer_slugs" | sort) <(echo "$plan_slugs" | sort))
+  [[ -z "$unknown_slugs" ]] && return 0
+
+  # Report unknown slugs with the nearest real slug
+  while IFS= read -r bad_slug; do
+    [[ -z "$bad_slug" ]] && continue
+    # Find nearest real slug (longest common prefix)
+    local nearest="" best_len=0
+    while IFS= read -r real_slug; do
+      [[ -z "$real_slug" ]] && continue
+      local common_len=0
+      local a="$bad_slug" b="$real_slug"
+      local min_len=$(( ${#a} < ${#b} ? ${#a} : ${#b} ))
+      for (( j=0; j<min_len; j++ )); do
+        if [[ "${a:$j:1}" == "${b:$j:1}" ]]; then
+          common_len=$((common_len + 1))
+        else
+          break
+        fi
+      done
+      if [[ $common_len -gt $best_len ]]; then
+        best_len=$common_len
+        nearest="$real_slug"
+      fi
+    done <<< "$plan_slugs"
+
+    # Find commits carrying this slug
+    local bad_shas
+    bad_shas=$(echo "$msgs" | grep -B1 "$bad_slug" | grep -oE '[0-9a-f]{7,}' | head -3 | tr '\n' ' ')
+
+    if [[ -n "$nearest" ]]; then
+      echo "  ! [trailer-slug] unknown slug '$bad_slug' in commit ${bad_shas}(nearest: '$nearest')" >&2
+    else
+      echo "  ! [trailer-slug] unknown slug '$bad_slug' in commit ${bad_shas}" >&2
+    fi
+  done <<< "$unknown_slugs"
+
+  return 1
+}
+
 get_subplan_slug() {
   : # TODO: helper — read plan: frontmatter
 }
@@ -2328,6 +2415,23 @@ print(json.dumps({
         after=$(grep -F "$r=" "$heads_after_file" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
         get_local_check_targets "$r" "$before" "$after" >> "$all_targets_file"
       done
+
+      # Check trailer slugs against plans dir — catch typos at write time.
+      # Only fires when trailers were found (not on shared remotes where
+      # trailers are absent by policy).  An unknown slug is a loud finding
+      # naming both the trailer and the nearest real slug.
+      if [[ -s "$all_targets_file" ]]; then
+        local plans_dir_for_check
+        plans_dir_for_check=$(get_plans_dir) || plans_dir_for_check=""
+        if [[ -n "$plans_dir_for_check" ]]; then
+          for r in "${REPOS[@]}"; do
+            local before after
+            before=$(grep -F "$r=" "$heads_before_file" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
+            after=$(grep -F "$r=" "$heads_after_file" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
+            check_trailer_slugs_against_plans "$r" "$before" "$after" "$plans_dir_for_check" || true
+          done
+        fi
+      fi
 
       # Trailer scanning found nothing, but commits exist ($total_new > 0 to be
       # here). On a shared remote that is the EXPECTED state, not an anomaly:
