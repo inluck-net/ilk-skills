@@ -223,7 +223,30 @@ def _coerce(s: str) -> Any:
 # ── sub-plan resolution ──────────────────────────────────────────────────────
 
 def find_subplan(project: Path, slug: str) -> Path | None:
-    """Find the sub-plan whose frontmatter `plan:` field matches slug."""
+    """Find the sub-plan for *slug*, by frontmatter `plan:` OR by filename.
+
+    Four components carry a sub-plan identity and three derive it from the
+    FILENAME:
+
+      * ``loop_status.py`` strips the date prefix and ``.md`` -- and its form
+        is what the loop prints and what ``ship-proof.jsonl`` records;
+      * ``quarantine_subplan.py`` globs ``*-<slug>.md``;
+      * this function used to be the lone outlier, matching only frontmatter.
+
+    That mattered because a generator may write a run id into the filename and
+    omit it from frontmatter, so ``2026-09-08-issue-4796-work-52d08c9c.md``
+    carries ``plan: issue-4796-work``.  Asked for the slug every other
+    component reports, this returned None -- and a not-found is an ``error``,
+    which is in ``_BLOCKING_OUTCOMES``.  Because a name mismatch is
+    deterministic, the confirm-before-block re-run reproduced it, so the loop
+    read a harness failure as a real gate failure and stopped.  Measured
+    2026-09-08 on a consumer host: two seconds elapsed between worker-done and
+    loop-stop against a gate declaring ``bun run test, timeout: 300``.  No test
+    ever ran.
+
+    Frontmatter is still tried FIRST, so nothing that resolved before resolves
+    differently now; the filename glob is a fallback, not a replacement.
+    """
     plans_dir, _ = _resolve_plans_dir(project)
     if plans_dir is None or not plans_dir.is_dir():
         return None
@@ -239,6 +262,13 @@ def find_subplan(project: Path, slug: str) -> Path | None:
                 if _coerce(v) == slug:
                     return p
                 break
+    # Fallback: the filename-derived form the rest of the toolkit uses.
+    # Same glob as quarantine_subplan._find_subplan_file, and MASTER files are
+    # excluded for the same reason -- a master is not a gateable sub-plan.
+    for p in sorted(plans_dir.glob(f"*-{slug}.md")):
+        if p.name.startswith("MASTER"):
+            continue
+        return p
     return None
 
 
