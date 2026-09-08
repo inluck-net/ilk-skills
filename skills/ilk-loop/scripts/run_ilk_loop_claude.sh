@@ -1236,11 +1236,16 @@ classify_loop_status() {
   json_output=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null) || json_output=""
 
   if [[ -z "$json_output" ]]; then
-    # Fallback: exit-code heuristic (today's behaviour).
+    # Fallback: the JSON oracle is unavailable, so proof CANNOT be consulted.
+    # That is itself a cannot-prove condition, so it fails closed to
+    # shipped-unproven rather than certifying a clean finish on the strength of
+    # an instrument that just failed.
     if test_all_shipped; then
-      CLASSIFIED_STATUS="all-shipped"
+      CLASSIFIED_STATUS="shipped-unproven"
+      UNPROVEN_SUBPLANS="(loop_status --json unavailable; proof not consulted)"
     else
       CLASSIFIED_STATUS="runnable"
+      UNPROVEN_SUBPLANS=""
     fi
     BLOCKED_SUBPLANS=""
     return 0
@@ -1258,7 +1263,14 @@ if runnable:
 elif blocked:
     print('blocked-no-runnable')
 else:
-    print('all-shipped')
+    # Every sub-plan is shipped -- but 'shipped' is a SELF-REPORT. Consult the
+    # ship-proof ledger before calling it a clean finish. Until 2026-09-08 the
+    # loop printed 'SHIP PROOF MISSING: 2 sub-plans shipped without proof' and
+    # 'ALL SHIPPED -- nothing to run' in the SAME run: the report existed, and
+    # the terminal state never read it.
+    unproven = [s for s in subplans
+                if s.get('status') == 'shipped' and not s.get('proven', True)]
+    print('shipped-unproven' if unproven else 'all-shipped')
 " <<<"$json_output") || has_runnable="runnable"
 
   blocked_fnames=$(python3 -c "
@@ -1269,8 +1281,22 @@ blocked = [s['fname'] for s in subplans if s.get('status') not in ('shipped', 'p
 print(' '.join(blocked))
 " <<<"$json_output") || blocked_fnames=""
 
+  local unproven_slugs
+  unproven_slugs=$(python3 -c "
+import json, sys
+data = json.loads(sys.stdin.read())
+rows = []
+for s in data.get('subplans', []):
+    if s.get('status') != 'shipped' or s.get('proven', True):
+        continue
+    rows.append(s.get('slug', s.get('fname', '?'))
+                + '(' + s.get('proof_state', 'unproven') + ')')
+print(' '.join(rows))
+" <<<"$json_output") || unproven_slugs=""
+
   CLASSIFIED_STATUS="$has_runnable"
   BLOCKED_SUBPLANS="$blocked_fnames"
+  UNPROVEN_SUBPLANS="$unproven_slugs"
 }
 
 get_plans_dir() {
@@ -2207,6 +2233,15 @@ main() {
     ts=$(date +%Y-%m-%dT%H:%M:%S%z)
     write_jsonl_record "{\"run_id\":\"$RUN_ID\",\"cli\":\"claude\",\"iteration\":0,\"timestamp\":\"$ts\",\"project\":\"$PROJECT_PATH\",\"stop_reason\":\"already-shipped\"}"
     return 0
+  elif [[ "$CLASSIFIED_STATUS" == "shipped-unproven" ]]; then
+    # Every sub-plan reports shipped and at least one has no proof. That is not
+    # a clean finish and must not read as one.
+    echo "Sub-plans report shipped, but proof is missing. Not a clean finish."
+    echo "[ilk] SHIPPED WITHOUT PROOF — ${UNPROVEN_SUBPLANS:-unknown}. No gate ran for these; the ship claim is unverified. Do NOT relaunch; this needs a human." >&2
+    local ts
+    ts=$(date +%Y-%m-%dT%H:%M:%S%z)
+    write_jsonl_record "{\"run_id\":\"$RUN_ID\",\"cli\":\"claude\",\"iteration\":0,\"timestamp\":\"$ts\",\"project\":\"$PROJECT_PATH\",\"stop_reason\":\"shipped-unproven\"}"
+    return 0
   elif [[ "$CLASSIFIED_STATUS" == "blocked-no-runnable" ]]; then
     local blocked_count
     blocked_count=$(echo "$BLOCKED_SUBPLANS" | wc -w | tr -d ' ')
@@ -2807,14 +2842,18 @@ print(json.dumps(d))
       break
     fi
 
-    if test_all_shipped; then
-      stop_reason="all-shipped"
-      break
-    fi
-
+    # There is deliberately no `test_all_shipped` shortcut here any more.
+    # That helper keys off loop_status's EXIT CODE, which reports "nothing
+    # actionable" and knows nothing about proof -- so reaching it first let a
+    # run terminate `all-shipped` without the proof consultation below ever
+    # happening. classify_loop_status subsumes it, and still falls back to it
+    # internally when the JSON oracle is unavailable.
     classify_loop_status
     if [[ "$CLASSIFIED_STATUS" == "all-shipped" ]]; then
       stop_reason="all-shipped"
+      break
+    elif [[ "$CLASSIFIED_STATUS" == "shipped-unproven" ]]; then
+      stop_reason="shipped-unproven"
       break
     elif [[ "$CLASSIFIED_STATUS" == "blocked-no-runnable" ]]; then
       stop_reason="blocked-no-runnable"
@@ -2841,6 +2880,8 @@ print(json.dumps(d))
       invoke_batch_gate "$PROJECT_PATH" "$runtime_dir"
     fi
     echo "[ilk] ALL SHIPPED — nothing to run. Do NOT relaunch."
+  elif [[ "$stop_reason" == "shipped-unproven" ]]; then
+    echo "[ilk] SHIPPED WITHOUT PROOF — ${UNPROVEN_SUBPLANS:-unknown}. No gate ran for these; the ship claim is unverified. Do NOT relaunch; this needs a human." >&2
   elif [[ "$stop_reason" == "blocked-no-runnable" ]]; then
     local blocked_count
     blocked_count=$(echo "$BLOCKED_SUBPLANS" | wc -w | tr -d ' ')

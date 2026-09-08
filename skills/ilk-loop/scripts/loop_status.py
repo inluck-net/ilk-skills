@@ -414,10 +414,33 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
         except Exception:
             _resolved_runtime_dir = None
 
+    # ``proof_state`` is the three-valued companion to ``proven``.  A reader
+    # holding only the JSON must be able to tell "audited and clean" from
+    # "the audit could not run" — the boolean alone cannot say that.
+    #
+    #   not-applicable — the sub-plan is not shipped; it claims nothing
+    #   proven         — the audit ran and found step commits + a green gate
+    #   unproven       — the audit ran and found a gap
+    #   audit-error    — the audit RAISED; nothing is known
+    #   not-audited    — ship_audit could not be loaded; nothing is known
+    #
+    # The last two FAIL CLOSED (proven=False).  Until 2026-09-08 both degraded
+    # to ``proven = True`` — a prover reporting SUCCESS when it cannot run,
+    # which is "no stage reports success without proof" violated inside the
+    # instrument meant to enforce it.
+    #
+    # Fail-closed was chosen over fail-open on a measurement, not a preference:
+    # the live risk is that a commonly-raising audit makes ``all-shipped``
+    # unreachable and loops never terminate.  Measured 2026-09-08 across every
+    # sub-plan file on this machine — 628 scanned, audit_ship raised 0 times.
+    # And ``ship_audit`` sits in this module's own directory, so it is
+    # importable whenever ``loop_status`` itself is: not-audited is a genuine
+    # breakage, not a routine path.
     if _ship_audit_available:
         for sp in subplans:
             if sp["status"] != "shipped":
                 sp["proven"] = True
+                sp["proof_state"] = "not-applicable"
                 continue
             # Read the sub-plan file to get body + declared_checks + slug.
             sp_path = plans_dir / sp["fname"]
@@ -433,13 +456,40 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
                     runtime_dir=_resolved_runtime_dir,
                 )
                 sp["proven"] = result["proven"]
+                sp["proof_state"] = "proven" if result["proven"] else "unproven"
                 sp["unproven_reasons"] = result["reasons"]
-            except Exception:
-                # Any failure → degrade to today's behaviour (proven).
-                sp["proven"] = True
+            except Exception as exc:
+                sp["proven"] = False
+                sp["proof_state"] = "audit-error"
+                sp["unproven_reasons"] = [
+                    f"ship audit could not run: {type(exc).__name__}: {exc}"
+                ]
     else:
         for sp in subplans:
-            sp["proven"] = True
+            if sp["status"] != "shipped":
+                sp["proven"] = True
+                sp["proof_state"] = "not-applicable"
+            else:
+                sp["proven"] = False
+                sp["proof_state"] = "not-audited"
+                sp["unproven_reasons"] = [
+                    "ship audit could not run: ship_audit module unavailable"
+                ]
+
+    # Withdraw the tier rather than leaving it standing.  A stale
+    # ``loop-verified`` on a sub-plan the ship-proof ledger holds no row for is
+    # FALSE PROVENANCE, and it has a real reader: a downstream consumer's
+    # publication step decides from ``shipped`` plus tier alone, so it will
+    # push and open a PR for work no gate ever touched.  An absent claim is
+    # strictly better than a false one.
+    #
+    # The DECLARED tier is preserved alongside so nothing that legitimately
+    # needs it (the compile-only / device-manual human-verify banner below)
+    # loses its signal.
+    for sp in subplans:
+        sp["verification_tier_declared"] = sp["verification_tier"]
+        if sp["status"] == "shipped" and not sp.get("proven", True):
+            sp["verification_tier"] = "withdrawn"
 
     # Counts
     active = queue_view["active_count"]
@@ -507,7 +557,12 @@ def _compile_only_summary(subplans: list[dict]) -> str | None:
     offenders = [
         sp for sp in subplans
         if sp["status"] == "shipped"
-        and sp.get("verification_tier", "loop-verified") in _VERIFY_TIERS
+        # DECLARED tier: an unproven sub-plan has its effective tier withdrawn,
+        # and that must not drop it out of the human-verify banner.
+        and sp.get(
+            "verification_tier_declared",
+            sp.get("verification_tier", "loop-verified"),
+        ) in _VERIFY_TIERS
     ]
     if not offenders:
         return None
@@ -612,6 +667,11 @@ def main() -> int:
         # zh-CN cp936/GBK console, the script exited 1, and the runner read
         # that as "pending work" → false stuck-no-progress (wechat-relay,
         # run 20260608-104937).
+        # `withdrawn` is not a tier a human can act on -- it is the ABSENCE of
+        # a tier, and the `(!) unproven` suffix already says why. Rendering
+        # both produced `(!) needs-verify:withdrawn  (!) unproven`.
+        if tier == "withdrawn":
+            return ""
         return f"  (!) needs-verify:{tier}" if tier != "loop-verified" and status == "shipped" else ""
 
     def _unproven_suffix(proven: bool, status: str) -> str:

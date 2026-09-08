@@ -1317,6 +1317,13 @@ def classify(
         # label: `shipped-unverified` is already in CLASSIFICATION_LABELS,
         # and watchdog.sh routes it to needs-human, never to relaunch.
         "ship_integrity_violation": "shipped-unverified",
+        # Every sub-plan reported `shipped` but the ship-proof ledger held no
+        # row for at least one of them, so the run stopped instead of claiming
+        # all-shipped (2026-09-08).  Same label deliberately: it is the same
+        # condition -- a ship nothing verified -- reached by a different route,
+        # and `shipped-unverified` is already routed to needs-human by both
+        # watchdogs.  A NEW label here would need a branch in each of them.
+        "shipped-unproven": "shipped-unverified",
     }
     if sentinel is not None:
         sentinel_state = (sentinel.get("state") or "").strip()

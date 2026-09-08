@@ -86,7 +86,8 @@ about the same file — this doc makes the implicit contracts explicit.
 | `"timeout"` | `gtimeout` killed the iteration before it completed | Terminal |
 | `"ship_integrity_violation"` | A sub-plan was `shipped` with its declared gate red; the driver reverted it to `in-progress` | Terminal |
 | `"no-progress"` | 3 consecutive iterations with zero new commits | Terminal |
-| `"all-shipped"` | Every registered sub-plan is shipped; loop ended naturally | Terminal |
+| `"all-shipped"` | Every registered sub-plan is shipped **and every one is proven**; loop ended naturally | Terminal |
+| `"shipped-unproven"` | Every registered sub-plan is shipped, but the ship-proof ledger holds no row for at least one — the ship claim is unverified | Terminal |
 | `"blocked-no-runnable"` | All remaining sub-plans are `blocked`; nothing to dispatch | Terminal |
 | `"already-shipped"` | Nothing to do at launch time (all sub-plans already shipped) | Terminal |
 
@@ -109,11 +110,23 @@ through to the generic heuristics, which is how a failed run gets classified
 | `"interrupted"` | `interrupted` | `relaunch` |
 | `"local_checks_failed"` | `local-checks-broken` (<3 iters) / `local-checks-stuck` | `block` |
 | `"ship_integrity_violation"` | `shipped-unverified` | `needs-human` |
+| `"shipped-unproven"` | `shipped-unverified` | `needs-human` |
 | `"timeout"` | *(none — falls through)* | `triage` |
 
 `ship_integrity_violation` is written by `run_ilk_loop_claude.sh` and
 `run_ilk_loop_claude.ps1` only. It was in **0** classifier files until
 2026-08-29 — see the bug reference under Contract 2b.
+
+`shipped-unproven` was added 2026-09-08. Before it, `all-shipped` never
+consulted proof: the loop printed `SHIP PROOF MISSING: 2 sub-plans shipped
+without proof` and `[ilk] ALL SHIPPED — nothing to run. Do NOT relaunch.` in
+the **same** run, because `SHIP PROOF MISSING` is a *report*
+(`loop_status.py`) and the driver's exit path never read it. It shares the
+`shipped-unverified` label with `ship_integrity_violation` on purpose — the
+same condition (a ship nothing verified) reached by a different route — so no
+new arm is needed in either watchdog. `classify_loop_status` is now the single
+decision point; the `test_all_shipped` exit-code shortcut was removed from the
+per-iteration check because an exit code cannot express proof.
 
 `timeout` was added to this table on 2026-08-29, having been a terminal state
 **no classifier knew**. `run_ilk_loop_claude.sh:2184` sets
