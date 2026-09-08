@@ -1,9 +1,13 @@
 # Unattended self-improvement (future work)
 
 **Status**: **partially built.** Every stage exists in some form; the pipeline is
-gated at two deliberate human points (`draft`, `supervised_only`). Blocker 1
-(self-modification race) has machinery built but not wired; blockers 2-3 remain.
-**Last touched**: 2026-09-08
+gated at two deliberate human points (`draft`, `supervised_only`). **Blockers 2
+and 3 are closed** — built in v0.9.88 and exercised end to end in v0.9.89, not
+merely built. Blocker 1 (self-modification race) has machinery built but **not
+wired**; the cutover is still open. **Blocker 4 (progress is self-reported) was
+found on 2026-09-08 and is open** — and it is the one that survives closing the
+other three.
+**Last touched**: 2026-09-08 (v0.9.89)
 **Origin**: asked directly after a session that carried an ilk-skills defect
 from discovery through two releases and a two-host deploy, entirely by hand —
 v0.9.86 (verification attribution) and v0.9.87 (Phase 4 ssh). The question was
@@ -26,13 +30,13 @@ Most of it. The stages are not the gap.
 | plan | `/ilk-plan`, auto-gating self-modifying masters `draft` + `supervised_only` | exists |
 | execute | the loop, step-recoverable, `run_local_checks.py` gates | exists |
 | verify | batch-verification sub-plan; at-base rerun + non-defeasible gate | **hardened v0.9.86** |
-| release | `/ilk-ship` Phases 0-3 | exists |
-| deploy | `/ilk-ship` Phase 4, per-host, ssh-capable | **fixed v0.9.87** |
+| release | `/ilk-ship` Phases 0-3 | **Phase 0 hardened v0.9.89** — its hard stop had a hole: the ledger union trusted a self-derived step range as proof of a commit |
+| deploy | `/ilk-ship` Phase 4, per-host, ssh-capable | **fixed v0.9.87; tag conformance v0.9.88, demonstrated v0.9.89** |
 
 `/ilk-self-improve`'s own SKILL.md states the boundary today: *"This skill is a
 planner, not an executor. It produces a plan; a human releases and runs it."*
 That sentence is what this design would change, and it should not be changed
-until the three blockers below are closed.
+until the four blockers below are closed.
 
 ## The readiness test
 
@@ -56,6 +60,22 @@ times and the assistant erred about eight. Scored honestly:
 
 **1 of 8.** That ratio, not the stage inventory, is the argument for waiting.
 
+**Re-scored 2026-09-08 against a batch that actually ran through the loop, and
+the headline row is a failure.** Two rows of the table above are now covered —
+the "resolve, don't type" lint shipped in v0.9.88 and `plan_lint` enforced it
+while authoring the v0.9.89 batch, and the at-base rerun was executed for real
+(31 failing node ids, every one failing at base too, 0 attributed). But the
+batch produced a *new* error, and it is the first one drawn from inside the
+loop's own rails rather than from hand-driving:
+
+| error, 2026-09-08 | mechanically caught? |
+|---|---|
+| The loop set a sub-plan `status: shipped` without performing its step 2 or writing either marker commit — twice, the second time in a 243s iteration with **zero commits** | **no.** Phase 0 returned `proven: True, missing_steps: []` while `git log --all --grep` found **0** commits for both `#step-2` and `#ship`. An unattended run would have tagged and deployed it. Caught by hand-reading a commit log; the audit hole was fixed mid-release (v0.9.89) |
+
+The counterfactual argument below still holds for the *hand-driving* errors —
+but it does not extend to this one. This error came from the rails, not from
+working outside them, and it is what Blocker 4 exists to record.
+
 **But score the counterfactual too, because it does not point the same way.**
 Most of those errors came from working *outside* the loop's rails. An
 unattended run does not hand-type a suite invocation — it runs `ship.suite`
@@ -66,8 +86,9 @@ to verify instead of assembled substitute evidence. On the specific axis of
 "is the evidence machine-produced", the unattended path is **better**
 instrumented than the hand path that produced v0.9.86 and v0.9.87.
 
-So the conclusion is not "too risky". It is: **three specific things must be
-built, and the first is not a policy choice.**
+So the conclusion is not "too risky". It is: **four specific things must be
+built, and neither the first nor the fourth is a policy choice.** Blockers 2 and
+3 are now closed; 1 and 4 are not.
 
 ## Blocker 1 — the self-modification race (structural)
 
@@ -152,8 +173,16 @@ Two halves, one already free:
 
 - **Batch verdict** — solved by construction if the work runs *as a loop batch*
   rather than direct-implement. The loop records a verdict at the batch tip.
-- **Baseline** — parked as inbox item `2026-09-07 — ilk-skills-serial-suite-baseline`.
-  Until it lands, every toolkit release hits `could_not_compare`.
+- **Baseline** — **done, as of v0.9.89.** `.ilk-baselines/` holds
+  `v0.9.87__62005b14ac04.json` (stored during v0.9.88's release, after Phase 1
+  refused that release on `could_not_compare`) and `v0.9.88__62005b14ac04.json`
+  (stored during v0.9.89's, from that batch's own at-base measurement of the
+  tagged commit — same host, same resolved invocation, so no suite was re-run
+  to learn something already measured). v0.9.89's baseline-diff returned
+  `FOUND`: **0 regressions across 2829 collected tests vs v0.9.88, 0 new
+  failures, 10 fixed.** The claim this bullet used to carry — "until it lands,
+  every toolkit release hits `could_not_compare`" — no longer holds on this
+  host.
 
 Unattended release should **refuse** rather than substitute: a missing or stale
 verdict, or a `could_not_compare` baseline, halts and files rather than ships.
@@ -175,7 +204,82 @@ Unattended deploy needs a state that asserts *"host is at tag X, with a daemon
 running tag X's code"*, and a report where a host that is merely reachable
 cannot be confused with a host that is deployed.
 
-## What should stay gated even when all three close
+## Blocker 4 — progress is self-reported, and nothing binds it to an artifact
+
+**Found 2026-09-08, during the v0.9.89 release. Open.** This is the blocker that
+survives closing the other three: with 1, 2 and 3 all shut, an unattended run
+that day would still have tagged and deployed a batch containing a sub-plan
+that was never completed.
+
+What happened. Sub-plan `a-productive-timeout-is-not-a-barren-one` authored four
+steps. Its step 2 was **contingent** — "if step 1 introduced a new label, add
+its arm to `classify_action`" — and step 1 correctly introduced none, recording
+that decision in its Findings as a labelled judgment call. So step 2 was
+genuinely vacuous. The loop then set `status: shipped, current_step: 4` and
+never committed anything for step 2 or for the ship transition. Measured:
+`git log --all --grep` returns **0** commits for `[plan:…#step-2]` and **0** for
+`[plan:…#ship]`, while the sub-plan reported `shipped`.
+
+The chain has four links, and only the last one is fixed:
+
+1. **Progress is self-reported.** `skills/ilk-loop/SKILL.md:200-215` instructs
+   the *worker* to bump `current_step` in the sub-plan front-matter and commit
+   it. The driver writes plan status in **0** places — grep
+   `run_ilk_loop_claude.sh` for a plan-status write — it only reads it back
+   through `loop_status`. The claim and its auditor read the same self-report.
+2. **A gate proves the tree, not the step.** Step 2's three gates pass on
+   unchanged state; measured with the step never performed,
+   `test_watchdog_action_vocab.sh` exits 0 and `test_iteration_outcome.sh`
+   reports 0 failed. Performing a step and skipping it are observationally
+   identical to the gate.
+3. **A contingent step carried no empty-marker instruction.** The
+   batch-verification template states one for its own no-op step ("commit the
+   empty marker and move on"); a hand-authored contingent step in a generated
+   sub-plan did not, so there was no artifact prescribed for the judgment
+   "this step is vacuous". This is a planner-discipline gap, not a driver bug.
+4. **The audit trusted the self-report back.** `ship_audit`'s ledger union
+   treated a record's `[step_from, step_to)` range as proof of a commit — and
+   the driver derives that range from the worker's own `current_step`
+   (`run_ilk_loop_claude.sh:2267`), so the range restated the claim under
+   audit. A record claiming `step_from: 0, step_to: 4`, whose own `commits`
+   list held 3 shas, made `missing_steps` come back `[]`. **Fixed in v0.9.89**:
+   the union is scoped to the trailerless (shared-remote) regime it was
+   authored for, so when a slug carries trailers, a step without one is a real
+   gap.
+
+**Relaunching is not a repair path, and that was measured too.** The sub-plan
+was reopened to `current_step: 2` and re-dispatched by the scheduler; the second
+run (`20260908-143046`, 1 iteration, 243s) produced **zero commits** and set
+`shipped` again. Two identical outcomes with nothing different between the
+attempts is a design defect, not a flake — the same reasoning recorded in
+`relaunch-fixes-state-not-step-design`.
+
+**What would close it.** Any one of these breaks the self-report loop; the first
+is the cheapest and the most direct:
+
+- **A per-step commit-presence check in the driver.** After a step's gate
+  passes, require a commit carrying that step's trailer before advancing
+  `current_step`. A vacuous step then costs one empty commit, which is the
+  convention already in use elsewhere.
+- **A planner rule** that any contingent step ("if X, then …") must state its
+  empty-marker commit for the case where X is false. Enforceable in
+  `plan_lint`.
+- **Requiring a `#ship` commit for a `shipped` sub-plan.** Attempted in
+  v0.9.89 and deliberately **not** shipped: it broke 8 tests across 3 files
+  that assert PROVEN for a trailered sub-plan without one, so `proven` currently
+  means "a commit per authored step" by contract. Changing that is a contract
+  decision, and it is pinned as a `strict=True` xfail in
+  `skills/ilk-loop/tests/test_ship_audit_ledger_gap.py` rather than left to be
+  rediscovered.
+
+**Why this gates removing the human.** The other three blockers are about the
+machinery being *available* — a worktree to run in, a Phase 1 that can execute,
+a deploy state that means what it says. This one is about the machinery being
+*truthful* about work it performed itself. A pipeline can have all three and
+still ship a claim, and the only thing that caught it here was a human reading
+a commit log.
+
+## What should stay gated even when all four close
 
 Not a blanket human gate — a **staged deploy with a canary**, which the toolkit
 already has the shape for (two hosts, and prior art in the gh-resolve batch's
@@ -210,15 +314,42 @@ rather than a matter of confidence.
 
 ## Nearest next steps, in dependency order
 
-1. `plan_lint` rule + template bullet: a verification sub-plan must **resolve**
-   the suite command (`ship_audit._resolve_expected_invocation`), never
-   hard-code or restate one. Directly scores one row of the table.
-2. The serial baseline (inbox item), which unblocks Phase 1's second engine.
-3. `suite_timing.py` — serial vs `-n N` with **outcome-set equality gating
-   speed**, writing a dated artifact. Settles whether the declared invocations
-   on both projects are correct at all.
-4. Worktree isolation + merge lock for self-modifying batches (Blocker 1). **Machinery built; cutover still open.**
-5. A deploy state that names the tag, not just daemon freshness (Blocker 3).
+Four of the five original items are done. Kept with their outcomes rather than
+deleted, so the ordering that produced them stays legible.
+
+1. ~~`plan_lint` rule + template bullet: a verification sub-plan must
+   **resolve** the suite command
+   (`ship_audit._resolve_expected_invocation`).~~ **Done, v0.9.88**
+   (`lint_verification_subplan_hardcodes_suite`), and it enforced the v0.9.89
+   batch's authoring rather than sitting unused.
+2. ~~The serial baseline, which unblocks Phase 1's second engine.~~ **Done** —
+   v0.9.87's baseline stored during v0.9.88's release, v0.9.88's during
+   v0.9.89's. Phase 1's second engine has now run for real twice.
+3. ~~`suite_timing.py` — serial vs `-n N` with outcome-set equality gating
+   speed.~~ **Done, v0.9.88** (713 lines, refuses to measure a loaded box).
+4. **Worktree isolation + merge lock for self-modifying batches (Blocker 1).
+   Machinery built; cutover STILL OPEN.** Re-measured 2026-09-08:
+   `selfmod_worktree` appears 25 times across `skills/` and `tools/`, in
+   exactly **2 files** — the module and its test — so no driver calls it. Every
+   sub-plan of the v0.9.89 batch edited the clone that live consumer loops
+   execute. **This is now the only original item left.**
+5. ~~A deploy state that names the tag, not just daemon freshness
+   (Blocker 3).~~ **Done, v0.9.88; demonstrated v0.9.89** —
+   `host_deploy_status.py --require-tag` reported `chad-mbp: ok (local)` /
+   `rezmac: ok (ssh)` with exit 0, and rezmac read `tag-mismatch` until it was
+   genuinely on the release, which is the discrimination this item asked for.
+6. **NEW — bind progress to an artifact (Blocker 4).** A per-step
+   commit-presence check in the driver before `current_step` advances, plus a
+   `plan_lint` rule requiring a contingent step to state its empty-marker
+   commit. Cheapest of the three candidate fixes in that section, and the one
+   that does not require a contract change.
+
+One reporting note for whoever runs the next release: a
+`host_deploy_status.py --bounce-hosts` invocation reports the **pre-bounce**
+state. Both hosts printed `tag-mismatch` on the bouncing run and `ok` on the
+next detect-only check, with nothing changed in between. It errs toward
+refusing, so it is not a false `ok` — but the bouncing run's own output is not
+the deploy verdict.
 
 ## See also
 
