@@ -382,6 +382,57 @@ class TestRepair:
         assert "conflict-batch-verify" in rc.stdout + rc.stderr
 
 
+class TestOnlyInterrupted:
+    """The driver's automatic mode must not out-vote a deliberate revert.
+
+    test_ship_integrity reverts shipped -> in-progress when a sub-plan's gate
+    is red, and the marker commit stays in history. That residue is
+    indistinguishable BY CONTENT from an interrupted transition; only the
+    intent marker tells them apart.
+    """
+
+    def test_a_gate_revert_is_left_alone(self, tmp_path: Path) -> None:
+        st = _mod()
+        repo = _make_repo(tmp_path)
+        plans = _make_plans_dir(tmp_path, status="in-progress")
+        _marker_commit(repo, "conflict-batch-verify")  # ship happened...
+        # ...and ship_integrity reverted the status. No intent marker.
+
+        actions = st.repair(
+            plans_dir=plans, repo=repo, apply=True, only_interrupted=True,
+        )
+
+        assert actions == []
+        assert _status_of(plans, "conflict-batch-verify") == "in-progress"
+
+    def test_an_interrupted_transition_is_converged(self, tmp_path: Path) -> None:
+        st = _mod()
+        repo = _make_repo(tmp_path)
+        plans = _make_plans_dir(tmp_path, status="in-progress")
+        st.write_intent(plans_dir=plans, slug="conflict-batch-verify", repo=repo)
+        _marker_commit(repo, "conflict-batch-verify")
+        # <-- killed before the front-matter write; intent still on disk
+
+        actions = st.repair(
+            plans_dir=plans, repo=repo, apply=True, only_interrupted=True,
+        )
+
+        assert len(actions) == 1 and actions[0].applied is True
+        assert _status_of(plans, "conflict-batch-verify") == "shipped"
+        assert st.read_intent(plans_dir=plans) is None
+
+    def test_the_operator_cli_still_sees_an_old_residue(self, tmp_path: Path) -> None:
+        """--repair without --only-interrupted is the operator's tool: it names
+        the real gh-resolve pair, which predates any intent marker."""
+        st = _mod()
+        repo = _make_repo(tmp_path)
+        plans = _make_plans_dir(tmp_path, status="in-progress")
+        _marker_commit(repo, "conflict-batch-verify")
+
+        actions = st.repair(plans_dir=plans, repo=repo)
+        assert [a.slug for a in actions] == ["conflict-batch-verify"]
+
+
 class TestCli:
     def test_repair_json_names_each_pair(self, tmp_path: Path) -> None:
         st = _mod()  # noqa: F841 — module must exist for the CLI to run

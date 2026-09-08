@@ -269,8 +269,21 @@ local_checks:
 - CLI verification covering all loop-shippable acceptance criteria
   (pytest run + any verify scripts authored in earlier steps).
 - Move all listed tickets to the next tracker state (e.g. `待验证` for Lark).
-- Update plan: `status: shipped`.
-- Commit: `chore(plans): <slug> shipped [plan:<slug>#ship]`
+- Ship through **one writer**, not two separate writes. The front-matter
+  `status: shipped` lives outside the repo and the marker commit lives inside
+  it; an iteration killed between them leaves a pair nothing can reconcile:
+
+  ```bash
+  python3 <skill-root>/ilk-loop/scripts/ship_transition.py \
+    --ship <slug> --plans-dir <plans-dir> --repo <repo>
+  ```
+
+  It records an intent marker, makes the marker commit
+  `chore(plans): <slug> shipped [plan:<slug>#ship]`, writes
+  `status: shipped`, and clears the intent only once both halves are durable.
+  Idempotent, and it refuses a slug no sub-plan declares. If it is unavailable,
+  do the two writes by hand **in that order** — marker commit first, because
+  that residue is the one `--repair` can converge from evidence.
 
 <!--
 If the final verification needs a browser:

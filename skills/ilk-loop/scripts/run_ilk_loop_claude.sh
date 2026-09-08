@@ -1414,6 +1414,48 @@ find_shipped_subplans_pending_gates() {
   : # TODO: step 6+ — scan plans dir for shipped plans without ship-reports
 }
 
+converge_ship_transition() {
+  # Finish a ship transition this iteration started and did not complete.
+  #
+  # Shipping is two writes to two stores -- the sub-plan front-matter (outside
+  # the repo, under ~/.ilk-data) and the marker commit (inside it) -- and the
+  # agent performs both. An iteration killed at the timeout boundary between
+  # them leaves the pair half-written, with nothing afterwards able to say
+  # which half landed. Measured 2026-09-08 in gh-resolve: MASTER-2026-09-07c
+  # read `shipped` while conflict-batch-verify read `in-progress` at step 2,
+  # with the [plan:conflict-batch-verify#ship] commit present.
+  #
+  # --only-interrupted is deliberate and load-bearing: it converges ONLY pairs
+  # the intent marker attests to. test_ship_integrity (below) reverts a shipped
+  # sub-plan to in-progress when its gate is red, and the marker commit stays
+  # in history -- so an unconditional repair would re-ship it on the next run,
+  # out-voting a deliberate revert. ship_transition.py writes the intent marker
+  # before the first half and clears it only when both are durable, so its
+  # presence distinguishes "died mid-write" from "a gate unwound this".
+  #
+  # Args: $1 = plans_dir (optional, defaults to get_plans_dir)
+  # Never fails the iteration: a refusal is reported, not enforced. Enforcement
+  # of the un-decidable direction is test_ship_integrity's job.
+  local plans_dir="${1:-}"
+  if [[ -z "$plans_dir" || ! -d "$plans_dir" ]]; then
+    plans_dir=$(get_plans_dir) || return 0
+  fi
+  [[ -z "$plans_dir" || ! -d "$plans_dir" ]] && return 0
+
+  local script="${_SKILL_ROOT}/ilk-loop/scripts/ship_transition.py"
+  [[ ! -f "$script" ]] && return 0
+
+  local out=""
+  out=$(python3 "$script" --repair --apply --only-interrupted \
+        --plans-dir "$plans_dir" --repo "$PROJECT_PATH" 2>&1) || true
+  # Silent when there is nothing to converge -- the common case is one line of
+  # "0 diverged pairs", which is noise on every iteration.
+  if [[ -n "$out" && "$out" != *"0 diverged pairs"* ]]; then
+    echo "  [ship-transition] $out"
+  fi
+  return 0
+}
+
 test_ship_integrity() {
   # Ship-integrity enforcement: a sub-plan must not be "shipped" while its
   # declared local_checks gate is red.
@@ -2736,6 +2778,13 @@ print(json.dumps(d))
     elif [[ ! -s "$local_checks_results" ]]; then
       echo "  ! [ship-integrity] gate results at $local_checks_results are missing or empty — enforcing without gate data" >&2
     fi
+    # Converge a half-written ship BEFORE integrity enforcement reads the
+    # front-matter: a transition killed between its two writes must not be
+    # mistaken for a sub-plan that never shipped. Integrity still gets the last
+    # word -- it runs after, and its revert is not re-applied (see the
+    # --only-interrupted note in converge_ship_transition).
+    converge_ship_transition "$(get_plans_dir)"
+
     if ! test_ship_integrity "$(get_plans_dir)" "$local_checks_results"; then
       stop_reason="ship_integrity_violation"
       iter_stop_reason="ship_integrity_violation"

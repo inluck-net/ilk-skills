@@ -356,7 +356,12 @@ _REFUSAL = (
 )
 
 
-def repair(plans_dir: Path, repo: Path, apply: bool = False) -> list[RepairAction]:
+def repair(
+    plans_dir: Path,
+    repo: Path,
+    apply: bool = False,
+    only_interrupted: bool = False,
+) -> list[RepairAction]:
     """Converge diverged pairs. **Dry-run by default**; ``apply=True`` writes.
 
     ``marker-without-status`` converges forward: the commit is durable proof
@@ -364,10 +369,23 @@ def repair(plans_dir: Path, repo: Path, apply: bool = False) -> list[RepairActio
 
     ``status-without-marker`` is **refused**, not guessed — see ``_REFUSAL``.
     A refusal names the pair and makes the CLI exit non-zero.
+
+    ``only_interrupted`` narrows the scan to pairs the intent marker attests
+    to, and it exists for exactly one caller: the loop driver, which converges
+    automatically and so must not out-vote a *deliberate* revert. ``test_ship_integrity``
+    reverts ``shipped`` → ``in-progress`` when a sub-plan's gate is red, and
+    the marker commit stays in history — so an unconditional auto-repair would
+    silently re-ship it on the next run. An intent marker is only written by
+    ``ship()``, and only cleared once both halves are durable, so its presence
+    is positive evidence that *this* pair is a transition that died mid-write
+    rather than one a gate deliberately unwound. The operator CLI leaves it off:
+    converging an old residue is a judgment a human is making on purpose.
     """
     plans_dir, repo = Path(plans_dir), Path(repo)
     actions: list[RepairAction] = []
     for d in detect(plans_dir, repo):
+        if only_interrupted and not d.interrupted:
+            continue
         if d.kind == MARKER_WITHOUT_STATUS:
             action = RepairAction(
                 slug=d.slug, subplan=d.subplan, kind=d.kind,
@@ -416,6 +434,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="the project repo holding the marker commits")
     p.add_argument("--apply", action="store_true",
                    help="with --repair: actually write (default is dry-run)")
+    p.add_argument("--only-interrupted", action="store_true",
+                   help=("with --repair: consider only pairs an intent marker "
+                         "attests to (the loop driver's automatic mode)"))
     p.add_argument("--json", action="store_true", help="machine-readable output")
     return p
 
@@ -441,7 +462,8 @@ def main(argv: list[str] | None = None) -> int:
         _build_parser().print_help()
         return 2
 
-    actions = repair(args.plans_dir, args.repo, apply=args.apply)
+    actions = repair(args.plans_dir, args.repo, apply=args.apply,
+                     only_interrupted=args.only_interrupted)
     refused = [a for a in actions if a.refused]
 
     if args.json:
