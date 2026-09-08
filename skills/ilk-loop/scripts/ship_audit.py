@@ -88,6 +88,21 @@ def _find_near_miss_slugs(
     return near_misses
 
 
+def _slug_has_any_trailer(slug: str, git_output: str) -> bool:
+    """True when *slug* carries at least one ``[plan:<slug>#…]`` trailer.
+
+    The discriminator between the two attribution regimes.  On a shared
+    remote SKILL.md's policy strips every trailer, so this is False and the
+    ship-proof ledger is the only evidence there is.  When it is True,
+    trailers are demonstrably being written for this sub-plan, and a step
+    without one is a real gap rather than a stripped one.
+    """
+    return re.search(
+        rf"\[plan:{re.escape(slug)}#(?:step-\d+(?:,step-\d+)*|ship)\]",
+        git_output,
+    ) is not None
+
+
 def count_authored_steps(body: str) -> list[int]:
     """Return sorted list of step numbers from ``### Step N`` headings.
 
@@ -162,7 +177,21 @@ def check_step_commits(
     # AC-3: union with ledger records.  A step covered by a ledger record
     # for the same slug is also committed.  The ledger is supplementary —
     # trailer matching (above) is unchanged.
-    if ledger_records:
+    #
+    # Scoped to the TRAILERLESS regime, which is the only one the ledger was
+    # authored for: both of its ACs build their fixture with
+    # ``trailers=False`` (test_ship_proof_ledger_attribution.py).  A record's
+    # ``[step_from, step_to)`` range is derived by the driver from the
+    # worker's self-reported ``current_step``, so it is a restatement of the
+    # claim under audit, not evidence for it — harmless when trailers are
+    # stripped and it is all we have, unsound the moment trailers exist.
+    #
+    # Measured 2026-09-08, batch 2026-09-08c: a record claiming
+    # ``step_from: 0, step_to: 4`` (own ``commits`` list: 3 shas) attributed
+    # step 2 for a sub-plan carrying trailers on steps 0, 1 and 3 and no
+    # commit at all for step 2, so ``missing_steps`` came back ``[]`` for
+    # work that was never done.
+    if ledger_records and not _slug_has_any_trailer(slug, result.stdout):
         for rec in ledger_records:
             if not isinstance(rec, dict):
                 continue
