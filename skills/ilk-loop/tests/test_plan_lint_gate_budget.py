@@ -333,6 +333,9 @@ class TestLoadFailureIsNotSilence:
             stderr = "gate_cost: --project 'typo' not found under /x (23 projects present)."
 
         monkeypatch.setattr(plan_lint, "_TIMING_CACHE", None)
+        # Bypass the cross-process disk cache: a HIT would skip the scan
+        # entirely and this test would assert nothing about the failure path.
+        monkeypatch.setattr(plan_lint, "_TIMING_DISK_CACHE", False)
         monkeypatch.setattr(_sp, "run", lambda *a, **k: _R())
         data = plan_lint._load_timing_data()
         assert data.get("_load_failed"), "a non-zero exit must be recorded as a failure"
@@ -438,3 +441,99 @@ class TestFiresOnMedianNotPeak:
         f = lint_gate_budget(OVER_BUDGET, "sp1", timing_data=data)[0]
         assert "median" not in f
         assert "(budget: 60s). " in f, "separator lost on the no-spread path"
+
+
+# ── the cross-process timing cache ──────────────────────────────────────────
+#
+# `_TIMING_CACHE` memoises within ONE process, but plan_lint is overwhelmingly
+# invoked as a fresh subprocess -- once per gated sub-plan by the loop, and
+# from 53 CLI spawn sites across this suite -- so each paid the full
+# `gate_cost --by-test-file` scan again.  Measured 2026-09-08: 207 JSONL files
+# / 461 MB, 5.57s per CLI invocation, 96% of it that one call; a stat-only
+# fingerprint over the same set is 2.7ms.  See
+# tests/baselines/suite-timing-2026-09-08.md.
+
+
+class TestTimingDiskCache:
+    def _corpus(self, tmp_path):
+        """A fake project corpus: <root>/projects/<key>/logs/runs/<run>/*.jsonl."""
+        key = "test-project-key"
+        runs = tmp_path / "projects" / key / "logs" / "runs" / "20260908-000000"
+        runs.mkdir(parents=True)
+        f = runs / "iter-01.log.jsonl"
+        f.write_text('{"iteration": 1}\n', encoding="utf-8")
+        return key, f
+
+    def _patch_paths(self, monkeypatch, tmp_path):
+        """Redirect ALL THREE resolvers, including ``ilk_data_root``.
+
+        The unscoped identity resolves its cache through ``ilk_data_root``, not
+        ``external_runtime_dir``.  Patching only the latter leaves the
+        unscoped path pointing at the operator's real
+        ``~/.ilk-data/runtime/gate-cost-timing.all-projects.json`` -- which
+        made ``test_a_failed_scan_is_never_cached`` pass standalone (the key
+        resolved, so the scoped path was taken) and fail inside the full
+        suite (it did not, so a real cache HIT masked the failure).
+        """
+        import ilk_paths
+        monkeypatch.setattr(
+            ilk_paths, "ilk_data_root", lambda: tmp_path, raising=False)
+        monkeypatch.setattr(
+            ilk_paths, "external_logs_dir",
+            lambda k: tmp_path / "projects" / k / "logs", raising=False)
+        monkeypatch.setattr(
+            ilk_paths, "external_runtime_dir",
+            lambda k: tmp_path / "projects" / k / "runtime", raising=False)
+
+    def test_fingerprint_changes_when_the_corpus_changes(self, monkeypatch, tmp_path):
+        key, f = self._corpus(tmp_path)
+        self._patch_paths(monkeypatch, tmp_path)
+        before = plan_lint._timing_corpus_fingerprint(key)
+        assert before is not None
+        f.write_text('{"iteration": 1}\n{"iteration": 2}\n', encoding="utf-8")
+        after = plan_lint._timing_corpus_fingerprint(key)
+        assert after is not None and after != before, (
+            "appending to a run log must change the fingerprint, or a stale "
+            "cache would be served forever"
+        )
+
+    def test_roundtrip_hit_and_miss(self, monkeypatch, tmp_path):
+        key, _ = self._corpus(tmp_path)
+        self._patch_paths(monkeypatch, tmp_path)
+        fp = plan_lint._timing_corpus_fingerprint(key)
+        payload = {"schema": 4, "per_project": {key: {"per_file": []}}}
+
+        assert plan_lint._read_timing_cache(key, fp) is None, "empty cache must miss"
+        plan_lint._write_timing_cache(key, fp, payload)
+        assert plan_lint._read_timing_cache(key, fp) == payload, "same corpus must hit"
+        assert plan_lint._read_timing_cache(key, fp + "x") is None, (
+            "a different fingerprint must MISS, not serve the old payload"
+        )
+
+    def test_a_failed_scan_is_never_cached(self, monkeypatch, tmp_path):
+        """A cached failure would age into a stale success.
+
+        `_failed()` exists so a crashed gate_cost stays distinguishable from an
+        empty corpus -- persisting one would erase that distinction for every
+        later process, which is strictly worse than the slow path.
+        """
+        import subprocess as _sp
+
+        class _R:
+            returncode = 2
+            stdout = ""
+            stderr = "gate_cost: boom"
+
+        key, _ = self._corpus(tmp_path)
+        self._patch_paths(monkeypatch, tmp_path)
+        monkeypatch.setattr(plan_lint, "_TIMING_CACHE", None)
+        monkeypatch.setattr(_sp, "run", lambda *a, **k: _R())
+
+        data = plan_lint._load_timing_data()
+        assert data.get("_load_failed"), "a non-zero exit is still a failure"
+
+        cache_file = tmp_path / "projects" / key / "runtime" / "gate-cost-timing.cache.json"
+        assert not cache_file.exists(), (
+            "a failed scan must not be written to the cache"
+        )
+        monkeypatch.setattr(plan_lint, "_TIMING_CACHE", None)

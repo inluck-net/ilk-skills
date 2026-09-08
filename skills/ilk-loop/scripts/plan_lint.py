@@ -2599,6 +2599,114 @@ def _extract_gate_budget(text: str) -> int:
 _TIMING_CACHE: dict | None = None
 
 
+# Disk-cache switch.  True in production; tests that need the *scan* path
+# (e.g. the non-zero-exit failure test) monkeypatch this to False, and an
+# operator forcing a rescan can set ILK_PLAN_LINT_TIMING_CACHE=0.
+_TIMING_DISK_CACHE = os.environ.get("ILK_PLAN_LINT_TIMING_CACHE", "1") != "0"
+
+#: Bump when the cached payload's shape changes, so old files are ignored
+#: rather than misread.
+_TIMING_CACHE_SCHEMA = 1
+
+#: Cache identity for the UNSCOPED scan (the project key could not be resolved
+#: to a data dir, so gate_cost reads every project).  Judgment call 2026-09-08:
+#: caching it changes latency, not semantics -- unscoped is already what those
+#: invocations receive.  Measured: 877 files / 2.56 GB to parse, 12.9ms to
+#: fingerprint.  Wrong if the cross-project basename-attribution hazard noted
+#: in _load_timing_data is ever fixed by NOT merging, since this would keep
+#: serving the merged shape until the corpus next changes.
+_UNSCOPED_KEY = "__all-projects__"
+
+
+def _timing_corpus_fingerprint(key: str) -> str | None:
+    """A stat-only signature of the corpus ``gate_cost`` would parse.
+
+    ``gate_cost --by-test-file`` reads every ``iter-*.log.jsonl`` under the
+    project's run logs.  Measured 2026-09-08 on this project: **207 files,
+    461 MB** -- 5.4s to parse, but 2.7ms to stat.  So the fingerprint is
+    (count, newest mtime_ns, total bytes): it changes whenever a run appends
+    or a new iteration lands, and costs three orders of magnitude less than
+    the answer it guards.
+
+    Returns None when the corpus cannot be located, which disables the disk
+    cache for this call rather than inventing a key -- a wrong key would
+    serve one project's timings for another's, the same attribution bug the
+    ``--project`` scoping below exists to prevent.
+    """
+    try:
+        if key == _UNSCOPED_KEY:
+            from ilk_paths import ilk_data_root as _root
+            runs = _root() / "projects"
+            pattern = "*/logs/runs/*/iter-*.log.jsonl"
+        else:
+            from ilk_paths import external_logs_dir as _logs_dir
+            runs = _logs_dir(key) / "runs"
+            pattern = "*/iter-*.log.jsonl"
+        n = 0
+        newest = 0
+        total = 0
+        for f in runs.glob(pattern):
+            st = f.stat()
+            n += 1
+            if st.st_mtime_ns > newest:
+                newest = st.st_mtime_ns
+            total += st.st_size
+        return f"{_TIMING_CACHE_SCHEMA}:{n}:{newest}:{total}"
+    except Exception:
+        return None
+
+
+def _timing_cache_path(key: str) -> "Path | None":
+    try:
+        if key == _UNSCOPED_KEY:
+            from ilk_paths import ilk_data_root as _root
+            return _root() / "runtime" / "gate-cost-timing.all-projects.json"
+        from ilk_paths import external_runtime_dir as _runtime_dir
+        return _runtime_dir(key) / "gate-cost-timing.cache.json"
+    except Exception:
+        return None
+
+
+def _read_timing_cache(key: str, fingerprint: str) -> dict | None:
+    """Return the cached payload when it was built from this exact corpus."""
+    path = _timing_cache_path(key)
+    if path is None:
+        return None
+    import json as _json
+    try:
+        blob = _json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(blob, dict) or blob.get("fingerprint") != fingerprint:
+        return None
+    payload = blob.get("payload")
+    return payload if isinstance(payload, dict) else None
+
+
+def _write_timing_cache(key: str, fingerprint: str, payload: dict) -> None:
+    """Persist a SUCCESSFUL scan.  Failures are never written.
+
+    A cached failure would age into a stale success: ``_failed()`` exists
+    precisely so a crashed gate_cost is distinguishable from an empty
+    corpus, and writing one here would erase that distinction on every
+    subsequent process.  See the note in ``_load_timing_data``.
+    """
+    path = _timing_cache_path(key)
+    if path is None:
+        return
+    import json as _json
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(
+            _json.dumps({"fingerprint": fingerprint, "payload": payload}),
+            encoding="utf-8",
+        )
+        os.replace(tmp, path)
+    except OSError:
+        pass  # a cache we cannot write is a slow path, not a wrong one
+
+
 def _load_timing_data() -> dict:
     """Load per-test-file measurements from gate_cost --by-test-file --json."""
     global _TIMING_CACHE
@@ -2634,6 +2742,9 @@ def _load_timing_data() -> dict:
         # A key we cannot resolve degrades to the unscoped scan rather than
         # to an empty corpus: slow is recoverable, silently-no-data is not.
         cmd = [sys.executable, str(script), "--by-test-file", "--json"]
+        scoped_key = ""
+        cache_id = ""
+        fingerprint = None
         try:
             sys.path.insert(0, str(Path(__file__).resolve().parent))
             from ilk_paths import ilk_data_root as _data_root
@@ -2646,8 +2757,28 @@ def _load_timing_data() -> dict:
             # yet must go unscoped, not scoped-and-failed.
             if key and (_data_root() / "projects" / key).is_dir():
                 cmd += ["--project", key]
+                scoped_key = key
         except Exception:
             pass  # unscoped: correct, just slower
+
+        # Cross-process cache.  _TIMING_CACHE above memoises within ONE
+        # process, but plan_lint is overwhelmingly invoked as a fresh
+        # subprocess -- once per gated sub-plan by the loop, and once per
+        # assertion by 25 test files -- so every one of them re-paid the
+        # full scan.  Measured 2026-09-08: 5.57s per CLI invocation, of
+        # which cProfile attributes 96% to this one call.
+        # An unresolved key means gate_cost runs UNSCOPED, which is the
+        # slowest path of all and the one every test pays (they spawn the CLI
+        # with cwd=tmp_path, so the key resolves away from the repo).  Cache
+        # that under a reserved identity rather than leaving it uncached.
+        cache_id = scoped_key or _UNSCOPED_KEY
+        if _TIMING_DISK_CACHE and cache_id:
+            fingerprint = _timing_corpus_fingerprint(cache_id)
+            if fingerprint:
+                cached = _read_timing_cache(cache_id, fingerprint)
+                if cached is not None:
+                    _TIMING_CACHE = {**cached, "_auto_loaded": True}
+                    return _TIMING_CACHE
         out = _sp.run(
             cmd, capture_output=True, text=True, timeout=120, encoding="utf-8",
         )
@@ -2669,6 +2800,11 @@ def _load_timing_data() -> dict:
         # findings.  Callers that pass timing_data explicitly (the AC-3
         # unit tests, and anyone auditing coverage) still get the note.
         if isinstance(_TIMING_CACHE, dict):
+            # Cache the SCAN RESULT, not the _auto_loaded marker: that flag
+            # is about how this process obtained the data, and a reader of
+            # the cache adds its own.
+            if _TIMING_DISK_CACHE and cache_id and fingerprint:
+                _write_timing_cache(cache_id, fingerprint, _TIMING_CACHE)
             _TIMING_CACHE = {**_TIMING_CACHE, "_auto_loaded": True}
     except Exception as exc:  # subprocess timeout, OSError, ...
         _TIMING_CACHE = _failed(f"{type(exc).__name__}: {exc}"[:200])
