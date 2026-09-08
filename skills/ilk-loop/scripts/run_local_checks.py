@@ -222,6 +222,23 @@ def _coerce(s: str) -> Any:
 
 # ── sub-plan resolution ──────────────────────────────────────────────────────
 
+_DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[a-z]?-")
+
+
+def _slug_from_filename(fname: str) -> str:
+    """The slug ``loop_status.py:377-384`` derives for this file.
+
+    Strips the ``.md`` suffix and the leading ``YYYY-MM-DD`` date prefix
+    (with the optional same-day letter, e.g. ``2026-09-08b-``).  Kept as a
+    local regex rather than importing ``plan_slug.strip_date_prefix`` because
+    this module is invoked as a script from arbitrary working directories and
+    has no sibling-import shim; a failed import here would turn every gate
+    into an ``error``, which is a blocking outcome.
+    """
+    stem = fname[:-3] if fname.endswith(".md") else fname
+    return _DATE_PREFIX_RE.sub("", stem, count=1)
+
+
 def find_subplan(project: Path, slug: str) -> Path | None:
     """Find the sub-plan for *slug*, by frontmatter `plan:` OR by filename.
 
@@ -263,12 +280,25 @@ def find_subplan(project: Path, slug: str) -> Path | None:
                     return p
                 break
     # Fallback: the filename-derived form the rest of the toolkit uses.
-    # Same glob as quarantine_subplan._find_subplan_file, and MASTER files are
-    # excluded for the same reason -- a master is not a gateable sub-plan.
-    for p in sorted(plans_dir.glob(f"*-{slug}.md")):
+    #
+    # This is an EXACT derivation, not a `*-<slug>.md` glob.  The glob was the
+    # first shape tried and it is ambiguous: asked for `work-52d08c9c` with
+    # both `2026-09-08-work-52d08c9c.md` and
+    # `2026-09-08-issue-4796-work-52d08c9c.md` on disk, it matches both and
+    # `sorted()` silently returns the second.  Resolving to the WRONG sub-plan
+    # is worse than not resolving -- it gates work nobody asked about while
+    # reporting success.  quarantine_subplan.py:33-39 still uses the glob and
+    # carries the same latent ambiguity; that is pre-existing and not changed
+    # here.
+    #
+    # Deriving the slug the way loop_status.py:377-384 does makes the match
+    # one-to-one, which is exactly the invariant the caller is asking about:
+    # "the slug the loop reports for this sub-plan".
+    for p in sorted(plans_dir.glob("*.md")):
         if p.name.startswith("MASTER"):
             continue
-        return p
+        if _slug_from_filename(p.name) == slug:
+            return p
     return None
 
 

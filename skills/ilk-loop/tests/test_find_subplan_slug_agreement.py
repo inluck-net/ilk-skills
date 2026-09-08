@@ -155,3 +155,45 @@ def test_an_unknown_slug_still_returns_none(tmp_path: Path) -> None:
     plans = _plans(tmp_path)
     _mk(plans, "2026-09-08-issue-4796-work-52d08c9c.md", "issue-4796-work")
     assert rlc.find_subplan(tmp_path, "issue-9999-does-not-exist") is None
+
+
+def test_a_suffix_collision_resolves_exactly_not_ambiguously(tmp_path: Path) -> None:
+    """Two sub-plans where one slug is a SUFFIX of the other's filename.
+
+    The first shape of this fallback was a ``*-<slug>.md`` glob, and it was
+    wrong: asked for ``work-52d08c9c`` with both files below on disk, the glob
+    matched BOTH and ``sorted()`` silently returned
+    ``2026-09-08-issue-4796-work-52d08c9c.md``. Resolving to the WRONG
+    sub-plan is worse than not resolving — it gates work nobody asked about
+    and reports success.
+
+    Flagged by the reporting peer as a risk; reproduced before changing the
+    implementation to an exact filename-derived match.
+    """
+    plans = _plans(tmp_path)
+    _mk(plans, "2026-09-08-work-52d08c9c.md", "work")
+    _mk(plans, "2026-09-08-issue-4796-work-52d08c9c.md", "issue-4796-work")
+
+    got = rlc.find_subplan(tmp_path, "work-52d08c9c")
+    assert got is not None and got.name == "2026-09-08-work-52d08c9c.md", (
+        f"suffix collision resolved to {got.name if got else None!r}; the glob "
+        f"form returned the issue-4796 file for this slug"
+    )
+    # And the longer one still resolves to itself, not to its shorter sibling.
+    other = rlc.find_subplan(tmp_path, "issue-4796-work-52d08c9c")
+    assert other is not None and other.name == "2026-09-08-issue-4796-work-52d08c9c.md"
+
+
+def test_derivation_agrees_with_loop_status(tmp_path: Path) -> None:
+    """The fallback's slug derivation must BE loop_status's, not resemble it.
+
+    If these drift, find_subplan silently stops resolving the slugs the loop
+    reports — which is the original defect, reintroduced.
+    """
+    for fname in (
+        "2026-09-08-issue-4796-work-52d08c9c.md",
+        "2026-09-08b-a-status-read-does-not-mutate.md",
+        "2026-09-08-plain.md",
+        "no-date-prefix.md",
+    ):
+        assert rlc._slug_from_filename(fname) == _loop_status_slug(fname), fname
