@@ -57,6 +57,11 @@ about the same file — this doc makes the implicit contracts explicit.
   Writes `state: "running"` at loop start; rewrites to a terminal value on
   any exit (normal, error, interrupt, budget, max-iterations).
 - **`run_ilk_loop_claude.sh`** — equivalent `finalize_sentinel` function.
+  The stop-reason decision (`_decide_iter_stop_reason`) consults
+  `total_new` when `ITER_COMPLETED=0` (boundary kill): a productive
+  boundary kill (new commits > 0) does NOT set `iter_stop_reason="timeout"`;
+  the sentinel records the iteration's actual outcome (e.g. `all-shipped`).
+  A barren boundary kill (zero new commits) still sets `timeout`.
 
 ### Who reads
 
