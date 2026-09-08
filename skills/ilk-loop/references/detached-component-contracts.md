@@ -950,6 +950,99 @@ invariants 1 and 2.
 
 ---
 
+## Contract 9: The commit trailer (`[plan:<slug>#step-N]`)
+
+### Purpose
+
+The trailer is how a commit says which step of which sub-plan it discharges.
+It is the only such record that lives *inside the repository* — the ship-proof
+ledger (Contract 5) lives outside it, and only covers shared remotes where
+the trailer is stripped by policy. Every downstream claim of the form "this
+step was done" resolves, directly or through the ledger, to a trailer.
+
+### Format
+
+```
+<type>(<scope>): <summary> [plan:<slug>#step-<N>]
+<type>(<scope>): <summary> [plan:<slug>#step-<N>,step-<M>]
+chore(plans): <slug> shipped [plan:<slug>#ship]
+```
+
+`<slug>` is the sub-plan front-matter `plan:` value — **not** the filename,
+which carries a date prefix the slug does not.
+
+### Who writes
+
+- **The agent driving a step**, prompted by `run_ilk_loop_claude.sh`. There
+  is no code path that generates the trailer; it is typed. That is the whole
+  reason this contract exists.
+- **On a shared remote the trailer is omitted entirely** by policy
+  (`SKILL.md` → "Shared remote trailer policy"; `classify_remote` +
+  `.ilk-remote-type` decide). Absence there is correct, and Contract 5 covers
+  attribution.
+
+### Who reads
+
+- **`ship_audit.check_step_commits`** (`ship_audit.py:139`, `:158`) — builds
+  `rf"\[plan:{re.escape(slug)}#…\]"` and `rf"\[plan:{re.escape(slug)}#ship\]"`.
+  `re.escape` means this is an **exact string match**; there is no
+  normalization step.
+- **`ship_integrity.py:206`** — delegates to `check_step_commits`, so it
+  inherits the exact match.
+- **`loop_status.py:397-426`** — imports `ship_audit` and surfaces the
+  `(!) unproven` marker from its verdict.
+- **Gate discovery in the driver** (`run_ilk_loop_claude.sh:829-831`) —
+  extracts `\[plan:[^#]+#step-[0-9]+\]` and keeps the max step per slug, to
+  decide which step's `local_checks` to run.
+
+### Invariants
+
+1. **The match is exact, and stays exact.** A slug is matched by
+   `re.escape`d equality. Fuzzy matching must never become an *acceptance*
+   path: an audit that accepts an approximate slug is forgeable, which
+   inverts its purpose.
+
+2. **An unknown slug is an error, not an absence.** A trailer naming a slug
+   with no corresponding sub-plan file in the plans dir is a typo. Zero
+   matches for the audited slug therefore has two distinct causes — no work,
+   or misspelled work — and no reader may report the second as the first.
+
+3. **Zero matches names its near misses.** When `audit_ship` finds *every*
+   authored step missing, it scans the same range for `[plan:<other>#…]`
+   trailers whose longest common prefix with the audited slug covers ≥80% of
+   the shorter slug, and appends `near-miss slug '<other>' found in commit
+   <sha>` to `reasons` (`ship_audit.py:32-88`, `:411-429`). **The verdict is
+   unchanged** — the sub-plan still audits as unproven and `/ilk-ship`
+   Phase 0 still hard-stops. Only the report becomes actionable.
+
+4. **The typo is caught in the iteration that wrote it.** The driver compares
+   each extracted trailer slug against the slugs read from the plans dir and
+   prints `! [trailer-slug] unknown slug '<bad>' … (nearest: '<real>')` to
+   stderr (`run_ilk_loop_claude.sh:1306-1391`, called at `:2431`). Five
+   commits later at Phase 0 is too late to be cheap to fix.
+
+5. **A missing trailer is silent; a wrong one is loud.** The write-time check
+   fires only when trailers were found at all (guarded on a non-empty targets
+   file at `run_ilk_loop_claude.sh:2423`). It must never fire on the
+   shared-remote path, where trailers are absent by design.
+
+### Bug reference (gh-resolve, 2026-09-08)
+
+Five commits carried `[plan:a-collaborator-is-not-antruder#…]` against a
+sub-plan whose `plan:` value is `a-collaborator-is-not-an-intruder` — one
+character removed, **5 of 5 mangled, 0 correct**. The last of the five spells
+the slug correctly in its *subject* and wrongly in its *trailer*, which is
+what made it invisible to a human reading the log. The work was complete and
+correct; `ship_audit` reported `missing commit for steps 0, 1, 2, 3` and
+Phase 0 hard-stopped a finished sub-plan. This is the false-**positive**
+mirror of the `missing_steps: []` false negative in the same family.
+
+Fixed in sub-plan `a-mistyped-slug-is-not-missing-work` (2026-09-08) by
+invariants 3 and 4. Pinned by
+`skills/ilk-loop/tests/test_trailer_slug_integrity.py`.
+
+---
+
 ## Adding a new reader or writer
 
 When adding a component that reads or writes any of the three artifact
@@ -1003,6 +1096,22 @@ types above, follow this checklist:
       `python3 -m pytest skills/ilk-watchdog/tests/test_captured_fn_logging.py -q`
       Add the script to its `_SCRIPTS` tuple if you introduced a new one.
 
+### For a commit trailer slug (`[plan:<slug>#step-N]`)
+
+- [ ] **Match exactly.** Use `re.escape(slug)`; do not normalize, lowercase,
+      or strip characters. Reuse `ship_audit.check_step_commits` rather than
+      writing a second regex.
+- [ ] **Never accept a near miss.** Similarity is diagnostic output only.
+      A reader that accepts an approximate slug makes ship-proof forgeable.
+- [ ] **Distinguish "no work" from "misspelled work".** Zero matches must
+      report the near-miss slugs present in the same range (Contract 9
+      invariant 3), not just the missing step numbers.
+- [ ] **Tolerate a legitimately absent trailer.** On a shared remote there
+      are none; fall back to the ship-proof ledger (Contract 5) and stay
+      silent rather than reporting an anomaly.
+- [ ] **Run the regression test**:
+      `python3 -m pytest skills/ilk-loop/tests/test_trailer_slug_integrity.py -q --timeout=60 --timeout-method=signal`
+
 ### General
 
 - [ ] **Read with `utf-8-sig` for any file the PowerShell side may write.**
@@ -1028,3 +1137,5 @@ types above, follow this checklist:
 - Sub-plan #1 (`collect-bom-tolerant-reads`) — the BOM fix.
 - Sub-plan #2 (`runner-trust-allpassed`) — the all_passed fix.
 - Sub-plan #3 (`status-terminal-sentinel-alive`) — the liveness fix.
+- Sub-plan `a-mistyped-slug-is-not-missing-work` (2026-09-08) — Contract 9,
+  the commit-trailer slug.
