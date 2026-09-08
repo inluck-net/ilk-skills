@@ -389,3 +389,77 @@ class TestShipGapWiring:
         assert raw.strip(), f"_SHIP_GAP_JSON is empty; stderr: {proc.stderr.strip()!r}"
         parsed = json.loads(raw)
         assert isinstance(parsed, dict) and "unexplained" in parsed
+
+
+# ── gate discovery must not be conditional on new commits ────────────────────
+#
+# Measured on a consumer host 2026-09-08 (issues #4796, #4798): an iteration
+# with 0 new commits was never gated AT ALL, and the run then reported
+# `all-shipped`:
+#
+#     duration: 474s  exit: 0  new commits: 0
+#     [ship-integrity] no gate ran this iteration; enforcing without gate data
+#     2026-09-08-issue-4796-work-52d08c9c.md  [OK] shipped 1/1  (!) unproven
+#     SHIP PROOF MISSING: 2 sub-plans shipped without proof
+#     [ilk] ALL SHIPPED — nothing to run. Do NOT relaunch.
+#
+# The commit count is an input to TRAILER SCANNING, not a precondition for
+# gating: the fallback below the scan (ledger -> PRE_ITER_TARGET -> active
+# sub-plan) exists precisely for the case where trailers are absent, and a
+# shared remote strips them by policy anyway. Guarding the whole block on
+# `total_new` made that fallback unreachable in the one case that most needs
+# it.
+
+
+class TestGateDiscoveryNotConditionalOnCommits:
+    def _guard_line(self) -> str:
+        lines = _DRIVER.read_text(encoding="utf-8", errors="replace").splitlines()
+        for i, line in enumerate(lines):
+            if "Optional local_checks" in line:
+                # the guard is the next `if [[` at or below this marker
+                # Window is generous: the guard carries a rationale comment
+                # above it, and a too-narrow scan silently finds the WRONG
+                # `if` further down, which fails for the wrong reason.
+                for cand in lines[i : i + 25]:
+                    if cand.strip().startswith("if [["):
+                        return cand.strip()
+        raise AssertionError("could not locate the local_checks guard in the driver")
+
+    def test_guard_does_not_depend_on_total_new(self) -> None:
+        guard = self._guard_line()
+        assert "total_new" not in guard, (
+            f"gate discovery is still gated on the commit count: {guard!r}. "
+            f"A zero-commit iteration is then never gated, and the run reports "
+            f"all-shipped over unproven sub-plans."
+        )
+        assert "RUN_LOCAL_CHECKS" in guard, (
+            f"the operator switch must remain — that half is deliberate: {guard!r}"
+        )
+
+    def test_the_guard_admits_a_zero_commit_iteration(self) -> None:
+        """Execute the driver's own condition, per this file's method."""
+        guard = self._guard_line()
+        # Strip the trailing `; then` so the condition can be evaluated alone.
+        cond = guard[len("if ") :].rsplit(";", 1)[0].strip()
+        script = f'RUN_LOCAL_CHECKS=true; total_new=0; if {cond}; then echo GATE; else echo SKIP; fi'
+        out = subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+        )
+        assert out.stdout.strip() == "GATE", (
+            f"with RUN_LOCAL_CHECKS=true and 0 new commits the driver skips "
+            f"gate discovery (got {out.stdout.strip()!r} from {cond!r})"
+        )
+
+    def test_the_operator_switch_still_disables_it(self) -> None:
+        """The other direction: RUN_LOCAL_CHECKS=false must still skip."""
+        guard = self._guard_line()
+        cond = guard[len("if ") :].rsplit(";", 1)[0].strip()
+        script = f'RUN_LOCAL_CHECKS=false; total_new=5; if {cond}; then echo GATE; else echo SKIP; fi'
+        out = subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+        )
+        assert out.stdout.strip() == "SKIP", (
+            "removing the commit-count guard must not also remove the operator switch"
+        )
