@@ -2447,8 +2447,17 @@ print(json.dumps({
     fi
 
     # Optional local_checks
+    #
+    # NOT gated on $total_new. The commit count is an input to TRAILER
+    # SCANNING below, not a precondition for gating: the fallback (ledger ->
+    # PRE_ITER_TARGET -> active sub-plan) exists for the case where trailers
+    # are absent, and a shared remote strips them by policy. Guarding the whole
+    # block on the commit count made that fallback unreachable in the one case
+    # that most needs it -- measured 2026-09-08 on a consumer host, an
+    # iteration with 0 commits was never gated and the run reported
+    # all-shipped over two unproven sub-plans.
     local local_checks_results=""
-    if [[ "$RUN_LOCAL_CHECKS" == true && "$total_new" -gt 0 ]]; then
+    if [[ "$RUN_LOCAL_CHECKS" == true ]]; then
       local all_targets_file
       all_targets_file=$(mktemp)
       for r in "${REPOS[@]}"; do
@@ -2475,8 +2484,9 @@ print(json.dumps({
         fi
       fi
 
-      # Trailer scanning found nothing, but commits exist ($total_new > 0 to be
-      # here). On a shared remote that is the EXPECTED state, not an anomaly:
+      # Trailer scanning found nothing. Either the iteration committed nothing,
+      # or it committed without trailers. On a shared remote the latter is the
+      # EXPECTED state, not an anomaly:
       # the trailer policy strips the [plan:…#step-N] tags this discovery reads.
       # Without this fallback the declared gate silently never runs and the
       # sub-plan ships as loop-verified on the strength of nothing.
@@ -2499,7 +2509,7 @@ print(json.dumps({
         else
           # Neither source produced a target. Say so loudly: a silent skip here
           # is what let unverified work ship as verified.
-          echo "  ! [local_checks] commits landed but NO gate target could be resolved (no commit trailers, no unshipped sub-plan) — gate did NOT run" >&2
+          echo "  ! [local_checks] NO gate target could be resolved (no commit trailers, no ledger row, no unshipped sub-plan) — gate did NOT run. This iteration made ${total_new} commit(s)." >&2
         fi
       fi
 
