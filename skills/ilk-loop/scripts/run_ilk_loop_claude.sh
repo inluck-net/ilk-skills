@@ -912,11 +912,36 @@ write_ship_proof_records() {
   # Resolve current_step for each slug from loop_status (the post-iteration
   # state — the agent may have advanced the sub-plan during this iteration).
   local status_json to_list=()
-  status_json=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null) || true
+  # Do NOT swallow this probe.  `|| true` + `2>/dev/null` discarded both the
+  # exit status and the reason, so a probe that never answered was
+  # indistinguishable from one that answered "no advance": `to_val` kept its
+  # pre-iteration value and the writer emitted a record asserting
+  # step_to == step_from -- zero progress attributed on evidence that does not
+  # exist.  On a shared remote that row is the ONLY evidence (the ledger union
+  # at ship_audit.py:204 is gated on the slug having no trailers), so the false
+  # negative is what an unattended publisher reads before refusing work that
+  # shipped fine.  Same rule as the ledger_dir resolve below: a swallowed probe
+  # failure is not data.  stderr is left attached so the reason is reported.
+  #
+  # The exit CODE cannot be the predicate here: loop_status returns 1 at
+  # loop_status.py:786 to mean "a next sub-plan exists", which is the normal
+  # productive case, 0 at :763 for all-shipped, and only >=2 (:616, :657) for
+  # a genuine error.  Gating on `rc != 0` would suppress the ledger on every
+  # productive iteration.  The honest predicate is whether the probe actually
+  # ANSWERED -- i.e. whether stdout parses as JSON.
+  local probe_rc=0
+  status_json=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json) || probe_rc=$?
+  if (( probe_rc >= 2 )) || [[ -z "$status_json" ]] \
+     || ! printf '%s' "$status_json" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then
+    echo "  ! [ship-proof] loop_status --json probe did not answer (exit ${probe_rc}) -- writing no ledger rows for iteration ${iteration}. A row asserting zero progress would be a false negative, not a safe default." >&2
+    return 0
+  fi
   local si
   for (( si=0; si<${#slug_list[@]}; si++ )); do
     local s="${slug_list[$si]}"
-    local to_val="${step_list[$si]}"
+    # Empty means "not resolved".  Deliberately NOT the pre-iteration step:
+    # falling back to it is what manufactured the zero-progress row above.
+    local to_val=""
     if [[ -n "$status_json" ]]; then
       local looked
       looked=$(echo "$status_json" | python3 -c "
@@ -965,6 +990,14 @@ for sp in (d.get('subplans') or []):
       local slug="${slug_list[$si]}"
       local step_from="${step_list[$si]}"
       local step_to="${to_list[$si]}"
+      # An unresolved current_step is not zero progress -- it is no answer.
+      # Attributing [step_from, step_from) would be a row claiming the
+      # iteration advanced nothing, which on a trailerless remote is the only
+      # thing the audit gets to read.  Skip and say so.
+      if [[ -z "$step_to" ]]; then
+        echo "  ! [ship-proof] no current_step resolved for '${slug}' -- skipping its row for iteration ${iteration} rather than attributing zero progress." >&2
+        continue
+      fi
       local shas_json
       shas_json=$(printf '%s\n' "$new_shas" | jq -R . | jq -sc .)
 
@@ -979,6 +1012,11 @@ print(json.dumps({
     'step_from': int(sys.argv[5]),
     'step_to': int(sys.argv[6]),
     'commits': json.loads(sys.argv[7]),
+    # Who wrote this row.  The driver can only speak for itself: a
+    # hand-executed batch writes no rows at all, so without this field an
+    # empty ledger is ambiguous between 'nobody ran the loop' and 'the
+    # writer is broken'.  Readers ignore unknown fields.
+    'provenance': 'loop-executed',
 }, separators=(',', ':')))" "$RUN_ID" "$iteration" "$slug" "$r" "$step_from" "$step_to" "$shas_json" 2>/dev/null) || continue
 
       printf '%s\n' "$record" >> "$ledger"
