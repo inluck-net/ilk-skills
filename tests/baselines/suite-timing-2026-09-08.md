@@ -170,6 +170,67 @@ the shared-state flips it saw; and 11 test files here touch machine-global
 state (`launchctl`, `bootout`, `scheduler.pid`, `pkill`), while only 8 touch
 real `Path.home()`.
 
+## Ruled out as levers on the full suite's 274s
+
+Every row is a measurement, not a judgement. The full suite is ~2400 tests
+each doing real subprocess work; **148 of 235 test files spawn subprocesses**.
+There is no hotspot, so a lever has to be either per-spawn cost or parallelism,
+and both are now closed off.
+
+| candidate | verdict | evidence |
+|---|---|---|
+| xdist (`-n 2` / `-n 4` / `-n auto`) | **slower**, 1.53-2.34x, and flips 5 green tests red | `gate-timing-2026-08-27.md`, full suite, every worker count |
+| the `gate_cost` timing scan | **irrelevant to the full suite** | cached in `e78d8ae`: 274.14s → 274.52s, unchanged |
+| a single dominating test | **none exists** | top-15 ≈ 60s of 274s here; top-25 ≈ 100s of 263s on 2026-08-27 |
+| the autouse host-guard shim | **0.4s (0.2%)** | 0.15 ms/test measured over 500 iterations of its mktemp + 2 writes + chmod |
+| interpreter / bytecode overhead | **≤ ~26s (<10%)**, and needs 53 call-site changes | 145 ms per warm `plan_lint.py` spawn vs 16 ms for a bare interpreter |
+
+Per-spawn costs, measured 2026-09-08 (10 iterations each):
+
+| spawn | cost |
+|---|---|
+| `python3 -c pass` | **16 ms** |
+| `python3 plan_lint.py <file>`, warm cache | **145 ms** |
+
+So ~130 ms of a `plan_lint` spawn is parsing and importing its 4,286 lines.
+Python does not cache bytecode for a file run as `__main__`, so that is paid
+every time; invoking it as `-m plan_lint` would recover part of it.
+
+### What is actually left
+
+Spawning less. The repo already contains both patterns:
+
+| file | tests | CLI spawns | imports the lint function |
+|---|---|---|---|
+| `test_plan_lint_vacuous_selector.py` | 13 | 13 | no |
+| `test_plan_lint_balance_regression.py` | 16 | 4 | yes |
+
+The second calls the lint function in-process for the 12 tests that are about
+lint *logic*, and reserves a real subprocess for the 4 that are about the
+*CLI*. The first pays full process cost to test pure functions.
+
+**Sized honestly, this is now a small win.** Against the pre-cache spawn cost
+(~13s) it would have been large; at 145 ms it is ~1.7s for that file and the
+~26s ceiling above for all of them. The cache already collected most of what
+this refactor was going to return, and it trades away CLI coverage. Do not
+start it expecting minutes.
+
+### Untested, and the one config never tried
+
+`--dist loadfile`. The 2026-08-27 measurement used only the **default `load`**
+scheduler; `loadfile` keeps a file's tests on one worker and is the standard
+remedy for precisely the shared-state flips it observed. gh-resolve declares
+`-n 8 --dist loadfile` with no timing baseline in that repo.
+
+Expectation is **low**: that document attributes the loss to contention from
+subprocess fan-out already saturating 10 cores, which the scheduler choice does
+not change. But it is the one open question, and
+`skills/ilk-ship/scripts/suite_timing.py` exists to settle it — it compares
+configurations on **outcome-set equality first, wall-clock second**, and writes
+a dated artifact. Use it rather than a hand-typed pytest command; hand-typing
+the invocation is what produced the wrong 31-red run recorded in the
+`ilk-skills-serial-suite-baseline` inbox entry.
+
 ## Red set (full suite, serial, this host, today)
 
 **31** non-passing: 24 failed + 7 errors, mapping onto 5 of the 6 declared
