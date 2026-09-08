@@ -295,6 +295,36 @@ def _resolve_batch_record(
     project_path = cwd or Path.cwd()
     expected_invocation = _resolve_expected_invocation(project_path)
 
+    # A `not_configured` record is not a stale record.  It is the designed name
+    # for "this project has no suite to run" (written at batch_gate.py:599-605;
+    # created by SP6 so that "no suite" would not read as "suite failed" --
+    # batch_gate.py:755-758).  Freshness grading compares the record's
+    # invocation against the one resolved from .ilk-launch.json, but when
+    # nothing is configured there IS no expected invocation: the comparison is
+    # against '' and can only mismatch, yielding stale_invocation and refusing
+    # the ship.  That is precisely the outcome SP6 created the verdict to
+    # prevent, reached by a different route.
+    #
+    # Parity with the layer below: ship_integrity.py:70-71 already returns
+    # ok=True, "no gate declared -- nothing to enforce" for a sub-plan that
+    # declares no checks.  Absence of a declared gate is already not a refusal;
+    # this is the same shape one level up -- absence of a configured suite.
+    #
+    # Gated on the LIVE config, not on the record alone: once a project gains a
+    # ship block, an old not_configured record describes a world that no longer
+    # exists and must be graded normally.  Everything that was actually
+    # computed -- pass, fail, error -- and every staleness outcome keeps failing
+    # closed, `absent` included: absent means the gate never executed, which is
+    # an anomaly rather than a project without a suite, and 08d made it refuse
+    # on 2026-09-08.
+    if not expected_invocation:
+        try:
+            _rec = json.loads(rp.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            _rec = None
+        if isinstance(_rec, dict) and _rec.get("verdict") == "not_configured":
+            return "not_configured", _rec.get("invocation") or "no suite configured"
+
     # AC-3: delegate to SP2's validator.
     outcome = validate_record(rp, current_head, expected_invocation)
 
@@ -474,7 +504,14 @@ def audit_ship(
     elif gate_verdict in ("stale_head", "stale_invocation", "incomplete", "absent"):
         reasons.append(gate_reason or f"gate is {gate_verdict}")
 
-    proven = not missing and gate_verdict in (None, "pass")
+    # `not_configured` joins None and "pass" as non-blocking: a project with no
+    # suite has no gate that could have run, so refusing on that basis is the
+    # "no suite reads as suite failed" conflation SP6 named the verdict to
+    # prevent.  The cost is explicit: `proven` then rests on the commit half
+    # alone -- steps have commits and nothing verifies the tree.  That gap is
+    # surfaced at PLAN time instead (plan_lint flags zero coverage, and
+    # batch_gate still prints the verdict), which is where the design puts it.
+    proven = not missing and gate_verdict in (None, "pass", "not_configured")
     final_gate: str | None
     if declared_checks:
         final_gate = gate_verdict  # "pass" or "fail"
