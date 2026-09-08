@@ -92,6 +92,33 @@ def _write_summary_record(
         f.write(json.dumps(record) + "\n")
 
 
+def _write_started_record(
+    data_home: Path,
+    key: str,
+    project_path: Path,
+    run_id: str,
+    *,
+    iteration: int = 1,
+) -> None:
+    """Write the ``status: started`` line the runner emits at iteration launch.
+
+    This is the line every fixture in this file was missing.  It shares
+    ``(run_id, iteration)`` with the completion record and carries none of
+    the outcome fields.
+    """
+    logs_dir = _logs_dir(data_home, key)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    with (logs_dir / ".ilk-loop.log").open("a", encoding="utf-8") as f:
+        f.write(json.dumps({
+            "project": str(project_path),
+            "run_id": run_id,
+            "iteration": iteration,
+            "cli": "claude",
+            "model": "mimo-v2.5-pro",
+            "status": "started",
+        }) + "\n")
+
+
 # ── AC-1: front-matter stats equal the record's stats ─────────────────────
 
 
@@ -314,3 +341,87 @@ def test_relaunch_not_blocked_when_gate_was_green(scratch_env):
         f"Relaunch should not be blocked when gate was green.\n"
         f"Body:\n{text[600:]}"
     )
+
+
+# ── AC-5: a `started` placeholder must not out-vote the completion line ────
+#
+# Root cause of the 2026-09-04 report, found 2026-09-08 from the REAL record
+# on the consumer host (run 20260904-103214, kira-cloudflare resolver
+# worktree).  That log holds TWO lines for (run_id, iteration=1): the
+# `status: started` line written at launch, then the completion line with
+# duration_sec=820 / exit_code=0 / new_commits_total=1.  `read_jsonl_iters`
+# de-duplicated on (run_id, iteration) keeping whichever came FIRST, so the
+# empty placeholder won and the postmortem reported 0 / 0 / `Exit ?` /
+# `Stop reason -`, then recommended against relaunching on those zeros.
+#
+# Every fixture above writes only the completion line, which is why this
+# 316-line suite passed against the unfixed collect.py.
+
+
+def test_started_line_does_not_mask_the_completion_record(scratch_env):
+    """The real two-line shape: `started` first, completion second."""
+    project_path, env, key = scratch_env
+    data_home = Path(env["ILK_DATA_HOME"])
+    run_id = "20260904-103214"
+
+    _write_started_record(data_home, key, project_path, run_id, iteration=1)
+    _write_summary_record(
+        data_home, key, project_path, run_id,
+        iteration=1, exit_code=0, new_commits_total=1,
+        duration_sec=820, stop_reason="local_checks_failed",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(_COLLECT_PY), "-ProjectPath", str(project_path), "--quiet"],
+        capture_output=True, text=True, env=env,
+        encoding="utf-8", errors="replace",
+    )
+    assert result.returncode == 0, (
+        f"Expected exit 0, got {result.returncode}.\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+    pm_path = _launcher_dir(data_home, key) / "postmortems" / f"{run_id}.md"
+    assert pm_path.exists(), f"Postmortem not found at {pm_path}"
+    text = pm_path.read_text(encoding="utf-8")
+
+    assert "new_commits_total: 1" in text, (
+        "The `started` placeholder masked the completion record: front-matter "
+        f"should read new_commits_total: 1.\nHead:\n{text[:600]}"
+    )
+    assert "total_elapsed_sec: 820" in text, (
+        "The `started` placeholder masked the completion record: front-matter "
+        f"should read total_elapsed_sec: 820.\nHead:\n{text[:600]}"
+    )
+
+
+def test_read_jsonl_iters_prefers_the_outcome_record_either_order(tmp_path):
+    """Unit-level, and order-independent in both directions.
+
+    A late-arriving `started` line (a legacy log scanned after the external
+    one) must not clobber an outcome record already collected.
+    """
+    sys.path.insert(0, str(_REPO_ROOT / "skills" / "ilk-feedback" / "scripts"))
+    import collect
+
+    proj = tmp_path / "proj"
+    started = {"project": str(proj), "run_id": "R", "iteration": 1, "status": "started"}
+    done = {"project": str(proj), "run_id": "R", "iteration": 1, "exit_code": 0,
+            "new_commits_total": 1, "duration_sec": 820,
+            "stop_reason": "local_checks_failed"}
+
+    for order in ([started, done], [done, started]):
+        log = tmp_path / f"log-{'sd' if order[0] is started else 'ds'}.jsonl"
+        log.write_text("".join(json.dumps(r) + "\n" for r in order), encoding="utf-8")
+        orig = collect._jsonl_log_candidates
+        try:
+            collect._jsonl_log_candidates = lambda p, l=None, _lg=log: [_lg]
+            recs = collect.read_jsonl_iters(proj)
+        finally:
+            collect._jsonl_log_candidates = orig
+        assert len(recs) == 1, f"expected one de-duplicated record, got {len(recs)}"
+        assert recs[0].get("duration_sec") == 820, (
+            f"outcome record lost for order "
+            f"{'started-first' if order[0] is started else 'completion-first'}"
+        )
+        assert recs[0].get("new_commits_total") == 1

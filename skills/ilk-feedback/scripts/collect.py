@@ -363,6 +363,22 @@ def _normalize_path_for_compare(p: str | os.PathLike) -> str:
     return str(p).replace("\\", "/").lower()
 
 
+def _carries_outcome(rec: dict) -> bool:
+    """True when a record carries an iteration's OUTCOME, not just its start.
+
+    The runner writes TWO lines per iteration: a ``status: "started"`` line at
+    launch, then a completion line carrying ``duration_sec`` / ``exit_code`` /
+    ``new_commits_total`` / ``stop_reason``.  Both share the same
+    ``(run_id, iteration)``, so a de-dup that keeps whichever arrives first
+    keeps the empty one.
+
+    Keyed on the outcome fields rather than on ``status != "started"``: the
+    completion line carries no ``status`` key at all, so absence of the token
+    is not evidence of completeness.
+    """
+    return any(k in rec for k in ("duration_sec", "exit_code", "stop_reason"))
+
+
 def read_jsonl_iters(project_path: Path, last_launch: dict | None = None) -> list[dict]:
     """Return ALL iteration records for this project across all runs.
 
@@ -370,7 +386,10 @@ def read_jsonl_iters(project_path: Path, last_launch: dict | None = None) -> lis
     legacy) and de-duplicates by (run_id, iteration).
     """
     project_path_norm = _normalize_path_for_compare(project_path)
-    seen: set[tuple[str, int]] = set()
+    # key -> index into `records`, so a later completion line can SUPERSEDE an
+    # earlier `status: started` placeholder in place (preserving position)
+    # rather than being discarded as a duplicate.
+    seen: dict[tuple[str, int], int] = {}
     records: list[dict] = []
 
     for candidate in _jsonl_log_candidates(project_path, last_launch):
@@ -392,10 +411,18 @@ def read_jsonl_iters(project_path: Path, last_launch: dict | None = None) -> lis
                     rid = rec.get("run_id", "")
                     it = rec.get("iteration", 0)
                     key = (rid, it)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    records.append(rec)
+                    prev = seen.get(key)
+                    if prev is None:
+                        seen[key] = len(records)
+                        records.append(rec)
+                    elif _carries_outcome(rec) and not _carries_outcome(records[prev]):
+                        # The completion line for an iteration we have only
+                        # seen the `started` placeholder for.  Without this,
+                        # the postmortem reports duration 0, 0 commits,
+                        # `Exit ?` and `Stop reason -` while the record on
+                        # disk says otherwise -- and then recommends against
+                        # relaunching on the strength of those zeros.
+                        records[prev] = rec
         except OSError:
             continue
 
