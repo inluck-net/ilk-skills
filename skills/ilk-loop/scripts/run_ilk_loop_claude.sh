@@ -1618,6 +1618,34 @@ invoke_claude_iteration() {
   ITER_BUDGET_EXHAUSTED=$budget_exhausted
 }
 
+# Decide the iteration stop reason from the iteration's outcome.
+# Inputs (positional):
+#   $1 = completed       (1 = normal exit, 0 = gtimeout boundary kill)
+#   $2 = total_new       (new commit count this iteration)
+#   $3 = budget_exhausted (1 = hit --max-budget-usd)
+#   $4 = no_progress_streak (consecutive zero-commit iterations before this one)
+# Prints: the stop reason, or empty string to continue.
+_decide_iter_stop_reason() {
+  local completed="$1"
+  local total_new="$2"
+  local budget_exhausted="$3"
+  local current_streak="$4"
+
+  if [[ "$completed" -eq 0 && "$total_new" -eq 0 ]]; then
+    # Boundary kill with no new commits — a genuine barren timeout.
+    echo "timeout"
+  elif [[ "$budget_exhausted" -eq 1 ]]; then
+    echo "budget-exhausted"
+  elif [[ "$total_new" -eq 0 ]]; then
+    local new_streak=$((current_streak + 1))
+    if [[ "$new_streak" -ge 3 ]]; then
+      echo "no-progress"
+    fi
+    # else: empty (continue), streak warning handled by caller
+  fi
+  # completed=1 and total_new > 0: empty string (continue)
+}
+
 # ----- Startup banner --------------------------------------------------------
 
 print_banner() {
@@ -2267,21 +2295,22 @@ print(json.dumps({
       write_ship_proof_records "$heads_before_file" "$heads_after_file" "$i"
     fi
 
-    # Stall detection
+    # Stall detection — extracted to _decide_iter_stop_reason for testability.
     local iter_stop_reason=""
+    iter_stop_reason=$(_decide_iter_stop_reason \
+      "$ITER_COMPLETED" "$total_new" "$ITER_BUDGET_EXHAUSTED" "$no_progress_streak")
+
+    # Preserve any dirty tree as a WIP commit on boundary kills so the
+    # next iteration can resume from a recoverable state (AC-1, AC-2, AC-4).
     local wip_preserved=0
     if [[ "$ITER_COMPLETED" -eq 0 ]]; then
-      iter_stop_reason="timeout"
-      # Preserve any dirty tree as a WIP commit so the next iteration can
-      # resume from a recoverable state (AC-1, AC-2, AC-4).
       wip_preserved=$(preserve_dirty_tree_on_timeout 2>/dev/null) || wip_preserved=0
-    elif [[ "$ITER_BUDGET_EXHAUSTED" -eq 1 ]]; then
-      iter_stop_reason="budget-exhausted"
-    elif [[ "$total_new" -eq 0 ]]; then
+    fi
+
+    # Update no-progress streak
+    if [[ "$total_new" -eq 0 ]]; then
       no_progress_streak=$((no_progress_streak + 1))
-      if [[ "$no_progress_streak" -ge 3 ]]; then
-        iter_stop_reason="no-progress"
-      elif [[ "$ITER_EXIT_CODE" -ne 0 ]]; then
+      if [[ "$iter_stop_reason" == "" && "$ITER_EXIT_CODE" -ne 0 ]]; then
         echo "  ! agent exited $ITER_EXIT_CODE (likely transient upstream API error). Streak: $no_progress_streak/3. Continuing." >&2
       fi
     else

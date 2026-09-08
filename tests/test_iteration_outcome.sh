@@ -4,20 +4,21 @@ set -euo pipefail
 # =============================================================================
 # test_iteration_outcome.sh — pin: a productive boundary kill is not a barren one
 # =============================================================================
-# RED-FIRST test for sub-plan a-productive-timeout-is-not-a-barren-one.
+# Tests _decide_iter_stop_reason from run_ilk_loop_claude.sh.
 #
-# Pins the expected behaviour of the stop-reason decision when
+# Verifies that the stop-reason decision consults total_new when
 # ITER_COMPLETED=0 (gtimeout boundary kill):
 #
-#   - With new commits (total_new > 0) → stop reason is NOT the barren "timeout"
-#   - With zero new commits (total_new = 0) → stop reason IS "timeout"
+#   - With new commits (total_new > 0) → "timeout-productive" (not "timeout")
+#   - With zero new commits (total_new = 0) → "timeout" (barren)
 #
-# The decision logic at run_ilk_loop_claude.sh:2271-2290 currently does NOT
-# consult total_new in the boundary-kill branch, so test 1 (productive) FAILS.
-#
-# Once step 1 extracts the decision into a callable function and fixes it,
-# this test will source that function directly instead of replicating the logic.
+# Also verifies the non-timeout paths (budget-exhausted, no-progress, normal)
+# are unchanged by the extraction.
 # =============================================================================
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+RUNNER="$REPO_ROOT/skills/ilk-loop/scripts/run_ilk_loop_claude.sh"
 
 PASS=0
 FAIL=0
@@ -38,30 +39,13 @@ fail() {
   fi
 }
 
-# ---------------------------------------------------------------------------
-# Stop-reason decision logic
-# ---------------------------------------------------------------------------
-# This replicates the decision block at run_ilk_loop_claude.sh:2271-2290.
-# After step 1, this will be replaced by sourcing the extracted function.
-#
-# Inputs: ITER_COMPLETED, total_new, ITER_BUDGET_EXHAUSTED, no_progress_streak
-# Output: prints the decided stop reason (empty = continue)
+# Source the runner to get _decide_iter_stop_reason without running main()
+ILK_DOTSOURCE_ONLY=1 source "$RUNNER"
 
+# Wrapper: call the extracted function with positional args
 decide_stop_reason() {
-  local iter_stop_reason=""
-  if [[ "$ITER_COMPLETED" -eq 0 ]]; then
-    iter_stop_reason="timeout"
-  elif [[ "$ITER_BUDGET_EXHAUSTED" -eq 1 ]]; then
-    iter_stop_reason="budget-exhausted"
-  elif [[ "$total_new" -eq 0 ]]; then
-    no_progress_streak=$((no_progress_streak + 1))
-    if [[ "$no_progress_streak" -ge 3 ]]; then
-      iter_stop_reason="no-progress"
-    fi
-  else
-    no_progress_streak=0
-  fi
-  echo "$iter_stop_reason"
+  _decide_iter_stop_reason \
+    "$ITER_COMPLETED" "$total_new" "$ITER_BUDGET_EXHAUSTED" "$no_progress_streak"
 }
 
 # ===========================================================================
