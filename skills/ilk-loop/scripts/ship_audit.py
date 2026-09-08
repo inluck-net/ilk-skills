@@ -29,6 +29,65 @@ from typing import Any
 _STEP_HEADING_RE = re.compile(r"^### Step (\d+)", re.MULTILINE)
 
 
+def _find_near_miss_slugs(
+    target_slug: str,
+    git_output: str,
+) -> list[tuple[str, list[str]]]:
+    """Find slugs in *git_output* that are near-misses of *target_slug*.
+
+    A near-miss is a slug whose longest common prefix with *target_slug*
+    covers at least 80% of the shorter slug's length.  This catches the
+    real-world typo from gh-resolve where ``a-collaborator-is-not-an-intruder``
+    was written as ``a-collaborator-is-not-antruder`` (one character removed).
+
+    *git_output* is ``git log --format=%H %s%n%b``: each commit's full SHA
+    on the subject line, then the body on subsequent lines.
+
+    Returns a list of ``(slug, [commit_shas])`` tuples.  Each slug appears
+    at most once; the SHAs are the commits carrying it.
+    """
+    all_trailer_re = re.compile(r"\[plan:([^#]+)#(?:step-\d+|ship)\]")
+
+    # Two-pass: first collect slug→SHAs, then filter for near-misses.
+    slug_shas: dict[str, list[str]] = {}
+    current_sha = ""
+    for line in git_output.splitlines():
+        # A line starting with a 40-char hex SHA is a commit header.
+        sha_match = re.match(r"^([0-9a-f]{40})\s", line)
+        if sha_match:
+            current_sha = sha_match.group(1)[:7]
+            continue
+        for m in all_trailer_re.finditer(line):
+            found_slug = m.group(1)
+            if found_slug == target_slug:
+                continue
+            if found_slug not in slug_shas:
+                slug_shas[found_slug] = []
+            if current_sha and current_sha not in slug_shas[found_slug]:
+                slug_shas[found_slug].append(current_sha)
+
+    if not slug_shas:
+        return []
+
+    # Find near-misses by common prefix length
+    near_misses: list[tuple[str, list[str]]] = []
+    threshold = 0.8
+    for found_slug, shas in slug_shas.items():
+        min_len = min(len(target_slug), len(found_slug))
+        if min_len == 0:
+            continue
+        common = 0
+        for a, b in zip(target_slug, found_slug):
+            if a == b:
+                common += 1
+            else:
+                break
+        if common >= min_len * threshold:
+            near_misses.append((found_slug, shas))
+
+    return near_misses
+
+
 def count_authored_steps(body: str) -> list[int]:
     """Return sorted list of step numbers from ``### Step N`` headings.
 
@@ -349,6 +408,26 @@ def audit_ship(
         reasons.append(
             f"missing commit for {step_word} {', '.join(str(s) for s in missing)}"
         )
+        # Near-miss detection: when ALL steps are missing, scan the commit
+        # range for trailers carrying a similar slug (e.g. a typo).  This
+        # turns "missing commit for steps 0, 1, 2, 3" into actionable output
+        # that names the mangled slug and the commits carrying it.
+        if len(missing) == len(authored):
+            try:
+                result = subprocess.run(
+                    ["git", "log", "--format=%H %s%n%b", "--all"],
+                    capture_output=True, text=True, cwd=cwd,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    near = _find_near_miss_slugs(slug, result.stdout)
+                    for near_slug, shas in near:
+                        sha_str = ", ".join(shas[:3]) if shas else "unknown"
+                        reasons.append(
+                            f"near-miss slug '{near_slug}' found in "
+                            f"commit {sha_str}"
+                        )
+            except (FileNotFoundError, OSError):
+                pass  # git not available — degrade silently
     if gate_verdict == "fail":
         reasons.append(gate_reason or "gate is red")
     elif gate_verdict in ("stale_head", "stale_invocation", "incomplete", "absent"):

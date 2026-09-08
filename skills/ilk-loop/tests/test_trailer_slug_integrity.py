@@ -191,7 +191,6 @@ class TestPin1Refusal:
 
 # ── Pin 2: the report names near-miss slugs ─────────────────────────────────
 
-@pytest.mark.xfail(reason="near-miss detection not yet implemented (step 2)")
 class TestPin2NearMissReport:
     """When zero commits match, the report must name near-miss slugs.
 
