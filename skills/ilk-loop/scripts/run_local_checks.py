@@ -242,13 +242,27 @@ def _slug_from_filename(fname: str) -> str:
 def find_subplan(project: Path, slug: str) -> Path | None:
     """Find the sub-plan for *slug*, by frontmatter `plan:` OR by filename.
 
-    Four components carry a sub-plan identity and three derive it from the
-    FILENAME:
+    FIVE components carry a sub-plan identity.  Three derive it from the
+    FILENAME, and two from FRONTMATTER:
 
       * ``loop_status.py`` strips the date prefix and ``.md`` -- and its form
-        is what the loop prints and what ``ship-proof.jsonl`` records;
+        is what the loop prints and what ``ship-proof.jsonl`` records, so the
+        filename form is the canonical one;
       * ``quarantine_subplan.py`` globs ``*-<slug>.md``;
+      * ``ship_audit.read_subplan_for_audit`` reads frontmatter ``plan:``
+        (``ship_audit.py:557`` at time of writing), and
+        ``check_step_commits`` then unions ledger rows on EXACT slug equality
+        (``ship_audit.py:204-208``), so a frontmatter form that differs from
+        the filename form silently matches no row;
       * this function used to be the lone outlier, matching only frontmatter.
+
+    ``ship_audit`` was missing from this list until 2026-09-09.  That omission
+    had a cost: a peer's fix proposal for the mismatch below targeted only
+    ``find_subplan``, and would have looked applied while leaving the stall
+    live, because ``ship_audit`` reads the same frontmatter and was not in the
+    table anyone was working from.  Anything added here that resolves a
+    sub-plan identity belongs in this list, and the list is load-bearing rather
+    than decorative.
 
     That mattered because a generator may write a run id into the filename and
     omit it from frontmatter, so ``2026-09-08-issue-4796-work-52d08c9c.md``
