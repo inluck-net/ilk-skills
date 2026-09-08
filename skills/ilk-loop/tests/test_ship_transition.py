@@ -489,3 +489,122 @@ class TestCli:
         payload = json.loads(cp.stdout)
         assert payload["actions"][0]["slug"] == "conflict-batch-verify"
         assert payload["actions"][0]["applied"] is False
+
+
+# ── a COMPLETED intent must be retired, or it outlives its transition ────────
+#
+# Reported by a peer session 2026-09-08 and reproduced here at 9ee4d3f.
+# `ship()` clears the intent as its LAST act, so a termination after the
+# status write but before `clear_intent` leaves both halves durable and the
+# intent file behind.  `detect()` skips consistent pairs
+# (`if shipped == bool(marker): continue`), so `repair()` never enters its
+# loop and never reaches its own clear_intent branch.
+#
+# That falsifies the invariant TestOnlyInterrupted above depends on: an
+# intent's presence is supposed to be positive evidence of a mid-write death.
+# Once a red gate reverts the status, the surviving intent makes the
+# deliberate revert look interrupted and auto-repair re-ships it.
+#
+# The crash boundary matters: a crash BETWEEN the marker and the status write
+# is a different case and was already repaired correctly.
+
+
+class TestCompletedIntentIsRetired:
+    def _crash_after_status(self, st, plans, repo, slug):
+        """Ship, but die after the status write and before clear_intent."""
+        def hook(path):
+            st._write_status_shipped(path)
+            raise RuntimeError("simulated termination after status")
+        with pytest.raises(RuntimeError):
+            st.ship(plans, repo, slug, _write_status=hook)
+
+    def test_repair_retires_an_intent_whose_transition_completed(
+        self, tmp_path: Path,
+    ) -> None:
+        st = _mod()
+        repo = _make_repo(tmp_path)
+        plans = _make_plans_dir(tmp_path, status="in-progress")
+        slug = "conflict-batch-verify"
+
+        self._crash_after_status(st, plans, repo, slug)
+        # Both halves are durable, and the intent survived the crash.
+        assert st.find_marker_commit(repo, slug) is not None
+        assert _status_of(plans, slug) == "shipped"
+        assert st.read_intent(plans) is not None
+
+        actions = st.repair(
+            plans_dir=plans, repo=repo, apply=True, only_interrupted=True,
+        )
+
+        assert actions == [], "a consistent pair is not a divergence to repair"
+        assert st.read_intent(plans) is None, (
+            "a completed transition's intent must be retired, or it will make "
+            "a later gate revert look interrupted"
+        )
+
+    def test_a_gate_revert_after_a_completed_ship_is_left_alone(
+        self, tmp_path: Path,
+    ) -> None:
+        """The defect end to end: revert after the crash, then recover."""
+        st = _mod()
+        repo = _make_repo(tmp_path)
+        plans = _make_plans_dir(tmp_path, status="in-progress")
+        slug = "conflict-batch-verify"
+
+        self._crash_after_status(st, plans, repo, slug)
+        st.repair(plans_dir=plans, repo=repo, apply=True, only_interrupted=True)
+
+        # test_ship_integrity reverts a red gate's sub-plan.
+        path = next(q for q in plans.glob("*.md") if not q.name.startswith("MASTER"))
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                "status: shipped", "status: in-progress"),
+            encoding="utf-8",
+        )
+
+        actions = st.repair(
+            plans_dir=plans, repo=repo, apply=True, only_interrupted=True,
+        )
+
+        assert _status_of(plans, slug) == "in-progress", (
+            "a stale intent re-shipped a sub-plan a gate deliberately unwound"
+        )
+        assert all(not a.applied for a in actions)
+
+    def test_a_dry_run_does_not_retire(self, tmp_path: Path) -> None:
+        """apply=False must not mutate — retirement is a write."""
+        st = _mod()
+        repo = _make_repo(tmp_path)
+        plans = _make_plans_dir(tmp_path, status="in-progress")
+        slug = "conflict-batch-verify"
+
+        self._crash_after_status(st, plans, repo, slug)
+        st.repair(plans_dir=plans, repo=repo, apply=False, only_interrupted=True)
+
+        assert st.read_intent(plans) is not None, "a dry run must not retire"
+
+    def test_a_genuinely_interrupted_ship_is_still_repaired(
+        self, tmp_path: Path,
+    ) -> None:
+        """The guard against over-retiring.
+
+        Marker present, status NOT shipped: the transition really did die
+        between its two writes.  Retirement must not swallow that — repair
+        still has to converge it.
+        """
+        st = _mod()
+        repo = _make_repo(tmp_path)
+        plans = _make_plans_dir(tmp_path, status="in-progress")
+        slug = "conflict-batch-verify"
+
+        st.write_intent(plans, slug, repo)
+        _marker_commit(repo, slug)  # marker landed, status write never did
+
+        actions = st.repair(
+            plans_dir=plans, repo=repo, apply=True, only_interrupted=True,
+        )
+
+        assert _status_of(plans, slug) == "shipped", (
+            "an interrupted transition must still converge"
+        )
+        assert any(a.applied for a in actions)

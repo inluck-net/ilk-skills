@@ -70,6 +70,7 @@ __all__ = [
     "read_intent",
     "write_intent",
     "clear_intent",
+    "retire_completed_intent",
 ]
 
 # The two directions of divergence. Named, never merely "inconsistent": the
@@ -257,6 +258,56 @@ def clear_intent(plans_dir: Path) -> None:
         pass
 
 
+def retire_completed_intent(plans_dir: Path, repo: Path) -> str | None:
+    """Clear an intent whose transition demonstrably COMPLETED.
+
+    ``ship()`` clears the intent as its last act, so a termination in the
+    window *after* the status write and *before* ``clear_intent`` leaves both
+    halves durable and the intent file behind.  ``detect()`` skips consistent
+    pairs (``if shipped == bool(marker): continue``), so ``repair()`` never
+    enters its loop and never reaches its own ``clear_intent`` branch — the
+    stale file survives indefinitely.
+
+    That breaks the invariant ``repair()`` documents and depends on: an intent
+    "is only cleared once both halves are durable, so its presence is positive
+    evidence that *this* pair is a transition that died mid-write rather than
+    one a gate deliberately unwound."  When ``test_ship_integrity`` later
+    reverts ``shipped`` → ``in-progress`` for a red gate, the surviving intent
+    makes that deliberate revert look interrupted, and ``repair(apply=True,
+    only_interrupted=True)`` re-ships it.
+
+    Retires ONLY the completed shape — marker present AND status shipped.
+    Every other combination is either a real divergence (``repair``'s
+    business) or a crash before either half landed, where the intent is the
+    only remaining trace and must stay.
+
+    Returns the retired slug, or None when there was nothing to retire.
+    """
+    plans_dir, repo = Path(plans_dir), Path(repo)
+    intent = read_intent(plans_dir)
+    if not intent:
+        return None
+    slug = str(intent.get("slug") or "").strip()
+    if not slug:
+        return None
+    # Both halves must be durable.  Marker first: it is the cheaper of the
+    # two to disprove and the one that cannot be edited by a gate.
+    if find_marker_commit(repo, slug) is None:
+        return None
+    for path in _subplan_files(plans_dir):
+        try:
+            _, fm = _read_subplan(path)
+        except OSError:
+            continue
+        if fm.get("plan", "") != slug:
+            continue
+        if fm.get("status", "").strip().lower() == "shipped":
+            clear_intent(plans_dir)
+            return slug
+        return None  # the slug's own sub-plan says not shipped
+    return None  # no sub-plan carries this slug — not ours to retire
+
+
 # ── detection ────────────────────────────────────────────────────────────────
 
 def detect(plans_dir: Path, repo: Path) -> list[Divergence]:
@@ -383,6 +434,11 @@ def repair(
     converging an old residue is a judgment a human is making on purpose.
     """
     plans_dir, repo = Path(plans_dir), Path(repo)
+    # A completed-but-uncleared intent is retired BEFORE detection, so it
+    # cannot supply ``interrupted=True`` for a pair a gate later reopens.
+    # Only when applying: a dry run must not mutate.
+    if apply:
+        retire_completed_intent(plans_dir, repo)
     actions: list[RepairAction] = []
     for d in detect(plans_dir, repo):
         if only_interrupted and not d.interrupted:
