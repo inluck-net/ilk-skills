@@ -261,14 +261,24 @@ class TestShip:
             seen.append("status")
             raise RuntimeError("killed between the two writes")
 
-        st.ship(
-            plans_dir=plans, repo=repo, slug="conflict-batch-verify",
-            _write_status=_boom,
-        )
+        # ship must NOT swallow a failed status write — the intent marker is
+        # what stays behind, and the caller has to know the half landed.
+        with pytest.raises(RuntimeError):
+            st.ship(
+                plans_dir=plans, repo=repo, slug="conflict-batch-verify",
+                _write_status=_boom,
+            )
 
         # It got as far as attempting the status write, which means the marker
         # was already durable — the residue is the recoverable direction.
         assert seen == ["status"]
+        d = next(d for d in st.detect(plans_dir=plans, repo=repo)
+                 if d.slug == "conflict-batch-verify")
+        assert d.kind == st.MARKER_WITHOUT_STATUS
+        assert d.interrupted is True, "the uncleared intent must still be visible"
+        # ...and that residue is the one repair can converge from evidence.
+        assert st.repair(plans_dir=plans, repo=repo, apply=True)[0].applied is True
+        assert _status_of(plans, "conflict-batch-verify") == "shipped"
 
     def test_ship_is_idempotent(self, tmp_path: Path) -> None:
         st = _mod()
