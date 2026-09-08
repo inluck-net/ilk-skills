@@ -410,6 +410,19 @@ def repair(
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
+def _wrap_slugs(slugs, width: int = 76, indent: str = "    ") -> str:
+    """One indented, comma-separated block — every refused pair is still named."""
+    out, line = [], indent
+    for slug in slugs:
+        piece = slug + ", "
+        if len(line) + len(piece) > width and line.strip():
+            out.append(line.rstrip())
+            line = indent
+        line += piece
+    out.append(line.rstrip().rstrip(","))
+    return "\n".join(out)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="ship_transition.py",
@@ -476,12 +489,33 @@ def main(argv: list[str] | None = None) -> int:
     elif not actions:
         print(f"ship_transition: 0 diverged pairs in {args.plans_dir}")
     else:
+        # Refusals share one reason verbatim, and there can be many of them:
+        # gh-resolve on 2026-09-08 had 144 refusals against 1 repairable pair,
+        # and printing the paragraph once per slug produced 69KB that buried
+        # the single actionable line. Repairable pairs are listed in full; the
+        # refused set is one paragraph plus its slugs. --json is unshaped.
         mode = "APPLIED" if args.apply else "dry-run (pass --apply to write)"
-        print(f"ship_transition: {len(actions)} diverged pair(s) — {mode}")
-        for a in actions:
-            verb = "REFUSED" if a.refused else ("repaired" if a.applied else "would repair")
-            print(f"  [{verb}] {a.slug} ({a.kind}) — {a.subplan}")
-            print(f"      {a.reason}")
+        repairable = [a for a in actions if not a.refused]
+        print(f"ship_transition: {len(actions)} diverged pair(s) in "
+              f"{args.plans_dir} — {mode}")
+
+        if repairable:
+            print(f"\n  repairable ({len(repairable)}):")
+            for a in repairable:
+                verb = "repaired" if a.applied else "would repair"
+                print(f"    [{verb}] {a.slug} ({a.kind}) — {a.subplan}")
+                print(f"        {a.reason}")
+
+        if refused:
+            print(f"\n  REFUSED ({len(refused)}) — front-matter says shipped but no "
+                  f"[plan:<slug>#ship] commit exists in this repo.")
+            print("      Fabricating the marker would forge the trail ship_audit "
+                  "reads, and reverting")
+            print("      the status would destroy a genuine ship whose trailer was "
+                  "mistyped. Resolve")
+            print("      by hand: `git log --all --grep \'#ship\'` for a near-miss "
+                  "slug, or re-run ship.")
+            print(_wrap_slugs(a.slug for a in refused))
 
     return 1 if refused else 0
 

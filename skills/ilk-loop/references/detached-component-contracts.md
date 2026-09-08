@@ -1123,6 +1123,86 @@ types above, follow this checklist:
       - `python -m pytest skills/ilk-loop/tests/test_status_terminal_sentinel.py -q`
       - `powershell -File skills/ilk-loop/tests/test_runner_outcome_allpassed.ps1`
 
+## Contract 10: The ship transition (front-matter + marker commit)
+
+**Writers:** `ship_transition.py` (`--ship`), and the agent following
+`templates/subplan-template.md`'s "Step N — E2E + handoff".
+**Readers:** `loop_status.py`, `ship_audit.py`, `plan_status.reconcile_master_status`,
+`test_ship_integrity` in `run_ilk_loop_claude.sh`.
+
+Shipping a sub-plan writes to **two stores that no transaction spans**:
+
+| half | store | mutable? |
+|---|---|---|
+| `status: shipped` in the sub-plan front-matter | `~/.ilk-data/projects/<key>/plans/` — **outside** the repo | yes |
+| `chore(plans): <slug> shipped [plan:<slug>#ship]` | the project repo — **inside** it | no (append-only) |
+
+They are separate by design (`toolkit-data-never-enters-consumer-repo`), so
+the transition between them has to be recoverable rather than atomic.
+
+### The rule
+
+**Write the marker commit first, the front-matter second.**
+
+Not because either order is compelled by evidence — only the recoverability
+is. The residue of this order is `marker-without-status`, which converges
+forward from evidence that is already durable: an idempotent front-matter
+write, safe to repeat. The reverse residue is `status-without-marker`, which
+could only converge by *fabricating* a commit for work nothing in the repo
+attests to — forging the trail `ship_audit` reads. `--repair` therefore
+**refuses** that direction and names the pair, rather than guessing.
+
+### What went wrong (2026-09-08, gh-resolve)
+
+`MASTER-2026-09-07c-execution-plan.md` read `status: shipped` while
+`2026-09-07c-conflict-batch-verify.md` read `status: in-progress` at
+`current_step: 2`, with the `[plan:conflict-batch-verify#ship]` commit
+present at `41f0cd688724`. `loop_status` then selected that older master as
+next-active and flagged three of its sub-plans `(!) unproven`. The window is
+opened by an iteration killed at the timeout boundary between the two writes
+— which is why this contract's fix shipped after
+`a-productive-timeout-is-not-a-barren-one`.
+
+### The intent marker
+
+`ship_transition.py` writes `.ship-intent.json` into the plans dir **before**
+the first half and clears it only once **both** are durable. It is what
+separates "an iteration died mid-ship" from "someone edited a file by hand" —
+the two leave identical store contents otherwise.
+
+That distinction is load-bearing for the driver. `test_ship_integrity` reverts
+`shipped` → `in-progress` when a sub-plan's gate is red, and the marker commit
+stays in history — a state byte-identical to an interrupted transition. So the
+driver's automatic converge (`converge_ship_transition`) passes
+`--only-interrupted` and repairs **only** pairs the intent marker attests to;
+an unconditional auto-repair would silently re-ship a deliberately unwound
+sub-plan on the next run. The operator CLI leaves the flag off, because
+converging an old residue is a judgment a human is making on purpose.
+
+### Refusals are expected in volume, and are not this contract's bug
+
+Measured on gh-resolve 2026-09-08: **145 diverged pairs across 312 sub-plans
+— 1 repairable, 144 refused**, with 169 `#ship` markers in history. Of the 144,
+**141 slugs carry other `[plan:<slug>#step-N]` trailers**, so the trailer
+convention *was* in force for them; they simply shipped without a marker
+commit. That is a proof gap `loop_status` already reports as `(!) unproven`,
+not a half-written transition, and `--repair` cannot decide it from evidence.
+The CLI prints the shared refusal paragraph once and names every slug, so the
+one actionable pair is not buried (69KB → 5.9KB on that run).
+
+### If you add a reader or writer
+
+- [ ] **Never write the front-matter first.** If you cannot use
+      `ship_transition.ship()`, do the marker commit first by hand.
+- [ ] **Never fabricate a marker commit** to converge a pair. Refuse.
+- [ ] **Never auto-repair without `--only-interrupted`** from an automatic
+      caller — you will out-vote `test_ship_integrity`'s revert.
+- [ ] **Match markers over `--all` and the full message** (`%s%n%b`), as
+      `ship_audit.check_step_commits` does. A subject-only predicate misses
+      body-placed trailers.
+- [ ] **Run the regression test**:
+      `python3 -m pytest skills/ilk-loop/tests/test_ship_transition.py -q --timeout=60 --timeout-method=signal`
+
 ---
 
 ## See also
@@ -1139,3 +1219,5 @@ types above, follow this checklist:
 - Sub-plan #3 (`status-terminal-sentinel-alive`) — the liveness fix.
 - Sub-plan `a-mistyped-slug-is-not-missing-work` (2026-09-08) — Contract 9,
   the commit-trailer slug.
+- Sub-plan `one-writer-for-the-ship-transition` (2026-09-08) — Contract 10,
+  the two-store ship transition and its repair.

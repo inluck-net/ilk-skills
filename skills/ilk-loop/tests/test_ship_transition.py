@@ -434,6 +434,47 @@ class TestOnlyInterrupted:
 
 
 class TestCli:
+    def test_help_is_runnable(self, tmp_path: Path) -> None:
+        """Smoke, not proof — the proof is the repair tests above."""
+        cp = subprocess.run(
+            [sys.executable, str(SCRIPTS / "ship_transition.py"), "--help"],
+            capture_output=True, text=True,
+        )
+        assert cp.returncode == 0
+        assert "--repair" in cp.stdout and "--apply" in cp.stdout
+        assert "DRY-RUN by default" in cp.stdout
+
+    def test_many_refusals_do_not_bury_the_repairable_pair(self, tmp_path: Path) -> None:
+        """Measured on gh-resolve 2026-09-08: 144 refusals vs 1 repairable pair.
+        Printing the shared reason once per slug produced 69KB of output with
+        the single actionable line buried in it. Every refused pair is still
+        named; the paragraph is printed once."""
+        st = _mod()  # noqa: F841
+        repo = _make_repo(tmp_path)
+        plans = _make_plans_dir(tmp_path, status="in-progress")
+        _marker_commit(repo, "conflict-batch-verify")
+        for i in range(40):
+            slug = f"already-shipped-{i:02d}"
+            (plans / f"2026-01-01-{slug}.md").write_text(
+                SUBPLAN_TEMPLATE.format(slug=slug, status="shipped", step=2),
+                encoding="utf-8",
+            )
+
+        cp = subprocess.run(
+            [sys.executable, str(SCRIPTS / "ship_transition.py"), "--repair",
+             "--plans-dir", str(plans), "--repo", str(repo)],
+            capture_output=True, text=True,
+        )
+
+        assert cp.returncode != 0, "refusals must still exit non-zero"
+        out = cp.stdout
+        assert out.count("Fabricating the marker") == 1, "reason printed per slug"
+        # The one actionable pair is above the refusal block, not buried in it.
+        assert out.index("conflict-batch-verify") < out.index("REFUSED (40)")
+        # ...and every refused pair is still named.
+        for i in range(40):
+            assert f"already-shipped-{i:02d}" in out
+
     def test_repair_json_names_each_pair(self, tmp_path: Path) -> None:
         st = _mod()  # noqa: F841 — module must exist for the CLI to run
         repo = _make_repo(tmp_path)
