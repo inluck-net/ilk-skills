@@ -278,8 +278,8 @@ def _extract_section(text: str, heading: str) -> str:
     return m.group(0) if m else ""
 
 
-class TestDirectReleaseDoesNotRunTheFullSuite:
-    """A direct release states a scoped claim; it does not manufacture a verdict.
+class TestDirectReleaseDoesNotManufactureAVerdict:
+    """A direct release states its own claim; it does not author a verdict.
 
     Added 2026-09-09. Four consecutive releases (v0.9.86, v0.9.87, v0.9.90,
     v0.9.91) had no batch to verify, and each ran the suite by hand at release
@@ -288,16 +288,55 @@ class TestDirectReleaseDoesNotRunTheFullSuite:
     last two did so while quoting the refusal contract in their own tag bodies,
     which is how a documented rule fails: it was read, cited, and not applied.
 
-    The full suite belongs to the loop's batch-verification sub-plan, once per
-    batch. These assertions keep the direct-release path from drifting back to
-    a hand-run suite, because prose alone demonstrably did not hold.
+    NARROWED the same day, after v0.9.94. The first wording of this rule was
+    "Direct releases do not run the full suite", and the releasing agent on
+    v0.9.94 read it correctly as prohibiting a full-suite run it had been
+    directed to perform — then performed it, wrote no record, and stated the
+    departure in the tag. That was the right handling of a miswritten rule, and
+    it showed the rule banned the wrong thing: the hazard is a SELF-AUTHORED
+    BATCH-GATE RECORD, and its distinguishing property is provenance, not cost
+    and not which tests ran. A rule that forbids a safe act teaches people to
+    route around it, which is how the four releases above happened.
+
+    So these assertions now pin BOTH edges: the record is still forbidden, and
+    an operator-directed full suite is explicitly permitted.
     """
 
     def test_direct_release_section_exists(self, skill_md_text: str):
-        assert "Direct releases do not run the full suite" in skill_md_text, (
+        assert "Direct releases do not manufacture a verdict" in skill_md_text, (
             "SKILL.md must document the direct-release path — without it, the "
             "only documented evidence is a batch verdict a direct release "
-            "cannot have, and the gap gets filled by running the suite by hand"
+            "cannot have, and the gap gets filled by manufacturing one"
+        )
+
+    def test_does_not_ban_the_full_suite_outright(self, skill_md_text: str):
+        # The heading is the part that got read as the rule, so it is the part
+        # that must not reinstate the ban.
+        assert "Direct releases do not run the full suite" not in skill_md_text, (
+            "the rule must not read as a blanket ban on running the suite. "
+            "That wording prohibits a safe act (running tests and reporting "
+            "them as your own) while the actual hazard — writing a batch-gate "
+            "record and reading it back — is narrower. Measured on v0.9.94: "
+            "the releasing agent hit exactly this and had to document a "
+            "departure to do the safe thing"
+        )
+
+    def test_permits_an_operator_directed_full_suite(self, skill_md_text: str):
+        flat = " ".join(skill_md_text.split())
+        assert "Running the full suite is permitted, and is not a verdict" in flat, (
+            "the doc must say plainly that a full-suite run is allowed when "
+            "directed, or the next releasing agent re-derives the v0.9.94 "
+            "conflict between the rule as written and the instruction given"
+        )
+
+    def test_names_provenance_as_the_distinguishing_property(
+        self, skill_md_text: str,
+    ):
+        flat = " ".join(skill_md_text.split())
+        assert "The distinction is provenance, not cost" in flat, (
+            "without naming provenance as the axis, 'do not manufacture a "
+            "verdict' collapses back into a cost rule about suite size — "
+            "which is what the first wording did"
         )
 
     def test_forbids_manufacturing_a_verdict(self, skill_md_text: str):
