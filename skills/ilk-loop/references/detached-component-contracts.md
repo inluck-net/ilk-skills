@@ -641,7 +641,7 @@ Fields:
 | `iteration` | int | The iteration number (0-indexed) |
 | `slug` | string | The sub-plan slug |
 | `repo` | string | Absolute path to the repository |
-| `step_from` | int | The step the iteration **started** on (from `PRE_ITER_TARGET`) |
+| `step_from` | int | The step the iteration **started** on — the slug's *real* pre-iteration `current_step`, never a floor (see "Who writes") |
 | `step_to` | int | The step the iteration **reached** (the sub-plan's `current_step` after the agent ran) |
 | `commits` | list[str] | SHAs in the iteration's `before..after` range |
 
@@ -654,7 +654,64 @@ The step range is **half-open**: `[step_from, step_to)`.  A record with
   the post-iteration head capture and new-commit count.  Only writes when
   `total_new > 0` (an unproductive iteration claims no steps).
 
+**The slug universe comes from TWO pre-iteration captures, not one**
+(v0.9.94, 2026-09-09):
+
+| Capture | Function | Feeds |
+|---|---|---|
+| `PRE_ITER_TARGET` | `get_active_subplan_targets` (`:784`) | the gate's fallback target, and the row for the slug the loop targeted |
+| `PRE_ITER_ALL_STEPS` | `get_all_subplan_steps` (`:816`) | every OTHER non-shipped sub-plan and the step it starts on |
+
+Both are read at `:2418`, **before** the agent runs, because afterwards the
+agent has marked sub-plans `shipped` and moved their steps.
+
+`get_active_subplan_targets` emits exactly ONE line — `[0]` of the non-shipped
+sub-plans — so keying the writer off `PRE_ITER_TARGET` alone capped the ledger
+at one row per iteration however many sub-plans the iteration advanced. A run
+fast enough to finish two sub-plans in ONE iteration structurally could not
+produce the second row, and the refusal was permanent because the iteration
+that would have written it is over. **The faster run was the less publishable
+one.** Measured on gh-resolve #4829.
+
+`PRE_ITER_TARGET` itself was deliberately NOT widened: it is the gate's
+fallback target, and widening it would point the gate at sub-plans the
+iteration never touched.
+
+**A slug added from the baseline earns a row only by having ADVANCED**
+(`advanced_only`, guard at `:1074`); the targeted slug earns its row from
+having been targeted. Without that asymmetry every untouched sub-plan in the
+batch would get a row claiming the iteration's commits — and see "Who reads"
+below for why that is not a cosmetic problem.
+
+**`step_from` for an added slug is its real pre-iteration step. Do not
+simplify it to 0.** The tempting repair — union the slug set out of the
+post-iteration `loop_status` payload already in hand at `:933` — yields slug
+and `step_to` but must invent `step_from`, and a sub-plan advanced into may be
+one the loop partially worked earlier and returned to. An invented floor is
+invisible at the consumer's reap, which reads presence only, but
+`ship_audit.check_step_commits` (`:176-178`) counts a step committed if any
+record covers it in `[step_from, step_to)`, so a floor of 0 marks every earlier
+step proven. Already measured at `ship_audit.py:234-240`: `step_from 0 /
+step_to 4` attributed step 2 for a sub-plan with no step-2 commit, and
+`missing_steps` came back `[]` for work never done (batch 2026-09-08c).
+
+**Not provided, by design:** per-commit attribution between slugs. When an
+iteration advances two sub-plans, both rows carry the full `before..after`
+range. Without trailers there is nothing to partition on, and no reader
+consumes `commits` for attribution. A sub-plan created *during* an iteration
+has no baseline and gets no row; batch-verification sub-plans exist at plan
+time, so the case that matters is covered.
+
 ### Who reads
+
+**A row's mere existence proves its slug to the consumer.** gh-resolve's
+`reap._check_ship_proof` builds `proven_slugs` from the whole ledger file and
+tests set membership on `slug` (`reap.py:1010-1021`, `:1035`); `commits`,
+`step_from`, `step_to`, `iteration` and `run_id` are never read, and the set is
+NOT scoped by run. So an unearned row does not merely look plausible to a human
+reading the file — it is accepted as proof and the run publishes. That is why
+`advanced_only` exists, and why a test writing into a real project's ledger is
+guarded against in `conftest.py` rather than treated as untidiness.
 
 - **`ship_audit.py`** — `check_step_commits` accepts an optional
   `ledger_records` parameter.  Union semantics: a step is committed if
