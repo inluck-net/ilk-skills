@@ -276,3 +276,58 @@ def _extract_section(text: str, heading: str) -> str:
     pattern = rf"{re.escape(heading)}.*?(?=\n### |\n## |\Z)"
     m = re.search(pattern, text, re.DOTALL)
     return m.group(0) if m else ""
+
+
+class TestDirectReleaseDoesNotRunTheFullSuite:
+    """A direct release states a scoped claim; it does not manufacture a verdict.
+
+    Added 2026-09-09. Four consecutive releases (v0.9.86, v0.9.87, v0.9.90,
+    v0.9.91) had no batch to verify, and each ran the suite by hand at release
+    time to produce a batch-gate record it then read back as proof — evidence
+    the releasing agent authored for itself, moments before consuming it. The
+    last two did so while quoting the refusal contract in their own tag bodies,
+    which is how a documented rule fails: it was read, cited, and not applied.
+
+    The full suite belongs to the loop's batch-verification sub-plan, once per
+    batch. These assertions keep the direct-release path from drifting back to
+    a hand-run suite, because prose alone demonstrably did not hold.
+    """
+
+    def test_direct_release_section_exists(self, skill_md_text: str):
+        assert "Direct releases do not run the full suite" in skill_md_text, (
+            "SKILL.md must document the direct-release path — without it, the "
+            "only documented evidence is a batch verdict a direct release "
+            "cannot have, and the gap gets filled by running the suite by hand"
+        )
+
+    def test_forbids_manufacturing_a_verdict(self, skill_md_text: str):
+        assert "batch_gate --run" in skill_md_text, (
+            "the doc must name the specific move it forbids; 'do not "
+            "manufacture evidence' is advice, naming the command is a rule"
+        )
+
+    def test_names_the_scoped_gate_as_the_substitute(self, skill_md_text: str):
+        assert "change-scoped gate" in skill_md_text, (
+            "forbidding the hand-run suite without naming what replaces it "
+            "leaves the releasing agent to invent a substitute, which is the "
+            "behaviour being corrected"
+        )
+
+    def test_requires_the_tag_to_state_the_narrower_claim(
+        self, skill_md_text: str,
+    ):
+        assert "what was run and what was not" in skill_md_text, (
+            "a scoped release that reads like a full one is the misreading "
+            "this skill exists to correct — the tag must carry the limit"
+        )
+
+    def test_points_at_the_loop_for_whole_tree_evidence(
+        self, skill_md_text: str,
+    ):
+        # Collapse whitespace: this asserts CONTENT, and a phrase that happens
+        # to straddle a line wrap is still present in the document.
+        flat = " ".join(skill_md_text.split())
+        assert "batch-verification sub-plan runs the suite once" in flat, (
+            "the doc must say where whole-tree evidence legitimately comes "
+            "from, or 'do not run the suite here' reads as 'do not run it'"
+        )

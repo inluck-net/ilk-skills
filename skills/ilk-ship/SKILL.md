@@ -332,6 +332,51 @@ variable is the sanctioned way to run a whole suite past the
 the hook blocks bare `pytest` invocations to prevent accidental
 full-suite runs; the escape lets a deliberate full-suite gate proceed.
 
+## Direct releases do not run the full suite
+
+A **direct release** is one whose commits did not go through the loop — a
+hand-made fix, tagged without a batch. It has no batch-verification sub-plan,
+therefore no batch-gate record, therefore nothing for Phase 1's verdict engine
+to verify.
+
+**Do not manufacture one by running the suite by hand.** Invoking
+`batch_gate --run` at release time produces a record the releasing agent
+created for itself, moments before reading it back as proof. That is the exact
+shape the refusal contract exists to prevent, and it is what v0.9.86, v0.9.87,
+v0.9.90 and v0.9.91 each did — the last two while quoting the refusal contract
+in their own tag bodies.
+
+**The full suite belongs to the loop, once per batch**, in the sub-plan marked
+`batch_verification: true`. It does not belong here.
+
+### What a direct release runs instead
+
+1. **A change-scoped gate.** Every test file referencing the changed modules
+   AND their resolved production importers. Name the file count and the result.
+2. **Nothing else is claimed.** The evidence covers the change and its readers.
+   It does not cover the rest of the tree, and the tag body must say so.
+
+Measured 2026-09-09 on this repo: the change-scoped gate for a `batch_gate` +
+`ship_audit` change was 63 files / 606 tests / 55s, against a full suite of
+2877 tests / ~264s that found **0** attributed regressions on three consecutive
+direct releases. The scoped gate is what actually caught the defects, both
+times.
+
+### The tag body must state the narrower claim
+
+A direct release's tag records **what was run and what was not** — not a
+sentence that reads like a full verification. State the scoped gate, its file
+and test counts, and the fact that no whole-suite run backs this release. A
+reader who cannot tell a scoped release from a batch release will read the
+first as the second, which is the same misreading the whole skill exists to
+correct.
+
+### If whole-tree evidence is actually wanted
+
+Route the work through the loop so the batch-verification sub-plan runs the
+suite once, under the gate that persists a real record. That is cheaper than a
+hand-run suite and it produces evidence the releasing agent did not author.
+
 ## Missing `ship:` block
 
 A missing `ship:` block degrades to a documented default — it never
