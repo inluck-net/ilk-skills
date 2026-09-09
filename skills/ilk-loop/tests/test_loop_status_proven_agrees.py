@@ -67,6 +67,21 @@ def _make_git_repo(tmp_path: Path, slug: str = "test-slug", steps: int = 2) -> P
         ["git", "config", "user.name", "Test"],
         cwd=repo, capture_output=True, check=True,
     )
+    # A ship config, so a `pass` verdict is a REACHABLE state for this repo.
+    #
+    # These fixtures previously used a bare repo, which made
+    # `_resolve_expected_invocation` return '' and let a `pass` record carry an
+    # empty invocation.  That state cannot occur in production — with no ship
+    # block the real writer emits `not_configured`, never `pass` — and as of
+    # 2026-09-09 it is rejected as `unenforced`, because it is exactly the shape
+    # a hand-authored record takes (see test_verdict_requires_an_invocation.py).
+    # The subject of these tests is whether the two readers AGREE, so the fix is
+    # to model a reachable record rather than to relax the check.
+    (repo / ".ilk-launch.json").write_text(
+        json.dumps({"ship": {"suite": {"command": "python3 -m pytest",
+                                       "flags": ["-q"]}}}),
+        encoding="utf-8",
+    )
     # Initial commit.
     (repo / "placeholder").write_text("init\n")
     subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
@@ -97,12 +112,14 @@ def _write_gate_record(
     runtime_dir: Path,
     verdict: str,
     head_sha: str,
-    invocation: str = "",
+    invocation: str = "python3 -m pytest -q",
 ) -> Path:
     """Write a batch-gate.json record with the given verdict.
 
-    invocation defaults to "" to match _resolve_expected_invocation on a
-    bare repo with no ship config.
+    invocation defaults to the command `_make_git_repo`'s ship config resolves
+    to, so a `pass` record names the suite it claims to have run. It previously
+    defaulted to "" to match a bare repo — a convenience that modelled a record
+    the real writer cannot produce.
     """
     runtime_dir.mkdir(parents=True, exist_ok=True)
     record = {

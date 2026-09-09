@@ -292,6 +292,25 @@ def _resolve_batch_record(
     except (subprocess.TimeoutExpired, OSError):
         current_head = ""
 
+    # The tree at HEAD, for records that carry one.  The gate certifies code,
+    # and the batch-verification sub-plan is REQUIRED to make empty marker
+    # commits, so comparing commit shas makes the verification step invalidate
+    # everything verified before it.  None on failure — an unresolvable tree
+    # must degrade to the strict sha comparison, never to a value that could
+    # compare equal.
+    try:
+        tree_result = subprocess.run(
+            ["git", "rev-parse", "HEAD^{tree}"],
+            capture_output=True, text=True, timeout=10,
+            encoding="utf-8", errors="replace",
+            cwd=cwd,
+        )
+        current_tree = (
+            tree_result.stdout.strip() if tree_result.returncode == 0 else None
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        current_tree = None
+
     project_path = cwd or Path.cwd()
     expected_invocation = _resolve_expected_invocation(project_path)
 
@@ -326,7 +345,9 @@ def _resolve_batch_record(
             return "not_configured", _rec.get("invocation") or "no suite configured"
 
     # AC-3: delegate to SP2's validator.
-    outcome = validate_record(rp, current_head, expected_invocation)
+    outcome = validate_record(
+        rp, current_head, expected_invocation, expected_tree_sha=current_tree,
+    )
 
     if outcome == "fresh":
         # Record is trustworthy — read its verdict.
@@ -351,7 +372,9 @@ def _resolve_batch_record(
     # validate_record_detail so the operator is told WHICH field is missing or
     # WHICH sha mismatched.  "batch-gate record is incomplete" names a class
     # and leaves them to go find the instance.
-    detail = validate_record_detail(rp, current_head, expected_invocation)
+    detail = validate_record_detail(
+        rp, current_head, expected_invocation, expected_tree_sha=current_tree,
+    )
     return outcome, f"batch-gate record is {detail}"
 
 
@@ -501,7 +524,15 @@ def audit_ship(
                 pass  # git not available — degrade silently
     if gate_verdict == "fail":
         reasons.append(gate_reason or "gate is red")
-    elif gate_verdict in ("stale_head", "stale_invocation", "incomplete", "absent"):
+    elif gate_verdict in (
+        "stale_head", "stale_invocation", "incomplete", "absent", "unenforced",
+    ):
+        # `unenforced` must be listed here, not only excluded from the proven
+        # set below.  It already blocks `proven` by omission, but a refusal
+        # whose reason is never appended is a silent one — and the whole point
+        # of this verdict is to tell the reader that the record claimed a run
+        # it did not name.  A gate that refuses without saying why is the
+        # defect family this predicate exists to close.
         reasons.append(gate_reason or f"gate is {gate_verdict}")
 
     # `not_configured` joins None and "pass" as non-blocking: a project with no

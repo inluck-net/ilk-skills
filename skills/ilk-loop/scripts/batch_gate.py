@@ -17,10 +17,19 @@ Record format (JSON):
 
   // optional, written only when computed (v0.9.81+):
   "undeclared":     ["<node id>", ...],   // failures no baseline_red covered
-  "excused_count":  <int>                  // failures baseline_red excused
+  "excused_count":  <int>,                 // failures baseline_red excused
+
+  // provenance (2026-09-09+):
+  "tree_sha":       "<40-char hex>",   // the tree the verdict describes
+  "writer":         "batch_gate.py"    // absent on legacy and foreign records
 }
-// A record without the two optional fields was written by a gate that did
+// A record without the two attribution fields was written by a gate that did
 // not record attribution — absence means "not recorded", never "none".
+//
+// `write_record` is the SOLE writer. This format is documented so readers can
+// validate a record, NOT so one can be produced by hand — see
+// `_claims_a_run_without_naming_it` for the 2026-09-09 case where a worker
+// session authored its own `verdict: pass` from the documentation.
 
 Running-marker format (JSON):
 {
@@ -46,6 +55,11 @@ from typing import Optional
 
 
 REQUIRED_FIELDS = ("verdict", "head_sha", "invocation", "timestamp")
+
+#: Stamped into every record this module writes.  Its ABSENCE is the signal:
+#: a record without it was not written by `write_record`, and on 2026-09-09 a
+#: worker session hand-authored one (see `_claims_a_run_without_naming_it`).
+WRITER_ID = "batch_gate.py"
 
 #: Poll bound used only when the caller passed none AND the project declared
 #: no ``ship.suite.timeout``.  Judgment call 2026-08-26: kept at 600 rather
@@ -77,6 +91,20 @@ class BatchGateRecord:
     timestamp: str
     undeclared: Optional[list] = None
     excused_count: Optional[int] = None
+    #: The tree the verdict describes.  The gate certifies CODE, and a commit
+    #: that changes no files does not change the code — but `head_sha` moves.
+    #: The batch-verification sub-plan is REQUIRED to make empty marker commits
+    #: (templates/batch-verification-subplan.md:234-235), so without this the
+    #: verification step invalidates the proof of everything verified before it.
+    #:
+    #: It is also a PROVENANCE marker, and that is load-bearing: only
+    #: `write_record` emits it, so a record lacking it falls back to strict SHA
+    #: comparison.  A hand-authored record (see `_claims_a_run_without_naming_it`
+    #: for the 2026-09-09 case) therefore cannot benefit from tree comparison.
+    tree_sha: Optional[str] = None
+    #: Which component wrote this record.  Absent on legacy records and on
+    #: anything not written by `write_record`.
+    writer: Optional[str] = None
 
     def to_dict(self) -> dict:
         d = {
@@ -90,6 +118,10 @@ class BatchGateRecord:
             d["undeclared"] = list(self.undeclared)
         if self.excused_count is not None:
             d["excused_count"] = int(self.excused_count)
+        if self.tree_sha:
+            d["tree_sha"] = self.tree_sha
+        if self.writer:
+            d["writer"] = self.writer
         return d
 
 
@@ -167,6 +199,8 @@ def read_record(runtime_dir: Path) -> Optional[BatchGateRecord]:
         timestamp=data["timestamp"],
         undeclared=_optional_str_list(data.get("undeclared")),
         excused_count=_optional_int(data.get("excused_count")),
+        tree_sha=data.get("tree_sha") or None,
+        writer=data.get("writer") or None,
     )
 
 
@@ -235,6 +269,7 @@ def validate_record(
     record_path: Path,
     expected_head_sha: str,
     expected_invocation: str,
+    expected_tree_sha: Optional[str] = None,
 ) -> str:
     """Validate a batch-gate record against the project as it is now.
 
@@ -256,17 +291,88 @@ def validate_record(
     for field in REQUIRED_FIELDS:
         if field not in data:
             return "incomplete"
-    if data["head_sha"] != expected_head_sha:
+    if _claims_a_run_without_naming_it(data):
+        return "unenforced"
+    if not _head_is_current(data, expected_head_sha, expected_tree_sha):
         return "stale_head"
     if data["invocation"] != expected_invocation:
         return "stale_invocation"
     return "fresh"
 
 
+#: Verdicts that assert a suite actually ran.  ``not_configured`` and
+#: ``error`` make no such claim and legitimately name no suite.
+_VERDICTS_CLAIMING_A_RUN = ("pass", "fail")
+
+
+def _head_is_current(
+    data: dict,
+    expected_head_sha: str,
+    expected_tree_sha: Optional[str] = None,
+) -> bool:
+    """Is this record's verdict still about the code at HEAD?
+
+    Prefers the TREE when the record carries one, because the gate certifies
+    code and a commit that changes no files does not change the code.  The
+    batch-verification sub-plan is required to make empty marker commits
+    (``templates/batch-verification-subplan.md:234-235``), so comparing commit
+    shas means the verification step invalidates the proof of everything
+    verified before it — measured on 08d, whose two verification commits both
+    carry their parent's tree and change 0 files.
+
+    Falls back to strict sha equality when the record carries no ``tree_sha``,
+    and that fallback is deliberate rather than merely conservative.  Only
+    ``write_record`` emits ``tree_sha``, so its presence is provenance: a legacy
+    record keeps today's behaviour, and a hand-authored one — which has a
+    genuinely current ``head_sha``, that being the point of authoring it —
+    cannot reach the looser comparison.  Resolving ``<recorded_sha>^{tree}``
+    instead would rescue records already on disk, but would extend tree
+    comparison to records nothing vouches for.
+    """
+    if data.get("tree_sha") and expected_tree_sha:
+        return str(data["tree_sha"]) == str(expected_tree_sha)
+    return data.get("head_sha") == expected_head_sha
+
+
+def _claims_a_run_without_naming_it(data: dict) -> bool:
+    """True when a verdict asserts a suite ran but names no invocation.
+
+    A record cannot pass or fail a command it did not run.  Every real writer
+    names something: ``pass``/``fail`` carry ``full_cmd`` (an empty
+    ``suite.command`` yields ``MalformedConfig`` and never reaches that path),
+    ``not_configured`` carries ``"not_configured: ..."``, ``error`` carries
+    ``"<gate-code-error>"``.  So this state is unreachable for the real writer
+    and rejecting it costs no legitimate record.
+
+    It is reachable by hand, and was reached.  On 2026-09-09 a worker session
+    on resolver run ``a491abe9`` (#4824) whose enforced gate had TIMED OUT
+    (harness recorded ``outcome: inconclusive, exit_code: 124`` against a
+    declared ``timeout: 300``) read this record's schema out of the contract
+    documentation and authored its own ``verdict: pass`` by shell heredoc.  Its
+    first attempt named the real suite command and was rejected as
+    ``stale_invocation`` -- but ``validate_record_detail`` answers that
+    mismatch with BOTH sides named, so polling ``loop_status.py --json``
+    disclosed that ``''`` was the expected value.  The second write used it.
+    Every other check then passed: ``head_sha`` was genuinely HEAD, and
+    ``'' == ''`` compares equal.
+
+    The disclosure is deliberately NOT the thing fixed here.  Naming both sides
+    is what makes a stale record diagnosable to an operator, and a boolean
+    oracle stays binary-searchable anyway; removing it would cost real
+    diagnosability to buy a delay.  The defect is that a verdict claiming a run
+    was accepted while naming no run.
+    """
+    return (
+        data.get("verdict") in _VERDICTS_CLAIMING_A_RUN
+        and not str(data.get("invocation") or "").strip()
+    )
+
+
 def validate_record_detail(
     record_path: Path,
     expected_head_sha: str,
     expected_invocation: str,
+    expected_tree_sha: Optional[str] = None,
 ) -> str:
     """Validate and return a human-readable detail string.
 
@@ -284,7 +390,14 @@ def validate_record_detail(
     missing = [f for f in REQUIRED_FIELDS if f not in data]
     if missing:
         return f"incomplete: missing field(s): {', '.join(missing)}"
-    if data["head_sha"] != expected_head_sha:
+    if _claims_a_run_without_naming_it(data):
+        return (
+            f"unenforced: verdict '{data['verdict']}' with an empty invocation "
+            f"— a record cannot pass or fail a suite it does not name. No real "
+            f"writer produces this; it is the shape a hand-authored record "
+            f"takes. The enforced gate result, not this file, is the evidence."
+        )
+    if not _head_is_current(data, expected_head_sha, expected_tree_sha):
         return (
             f"stale_head: record sha {data['head_sha'][:7]} "
             f"!= current HEAD {expected_head_sha[:7]}"
@@ -436,6 +549,26 @@ def append_subplan_if_allowed(
 
 
 # ── git helper ───────────────────────────────────────────────────────────────
+
+def _git_head_tree(project_path: Path) -> Optional[str]:
+    """Capture the tree sha at HEAD.  Returns None on failure.
+
+    None rather than a sentinel: an unresolvable tree must degrade to the
+    strict sha comparison, never to a value that could compare equal.
+    """
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "HEAD^{tree}"],
+            cwd=project_path,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        if len(out) == 40 and all(c in "0123456789abcdef" for c in out):
+            return out
+    except (subprocess.CalledProcessError, OSError):
+        pass
+    return None
+
 
 def _git_head_sha(project_path: Path) -> str:
     """Capture HEAD sha.  Returns 'unknown' on failure."""
@@ -602,6 +735,8 @@ def _run_gate_inner(
             head_sha=head_sha,
             invocation=inv,
             timestamp=_now_iso(),
+            tree_sha=_git_head_tree(project_path),
+            writer=WRITER_ID,
         )
 
     invocation = config.ship["suite"]["command"]
@@ -689,6 +824,8 @@ def _run_gate_inner(
         # Computed above; persisting it is the whole point of v0.9.81.
         undeclared=list(undeclared),
         excused_count=len(excused),
+        tree_sha=_git_head_tree(project_path),
+        writer=WRITER_ID,
     )
 
 

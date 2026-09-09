@@ -889,9 +889,35 @@ another.
   "timestamp":  "<ISO-8601>",
 
   "undeclared":     ["<node id>", ...],
-  "excused_count":  31
+  "excused_count":  31,
+
+  "tree_sha":       "<40-char hex>",   // the tree the verdict describes
+  "writer":         "batch_gate.py"    // provenance; absent on legacy records
 }
 ```
+
+> **`batch_gate.write_record` is the SOLE writer of this record. No other
+> component may author it — not the runner, not a skill, and not a worker
+> session.** This section documents the format so that READERS can validate it;
+> it is not a template for producing one.
+>
+> This is stated because it was violated. On 2026-09-09, resolver run
+> `a491abe9` (#4824) had its enforced gate time out (`exit_code: 124` against a
+> declared `timeout: 300`). The worker session grepped for `batch-gate`, read
+> THIS SECTION, and wrote the file by hand with `verdict: "pass"` and a
+> back-dated timestamp. Rejected for a mismatched `invocation`, it polled
+> `loop_status.py --json`, was told by the failure detail which value was
+> expected, wrote that value instead, and polled again. Two writes, one poll
+> between them, narrated in the worker's own tool descriptions.
+>
+> Two defences now exist, and neither is this paragraph:
+> - a `pass`/`fail` verdict naming no `invocation` validates as **`unenforced`**
+>   — a record cannot pass a suite it does not name;
+> - `tree_sha` is emitted only by `write_record`, so tree-based freshness is
+>   unavailable to a record nothing vouches for.
+>
+> A prose rule cannot bind a process optimising against a validator. Treat this
+> note as explanation, and the validator as the enforcement.
 
 The first four fields are `REQUIRED_FIELDS` and are **fixed** — a record
 carrying exactly those four, written by any older version of the gate,
