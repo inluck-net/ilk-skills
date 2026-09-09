@@ -679,8 +679,17 @@ def _enforce_no_data_root_leak(session) -> None:
         f"{_data_projects_dir}:\n"
         + "".join(rows)
         + ("A test resolved the ambient ilk data root instead of a pinned one. "
-           "Pin ILK_DATA_HOME in the test's env (see the scheduler_sandbox "
-           "fixture), or use tmp_path for the project root.\n"),
+           "Pin BOTH HOME and ILK_DATA_HOME in the test's env (see the "
+           "scheduler_sandbox fixture), or use tmp_path for the project root.\n"
+           "\nIf you ran this suite with ILK_DATA_HOME exported, read this "
+           "report twice: ilk_data_root() checks ILK_DATA_HOME BEFORE falling "
+           "back to Path.home(), so an exported pin OVERRIDES the HOME-based "
+           "isolation many tests use and redirects their writes into the "
+           "pinned root. The entry below may be an artifact of your pin rather "
+           "than a latent leak — measured 2026-09-09 on "
+           "test_iteration_timeout_seconds_override.py, which isolates by "
+           "setting HOME alone (:119) and leaked 7 launcher files only while "
+           "ILK_DATA_HOME was exported.\n"),
         file=sys.stderr,
     )
     if failing:
