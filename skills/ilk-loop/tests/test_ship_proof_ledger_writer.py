@@ -21,8 +21,16 @@ These three tests cover the WRITER half:
         repo, step_from, step_to and the iteration's commit SHAs
   AC-2  no commits in the iteration ⇒ no record
   AC-5  two slugs worked in one iteration ⇒ two records
+  AC-6  the PRE-ITERATION CAPTURE can ask for two records, not just the writer
+  AC-7  a sub-plan the iteration never advanced gets no record
 
-Sub-plan: ``a-shared-remote-ship-can-be-proven`` (AC-1, AC-2, AC-5).
+AC-5 is a fixture trap on its own: it hands the writer a hand-written two-line
+``PRE_ITER_TARGET``, which the production capture cannot produce --
+``get_active_subplan_targets`` emits ``[0]`` of the non-shipped sub-plans, one
+line.  AC-6 therefore calls the real capture functions and lets the iteration
+advance a sub-plan the capture did not name.
+
+Sub-plan: ``a-shared-remote-ship-can-be-proven`` (AC-1, AC-2, AC-5, AC-6, AC-7).
 """
 from __future__ import annotations
 
@@ -310,3 +318,150 @@ def test_two_slugs_in_one_iteration_write_two_records(tmp_path: Path) -> None:
     assert by_slug["gate-work"]["step_to"] == 2
     assert by_slug["second-work"]["step_from"] == 1
     assert by_slug["second-work"]["step_to"] == 3
+
+
+# ── AC-6 / AC-7 ──────────────────────────────────────────────────────────────
+
+def _run_capture_then_writer(
+    project: Path,
+    env: dict[str, str],
+    *,
+    advance: dict[str, int],
+    run_id: str,
+    iteration: int,
+) -> subprocess.CompletedProcess:
+    """Capture pre-iteration state the way the driver does, then run an iteration.
+
+    Unlike ``_run_writer``, this does NOT hand the writer its slug list.  It
+    calls ``get_active_subplan_targets`` / ``get_all_subplan_steps`` against the
+    real plan files, THEN commits and advances sub-plans, THEN writes the
+    ledger — the driver's actual order (``run_ilk_loop_claude.sh:2335`` before
+    the agent, the writer after).  A fix that only widens the writer's parsing
+    cannot pass this.
+
+    *advance* maps slug -> its ``current_step`` after the iteration.
+    """
+    heads = project.parent / "heads6"
+    heads.mkdir(exist_ok=True)
+    plans = project / "docs" / "plans"
+
+    bumps = "\n".join(
+        "python3 -c \"import sys,pathlib; p=pathlib.Path(sys.argv[1]); "
+        "p.write_text(p.read_text().replace('current_step: 0', "
+        "'current_step: ' + sys.argv[2]))\" "
+        f"'{plans / f'2026-08-29-{slug}.md'}' {step}"
+        for slug, step in advance.items()
+    )
+
+    script = f"""
+export ILK_DOTSOURCE_ONLY=1
+source '{RUNNER}'
+PROJECT_PATH='{project}'
+REPOS=('{project}')
+RUN_ID='{run_id}'
+LOOP_STATUS_SCRIPT='{RUNNER.parent / "loop_status.py"}'
+set +e
+
+declare -F get_all_subplan_steps >/dev/null || {{ echo "CAPTURE_MISSING"; exit 91; }}
+
+# -- pre-iteration, the driver's order --
+PRE_ITER_TARGET="$(get_active_subplan_targets 2>/dev/null || true)"
+PRE_ITER_ALL_STEPS="$(get_all_subplan_steps || true)"
+echo "CAPTURED_TARGET_LINES=$(printf '%s' "$PRE_ITER_TARGET" | grep -c . )"
+
+printf '%s=%s\n' '{project}' "$(git -C '{project}' rev-parse HEAD)" > '{heads / "before"}'
+
+# -- the iteration: one commit, and the agent advances the sub-plans --
+echo change > '{project}/worked.txt'
+git -C '{project}' add -A
+git -C '{project}' -c user.email=t@example.com -c user.name=Test \
+  commit -q -m 'fix(app): work carrying no plan trailer'
+{bumps}
+
+printf '%s=%s\n' '{project}' "$(git -C '{project}' rev-parse HEAD)" > '{heads / "after"}'
+
+{WRITER_FUNC} '{heads / "before"}' '{heads / "after"}' {iteration}
+echo "RC=$?"
+"""
+    return subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True, text=True, timeout=180, env=env, cwd=str(project),
+    )
+
+
+def test_a_subplan_advanced_into_gets_its_own_record(tmp_path: Path) -> None:
+    """AC-6 — the capture, not just the writer, must reach the second slug.
+
+    Measured on gh-resolve #4829: one iteration finished the work sub-plan and
+    advanced into ``issue-4829-batch-verification-…``; the ledger got one row,
+    attributed to the slug active at the start, and the consumer's reap refused
+    the unrowed slug with ``ship-proof-missing``.  Runs that took TWO iterations
+    wrote two rows and published fine — so the faster run was the less
+    publishable one, permanently, since the iteration that would have written
+    the row is over.
+    """
+    project = _make_project(
+        tmp_path / "proj",
+        {"gate-work": (0, 2), "second-work": (0, 3)},
+    )
+    env = _sandbox_env(tmp_path)
+
+    proc = _run_capture_then_writer(
+        project, env,
+        advance={"gate-work": 2, "second-work": 3},
+        run_id="20260909-090000", iteration=1,
+    )
+    assert "CAPTURE_MISSING" not in proc.stdout, (
+        "get_all_subplan_steps is not defined in the runner — without it this "
+        f"assertion cannot distinguish a fix from an absent one.\n{proc.stdout}"
+    )
+    # Documents WHY the writer alone could not be widened: the target capture
+    # names exactly one slug, so it can never be the writer's slug universe.
+    assert "CAPTURED_TARGET_LINES=1" in proc.stdout, (
+        "get_active_subplan_targets is expected to name exactly one sub-plan; "
+        f"if that changed, this test's premise needs rewriting.\n{proc.stdout}"
+    )
+
+    records = _read_ledger(project, env)
+    by_slug = {r["slug"]: r for r in records}
+    assert set(by_slug) == {"gate-work", "second-work"}, (
+        "a sub-plan advanced INTO during the iteration must get its own ledger "
+        f"row; got {records}\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+    )
+    assert by_slug["second-work"]["step_from"] == 0, (
+        "step_from for the advanced-into slug is its PRE-iteration step"
+    )
+    assert by_slug["second-work"]["step_to"] == 3
+    assert by_slug["gate-work"]["step_from"] == 0
+    assert by_slug["gate-work"]["step_to"] == 2
+    assert all(r["iteration"] == 1 for r in records)
+
+
+def test_an_untouched_subplan_gets_no_record(tmp_path: Path) -> None:
+    """AC-7 — widening the universe must not manufacture attribution.
+
+    The baseline names every non-shipped sub-plan, most of which the iteration
+    never touches.  A row for one of those would claim this iteration's commits
+    for a slug nothing worked — the same shape of unearned proof the ledger
+    exists to prevent.  Only the iteration's target earns a row without having
+    advanced.
+    """
+    project = _make_project(
+        tmp_path / "proj",
+        {"gate-work": (0, 2), "untouched-work": (0, 3)},
+    )
+    env = _sandbox_env(tmp_path)
+
+    proc = _run_capture_then_writer(
+        project, env,
+        advance={"gate-work": 2},
+        run_id="20260909-091500", iteration=1,
+    )
+    assert "CAPTURE_MISSING" not in proc.stdout, proc.stdout
+
+    records = _read_ledger(project, env)
+    slugs = {r["slug"] for r in records}
+    assert slugs == {"gate-work"}, (
+        "only the worked sub-plan may be attributed the iteration's commits; "
+        f"got {records}\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+    )

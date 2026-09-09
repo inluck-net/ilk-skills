@@ -813,6 +813,44 @@ get_active_subplan_targets() {
   printf '%s %s\n' "$slug" "$step"
 }
 
+get_all_subplan_steps() {
+  # Emit "<slug> <step>" for EVERY not-yet-shipped sub-plan, read BEFORE the
+  # iteration.  This is the ledger writer's baseline, and only its.
+  #
+  # get_active_subplan_targets above emits exactly ONE line -- `[0]` of the
+  # non-shipped sub-plans -- so PRE_ITER_TARGET is a single-slug list by
+  # construction.  write_ship_proof_records keys its entire slug universe off
+  # that list, so an iteration could never write more than one ledger row no
+  # matter how many sub-plans it advanced.  A sub-plan the agent advanced INTO
+  # got no row, and its commits were swept into the row for whichever slug was
+  # active at the start.  Measured on gh-resolve #4829: one iteration, one row
+  # claiming all three commits, no row for the batch-verification slug -- which
+  # is exactly the slug the consumer's reap refused with `ship-proof-missing`.
+  # The inversion is the point: the FASTER run was the less publishable one,
+  # and permanently so, because the iteration that would have written the
+  # second row is over.  Runs that took two iterations wrote two rows and
+  # published fine.
+  #
+  # The gate's fallback target deliberately stays PRE_ITER_TARGET: widening
+  # THAT would point the gate at sub-plans the iteration never touched.
+  local status_json
+  # --json exits non-zero when work is pending (loop_status.py:786); the
+  # payload is still valid, so the exit code cannot be the predicate here.
+  # stderr stays attached: a baseline that never answered is not a baseline of
+  # zero sub-plans, and the difference is a missing row nobody would see.
+  status_json=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json) || true
+  if [[ -z "$status_json" ]]; then
+    echo "  ! [ship-proof] loop_status --json gave no pre-iteration baseline -- a sub-plan advanced INTO this iteration will get no ledger row." >&2
+    return 0
+  fi
+  echo "$status_json" | jq -r '
+    (.subplans // [])[]
+    | select(((.status // "") | ascii_downcase) != "shipped")
+    | select(.slug != null and .slug != "null")
+    | "\(.slug) \(.current_step)"
+  ' 2>/dev/null || true
+}
+
 get_local_check_targets() {
   local repo="$1"
   local before="$2"
@@ -907,6 +945,48 @@ write_ship_proof_records() {
     step_list+=("$st")
   done <<< "${PRE_ITER_TARGET:-}"
 
+  # Add every OTHER sub-plan that existed before the iteration, so one the
+  # agent advanced INTO can still get a row.  PRE_ITER_TARGET names a single
+  # slug by construction (see get_all_subplan_steps), so without this the
+  # universe is capped at one row per iteration.
+  #
+  # An added slug's step_from is its REAL pre-iteration step, and that is not a
+  # stylistic preference -- do not simplify it to 0.  ship_audit's
+  # check_step_commits (ship_audit.py:176-178) counts a step as committed if
+  # any record covers it in [step_from, step_to), so a floor of 0 would mark
+  # every earlier step of a sub-plan the loop had partially worked and returned
+  # to as proven.  That exact shape was measured on batch 2026-09-08c: a record
+  # claiming step_from 0, step_to 4 attributed step 2 for a sub-plan with no
+  # step-2 commit, and missing_steps came back [] for work never done
+  # (ship_audit.py:234-240).  The consumer's reap reads presence only, so
+  # nothing downstream of it would catch an invented floor.
+  #
+  # These carry a STRICTER emission rule than the PRE_ITER_TARGET slug, tracked
+  # in the parallel `advanced_only` array: the loop TARGETED that slug, so its
+  # row stands on the targeting alone; these stand only on having actually
+  # advanced.  Without the distinction, every untouched sub-plan would get a
+  # row claiming this iteration's commits -- attribution to a slug nothing
+  # worked, which is the forgery the ledger exists to make impossible.
+  local advanced_only=() i0 j dup s2 st2
+  for (( i0=0; i0<${#slug_list[@]}; i0++ )); do
+    advanced_only+=("0")
+  done
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    s2="${line%% *}"
+    st2="${line#* }"
+    [[ -n "$s2" && "$s2" != "null" ]] || continue
+    [[ "$st2" =~ ^[0-9]+$ ]] || st2=0
+    dup=0
+    for (( j=0; j<${#slug_list[@]}; j++ )); do
+      if [[ "${slug_list[$j]}" == "$s2" ]]; then dup=1; break; fi
+    done
+    (( dup )) && continue
+    slug_list+=("$s2")
+    step_list+=("$st2")
+    advanced_only+=("1")
+  done <<< "${PRE_ITER_ALL_STEPS:-}"
+
   [[ ${#slug_list[@]} -gt 0 ]] || return 0
 
   # Resolve current_step for each slug from loop_status (the post-iteration
@@ -996,6 +1076,13 @@ for sp in (d.get('subplans') or []):
       # thing the audit gets to read.  Skip and say so.
       if [[ -z "$step_to" ]]; then
         echo "  ! [ship-proof] no current_step resolved for '${slug}' -- skipping its row for iteration ${iteration} rather than attributing zero progress." >&2
+        continue
+      fi
+      # A slug that was not this iteration's target earns a row only by having
+      # advanced.  Unchanged current_step means the iteration did not work it,
+      # and a row would attribute these commits to it anyway.  No log line:
+      # on any real batch this is the quiet majority of sub-plans.
+      if [[ "${advanced_only[$si]}" == "1" && "$step_to" -le "$step_from" ]]; then
         continue
       fi
       local shas_json
@@ -2333,6 +2420,13 @@ main() {
     # Measured end-to-end — reading it afterwards resolved nothing and the gate
     # still did not run.
     PRE_ITER_TARGET="$(get_active_subplan_targets 2>/dev/null || true)"
+    # The ledger writer's wider baseline: every non-shipped sub-plan and the
+    # step it starts this iteration on.  Read here for the same reason
+    # PRE_ITER_TARGET is -- afterwards the agent has already marked sub-plans
+    # `shipped` and moved their steps, so the pre-iteration value is gone.
+    # stderr is NOT silenced: a baseline that failed to resolve is a missing
+    # ledger row, not an empty project.
+    PRE_ITER_ALL_STEPS="$(get_all_subplan_steps || true)"
 
     local iter_log
     iter_log="${RUN_LOG_DIR}/iter-$(printf '%02d' $i).log"
