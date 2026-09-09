@@ -24,6 +24,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -50,6 +51,68 @@ def _dirs_with_tests() -> list[Path]:
     return found
 
 
+def _ilk_paths_module():
+    """Import the production path resolver, or return None.
+
+    Imported rather than reimplemented: `ilk_data_root`'s precedence
+    (ILK_DATA_HOME -> ILK_DATA_DIR -> ~/.ilk-data) and `project_key`'s 80-char
+    cap with sha1 tail are the things this guard must agree with EXACTLY. A
+    second copy of a resolver is the hazard that put the batch-gate marker and
+    its verdict in different directories in 2026-08; a guard that disagreed
+    with production about where the root is would watch the wrong directory
+    and report a reassuring empty diff.
+    """
+    scripts = _ROOT / "skills" / "ilk-loop" / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    try:
+        import ilk_paths
+    except Exception:  # noqa: BLE001 - reported, never swallowed; see below
+        return None
+    return ilk_paths
+
+
+def _snapshot_data_projects() -> None:
+    """Record what the AMBIENT data root holds before any test runs.
+
+    Ambient means resolved from the environment as the operator left it —
+    read here, before a fixture or a test mutates ILK_DATA_HOME. If the
+    operator pinned ILK_DATA_HOME to a scratch dir for this run, that scratch
+    dir is what gets watched, and writes into it are legitimate.
+    """
+    global _data_projects_dir, _data_snapshot, _data_probe_error
+    global _data_session_start
+    mod = _ilk_paths_module()
+    if mod is None:
+        # A probe that could not run is not a clean result. Say so at session
+        # end rather than reporting "no leaks" from a guard that never looked.
+        _data_probe_error = (
+            "could not import ilk_paths; the data-root leak guard did not run"
+        )
+        return
+    try:
+        _data_projects_dir = mod.ilk_data_root() / "projects"
+        _data_session_start = time.time()
+        _data_snapshot = {
+            e.name: _entry_stat(e)
+            for e in _data_projects_dir.iterdir() if e.is_dir()
+        } if _data_projects_dir.is_dir() else {}
+        _data_tmp_prefix_set(mod)
+    except OSError as exc:
+        _data_probe_error = f"could not read the data root: {exc}"
+
+
+def _data_tmp_prefix_set(mod) -> None:
+    """The key prefix a pytest tmp path produces, derived not guessed."""
+    global _data_tmp_prefix
+    try:
+        _data_tmp_prefix = mod.project_key(
+            Path(tempfile.gettempdir()).resolve(),
+        )
+    except Exception:  # noqa: BLE001
+        _data_tmp_prefix = None
+
+
 def pytest_configure(config) -> None:
     """Put each test directory on sys.path, and register guard markers.
 
@@ -62,6 +125,8 @@ def pytest_configure(config) -> None:
         entry = str(directory)
         if entry not in sys.path:
             sys.path.insert(0, entry)
+    # Before any test runs: record what the ambient data root already holds.
+    _snapshot_data_projects()
     config.addinivalue_line(
         "markers",
         "allow_launchctl: exempt this test from the host-mutation guard",
@@ -182,6 +247,61 @@ def pytest_collectstart(collector) -> None:
 _HOST_DENYLIST = frozenset({"launchctl"})
 _HOST_REPORT_ENV = "ILK_TEST_GUARD_REPORT"
 _host_blocked_calls: list[tuple[str, str]] = []  # (nodeid, described_argv)
+
+
+# ── Data-root leak guard state ──────────────────────────────────────────────
+#
+# Sibling of the host-mutation guard below, on a different axis: that one
+# catches host-mutating BINARIES, this one catches FILESYSTEM writes into the
+# operator's real ilk data root. Same shape deliberately — snapshot, then
+# enforce at pytest_sessionfinish — because the leak is defined by what a test
+# forgot to guard against, and an opt-in check is only consulted by the tests
+# that did not need it (see _host_guard_active's docstring).
+#
+# Why this exists with a measured harm of ZERO: as of 2026-09-09 the real root
+# holds 24 test-created directories spanning two weeks, containing 0 files at
+# any depth, and no test has ever created a real-shaped project key. The guard
+# is not for that debris. It is for the row that has not been written yet:
+# gh-resolve's reap proves a sub-plan on the mere PRESENCE of a ship-proof row
+# and builds its proven set from the whole ledger, unfiltered by run_id
+# (reap.py:1010-1021, membership at :1035). So a stray row written by a test
+# into a REAL project's ledger would not look like proof to a human reading the
+# file — it would be accepted as proof and the run would publish on it. That is
+# the failure class v0.9.92 and v0.9.94 both exist to close. What makes it
+# improbable today is that slug names embed run ids, which is a property of
+# naming, not a control.
+_data_projects_dir: Path | None = None
+# name -> (recursive file count, newest file mtime).  NOT a set of names: the
+# first version of this guard diffed names only, and a full suite run added
+# ZERO new names while still leaking, because pytest rotates a small set of
+# numbered basetemps so the derived key usually already exists.  Worse, the
+# dangerous case writes into a key that certainly already exists — a REAL
+# project's — so a name diff was blind to precisely the event the guard is for.
+_data_snapshot: dict[str, tuple[int, float]] = {}
+_data_session_start: float = 0.0
+_data_tmp_prefix: str | None = None
+_data_probe_error: str | None = None
+
+
+def _entry_stat(entry: Path) -> tuple[int, float]:
+    """(file count, newest mtime) for one project entry, recursive.
+
+    A full walk of this tree measured 5340 files in 15ms on chad-mbp, so the
+    guard watches contents rather than names and does not need to scope itself
+    to runtime/ to stay cheap.
+    """
+    n, newest = 0, 0.0
+    try:
+        for f in entry.rglob("*"):
+            try:
+                if f.is_file():
+                    n += 1
+                    newest = max(newest, f.stat().st_mtime)
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return n, newest
 
 
 class HostMutationBlocked(BaseException):
@@ -469,6 +589,111 @@ def _enforce_no_host_mutations(session) -> None:
     )
 
 
+def _enforce_no_data_root_leak(session) -> None:
+    """Report entries this run added to the ambient data root.
+
+    FAILS the session on a new entry that holds FILES, or whose key is not
+    pytest-tmp-derived. Empty tmp-derived directories are REPORTED but do not
+    fail.
+
+    That threshold is a judgment call, not a measurement: 24 such directories
+    accumulated over two weeks contain 0 files between them, so failing on
+    them would paint the suite permanently red for a condition that has never
+    once carried data, and a guard that is always red is a guard nobody reads.
+    Wrong if an empty directory ever turns out to precede a write we needed to
+    catch earlier — set ILK_DATA_LEAK_STRICT=1 to fail on any new entry, which
+    is the setting to use once session-wide isolation lands and the expected
+    count is zero.
+    """
+    if _data_probe_error is not None:
+        session.exitstatus = 1
+        print(
+            f"\nDATA-ROOT GUARD DID NOT RUN: {_data_probe_error}. "
+            "This is not a clean result — the guard reports nothing because it "
+            "could not look, which reads identically to no leaks.",
+            file=sys.stderr,
+        )
+        return
+    if _data_projects_dir is None or not _data_projects_dir.is_dir():
+        return
+    try:
+        now = {
+            e.name: _entry_stat(e)
+            for e in _data_projects_dir.iterdir() if e.is_dir()
+        }
+    except OSError as exc:
+        session.exitstatus = 1
+        print(f"\nDATA-ROOT GUARD: could not re-read the root: {exc}",
+              file=sys.stderr)
+        return
+
+    strict = os.environ.get("ILK_DATA_LEAK_STRICT", "").strip().lower() not in (
+        "", "0", "false", "no",
+    )
+    rows, failing = [], []
+    for name in sorted(now):
+        n_files, newest = now[name]
+        was = _data_snapshot.get(name)
+        is_new = was is None
+        gained = (not is_new) and n_files > was[0]
+        touched = (not is_new) and newest > _data_session_start
+        if not (is_new or gained or touched):
+            continue
+
+        tmp_derived = bool(_data_tmp_prefix) and name.startswith(_data_tmp_prefix)
+        # Fail on what this session CREATED, not on what the entry contains.
+        #
+        # The absolute state cannot be the predicate on a host where the
+        # scheduler daemon is live: it polls every 5 minutes and writes into a
+        # real project's runtime dir, so a 5-minute suite is guaranteed to
+        # overlap a poll.  Failing on "a real key holds files and its mtime
+        # moved" would convict the suite of the daemon's writes — which is
+        # exactly the wall-clock attribution defect that made gh-resolve's own
+        # guard blame this repo's tests for its exit 1.
+        #
+        # LIMIT, stated rather than hidden: an APPEND to a file that already
+        # exists (a row added to a real ship-proof.jsonl — the precise hazard
+        # this guard is for) changes no file count, so it lands in TOUCHED and
+        # is reported, not failed.  The filesystem cannot tell a test's append
+        # from a concurrent daemon's, and guessing would either cry wolf every
+        # run or invent an attribution it does not have.  TOUCHED on a
+        # real-shaped key is therefore a line to READ, not noise.
+        bad = strict or (is_new and (n_files > 0 or not tmp_derived)) or gained
+        what = ("NEW" if is_new else
+                "GAINED FILES" if gained else "TOUCHED")
+        rows.append(
+            f"  {name}\n"
+            f"      {what}  files={n_files}"
+            f"{'' if is_new else f' (was {was[0]})'}"
+            f"  tmp-derived={tmp_derived}"
+            f"{'  <-- FAILS' if bad else '  (reported only)'}\n"
+        )
+        if bad:
+            failing.append(name)
+
+    if not rows:
+        return
+
+    print(
+        f"\nDATA-ROOT LEAK: this run changed {len(rows)} entry(ies) under "
+        f"{_data_projects_dir}:\n"
+        + "".join(rows)
+        + ("A test resolved the ambient ilk data root instead of a pinned one. "
+           "Pin ILK_DATA_HOME in the test's env (see the scheduler_sandbox "
+           "fixture), or use tmp_path for the project root.\n"),
+        file=sys.stderr,
+    )
+    if failing:
+        session.exitstatus = 1
+        print(
+            f"DATA-ROOT GUARD VIOLATION: {len(failing)} entry(ies) carry data "
+            "or a real-shaped project key — a write into a real project's "
+            "runtime can be read back as proof by a publisher.\n",
+            file=sys.stderr,
+        )
+
+
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
     """Enforce the host-mutation guard at session end (AC-4)."""
     _enforce_no_host_mutations(session)
+    _enforce_no_data_root_leak(session)
