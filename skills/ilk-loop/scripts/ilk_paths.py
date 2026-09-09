@@ -432,7 +432,22 @@ def _selftest() -> int:
                     help="Print human-readable state paths (one per line) instead of JSON.")
     ap.add_argument("--sentinel-path", action="store_true",
                     help="Print the canonical sentinel path and exit.")
+    ap.add_argument("--project-key", action="store_true",
+                    help="Print the canonical project key for --start and exit. "
+                         "Keys the path AS GIVEN (no project-root resolution) so "
+                         "a caller holding a worktree path gets that worktree's "
+                         "key. This is the cross-repo entry point: consumers must "
+                         "call it rather than re-deriving the transform.")
     args = ap.parse_args()
+
+    if args.project_key:
+        # Deliberately project_key(args.start), NOT
+        # project_key(find_project_root(args.start)): a caller asking for the
+        # key OF A PATH is answered about that path. The launcher separately
+        # keys by resolved root, which is a different question.
+        print(project_key(args.start))
+        return 0
+
     g_root = git_root(args.start)
     m_root = meta_root(args.start)
     root, kind = find_project_root(args.start)

@@ -764,6 +764,59 @@ Both fixed in sub-plan `a-shared-remote-ship-can-be-proven` (2026-08-29).
 
 ---
 
+## Contract 6b: The project key is a cross-repo contract
+
+### The rule
+
+`ilk_paths.project_key` decides the directory every run's records are filed
+under. Any consumer that must find those records again — in this repo or
+another — **calls the canonical implementation. It does not re-derive the
+transform.**
+
+```bash
+python3 skills/ilk-loop/scripts/ilk_paths.py --project-key --start <path>
+```
+
+`--project-key` keys the path **as given**, with no project-root resolution:
+a caller holding a worktree path gets that worktree's key. The launcher
+separately keys by *resolved root* (`run_ilk_loop_claude.sh:269`), which
+answers a different question — do not assume the two agree for a path that
+sits inside a project rather than at its root.
+
+### The algorithm, for a mirror that cannot call out
+
+Lowercase the resolved absolute path; replace every run of `[^a-z0-9]+` with
+`-`; strip leading and trailing `-`. **If the result exceeds 80 characters**,
+replace the tail: `slug[:72].rstrip("-") + "-" + sha1(lowercased_abs_path)[:7]`.
+Note the `rstrip` — when the 72-char cut lands on a separator the key is 79
+characters, not 80.
+
+### Why this is a contract and not a detail
+
+gh-resolve's `reconcile.py:41` re-implemented the transform rather than shell
+out to another repo — a reasonable instinct — but omitted the cap. The two
+forms **agree below 80 characters and diverge above**, and because the cap is a
+one-way hash the consumer cannot recover the producer's key from the path
+alone.
+
+Measured on rezmac 2026-09-09: **0 of 5 exit records reachable by the remedy
+`doctor` prints, and 0 of 5 computed directories exist**, out of 90. So
+`gh-resolve reconcile <worktree>` — the command an operator is told to run —
+exits 0 and does nothing, forever, on every parked run. A run that parks and
+cannot be reconciled needs a human, which is the outcome the loop exists to
+avoid.
+
+The near-miss is the instructive part: the live worktree key
+`users-chad-projects-keyreply-kira-cloudflare-scratch-worktrees-resolver-7359f23`
+is **79 characters** and agrees with the uncapped form by one character. The
+divergence was invisible until a worktree name grew.
+
+`skills/ilk-loop/tests/test_project_key_contract.py` pins the algorithm with
+named vectors, including that near-miss and the failing case, so a mirror
+implementation in any language can be diffed against it.
+
+---
+
 ## Contract 7: The no-progress dispatch bound (`no-progress.json`)
 
 ### The rule
