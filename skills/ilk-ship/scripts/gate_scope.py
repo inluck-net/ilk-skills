@@ -107,7 +107,41 @@ def resolve_consumers(
     zero — AC-5.
 
     This is the I/O boundary.  The tier decision function is pure.
+
+    *module_name* may be given as a bare module name or as a ``.py`` filename;
+    both name the same module and resolve identically.  Anything else — a
+    ``.sh``, ``.ps1`` or other non-Python file — is UNANSWERABLE by a Python
+    import oracle and returns ``FAILED``, which ``select_tier`` routes to
+    tier 3 (AC-5).
+
+    Both behaviours are fixes for the same defect, measured 2026-09-09 while
+    gating v0.9.95: the oracle answered questions it could not answer, with a
+    confident zero.
+
+    * ``resolve_consumers("ilk_paths.py")`` returned 0 while
+      ``resolve_consumers("ilk_paths")`` returned 28 — the pattern is
+      ``import {module_name}``, so an extension makes it ``import
+      ilk_paths.py``, matching nothing.  Passing ``Path(p).name`` is the
+      obvious thing for a caller to do, and it was accepted and answered
+      zero.
+    * A ``.sh`` file has no Python importers by construction, so every shell
+      change selected **tier 1 — the narrowest gate** — for a file the oracle
+      never examined.
+
+    ``is_zero`` then reads as a legitimate finding, and SKILL.md's stated
+    protection ("a failing oracle degrades to tier 3") was unreachable because
+    the oracle never admitted failure.  A confident zero from a search that
+    could not see is worse than an error.
     """
+    suffix = Path(module_name).suffix
+    if suffix == ".py":
+        module_name = Path(module_name).stem
+    elif suffix:
+        # Not a Python module: this oracle has no way to look.  Refusing is the
+        # whole point — a zero here would be indistinguishable from "examined
+        # and found nothing".
+        return ConsumerResult(status=OracleStatus.FAILED, importers=())
+
     pattern = f"from {module_name} import|import {module_name}"
     try:
         result = subprocess.run(
@@ -171,6 +205,17 @@ def _is_path_or_schema_change(path: str) -> bool:
     """
     p = path.replace("\\", "/")
     basename = p.rsplit("/", 1)[-1] if "/" in p else p
+
+    # conftest.py is the extreme case of "no import graph, high risk": pytest
+    # AUTO-LOADS it, so no file contains `import conftest` and the oracle's
+    # zero is true and useless. It is loaded by every test file in the repo —
+    # 248 of them as of 2026-09-09 — which made it the single worst file to
+    # select tier 1 for, and tier 1 is exactly what it selected. Same shape as
+    # the sentinel case this predicate was built for (a writer path moved at 2
+    # call sites broke 12 fixtures across 7 files), so it belongs here rather
+    # than in the contract-governed set, which is about contract documents.
+    if basename == "conftest.py":
+        return True
     # This tool's OWN artifacts are not risk signals. `store_baseline` commits
     # .ilk-baselines/<tag>__<hash>.json on every release; because `.json` is a
     # path/schema extension, that artifact forced the NEXT release to tier 3

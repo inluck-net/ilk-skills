@@ -25,6 +25,7 @@ from gate_scope import (
     _is_contract_governed,
     _is_path_or_schema_change,
     _is_test_path,
+    resolve_consumers,
     select_tier,
     subtract_complement,
 )
@@ -443,3 +444,77 @@ class TestReplay0813Batch:
         # (this is verified by the SKILL.md in sub-plan 6, but the fixture
         # confirms the tier is correct)
 
+
+
+# ---------------------------------------------------------------------------
+# The oracle must not answer a question it cannot answer
+# ---------------------------------------------------------------------------
+
+class TestOracleFalseZero:
+    """A confident zero from a search that could not see is the worst answer.
+
+    Measured 2026-09-09 while gating v0.9.95. `select_tier`, fed per changed
+    module as SKILL.md instructs, returned **tier 1 — "zero resolved
+    consumers"** for `conftest.py` (loaded by all 248 test files) and
+    `bounce_daemons.sh`. SKILL.md's stated protection is that a failing oracle
+    degrades to tier 3; these degrade to tier 1, the NARROWEST, on files with
+    the highest fan-in in the repo — silently, and in the dangerous direction.
+
+    A third case was the releasing agent's own error and is the reason the
+    other two stayed invisible: `resolve_consumers("ilk_paths.py")` returns 0
+    while `resolve_consumers("ilk_paths")` returns 28. The pattern is
+    `import {module_name}`, so an extension makes it `import ilk_paths.py`,
+    which matches nothing. Passing `Path(p).name` is the obvious thing for a
+    caller to do, and the function accepted it and answered zero rather than
+    refusing. `is_zero` then reads as a legitimate finding.
+
+    The rule these pin: **an oracle that cannot resolve must say FAILED, not
+    zero.** `select_tier` already routes FAILED to tier 3 (AC-5); it was never
+    reached because the oracle never admitted failure.
+    """
+
+    def test_a_filename_resolves_the_same_as_its_module_stem(self) -> None:
+        """`ilk_paths.py` and `ilk_paths` name the same module."""
+        root = Path(__file__).resolve().parent.parent.parent.parent
+        with_ext = resolve_consumers("ilk_paths.py", root)
+        stem = resolve_consumers("ilk_paths", root)
+        assert with_ext.count == stem.count, (
+            f"a .py filename resolved {with_ext.count} consumers and its stem "
+            f"resolved {stem.count}; the extension makes the grep pattern "
+            "`import ilk_paths.py`, which matches nothing, and the caller is "
+            "handed a confident zero"
+        )
+        assert stem.count > 0, (
+            "premise check: ilk_paths must have production importers, or this "
+            "test proves nothing"
+        )
+
+    def test_a_shell_script_cannot_be_answered_by_a_python_import_oracle(
+        self,
+    ) -> None:
+        """`.sh`/`.ps1` have no Python import graph — that is FAILED, not zero."""
+        root = Path(__file__).resolve().parent.parent.parent.parent
+        r = resolve_consumers("bounce_daemons.sh", root)
+        assert r.is_unknown, (
+            "a shell script has no Python importers by construction, so the "
+            "oracle greps *.py for `import bounce_daemons.sh` and reports a "
+            "clean zero. Every .sh change therefore selects tier 1 — the "
+            "narrowest gate — for a file the oracle never examined"
+        )
+        assert select_tier(["skills/x/scripts/bounce_daemons.sh"], r).tier == 3, (
+            "AC-5 routes an unresolvable oracle to tier 3; that is the whole "
+            "protection, and it was unreachable"
+        )
+
+    def test_conftest_is_not_tier_1(self) -> None:
+        """pytest auto-loads conftest; nothing imports it, and it governs all."""
+        root = Path(__file__).resolve().parent.parent.parent.parent
+        r = resolve_consumers("conftest", root)
+        decision = select_tier(["conftest.py"], r)
+        assert decision.tier == 3, (
+            f"conftest.py selected tier {decision.tier} ({decision.reason}). "
+            "It is loaded by every test file in the repo and has zero import "
+            "statements pointing at it, so the import oracle's zero is true "
+            "and useless — the same 'no import graph, high risk' shape that "
+            "_is_path_or_schema_change already exists to catch"
+        )
