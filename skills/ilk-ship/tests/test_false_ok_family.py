@@ -7,10 +7,19 @@ that did not check the thing that matters:
   |---------|-----------------------------|----------------------------------|
   | v0.9.74 | a host whose bounce failed  | that the daemon came back        |
   | v0.9.87 | a host never contacted      | that ssh happened at all         |
-  | current | a host at an older tag      | that the host is on the release  |
+  | v0.9.94 | a host at an older tag      | that the host is on the release  |
+  | current | a host with a DIRTY TREE    | that the files are the tag       |
 
-Each test asserts the resolver does NOT return `ok`.  The third is red
+Each test asserts the resolver does NOT return `ok`.  The fourth is red
 at this step by construction — that is the point.
+
+The fourth member is the one the v0.9.93 tag body predicted: "Phase 4's
+`--require-tag` checks the daemon's recorded sha but never whether the
+working tree is clean, so a host running uncommitted code reports `ok`."
+It is not hypothetical — rezmac reported `ok` at v0.9.92 while carrying the
+uncommitted modification that became v0.9.93, and the only reason both hosts
+were trustworthy at v0.9.94 is that two sessions hand-asserted
+`git status --porcelain` three times each.
 """
 
 from __future__ import annotations
@@ -154,4 +163,106 @@ class TestFalseOkOlderTag:
         assert result != "ok", (
             "A host at an older tag must not report 'ok'. "
             "This is the current false-ok shape."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Family member 4: host whose working tree is dirty (current)
+# ---------------------------------------------------------------------------
+
+class TestFalseOkDirtyTree:
+    """A recorded sha that resolves to the tag says nothing about the FILES.
+
+    `--require-tag` answers "is this host running the code at <tag>?" by
+    resolving the daemon's recorded `toolkit_head`. A dirty working tree means
+    the files on disk are not that commit — the daemon is running edits that
+    exist in no commit anywhere. The sha check passes and the answer is still
+    no.
+
+    Same shape as the other three: a state meaning "checked and current"
+    returned on a path that did not check the thing that matters.
+    """
+
+    def test_dirty_tree_is_not_ok(self, tmp_path: Path) -> None:
+        """The reproducible case: rezmac at v0.9.92 over uncommitted code."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "recorded_sha: 800efd5cab82fae3ac18b7267c7734548a678244",
+            "tree_state: dirty",
+            "fresh: scheduler — fresh (toolkit_head matches HEAD)",
+        ], exit_code=0)
+        result = resolve_host(
+            fake, tmp_path,
+            require_tag="v0.9.93",
+            tag_resolver=lambda _sha: "v0.9.93",   # the sha DOES match
+        )
+        assert result != "ok", (
+            "a host whose recorded sha resolves to the required tag but whose "
+            "working tree is dirty must not report 'ok' — the daemon is "
+            "running code that exists in no commit"
+        )
+        assert result == "dirty-tree", (
+            f"got {result!r}; the state must NAME the problem, because "
+            "'tag-mismatch' would send an operator looking at the wrong thing "
+            "— the tag is right and the tree is not"
+        )
+
+    def test_clean_tree_at_the_right_tag_is_still_ok(self, tmp_path: Path) -> None:
+        """The guard must not make every conformant host red."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "recorded_sha: da20e6cee03e31ec5123d64e1ad81c71cdd36f8b",
+            "tree_state: clean",
+            "fresh: scheduler — fresh (toolkit_head matches HEAD)",
+        ], exit_code=0)
+        result = resolve_host(
+            fake, tmp_path,
+            require_tag="v0.9.94",
+            tag_resolver=lambda _sha: "v0.9.94",
+        )
+        assert result == "ok", f"got {result!r}"
+
+    def test_absent_tree_state_does_not_fail_closed_into_dirty(
+        self, tmp_path: Path,
+    ) -> None:
+        """An older bouncer emits no tree_state line.
+
+        Judgment call: absence is treated as UNKNOWN and does not by itself
+        produce `dirty-tree`, because a host mid-upgrade runs the old bouncer
+        and would otherwise report dirty forever with nothing an operator
+        could do about it. The sha check still applies. Wrong if a host is
+        ever left indefinitely on a bouncer too old to report — which the
+        release path makes visible, since upgrading the bouncer IS the deploy.
+        """
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "recorded_sha: da20e6cee03e31ec5123d64e1ad81c71cdd36f8b",
+            "fresh: scheduler — fresh (toolkit_head matches HEAD)",
+        ], exit_code=0)
+        result = resolve_host(
+            fake, tmp_path,
+            require_tag="v0.9.94",
+            tag_resolver=lambda _sha: "v0.9.94",
+        )
+        assert result == "ok", (
+            f"got {result!r} — an absent tree_state must not be read as dirty"
+        )
+
+
+    def test_dirty_tree_exits_1_not_2(self) -> None:
+        """The CLI exit code, which resolve_host() cannot exercise.
+
+        `_STATE_EXIT_CODES` defaults to 2 for unknown states, so a new state
+        added without an entry reports a REACHED, answering host as if it
+        could not be contacted — 2 means "could not tell" and belongs to
+        unreachable. Every unit test above calls resolve_host() directly and
+        would have stayed green; this was caught by running the CLI.
+        """
+        from host_deploy_status import _STATE_EXIT_CODES
+        assert _STATE_EXIT_CODES.get("dirty-tree") == 1, (
+            "dirty-tree must exit 1 (non-conformant host, reached), not fall "
+            "through to the default 2 (could not tell)"
+        )
+        assert set(_STATE_EXIT_CODES) == {
+            "ok", "stale-daemon", "tag-mismatch", "dirty-tree", "unreachable",
+        }, (
+            "every documented state needs an explicit exit code; the .get() "
+            "default hides a missing one as 'unreachable'"
         )

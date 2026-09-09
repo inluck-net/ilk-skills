@@ -148,6 +148,38 @@ fi
 # conformance even when the daemon is fresh (no stale line to parse).
 echo "recorded_sha: ${recorded_head:-unknown}"
 
+# Emit the working tree's cleanliness, for the same reason and a stronger one.
+# A recorded sha that resolves to the required tag says nothing about the
+# FILES: a dirty tree means the daemon is running edits that exist in no
+# commit anywhere. rezmac reported `ok` at v0.9.92 while carrying the
+# uncommitted modification that became v0.9.93, and the only reason both hosts
+# were trustworthy at v0.9.94 is that two sessions hand-asserted
+# `git status --porcelain` three times each.
+#
+# This must be measured HERE rather than by the resolver: on a remote host the
+# resolver only sees this output, and it cannot inspect a tree it is not on.
+#
+# `unknown` when git cannot answer -- an unreadable tree is not a clean one,
+# and the resolver is left to decide rather than handed a false `clean`.
+# Resolve the repo from the SCRIPT'S OWN LOCATION, not $PWD -- ssh lands in
+# $HOME and launchd starts in an arbitrary dir, so $PWD would silently answer
+# about the wrong tree (or none). Same rule as the toolkit_path resolution
+# above; `rev-parse --show-toplevel` rather than walking for a `.git`
+# directory, so a linked worktree (where `.git` is a FILE) resolves too.
+_tree_state="unknown"
+_tree_start="${ILK_BOUNCE_TOOLKIT_PATH:-}"
+if [[ -z "$_tree_start" ]]; then
+  _tree_start="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || _tree_start=""
+fi
+if [[ -n "$_tree_start" ]]; then
+  if _tree_root=$(git -C "$_tree_start" rev-parse --show-toplevel 2>/dev/null); then
+    if _porcelain=$(git -C "$_tree_root" status --porcelain 2>/dev/null); then
+      if [[ -z "$_porcelain" ]]; then _tree_state="clean"; else _tree_state="dirty"; fi
+    fi
+  fi
+fi
+echo "tree_state: ${_tree_state}"
+
 # ── Report ──────────────────────────────────────────────────────────────────
 
 bounced=0

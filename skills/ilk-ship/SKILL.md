@@ -256,12 +256,13 @@ operator step — `/ilk-ship` prepares the release; it does not push.
 **Exit:** install attempted on each declared host.
 
 **Per-host reporting.** Phase 4 reports per host with one of exactly
-four states:
+five states:
 
 | State | Meaning |
 |---|---|
 | `ok` | Install succeeded, all daemons are current, **and** (when `--require-tag` is set) the daemon code resolves to the required release tag. |
 | `tag-mismatch` | The daemon's recorded sha does not resolve to the required release tag (when `--require-tag` is set). A sha that resolves to no tag at all is not-conformant (fail closed). |
+| `dirty-tree` | The sha resolves to the required tag but the host's working tree is not clean (when `--require-tag` is set), so the daemon runs edits that exist in no commit. Distinct from `tag-mismatch` on purpose: there the tag is wrong, here the tag is right and the tree is not, and the two send an operator to different places. |
 | `stale-daemon` | Install succeeded but at least one daemon holds stale code (and the tag matches, if checked). |
 | `unreachable` | Could not probe the host (ssh failed, launchctl absent, script missing). |
 
@@ -292,7 +293,8 @@ instead of `ok`. A sha that resolves to no tag is not-conformant (fail
 closed). Omit for the default three-state check.
 
 In single-host mode the script prints one line (`ok` / `stale-daemon` /
-`tag-mismatch` / `unreachable`) and exits 0 / 1 / 1 / 2 respectively.
+`tag-mismatch` / `dirty-tree` / `unreachable`) and exits 0 / 1 / 1 / 1 / 2
+respectively.
 In multi-host mode it prints one `<host>: <state> (<transport>)` line per
 declared host and exits 0 only if every host is `ok`.
 
@@ -314,12 +316,25 @@ This is the third false-`ok` in this resolver — the family:
 |---|---|---|
 | v0.9.74 | a host whose `bootstrap` had failed | that the daemon came back |
 | v0.9.87 | a host that was never contacted | that ssh happened at all |
-| this one | a host at an older tag | that the host is on the release |
+| v0.9.94 | a host at an older tag | that the host is on the release |
+| this one | a host with a dirty working tree | that the FILES are the tag |
 
 Same shape each time: a state meaning "checked and current" returned on a
 path that did not check the thing that matters. The regression test
 (`test_false_ok_family.py`) names the family, not the instance — the next
-false-`ok` should be recognised as a fourth member, not a novelty.
+false-`ok` should be recognised as a **fifth** member, not a novelty.
+
+The fourth was predicted in the v0.9.93 tag body and hit the next day: rezmac
+reported `ok` at v0.9.92 while carrying the uncommitted modification that
+became v0.9.93, and the only reason both hosts were trustworthy at v0.9.94 is
+that two sessions hand-asserted `git status --porcelain` three times each.
+Tree state is now measured by `bounce_daemons.sh` **on the host** and emitted
+as `tree_state:`, because on a remote host the resolver sees only that output
+and cannot inspect a tree it is not on. An ABSENT `tree_state` line is
+`unknown`, not dirty — a host mid-upgrade runs the older bouncer, and failing
+closed would report dirty forever when upgrading the bouncer *is* the deploy.
+An explicitly emitted `unknown` (git could not answer) IS treated as dirty:
+there the bouncer looked and could not tell.
 
 The `hosts` field in the `ship:` block is declarative data — Phase 4
 acts on it. Every declared host appears in the summary; a host missing

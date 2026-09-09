@@ -172,7 +172,8 @@ def resolve_host(
                       ``git tag --points-at``.  Injected by tests.
 
     Returns:
-        One of 'ok', 'stale-daemon', 'unreachable', 'tag-mismatch'.
+        One of 'ok', 'stale-daemon', 'unreachable', 'tag-mismatch',
+        'dirty-tree'.
     """
     if remote_host is None:
         # A missing bouncer script means the host is unreachable.
@@ -275,12 +276,46 @@ def resolve_host(
         if actual_tag != require_tag:
             return "tag-mismatch"
 
+        # The sha resolving to the tag says nothing about the FILES. A dirty
+        # tree means the daemon runs edits that exist in no commit, so the
+        # host is not on the release however well its sha reads. Fourth
+        # member of the false-ok family: a state meaning "checked and current"
+        # returned on a path that did not check the thing that matters.
+        #
+        # A distinct state rather than `tag-mismatch`, because the two send an
+        # operator to different places: here the tag is RIGHT and the tree is
+        # not, and `tag-mismatch` would have them hunting a deploy that
+        # already happened.
+        #
+        # Judgment call: an ABSENT tree_state line is unknown, not dirty. A
+        # host mid-upgrade runs the older bouncer that does not emit it, and
+        # failing closed would report dirty forever with nothing an operator
+        # could do — while upgrading the bouncer IS the deploy. `unknown`
+        # emitted explicitly (git could not answer) is treated as dirty,
+        # because there the bouncer looked and could not tell.
+        tree_state = _extract_tree_state(output)
+        if tree_state in ("dirty", "unknown"):
+            return "dirty-tree"
+
     # Any stale line (exit 0 in --check mode) → stale-daemon.
     if has_stale:
         return "stale-daemon"
 
     # All fresh.
     return "ok"
+
+
+def _extract_tree_state(bouncer_output: str) -> str | None:
+    """Extract ``tree_state: clean|dirty|unknown`` from bouncer output.
+
+    Returns None when the line is absent, which is how an older bouncer
+    presents and is deliberately distinguished from an explicit ``unknown``.
+    """
+    for line in bouncer_output.splitlines():
+        line = line.strip()
+        if line.startswith("tree_state:"):
+            return line.split(":", 1)[1].strip() or None
+    return None
 
 
 def _extract_recorded_head(bouncer_output: str) -> str | None:
@@ -375,6 +410,13 @@ _STATE_EXIT_CODES = {
     "ok": 0,
     "stale-daemon": 1,
     "tag-mismatch": 1,
+    # 1, not 2: a dirty tree is a NON-CONFORMANT host that was reached and
+    # answered, which is the same class as tag-mismatch. 2 means "could not
+    # tell" and belongs to unreachable. The lookup below defaults to 2, so
+    # omitting this entry silently reported a reached host as unreachable —
+    # caught by running the CLI rather than by the unit tests, which call
+    # resolve_host() and never reach the exit-code table.
+    "dirty-tree": 1,
     "unreachable": 2,
 }
 
