@@ -21,11 +21,14 @@ Points HOME at tmp_path so the state file read is hermetic.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import signal
 import stat
 import subprocess
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -138,6 +141,7 @@ def _run_bounce(
     bootstrap_rc: int | None = None,
     print_rc: int | None = None,
     bootstrap_fail_times: int | None = None,
+    env_extra: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     """Set up the hermetic environment and run bounce_daemons.sh.
 
@@ -206,6 +210,9 @@ def _run_bounce(
         env["ILK_FAKE_LAUNCHCTL_PRINT_RC"] = str(print_rc)
     if bootstrap_fail_times is not None:
         env["ILK_FAKE_LAUNCHCTL_BOOTSTRAP_FAIL_TIMES"] = str(bootstrap_fail_times)
+
+    if env_extra:
+        env.update(env_extra)
 
     cmd = ["bash", str(_BOUNCE_SH)]
     if extra_args:
@@ -883,3 +890,115 @@ def test_guard_catches_launchctl_through_bash():
     assert "launchctl was reached through a spawned shell" in result.stderr, (
         f"Expected deny-shim message on stderr, got: {result.stderr!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Refusing to swap the driver under a running loop
+# ---------------------------------------------------------------------------
+
+class TestRefusesWhileALoopRuns:
+    """A bounce is a LIVE SWAP of run_ilk_loop_claude.sh, not a service restart.
+
+    On a host tracking `main` rather than a detached tag, checkout + bounce
+    replaces the driver underneath a running loop. The run is corrupted, and
+    afterwards it is indistinguishable from a pipeline defect — which is the
+    worst property, because the run exists to measure the pipeline.
+
+    Until now this was a fence held by asking: "do not deploy while a run is in
+    flight." Safety belongs in the tool, not in whoever is deploying
+    remembering. These tests exist because a guard that has only been observed
+    NOT firing is indistinguishable from one that cannot fire.
+    """
+
+    @contextlib.contextmanager
+    def _fake_loop(self, tmp_path: Path):
+        """A process whose argv matches the driver, cleaned up COMPLETELY.
+
+        `bash script.sh` spawns `sleep` as a CHILD, so killing the bash pid
+        orphans the sleep. Measured: the orphan changed the process table
+        enough to fail `test_ignored_ancestry_does_not_disarm_signal[SIGHUP]`
+        in the same run while it passed 3/3 in isolation — i.e. this helper
+        became a polluter of exactly the order-dependent kind under
+        investigation. Same shape as the `test_push_branch_hangs_on_orphan`
+        leak recorded known-unfixed in the v0.9.92 tag.
+
+        `exec sleep` would kill cleanly but rewrites argv to `sleep`, which no
+        longer matches the pgrep pattern under test. So: own session, and kill
+        the whole process GROUP.
+        """
+        script = tmp_path / "run_ilk_loop_claude.sh"
+        script.write_text("#!/usr/bin/env bash\nsleep 30\n", encoding="utf-8")
+        script.chmod(0o755)
+        proc = subprocess.Popen(
+            ["bash", str(script)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        try:
+            time.sleep(0.5)   # let it appear in the process table
+            yield proc
+        finally:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            proc.wait(timeout=10)
+
+    def test_refuses_and_bounces_nothing(self, tmp_path: Path) -> None:
+        with self._fake_loop(tmp_path):
+            result = _run_bounce(
+                tmp_path,
+                state={"pid": 111, "started_at": "x", "toolkit_head": "OLD"},
+                head_sha="NEW",
+            )
+
+        assert result.returncode == 2, (
+            f"a refused bounce must not report success; got {result.returncode}"
+            f"\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert "refused" in (result.stdout + result.stderr), (
+            "the refusal must SAY it refused and why — an operator who reads "
+            f"only 'unreachable' will retry it.\nstdout: {result.stdout}"
+        )
+        assert "bouncing:" not in result.stdout, (
+            "the guard must sit BEFORE any bootout; a refusal that already "
+            f"bounced is not a refusal.\nstdout: {result.stdout}"
+        )
+
+    def test_check_still_reports_during_a_run(self, tmp_path: Path) -> None:
+        """--check is side-effect free, so it stays usable mid-run.
+
+        This is the half that makes the guard acceptable: a deploying operator
+        must still be able to ASK the host's state while a loop is live.
+        """
+        with self._fake_loop(tmp_path):
+            result = _run_bounce(
+                tmp_path,
+                state={"pid": 111, "started_at": "x", "toolkit_head": "OLD"},
+                head_sha="NEW",
+                extra_args=["--check"],
+            )
+
+        assert "refused" not in result.stdout, (
+            f"--check must not refuse; it changes nothing.\n{result.stdout}"
+        )
+        assert "stale:" in result.stdout, (
+            f"--check must still report staleness during a run.\n{result.stdout}"
+        )
+
+    def test_override_env_permits_it(self, tmp_path: Path) -> None:
+        """An operator who accepts the cost must be able to proceed.
+
+        A guard with no escape hatch gets disabled wholesale the first time it
+        is genuinely in the way.
+        """
+        with self._fake_loop(tmp_path):
+            result = _run_bounce(
+                tmp_path,
+                state={"pid": 111, "started_at": "x", "toolkit_head": "OLD"},
+                head_sha="NEW",
+                env_extra={"ILK_BOUNCE_ALLOW_DURING_RUN": "1"},
+            )
+        assert "refused" not in result.stdout, (
+            f"the override must bypass the refusal.\n{result.stdout}"
+        )

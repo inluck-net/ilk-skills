@@ -180,6 +180,41 @@ if [[ -n "$_tree_start" ]]; then
 fi
 echo "tree_state: ${_tree_state}"
 
+# ── Refuse to swap the driver under a running loop ──────────────────────────
+#
+# A bounce here is not a restart of an idle service: on a host tracking `main`
+# rather than a detached tag, a checkout plus a bounce is a LIVE SWAP of
+# run_ilk_loop_claude.sh. Do that mid-iteration and the running loop's driver
+# is replaced underneath it, which corrupts the run and is indistinguishable
+# from a pipeline defect when someone reads the records afterwards.
+#
+# This was a fence held by asking people nicely — "do not deploy to rezmac
+# while a run is in flight". Safety belongs in the tool, not in whoever is
+# deploying remembering. Same argument this project already applies to gc.
+#
+# --check stays side-effect free AND still reports: a detect-only probe during
+# a run is exactly what a deploying operator should be able to do.
+#
+# Detection is host-wide because the daemon being bounced is host-wide. No
+# `pgrep -c` — macOS does not have it; count lines instead. `pgrep -f` alone
+# would match this script's own ancestry if it were ever invoked from a loop,
+# so the driver's own PID file is preferred when it resolves and pgrep is the
+# fallback, not the primary.
+if [[ "$CHECK_ONLY" -eq 0 && "${ILK_BOUNCE_ALLOW_DURING_RUN:-0}" != "1" ]]; then
+  _running_loops="$(pgrep -f 'run_ilk_loop_claude\.(sh|ps1)' 2>/dev/null | grep -v "^$$\$" || true)"
+  _running_count=0
+  if [[ -n "$_running_loops" ]]; then
+    _running_count=$(printf '%s\n' "$_running_loops" | grep -c . || true)
+  fi
+  if [[ "$_running_count" -gt 0 ]]; then
+    echo "unreachable: scheduler (refused: ${_running_count} ilk loop(s) running, pid(s) $(printf '%s' "$_running_loops" | tr '\n' ' ')) -- bouncing now would swap run_ilk_loop_claude.sh under a live run" >&2
+    echo "unreachable: scheduler (refused: loop running)"
+    echo "  Re-run once the loop reaches a terminal state, or set" >&2
+    echo "  ILK_BOUNCE_ALLOW_DURING_RUN=1 if you accept corrupting it." >&2
+    exit 2
+  fi
+fi
+
 # ── Report ──────────────────────────────────────────────────────────────────
 
 bounced=0
