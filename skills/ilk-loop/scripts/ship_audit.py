@@ -111,6 +111,46 @@ def _slug_has_any_trailer(slug: str, git_output: str) -> bool:
     ) is not None
 
 
+def load_ledger_records(project: Path) -> list[dict[str, Any]] | None:
+    """Resolve and read this project's ship-proof ledger.
+
+    THE single ledger resolver.  Both this module's ``main()`` and
+    ``loop_status.resolve_status`` call it; a second copy of the resolution is
+    the two-resolver hazard that put the batch-gate marker and its verdict in
+    different directories in 2026-08 (see ``batch_gate.resolve_runtime_dir``).
+
+    Exists because the two readers disagreed.  ``main()`` resolved the ledger
+    and passed it to ``audit_ship``; ``loop_status`` called the same function
+    without it, so a sub-plan on a SHARED remote — where SKILL.md's trailer
+    policy strips every ``[plan:<slug>#step-N]`` and the ledger is the only
+    evidence — audited proven from the CLI and unproven from ``loop_status``.
+    ``loop_status`` is what the driver reads to decide ``shipped-unproven``, so
+    the disagreement parked correct work.
+
+    Supplying the records cannot make a reader more permissive than
+    ``ship_audit`` already is: ``check_step_commits`` unions them only when the
+    slug carries no trailers at all, and only ever ADDS attribution.
+
+    Returns None when the ledger cannot be resolved or read.  That degrades to
+    trailer-only attribution, which is the fail-closed direction — a trailerless
+    sub-plan then reads unproven rather than proven.
+    """
+    try:
+        scripts_dir = Path(__file__).resolve().parent
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        from ship_proof_ledger import read_records  # type: ignore[import-untyped]
+        from ilk_paths import (  # type: ignore[import-untyped]
+            external_launcher_dir, resolve_project_key,
+        )
+        key = resolve_project_key(project)
+        if not key:
+            return None
+        return read_records(Path(external_launcher_dir(key)) / "ship-proof.jsonl")
+    except (ImportError, OSError, KeyError, ValueError, TypeError):
+        return None
+
+
 def count_authored_steps(body: str) -> list[int]:
     """Return sorted list of step numbers from ``### Step N`` headings.
 
@@ -652,27 +692,7 @@ def _cli(argv: list[str]) -> int:
     # Resolve the ship-proof ledger (AC-3, AC-4).  The ledger lives at
     # <external_launcher_dir>/ship-proof.jsonl.  An absent or unreadable
     # ledger degrades to trailer-only attribution (AC-6).
-    ledger_records: list[dict[str, Any]] | None = None
-    try:
-        _scripts_dir = str(Path(__file__).resolve().parent)
-        if _scripts_dir not in sys.path:
-            sys.path.insert(0, _scripts_dir)
-        from ship_proof_ledger import read_records  # type: ignore[import-untyped]
-        # Resolve launcher dir the same way the runner does.
-        proc = subprocess.run(
-            ["python3", str(Path(_scripts_dir) / "ilk_paths.py"),
-             "--start", str(project)],
-            capture_output=True, text=True, timeout=30,
-            encoding="utf-8", errors="replace",
-        )
-        if proc.returncode == 0:
-            paths = json.loads(proc.stdout)
-            launcher_dir = paths.get("external_launcher_dir")
-            if launcher_dir:
-                ledger_path = Path(launcher_dir) / "ship-proof.jsonl"
-                ledger_records = read_records(ledger_path)
-    except (ImportError, OSError, KeyError, json.JSONDecodeError):
-        ledger_records = None
+    ledger_records = load_ledger_records(project)
 
     try:
         info = read_subplan_for_audit(args.subplan)

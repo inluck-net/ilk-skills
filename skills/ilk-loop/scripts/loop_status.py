@@ -436,6 +436,17 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
     # And ``ship_audit`` sits in this module's own directory, so it is
     # importable whenever ``loop_status`` itself is: not-audited is a genuine
     # breakage, not a routine path.
+    # Resolve the ship-proof ledger ONCE for the whole read, through
+    # ship_audit's single resolver.  Without this, `loop_status` and
+    # `ship_audit`'s CLI disagreed about `proven` for any sub-plan on a shared
+    # remote: the CLI passed the ledger, this reader did not, and on a remote
+    # whose trailers are stripped by policy the ledger is the only evidence
+    # there is.  This reader is what the driver consults to decide
+    # `shipped-unproven`, so the disagreement parked correct work.
+    _ledger_records = None
+    if _ship_audit_available:
+        _ledger_records = _ship_audit_mod.load_ledger_records(cwd)
+
     if _ship_audit_available:
         for sp in subplans:
             if sp["status"] != "shipped":
@@ -454,6 +465,7 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
                     slug=info["slug"],
                     cwd=cwd,
                     runtime_dir=_resolved_runtime_dir,
+                    ledger_records=_ledger_records,
                 )
                 sp["proven"] = result["proven"]
                 sp["proof_state"] = "proven" if result["proven"] else "unproven"
