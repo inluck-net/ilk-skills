@@ -41,14 +41,35 @@ def _strip_inline_comment(value: str) -> str:
     return value
 
 
+def _unquote(value: str) -> str:
+    """Strip one layer of surrounding quotes (YAML scalar shorthand)."""
+    if len(value) >= 2 and ((value[0] == '"' and value[-1] == '"') or
+                            (value[0] == "'" and value[-1] == "'")):
+        return value[1:-1]
+    return value
+
+
 def parse_frontmatter(text: str) -> dict[str, str]:
-    """Minimal YAML front-matter parser (flat key: value only).
+    """Minimal YAML front-matter parser (flat scalars + block sequences).
 
     Returns an empty dict when *text* has no valid front-matter block.
 
     Inline ``# comments`` are stripped from unquoted scalar values so that
     ``status: queued  # note`` parses as ``"queued"``, matching documented
     template conventions.
+
+    A block-style list is normalised to YAML flow form, keeping the
+    ``dict[str, str]`` contract so consumers that already accept the inline
+    ``[a, b]`` shape read block form for free::
+
+        depends_on:            ->  {"depends_on": "[alpha, beta]"}
+          - alpha
+          - beta
+
+    Before this, a bullet line was skipped and the key kept its empty inline
+    value, so a block-form ``depends_on`` parsed as "no dependencies" with
+    nothing warning — see :func:`_parse_depends_on`.  A key with no value
+    and no bullets still reads as ``""``.
     """
     if not text.startswith("---"):
         return {}
@@ -56,19 +77,36 @@ def parse_frontmatter(text: str) -> dict[str, str]:
     if end < 0:
         return {}
     fm: dict[str, str] = {}
+    items: dict[str, list[str]] = {}
+    list_key: str | None = None
     for raw in text[3:end].splitlines():
         line = raw.strip()
-        if not line or line.startswith("#") or line.startswith("- "):
+        if not line or line.startswith("#"):
+            # Blank and comment lines do NOT end a sequence — ending it here
+            # would silently drop the remaining items, which is the class of
+            # bug this parser is fixing.
+            continue
+        if line.startswith("- "):
+            if list_key is not None:
+                item = _unquote(_strip_inline_comment(line[2:].strip()))
+                if item:
+                    items[list_key].append(item)
             continue
         if ":" in line:
             k, _, v = line.partition(":")
             v = v.strip()
             v = _strip_inline_comment(v)
-            # Strip surrounding quotes (YAML scalar shorthand).
-            if len(v) >= 2 and ((v[0] == '"' and v[-1] == '"') or
-                                (v[0] == "'" and v[-1] == "'")):
-                v = v[1:-1]
-            fm[k.strip()] = v
+            v = _unquote(v)
+            key = k.strip()
+            fm[key] = v
+            # An empty value may introduce a block sequence — collect the
+            # bullets that follow before deciding what the key holds.
+            list_key = None if v else key
+            if list_key is not None:
+                items[key] = []
+    for key, collected in items.items():
+        if collected:
+            fm[key] = "[" + ", ".join(collected) + "]"
     return fm
 
 
@@ -219,6 +257,7 @@ def _parse_depends_on(raw: str) -> list[str]:
       - JSON-style quoted list:   ``["alpha", "beta"]``
       - comma-separated bare:     ``alpha, beta``
       - a single bare slug:       ``alpha``
+      - block sequence text:      ``"- alpha\\n- beta"``
       - empty / whitespace:       ``[]`` / ``""``
 
     Slugs contain hyphens, so an unquoted flow list is valid YAML but NOT valid
@@ -227,6 +266,15 @@ def _parse_depends_on(raw: str) -> list[str]:
     slug, which never matched a sibling and falsely stalled the queue
     (2026-06-17, self-hosting). We strip the brackets and split on commas
     instead, which handles quoted and unquoted items uniformly.
+
+    Block-sequence text is accepted here as well as in
+    :func:`parse_frontmatter`, and the two halves must land together. Teaching
+    the reader to capture bullets while leaving the ``- `` bullet on each item
+    would turn a silently-ignored dependency into a permanently wedged
+    sub-plan — ``['- alpha']`` can never match a sibling slug, so the dependent
+    would read as blocked forever instead of running too early. Stripping the
+    bullet here keeps this function correct on raw block text no matter which
+    reader hands it over.
     """
     raw = raw.strip()
     if not raw or raw == "[]":
@@ -235,7 +283,10 @@ def _parse_depends_on(raw: str) -> list[str]:
     def _clean(items: list[str]) -> list[str]:
         out: list[str] = []
         for s in items:
-            s = s.strip().strip('"').strip("'").strip()
+            s = s.strip()
+            if s.startswith("- "):
+                s = s[2:].strip()
+            s = s.strip('"').strip("'").strip()
             if s:
                 out.append(s)
         return out
@@ -243,6 +294,11 @@ def _parse_depends_on(raw: str) -> list[str]:
     if raw.startswith("["):
         inner = raw[1:-1] if raw.endswith("]") else raw[1:]
         return _clean(inner.split(","))
+    if "\n" in raw:
+        lines: list[str] = []
+        for line in raw.splitlines():
+            lines.extend(_clean(line.split(",")))
+        return lines
     if "," in raw:
         return _clean(raw.split(","))
     return _clean([raw])

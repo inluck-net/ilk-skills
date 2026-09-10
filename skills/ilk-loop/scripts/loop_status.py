@@ -64,20 +64,60 @@ def find_plans_dir(start: Path) -> Path | None:
 
 
 def parse_frontmatter(text: str) -> dict[str, str]:
-    """Minimal YAML front-matter parser (flat key: value only)."""
+    """Minimal YAML front-matter parser (flat scalars + block sequences).
+
+    A block-style list is normalised to YAML flow form, so the return type
+    stays ``dict[str, str]`` and every consumer that already accepts the
+    inline ``[a, b]`` shape reads block form for free::
+
+        depends_on:            ->  {"depends_on": "[alpha, beta]"}
+          - alpha
+          - beta
+
+    Before this, a bullet line was skipped outright and the key kept its
+    empty inline value, so a block-form ``depends_on`` parsed as "no
+    dependencies" with nothing warning: on 2026-09-03 all three sub-plans of
+    a master read as dependency-free and the loop started sub-plan 2 while
+    sub-plan 1 was still ``blocked``.  A key with no value and no bullets
+    still reads as ``""``, for callers that treat a bare key as absent.
+
+    Items are joined with ", " — the list-valued keys plans actually use
+    (``depends_on`` slugs, ``scope_paths`` globs) contain no commas.
+    """
     if not text.startswith("---"):
         return {}
     end = text.find("\n---", 3)
     if end < 0:
         return {}
     fm: dict[str, str] = {}
+    items: dict[str, list[str]] = {}
+    list_key: str | None = None
     for raw in text[3:end].splitlines():
         line = raw.strip()
-        if not line or line.startswith("#") or line.startswith("- "):
+        if not line or line.startswith("#"):
+            # Blank and comment lines do NOT end a sequence — ending it here
+            # would silently drop the remaining items, which is the class of
+            # bug this parser is fixing.
+            continue
+        if line.startswith("- "):
+            if list_key is not None:
+                item = line[2:].strip().strip('"').strip("'").strip()
+                if item:
+                    items[list_key].append(item)
             continue
         if ":" in line:
             k, _, v = line.partition(":")
-            fm[k.strip()] = v.strip()
+            key = k.strip()
+            value = v.strip()
+            fm[key] = value
+            # An empty value may introduce a block sequence — collect the
+            # bullets that follow before deciding what the key holds.
+            list_key = None if value else key
+            if list_key is not None:
+                items[key] = []
+    for key, collected in items.items():
+        if collected:
+            fm[key] = "[" + ", ".join(collected) + "]"
     return fm
 
 
