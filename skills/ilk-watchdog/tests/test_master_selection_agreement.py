@@ -74,18 +74,27 @@ def _write_subplan(plans_dir: Path, name: str, *, status: str = "pending",
 def _read_loop_status(plans_dir: Path) -> dict:
     """Import and call loop_status.resolve_status, returning the result."""
     sys.path.insert(0, str(SCRIPTS_ILK_LOOP))
-    import importlib
-    # Fresh import to avoid stale state across parametrized tests.
-    if "loop_status" in sys.modules:
-        del sys.modules["loop_status"]
-    if "ilk_paths" in sys.modules:
-        del sys.modules["ilk_paths"]
-    if "plan_status" in sys.modules:
-        del sys.modules["plan_status"]
     import loop_status
-    # Monkeypatch the plans-dir resolver to return our temp dir.
+    # Swap the plans-dir resolver on the module object every other holder of a
+    # reference already sees, and put it back afterwards.
+    #
+    # This used to `del sys.modules["loop_status"]` (and ilk_paths, plan_status)
+    # and re-import, for fresh state across parametrized tests. That ORPHANED
+    # the live module object: a test elsewhere that did
+    # `from loop_status import resolve_status` at COLLECTION time keeps the old
+    # object, so its later `patch("loop_status._resolve_plans_dir")` writes into
+    # a module its bound function no longer reads -- the patch silently does not
+    # reach the running code, `_resolve_plans_dir` returns (None, ""), and
+    # loop_status.py:303 returns an error dict carrying no "next" key.
+    #
+    # The orphan is not a sys.modules entry, so a duplicate scan cannot see it.
+    # Restoring the attribute is all the freshness this helper ever needed.
+    original = loop_status._resolve_plans_dir
     loop_status._resolve_plans_dir = lambda start: (plans_dir, "test")
-    return loop_status.resolve_status(Path(plans_dir))
+    try:
+        return loop_status.resolve_status(Path(plans_dir))
+    finally:
+        loop_status._resolve_plans_dir = original
 
 
 def _read_scan_projects(tmp_home: Path) -> list[dict]:

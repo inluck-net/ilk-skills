@@ -67,12 +67,19 @@ def _write_subplan(plans_dir: Path, name: str, *, status: str = "pending",
 
 def _read_loop_status(plans_dir: Path) -> dict:
     sys.path.insert(0, str(SCRIPTS_ILK_LOOP))
-    for mod_name in ("loop_status", "ilk_paths", "plan_status"):
-        if mod_name in sys.modules:
-            del sys.modules[mod_name]
     import loop_status
+    # Swap the resolver on the live module object and put it back afterwards.
+    # Deleting the sys.modules entries and re-importing orphaned the module a
+    # test elsewhere had already bound a function from at collection time, so
+    # that test's `patch("loop_status...")` wrote into an object its function
+    # no longer read -- see the same helper in
+    # test_master_selection_agreement.py for the full account.
+    original = loop_status._resolve_plans_dir
     loop_status._resolve_plans_dir = lambda start: (plans_dir, "test")
-    return loop_status.resolve_status(Path(plans_dir))
+    try:
+        return loop_status.resolve_status(Path(plans_dir))
+    finally:
+        loop_status._resolve_plans_dir = original
 
 
 def _read_scan_projects(tmp_home: Path) -> list[dict]:
