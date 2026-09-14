@@ -182,14 +182,34 @@ class RunnerSandbox:
 
 
 def _reap(sandbox: RunnerSandbox) -> None:
-    """Kill anything the sandbox left running.
+    r"""Kill anything the sandbox left running.
 
     Killing the runner orphans its `gtimeout ... claude` child -- reproduced
     2026-08-29 and the reason a stray worker outlived `stop.sh`. A test that
     creates that state must clean it up or it leaks a sleeping process per run.
+
+    The stub agent is not the only thing left behind, and the rest of this
+    docstring is the 2026-09-14 correction. `os.kill(proc.pid, SIGKILL)` in
+    test_a_killed_runner_still_leaves_the_started_record kills the runner bash
+    ONLY; every descendant reparents to PID 1 and outlives the pytest session.
+    Measured: an orphaned `run_ilk_loop_claude.sh` was still alive after a 292s
+    full-suite run and had to be killed by hand. It is not inert while it
+    lives -- `bounce_daemons.sh` detects loops with a bare
+    `pgrep -f 'run_ilk_loop_claude\.(sh|ps1)'`, which cannot tell a test
+    fixture from a real loop, so the orphan fails **18** of
+    `test_bounce_daemons.py`'s tests, none of them declared in `baseline_red`.
+    That file alone is 46 passed / 0 failed; the two files together were
+    18 failed / 33 passed before this fix.
+
+    So reap by the sandbox's PROJECT PATH as well. It appears in the runner's
+    own `--project-path` argument and in every descendant's command line, and
+    it is a pytest `tmp_path`, unique to this one test -- so it cannot match a
+    real loop on the machine. Reaping by the runner's script name instead WOULD
+    match a real loop, which is the bug being cleaned up, not a fix for it.
     """
-    subprocess.run(["pkill", "-9", "-f", str(sandbox.bin / "claude")],
-                   capture_output=True, encoding="utf-8")
+    for pattern in (str(sandbox.bin / "claude"), str(sandbox.proj)):
+        subprocess.run(["pkill", "-9", "-f", pattern],
+                       capture_output=True, encoding="utf-8")
 
 
 @pytest.fixture()

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -405,8 +406,19 @@ class TestStaleness:
         assert result.stale_exclusions[0] == "test_foo.py"
 
     def test_fresh_entry_not_stale(self, tmp_path: Path) -> None:
-        """A recent entry is not marked stale."""
+        """A recent entry is not marked stale.
+
+        `as_of` is computed relative to today, never written as a literal. A
+        literal here is a TIME BOMB: this test was authored with
+        "2026-08-14" against `staleness_days=30`, so it passed for 30 days and
+        then began failing on ~2026-09-13 with no commit involved -- found
+        2026-09-14 as an undeclared red in a full serial run, and it fails in
+        isolation too, so it costs a real diagnosis to rule out as a
+        regression. The sibling `test_stale_entry_reported` may keep its
+        literal: a past date only grows staler, so it cannot flip.
+        """
         project = _make_project(tmp_path)
+        fresh = (date.today() - timedelta(days=1)).isoformat()
         _write_json(project / ".ilk-launch.json", {
             "ship": {
                 "suite": {"command": "pytest"},
@@ -414,7 +426,7 @@ class TestStaleness:
                     {
                         "node_id": "test_foo.py",
                         "reason": "current failure",
-                        "as_of": "2026-08-14",
+                        "as_of": fresh,
                     },
                 ],
             },
