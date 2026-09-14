@@ -211,6 +211,17 @@ def _run_bounce(
     if bootstrap_fail_times is not None:
         env["ILK_FAKE_LAUNCHCTL_BOOTSTRAP_FAIL_TIMES"] = str(bootstrap_fail_times)
 
+    # HERMETIC IN EVERY RESPECT BUT ONE. This helper fakes HOME, launchctl and
+    # git, but the run-guard reads the real host PROCESS TABLE, which a sandbox
+    # cannot fake. So a genuinely running production loop decided the outcome
+    # of tests that have nothing to do with it: measured 2026-09-14 with 4 live
+    # gh-resolve loops, this file was 18 failed / 28 passed, and 46 passed / 0
+    # failed with none running. A test whose result depends on whether someone
+    # happens to be running a loop is not evidence about the code.
+    # So the guard is OFF by default here and TestRefusesWhileALoopRuns turns it
+    # back ON, having spawned a loop it controls.
+    env.setdefault("ILK_BOUNCE_ALLOW_DURING_RUN", "1")
+
     if env_extra:
         env.update(env_extra)
 
@@ -950,6 +961,10 @@ class TestRefusesWhileALoopRuns:
                 tmp_path,
                 state={"pid": 111, "started_at": "x", "toolkit_head": "OLD"},
                 head_sha="NEW",
+                # Guard ON explicitly: _run_bounce defaults it OFF so that a
+                # production loop cannot decide unrelated tests. This class is
+                # the one that wants it, and it supplies its own loop.
+                env_extra={"ILK_BOUNCE_ALLOW_DURING_RUN": "0"},
             )
 
         assert result.returncode == 2, (
@@ -977,6 +992,9 @@ class TestRefusesWhileALoopRuns:
                 state={"pid": 111, "started_at": "x", "toolkit_head": "OLD"},
                 head_sha="NEW",
                 extra_args=["--check"],
+                # Guard ON: the claim under test is that --check is EXEMPT from
+                # it. With the guard off this would pass vacuously.
+                env_extra={"ILK_BOUNCE_ALLOW_DURING_RUN": "0"},
             )
 
         assert "refused" not in result.stdout, (
