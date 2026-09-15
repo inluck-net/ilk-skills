@@ -314,6 +314,16 @@ local_checks:
     timeout: 120
 ```
 
+On a clean verdict it also **records the proof** — it writes
+`runtime/batch-gate.json` (verdict, the resolved invocation, `head_sha`,
+`tree_sha`, `excused_count`), which is what `loop_status` and `ship_audit`
+actually read. Before v0.9.104 the sub-plan wrote its record under
+`logs/verification/` and nothing bridged the two, so a batch that verified green
+still reported `SHIP PROOF MISSING` — measured on two projects the same day.
+It passes `--project` as the cwd by default; add `--no-write-gate-record` only
+if you deliberately want to verify without recording proof. A failed
+verification writes nothing, leaving the previous record to be caught as stale.
+
 `verify_attribution.py` is a real script in the toolkit — resolve
 `<skill-root>` and `<record path>` and leave the rest alone. **Do not inline your
 own copy of this check.** It has two subtleties that were each got wrong once on

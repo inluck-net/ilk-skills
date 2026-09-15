@@ -124,8 +124,12 @@ def attributed_rows(rows: list[list[str]]) -> list[list[str]]:
     return [r for r in rows if r and r[-1].strip().upper() == "YES"]
 
 
-def verify(record_path: Path) -> str:
-    """Raise VerificationError unless the record establishes a clean batch."""
+def verify(record_path: Path) -> tuple[str, int]:
+    """Raise VerificationError unless the record establishes a clean batch.
+
+    Returns ``(message, excused_count)`` — the number of failures the record
+    accounted for and exonerated.
+    """
     if not record_path.is_file():
         raise VerificationError(f"record not found: {record_path}")
     text = record_path.read_text(encoding="utf-8-sig", errors="replace")
@@ -137,6 +141,8 @@ def verify(record_path: Path) -> str:
     rows = parse_rows(section)
 
     if failed == 0:
+        # excused_count is the number of failures the record accounted for and
+        # did not attribute — 0 when the suite was green.
         # A green suite may say so with the marker or with an empty table; it may
         # not say so with rows it did not account for.
         if rows:
@@ -148,7 +154,7 @@ def verify(record_path: Path) -> str:
             # Prose in the section with no rows and no marker is tolerated only
             # when the section is genuinely empty; say so rather than guess.
             pass
-        return f"attribution verified: 0 failures, none attributed"
+        return ("attribution verified: 0 failures, none attributed", 0)
 
     if len(rows) != failed:
         raise VerificationError(
@@ -167,7 +173,80 @@ def verify(record_path: Path) -> str:
             f"batch broke it."
         )
 
-    return f"attribution verified: {failed} failure(s), none attributed"
+    return (f"attribution verified: {failed} failure(s), none attributed", failed)
+
+
+
+def write_gate_record(project: Path, excused: int) -> tuple[bool, str]:
+    """Record the verified verdict where the PROOF CHECK actually reads it.
+
+    Verification and proof were two different files. This script validates
+    ``<ext logs>/verification/<batch>-batch.md``; ``loop_status``/``ship_audit``
+    read ``<ext runtime>/batch-gate.json``, which only ``batch_gate.py`` and
+    ``phase1_verify.py`` wrote. Nothing bridged them, so a batch that verified
+    green still reported ``SHIP PROOF MISSING``.
+
+    Measured 2026-09-15: kira-cloudflare's `pv-verify` shipped 2/2 with
+    ``suite_failed: 0`` and an empty at-base table, and all 6 sub-plans read
+    ``(!) unproven`` because ``batch-gate.json`` was still a 12:01 record from
+    ``manual-ilk-session`` naming a pre-batch ``head_sha``. gh-resolve verified
+    ``5123 passed, 0 failed`` and read unproven for the same reason.
+
+    Constraints that are NOT negotiable, each enforced by ``validate_record``:
+
+    * ``invocation`` must equal ``ship_audit._resolve_expected_invocation``
+      exactly, or the record is rejected as ``stale_invocation``;
+    * a ``pass`` verdict naming no invocation is rejected as ``unenforced``,
+      so an unresolvable suite command must REFUSE to write rather than write
+      a vague one;
+    * ``head_sha`` must be real — a proof that cannot name its commit is not a
+      proof, so ``"unknown"`` refuses too.
+
+    ``tree_sha`` is written because this step makes an empty marker commit: the
+    gate certifies CODE, and an empty commit moves ``head_sha`` while leaving
+    the tree identical. Without it the verification step would invalidate its
+    own proof.
+
+    Returns ``(written, detail)``.
+    """
+    scripts_dir = Path(__file__).resolve().parent
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    try:
+        import batch_gate  # type: ignore[import-untyped]
+        from ship_audit import _resolve_expected_invocation  # type: ignore[import-untyped]
+    except ImportError as exc:
+        return False, f"batch_gate/ship_audit unavailable: {exc}"
+
+    runtime_dir = batch_gate.resolve_runtime_dir(project)
+    if runtime_dir is None:
+        return False, "runtime dir unresolved (no project key)"
+
+    invocation = (_resolve_expected_invocation(project) or "").strip()
+    if not invocation:
+        return False, ("ship.suite is not configured, so the verdict can name no "
+                       "invocation; a pass naming no run is rejected as "
+                       "'unenforced'. Refusing to write.")
+
+    head_sha = batch_gate._git_head_sha(project)
+    if head_sha == "unknown":
+        return False, "HEAD sha unresolvable; refusing to write a proof that cannot name its commit"
+
+    record = batch_gate.BatchGateRecord(
+        verdict="pass",
+        head_sha=head_sha,
+        invocation=invocation,
+        timestamp=batch_gate._now_iso(),
+        undeclared=[],          # computed-empty, not "not recorded"
+        excused_count=excused,
+        tree_sha=batch_gate._git_head_tree(project),
+        writer="verify_attribution",
+    )
+    try:
+        written = batch_gate.write_record(record, runtime_dir)
+    except OSError as exc:
+        return False, f"could not write {runtime_dir}: {exc}"
+    return True, str(written)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -175,12 +254,31 @@ def main(argv: list[str] | None = None) -> int:
         description="Re-derive a batch verification verdict from its at-base rerun table."
     )
     ap.add_argument("record", help="path to the batch's verification record (.md)")
+    ap.add_argument("--project", default=".",
+                    help="project root whose batch-gate record to update (default: cwd)")
+    ap.add_argument("--no-write-gate-record", action="store_true",
+                    help="verify only; do not record the verdict in batch-gate.json")
     args = ap.parse_args(argv)
     try:
-        print(verify(Path(args.record)))
+        message, excused = verify(Path(args.record))
     except VerificationError as exc:
         print(f"ATTRIBUTION FAILED: {exc}", file=sys.stderr)
         return 1
+
+    # Only a PASS writes a proof. A failed verification leaves the previous
+    # record alone — it will be rejected as stale on head/tree mismatch, which
+    # is the correct outcome for a batch that did not verify.
+    if args.no_write_gate_record:
+        print(f"{message}; gate record not written (--no-write-gate-record)")
+        return 0
+    ok, detail = write_gate_record(Path(args.project).resolve(), excused)
+    if ok:
+        print(f"{message}; batch-gate record written to {detail}")
+    else:
+        # Loud, but not fatal: attribution genuinely passed. Silence here would
+        # recreate the very gap this bridge closes.
+        print(f"{message}; PROOF NOT RECORDED — {detail}")
+        print(f"PROOF NOT RECORDED: {detail}", file=sys.stderr)
     return 0
 
 
