@@ -190,9 +190,37 @@ already exists: the record file, the sha-keyed baseline cache, and
 `git log --grep '\[plan:<slug>#step-0\]'` for fixes an earlier iteration
 already landed. Re-run only the tracks whose results you do not have.
 
-- Run the project's full test suite (resolved from `.ilk-launch.json` →
-  `ship.suite` via the gate above, or `python3 -m pytest --timeout=60
-  --timeout-method=signal` if unconfigured).
+- **Scope the run to the batch's changed area, and say so in the record.**
+  Resolve the invocation from `.ilk-launch.json` → `ship.suite` (via
+  `ship_audit._resolve_expected_invocation`, never hand-typed), then restrict it
+  to a selection derived from the batch's own diff:
+
+  1. `git diff --name-only <base_sha>..HEAD` — the batch's changed files.
+  2. The test files among them.
+  3. **Plus the test files of every module that imports a changed module.** This
+     is the load-bearing half. A selection of only the batch's own test files is
+     the per-file-gate anti-pattern (§8): it re-tests what the batch wrote and
+     never exercises the callers a shared-module change can break.
+  4. Run the resolved invocation restricted to that selection.
+
+  **If the importer set cannot be computed, run the full suite.** An unresolved
+  import graph is not an empty one, and a narrow run justified by a failed scan
+  is exactly the "empty answer nobody looked for" shape this batch's own gates
+  exist to prevent. The same applies when the diff touches build config,
+  fixtures, conftest, or anything global: widen to the full suite rather than
+  reason about blast radius.
+
+  Record the decision as a machine-readable line, `suite_scope: scoped` or
+  `suite_scope: full`, plus the selection size. A green result means different
+  things under each, and a reader of the record must not have to infer which.
+
+  **What scoping gives up.** A scoped run cannot see breakage outside the
+  importer set. It is a deliberate wall-clock trade: measured on kira-cloudflare
+  2026-09-15, the verification tracks were 7.5 min of a 27.2 min iteration
+  (27.5%), against 19.5 min (71.6%) of model/API latency — so scoping buys back
+  roughly a quarter of an iteration, not the bulk of it. Do not let it become a
+  reason to skip the at-base rerun below, which is what makes the verdict a
+  measurement rather than an opinion, and which costs seconds.
 - Record the result: which tests failed, which passed, which were skipped.
 - **Re-run every failing node id at the base commit** and write the
   `## At-base rerun` table — see "The at-base rerun" above. Do this even when
