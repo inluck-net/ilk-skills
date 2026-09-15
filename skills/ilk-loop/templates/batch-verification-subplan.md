@@ -151,6 +151,45 @@ command is a copy that can drift — the defect that produced two wrong full-sui
 runs on 2026-09-07 (gh-resolve's `--dist loadfile` carried into a repo whose
 own baseline measures xdist slower at every worker count).
 
+**Commit every product fix the moment it passes — never batch them behind the
+record.** Getting a track to yield a meaningful result routinely forces real code
+changes: a typecheck error or a failing assertion has to be fixed before the
+suite says anything useful. Each such change is a product fix and gets its own
+commit, immediately:
+
+```
+git commit -am "fix(<scope>): <what changed> [plan:<slug>#step-0]"
+```
+
+Commit when the command that was failing *because of that change* now passes.
+This is a checkpointing rule, not a licence to commit broken code. Several
+commits carrying the `#step-0` trailer is correct; nothing in the loop requires
+one commit per step, and the empty marker at the end still marks completion.
+
+**Why, measured.** This step's gate asserts the verification record exists, and
+the record is written at the very END of the step. With only the terminal marker
+commit, an iteration that runs out of time leaves **nothing**: no commit, no
+record, an empty Findings section — and the gate then fails "record missing" on
+the next iteration too. At `quarantine_subplan.py`'s threshold of 2 consecutive
+failures the sub-plan is auto-blocked, and the run exits `blocked-no-runnable`.
+
+Observed on kira-cloudflare 2026-09-15, run `20260915-123334` iteration 5: 45.0
+min, 106 tool calls totalling 25.7 min (three suite runs at 153s/301s/302s, all
+of which completed with real output, five typechecks, `convex codegen`, a fresh
+at-base worktree needing a 151-package install), real fixes across 6 files —
+and **0 commits**. Iteration 4 of the same run made 13 commits in 43 min and
+advanced normally. The sub-plan was auto-quarantined two gate-failures later.
+
+The failure is invisible without this rule: it presents as a slow step rather
+than a step that discards its own progress, and the natural response — raising
+the iteration timeout — buys a longer iteration that still ends in
+commit-or-nothing.
+
+**On re-entry, do not start over.** Before re-running anything, check what
+already exists: the record file, the sha-keyed baseline cache, and
+`git log --grep '\[plan:<slug>#step-0\]'` for fixes an earlier iteration
+already landed. Re-run only the tracks whose results you do not have.
+
 - Run the project's full test suite (resolved from `.ilk-launch.json` →
   `ship.suite` via the gate above, or `python3 -m pytest --timeout=60
   --timeout-method=signal` if unconfigured).
