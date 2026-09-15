@@ -7,7 +7,8 @@
         "--timeout-method=signal",
         "--durations=25"
       ],
-      "timeout": 900
+      "timeout": 900,
+      "path_prelude": "export PATH=\"/opt/homebrew/bin:$PATH\""
     },
     "baseline_red": [
       {
@@ -44,7 +45,6 @@
     "hosts": [
       "chad-mbp",
       "rezmac"
-    ],
-    "path_prelude": "export PATH=\"/opt/homebrew/bin:$PATH\""
+    ]
   }
 }

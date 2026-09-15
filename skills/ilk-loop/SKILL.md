@@ -220,45 +220,62 @@ helper is idempotent — running it twice does not duplicate files.
   and add a one-line note under "Out of scope" in the current sub-plan.
   Do NOT silently expand the plan.
 
-## A missing tool is an environment fault, not a gate to skip
+## A hook is a gate: never bypass it silently, never bypass it first
 
-**Never pass `--no-verify` to `git commit`.** A pre-commit hook is a gate. The
-loop's whole claim to `shipped` rests on gates having run, and a bypassed hook
-produces a commit that looks verified and is not.
+`git commit --no-verify` switches off a gate. The loop's claim to `shipped`
+rests on gates having run, so a silent bypass produces a commit that looks
+verified and is not.
 
-This is not a rule about tidiness. It is the rule that keeps a *missing tool*
-from silently becoming a *disabled gate*:
+But a hard prohibition would deadlock the loop, and that is the worse failure.
+Steps must checkpoint (see the batch-verification step-0 rule): work that is
+never committed is discarded at the iteration bound and redone from zero. If a
+hook is red for a cause the worker cannot fix, "never bypass" and "always
+commit" collide, and the only exit is a stall that needs a human. So the rule
+is about **order and evidence**, not prohibition.
 
-- **Hook fails because a command is not found** (`bunx: command not found`,
-  `eslint-staged can't find ...`) → an **environment fault**. The toolchain is
-  mis-configured for this worker, not absent from the project. Report it: write
-  the exact failure into the sub-plan's Findings and, if it blocks the step, set
-  `status: blocked` naming the tool. Do **not** bypass, and do **not** hand-roll
-  a PATH guess.
-  - The project's toolchain PATH is `ship.suite.path_prelude` in
-    `.ilk-launch.json`, and since v0.9.99 the driver applies it to your shell as
-    well as to gate commands. If a tool is still missing, that config is wrong
-    or the key is misplaced (it must be `ship.suite.path_prelude`, **not**
-    `ship.path_prelude`) — which is a finding worth reporting, not a detour to
-    work around.
-- **Hook fails on pre-existing issues your change did not cause** → still not a
-  licence to bypass. Record it in Findings with the evidence that it is
-  pre-existing (the failure at the base commit), and either fix it in its own
-  commit or report blocked. "Not my changes" is a hypothesis about *why* the
-  gate is red; it is the beginning of a fix, not grounds to switch the gate off.
+**1. Never bypass to hide your own failure.** If the hook is red *because of
+the change you just made*, that is the gate doing its job. Fix the change. This
+case is not negotiable.
+
+**2. Before bypassing anything, prove the cause is not yours.** A failure is
+exonerated by a measurement, never by an assertion — the same rule the at-base
+rerun applies to tests. Check whether the hook fails at the batch's base commit,
+or on a file your change never touched. "Not my changes" is a hypothesis about
+why the gate is red; the check is what makes it a finding.
+
+**3. A tool that cannot be found is an environment fault, not a verdict.**
+`bunx: command not found`, `eslint-staged can't find ...` — the toolchain is
+mis-configured for this worker, not broken in the project. The project's
+toolchain PATH is `ship.suite.path_prelude` in `.ilk-launch.json` (note the
+nesting: `ship.path_prelude` is **not** read), and since v0.9.99 the driver
+applies it to your shell as well as to gate commands. Report the gap; do not
+hand-roll a PATH guess.
+
+**4. If you must bypass, make it expensive and visible.** Having done 1-3, you
+may commit with `--no-verify` rather than stall — but:
+
+- Record it in the sub-plan's **Findings**: which hook, the exact failure, and
+  the evidence that the cause predates your change.
+- Say so in the commit message body. A bypass that leaves no trace in the
+  history is the thing this rule exists to prevent.
+- Treat the resulting commit as **unproven**. It has not passed the gate, so it
+  cannot count as evidence that the gate is green, and a batch resting on it is
+  not verified.
+- Never bypass repeatedly without escalating. A hook that is red every
+  iteration is a real blocker: fix it, or report it and set `status: blocked`
+  naming the hook.
 
 **Measured, kira-cloudflare 2026-09-15.** The worker hit failing hooks and
 reasoned *"the pre-commit hooks are failing on pre-existing issues … and `bunx`
 not available. Let me skip them"*, then committed with `--no-verify`. The same
 file committed from an interactive shell **with hooks enabled passed both** —
 `eslint-staged` and `no-absolute-paths`. The hooks were fine; the worker's PATH
-was not. The second-order effect is the one that matters: a missing PATH did not
-merely fail a gate, it taught the agent to disable gates, on a shared remote.
+was not, and nothing made it check. It recurred at 15:42 the same day *after*
+the PATH problem was solved: the agent found `$HOME/.bun/bin` itself and still
+passed `--no-verify`, silently, three times. The habit outlives the cause.
 
-It recurred at 15:42 the same day *after* the PATH problem was solved — the
-agent found `$HOME/.bun/bin` itself and still passed `--no-verify`. Fixing the
-environment does not retire this rule; the habit outlives the cause, which is
-why the rule is written down here.
+What was missing was never the ability to bypass — it was any requirement to
+look first and to leave a record. That is what steps 1-4 add.
 
 ## Standard workflows
 
