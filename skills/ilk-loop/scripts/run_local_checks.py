@@ -78,6 +78,63 @@ def split_frontmatter(body: str) -> tuple[str, str]:
 _BLOCK_SCALAR_INDICATORS = {">", ">-", "|", "|-"}
 
 
+def count_local_checks_items(yaml_text: str) -> int:
+    """Count list items declared under ``local_checks:``, parsed or not.
+
+    Pairs with :func:`parse_local_checks_block`. That function returns ``[]``
+    for a block it cannot read, which is indistinguishable from a block that
+    declares nothing — and ``all([])`` is ``True``, so an unreadable gate block
+    becomes a silent pass.
+
+    Measured 2026-09-15: a resolver-generated sub-plan declared
+
+        local_checks:
+          - name: repo-verifier-1
+            cmd: bunx tsc --noEmit -p convex/tsconfig.json --pretty false
+
+    using ``cmd:`` where the parser reads ``command:``. It parsed to ``[]``, the
+    step passed unconditionally, and the sub-plan shipped ``2/2`` reporting
+    "0 fail" with nothing having run. 66 of 67 batch-verification sub-plans on
+    that host had the same shape; 63 shipped.
+
+    Counting the ITEMS lets the caller tell "declared nothing" from "declared
+    something I could not read" — the difference between an absent gate and a
+    broken one.  ``local_checks: []`` counts 0 and stays legitimate.
+    """
+    lines = yaml_text.splitlines()
+    in_block = False
+    item_indent: int | None = None
+    count = 0
+    for raw in lines:
+        line = raw.rstrip("\n").rstrip("\r")
+        stripped = line.strip()
+        if not in_block:
+            if stripped.startswith("local_checks:"):
+                rhs = stripped[len("local_checks:"):].strip()
+                if rhs in ("[]", "[ ]"):
+                    return 0
+                in_block = True
+            continue
+        if not stripped or stripped.startswith("#"):
+            continue
+        leading = len(line) - len(line.lstrip(" "))
+        if stripped.startswith("- "):
+            # The first item fixes the list indent; deeper "- " lines belong to
+            # a nested value, not to this list.
+            if item_indent is None:
+                item_indent = leading
+            if leading == item_indent:
+                count += 1
+            continue
+        # A non-item line dedented to or past a sibling top-level key ends the
+        # block.  Anything more indented is a continuation of the current item.
+        if item_indent is not None and leading <= item_indent and ":" in stripped:
+            break
+        if item_indent is None and leading == 0 and ":" in stripped:
+            break
+    return count
+
+
 def parse_local_checks_block(yaml_text: str) -> list[dict]:
     """
     Parse a `local_checks:` list out of a yaml-ish text block.
@@ -148,6 +205,15 @@ def parse_local_checks_block(yaml_text: str) -> list[dict]:
         # First content line gives us the block indent
         if indent is None:
             stripped_lead = line.lstrip(" ")
+            if stripped_lead.startswith("#"):
+                # A comment before the first item is not "followed by something
+                # other than a list" — it is a comment. Breaking here dropped the
+                # ENTIRE block, and since all([]) is True the step then passed
+                # with no gate at all. Measured 2026-09-15: 7 sub-plans on this
+                # host had their gate silently disabled by the comment that
+                # explained the gate. End-of-block detection below already
+                # skips comments; this branch did not.
+                continue
             if not stripped_lead.startswith("-"):
                 # local_checks: was followed by something other than a list — stop
                 break
@@ -386,6 +452,22 @@ def extract_step_local_checks(body: str, step_n: int) -> list[dict]:
     if not fence:
         return []
     return parse_local_checks_block(fence.group(1))
+
+
+def count_step_local_checks_items(body: str, step_n: int) -> int:
+    """Item count for a per-step fence — the step-scoped twin of
+    :func:`count_local_checks_items`."""
+    pat = re.compile(rf"^###\s+Step\s+{step_n}(\s|—|-|$)", re.MULTILINE)
+    m = pat.search(body)
+    if not m:
+        return 0
+    after = body[m.end():]
+    next_heading = re.search(r"^###\s+", after, re.MULTILINE)
+    region = after[: next_heading.start()] if next_heading else after
+    fence = re.search(r"^```(?:yaml|yml)?\s*\n(.*?)^```", region, re.MULTILINE | re.DOTALL)
+    if not fence:
+        return 0
+    return count_local_checks_items(fence.group(1))
 
 
 # ── runner ───────────────────────────────────────────────────────────────────
@@ -875,6 +957,39 @@ def main(argv: list[str]) -> int:
     step_checks: list[dict] = []
     if step is not None:
         step_checks = extract_step_local_checks(body, step)
+
+    # A declared gate that yields nothing runnable is MALFORMED, not absent.
+    # `all([])` is True, so without this an unparseable block passes the step
+    # with no gate having run. Measured 2026-09-15: a resolver-generated
+    # sub-plan used `cmd:` where this parser reads `command:`; it parsed to [],
+    # the step passed unconditionally, and it shipped 2/2 reporting "0 fail".
+    # 66 of 67 batch-verification sub-plans on that host had the same shape.
+    malformed: list[str] = []
+    fm_items = count_local_checks_items(fm_text)
+    if fm_items > len(subplan_checks):
+        malformed.append(
+            f"frontmatter local_checks declares {fm_items} item(s) but "
+            f"{len(subplan_checks)} parsed"
+        )
+    if step is not None:
+        step_items = count_step_local_checks_items(body, step)
+        if step_items > len(step_checks):
+            malformed.append(
+                f"step {step} local_checks declares {step_items} item(s) but "
+                f"{len(step_checks)} parsed"
+            )
+    if malformed:
+        print(json.dumps({
+            "error": "malformed local_checks: " + "; ".join(malformed)
+                     + ". Each item needs a `command:` key (a `cmd:`/`name:` pair "
+                       "is not read). Refusing rather than reporting a pass: an "
+                       "unreadable gate is a broken gate, not an absent one.",
+            "slug": slug,
+            "step": step,
+            "subplan_path": str(subplan),
+            "all_passed": False,
+        }))
+        return 2
 
     results: list[CheckResult] = []
     iso_ctx = contextlib.nullcontext(IsolationState()) if args.no_isolate else isolate_to_head(project)
