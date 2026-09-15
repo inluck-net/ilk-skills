@@ -136,3 +136,82 @@ class TestPathPreludeSchema:
             f"expected MalformedConfig for non-string path_prelude, got {type(result).__name__}"
         )
         assert "path_prelude" in result.detail
+
+
+# ── AC-4: the DRIVER applies the prelude to the agent's own environment ─────
+#
+# run_local_checks applies path_prelude to gate commands only. The agent's own
+# shell — where `git commit` runs a pre-commit hook — inherited nothing, so a
+# correctly-configured project could still fail to find its toolchain and the
+# agent reached for `git commit --no-verify` instead (kira-cloudflare,
+# 2026-09-15). These pin the driver-side half.
+
+DRIVER = Path(__file__).resolve().parent.parent / "scripts" / "run_ilk_loop_claude.sh"
+
+
+class TestDriverAppliesPreludeToAgentEnv:
+    """The bash driver resolves path_prelude and evals it before `claude`."""
+
+    def test_driver_resolves_path_prelude(self) -> None:
+        """AC-4a: the driver computes PATH_PRELUDE from the project config."""
+        text = DRIVER.read_text(encoding="utf-8")
+        assert "PATH_PRELUDE=" in text, (
+            "driver never resolves PATH_PRELUDE; the agent's shell will inherit "
+            "only getconf PATH and a configured toolchain stays invisible to it"
+        )
+        assert "_read_path_prelude" in text, (
+            "driver should reuse run_local_checks._read_path_prelude rather than "
+            "reimplementing config parsing"
+        )
+
+    def test_every_claude_invocation_applies_it(self) -> None:
+        """AC-4b: BOTH claude invocation arms eval the prelude.
+
+        The driver has two arms (env-clear and plain). An arm that forgets the
+        eval is the whole defect, reachable only on projects with settings env.
+        """
+        text = DRIVER.read_text(encoding="utf-8")
+        invocations = [ln for ln in text.splitlines()
+                       if 'gtimeout "${timeout_sec}s" claude' in ln]
+        assert len(invocations) == 2, (
+            f"expected 2 claude invocation arms, found {len(invocations)} — "
+            "update this test if the driver's shape changed"
+        )
+        evals = text.count('eval "$PATH_PRELUDE"')
+        assert evals == 2, (
+            f"expected both arms to eval the prelude, found {evals} eval(s)"
+        )
+
+    def test_unconfigured_project_is_a_noop(self, tmp_path: Path) -> None:
+        """AC-4c: no prelude configured ⇒ empty string, no behaviour change.
+
+        The guard is `[[ -z "$PATH_PRELUDE" ]] || eval ...`, so an empty value
+        must stay empty rather than raising or emitting junk.
+        """
+        project = _make_project(tmp_path)
+        assert rlc._read_path_prelude(project) == ""
+        text = DRIVER.read_text(encoding="utf-8")
+        assert '[[ -z "$PATH_PRELUDE" ]] || eval "$PATH_PRELUDE"' in text, (
+            "the eval must be guarded so an unconfigured project is unaffected"
+        )
+
+    def test_prelude_read_from_suite_not_ship_root(self, tmp_path: Path) -> None:
+        """AC-4d: the key is ship.suite.path_prelude, NOT ship.path_prelude.
+
+        ilk-skills' own .ilk-launch.json put it at ship.path_prelude, where
+        nothing reads it — silently inert. Pin the location so a misplaced key
+        is a visible empty rather than a mystery.
+        """
+        project = _make_project(tmp_path)
+        _write_json(project / ".ilk-launch.json",
+                    {"ship": {"path_prelude": 'export PATH="/nope:$PATH"',
+                              "suite": {"command": "true"}}})
+        assert rlc._read_path_prelude(project) == "", (
+            "a prelude at ship.path_prelude must NOT be picked up — if this "
+            "starts passing the reader gained a fallback and ilk-skills' own "
+            "config silently changed meaning"
+        )
+        _write_json(project / ".ilk-launch.json",
+                    {"ship": {"suite": {"command": "true",
+                                        "path_prelude": 'export PATH="/yes:$PATH"'}}})
+        assert rlc._read_path_prelude(project) == 'export PATH="/yes:$PATH"'

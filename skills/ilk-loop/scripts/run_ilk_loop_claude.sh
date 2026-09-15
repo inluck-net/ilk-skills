@@ -214,6 +214,37 @@ preflight() {
   # Resolve to absolute path so downstream git -C calls are unambiguous
   PROJECT_PATH="$(cd "$PROJECT_PATH" && pwd)"
 
+  # Resolve the project's ship.suite.path_prelude ONCE and apply it to the
+  # AGENT's environment, not only to gate commands.
+  #
+  # run_local_checks.py:515 prepends this prelude to every `local_checks`
+  # command, so a correctly-configured project's GATES resolve their toolchain
+  # while the agent's own shell does not: the driver exports no PATH, and a
+  # non-login subprocess inherits `getconf PATH` (/usr/bin:/bin:/usr/sbin:/sbin).
+  # Measured on kira-cloudflare 2026-09-15: `bunx` lives at ~/.bun/bin and the
+  # project's .ilk-launch.json path_prelude already named it, yet the agent's
+  # `git commit` could not run the pre-commit hook, guessed /opt/homebrew/bin,
+  # failed, and reached for `--no-verify` instead. A missing tool must be an
+  # environment fault to report, never a gate to skip.
+  #
+  # Deliberately NOT a hardcoded PATH: node here resolves through
+  # fnm_multishells/<pid>/bin, which is per-shell and ephemeral, so a literal
+  # copy of an interactive PATH would rot. The project's own config is the
+  # single source of truth, and an unconfigured project gets today's behaviour.
+  PATH_PRELUDE="$(python3 -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+try:
+    from pathlib import Path
+    from run_local_checks import _read_path_prelude
+    sys.stdout.write(_read_path_prelude(Path(sys.argv[2])) or "")
+except Exception:
+    pass
+' "$(dirname "${BASH_SOURCE[0]}")" "$PROJECT_PATH" 2>/dev/null || true)"
+  if [[ -n "$PATH_PRELUDE" ]]; then
+    echo "[ilk] path_prelude applied to the agent environment: $PATH_PRELUDE"
+  fi
+
   if [[ ! -f "$LOOP_STATUS_SCRIPT" ]]; then
     echo "Error: loop_status.py not found at: $LOOP_STATUS_SCRIPT" >&2
     exit 1
@@ -1867,12 +1898,14 @@ invoke_claude_iteration() {
   # The subshell (cd ...) keeps the cwd change local.
   local exit_code=0
   if [[ "$SETTINGS_HAS_ENV" -eq 1 ]]; then
-    (cd "$cwd" && env -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL -u ANTHROPIC_MODEL \
+    (cd "$cwd" && { [[ -z "$PATH_PRELUDE" ]] || eval "$PATH_PRELUDE"; } \
+      && env -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL -u ANTHROPIC_MODEL \
       gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
       | tee "$jsonl_log" | python3 "$renderer" | tee "$iter_log" \
       || exit_code=$?
   else
-    (cd "$cwd" && gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
+    (cd "$cwd" && { [[ -z "$PATH_PRELUDE" ]] || eval "$PATH_PRELUDE"; } \
+      && gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
       | tee "$jsonl_log" | python3 "$renderer" | tee "$iter_log" \
       || exit_code=$?
   fi
