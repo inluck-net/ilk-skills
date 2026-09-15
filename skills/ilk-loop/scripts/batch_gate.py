@@ -94,7 +94,7 @@ class BatchGateRecord:
     #: The tree the verdict describes.  The gate certifies CODE, and a commit
     #: that changes no files does not change the code — but `head_sha` moves.
     #: The batch-verification sub-plan is REQUIRED to make empty marker commits
-    #: (templates/batch-verification-subplan.md:234-235), so without this the
+    #: (templates/batch-verification-subplan.md, "Commit an empty marker"), so without this the
     #: verification step invalidates the proof of everything verified before it.
     #:
     #: It is also a PROVENANCE marker, and that is load-bearing: only
@@ -315,7 +315,7 @@ def _head_is_current(
     Prefers the TREE when the record carries one, because the gate certifies
     code and a commit that changes no files does not change the code.  The
     batch-verification sub-plan is required to make empty marker commits
-    (``templates/batch-verification-subplan.md:234-235``), so comparing commit
+    (``templates/batch-verification-subplan.md, "Commit an empty marker"``), so comparing commit
     shas means the verification step invalidates the proof of everything
     verified before it — measured on 08d, whose two verification commits both
     carry their parent's tree and change 0 files.
