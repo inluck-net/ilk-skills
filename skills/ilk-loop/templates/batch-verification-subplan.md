@@ -32,8 +32,10 @@ expected_entities:
 # Sub-plan: batch verification — full suite
 
 Part of [MASTER-YYYY-MM-DD-execution-plan](./MASTER-YYYY-MM-DD-execution-plan.md).
-**Order #N (last)** — runs the full test suite for the batch. No other
-sub-plan runs the full suite; they stay change-scoped.
+**Order #N (last)** — runs the batch-wide verification, scoped to the batch's
+changed area (see step 0) and falling back to the whole suite when that scope
+cannot be established. No other sub-plan runs a broad gate; they stay
+change-scoped.
 
 This sub-plan is **not optional**. A master without a batch-verification
 sub-plan is a HARD lint finding (`lint_master_has_verification_subplan`).

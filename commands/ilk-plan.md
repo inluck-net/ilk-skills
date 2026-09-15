@@ -368,9 +368,12 @@ Meta mode (`Repo` column required; values must come from `meta_members`):
 
 **Every master MUST end with a batch-verification sub-plan** — the last row
 in the table. It declares `batch_verification: true` (from
-`templates/batch-verification-subplan.md`) and runs the full test suite
-for the batch. No other sub-plan runs the full suite; they stay
-change-scoped. A master without one is a HARD lint finding. Add it as
+`templates/batch-verification-subplan.md`) and runs the batch-wide
+verification. Since v0.9.100 that run is **scoped to the batch's changed
+area** — the `base_sha..HEAD` diff plus the test files of every importer
+of a changed module — falling back to the whole suite when the importer
+set cannot be computed or the diff touches anything global. No other
+sub-plan runs a broad gate; they stay change-scoped. A master without one is a HARD lint finding. Add it as
 the last row in your grouping table:
 
 ```
@@ -456,8 +459,11 @@ Once approved, write all files in one batch under the
 
 - **The last sub-plan MUST be the batch-verification sub-plan**, derived from
   `<skill-root>/ilk-loop/templates/batch-verification-subplan.md`. It declares
-  `batch_verification: true` and runs the full test suite for the batch. No
-  other sub-plan may run the full suite — they stay change-scoped. A master
+  `batch_verification: true` and runs the batch-wide verification — since
+  v0.9.100 scoped to the batch's changed area plus the importers of every
+  changed module, falling back to the whole suite when that set cannot be
+  computed. No other sub-plan may run a broad gate — they stay
+  change-scoped. A master
   without this sub-plan as the last registry entry is a HARD lint finding.
   See the template for the step-0 / step-1 shape and the attributed-failure
   exit condition.
@@ -650,7 +656,8 @@ per-step `local_checks` yaml block. Warn on each occurrence:
 - **per-file-only gate on a shared module** — a `local_check` that runs
   only the new file's tests while the change touches a shared/imported
   module hides integration + test-state-leak bugs (decomposition-principles
-  §8, field-log bugs #1/#2); the last step must run the FULL suite.
+  §8, field-log bugs #1/#2); the last step must widen beyond the new file
+  to the module's tests plus its resolved callers' tests.
 - **Whole-project-only compile gate** (decomposition-principles §16) —
   a sub-plan whose ONLY `local_check` is a whole-project compile
   command (`tsc`, `mypy`, `cargo build`, `npm run build`,

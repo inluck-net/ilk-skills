@@ -3220,7 +3220,7 @@ def lint_wholesuite_gate_outside_verification_subplan(text: str, slug: str) -> l
         return findings
     findings.append(
         f"{slug}: whole-suite gate(s) found outside the batch-verification "
-        f"sub-plan: {broad_cmds!r}. The full-suite obligation belongs to the "
+        f"sub-plan: {broad_cmds!r}. The batch-wide obligation belongs to the "
         f"verification sub-plan (``batch_verification: true``) — no other "
         f"sub-plan should run the full suite "
         f"(decomposition-principles.md §12, §16). "

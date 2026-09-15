@@ -186,7 +186,11 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   runs only the new file's tests (`pytest <one file>`) while the
   change touches a shared/imported module hides integration +
   test-state-leak bugs (WeChatRelay bugs #1/#2). When the change
-  touches a shared module, the LAST step must run the FULL suite.
+  touches a shared module, the LAST step must widen beyond the new
+  file — to the module's tests **plus its resolved callers' tests**
+  (the importer oracle). Since v0.9.100 the batch-verification
+  sub-plan applies that same widening at batch scope instead of
+  running the whole suite unconditionally; see §12.
 - **exact-equality on a growing set** (FM-0002) → a `local_checks`
   command asserts `== ["area", "perimeter"]` or
   `deepStrictEqual(result, ['a', 'b'])` against a registry /
@@ -540,7 +544,17 @@ module's tests plus the resolved callers' tests (the importer oracle
 from `plan_lint.py:lint_shared_module_gate`). The **whole-suite
 obligation** belongs to the **batch-verification sub-plan** — the last
 sub-plan in every master, marked `batch_verification: true`, whose job
-is the full suite for that batch. No other sub-plan runs the full suite.
+is the batch-wide run. No other sub-plan runs a broad gate.
+
+Since **v0.9.100** that sub-plan's run is itself **scoped to the batch's
+changed area**: the diff from `base_sha..HEAD`, plus the test files of
+every module importing a changed module — the same importer oracle this
+section already prescribes for a work sub-plan, applied one level up. It
+**falls back to the whole suite** when the importer set cannot be
+computed, or when the diff touches build config, fixtures, `conftest` or
+anything global. An unresolved import graph is not an empty one. The
+record states which it did, as `suite_scope: scoped|full`, because a
+green result means different things under each.
 Per-file-only gates (module tests without caller tests) still hide
 integration bugs (WeChatRelay bugs #1/#2). See also §8 anti-pattern
 "per-file-only gate on a shared module", and §16 which this rule now
