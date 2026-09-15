@@ -308,9 +308,19 @@ already landed. Re-run only the tracks whose results you do not have.
 
 ```yaml
 local_checks:
-  - command: "python3 <path>/verify_attribution.py <record path>"
-    timeout: <suite timeout>
+  - command: "python3 <skill-root>/ilk-loop/scripts/verify_attribution.py <record path>"
+    timeout: 120
 ```
+
+`verify_attribution.py` is a real script in the toolkit — resolve
+`<skill-root>` and `<record path>` and leave the rest alone. **Do not inline your
+own copy of this check.** It has two subtleties that were each got wrong once on
+2026-09-15: the verdict is the row's **last cell** (a substring search for `YES`
+also matches the `yes` in `in baseline_red`, failing a correctly-exonerated row),
+and a record whose failure count cannot be parsed must **refuse** rather than
+read as zero. One tested implementation beats a copy per sub-plan — the same
+reason step 0 resolves the suite command instead of hand-typing it. The timeout
+is 120s because this parses a file; it does not run tests.
 
 The gate **re-derives** the verdict from step 0's `## At-base rerun` table. It
 must NOT grep the record for a sentence like `Attributed regressions: 0` — that
