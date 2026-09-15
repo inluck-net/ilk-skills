@@ -215,3 +215,40 @@ class TestDriverAppliesPreludeToAgentEnv:
                     {"ship": {"suite": {"command": "true",
                                         "path_prelude": 'export PATH="/yes:$PATH"'}}})
         assert rlc._read_path_prelude(project) == 'export PATH="/yes:$PATH"'
+
+
+# ── AC-5: the instruction half of the same defect ───────────────────────────
+#
+# Fixing the PATH does not retire the bypass habit: kira-cloudflare 2026-09-15
+# found $HOME/.bun/bin itself at 15:42 and still passed --no-verify. The rule
+# lives in ilk-loop/SKILL.md, which the driver loads via its `/ilk` prompt.
+
+SKILL_MD = Path(__file__).resolve().parent.parent / "SKILL.md"
+
+
+class TestNoVerifyRuleIsDocumented:
+    """SKILL.md must carry the never-bypass-a-hook rule."""
+
+    def test_skill_md_forbids_no_verify(self) -> None:
+        """AC-5a: the rule exists and names the flag it forbids."""
+        text = SKILL_MD.read_text(encoding="utf-8")
+        assert "--no-verify" in text, (
+            "ilk-loop/SKILL.md must tell the worker never to bypass a pre-commit "
+            "hook; without it a missing tool silently becomes a disabled gate"
+        )
+        assert "environment fault" in text, (
+            "the rule must frame a missing tool as an environment fault to "
+            "report, not merely say 'do not do this'"
+        )
+
+    def test_rule_names_the_config_key(self) -> None:
+        """AC-5b: it points at the fix, not just the prohibition.
+
+        A prohibition with no remedy is what produces the hand-rolled PATH
+        guess that failed at 15:39:45.
+        """
+        text = SKILL_MD.read_text(encoding="utf-8")
+        assert "ship.suite.path_prelude" in text, (
+            "the rule must name where the toolchain PATH actually comes from, "
+            "so the worker reports a config fault instead of guessing a PATH"
+        )

@@ -220,6 +220,46 @@ helper is idempotent — running it twice does not duplicate files.
   and add a one-line note under "Out of scope" in the current sub-plan.
   Do NOT silently expand the plan.
 
+## A missing tool is an environment fault, not a gate to skip
+
+**Never pass `--no-verify` to `git commit`.** A pre-commit hook is a gate. The
+loop's whole claim to `shipped` rests on gates having run, and a bypassed hook
+produces a commit that looks verified and is not.
+
+This is not a rule about tidiness. It is the rule that keeps a *missing tool*
+from silently becoming a *disabled gate*:
+
+- **Hook fails because a command is not found** (`bunx: command not found`,
+  `eslint-staged can't find ...`) → an **environment fault**. The toolchain is
+  mis-configured for this worker, not absent from the project. Report it: write
+  the exact failure into the sub-plan's Findings and, if it blocks the step, set
+  `status: blocked` naming the tool. Do **not** bypass, and do **not** hand-roll
+  a PATH guess.
+  - The project's toolchain PATH is `ship.suite.path_prelude` in
+    `.ilk-launch.json`, and since v0.9.99 the driver applies it to your shell as
+    well as to gate commands. If a tool is still missing, that config is wrong
+    or the key is misplaced (it must be `ship.suite.path_prelude`, **not**
+    `ship.path_prelude`) — which is a finding worth reporting, not a detour to
+    work around.
+- **Hook fails on pre-existing issues your change did not cause** → still not a
+  licence to bypass. Record it in Findings with the evidence that it is
+  pre-existing (the failure at the base commit), and either fix it in its own
+  commit or report blocked. "Not my changes" is a hypothesis about *why* the
+  gate is red; it is the beginning of a fix, not grounds to switch the gate off.
+
+**Measured, kira-cloudflare 2026-09-15.** The worker hit failing hooks and
+reasoned *"the pre-commit hooks are failing on pre-existing issues … and `bunx`
+not available. Let me skip them"*, then committed with `--no-verify`. The same
+file committed from an interactive shell **with hooks enabled passed both** —
+`eslint-staged` and `no-absolute-paths`. The hooks were fine; the worker's PATH
+was not. The second-order effect is the one that matters: a missing PATH did not
+merely fail a gate, it taught the agent to disable gates, on a shared remote.
+
+It recurred at 15:42 the same day *after* the PATH problem was solved — the
+agent found `$HOME/.bun/bin` itself and still passed `--no-verify`. Fixing the
+environment does not retire this rule; the habit outlives the cause, which is
+why the rule is written down here.
+
 ## Standard workflows
 
 ### 1. Resume / continue (`/ilk`)
