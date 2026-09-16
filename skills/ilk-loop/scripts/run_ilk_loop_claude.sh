@@ -1655,6 +1655,42 @@ test_ship_integrity() {
   [[ ! -f "$ship_integrity_script" ]] && return 0
 
   local violations=0
+
+  # The sub-plans registered in the ACTIVE master. This is the batch boundary,
+  # and it has to be explicit.
+  #
+  # 6010938 replaced the non-verdict `continue` with `skip` so a worker that
+  # skipped its gate could not skip step-commit enforcement. The reasoning was
+  # right — "does every authored step have a commit" is a question about git
+  # history and holds whether or not a gate ran — and the consequence was not:
+  # the gate result was ALSO the de-facto batch scope, because the walk below is
+  # `for f in "$plans_dir"/*.md` and nothing else narrows it.
+  #
+  # MEASURED 2026-09-16 on gh-resolve, by the gh-resolve session and confirmed
+  # here: 445 plan files, 360 shipped, 358 gated, **71 would revert**, oldest
+  # 2026-07-26-corpus-dossier. Not a tail of recent work — the entire July-to-
+  # September corpus. That is the 2026-08-20 incident again (69 of 150 then),
+  # and it is worse than a status flip: ship_integrity_violation maps to
+  # shipped-unverified -> needs-human (detached-component-contracts.md:112),
+  # which test_shipped_unverified_never_relaunches.py pins as never-relaunch.
+  # The first iteration after that change would halt an unattended pipeline.
+  local _active_subplans=""
+  _active_subplans=$(python3 -c "
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+try:
+    from plan_status import extract_subplan_files
+    from loop_status import pick_active_master
+    masters = sorted(Path(sys.argv[1]).glob('MASTER-*.md'))
+    if masters:
+        chosen, _ = pick_active_master(masters, json_mode=True)
+        for n in extract_subplan_files(Path(chosen).read_text(encoding='utf-8')):
+            print(n)
+except Exception:
+    pass
+" "$plans_dir" "${_SKILL_ROOT}/ilk-loop/scripts" 2>/dev/null)
+
   for f in "$plans_dir"/*.md; do
     [[ "$(basename "$f")" == MASTER* ]] && continue
     # Check if shipped
@@ -1751,7 +1787,16 @@ print(gate_passed)
     # shipped twice with no commit for step 2 — the exact condition this check
     # exists to refuse — because iteration 1 ran no gates at all.
     if [[ "$gate_passed" != "true" && "$gate_passed" != "false" ]]; then
-      gate_passed="skip"
+      # Enforce without a gate verdict ONLY for sub-plans in the active batch.
+      # Outside it, a non-verdict still means skip-entirely: an archived ship
+      # has no current gate result and re-litigating it is the 2026-08-20
+      # mass revert.
+      if [[ -n "$_active_subplans" ]] \
+         && printf '%s\n' "$_active_subplans" | grep -qxF "$(basename "$f")"; then
+        gate_passed="skip"
+      else
+        continue
+      fi
     fi
 
     si_exit=0
