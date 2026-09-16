@@ -66,14 +66,15 @@ class TestRecordEmissionFromCommands:
         assert commands, "template has no command: lines"
         combined = "\n".join(commands)
 
-        # The command must either invoke verification_record.py (which reads
-        # HEAD from git) or read HEAD itself.  A bare suite run that does not
+        # The command must invoke verification_record.py (which reads HEAD
+        # from git, never as an argument).  A bare suite run that does not
         # record HEAD anywhere machine-readable is not enough.
-        assert "verified_head" in combined or "rev-parse HEAD" in combined, (
-            "after prose-stripping, no surviving command derives verified_head. "
-            "The field exists only in prose bullets today and drops out of "
-            "rendered sub-plans.  Wire it into a gate command (e.g. "
-            "verification_record.py) so it survives."
+        assert "verification_record.py" in combined, (
+            "after prose-stripping, no surviving command invokes "
+            "verification_record.py to derive verified_head.  The field "
+            "exists only in prose bullets today and drops out of rendered "
+            "sub-plans.  Wire verification_record.py into a gate command "
+            "so it survives."
         )
 
     def test_suite_scope_in_command_lines(self) -> None:

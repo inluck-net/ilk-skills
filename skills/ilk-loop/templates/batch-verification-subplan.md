@@ -144,6 +144,8 @@ section headed "exit 1 with zero failures is not a regression", the run recorded
 local_checks:
   - command: "python3 -c \"import sys; sys.path.insert(0,'<skill-root>/ilk-loop/scripts'); from ship_audit import _resolve_expected_invocation; from pathlib import Path; cmd=_resolve_expected_invocation(Path('.')); assert cmd, 'ship.suite not configured'; import subprocess; sys.exit(subprocess.run(cmd,shell=True).returncode)\""
     timeout: <suite timeout>
+  - command: "python3 <skill-root>/ilk-loop/scripts/verification_record.py --project . --batch <batch-slug>"
+    timeout: 60
 ```
 
 **Resolve the suite command, never hand-type it.** The command above uses
