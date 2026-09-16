@@ -155,27 +155,72 @@ def compute_suite_scope(project: Path, base_sha: str) -> dict:
         return {"mode": "full", "count": 0,
                 "reason": "diff touches conftest/fixtures/build config"}
 
-    # Map each changed module to its test file.  If ANY module has no test,
-    # the importer set is incomplete → widen.
+    # Map each changed module to the test files that cover it.
+    #
+    # Degrade PER MODULE, never globally. The previous version returned
+    # mode=full from inside this loop on the first unmapped module, throwing
+    # away every selection already computed. MEASURED 2026-09-16: it returned
+    # `count: 0, reason: "no test file found for changed module
+    # skills/ilk-loop/scripts/verification_record.py"` and ran 3102 tests —
+    # because that module's tests are test_verification_record_emission.py and
+    # test_record_is_measured.py, neither of which is test_verification_record.py.
+    # One naming mismatch cost the whole selection.
+    #
+    # Three ways a module maps, cheapest first. A module that matches none of
+    # them contributes nothing and is RECORDED; it does not veto the rest.
     mapped: set[str] = set()
+    unmapped: list[str] = []
     for py_path in non_test_py:
         stem = Path(py_path).stem
-        test_name = _module_test_name(stem)
-        candidates = list(project.rglob(test_name))
-        if candidates:
-            mapped.add(str(candidates[0].relative_to(project)))
+        hits: set[str] = set()
+
+        # 1. exact conventional name, e.g. foo.py -> test_foo.py
+        for c in project.rglob(_module_test_name(stem)):
+            hits.add(str(c.relative_to(project)))
+
+        # 2. prefixed variants, e.g. foo.py -> test_foo_emission.py
+        if not hits:
+            for c in project.rglob(f"test_{stem}*.py"):
+                hits.add(str(c.relative_to(project)))
+
+        # 3. importers — the actual contract the docstring promises. A test
+        #    that imports the module covers it whatever the file is called.
+        if not hits:
+            for c in project.rglob("test_*.py"):
+                try:
+                    src = c.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                if f"import {stem}" in src or f"from {stem} import" in src:
+                    hits.add(str(c.relative_to(project)))
+
+        if hits:
+            mapped |= hits
         else:
-            # Module with no discoverable test file — importer set incomplete.
-            return {"mode": "full", "count": 0,
-                    "reason": f"no test file found for changed module {py_path}"}
+            unmapped.append(py_path)
+
+    # Only a module with NO coverage at all forces a broad run, and only when
+    # nothing else was selected — an unresolved import graph is not an empty one.
+    if unmapped and not (test_files | mapped):
+        return {"mode": "full", "count": 0,
+                "reason": f"no tests found for any changed module "
+                          f"({len(unmapped)} unmapped, first: {unmapped[0]})"}
 
     combined = test_files | mapped
     if not combined:
         # Only non-Python files changed (docs, configs not in _GLOBAL_PATTERNS).
         return {"mode": "scoped", "count": 0, "reason": "no test-eligible changes"}
 
+    reason = f"{len(combined)} test file(s) selected"
+    if unmapped:
+        # Name them: a scoped run that silently omits a changed module is the
+        # narrowing this whole mechanism exists to prevent.
+        reason += (f"; {len(unmapped)} changed module(s) have no discoverable "
+                   f"tests and are NOT covered by this selection: "
+                   f"{', '.join(unmapped[:3])}")
     return {"mode": "scoped", "count": len(combined),
-            "reason": f"{len(combined)} test file(s) selected"}
+            "reason": reason, "selection": sorted(combined),
+            "unmapped": unmapped}
 
 
 def inject_suite_scope(text: str, mode: str, count: int) -> str:
