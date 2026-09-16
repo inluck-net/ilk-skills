@@ -435,3 +435,59 @@ class TestAC6CorpusSweep:
         assert compile_only_flagged >= 0  # currently 0
         assert at_base_flagged_plans >= 30  # currently 45
         assert at_base_empty_table >= 10  # currently 14
+
+
+# ── The plan that exposed both defects ────────────────────────────────────
+#
+# Fetched from rezmac: ~/.ilk-data/projects/.../2026-09-15-issue-5445-
+# batch-verification-e0b2a837.md.  A local copy is kept in the test
+# fixtures directory.
+
+_EXPOSED_PLAN_FIXTURE = _HERE / "fixtures" / "issue-5445-batch-verification.md"
+
+
+@pytest.mark.skipif(
+    not _EXPOSED_PLAN_FIXTURE.exists(),
+    reason="Fixture not present (fetch from rezmac)",
+)
+class TestExposedPlan:
+    """The kira-cloudflare plan that exposed both defects must be rejected."""
+
+    def test_compile_only_gate_hard_finding(self):
+        """The exposed plan's typecheck-only gate produces a HARD finding."""
+        text = _EXPOSED_PLAN_FIXTURE.read_text(encoding="utf-8-sig")
+        findings = plan_lint.lint_verification_gate_compile_only(
+            text, _EXPOSED_PLAN_FIXTURE.stem
+        )
+        hard = [f for f in findings if "HARD" in f]
+        assert hard, (
+            f"Expected HARD compile-only finding on exposed plan. "
+            f"Findings: {findings}"
+        )
+
+    def test_empty_table_hard_finding(self):
+        """The exposed plan's unfilled at-base table produces a HARD finding."""
+        text = _EXPOSED_PLAN_FIXTURE.read_text(encoding="utf-8-sig")
+        findings = plan_lint.lint_verification_attribution_unmeasured(
+            text, _EXPOSED_PLAN_FIXTURE.stem
+        )
+        hard = [f for f in findings if "HARD" in f]
+        assert hard, (
+            f"Expected HARD at-base finding on exposed plan. "
+            f"Findings: {findings}"
+        )
+        # At least one must be about empty table (AC-3), not just the
+        # pre-existing "no section" finding.
+        empty = [f for f in hard if "zero data rows" in f]
+        assert empty, (
+            f"Expected empty-table finding. Findings: {hard}"
+        )
+
+    def test_full_lint_has_hard_findings(self):
+        """Full lint_file produces HARD findings, not just the pre-existing warnings."""
+        findings = plan_lint.lint_file(_EXPOSED_PLAN_FIXTURE)
+        hard = [f for f in findings if "HARD" in f]
+        assert len(hard) >= 2, (
+            f"Expected ≥2 HARD findings on exposed plan. "
+            f"Findings: {findings}"
+        )
