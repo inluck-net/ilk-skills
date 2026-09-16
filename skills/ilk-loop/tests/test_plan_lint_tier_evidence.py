@@ -145,3 +145,49 @@ def test_loop_verified_with_targets_not_flagged(tmp_path):
     assert "WARN" not in result.stdout, (
         f"Expected no warnings when unit_test_targets is non-empty.\nstdout={result.stdout}"
     )
+
+
+# ── batch_verification is exempt, and that is correctness ───────────────────
+#
+# A verification sub-plan's evidence is the SUITE it runs, declared in its
+# step-0 gate — not a test it adds. `must_add_tests: false` with an empty
+# `unit_test_targets` is exactly how that type is supposed to be declared.
+#
+# MEASURED 2026-09-16 over 697 sub-plans in 11 projects: 59 flagged, and 49 of
+# them (83%) were batch_verification: true. Without the exemption the rule
+# fires on every verification sub-plan in every project — a false-positive
+# class big enough to train readers to ignore it. With it: 10 of 697 (1.4%),
+# which are ordinary work sub-plans that genuinely claim loop-verified while
+# forbidding their own evidence.
+
+_SUBPLAN_BATCH_VERIFICATION = """\
+---
+plan: x-verify
+batch_verification: true
+verification_tier: loop-verified
+must_add_tests: false
+unit_test_targets: []
+local_checks: []
+---
+
+## Steps
+
+### Step 0 — run the suite
+"""
+
+
+def test_batch_verification_subplan_is_not_flagged(tmp_path):
+    """The 83% false-positive class."""
+    result = _run_lint(tmp_path, "x-verify.md", _SUBPLAN_BATCH_VERIFICATION)
+    assert "forbid" not in result.stdout.lower(), (
+        "a batch-verification sub-plan must not be flagged for the tier/evidence "
+        f"contradiction.\nstdout={result.stdout}"
+    )
+
+
+def test_an_ordinary_subplan_is_still_flagged(tmp_path):
+    """Not a weakening — the rule still fires where its premise holds."""
+    result = _run_lint(tmp_path, "ordinary.md", _SUBPLAN_LOOP_VERIFIED_NO_TESTS)
+    assert result.returncode == 1, (
+        f"the rule must still fire on an ordinary sub-plan.\nstdout={result.stdout}"
+    )

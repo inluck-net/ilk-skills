@@ -3436,6 +3436,20 @@ def lint_tier_forbids_its_evidence(text: str, slug: str) -> list[str]:
     See decomposition-principles.md §12.
     Measured: kira-cloudflare issue-5445-work, 2026-09-15.
     """
+    # A batch-verification sub-plan is exempt, and this is correctness, not a
+    # weakening. Its evidence is the SUITE it runs, declared in its step-0 gate
+    # — not a test it adds. `must_add_tests: false` and an empty
+    # `unit_test_targets` are exactly how that type is supposed to be declared,
+    # so the contradiction the rule detects does not exist for it.
+    #
+    # MEASURED 2026-09-16 over 697 sub-plans in 11 projects: 59 flagged, and
+    # **49 of them (83%) were batch_verification: true**. Without this, the rule
+    # fires on every verification sub-plan in every project — a false-positive
+    # class large enough to train readers to ignore it. With it: 10 genuine
+    # hits of 697 (1.4%), which are ordinary work sub-plans that really do claim
+    # loop-verified while forbidding their own evidence.
+    if re.search(r"^batch_verification:\s*true\s*$", text, re.MULTILINE | re.IGNORECASE):
+        return []
     m = re.match(r"^---\n(.*?)\n---\n", text, re.S)
     if not m:
         return []
