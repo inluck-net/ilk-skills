@@ -3414,6 +3414,50 @@ def lint_verification_subplan_hardcodes_suite(text: str, slug: str) -> list[str]
     return findings
 
 
+def lint_duplicate_frontmatter_key(text: str, slug: str) -> list[str]:
+    """HARD when a top-level key appears twice in the frontmatter block.
+
+    ``grep -m1 '^status:'`` returns the first occurrence; ``parse_frontmatter``
+    returns the last.  A file with two ``status:`` keys reads differently to
+    the two instruments, and a session that reads it twice with different tools
+    reports a phantom rewrite.  Measured on gh-resolve 2026-09-16: 1 of 27
+    ``2026-09-15*`` files had this defect.
+    """
+    m = re.match(r"^---\n(.*?)\n---\n", text, re.S)
+    if not m:
+        return []
+    fm_block = m.group(1)
+    # Scan top-level keys only: lines with no leading whitespace that match
+    # ``key: value``.  Skip blank lines and ``#`` comments (matching
+    # ``parse_frontmatter``'s own skip logic).
+    seen: dict[str, tuple[int, str]] = {}  # key -> (line_no, value)
+    findings: list[str] = []
+    for i, line in enumerate(fm_block.splitlines(), start=1):
+        if not line or line.startswith("#"):
+            continue
+        if line[0].isspace():
+            continue  # indented = list item or nested mapping, not top-level
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        if key in seen:
+            first_line, first_value = seen[key]
+            findings.append(
+                f"HARD {slug}: duplicate frontmatter key {key!r} — "
+                f"first at line {first_line} ({key}: {first_value!r}), "
+                f"second at line {i} ({key}: {value!r}). "
+                f"The runtime (parse_frontmatter) uses the LAST value "
+                f"({value!r}); grep -m1 uses the FIRST ({first_value!r})."
+            )
+        else:
+            seen[key] = (i, value)
+    return findings
+
+
 ALL_CHECKS = (
     lint_gate_budget,
     lint_verification_attribution_unmeasured,
@@ -3445,6 +3489,7 @@ ALL_CHECKS = (
     lint_broken_process_wait,
     lint_wholesuite_gate_outside_verification_subplan,
     lint_verification_subplan_hardcodes_suite,
+    lint_duplicate_frontmatter_key,
 )
 
 
