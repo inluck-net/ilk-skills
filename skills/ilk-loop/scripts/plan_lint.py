@@ -3203,6 +3203,65 @@ def lint_gate_executable_on_driver_path(text: str, slug: str) -> list[str]:
     return findings
 
 
+# A template token the planner never filled, e.g. `<record path>`.
+#
+# Two narrowings, both derived from measurement rather than guessed:
+#
+# * letters/digits/spaces/hyphens/underscores/apostrophes only, so shell
+#   redirection (`cmd < in > out`) and `2>&1` cannot match;
+# * the token must contain a SPACE or a HYPHEN.  Every placeholder appearing
+#   inside a gate command across the toolkit's templates is multi-word —
+#   `<skill-root>`, `<batch-slug>`, `<record path>`,
+#   `<command that proves this step's outcome>` (4 of 4).  Every false positive
+#   in a sweep of 678 existing sub-plans across 11 projects was a bare single
+#   word that genuinely belonged to its command: `<key>PATH</key>` and
+#   `<integer>5</integer>` in plist greps, `update <id>` in a commander.js
+#   signature (4 of 4).  One character of structure separates the two sets.
+_UNRESOLVED_PLACEHOLDER_RE = re.compile(r"<[A-Za-z][A-Za-z0-9 _'-]*>")
+
+
+def lint_gate_placeholder_unresolved(text: str, slug: str) -> list[str]:
+    """Flag a gate command still carrying an unsubstituted template token.
+
+    A rendered sub-plan is not a template.  A ``local_checks`` command that
+    still reads ``<record path>`` or ``<skill-root>`` cannot run, and the way it
+    fails is the expensive part: the shell reports a missing file or an unknown
+    redirection, which reads as *the thing the gate checks is absent* rather
+    than *the command was never finished*.
+
+    Measured on gh-resolve 2026-09-15/16.  The batch-verification template said
+    ``verify_attribution.py <record path>`` and asked the planner to resolve it.
+    The planner resolved ``<skill-root>`` and ``<batch-slug>`` in the same file
+    and left this one literal, on **both** batches of that day.  Each gate then
+    failed as "record not found", ``ship_integrity`` read a red gate, and both
+    sub-plans were reverted from ``shipped`` to ``in-progress`` **after their
+    suites had run green** — 5262 passed / 0 failed for one, ``suite_failed: 0``
+    over 5319 tests for the other.  The diagnosis the message invited was
+    "re-run the suite", which could never fix it.
+
+    This is the class, not the instance: v0.9.105 fixed that one token, and any
+    future template token is the same defect under a new name.  A planner that
+    forgets one is caught here, at plan time, before a run is spent.
+    """
+    findings: list[str] = []
+    for cmd in _extract_all_local_checks_commands(text):
+        for token in dict.fromkeys(_UNRESOLVED_PLACEHOLDER_RE.findall(cmd)):
+            inner = token[1:-1]
+            if " " not in inner and "-" not in inner:
+                continue  # a bare word is a literal, not a template token
+            if f"</{inner}>" in cmd:
+                continue  # an XML element, closed in the same command
+            findings.append(
+                f"HARD {slug}: gate command carries an unsubstituted template "
+                f"placeholder {token!r} and cannot run. Resolve it when the "
+                f"plan is rendered \u2014 a literal placeholder fails as "
+                f"\"not found\", which reads as a missing artifact rather than "
+                f"an unfinished command."
+            )
+    return findings
+
+
+
 def lint_wholesuite_gate_outside_verification_subplan(text: str, slug: str) -> list[str]:
     """Flag a whole-suite gate in a sub-plan that is NOT the batch-verification sub-plan.
 
@@ -3380,6 +3439,7 @@ ALL_CHECKS = (
     lint_shared_module_gate,
     lint_gate_extractable,
     lint_gate_executable_on_driver_path,
+    lint_gate_placeholder_unresolved,
     lint_redfirst_step0_under_frontmatter_gate,
     lint_exit_status_discarded,
     lint_broken_process_wait,
