@@ -88,11 +88,14 @@ class TestRecordEmissionFromCommands:
         assert commands, "template has no command: lines"
         combined = "\n".join(commands)
 
-        assert "suite_scope" in combined, (
+        # The command must invoke verification_record.py with --compute-scope
+        # so that suite_scope is derived from the diff, not asserted by the
+        # worker in prose.
+        assert "compute-scope" in combined or "suite_scope" in combined, (
             "after prose-stripping, no surviving command computes or records "
             "suite_scope.  The field exists only in prose bullets today and "
-            "drops out of rendered sub-plans.  Wire it into a gate command "
-            "(e.g. verification_record.py) so it survives."
+            "drops out of rendered sub-plans.  Wire verification_record.py "
+            "--compute-scope into a gate command so it survives."
         )
 
     # ── AC-4 (the thesis): render, strip prose, verify both fields ─────────
@@ -110,12 +113,14 @@ class TestRecordEmissionFromCommands:
             f"got {len(commands)}"
         )
 
-        combined = "\n".join(commands).lower()
+        combined = "\n".join(commands)
         # Both fields must be machine-parseable after prose-stripping.
-        # Any spelling that the runtime can read is acceptable.
-        assert "verified_head" in combined or "rev-parse head" in combined, (
-            "prose-stripped commands do not produce verified_head"
+        # The commands must invoke verification_record.py (for verified_head)
+        # with --compute-scope (for suite_scope).
+        assert "verification_record.py" in combined, (
+            "prose-stripped commands do not invoke verification_record.py "
+            "to produce verified_head"
         )
-        assert "suite_scope" in combined or "scope" in combined, (
+        assert "compute-scope" in combined or "suite_scope" in combined, (
             "prose-stripped commands do not produce suite_scope"
         )

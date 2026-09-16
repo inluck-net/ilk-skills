@@ -72,6 +72,113 @@ def inject_verified_head(text: str, sha: str) -> str:
     return field_line + "\n"
 
 
+_SUITE_SCOPE_RE = re.compile(
+    r"^[-*\s]*\**\s*suite_scope[ \t]*:\**[ \t]*`?\w+`?.*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+# Global/config/fixture patterns whose change invalidates any narrow scope.
+_GLOBAL_PATTERNS = (
+    "conftest.py",
+    "fixtures",
+    "pytest.ini",
+    "setup.cfg",
+    "pyproject.toml",
+    "tox.ini",
+    ".github",
+    "Makefile",
+)
+
+
+def _is_global_change(path: str) -> bool:
+    """True if *path* touches conftest, fixtures, or build config."""
+    norm = path.replace("\\", "/").lower()
+    return any(pat in norm for pat in _GLOBAL_PATTERNS)
+
+
+def _module_test_name(module_stem: str) -> str:
+    """Derive the expected test-file name for a Python module stem."""
+    if module_stem.startswith("test_"):
+        return module_stem + ".py"
+    return f"test_{module_stem}.py"
+
+
+def compute_suite_scope(project: Path, base_sha: str) -> dict:
+    """Derive the suite scope from ``base_sha..HEAD``.
+
+    Returns ``{"mode": "scoped"|"full", "count": N, "reason": str}``.
+
+    Widen to ``full`` (AC-2) when:
+    - the importer set cannot be computed;
+    - the diff touches conftest, fixtures, or build config;
+    - no test files are in the changed set and no changed module maps to an
+      existing test file.
+    """
+    try:
+        r = subprocess.run(
+            ["git", "diff", "--name-only", f"{base_sha}..HEAD"],
+            cwd=project, capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {"mode": "full", "count": 0,
+                "reason": "git diff failed — importer set uncomputable"}
+
+    if r.returncode != 0:
+        return {"mode": "full", "count": 0,
+                "reason": f"git diff exited {r.returncode}"}
+
+    changed = [p for p in r.stdout.strip().splitlines() if p.strip()]
+    if not changed:
+        return {"mode": "scoped", "count": 0, "reason": "empty diff"}
+
+    # Direct test-file changes.
+    test_files = {p for p in changed
+                  if "/test" in p.replace("\\", "/")
+                  or p.replace("\\", "/").endswith("_test.py")}
+
+    # Non-test Python files: try to map to their test counterparts.
+    non_test_py = [p for p in changed
+                   if p.endswith(".py") and p not in test_files]
+    has_global = any(_is_global_change(p) for p in changed)
+
+    if has_global:
+        return {"mode": "full", "count": 0,
+                "reason": "diff touches conftest/fixtures/build config"}
+
+    # Map each changed module to its test file.  If ANY module has no test,
+    # the importer set is incomplete → widen.
+    mapped: set[str] = set()
+    for py_path in non_test_py:
+        stem = Path(py_path).stem
+        test_name = _module_test_name(stem)
+        candidates = list(project.rglob(test_name))
+        if candidates:
+            mapped.add(str(candidates[0].relative_to(project)))
+        else:
+            # Module with no discoverable test file — importer set incomplete.
+            return {"mode": "full", "count": 0,
+                    "reason": f"no test file found for changed module {py_path}"}
+
+    combined = test_files | mapped
+    if not combined:
+        # Only non-Python files changed (docs, configs not in _GLOBAL_PATTERNS).
+        return {"mode": "scoped", "count": 0, "reason": "no test-eligible changes"}
+
+    return {"mode": "scoped", "count": len(combined),
+            "reason": f"{len(combined)} test file(s) selected"}
+
+
+def inject_suite_scope(text: str, mode: str, count: int) -> str:
+    """Return *text* with ``suite_scope: <mode> (N files)`` present (idempotent)."""
+    field_line = f"**suite_scope:** `{mode}` ({count} file{'s' if count != 1 else ''})"
+    if _SUITE_SCOPE_RE.search(text):
+        return _SUITE_SCOPE_RE.sub(field_line, text)
+    stripped = text.rstrip("\n")
+    if stripped:
+        return stripped + "\n" + field_line + "\n"
+    return field_line + "\n"
+
+
 def resolve_batch_record(project: Path, batch_slug: str) -> Path:
     """Resolve ``<ext logs>/verification/<batch_slug>-batch.md`` for a project.
 
@@ -120,6 +227,14 @@ def main(argv: list[str] | None = None) -> int:
         "--batch", default=None, metavar="BATCH_SLUG",
         help="resolve the record as <ext logs>/verification/<BATCH_SLUG>-batch.md",
     )
+    ap.add_argument(
+        "--compute-scope", action="store_true",
+        help="compute suite_scope from base_sha..HEAD and inject it",
+    )
+    ap.add_argument(
+        "--base-sha", default=None, metavar="SHA",
+        help="batch base commit for scope computation (required with --compute-scope)",
+    )
     args = ap.parse_args(argv)
 
     project = Path(args.project).resolve()
@@ -154,6 +269,18 @@ def main(argv: list[str] | None = None) -> int:
 
     text = record.read_text(encoding="utf-8-sig", errors="replace")
     updated = inject_verified_head(text, sha)
+
+    if args.compute_scope:
+        if not args.base_sha:
+            print(
+                "ERROR: --compute-scope requires --base-sha",
+                file=sys.stderr,
+            )
+            return 2
+        scope = compute_suite_scope(project, args.base_sha)
+        updated = inject_suite_scope(updated, scope["mode"], scope["count"])
+        print(f"suite_scope: {scope['mode']} ({scope['count']} files) — {scope['reason']}")
+
     record.write_text(updated, encoding="utf-8")
     print(f"verified_head: {sha} → {record}")
     return 0
