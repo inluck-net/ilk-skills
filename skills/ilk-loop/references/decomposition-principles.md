@@ -502,6 +502,31 @@ Every sub-plan SHOULD declare a `verification_tier` frontmatter field:
   external app that the loop cannot reach. The loop can ship the code
   but cannot confirm it works.
 
+### Tier/evidence consistency
+
+A tier is a claim about evidence. The claim and the evidence must be
+self-consistent in the same frontmatter.
+
+**`loop-verified` must not forbid its own evidence.** A sub-plan that
+declares `verification_tier: loop-verified` while `must_add_tests: false`
+and an empty `unit_test_targets` has asserted "runtime gate proves
+correctness" while simultaneously forbidding the test evidence that claim
+requires. The two exits are honest: either **lower the tier** to
+`compile-only` (admitting no runtime gate exists), or **arm the evidence**
+(set `must_add_tests: true` or name a `unit_test_targets` entry).
+
+`compile-only` and `device-manual` with `must_add_tests: false` are
+legitimate — those tiers make no claim about a runtime gate.
+
+**Measured 2026-09-15, kira-cloudflare issue-5445-work:** a sub-plan
+declared `loop-verified` + `must_add_tests: false` + empty
+`unit_test_targets`. The run added zero tests, passed a fully green suite
+(where green was the expected result of a semantically wrong change — the
+`"complete"` vs `"unavailable"` literal), and shipped as the most
+trustworthy tier. A human PR (#5540) fixed the semantic bug 16 hours later.
+
+Enforced by `plan_lint.py:lint_tier_forbids_its_evidence`.
+
 ### Dependency rule (don't build blind on blind)
 
 **Never queue a sub-plan whose runtime correctness depends on a
