@@ -146,6 +146,8 @@ local_checks:
     timeout: <suite timeout>
   - command: "python3 <skill-root>/ilk-loop/scripts/verification_record.py --project . --batch <batch-slug> --compute-scope --base-sha <base_sha>"
     timeout: 60
+  - command: "python3 -c \"import sys; sys.path.insert(0,'<skill-root>/ilk-loop/scripts'); import verify_attribution as va; rec=va.resolve_batch_record(__import__('pathlib').Path('.'),'<batch-slug>'); text=rec.read_text(errors='replace'); assert not va.has_emptied_record_fields(text), f'record {rec.name} carries heredoc-emptied fields — rewrite with Path.write_text, not a shell heredoc'\""
+    timeout: 30
 ```
 
 **Resolve the suite command, never hand-type it.** The command above uses
@@ -315,7 +317,9 @@ already landed. Re-run only the tracks whose results you do not have.
   spliced the whole of `gh --help` into an error field, because the prose said
   "the monkeypatch captures `gh` calls". The one artifact a human reads was
   mangled precisely where its evidence belonged. If a heredoc is unavoidable,
-  quote the delimiter (`<<'EOF'`).
+  quote the delimiter (`<<'EOF'`). **The gate now checks for this** — see the
+  `verify_attribution.has_emptied_record_fields` command in step 0's
+  `local_checks`.
 - **Commit an empty marker** (the record lives outside the repo):
   `git commit --allow-empty -m "test(verify): record full suite result for <batch-slug> [plan:<slug>#step-0]"`
 - The gate asserts **the external record exists and is non-empty**, not that the
