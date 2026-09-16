@@ -151,13 +151,26 @@ def load_ledger_records(project: Path) -> list[dict[str, Any]] | None:
         return None
 
 
+_STEPS_SECTION_RE = re.compile(r"^## Steps\s*\n(.*?)(?=\n## |\Z)", re.MULTILINE | re.DOTALL)
+
+
 def count_authored_steps(body: str) -> list[int]:
     """Return sorted list of step numbers from ``### Step N`` headings.
 
-    Uses the sub-plan body, NOT ``estimated_steps`` (which the agent also
-    authors and which already disagrees with reality).
+    Scans **only** the ``## Steps`` section — headings under ``## Findings``,
+    ``## Reference reading``, or any other H2 are excluded.  Without this
+    bound, a sub-plan that documents its work under ``## Findings`` using
+    ``### Step N`` subheadings inflates its own authored-step list (measured
+    2026-09-16: ``[0, 0, 1, 2, 3, 3, 4, 4]`` on a five-step plan).
+
+    Legacy fallback: when no ``## Steps`` heading exists, the whole body is
+    scanned.  An empty return would make ``ship_integrity.py:203-204`` treat
+    the plan as "nothing to check", silently disabling the gate on older plan
+    files that lack the heading.
     """
-    return sorted(int(m) for m in _STEP_HEADING_RE.findall(body))
+    m = _STEPS_SECTION_RE.search(body)
+    scan_target = m.group(1) if m else body
+    return sorted(int(x) for x in _STEP_HEADING_RE.findall(scan_target))
 
 
 def check_step_commits(
