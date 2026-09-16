@@ -3369,6 +3369,18 @@ def _strip_frontmatter(text: str) -> str:
     return re.sub(r"^---.*?---", "", text, count=1, flags=re.S)
 
 
+_FENCED_CODE_BLOCK_RE = re.compile(r"^```.*?\n.*?^```", re.S | re.M)
+
+
+def _strip_fenced_code_blocks(text: str) -> str:
+    """Remove fenced code blocks (``` ... ```) from *text*.
+
+    Used to avoid treating documentation examples as real plan content.
+    Does not affect inline backticks.
+    """
+    return _FENCED_CODE_BLOCK_RE.sub("", text)
+
+
 def _extract_at_base_table_node_ids(body: str) -> list[str]:
     """Extract node IDs from the `## At-base rerun` table.
 
@@ -3394,7 +3406,7 @@ def _extract_at_base_table_node_ids(body: str) -> list[str]:
             continue
         first_cell = cells[1]
         # Skip header/separator rows.
-        if "node id" in first_cell.lower() or "----" in first_cell:
+        if "node id" in first_cell.lower() or re.fullmatch(r"-+", first_cell):
             continue
         if first_cell:
             node_ids.append(first_cell)
@@ -3459,6 +3471,57 @@ def lint_verification_attribution_unmeasured(text: str, slug: str) -> list[str]:
             f"regressions marked green. See "
             f"templates/batch-verification-subplan.md."
         )
+
+    # Unfilled table detection (AC-2, AC-3, AC-4).
+    #
+    # When the heading and worktree are present, check whether the table is
+    # unfilled.  Two sub-cases, each a different defect:
+    #
+    #   - Template example rows only (AC-2): always flagged, regardless of
+    #     whether a suite gate exists.  The rows are placeholders from the
+    #     template, not measurements.
+    #
+    #   - Empty table, no suite gate (AC-3): flagged when no test-suite
+    #     runner is declared in local_checks.  An empty table is legitimate
+    #     alongside a recorded green suite — but the plan cannot know that
+    #     at plan time, so empty-plus-no-suite-gate is a finding.
+    if has_heading and has_worktree:
+        # Strip fenced code blocks so documentation examples (e.g. in the
+        # template itself) are not treated as real plan content.
+        body_no_code = _strip_fenced_code_blocks(body)
+
+        # The batch-verification template carries placeholder values
+        # (e.g. "<short-slug>-verify") — it is documentation, not a real
+        # sub-plan.  Skip unfilled-table checks on it.
+        _is_template = bool(re.search(r"<[a-z][\w-]*>", text[:500]))
+        node_ids = _extract_at_base_table_node_ids(body_no_code)
+        template_ids = _template_example_node_ids()
+        has_suite = _has_suite_gate(text)
+
+        if not _is_template and node_ids and template_ids and all(nid in template_ids for nid in node_ids):
+            # Table contains ONLY template example rows — unfilled placeholder.
+            findings.append(
+                f"HARD {slug}: batch-verification sub-plan's "
+                f"`## At-base rerun` section carries only the template's "
+                f"example rows ({', '.join(node_ids)}) — this is an "
+                f"unfilled placeholder, not a measured result. A table row is "
+                f"not evidence because it is a row; it is evidence because "
+                f"something ran. Run the suite, re-run every failing node id "
+                f"at `base_sha` in a detached worktree, and replace the "
+                f"placeholder with real rows. See "
+                f"templates/batch-verification-subplan.md."
+            )
+        elif not _is_template and not node_ids and not has_suite:
+            # Empty table AND no suite gate anywhere in the sub-plan.
+            findings.append(
+                f"HARD {slug}: batch-verification sub-plan's "
+                f"`## At-base rerun` table has zero data rows and the "
+                f"sub-plan declares no test-suite gate in local_checks. "
+                f"An empty table is legitimate only alongside a recorded "
+                f"green suite, but nothing in this sub-plan runs one. "
+                f"Declare a pytest/vitest/jest local_check gate so the "
+                f"table's emptiness is backed by a measurement."
+            )
 
     for cmd in _extract_all_local_checks_commands(text):
         if _PROSE_ATTRIBUTION_COUNT_RE.search(cmd):
