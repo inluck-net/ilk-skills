@@ -496,5 +496,45 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+# ── heredoc-emptied record detection ─────────────────────────────────────────
+#
+# An unquoted heredoc command-substitutes every backtick.  A verification
+# record written that way loses its backticked values silently — the step-1
+# gate passes because it reads suite_failed and the at-base table, neither of
+# which is affected.  The detector keys on the mangling signature (AC-2):
+#
+# * a list item whose content starts with a separator (`— `, `- `, `: `);
+# * a `**Field:**` whose value is empty or starts with a separator.
+#
+# A field whitelist would need updating for every new template.  The signature
+# is stable because it is the *output* of heredoc mangling, not its *input*.
+
+_EMPTIED_LIST_RE = re.compile(
+    r"^\s*\d+\.\s+(?:—|[-:])\s",  # "1.  — added  to schema"
+    re.MULTILINE,
+)
+_EMPTIED_FIELD_RE = re.compile(
+    r"^\*\*[^*]+:\*\*\s*$",  # "**Field:**" with nothing after the closing **
+    re.MULTILINE,
+)
+
+
+def has_emptied_record_fields(text: str) -> bool:
+    """True when *text* carries the heredoc-mangling signature.
+
+    A record written with an unquoted heredoc loses every backticked value.
+    The result looks like: ``1.  — added  to schema expected set`` — a list
+    item whose content starts with a separator where a backticked name was.
+
+    AC-3: ``_(no failures)_`` and empty at-base tables are legitimate and
+    must not trigger this.
+    """
+    if _EMPTIED_LIST_RE.search(text):
+        return True
+    if _EMPTIED_FIELD_RE.search(text):
+        return True
+    return False
+
+
 if __name__ == "__main__":
     sys.exit(main())
