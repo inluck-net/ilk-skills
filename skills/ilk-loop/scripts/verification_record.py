@@ -30,6 +30,16 @@ import sys
 from pathlib import Path
 
 
+def _git(project: Path, *args: str) -> str | None:
+    """Run a read-only git command, returning stripped stdout or None."""
+    try:
+        r = subprocess.run(["git", *args], cwd=project, capture_output=True,
+                           text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
 def read_head_from_git(project: Path) -> str | None:
     """Return the full 40-char HEAD sha, or None if unresolvable."""
     try:
@@ -51,7 +61,7 @@ def read_head_from_git(project: Path) -> str | None:
 
 
 _VERIFIED_HEAD_RE = re.compile(
-    r"^[-*\s]*\**\s*head[^:\n]*:\**[ \t]*`?[0-9a-fA-F]{7,40}`?\s*$",
+    r"^[-*\s]*\**\s*(?:verified_)?head[^:\n]*:\**[ \t]*`?([0-9a-fA-F]{7,40})`?\s*$",
     re.MULTILINE | re.IGNORECASE,
 )
 
@@ -177,6 +187,99 @@ def inject_suite_scope(text: str, mode: str, count: int) -> str:
     if stripped:
         return stripped + "\n" + field_line + "\n"
     return field_line + "\n"
+
+
+def _resolve_project_verification_dir(project: Path) -> Path:
+    """Return ``<ext logs>/verification/`` for *project*, raising if unresolvable."""
+    scripts_dir = Path(__file__).resolve().parent
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    try:
+        from ilk_paths import external_logs_dir, resolve_project_key  # type: ignore[import-untyped]
+    except ImportError as exc:
+        raise FileNotFoundError(f"ilk_paths unavailable: {exc}")
+
+    key = resolve_project_key(project)
+    if not key:
+        raise FileNotFoundError(
+            f"no ilk project key resolves from {project} — cannot locate verification dir"
+        )
+    return external_logs_dir(key) / "verification"
+
+
+# Regexes for fields written by ``inject_verified_head`` and the step-0 gate.
+_RESOLVED_TREE_RE = re.compile(
+    r"^[-*\s]*\**\s*verified_tree\s*:\**[ \t]*`?([0-9a-fA-F]{7,40})`?\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def resolve_previous_batch_tree(project: Path) -> tuple[str, Path]:
+    """Find the most recent ``*-batch.md`` and resolve the tree it verified.
+
+    Reads ``verified_tree`` directly when present; falls back to resolving
+    ``verified_head`` through git so an older record that only names the head
+    still works (the tree it measured is what matters, not the head).
+
+    **A miss lists what is present**, as ``resolve_batch_record`` already does:
+    an absence a reader cannot check is how a wrong search space passes for an
+    empty one.
+
+    Returns ``(tree_sha, record_path)``.  Raises ``FileNotFoundError`` when no
+    records exist or when the chosen record names neither a tree nor a head.
+    """
+    vdir = _resolve_project_verification_dir(project)
+    records = sorted(vdir.glob("*-batch.md"), reverse=True)
+    if not records:
+        raise FileNotFoundError(
+            f"no verification records found in {vdir} — the previous batch's "
+            f"tree cannot be resolved.  Measure the baseline from scratch."
+        )
+
+    record = records[0]
+    text = record.read_text(encoding="utf-8-sig", errors="replace")
+
+    # Prefer verified_tree (machine-form, no git dependency).
+    m = _RESOLVED_TREE_RE.search(text)
+    if m:
+        return m.group(1), record
+
+    # Fall back to verified_head → resolve its tree through git.
+    h = _VERIFIED_HEAD_RE.search(text)
+    if not h:
+        raise FileNotFoundError(
+            f"{record.name} names neither verified_tree nor verified_head — "
+            f"its tree is unknown and cannot be compared.  Add one of those "
+            f"fields in step 0 and re-run."
+        )
+    head_sha = h.group(1)
+    tree_sha = _git(project, "rev-parse", f"{head_sha}^{{tree}}")
+    if tree_sha is None:
+        raise FileNotFoundError(
+            f"{record.name} declares head {head_sha}, which this repo cannot "
+            f"resolve — so its tree cannot be compared."
+        )
+    return tree_sha, record
+
+
+def resolve_baseline(
+    project: Path, *, base_tree: str
+) -> tuple[dict | None, Path] | None:
+    """Reuse the previous batch's result when its tree matches *base_tree*.
+
+    Returns ``(counts, source_record)`` on a match, or ``None`` when the
+    previous record's tree differs or cannot be established (caller must
+    measure).  The counts dict is a placeholder until step 2 fills in the
+    extraction; for now a tree match returns ``{}`` and a miss returns ``None``.
+    """
+    try:
+        record_tree, record_path = resolve_previous_batch_tree(project)
+    except FileNotFoundError:
+        return None
+
+    if record_tree == base_tree:
+        return {}, record_path
+    return None
 
 
 def resolve_batch_record(project: Path, batch_slug: str) -> Path:
