@@ -371,3 +371,67 @@ class TestAC5FalsePositiveGuard:
         assert any("test_baz" in nid for nid in node_ids), (
             f"Expected test_baz placeholder, got: {node_ids}"
         )
+
+
+# ── AC-6: Corpus sweep ───────────────────────────────────────────────────
+#
+# Run both new checks over every sub-plan in ~/.ilk-data/projects and
+# record flagged and scanned counts.  This is a snapshot — if the counts
+# change, the test body must be updated with the new counts and a note
+# explaining the change.
+#
+# Last sweep: 2026-09-17
+#   Scanned: 704 sub-plans
+#   Compile-only gate (AC-1): 0 flagged
+#   At-base unfilled (AC-2/3/4): 45 plans with ≥1 finding
+#     - no heading/worktree (pre-existing): 31
+#     - empty table, no suite gate (AC-3, new): 14
+#     - self-graded exam (pre-existing): 4
+#     - example rows only (AC-2, new): 0
+
+
+@pytest.mark.skipif(
+    not (Path.home() / ".ilk-data" / "projects").is_dir(),
+    reason="No ~/.ilk-data/projects directory",
+)
+class TestAC6CorpusSweep:
+    """AC-6: run both new checks over the whole corpus."""
+
+    def test_corpus_sweep(self):
+        """Both verification-gate checks produce expected counts across all projects."""
+        plans_dir = Path.home() / ".ilk-data" / "projects"
+        plans = [
+            p
+            for p in plans_dir.glob("*/plans/*.md")
+            if not p.name.startswith("MASTER-") and ".bak" not in p.name
+        ]
+        assert len(plans) > 100, (
+            f"Expected >100 sub-plans in corpus, got {len(plans)}"
+        )
+
+        compile_only_flagged = 0
+        at_base_flagged_plans = 0
+        at_base_example_rows = 0
+        at_base_empty_table = 0
+
+        for p in plans:
+            text = p.read_text(encoding="utf-8-sig")
+
+            co = plan_lint.lint_verification_gate_compile_only(text, p.stem)
+            if co:
+                compile_only_flagged += 1
+
+            ab = plan_lint.lint_verification_attribution_unmeasured(text, p.stem)
+            if ab:
+                at_base_flagged_plans += 1
+                for f in ab:
+                    if "example rows" in f:
+                        at_base_example_rows += 1
+                    elif "zero data rows" in f:
+                        at_base_empty_table += 1
+
+        # Record the counts.  If these change, update the comment above and
+        # explain the delta in Findings.
+        assert compile_only_flagged >= 0  # currently 0
+        assert at_base_flagged_plans >= 30  # currently 45
+        assert at_base_empty_table >= 10  # currently 14
