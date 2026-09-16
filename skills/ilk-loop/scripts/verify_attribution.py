@@ -219,6 +219,9 @@ def derive_attributed(rows: list[list[str]]) -> list[list[str]]:
     return bad
 
 
+_ATTRIB_OK = {"YES", "NO"}
+
+
 def attributed_rows(rows: list[list[str]]) -> list[list[str]]:
     """Rows whose FINAL cell marks the failure as attributed — LEGACY path.
 
@@ -229,8 +232,30 @@ def attributed_rows(rows: list[list[str]]) -> list[list[str]]:
     The final cell is the ``attributed`` column. Matching on the whole row
     instead would also hit the ``yes`` in ``in baseline_red`` and fail a row that
     was correctly exonerated.
+
+    An unrecognised verdict cell (e.g. ``no (fixed)``, ``N/A``) is refused,
+    not silently read as not-attributed.  The tolerant-reader substitution —
+    unrecognised treated as benign — is the defect this whole family exists
+    to close.
     """
-    return [r for r in rows if r and r[-1].strip().upper() == "YES"]
+    bad: list[list[str]] = []
+    for r in rows:
+        if not r:
+            continue
+        cell = r[-1].strip().upper()
+        if cell not in _ATTRIB_OK:
+            node = r[0] if r else "<unknown>"
+            raise VerificationError(
+                f"unrecognised `attributed` value {r[-1]!r} for {node}. "
+                f"Legal values are YES or no (case- and whitespace-tolerant). "
+                f"A value the checker cannot read is not a pass — if the "
+                f"failure was genuinely fixed, re-run the at-base suite at "
+                f"the current tree and record the new result so the table "
+                f"describes the tree as it is."
+            )
+        if cell == "YES":
+            bad.append(r)
+    return bad
 
 
 def verify(record_path: Path) -> tuple[str, int]:
