@@ -23,7 +23,12 @@ Three assertions, all of them measurements:
 
 Usage::
 
-    python3 verify_attribution.py <record path>
+    python3 verify_attribution.py --batch batch-2026-09-15c   # preferred
+    python3 verify_attribution.py /abs/path/to/record.md
+
+Prefer ``--batch``: the record lives under the external logs dir, whose absolute
+path differs per host, so a path baked into a plan file is a path that is wrong
+on the second machine.  ``--batch`` resolves it through ``ilk_paths`` instead.
 
 Exit 0 when the batch is verified; non-zero, with the reason on stderr, when it
 is not.  Stdlib only.
@@ -56,9 +61,55 @@ _SUITE_LINE_RE = re.compile(r"^Suite:.*?\b([0-9]+)[ \t]+failed\b", re.MULTILINE)
 # The "no failures" marker step 0 writes for a green suite.
 _NO_FAILURES_RE = re.compile(r"_\(\s*no failures\s*\)_", re.IGNORECASE)
 
+# An argument still carrying a template placeholder, e.g. `<record path>`.
+_PLACEHOLDER_RE = re.compile(r"<[^>]*>")
+
+# The commit the record says its suite ran on. Machine form first; the bold
+# prose spellings already in the wild are accepted too, because the refusal
+# below is about the field being ABSENT, not about its formatting.
+#
+# A sha is required — six records across all projects carried a head line on
+# 2026-09-16 and two of them said `current main` and `asserted and confirmed`.
+# Prose is not a commit, and must not read as one.
+_VERIFIED_HEAD_RE = re.compile(
+    r"^[-*\s]*\**\s*head[^:\n]*:\**[ \t]*`?([0-9a-fA-F]{7,40})`?\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+_VERIFIED_TREE_RE = re.compile(
+    r"^[-*\s]*\**\s*verified_tree\s*:\**[ \t]*`?([0-9a-fA-F]{7,40})`?\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+
 
 class VerificationError(Exception):
     """The record does not establish that the batch is clean."""
+
+
+def reject_placeholder(raw: str) -> None:
+    """Refuse an argument the planner never substituted.
+
+    The template carried ``verify_attribution.py <record path>`` and told the
+    planner to resolve it.  Twice on 2026-09-15 the planner resolved
+    ``<skill-root>`` and ``<batch-slug>`` beside it and left this one alone, so
+    the loop ran the gate with a literal ``<record path>``.  It failed as
+    "record not found", which reads as *step 0 never wrote its record* — and the
+    response to that diagnosis is to re-run the suite, not to fix the command.
+    Both gh-resolve batches (2026-09-15c and 2026-09-15d) were reverted from
+    ``shipped`` to ``in-progress`` by ship-integrity on that misreading, after
+    their suites had in fact run green.
+
+    So say which of the two it is.  A wrong path and an unfilled placeholder
+    both produce an absent file; only one of them is fixed by looking at the
+    plan file.
+    """
+    if _PLACEHOLDER_RE.search(raw):
+        raise VerificationError(
+            f"unsubstituted template placeholder in the record argument: {raw!r}. "
+            f"The plan file copied this command from the batch-verification "
+            f"template without resolving it — fix the command in the sub-plan's "
+            f"step-1 `local_checks`, do not re-run the suite. Prefer "
+            f"`--batch <batch-slug>`, which needs no host path."
+        )
 
 
 def parse_failure_count(text: str) -> int:
@@ -177,6 +228,141 @@ def verify(record_path: Path) -> tuple[str, int]:
 
 
 
+def resolve_batch_record(project: Path, batch_slug: str) -> Path:
+    """Resolve ``<ext logs>/verification/<batch_slug>-batch.md`` for a project.
+
+    The record lives outside the repo, under a data root that differs per host
+    (and per ``ILK_DATA_HOME``).  A plan file that hardcodes the absolute path
+    is correct on the machine that planned the batch and wrong on the other one
+    — the same class of defect as resolving a conventional path instead of a
+    configured one.  So the plan names the batch and this resolves the path.
+
+    A miss lists the directory's actual contents.  "not found" plus a path the
+    reader cannot check is how a wrong search space passes for an empty one.
+    """
+    scripts_dir = Path(__file__).resolve().parent
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    try:
+        from ilk_paths import external_logs_dir, resolve_project_key  # type: ignore[import-untyped]
+    except ImportError as exc:  # pragma: no cover - toolkit always ships it
+        raise VerificationError(f"ilk_paths unavailable, cannot resolve --batch: {exc}")
+
+    key = resolve_project_key(project)
+    if not key:
+        raise VerificationError(
+            f"no ilk project key resolves from {project} — --batch cannot find "
+            f"the external logs dir. Pass the record path explicitly."
+        )
+    verification_dir = external_logs_dir(key) / "verification"
+    record = verification_dir / f"{batch_slug}-batch.md"
+    if record.is_file():
+        return record
+
+    if verification_dir.is_dir():
+        siblings = sorted(p.name for p in verification_dir.glob("*-batch.md"))
+        found = ", ".join(siblings) if siblings else "(0 *-batch.md files)"
+        raise VerificationError(
+            f"no record for batch {batch_slug!r} at {record}. "
+            f"{verification_dir} holds: {found}"
+        )
+    raise VerificationError(
+        f"no record for batch {batch_slug!r}: {verification_dir} does not exist. "
+        f"Step 0 writes it; if step 0 ran, check the resolved project key ({key})."
+    )
+
+
+def _git(project: Path, *args: str) -> str | None:
+    """Run a read-only git command, returning stripped stdout or None."""
+    import subprocess
+    try:
+        r = subprocess.run(["git", *args], cwd=project, capture_output=True,
+                           text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def check_verified_tree(project: Path, record_path: Path) -> tuple[bool, str]:
+    """Is the tree the record verified still the tree we are about to certify?
+
+    ``write_gate_record`` stamps the proof with the tree as it is **at write
+    time**, which is only the verified tree if nothing landed in between.  It
+    is not the same question as "did the suite pass", and conflating them
+    writes a proof for code no suite has run on.
+
+    Downstream already catches a proof that *ages*: ``validate_record``
+    compares the record's ``tree_sha`` against the tree now, and returns
+    ``stale_head``/``stale_tree`` once anything lands.  What nothing catches is
+    a proof **born stale** — written by a gate re-run on a tree the suite never
+    saw.  Every downstream check compares the proof to *now*, and such a proof
+    was written *now*.
+
+    Measured on gh-resolve 2026-09-16, and this is the case that matters: both
+    verification sub-plans were about to have their step-1 gate re-run after a
+    placeholder fix.  ``batch-2026-09-15c-batch.md`` declares head ``c3fa0bf``,
+    whose tree is ``0fc84c67ce99``; the tree had since moved to ``799468f774a4``
+    — **26 files, +2900/-99** — so that re-run would have stamped ``verdict:
+    pass`` over 2900 lines the c suite never ran.  (The record written at 02:17
+    that day was NOT false: its ``tree_sha`` equals d's verified tree exactly,
+    because the commits between were the step's own empty markers.  The hazard
+    is the re-run, not the original write.)
+
+    **Compare trees, not heads.** This step makes an empty marker commit by
+    design, so head always moves and the tree deliberately does not.  A head
+    comparison would refuse every correct run; a tree comparison refuses
+    exactly the runs where code changed.
+
+    Returns ``(licensed, detail)``.  A refusal is loud but not fatal — see
+    ``main``: attribution genuinely passed, so the gate must not go red and
+    revert a sub-plan.  It simply declines to call this tree proven.
+    """
+    try:
+        text = record_path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError as exc:
+        return False, f"cannot re-read the record to check its tree: {exc}"
+
+    m = _VERIFIED_TREE_RE.search(text)
+    if m:
+        declared_tree: str | None = m.group(1)
+        declared_desc = f"verified_tree {declared_tree}"
+    else:
+        h = _VERIFIED_HEAD_RE.search(text)
+        if not h:
+            return False, (
+                f"{record_path.name} declares no verified commit, so the tree its "
+                f"suite ran on is unknown and a proof stamped with the CURRENT "
+                f"tree would be asserting something unmeasured. Add a "
+                f"`verified_head: <sha>` line in step 0 (the template now writes "
+                f"one) and re-run this gate."
+            )
+        declared_head = h.group(1)
+        declared_tree = _git(project, "rev-parse", f"{declared_head}^{{tree}}")
+        if declared_tree is None:
+            return False, (
+                f"{record_path.name} declares head {declared_head}, which this "
+                f"repo cannot resolve — so its tree cannot be compared. A proof "
+                f"cannot rest on a commit that is not here."
+            )
+        declared_desc = f"head {declared_head} (tree {declared_tree[:12]})"
+
+    current_tree = _git(project, "rev-parse", "HEAD^{tree}")
+    if current_tree is None:
+        return False, "cannot resolve the current tree; refusing to write a proof about it"
+
+    if current_tree.startswith(declared_tree) or declared_tree.startswith(current_tree):
+        return True, f"verified tree still current ({current_tree[:12]})"
+
+    changed = _git(project, "diff", "--stat", declared_tree, "HEAD") or "(diff unavailable)"
+    first_line = changed.strip().splitlines()[-1] if changed.strip() else "(no stat)"
+    return False, (
+        f"the tree moved after verification: record verified {declared_desc}, "
+        f"current tree {current_tree[:12]}. Changes since: {first_line}. "
+        f"The suite has not run on this tree, so it is not proven — re-run "
+        f"step 0 at the current tree rather than stamping this one."
+    )
+
+
 def write_gate_record(project: Path, excused: int) -> tuple[bool, str]:
     """Record the verified verdict where the PROOF CHECK actually reads it.
 
@@ -253,14 +439,34 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Re-derive a batch verification verdict from its at-base rerun table."
     )
-    ap.add_argument("record", help="path to the batch's verification record (.md)")
+    ap.add_argument("record", nargs="?",
+                    help="path to the batch's verification record (.md); "
+                         "prefer --batch, which needs no host-specific path")
+    ap.add_argument("--batch", default=None, metavar="BATCH_SLUG",
+                    help="resolve the record as <ext logs>/verification/"
+                         "<BATCH_SLUG>-batch.md (e.g. --batch batch-2026-09-15c)")
     ap.add_argument("--project", default=".",
                     help="project root whose batch-gate record to update (default: cwd)")
     ap.add_argument("--no-write-gate-record", action="store_true",
                     help="verify only; do not record the verdict in batch-gate.json")
     args = ap.parse_args(argv)
+
+    project = Path(args.project).resolve()
+    if bool(args.record) == bool(args.batch):
+        # Both or neither. Neither leaves nothing to check; both invites a plan
+        # that passes a stale path next to a correct slug and gets the stale one.
+        print("ATTRIBUTION FAILED: pass exactly one of <record path> or "
+              "--batch <batch-slug>.", file=sys.stderr)
+        return 2
+
     try:
-        message, excused = verify(Path(args.record))
+        if args.batch:
+            reject_placeholder(args.batch)
+            record_path = resolve_batch_record(project, args.batch)
+        else:
+            reject_placeholder(args.record)
+            record_path = Path(args.record)
+        message, excused = verify(record_path)
     except VerificationError as exc:
         print(f"ATTRIBUTION FAILED: {exc}", file=sys.stderr)
         return 1
@@ -271,7 +477,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_write_gate_record:
         print(f"{message}; gate record not written (--no-write-gate-record)")
         return 0
-    ok, detail = write_gate_record(Path(args.project).resolve(), excused)
+
+    # A pass licenses a proof only for the tree the suite actually ran on.
+    licensed, why = check_verified_tree(project, record_path)
+    if not licensed:
+        print(f"{message}; PROOF NOT RECORDED — {why}")
+        print(f"PROOF NOT RECORDED: {why}", file=sys.stderr)
+        return 0
+
+    ok, detail = write_gate_record(project, excused)
     if ok:
         print(f"{message}; batch-gate record written to {detail}")
     else:

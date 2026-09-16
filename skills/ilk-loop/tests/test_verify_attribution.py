@@ -219,3 +219,229 @@ class TestGateRecordBridge:
         import batch_gate  # noqa: E402
         rec = batch_gate.read_record(batch_gate.resolve_runtime_dir(proj))
         assert rec.tree_sha, "without tree_sha the marker commit invalidates the proof"
+
+
+# ── the unsubstituted placeholder ───────────────────────────────────────────
+#
+# The template shipped `verify_attribution.py <record path>` and asked the
+# planner to resolve it. On 2026-09-15 the planner resolved `<skill-root>` and
+# `<batch-slug>` in the same file and left this one literal, on BOTH gh-resolve
+# batches (2026-09-15c and 2026-09-15d). The gate then failed as "record not
+# found" — which reads as "step 0 never wrote its record", so ship-integrity
+# reverted each sub-plan from shipped to in-progress after a green suite.
+
+class TestPlaceholderRefusal:
+    def test_literal_placeholder_is_named_as_such(self) -> None:
+        with pytest.raises(va.VerificationError, match="unsubstituted template placeholder"):
+            va.reject_placeholder("<record path>")
+
+    def test_placeholder_anywhere_in_the_argument_is_caught(self) -> None:
+        """A half-resolved path is still unrunnable."""
+        with pytest.raises(va.VerificationError, match="unsubstituted"):
+            va.reject_placeholder("/Users/x/logs/verification/<batch-slug>-batch.md")
+
+    def test_a_real_path_passes_through(self) -> None:
+        va.reject_placeholder("/Users/x/logs/verification/batch-2026-09-15c-batch.md")
+
+    def test_cli_refuses_the_placeholder_without_blaming_step_0(self, capsys) -> None:
+        """The message must point at the plan file, not at a missing record."""
+        assert va.main(["<record path>", "--no-write-gate-record"]) == 1
+        err = capsys.readouterr().err
+        assert "unsubstituted template placeholder" in err
+        assert "do not re-run the suite" in err
+
+
+# ── --batch: the record path is resolved, never hardcoded ───────────────────
+
+class TestBatchResolution:
+    def _project_with_record(self, tmp_path: Path, monkeypatch, body: str,
+                             slug: str = "batch-2026-09-15c"):
+        import subprocess
+        monkeypatch.setenv("ILK_DATA_HOME", str(tmp_path / "data"))
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=proj, check=True)
+
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        from ilk_paths import external_logs_dir, resolve_project_key  # noqa: E402
+        key = resolve_project_key(proj)
+        vdir = external_logs_dir(key) / "verification"
+        vdir.mkdir(parents=True, exist_ok=True)
+        if body is not None:
+            (vdir / f"{slug}-batch.md").write_text(body, encoding="utf-8")
+        return proj, vdir
+
+    def test_resolves_the_record_from_the_slug(self, tmp_path: Path, monkeypatch) -> None:
+        proj, vdir = self._project_with_record(
+            tmp_path, monkeypatch, "suite_failed: 0\n\n## At-base rerun\n\n_(no failures)_\n")
+        found = va.resolve_batch_record(proj, "batch-2026-09-15c")
+        assert found == vdir / "batch-2026-09-15c-batch.md"
+
+    def test_a_miss_lists_what_is_actually_there(self, tmp_path: Path, monkeypatch) -> None:
+        """An unconstructible empty answer: name the siblings, not just the miss.
+
+        "not found: <path>" and "you looked in the wrong directory" are the same
+        string, and the second one is the expensive mistake.
+        """
+        proj, _ = self._project_with_record(
+            tmp_path, monkeypatch, "suite_failed: 0\n", slug="batch-2026-09-15d")
+        with pytest.raises(va.VerificationError) as exc:
+            va.resolve_batch_record(proj, "batch-2026-09-15c")
+        assert "batch-2026-09-15d-batch.md" in str(exc.value)
+
+    def test_end_to_end_via_cli(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        proj, _ = self._project_with_record(
+            tmp_path, monkeypatch, "suite_failed: 0\n\n## At-base rerun\n\n_(no failures)_\n")
+        rc = va.main(["--batch", "batch-2026-09-15c", "--project", str(proj),
+                      "--no-write-gate-record"])
+        assert rc == 0
+        assert "none attributed" in capsys.readouterr().out
+
+    def test_both_forms_at_once_is_refused(self, tmp_path: Path, capsys) -> None:
+        """A stale path beside a correct slug must not silently pick one."""
+        rc = va.main([str(tmp_path / "r.md"), "--batch", "batch-x",
+                      "--no-write-gate-record"])
+        assert rc == 2
+        assert "exactly one" in capsys.readouterr().err
+
+    def test_neither_form_is_refused(self, capsys) -> None:
+        assert va.main(["--no-write-gate-record"]) == 2
+        assert "exactly one" in capsys.readouterr().err
+
+
+# ── the proof must cover the tree the suite ran on ──────────────────────────
+#
+# write_gate_record stamps the proof with the tree at WRITE time. Downstream
+# catches a proof that AGES (validate_record -> stale_head). What nothing
+# catches is a proof born stale: a gate re-run on a tree the suite never saw.
+# Measured on gh-resolve 2026-09-16 - re-running c's step-1 gate after a
+# placeholder fix would have stamped pass over a tree 26 files / +2900 lines
+# past the one its suite ran on.
+
+class TestVerifiedTreeGuard:
+    def _repo(self, tmp_path: Path, monkeypatch):
+        import subprocess
+        monkeypatch.setenv("ILK_DATA_HOME", str(tmp_path / "data"))
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path / "home"),
+               "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+        subprocess.run(["git", "init", "-q"], cwd=proj, check=True)
+        (proj / "code.py").write_text("x = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=proj, check=True, env=env)
+        subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=proj, check=True, env=env)
+        return proj, env
+
+    def _head(self, proj) -> str:
+        import subprocess
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=proj,
+                              capture_output=True, text=True).stdout.strip()
+
+    def _record(self, tmp_path: Path, head: str | None) -> Path:
+        body = "suite_failed: 0\n\n"
+        if head:
+            body += f"**Head:** {head}\n\n"
+        body += "## At-base rerun\n\n_(no failures)_\n"
+        p = tmp_path / "rec.md"
+        p.write_text(body, encoding="utf-8")
+        return p
+
+    def test_empty_marker_commit_does_not_invalidate_the_proof(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Head moves, tree does not — this step makes such a commit by design.
+
+        A head comparison would refuse every correct run.
+        """
+        import subprocess
+        proj, env = self._repo(tmp_path, monkeypatch)
+        rec = self._record(tmp_path, self._head(proj))
+        subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "marker"],
+                       cwd=proj, check=True, env=env)
+        ok, why = va.check_verified_tree(proj, rec)
+        assert ok, why
+
+    def test_code_landing_after_the_suite_refuses_the_proof(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """The gh-resolve 2026-09-16 case: a gate re-run after code landed."""
+        import subprocess
+        proj, env = self._repo(tmp_path, monkeypatch)
+        rec = self._record(tmp_path, self._head(proj))
+        (proj / "code.py").write_text("x = 2\n", encoding="utf-8")
+        subprocess.run(["git", "commit", "-qam", "later fix"], cwd=proj, check=True, env=env)
+        ok, why = va.check_verified_tree(proj, rec)
+        assert not ok
+        assert "tree moved after verification" in why
+        assert "re-run step 0" in why
+
+    def test_a_record_naming_no_commit_refuses(self, tmp_path: Path, monkeypatch) -> None:
+        """Unknown is not the same as unchanged; it must not read as a match."""
+        proj, _ = self._repo(tmp_path, monkeypatch)
+        ok, why = va.check_verified_tree(proj, self._record(tmp_path, None))
+        assert not ok
+        assert "declares no verified commit" in why
+
+    def test_prose_where_a_sha_belongs_is_not_a_commit(self, tmp_path: Path, monkeypatch) -> None:
+        """Two real records said `current main` and `asserted and confirmed`."""
+        proj, _ = self._repo(tmp_path, monkeypatch)
+        p = tmp_path / "rec.md"
+        p.write_text("suite_failed: 0\n\n**HEAD:** current main\n\n"
+                     "## At-base rerun\n\n_(no failures)_\n", encoding="utf-8")
+        ok, why = va.check_verified_tree(proj, p)
+        assert not ok
+        assert "declares no verified commit" in why
+
+    def test_a_base_line_is_not_read_as_the_head(self, tmp_path: Path, monkeypatch) -> None:
+        """`**Base ≠ HEAD:** asserted` and `**Base:** <sha>` are not the head."""
+        proj, _ = self._repo(tmp_path, monkeypatch)
+        p = tmp_path / "rec.md"
+        p.write_text(f"suite_failed: 0\n\n**Base:** {self._head(proj)}\n\n"
+                     "## At-base rerun\n\n_(no failures)_\n", encoding="utf-8")
+        ok, why = va.check_verified_tree(proj, p)
+        assert not ok, "a Base line must not be mistaken for the verified head"
+
+    def test_unresolvable_commit_refuses(self, tmp_path: Path, monkeypatch) -> None:
+        proj, _ = self._repo(tmp_path, monkeypatch)
+        ok, why = va.check_verified_tree(proj, self._record(tmp_path, "deadbeefdeadbeef"))
+        assert not ok
+        assert "cannot resolve" in why
+
+    def test_machine_form_verified_tree_is_compared_directly(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        proj, _ = self._repo(tmp_path, monkeypatch)
+        tree = va._git(proj, "rev-parse", "HEAD^{tree}")
+        p = tmp_path / "rec.md"
+        p.write_text(f"suite_failed: 0\n\nverified_tree: {tree}\n\n"
+                     "## At-base rerun\n\n_(no failures)_\n", encoding="utf-8")
+        ok, why = va.check_verified_tree(proj, p)
+        assert ok, why
+
+    def test_cli_still_exits_0_when_the_proof_is_refused(
+        self, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        """Loud, not fatal. Attribution passed; a red gate would revert the sub-plan.
+
+        That is the exact failure this batch spent the morning undoing.
+        """
+        import json as _json, subprocess
+        proj, env = self._repo(tmp_path, monkeypatch)
+        (proj / ".ilk-launch.json").write_text(
+            _json.dumps({"ship": {"suite": {"command": "echo hi", "flags": []}}}),
+            encoding="utf-8")
+        rec = self._record(tmp_path, self._head(proj))
+        (proj / "code.py").write_text("x = 3\n", encoding="utf-8")
+        subprocess.run(["git", "commit", "-qam", "later"], cwd=proj, check=True, env=env)
+
+        rc = va.main([str(rec), "--project", str(proj)])
+        assert rc == 0
+        out = capsys.readouterr()
+        assert "PROOF NOT RECORDED" in out.out
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        import batch_gate  # noqa: E402
+        rd = batch_gate.resolve_runtime_dir(proj)
+        assert not batch_gate.record_path(rd).is_file(), "a refused proof must write nothing"

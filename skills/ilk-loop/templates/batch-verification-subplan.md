@@ -292,6 +292,20 @@ already landed. Re-run only the tracks whose results you do not have.
   verification_dir.mkdir(parents=True, exist_ok=True)
   ```
   Write `<batch-slug>-baseline.md` and `<batch-slug>-batch.md` to that directory.
+- **The record must name the commit its suite ran on, machine-readably:**
+  ```
+  verified_head: <full sha of HEAD when the suite ran>
+  ```
+  Step 1's gate resolves that commit's **tree** and refuses to write a proof
+  when the tree has since moved — otherwise a gate re-run stamps `verdict:
+  pass` over code no suite has seen. It compares trees, not heads, so the empty
+  marker commits this step makes are correctly ignored.
+
+  **A record with no `verified_head` cannot be proven**, by design: unknown is
+  not the same as unchanged. Surveyed 2026-09-16, 6 of 15 existing records
+  across all projects carried any head line at all, in 6 different spellings,
+  two of which were prose (`current main`, `asserted and confirmed`) — which is
+  why the field is now mandatory and parsed strictly as a sha.
 - **Write the record with `Path.write_text`, never a shell heredoc.** An
   unquoted heredoc command-substitutes every backtick in the prose, and a
   verification record is nothing but backticked file paths and test names. On
@@ -310,9 +324,24 @@ already landed. Re-run only the tracks whose results you do not have.
 
 ```yaml
 local_checks:
-  - command: "python3 <skill-root>/ilk-loop/scripts/verify_attribution.py <record path>"
+  - command: "python3 <skill-root>/ilk-loop/scripts/verify_attribution.py --batch <batch-slug>"
     timeout: 120
 ```
+
+**`--batch` takes the same `<batch-slug>` step 0 writes its record under**, and
+resolves `<ext logs>/verification/<batch-slug>-batch.md` itself. Do not pass an
+absolute record path: the external logs dir differs per host, so a path baked
+into the plan is correct on the machine that planned the batch and wrong on the
+other one — a conventional path where a resolved one belongs.
+
+This gate used to take a record path, and that placeholder was the only one in
+the template with no mechanical value to fill. On 2026-09-15 the
+planner resolved `<skill-root>` and `<batch-slug>` in the same file and left it
+literal on **both** gh-resolve batches of that day. The gate then failed as
+"record not found" — indistinguishable from *step 0 never wrote its record* —
+and ship-integrity reverted each sub-plan from `shipped` back to `in-progress`
+**after its suite had run green**. The script now refuses any argument still
+containing `<...>` and says to fix the plan file rather than re-run the suite.
 
 On a clean verdict it also **records the proof** — it writes
 `runtime/batch-gate.json` (verdict, the resolved invocation, `head_sha`,
@@ -325,7 +354,7 @@ if you deliberately want to verify without recording proof. A failed
 verification writes nothing, leaving the previous record to be caught as stale.
 
 `verify_attribution.py` is a real script in the toolkit — resolve
-`<skill-root>` and `<record path>` and leave the rest alone. **Do not inline your
+`<skill-root>` and `<batch-slug>` and leave the rest alone. **Do not inline your
 own copy of this check.** It has two subtleties that were each got wrong once on
 2026-09-15: the verdict is the row's **last cell** (a substring search for `YES`
 also matches the `yes` in `in baseline_red`, failing a correctly-exonerated row),

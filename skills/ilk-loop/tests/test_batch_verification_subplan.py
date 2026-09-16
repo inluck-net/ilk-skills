@@ -421,3 +421,52 @@ class TestAC14Registration:
             "lint_verification_attribution_unmeasured must be in ALL_CHECKS or "
             "lint_file will never call it"
         )
+
+
+class TestStep1GateIsSubstitutable:
+    """Every placeholder in the step-1 gate must have a value the planner fills.
+
+    `<record path>` had none — it named a host-specific absolute path the
+    planner had no way to compute — so it survived into the rendered plan on
+    both gh-resolve batches of 2026-09-15 and made the gate unrunnable. The
+    command now names the batch and lets the script resolve the path.
+    """
+
+    def _gate_command(self) -> str:
+        text = _TEMPLATE.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if "verify_attribution.py" in line and "command:" in line:
+                return line
+        raise AssertionError("template has no verify_attribution gate command")
+
+    def test_gate_uses_batch_slug_not_a_record_path(self) -> None:
+        cmd = self._gate_command()
+        assert "--batch <batch-slug>" in cmd, cmd
+        assert "<record path>" not in cmd, cmd
+
+    def test_every_placeholder_in_the_gate_is_one_the_planner_resolves(self) -> None:
+        import re
+        # These two are substituted throughout the template, so a planner that
+        # renders the file at all renders them.
+        resolvable = {"<skill-root>", "<batch-slug>"}
+        found = set(re.findall(r"<[^>]+>", self._gate_command()))
+        assert found <= resolvable, f"unresolvable placeholder(s): {found - resolvable}"
+
+
+class TestRecordNamesItsVerifiedCommit:
+    """Step 0 must emit `verified_head:`, or step 1 can never prove the batch.
+
+    The guard in verify_attribution refuses a record that names no commit, so a
+    template that does not ask for one would make every future batch unprovable.
+    """
+
+    def test_template_requires_verified_head(self) -> None:
+        text = _TEMPLATE.read_text(encoding="utf-8")
+        assert "verified_head:" in text, (
+            "step 0 must instruct the record to name the commit its suite ran on"
+        )
+
+    def test_template_explains_the_tree_comparison(self) -> None:
+        """A head comparison would refuse every correct run (marker commits)."""
+        text = _TEMPLATE.read_text(encoding="utf-8")
+        assert "compares trees, not heads" in text
