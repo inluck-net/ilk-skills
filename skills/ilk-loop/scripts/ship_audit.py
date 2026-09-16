@@ -163,14 +163,27 @@ def count_authored_steps(body: str) -> list[int]:
     ``### Step N`` subheadings inflates its own authored-step list (measured
     2026-09-16: ``[0, 0, 1, 2, 3, 3, 4, 4]`` on a five-step plan).
 
-    Legacy fallback: when no ``## Steps`` heading exists, the whole body is
-    scanned.  An empty return would make ``ship_integrity.py:203-204`` treat
-    the plan as "nothing to check", silently disabling the gate on older plan
-    files that lack the heading.
+    **Every** ``## Steps`` section is scanned, not the first.  A plan may carry
+    more than one — a scaffold heading near the top, the real one lower down,
+    and sometimes a third in trailing notes.  MEASURED 2026-09-16 on
+    gh-resolve's ``2026-07-29b-plan-carries-the-work.md``: three ``## Steps``
+    headings at lines 64, 155 and 239, with all five ``### Step N`` headings
+    under the SECOND.  Taking the first returned ``[]`` for a five-step plan —
+    which ``ship_integrity.py:203-204`` reads as "nothing to check", silently
+    disabling the gate.  That is the failure this bound was added to prevent,
+    reintroduced by the bound itself, and it was caught by this function's own
+    corpus sweep rather than by a fixture.
+
+    Legacy fallback: when no ``## Steps`` heading exists at all, the whole body
+    is scanned, for the same reason.
     """
-    m = _STEPS_SECTION_RE.search(body)
-    scan_target = m.group(1) if m else body
-    return sorted(int(x) for x in _STEP_HEADING_RE.findall(scan_target))
+    sections = [m.group(1) for m in _STEPS_SECTION_RE.finditer(body)]
+    found: list[int] = []
+    for sec in sections:
+        found.extend(int(x) for x in _STEP_HEADING_RE.findall(sec))
+    if not found and not sections:
+        found = [int(x) for x in _STEP_HEADING_RE.findall(body)]
+    return sorted(found)
 
 
 def check_step_commits(
