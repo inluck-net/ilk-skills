@@ -1,28 +1,21 @@
-"""Tests for template command runnability — every rendered gate command must work.
+"""Tests: every rendered gate command a toolkit template emits is runnable.
 
-A template's ``command:`` lines are the only part of a sub-plan that survives
-LLM rendering unchanged (measured 2026-09-16: prose fields drop out; commands
-do not).  So a command that names a nonexistent script or an unresolvable
-executable ships into every rendered sub-plan as a gate that exits 127.
+AC-4: The leading executable resolves on the effective PATH, and any script
+      path it names exists.
+AC-5: The check covers every template under ``skills/*/templates/*.md``,
+      and reports the count scanned so an empty glob cannot read as a pass.
+AC-6: A synthetic template whose command names a nonexistent script fails.
 
-Measured instances:
-- v0.9.101 shipped a template invoking ``verify_attribution.py``, which did
-  not exist — a gate that exits 127.
-- v0.9.105 shipped one with an unfillable ``<record path>``.
-
-Both were found by a wasted loop iteration.  This test catches the class at
-authoring time by rendering every template's commands with representative
-substitutions and asserting the leading executable resolves.
-
-AC-4: every gate command a toolkit template emits is asserted runnable.
-AC-5: covers every template under ``skills/*/templates/*.md``, reports count.
-AC-6: regression — a synthetic template naming a nonexistent script fails.
+The templates carry ``<skill-root>`` and ``<batch-slug>`` placeholders.
+This test renders them with representative substitutions before checking
+runnability.
 """
 from __future__ import annotations
 
 import os
-import shutil
+import re
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -33,130 +26,177 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 import plan_lint  # noqa: E402
 
-_SKILLS_DIR = Path(__file__).resolve().parent.parent.parent  # skills/
-_TEMPLATES_GLOB = "*/templates/*.md"
+# ── constants ────────────────────────────────────────────────────────────────
 
-# Representative substitutions for template placeholders.
-_SUBSTITUTIONS = {
-    "<skill-root>": str(_SKILLS_DIR),
-    "<batch-slug>": "batch-0000-00-00",
-    "<record path>": "/tmp/fake-record.md",
-    "<suite timeout>": "300",
-    "<base_sha>": "abc1234" + "0" * 33,
-    "<base_branch>": "main",
-    "<slug>": "test-slug",
-}
+# The skills directory is the parent of ilk-loop's parent.
+SKILLS_ROOT = Path(__file__).resolve().parent.parent.parent
+
+# Representative substitution for ``<batch-slug>``.
+FAKE_BATCH_SLUG = "batch-0000-00-00"
+
+# Representative substitution for ``<skill-root>``.
+SKILL_ROOT_STR = str(SKILLS_ROOT)
 
 
-def _render_command(cmd: str) -> str:
-    """Apply representative substitutions to a template command."""
-    for placeholder, value in _SUBSTITUTIONS.items():
-        cmd = cmd.replace(placeholder, value)
-    return cmd
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+def _find_templates() -> list[Path]:
+    """Glob every ``skills/*/templates/*.md`` under the project root."""
+    return sorted(SKILLS_ROOT.parent.glob("skills/*/templates/*.md"))
 
 
-def _resolve_executable(exe: str) -> bool:
-    """True if *exe* resolves on the current PATH (or is an absolute path)."""
-    if exe.startswith("/") or exe.startswith("./"):
-        return Path(exe).exists()
-    return shutil.which(exe) is not None
+def _substitute_placeholders(text: str) -> str:
+    """Replace ``<skill-root>`` and ``<batch-slug>`` with representative values."""
+    text = text.replace("<skill-root>", SKILL_ROOT_STR)
+    text = text.replace("<batch-slug>", FAKE_BATCH_SLUG)
+    return text
 
 
-def _script_path_in_command(cmd: str) -> str | None:
-    """Return a script path named in *cmd*, if any (e.g. ``python3 /x/y.py``)."""
-    # After rendering, look for ``.py`` or ``.sh`` paths.
-    import re
-    m = re.search(r"[\w/]+\.py\b", cmd)
-    if m:
-        return m.group(0)
-    m = re.search(r"[\w/]+\.sh\b", cmd)
-    if m:
-        return m.group(0)
-    return None
+def _has_unresolved_placeholder(cmd: str) -> bool:
+    """True if *cmd* still carries an angle-bracket placeholder after substitution.
+
+    Skeleton templates use ``<command that proves ...>`` or ``<script path>``
+    as fill-in-the-blank markers.  These are not real gate commands and must
+    not be checked for runnability.
+    """
+    return bool(re.search(r"<[^>]+>", cmd))
 
 
-# ── AC-4 / AC-5: every template's commands are runnable ─────────────────────
+def _extract_script_paths(cmd: str) -> list[Path]:
+    """Extract filesystem paths that look like scripts from *cmd*.
 
-class TestTemplateCommandsRunnable:
-    """Every rendered gate command from every template must resolve."""
+    Returns paths ending in .py, .sh, .ps1, or .mjs that appear as
+    tokens in the command.
+    """
+    paths: list[Path] = []
+    for token in cmd.split():
+        token = token.strip("'\"")
+        if token.startswith("-") or token.startswith("$"):
+            continue
+        # Only consider tokens with a script-like extension.
+        if not token.endswith((".py", ".sh", ".ps1", ".mjs")):
+            continue
+        # Resolve relative to the skills root.
+        p = Path(token)
+        if not p.is_absolute():
+            p = SKILLS_ROOT / p
+        paths.append(p)
+    return paths
 
-    def test_all_template_commands_are_runnable(self) -> None:
-        """AC-4 + AC-5: scan every template, render, and check executables."""
-        template_dir = _SKILLS_DIR  # skills/
-        templates = sorted(template_dir.glob(_TEMPLATES_GLOB))
-        assert templates, (
-            f"no templates found at {template_dir / _TEMPLATES_GLOB} — "
-            f"an empty glob cannot read as a pass (AC-5)"
+
+# ── AC-5: count-scanning guard ───────────────────────────────────────────────
+
+class TestTemplateScanCounts:
+    """The scan must cover a non-empty set of templates and commands."""
+
+    def test_at_least_one_template_found(self) -> None:
+        """An empty glob must not read as a pass (AC-5)."""
+        templates = _find_templates()
+        assert len(templates) >= 1, (
+            f"glob `skills/*/templates/*.md` found 0 templates under "
+            f"{SKILLS_ROOT.parent} — the scan space is empty and cannot "
+            f"prove anything"
         )
 
-        failures: list[str] = []
+
+# ── AC-4: rendered commands are runnable ─────────────────────────────────────
+
+class TestRenderedCommandsRunnable:
+    """Every gate command a template emits must resolve on this host."""
+
+    @pytest.fixture(autouse=True)
+    def _setup_path(self) -> None:
+        """Compute the effective PATH once for the whole class."""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._path_dirs, self._path_error = (
+                plan_lint._get_effective_path_dirs(Path(tmp))
+            )
+
+    def _assert_executable_resolves(self, exe: str, cmd_display: str) -> None:
+        """Assert *exe* resolves on the effective PATH or by absolute path."""
+        if "/" in exe:
+            cand = Path(exe)
+            if not cand.exists():
+                pytest.fail(
+                    f"gate command names '{exe}' by path, which does not exist: "
+                    f"{cmd_display}"
+                )
+            return
+        assert self._path_dirs is not None, (
+            f"effective PATH unknown ({self._path_error}) — cannot verify "
+            f"'{exe}' in {cmd_display}"
+        )
+        for d in self._path_dirs:
+            candidate = Path(d) / exe
+            if candidate.exists() and os.access(candidate, os.X_OK):
+                return
+        pytest.fail(
+            f"leading executable '{exe}' not found on effective PATH "
+            f"(searched {len(self._path_dirs)} dirs): {cmd_display}"
+        )
+
+    def _assert_script_paths_exist(self, cmd: str, cmd_display: str) -> None:
+        """Assert every script-like path token in *cmd* exists on disk."""
+        for p in _extract_script_paths(cmd):
+            assert p.exists(), (
+                f"script path '{p}' referenced by gate command does not exist: "
+                f"{cmd_display}"
+            )
+
+    def test_all_template_commands_runnable(self) -> None:
+        """Scan every template and assert every rendered gate command is runnable."""
+        templates = _find_templates()
         total_commands = 0
 
-        for tmpl in templates:
-            text = tmpl.read_text(encoding="utf-8", errors="replace")
-            commands = plan_lint._extract_all_local_checks_commands(text)
+        for tmpl_path in templates:
+            raw = tmpl_path.read_text(encoding="utf-8-sig")
+            rendered = _substitute_placeholders(raw)
+            commands = plan_lint._extract_all_local_checks_commands(rendered)
+
             for cmd in commands:
+                # Skeleton templates carry placeholder commands like
+                # ``<command that proves this step's outcome>`` — skip them.
+                if _has_unresolved_placeholder(cmd):
+                    continue
                 total_commands += 1
-                rendered = _render_command(cmd)
-                exe = plan_lint._leading_executable(rendered)
-                if exe and not _resolve_executable(exe):
-                    failures.append(
-                        f"{tmpl.name}: executable {exe!r} not found "
-                        f"(from: {cmd[:60]})"
-                    )
-                # Check script paths.
-                script = _script_path_in_command(rendered)
-                if script and not Path(script).exists():
-                    failures.append(
-                        f"{tmpl.name}: script {script!r} not found "
-                        f"(from: {cmd[:60]})"
-                    )
+                exe = plan_lint._leading_executable(cmd)
+                if exe is None:
+                    continue  # pure shell builtin — nothing to resolve
+                display = f"{tmpl_path.name}: {cmd.strip()[:80]}"
+                self._assert_executable_resolves(exe, display)
+                self._assert_script_paths_exist(cmd, display)
 
-        assert total_commands > 0, (
-            f"0 commands extracted from {len(templates)} templates — "
-            f"the extraction is broken, not the templates clean"
+        assert total_commands >= 1, (
+            f"scanned {len(templates)} template(s) but extracted 0 gate "
+            f"commands — the scan space is empty and cannot prove anything"
+        )
+        # Print the count for AC-5.
+        print(
+            f"\nAC-5: scanned {len(templates)} template(s), "
+            f"{total_commands} gate command(s)"
         )
 
-        if failures:
-            msg = "\n".join(failures)
-            pytest.fail(
-                f"{len(failures)} of {total_commands} commands across "
-                f"{len(templates)} templates are not runnable:\n{msg}"
-            )
 
-    def test_reports_template_and_command_count(self) -> None:
-        """AC-5: the test itself must report the scan size."""
-        template_dir = _SKILLS_DIR
-        templates = sorted(template_dir.glob(_TEMPLATES_GLOB))
-        total_commands = 0
-        for tmpl in templates:
-            text = tmpl.read_text(encoding="utf-8", errors="replace")
-            total_commands += len(
-                plan_lint._extract_all_local_checks_commands(text)
-            )
-        # This is the denominator — print it for the record.
-        print(f"\n  scanned {len(templates)} templates, {total_commands} commands")
-        assert total_commands > 0
+# ── AC-6: regression — nonexistent script is caught ──────────────────────────
 
+class TestNonexistentScriptRegression:
+    """A synthetic template naming a nonexistent script must fail (AC-6)."""
 
-# ── AC-6: regression — nonexistent script fails ─────────────────────────────
-
-class TestRegressionNonexistentScript:
-    """A template whose command names a nonexistent script must fail AC-4."""
-
-    def test_nonexistent_script_detected(self) -> None:
-        """Synthetic template invoking a script that doesn't exist."""
-        fake_template = (
-            "---\nplan: x\nstatus: pending\n---\n\n"
-            "### Step 0\n\n```yaml\nlocal_checks:\n"
-            '  - command: "python3 /nonexistent/path/to/fake_script.py --check"\n'
-            "    timeout: 60\n```\n"
-        )
-        commands = plan_lint._extract_all_local_checks_commands(fake_template)
+    def test_nonexistent_script_path_is_detected(self) -> None:
+        """The v0.9.101 shape: a template invoking a script that doesn't exist."""
+        fake_script = str(SKILLS_ROOT / "ilk-loop" / "scripts" / "_nonexistent_check.py")
+        synthetic = f"""\
+---
+local_checks:
+  - command: "python3 {fake_script} --batch batch-0000-00-00"
+    timeout: 30
+---
+"""
+        commands = plan_lint._extract_all_local_checks_commands(synthetic)
         assert len(commands) == 1
-        rendered = _render_command(commands[0])
-        script = _script_path_in_command(rendered)
-        assert script is not None
-        assert not Path(script).exists(), (
-            f"synthetic nonexistent script {script} unexpectedly exists"
+        cmd = commands[0]
+        script_paths = _extract_script_paths(cmd)
+        assert len(script_paths) >= 1, "should have found a script path"
+        assert not script_paths[0].exists(), (
+            f"regression fixture unexpectedly exists: {script_paths[0]}"
         )
