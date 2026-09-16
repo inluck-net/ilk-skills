@@ -130,6 +130,76 @@ Both are in the improvement backlog
 2. **Rendered-template runnability check.** Assert that every command a template
    emits is executable as rendered, not merely placeholder-free.
 
+## 6b. The cost half — 70 full suites in one day
+
+The same mechanism was also, separately, **slow without bound**, and that is
+recorded here so no future batch inherits it.
+
+**Measured 2026-09-16 on ilk-skills: 70 whole-suite pytest invocations in one
+day**, ~305s each — roughly six hours of test execution for one batch, which had
+still not converged when it was stopped.
+
+### Why it was unbounded
+
+The verification step asks two questions with one instrument:
+
+| question | needs | got |
+|---|---|---|
+| did this change break anything? | a broad run, **once** | a broad run |
+| did my fix work? | the **failing selection** | a broad run, every time |
+
+The fix loop re-answers the first question every time it should be answering the
+second, with no convergence guarantee — each fix can break something else — and
+no cap on suite runs. `quarantine_subplan.py` bounds *consecutive gate reds*;
+nothing bounded the resource actually burned.
+
+The template already contained the right principle and applied it to the wrong
+half. Of the at-base rerun it says: *"This is cheap — it is the failing
+selection, not the suite. Measured: 2 failing node ids, 0.14s at base."* That is
+exactly the rule the fix loop needed, applied only to exoneration.
+
+### Three compounding bugs, all now fixed
+
+1. **One unmatched module name forced a full run.** `compute_suite_scope`
+   returned `full` from *inside* its mapping loop on the first module with no
+   test file, discarding every selection already computed. The module in
+   question had tests — `test_verification_record_emission.py` and
+   `test_record_is_measured.py` — and the mapper only looked for
+   `test_verification_record.py`. **3102 tests / 305s → 172 tests / 18.6s**
+   once it degraded per module and learned to match prefixes and importers.
+   (`6aa001f`)
+
+2. **`baseline_red` was read from the wrong place, in the wrong shape.** The
+   list lives at `ship.baseline_red` and holds dicts; the reader checked the
+   top level and assumed strings. Six correctly-declared entries covering 32
+   known failures were invisible, so every record said `in baseline_red: no`
+   for all 35 rows, and **24 of 24 at-base reruns were subprocesses
+   rediscovering declared facts**. Declared entries now resolve from the
+   declaration. (`054dc08`)
+
+3. **A declared failure was re-measured anyway** — the same fix; `run_at_base`
+   no longer spawns a subprocess for a node id the project has already
+   exonerated.
+
+Bug 2 is worth its own line: **I reported "baseline_red is empty" as a finding,
+and it was not.** An empty answer from the wrong location is indistinguishable
+from an empty answer from the right one — the exact defect this document is
+about, committed inside the tool built to refuse it, and then published as
+evidence.
+
+### What a plan costs now, and what is still open
+
+Per verification sub-plan, in the happy path: **one suite invocation**, scoped.
+Step 1 parses the record and runs no tests. No other sub-plan may run a broad
+gate (`lint_wholesuite_gate_outside_verification_subplan`).
+
+**Still open, and the reason this section says "cost half" rather than "fixed":**
+the fix loop is still N broad runs, because a red step-0 gate does not advance
+and the next iteration re-runs step 0 in full. The three-pass design —
+discover once, re-run only the failing selection while fixing, confirm once —
+is specified in `docs/verification-record-design.md` and **not implemented**.
+Until it is, the count is `1 + number of fix iterations`, unbounded.
+
 ## 7. The rule this is evidence for
 
 A fix to a gate should ask, before it is called done: **what does this gate
