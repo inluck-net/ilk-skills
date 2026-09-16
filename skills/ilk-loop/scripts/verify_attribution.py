@@ -72,7 +72,7 @@ _PLACEHOLDER_RE = re.compile(r"<[^>]*>")
 # 2026-09-16 and two of them said `current main` and `asserted and confirmed`.
 # Prose is not a commit, and must not read as one.
 _VERIFIED_HEAD_RE = re.compile(
-    r"^[-*\s]*\**\s*head[^:\n]*:\**[ \t]*`?([0-9a-fA-F]{7,40})`?\s*$",
+    r"^[-*\s]*\**\s*(?:verified_)?head[^:\n]*:\**[ \t]*`?([0-9a-fA-F]{7,40})`?\s*$",
     re.MULTILINE | re.IGNORECASE,
 )
 _VERIFIED_TREE_RE = re.compile(
