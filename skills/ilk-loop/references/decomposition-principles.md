@@ -1445,3 +1445,32 @@ re-introduced across several harnesses after being fixed in one. Now mechanical:
 - §16 (gate-scoping) — narrow gates are cheap only when they are also honest.
 - §21 (never launch the loop from a model session) — the same ancestry
   distinction, seen from the launching side rather than the measuring side.
+
+## §22. The frontmatter field is authoritative — `grep -m1` is the wrong instrument
+
+A plan file's frontmatter can be read two ways:
+
+- `parse_frontmatter` (used by the runtime: `loop_status.py`, `ship_audit.py`,
+  `plan_status.py`) returns the **last** value for a key, matching YAML
+  semantics.
+- `grep -m1 '^status:'` returns the **first** value.
+
+When a key appears twice (measured on gh-resolve 2026-09-16: 1 of27 files),
+the two instruments disagree. A session that reads the same file with different
+tools twenty minutes apart reports a "phantom rewrite" — the file never changed,
+the readers did.
+
+**Decision: the frontmatter field is authoritative.** `parse_frontmatter` reads the frontmatter the way the runtime does (last-wins). `grep -m1` is the wrong
+tool for reading a plan field, because it disagrees with the runtime whenever a
+key is duplicated. Use `parse_frontmatter` or an equivalent that reads
+last-wins. The one existing `grep -m1` usage in `run_ilk_loop_claude.sh`
+(line 1236, reading `plan:`) has no known duplicate-key instance and is
+low-risk, but should be migrated for consistency.
+
+**Basis:** YAML's last-wins semantics are the intended convention; the runtime
+already follows them; and a reader that disagrees with the runtime about
+`current_step` under-reports how close the loop is — it errs toward "further
+away", which is the dangerous direction for a mid-run plan edit decision.
+
+**Falsifier:** if a future runtime change makes first-wins the authoritative
+semantics, this section must be updated and `grep -m1` becomes correct.
