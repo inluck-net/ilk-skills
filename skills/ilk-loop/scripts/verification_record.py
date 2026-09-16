@@ -430,7 +430,8 @@ AT_BASE_CAP = 50
 
 
 def run_at_base(project: Path, base_sha: str, node_ids: list[str],
-                invocation: str, timeout: int = 600) -> dict:
+                invocation: str, timeout: int = 600,
+                baseline_red: list[dict] | None = None) -> dict:
     """Re-run each failing node id at the batch's base commit.
 
     This is the step the template describes as a procedure a worker performs.
@@ -447,6 +448,20 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
     import tempfile
     if not node_ids:
         return {}
+
+    # A declared baseline_red entry is ALREADY an exoneration — re-measuring it
+    # pays a subprocess to rediscover a recorded fact. MEASURED 2026-09-16: 24
+    # of 25 at-base rows had verdict "failed", i.e. 24 individual pytest runs
+    # confirming known-failing tests.
+    #
+    # Declared entries are still RECORDED as rows (the table keeps one row per
+    # failure), with the verdict taken from the declaration rather than a rerun.
+    declared = {n for n in node_ids if _in_baseline_red(n, baseline_red or [])}
+    node_ids = [n for n in node_ids if n not in declared]
+    verdicts_declared = {n: "failed" for n in declared}
+    if not node_ids:
+        return verdicts_declared
+
     if len(node_ids) > AT_BASE_CAP:
         raise ValueError(
             f"{len(node_ids)} failing node ids exceeds the {AT_BASE_CAP} cap; "
@@ -497,24 +512,63 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
         subprocess.run(["git", "worktree", "remove", "--force", str(wt)],
                        cwd=project, capture_output=True, text=True)
         shutil.rmtree(tmp, ignore_errors=True)
+    verdicts.update(verdicts_declared)
     return verdicts
 
 
-def read_baseline_red(project: Path) -> list[str]:
-    """The project's declared platform failures, or [] when none are declared."""
+def read_baseline_red(project: Path) -> list[dict]:
+    """The project's declared platform failures, as ``{node_id, reason, as_of}``.
+
+    TWO bugs lived here, and both produced the same silent wrong answer.
+
+    1. **Wrong location.** The list lives at ``ship.baseline_red``, not at the
+       top level — `ship_config.py:129` reads `ship.get("baseline_red")`. This
+       function read the top level, found nothing, and reported an empty list.
+       MEASURED 2026-09-16: ilk-skills has **6** declared entries and every
+       record written that day said `in baseline_red: no` for all 35 rows,
+       against a list that was never read.
+
+    2. **Wrong shape.** Entries are DICTS with a required ``node_id`` and
+       ``reason`` (`ship_config.py:140-157`), not strings. The old substring
+       match would have raised on the first real entry; it only survived
+       because it was reading an empty list from the wrong place.
+
+    An empty answer from the wrong location is indistinguishable from an empty
+    answer from the right one — which is the defect this module exists to
+    refuse, committed inside the module itself.
+    """
     import json
     cfg = project / ".ilk-launch.json"
     if not cfg.is_file():
         return []
     try:
-        return list(json.loads(cfg.read_text(encoding="utf-8")).get("baseline_red") or [])
+        data = json.loads(cfg.read_text(encoding="utf-8"))
     except (ValueError, OSError):
         return []
+    ship = data.get("ship")
+    raw = (ship or {}).get("baseline_red") if isinstance(ship, dict) else None
+    if raw is None:                       # tolerate a top-level list too
+        raw = data.get("baseline_red")
+    out: list[dict] = []
+    for e in (raw or []):
+        if isinstance(e, dict) and e.get("node_id"):
+            out.append(e)
+        elif isinstance(e, str) and e.strip():
+            out.append({"node_id": e, "reason": "(legacy string entry)"})
+    return out
 
 
-def _in_baseline_red(node_id: str, baseline_red: list[str]) -> bool:
-    return any(entry and (entry in node_id or node_id in entry)
-               for entry in baseline_red)
+def _in_baseline_red(node_id: str, baseline_red: list[dict]) -> bool:
+    """Is this node id covered by a declared entry?
+
+    Substring either way, so a file-level declaration covers its tests:
+    `tests/test_x.py` matches `tests/test_x.py::TestA::test_b`.
+    """
+    for e in baseline_red:
+        nid = (e.get("node_id") or "").strip()
+        if nid and (nid in node_id or node_id in nid):
+            return True
+    return False
 
 
 def render_record(*, batch: str, head: str, tree: str, base_sha: str,
@@ -632,7 +686,9 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
 
     nodes = results["failing_nodes"]
     try:
-        at_base = run_at_base(project, args.base_sha, nodes, invocation)
+        baseline_red = read_baseline_red(project)
+        at_base = run_at_base(project, args.base_sha, nodes, invocation,
+                              baseline_red=baseline_red)
     except (ValueError, RuntimeError) as exc:
         print(f"ERROR: at-base rerun could not run: {exc}", file=sys.stderr)
         print(f"stub record left at {record}", file=sys.stderr)
@@ -642,7 +698,7 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
         batch=args.batch or record.stem,
         head=head, tree=tree, base_sha=args.base_sha,
         invocation=invocation, scope=scope, results=results,
-        at_base=at_base, baseline_red=read_baseline_red(project),
+        at_base=at_base, baseline_red=baseline_red,
     ), encoding="utf-8")
 
     c = results["counts"]

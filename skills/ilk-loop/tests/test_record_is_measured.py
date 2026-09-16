@@ -204,3 +204,70 @@ class TestAbsentAtBaseDetection:
         collection_error = "= 7 errors in 0.4s =\nno tests ran"
         missing_node = "ERROR: not found: x::y\nno tests ran"
         assert "no tests ran" in collection_error and "no tests ran" in missing_node
+
+
+# ── baseline_red: read the right place, the right shape, and skip the rerun ──
+#
+# MEASURED 2026-09-16. Two bugs, one silent wrong answer: read_baseline_red
+# looked at the TOP LEVEL of .ilk-launch.json while the list lives at
+# `ship.baseline_red`, and it assumed STRING entries while the schema
+# (ship_config.py:140-157) requires dicts with node_id + reason. ilk-skills had
+# 6 correctly-declared entries covering 32 failures; every record written that
+# day said `in baseline_red: no` for all 35 rows, against a list never read.
+# 24 of 24 at-base reruns were subprocesses rediscovering declared facts.
+
+class TestBaselineRedIsRead:
+    def _cfg(self, tmp_path: Path, payload: dict) -> Path:
+        import json
+        p = tmp_path / "proj"
+        p.mkdir(exist_ok=True)
+        (p / ".ilk-launch.json").write_text(json.dumps(payload), encoding="utf-8")
+        return p
+
+    def test_reads_the_ship_nested_location(self, tmp_path: Path) -> None:
+        """The real location, per ship_config.py:129."""
+        proj = self._cfg(tmp_path, {"ship": {"baseline_red": [
+            {"node_id": "tests/test_x.py", "reason": "platform"}]}})
+        assert len(vr.read_baseline_red(proj)) == 1
+
+    def test_tolerates_a_top_level_list(self, tmp_path: Path) -> None:
+        proj = self._cfg(tmp_path, {"baseline_red": [
+            {"node_id": "tests/test_x.py", "reason": "platform"}]})
+        assert len(vr.read_baseline_red(proj)) == 1
+
+    def test_dict_entries_do_not_raise(self, tmp_path: Path) -> None:
+        """The old substring match would have raised on the first real entry."""
+        proj = self._cfg(tmp_path, {"ship": {"baseline_red": [
+            {"node_id": "tests/test_x.py", "reason": "r"}]}})
+        b = vr.read_baseline_red(proj)
+        assert vr._in_baseline_red("tests/test_x.py::TestA::test_b", b), (
+            "a file-level declaration must cover its node ids"
+        )
+
+    def test_absent_config_is_empty_not_a_crash(self, tmp_path: Path) -> None:
+        assert vr.read_baseline_red(tmp_path / "nope") == []
+
+    def test_declared_node_ids_skip_the_rerun(self, tmp_path: Path) -> None:
+        """The saving: a declared failure is already exonerated.
+
+        run_at_base must return its verdict WITHOUT spawning a subprocess —
+        and must still return a row, because the table keeps one row per
+        failure.
+        """
+        declared = [{"node_id": "tests/test_known.py", "reason": "platform"}]
+        out = vr.run_at_base(
+            tmp_path, "deadbeef",
+            ["tests/test_known.py::test_a", "tests/test_known.py::test_b"],
+            "python3 -m pytest", baseline_red=declared)
+        assert out == {"tests/test_known.py::test_a": "failed",
+                       "tests/test_known.py::test_b": "failed"}, out
+
+    def test_undeclared_node_ids_are_still_measured(self, tmp_path: Path) -> None:
+        """Not a weakening: anything undeclared still gets a real rerun.
+
+        With no git repo here, the worktree add fails and run_at_base raises —
+        which proves it tried to measure rather than assuming.
+        """
+        with pytest.raises((RuntimeError, ValueError)):
+            vr.run_at_base(tmp_path, "deadbeef", ["tests/test_new.py::test_x"],
+                           "python3 -m pytest", baseline_red=[])
