@@ -627,25 +627,81 @@ def _compile_only_summary(subplans: list[dict]) -> str | None:
     )
 
 
+def _parse_missing_steps(sp: dict) -> list[int]:
+    """Extract missing step numbers from a sub-plan's unproven_reasons.
+
+    Parses ``"missing commit for step 2"`` and ``"missing commit for steps 3, 4"``
+    from the reasons list.  Returns a sorted list of ints, empty when the
+    sub-plan is merely stale.
+    """
+    steps: set[int] = set()
+    for reason in sp.get("unproven_reasons", []):
+        m = re.match(r"missing commit for steps? (\d[\d, ]*)", reason)
+        if m:
+            for tok in m.group(1).split(","):
+                tok = tok.strip()
+                if tok.isdigit():
+                    steps.add(int(tok))
+    return sorted(steps)
+
+
 def _unproven_summary(subplans: list[dict]) -> str | None:
     """Banner for shipped sub-plans that lack proof (step commits or gate).
 
-    Follows ``_compile_only_summary``'s shape: count + slugs, ASCII-only.
+    Partitions into two causes (AC-1):
+      - missing work: authored steps have no commits (serious)
+      - stale: the tree moved since a green suite (benign)
+
+    Missing-work is reported first (AC-4) with step numbers (AC-2).
+    When every unproven sub-plan is merely stale, the output says so
+    without the phrase ``SHIP PROOF MISSING`` (AC-3).
+
     Returns None when all shipped sub-plans are proven.
     """
-    offenders = [
+    unproven = [
         sp for sp in subplans
         if sp["status"] == "shipped" and not sp.get("proven", True)
     ]
-    if not offenders:
+    if not unproven:
         return None
-    slugs = ", ".join(sp["slug"] for sp in offenders)
-    n = len(offenders)
-    plural = "s" if n != 1 else ""
-    return (
-        f"SHIP PROOF MISSING: {n} sub-plan{plural} shipped without proof\n"
-        f"  slugs: {slugs}"
-    )
+
+    missing_work: list[tuple[dict, list[int]]] = []
+    stale: list[dict] = []
+    for sp in unproven:
+        ms = _parse_missing_steps(sp)
+        if ms:
+            missing_work.append((sp, ms))
+        else:
+            stale.append(sp)
+
+    parts: list[str] = []
+
+    # ── missing-work section (serious; first when present) ────────────────
+    if missing_work:
+        n = len(missing_work)
+        plural = "s" if n != 1 else ""
+        lines = [f"MISSING WORK: {n} sub-plan{plural} with missing commits"]
+        for sp, steps in missing_work:
+            step_word = "steps" if len(steps) > 1 else "step"
+            step_str = ", ".join(str(s) for s in steps)
+            lines.append(f"  {sp['slug']} ({step_word} {step_str})")
+        parts.append("\n".join(lines))
+
+    # ── stale section (benign) ────────────────────────────────────────────
+    if stale:
+        n = len(stale)
+        plural = "s" if n != 1 else ""
+        if missing_work:
+            # Both sections present — add a blank-line separator.
+            parts.append("")
+        slugs = ", ".join(sp["slug"] for sp in stale)
+        parts.append(
+            f"{n} sub-plan{plural} have stale records (suite ran at an older tree):\n"
+            f"  {slugs}\n"
+            f"  Rerun the suite at the current HEAD to clear."
+        )
+
+    return "\n".join(parts)
 
 
 def main() -> int:
