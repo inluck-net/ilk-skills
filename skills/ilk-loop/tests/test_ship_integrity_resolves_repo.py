@@ -243,30 +243,104 @@ class TestAC3UnresolvableRootFailsOpen:
 # ── AC-4: two distinct warning messages ──────────────────────────────────────
 
 class TestAC4DistinctWarnings:
-    """The warning text distinguishes 'could not resolve' from 'not a git
-    work tree' — they send a reader to different places.
+    """The two warnings are distinguished by BEHAVIOUR, not by source text.
 
-    The 'not a git work tree' message triggers when a resolution succeeds
-    (a .git ancestor is found) but git rev-parse --is-inside-work-tree
-    fails (bare repo, corrupted work tree, etc.).  In practice this is
-    hard to trigger in tests because git's work-tree check searches
-    upward and finds a valid work tree ancestor.  We verify the message
-    strings exist in the code instead of constructing a fragile filesystem
-    scenario.
+    An earlier version of this test grepped ship_integrity.py for the
+    literal "not a git work tree" and failed the moment step 2 reworded the
+    message: the phrase is split across two adjacent string literals
+    (``"... is not a "`` + ``"git work tree; ..."``), so it never appears
+    contiguously in the source even though it is emitted correctly at
+    runtime.  Joining whitespace does not help — the quote characters sit
+    between the words.
+
+    That is the defect this whole batch is about, committed inside the batch
+    itself: a check that confirms a SHAPE (a substring of source) instead of
+    a MEASUREMENT (what the program prints).  The docstring justified it as
+    avoiding "a fragile filesystem scenario", but the scenario below is a
+    `.git` file with invalid content — deterministic, and it exercises the
+    real branch.
     """
 
-    def test_code_emits_both_distinct_messages(self) -> None:
-        """AC-4: both warning strings are present and distinct in the source."""
-        src = (SCRIPTS / "ship_integrity.py").read_text(encoding="utf-8")
-        assert "could not resolve" in src.lower(), (
-            "the 'could not resolve' message was removed from ship_integrity.py"
-        )
-        # The "not a git work tree" message spans a line break in the source,
-        # so join lines before checking.
-        joined = " ".join(src.lower().split())
-        assert "not a git work tree" in joined, (
-            "the 'not a git work tree' message was removed from ship_integrity.py"
-        )
+    def _broken_gitfile_root(self, iso: Path) -> Path:
+        """A directory git_root() accepts but git rejects as a work tree.
+
+        ``ilk_paths.git_root`` returns the first ancestor containing a
+        ``.git`` entry, dir **or file** (it uses ``.exists()``).  A ``.git``
+        FILE holding an invalid gitdir pointer therefore resolves as a
+        project root while ``git rev-parse --is-inside-work-tree`` fails —
+        which is exactly the state this warning describes.
+        """
+        root = iso / "broken-worktree"
+        root.mkdir()
+        (root / ".git").write_text("gitdir: /nonexistent/path/to/nowhere\n",
+                                   encoding="utf-8")
+        return root
+
+    def test_resolved_but_not_a_work_tree_says_so(self, tmp_path: Path) -> None:
+        """AC-4: resolution SUCCEEDS, the work-tree probe FAILS."""
+        import shutil
+        import tempfile
+        iso = Path(tempfile.mkdtemp(prefix="ilk-ac4-worktree-"))
+        try:
+            root = self._broken_gitfile_root(iso)
+            plans = root / "docs" / "plans"
+            plans.mkdir(parents=True)
+            sp = _write_subplan(plans, "broken-worktree-plan", n_steps=2)
+
+            r = _run_cli(sp, cwd=root, env_overrides={
+                "HOME": str(iso / "fake-home"),
+            })
+            low = r.stderr.lower()
+            assert "not a" in low and "git work tree" in low, (
+                "a resolved-but-not-a-work-tree root must say so. "
+                "stderr={!r}".format(r.stderr)
+            )
+            assert "could not resolve" not in low, (
+                "this is the RESOLVED case; it must not report the "
+                "unresolvable message. stderr={!r}".format(r.stderr)
+            )
+        finally:
+            shutil.rmtree(iso, ignore_errors=True)
+
+    def test_the_two_messages_are_distinct(self, tmp_path: Path) -> None:
+        """AC-4: the two cases do not emit the same sentence.
+
+        They send a reader to different places — one is a resolution
+        problem, the other a repo-state problem.
+        """
+        import shutil
+        import tempfile
+        iso = Path(tempfile.mkdtemp(prefix="ilk-ac4-distinct-"))
+        try:
+            # Case 1: nothing resolves.
+            plans_a = iso / "orphan" / "plans"
+            plans_a.mkdir(parents=True)
+            sp_a = _write_subplan(plans_a, "orphan-plan", n_steps=2)
+            cwd_a = iso / "orphan" / "cwd"
+            cwd_a.mkdir()
+            r_a = _run_cli(sp_a, cwd=cwd_a, env_overrides={
+                "HOME": str(iso / "fake-home"),
+                "GIT_CEILING_DIRECTORIES": str(iso.resolve()),
+            })
+
+            # Case 2: resolves, but not a work tree.
+            root = self._broken_gitfile_root(iso)
+            plans_b = root / "docs" / "plans"
+            plans_b.mkdir(parents=True)
+            sp_b = _write_subplan(plans_b, "broken-plan", n_steps=2)
+            r_b = _run_cli(sp_b, cwd=root, env_overrides={
+                "HOME": str(iso / "fake-home"),
+            })
+
+            a, b = r_a.stderr.strip().lower(), r_b.stderr.strip().lower()
+            assert a and b, "both cases must warn. a={!r} b={!r}".format(a, b)
+            assert a != b, (
+                "the two cases emit the SAME message, so a reader cannot "
+                "tell a resolution failure from a repo-state failure. "
+                "msg={!r}".format(a)
+            )
+        finally:
+            shutil.rmtree(iso, ignore_errors=True)
 
 
 # ── sanity: when cwd IS the repo, it still works (regression guard) ──────────
