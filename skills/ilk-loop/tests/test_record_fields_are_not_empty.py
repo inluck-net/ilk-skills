@@ -66,8 +66,9 @@ class TestEmptiedFieldDetection:
         assert va.has_emptied_record_fields(MEASURED_EMPTIED_RECORD)
 
     def test_bold_field_with_empty_value(self) -> None:
-        """`**Fixes landed:**` whose value is empty after the colon."""
-        text = "**Fixes landed during this step:**\n\n_(no failures)_\n"
+        """`**verified_head:**` with nothing after the colon-on-the-line."""
+        # The heredoc mangles `**verified_head:** `sha`` into just `**verified_head:**`
+        text = "**verified_head:**\n\n## At-base rerun\n\n_(no failures)_\n"
         assert va.has_emptied_record_fields(text)
 
     def test_list_item_starting_with_separator(self) -> None:
@@ -75,9 +76,9 @@ class TestEmptiedFieldDetection:
         text = "1.  — added  to schema expected set\n"
         assert va.has_emptied_record_fields(text)
 
-    def test_field_value_begins_with_colon_separator(self) -> None:
-        """A field whose value starts with `: ` (the empty-value signature)."""
-        text = "**verified_head:**\n\n## At-base rerun\n\n_(no failures)_\n"
+    def test_list_item_with_em_dash_separator(self) -> None:
+        """Another measured variant: `2.  — updated 18 line-number references`."""
+        text = "2.  — updated 18 line-number references shifted by batch changes\n"
         assert va.has_emptied_record_fields(text)
 
 
