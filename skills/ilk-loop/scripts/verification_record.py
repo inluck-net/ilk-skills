@@ -410,11 +410,23 @@ def parse_pytest_output(out: str) -> dict:
     return {"counts": counts, "failing_nodes": nodes}
 
 
-def run_suite(project: Path, invocation: str, timeout: int) -> dict:
-    """Run the project's configured suite and return parsed results."""
+def run_suite(project: Path, invocation: str, timeout: int,
+              selection: list[str] | None = None) -> dict:
+    """Run the project's configured suite and return parsed results.
+
+    ``selection`` APPLIES the computed scope. Without it the scope was
+    computed, written into the record, and then ignored — the run was always
+    the full suite. MEASURED 2026-09-16: `suite_scope: scoped, 14 files` sat in
+    a record produced by a 3102-test run. A scope that is recorded but not
+    applied is a label, not a saving, and it made the record's own
+    `selection_size` a claim about something that never happened.
+    """
     import subprocess
+    cmd = invocation
+    if selection:
+        cmd = f"{invocation} {' '.join(selection)}"
     try:
-        r = subprocess.run(invocation, shell=True, cwd=project, timeout=timeout,
+        r = subprocess.run(cmd, shell=True, cwd=project, timeout=timeout,
                            capture_output=True, text=True, encoding="utf-8",
                            errors="replace")
     except subprocess.TimeoutExpired:
@@ -678,7 +690,10 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
     record.write_text(stub, encoding="utf-8")
 
     try:
-        results = run_suite(project, invocation, args.suite_timeout)
+        # Apply the scope, do not merely record it.
+        selection = scope.get("selection") if scope.get("mode") == "scoped" else None
+        results = run_suite(project, invocation, args.suite_timeout,
+                            selection=selection)
     except (TimeoutError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         print(f"stub record left at {record}", file=sys.stderr)
