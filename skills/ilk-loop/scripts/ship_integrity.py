@@ -207,7 +207,49 @@ def _missing_step_reason(subplan: Path) -> str | None:
             if probe.returncode == 0 and probe.stdout.strip() == "true":
                 resolved_root = candidate
                 _root_src = "subplan_parent"
-        # 2. Trust cwd — the runner's project root when it has not cd'd
+        # 2. The registry: map the plans dir's project KEY back to its root.
+        #
+        # This is the candidate that makes the check work in production. Plans
+        # live at ~/.ilk-data/projects/<key>/plans, which has no .git ancestor
+        # by design (toolkit data never enters a consumer repo), so candidate 1
+        # cannot resolve for any project on the external layout — which is every
+        # project. Without this, resolution fell through to cwd, and the runner
+        # invokes this from outside the repo.
+        #
+        # Measured 2026-09-16 on ilk-skills: two sub-plans shipped with missing
+        # step commits (authored-steps step 2; the-step-commit-check steps 3-4)
+        # because this check silently skipped. The batch that shipped candidate 1
+        # tested it against the IN-TREE layout (<repo>/docs/plans), so its AC
+        # passed while production still could not resolve.
+        if resolved_root is None:
+            key = None
+            for parent in subplan.resolve().parents:
+                if parent.name == "plans" and parent.parent.parent.name == "projects":
+                    key = parent.parent.name
+                    break
+            if key:
+                try:
+                    import json as _json
+                    from ilk_paths import project_key as _project_key, skill_root
+                    # Resolve the registry, never guess it: register_project.py
+                    # writes <skill-root>/ilk-launcher/projects.json. An earlier
+                    # draft of this block guessed ~/.ilk-data/projects.json and
+                    # silently resolved nothing.
+                    reg = skill_root() / "ilk-launcher" / "projects.json"
+                    if reg.is_file():
+                        entries = _json.loads(reg.read_text(encoding="utf-8"))
+                        if isinstance(entries, dict):
+                            entries = entries.get("projects", [])
+                        for e in entries or []:
+                            path = Path(str(e.get("path", "")))
+                            if path.is_dir() and _project_key(path) == key:
+                                resolved_root = path
+                                _root_src = "registry"
+                                break
+                except Exception:  # noqa: BLE001 - resolution is best-effort
+                    pass
+
+        # 3. Trust cwd — the runner's project root when it has not cd'd
         #    into the plans dir.
         if resolved_root is None:
             candidate = _git_root(Path.cwd())

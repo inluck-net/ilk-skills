@@ -364,3 +364,65 @@ class TestSanityCwdInRepo:
             "when cwd IS the repo, the check must still detect the missing step. "
             "stdout={!r} stderr={!r}".format(r.stdout, r.stderr)
         )
+
+
+# ── the EXTERNAL plans layout — the one production actually uses ────────────
+#
+# AC-2's original fixture put the plans dir INSIDE the repo (<repo>/docs/plans),
+# the legacy in-tree layout. Every project is on the external layout, where
+# plans live at ~/.ilk-data/projects/<key>/plans and there is no .git ancestor
+# by design. So the AC passed while the check still skipped in production.
+#
+# Measured 2026-09-16: two sub-plans of this batch shipped with missing step
+# commits (authored-steps step 2; the-step-commit-check steps 3-4) because the
+# check silently fell through to cwd, and the runner invokes it from outside
+# the repo. Resolution now maps the plans dir's project KEY back to a root via
+# the registry that register_project.py writes.
+
+class TestExternalPlansLayout:
+    def test_check_runs_when_plans_are_outside_the_repo(self, tmp_path: Path) -> None:
+        """The real production shape: external plans, cwd not the repo."""
+        import json
+        import os
+        import subprocess
+
+        repo = _make_repo(tmp_path, name="proj")
+        sp_slug = "external-layout-plan"
+        # one commit for step 0, none for step 1 -> a real violation
+        _git(repo, "commit", "-q", "--allow-empty", "-m",
+             f"work [plan:{sp_slug}#step-0]")
+
+        sys.path.insert(0, str(SCRIPTS))
+        from ilk_paths import project_key
+
+        key = project_key(repo)
+        data = tmp_path / "ilk-data"
+        plans = data / "projects" / key / "plans"
+        plans.mkdir(parents=True)
+        sp = _write_subplan(plans, sp_slug, n_steps=2)
+
+        skills_home = tmp_path / "skills"
+        (skills_home / "ilk-launcher").mkdir(parents=True)
+        (skills_home / "ilk-launcher" / "projects.json").write_text(
+            json.dumps([{"name": "proj", "path": str(repo)}]), encoding="utf-8")
+
+        cwd_dir = tmp_path / "elsewhere"
+        cwd_dir.mkdir()
+
+        env = os.environ.copy()
+        env.update({"ILK_DATA_HOME": str(data),
+                    "ILK_SKILL_HOME": str(skills_home),
+                    "HOME": str(tmp_path / "fake-home")})
+        r = subprocess.run(
+            [sys.executable, str(CLI), "--subplan", str(sp), "--gate-passed", "true"],
+            capture_output=True, text=True, timeout=60, cwd=cwd_dir, env=env)
+
+        combined = r.stdout + r.stderr
+        assert "could not resolve" not in combined.lower(), (
+            "resolution must succeed via the registry for external plans. "
+            f"output={combined!r}"
+        )
+        assert "missing commit for step 1" in combined, (
+            "the step-commit check must RUN and catch the missing step. "
+            f"output={combined!r}"
+        )
