@@ -165,10 +165,68 @@ def parse_rows(section: str) -> list[list[str]]:
     return rows[1:] if rows else []  # first surviving row is the header
 
 
-def attributed_rows(rows: list[list[str]]) -> list[list[str]]:
-    """Rows whose FINAL cell marks the failure as attributed to this batch.
+_SIGNED_RE = re.compile(r"^record_writer:[ \t]*(\S+)", re.MULTILINE)
 
-    The final cell is the ``attributed`` column.  Matching on the whole row
+_AT_BASE_OK = {"passed", "failed", "absent-at-base"}
+
+
+def is_signed(text: str) -> bool:
+    """Was this record written by the tool, or typed by a worker?
+
+    A signed record has a known column layout and carries measurements only.
+    An unsigned one is free-form markdown whose dialect has to be guessed —
+    which is the defect this whole module keeps absorbing.
+    """
+    return bool(_SIGNED_RE.search(text))
+
+
+def derive_attributed(rows: list[list[str]]) -> list[list[str]]:
+    """Apply the attribution rule to a SIGNED record's measurements.
+
+    Signed rows are ``| node id | at base | in baseline_red |`` — three
+    measurements and no verdict.  Attribution is *derived* here:
+
+        at_base in {passed, absent-at-base}  AND  NOT in_baseline_red
+
+    ``absent-at-base`` counts as attributed: a test this batch introduced, and
+    that fails now, is the batch's own damage, not an exoneration.
+
+    There is no verdict cell to write into, so ``no (fixed)`` — four of which
+    excused real regressions on gh-resolve's layer-3 batch — cannot be
+    expressed at all.  An unrecognised measurement raises rather than passing.
+    """
+    bad: list[list[str]] = []
+    for r in rows:
+        if len(r) < 3:
+            raise VerificationError(
+                f"signed record row has {len(r)} cells, expected 3 "
+                f"(node id | at base | in baseline_red): {r}"
+            )
+        node, at_base, in_red = r[0], r[1].strip().lower(), r[2].strip().lower()
+        if at_base not in _AT_BASE_OK:
+            raise VerificationError(
+                f"unrecognised `at base` value {r[1]!r} for {node}. Legal "
+                f"values are {sorted(_AT_BASE_OK)}. A cell the checker cannot "
+                f"read is not an exoneration — re-run the at-base rerun."
+            )
+        if in_red not in {"yes", "no"}:
+            raise VerificationError(
+                f"unrecognised `in baseline_red` value {r[2]!r} for {node}; "
+                f"expected yes or no."
+            )
+        if at_base in {"passed", "absent-at-base"} and in_red == "no":
+            bad.append(r)
+    return bad
+
+
+def attributed_rows(rows: list[list[str]]) -> list[list[str]]:
+    """Rows whose FINAL cell marks the failure as attributed — LEGACY path.
+
+    Only for unsigned records, which are worker-typed markdown. Kept because
+    parked batches on other projects still carry them; every new record is
+    signed and goes through ``derive_attributed`` instead.
+
+    The final cell is the ``attributed`` column. Matching on the whole row
     instead would also hit the ``yes`` in ``in baseline_red`` and fail a row that
     was correctly exonerated.
     """
@@ -215,7 +273,7 @@ def verify(record_path: Path) -> tuple[str, int]:
             f"pass."
         )
 
-    bad = attributed_rows(rows)
+    bad = derive_attributed(rows) if is_signed(text) else attributed_rows(rows)
     if bad:
         names = ", ".join(r[0] for r in bad)
         raise VerificationError(

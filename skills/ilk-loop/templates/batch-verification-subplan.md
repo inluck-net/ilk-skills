@@ -142,13 +142,34 @@ section headed "exit 1 with zero failures is not a regression", the run recorded
 
 ```yaml
 local_checks:
-  - command: "python3 -c \"import sys; sys.path.insert(0,'<skill-root>/ilk-loop/scripts'); from ship_audit import _resolve_expected_invocation; from pathlib import Path; cmd=_resolve_expected_invocation(Path('.')); assert cmd, 'ship.suite not configured'; import subprocess; sys.exit(subprocess.run(cmd,shell=True).returncode)\""
+  - command: "python3 <skill-root>/ilk-loop/scripts/verification_record.py --project . --batch <batch-slug> --base-sha <base_sha> --run-suite --suite-timeout <suite timeout>"
     timeout: <suite timeout>
-  - command: "python3 <skill-root>/ilk-loop/scripts/verification_record.py --project . --batch <batch-slug> --compute-scope --base-sha <base_sha>"
-    timeout: 60
   - command: "python3 -c \"import sys; sys.path.insert(0,'<skill-root>/ilk-loop/scripts'); import verify_attribution as va; rec=va.resolve_batch_record(__import__('pathlib').Path('.'),'<batch-slug>'); text=rec.read_text(errors='replace'); assert not va.has_emptied_record_fields(text), f'record {rec.name} carries heredoc-emptied fields — rewrite with Path.write_text, not a shell heredoc'\""
     timeout: 30
 ```
+
+**ONE command, and you do not write the record.** `verification_record.py`
+resolves the suite invocation, runs it, re-runs every failing node id at
+`base_sha` in a detached worktree, reads `baseline_red`, and writes the whole
+record itself — signed with `record_writer:`.
+
+This replaced two independent commands (run-the-suite, then write-the-record)
+whose defect was that **no data flowed between them**: the suite's results went
+to the first command's stdout, so the emitter could not know the failure count
+and that field was left to prose. Five of six stalled verification runs across
+three projects on 2026-09-15/16 were a mismatch between prose a worker wrote and
+the grammar the step-1 gate parses. See `docs/verification-record-design.md`.
+
+**Do not hand-write any field above `## Findings`.** Everything the gate parses
+is emitted. Findings is yours and no parser reads it. A record you typed is
+unsigned, and the checker falls back to a legacy path kept only for batches
+parked before this change.
+
+**A record is written twice on purpose.** A signed stub carrying
+`suite_failed: unmeasured` lands *before* the suite starts, so an iteration
+killed at its bound leaves something the checker can refuse loudly, rather than
+nothing at all — which reads as "step 0 never ran" and costs another iteration
+to diagnose.
 
 **Resolve the suite command, never hand-type it.** The command above uses
 `ship_audit._resolve_expected_invocation(Path('.'))` to compose the one true

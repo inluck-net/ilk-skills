@@ -316,6 +316,283 @@ def resolve_batch_record(project: Path, batch_slug: str) -> Path:
     )
 
 
+# ── the machine-read surface: measure it, do not ask for it ──────────────────
+#
+# Everything below exists because of one measured fact (2026-09-16): of the
+# seven fields ``verify_attribution`` parses out of a record, six were authored
+# by a language model following prose and one by a tool.  Five of six stalled
+# verification runs across three projects were a mismatch between what the
+# worker wrote and what the parser accepts.
+#
+# The rule this implements: **nothing the gate parses may be authored by
+# prose.**  The tool measures and writes; the checker re-derives; the worker
+# writes narrative into sections no parser reads.
+#
+# See docs/verification-record-design.md.
+
+RECORD_WRITER = "verification_record.py"
+
+_SUMMARY_RE = re.compile(
+    r"^=+\s(.*?)\sin\s[\d.]+s.*?=+$", re.MULTILINE)
+_COUNT_RE = re.compile(r"(\d+)\s+(passed|failed|error|errors|skipped|xfailed|xpassed)")
+_NODE_RE = re.compile(r"^(?:FAILED|ERROR)\s+(\S+)", re.MULTILINE)
+
+
+def parse_pytest_output(out: str) -> dict:
+    """Extract counts and failing node ids from pytest output.
+
+    Raises ValueError when no summary line is present.  A run whose outcome
+    cannot be read has not said the batch is clean — it has said nothing, and
+    those are different.  Returning zeros here is the exact substitution this
+    module exists to remove.
+    """
+    m = _SUMMARY_RE.search(out)
+    if not m:
+        raise ValueError(
+            "no pytest summary line found in the suite output; the record "
+            "cannot state a failure count it did not measure"
+        )
+    counts = {"passed": 0, "failed": 0, "errors": 0, "skipped": 0,
+              "xfailed": 0, "xpassed": 0}
+    for n, word in _COUNT_RE.findall(m.group(1)):
+        key = "errors" if word.startswith("error") else word
+        counts[key] = int(n)
+    # dict.fromkeys preserves first-seen order and de-duplicates: a node id
+    # reported as both FAILED and ERROR is one failing test, not two.
+    nodes = list(dict.fromkeys(_NODE_RE.findall(out)))
+    counts["total"] = (counts["passed"] + counts["failed"] + counts["skipped"]
+                       + counts["xfailed"] + counts["xpassed"])
+    return {"counts": counts, "failing_nodes": nodes}
+
+
+def run_suite(project: Path, invocation: str, timeout: int) -> dict:
+    """Run the project's configured suite and return parsed results."""
+    import subprocess
+    try:
+        r = subprocess.run(invocation, shell=True, cwd=project, timeout=timeout,
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace")
+    except subprocess.TimeoutExpired:
+        raise TimeoutError(
+            f"suite exceeded {timeout}s; the record keeps `suite_failed: "
+            f"unmeasured` rather than a count nothing measured"
+        )
+    return {**parse_pytest_output((r.stdout or "") + (r.stderr or "")),
+            "exit_code": r.returncode}
+
+
+AT_BASE_CAP = 50
+
+
+def run_at_base(project: Path, base_sha: str, node_ids: list[str],
+                invocation: str, timeout: int = 600) -> dict:
+    """Re-run each failing node id at the batch's base commit.
+
+    This is the step the template describes as a procedure a worker performs.
+    Every input is available to a program — the ids come from the suite run,
+    the base sha from the master, the runner from config — and "did this node
+    id pass at base" is a measurement, not a judgment.  So it is code.
+
+    Returns ``{node_id: "passed" | "failed" | "absent-at-base"}``.
+    ``absent-at-base`` means the test did not exist at the base commit, which
+    makes a present failure this batch's own damage rather than an exoneration.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    if not node_ids:
+        return {}
+    if len(node_ids) > AT_BASE_CAP:
+        raise ValueError(
+            f"{len(node_ids)} failing node ids exceeds the {AT_BASE_CAP} cap; "
+            f"a batch failing this widely needs a human, not an at-base rerun"
+        )
+    tmp = Path(tempfile.mkdtemp(prefix="ilk-at-base-"))
+    wt = tmp / "base-wt"
+    verdicts: dict[str, str] = {}
+    try:
+        add = subprocess.run(
+            ["git", "worktree", "add", "--detach", str(wt), base_sha],
+            cwd=project, capture_output=True, text=True, timeout=180)
+        if add.returncode != 0:
+            raise RuntimeError(
+                f"could not create a worktree at {base_sha}: "
+                f"{(add.stderr or '').strip()[:200]}"
+            )
+        # Strip any -n/--dist xdist flags: one node id per process is slower
+        # under xdist, not faster, and the selection is tiny by construction.
+        runner = re.sub(r"\s-n\s+\S+|\s--dist\s+\S+", "", invocation)
+        for nid in node_ids:
+            r = subprocess.run(f"{runner} {nid}", shell=True, cwd=wt,
+                               capture_output=True, text=True, timeout=timeout,
+                               encoding="utf-8", errors="replace")
+            blob = (r.stdout or "") + (r.stderr or "")
+            if "no tests ran" in blob.lower() or "not found" in blob.lower():
+                verdicts[nid] = "absent-at-base"
+            elif r.returncode == 0:
+                verdicts[nid] = "passed"
+            else:
+                verdicts[nid] = "failed"
+    finally:
+        subprocess.run(["git", "worktree", "remove", "--force", str(wt)],
+                       cwd=project, capture_output=True, text=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+    return verdicts
+
+
+def read_baseline_red(project: Path) -> list[str]:
+    """The project's declared platform failures, or [] when none are declared."""
+    import json
+    cfg = project / ".ilk-launch.json"
+    if not cfg.is_file():
+        return []
+    try:
+        return list(json.loads(cfg.read_text(encoding="utf-8")).get("baseline_red") or [])
+    except (ValueError, OSError):
+        return []
+
+
+def _in_baseline_red(node_id: str, baseline_red: list[str]) -> bool:
+    return any(entry and (entry in node_id or node_id in entry)
+               for entry in baseline_red)
+
+
+def render_record(*, batch: str, head: str, tree: str, base_sha: str,
+                  invocation: str, scope: dict, results: dict,
+                  at_base: dict, baseline_red: list[str]) -> str:
+    """Render the complete record.  Measurements only — no verdict column.
+
+    The ``attributed`` column is deliberately absent.  It was the cell that
+    carried ``no (fixed)`` on gh-resolve's layer-3 batch, where four failures
+    that passed at base were excused by a parenthetical.  With no cell to write
+    into, that outcome is not fixed — it is unrepresentable.  The checker
+    derives attribution from the two measurements beside each node id.
+    """
+    c = results["counts"]
+    lines = [
+        f"# Batch verification record — {batch}",
+        "",
+        f"record_writer: {RECORD_WRITER}",
+        f"batch: {batch}",
+        f"verified_head: {head}",
+        f"verified_tree: {tree}",
+        f"base_sha: {base_sha}",
+        f"suite_invocation: {invocation}",
+        f"suite_scope: {scope['mode']}",
+        f"selection_size: {scope['count']}",
+        f"suite_total: {c['total']}",
+        f"suite_passed: {c['passed']}",
+        f"suite_failed: {c['failed'] + c['errors']}",
+        f"suite_errors: {c['errors']}",
+        f"suite_skipped: {c['skipped']}",
+        "",
+        "## At-base rerun",
+        "",
+    ]
+    if not at_base:
+        lines += ["_(no failures)_", ""]
+    else:
+        lines += ["| node id | at base | in baseline_red |",
+                  "|---|---|---|"]
+        for nid, verdict in at_base.items():
+            red = "yes" if _in_baseline_red(nid, baseline_red) else "no"
+            lines.append(f"| {nid} | {verdict} | {red} |")
+        lines.append("")
+    lines += [
+        "## Findings",
+        "",
+        "_(the worker writes narrative here; no parser reads this section)_",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _write_measured_record(project: Path, record: Path, args) -> int:
+    """Own the whole machine-read surface: measure it, then write it.
+
+    Ordering is deliberate.  The record is written TWICE — a signed stub with
+    ``suite_failed: unmeasured`` before the long run, then the real thing after.
+    A suite that exceeds its bound is killed with the gate, and without the stub
+    the step leaves nothing at all: no record, and a next iteration that fails
+    "record missing" for a reason that has nothing to do with the code.  The
+    stub is refused by the checker (``unmeasured`` is not a count), which is the
+    correct outcome — loudly incomplete beats silently absent.
+    """
+    if not args.base_sha:
+        print("ERROR: --run-suite requires --base-sha", file=sys.stderr)
+        return 2
+
+    scripts = Path(__file__).resolve().parent
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    try:
+        from ship_audit import _resolve_expected_invocation
+    except ImportError as exc:
+        print(f"ERROR: cannot import ship_audit: {exc}", file=sys.stderr)
+        return 1
+
+    invocation = (_resolve_expected_invocation(project) or "").strip()
+    if not invocation:
+        print("ERROR: ship.suite is not configured; refusing to invent a suite "
+              "command. A record naming no invocation cannot be verified.",
+              file=sys.stderr)
+        return 1
+
+    head = read_head_from_git(project)
+    tree = _git(project, "rev-parse", "HEAD^{tree}")
+    if not head or not tree:
+        print(f"ERROR: cannot read HEAD/tree from git in {project}", file=sys.stderr)
+        return 1
+    if head.startswith(args.base_sha) or args.base_sha.startswith(head):
+        print(f"ERROR: base_sha equals HEAD ({head[:12]}); the comparison would "
+              f"be HEAD against itself and could not detect a regression.",
+              file=sys.stderr)
+        return 1
+
+    scope = compute_suite_scope(project, args.base_sha)
+    record.parent.mkdir(parents=True, exist_ok=True)
+
+    stub = (f"# Batch verification record — {args.batch or record.stem}\n\n"
+            f"record_writer: {RECORD_WRITER}\n"
+            f"verified_head: {head}\n"
+            f"verified_tree: {tree}\n"
+            f"base_sha: {args.base_sha}\n"
+            f"suite_invocation: {invocation}\n"
+            f"suite_scope: {scope['mode']}\n"
+            f"suite_failed: unmeasured\n\n"
+            f"## At-base rerun\n\n_(suite did not finish)_\n")
+    record.write_text(stub, encoding="utf-8")
+
+    try:
+        results = run_suite(project, invocation, args.suite_timeout)
+    except (TimeoutError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        print(f"stub record left at {record}", file=sys.stderr)
+        return 1
+
+    nodes = results["failing_nodes"]
+    try:
+        at_base = run_at_base(project, args.base_sha, nodes, invocation)
+    except (ValueError, RuntimeError) as exc:
+        print(f"ERROR: at-base rerun could not run: {exc}", file=sys.stderr)
+        print(f"stub record left at {record}", file=sys.stderr)
+        return 1
+
+    record.write_text(render_record(
+        batch=args.batch or record.stem,
+        head=head, tree=tree, base_sha=args.base_sha,
+        invocation=invocation, scope=scope, results=results,
+        at_base=at_base, baseline_red=read_baseline_red(project),
+    ), encoding="utf-8")
+
+    c = results["counts"]
+    print(f"recorded: {c['passed']} passed, {c['failed']} failed, "
+          f"{c['errors']} errors of {c['total']} · scope={scope['mode']} · "
+          f"at-base rows={len(at_base)} → {record}")
+    # Step 0 records; step 1 judges.  A red suite is not this command's failure.
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Write verified_head (and soon suite_scope) to a verification record."
@@ -337,6 +614,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--base-sha", default=None, metavar="SHA",
         help="batch base commit for scope computation (required with --compute-scope)",
+    )
+    ap.add_argument(
+        "--run-suite", action="store_true",
+        help="run the suite, re-run failures at base, and WRITE the whole record",
+    )
+    ap.add_argument(
+        "--suite-timeout", type=int, default=1800, metavar="SEC",
+        help="bound on the suite run (default 1800)",
     )
     args = ap.parse_args(argv)
 
@@ -365,6 +650,9 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+
+    if args.run_suite:
+        return _write_measured_record(project, record, args)
 
     if not record.is_file():
         print(f"ERROR: record not found: {record}", file=sys.stderr)
