@@ -242,9 +242,22 @@ def attributed_rows(rows: list[list[str]]) -> list[list[str]]:
     for r in rows:
         if not r:
             continue
+        node = r[0] if r else "<unknown>"
+        # Validate the at-base cell (column 2, index 1) when present.
+        if len(r) >= 2:
+            at_base = r[1].strip().lower()
+            if at_base not in _AT_BASE_OK:
+                raise VerificationError(
+                    f"unrecognised `at base` value {r[1]!r} for {node}. "
+                    f"Legal values are {sorted(_AT_BASE_OK)} (case- and "
+                    f"whitespace-tolerant). `N/A` usually means the test did "
+                    f"not exist at the base commit — a test introduced by this "
+                    f"batch and failing now is attributed, not exonerated. "
+                    f"Re-run the at-base suite at the current tree and record "
+                    f"the actual result."
+                )
         cell = r[-1].strip().upper()
         if cell not in _ATTRIB_OK:
-            node = r[0] if r else "<unknown>"
             raise VerificationError(
                 f"unrecognised `attributed` value {r[-1]!r} for {node}. "
                 f"Legal values are YES or no (case- and whitespace-tolerant). "
