@@ -510,23 +510,27 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
                 sp["proven"] = result["proven"]
                 sp["proof_state"] = "proven" if result["proven"] else "unproven"
                 sp["unproven_reasons"] = result["reasons"]
+                sp["missing_steps"] = _parse_missing_steps(sp)
             except Exception as exc:
                 sp["proven"] = False
                 sp["proof_state"] = "audit-error"
                 sp["unproven_reasons"] = [
                     f"ship audit could not run: {type(exc).__name__}: {exc}"
                 ]
+                sp["missing_steps"] = []
     else:
         for sp in subplans:
             if sp["status"] != "shipped":
                 sp["proven"] = True
                 sp["proof_state"] = "not-applicable"
+                sp["missing_steps"] = []
             else:
                 sp["proven"] = False
                 sp["proof_state"] = "not-audited"
                 sp["unproven_reasons"] = [
                     "ship audit could not run: ship_audit module unavailable"
                 ]
+                sp["missing_steps"] = []
 
     # Withdraw the tier rather than leaving it standing.  A stale
     # ``loop-verified`` on a sub-plan the ship-proof ledger holds no row for is
@@ -668,7 +672,7 @@ def _unproven_summary(subplans: list[dict]) -> str | None:
     missing_work: list[tuple[dict, list[int]]] = []
     stale: list[dict] = []
     for sp in unproven:
-        ms = _parse_missing_steps(sp)
+        ms = sp.get("missing_steps") or _parse_missing_steps(sp)
         if ms:
             missing_work.append((sp, ms))
         else:
