@@ -198,38 +198,43 @@ def _missing_step_reason(subplan: Path) -> str | None:
         resolved_root: Path | None = None
         _root_src = "none"
         # 1. Walk up from the sub-plan's parent (the plans dir).
-        resolved_root, _kind = find_project_root(subplan.parent)
-        if resolved_root is not None:
-            _root_src = "subplan_parent"
-        # 2. Trust cwd as last resort (the runner's project root when it
-        #    has not cd'd into the plans dir).
+        candidate, _kind = find_project_root(subplan.parent)
+        if candidate is not None:
+            probe = subprocess.run(
+                ["git", "rev-parse", "--is-inside-work-tree"],
+                capture_output=True, text=True, cwd=candidate, encoding="utf-8",
+            )
+            if probe.returncode == 0 and probe.stdout.strip() == "true":
+                resolved_root = candidate
+                _root_src = "subplan_parent"
+        # 2. Trust cwd — the runner's project root when it has not cd'd
+        #    into the plans dir.
         if resolved_root is None:
-            resolved_root = _git_root(Path.cwd())
-            if resolved_root is not None:
+            candidate = _git_root(Path.cwd())
+            if candidate is not None:
+                resolved_root = candidate
                 _root_src = "cwd"
+
         if resolved_root is None:
-            resolved_root = Path.cwd()
-            _root_src = "cwd_fallback"
+            print(
+                "warning: could not resolve a project root from the sub-plan "
+                "path; step-commit check skipped and ship-integrity fell "
+                "back to the gate check alone",
+                file=sys.stderr,
+            )
+            return None
 
         probe = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
             capture_output=True, text=True, cwd=resolved_root, encoding="utf-8",
         )
         if probe.returncode != 0 or probe.stdout.strip() != "true":
-            if _root_src == "none":
-                print(
-                    "warning: could not resolve a project root from the sub-plan "
-                    "path; step-commit check skipped and ship-integrity fell "
-                    "back to the gate check alone",
-                    file=sys.stderr,
-                )
-            else:
-                print(
-                    f"warning: resolved project root ({resolved_root}) is not a "
-                    "git work tree; step-commit check skipped and ship-integrity "
-                    "fell back to the gate check alone",
-                    file=sys.stderr,
-                )
+            print(
+                f"warning: resolved project root ({resolved_root}) is not a "
+                "git work tree; step-commit check skipped and ship-integrity "
+                "fell back to the gate check alone",
+                file=sys.stderr,
+            )
             return None
 
         authored = count_authored_steps(body)
