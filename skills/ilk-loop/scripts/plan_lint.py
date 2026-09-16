@@ -3288,6 +3288,26 @@ def lint_wholesuite_gate_outside_verification_subplan(text: str, slug: str) -> l
     )
     return findings
 
+# -- Template example node IDs for at-base table validation ------------------
+#
+# The batch-verification template includes example rows in the at-base table
+# (tests/test_foo.py::test_bar, tests/test_baz.py::test_qux).  We extract
+# these programmatically from the template itself so the check cannot go stale
+# when the template's example changes.
+_TEMPLATES = Path(__file__).resolve().parent.parent / "templates"
+_TEMPLATE_EXAMPLE_NODE_IDS_RE = re.compile(
+    r"tests/test_foo\.py::test_bar|tests/test_baz\.py::test_qux"
+)
+
+
+def _template_example_node_ids() -> frozenset[str]:
+    """Extract the example node IDs from the batch-verification template."""
+    template = _TEMPLATES / "batch-verification-subplan.md"
+    if not template.exists():
+        return frozenset()
+    text = template.read_text(encoding="utf-8")
+    return frozenset(_TEMPLATE_EXAMPLE_NODE_IDS_RE.findall(text))
+
 
 # -- Batch verification: attribution asserted rather than measured -----------
 #
@@ -3331,6 +3351,83 @@ _AT_BASE_WORKTREE_RE = re.compile(r"git\s+worktree\s+add", re.I)
 # "Attributed", "[Aa]ttributed" and "[aA]ttributed" alike. ``\??`` likewise
 # absorbs the literal "?" in the caught gate's own ``regressions?`` quantifier.
 _PROSE_ATTRIBUTION_COUNT_RE = re.compile(r"ttributed\s+regressions?\??\s*:", re.I)
+
+
+# -- At-base table parsing for unfilled-table detection ----------------------
+#
+# The at-base section's table may contain only the template's example rows
+# (placeholder) or be entirely empty (no data rows).  Both are "unfilled" --
+# the heading is present but the data is not.
+#
+# Table row: starts with `|`, has at least 4 `|`-separated cells.
+# Header/separator rows are excluded by checking for `---` or `node id`.
+_AT_BASE_TABLE_ROW_RE = re.compile(r"^\|[^|]+\|[^|]+\|[^|]+\|[^|]+\|", re.M)
+
+
+def _strip_frontmatter(text: str) -> str:
+    """Remove YAML frontmatter block."""
+    return re.sub(r"^---.*?---", "", text, count=1, flags=re.S)
+
+
+def _extract_at_base_table_node_ids(body: str) -> list[str]:
+    """Extract node IDs from the `## At-base rerun` table.
+
+    Returns a list of node-id strings (first cell of each data row).
+    Header and separator rows are excluded.
+    """
+    heading = _AT_BASE_RERUN_HEADING_RE.search(body)
+    if not heading:
+        return []
+
+    section = body[heading.end():]
+    next_heading = re.search(r"^##\s+", section, re.M)
+    if next_heading:
+        section = section[:next_heading.start()]
+
+    # Find table rows (lines starting with |).
+    rows = _AT_BASE_TABLE_ROW_RE.findall(section)
+    node_ids: list[str] = []
+    for row in rows:
+        cells = [c.strip() for c in row.split("|")]
+        # cells[0] is empty (before first |), cells[1] is first real cell.
+        if len(cells) < 2:
+            continue
+        first_cell = cells[1]
+        # Skip header/separator rows.
+        if "node id" in first_cell.lower() or "----" in first_cell:
+            continue
+        if first_cell:
+            node_ids.append(first_cell)
+    return node_ids
+
+
+def _at_base_table_is_unfilled(body: str) -> tuple[bool, list[str]]:
+    """Check whether the at-base table is unfilled (template-only or empty).
+
+    Returns (is_unfilled, example_node_ids) where example_node_ids is the
+    list of placeholder rows found if the table is template-only.
+    """
+    node_ids = _extract_at_base_table_node_ids(body)
+    if not node_ids:
+        # Empty table -- no data rows at all.
+        return True, []
+    # Check if ALL rows are template examples.
+    template_ids = _template_example_node_ids()
+    if template_ids and all(nid in template_ids for nid in node_ids):
+        return True, list(node_ids)
+    return False, []
+
+
+_SUITE_GATE_RE = re.compile(
+    r"\b(pytest|unittest|vitest|jest|mocha|cargo\s+test|go\s+test|npm\s+test)\b",
+    re.I,
+)
+
+
+def _has_suite_gate(text: str) -> bool:
+    """True if local_checks include at least one test-suite runner."""
+    commands = _extract_all_local_checks_commands(text)
+    return any(_SUITE_GATE_RE.search(cmd) for cmd in commands)
 
 
 def lint_verification_attribution_unmeasured(text: str, slug: str) -> list[str]:
