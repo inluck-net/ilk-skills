@@ -3414,6 +3414,83 @@ def lint_verification_subplan_hardcodes_suite(text: str, slug: str) -> list[str]
     return findings
 
 
+def lint_tier_forbids_its_evidence(text: str, slug: str) -> list[str]:
+    """Flag a sub-plan whose tier claims loop-verified while forbidding test evidence.
+
+    ``loop-verified`` is defined as *runtime gate proves correctness (pytest
+    boots the app, real HTTP/CLI/browser smoke runs)*.  A sub-plan that
+    declares ``must_add_tests: false`` with an empty ``unit_test_targets``
+    has forbidden the very evidence the tier claims.  The tier is a claim
+    about evidence; the other two fields forbid the evidence.
+
+    Only fires when ALL three are present and contradictory:
+    - ``verification_tier: loop-verified``
+    - ``must_add_tests: false``
+    - ``unit_test_targets: []`` (empty or absent)
+
+    ``compile-only`` and ``device-manual`` with ``must_add_tests: false``
+    are legitimate (those tiers make no claim about a runtime gate).
+    A non-empty ``unit_test_targets`` names existing tests that must pass,
+    which is evidence — not flagged.
+
+    See decomposition-principles.md §12.
+    Measured: kira-cloudflare issue-5445-work, 2026-09-15.
+    """
+    m = re.match(r"^---\n(.*?)\n---\n", text, re.S)
+    if not m:
+        return []
+    fm = m.group(1)
+
+    # Extract verification_tier.
+    tier_match = re.search(r"^verification_tier:\s*(\S+)", fm, re.MULTILINE)
+    if not tier_match:
+        return []
+    tier = tier_match.group(1).strip().strip("'\"")
+    if tier != "loop-verified":
+        return []
+
+    # Extract must_add_tests.
+    mat_match = re.search(r"^must_add_tests:\s*(\S+)", fm, re.MULTILINE)
+    if not mat_match:
+        return []
+    mat = mat_match.group(1).strip().strip("'\"").lower()
+    if mat not in ("false", "no", "0"):
+        return []
+
+    # Extract unit_test_targets — check for empty list or absent.
+    # An empty YAML list is ``unit_test_targets: []`` or a bare key followed
+    # by no items.  A non-empty list has ``- "..."`` entries indented below.
+    utt_match = re.search(r"^unit_test_targets:\s*(\[.*?\])?\s*$", fm, re.MULTILINE)
+    if utt_match:
+        inline = utt_match.group(1)
+        if inline is not None:
+            # Inline form: ``unit_test_targets: []`` or ``["a", "b"]``.
+            if inline.strip() not in ("[]", ""):
+                return []  # non-empty inline list = evidence
+            # empty inline list → continue to flag
+        else:
+            # Block form: check for indented list items below.
+            after_pos = utt_match.end()
+            remaining = fm[after_pos:]
+            # A list item starts with ``  - `` (indented hyphen).
+            if re.match(r"\s+-\s+\S", remaining):
+                return []  # non-empty block list = evidence
+            # No items below → empty list → continue to flag
+    else:
+        # absent → equivalent to empty → continue to flag
+        pass
+
+    return [
+        f"HARD {slug}: verification_tier is 'loop-verified' but "
+        f"must_add_tests is 'false' and unit_test_targets is empty. "
+        f"The tier claims 'runtime gate proves correctness' while both "
+        f"fields forbid the evidence that claim requires. Either "
+        f"**lower the tier** to 'compile-only' (honest about what the "
+        f"gate proves), or **arm the evidence** (set must_add_tests: true "
+        f"or name a unit_test_targets entry)."
+    ]
+
+
 def lint_duplicate_frontmatter_key(text: str, slug: str) -> list[str]:
     """HARD when a top-level key appears twice in the frontmatter block.
 
@@ -3489,6 +3566,7 @@ ALL_CHECKS = (
     lint_broken_process_wait,
     lint_wholesuite_gate_outside_verification_subplan,
     lint_verification_subplan_hardcodes_suite,
+    lint_tier_forbids_its_evidence,
     lint_duplicate_frontmatter_key,
 )
 
