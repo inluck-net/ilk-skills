@@ -317,9 +317,14 @@ already landed. Re-run only the tracks whose results you do not have.
   spliced the whole of `gh --help` into an error field, because the prose said
   "the monkeypatch captures `gh` calls". The one artifact a human reads was
   mangled precisely where its evidence belonged. If a heredoc is unavoidable,
-  quote the delimiter (`<<'EOF'`). **The gate now checks for this** — see the
-  `verify_attribution.has_emptied_record_fields` command in step 0's
-  `local_checks`.
+  quote the delimiter (`<<'EOF'`). **Step 0's gate refuses a record that
+  carries the mangling signature** — the third `local_checks` command calls
+  `verify_attribution.has_emptied_record_fields`, which keys on the output
+  shape (a list item or `**Field:**` whose value is empty or starts with a
+  separator) rather than a field whitelist, so the next variant is caught too.
+  Detected on batch-2026-09-15d (every backticked value gone, the step-1 gate
+  passing silently because it reads `suite_failed` and the at-base table,
+  neither of which is affected).
 - **Commit an empty marker** (the record lives outside the repo):
   `git commit --allow-empty -m "test(verify): record full suite result for <batch-slug> [plan:<slug>#step-0]"`
 - The gate asserts **the external record exists and is non-empty**, not that the
