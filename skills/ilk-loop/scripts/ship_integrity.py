@@ -329,11 +329,13 @@ def _cli(argv: list[str]) -> int:
     )
     ap.add_argument(
         "--gate-passed",
-        choices=["true", "false", "unknown"],
+        choices=["true", "false", "unknown", "skip"],
         default=None,
         help="scalar gate outcome — robust alternative to --gate-json that avoids "
-             "shell quote-mangling. 'unknown' means no gate result recorded. "
-             "Takes precedence over --gate-json when given.",
+             "shell quote-mangling. 'unknown' means no gate result recorded (a "
+             "violation when a gate is declared). 'skip' means no gate ran THIS "
+             "iteration: the gate half is not enforced, the step-commit half "
+             "still is. Takes precedence over --gate-json when given.",
     )
     args = ap.parse_args(argv)
 
@@ -358,8 +360,25 @@ def _cli(argv: list[str]) -> int:
     # Resolve gate result. --gate-passed (scalar) takes precedence — it avoids
     # the shell quote-mangling that breaks JSON args passed PS->python.exe.
     gate_result: dict[str, Any] | None
+    # `skip` is NOT `unknown`. Both mean "no verdict here", but they answer
+    # different questions and the distinction is the whole point of this flag:
+    #
+    #   unknown — a gate is declared and its result is missing. That is
+    #             dishonest, and evaluate_ship says so.
+    #   skip    — no gate ran in this ITERATION. Says nothing about the
+    #             sub-plan's honesty, so the gate half is not enforced. The
+    #             step-commit half still is, because "does every authored step
+    #             have a commit" is a question about git history and does not
+    #             depend on whether a gate ran.
+    #
+    # Measured 2026-09-16: the runner used to `continue` past the whole check
+    # when no gate ran this iteration, so `authored-steps-stop-at-the-findings-
+    # section` shipped with no commit for step 2 — twice. A worker that skips
+    # its gate skipped enforcement with it, which inverts the intent.
+    skip_gate_half = args.gate_passed == "skip"
     if args.gate_passed is not None:
-        gate_result = None if args.gate_passed == "unknown" else {"all_passed": args.gate_passed == "true"}
+        gate_result = (None if args.gate_passed in ("unknown", "skip")
+                       else {"all_passed": args.gate_passed == "true"})
     else:
         try:
             gate = json.loads(args.gate_json)
@@ -374,7 +393,9 @@ def _cli(argv: list[str]) -> int:
             print(f"error: invalid --gate-json: {exc}", file=sys.stderr)
             return 2
 
-    verdict = evaluate_ship(status, checks, gate_result)
+    verdict = (ShipVerdict(ok=True, reason="no gate ran this iteration — gate half not enforced")
+               if skip_gate_half
+               else evaluate_ship(status, checks, gate_result))
 
     # Step-commit half.  evaluate_ship only asks "was the gate green?", so a
     # sub-plan that ran two of four steps and went green on the second was

@@ -1739,8 +1739,19 @@ print(gate_passed)
     # Anything that is not a real verdict is a skip, never 'unknown':
     # ship_integrity.py counts 'unknown' as a violation, so passing it from
     # this enforcement path is what caused the mass revert.
+    # A non-verdict is NOT a reason to skip the whole check. The 2026-08-20
+    # protection this comment describes is about the GATE half — a prior-run
+    # ship has no current-iteration gate result and must never be failed for
+    # it. The STEP-COMMIT half is a question about git history and holds
+    # regardless of whether a gate ran, so it is enforced either way; passing
+    # `skip` tells ship_integrity.py to enforce that half only.
+    #
+    # Measured 2026-09-16: `continue` here meant a worker that skipped its gate
+    # skipped enforcement with it. authored-steps-stop-at-the-findings-section
+    # shipped twice with no commit for step 2 — the exact condition this check
+    # exists to refuse — because iteration 1 ran no gates at all.
     if [[ "$gate_passed" != "true" && "$gate_passed" != "false" ]]; then
-      continue
+      gate_passed="skip"
     fi
 
     si_exit=0

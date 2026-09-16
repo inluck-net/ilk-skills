@@ -426,3 +426,55 @@ class TestExternalPlansLayout:
             "the step-commit check must RUN and catch the missing step. "
             f"output={combined!r}"
         )
+
+
+# ── `skip` enforces the step-commit half, not the gate half ─────────────────
+#
+# Measured 2026-09-16. run_ilk_loop_claude.sh scoped enforcement to sub-plans
+# whose gate ran THIS iteration and `continue`d past everything else. That
+# scoping is right for the GATE half — a prior-run ship has no current-iteration
+# result and re-litigating it reverted 69 of 150 sub-plans on 2026-08-20. It was
+# over-applied to the STEP-COMMIT half, which asks a question about git history
+# and holds regardless of whether a gate ran.
+#
+# Consequence: a worker that skipped its gate skipped enforcement with it.
+# authored-steps-stop-at-the-findings-section shipped TWICE with no commit for
+# step 2 because its iteration ran no gates at all.
+
+class TestSkipEnforcesStepCommitsOnly:
+    def _shipped(self, tmp_path: Path, *, committed: list[int], n_steps: int):
+        repo = _make_repo(tmp_path, name="proj")
+        slug = "skip-semantics-plan"
+        for n in committed:
+            _git(repo, "commit", "-q", "--allow-empty", "-m",
+                 f"work [plan:{slug}#step-{n}]")
+        plans = repo / "docs" / "plans"
+        plans.mkdir(parents=True)
+        return repo, _write_subplan(plans, slug, n_steps=n_steps)
+
+    def test_skip_still_catches_a_missing_step_commit(self, tmp_path: Path) -> None:
+        repo, sp = self._shipped(tmp_path, committed=[0], n_steps=2)
+        r = _run_cli(sp, cwd=repo, gate="skip")
+        assert r.returncode != 0, (
+            "a ship with a missing step commit must be refused even when no "
+            f"gate ran this iteration. output={r.stdout + r.stderr!r}"
+        )
+        assert "missing commit for step 1" in (r.stdout + r.stderr)
+
+    def test_skip_does_not_fail_a_complete_subplan(self, tmp_path: Path) -> None:
+        """The 2026-08-20 protection: no prior-run ship fails for a missing gate."""
+        repo, sp = self._shipped(tmp_path, committed=[0, 1], n_steps=2)
+        r = _run_cli(sp, cwd=repo, gate="skip")
+        assert r.returncode == 0, (
+            "a complete sub-plan must not be failed merely because its gate did "
+            f"not run this iteration. output={r.stdout + r.stderr!r}"
+        )
+
+    def test_skip_is_not_unknown(self, tmp_path: Path) -> None:
+        """`unknown` means a declared gate's result is missing — still a violation."""
+        repo, sp = self._shipped(tmp_path, committed=[0, 1], n_steps=2)
+        assert _run_cli(sp, cwd=repo, gate="skip").returncode == 0
+        assert _run_cli(sp, cwd=repo, gate="unknown").returncode != 0, (
+            "'unknown' and 'skip' must not be treated the same: a declared gate "
+            "with no recorded result is dishonest; no gate running is not."
+        )
