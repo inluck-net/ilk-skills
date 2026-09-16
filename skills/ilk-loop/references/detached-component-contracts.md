@@ -1370,3 +1370,155 @@ one actionable pair is not buried (69KB → 5.9KB on that run).
   the commit-trailer slug.
 - Sub-plan `one-writer-for-the-ship-transition` (2026-09-08) — Contract 10,
   the two-store ship transition and its repair.
+- Contract 11 (2026-09-16) — the enforcement scope, and the three defects
+  that produced it.
+
+## Contract 11: The enforcement scope (which ships may be auto-reverted)
+
+**This is an outward-facing interface.** Every project's loop runs this code
+from the shared toolkit clone. A change to the scope does not degrade a feature
+— it decides whether other people's pipelines keep running. It is versioned by
+behaviour, not by a number, so the compatibility rules below are the only thing
+standing between a refactor here and a halted pipeline elsewhere.
+
+### The two checks, and why they are not interchangeable
+
+Both ask "is this `shipped` backed by the work". They differ in **scope**, in
+**when**, and in **what they do about it** — and conflating them is what caused
+the 2026-09-16 near-miss.
+
+| | `ship_integrity` (in-loop) | `ship_audit` / `/ilk-ship` Phase 0 |
+|---|---|---|
+| runs | every iteration, from the runner | once, at release |
+| scope | **the ACTIVE master's registered sub-plans only** | **everything the release covers, no limit** |
+| on failure | **auto-reverts** `shipped` → `in-progress` | **refuses to release**; reverts nothing |
+| blast radius | the batch being worked | a report a human reads |
+
+The asymmetry is deliberate. An auto-revert is cheap and safe *inside the batch
+a worker is currently driving* — the worker is right there and will redo the
+step. The same auto-revert pointed at historical batches is a mass revert, and
+it is worse than it sounds: `ship_integrity_violation` maps to
+`shipped-unverified` → `needs-human` (see the state vocabulary above), which
+`ilk-watchdog/tests/test_shipped_unverified_never_relaunches.py` pins as
+never-relaunch. A mass revert therefore **halts an unattended loop and the
+watchdog refuses to restart it**.
+
+So: reaching backwards is not "stricter enforcement". It is an outage.
+
+### Format — how scope is computed
+
+`run_ilk_loop_claude.sh` → `test_ship_integrity`:
+
+1. Resolve the active master: `loop_status.pick_active_master`.
+2. Its registered sub-plans: `plan_status.extract_subplan_files`.
+3. Walk `"$plans_dir"/*.md`. **Nothing else narrows this walk** — the registry
+   membership test below is the only batch boundary that exists.
+4. For each `status: shipped` sub-plan with a declared gate, resolve a verdict
+   from this iteration's `local_checks` results file (Contract 2b).
+
+### `--gate-passed` vocabulary
+
+Four values. `skip` and `unknown` are **not** synonyms, and the distinction is
+load-bearing:
+
+| value | meaning | gate half | step-commit half |
+|---|---|---|---|
+| `true` | gate ran, passed | enforced | enforced |
+| `false` | gate ran, failed | enforced (violation) | enforced |
+| `unknown` | a gate is DECLARED and its result is MISSING | **violation** — dishonest | enforced |
+| `skip` | no gate ran this ITERATION | **not enforced** | **enforced** |
+
+`skip` exists because "does every authored step have a commit" is a question
+about git history and holds whether or not a gate ran. Without it, a worker that
+skipped its gate skipped enforcement with it.
+
+**But `skip` is only passed for sub-plans inside the active batch.** Outside it,
+a non-verdict still means skip-entirely. That single conditional is the whole
+contract.
+
+### Who writes
+
+- `run_ilk_loop_claude.sh::test_ship_integrity` — computes scope, resolves the
+  verdict, invokes the checker, applies the revert.
+- `ship_integrity.py` — pure validator; decides, never reverts.
+
+### Who reads
+
+- `ilk-watchdog` — via the sentinel state, to decide relaunch (Contract 1).
+- `/ilk-ship` Phase 0 — independently, with no scope limit.
+- Every consumer project's loop, from the shared clone.
+
+### Invariants
+
+1. **Auto-revert never reaches outside the active master's registry.** A change
+   that widens this is a breaking change to every consumer.
+2. **Unresolvable scope fails SAFE, not wide.** If `pick_active_master` raises
+   or no `MASTER-*.md` exists, the scope set is empty and every non-verdict
+   takes the skip-entirely path — the pre-2026-09-16 behaviour. A broken master
+   lookup must never be able to mass-revert. *Verified by the gh-resolve session
+   reading the diff, 2026-09-16.*
+3. **Membership is an exact whole-name match** (`grep -qxF` on the basename), so
+   a sub-plan whose filename is a prefix of another cannot be pulled into scope.
+4. **`skip` is not `unknown`.** Collapsing them re-creates either the mass
+   revert (if `skip` enforces the gate half) or the original evasion (if
+   `unknown` stops enforcing the step half).
+5. **Fail-open on an unresolvable project root stays.** `ship_integrity`
+   warns and returns no violation when git cannot answer. Flipping this to
+   fail-closed is the 2026-08-20 shape.
+
+### Backward compatibility — what may and may not change
+
+**May change freely:** the wording of warnings; how the scope set is *computed*,
+provided the resulting set is never larger than the active master's registry;
+performance.
+
+**May change only with a migration:** the `--gate-passed` vocabulary. Adding a
+value is safe **only if** older `ship_integrity.py` versions reject it loudly
+rather than coercing it — an unrecognised value that falls through to
+`{"all_passed": False}` reads as a red gate and reverts. Removing or repurposing
+a value is breaking.
+
+**May not change without a decision record:** invariants 1-5. Each one has an
+incident behind it, and each failure mode is an outage in someone else's repo
+rather than a bug in this one.
+
+**Before changing any of this, measure the blast radius over the FULL plan
+corpus** — `"$plans_dir"/*.md`, every project — not a recent slice. See the bug
+reference.
+
+### Bug reference (2026-09-16)
+
+Three defects in one mechanism, in sequence, each found only because the next
+was looked for.
+
+1. **The check never ran.** `ship_integrity` resolved the project root from
+   `Path.cwd()`. Plans live at `~/.ilk-data/projects/<key>/plans`, which has no
+   `.git` ancestor by design, and the runner invokes the check from outside the
+   repo. Measured across every project's launcher logs: **18 skips against 18
+   fires** — it silently no-opped about half the time. Fixed by resolving the
+   root through the registry (`136f1b6`).
+
+2. **The check was never called.** The runner `continue`d past it entirely
+   whenever no gate ran in the current iteration. A worker that skipped its gate
+   skipped enforcement with it, and
+   `authored-steps-stop-at-the-findings-section` shipped **twice** with no
+   commit for step 2. Fixed by passing `skip` instead (`6010938`).
+
+3. **That fix removed the only scope.** The `continue` in (2) was also the
+   *de-facto* batch boundary — nothing else narrows the walk. Measured on
+   gh-resolve: **445 plan files, 360 shipped, 358 enforced, 71 would revert**,
+   oldest `2026-07-26-corpus-dossier` — the entire Jul–Sep corpus. That is the
+   2026-08-20 incident again (69 of 150 then). Fixed by making the batch
+   boundary explicit (`2317750`); enforced population went **358 → 5**.
+
+**How it was caught, and the lesson that generalises.** Defect 3 was found
+before release *only* because the impact was checked with the consuming project
+rather than reasoned about. The ilk-skills session first reported **6** reverts
+— having globbed `2026-09-1[5-6]*.md`, 33 of 445 files, and published a 7% slice
+as the blast radius. The gh-resolve session re-ran the same instrument over the
+full population and reported 71. Both numbers came from the same code; only one
+had the right denominator.
+
+A negative or a count about a *corpus* is only as good as the glob that produced
+it. For this contract the corpus is every `.md` in every project's plans dir,
+because that is what the runner walks.

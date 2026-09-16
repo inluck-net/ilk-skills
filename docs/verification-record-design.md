@@ -220,6 +220,69 @@ the corpus is clean. Deleting them early re-opens every closed hole.
 (`must_add_tests` / tier consistency) — that is a separate tracked defect and a
 different mechanism.
 
+## The outward-facing surface, and what may change
+
+**The record is an interface, not an internal file.** Records written by every
+project sit on disk under `~/.ilk-data/projects/*/logs/verification/`, and the
+checker in this repo reads all of them. A format change here does not break a
+feature — it invalidates other people's evidence.
+
+The enforcement half of this mechanism has its own contract, written in the
+house style with invariants and a compatibility policy:
+**`skills/ilk-loop/references/detached-component-contracts.md` → Contract 11,
+"The enforcement scope"**. Read it before touching `ship_integrity`, the
+runner's `test_ship_integrity`, or the `--gate-passed` vocabulary. Its lesson
+generalises to everything below: *measure the blast radius over the full corpus,
+not a recent slice.*
+
+### Two record dialects, and both must keep working
+
+| dialect | written by | read by | status |
+|---|---|---|---|
+| **signed** — carries `record_writer:` | `verification_record.py` | `derive_attributed` (measurements → verdict) | current |
+| **unsigned** — hand-written markdown | a worker following prose | `attributed_rows` (legacy `attributed` column) | **supported, frozen** |
+
+The legacy path is not deprecated-and-scheduled-for-removal. It is **load
+bearing**: parked batches on other projects carry unsigned records, and a batch
+cannot be un-parked if the checker refuses to read the record it already has.
+Deleting that path strands them.
+
+**It may be removed only when the corpus is measurably empty of unsigned
+records** — a count over `~/.ilk-data/projects/*/logs/verification/*-batch.md`,
+not an assumption that everyone has migrated.
+
+### What may and may not change
+
+**May change freely:** anything the checker does not parse — narrative, the
+Findings section, field ordering, headings that are not `## At-base rerun`.
+
+**May change with care:** adding a field the checker reads. Older records lack
+it, so absence must be *tolerated* where it is genuinely optional and *refused*
+where it is not — and the refusal must say which. `verified_head` is the worked
+example: absent ⇒ no proof is written, loudly, rather than a proof for a tree
+nobody measured.
+
+**May not change without a migration:** removing or repurposing a parsed field;
+changing the at-base table's column meanings; making the checker reject a
+dialect it used to accept.
+
+### Two rules that came from getting this wrong
+
+**A reader must be told where to look, and in what shape.** `read_baseline_red`
+checked the top level of `.ilk-launch.json` while the list lives at
+`ship.baseline_red`, and assumed strings where the schema requires dicts with
+`node_id` + `reason` (`ship_config.py:140-157`). Six correctly-declared entries
+covering 32 known failures were invisible; every record that day recorded
+`in baseline_red: no` for all 35 rows. **An empty answer from the wrong location
+is indistinguishable from an empty answer from the right one** — and it was then
+published as a finding ("baseline_red is empty") that was simply false.
+
+**A tolerant reader is a silent wrong answer.** `attributed_rows` treated
+anything-not-`YES` as not-attributed, so `no (fixed)` and `N/A` passed. In the
+signed dialect the `attributed` column does not exist — the checker derives the
+verdict from measurements — so that class is not fixed, it is *unrepresentable*.
+Prefer removing the cell over validating it.
+
 ## How to continue in a fresh session
 
 1. Read this file, then `templates/batch-verification-subplan.md` step 0/1, then
