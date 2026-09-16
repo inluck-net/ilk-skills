@@ -3379,6 +3379,71 @@ def lint_verification_attribution_unmeasured(text: str, slug: str) -> list[str]:
     return findings
 
 
+# -- Batch verification: gate must not be compile-only ----------------------
+#
+# A ``batch_verification: true`` sub-plan whose declared gates are ALL
+# compile-only (typecheckers, linters, builders) cannot discharge the
+# batch-wide verification obligation.  A typecheck proves the code compiles;
+# it does not prove it works.
+#
+# Reuses the compile-only predicate from the spec-pillar lint
+# (``_COMPILE_ONLY_AC_RE``), tightened for gate commands: "green" and
+# "lint" are removed because they appear in legitimate test invocations
+# (``pytest --tb=green``, ``ruff lint tests/``).
+
+_COMPILE_ONLY_GATE_RE = re.compile(
+    r"\b(mypy|pyright|tsc|cargo\s+build|"
+    r"npm\s+run\s+build|typecheck|"
+    r"--noEmit|--no-emit)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_compile_only_gate(cmd: str) -> bool:
+    """True if *cmd* is a compile-only gate (typecheck, not a test suite)."""
+    return bool(_COMPILE_ONLY_GATE_RE.search(cmd))
+
+
+def lint_verification_gate_compile_only(text: str, slug: str) -> list[str]:
+    """Flag a batch-verification sub-plan whose gates are all compile-only.
+
+    ``batch_verification: true`` means the sub-plan runs the batch-wide
+    verification.  A typecheck is not a test suite — it proves the code
+    compiles, not that it works.  The batch obligation cannot be discharged
+    by a typecheck alone.
+
+    Fires ONLY on sub-plans declaring ``batch_verification: true``.
+    """
+    findings: list[str] = []
+    if not _has_batch_verification_marker(text):
+        return findings
+
+    commands = _extract_all_local_checks_commands(text)
+    if not commands:
+        return findings
+
+    compile_only = [cmd for cmd in commands if _is_compile_only_gate(cmd)]
+    if not compile_only:
+        return findings
+
+    # Only flag when ALL gates are compile-only — a typecheck alongside a
+    # real suite gate is legitimate (the suite gate discharges the obligation).
+    non_compile = [cmd for cmd in commands if not _is_compile_only_gate(cmd)]
+    if non_compile:
+        return findings
+
+    examples = "; ".join(cmd.strip()[:60] for cmd in compile_only[:3])
+    findings.append(
+        f"HARD {slug}: batch-verification sub-plan's gates are ALL "
+        f"compile-only ({examples}). A typecheck proves the code compiles; "
+        f"it does not prove it works. The batch-wide verification obligation "
+        f"requires at least one gate that runs a test suite. "
+        f"Add a pytest/vitest/jest gate alongside the typecheck, or remove "
+        f"the batch_verification marker if this is not a verification sub-plan."
+    )
+    return findings
+
+
 # -- Batch verification: suite command resolved, not restated ----------------
 #
 # Both wrong full-suite runs on 2026-09-07 came from hand-typing a pytest
@@ -3552,6 +3617,7 @@ def lint_duplicate_frontmatter_key(text: str, slug: str) -> list[str]:
 ALL_CHECKS = (
     lint_gate_budget,
     lint_verification_attribution_unmeasured,
+    lint_verification_gate_compile_only,
     lint_envprereq_fallback_contradiction,
     lint_block_when_default_exists,
     lint_contract_change_review,
