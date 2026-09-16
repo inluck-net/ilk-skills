@@ -133,6 +133,137 @@ class TestAttributionCell:
         assert len(va.attributed_rows(rows)) == 1
 
 
+# ── unrecognised tokens: the tolerant-reader family ────────────────────────
+#
+# Measured on gh-resolve batch-2026-09-16. The suite reported 5337 passed,
+# 11 failed, 2 skipped against a 0-failed baseline. The at-base table had
+# 11 rows for 11 failures — count assertion passed — but 6 of those rows
+# carried values the gate should refuse, and it saw neither.
+#
+# Two distinct shapes:
+#   4 rows  `passed | no | no (fixed)`  — verdict cell prose, not a token
+#   2 rows  `N/A    | no | no`          — at-base not a measurement
+#
+# The gate returned `attribution verified: 11 failure(s), none attributed`,
+# exit 0.  These tests pin the correct behaviour: both shapes raise.
+
+_MEASURED_TABLE = (
+    "| node id | at base | in baseline_red | attributed |\n"
+    "|---|---|---|---|\n"
+    # 4 rows: verdict cell is `no (fixed)` — prose claiming a fix without
+    # re-running the suite.  The template says "no third column makes it
+    # not-attributed" when at_base is passed and not in baseline_red.
+    "| test_alpha.py::t1 | passed | no | no (fixed) |\n"
+    "| test_alpha.py::t2 | passed | no | no (fixed) |\n"
+    "| test_alpha.py::t3 | passed | no | no (fixed) |\n"
+    "| test_alpha.py::t4 | passed | no | no (fixed) |\n"
+    # 2 rows: at-base is `N/A` — the test did not exist at base, so a
+    # present failure is the batch's own damage, not an exoneration.
+    "| test_beta.py::t5 | N/A | no | no |\n"
+    "| test_beta.py::t6 | N/A | no | no |\n"
+    # 5 rows: genuinely failed at base, correctly exonerated.
+    "| test_gamma.py::t7 | failed | no | no |\n"
+    "| test_gamma.py::t8 | failed | no | no |\n"
+    "| test_gamma.py::t9 | failed | no | no |\n"
+    "| test_gamma.py::t10 | failed | no | no |\n"
+    "| test_gamma.py::t11 | failed | no | no |\n"
+)
+
+_MEASURED_SUITE = "Suite: 5337 passed, 11 failed, 2 skipped\n"
+
+
+class TestUnrecognisedTokens:
+    """The tolerant-reader family: unrecognised ≠ benign."""
+
+    def test_no_fixed_verdict_cell_refuses(self, tmp_path: Path) -> None:
+        """`no (fixed)` is prose overturning a row — the gate must refuse it.
+
+        The row says passed-at-base and not in baseline_red.  The template's
+        rule is explicit: there is no third column that makes it not-attributed.
+        A parenthetical claim that the failure was fixed is a hypothesis about
+        why, not a measurement.
+        """
+        rec = _write(tmp_path, _MEASURED_SUITE + "\n## At-base rerun\n\n" +
+                     _MEASURED_TABLE)
+        with pytest.raises(va.VerificationError):
+            va.verify(rec)
+
+    def test_na_at_base_refuses(self, tmp_path: Path) -> None:
+        """`N/A` at base means the test did not exist — that is attributed.
+
+        A test introduced by this batch and failing now is the batch's own
+        damage.  Reading N/A as `failed` would silently exonerate it.
+        """
+        table = (
+            "| node id | at base | in baseline_red | attributed |\n"
+            "|---|---|---|---|\n"
+            "| test_new.py::t1 | N/A | no | no |\n"
+        )
+        rec = _write(tmp_path, "Suite: 1 passed, 1 failed, 0 skipped\n\n"
+                     "## At-base rerun\n\n" + table)
+        with pytest.raises(va.VerificationError):
+            va.verify(rec)
+
+    def test_full_measured_table_refuses(self, tmp_path: Path) -> None:
+        """The complete gh-resolve batch-2026-09-16 table: 6 of 11 rows bad.
+
+        This is the exact record the gate returned exit 0 on.  After the fix,
+        it must refuse and name the offending rows.
+        """
+        rec = _write(tmp_path, _MEASURED_SUITE + "\n## At-base rerun\n\n" +
+                     _MEASURED_TABLE)
+        with pytest.raises(va.VerificationError) as exc:
+            va.verify(rec)
+        msg = str(exc.value)
+        # The refusal must name the unrecognised values so the reader knows
+        # what to fix.
+        assert "no (fixed)" in msg or "N/A" in msg
+
+    def test_no_fixed_only_verdict_section_refuses(self, tmp_path: Path) -> None:
+        """Isolated: only `no (fixed)` rows, no N/A distraction."""
+        table = (
+            "| node id | at base | in baseline_red | attributed |\n"
+            "|---|---|---|---|\n"
+            "| test_alpha.py::t1 | passed | no | no (fixed) |\n"
+            "| test_alpha.py::t2 | passed | no | no (fixed) |\n"
+        )
+        rec = _write(tmp_path, "Suite: 10 passed, 2 failed, 0 skipped\n\n"
+                     "## At-base rerun\n\n" + table)
+        with pytest.raises(va.VerificationError):
+            va.verify(rec)
+
+    def test_na_only_at_base_section_refuses(self, tmp_path: Path) -> None:
+        """Isolated: only N/A at-base rows, no `no (fixed)` distraction."""
+        table = (
+            "| node id | at base | in baseline_red | attributed |\n"
+            "|---|---|---|---|\n"
+            "| test_beta.py::t1 | N/A | no | no |\n"
+            "| test_beta.py::t2 | N/A | no | no |\n"
+        )
+        rec = _write(tmp_path, "Suite: 10 passed, 2 failed, 0 skipped\n\n"
+                     "## At-base rerun\n\n" + table)
+        with pytest.raises(va.VerificationError):
+            va.verify(rec)
+
+    def test_whitespace_and_case_tolerant(self, tmp_path: Path) -> None:
+        """` YES `, `yes`, `Yes` are formatting, not meaning.
+
+        AC-5: case and whitespace tolerance is preserved.  The refusal is
+        about unrecognised *tokens*, not about punctuation.
+        """
+        table = (
+            "| node id | at base | in baseline_red | attributed |\n"
+            "|---|---|---|---|\n"
+            "| a::t1 | passed | no | YES |\n"
+            "| a::t2 | passed | no | yes |\n"
+            "| a::t3 | passed | no |  Yes  |\n"
+        )
+        rec = _write(tmp_path, "Suite: 10 passed, 3 failed, 0 skipped\n\n"
+                     "## At-base rerun\n\n" + table)
+        with pytest.raises(va.VerificationError, match="attributed regression"):
+            va.verify(rec)
+
+
 # ── the CLI contract the gate depends on ────────────────────────────────────
 
 class TestCli:
