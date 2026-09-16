@@ -427,7 +427,22 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
                                capture_output=True, text=True, timeout=timeout,
                                encoding="utf-8", errors="replace")
             blob = (r.stdout or "") + (r.stderr or "")
-            if "no tests ran" in blob.lower() or "not found" in blob.lower():
+            # Distinguish "this test did not exist at base" from "this test
+            # exists and its module fails to import". Both produce "no tests
+            # ran"; only the first is absent.
+            #
+            # pytest exits 4 (usage error) and prints `ERROR: not found:` for an
+            # unresolvable node id. A collection error in a file that DOES exist
+            # exits 2 with an ERRORS section — that is a failure at base, and
+            # exonerates the batch.
+            #
+            # Getting this backwards is costly in one direction only:
+            # absent-at-base counts as ATTRIBUTED, so a misread manufactures a
+            # regression. Measured 2026-09-16: an earlier version keyed on
+            # "no tests ran" and marked all 7 test_meta_paths.py collection
+            # errors absent — the file exists at base (`git cat-file -e` proves
+            # it), so all 7 were false attributions.
+            if r.returncode == 4 or "error: not found:" in blob.lower():
                 verdicts[nid] = "absent-at-base"
             elif r.returncode == 0:
                 verdicts[nid] = "passed"

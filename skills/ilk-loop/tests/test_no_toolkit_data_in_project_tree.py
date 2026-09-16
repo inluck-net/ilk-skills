@@ -114,6 +114,29 @@ def _is_guarded_by_args(assign_node: ast.Assign, tree: ast.Module) -> bool:
     return False
 
 
+def test_a_real_project_tree_write_path_is_still_caught(tmp_path: Path) -> None:
+    """The tightened matcher must still reject an actual write directory.
+
+    Guards the 2026-09-16 tightening (bare `docs/verification` -> with a
+    trailing slash) against becoming a hole.
+    """
+    bad = tmp_path / "bad-template.md"
+    bad.write_text("Write the record to docs/verification/batch-x.md\n"
+                   "ilk_paths is mentioned so the other rule stays quiet.\n",
+                   encoding="utf-8")
+    assert _check_template_writes_external(bad), (
+        "a template writing into docs/verification/ must still be a violation"
+    )
+
+
+def test_a_design_doc_citation_is_not_a_write_path(tmp_path: Path) -> None:
+    """The false positive that made this fire on 2026-09-16."""
+    ok = tmp_path / "ok-template.md"
+    ok.write_text("See `docs/verification-record-design.md` for the contract.\n"
+                  "ilk_paths resolves the destination.\n", encoding="utf-8")
+    assert _check_template_writes_external(ok) == []
+
+
 def _check_template_writes_external(template_path: Path) -> list[str]:
     """Check that the batch-verification template writes externally.
 
@@ -133,10 +156,21 @@ def _check_template_writes_external(template_path: Path) -> list[str]:
             f"without specifying an external path via ilk_paths.py"
         )
 
-    # Check for "docs/verification" or similar project-tree write paths
-    if re.search(r"docs/verification", text):
+    # Check for "docs/verification/" or similar project-tree write DIRECTORIES.
+    #
+    # The trailing separator is load-bearing, not cosmetic. The rule is "do not
+    # write records into <project>/docs/verification/"; a bare `docs/verification`
+    # substring also matches a prose CITATION of a file whose name merely starts
+    # that way — e.g. `docs/verification-record-design.md`, a design document
+    # that is not a write path at all. Measured 2026-09-16: that citation alone
+    # failed this test, and the failure read as an attributed regression.
+    #
+    # This is a tightening, not a weakening: a genuine violation writes into the
+    # directory and still matches. Pinned by test_a_real_project_tree_write_path
+    # _is_still_caught below.
+    if re.search(r"docs/verification/", text):
         violations.append(
-            f"{template_path.name}: references docs/verification "
+            f"{template_path.name}: references docs/verification/ "
             f"(project-tree write path)"
         )
 

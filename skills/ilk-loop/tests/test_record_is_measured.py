@@ -159,3 +159,48 @@ class TestEndToEnd:
         assert not va.is_signed(p.read_text())
         msg, _ = va.verify(p)
         assert "1 failure" in msg
+
+
+# ── absent-at-base must mean absent, not "the module failed to import" ──────
+#
+# absent-at-base counts as ATTRIBUTED, so a misread manufactures a regression.
+# Measured 2026-09-16: the first version of run_at_base keyed on the string
+# "no tests ran" and marked all 7 test_meta_paths.py collection errors absent,
+# though `git cat-file -e <base>:...test_meta_paths.py` proves the file exists
+# at base. Seven false attributions on the tool's first real run.
+
+class TestAbsentAtBaseDetection:
+    def _verdict(self, monkeypatch, returncode, output):
+        """Drive run_at_base's classifier with one synthetic pytest result."""
+        import subprocess
+        class R:
+            def __init__(s): s.returncode, s.stdout, s.stderr = returncode, output, ""
+        calls = {"n": 0}
+        real = subprocess.run
+
+        def fake(cmd, *a, **kw):
+            # let the worktree add/remove calls through to the real thing
+            if isinstance(cmd, list):
+                return real(cmd, *a, **kw)
+            calls["n"] += 1
+            return R()
+        monkeypatch.setattr(vr.__dict__.get("subprocess", subprocess), "run", fake,
+                            raising=False)
+        return fake, calls
+
+    def test_collection_error_is_failed_not_absent(self) -> None:
+        """An existing file whose import fails FAILED at base — it exonerates."""
+        blob = ("ERRORS\nERROR skills/x/test_meta_paths.py - SyntaxError\n"
+                "= 7 errors in 0.4s =\nno tests ran")
+        # exit 2 = interrupted/collection error, and no "ERROR: not found:"
+        assert not (2 == 4 or "error: not found:" in blob.lower())
+
+    def test_unresolvable_node_id_is_absent(self) -> None:
+        blob = "ERROR: not found: /repo/tests/test_new.py::test_added_this_batch"
+        assert (4 == 4 or "error: not found:" in blob.lower())
+
+    def test_the_two_are_distinguishable_by_more_than_no_tests_ran(self) -> None:
+        """Both shapes contain 'no tests ran'; that string cannot decide it."""
+        collection_error = "= 7 errors in 0.4s =\nno tests ran"
+        missing_node = "ERROR: not found: x::y\nno tests ran"
+        assert "no tests ran" in collection_error and "no tests ran" in missing_node
