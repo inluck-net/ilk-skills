@@ -1,8 +1,14 @@
 # The verification record (2026-09-16)
 
-**Status:** design, not yet implemented. Written after six consecutive stuck
-verification steps across three projects. Supersedes the implicit design that
-`templates/batch-verification-subplan.md` describes in prose.
+**Status (2026-09-16):** the measure/derive split, the signed record, and the
+single-command step 0 are **implemented and shipped**. The three-pass fix loop
+(§"What stays open") is **specified and not implemented** — that is the
+remaining cost work. Supersedes the implicit design that
+`templates/batch-verification-subplan.md` described in prose.
+
+Written after six consecutive stuck verification steps across three projects.
+The enforcement half is a separate outward-facing contract:
+`skills/ilk-loop/references/detached-component-contracts.md` → **Contract 11**.
 
 ## The defect it exists for
 
