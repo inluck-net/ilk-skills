@@ -86,8 +86,8 @@ echo "RC=$?"
 # ── Tests ────────────────────────────────────────────────────────────────────
 
 
-class TestSelfmodIsolationPredicate:
-    """AC-1: falsifier.  AC-2: predicate true/false on toolkit vs other."""
+class TestSelfmodFalsifier:
+    """AC-1: the string 'selfmod_worktree' must appear in the driver script."""
 
     def test_falsifier_selfmod_worktree_in_driver(self) -> None:
         """AC-1: grep selfmod_worktree in the driver script.
@@ -100,6 +100,10 @@ class TestSelfmodIsolationPredicate:
         assert "selfmod_worktree" in text, (
             "selfmod_worktree not yet referenced in driver — falsifier is red"
         )
+
+
+class TestSelfmodIsolationPredicate:
+    """AC-2: predicate true/false on toolkit vs other."""
 
     def test_predicate_true_for_toolkit_clone(self, tmp_path: Path) -> None:
         """AC-2: selfmod_isolation_required exits 0 for the toolkit clone."""

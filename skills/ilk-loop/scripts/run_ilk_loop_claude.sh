@@ -324,6 +324,32 @@ if root: print(external_logs_dir(project_key(root)))
   JSONL_LOG="$JSONL_LOG_PATH"
 }
 
+# ----- Selfmod isolation (DP-2) ----------------------------------------------
+
+# Returns 0 (true) when PROJECT_PATH resolves to the toolkit clone — the
+# clone that the installed skill symlinks point at.  Compares resolved
+# paths (via readlink -f or realpath), never bare strings.
+#
+# Emits one line on stdout when isolation is required, naming the resolved
+# clone.  A silent behaviour change to where the loop executes is not
+# acceptable.
+selfmod_isolation_required() {
+  local project_resolved toolkit_resolved
+
+  project_resolved="$(readlink -f "$PROJECT_PATH" 2>/dev/null \
+                    || realpath "$PROJECT_PATH" 2>/dev/null \
+                    || echo "$PROJECT_PATH")"
+  toolkit_resolved="$(readlink -f "${_SKILL_ROOT}/.." 2>/dev/null \
+                    || realpath "${_SKILL_ROOT}/.." 2>/dev/null \
+                    || echo "${_SKILL_ROOT}/..")"
+
+  if [[ "$project_resolved" == "$toolkit_resolved" ]]; then
+    echo "[selfmod] isolation required: project=$project_resolved matches toolkit clone"
+    return 0
+  fi
+  return 1
+}
+
 # ----- Helpers ---------------------------------------------------------------
 
 discover_git_repos() {
