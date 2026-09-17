@@ -3435,11 +3435,28 @@ _SUITE_GATE_RE = re.compile(
     re.I,
 )
 
+# verification_record.py --run-suite resolves the pytest invocation from
+# .ilk-launch.json via ship_audit._resolve_expected_invocation — the literal
+# string "pytest" never appears in the plan, but the --run-suite flag is
+# precisely the promise that a suite runs.
+_RESOLVER_SUITE_GATE_RE = re.compile(
+    r"verification_record\.py\b.*--run-suite\b",
+    re.I,
+)
+
 
 def _has_suite_gate(text: str) -> bool:
-    """True if local_checks include at least one test-suite runner."""
+    """True if local_checks include at least one test-suite runner.
+
+    Recognises both direct runners (pytest, vitest, jest, …) and the
+    verification_record.py resolver carrying ``--run-suite``, which delegates
+    to the configured suite invocation.
+    """
     commands = _extract_all_local_checks_commands(text)
-    return any(_SUITE_GATE_RE.search(cmd) for cmd in commands)
+    return any(
+        _SUITE_GATE_RE.search(cmd) or _RESOLVER_SUITE_GATE_RE.search(cmd)
+        for cmd in commands
+    )
 
 
 def lint_verification_attribution_unmeasured(text: str, slug: str) -> list[str]:
