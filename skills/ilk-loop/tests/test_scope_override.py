@@ -79,17 +79,21 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return p
 
 
-# Mock run_suite results:
+# Mock run_suite results (must include "counts" key for render_record).
 _SCOPED_RESULT = {
     "exit_code": 0,
-    "passed": 100, "failed": 0, "errors": 0,
-    "total": 100,
+    "counts": {
+        "passed": 100, "failed": 0, "errors": 0,
+        "skipped": 0, "xfailed": 0, "xpassed": 0, "total": 100,
+    },
     "failing_nodes": [],
 }
 _FULL_RESULT = {
     "exit_code": 0,
-    "passed": 3000, "failed": 0, "errors": 0,
-    "total": 3200,
+    "counts": {
+        "passed": 3000, "failed": 0, "errors": 0,
+        "skipped": 200, "xfailed": 0, "xpassed": 0, "total": 3200,
+    },
     "failing_nodes": [],
 }
 
@@ -242,18 +246,20 @@ def test_ac4_unrecognised_scope_refused(project, monkeypatch: pytest.MonkeyPatch
     the accepted values."""
     record_path = project / "record.md"
     base_sha = _git(project, "rev-parse", "HEAD~1")
-    # Capture stderr.
+    # argparse calls sys.exit(2) for invalid choices; catch it and check the
+    # error message.
     import io
     captured = io.StringIO()
     monkeypatch.setattr("sys.stderr", captured)
-    rc = vr_main([
-        "--project", str(project),
-        "--record", str(record_path),
-        "--run-suite",
-        "--base-sha", base_sha,
-        "--scope", "bogus",
-    ])
-    assert rc != 0, f"expected non-zero exit for bogus --scope, got {rc}"
+    with pytest.raises(SystemExit) as exc_info:
+        vr_main([
+            "--project", str(project),
+            "--record", str(record_path),
+            "--run-suite",
+            "--base-sha", base_sha,
+            "--scope", "bogus",
+        ])
+    assert exc_info.value.code == 2, f"expected exit code 2, got {exc_info.value.code}"
     err = captured.getvalue()
     assert "full" in err and "auto" in err, (
         f"expected error to name accepted values (full, auto), got: {err}"

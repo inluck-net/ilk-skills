@@ -676,6 +676,10 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
         return 1
 
     scope = compute_suite_scope(project, args.base_sha)
+    # --scope full overrides the computed scope.
+    if getattr(args, "scope", "auto") == "full":
+        scope["mode"] = "full"
+        scope["reason"] = "override: --scope full"
     record.parent.mkdir(parents=True, exist_ok=True)
 
     stub = (f"# Batch verification record — {args.batch or record.stem}\n\n"
@@ -753,6 +757,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--suite-timeout", type=int, default=1800, metavar="SEC",
         help="bound on the suite run (default 1800)",
+    )
+    ap.add_argument(
+        "--scope", default="auto", choices=("full", "auto"),
+        metavar="MODE",
+        help="override suite scope: 'full' forces the whole suite even when "
+             "compute_suite_scope returns scoped; 'auto' (default) uses the "
+             "computed scope.",
     )
     args = ap.parse_args(argv)
 
