@@ -361,12 +361,14 @@ class TestMeasuredHitRate:
         projects = list(self._corpus())
         assert projects, "no projects with ≥2 batch records found in ~/.ilk-data"
 
-    def test_all_existing_pairs_lack_verified_tree(self) -> None:
-        """0 of 14 existing consecutive pairs carry `verified_tree`.
+    def test_corpus_pair_counts_are_documented(self) -> None:
+        """Document how many consecutive pairs have `verified_tree`.
 
-        This is expected: the emission feature (sub-plan 3) shipped after these
-        records were written.  It documents the denominator and explains why the
-        new lookup's hit rate is 0% on historical data.
+        The emission feature (sub-plan 3, step-zeros-gate-emits-what-the-runtime-needs)
+        was new when this test was written — most historical records lack the field.
+        As new batches carry it, the count grows. This test documents the denominator
+        and the current hit rate so the baseline-reuse savings are visible, without
+        asserting a fixed count that turns stale every time a new batch ships.
         """
         total_pairs = 0
         pairs_with_tree = 0
@@ -378,10 +380,11 @@ class TestMeasuredHitRate:
                     pairs_with_tree += 1
 
         assert total_pairs > 0, "no consecutive pairs to analyse"
-        # The finding: 0 pairs have verified_tree.
-        assert pairs_with_tree == 0, (
-            f"{pairs_with_tree} of {total_pairs} pairs unexpectedly have "
-            f"verified_tree — the corpus predates the emission feature"
+        hit_rate = pairs_with_tree / total_pairs if total_pairs else 0
+        # Print for visibility; the functional invariants are in TestBaselineReuse.
+        print(
+            f"corpus: {pairs_with_tree} of {total_pairs} pairs carry "
+            f"verified_tree ({hit_rate:.0%} reuse-eligible)"
         )
 
     def test_sha_keyed_cache_also_missed(self) -> None:
