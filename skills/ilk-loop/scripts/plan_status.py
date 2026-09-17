@@ -143,6 +143,10 @@ def extract_subplan_files(master_text: str) -> list[str]:
 
 _RUNNABLE_STATUSES = {"queued", "active"}
 
+#: Statuses that encode a human decision to hold a master. `reconcile_master_status`
+#: never rewrites these: `draft` = authored but not released, `blocked` = parked.
+_HELD_STATUSES = {"draft", "blocked"}
+
 
 def normalize_master_status(raw_status: str) -> str:
     """Normalize a raw master front-matter status for queue-model readers.
@@ -527,14 +531,37 @@ def reconcile_master_status(master_path: Path, plans_dir: Path) -> bool:
     sub-plan reverted — this would silently un-park it; that is a
     pre-existing state, not the live defect this was built to fix.
     """
-    if is_master_all_shipped(master_path, plans_dir):
-        target = "shipped"
-    else:
-        target = "queued"
-
     text = master_path.read_text(encoding="utf-8-sig")
     fm = parse_frontmatter(text)
     current = fm.get("status", "").strip().lower()
+
+    # A held master is a HUMAN gate, and reconciliation does not lift it.
+    #
+    # `draft` means "authored, not released"; `blocked` means "parked, do not
+    # dispatch". Neither is a claim about whether the sub-plans finished, so
+    # neither is this function's to overrule -- in either direction. Completing
+    # every sub-plan of a draft master does not constitute a human releasing it.
+    #
+    # Measured 2026-09-18: without this guard the first symmetric version
+    # (274bb19) rewrote EVERY not-all-shipped master to `queued`, because it
+    # compared only `current != target`. MASTER-2026-09-08b had been held at
+    # `draft` and parked behind 09-08e for ten days. It was silently released,
+    # sorted ahead of the live batch by date, and five commits of it ran before
+    # anyone noticed. Three call sites reconcile every master file
+    # (run_ilk_loop_claude.sh:3299, loop_status.py:357, scheduler_scan.py:397),
+    # so merely READING status un-parked it.
+    if current in _HELD_STATUSES:
+        return False
+
+    if is_master_all_shipped(master_path, plans_dir):
+        target = "shipped"
+    elif current == "shipped":
+        # The reverse direction, and only from `shipped`. This function exists
+        # to retract a ship claim that stopped being true -- not to promote a
+        # master that never made one.
+        target = "queued"
+    else:
+        return False
 
     # Already at the target — nothing to do.
     if current == target:
