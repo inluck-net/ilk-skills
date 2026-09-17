@@ -2604,6 +2604,11 @@ main() {
 
   if [[ -n "$runtime_dir" ]]; then
     mkdir -p "$runtime_dir"
+    # Claim running.pid — only the lock winner reaches here (ILK_RUN_LOCK_HELD=1).
+    # launch.sh no longer writes the PID; the runner owns the file.
+    if [[ "${ILK_RUN_LOCK_HELD:-}" == "1" ]]; then
+      echo "$$" > "${runtime_dir}/running.pid"
+    fi
     python3 -c "import json; print(json.dumps({
       'state': 'running',
       'pid': $$,

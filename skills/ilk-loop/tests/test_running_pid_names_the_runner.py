@@ -206,19 +206,21 @@ def test_lock_loser_does_not_overwrite_winner_pid(tmp_path):
     lock_file = launcher_dir / "run.lock"
     lock_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # --- Simulate two launch.sh instances ---
+    # --- Simulate two runners racing for the lock ---
 
-    # First: write PID1 to running.pid, acquire the lock
+    # First runner: acquires the lock, then writes its PID (as the runner
+    # now does after lock acquisition in run_ilk_loop_claude.sh).
     winner = _acquire_lock(lock_file, wait=5)
     try:
         winner_pid = winner.pid
 
-        # Second: write PID2 to running.pid (launch.sh does this at :719
-        # before the runner even tries the lock).
-        loser_fake_pid = 999999  # a PID we know is not running
-        pid_file.write_text(str(loser_fake_pid))
+        # Winner claims running.pid (the runner writes its own PID after
+        # acquiring the lock — launch.sh no longer does it).
+        pid_file.write_text(str(winner_pid))
 
-        # Now the second runner tries the lock — it will fail (exit 3)
+        # Second runner: tries the lock — it will fail (exit 3).
+        # The loser never writes to running.pid (it exits before reaching
+        # the PID-write code).
         loser = subprocess.Popen(
             [sys.executable, str(_LOCK_SCRIPT),
              "--lock", str(lock_file),
@@ -232,15 +234,14 @@ def test_lock_loser_does_not_overwrite_winner_pid(tmp_path):
             f"stdout={loser.stdout.decode()}\nstderr={loser.stderr.decode()}"
         )
 
-        # running.pid must name the winner, not the loser
-        # (Currently red: launch.sh already wrote the loser's PID.)
+        # running.pid must still name the winner — the loser never wrote.
         actual_pid = pid_file.read_text().strip()
         assert actual_pid == str(winner_pid), (
-            f"running.pid names the lock loser (or a stale PID).\n"
+            f"running.pid does not name the lock winner.\n"
             f"  Expected: {winner_pid} (the lock winner)\n"
             f"  Actual:   {actual_pid}\n"
-            f"launch.sh writes the PID before the lock race; the loser's "
-            f"PID overwrites the winner's."
+            f"The loser should never write to running.pid; only the lock "
+            f"winner claims it."
         )
     finally:
         winner.kill()

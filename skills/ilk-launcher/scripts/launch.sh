@@ -713,11 +713,6 @@ start_ilk_window() {
   local leader_pid
   leader_pid=$(start_detached_session "$runner_cmd" "$log_file")
 
-  # Write PID file
-  local pid_file
-  pid_file=$(get_pid_file_path "$project_path")
-  echo "$leader_pid" > "$pid_file"
-
   # Write last-launch.json
   local meta_path
   meta_path=$(get_launch_meta_path "$project_path")
