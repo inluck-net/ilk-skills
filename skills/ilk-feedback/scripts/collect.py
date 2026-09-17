@@ -28,7 +28,6 @@ import os
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -1778,22 +1777,33 @@ def detect_uncommitted_changes(project_path: Path) -> list[dict[str, Any]]:
 # See sub-plan a-report-never-advises-discarding-work.
 
 
-@dataclass
 class HeadDependency:
     """Result of probing whether HEAD depends on uncommitted changes.
 
     AC-3: INDEPENDENT cannot be constructed with files_scanned == 0.
     A vacuous pass — scanning nothing and concluding "no dependency" —
     reproduces the original defect one layer down.
+
+    Not a @dataclass: Python 3.9's dataclass decorator needs the module
+    registered in sys.modules for type-annotation resolution, and some
+    test files load collect.py via importlib without registering it.
     """
 
-    verdict: str  # "LOAD_BEARING" | "INDEPENDENT" | "UNDECIDABLE"
-    symbols: list[str]
-    files_scanned: int
-    symbols_examined: int
-    detail: str = ""
+    __slots__ = ("verdict", "symbols", "files_scanned", "symbols_examined", "detail")
 
-    def __post_init__(self) -> None:
+    def __init__(
+        self,
+        verdict: str,
+        symbols: list,
+        files_scanned: int,
+        symbols_examined: int,
+        detail: str = "",
+    ) -> None:
+        self.verdict = verdict
+        self.symbols = symbols
+        self.files_scanned = files_scanned
+        self.symbols_examined = symbols_examined
+        self.detail = detail
         if self.verdict == "INDEPENDENT" and self.files_scanned == 0:
             raise ValueError(
                 "INDEPENDENT verdict requires files_scanned > 0 — "
