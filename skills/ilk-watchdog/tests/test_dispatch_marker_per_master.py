@@ -381,3 +381,39 @@ class TestDispatchMarkerLifecycle:
         assert data["master"] == "MASTER-B.md", (
             "marker must be overwritten with the newly dispatched master"
         )
+
+    def test_stale_marker_for_old_master_does_not_block_new(self, tmp_path):
+        """A pre-existing marker naming an old master is inert for a new one.
+
+        This is the migration test: three stale markers exist across
+        projects (kira-cloudflare, ilk-skills, gh-resolve), each naming
+        a master that shipped weeks or months ago.  Under the per-master
+        guard, they must NOT suppress dispatch for any current master.
+        No explicit migration is needed — the read-side fix handles it.
+        """
+        dispatches: list[list[str]] = []
+        project_dir = _setup_project(
+            tmp_path,
+            master_name="MASTER-2026-09-08b-state-ownership-execution-plan.md",
+        )
+        plans_dir = project_dir / "plans"
+        master_path = plans_dir / "MASTER-2026-09-08b-state-ownership-execution-plan.md"
+
+        # Pre-existing marker names the stale master from 2026-09-03.
+        _write_marker(
+            project_dir,
+            "MASTER-2026-09-03-gate-identity-and-driver-bookkeeping-execution-plan.md",
+        )
+
+        def capture_launch(cmd):
+            dispatches.append(cmd)
+
+        _call_dispatch(
+            project_dir, master_path, plans_dir,
+            launch_fn=capture_launch,
+        )
+
+        assert len(dispatches) == 1, (
+            "stale marker naming MASTER-2026-09-03-… must NOT suppress "
+            "dispatch for MASTER-2026-09-08b-…"
+        )
