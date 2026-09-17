@@ -3375,7 +3375,7 @@ for mp in masters:
 
     # Remove the launcher's running.pid so the scheduler does not see a
     # stale sentinel and log skip-busy forever.  Best-effort + idempotent.
-    rm -f "${runtime_dir}/launcher/running.pid"
+    rm -f "${runtime_dir}/running.pid"
   fi
 }
 
