@@ -3287,6 +3287,21 @@ print(json.dumps(d))
       stop_reason="ship_integrity_violation"
       iter_stop_reason="ship_integrity_violation"
     fi
+    # After a ship-integrity revert, reconcile the master so it no longer
+    # claims "shipped" when a sub-plan was un-shipped.  Without this call,
+    # reconcile_master_status (now symmetric) is never reached and the
+    # master stays stranded — the scheduler sees "shipped" and stops
+    # dispatching the batch.  Idempotent: a clean pass is a no-op.
+    python3 -c "
+import sys
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+from plan_status import reconcile_master_status
+plans_dir = Path(sys.argv[2])
+masters = sorted(plans_dir.glob('MASTER-*.md'))
+for mp in masters:
+    reconcile_master_status(mp, plans_dir)
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$(get_plans_dir)" 2>/dev/null || true
     # Every reader in this iteration is done with it.
     rm -f "$local_checks_results"
 
