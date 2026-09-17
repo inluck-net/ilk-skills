@@ -142,11 +142,18 @@ section headed "exit 1 with zero failures is not a regression", the run recorded
 
 ```yaml
 local_checks:
-  - command: "python3 <skill-root>/ilk-loop/scripts/verification_record.py --project . --batch <batch-slug> --base-sha <base_sha> --run-suite --suite-timeout <suite timeout>"
+  - command: "python3 <skill-root>/ilk-loop/scripts/verification_record.py --project . --batch <batch-slug> --base-sha <base_sha> --run-suite --scope <auto|full> --suite-timeout <suite timeout>"
     timeout: <suite timeout>
   - command: "python3 -c \"import sys; sys.path.insert(0,'<skill-root>/ilk-loop/scripts'); import verify_attribution as va; rec=va.resolve_batch_record(__import__('pathlib').Path('.'),'<batch-slug>'); text=rec.read_text(errors='replace'); assert not va.has_emptied_record_fields(text), f'record {rec.name} carries heredoc-emptied fields — rewrite with Path.write_text, not a shell heredoc'\""
     timeout: 30
 ```
+
+**`--scope full` when the plan demands it.** The `--scope` flag overrides
+`compute_suite_scope`'s auto-detection. Set `--scope full` when the MASTER or
+sub-plan body explicitly mandates a full suite (e.g. "batch verification — full
+suite", or "the whole-suite obligation belongs to this sub-plan"). The default
+`--scope auto` preserves today's behaviour — let the diff decide. The record
+reports what actually ran regardless of which mode produced it.
 
 **ONE command, and you do not write the record.** `verification_record.py`
 resolves the suite invocation, runs it, re-runs every failing node id at
