@@ -326,9 +326,42 @@ if root: print(external_logs_dir(project_key(root)))
 
 # ----- Selfmod isolation (DP-2) ----------------------------------------------
 
+# Resolve the toolkit clone from _SKILL_ROOT.
+# Two layouts exist:
+#   1. Direct install (tests, dev): _SKILL_ROOT lives inside the real repo
+#      (e.g. .../ilk-skills/skills/).  git -C finds the root immediately.
+#   2. Symlink farm (production): _SKILL_ROOT is ~/.claude-worker/skills/ with
+#      symlinks into the real repo.  Follow one child symlink to the repo.
+_resolve_toolkit_clone() {
+  local skill_root_resolved
+  skill_root_resolved="$(readlink -f "$_SKILL_ROOT" 2>/dev/null \
+                    || realpath "$_SKILL_ROOT" 2>/dev/null \
+                    || echo "$_SKILL_ROOT")"
+  # Case 1: _SKILL_ROOT (or its resolved path) is inside the git repo.
+  local git_root
+  git_root="$(git -C "$skill_root_resolved" rev-parse --show-toplevel 2>/dev/null)" && {
+    echo "$git_root"
+    return 0
+  }
+  # Case 2: symlink farm — follow a child symlink into the real repo.
+  local candidate
+  for candidate in "$_SKILL_ROOT"/*; do
+    [[ -L "$candidate" ]] || continue
+    local real_target
+    real_target="$(readlink -f "$candidate" 2>/dev/null \
+                || realpath "$candidate" 2>/dev/null)" || continue
+    git_root="$(git -C "$real_target" rev-parse --show-toplevel 2>/dev/null)" || continue
+    echo "$git_root"
+    return 0
+  done
+  # Last resort — will cause the comparison to fail (correct behaviour:
+  # the toolkit clone is genuinely unresolvable).
+  echo "$skill_root_resolved"
+}
+
 # Returns 0 (true) when PROJECT_PATH resolves to the toolkit clone — the
 # clone that the installed skill symlinks point at.  Compares resolved
-# paths (via readlink -f or realpath), never bare strings.
+# paths (via readlink -f / realpath + git rev-parse), never bare strings.
 #
 # Emits one line on stdout when isolation is required, naming the resolved
 # clone.  A silent behaviour change to where the loop executes is not
@@ -339,15 +372,49 @@ selfmod_isolation_required() {
   project_resolved="$(readlink -f "$PROJECT_PATH" 2>/dev/null \
                     || realpath "$PROJECT_PATH" 2>/dev/null \
                     || echo "$PROJECT_PATH")"
-  toolkit_resolved="$(readlink -f "${_SKILL_ROOT}/.." 2>/dev/null \
-                    || realpath "${_SKILL_ROOT}/.." 2>/dev/null \
-                    || echo "${_SKILL_ROOT}/..")"
+  toolkit_resolved="$(_resolve_toolkit_clone)"
 
   if [[ "$project_resolved" == "$toolkit_resolved" ]]; then
     echo "[selfmod] isolation required: project=$project_resolved matches toolkit clone"
     return 0
   fi
   return 1
+}
+
+# Create the selfmod worktree and switch the iteration's working directory
+# into it.  Resolves the worktree path from the external runtime dir via
+# ilk_paths.py (never inside the project tree).  Honours
+# $SELFMOD_WORKTREE_PATH override for testing.
+#
+# On creation failure, exits non-zero — silently continuing in the clone
+# is the hazard this function exists to prevent.
+create_selfmod_worktree() {
+  local wt_path="${SELFMOD_WORKTREE_PATH:-}"
+  if [[ -z "$wt_path" ]]; then
+    local runtime_dir
+    runtime_dir="$(get_ilk_runtime_dir)" || {
+      echo "[selfmod] ERROR: cannot resolve runtime dir — aborting." >&2
+      exit 1
+    }
+    wt_path="${runtime_dir}/worktrees/selfmod-batch"
+  fi
+
+  local toolkit_clone
+  toolkit_clone="$(_resolve_toolkit_clone)"
+
+  local sw_script="${_SKILL_ROOT}/ilk-loop/scripts/selfmod_worktree.py"
+  if [[ ! -f "$sw_script" ]]; then
+    echo "[selfmod] ERROR: selfmod_worktree.py not found at $sw_script" >&2
+    exit 1
+  fi
+
+  python3 "$sw_script" create "$toolkit_clone" "$wt_path" || {
+    echo "[selfmod] ERROR: worktree creation failed at $wt_path — aborting." >&2
+    exit 1
+  }
+
+  PROJECT_PATH="$wt_path"
+  echo "[selfmod] working directory switched to worktree: $wt_path"
 }
 
 # ----- Helpers ---------------------------------------------------------------
