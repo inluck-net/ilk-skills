@@ -931,13 +931,40 @@ ensure_fresh_base_ref() {
   fi
 }
 
+# Resolve the path whose git history describes THIS iteration's work.
+#
+# While a selfmod batch runs isolated, the iteration commits into the worktree.
+# The clone's HEAD does not move until merge_selfmod_worktree runs, which is
+# ~290 lines AFTER the gate block -- so a clone-based read sees `before ==
+# after`, finds no trailers, and the gate falls through to PRE_ITER_TARGET.
+#
+# Measured 2026-09-17, run 20260917-115455: the fallback resolved
+# `an-isolated-batch-lands-or-reports 4` on a sub-plan whose steps are 0..3,
+# that check errored, and ship_integrity reverted a sub-plan whose work was
+# complete and merged back cleanly seconds later.
+#
+# The KEY stays the repo path so heads-before/heads-after lookups still match;
+# only the path read from changes.
+selfmod_effective_repo() {
+  local r="$1"
+  if [[ "${SELFMOD_ISOLATED:-0}" -eq 1 \
+        && -n "${SELFMOD_WORKTREE_PATH:-}" \
+        && "$r" == "${SELFMOD_ORIGINAL_PROJECT_PATH:-}" \
+        && -d "${SELFMOD_WORKTREE_PATH}" ]]; then
+    printf '%s\n' "$SELFMOD_WORKTREE_PATH"
+    return
+  fi
+  printf '%s\n' "$r"
+}
+
 get_repo_heads() {
   local out_file="$1"
   : > "$out_file"
   local r
   for r in "${REPOS[@]}"; do
-    local sha
-    sha=$(git -C "$r" rev-parse HEAD 2>/dev/null) || sha="(unknown)"
+    local sha src
+    src="$(selfmod_effective_repo "$r")"
+    sha=$(git -C "$src" rev-parse HEAD 2>/dev/null) || sha="(unknown)"
     printf '%s=%s\n' "$r" "$sha" >> "$out_file"
   done
 }
@@ -2899,7 +2926,7 @@ print(json.dumps({
         local before after
         before=$(grep -F "$r=" "$heads_before_file" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
         after=$(grep -F "$r=" "$heads_after_file" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
-        get_local_check_targets "$r" "$before" "$after" >> "$all_targets_file"
+        get_local_check_targets "$(selfmod_effective_repo "$r")" "$before" "$after" >> "$all_targets_file"
       done
 
       # Check trailer slugs against plans dir — catch typos at write time.
@@ -2914,7 +2941,7 @@ print(json.dumps({
             local before after
             before=$(grep -F "$r=" "$heads_before_file" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
             after=$(grep -F "$r=" "$heads_after_file" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
-            check_trailer_slugs_against_plans "$r" "$before" "$after" "$plans_dir_for_check" || true
+            check_trailer_slugs_against_plans "$(selfmod_effective_repo "$r")" "$before" "$after" "$plans_dir_for_check" || true
           done
         fi
       fi
