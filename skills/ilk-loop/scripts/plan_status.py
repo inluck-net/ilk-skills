@@ -501,27 +501,43 @@ def reconcile_master_registry(master_path: Path, plans_dir: Path) -> bool:
 
 
 def reconcile_master_status(master_path: Path, plans_dir: Path) -> bool:
-    """Persist ``status: shipped`` when all registered sub-plans are shipped.
+    """Make the master's ``status:`` line agree with its sub-plan registry.
 
-    Reads *master_path*, checks via ``is_master_all_shipped``, and if the
-    stored status is not already ``shipped``, rewrites **only** the
-    ``status:`` line inside the front-matter block.  The rest of the file
-    (registry table, body) is byte-for-byte unchanged.
+    The predicate ``is_master_all_shipped`` governs both directions:
+
+    * **All shipped** → flip to ``shipped`` (the forward direction that
+      already existed).
+    * **Not all shipped** and the master is currently ``shipped`` → flip
+      back to ``queued`` (the new reverse direction).
+
+    Only the ``status:`` line inside the front-matter block is rewritten;
+    the rest of the file (registry table, body) is byte-for-byte unchanged.
 
     Returns True if the file was modified (status flipped), False if no
-    change was needed (already shipped or not all sub-plans shipped).
+    change was needed (status already agrees with the predicate).
 
-    Idempotent: safe to call repeatedly — an already-``shipped`` master
-    is a no-op with no rewrite churn.
+    Idempotent: safe to call repeatedly — no rewrite churn in either
+    direction.
+
+    Judgment call (2026-09-17): an un-shipped master becomes ``queued``,
+    not ``active``.  After a ship-integrity revert there is no active
+    iteration — the worker is gone.  ``queued`` re-arms the scheduler for
+    unattended re-dispatch; ``active`` would claim a run is in progress
+    when none is.  Wrong if a deliberate ``blocked`` (parked) master had a
+    sub-plan reverted — this would silently un-park it; that is a
+    pre-existing state, not the live defect this was built to fix.
     """
-    if not is_master_all_shipped(master_path, plans_dir):
-        return False
+    if is_master_all_shipped(master_path, plans_dir):
+        target = "shipped"
+    else:
+        target = "queued"
 
     text = master_path.read_text(encoding="utf-8-sig")
-
-    # Already shipped — nothing to do.
     fm = parse_frontmatter(text)
-    if fm.get("status", "").strip().lower() == "shipped":
+    current = fm.get("status", "").strip().lower()
+
+    # Already at the target — nothing to do.
+    if current == target:
         return False
 
     # Locate the front-matter block boundaries.
@@ -539,14 +555,14 @@ def reconcile_master_status(master_path: Path, plans_dir: Path) -> bool:
     replaced = False
     for line in frontmatter.splitlines(keepends=True):
         if re.match(r"^\s*status\s*:", line):
-            new_fm_lines.append("status: shipped\n")
+            new_fm_lines.append(f"status: {target}\n")
             replaced = True
         else:
             new_fm_lines.append(line)
 
     if not replaced:
         # No status line in frontmatter — add one at the end.
-        new_fm_lines.append("status: shipped\n")
+        new_fm_lines.append(f"status: {target}\n")
 
     new_text = "---" + "".join(new_fm_lines) + rest
     master_path.write_text(new_text, encoding="utf-8")
