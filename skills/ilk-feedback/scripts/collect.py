@@ -1350,12 +1350,16 @@ def classify(
             if sentinel_state == "timeout":
                 label = "timeout-bound"
             elif sentinel_state == "local_checks_failed":
-                iter_count = len(iters)
-                last_iter = iters[-1] if iters else {}
-                if iter_count < 3 and last_iter.get("exit_code", 1) == 0:
-                    label = "local-checks-broken"
-                else:
-                    label = "local-checks-stuck"
+                # A broken-gate label requires a broken-gate result.
+                # Consult _is_broken_gate_result on the recorded checks
+                # rather than iterating on count and runner exit code.
+                # See sub-plan a-label-matches-its-own-trigger.
+                has_broken_gate = any(
+                    _is_broken_gate_result(it.get("local_checks", {}))
+                    for it in iters
+                    if it.get("local_checks")
+                )
+                label = "local-checks-broken" if has_broken_gate else "local-checks-stuck"
             else:
                 label = _SENTINEL_FAILURE_MAP[sentinel_state]
             facts: dict[str, Any] = {
