@@ -2198,7 +2198,26 @@ def render_report(
             for change in uncommitted:
                 body_lines.append(f"| `{change['path']}` | {change['line_count']} |")
             body_lines.append("")
-            body_lines.append("**Do not commit these** — they represent half-finished work from the last iteration.")
+
+            # Probe whether HEAD depends on these changes before advising.
+            dep = probe_head_dependency(project_path, uncommitted)
+            if dep.verdict == "LOAD_BEARING":
+                sym_list = ", ".join(f"`{s}`" for s in dep.symbols)
+                body_lines.append(
+                    f"**These changes are load-bearing** — HEAD imports {sym_list} "
+                    f"which is defined only in the uncommitted diff. "
+                    f"Commit or amend them before relaunching."
+                )
+            elif dep.verdict == "INDEPENDENT":
+                body_lines.append(
+                    "**Do not commit these** — they represent half-finished work "
+                    "from the last iteration."
+                )
+            else:  # UNDECIDABLE
+                body_lines.append(
+                    f"**Dependency check could not run** ({dep.detail}). "
+                    f"Review these changes manually before committing or discarding."
+                )
             body_lines.append("")
 
     body_lines.append("## Recommendation for next launch\n")
