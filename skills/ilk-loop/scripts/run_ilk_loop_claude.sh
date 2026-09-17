@@ -417,6 +417,75 @@ create_selfmod_worktree() {
   echo "[selfmod] working directory switched to worktree: $wt_path"
 }
 
+# Merge the selfmod worktree back into the clone.
+# Called after converge_ship_transition when SELFMOD_ISOLATED=1.
+# On success: removes the worktree, restores PROJECT_PATH.
+# On failure: leaves the worktree intact and reports the reason.
+# Exit codes (from selfmod_worktree.py merge CLI):
+#   0 = merged, 2 = live loop blocked, 3 = branch moved,
+#   4 = broken probe (fail-closed), 5 = lock contention
+merge_selfmod_worktree() {
+  local wt_path="${SELFMOD_WORKTREE_PATH:-}"
+  local orig_path="${SELFMOD_ORIGINAL_PROJECT_PATH:-}"
+  local lock_path="${SELFMOD_MERGE_LOCK_PATH:-}"
+
+  if [[ -z "$wt_path" || -z "$orig_path" ]]; then
+    echo "[selfmod] ERROR: merge called but worktree/original path not set" >&2
+    return 1
+  fi
+
+  local sw_script="${_SKILL_ROOT}/ilk-loop/scripts/selfmod_worktree.py"
+  if [[ ! -f "$sw_script" ]]; then
+    echo "[selfmod] ERROR: selfmod_worktree.py not found at $sw_script" >&2
+    return 1
+  fi
+
+  local cmd=(python3 "$sw_script" merge "$orig_path" "$wt_path")
+  if [[ -n "$lock_path" ]]; then
+    cmd+=(--lock "$lock_path")
+  fi
+
+  local merge_output merge_rc=0
+  merge_output=$("${cmd[@]}" 2>&1) || merge_rc=$?
+
+  case $merge_rc in
+    0)
+      echo "[selfmod] merge complete: $merge_output"
+      # Restore PROJECT_PATH to the original clone.
+      PROJECT_PATH="$orig_path"
+      # Remove the worktree — all commits are now in the clone.
+      python3 "$sw_script" remove "$orig_path" "$wt_path" 2>/dev/null || true
+      ;;
+    2)
+      echo "[selfmod] MERGE BLOCKED: live loop(s) detected." >&2
+      echo "$merge_output" >&2
+      echo "[selfmod] worktree left at $wt_path (holds unmerged work)" >&2
+      ;;
+    3)
+      echo "[selfmod] MERGE REFUSED: clone HEAD moved since worktree creation." >&2
+      echo "$merge_output" >&2
+      echo "[selfmod] worktree left at $wt_path (holds unmerged work)" >&2
+      ;;
+    4)
+      echo "[selfmod] MERGE BLOCKED: liveness probe broken (fail-closed)." >&2
+      echo "$merge_output" >&2
+      echo "[selfmod] worktree left at $wt_path (holds unmerged work)" >&2
+      ;;
+    5)
+      echo "[selfmod] MERGE FAILED: lock contention." >&2
+      echo "$merge_output" >&2
+      echo "[selfmod] worktree left at $wt_path (holds unmerged work)" >&2
+      ;;
+    *)
+      echo "[selfmod] MERGE FAILED: unexpected exit code $merge_rc." >&2
+      echo "$merge_output" >&2
+      echo "[selfmod] worktree left at $wt_path (holds unmerged work)" >&2
+      ;;
+  esac
+
+  return $merge_rc
+}
+
 # ----- Helpers ---------------------------------------------------------------
 
 discover_git_repos() {
@@ -2683,6 +2752,23 @@ print(json.dumps({
 }))
 " >> "$JSONL_LOG" || true
 
+    # -- Selfmod isolation (DP-2): detect and create worktree ----------
+    # If this project is the toolkit clone, run the batch in an isolated
+    # worktree so live consumer loops keep executing the stable clone.
+    SELFMOD_ISOLATED=0
+    if selfmod_isolation_required; then
+      SELFMOD_ISOLATED=1
+      SELFMOD_ORIGINAL_PROJECT_PATH="$PROJECT_PATH"
+      local runtime_dir
+      runtime_dir="$(get_ilk_runtime_dir)" || {
+        echo "[selfmod] ERROR: cannot resolve runtime dir — aborting." >&2
+        exit 1
+      }
+      SELFMOD_WORKTREE_PATH="${runtime_dir}/worktrees/selfmod-batch"
+      SELFMOD_MERGE_LOCK_PATH="${runtime_dir}/selfmod-merge.lock"
+      create_selfmod_worktree
+    fi
+
     invoke_claude_iteration "$PROJECT_PATH" "$iter_log" "$iter_prompt" "$timeout_sec" "$MAX_BUDGET_USD" "$MODEL"
 
     local iter_end iter_dur_sec
@@ -3153,6 +3239,22 @@ print(json.dumps(d))
     # word -- it runs after, and its revert is not re-applied (see the
     # --only-interrupted note in converge_ship_transition).
     converge_ship_transition "$(get_plans_dir)"
+
+    # -- Selfmod merge-back: land or report --------------------------------
+    # After the ship transition converges, merge the worktree back into the
+    # clone.  On success, PROJECT_PATH is restored and the worktree removed.
+    # On failure, the worktree is left intact and the reason is on stderr.
+    if [[ "${SELFMOD_ISOLATED:-0}" -eq 1 ]]; then
+      merge_rc=0
+      merge_selfmod_worktree || merge_rc=$?
+      if [[ $merge_rc -ne 0 ]]; then
+        echo "[selfmod] merge exited $merge_rc — batch did not land." >&2
+        iter_stop_reason="selfmod_merge_failed"
+        stop_reason="selfmod_merge_failed"
+      fi
+      # Reset for next iteration (merge only runs once per batch).
+      SELFMOD_ISOLATED=0
+    fi
 
     if ! test_ship_integrity "$(get_plans_dir)" "$local_checks_results"; then
       stop_reason="ship_integrity_violation"

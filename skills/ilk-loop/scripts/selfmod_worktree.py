@@ -207,7 +207,7 @@ class SelfmodWorktree:
         """
         if self._is_valid_worktree():
             logger.info("Reusing existing worktree at %s", self.worktree_path)
-            self._head_at_creation = _resolve_head_sha(self.repo_path)
+            self._head_at_creation = self._read_saved_head()
             return
 
         # Remove stale directory if it exists but isn't a worktree.
@@ -231,12 +231,34 @@ class SelfmodWorktree:
             str(self.worktree_path),
             cwd=self.repo_path,
         )
+        self._save_head(self._head_at_creation)
         logger.info(
             "Created worktree at %s (branch=%s, head=%s)",
             self.worktree_path,
             self.branch,
             self._head_at_creation[:8],
         )
+
+    def _head_marker_path(self) -> Path:
+        """Path to the file that persists ``_head_at_creation`` across CLI invocations.
+
+        Stored alongside the worktree (not inside it) to avoid dirtying
+        the worktree's git status.
+        """
+        return self.worktree_path.parent / f"{self.worktree_path.name}.head-at-creation"
+
+    def _save_head(self, sha: str) -> None:
+        """Persist the creation-time HEAD SHA alongside the worktree."""
+        marker = self._head_marker_path()
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(sha + "\n", encoding="utf-8")
+
+    def _read_saved_head(self) -> str | None:
+        """Read the persisted creation-time HEAD SHA, or None if missing."""
+        marker = self._head_marker_path()
+        if marker.exists():
+            return marker.read_text(encoding="utf-8").strip()
+        return None
 
     def merge_back(
         self,
@@ -265,12 +287,15 @@ class SelfmodWorktree:
             raise MergeBlockedError(blocking_pids=live_pids)
 
         # Step 2: Branch movement check.
-        if check_branch and self._head_at_creation is not None:
+        head_at_creation = self._head_at_creation
+        if head_at_creation is None:
+            head_at_creation = self._read_saved_head()
+        if check_branch and head_at_creation is not None:
             current_sha = _resolve_head_sha(self.repo_path)
-            if current_sha != self._head_at_creation:
+            if current_sha != head_at_creation:
                 raise BranchMovedError(
                     branch=self.branch,
-                    expected_sha=self._head_at_creation,
+                    expected_sha=head_at_creation,
                     current_sha=current_sha,
                 )
 
@@ -442,8 +467,25 @@ def main() -> None:
 
     elif args.command == "merge":
         sw = SelfmodWorktree(args.repo, args.worktree)
-        sw.merge_back(lock_path=args.lock)
-        print("Merge complete.")
+        sw.create()  # idempotent — captures _head_at_creation for branch check
+        try:
+            sw.merge_back(lock_path=args.lock)
+        except MergeBlockedError as exc:
+            # Distinguish broken probe (sentinel PID -1) from live loops.
+            if exc.blocking_pids == [-1]:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                sys.exit(4)
+            else:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                sys.exit(2)
+        except BranchMovedError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(3)
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(5)
+        worktree_sha = _resolve_head_sha(args.worktree)
+        print(f"Merged {worktree_sha[:8]} into {args.repo}")
 
     elif args.command == "remove":
         sw = SelfmodWorktree(args.repo, args.worktree)
