@@ -39,15 +39,16 @@ BLOCKING_STATES = {
     "ship_integrity_violation",
     "blocked-no-runnable",
     "budget-exhausted",
-    "local-checks-stuck",
-    "stuck-no-progress",
+    "local_checks_failed",
+    "no-progress",
+    "interrupted",
 }
 
 ORDINARY_STATES = {
-    "max-iter-bound",
-    "timeout-bound",
     "all-shipped",
-    "clean-success",
+    "max-iterations",
+    "timeout",
+    "already-shipped",
 }
 
 

@@ -606,7 +606,7 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
     # ordinary outstanding work.
     sentinel = _resolve_exit_sentinel(plans_dir, plans_source, cwd)
     raw = _read_exit_sentinel(sentinel)
-    result["exit_state"] = _classify_exit_state(raw)
+    result["exit_state"] = _classify_exit_state(raw, cwd=cwd)
 
     return result
 
@@ -725,19 +725,16 @@ def _unproven_summary(subplans: list[dict]) -> str | None:
 # ``ship_integrity_violation`` to the sentinel currently prints a normal
 # status table — the detection never reaches a reader (MEASURED 2026-09-16).
 
+# Authoritative blocking states — taken from the launcher's own exit-state
+# vocabulary (test_exit_state_vocabulary.py).  A blocking state is one that
+# requires human intervention; an ordinary one is self-clearing or routine.
 _BLOCKING_STATES = {
     "ship_integrity_violation",
     "blocked-no-runnable",
     "budget-exhausted",
-    "local-checks-stuck",
-    "stuck-no-progress",
-}
-
-_ORDINARY_STATES = {
-    "max-iter-bound",
-    "timeout-bound",
-    "all-shipped",
-    "clean-success",
+    "local_checks_failed",
+    "no-progress",
+    "interrupted",
 }
 
 
@@ -779,11 +776,29 @@ def _read_exit_sentinel(path: Path | None) -> dict | None:
         return None
 
 
-def _classify_exit_state(data: dict) -> dict | None:
+def _newest_commit_epoch(cwd: Path) -> float | None:
+    """Return the epoch timestamp of the newest git commit, or None."""
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", str(cwd), "log", "-1", "--format=%ct"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        return float(out) if out else None
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+        return None
+
+
+def _classify_exit_state(data: dict, cwd: Path | None = None) -> dict | None:
     """Build the exit-state dict for the status report.
 
     Returns a dict with state, blocking, run_id, iterations, stale, and
     ended_days_ago — or None if the sentinel is absent or unparseable.
+
+    AC-4: staleness compares ended_at against the newest git commit, not
+    wall-clock time.  A sentinel from 3 days ago that predates the newest
+    commit is stale; one from 3 days ago on a project with no newer commits
+    is not.
     """
     if data is None:
         return None
@@ -801,12 +816,19 @@ def _classify_exit_state(data: dict) -> dict | None:
             if len(ts) > 5 and ts[-5] in ("+", "-") and ts[-3] != ":":
                 ts = ts[:-2] + ":" + ts[-2:]
             end_dt = datetime.fromisoformat(ts)
-            now = datetime.now(timezone.utc)
             if end_dt.tzinfo is None:
                 end_dt = end_dt.replace(tzinfo=timezone.utc)
-            delta = now - end_dt
-            ended_days_ago = delta.days
-            stale = delta.days > 0
+            # Compare against newest git commit (AC-4).
+            newest = _newest_commit_epoch(cwd) if cwd else None
+            if newest is not None:
+                commit_dt = datetime.fromtimestamp(newest, tz=timezone.utc)
+                stale = commit_dt > end_dt
+            else:
+                # No git available — fall back to wall-clock (conservative).
+                now = datetime.now(timezone.utc)
+                delta = now - end_dt
+                stale = delta.days > 1
+            ended_days_ago = (datetime.now(timezone.utc) - end_dt).days
         except (ValueError, TypeError):
             pass
     return {
