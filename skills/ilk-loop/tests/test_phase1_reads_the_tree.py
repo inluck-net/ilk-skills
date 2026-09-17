@@ -137,15 +137,15 @@ def _phase1(
     expected_invocation: str = "echo ok",
     *,
     baseline_report: BaselineReport | None = None,
+    expected_tree_sha: str | None = None,
 ):
-    """Run Phase 1.  verify_phase1 does not receive expected_tree_sha
-    today — that is the defect this test pins.  After the fix, the
-    caller passes it through; until then AC-1/AC-2 are red."""
+    """Run Phase 1, passing expected_tree_sha through to verify_phase1."""
     return verify_phase1(
         runtime_dir,
         expected_head_sha,
         expected_invocation,
         baseline_report=baseline_report,
+        expected_tree_sha=expected_tree_sha,
     )
 
 
@@ -154,8 +154,6 @@ def _phase1(
 def test_ac1_fresh_by_tree_accepted(project):
     """AC-1: a record whose head_sha differs but tree_sha matches current
     tree must be accepted (action: proceed).
-
-    RED until Phase 1 passes expected_tree_sha through.
     """
     repo, runtime_dir = project
     _write_record(
@@ -163,7 +161,11 @@ def test_ac1_fresh_by_tree_accepted(project):
         head_sha="0" * 40,          # differs from real HEAD
         tree_sha=_tree_sha(repo),   # matches current tree
     )
-    result = _phase1(runtime_dir, _head_sha(repo))
+    result = _phase1(
+        runtime_dir, _head_sha(repo),
+        baseline_report=_passing_baseline_report(),
+        expected_tree_sha=_tree_sha(repo),
+    )
     assert result.action == "proceed", (
         f"expected proceed, got {result.action}: {result.reason}"
     )
@@ -174,8 +176,6 @@ def test_ac1_fresh_by_tree_accepted(project):
 def test_ac2_survives_empty_marker_commits(project):
     """AC-2: acceptance survives several empty commits after the record is
     written — the real batch-verification shape.
-
-    RED until Phase 1 passes expected_tree_sha through.
     """
     repo, runtime_dir = project
     base_tree = _tree_sha(repo)
@@ -183,7 +183,11 @@ def test_ac2_survives_empty_marker_commits(project):
     # Three empty marker commits — HEAD moves, tree does not.
     for _ in range(3):
         _git(repo, "commit", "--allow-empty", "-m", "marker")
-    result = _phase1(runtime_dir, _head_sha(repo))
+    result = _phase1(
+        runtime_dir, _head_sha(repo),
+        baseline_report=_passing_baseline_report(),
+        expected_tree_sha=base_tree,
+    )
     assert result.action == "proceed", (
         f"expected proceed after empty commits, got {result.action}: {result.reason}"
     )
@@ -206,7 +210,10 @@ def test_ac3_real_change_refused(project):
         head_sha=_head_sha(repo),
         tree_sha="0" * 40,          # stale tree
     )
-    result = _phase1(runtime_dir, _head_sha(repo))
+    result = _phase1(
+        runtime_dir, _head_sha(repo),
+        expected_tree_sha=_tree_sha(repo),
+    )
     assert result.action == "refuse", (
         f"expected refuse on stale tree, got {result.action}: {result.reason}"
     )
@@ -239,7 +246,6 @@ def test_ac5_no_refusal_artifact_on_fresh_by_tree(project):
     """AC-5: when Phase 1 proceeds (AC-1 path), no phase1-refusal.json is
     written.
 
-    RED until Phase 1 passes expected_tree_sha through (same fix as AC-1).
     A baseline_report is supplied so the baseline engine does not refuse
     before the batch-verdict path is exercised.
     """
@@ -252,6 +258,7 @@ def test_ac5_no_refusal_artifact_on_fresh_by_tree(project):
     _phase1(
         runtime_dir, _head_sha(repo),
         baseline_report=_passing_baseline_report(),
+        expected_tree_sha=_tree_sha(repo),
     )
     assert not _refusal_path(runtime_dir).exists(), (
         "phase1-refusal.json must not be written on the proceed path"

@@ -74,6 +74,7 @@ def verify_phase1(
     expected_head_sha: str,
     expected_invocation: str,
     baseline_report: Optional[BaselineReport] = None,
+    expected_tree_sha: Optional[str] = None,
 ) -> Phase1Verdict:
     """Verify Phase 1 preconditions and refuse if either engine is unavailable.
 
@@ -92,11 +93,18 @@ def verify_phase1(
         baseline_report: pre-computed baseline-diff result (optional; if
             None, baseline verification is skipped — the caller is
             responsible for running baseline_diff first).
+        expected_tree_sha: the current tree SHA.  When the record carries
+            a ``tree_sha``, the gate compares trees rather than heads —
+            a commit that changes no files does not change the code the
+            gate certified.  Absent means "not resolved"; the record
+            falls back to strict head equality (the provenance rule in
+            ``_head_is_current``).
     """
     # ── Engine 1: batch verdict ──────────────────────────────────────────
     verdict_path = record_path(runtime_dir)
     detail = validate_record_detail(
         verdict_path, expected_head_sha, expected_invocation,
+        expected_tree_sha,
     )
 
     if detail != "fresh":
