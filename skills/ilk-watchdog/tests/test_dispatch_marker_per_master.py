@@ -294,3 +294,90 @@ class TestDispatchMarkerPerMaster:
         assert len(dispatches) == 1, (
             "corrupt marker JSON must NOT suppress dispatch"
         )
+
+
+class TestDispatchMarkerLifecycle:
+    """Marker lifecycle: written on dispatch, keyed per-master."""
+
+    def test_dispatch_writes_master_name_in_marker(self, tmp_path):
+        """After dispatch, the marker names the master that was dispatched."""
+        dispatches: list[list[str]] = []
+        project_dir = _setup_project(
+            tmp_path,
+            master_name="MASTER-alpha.md",
+        )
+        plans_dir = project_dir / "plans"
+        master_path = plans_dir / "MASTER-alpha.md"
+
+        def capture_launch(cmd):
+            dispatches.append(cmd)
+
+        _call_dispatch(
+            project_dir, master_path, plans_dir,
+            launch_fn=capture_launch,
+        )
+        assert len(dispatches) == 1
+
+        marker_path = (
+            project_dir / "runtime" / "verification-dispatched.json"
+        )
+        assert marker_path.exists()
+        data = json.loads(marker_path.read_text(encoding="utf-8"))
+        assert data["master"] == "MASTER-alpha.md", (
+            "marker must name the dispatched master"
+        )
+
+    def test_successive_masters_overwrite_marker(self, tmp_path):
+        """Dispatching master B after master A updates the marker to B.
+
+        This pins the lifecycle: a marker is not permanent — it is
+        superseded when a different master dispatches.  The old marker
+        for A was already inert (per-master guard), but it must also
+        not accumulate stale state on disk.
+        """
+        dispatches: list[list[str]] = []
+
+        def capture_launch(cmd):
+            dispatches.append(cmd)
+
+        # First: dispatch for master A.
+        project_dir = _setup_project(
+            tmp_path,
+            master_name="MASTER-A.md",
+        )
+        plans_dir = project_dir / "plans"
+        master_a = plans_dir / "MASTER-A.md"
+
+        _call_dispatch(
+            project_dir, master_a, plans_dir,
+            launch_fn=capture_launch,
+        )
+        assert len(dispatches) == 1
+
+        marker_path = (
+            project_dir / "runtime" / "verification-dispatched.json"
+        )
+        data = json.loads(marker_path.read_text(encoding="utf-8"))
+        assert data["master"] == "MASTER-A.md"
+
+        # Now: dispatch for master B — writes a fresh marker.
+        _write_master(
+            plans_dir,
+            "MASTER-B.md",
+            status="active",
+            subplans=["2026-07-29-next.md"],
+        )
+        master_b = plans_dir / "MASTER-B.md"
+
+        _call_dispatch(
+            project_dir, master_b, plans_dir,
+            launch_fn=capture_launch,
+        )
+        assert len(dispatches) == 2, (
+            "master B must dispatch (marker names A)"
+        )
+
+        data = json.loads(marker_path.read_text(encoding="utf-8"))
+        assert data["master"] == "MASTER-B.md", (
+            "marker must be overwritten with the newly dispatched master"
+        )
