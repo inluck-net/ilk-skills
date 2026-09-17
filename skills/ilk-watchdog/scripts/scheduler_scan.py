@@ -267,10 +267,21 @@ def _dispatch_verification_on_drain(
     Errors are logged and non-fatal (AC-7 — the scheduler continues
     draining other projects).
     """
-    # --- idempotency guard (AC-1) ---
+    # --- idempotency guard (AC-1, per-master) ---
+    # The marker stores which master it was written for.  A mismatch means
+    # "not yet dispatched for this master", not "already handled".  Fail
+    # closed on unreadable or malformed markers: treat as "unknown" and
+    # dispatch — the caller will write a fresh marker on success.
     marker_path = project_dir / "runtime" / _VERIFICATION_DISPATCH_MARKER
     if marker_path.exists():
-        return
+        try:
+            marker_data = json.loads(
+                marker_path.read_text(encoding="utf-8-sig"),
+            )
+            if marker_data.get("master") == master_path.name:
+                return  # same master — already dispatched
+        except (OSError, json.JSONDecodeError):
+            pass  # unreadable → dispatch
 
     # --- read master frontmatter ---
     try:
