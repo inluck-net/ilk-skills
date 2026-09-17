@@ -48,18 +48,32 @@ _EXIT_LOCK_HELD = 5        # lock contention (RuntimeError from fcntl)
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
+def _sandbox_env(root: Path, *, extras: dict[str, str] | None = None) -> dict[str, str]:
+    """HOME and ILK_DATA_HOME pinned inside *root* so nothing reads ~/.ilk-data."""
+    env = {
+        "HOME": str(root),
+        "ILK_DATA_HOME": str(root / ".ilk-data"),
+        "PATH": os.environ["PATH"],
+    }
+    if extras:
+        env.update(extras)
+    return env
+
+
 def _merge_cli(
     repo: Path,
     worktree: Path,
     *,
     lock: Path | None = None,
     env_extra: dict[str, str] | None = None,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     """Call ``selfmod_worktree.py merge`` and capture the result."""
     cmd = [sys.executable, str(_SELFMOD), "merge", str(repo), str(worktree)]
     if lock is not None:
         cmd.extend(["--lock", str(lock)])
-    env = {**os.environ, **(env_extra or {})}
+    if env is None:
+        env = {**os.environ, **(env_extra or {})}
     return subprocess.run(cmd, capture_output=True, text=True, timeout=30,
                           env=env)
 
@@ -112,11 +126,13 @@ class TestLandingHappyPath:
         """
         repo = _create_throwaway_repo(tmp_path)
         worktree_path = tmp_path / "selfmod-worktree"
+        env = _sandbox_env(tmp_path)
 
         subprocess.run(
             [sys.executable, str(_SELFMOD), "create",
              str(repo), str(worktree_path)],
             check=True, capture_output=True, text=True, timeout=30,
+            env=env,
         )
 
         base_sha = _head_sha(repo)
@@ -125,7 +141,7 @@ class TestLandingHappyPath:
         sha2 = _commit_in(worktree_path, "step2.txt", "two", "step 2")
         sha3 = _commit_in(worktree_path, "step3.txt", "three", "step 3")
 
-        result = _merge_cli(repo, worktree_path)
+        result = _merge_cli(repo, worktree_path, env=env)
 
         # Step 1 contract: exit 0 and a structured success message.
         assert result.returncode == _EXIT_OK, (
@@ -158,6 +174,7 @@ class TestLandingHappyPath:
             [sys.executable, str(_SELFMOD), "remove",
              str(repo), str(worktree_path)],
             check=True, capture_output=True, text=True, timeout=30,
+            env=env,
         )
         assert not worktree_path.exists()
 
@@ -176,11 +193,13 @@ class TestLandingBlockedByLiveLoop:
         """
         repo = _create_throwaway_repo(tmp_path)
         worktree_path = tmp_path / "selfmod-worktree"
+        env = _sandbox_env(tmp_path)
 
         subprocess.run(
             [sys.executable, str(_SELFMOD), "create",
              str(repo), str(worktree_path)],
             check=True, capture_output=True, text=True, timeout=30,
+            env=env,
         )
 
         _commit_in(worktree_path, "batch.txt", "work", "batch commit")
@@ -193,7 +212,7 @@ class TestLandingBlockedByLiveLoop:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         try:
-            result = _merge_cli(repo, worktree_path)
+            result = _merge_cli(repo, worktree_path, env=env)
 
             # Step 1 contract: distinct exit code for blocked merges.
             assert result.returncode == _EXIT_BLOCKED, (
@@ -235,11 +254,13 @@ class TestLandingRefusedOnBranchMoved:
         """
         repo = _create_throwaway_repo(tmp_path)
         worktree_path = tmp_path / "selfmod-worktree"
+        env = _sandbox_env(tmp_path)
 
         subprocess.run(
             [sys.executable, str(_SELFMOD), "create",
              str(repo), str(worktree_path)],
             check=True, capture_output=True, text=True, timeout=30,
+            env=env,
         )
 
         expected_sha = _head_sha(repo)
@@ -250,7 +271,7 @@ class TestLandingRefusedOnBranchMoved:
         _commit_in(repo, "other.txt", "other process", "other commit")
         current_sha = _head_sha(repo)
 
-        result = _merge_cli(repo, worktree_path)
+        result = _merge_cli(repo, worktree_path, env=env)
 
         # Step 1 contract: distinct exit code for branch-moved.
         assert result.returncode == _EXIT_BRANCH_MOVED, (
@@ -293,15 +314,6 @@ class TestLandingFailClosedOnBrokenProbe:
         repo = _create_throwaway_repo(tmp_path)
         worktree_path = tmp_path / "selfmod-worktree"
 
-        subprocess.run(
-            [sys.executable, str(_SELFMOD), "create",
-             str(repo), str(worktree_path)],
-            check=True, capture_output=True, text=True, timeout=30,
-        )
-
-        _commit_in(worktree_path, "batch.txt", "work", "batch commit")
-        wt_sha = _head_sha(worktree_path)
-
         # Shadow pgrep with a stub that always fails (exit 2 = "not found"),
         # so _find_live_ilk_pids raises RuntimeError.
         fake_bin = tmp_path / "fake_bin"
@@ -309,10 +321,20 @@ class TestLandingFailClosedOnBrokenProbe:
         fake_pgrep = fake_bin / "pgrep"
         fake_pgrep.write_text("#!/bin/sh\nexit 2\n", encoding="utf-8")
         fake_pgrep.chmod(0o755)
-        result = _merge_cli(
-            repo, worktree_path,
-            env_extra={"PATH": f"{fake_bin}:{os.environ['PATH']}"},
+
+        env = _sandbox_env(tmp_path, extras={"PATH": f"{fake_bin}:{os.environ['PATH']}"})
+
+        subprocess.run(
+            [sys.executable, str(_SELFMOD), "create",
+             str(repo), str(worktree_path)],
+            check=True, capture_output=True, text=True, timeout=30,
+            env=env,
         )
+
+        _commit_in(worktree_path, "batch.txt", "work", "batch commit")
+        wt_sha = _head_sha(worktree_path)
+
+        result = _merge_cli(repo, worktree_path, env=env)
 
         # Step 1 contract: distinct exit code for broken probe.
         assert result.returncode == _EXIT_PROBE_BROKEN, (
@@ -343,11 +365,13 @@ class TestLandingMergeLock:
         repo = _create_throwaway_repo(tmp_path)
         worktree_path = tmp_path / "selfmod-worktree"
         lock_path = tmp_path / "merge.lock"
+        env = _sandbox_env(tmp_path)
 
         subprocess.run(
             [sys.executable, str(_SELFMOD), "create",
              str(repo), str(worktree_path)],
             check=True, capture_output=True, text=True, timeout=30,
+            env=env,
         )
 
         _commit_in(worktree_path, "locked.txt", "data", "locked commit")
@@ -358,7 +382,7 @@ class TestLandingMergeLock:
         fcntl.flock(held_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
         try:
-            result = _merge_cli(repo, worktree_path, lock=lock_path)
+            result = _merge_cli(repo, worktree_path, lock=lock_path, env=env)
 
             # Step 1 contract: distinct exit code for lock contention.
             assert result.returncode == _EXIT_LOCK_HELD, (
