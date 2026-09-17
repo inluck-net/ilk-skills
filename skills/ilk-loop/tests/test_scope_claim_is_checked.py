@@ -244,16 +244,19 @@ def test_ac4_record_absent(tmp_path: Path):
 
 
 def test_ac4_record_unparseable(tmp_path: Path):
-    """AC-4: record unparseable ⇒ finding that says so."""
+    """AC-4: record unparseable or missing required fields ⇒ finding that says so."""
     bad = _write_record(tmp_path, "bad.md", "not a valid record\n")
     findings = lint_scope_claim_vs_record(
         DECLARED_FULL, "batch-2026-09-17-verify",
         record_path=bad,
     )
     assert findings, "expected a finding when record is unparseable"
-    assert any("unparseable" in f or "unreadable" in f or "missing" in f for f in findings), (
-        f"expected finding to say record is unparseable, got: {findings}"
-    )
+    # The finding must say the scope could not be verified — wording varies
+    # by failure mode (unreadable, no suite_scope field, etc.).
+    assert any(
+        "unparseable" in f or "unreadable" in f or "no suite_scope" in f
+        for f in findings
+    ), f"expected finding to say record cannot be verified, got: {findings}"
 
 
 # ── AC-5: finding names sub-plan, declared scope, recorded scope ────────────

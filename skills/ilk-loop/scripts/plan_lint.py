@@ -4582,6 +4582,80 @@ def lint_master_has_verification_subplan(
     return findings
 
 
+# ── Scope-claim-vs-record check ─────────────────────────────────────────────
+
+_SCOPE_FLAG_RE = re.compile(r"--scope\s+(full|auto)")
+
+_SUITE_SCOPE_RE = re.compile(r"^suite_scope:\s*(\w+)", re.MULTILINE)
+
+
+def lint_scope_claim_vs_record(
+    text: str,
+    slug: str,
+    record_path: Path | None = None,
+) -> list[str]:
+    """Check that a batch-verification sub-plan's declared ``--scope``
+    matches the record's ``suite_scope:`` field.
+
+    AC-1: declared ``full``, record ``scoped`` ⇒ finding.
+    AC-2: declared ``full``, record ``full`` ⇒ no finding.
+    AC-3: declared ``auto`` or absent ⇒ no finding.
+    AC-4: record absent or unparseable ⇒ finding.
+    AC-5: finding names the sub-plan slug, declared scope and recorded scope.
+
+    Not in ``ALL_CHECKS`` — takes an extra ``record_path`` that
+    ``lint_file`` cannot supply.  Called from the driver or from
+    ``lint_file`` when the caller passes a record path.
+    """
+    if record_path is None:
+        return []
+
+    findings: list[str] = []
+
+    # Extract declared scope from the step-0 command.
+    m = _SCOPE_FLAG_RE.search(text)
+    declared = m.group(1) if m else None
+
+    # auto (or absent) makes no claim — skip the check.
+    if declared is None or declared == "auto":
+        return []
+
+    # Read the record.
+    if not record_path.is_file():
+        findings.append(
+            f"HARD {slug}: declared --scope {declared} but record is "
+            f"absent ({record_path.name}) — cannot verify the scope claim."
+        )
+        return findings
+
+    try:
+        rec_text = record_path.read_text(encoding="utf-8-sig")
+    except OSError:
+        findings.append(
+            f"HARD {slug}: declared --scope {declared} but record is "
+            f"unreadable ({record_path.name})."
+        )
+        return findings
+
+    rm = _SUITE_SCOPE_RE.search(rec_text)
+    if not rm:
+        findings.append(
+            f"HARD {slug}: declared --scope {declared} but record has no "
+            f"suite_scope field ({record_path.name}) — cannot verify."
+        )
+        return findings
+
+    recorded = rm.group(1)
+    if declared == "full" and recorded == "scoped":
+        findings.append(
+            f"HARD {slug}: declared --scope full but record reports "
+            f"suite_scope: scoped — the plan demanded a full suite that "
+            f"the record does not evidence."
+        )
+
+    return findings
+
+
 def lint_file(path: str | Path, master_text: str = "") -> list[str]:
     """Run all checks against one sub-plan file. Returns finding messages.
 
