@@ -558,6 +558,7 @@ CLASSIFICATION_LABELS: tuple[str, ...] = (
     "no-evidence",
     "never-ran",
     "throttled",
+    "merge-conflict",
 )
 
 LOCAL_CHECK_RE = re.compile(
@@ -1326,6 +1327,15 @@ def classify(
         # and `shipped-unverified` is already routed to needs-human by both
         # watchdogs.  A NEW label here would need a branch in each of them.
         "shipped-unproven": "shipped-unverified",
+        # A selfmod worktree's merge-back failed — committed work is parked in
+        # a worktree and cannot be recovered by relaunching.  Without this
+        # entry the state fell through to the generic heuristics, which see
+        # productive iterations and classify it `clean-success` — the third
+        # instance of identical drift (after ship_integrity_violation and
+        # timeout).  The label `merge-conflict` is already in watchdog.sh's
+        # classify_action arms (→ block), and reused here to avoid adding a
+        # new branch.
+        "selfmod_merge_failed": "merge-conflict",
     }
     if sentinel is not None:
         sentinel_state = (sentinel.get("state") or "").strip()
