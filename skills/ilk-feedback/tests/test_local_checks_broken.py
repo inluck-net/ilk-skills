@@ -221,11 +221,14 @@ class TestSentinelPathUnchanged:
     """Sentinel-derived local-checks-broken for 1-iter unrunnable gate."""
 
     def test_sentinel_one_iter_exit_0_is_broken(self):
-        """state=local_checks_failed, 1 iter, exit_code=0 → local-checks-broken.
+        """state=local_checks_failed, 1 iter, broken gate in checks → local-checks-broken.
 
-        A single iteration whose sentinel records local_checks_failed with
-        exit_code=0 is an unrunnable gate, not a stuck agent.  The L1
-        sentinel path now distinguishes this from the ≥3-iter case.
+        Corrected by sub-plan a-label-matches-its-own-trigger step 2:
+        the previous fixture had local_checks outcome=pass (no broken gate
+        recorded), which correctly falls through to local-checks-stuck
+        under the narrowed sentinel path.  A genuine broken-gate fixture
+        needs exit_code in {4,5,127} or matching stderr — the predicate
+        the label now consults.
         """
         iters = [{
             "run_id": "20260619-120000",
@@ -233,7 +236,12 @@ class TestSentinelPathUnchanged:
             "exit_code": 0,
             "duration_sec": 120,
             "new_commits_total": 1,
-            "local_checks": {"outcome": "pass", "command": "pytest -q"},
+            "local_checks": {
+                "outcome": "fail",
+                "command": "bunx eslint-staged",
+                "exit_code": 127,
+                "stderr_tail": "bunx: command not found",
+            },
         }]
         sentinel = {"state": "local_checks_failed", "run_id": "20260619-120000", "iteration": 1}
 

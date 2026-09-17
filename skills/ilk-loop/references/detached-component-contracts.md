@@ -108,7 +108,7 @@ through to the generic heuristics, which is how a failed run gets classified
 | `"budget_exhausted"` | `budget-exhausted` | `block` |
 | `"max-iterations"` | `max-iter-bound` | `relaunch` |
 | `"interrupted"` | `interrupted` | `relaunch` |
-| `"local_checks_failed"` | `local-checks-broken` (<3 iters) / `local-checks-stuck` | `block` |
+| `"local_checks_failed"` | `local-checks-broken` (broken-gate result in checks) / `local-checks-stuck` | `block` |
 | `"ship_integrity_violation"` | `shipped-unverified` | `needs-human` |
 | `"shipped-unproven"` | `shipped-unverified` | `needs-human` |
 | `"timeout"` | *(none — falls through)* | `triage` |

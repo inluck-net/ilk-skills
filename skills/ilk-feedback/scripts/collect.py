@@ -1053,6 +1053,7 @@ def _classify_core(
                 "fail_iters_in_window": fail_iters,
                 "pass_iters_in_window": pass_iters,
                 "window_size": len(recent),
+                "broken_gate_result": broken,
             }
 
     # explicit JSONL-recorded stop reasons
@@ -1191,6 +1192,7 @@ def _classify_core(
                     "fail_iters_in_window": fail_iters,
                     "pass_iters_in_window": pass_iters,
                     "window_size": len(last3),
+                    "broken_gate_result": broken,
                 }
             return "api-blocked", {
                 "iter_at_stop": last.get("iteration"),
@@ -1366,6 +1368,8 @@ def classify(
                 "iter_at_stop": sentinel.get("iteration"),
                 "reason": "sentinel terminal state",
             }
+            if sentinel_state == "local_checks_failed":
+                facts["has_broken_gate"] = has_broken_gate
             # Merge self-hosting facts and return early — the sentinel is
             # authoritative, no further classification needed.
             facts.update(sh_facts)
@@ -2425,13 +2429,25 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
             )
         else:
             counts_clause = ". "
+        broken_confirmed = (
+            facts.get("has_broken_gate") or facts.get("broken_gate_result")
+        )
+        if broken_confirmed:
+            return (
+                f"The gate COMMAND could not execute{counts_clause}"
+                "The product code is NOT "
+                "implicated — a blind resume re-fails identically. The fix is the "
+                "gate config itself: often a path a later plan step creates, a missing "
+                "dependency, or a command not installed in the worker environment. "
+                "See also the plan_lint frontmatter-path rule for prevention. "
+                "**Do not auto-relaunch until the gate is fixed.**"
+            )
         return (
-            f"The gate COMMAND could not execute{counts_clause}"
-            "The product code is NOT "
-            "implicated — a blind resume re-fails identically. The fix is the "
-            "gate config itself: often a path a later plan step creates, a missing "
-            "dependency, or a command not installed in the worker environment. "
-            "See also the plan_lint frontmatter-path rule for prevention. "
+            f"The gate classification recorded a broken-gate result"
+            f"{counts_clause}"
+            "The recorded checks show an environment or toolchain fault "
+            "(exit 4/5/127 or matching stderr). The fix is the gate config "
+            "or a missing dependency in the worker environment. "
             "**Do not auto-relaunch until the gate is fixed.**"
         )
     if label == "budget-exhausted":
