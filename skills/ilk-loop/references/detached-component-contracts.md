@@ -113,6 +113,12 @@ through to the generic heuristics, which is how a failed run gets classified
 | `"ship_integrity_violation"` | `shipped-unverified` | `needs-human` |
 | `"shipped-unproven"` | `shipped-unverified` | `needs-human` |
 | `"selfmod_merge_failed"` | `merge-conflict` | `block` |
+
+`selfmod_merge_failed` was in **0** consumer files until 2026-09-17 — the
+third instance of identical drift (after `ship_integrity_violation` and
+`timeout`), and the first to escape to another project (gh-resolve's
+`doctor --strict` failed 8 of its tests).  Added to `_SENTINEL_FAILURE_MAP` in
+sub-plan `a-new-terminal-state-cannot-ship-unknown`.
 | `"timeout"` | *(none — falls through)* | `triage` |
 
 `ship_integrity_violation` is written by `run_ilk_loop_claude.sh` and
@@ -1225,6 +1231,18 @@ types above, follow this checklist:
 - [ ] **Finalize on exit** — if you're a runner, rewrite the sentinel to a
       terminal state on every exit path. A `state: "running"` sentinel
       with a dead PID is a crash artifact the watchdog must catch.
+- [ ] **Adding a new terminal state is a contract change.** Every terminal
+      state written to the sentinel MUST be:
+      1. In `collect.py`'s `_SENTINEL_FAILURE_MAP` (or handled by a named
+         special-case branch in its classify function).
+      2. Reachable through `watchdog.sh`'s `classify_action` arms — either
+         via the label the map emits, or via the raw-state fallback.
+      3. Pinned by `skills/ilk-loop/tests/test_terminal_state_is_declared.py`.
+      A state missing from both consumers falls through to generic heuristics,
+      which is how a failed run gets classified `clean-success`.  This has
+      happened three times: `ship_integrity_violation` (until 2026-08-29),
+      `timeout` (until 2026-08-29), and `selfmod_merge_failed` (until
+      2026-09-17) — the last being the first to escape to another project.
 
 ### For human-verify marker (sub-plan front-matter `verified:`)
 
