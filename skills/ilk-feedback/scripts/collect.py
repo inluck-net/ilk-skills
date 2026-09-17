@@ -28,6 +28,7 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -1766,6 +1767,191 @@ def detect_uncommitted_changes(project_path: Path) -> list[dict[str, Any]]:
         return changes
     except Exception:
         return []
+
+
+# ── HEAD-dependency probe ────────────────────────────────────────────────────
+#
+# Before advising anything about an uncommitted tree, ask: does HEAD depend
+# on these changes?  When a symbol imported by committed code is defined
+# nowhere in HEAD and appears in the uncommitted diff, the diff is
+# load-bearing and the correct advice is the opposite of "discard it".
+# See sub-plan a-report-never-advises-discarding-work.
+
+
+@dataclass
+class HeadDependency:
+    """Result of probing whether HEAD depends on uncommitted changes.
+
+    AC-3: INDEPENDENT cannot be constructed with files_scanned == 0.
+    A vacuous pass — scanning nothing and concluding "no dependency" —
+    reproduces the original defect one layer down.
+    """
+
+    verdict: str  # "LOAD_BEARING" | "INDEPENDENT" | "UNDECIDABLE"
+    symbols: list[str]
+    files_scanned: int
+    symbols_examined: int
+    detail: str = ""
+
+    def __post_init__(self) -> None:
+        if self.verdict == "INDEPENDENT" and self.files_scanned == 0:
+            raise ValueError(
+                "INDEPENDENT verdict requires files_scanned > 0 — "
+                "a scan that examined nothing is UNDECIDABLE, not independent"
+            )
+
+
+def _extract_defined_symbols(diff_text: str) -> list[str]:
+    """Extract symbols defined in a unified diff's added lines.
+
+    Covers TypeScript/JavaScript exports (export const/function/class X)
+    and Python module-level def/class.  Returns deduplicated names.
+    """
+    _TS_DEF_RE = re.compile(
+        r"^\+.*export\s+(?:const|let|var|function|class|async\s+function)\s+"
+        r"(?:default\s+)?([A-Za-z_$][A-Za-z0-9_$]*)",
+        re.MULTILINE,
+    )
+    _PY_DEF_RE = re.compile(
+        r"^\+(?:def|class)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        re.MULTILINE,
+    )
+    symbols = set(_TS_DEF_RE.findall(diff_text))
+    symbols.update(_PY_DEF_RE.findall(diff_text))
+    return sorted(symbols)
+
+
+def probe_head_dependency(
+    project_path: Path, uncommitted: list[dict[str, Any]]
+) -> HeadDependency:
+    """Determine whether HEAD imports symbols defined only in the uncommitted diff.
+
+    Returns a HeadDependency with one of three verdicts:
+    - LOAD_BEARING: ≥1 symbol imported by HEAD, undefined in HEAD, defined in diff.
+    - INDEPENDENT: scan ran and found no such symbol (files_scanned > 0).
+    - UNDECIDABLE: scan could not run — git failed or no parseable diff.
+    """
+    _SCAN_ERR = "probe_head_dependency: git operation failed"
+
+    def _git(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        """Run a git command, raising on non-zero exit (except where caller handles)."""
+        return subprocess.run(
+            ["git"] + args,
+            cwd=project_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            **kwargs,
+        )
+
+    # 1. Get the diff text.
+    try:
+        diff_result = _git(["diff", "HEAD"])
+    except Exception as exc:
+        return HeadDependency(
+            verdict="UNDECIDABLE", symbols=[], files_scanned=0,
+            symbols_examined=0, detail=f"{_SCAN_ERR}: {exc}",
+        )
+    if diff_result.returncode != 0:
+        return HeadDependency(
+            verdict="UNDECIDABLE", symbols=[], files_scanned=0,
+            symbols_examined=0,
+            detail=f"{_SCAN_ERR}: git diff exited {diff_result.returncode}: {diff_result.stderr.strip()}",
+        )
+
+    diff_text = diff_result.stdout
+    if not diff_text.strip():
+        return HeadDependency(
+            verdict="UNDECIDABLE", symbols=[], files_scanned=0,
+            symbols_examined=0, detail="empty diff — nothing to scan",
+        )
+
+    # 2. Extract defined symbols from the diff.
+    defined = _extract_defined_symbols(diff_text)
+    files_scanned = len(uncommitted)
+
+    if not defined:
+        # Diff has changes but no parseable export/def/class.
+        return HeadDependency(
+            verdict="INDEPENDENT", symbols=[], files_scanned=files_scanned,
+            symbols_examined=0,
+            detail="diff has changes but no exported symbol definitions found",
+        )
+
+    # 3. For each defined symbol, check if HEAD imports it and defines it.
+    load_bearing: list[str] = []
+
+    for sym in defined:
+        # Is it imported anywhere at HEAD?
+        try:
+            import_result = _git([
+                "grep", "-wl", "--perl-regexp",
+                rf"\bimport\b.*\b{re.escape(sym)}\b",
+                "HEAD", "--", "*.ts", "*.tsx", "*.js", "*.jsx", "*.py",
+            ])
+        except Exception:
+            continue  # treat as "not imported" — UNDECIDABLE applies only to bulk failures
+        if import_result.returncode != 0:
+            # exit 1 = no match (not imported), exit 2+ = error
+            if import_result.returncode >= 2:
+                continue
+            # Not imported — can't be load-bearing regardless.
+            continue
+
+        # Is it defined anywhere at HEAD?
+        try:
+            def_result = _git([
+                "grep", "-wl", "--perl-regexp",
+                rf"\b{re.escape(sym)}\b",
+                "HEAD", "--", "*.ts", "*.tsx", "*.js", "*.jsx", "*.py",
+            ])
+        except Exception:
+            continue
+        # If not found at HEAD at all, it's defined only in the diff → load-bearing.
+        if def_result.returncode != 0:
+            load_bearing.append(sym)
+            continue
+
+        # Found at HEAD — but check if the definition (not just a reference)
+        # exists.  Re-use the same pattern as _extract_defined_symbols but
+        # against HEAD content.
+        try:
+            head_def = _git([
+                "grep", "-P", "--name-only",
+                rf"^export\s+(?:const|let|var|function|class|async\s+function)\s+(?:default\s+)?\b{re.escape(sym)}\b",
+                "HEAD", "--", "*.ts", "*.tsx", "*.js", "*.jsx",
+            ])
+            if head_def.returncode == 0:
+                # Defined in HEAD — not load-bearing.
+                continue
+            # Check Python defs at HEAD.
+            head_py = _git([
+                "grep", "-P", "--name-only",
+                rf"^(?:def|class)\s+{re.escape(sym)}\b",
+                "HEAD", "--", "*.py",
+            ])
+            if head_py.returncode == 0:
+                continue
+        except Exception:
+            continue
+
+        # Imported at HEAD but not defined at HEAD → load-bearing.
+        load_bearing.append(sym)
+
+    if load_bearing:
+        return HeadDependency(
+            verdict="LOAD_BEARING", symbols=load_bearing,
+            files_scanned=files_scanned, symbols_examined=len(defined),
+            detail=f"HEAD imports symbols defined only in the uncommitted diff: {', '.join(load_bearing)}",
+        )
+
+    return HeadDependency(
+        verdict="INDEPENDENT", symbols=[], files_scanned=files_scanned,
+        symbols_examined=len(defined),
+        detail=f"scanned {files_scanned} files, examined {len(defined)} symbols — no HEAD dependency found",
+    )
 
 
 def resolve_iter_log(

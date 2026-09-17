@@ -78,7 +78,11 @@ def _make_kira_repo(tmp_path: Path) -> Path:
 
 
 def _make_independent_repo(tmp_path: Path) -> Path:
-    """Create a repo whose uncommitted diff defines nothing HEAD imports."""
+    """Create a repo whose uncommitted diff defines nothing HEAD imports.
+
+    Tracks util.ts with a placeholder, then modifies it in the working tree
+    so `git diff HEAD` sees it (untracked files are invisible to git diff).
+    """
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
@@ -97,16 +101,18 @@ def _make_independent_repo(tmp_path: Path) -> Path:
 
     main_file = repo / "main.ts"
     main_file.write_text('console.log("hello");\n')
-    subprocess.run(["git", "add", "main.ts"], cwd=repo, capture_output=True, check=True)
+    util = repo / "util.ts"
+    util.write_text("// placeholder\n")
+    subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
     subprocess.run(
-        ["git", "commit", "-m", "feat: add main"],
+        ["git", "commit", "-m", "feat: add main and util stub"],
         cwd=repo,
         capture_output=True,
         check=True,
     )
 
-    # Uncommitted: defines a symbol nothing imports.
-    util = repo / "util.ts"
+    # Modify util.ts — tracked, so `git diff HEAD` sees it.
+    # Defines a symbol nothing imports.
     util.write_text('export function helper(): string { return "unused"; }\n')
     return repo
 
@@ -155,6 +161,83 @@ class TestProbeLoadBearing:
                 os.environ.pop("ILK_DATA_HOME", None)
 
 
+# -- AC-2: INDEPENDENT with files_scanned > 0 for a non-load-bearing diff ------
+
+
+class TestProbeIndependent:
+    """Given a repo whose uncommitted diff defines nothing HEAD imports,
+    probe_head_dependency must return INDEPENDENT with files_scanned > 0."""
+
+    def test_independent_shape_returns_independent(self, tmp_path):
+        """No symbol in the diff is imported by HEAD → INDEPENDENT."""
+        repo = _make_independent_repo(tmp_path)
+
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        data_home = tmp_path / "ilk-data"
+        data_home.mkdir()
+        old_home = os.environ.get("HOME")
+        old_data = os.environ.get("ILK_DATA_HOME")
+        try:
+            os.environ["HOME"] = str(fake_home)
+            os.environ["ILK_DATA_HOME"] = str(data_home)
+
+            uncommitted = collect.detect_uncommitted_changes(repo)
+            result = collect.probe_head_dependency(repo, uncommitted)
+            assert result.verdict == "INDEPENDENT", (
+                f"expected INDEPENDENT, got {result.verdict}: {result.detail}"
+            )
+            assert result.files_scanned > 0, (
+                "INDEPENDENT requires files_scanned > 0"
+            )
+        finally:
+            if old_home is not None:
+                os.environ["HOME"] = old_home
+            else:
+                os.environ.pop("HOME", None)
+            if old_data is not None:
+                os.environ["ILK_DATA_HOME"] = old_data
+            else:
+                os.environ.pop("ILK_DATA_HOME", None)
+
+
+# -- AC-4: git failure yields UNDECIDABLE with stderr --------------------------
+
+
+class TestProbeUndecidable:
+    """When git is unavailable or returns non-zero, the probe must return
+    UNDECIDABLE carrying the stderr — never an empty symbol list."""
+
+    def test_no_git_repo_yields_undecidable(self, tmp_path):
+        """A directory that is not a git repo → UNDECIDABLE."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        data_home = tmp_path / "ilk-data"
+        data_home.mkdir()
+        old_home = os.environ.get("HOME")
+        old_data = os.environ.get("ILK_DATA_HOME")
+        try:
+            os.environ["HOME"] = str(fake_home)
+            os.environ["ILK_DATA_HOME"] = str(data_home)
+
+            bare_dir = tmp_path / "not-a-repo"
+            bare_dir.mkdir()
+            result = collect.probe_head_dependency(bare_dir, [{"path": "x.ts", "line_count": 1}])
+            assert result.verdict == "UNDECIDABLE", (
+                f"expected UNDECIDABLE, got {result.verdict}: {result.detail}"
+            )
+            assert result.detail, "UNDECIDABLE must carry a detail string"
+        finally:
+            if old_home is not None:
+                os.environ["HOME"] = old_home
+            else:
+                os.environ.pop("HOME", None)
+            if old_data is not None:
+                os.environ["ILK_DATA_HOME"] = old_data
+            else:
+                os.environ.pop("ILK_DATA_HOME", None)
+
+
 # -- AC-3: INDEPENDENT with files_scanned == 0 raises -------------------------
 
 
@@ -162,7 +245,7 @@ class TestConstructibility:
     """Constructing an INDEPENDENT verdict with files_scanned == 0 must raise.
     A vacuous pass is the bug this probe exists to prevent."""
 
-    def test_independent_zero_scan_raises(self, tmp_path):
+    def test_constructible_independent_zero_scan_raises(self, tmp_path):
         """INDEPENDENT with files_scanned == 0 is unconstructible."""
         fake_home = tmp_path / "home"
         fake_home.mkdir()
