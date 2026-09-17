@@ -1662,13 +1662,25 @@ def recommend_params(
         )
 
     if label == "local-checks-broken":
+        has_broken_gate = any(
+            _is_broken_gate_result(it.get("local_checks", {}))
+            for it in iters
+            if it.get("local_checks")
+        )
+        if has_broken_gate:
+            return cur_max, cur_to, (
+                "gate COMMAND could not execute (exit 4/5/127 or 'not found' in "
+                "stderr) — product code is NOT the issue. Params unchanged. **Do "
+                "not auto-relaunch**: a blind resume re-fails identically. Fix the "
+                "gate config (often a path a later step creates; see plan_lint "
+                "frontmatter-path rule) or install the missing dependency, then "
+                "relaunch."
+            )
         return cur_max, cur_to, (
-            "gate COMMAND could not execute (exit 4/5/127 or 'not found' in "
-            "stderr) — product code is NOT the issue. Params unchanged. **Do "
-            "not auto-relaunch**: a blind resume re-fails identically. Fix the "
-            "gate config (often a path a later step creates; see plan_lint "
-            "frontmatter-path rule) or install the missing dependency, then "
-            "relaunch."
+            "gate classification recorded a broken-gate result — the recorded "
+            "checks show an environment or toolchain fault (exit 4/5/127 or "
+            "matching stderr). Params unchanged. **Do not auto-relaunch**: fix "
+            "the gate config or install the missing dependency, then relaunch."
         )
 
     if label == "budget-exhausted":
