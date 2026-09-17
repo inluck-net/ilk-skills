@@ -302,11 +302,16 @@ class TestLandingFailClosedOnBrokenProbe:
         _commit_in(worktree_path, "batch.txt", "work", "batch commit")
         wt_sha = _head_sha(worktree_path)
 
-        # Remove pgrep from PATH so _find_live_ilk_pids raises.
-        path_without_grep = "/usr/bin:/bin"
+        # Shadow pgrep with a stub that always fails (exit 2 = "not found"),
+        # so _find_live_ilk_pids raises RuntimeError.
+        fake_bin = tmp_path / "fake_bin"
+        fake_bin.mkdir()
+        fake_pgrep = fake_bin / "pgrep"
+        fake_pgrep.write_text("#!/bin/sh\nexit 2\n", encoding="utf-8")
+        fake_pgrep.chmod(0o755)
         result = _merge_cli(
             repo, worktree_path,
-            env_extra={"PATH": path_without_grep},
+            env_extra={"PATH": f"{fake_bin}:{os.environ['PATH']}"},
         )
 
         # Step 1 contract: distinct exit code for broken probe.

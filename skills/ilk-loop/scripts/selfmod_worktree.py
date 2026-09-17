@@ -473,7 +473,11 @@ def main() -> None:
         except MergeBlockedError as exc:
             # Distinguish broken probe (sentinel PID -1) from live loops.
             if exc.blocking_pids == [-1]:
-                print(f"ERROR: {exc}", file=sys.stderr)
+                print(
+                    "ERROR: Liveness probe broken — cannot detect live loops. "
+                    "Refusing to merge (fail-closed).",
+                    file=sys.stderr,
+                )
                 sys.exit(4)
             else:
                 print(f"ERROR: {exc}", file=sys.stderr)
