@@ -93,7 +93,18 @@ def evaluate_ship(
             for r in last_gate_result.get("results", [])
             if not r.get("passed", False)
         ]
-        detail = "; ".join(failing) if failing else "(unknown)"
+        if not failing:
+            # results empty or absent — the record itself is unreadable.
+            has_results = "results" in last_gate_result
+            found = "empty results" if has_results else "no results field"
+            return ShipVerdict(
+                ok=False,
+                reason=(
+                    f"gate record unreadable ({found}, all_passed=false) — "
+                    f"ship blocked; cannot determine which checks ran"
+                ),
+            )
+        detail = "; ".join(failing)
         return ShipVerdict(
             ok=False,
             reason=f"gate is red — ship blocked. Failing checks: {detail}",
