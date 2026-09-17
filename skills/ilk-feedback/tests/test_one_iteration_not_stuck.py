@@ -29,7 +29,15 @@ import collect  # noqa: E402
 
 
 def _make_single_iter(exit_code: int = 0, new_commits: int = 1) -> list[dict]:
-    """One iteration with given exit_code and new_commits."""
+    """One iteration with a genuine unrunnable gate (exit_code 127).
+
+    Corrected 2026-09-17 by sub-plan a-label-matches-its-own-trigger:
+    the previous fixture used exit_code 1 / assertion-failure stderr,
+    which is a genuine test failure (local-checks-stuck), not a broken
+    gate command.  The docstrings said "unrunnable" but the fixture
+    contradicted them.  See that sub-plan's "The existing test is a
+    second instance of the same bug".
+    """
     return [{
         "run_id": "20260813-173420",
         "iteration": 1,
@@ -38,9 +46,30 @@ def _make_single_iter(exit_code: int = 0, new_commits: int = 1) -> list[dict]:
         "new_commits_total": new_commits,
         "local_checks": {
             "outcome": "fail",
-            "command": "pytest -q",
+            "command": "bunx eslint-staged",
+            "exit_code": 127,
+            "stderr_tail": "bunx: command not found",
+        },
+    }]
+
+
+def _make_single_iter_genuine_failure() -> list[dict]:
+    """One iteration with a genuine test failure (exit_code 1, assertion error).
+
+    This is NOT a broken gate — the command executed and the code failed.
+    The correct label is local-checks-stuck.
+    """
+    return [{
+        "run_id": "20260915-112812",
+        "iteration": 1,
+        "exit_code": 0,
+        "duration_sec": 51.2 * 60,
+        "new_commits_total": 7,
+        "local_checks": {
+            "outcome": "fail",
+            "command": "npx vitest run --reporter=verbose",
             "exit_code": 1,
-            "stderr_tail": "FAILED tests/test_gate.py::test_yaml - assert 1 == 2",
+            "stderr_tail": "AssertionError: expected undefined to be 'kira_verify_patient'",
         },
     }]
 
@@ -168,4 +197,28 @@ class TestSentinelOverridesNarrative:
         )
         assert facts.get("reason") == "sentinel terminal state", (
             f"Expected reason='sentinel terminal state', got {facts.get('reason')}"
+        )
+
+
+# ── Fixture D: genuine test failure is stuck, not broken ─────────────────────
+
+
+class TestGenuineFailureIsStuck:
+    """A single-iteration run where the gate command executed and the code
+    failed (exit 1, assertion error). This is local-checks-stuck, not
+    local-checks-broken. Added by sub-plan a-label-matches-its-own-trigger
+    to pin both arms of the sentinel classification."""
+
+    def test_exit1_assertion_is_stuck(self):
+        """1-iter sentinel=local_checks_failed, gate exit 1 with assertion error
+        → local-checks-stuck.  The gate command executed; the code failed."""
+        iters = _make_single_iter_genuine_failure()
+        sentinel = _sentinel()
+
+        with patch.object(collect, "read_sentinel", return_value=sentinel):
+            with patch.object(collect, "collect_self_hosting_facts", return_value={}):
+                label, facts = collect.classify(iters, None, Path("/tmp/fake-project"))
+
+        assert label == "local-checks-stuck", (
+            f"Expected local-checks-stuck for genuine test failure, got {label}"
         )

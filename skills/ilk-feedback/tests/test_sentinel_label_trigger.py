@@ -26,13 +26,19 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 import collect  # noqa: E400
 
+_LOOP_SCRIPTS = Path(__file__).resolve().parent.parent.parent / "ilk-loop" / "scripts"
+if str(_LOOP_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_LOOP_SCRIPTS))
+
+from ilk_paths import external_launcher_dir, project_key  # noqa: E402
+
 
 # -- helpers ------------------------------------------------------------------
 
 
 def _write_sentinel(project_path: Path, state: str, iteration: int) -> None:
     """Write a minimal sentinel file in the external launcher dir."""
-    launcher_dir = project_path / "runtime" / "launcher"
+    launcher_dir = external_launcher_dir(project_key(project_path))
     launcher_dir.mkdir(parents=True, exist_ok=True)
     sentinel = {
         "state": state,
