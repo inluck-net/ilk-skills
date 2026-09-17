@@ -375,8 +375,16 @@ class TestBranchMovement:
 
             assert exc_info.value.branch == "selfmod-batch"
 
-    def test_merge_skips_branch_check_when_disabled(self, tmp_path: Path) -> None:
-        """With check_branch=False, merge proceeds even if HEAD moved."""
+    def test_merge_fails_on_diverged_base_when_branch_check_disabled(
+        self, tmp_path: Path
+    ) -> None:
+        """With check_branch=False and a moved base, ff-only merge must raise.
+
+        The fast-forward merge (replacing the old cherry-pick) cannot land
+        onto a diverged base.  In normal operation the BranchMovedError from
+        the branch check fires first; this test exercises the defensive
+        RuntimeError when that check is deliberately bypassed.
+        """
         from selfmod_worktree import SelfmodWorktree
 
         repo = _create_throwaway_repo(tmp_path)
@@ -400,8 +408,6 @@ class TestBranchMovement:
                       cwd=repo, check=True, capture_output=True)
 
         with patch("selfmod_worktree._find_live_ilk_pids", return_value=[]):
-            # Should succeed because branch check is disabled.
-            sw.merge_back(check_branch=False)
-
-        # The worktree change landed via cherry-pick.
-        assert (repo / "wt-file.txt").exists()
+            # ff-only fails when branches have diverged.
+            with pytest.raises(RuntimeError, match="Fast-forward merge"):
+                sw.merge_back(check_branch=False)

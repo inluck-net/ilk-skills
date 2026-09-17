@@ -312,11 +312,11 @@ class SelfmodWorktree:
     def _do_merge(self) -> None:
         """Perform the actual merge of worktree changes into the main repo.
 
-        Cherry-picks the worktree's HEAD onto the main branch.  This is the
-        cleanest approach: the worktree shares the same .git directory, so
-        its commits are accessible to the main repo.
+        Fast-forwards the main branch to the worktree's HEAD, preserving
+        every commit and its SHA.  The worktree is created with --detach
+        from the clone's HEAD, so its history is always a strict descendant
+        — a fast-forward is guaranteed when BranchMovedError has not fired.
         """
-        # Get the worktree's HEAD — the commit(s) to bring over.
         worktree_sha = _resolve_head_sha(self.worktree_path)
         main_sha = _resolve_head_sha(self.repo_path)
 
@@ -324,21 +324,19 @@ class SelfmodWorktree:
             logger.info("No changes to merge from worktree")
             return
 
-        # Cherry-pick the worktree's HEAD onto the main branch.
         result = _git(
-            "cherry-pick", worktree_sha,
+            "merge", "--ff-only", worktree_sha,
             cwd=self.repo_path,
         )
         if result.returncode != 0:
-            # Abort the failed cherry-pick before raising.
-            _git("cherry-pick", "--abort", cwd=self.repo_path)
             raise RuntimeError(
-                f"Cherry-pick of {worktree_sha[:8]} failed: "
+                f"Fast-forward merge of {worktree_sha[:8]} failed "
+                f"(main={main_sha[:8]}): "
                 f"{result.stderr.strip() or result.stdout.strip()}"
             )
 
         logger.info(
-            "Cherry-picked %s from worktree into main repo",
+            "Fast-forwarded main repo to %s from worktree",
             worktree_sha[:8],
         )
 
