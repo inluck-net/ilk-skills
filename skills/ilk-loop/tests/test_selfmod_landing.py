@@ -60,6 +60,24 @@ def _sandbox_env(root: Path, *, extras: dict[str, str] | None = None) -> dict[st
     return env
 
 
+def _probe_token(tmp_path: Path) -> str:
+    """A liveness-probe pattern that matches nothing but this test's own blocker.
+
+    The merge CLI is a subprocess, so the in-process tests' idiom —
+    ``patch("selfmod_worktree._find_live_ilk_pids")`` — cannot reach it, and
+    the default pattern ``run_ilk_loop`` matches the WHOLE HOST process table.
+    Every sibling test that spawns a runner, and every other project's loop,
+    is then a live loop as far as these tests are concerned: AC-1/3/5 expect
+    the probe to find nothing and fail when it finds someone else's process.
+    Measured 2026-09-17 — the three passed alone and across
+    skills/ilk-loop/tests/ (1798 passed, 0 failed), and failed in the full
+    suite, reproduced by starting one unrelated matching process.
+
+    ``tmp_path`` is unique per test, so the token is too.
+    """
+    return f"ilkprobe{tmp_path.name.replace('_', '')}"
+
+
 def _merge_cli(
     repo: Path,
     worktree: Path,
@@ -67,11 +85,14 @@ def _merge_cli(
     lock: Path | None = None,
     env_extra: dict[str, str] | None = None,
     env: dict[str, str] | None = None,
+    probe_pattern: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Call ``selfmod_worktree.py merge`` and capture the result."""
     cmd = [sys.executable, str(_SELFMOD), "merge", str(repo), str(worktree)]
     if lock is not None:
         cmd.extend(["--lock", str(lock)])
+    if probe_pattern is not None:
+        cmd.extend(["--probe-pattern", probe_pattern])
     if env is None:
         env = {**os.environ, **(env_extra or {})}
     return subprocess.run(cmd, capture_output=True, text=True, timeout=30,
@@ -101,8 +122,8 @@ def _head_sha(repo: Path) -> str:
 
 
 def _make_blocker_script(tmp_path: Path) -> Path:
-    """Create a long-running script whose filename matches ``pgrep -f``."""
-    script = tmp_path / "run_ilk_loop_test_blocker.py"
+    """Create a long-running script whose filename matches this test's token."""
+    script = tmp_path / f"{_probe_token(tmp_path)}_blocker.py"
     script.write_text("import time; time.sleep(3600)\n", encoding="utf-8")
     return script
 
@@ -141,7 +162,8 @@ class TestLandingHappyPath:
         sha2 = _commit_in(worktree_path, "step2.txt", "two", "step 2")
         sha3 = _commit_in(worktree_path, "step3.txt", "three", "step 3")
 
-        result = _merge_cli(repo, worktree_path, env=env)
+        result = _merge_cli(repo, worktree_path, env=env,
+                            probe_pattern=_probe_token(tmp_path))
 
         # Step 1 contract: exit 0 and a structured success message.
         assert result.returncode == _EXIT_OK, (
@@ -212,7 +234,8 @@ class TestLandingBlockedByLiveLoop:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         try:
-            result = _merge_cli(repo, worktree_path, env=env)
+            result = _merge_cli(repo, worktree_path, env=env,
+                                probe_pattern=_probe_token(tmp_path))
 
             # Step 1 contract: distinct exit code for blocked merges.
             assert result.returncode == _EXIT_BLOCKED, (
@@ -271,7 +294,8 @@ class TestLandingRefusedOnBranchMoved:
         _commit_in(repo, "other.txt", "other process", "other commit")
         current_sha = _head_sha(repo)
 
-        result = _merge_cli(repo, worktree_path, env=env)
+        result = _merge_cli(repo, worktree_path, env=env,
+                            probe_pattern=_probe_token(tmp_path))
 
         # Step 1 contract: distinct exit code for branch-moved.
         assert result.returncode == _EXIT_BRANCH_MOVED, (
@@ -334,7 +358,8 @@ class TestLandingFailClosedOnBrokenProbe:
         _commit_in(worktree_path, "batch.txt", "work", "batch commit")
         wt_sha = _head_sha(worktree_path)
 
-        result = _merge_cli(repo, worktree_path, env=env)
+        result = _merge_cli(repo, worktree_path, env=env,
+                            probe_pattern=_probe_token(tmp_path))
 
         # Step 1 contract: distinct exit code for broken probe.
         assert result.returncode == _EXIT_PROBE_BROKEN, (
@@ -382,7 +407,9 @@ class TestLandingMergeLock:
         fcntl.flock(held_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
         try:
-            result = _merge_cli(repo, worktree_path, lock=lock_path, env=env)
+            result = _merge_cli(repo, worktree_path, lock=lock_path,
+                                env=env,
+                                probe_pattern=_probe_token(tmp_path))
 
             # Step 1 contract: distinct exit code for lock contention.
             assert result.returncode == _EXIT_LOCK_HELD, (

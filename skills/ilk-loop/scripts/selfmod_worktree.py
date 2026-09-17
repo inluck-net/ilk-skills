@@ -93,7 +93,21 @@ class BranchMovedError(RuntimeError):
 # ── Liveness detection ──────────────────────────────────────────────────────
 
 
-def _find_live_ilk_pids() -> list[int]:
+#: Command-line substring identifying a live ilk runner.  Overridable ONLY
+#: so a test can pin it: the merge CLI runs in a subprocess, so the
+#: ``patch("selfmod_worktree._find_live_ilk_pids")`` the in-process tests
+#: use (test_selfmod_worktree.py:80, test_selfmod_merge_range.py:96) cannot
+#: reach it.  Without a pin, those tests assert on the HOST process table:
+#: any unrelated process matching this string — another project's loop, or
+#: a sibling test's runner subprocess — makes a merge that should succeed
+#: report "blocked" instead.  Measured 2026-09-17: 3 of 5 landing tests
+#: passed alone and in skills/ilk-loop/tests/ (1798 passed), and failed in
+#: the full suite.  Production never passes this; the default is the
+#: contract.
+DEFAULT_PROBE_PATTERN = "run_ilk_loop"
+
+
+def _find_live_ilk_pids(pattern: str = DEFAULT_PROBE_PATTERN) -> list[int]:
     """Detect live ilk runner processes.
 
     Uses ``pgrep -f`` to find processes whose command line matches the
@@ -113,7 +127,7 @@ def _find_live_ilk_pids() -> list[int]:
     """
     try:
         result = subprocess.run(
-            ["pgrep", "-f", "run_ilk_loop"],
+            ["pgrep", "-f", pattern],
             capture_output=True,
             text=True,
         )
@@ -264,6 +278,7 @@ class SelfmodWorktree:
         self,
         lock_path: Path | None = None,
         check_branch: bool = True,
+        probe_pattern: str = DEFAULT_PROBE_PATTERN,
     ) -> None:
         """Merge worktree changes back into the main repo.
 
@@ -275,10 +290,12 @@ class SelfmodWorktree:
             lock_path: Optional path to an exclusive lock file.  If set,
                 acquires the lock before merging.
             check_branch: Whether to check if the branch moved (default True).
+            probe_pattern: Command-line substring the liveness probe matches.
+                Defaults to the production contract; pinned only by tests.
         """
         # Step 1: Liveness check — fail closed.
         try:
-            live_pids = _find_live_ilk_pids()
+            live_pids = _find_live_ilk_pids(probe_pattern)
         except RuntimeError as exc:
             # Broken probe — fail closed.
             raise MergeBlockedError(blocking_pids=[-1]) from exc
@@ -449,6 +466,12 @@ def main() -> None:
     merge_p.add_argument("repo", type=Path, help="Path to the main repo.")
     merge_p.add_argument("worktree", type=Path, help="Path to the worktree.")
     merge_p.add_argument("--lock", type=Path, help="Lock file path.")
+    merge_p.add_argument(
+        "--probe-pattern", default=DEFAULT_PROBE_PATTERN,
+        help="Command-line substring the liveness probe matches "
+             "(default: %(default)s). For tests that must not see the "
+             "host's unrelated ilk processes.",
+    )
 
     remove_p = sub.add_parser("remove", help="Remove a worktree.")
     remove_p.add_argument("repo", type=Path, help="Path to the main repo.")
@@ -469,7 +492,8 @@ def main() -> None:
         sw = SelfmodWorktree(args.repo, args.worktree)
         sw.create()  # idempotent — captures _head_at_creation for branch check
         try:
-            sw.merge_back(lock_path=args.lock)
+            sw.merge_back(lock_path=args.lock,
+                          probe_pattern=args.probe_pattern)
         except MergeBlockedError as exc:
             # Distinguish broken probe (sentinel PID -1) from live loops.
             if exc.blocking_pids == [-1]:
