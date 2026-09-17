@@ -15,7 +15,9 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Local import of ilk_paths (sibling module) — used to discover the
@@ -598,6 +600,14 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
     else:
         result["next"] = None
 
+    # ── exit-state sentinel ──────────────────────────────────────────────
+    # Read the launcher's last-exit.json to surface the run's exit state.
+    # A parked project (e.g. ship_integrity_violation) must not read as
+    # ordinary outstanding work.
+    sentinel = _resolve_exit_sentinel(plans_dir, plans_source, cwd)
+    raw = _read_exit_sentinel(sentinel)
+    result["exit_state"] = _classify_exit_state(raw)
+
     return result
 
 
@@ -706,6 +716,137 @@ def _unproven_summary(subplans: list[dict]) -> str | None:
         )
 
     return "\n".join(parts)
+
+
+# ── exit-state sentinel reader ───────────────────────────────────────────────
+#
+# Reads the launcher's ``last-exit.json`` sentinel to surface the run's
+# exit state in the status report.  A parked project that writes
+# ``ship_integrity_violation`` to the sentinel currently prints a normal
+# status table — the detection never reaches a reader (MEASURED 2026-09-16).
+
+_BLOCKING_STATES = {
+    "ship_integrity_violation",
+    "blocked-no-runnable",
+    "budget-exhausted",
+    "local-checks-stuck",
+    "stuck-no-progress",
+}
+
+_ORDINARY_STATES = {
+    "max-iter-bound",
+    "timeout-bound",
+    "all-shipped",
+    "clean-success",
+}
+
+
+def _resolve_exit_sentinel(
+    plans_dir: Path,
+    plans_source: str,
+    cwd: Path,
+) -> Path | None:
+    """Resolve the sentinel path from the plans directory and source type.
+
+    Returns the path to ``last-exit.json`` or None if unresolvable.
+    """
+    try:
+        if plans_source == "external":
+            return plans_dir.parent / "runtime" / "launcher" / "last-exit.json"
+        else:
+            from ilk_paths import resolve_project_key as _rpk, sentinel_path as _sp
+            key = _rpk(cwd)
+            if key:
+                return _sp(key)
+    except Exception:
+        pass
+    return None
+
+
+def _read_exit_sentinel(path: Path | None) -> dict | None:
+    """Read and parse the exit sentinel.  Returns None on any failure.
+
+    AC-5: missing, empty, or unparseable sentinel → None.
+    """
+    if path is None or not path.exists():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+        if not text:
+            return None
+        return json.loads(text)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _classify_exit_state(data: dict) -> dict | None:
+    """Build the exit-state dict for the status report.
+
+    Returns a dict with state, blocking, run_id, iterations, stale, and
+    ended_days_ago — or None if the sentinel is absent or unparseable.
+    """
+    if data is None:
+        return None
+    state = data.get("state", "")
+    if not state:
+        return None
+    blocking = state in _BLOCKING_STATES
+    ended_at = data.get("ended_at", "")
+    stale = False
+    ended_days_ago = None
+    if ended_at:
+        try:
+            # Handle both timezone formats: +0800 and +08:00
+            ts = ended_at.rstrip("Z").replace("+0000", "+00:00")
+            if len(ts) > 5 and ts[-5] in ("+", "-") and ts[-3] != ":":
+                ts = ts[:-2] + ":" + ts[-2:]
+            end_dt = datetime.fromisoformat(ts)
+            now = datetime.now(timezone.utc)
+            if end_dt.tzinfo is None:
+                end_dt = end_dt.replace(tzinfo=timezone.utc)
+            delta = now - end_dt
+            ended_days_ago = delta.days
+            stale = delta.days > 0
+        except (ValueError, TypeError):
+            pass
+    return {
+        "state": state,
+        "blocking": blocking,
+        "run_id": data.get("run_id", ""),
+        "iterations": data.get("iterations", 0),
+        "stale": stale,
+        "ended_days_ago": ended_days_ago,
+    }
+
+
+def _render_exit_state(data: dict) -> None:
+    """Print the exit-state banner if the sentinel indicates a notable state.
+
+    AC-3: blocking states are prominent; ordinary ones are quiet or omitted.
+    AC-4: staleness is stated.
+    """
+    es = data.get("exit_state")
+    if not es:
+        return
+    state = es.get("state", "")
+    if not state:
+        return
+    run_id = es.get("run_id", "")
+    iterations = es.get("iterations", 0)
+    stale = es.get("stale", False)
+    days = es.get("ended_days_ago")
+    blocking = es.get("blocking", False)
+
+    if blocking:
+        stale_note = f"  ({days}d old)" if stale and days else ""
+        line = (
+            f"LAST RUN PARKED: {state} "
+            f"(run {run_id}, {iterations} iter){stale_note}"
+        )
+        print()
+        print(line)
+    # Ordinary states: omit.  A banner that fires on every normal exit is a
+    # banner nobody reads (AC-3).  The information is available in --json.
 
 
 def main() -> int:
@@ -872,6 +1013,8 @@ def main() -> int:
         if unproven:
             print()
             print(unproven)
+        # Exit-state banner (AC-1, AC-3).
+        _render_exit_state(data)
         return 0
 
     nxt = data["next"]
@@ -895,6 +1038,8 @@ def main() -> int:
     if unproven:
         print()
         print(unproven)
+    # Exit-state banner (AC-1, AC-3).
+    _render_exit_state(data)
     return 1
 
 
