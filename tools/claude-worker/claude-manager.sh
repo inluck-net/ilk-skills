@@ -5,4 +5,8 @@
 # install.sh --only-path. Replaces the hand-written stopgap that lived at
 # ~/.local/bin/claude-manager until 2026-09-18.
 # Design: docs/role-tier-registry-design.md.
-exec "$HOME/.local/bin/claude-worker" --home "$HOME/.claude-manager" "$@"
+#
+# Passes --quiet so a routine manager launch prints nothing on success; the
+# fail-closed preflight still reports problems to stderr and exits 3. For the
+# full banner run: claude-worker --home ~/.claude-manager
+exec "$HOME/.local/bin/claude-worker" --home "$HOME/.claude-manager" --quiet "$@"

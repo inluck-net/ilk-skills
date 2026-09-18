@@ -64,6 +64,8 @@ echo ""
 echo "=== complete worker home: preflight passes, token masked ==="
 WK="$TMP/wk/.claude-worker"
 mkdir -p "$WK/skills/ilk-runner"
+mkdir -p "$WK/commands"
+echo "# /ilk" > "$WK/commands/ilk.md"
 cat > "$WK/settings.json" <<EOF
 { "env": { "ANTHROPIC_BASE_URL": "https://p.example/anthropic", "ANTHROPIC_AUTH_TOKEN": "$TOKEN", "ANTHROPIC_MODEL": "worker-m1" } }
 EOF
@@ -77,6 +79,27 @@ check "shows masked marker"                   "$good" contains "***set"
 check "reports base url"                      "$good" contains "https://p.example/anthropic"
 check "reports model"                         "$good" contains "worker-m1"
 check "says it is not launching"              "$good" contains "not launching claude"
+
+echo ""
+echo "=== --quiet: banner suppressed, failures still loud ==="
+set +e
+q="$(HOME="$TMP/wk" bash "$WRAP_SH" --home "$WK" --preflight-only --quiet 2>&1)"
+q_rc=$?
+set -e
+ok "--quiet exits 0 on complete home" "$([[ $q_rc -eq 0 ]] && echo 0 || echo 1)"
+check "--quiet hides the banner header"  "$q" absent "=== claude-worker ==="
+check "--quiet hides the worker home"    "$q" absent "worker home:"
+check "--quiet hides the base url"       "$q" absent "https://p.example/anthropic"
+check "--quiet hides the model"          "$q" absent "worker-m1"
+check "--quiet still says not launching" "$q" contains "not launching claude"
+
+set +e
+qf="$(HOME="$FAKE_HOME" bash "$WRAP_SH" --home "$TMP/empty" --preflight-only --quiet 2>&1)"
+qf_rc=$?
+set -e
+ok "--quiet keeps exit 3 on empty home"    "$([[ $qf_rc -eq 3 ]] && echo 0 || echo 1)"
+check "--quiet still names missing home"   "$qf" contains "worker home does not exist"
+check "--quiet still refuses to launch"    "$qf" contains "refusing to launch"
 
 echo ""
 echo "=== launch path wiring (static) ==="
@@ -99,6 +122,13 @@ check "ps1 reads ANTHROPIC_AUTH_TOKEN" "$ps1" contains "ANTHROPIC_AUTH_TOKEN"
 check "ps1 has -PreflightOnly switch"  "$ps1" contains '[switch]$PreflightOnly'
 check "ps1 fails closed (exit 3)"      "$ps1" contains "exit 3"
 check "ps1 masks the secret"           "$ps1" contains "Format-Secret"
+check "ps1 has -Quiet switch"          "$ps1" contains '[switch]$Quiet'
+check "ps1 maps --quiet flag"          "$ps1" contains "'--quiet'"
+
+echo ""
+echo "=== claude-manager.sh forwards --quiet (static) ==="
+mgr="$(cat "${REPO_ROOT}/tools/claude-worker/claude-manager.sh")"
+check "manager wrapper passes --quiet" "$mgr" contains -- '--home "$HOME/.claude-manager" --quiet'
 
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="

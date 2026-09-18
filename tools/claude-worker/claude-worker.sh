@@ -31,6 +31,9 @@
 #                       injection; worker launches with normal permission prompts
 #   --dry-run           run preflight, print resolved claude bin + assembled args,
 #                       exit 0 without launching claude
+#   --quiet             suppress the informational banner (worker home, provider
+#                       env, claude bin, "Launching claude" lines). Preflight
+#                       failures still print every problem to stderr, exit 3.
 #   -h | --help         show this help and exit
 #
 # Exit codes: 0 ok / preflight ok, 2 usage error, 3 incomplete provider env or
@@ -54,7 +57,7 @@ worker_home="${CLAUDE_WORKER_HOME:-$HOME/.claude-worker}"
 claude_bin="${CLAUDE_BIN:-}"
 
 usage() {
-  sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # Mask a secret for logs: keep nothing but a length-bucketed placeholder so
@@ -66,6 +69,13 @@ mask_secret() {
   else
     echo "***set (${#v} chars)***"
   fi
+}
+
+# Informational stdout (the launch banner); --quiet silences it. Errors and
+# exit codes are never silenced — the fail-closed preflight stays loud.
+info() {
+  if [[ $quiet -eq 1 ]]; then return 0; fi
+  echo "$@"
 }
 
 # Resolve a Python 3 interpreter for JSON parsing (python3 > python > py -3).
@@ -192,6 +202,7 @@ PY
 preflight_only=0
 no_skip_permissions=0
 dry_run=0
+quiet=0
 claude_args=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -199,6 +210,7 @@ while [[ $# -gt 0 ]]; do
     --preflight-only)       preflight_only=1 ;;
     --no-skip-permissions)  no_skip_permissions=1 ;;
     --dry-run)              dry_run=1 ;;
+    --quiet)                quiet=1 ;;
     --home)
       shift
       [[ $# -eq 0 ]] && { echo "error: --home requires a directory argument" >&2; exit 2; }
@@ -230,9 +242,9 @@ esac
 skill_home="$worker_home/skills"
 settings_file="$worker_home/settings.json"
 
-echo "=== claude-worker ==="
-echo "worker home:     $worker_home"
-echo "ILK_SKILL_HOME:  $skill_home"
+info "=== claude-worker ==="
+info "worker home:     $worker_home"
+info "ILK_SKILL_HOME:  $skill_home"
 
 # --- fail-closed preflight --------------------------------------------------
 # Each missing prerequisite is collected so the operator sees every problem at
@@ -253,9 +265,9 @@ if [[ -f "$settings_file" ]]; then
   model="$(read_setting ANTHROPIC_MODEL "$settings_file")"
 fi
 
-echo "base url:        ${base_url:-(missing)}"
-echo "auth token:      $(mask_secret "$auth_token")"
-echo "model:           ${model:-(missing)}"
+info "base url:        ${base_url:-(missing)}"
+info "auth token:      $(mask_secret "$auth_token")"
+info "model:           ${model:-(missing)}"
 
 [[ -z "$base_url" ]]   && problems+=("ANTHROPIC_BASE_URL missing from $settings_file")
 [[ -z "$auth_token" ]] && problems+=("ANTHROPIC_AUTH_TOKEN missing from $settings_file")
@@ -269,7 +281,7 @@ if [[ ! -r "$worker_home/commands/ilk.md" ]]; then
   problems+=("commands/ilk.md not readable at $worker_home/commands/ilk.md (run install.sh --claude-home \"$worker_home\" --only-claude)")
 fi
 
-echo
+info
 
 if [[ ${#problems[@]} -gt 0 ]]; then
   echo "ERROR: worker preflight failed — refusing to launch a worker that would" >&2
@@ -279,7 +291,7 @@ if [[ ${#problems[@]} -gt 0 ]]; then
   exit 3
 fi
 
-echo "Preflight OK: worker home, provider env, and ilk-runner all present."
+info "Preflight OK: worker home, provider env, and ilk-runner all present."
 
 if [[ $preflight_only -eq 1 ]]; then
   echo "(--preflight-only: not launching claude)"
@@ -317,7 +329,7 @@ if ! resolved_claude_bin="$(resolve_claude_bin)"; then
   exit 3
 fi
 
-echo "claude bin:      $resolved_claude_bin"
+info "claude bin:      $resolved_claude_bin"
 
 if [[ $dry_run -eq 1 ]]; then
   echo "claude args:     ${claude_args[*]:-}"
@@ -325,7 +337,7 @@ if [[ $dry_run -eq 1 ]]; then
   exit 0
 fi
 
-echo "Launching claude with CLAUDE_CONFIG_DIR=$worker_home ..."
+info "Launching claude with CLAUDE_CONFIG_DIR=$worker_home ..."
 
 # Write a sentinel so bootstrap can detect an active worker run before
 # overwriting the provider settings.  Uses PID + start-time identity so

@@ -45,6 +45,11 @@
   Run the full preflight, print the resolved claude binary and the assembled
   argv, then exit 0 WITHOUT launching claude. The token is never printed.
 
+.PARAMETER Quiet
+  Suppress the informational banner (worker home, provider env, claude bin,
+  "Launching claude" lines). Preflight failures still print every problem
+  and exit 3.
+
 .PARAMETER ClaudeArgs
   Remaining arguments are forwarded to `claude` verbatim.
 
@@ -74,6 +79,7 @@ param(
   [switch]$PreflightOnly,
   [switch]$NoSkipPermissions,
   [switch]$DryRun,
+  [switch]$Quiet,
   [Parameter(ValueFromRemainingArguments = $true)]
   [string[]]$ClaudeArgs
 )
@@ -104,6 +110,7 @@ if ($ClaudeArgs) {
       }
       '--no-skip-permissions' { $NoSkipPermissions = $true }
       '--dry-run' { $DryRun = $true }
+      '--quiet' { $Quiet = $true }
       default { $forward += $ClaudeArgs[$i] }
     }
   }
@@ -171,9 +178,13 @@ if (-not [System.IO.Path]::IsPathRooted($WorkerHome)) {
 $SkillHome    = Join-Path $WorkerHome "skills"
 $SettingsFile = Join-Path $WorkerHome "settings.json"
 
-Write-Host "=== claude-worker ==="
-Write-Host "worker home:     $WorkerHome"
-Write-Host "ILK_SKILL_HOME:  $SkillHome"
+# Informational banner (the launch banner); -Quiet silences it. Errors and
+# exit codes are never silenced -- the fail-closed preflight stays loud.
+if (-not $Quiet) {
+  Write-Host "=== claude-worker ==="
+  Write-Host "worker home:     $WorkerHome"
+  Write-Host "ILK_SKILL_HOME:  $SkillHome"
+}
 
 # --- fail-closed preflight --------------------------------------------------
 # Collect every problem so the operator sees them all at once.
@@ -200,9 +211,11 @@ if (Test-Path -LiteralPath $SettingsFile -PathType Leaf) {
   }
 }
 
-Write-Host "base url:        $(if ($baseUrl) { $baseUrl } else { '(missing)' })"
-Write-Host "auth token:      $(Format-Secret $authToken)"
-Write-Host "model:           $(if ($model) { $model } else { '(missing)' })"
+if (-not $Quiet) {
+  Write-Host "base url:        $(if ($baseUrl) { $baseUrl } else { '(missing)' })"
+  Write-Host "auth token:      $(Format-Secret $authToken)"
+  Write-Host "model:           $(if ($model) { $model } else { '(missing)' })"
+}
 
 if ([string]::IsNullOrEmpty($baseUrl))   { $problems += "ANTHROPIC_BASE_URL missing from $SettingsFile" }
 if ([string]::IsNullOrEmpty($authToken)) { $problems += "ANTHROPIC_AUTH_TOKEN missing from $SettingsFile" }
@@ -217,7 +230,7 @@ if (-not (Test-Path -LiteralPath $ilkCmd -PathType Leaf)) {
   $problems += "commands/ilk.md not readable at $ilkCmd (run install.ps1 -ClaudeHome `"$WorkerHome`" -OnlyClaude)"
 }
 
-Write-Host ""
+if (-not $Quiet) { Write-Host "" }
 
 if ($problems.Count -gt 0) {
   Write-Error "worker preflight failed -- refusing to launch a worker that would silently fall back to the planner's official OAuth identity."
@@ -226,7 +239,9 @@ if ($problems.Count -gt 0) {
   exit 3
 }
 
-Write-Host "Preflight OK: worker home, provider env, and ilk-runner all present."
+if (-not $Quiet) {
+  Write-Host "Preflight OK: worker home, provider env, and ilk-runner all present."
+}
 
 if ($PreflightOnly) {
   Write-Host "(--preflight-only: not launching claude)"
@@ -253,8 +268,10 @@ if ($DryRun) {
   exit 0
 }
 
-Write-Host "Launching claude with CLAUDE_CONFIG_DIR=$WorkerHome ..."
-Write-Host "claude bin:      $ResolvedClaudeBin"
+if (-not $Quiet) {
+  Write-Host "Launching claude with CLAUDE_CONFIG_DIR=$WorkerHome ..."
+  Write-Host "claude bin:      $ResolvedClaudeBin"
+}
 
 # Write a sentinel file so bootstrap can detect an active worker run before
 # overwriting the provider settings.  The sentinel records PID + process start
