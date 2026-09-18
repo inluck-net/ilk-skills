@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -101,6 +102,31 @@ def verify_phase1(
             ``_head_is_current``).
     """
     # ── Engine 1: batch verdict ──────────────────────────────────────────
+    #
+    # Resolve the tree ourselves when the caller did not supply one.
+    #
+    # An optional argument that defaults to the WRONG answer is the defect
+    # this function was just fixed for, one layer up: `phase1_verify` used to
+    # omit the tree when calling `validate_record_detail`, and every batch that
+    # followed the batch-verification template -- which REQUIRES empty marker
+    # commits -- was refused `stale_head`. Threading the argument through moved
+    # that hazard to the caller rather than removing it: measured 2026-09-18,
+    # `verify_phase1(rt, head, inv)` still returned `refuse` on a record whose
+    # tree was identical to HEAD, because the default is `None`.
+    #
+    # A caller that already resolved a head can resolve a tree; one that did
+    # not should still get the right answer. Falling back to the working tree
+    # is safe because `expected_head_sha` is resolved from the same place by
+    # every caller, and a mismatch degrades to strict head equality -- the
+    # pre-existing conservative behaviour, not a new risk.
+    if expected_tree_sha is None:
+        probe = subprocess.run(
+            ["git", "rev-parse", "HEAD^{tree}"],
+            capture_output=True, text=True, encoding="utf-8",
+        )
+        if probe.returncode == 0 and probe.stdout.strip():
+            expected_tree_sha = probe.stdout.strip()
+
     verdict_path = record_path(runtime_dir)
     detail = validate_record_detail(
         verdict_path, expected_head_sha, expected_invocation,

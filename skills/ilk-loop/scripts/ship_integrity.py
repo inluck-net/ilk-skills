@@ -177,6 +177,7 @@ def _missing_step_reason(subplan: Path) -> str | None:
         from ship_audit import (  # type: ignore[import-untyped]
             check_step_commits,
             count_authored_steps,
+            load_ledger_records,
         )
 
         fm_text, body = _split_fm(_read_text(subplan))
@@ -293,7 +294,41 @@ def _missing_step_reason(subplan: Path) -> str | None:
         authored = count_authored_steps(body)
         if not authored:
             return None
-        _present, missing = check_step_commits(slug, authored, cwd=resolved_root)
+        # Pass the ledger, exactly as the other two readers do.
+        #
+        # This is the THIRD reader of `check_step_commits`, and it was the one
+        # left out. `load_ledger_records`'s own docstring records the same
+        # defect between the first two: `main()` passed the records and
+        # `loop_status` did not, so on a SHARED remote -- where SKILL.md's
+        # trailer policy strips every `[plan:<slug>#step-N]` and the ledger is
+        # the only evidence -- the same sub-plan audited proven from the CLI
+        # and unproven from `loop_status`, and "the disagreement parked correct
+        # work". Enforcement was still asking the question without the evidence.
+        #
+        # Measured 2026-09-18 by a gh-resolve session on rezmac: 26 of 149
+        # `last-exit.json` records read `ship_integrity_violation`, 17 of them
+        # on or after 2026-09-16 -- the day the root-resolution fix made this
+        # check start firing instead of silently skipping (see ~:205, "18 skips
+        # vs 18 fires"). Their text: "0 of 2 authored steps committed" for work
+        # that was done and committed without trailers, by contract.
+        #
+        # Invisible from this repo: ilk-skills' own `.ilk-remote-type` is
+        # `personal`, so its trailers are kept and the check always had
+        # evidence to read.
+        #
+        # NOT narrowed to `provenance == "loop-executed"` here, though a
+        # gh-resolve session reasonably proposed it. `check_step_commits`
+        # already scopes the union to slugs carrying no trailer at all
+        # (`_slug_has_any_trailer`), which is the regime the ledger was
+        # authored for. Filtering by provenance in THIS reader alone would
+        # make it stricter than the other two and recreate the disagreement
+        # this comment exists to record. If provenance should discriminate,
+        # it belongs in `check_step_commits` so all three readers move
+        # together.
+        ledger = load_ledger_records(resolved_root)
+        _present, missing = check_step_commits(
+            slug, authored, cwd=resolved_root, ledger_records=ledger,
+        )
         if not missing:
             return None
         word = "step" if len(missing) == 1 else "steps"
