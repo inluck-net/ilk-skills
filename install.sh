@@ -458,18 +458,58 @@ apply_action() {
 }
 
 # --- PATH entry for claude-worker -------------------------------------------
-# Creates a symlink (or re-points a stale one) at <bin-dir>/claude-worker
-# pointing to tools/claude-worker/claude-worker.sh. Idempotent.
+# Creates a symlink (or re-points a stale one) at <bin-dir>/<command>
+# pointing at its source script in tools/claude-worker/. Idempotent.
 
-CLAUDE_WORKER_SRC="$REPO_ROOT/tools/claude-worker/claude-worker.sh"
 CLAUDE_WORKER_SWITCH_SRC="$REPO_ROOT/tools/claude-worker/switch.sh"
 
-# Every command this installer puts on PATH, as "name=source" pairs. Adding a
-# command here is all it takes for a fresh host to get it via --only-path.
+ROLE_REGISTRY_SRC="$REPO_ROOT/tools/claude-worker/role-registry.json"
+ROLE_REGISTRY_INSTALLED="$HOME/.ilk-data/role-registry.json"
+
+# Every command this installer puts on PATH, as "name=source" pairs. Static
+# utility rows live here; role-bound commands (claude-worker, claude-manager)
+# are generated from the role→provider registry right below — see
+# docs/role-tier-registry-design.md §6.
 PATH_ENTRIES=(
-  "claude-worker=$CLAUDE_WORKER_SRC"
   "claude-worker-switch=$CLAUDE_WORKER_SWITCH_SRC"
 )
+
+# Role commands come from the registry: every role carrying a path_command
+# yields a "name=source" pair for tools/claude-worker/<name>.sh. Validation
+# failure aborts the installer loudly — no fallback to hardcoded role rows.
+# JSON parsing in bash is not a thing this repo will grow.
+_registry_role_entries() {
+  python3 - "$ROLE_REGISTRY_SRC" <<'PY'
+import json, sys
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    data = json.load(fh)
+assert data.get("version") == 1, f"registry version {data.get('version')!r} != 1"
+seen = {}
+for role, row in data["roles"].items():
+    tier = row.get("tier")
+    assert tier in ("worker", "planner", "manager"), f"{role}: bad tier {tier!r}"
+    home = row.get("home", "")
+    if home in seen:
+        assert seen[home] == tier, f"home {home} carries conflicting tiers"
+    seen[home] = tier
+    cmd = row.get("path_command")
+    if cmd:
+        print(f"{cmd}={cmd}.sh")
+PY
+}
+
+_role_entries_output=""
+_role_entries_output="$(_registry_role_entries)" || {
+  echo "error: role registry unreadable or invalid: $ROLE_REGISTRY_SRC" >&2
+  exit 1
+}
+while IFS= read -r _role_entry; do
+  [[ -n "$_role_entry" ]] || continue
+  _cmd="${_role_entry%%=*}"
+  PATH_ENTRIES+=("$_cmd=$REPO_ROOT/tools/claude-worker/${_role_entry#*=}")
+done <<< "$_role_entries_output"
+unset _role_entry _cmd _role_entries_output
 
 # Create or replace the PATH entry (symlink preferred, copy as fallback for
 # environments where ln -s silently copies, e.g. Windows Git Bash without
@@ -548,10 +588,32 @@ install_one_path_entry() {
   fi
 }
 
+# Materialize the role registry to the shared root consumers read
+# (~/.ilk-data/role-registry.json). Idempotent copy from the committed
+# source, so the shared copy cannot drift (docs/role-tier-registry-design.md §6).
+install_role_registry() {
+  echo "=== role registry ($([[ $apply -eq 1 ]] && echo APPLY || echo DRY-RUN)) ==="
+  echo "source:    $ROLE_REGISTRY_SRC"
+  echo "target:    $ROLE_REGISTRY_INSTALLED"
+  if [[ $apply -eq 0 ]]; then
+    echo "(dry-run: not writing)"
+    return 0
+  fi
+  mkdir -p "$(dirname "$ROLE_REGISTRY_INSTALLED")"
+  if cmp -s "$ROLE_REGISTRY_SRC" "$ROLE_REGISTRY_INSTALLED"; then
+    echo "noop: $ROLE_REGISTRY_INSTALLED already current"
+  else
+    cp -- "$ROLE_REGISTRY_SRC" "$ROLE_REGISTRY_INSTALLED"
+    echo "installed: $ROLE_REGISTRY_INSTALLED"
+  fi
+}
+
 # Install every PATH entry, then warn once if the bin dir is not on PATH.
 install_path_entry() {
   local bin_dir="$1"
   local rc=0 entry name src
+
+  install_role_registry
 
   for entry in "${PATH_ENTRIES[@]}"; do
     name="${entry%%=*}"
