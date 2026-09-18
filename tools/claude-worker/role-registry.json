@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "roles": {
+    "planner": {"tier": "planner", "home": "~/.claude",
+                 "provider": "Claude Official", "model": "opus-4.8"},
+    "manager": {"tier": "manager", "home": "~/.claude-manager",
+                 "provider": "Zhipu GLM", "model": "glm-5.3",
+                 "path_command": "claude-manager"},
+    "coder":   {"tier": "worker", "home": "~/.claude-worker",
+                 "provider": "Xiaomi MiMo V2.5 - Pro", "model": "mimo-v2.5-pro",
+                 "path_command": "claude-worker"},
+    "art":     {"tier": "worker", "home": "~/.claude-worker-draw",
+                 "provider": "MiniMax", "model": "MiniMax-M3"}
+  }
+}
