@@ -6,7 +6,7 @@ tool. Five of six stalled verification runs across three projects were a
 mismatch between what the worker wrote and what the parser accepts.
 
 These pin the rule that replaces it: nothing the gate parses may be authored
-by prose. See docs/verification-record-design.md.
+by prose. See docs/runtime/verification-record-design.md.
 """
 from __future__ import annotations
 

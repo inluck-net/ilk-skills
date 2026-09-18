@@ -4,7 +4,7 @@
 # home ~/.claude-manager, tier "manager"); installed on PATH by
 # install.sh --only-path. Replaces the hand-written stopgap that lived at
 # ~/.local/bin/claude-manager until 2026-09-18.
-# Design: docs/role-tier-registry-design.md.
+# Design: docs/architecture/role-tier-registry-design.md.
 #
 # Passes --quiet so a routine manager launch prints nothing on success; the
 # fail-closed preflight still reports problems to stderr and exits 3. For the

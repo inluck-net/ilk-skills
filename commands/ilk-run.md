@@ -271,7 +271,7 @@ bash tools/claude-worker/claude-worker.sh /ilk-run
 Either way, bootstrap the worker home once
 (`tools/claude-worker/bootstrap.sh` / `bootstrap.ps1`) with explicit provider
 values. Do **not** live-switch the provider with CCSwitch during a worker run.
-See `docs/dual-claude-homes-design.md` and `tools/claude-worker/README.md`.
+See `docs/architecture/dual-claude-homes-design.md` and `tools/claude-worker/README.md`.
 
 ## S. Self-hosting projects
 

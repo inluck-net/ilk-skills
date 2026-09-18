@@ -130,4 +130,4 @@ tier 3 — so the mistake looks exactly like a legitimate decision.
 - `commands/ilk-ship.md` — the operator sequence.
 - `skills/ilk-loop/references/decomposition-principles.md` §8 — the gate
   anti-patterns, including the red-first step-0 rule this work produced.
-- `docs/loop-runtime-hardening.md` — broader runtime hardening notes.
+- `docs/runtime/loop-runtime-hardening.md` — broader runtime hardening notes.

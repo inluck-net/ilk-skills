@@ -373,7 +373,7 @@ def resolve_batch_record(project: Path, batch_slug: str) -> Path:
 # prose.**  The tool measures and writes; the checker re-derives; the worker
 # writes narrative into sections no parser reads.
 #
-# See docs/verification-record-design.md.
+# See docs/runtime/verification-record-design.md.
 
 RECORD_WRITER = "verification_record.py"
 

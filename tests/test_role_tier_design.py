@@ -1,6 +1,6 @@
 """Pin the role-tier registry design doc's appendix.
 
-The appendix in docs/role-tier-registry-design.md is the verbatim source the
+The appendix in docs/architecture/role-tier-registry-design.md is the verbatim source the
 build sub-plan copies into tools/claude-worker/role-registry.json. If the doc
 drifts (bad JSON, a tier leaves the enum, a home gains a conflicting tier),
 this gate goes red instead of a review comment noticing later.
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 DESIGN_DOC = (
-    Path(__file__).resolve().parent.parent / "docs" / "role-tier-registry-design.md"
+    Path(__file__).resolve().parent.parent / "docs" / "architecture" / "role-tier-registry-design.md"
 )
 VALID_TIERS = {"worker", "planner", "manager"}
 TIER_RANKS = {"worker": 0, "planner": 1, "manager": 2}

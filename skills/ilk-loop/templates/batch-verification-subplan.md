@@ -165,7 +165,7 @@ whose defect was that **no data flowed between them**: the suite's results went
 to the first command's stdout, so the emitter could not know the failure count
 and that field was left to prose. Five of six stalled verification runs across
 three projects on 2026-09-15/16 were a mismatch between prose a worker wrote and
-the grammar the step-1 gate parses. See `docs/verification-record-design.md`.
+the grammar the step-1 gate parses. See `docs/runtime/verification-record-design.md`.
 
 **Do not hand-write any field above `## Findings`.** Everything the gate parses
 is emitted. Findings is yours and no parser reads it. A record you typed is

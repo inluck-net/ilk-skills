@@ -3,7 +3,7 @@
 Run a **Worker Claude** (cheap Anthropic-compatible provider) alongside the
 default **Planner Claude** (official provider on `~/.claude`), without either
 one disturbing the other's provider state. Design:
-[`docs/dual-claude-homes-design.md`](../../docs/dual-claude-homes-design.md).
+[`docs/architecture/dual-claude-homes-design.md`](../../docs/architecture/dual-claude-homes-design.md).
 
 These scripts only ever touch the worker home you name. They never read,
 write, or mutate `~/.claude`, CCSwitch state, or any `cc-switch.db`, and they
@@ -13,7 +13,7 @@ never extract or print a provider token.
 
 The toolkit also exposes **capability services** — plain HTTP endpoints wrapped
 as CLI/MCP tools, distinct from agentic worker homes. See
-[`docs/model-worker-framework.md`](../../docs/model-worker-framework.md) for the
+[`docs/architecture/model-worker-framework.md`](../../docs/architecture/model-worker-framework.md) for the
 full architecture.
 
 | Capability | Tool | Endpoint | Status |

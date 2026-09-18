@@ -197,7 +197,7 @@ gate (`lint_wholesuite_gate_outside_verification_subplan`).
 the fix loop is still N broad runs, because a red step-0 gate does not advance
 and the next iteration re-runs step 0 in full. The three-pass design —
 discover once, re-run only the failing selection while fixing, confirm once —
-is specified in `docs/verification-record-design.md` and **not implemented**.
+is specified in `docs/runtime/verification-record-design.md` and **not implemented**.
 Until it is, the count is `1 + number of fix iterations`, unbounded.
 
 ## 7. The rule this is evidence for

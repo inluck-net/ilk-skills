@@ -2,7 +2,7 @@
 """MiniMax draw capability tool — image generation (image-01) and curation (M3-VL).
 
 Part of the model-worker framework capability-services layer.
-This is an HTTP tool, NOT a worker home — see docs/model-worker-framework.md §2b.
+This is an HTTP tool, NOT a worker home — see docs/architecture/model-worker-framework.md §2b.
 
 Pure-core functions (request builders, decoders, file I/O) have NO network
 dependency and are fully unit-testable offline. The single network call lives

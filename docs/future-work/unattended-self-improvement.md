@@ -355,7 +355,7 @@ the deploy verdict.
 
 - `docs/future-work/cross-project-supervisor.md` — the scheduler this would
   ride on; V1 shipped, V2 (parallel workers) still open.
-- `docs/ship-gate-design.md` — the ship gate's own defect history.
+- `docs/runtime/ship-gate-design.md` — the ship gate's own defect history.
 - `skills/ilk-self-improve/SKILL.md` — the planner/executor boundary this
   design would move.
 - `skills/ilk-loop/templates/batch-verification-subplan.md` — the at-base rerun

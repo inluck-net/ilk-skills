@@ -237,7 +237,7 @@ every successful pull. The heuristic itself lives in
 
 If you're building an *external* tool that observes or controls the loop — a
 dashboard, a bot, a mobile remote — start with
-[`docs/integration-surface.md`](docs/integration-surface.md). It documents the
+[`docs/architecture/integration-surface.md`](docs/architecture/integration-surface.md). It documents the
 status CLIs and their `--json` schemas, the `~/.ilk-data/` layout, the plan-file
 contract, and the verification gates.
 
@@ -266,7 +266,7 @@ install.ps1       Windows installer
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Dev setup, running the tests, the self-modification hazard |
 | [SECURITY.md](SECURITY.md) | Reporting, and what this toolkit does to your machine |
 | [CHANGELOG.md](CHANGELOG.md) | Release highlights |
-| [`docs/integration-surface.md`](docs/integration-surface.md) | The consumer-facing surface for external tools |
+| [`docs/architecture/integration-surface.md`](docs/architecture/integration-surface.md) | The consumer-facing surface for external tools |
 | [`docs/standards/`](docs/standards/agentskills-io.md) | agentskills.io references and per-skill compliance |
 
 ## Contributing

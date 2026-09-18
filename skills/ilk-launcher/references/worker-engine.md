@@ -47,7 +47,7 @@ fall back to the planner's OAuth identity.
 
 **Prerequisite:** the worker home must be bootstrapped first
 (`tools/claude-worker/bootstrap.sh` / `.ps1`). See
-`tools/claude-worker/README.md` and `docs/dual-claude-homes-design.md`
+`tools/claude-worker/README.md` and `docs/architecture/dual-claude-homes-design.md`
 for the planner/worker model.
 
 Examples:

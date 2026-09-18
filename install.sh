@@ -469,7 +469,7 @@ ROLE_REGISTRY_INSTALLED="$HOME/.ilk-data/role-registry.json"
 # Every command this installer puts on PATH, as "name=source" pairs. Static
 # utility rows live here; role-bound commands (claude-worker, claude-manager)
 # are generated from the role→provider registry right below — see
-# docs/role-tier-registry-design.md §6.
+# docs/architecture/role-tier-registry-design.md §6.
 PATH_ENTRIES=(
   "claude-worker-switch=$CLAUDE_WORKER_SWITCH_SRC"
 )
@@ -590,7 +590,7 @@ install_one_path_entry() {
 
 # Materialize the role registry to the shared root consumers read
 # (~/.ilk-data/role-registry.json). Idempotent copy from the committed
-# source, so the shared copy cannot drift (docs/role-tier-registry-design.md §6).
+# source, so the shared copy cannot drift (docs/architecture/role-tier-registry-design.md §6).
 install_role_registry() {
   echo "=== role registry ($([[ $apply -eq 1 ]] && echo APPLY || echo DRY-RUN)) ==="
   echo "source:    $ROLE_REGISTRY_SRC"

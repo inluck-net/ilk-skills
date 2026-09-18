@@ -297,13 +297,13 @@ Prefer removing the cell over validating it.
    `~/.ilk-data/projects/*/logs/verification/*-batch.md` — every dialect that has
    ever been written is there, and the migration question ("what happens to
    unsigned records") is answerable by counting them.
-3. `docs/retro-2026-09-16-batch-verification-gate.md` has the nine prior fixes
+3. `docs/retros/retro-2026-09-16-batch-verification-gate.md` has the nine prior fixes
    to this mechanism and why each was too narrow.
 
 ## See also
 
-- `docs/retro-2026-09-16-batch-verification-gate.md` — the recurring shape.
-- `docs/ship-gate-design.md` — the release-side consumer of the proof this
+- `docs/retros/retro-2026-09-16-batch-verification-gate.md` — the recurring shape.
+- `docs/runtime/ship-gate-design.md` — the release-side consumer of the proof this
   record produces.
 - `skills/ilk-loop/references/decomposition-principles.md` §12 — verification
   tiers, and the separate `must_add_tests` contradiction.

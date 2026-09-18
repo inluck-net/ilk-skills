@@ -137,7 +137,7 @@ bash tools/claude-worker/claude-worker.sh /ilk-run
 ```
 
 Set up the worker home once with `tools/claude-worker/bootstrap.sh`. See
-[`docs/dual-claude-homes-design.md`](../../docs/dual-claude-homes-design.md)
+[`docs/architecture/dual-claude-homes-design.md`](../../docs/architecture/dual-claude-homes-design.md)
 and [`tools/claude-worker/README.md`](../../tools/claude-worker/README.md).
 Do **not** use CCSwitch to live-switch the provider during a worker run, and
 do **not** run multiple workers against the same git worktree / project key.

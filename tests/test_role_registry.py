@@ -1,7 +1,7 @@
 """Schema gate for the committed role registry.
 
 Validates tools/claude-worker/role-registry.json against the contract in
-docs/role-tier-registry-design.md §3: tier enum, no home under conflicting
+docs/architecture/role-tier-registry-design.md §3: tier enum, no home under conflicting
 tiers, path_command roles naming real scripts. Runs on every platform with
 no environment dependency — the committed source is the subject.
 """
@@ -64,7 +64,7 @@ def test_committed_source_matches_design_appendix():
 
     design = (
         Path(__file__).resolve().parent.parent
-        / "docs" / "role-tier-registry-design.md"
+        / "docs" / "architecture" / "role-tier-registry-design.md"
     ).read_text(encoding="utf-8")
     blocks = re.findall(r"```json\n(\{.*?\})\n```", design, re.S)
     assert blocks, "design doc lost its fenced json appendix"

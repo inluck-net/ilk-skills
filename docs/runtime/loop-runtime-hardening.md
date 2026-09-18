@@ -14,7 +14,7 @@ Each fix extracted a **pure, unit-tested decision core** with the shells (`.ps1`
    use `tools/claude-worker/ilk-worker-mcp add <name>` (writes the server +
    copies only that server's `mcpOAuth`, never `claudeAiOauth`). `/ilk-plan`
    step 4b probes the worker surface via `skills/ilk-loop/scripts/worker_mcp.py`,
-   not the interactive `claude mcp list`. See `dual-claude-homes-design.md` →
+   not the interactive `claude mcp list`. See `docs/architecture/dual-claude-homes-design.md` →
    MCP Isolation.
 
 2. **git's normal stderr is not a failure.** git writes status like "Switched to

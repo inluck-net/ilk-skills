@@ -4,7 +4,7 @@
 # Creates a separate Claude Code home (default ~/.claude-worker) pinned to an
 # explicit Anthropic-compatible provider, so a Worker Claude can run cheap
 # implementation loops while the Planner Claude keeps the default ~/.claude
-# home on its official provider. See docs/dual-claude-homes-design.md.
+# home on its official provider. See docs/architecture/dual-claude-homes-design.md.
 #
 # SAFETY (non-negotiable, enforced by this script):
 #   * Never reads, writes, or mutates ~/.claude, CCSwitch state, or

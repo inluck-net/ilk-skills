@@ -1376,8 +1376,8 @@ one actionable pair is not buried (69KB → 5.9KB on that run).
 
 ## See also
 
-- `docs/loop-runtime-hardening.md` — broader runtime hardening notes
-- `docs/ship-gate-design.md` — the ship gate: why `shipped` never meant
+- `docs/runtime/loop-runtime-hardening.md` — broader runtime hardening notes
+- `docs/runtime/ship-gate-design.md` — the ship gate: why `shipped` never meant
   "gated", the tier table's measured behaviour, and its open limits
   (BOM reads, git stderr, branch policy, hung-alive detection).
 - `skills/ilk-loop/SKILL.md` — the loop convention itself.

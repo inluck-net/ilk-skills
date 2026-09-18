@@ -6,7 +6,7 @@
 ## Status
 
 Implemented. This document turns the diagnostic findings in
-`docs/claude-provider-isolation-diagnostic.md` into a cross-platform design for
+`docs/architecture/claude-provider-isolation-diagnostic.md` into a cross-platform design for
 running separate Planner and Worker Claude Code environments on the same
 machine, and the design has now shipped:
 

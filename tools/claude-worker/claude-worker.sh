@@ -4,7 +4,7 @@
 # Wraps `claude` so it runs against a separate Worker Claude home (default
 # ~/.claude-worker) pinned to an explicit Anthropic-compatible provider, while
 # the Planner Claude keeps the default ~/.claude home on its official provider.
-# See docs/dual-claude-homes-design.md. Create the worker home first with
+# See docs/architecture/dual-claude-homes-design.md. Create the worker home first with
 # tools/claude-worker/bootstrap.sh.
 #
 # The wrapper sets two environment variables before launching:
