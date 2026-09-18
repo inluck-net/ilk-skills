@@ -1326,6 +1326,17 @@ print(json.dumps({
     'provenance': 'loop-executed',
 }, separators=(',', ':')))" "$RUN_ID" "$iteration" "$slug" "$r" "$step_from" "$step_to" "$shas_json" 2>/dev/null) || continue
 
+      # Terminate a neighbour's unterminated line before appending.
+      #
+      # `printf '%s\n'` ends OUR row but says nothing about the row already
+      # there.  A foreign writer (a worker hand-appending) that omits its
+      # trailing newline makes our append land on ITS line, and a line-based
+      # reader then loses both.  Measured 2026-09-18, gh-resolve run 12cd8693:
+      # 4 rows, 3 newlines, and the pair lost included the only loop-executed
+      # row attributing that sub-plan.
+      if [[ -s "$ledger" ]] && [[ -n "$(tail -c 1 "$ledger")" ]]; then
+        printf '\n' >> "$ledger"
+      fi
       printf '%s\n' "$record" >> "$ledger"
     done
   done
