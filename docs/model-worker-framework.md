@@ -2,7 +2,7 @@
 
 > **Status:** shipped — extends [`dual-claude-homes-design.md`](dual-claude-homes-design.md)
 > from two roles (planner + worker) to **N roles + capability services**.
-> **Last updated:** 2026-06-28.
+> **Last updated:** 2026-09-18.
 > **Driving request:** GRIDLOCK needs a "drawing worker" to upgrade its UI —
 > see `gridlock/docs/handoffs/2026-06-28-drawing-worker-handoff.md` (incl. the
 > §1.5 MiniMax-M3 capability probe results). GRIDLOCK is a *consumer* of this
@@ -51,6 +51,7 @@ worker home.
 | Role | Model | cc-switch provider | Host | Home | Vision? | Status |
 |---|---|---|---|---|---|---|
 | **planner** | Opus 4.8 | Claude Official | api.anthropic.com | `~/.claude` | — | shipped (dual-homes) |
+| **manager** | `glm-5.3` | Zhipu GLM | open.bigmodel.cn | `~/.claude-manager` | — | **shipped** (registry batch 2026-09-18; judgement tier — see [`role-tier-registry-design.md`](role-tier-registry-design.md)) |
 | **coder** | `mimo-v2.5-pro` | Xiaomi MiMo V2.5 - Pro | token-plan-cn.xiaomimimo.com | `~/.claude-worker` | no | shipped (dual-homes) |
 | **art code-gen** | `MiniMax-M3` | MiniMax | api.minimaxi.com | `~/.claude-worker-draw` | **yes (input)** | **shipped** |
 | **VL curator** | `MiniMax-M3` | MiniMax | api.minimaxi.com | `~/.claude-worker-draw` (shared) | **yes (input)** | **shipped** |
@@ -79,7 +80,7 @@ worker home.
 | Component | Role | Location |
 |---|---|---|
 | **cc-switch DB** | reference for provider values (user copies from) | `~/.cc-switch/cc-switch.db` |
-| **role→provider registry** | maps role → provider profile; provisions homes | _to build_ (extends `tools/claude-worker/`) |
+| **role→provider registry** | maps role → tier + provider profile; drives installer PATH entries; guard source for tier floors | **shipped** — committed `tools/claude-worker/role-registry.json`, installed `~/.ilk-data/role-registry.json` ([design](role-tier-registry-design.md)) |
 | **dispatch helper** | given a role, launch `CLAUDE_CONFIG_DIR=<home> claude -p` | **shipped** (launcher `-WorkerHome` override + `CLAUDE_WORKER_HOME` env) |
 | **`worker_mcp.py list`** | probe a worker home's MCP surface | `skills/ilk-loop/scripts/` (exists) |
 | **`ilk-worker-mcp`** | add an MCP to a worker home safely | `tools/claude-worker/` (exists) |
@@ -97,6 +98,7 @@ flowchart TD
 
     subgraph Homes["Agentic worker homes (claude -p)"]
         direction LR
+        MGR["manager · glm-5.3<br/>~/.claude-manager · judgement tier"]
         CODER["coder · mimo-v2.5-pro<br/>~/.claude-worker"]
         ART["art code-gen + VL curator<br/>MiniMax-M3 (vision-in)<br/>~/.claude-worker-draw"]
     end
@@ -107,6 +109,7 @@ flowchart TD
         TTS["(future) TTS / STT"]
     end
 
+    REG --> MGR
     REG --> CODER
     REG --> ART
     P --> IMG
@@ -146,9 +149,15 @@ flowchart TD
    `~/.claude-worker-draw` is provisioned via the existing `bootstrap --home`
    flag (already existed; tested with MiniMax-like values in sub-plan 2).
    Dispatch uses the launcher's `-WorkerHome ~/.claude-worker-draw` override
-   (also pre-existing). A formal role→provider registry file is deferred —
-   the current implicit mapping (bootstrap command → home) is sufficient for
-   the three roles shipped.
+   (also pre-existing). **Shipped 2026-09-18** (replacing the 2026-06-28
+   deferral — git history keeps the original sentence): the formal registry
+   is `tools/claude-worker/role-registry.json` (committed) installed to
+   `~/.ilk-data/role-registry.json`, with tier ranks
+   `worker < planner < manager`, a fail-closed read contract, and installer
+   PATH entries generated from it — see
+   [`role-tier-registry-design.md`](role-tier-registry-design.md). The
+   implicit bootstrap→home mapping the deferral called "sufficient" is now
+   explicit data.
 3. **Self-hosting safety.** This batch was run `supervised_only: true` per the
    MASTER. All changes are additive (new `tools/minimax/`, bootstrap test
    coverage, docs) and touch no loop infrastructure.
