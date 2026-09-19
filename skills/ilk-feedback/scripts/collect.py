@@ -994,7 +994,11 @@ def _classify_core(
         }
 
     last = iters[-1]
-    last_stop = last.get("stop_reason")
+    # A run-level terminal record (record_type="run_exit") carries the
+    # enforcement-set stop_reason that the per-iteration record missed (D1).
+    # Prefer it over the last iteration's (possibly empty) stop_reason.
+    terminal = next((r for r in iters if r.get("record_type") == "run_exit"), None)
+    last_stop = (terminal or last).get("stop_reason")
     error_count = sum(1 for r in iters if r.get("exit_code") not in (0, None))
     err_rate = error_count / len(iters) if iters else 0.0
     new_commits_total = sum((r.get("new_commits_total") or 0) for r in iters)

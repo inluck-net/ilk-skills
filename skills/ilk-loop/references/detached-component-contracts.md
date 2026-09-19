@@ -277,6 +277,63 @@ per iteration. Readers should dedup if re-processing.
   `read_per_iter_jsonl` (~line 366). Feeds postmortem classification.
 - **Watchdog** — may scan for iteration progress.
 
+### Run-level terminal record (2026-09-19, D1 fix)
+
+After the enforcement block, the runner emits a **second** record carrying
+the terminal `stop_reason` — the reason the loop ended, including reasons
+set by enforcement after the per-iteration record was written.
+
+#### Format
+
+```json
+{"run_id":"20260918-175308","cli":"claude","iteration":999999,"timestamp":"2026-09-18T18:06:00+0800","project":"/path","stop_reason":"ship_integrity_violation","record_type":"run_exit","iters":1}
+```
+
+Fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `run_id` | string | Same run identifier as the per-iteration records |
+| `cli` | string | Always `"claude"` (matches per-iteration records) |
+| `iteration` | int | Always `999999` — keeps it out of the per-iteration de-dup key `(run_id, iteration)` |
+| `timestamp` | string | ISO-8601 timestamp at loop exit |
+| `project` | string | Absolute project path |
+| `stop_reason` | string | The terminal reason — always present |
+| `record_type` | string | Always `"run_exit"` — distinguishes from per-iteration records |
+| `iters` | int | Number of iterations the run completed |
+
+#### Why `iteration: 999999`
+
+The per-iteration de-dup key is `(run_id, iteration)`. Real iterations are
+numbered 1..N (max_iterations is typically 30-100). Using `999999` keeps
+the terminal record out of the per-iteration de-dup while staying numeric
+(`collect.py` uses `rec.get("iteration", 0)` and `int()`).
+
+#### Who writes
+
+- **`run_ilk_loop_claude.sh`** — appended after the enforcement block,
+  before the sentinel finalization. A new `python3 -c` block constructs
+  the record.
+- **`run_ilk_loop_claude.ps1`** — (mirror, TBD).
+
+#### Who reads
+
+- **`collect.py`** — `_classify_core` checks for `record_type="run_exit"`
+  and reads its `stop_reason` in preference to the last per-iteration
+  record's (which may be empty due to D1).
+
+#### Invariants
+
+1. **The terminal record is ALWAYS emitted.** Even when `stop_reason` is
+   empty or absent (which should never happen, but the record must exist
+   for the classifier to know the run ended).
+2. **`record_type` is the discriminator.** Readers must not key on
+   `iteration: 999999` alone — the number is a de-dup convenience, not a
+   semantic marker.
+3. **The terminal record supplements, never replaces, the per-iteration
+   record.** The per-iteration record stays in place; the terminal record
+   adds the missing `stop_reason`.
+
 ### Invariants
 
 1. **Files MUST be BOM-free.** Windows PowerShell 5.1's `-Encoding utf8`

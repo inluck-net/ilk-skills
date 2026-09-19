@@ -3352,6 +3352,30 @@ for mp in masters:
   # Final report
   echo ""
   echo "=== Loop ended: $stop_reason ==="
+
+  # Run-level terminal record: the per-iteration record at :3189-3247 is
+  # written BEFORE enforcement can set stop_reason (D1, retro-2026-09-18).
+  # Emit a second record carrying the terminal cause so readers
+  # (collect.py, watchdog) see the real reason — not an empty field.
+  # record_type="run_exit" marks it distinct; iter 999999 keeps it out of
+  # the per-iteration de-dup key (run_id, iteration).
+  local ts_terminal
+  ts_terminal=$(date '+%Y-%m-%dT%H:%M:%S%z')
+  python3 -c "
+import json, sys
+d = {
+  'run_id': sys.argv[1],
+  'cli': 'claude',
+  'iteration': 999999,
+  'timestamp': sys.argv[2],
+  'project': sys.argv[3],
+  'stop_reason': sys.argv[4],
+  'record_type': 'run_exit',
+  'iters': int(sys.argv[5]) if sys.argv[5].isdigit() else 0,
+}
+print(json.dumps(d))
+" "$RUN_ID" "$ts_terminal" "$PROJECT_PATH" "$stop_reason" "$iter_counter" >> "$JSONL_LOG"
+
   echo "Run logs: $RUN_LOG_DIR"
   echo "JSONL:    $JSONL_LOG"
   echo ""
