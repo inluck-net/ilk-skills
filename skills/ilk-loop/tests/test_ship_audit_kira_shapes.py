@@ -186,3 +186,96 @@ def test_0908c_shape_record_spanning_trailer_steps_is_rejected(
         "step 2 has no trailer and its ledger record overlaps trailer'd "
         f"steps 0/1/3 — must be flagged. Got present={present} missing={missing}"
     )
+
+
+# ── AC-3: three-reader agreement (audit_ship on the kira shapes) ─────────────
+
+_BODY_3 = "# Sub-plan\n\n" + "".join(
+    f"### Step {n} — work\n\nBody.\n\n" for n in range(3)
+)
+_BODY_4 = "# Sub-plan\n\n" + "".join(
+    f"### Step {n} — work\n\nBody.\n\n" for n in range(4)
+)
+_BODY_6 = "# Sub-plan\n\n" + "".join(
+    f"### Step {n} — work\n\nBody.\n\n" for n in range(6)
+)
+
+
+def test_pv3_authz_audit_ship_proven(tmp_path: Path) -> None:
+    """AC-3: audit_ship agrees pv3-authz is PROVEN."""
+    slug = "pv3-authz"
+    project, shas = _project(
+        tmp_path, slug=slug, steps=3, trailered_steps=set(), ship_marker=True,
+    )
+    ledger = _ledger(slug, project, shas, 0, 3)
+    result = ship_audit.audit_ship(
+        status="shipped", body=_BODY_3, declared_checks=[],
+        gate_passed="unknown", slug=slug, cwd=project,
+        ledger_records=ledger,
+    )
+    assert result["proven"], (
+        f"pv3-authz must audit PROVEN. Got {result}"
+    )
+    assert result["missing_steps"] == [], (
+        f"pv3-authz: no missing steps. Got {result['missing_steps']}"
+    )
+
+
+def test_pv3_dispatch_audit_ship_proven(tmp_path: Path) -> None:
+    """AC-3: audit_ship agrees pv3-dispatch is PROVEN."""
+    slug = "pv3-dispatch"
+    project, shas = _project(
+        tmp_path, slug=slug, steps=4, trailered_steps=set(), ship_marker=True,
+    )
+    ledger = _ledger(slug, project, shas, 0, 4)
+    result = ship_audit.audit_ship(
+        status="shipped", body=_BODY_4, declared_checks=[],
+        gate_passed="unknown", slug=slug, cwd=project,
+        ledger_records=ledger,
+    )
+    assert result["proven"], (
+        f"pv3-dispatch must audit PROVEN. Got {result}"
+    )
+    assert result["missing_steps"] == [], (
+        f"pv3-dispatch: no missing steps. Got {result['missing_steps']}"
+    )
+
+
+def test_pv3_flow_revert_audit_ship_proven(tmp_path: Path) -> None:
+    """AC-3: audit_ship agrees pv3-flow-revert is PROVEN (mixed evidence)."""
+    slug = "pv3-flow-revert"
+    project, shas = _project(
+        tmp_path, slug=slug, steps=6, trailered_steps={4, 5}, ship_marker=True,
+    )
+    ledger = _ledger(slug, project, shas, 0, 4)
+    result = ship_audit.audit_ship(
+        status="shipped", body=_BODY_6, declared_checks=[],
+        gate_passed="unknown", slug=slug, cwd=project,
+        ledger_records=ledger,
+    )
+    assert result["proven"], (
+        f"pv3-flow-revert must audit PROVEN. Got {result}"
+    )
+    assert result["missing_steps"] == [], (
+        f"pv3-flow-revert: no missing steps. Got {result['missing_steps']}"
+    )
+
+
+def test_0908c_audit_ship_unproven(tmp_path: Path) -> None:
+    """AC-3: audit_ship agrees 09-08c shape is UNPROVEN."""
+    slug = "pv3-gap"
+    project, shas = _project(
+        tmp_path, slug=slug, steps=4, trailered_steps={0, 1, 3}, ship_marker=True,
+    )
+    ledger = _ledger(slug, project, shas, 0, 4)
+    result = ship_audit.audit_ship(
+        status="shipped", body=_BODY_4, declared_checks=[],
+        gate_passed="unknown", slug=slug, cwd=project,
+        ledger_records=ledger,
+    )
+    assert not result["proven"], (
+        f"09-08c shape must audit UNPROVEN. Got {result}"
+    )
+    assert result["missing_steps"] == [2], (
+        f"09-08c: step 2 must be flagged. Got {result['missing_steps']}"
+    )
