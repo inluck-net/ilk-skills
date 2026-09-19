@@ -639,8 +639,10 @@ verified: true          # <-- human-verify marker
   reaching all-shipped, it dispatches a planner-tier session (engine: `claude`,
   home: `~/.claude`) running the verification entrypoint. That session may set
   `verified: true` if gates pass, or escalate (leaving the marker absent). The
-  dispatch is idempotent (marker file) and skips `supervised_only` masters and
-  blacklisted projects. A human pass remains valid and is the fallback when
+  dispatch is idempotent (marker file) and skips blacklisted projects.
+  (Retired 2026-09-20: the `supervised_only` skip was removed — worktree
+  isolation + merge bounce made it vestigial.) A human pass remains valid
+  and is the fallback when
   dispatch cannot happen (launcher missing, planner home unbootstrapped).
 
 ### Who reads

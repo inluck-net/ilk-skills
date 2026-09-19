@@ -34,22 +34,11 @@ fi
 
 # --- Decision matrix ---
 
-# AC-1: supervised + scheduler alive → block
+# AC-1: supervised + scheduler alive → no block (hard-stop retired)
 result=$(preflight_decision "active" "true" "true" "true")
 block=$(extract_key "$result" "block")
-reason=$(extract_key "$result" "reason")
-if [[ "$block" != "true" ]]; then
-  failures+=("AC-1a: supervised+alive: expected block=true, got block=$block")
-fi
-if [[ "$reason" != *"scheduler"* ]]; then
-  failures+=("AC-1a: supervised+alive: reason should mention scheduler, got '$reason'")
-fi
-
-# AC-1: supervised + scheduler not alive → no block
-result=$(preflight_decision "active" "true" "true" "false")
-block=$(extract_key "$result" "block")
 if [[ "$block" != "false" ]]; then
-  failures+=("AC-1b: supervised+not-alive: expected block=false, got block=$block")
+  failures+=("AC-1a: supervised+alive: expected block=false (retired), got block=$block")
 fi
 
 # AC-2: queued + no active → promote

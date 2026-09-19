@@ -260,8 +260,6 @@ def _dispatch_verification_on_drain(
     exactly one dispatch (AC-1).
 
     **Skips:**
-    - ``supervised_only: true`` masters (AC-3) — a self-modifying batch
-      must not auto-verify itself.
     - Blacklisted projects (AC-4) — a blocked project must not spawn work.
 
     Errors are logged and non-fatal (AC-7 — the scheduler continues
@@ -289,10 +287,6 @@ def _dispatch_verification_on_drain(
     except OSError:
         return
     fm = parse_frontmatter(master_text)
-
-    # --- supervised_only skip (AC-3) ---
-    if (fm.get("supervised_only") or "").strip().lower() in ("true", "yes", "1"):
-        return
 
     # --- blacklist skip (AC-4) ---
     try:
@@ -422,13 +416,6 @@ def _scan_one_project(project_dir: Path) -> dict | None:
 
         fm = parse_frontmatter(master_text)
         master_status = normalize_master_status(fm.get("status") or "")
-
-        # `supervised_only` masters are never autonomously dispatched.
-        # They edit the loop's own infrastructure (or are otherwise
-        # sensitive) and must be run by a human via manual `/ilk`. The
-        # manual path (loop_status) deliberately still selects them.
-        if (fm.get("supervised_only") or "").strip().lower() in ("true", "yes", "1"):
-            continue
 
         # Only masters with at least one runnable sub-plan are dispatched.
         # master_has_runnable (not master_has_nonshipped) prevents a master
