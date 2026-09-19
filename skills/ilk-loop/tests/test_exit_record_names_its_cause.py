@@ -188,3 +188,159 @@ class TestD1ExitRecordCarriesEnforcementReason:
             f"Extra: {set(record.keys()) - expected_keys!r}, "
             f"Missing: {expected_keys - set(record.keys())!r}"
         )
+
+
+def _setup_violation_project(tmp_path: Path) -> tuple[Path, dict]:
+    """Create an isolated project dir with JSONL + sentinel for a violation run.
+
+    Returns (project_path, env) suitable for subprocess calls to collect.py.
+    """
+    import os
+    import hashlib
+
+    project_path = tmp_path / "kira-cloudflare"
+    project_path.mkdir()
+
+    # Compute the project key the same way ilk_paths does.
+    abs_str = str(project_path.resolve()).lower()
+    slug = __import__("re").sub(r"[^a-z0-9]+", "-", abs_str).strip("-")
+    if len(slug) <= 80:
+        key = slug
+    else:
+        h = hashlib.sha1(abs_str.encode("utf-8")).hexdigest()[:7]
+        key = slug[:72].rstrip("-") + "-" + h
+
+    data_home = tmp_path / "ilk-data"
+    launcher_dir = data_home / "projects" / key / "runtime" / "launcher"
+    launcher_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir = data_home / "projects" / key / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write JSONL: per-iteration record (no stop_reason) + terminal record.
+    iter_record = _build_iteration_record(stop_reason="")
+    terminal_record = _build_terminal_record()
+    jsonl_path = logs_dir / ".ilk-loop.log"
+    jsonl_path.write_text(
+        json.dumps(iter_record) + "\n" + json.dumps(terminal_record) + "\n",
+        encoding="utf-8",
+    )
+
+    # Write sentinel with state=ship_integrity_violation.
+    sentinel = {
+        "state": "ship_integrity_violation",
+        "pid": 99999,
+        "run_id": "20260918-175308",
+        "started_at": "2026-09-18T17:53:09+0800",
+        "ended_at": "2026-09-18T18:06:00+0800",
+        "iterations": 1,
+        "project_path": str(project_path),
+    }
+    (launcher_dir / "last-exit.json").write_text(
+        json.dumps(sentinel), encoding="utf-8",
+    )
+
+    env = {
+        **os.environ,
+        "ILK_DATA_HOME": str(data_home),
+        "PYTHONIOENCODING": "utf-8",
+    }
+    return project_path, env
+
+
+class TestAC2ViolationRunClassifiesAsShippedUnverified:
+    """AC-2: feeding the AC-1 record shape to collect.py produces a postmortem
+    classified on the violation cause."""
+
+    def test_classify_returns_shipped_unverified(self):
+        """collect.py classify() on the AC-1 fixture → shipped-unverified."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project_path, env = _setup_violation_project(Path(tmp))
+
+            # Call collect.py and capture its output.
+            import subprocess, sys
+            collect_py = (
+                Path(__file__).resolve().parent.parent.parent
+                / "ilk-feedback" / "scripts" / "collect.py"
+            )
+            result = subprocess.run(
+                [sys.executable, str(collect_py),
+                 "-ProjectPath", str(project_path), "--quiet"],
+                capture_output=True, text=True, env=env,
+                encoding="utf-8", errors="replace",
+            )
+            # collect.py should succeed (exit 0) and print the postmortem path.
+            assert result.returncode == 0, (
+                f"collect.py exited {result.returncode}.\n"
+                f"stdout: {result.stdout}\nstderr: {result.stderr}"
+            )
+            postmortem_path = Path(result.stdout.strip())
+            assert postmortem_path.exists(), (
+                f"Postmortem not created. collect.py stdout: {result.stdout!r}"
+            )
+
+            # Verify the classification is shipped-unverified.
+            text = postmortem_path.read_text(encoding="utf-8")
+            assert "shipped-unverified" in text, (
+                f"Postmortem should classify as shipped-unverified.\n"
+                f"First 500 chars:\n{text[:500]}"
+            )
+
+    def test_terminal_record_stop_reason_reaches_report(self):
+        """The postmortem body mentions the mapped violation label.
+
+        collect.py maps ship_integrity_violation → shipped-unverified via
+        _SENTINEL_FAILURE_MAP (collect.py:1314).  The report body uses the
+        mapped label, not the raw sentinel state.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            project_path, env = _setup_violation_project(Path(tmp))
+
+            import subprocess, sys
+            collect_py = (
+                Path(__file__).resolve().parent.parent.parent
+                / "ilk-feedback" / "scripts" / "collect.py"
+            )
+            result = subprocess.run(
+                [sys.executable, str(collect_py),
+                 "-ProjectPath", str(project_path), "--quiet"],
+                capture_output=True, text=True, env=env,
+                encoding="utf-8", errors="replace",
+            )
+            assert result.returncode == 0
+            postmortem_path = Path(result.stdout.strip())
+            text = postmortem_path.read_text(encoding="utf-8")
+            # The report should classify as shipped-unverified (the mapped
+            # label for ship_integrity_violation).
+            assert "shipped-unverified" in text, (
+                f"Postmortem should classify as shipped-unverified.\n"
+                f"First 500 chars:\n{text[:500]}"
+            )
+
+
+class TestAC3MetricsReadPathSmoke:
+    """Metrics read-path smoke: metrics.py JSONL read over the AC-1 fixture."""
+
+    def test_metrics_reads_violation_records_without_error(self):
+        """metrics.py --project --json succeeds on the AC-1 fixture."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project_path, env = _setup_violation_project(Path(tmp))
+
+            import subprocess, sys
+            metrics_py = (
+                Path(__file__).resolve().parent.parent.parent
+                / "ilk-feedback" / "scripts" / "metrics.py"
+            )
+            result = subprocess.run(
+                [sys.executable, str(metrics_py),
+                 "--project", str(project_path), "--json"],
+                capture_output=True, text=True, env=env,
+                encoding="utf-8", errors="replace",
+            )
+            assert result.returncode == 0, (
+                f"metrics.py exited {result.returncode}.\n"
+                f"stdout: {result.stdout}\nstderr: {result.stderr}"
+            )
+            data = json.loads(result.stdout)
+            assert "classification_distribution" in data, (
+                f"Missing classification_distribution in output: {data.keys()}"
+            )
