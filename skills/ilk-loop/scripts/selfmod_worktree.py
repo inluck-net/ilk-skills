@@ -37,13 +37,19 @@ class MergeBlockedError(RuntimeError):
         blocking_pids: PIDs of the live ilk runner processes.
     """
 
-    def __init__(self, blocking_pids: list[int]) -> None:
+    def __init__(
+        self, blocking_pids: list[int], details: str | None = None
+    ) -> None:
         self.blocking_pids = blocking_pids
+        self.details = details
         pid_list = ", ".join(str(p) for p in blocking_pids)
-        super().__init__(
+        msg = (
             f"Merge blocked: {len(blocking_pids)} live ilk loop(s) detected "
             f"(pid={pid_list}). Stop the loops before merging."
         )
+        if details:
+            msg = f"{msg}\n{details}"
+        super().__init__(msg)
 
 
 class WorktreeDirtyError(RuntimeError):
@@ -106,6 +112,12 @@ class BranchMovedError(RuntimeError):
 #: contract.
 DEFAULT_PROBE_PATTERN = "run_ilk_loop"
 
+#: Command-line substring identifying a live scheduler daemon (the launchd
+#: job that runs ``scheduler_scan.py``).  Kept separate from
+#: :data:`DEFAULT_PROBE_PATTERN` so loop semantics are untouched — a live
+#: daemon is bounced, not refused.
+DAEMON_PROBE_PATTERN = "scheduler_scan"
+
 
 def _find_live_ilk_pids(pattern: str = DEFAULT_PROBE_PATTERN) -> list[int]:
     """Detect live ilk runner processes.
@@ -157,6 +169,25 @@ def _find_live_ilk_pids(pattern: str = DEFAULT_PROBE_PATTERN) -> list[int]:
         f"pgrep exited with code {result.returncode}: "
         f"{result.stderr.strip() or '(no stderr)'}"
     )
+
+
+def _find_live_daemon_pids(
+    pattern: str = DAEMON_PROBE_PATTERN,
+) -> list[int]:
+    """Detect live scheduler daemon processes.
+
+    Uses the same ``pgrep -f`` strategy as :func:`_find_live_ilk_pids` but
+    matches the daemon pattern (``scheduler_scan`` by default).  The two
+    probes are deliberately separate: loop liveness means "refuse" while
+    daemon liveness means "bounce".
+
+    Returns:
+        List of PIDs of live scheduler daemons.
+
+    Raises:
+        RuntimeError: If the probe itself fails.
+    """
+    return _find_live_ilk_pids(pattern)
 
 
 # ── Git helpers ──────────────────────────────────────────────────────────────
@@ -279,6 +310,7 @@ class SelfmodWorktree:
         lock_path: Path | None = None,
         check_branch: bool = True,
         probe_pattern: str = DEFAULT_PROBE_PATTERN,
+        bounce_daemons_path: Path | None = None,
     ) -> None:
         """Merge worktree changes back into the main repo.
 
@@ -286,14 +318,24 @@ class SelfmodWorktree:
         raises ``MergeBlockedError``.  If the target branch moved since
         creation, raises ``BranchMovedError``.
 
+        A live scheduler daemon is **bounced** (not refused): the daemon is
+        stateless between polls and launchd restarts it immediately.  The
+        bounce is invoked only when *bounce_daemons_path* is set; callers
+        that do not pass it see the legacy refuse-only behaviour.
+
         Args:
             lock_path: Optional path to an exclusive lock file.  If set,
                 acquires the lock before merging.
             check_branch: Whether to check if the branch moved (default True).
             probe_pattern: Command-line substring the liveness probe matches.
                 Defaults to the production contract; pinned only by tests.
+            bounce_daemons_path: Optional path to ``bounce_daemons.sh``.  If
+                set and a live scheduler daemon is detected, the bouncer is
+                called and the merge proceeds on success.  On bounce failure
+                (non-zero exit) the merge is blocked with details.  If not
+                set, daemon liveness is silently ignored (no probe runs).
         """
-        # Step 1: Liveness check — fail closed.
+        # Step 1a: Loop liveness check — refuse if loops are live.
         try:
             live_pids = _find_live_ilk_pids(probe_pattern)
         except RuntimeError as exc:
@@ -302,6 +344,44 @@ class SelfmodWorktree:
 
         if live_pids:
             raise MergeBlockedError(blocking_pids=live_pids)
+
+        # Step 1b: Daemon liveness check — bounce, do not refuse.
+        # A live daemon at merge time is safe to interrupt: it is stateless
+        # between polls and launchd restarts it immediately.
+        if bounce_daemons_path is not None:
+            try:
+                daemon_pids = _find_live_daemon_pids()
+            except RuntimeError as exc:
+                raise MergeBlockedError(
+                    blocking_pids=[-1],
+                    details=f"daemon probe failed: {exc}",
+                ) from exc
+
+            if daemon_pids:
+                pid_list = ", ".join(str(p) for p in daemon_pids)
+                try:
+                    result = subprocess.run(
+                        [str(bounce_daemons_path)],
+                        capture_output=True,
+                        text=True,
+                    )
+                except FileNotFoundError as exc:
+                    raise MergeBlockedError(
+                        blocking_pids=daemon_pids,
+                        details=(
+                            f"bounce script not found: {bounce_daemons_path}"
+                        ),
+                    ) from exc
+
+                if result.returncode != 0:
+                    stderr = result.stderr.strip() or "(no stderr)"
+                    raise MergeBlockedError(
+                        blocking_pids=daemon_pids,
+                        details=(
+                            f"daemon bounce failed (exit {result.returncode}): "
+                            f"{stderr}"
+                        ),
+                    )
 
         # Step 2: Branch movement check.
         head_at_creation = self._head_at_creation
