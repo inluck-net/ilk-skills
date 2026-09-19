@@ -4142,18 +4142,18 @@ def lint_slug_collision(text: str, slug: str, master_plan_slug: str) -> list[str
 
 # ── supervised_only scope guard (§13) ────────────────────────────────────────
 #
-# `supervised_only: true` exists for ONE hazard: a batch that rewrites the
-# loop's own dispatch machinery would be read by the scheduler while being
-# rewritten.  The trigger is therefore mechanical — a sub-plan's `scope_paths`
-# must actually *modify* one of the loop-infra files — never "this batch feels
-# risky" or "we haven't verified it yet" (that is `status: draft` + verification
-# tiers).  See decomposition-principles.md §13.
+# Retired 2026-09-20.  The flag's hazard was a self-modifying batch
+# dispatched under a running scheduler.  Worktree isolation (v0.9.107)
+# removed the edit hazard; the merge bounce (sub-plan 1 of this batch)
+# closed the liveness gap.  The dispatch skip in scheduler_scan and the
+# preflight hard-stop were removed in sub-plan 2, step 1.  The lint now
+# treats ANY `supervised_only: true` as unwarranted — the key is tolerated
+# for back-compat (state-ownership still carries it until its post-batch
+# flip) but no reader honours it.
 #
-# The flag is expensive to mis-set: the scheduler and `promote_next_master`
-# skip the master permanently, AND ilk-runner's preflight HARD-STOPS a manual
-# `/ilk-run` while any cross-project scheduler is alive.  A stray flag costs
-# both autonomy and the manual fallback, so an unwarranted one is a hard
-# finding, not a nit.
+# The helpers below (`_LOOP_INFRA_BASENAMES`, `_scope_entry_names_infra`,
+# `_scope_entry_may_cover_infra`) are now dead code — kept temporarily for
+# reference; safe to remove once this batch is fully verified.
 
 # Loop-infra basenames — the narrow §13 set.
 _LOOP_INFRA_BASENAMES = frozenset({
@@ -4225,16 +4225,17 @@ def lint_supervised_only_scope(
     master_text: str,
     subplans: list[tuple[str, str]],
 ) -> list[str]:
-    """Master-level check: is `supervised_only` warranted by scope_paths?
+    """Master-level check: is `supervised_only` set?  If so, flag it.
 
-    *subplans* is a list of ``(slug, text)`` pairs for the batch's sub-plans.
+    Retired 2026-09-20: the flag's hazard was a self-modifying batch
+    dispatched under a running scheduler.  Worktree isolation (v0.9.107)
+    + merge bounce (sub-plan 1 of this batch) removed the hazard; the
+    enforcement in scheduler_scan and preflight was removed in step 1.
+    The flag is now always unwarranted — tolerated in frontmatter for
+    back-compat, but the lint tells every planner to remove it.
 
-    Two directions, deliberately asymmetric so that each errs toward autonomy:
-
-    - flag set, no scope entry could even glob in an infra file → finding
-      (broad match, so this fires only when the flag is clearly unwarranted);
-    - a scope entry explicitly names an infra file, flag not set → finding
-      (strict match, so we never tell a planner to set the flag on a guess).
+    *subplans* is a list of ``(slug, text)`` pairs for the batch's
+    sub-plans (still accepted for the signature, but no longer used).
     """
     findings: list[str] = []
     if not master_text:
@@ -4243,44 +4244,15 @@ def lint_supervised_only_scope(
     raw = _extract_supervised_only(master_text)
     is_set = (raw or "").lower() in _TRUTHY
 
-    covering = [
-        (slug, p)
-        for slug, text in subplans
-        for p in _extract_scope_paths(text)
-        if _scope_entry_may_cover_infra(p)
-    ]
-    naming = [
-        (slug, p)
-        for slug, text in subplans
-        for p in _extract_scope_paths(text)
-        if _scope_entry_names_infra(p)
-    ]
-
-    if is_set and not covering:
+    if is_set:
         findings.append(
-            "MASTER: `supervised_only: true` but no sub-plan's scope_paths "
-            "modifies loop-infra ("
-            + ", ".join(sorted(_LOOP_INFRA_BASENAMES))
-            + "). This is the ONE thing the flag is for — it is not a "
-            "readiness gate, a risk gate, or a 'needs review' marker "
-            "(decomposition-principles.md §13). Setting it here removes "
-            "autonomous dispatch AND makes ilk-runner preflight hard-stop a "
-            "manual /ilk-run while a scheduler is alive. Use `status: draft` "
-            "for not-yet-released, verification tiers for trust level, and "
-            "config (e.g. point `clone_path` at a throwaway clone) to "
-            "neutralise local-mutation hazards. HARD FINDING: set "
-            "`supervised_only: false` unless the user explicitly asked for it."
-        )
-
-    if naming and not is_set:
-        offenders = ", ".join(f"{slug} → {p}" for slug, p in naming)
-        findings.append(
-            f"MASTER: sub-plan scope_paths modify loop-infra ({offenders}) but "
-            f"`supervised_only` is not set. A batch that rewrites the loop's "
-            f"own dispatch machinery must never be autonomously dispatched — "
-            f"the scheduler would read code it is simultaneously rewriting. "
-            f"HARD FINDING: set `supervised_only: true` on the MASTER "
-            f"(decomposition-principles.md §13)."
+            "MASTER: `supervised_only: true` is set but the flag has been "
+            "retired (2026-09-20). Worktree isolation + merge bounce "
+            "removed the hazard it guarded; the dispatch skip in "
+            "scheduler_scan and the preflight hard-stop are gone. "
+            "The key is tolerated for back-compat but no reader honours it. "
+            "HARD FINDING: set `supervised_only: false` or remove the key "
+            "unless the user explicitly asked for it."
         )
 
     return findings
