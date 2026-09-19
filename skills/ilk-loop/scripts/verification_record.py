@@ -777,11 +777,22 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.batch:
-        try:
-            record = resolve_batch_record(project, args.batch)
-        except FileNotFoundError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return 1
+        if args.run_suite:
+            # --run-suite creates the record; it doesn't need to exist yet.
+            # Construct the path directly to avoid the FileNotFoundError in
+            # resolve_batch_record.
+            try:
+                vdir = _resolve_project_verification_dir(project)
+            except FileNotFoundError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                return 1
+            record = vdir / f"{args.batch}-batch.md"
+        else:
+            try:
+                record = resolve_batch_record(project, args.batch)
+            except FileNotFoundError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                return 1
     else:
         record = Path(args.record)
 
