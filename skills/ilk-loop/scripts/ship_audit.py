@@ -246,19 +246,13 @@ def check_step_commits(
                     except ValueError:
                         pass
 
-    # The template mandates that the FINAL step commits with
-    # ``[plan:<slug>#ship]`` rather than ``#step-N`` (subplan-template.md:
-    # "### Step N — E2E + handoff … chore(plans): <slug> shipped
-    # [plan:<slug>#ship]").  A template-conformant sub-plan must audit PROVEN,
-    # so a #ship trailer satisfies the last declared step -- and only that one:
-    # a gap earlier in the sequence is still a gap.
-    ship_re = re.compile(rf"\[plan:{re.escape(slug)}#ship\]")
-    if ship_re.search(result.stdout):
-        committed.add(max(expected_steps))
-
-    # AC-3: union with ledger records.  A step covered by a ledger record
+    # AC-3: per-record ledger union.  A step covered by a ledger record
     # for the same slug is also committed.  The ledger is supplementary —
     # trailer matching (above) is unchanged.
+    #
+    # Runs BEFORE the #ship marker (below) so the 09-08c guard checks
+    # overlap with step-trailers only — the #ship marker is unconditional
+    # and its step must not cause a ledger record to be rejected.
     #
     # Scoped to the TRAILERLESS regime, which is the only one the ledger was
     # authored for: both of its ACs build their fixture with
@@ -273,7 +267,18 @@ def check_step_commits(
     # step 2 for a sub-plan carrying trailers on steps 0, 1 and 3 and no
     # commit at all for step 2, so ``missing_steps`` came back ``[]`` for
     # work that was never done.
-    if ledger_records and not _slug_has_any_trailer(slug, result.stdout):
+    #
+    # Per-record trust (not per-slug): the all-or-nothing switch at
+    # :270-283 matched _slug_has_any_trailer, which disabled the ledger
+    # union for the entire slug when *any* trailer existed.  On a mixed
+    # sub-plan (some steps trailered, some ledger-only), that blanket
+    # disabled the ledger for the trailerless steps too, producing false
+    # "missing" verdicts (13 re-dispatch runs on kira-cloudflare pv3,
+    # 2026-09-18 retro §2).  A record whose [step_from, step_to) range
+    # includes a step already committed by step-trailer is rejected for
+    # that range — the 09-08c guard, preserved at record granularity.
+    # A record whose range is entirely trailer-free is trusted.
+    if ledger_records:
         for rec in ledger_records:
             if not isinstance(rec, dict):
                 continue
@@ -284,9 +289,23 @@ def check_step_commits(
                 r_to = int(rec["step_to"])
             except (KeyError, TypeError, ValueError):
                 continue
+            # Reject the record when any step in its range carries a
+            # step-trailer — the record-granular 09-08c guard.
+            if any(s in committed for s in range(r_from, r_to)):
+                continue
             for s in expected_steps:
                 if r_from <= s < r_to:
                     committed.add(s)
+
+    # The template mandates that the FINAL step commits with
+    # ``[plan:<slug>#ship]`` rather than ``#step-N`` (subplan-template.md:
+    # "### Step N — E2E + handoff … chore(plans): <slug> shipped
+    # [plan:<slug>#ship]").  A template-conformant sub-plan must audit PROVEN,
+    # so a #ship trailer satisfies the last declared step -- and only that one:
+    # a gap earlier in the sequence is still a gap.
+    ship_re = re.compile(rf"\[plan:{re.escape(slug)}#ship\]")
+    if ship_re.search(result.stdout):
+        committed.add(max(expected_steps))
 
     present = [s for s in expected_steps if s in committed]
     missing = [s for s in expected_steps if s not in committed]

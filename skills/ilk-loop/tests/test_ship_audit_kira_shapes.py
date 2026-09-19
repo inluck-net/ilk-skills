@@ -162,27 +162,27 @@ def test_pv3_flow_revert_mixed_trailers_and_ledger_audits_clean(
 def test_0908c_shape_record_spanning_trailer_steps_is_rejected(
     tmp_path: Path,
 ) -> None:
-    """09-08c regression: ledger [0,4) but steps 2/3 carry trailers.
+    """09-08c regression: ledger [0,4) but steps 0/1/3 carry trailers.
 
-    A ledger record whose [step_from, step_to) range includes steps that
-    carry step-trailers must NOT be trusted for that range — the record
-    is a claim, and the trailers contradict it.  Step 1 has no trailer
-    and no trusted ledger coverage, so it is a real gap.
+    Measured 2026-09-08 on batch 2026-09-08c: a ledger record claiming
+    ``step_from:0, step_to:4`` (3 SHAs) attributed step 2 for a sub-plan
+    carrying trailers on steps 0, 1, and 3 with no commit at all for step
+    2, and the audit returned ``missing_steps=[]`` — a false pass.
 
-    Measured 2026-09-08 on batch 2026-09-08c: the record claimed
-    step_from:0 step_to:4 with 3 SHAs, step 2 had no commit anywhere,
-    and the audit returned missing_steps=[] — a false pass.
+    A ledger record whose [step_from, step_to) range includes a step
+    carrying a step-trailer must NOT be trusted for that range.  Step 2
+    has no trailer and no trusted ledger coverage — it is a real gap.
     """
     slug = "pv3-gap"
     project, shas = _project(
-        tmp_path, slug=slug, steps=4, trailered_steps={2, 3}, ship_marker=True,
+        tmp_path, slug=slug, steps=4, trailered_steps={0, 1, 3}, ship_marker=True,
     )
     ledger = _ledger(slug, project, shas, 0, 4)
 
     present, missing = ship_audit.check_step_commits(
         slug, [0, 1, 2, 3], cwd=project, ledger_records=ledger,
     )
-    assert missing == [1], (
-        "step 1 has no trailer and its ledger record overlaps trailer'd "
-        f"steps 2/3 — must be flagged. Got present={present} missing={missing}"
+    assert missing == [2], (
+        "step 2 has no trailer and its ledger record overlaps trailer'd "
+        f"steps 0/1/3 — must be flagged. Got present={present} missing={missing}"
     )
