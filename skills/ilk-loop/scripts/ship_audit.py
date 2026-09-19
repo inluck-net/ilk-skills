@@ -97,16 +97,22 @@ def _find_near_miss_slugs(
 
 
 def _slug_has_any_trailer(slug: str, git_output: str) -> bool:
-    """True when *slug* carries at least one ``[plan:<slug>#…]`` trailer.
+    """True when *slug* carries at least one ``[plan:<slug>#step-N]`` trailer.
 
     The discriminator between the two attribution regimes.  On a shared
     remote SKILL.md's policy strips every trailer, so this is False and the
     ship-proof ledger is the only evidence there is.  When it is True,
     trailers are demonstrably being written for this sub-plan, and a step
     without one is a real gap rather than a stripped one.
+
+    Only ``#step-N`` trailers are step evidence.  The ``#ship`` marker is
+    written unconditionally by the ship path and carries no per-step proof;
+    matching it disabled the ledger union for the whole slug, producing
+    false-positive "missing steps" verdicts that triggered 13 re-dispatch
+    runs on kira-cloudflare pv3 (2026-09-18 retro §2).
     """
     return re.search(
-        rf"\[plan:{re.escape(slug)}#(?:step-\d+(?:,step-\d+)*|ship)\]",
+        rf"\[plan:{re.escape(slug)}#step-\d+(?:,step-\d+)*\]",
         git_output,
     ) is not None
 
