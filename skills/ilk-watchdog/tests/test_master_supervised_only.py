@@ -1,7 +1,6 @@
-"""supervised_only guard test: a master flagged ``supervised_only: true`` is
-excluded from the autonomous scheduler (``scheduler_scan``) and from
-``promote_next_master``, but is STILL selectable by ``loop_status`` (manual
-``/ilk``). The flag blocks *autonomy*, not *execution*.
+"""supervised_only retirement test: the flag is tolerated-and-ignored since
+2026-09-20.  A master carrying ``supervised_only: true`` is dispatched by
+the scheduler exactly like any other — the flag no longer gates autonomy.
 
 Reuses the fixture harness from ``test_master_selection_agreement``.
 """
@@ -45,8 +44,8 @@ def _write_master_supervised(plans_dir, name, *, status, subplans,
 class TestSupervisedOnlyGuard:
     """Blocks the autonomous scheduler/promote (AC-1); manual path intact (AC-2)."""
 
-    def test_excluded_from_scheduler_and_promote(self, tmp_path):
-        """AC-1: supervised_only master is invisible to scan + promote."""
+    def test_not_excluded_from_scheduler_and_promote(self, tmp_path):
+        """supervised_only is tolerated-and-ignored: master IS dispatched."""
         plans = tmp_path / "projects" / "test-proj" / "plans"
         _write_master_supervised(plans, "MASTER-sup.md", status="queued",
                                  subplans=["2026-06-08-infra.md"])
@@ -54,8 +53,8 @@ class TestSupervisedOnlyGuard:
                        current_step=0, estimated_steps=4)
 
         scan = _read_scan_projects(tmp_home=tmp_path)
-        assert not _selected_from_scan(scan, "test-proj"), (
-            "scheduler must NOT dispatch a supervised_only master"
+        assert _selected_from_scan(scan, "test-proj"), (
+            "scheduler must dispatch a supervised_only master — flag is tolerated"
         )
 
         promote = _run_promote(plans)

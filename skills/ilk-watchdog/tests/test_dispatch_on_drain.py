@@ -273,8 +273,9 @@ class TestDispatchOnDrain:
         finally:
             scheduler_scan.subprocess.Popen = original_popen
 
-    def test_supervised_only_skipped(self, tmp_path):
-        """AC-3: supervised_only master is NOT dispatched."""
+    def test_supervised_only_not_skipped(self, tmp_path):
+        """supervised_only flag is tolerated-and-ignored (retired 2026-09-20).
+        The master IS dispatched — the flag no longer gates dispatch."""
         dispatches: list[list[str]] = []
         project_dir = _setup_project(
             tmp_path, master_status="active", supervised_only=True,
@@ -288,12 +289,9 @@ class TestDispatchOnDrain:
 
         _call_dispatch(project_dir, master_path, plans_dir,
                        launch_fn=capture_launch)
-        assert len(dispatches) == 0, (
-            "supervised_only master must NOT be dispatched"
+        assert len(dispatches) == 1, (
+            "supervised_only master must be dispatched — flag is tolerated"
         )
-        # Marker must NOT be written.
-        marker = project_dir / "runtime" / "verification-dispatched.json"
-        assert not marker.exists()
 
     def test_blacklisted_project_skipped(self, tmp_path):
         """AC-4: blacklisted project is NOT dispatched."""

@@ -242,9 +242,9 @@ class TestSchedulerDispatch:
         scan = _read_scan_projects(tmp_home=tmp_path)
         assert len(scan) == 0, "draft master must be excluded from dispatch"
 
-    def test_supervised_only_master_excluded(self, tmp_path):
-        """AC-4b: supervised_only master is NOT returned by scan_projects
-        even with a resolvable path."""
+    def test_supervised_only_master_not_excluded(self, tmp_path):
+        """supervised_only is tolerated-and-ignored: master IS returned by
+        scan_projects with a resolvable path (retired 2026-09-20)."""
         project_dir = tmp_path / "projects" / "test-proj"
         plans_dir = project_dir / "plans"
         plans_dir.mkdir(parents=True, exist_ok=True)
@@ -292,7 +292,7 @@ class TestSchedulerDispatch:
         )
 
         scan = _read_scan_projects(tmp_home=tmp_path)
-        assert len(scan) == 0, "supervised_only master must be excluded from dispatch"
+        assert len(scan) == 1, "supervised_only master must be dispatched — flag is tolerated"
 
 
 class TestRapidTerminal:
