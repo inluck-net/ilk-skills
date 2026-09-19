@@ -84,7 +84,7 @@ about the same file — this doc makes the implicit contracts explicit.
 | `"budget-exhausted"` | Hit `--max-budget-usd` cap | Terminal |
 | `"startup-hang"` | Pre-iteration-1 hang detected | Terminal |
 | `"timeout"` | `gtimeout` killed the iteration before it completed | Terminal |
-| `"ship_integrity_violation"` | A sub-plan was `shipped` with its declared gate red; the driver reverted it to `in-progress` | Terminal |
+| `"ship_integrity_violation"` | A sub-plan was `shipped` with its declared gate red; the driver reverted it to `in-progress` **and parked the master** (`blocked` + `parked_reason` with run_id + violating slugs via `park_master.py`) | Terminal |
 | `"no-progress"` | 3 consecutive iterations with zero new commits | Terminal |
 | `"all-shipped"` | Every registered sub-plan is shipped **and every one is proven**; loop ended naturally | Terminal |
 | `"shipped-unproven"` | Every registered sub-plan is shipped, but the ship-proof ledger holds no row for at least one — the ship claim is unverified | Terminal |

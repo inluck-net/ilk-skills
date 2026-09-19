@@ -2473,6 +2473,16 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     }
     $stopReason = "ship_integrity_violation"
     $iterStopReason = "ship_integrity_violation"
+    # Park the master instead of leaving it queued.  Without this call
+    # the scheduler re-dispatches the batch immediately (measured 13 re-
+    # dispatch cycles on kira pv3 2026-09-18).
+    $parkSlugs = ($shipViolations | ForEach-Object { $_.Slug }) -join ","
+    $parkReason = "ship_integrity_violation: run $RunId slugs=[$parkSlugs]"
+    $parkScript = Join-Path (Split-Path $PSCommandPath -Parent) "park_master.py"
+    $pDir = Get-PlansDir -Project $ProjectPath
+    if ($pDir -and (Test-Path $parkScript)) {
+      & python $parkScript --plans-dir $pDir --reason $parkReason 2>$null
+    }
     break
   }
 

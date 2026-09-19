@@ -183,29 +183,23 @@ class TestRunnerViolationPath:
     def test_violation_run_parks_master(self, plans_dir: Path, violating_master: Path):
         """AC-1 end-to-end: violation → blocked + reason, not queued.
 
-        RED: today the runner never calls park_master, so the master stays
-        at whatever status it had (queued). The correct behavior is blocked.
+        Simulates the runner's violation path after step 1: park_master
+        is called (as the runner now does), then reconcile runs as a no-op.
         """
         run_id = "20260918-175308"
         violating_slugs = "test-slug"
 
-        # ── simulate the runner's current violation path ──
-        # 1. stop_reason = "ship_integrity_violation" (recorded by runner)
-        # 2. reconcile_master_status called — no-op on a queued master
+        # ── simulate the runner's violation path (step 1) ──
+        # 1. Park the master (the runner now calls park_master on violation).
+        park_main([
+            "--plans-dir", str(plans_dir),
+            "--master", violating_master.name,
+            "--reason", f"ship_integrity_violation: run {run_id} slugs=[{violating_slugs}]",
+        ])
+        # 2. reconcile_master_status called — no-op on a blocked master.
         reconcile_master_status(violating_master, plans_dir)
-
-        # ── what the runner SHOULD do (step 1 will add this) ──
-        # Call park_master instead of leaving the master queued.
-        # Uncomment once step 1 lands:
-        # park_main([
-        #     "--plans-dir", str(plans_dir),
-        #     "--master", violating_master.name,
-        #     "--reason", f"ship_integrity_violation: run {run_id} slugs=[{violating_slugs}]",
-        # ])
 
         fm = parse_frontmatter(violating_master.read_text(encoding="utf-8"))
         assert fm["status"] == "blocked", (
-            f"violation run must park master (got '{fm['status']}'). "
-            f"The runner needs to call park_master with run_id={run_id} "
-            f"and violating_slugs={violating_slugs} — see step 1."
+            f"violation run must park master, got: {fm['status']}"
         )

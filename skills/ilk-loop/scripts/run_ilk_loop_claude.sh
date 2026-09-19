@@ -3291,6 +3291,21 @@ print(json.dumps(d))
     if ! test_ship_integrity "$(get_plans_dir)" "$local_checks_results"; then
       stop_reason="ship_integrity_violation"
       iter_stop_reason="ship_integrity_violation"
+      # Park the master instead of leaving it queued.  Without this call
+      # the scheduler re-dispatches the batch immediately — the 13-re-
+      # dispatch cycle measured on kira pv3 2026-09-18.
+      local _violating_slugs=""
+      if [[ -n "$local_checks_results" && -s "$local_checks_results" ]]; then
+        _violating_slugs=$(python3 -c "
+import json, sys
+slugs = [json.loads(l).get('slug','') for l in sys.stdin if l.strip()]
+print(','.join(s for s in slugs if s))
+" < "$local_checks_results" 2>/dev/null) || true
+      fi
+      local _park_reason="ship_integrity_violation: run ${RUN_ID} slugs=[${_violating_slugs}]"
+      python3 "${_SKILL_ROOT}/ilk-loop/scripts/park_master.py" \
+        --plans-dir "$(get_plans_dir)" \
+        --reason "$_park_reason" 2>/dev/null || true
     fi
     # After a ship-integrity revert, reconcile the master so it no longer
     # claims "shipped" when a sub-plan was un-shipped.  Without this call,
