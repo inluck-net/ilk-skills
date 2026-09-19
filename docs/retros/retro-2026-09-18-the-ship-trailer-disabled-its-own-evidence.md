@@ -144,6 +144,14 @@ parks nothing.
 ## 6. Follow-ups
 
 - [ ] Author the fix batch (grouping approved-pending; files not yet written)
+- [x] D2 root cause established: D1 alone — the JSONL record lacked
+      `stop_reason` because it was written before enforcement
+      (`run_ilk_loop_claude.sh:3189-3247` vs `:3302-3305`). The sentinel
+      correctly classified `ship_integrity_violation` → `shipped-unverified`
+      via `_SENTINEL_FAILURE_MAP` (`collect.py:1314`). The postmortem was
+      generated5.5h late (23:30 vs 18:06) because the watchdog never saw
+      the terminal sentinel — the scheduler dispatched the next run before
+      the watchdog could process it. No additional bug in `collect.py`.
 - [ ] F6, F7 filed to `/ilk-self-improve` backlog
 - [ ] Post-toolkit-fix: gh-resolve's historical 26/149 violation records
       self-resolve on next audit — spot-check one
