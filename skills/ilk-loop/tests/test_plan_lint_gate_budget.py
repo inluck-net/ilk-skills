@@ -240,6 +240,7 @@ def test_baseline_unchanged() -> None:
     common_dir = subprocess.run(
         ["git", "rev-parse", "--git-common-dir"],
         cwd=repo_root, capture_output=True, text=True, check=True,
+        encoding="utf-8",
     ).stdout.strip()
     main_root = (repo_root / common_dir).resolve().parent
     plans_dir = (
