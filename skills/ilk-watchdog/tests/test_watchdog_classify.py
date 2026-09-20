@@ -15,10 +15,8 @@ Uses ILK_DATA_HOME isolation so tests never touch real ~/.ilk-data.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -29,16 +27,14 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _COLLECT_PY = _REPO_ROOT / "skills" / "ilk-feedback" / "scripts" / "collect.py"
 _WATCHDOG_SH = _REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "watchdog.sh"
 
-_KEY_PUNCT = re.compile(r"[^a-z0-9]+")
-
-
-def _project_key(project_path: Path) -> str:
-    abs_str = str(project_path.resolve()).lower()
-    slug = _KEY_PUNCT.sub("-", abs_str).strip("-")
-    if len(slug) <= 80:
-        return slug
-    h = hashlib.sha1(abs_str.encode("utf-8")).hexdigest()[:7]
-    return slug[: 80 - 8].rstrip("-") + "-" + h
+# Use the REAL project_key from ilk_paths — the test's old _project_key
+# helper diverged from the canonical algorithm (lowercased hash input,
+# no hash for short slugs) and produced a key that collect.py could not
+# find.  See: one-classification-mapping (699a6c3..70ca5fb).
+_ILK_LOOP_SCRIPTS = _REPO_ROOT / "skills" / "ilk-loop" / "scripts"
+if str(_ILK_LOOP_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_ILK_LOOP_SCRIPTS))
+from ilk_paths import project_key as _project_key  # noqa: E402
 
 
 @pytest.fixture()
