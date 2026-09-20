@@ -167,6 +167,17 @@ def render_xbar(
         if icon == "-" and not e.get("manually_runnable") and not e.get("blocked"):
             continue
 
+        # ── Residue filter: blocked but owing nothing ─────────────────
+        # A finished project (every master shipped, pending == 0) shows a
+        # blocked row only as residue — typically a verification run that
+        # died without writing terminal state, re-flagging it on every
+        # retry. Hidden by operator request 2026-09-20. Two classes stay
+        # visible on purpose: a blocked project that still owes a batch
+        # (real signal), and a parked one (human-held work whose Resume
+        # action lives in this very row).
+        if icon == "!" and pending == 0 and not e.get("parked"):
+            continue
+
         # Row text: icon + queue badge + SHORT key + batch context.
         model = e.get("model") or ""
         # Short display key: the source repo's directory name

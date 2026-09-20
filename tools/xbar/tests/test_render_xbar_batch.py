@@ -119,3 +119,17 @@ def test_copy_reference_child_mirrors_start_now_quoting() -> None:
 def test_copy_reference_absent_without_subplan_file() -> None:
     out = render_xbar([_entry()])
     assert not [l for l in out.splitlines() if l.startswith("--Copy reference")]
+
+
+def test_blocked_row_owing_nothing_is_hidden() -> None:
+    # Finished-project residue (all masters shipped, a stale verification
+    # run holding a blocked flag): hidden (operator, 2026-09-20).
+    out = render_xbar([_entry(blocked=True, pending_batches=0)])
+    assert "proj" not in out
+
+
+def test_blocked_row_owing_work_stays_visible() -> None:
+    # The same filter must not swallow a genuinely stuck project that
+    # still owes a batch.
+    line = _raw_line([_entry(blocked=True, pending_batches=1)], "! ")
+    assert line.startswith("! proj")

@@ -45,6 +45,7 @@ def _make_entry(
     parked: bool = False,
     path: str = "",
     model: str = "",
+    pending_batches: int = 0,
 ) -> dict:
     """Build a single status_all entry dict with action flags."""
     return {
@@ -64,6 +65,7 @@ def _make_entry(
         "runnable": runnable,
         "manually_runnable": manually_runnable,
         "parked": parked,
+        "pending_batches": pending_batches,
     }
 
 
@@ -308,7 +310,9 @@ class TestModelLabel:
 
     def test_blocked_row_with_model_no_suffix(self) -> None:
         """Non-running rows (e.g. blocked) don't show model suffix."""
-        entry = _make_entry("proj", blocked=True,
+        # pending_batches=1: a blocked row that owes work stays visible
+        # under the residue filter (owing-nothing rows are hidden).
+        entry = _make_entry("proj", blocked=True, pending_batches=1,
                             model="claude-sonnet-4-20250514")
         text = _render(entry)
         lines = text.splitlines()
@@ -340,7 +344,7 @@ class TestIdleFilter:
         entries = [
             _make_entry("idle-proj"),
             _make_entry("running-proj", alive=True, state="running"),
-            _make_entry("blocked-proj", blocked=True),
+            _make_entry("blocked-proj", blocked=True, pending_batches=1),
             _make_entry("runnable-proj", manually_runnable=True, step="1/4"),
         ]
         text = _render(*entries)
