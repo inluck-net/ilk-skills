@@ -34,7 +34,7 @@ def _run_helper(file_path: Path, *, timeout_sec: int = 5, poll_ms: int = 100) ->
         ["bash", str(HELPER), str(file_path),
          "--timeout", str(timeout_sec),
          "--poll-ms", str(poll_ms)],
-        capture_output=True, text=True, timeout=timeout_sec + 5,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout_sec + 5,
     )
 
 

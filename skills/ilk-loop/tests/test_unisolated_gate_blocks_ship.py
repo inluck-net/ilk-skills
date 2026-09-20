@@ -22,12 +22,17 @@ def _make_git_repo(tmp_path: Path) -> Path:
     """Create a minimal git repo with one committed file."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "test@test"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
+    subprocess.run(["git", "config", "user.email", "test@test"], cwd=repo, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     (repo / "marker.txt").write_text("committed", encoding="utf-8")
-    subprocess.run(["git", "add", "marker.txt"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "add", "marker.txt"], cwd=repo, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
+    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     return repo
 
 

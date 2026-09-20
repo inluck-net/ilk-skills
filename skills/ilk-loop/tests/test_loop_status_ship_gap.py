@@ -25,21 +25,21 @@ SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "loop_status.py"
 
 def _init_repo(path: Path) -> None:
     """Create a git repo with an initial commit so ``git log`` works."""
-    subprocess.run(["git", "init"], cwd=path, capture_output=True, check=True)
+    subprocess.run(["git", "init"], cwd=path, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test"], cwd=path,
-        capture_output=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"], cwd=path,
-        capture_output=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     (path / ".gitkeep").write_text("")
     subprocess.run(
-        ["git", "add", ".gitkeep"], cwd=path, capture_output=True, check=True,
+        ["git", "add", ".gitkeep"], cwd=path, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     subprocess.run(
-        ["git", "commit", "-m", "init"], cwd=path, capture_output=True, check=True,
+        ["git", "commit", "-m", "init"], cwd=path, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
 
 
@@ -47,12 +47,12 @@ def _commit_with_message(path: Path, subject: str, body: str = "") -> None:
     """Create a commit with a specific subject and optional body."""
     (path / "marker.txt").write_text(subject)
     subprocess.run(
-        ["git", "add", "marker.txt"], cwd=path, capture_output=True, check=True,
+        ["git", "add", "marker.txt"], cwd=path, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     msg = subject if not body else f"{subject}\n\n{body}"
     subprocess.run(
         ["git", "commit", "-m", msg, "--allow-empty"],
-        cwd=path, capture_output=True, check=True,
+        cwd=path, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
 
 
@@ -178,7 +178,7 @@ def _run_status(tmp_path: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(SCRIPT)],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         timeout=30,
         cwd=tmp_path,
         env={**__import__("os").environ, "ILK_DATA_HOME": str(tmp_path / "ilk-data")},
@@ -288,7 +288,7 @@ def test_exit_code_one_when_pending_subplan(tmp_path: Path) -> None:
     result = subprocess.run(
         [sys.executable, str(SCRIPT)],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         timeout=30,
         cwd=tmp_path,
         env={**__import__("os").environ, "ILK_DATA_HOME": str(tmp_path / "ilk-data")},
@@ -307,7 +307,7 @@ def test_json_has_proven_field(tmp_path: Path) -> None:
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--json"],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         timeout=30,
         cwd=tmp_path,
         env={**__import__("os").environ, "ILK_DATA_HOME": str(tmp_path / "ilk-data")},
@@ -329,7 +329,7 @@ def test_json_existing_keys_preserved(tmp_path: Path) -> None:
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--json"],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         timeout=30,
         cwd=tmp_path,
         env={**__import__("os").environ, "ILK_DATA_HOME": str(tmp_path / "ilk-data")},

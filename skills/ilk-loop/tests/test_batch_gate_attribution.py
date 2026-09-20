@@ -60,11 +60,13 @@ def _gate_project(tmp: Path, baseline_red: list[dict], suite_cmd: str) -> Path:
     """A git repo whose ship block declares *baseline_red* and *suite_cmd*."""
     proj = tmp / "proj"
     proj.mkdir()
-    subprocess.run(["git", "init", "-q"], cwd=proj, check=True, capture_output=True)
+    subprocess.run(["git", "init", "-q"], cwd=proj, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     subprocess.run(
         ["git", "-c", "user.email=t@e.com", "-c", "user.name=t",
          "commit", "-q", "--allow-empty", "-m", "init"],
-        cwd=proj, check=True, capture_output=True)
+        cwd=proj, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     (proj / ".ilk-launch.json").write_text(json.dumps({
         "ship": {"suite": {"command": suite_cmd, "timeout": 60},
                  "baseline_red": baseline_red}
@@ -86,18 +88,21 @@ def _audit_repo(path: Path) -> str:
                                        "flags": ["-q"]}}}),
         encoding="utf-8",
     )
-    subprocess.run(["git", "init", "-q"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     (path / ".gitkeep").write_text("", encoding="utf-8")
     subprocess.run(
         ["git", "-c", "user.email=t@e.com", "-c", "user.name=t",
-         "add", ".gitkeep"], cwd=path, check=True, capture_output=True)
+         "add", ".gitkeep"], cwd=path, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     subprocess.run(
         ["git", "-c", "user.email=t@e.com", "-c", "user.name=t",
          "commit", "-q", "-m", "init"],
-        cwd=path, check=True, capture_output=True)
+        cwd=path, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     return subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=path,
-        capture_output=True, text=True, check=True).stdout.strip()
+        capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True).stdout.strip()
 
 
 def _write_raw_record(runtime_dir: Path, data: dict) -> None:

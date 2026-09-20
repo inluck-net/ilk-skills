@@ -232,7 +232,7 @@ def _run_bounce(
     result = subprocess.run(
         cmd,
         env=env,
-        capture_output=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
         text=True,
         timeout=30,
     )
@@ -889,7 +889,7 @@ def test_guard_catches_launchctl_through_bash():
     """
     result = subprocess.run(
         ["bash", "-c", f"launchctl print gui/{os.getuid()}/x"],
-        capture_output=True, text=True, timeout=5,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
     )
     # The deny-shim exits 126; real launchctl would exit 0 or 1.
     # Either way, non-zero + the shim's stderr message means it was caught.

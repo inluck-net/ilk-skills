@@ -32,7 +32,7 @@ def _collect_shas(repo_path: Path, count: int) -> list[str]:
     result = subprocess.run(
         ["git", "log", "--format=%H", f"-{count}", "--reverse"],
         cwd=repo_path,
-        capture_output=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
         text=True,
         check=True,
     )
@@ -63,7 +63,7 @@ class TestMergePreservesEveryCommit:
         before_sha = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=repo,
-            capture_output=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
             text=True,
             check=True,
         ).stdout.strip()
@@ -80,12 +80,14 @@ class TestMergePreservesEveryCommit:
                 cwd=worktree_path,
                 check=True,
                 capture_output=True,
+            encoding="utf-8", errors="replace",
             )
             subprocess.run(
                 ["git", "commit", "-m", f"commit {i}"],
                 cwd=worktree_path,
                 check=True,
                 capture_output=True,
+            encoding="utf-8", errors="replace",
             )
 
         # Collect the three SHAs from the worktree (oldest-first).
@@ -100,7 +102,7 @@ class TestMergePreservesEveryCommit:
         result = subprocess.run(
             ["git", "rev-list", "--count", f"{before_sha}..HEAD"],
             cwd=repo,
-            capture_output=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
             text=True,
             check=True,
         )

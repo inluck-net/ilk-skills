@@ -39,7 +39,7 @@ def _run_hook(command: str, env: dict[str, str] | None = None) -> dict:
         ["bash", str(HOOK_PATH)],
         input=event,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         env=run_env,
         timeout=10,
     )

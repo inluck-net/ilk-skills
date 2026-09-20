@@ -30,13 +30,16 @@ def _create_throwaway_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "test-repo"
     repo.mkdir()
     subprocess.run(["git", "init"], cwd=repo, check=True,
-                   capture_output=True)
+                   capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     # Initial commit so HEAD exists
     (repo / "README.md").write_text("test repo", encoding="utf-8")
     subprocess.run(["git", "add", "README.md"], cwd=repo, check=True,
-                   capture_output=True)
+                   capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "commit", "-m", "initial"], cwd=repo, check=True,
-                   capture_output=True)
+                   capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     return repo
 
 
@@ -70,10 +73,12 @@ class TestLiveLoopBlocksMerge:
             "selfmod change", encoding="utf-8"
         )
         subprocess.run(["git", "add", "new-file.txt"], cwd=worktree_path,
-                      check=True, capture_output=True)
+                      check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
         subprocess.run(
             ["git", "commit", "-m", "selfmod change"],
-            cwd=worktree_path, check=True, capture_output=True
+            cwd=worktree_path, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace"
         )
 
         # Patch _find_live_ilk_pids to return our live PID
@@ -108,10 +113,12 @@ class TestLiveLoopBlocksMerge:
             "selfmod change", encoding="utf-8"
         )
         subprocess.run(["git", "add", "new-file.txt"], cwd=worktree_path,
-                      check=True, capture_output=True)
+                      check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
         subprocess.run(
             ["git", "commit", "-m", "selfmod change"],
-            cwd=worktree_path, check=True, capture_output=True
+            cwd=worktree_path, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace"
         )
 
         # Patch _find_live_ilk_pids to return empty (no live loops)
@@ -159,10 +166,12 @@ class TestLiveLoopBlocksMerge:
             "selfmod change", encoding="utf-8"
         )
         subprocess.run(["git", "add", "new-file.txt"], cwd=worktree_path,
-                      check=True, capture_output=True)
+                      check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
         subprocess.run(
             ["git", "commit", "-m", "selfmod change"],
-            cwd=worktree_path, check=True, capture_output=True
+            cwd=worktree_path, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace"
         )
 
         # Patch _find_live_ilk_pids to raise (simulating a broken probe)
@@ -296,9 +305,11 @@ class TestMergeUnderLock:
         # Make a commit in the worktree.
         (worktree_path / "new.txt").write_text("locked merge", encoding="utf-8")
         subprocess.run(["git", "add", "new.txt"], cwd=worktree_path,
-                      check=True, capture_output=True)
+                      check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
         subprocess.run(["git", "commit", "-m", "add new"],
-                      cwd=worktree_path, check=True, capture_output=True)
+                      cwd=worktree_path, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
 
         with patch("selfmod_worktree._find_live_ilk_pids", return_value=[]):
             sw.merge_back(lock_path=lock_path)
@@ -325,9 +336,11 @@ class TestMergeUnderLock:
         # Make a commit in the worktree.
         (worktree_path / "new.txt").write_text("locked merge", encoding="utf-8")
         subprocess.run(["git", "add", "new.txt"], cwd=worktree_path,
-                      check=True, capture_output=True)
+                      check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
         subprocess.run(["git", "commit", "-m", "add new"],
-                      cwd=worktree_path, check=True, capture_output=True)
+                      cwd=worktree_path, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
 
         # Hold the lock from "another process".
         lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -358,16 +371,20 @@ class TestBranchMovement:
         # Make a commit in the worktree.
         (worktree_path / "wt-file.txt").write_text("worktree", encoding="utf-8")
         subprocess.run(["git", "add", "wt-file.txt"], cwd=worktree_path,
-                      check=True, capture_output=True)
+                      check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
         subprocess.run(["git", "commit", "-m", "worktree commit"],
-                      cwd=worktree_path, check=True, capture_output=True)
+                      cwd=worktree_path, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
 
         # Move HEAD in the main repo (simulating another process).
         (repo / "main-file.txt").write_text("main", encoding="utf-8")
         subprocess.run(["git", "add", "main-file.txt"], cwd=repo,
-                      check=True, capture_output=True)
+                      check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
         subprocess.run(["git", "commit", "-m", "main repo commit"],
-                      cwd=repo, check=True, capture_output=True)
+                      cwd=repo, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
 
         with patch("selfmod_worktree._find_live_ilk_pids", return_value=[]):
             with pytest.raises(BranchMovedError) as exc_info:
@@ -396,16 +413,20 @@ class TestBranchMovement:
         # Make a commit in the worktree.
         (worktree_path / "wt-file.txt").write_text("worktree", encoding="utf-8")
         subprocess.run(["git", "add", "wt-file.txt"], cwd=worktree_path,
-                      check=True, capture_output=True)
+                      check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
         subprocess.run(["git", "commit", "-m", "worktree commit"],
-                      cwd=worktree_path, check=True, capture_output=True)
+                      cwd=worktree_path, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
 
         # Move HEAD in the main repo.
         (repo / "main-file.txt").write_text("main", encoding="utf-8")
         subprocess.run(["git", "add", "main-file.txt"], cwd=repo,
-                      check=True, capture_output=True)
+                      check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
         subprocess.run(["git", "commit", "-m", "main repo commit"],
-                      cwd=repo, check=True, capture_output=True)
+                      cwd=repo, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
 
         with patch("selfmod_worktree._find_live_ilk_pids", return_value=[]):
             # ff-only fails when branches have diverged.

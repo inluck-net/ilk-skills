@@ -56,7 +56,7 @@ WRITER_FUNC = "write_ship_proof_records"
 def _git(repo: Path, *args: str) -> str:
     proc = subprocess.run(
         ["git", "-C", str(repo), *args],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
     )
     assert proc.returncode == 0, f"git {' '.join(args)} failed: {proc.stderr}"
     return proc.stdout.strip()
@@ -131,7 +131,7 @@ def _launcher_dir(project: Path, env: dict[str, str]) -> Path:
     resolver = RUNNER.parent / "ilk_paths.py"
     proc = subprocess.run(
         ["python3", str(resolver), "--start", str(project)],
-        capture_output=True, text=True, timeout=60, env=env,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, env=env,
     )
     assert proc.returncode == 0, proc.stderr
     return Path(json.loads(proc.stdout)["external_launcher_dir"])
@@ -168,7 +168,7 @@ echo "RC=$?"
 """
     return subprocess.run(
         ["bash", "-c", script],
-        capture_output=True, text=True, timeout=120, env=env, cwd=str(project),
+        capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=120, env=env, cwd=str(project),
     )
 
 
@@ -385,7 +385,7 @@ echo "RC=$?"
 """
     return subprocess.run(
         ["bash", "-c", script],
-        capture_output=True, text=True, timeout=180, env=env, cwd=str(project),
+        capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=180, env=env, cwd=str(project),
     )
 
 

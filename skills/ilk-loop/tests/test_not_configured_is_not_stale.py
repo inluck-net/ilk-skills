@@ -57,7 +57,7 @@ if str(SCRIPTS) not in sys.path:
 
 def _git(repo: Path, *args: str) -> None:
     proc = subprocess.run(
-        ["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=60
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60
     )
     assert proc.returncode == 0, f"git {' '.join(args)}: {proc.stderr}"
 
@@ -77,7 +77,7 @@ def _repo(tmp_path: Path) -> Path:
 def _head(repo: Path) -> str:
     proc = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "HEAD"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
     )
     return proc.stdout.strip()
 

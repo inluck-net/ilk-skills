@@ -98,11 +98,13 @@ class TestOverrideBoundsARealRun:
         proj = tmp_path / "proj"
         (proj / "docs" / "plans").mkdir(parents=True)
         subprocess.run(["git", "init", "-q"], cwd=proj, check=True,
-                       capture_output=True)
+                       capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
         subprocess.run(
             ["git", "-c", "user.email=t@e.com", "-c", "user.name=t",
              "commit", "-q", "--allow-empty", "-m", "init"],
-            cwd=proj, check=True, capture_output=True)
+            cwd=proj, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
 
         mock_bin = tmp_path / "bin"
         mock_bin.mkdir()

@@ -43,7 +43,7 @@ def _run_hook(
         ["bash", str(HOOK_PATH)],
         input=json.dumps(event),
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         env=run_env,
         timeout=10,
     )
@@ -347,7 +347,7 @@ class TestFailOpen:
             ["bash", str(HOOK_PATH)],
             input="this is not json",
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             env=run_env,
             timeout=10,
         )
@@ -364,7 +364,7 @@ class TestFailOpen:
             ["bash", str(HOOK_PATH)],
             input="",
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             env=run_env,
             timeout=10,
         )

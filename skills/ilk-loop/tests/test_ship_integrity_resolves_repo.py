@@ -57,7 +57,8 @@ def _make_repo(
     repo = tmp / name
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True,
-                   capture_output=True)
+                   capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     _git(repo, "commit", "-q", "--allow-empty", "-m", "init")
     for msg in (commits or []):
         _git(repo, "commit", "-q", "--allow-empty", "-m", msg)
@@ -415,7 +416,7 @@ class TestExternalPlansLayout:
                     "HOME": str(tmp_path / "fake-home")})
         r = subprocess.run(
             [sys.executable, str(CLI), "--subplan", str(sp), "--gate-passed", "true"],
-            capture_output=True, text=True, timeout=60, cwd=cwd_dir, env=env)
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, cwd=cwd_dir, env=env)
 
         combined = r.stdout + r.stderr
         assert "could not resolve" not in combined.lower(), (

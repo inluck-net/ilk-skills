@@ -40,17 +40,17 @@ def _make_kira_repo(tmp_path: Path) -> Path:
     """
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "init"], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test"],
         cwd=repo,
-        capture_output=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
         check=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
         cwd=repo,
-        capture_output=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
         check=True,
     )
 
@@ -61,11 +61,11 @@ def _make_kira_repo(tmp_path: Path) -> Path:
     )
     producer = repo / "producer.ts"
     producer.write_text("// placeholder\n")
-    subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     subprocess.run(
         ["git", "commit", "-m", "feat: add consumer and producer stub"],
         cwd=repo,
-        capture_output=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
         check=True,
     )
 
@@ -85,17 +85,17 @@ def _make_independent_repo(tmp_path: Path) -> Path:
     """
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "init"], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test"],
         cwd=repo,
-        capture_output=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
         check=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
         cwd=repo,
-        capture_output=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
         check=True,
     )
 
@@ -103,11 +103,11 @@ def _make_independent_repo(tmp_path: Path) -> Path:
     main_file.write_text('console.log("hello");\n')
     util = repo / "util.ts"
     util.write_text("// placeholder\n")
-    subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     subprocess.run(
         ["git", "commit", "-m", "feat: add main and util stub"],
         cwd=repo,
-        capture_output=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
         check=True,
     )
 

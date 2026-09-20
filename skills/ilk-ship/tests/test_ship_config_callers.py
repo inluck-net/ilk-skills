@@ -51,7 +51,7 @@ class TestExitCodes:
         proc = subprocess.run(
             [sys.executable, str(SCRIPTS_DIR / "ship_config.py"),
              "--validate", "--project", str(project)],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         assert proc.returncode == 2, (
             f"Expected exit 2 for NotConfigured, got {proc.returncode}. "
@@ -71,7 +71,7 @@ class TestExitCodes:
         proc = subprocess.run(
             [sys.executable, str(SCRIPTS_DIR / "ship_config.py"),
              "--validate", "--project", str(project)],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         assert proc.returncode == 2, (
             f"Expected exit 2 for NotConfigured (no ship key), got {proc.returncode}. "

@@ -308,7 +308,7 @@ def test_cli_finds_unextractable_gate(tmp_path):
     result = subprocess.run(
         [sys.executable, str(SCRIPTS_DIR / "plan_lint.py"), str(fixture)],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
     )
     assert result.returncode == 1, (
         f"plan_lint.py should exit 1 on unextractable gate, "

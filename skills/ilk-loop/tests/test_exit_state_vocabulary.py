@@ -117,7 +117,7 @@ UNPROVEN_EXIT_STATE = "shipped-unproven"
 
 
 def _git(args: list[str], cwd: Path) -> None:
-    subprocess.run(["git", *args], cwd=cwd, capture_output=True, check=True)
+    subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
 
 
 def _init_repo(path: Path) -> None:
@@ -183,7 +183,7 @@ def _make_all_shipped_but_unproven(tmp: Path) -> Path:
 def _status_json(project: Path) -> dict:
     result = subprocess.run(
         [sys.executable, str(_LOOP_STATUS), "--json"],
-        capture_output=True, text=True, timeout=60, cwd=project,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, cwd=project,
         env={**os.environ, "ILK_DATA_HOME": str(project / "ilk-data")},
     )
     assert result.stdout.strip(), f"loop_status --json emitted nothing: {result.stderr}"

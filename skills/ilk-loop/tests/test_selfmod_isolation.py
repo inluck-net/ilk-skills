@@ -55,7 +55,7 @@ def _toolkit_clone_from_runner() -> Path:
             f"realpath \"$_SKILL_ROOT/..\" 2>/dev/null || "
             f"echo \"$_SKILL_ROOT/..\""
         )],
-        capture_output=True, text=True, timeout=15, env=env,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15, env=env,
     )
     assert result.returncode == 0, (
         f"failed to resolve toolkit clone: {result.stderr}"
@@ -78,7 +78,7 @@ echo "RC=$?"
 """
     return subprocess.run(
         ["bash", "-c", script],
-        capture_output=True, text=True, timeout=120, env=env,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=120, env=env,
         cwd=str(project),
     )
 
@@ -170,7 +170,7 @@ echo "RC2=$RC2"
 """
         result = subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True, timeout=120, env=env,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=120, env=env,
             cwd=str(toolkit),
         )
         assert result.returncode == 0, (

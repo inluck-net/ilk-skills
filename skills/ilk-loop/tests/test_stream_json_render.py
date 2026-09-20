@@ -47,7 +47,7 @@ def render(events, env_extra=None, feed_delay=None):
             [sys.executable, str(RENDERER)],
             input=payload,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=60,
             env=_env(env_extra),
         )
@@ -63,13 +63,14 @@ def render(events, env_extra=None, feed_delay=None):
         f"    time.sleep({feed_delay})\n"
     )
     feeder = subprocess.Popen(
-        [sys.executable, "-u", "-c", driver], stdout=subprocess.PIPE
+        [sys.executable, "-u", "-c", driver], stdout=subprocess.PIPE,
+        encoding="utf-8", errors="replace"
     )
     proc = subprocess.run(
         [sys.executable, "-u", str(RENDERER)],
         stdin=feeder.stdout,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         timeout=120,
         env=_env(env_extra),
     )

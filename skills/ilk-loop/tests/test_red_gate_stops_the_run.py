@@ -61,6 +61,7 @@ def _git(repo: Path, *args: str) -> None:
     subprocess.run(
         ["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
         cwd=repo, check=True, capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
     )
 
 
@@ -161,7 +162,7 @@ def _run_one_iteration(world: dict, root: Path) -> subprocess.CompletedProcess:
          "--max-iterations", "1",
          "--iteration-timeout-min", "2",
          "--run-local-checks"],
-        capture_output=True, text=True, timeout=300, env=env, cwd=str(root),
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, env=env, cwd=str(root),
     )
 
 
@@ -273,7 +274,7 @@ def test_ship_integrity_violation_classifies_as_shipped_unverified() -> None:
     action = subprocess.run(
         ["bash", "-c",
          f"source '{WATCHDOG}' >/dev/null 2>&1; classify_action shipped-unverified"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=60,
     ).stdout.strip()
     assert action == "needs-human", (
         f"watchdog.sh routes shipped-unverified to {action!r}; it must not be "
