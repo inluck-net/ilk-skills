@@ -222,11 +222,29 @@ def mock_urlopen(req, timeout=None):
 # ---------------------------------------------------------------------------
 # Gateway smoke (network-gated)
 # ---------------------------------------------------------------------------
+def _live_smoke_enabled() -> bool:
+    """ILK_LIVE_SMOKE=1 opts IN to the live gateway call.
+
+    A live-network assertion has no place in a batch gate that must be
+    reproducible on a quiet box: this test passed 2026-09-20 only because
+    the gateway happened to be up, and failed the same way when it was not.
+    Default is skip; export ILK_LIVE_SMOKE=1 to run it for real.
+    """
+    return os.environ.get("ILK_LIVE_SMOKE") == "1"
+
+
 @pytest.mark.skipif(not _has_gateway_creds(), reason="Worker gateway creds not available")
 @pytest.mark.skipif(not HELLO_PNG.exists(), reason="vl_hello.png fixture missing")
 class TestSmokeGateway:
-    """Step 0: prove the gateway accepts image blocks for mimo-v2.5."""
+    """Step 0: prove the gateway accepts image blocks for mimo-v2.5.
 
+    Only test_hello_image_returns_answer talks to the live gateway; the
+    failure-envelope tests below it reject a nonexistent image path locally
+    and stay deterministic, so they are NOT opt-in.
+    """
+
+    @pytest.mark.skipif(not _live_smoke_enabled(),
+                        reason="live gateway call — export ILK_LIVE_SMOKE=1 to run")
     def test_hello_image_returns_answer(self):
         """POST vl_hello.png asking 'what text is shown?' — answer must contain HELLO."""
         result = _run_vl(
