@@ -78,7 +78,7 @@ echo "RC=$?"
 """
     return subprocess.run(
         ["bash", "-c", script],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=120, env=env,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, env=env,
         cwd=str(project),
     )
 
@@ -170,7 +170,7 @@ echo "RC2=$RC2"
 """
         result = subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=120, env=env,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, env=env,
             cwd=str(toolkit),
         )
         assert result.returncode == 0, (

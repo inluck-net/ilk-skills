@@ -68,7 +68,7 @@ def _run_quarantine(plans: Path, slug: str, check: str = "pytest -q",
             "--slug", slug, "--failing-check", check]
     if threshold is not None:
         args += ["--threshold", str(threshold)]
-    r = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=60)
+    r = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     assert r.returncode == 0, f"CLI exited {r.returncode}: {r.stderr}"
     return json.loads(r.stdout)
 
@@ -162,8 +162,8 @@ def test_the_driver_resolves_a_real_plans_dir_for_quarantine(tmp_path: Path) -> 
         {line}
         echo "RESOLVED=[$q_plans_dir]"
     """)
-    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, encoding="utf-8", errors="replace", text=True,
-                         timeout=120, encoding="utf-8", errors="replace")
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                         timeout=120)
     resolved = ""
     for l in out.stdout.splitlines():
         if l.startswith("RESOLVED="):

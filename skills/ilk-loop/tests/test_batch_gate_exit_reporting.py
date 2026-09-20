@@ -49,7 +49,7 @@ def _source_runner_and_call(
     )
     return subprocess.run(
         ["bash", "-c", script],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=30, env=env,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, env=env,
     )
 
 

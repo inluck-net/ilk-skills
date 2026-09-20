@@ -157,7 +157,7 @@ set +e
 """
     return subprocess.run(
         ["bash", "-c", prelude + script],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=120, env=env, cwd=str(project),
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, env=env, cwd=str(project),
     )
 
 

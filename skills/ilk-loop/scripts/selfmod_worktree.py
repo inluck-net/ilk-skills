@@ -131,7 +131,6 @@ def _find_live_ilk_pids(pattern: str = DEFAULT_PROBE_PATTERN) -> list[int]:
             capture_output=True,
             text=True,
                 encoding="utf-8", errors="replace",
-            encoding="utf-8", errors="replace",
         )
     except FileNotFoundError as exc:
         raise RuntimeError(

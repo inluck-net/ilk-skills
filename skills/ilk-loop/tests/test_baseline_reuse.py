@@ -100,7 +100,7 @@ def _git_sha(proj: Path, *args: str) -> str:
     """Run a git command and return stripped stdout."""
     import subprocess
     return subprocess.run(
-        ["git", *args], cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+        ["git", *args], cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     ).stdout.strip()
 
 

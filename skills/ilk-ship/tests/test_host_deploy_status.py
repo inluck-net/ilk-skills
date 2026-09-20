@@ -831,7 +831,7 @@ class TestCliEntryPoint:
             cmd.extend(["--local-host", host])
         return subprocess.run(
             cmd,
-            capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env={**os.environ, "BOUNCER_LOG": "/dev/null"},
         )
 
@@ -1206,7 +1206,7 @@ class TestAC12CliNamesTheTransport:
             exit_code=0,
         )
         result = subprocess.run(
-            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=60,
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
             env={
                 **os.environ,
                 "BOUNCER_LOG": "/dev/null",

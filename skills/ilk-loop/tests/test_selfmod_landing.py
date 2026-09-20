@@ -95,7 +95,7 @@ def _merge_cli(
         cmd.extend(["--probe-pattern", probe_pattern])
     if env is None:
         env = {**os.environ, **(env_extra or {})}
-    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=30,
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
                           env=env)
 
 
@@ -110,7 +110,7 @@ def _commit_in(path: Path, filename: str, content: str, msg: str) -> str:
             text=True, encoding="utf-8", errors="replace")
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=path,
-        capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     return result.stdout.strip()
 
@@ -118,7 +118,7 @@ def _commit_in(path: Path, filename: str, content: str, msg: str) -> str:
 def _head_sha(repo: Path) -> str:
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=repo,
-        capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     return result.stdout.strip()
 
@@ -181,7 +181,7 @@ class TestLandingHappyPath:
         # Every worktree SHA must be reachable from the clone's HEAD.
         clone_log = subprocess.run(
             ["git", "rev-list", base_sha + "..HEAD"], cwd=repo,
-            capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         )
         clone_shas = set(clone_log.stdout.strip().splitlines())
         for expected in (sha1, sha2, sha3):

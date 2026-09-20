@@ -27,8 +27,7 @@ def _make_git_repo(tmp_path: Path) -> Path:
     """Create a minimal git repo with one committed file."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            text=True, encoding="utf-8", errors="replace")
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
         cwd=repo, check=True, capture_output=True,
@@ -41,8 +40,7 @@ def _make_git_repo(tmp_path: Path) -> Path:
     )
     marker = repo / "marker.txt"
     marker.write_text("committed", encoding="utf-8")
-    subprocess.run(["git", "add", "marker.txt"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            text=True, encoding="utf-8", errors="replace")
+    subprocess.run(["git", "add", "marker.txt"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(
         ["git", "commit", "-m", "initial"],
         cwd=repo, check=True, capture_output=True,
@@ -143,7 +141,7 @@ class TestGateReadsWorkingTree:
         repo = _make_git_repo(tmp_path)
         expected_sha = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         ).stdout.strip()
 
         slug = "test-head-sha"
@@ -202,7 +200,7 @@ class TestIsolateToHead:
         # Record pre-isolation status
         pre_status = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         ).stdout
 
         with isolate_to_head(repo) as iso:
@@ -212,7 +210,7 @@ class TestIsolateToHead:
         # Post-restore: status should be byte-identical
         post_status = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         ).stdout
         assert post_status == pre_status, "dirty tree not restored after isolation"
 
@@ -224,7 +222,7 @@ class TestIsolateToHead:
 
         pre_status = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         ).stdout
 
         with pytest.raises(RuntimeError, match="simulated failure"):
@@ -235,7 +233,7 @@ class TestIsolateToHead:
         # Post-restore: status should be byte-identical
         post_status = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         ).stdout
         assert post_status == pre_status, "dirty tree not restored after exception"
 
@@ -250,8 +248,7 @@ class TestIsolateToHead:
             assert iso.isolated is True
             # Create a conflicting committed change
             marker.write_text("conflict", encoding="utf-8")
-            subprocess.run(["git", "add", "marker.txt"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            text=True, encoding="utf-8", errors="replace")
+            subprocess.run(["git", "add", "marker.txt"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
             subprocess.run(
                 ["git", "commit", "-m", "conflict"],
                 cwd=repo, check=True, capture_output=True,
@@ -261,7 +258,7 @@ class TestIsolateToHead:
         # The stash entry should still exist (never dropped)
         stash_list = subprocess.run(
             ["git", "stash", "list"],
-            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         ).stdout
         assert "ilk-gate-isolation" in stash_list, "stash entry should still exist after pop conflict"
 
@@ -275,8 +272,7 @@ class TestIsolateToHead:
         with isolate_to_head(repo) as iso:
             # Create a conflicting committed change
             marker.write_text("conflict", encoding="utf-8")
-            subprocess.run(["git", "add", "marker.txt"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            text=True, encoding="utf-8", errors="replace")
+            subprocess.run(["git", "add", "marker.txt"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
             subprocess.run(
                 ["git", "commit", "-m", "conflict"],
                 cwd=repo, check=True, capture_output=True,
@@ -290,7 +286,7 @@ class TestIsolateToHead:
         # Stash entry must still be on the stack (never dropped)
         stash_list = subprocess.run(
             ["git", "stash", "list"],
-            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         ).stdout
         assert "ilk-gate-isolation" in stash_list
 
@@ -306,7 +302,7 @@ class TestIsolateToHead:
 
         pre_status = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         ).stdout
 
         with isolate_to_head(repo) as iso:
@@ -321,7 +317,7 @@ class TestIsolateToHead:
         # Status must be identical
         post_status = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         ).stdout
         assert post_status == pre_status
 
