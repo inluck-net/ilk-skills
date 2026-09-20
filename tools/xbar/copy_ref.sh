@@ -10,4 +10,10 @@
 # values; the two prior attempts died to each of those in turn
 # (2026-09-20). Keep this script's contract: one argument, no spaces,
 # printf not echo (no trailing newline — the paste lands as one line).
+#
+# Debug log (temporary, remove once the click path is proven): every
+# invocation appends a timestamped line to /tmp/ilk-copy-ref.log —
+# an entry proves SwiftBar fired the action and pbcopy ran; NO entry
+# after a click means SwiftBar never invoked it (parse/permission).
+printf '%s\n' "$(date '+%H:%M:%S') argv0_ok=$# ref=${1:-EMPTY}" >> /tmp/ilk-copy-ref.log
 printf '%s' "$1" | pbcopy

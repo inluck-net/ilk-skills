@@ -100,12 +100,15 @@ def test_copy_reference_action_names_files_not_slugs() -> None:
     # therefore SPACE-FREE and every param value in the action is BARE —
     # no spaces, no quotes, no pipes. copy_ref.sh does the clipboard work.
     assert "copy_ref.sh" in line and "refresh=false" in line
-    # The REF param is bare — no quotes, no spaces, no pipes (quoted
-    # script paths are fine; Start-now proves that form works — it is
-    # nesting quotes INSIDE a quoted value that kills the parser).
+    # The REF param is single-quoted exactly like Start-now's proven
+    # param2, and the value inside the quotes is space-free, quote-free,
+    # pipe-free — nesting quotes inside a quoted value is what killed
+    # attempt 2; a bare long value is the delta that plausibly killed 3.
     refprm = [tok for tok in line.split() if tok.startswith("param2=")][0]
     val = refprm.split("=", 1)[1]
-    assert " " not in val and "'" not in val and '"' not in val and "|" not in val
+    assert val.startswith("'") and val.endswith("'")
+    inner = val[1:-1]
+    assert " " not in inner and "'" not in inner and '"' not in inner and "|" not in inner
 
 
 def test_no_copy_reference_without_file_identities() -> None:
