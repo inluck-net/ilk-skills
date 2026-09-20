@@ -150,7 +150,7 @@ _CONTRACT_DOC_NAMES = (
 )
 
 _SCOPE_PATHS_RE = re.compile(r"^scope_paths:\s*$", re.MULTILINE)
-_LIST_ITEM_RE = re.compile(r"^\s+-\s+\"?([^\"]+)\"?\s*$", re.MULTILINE)
+_LIST_ITEM_RE = re.compile(r"^\s+-\s+\"?([^\"\n]+)\"?\s*$", re.MULTILINE)
 
 
 def _extract_scope_paths(text: str) -> list[str]:
@@ -1613,6 +1613,79 @@ def lint_budget_vs_gate_timeout(text: str, slug: str) -> list[str]:
             f"entire budget on gates alone. Either reduce gate timeouts, raise "
             f"recommended_iteration_timeout_min, or split the step "
             f"(see decomposition-principles.md section 16)."
+        )
+    return findings
+
+
+def _has_timeout_basis(text: str) -> bool:
+    """Return True when ``recommended_iteration_timeout_min`` carries a stated basis.
+
+    The lint only fires on UNDECLARED mismatches.  When the operator has
+    explicitly declared a timeout AND justified why it is that large, the
+    lint defers to the operator's judgment.
+
+    A basis is detected when:
+    - the frontmatter value is followed by an inline ``# comment`` containing
+      "basis" (case-insensitive), OR
+    - the plan body contains a ``Basis:`` / ``理由:`` line near the
+      ``recommended_iteration_timeout_min`` mention.
+    """
+    m = re.match(r"^---\n.*?\n---\n", text, re.S)
+    if not m:
+        return False
+    fm = text[m.start():m.end()]
+    if not re.search(r"recommended_iteration_timeout_min:\s*\d+", fm):
+        return False
+    # Inline basis comment on the same line.
+    if re.search(r"recommended_iteration_timeout_min:.*#.*\bbasis\b", fm, re.I):
+        return True
+    # Basis line anywhere in the body (canonical pattern).
+    body = _strip_frontmatter(text)
+    return bool(re.search(r"(?i)^\s*(?:Basis|理由|依据)\s*[:：]", body, re.MULTILINE))
+
+
+def lint_step_window_fit(text: str, slug: str) -> list[str]:
+    """Flag a step whose edit surface plausibly exceeds half the effective window.
+
+    A step whose edit surface (estimated from ``scope_paths`` and per-step
+    structure) plausibly exceeds half the effective iteration window must
+    either be split or carry an explicit ``recommended_iteration_timeout_min``
+    with a stated basis.  An explicit declaration with basis always passes
+    (the operator judged).
+
+    HARD finding when: oversized AND no explicit declaration with basis.
+    """
+    findings: list[str] = []
+
+    # 1. Estimate edit surface from scope_paths.
+    scope_paths = _extract_scope_paths(text)
+    surface = len(scope_paths) if scope_paths else 0
+
+    # Also count per-step headings as a secondary signal — the step count
+    # itself is a lower bound on the number of distinct edit rounds.
+    body = _strip_frontmatter(text)
+    step_headings = re.findall(r"^###\s+Step\s+\S+", body, re.MULTILINE)
+    # Conservative: use the max of scope_paths count and step headings.
+    surface = max(surface, len(step_headings))
+
+    if surface == 0:
+        return findings  # nothing to estimate
+
+    # 2. Check for explicit declaration with basis — always passes.
+    if _has_timeout_basis(text):
+        return findings
+
+    # 3. Half the effective window (default 30 min when no declaration).
+    timeout = _extract_recommended_timeout(text)
+    half_window = timeout / 2
+
+    # 4. Oversized check.
+    if surface > half_window:
+        findings.append(
+            f"{slug}: HARD — estimated edit surface ({surface} files) exceeds "
+            f"half the iteration window ({half_window:.0f}min).  Either split "
+            f"the step or declare recommended_iteration_timeout_min with a "
+            f"stated basis (see decomposition-principles.md §5)."
         )
     return findings
 
