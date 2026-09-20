@@ -306,12 +306,19 @@ def project_key(root: Path) -> str:
 
     Re-keying is an operator step
     -----------------------------
-    Every registered project's key changes under this construction: short keys
-    gain a suffix, and long ones get a different suffix because the hash input
-    changed. On-disk state must be migrated by ``migrate_project_keys.py``,
-    which is dry-run by default and refuses to run while any loop is live.
-    Deploying this function without running that migration points every tool at
-    a new, empty state directory.
+    Keys change under this construction and on-disk state must be migrated by
+    ``migrate_project_keys.py``, which is dry-run by default and refuses to run
+    while any loop is live. Deploying this function without running that
+    migration points every tool at a new, empty state directory.
+
+    Which keys change, measured 2026-09-20 over the 55 registered projects:
+    all 11 that had state on disk. Under the cap a key always changes (it gains
+    a suffix it never had). Over the cap it changes only if the path contains
+    an uppercase character, because the sole difference is that the hash input
+    stopped being lowercased — every real path here begins ``/Users/...``, so
+    all of them did. An all-lowercase over-cap path (``/home/...`` on Linux)
+    keeps its key, and the migration reports it as ``unchanged-key`` rather
+    than renaming a directory onto itself.
     """
     abs_str = str(Path(root).resolve())
     h = hashlib.sha1(abs_str.encode("utf-8")).hexdigest()[:_KEY_HASH_LEN]
