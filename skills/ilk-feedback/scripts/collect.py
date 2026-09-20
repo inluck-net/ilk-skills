@@ -800,7 +800,6 @@ def loop_status_exit(project_path: Path) -> int:
             text=True,
                 encoding="utf-8", errors="replace",
             timeout=30,
-            encoding="utf-8", errors="replace",
         )
         return proc.returncode
     except (subprocess.TimeoutExpired, OSError):
@@ -1887,8 +1886,6 @@ def probe_head_dependency(
             capture_output=True,
             text=True,
                 encoding="utf-8", errors="replace",
-            encoding="utf-8",
-            errors="replace",
             timeout=30,
             **kwargs,
         )

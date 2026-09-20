@@ -32,7 +32,7 @@ _MASTER_TEMPLATE = _HERE.parent / "templates" / "master-template.md"
 def _git_init(tmp_path: Path) -> None:
     """Initialise a hermetic git repo in *tmp_path*."""
     subprocess.run(["git", "init"], cwd=tmp_path, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", text=True)
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
     subprocess.run(
         ["git", "config", "user.email", "test@test.local"],
         cwd=tmp_path, check=True, capture_output=True, text=True,
@@ -51,18 +51,18 @@ def _make_two_branch_repo(tmp_path: Path) -> None:
     _git_init(tmp_path)
     (tmp_path / "main.txt").write_text("on main\n")
     subprocess.run(["git", "add", "main.txt"], cwd=tmp_path, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", text=True)
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
     subprocess.run(["git", "commit", "-m", "add main file"], cwd=tmp_path,
-                   check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True)
+                   check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", )
     subprocess.run(["git", "checkout", "-b", "feature"], cwd=tmp_path,
-                   check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True)
+                   check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", )
     (tmp_path / "feature.txt").write_text("only on feature\n")
     subprocess.run(["git", "add", "feature.txt"], cwd=tmp_path, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", text=True)
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
     subprocess.run(["git", "commit", "-m", "add feature file"], cwd=tmp_path,
-                   check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True)
+                   check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", )
     subprocess.run(["git", "checkout", "main"], cwd=tmp_path, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", text=True)
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
 
 
 def _run_master(tmp_path: Path, master: str,

@@ -38,7 +38,7 @@ def _repo(tmp_path: Path, files: dict[str, str]):
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True, env=env)
     subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True, env=env)
     base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
-                          capture_output=True, text=True, encoding="utf-8", errors="replace", text=True).stdout.strip()
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", ).stdout.strip()
     for rel, body in files.items():
         f = repo / rel
         f.parent.mkdir(parents=True, exist_ok=True)

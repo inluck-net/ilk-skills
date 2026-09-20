@@ -69,7 +69,7 @@ def _run_preflight_decision(master_status: str, has_active: str,
     )
     result = subprocess.run(
         ["bash", "-c", cmd],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
     )
     assert result.returncode == 0, (
         f"preflight_decision failed: exit={result.returncode} stderr={result.stderr}"

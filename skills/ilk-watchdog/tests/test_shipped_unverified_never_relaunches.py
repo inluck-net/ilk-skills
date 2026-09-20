@@ -51,7 +51,7 @@ def _classify_action(label: str) -> str:
     classify_action '{label}'
     """
     proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, encoding="utf-8", errors="replace",
-                          text=True, timeout=60)
+                           timeout=60)
     out = proc.stdout.strip().splitlines()
     assert "FN_MISSING" not in proc.stdout, (
         "classify_action is not defined — this test would otherwise pass "

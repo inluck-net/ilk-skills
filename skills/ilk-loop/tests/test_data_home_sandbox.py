@@ -81,7 +81,7 @@ class TestSubprocessResolvesInsideSandbox:
         )
         proc = subprocess.run(
             [os.sys.executable, "-c", script],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",  timeout=30,
             env=scheduler_sandbox.env,
         )
         assert proc.returncode == 0, proc.stderr

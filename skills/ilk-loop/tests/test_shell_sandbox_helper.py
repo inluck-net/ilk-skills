@@ -52,7 +52,7 @@ class TestHelperBehaviour:
         )
         result = subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",  timeout=10,
         )
         assert result.returncode == 0, f"helper failed to source: {result.stderr}"
         out = result.stdout
@@ -80,7 +80,7 @@ class TestHelperBehaviour:
         )
         result = subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",  timeout=10,
         )
         assert result.returncode == 0, f"helper failed: {result.stderr}"
         logs_dir = root / ".ilk-data" / "logs"

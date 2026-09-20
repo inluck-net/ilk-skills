@@ -33,7 +33,6 @@ def _collect_shas(repo_path: Path, count: int) -> list[str]:
         ["git", "log", "--format=%H", f"-{count}", "--reverse"],
         cwd=repo_path,
         capture_output=True, text=True, encoding="utf-8", errors="replace",
-        text=True,
         check=True,
     )
     return [line.strip() for line in result.stdout.strip().splitlines() if line.strip()]
@@ -64,7 +63,6 @@ class TestMergePreservesEveryCommit:
             ["git", "rev-parse", "HEAD"],
             cwd=repo,
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            text=True,
             check=True,
         ).stdout.strip()
 
@@ -103,7 +101,6 @@ class TestMergePreservesEveryCommit:
             ["git", "rev-list", "--count", f"{before_sha}..HEAD"],
             cwd=repo,
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            text=True,
             check=True,
         )
         merged_count = int(result.stdout.strip())

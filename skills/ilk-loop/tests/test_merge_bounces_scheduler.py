@@ -33,12 +33,12 @@ def _create_throwaway_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "test-repo"
     repo.mkdir()
     subprocess.run(["git", "init"], cwd=repo, check=True,
-                   capture_output=True)
+                   capture_output=True, encoding="utf-8", errors="replace")
     (repo / "README.md").write_text("test repo", encoding="utf-8")
     subprocess.run(["git", "add", "README.md"], cwd=repo, check=True,
-                   capture_output=True)
+                   capture_output=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "commit", "-m", "initial"], cwd=repo, check=True,
-                   capture_output=True)
+                   capture_output=True, encoding="utf-8", errors="replace")
     return repo
 
 
@@ -82,10 +82,11 @@ class TestMergeBouncesScheduler:
             "selfmod change", encoding="utf-8"
         )
         subprocess.run(["git", "add", "new-file.txt"], cwd=worktree_path,
-                      check=True, capture_output=True)
+                      check=True, capture_output=True, encoding="utf-8", errors="replace")
         subprocess.run(
             ["git", "commit", "-m", "selfmod change"],
-            cwd=worktree_path, check=True, capture_output=True
+            cwd=worktree_path, check=True, capture_output=True,
+            encoding="utf-8", errors="replace"
         )
 
         with (
@@ -135,10 +136,11 @@ class TestMergeBlockedOnBounceFailure:
             "selfmod change", encoding="utf-8"
         )
         subprocess.run(["git", "add", "new-file.txt"], cwd=worktree_path,
-                      check=True, capture_output=True)
+                      check=True, capture_output=True, encoding="utf-8", errors="replace")
         subprocess.run(
             ["git", "commit", "-m", "selfmod change"],
-            cwd=worktree_path, check=True, capture_output=True
+            cwd=worktree_path, check=True, capture_output=True,
+            encoding="utf-8", errors="replace"
         )
 
         with (
@@ -188,10 +190,11 @@ class TestMergeStillRefusesOnLiveLoop:
             "selfmod change", encoding="utf-8"
         )
         subprocess.run(["git", "add", "new-file.txt"], cwd=worktree_path,
-                      check=True, capture_output=True)
+                      check=True, capture_output=True, encoding="utf-8", errors="replace")
         subprocess.run(
             ["git", "commit", "-m", "selfmod change"],
-            cwd=worktree_path, check=True, capture_output=True
+            cwd=worktree_path, check=True, capture_output=True,
+            encoding="utf-8", errors="replace"
         )
 
         with (

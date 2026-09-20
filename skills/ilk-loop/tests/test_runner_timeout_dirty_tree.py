@@ -59,7 +59,7 @@ def _git_log(repo: Path, n: int = 5) -> list[str]:
     """Return the last n commit messages (one line each)."""
     result = subprocess.run(
         ["git", "log", f"--oneline", f"-{n}", "--format=%s"],
-        cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+        cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
     )
     return [line.strip() for line in result.stdout.strip().splitlines() if line.strip()]
 
@@ -68,7 +68,7 @@ def _git_status(repo: Path) -> str:
     """Return `git status --short` output."""
     result = subprocess.run(
         ["git", "status", "--short"],
-        cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+        cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
     )
     return result.stdout.strip()
 
@@ -77,7 +77,7 @@ def _is_dirty(repo: Path) -> bool:
     """Return True if the working tree has tracked or untracked changes."""
     result = subprocess.run(
         ["git", "status", "--porcelain"],
-        cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+        cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
     )
     return bool(result.stdout.strip())
 
@@ -101,7 +101,7 @@ def _run_preservation(repo: Path, env: dict) -> tuple[int, str]:
     """)
     result = subprocess.run(
         ["bash", "-c", script],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=30, env=env_copy,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",  timeout=30, env=env_copy,
     )
     # The function echoes the wip_count on stdout and logs on stderr
     stdout_lines = result.stdout.strip().splitlines()
@@ -156,7 +156,7 @@ class TestAC1DirtyTreePreservation:
         # Verify all files are in the commit
         result = subprocess.run(
             ["git", "show", "--stat", "HEAD"],
-            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
         )
         assert "a.txt" in result.stdout
         assert "b.txt" in result.stdout
@@ -175,7 +175,7 @@ class TestAC2MessageShape:
 
         result = subprocess.run(
             ["git", "log", "-1", "--format=%B"],
-            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
         )
         body = result.stdout
         assert "WIP: preserve timed-out iteration" in body, \
@@ -201,7 +201,7 @@ class TestAC4UntrackedFiles:
         # Verify the file is in the commit
         result = subprocess.run(
             ["git", "show", "--stat", "HEAD"],
-            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
         )
         assert "new_test.py" in result.stdout
 
@@ -216,7 +216,7 @@ class TestAC4UntrackedFiles:
         assert not _is_dirty(repo)
         result = subprocess.run(
             ["git", "show", "--stat", "HEAD"],
-            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
         )
         assert "seed.txt" in result.stdout
         assert "untracked.txt" in result.stdout
@@ -275,7 +275,7 @@ class TestAC7CannotAbort:
         """
         result = subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=30, env={**env, "ILK_DOTSOURCE_ONLY": "1"},
+            capture_output=True, text=True, encoding="utf-8", errors="replace",  timeout=30, env={**env, "ILK_DOTSOURCE_ONLY": "1"},
         )
         assert result.returncode == 0, "nonexistent repo should not abort"
         assert "0" in result.stdout, "wip_count should be 0 for nonexistent repo"
@@ -325,7 +325,7 @@ class TestAC3FrontMatterUntouched:
         """)
         result = subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",  timeout=30,
             env={**env, "ILK_DOTSOURCE_ONLY": "1"},
         )
         assert "CLEAN" in result.stdout, \
@@ -377,7 +377,7 @@ class TestAC6NextIterationResumes:
         # Verify we can create new branches
         result = subprocess.run(
             ["git", "checkout", "-b", "test-branch"],
-            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
         )
         assert result.returncode == 0
 
@@ -419,7 +419,7 @@ class TestAC11ClassificationSafety:
         """)
         result = subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",  timeout=30,
             env={**env, "ILK_DOTSOURCE_ONLY": "1"},
         )
         assert "CLEAN" in result.stdout, \
@@ -440,7 +440,7 @@ class TestStructural:
         """)
         result = subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",  timeout=30,
             env={**env, "ILK_DOTSOURCE_ONLY": "1"},
         )
         assert result.returncode == 0, "function should be defined"
@@ -647,7 +647,7 @@ class TestLiveRunnerTimeout:
         # Assert: WIP commit was created
         git_log = subprocess.run(
             ["git", "log", "--oneline", "-5"],
-            cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
         )
         assert "WIP:" in git_log.stdout, \
             f"Expected WIP commit in git log:\n{git_log.stdout}"
@@ -655,7 +655,7 @@ class TestLiveRunnerTimeout:
         # Assert: tree is clean after preservation
         git_status = subprocess.run(
             ["git", "status", "--short"],
-            cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
         )
         assert git_status.stdout.strip() == "", \
             f"tree should be clean after WIP commit:\n{git_status.stdout}"
@@ -663,7 +663,7 @@ class TestLiveRunnerTimeout:
         # Assert: WIP commit includes both tracked and untracked files
         git_show = subprocess.run(
             ["git", "show", "--stat", "HEAD"],
-            cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
         )
         assert "work.txt" in git_show.stdout, "tracked file should be in WIP commit"
         assert "untracked_test.py" in git_show.stdout, "untracked file should be in WIP commit"
@@ -699,7 +699,7 @@ class TestLiveRunnerTimeout:
         # Verify tree is clean before running the runner
         pre_status = subprocess.run(
             ["git", "status", "--short"],
-            cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
         )
         assert pre_status.stdout.strip() == "", \
             f"tree should be clean before runner, got:\n{pre_status.stdout}"
@@ -736,17 +736,17 @@ class TestLiveRunnerTimeout:
         # Assert: no WIP commit (the last commit should still be "clean up")
         git_log = subprocess.run(
             ["git", "log", "--oneline", "-3"],
-            cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+            cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
         )
         if "WIP:" in git_log.stdout:
             # Debug: what did the WIP commit include?
             git_show = subprocess.run(
                 ["git", "show", "--stat", "HEAD"],
-                cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+                cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
             )
             git_status = subprocess.run(
                 ["git", "status", "--short"],
-                cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
+                cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
             )
             pytest.fail(
                 f"clean tree should not produce WIP commit.\n"
@@ -775,7 +775,7 @@ class TestAC12IterationMetrics:
             """)
             result = subprocess.run(
                 ["bash", "-c", script],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=30,
+                capture_output=True, text=True, encoding="utf-8", errors="replace",  timeout=30,
                 env={**env, "ILK_DOTSOURCE_ONLY": "1"},
             )
             parts = result.stdout.strip().split()
@@ -901,7 +901,7 @@ class TestAC13OrphanReaping:
         """)
         result = subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",  timeout=30,
             env={**env, "ILK_DOTSOURCE_ONLY": "1"},
         )
         assert result.returncode == 0, "function should be defined"
@@ -918,7 +918,7 @@ class TestAC13OrphanReaping:
         """)
         result = subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",  timeout=30,
             env={**env, "ILK_DOTSOURCE_ONLY": "1"},
         )
         assert result.returncode == 0, "function should not abort"
@@ -960,7 +960,7 @@ def _raw_preservation_stdout(repo: Path, env: dict) -> str:
     """)
     result = subprocess.run(
         ["bash", "-c", script],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=30, env=env_copy,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",  timeout=30, env=env_copy,
     )
     return result.stdout
 
