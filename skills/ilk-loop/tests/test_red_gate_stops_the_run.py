@@ -274,7 +274,7 @@ def test_ship_integrity_violation_classifies_as_shipped_unverified() -> None:
     action = subprocess.run(
         ["bash", "-c",
          f"source '{WATCHDOG}' >/dev/null 2>&1; classify_action shipped-unverified"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",  timeout=60,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
     ).stdout.strip()
     assert action == "needs-human", (
         f"watchdog.sh routes shipped-unverified to {action!r}; it must not be "

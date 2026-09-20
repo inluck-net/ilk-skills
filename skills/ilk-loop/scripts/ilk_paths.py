@@ -263,21 +263,73 @@ def meta_member_for(meta_dir: Path, start: Path) -> dict | None:
 
 _KEY_PUNCT = re.compile(r"[^a-z0-9]+")
 
+# Total key length stays at 80 = _KEY_SLUG_MAX + 1 separator + _KEY_HASH_LEN.
+# Judgment call: the 80-char total is CARRIED OVER, not re-chosen. Nothing in
+# C1 asks for a different budget, and consumers that size columns or filenames
+# around it keep working. Wrong if a future caller needs a longer readable
+# prefix — then raise _KEY_SLUG_MAX and re-run the migration.
+_KEY_HASH_LEN = 7
+_KEY_SLUG_MAX = 80 - 1 - _KEY_HASH_LEN  # 72
+
 
 def project_key(root: Path) -> str:
     """
-    Stable, readable key from an absolute project root path.
+    Stable, readable, COLLIDING-PROOF key from an absolute project root path.
 
-    Lowercase, ASCII, hyphenated path. Capped at 80 chars; if the raw
-    slug would exceed the cap, the tail is replaced with a 7-char sha1
-    suffix to keep the key unique while still searchable by humans.
+    Shape: ``<lowercased-hyphenated-slug, <=72 chars>-<7-char sha1>``.
+
+    The slug is for humans — it keeps ``ls ~/.ilk-data/projects`` greppable.
+    Identity lives entirely in the hash, which is taken over the **exact,
+    case-preserving** absolute path, so no two distinct paths can share a key.
+
+    Why the hash is unconditional (C1, MASTER-2026-09-08b)
+    -----------------------------------------------------
+    The previous construction appended the hash only when the slug exceeded 80
+    characters. The slug transform is lossy — it lowercases and collapses every
+    run of non-``[a-z0-9]`` to one ``-`` — so below the cap the lossy string was
+    the whole key and distinct paths mapped onto one. Reproduced 2026-09-08::
+
+        /tmp/ilk-review/app-one   ->  private-tmp-ilk-review-app-one
+        /tmp/ilk-review/app_one   ->  private-tmp-ilk-review-app-one
+        /tmp/ilk-review/app/one   ->  private-tmp-ilk-review-app-one
+        /tmp/ilk-review/APP.ONE   ->  private-tmp-ilk-review-app-one
+
+    Four paths, one key — one plans dir, one runtime dir, one log stream and one
+    lock, shared. 0 of the 55 registered projects actually collided, so the bug
+    was latent; but the same 80-char boundary had already failed in the other
+    direction (``status_all.py`` reporting ``repo_path: None`` for over-length
+    slugs, because the transform is one-way and nothing could invert it).
+
+    The hash input is deliberately NOT lowercased. Lowercasing it would leave
+    ``APP.ONE`` and ``app.one`` sharing a key — genuinely different directories
+    on any case-sensitive filesystem.
+
+    Re-keying is an operator step
+    -----------------------------
+    Keys change under this construction and on-disk state must be migrated by
+    ``migrate_project_keys.py``, which is dry-run by default and refuses to run
+    while any loop is live. Deploying this function without running that
+    migration points every tool at a new, empty state directory.
+
+    Which keys change, measured 2026-09-20 over the 55 registered projects:
+    all 11 that had state on disk. Under the cap a key always changes (it gains
+    a suffix it never had). Over the cap it changes only if the path contains
+    an uppercase character, because the sole difference is that the hash input
+    stopped being lowercased — every real path here begins ``/Users/...``, so
+    all of them did. An all-lowercase over-cap path (``/home/...`` on Linux)
+    keeps its key, and the migration reports it as ``unchanged-key`` rather
+    than renaming a directory onto itself.
+
+    Operator procedure, the refusals, the git-worktree repair step and the
+    cross-repo consumers: ``docs/re-keying-project-state.md``.
     """
-    abs_str = str(Path(root).resolve()).lower()
-    slug = _KEY_PUNCT.sub("-", abs_str).strip("-")
-    if len(slug) <= 80:
-        return slug
-    h = hashlib.sha1(abs_str.encode("utf-8")).hexdigest()[:7]
-    return slug[: 80 - 8].rstrip("-") + "-" + h
+    abs_str = str(Path(root).resolve())
+    h = hashlib.sha1(abs_str.encode("utf-8")).hexdigest()[:_KEY_HASH_LEN]
+    slug = _KEY_PUNCT.sub("-", abs_str.lower()).strip("-")[:_KEY_SLUG_MAX].rstrip("-")
+    # A path whose slug is empty (``/``, or an all-punctuation root) would
+    # otherwise produce a key starting with "-", which is not a safe directory
+    # name. The hash alone still identifies it.
+    return f"{slug}-{h}" if slug else h
 
 
 def ilk_data_root() -> Path:

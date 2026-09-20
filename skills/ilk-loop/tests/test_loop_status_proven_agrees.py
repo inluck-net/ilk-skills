@@ -103,7 +103,7 @@ def _make_git_repo(tmp_path: Path, slug: str = "test-slug", steps: int = 2) -> P
 def _current_head(repo: Path) -> str:
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
-        cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
+        cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     return result.stdout.strip()
 

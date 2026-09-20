@@ -28,8 +28,7 @@ def _init_repo(tmp: Path) -> Path:
     """Create a minimal git repo with one initial commit."""
     repo = tmp / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
-              )
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(
         ["git", "config", "user.email", "test@test"], cwd=repo, check=True,
         capture_output=True,
@@ -41,8 +40,7 @@ def _init_repo(tmp: Path) -> Path:
             encoding="utf-8", errors="replace",
     )
     (repo / "README.md").write_text("init\n")
-    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
-              )
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(
         ["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True,
             encoding="utf-8", errors="replace",
@@ -53,8 +51,7 @@ def _init_repo(tmp: Path) -> Path:
 def _commit_with_trailer(repo: Path, filename: str, content: str, trailer: str) -> str:
     """Create a commit with a plan trailer. Returns short SHA."""
     (repo / filename).write_text(content)
-    subprocess.run(["git", "add", filename], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
-              )
+    subprocess.run(["git", "add", filename], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     msg = f"feat({filename}): change\n\n{trailer}"
     subprocess.run(
         ["git", "commit", "-m", msg], cwd=repo, check=True, capture_output=True,
@@ -78,8 +75,7 @@ def _commit_with_subject_trailer(repo: Path, filename: str, content: str,
     near-miss diagnostic could regress without any test noticing.
     """
     (repo / filename).write_text(content)
-    subprocess.run(["git", "add", filename], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
-              )
+    subprocess.run(["git", "add", filename], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     msg = f"feat({filename}): change {trailer}"
     subprocess.run(
         ["git", "commit", "-m", msg], cwd=repo, check=True, capture_output=True,
@@ -395,7 +391,7 @@ class TestPin3UnknownSlugDetection:
         # Extract trailer slugs from git log
         result = subprocess.run(
             ["git", "log", "--format=%s%n%b", "--all"],
-            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
+            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         )
         import re
         trailer_re = re.compile(r"\[plan:([^#]+)#")
@@ -437,7 +433,7 @@ class TestPin3BashDriver:
         )
         return subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",  timeout=30, cwd=str(cwd),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, cwd=str(cwd),
         )
 
     def test_unknown_slug_detected(self, typo_repo: tuple[Path, Path]) -> None:

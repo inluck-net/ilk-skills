@@ -102,7 +102,7 @@ def _audit_repo(path: Path) -> str:
             text=True, encoding="utf-8", errors="replace")
     return subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=path,
-        capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True).stdout.strip()
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True).stdout.strip()
 
 
 def _write_raw_record(runtime_dir: Path, data: dict) -> None:

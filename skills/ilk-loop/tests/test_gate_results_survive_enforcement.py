@@ -57,7 +57,7 @@ def _dotsource(script: str, cwd: Path) -> subprocess.CompletedProcess:
     """Run ``script`` in a shell that has the runner's functions but not its main."""
     return subprocess.run(
         ["bash", "-c", f"export ILK_DOTSOURCE_ONLY=1; source '{RUNNER}'; {script}"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",  timeout=120, cwd=str(cwd),
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, cwd=str(cwd),
         env={"ILK_DOTSOURCE_ONLY": "1", "PATH": _PATH, "HOME": str(cwd)},
     )
 

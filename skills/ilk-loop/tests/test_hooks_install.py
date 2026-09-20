@@ -201,7 +201,7 @@ else:
 '''
     result = subprocess.run(
         ["python3", "-", settings_path, hook_cmd, "1" if apply else "0"],
-        input=script, capture_output=True, text=True, encoding="utf-8", errors="replace",  timeout=10,
+        input=script, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
     )
     assert result.returncode == 0, f"reconcile failed: {result.stderr}"
     return result.stdout.strip()
@@ -383,7 +383,7 @@ def _run_reconcile_multi(hooks_dir: str, *, apply: bool = True,
     result = subprocess.run(
         ["python3", "-", settings_path, hook_cmds, matchers, hosts,
          host, "1" if apply else "0"],
-        input=script, capture_output=True, text=True, encoding="utf-8", errors="replace",  timeout=10,
+        input=script, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
     )
     assert result.returncode == 0, f"reconcile failed: {result.stderr}"
     return result.stdout.strip()

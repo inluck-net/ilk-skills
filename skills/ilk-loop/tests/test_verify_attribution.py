@@ -469,7 +469,7 @@ class TestVerifiedTreeGuard:
     def _head(self, proj) -> str:
         import subprocess
         return subprocess.run(["git", "rev-parse", "HEAD"], cwd=proj,
-                              capture_output=True, text=True, encoding="utf-8", errors="replace", ).stdout.strip()
+                              capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
 
     def _record(self, tmp_path: Path, head: str | None) -> Path:
         body = "suite_failed: 0\n\n"

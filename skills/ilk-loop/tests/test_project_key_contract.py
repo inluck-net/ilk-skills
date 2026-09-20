@@ -9,11 +9,26 @@ divergence:
     lowercase + [/\\.] -> '-' + lstrip('-')        (the re-implementation)
     lowercase + [^a-z0-9]+ -> '-' + 80-char cap    (this repo)
 
-The two AGREE below 80 characters and DIVERGE above it, because the cap
-replaces the tail with a 7-char sha1 and a hash cannot be inverted.  Resolver
-worktree paths sit right at the boundary: the live
+Those two AGREED below 80 characters and DIVERGED above it, because the cap
+replaced the tail with a 7-char sha1 and a hash cannot be inverted.  Resolver
+worktree paths sat right at the boundary: the live
 ``…kira-cloudflare-scratch-worktrees-resolver-7359f23`` is 79 characters and
-agrees by ONE character.  A slightly longer worktree name does not.
+agreed by ONE character.  A slightly longer worktree name did not.
+
+**Superseded 2026-09-20 (C1, sub-plan a-project-key-that-cannot-collide).**
+That conditional hash was itself the defect: below the cap the lossy slug WAS
+the key, so four distinct paths mapped to ``private-tmp-ilk-review-app-one``.
+The hash is now unconditional and taken over the case-preserving absolute path,
+so the transform is::
+
+    <lowercased-hyphenated-slug, <=72 chars>-<7-char sha1 of the exact path>
+
+The consequence for this file is that the naive mirror now diverges at **every**
+length, not just above 80.  That is a widening of an existing break, not a new
+one -- the mirror was already unusable for the case that mattered, and this
+file's own conclusion was already "call the CLI rather than re-implement".  The
+vectors below are kept and updated rather than deleted: they are the record of
+what a mirror must now reproduce, and of the boundary that no longer exists.
 
 Measured consequence on rezmac, 2026-09-09: **0 of 5 exit records reachable by
 the remedy `doctor` prints, and 0 of 5 computed directories exist**, so
@@ -53,6 +68,11 @@ def _naive_key(path: str) -> str:
 
     Not a criticism of that code — it is here so the boundary is a checked
     fact rather than a claim in a commit message.
+
+    Since C1 it diverges everywhere, so this is no longer a boundary marker but
+    a standing demonstration that mirroring cannot work. gh-resolve has not
+    been updated by this repo; until it calls `--project-key` it computes the
+    old key for every path.
     """
     return re.sub(r"[/\\.]", "-", path.lower()).lstrip("-")
 
@@ -83,21 +103,43 @@ def test_cli_agrees_with_the_function(path: str) -> None:
 
 # ── AC-2: named vectors, including the one that broke ───────────────────────
 
-def test_short_paths_are_the_plain_slug() -> None:
-    assert project_key(Path("/Users/chad/Projects/github/inluck-net/ilk-skills")) == (
-        "users-chad-projects-github-inluck-net-ilk-skills"
+def test_short_paths_are_slug_plus_hash_not_the_plain_slug() -> None:
+    """The vector that used to assert the defect, inverted.
+
+    Before C1 this asserted the key WAS the bare slug.  That is precisely the
+    property that let four paths share it, so the assertion now pins the
+    replacement: the readable slug survives verbatim as a prefix, and identity
+    is carried by a suffix that is always present.
+    """
+    key = project_key(Path("/Users/chad/Projects/github/inluck-net/ilk-skills"))
+    assert key == "users-chad-projects-github-inluck-net-ilk-skills-604d727"
+    assert key.startswith("users-chad-projects-github-inluck-net-ilk-skills-"), (
+        "the slug must survive verbatim so state dirs stay greppable"
+    )
+    assert key != _naive_key("/Users/chad/Projects/github/inluck-net/ilk-skills"), (
+        "a short path no longer agrees with the naive mirror either -- this is "
+        "the widening gh-resolve must be told about"
     )
 
 
-def test_a_path_at_79_chars_is_not_capped() -> None:
-    """The live resolver worktree — it agrees with the naive transform by ONE
-    character, which is why the divergence went unnoticed."""
+def test_the_79_char_near_miss_no_longer_agrees() -> None:
+    """The live resolver worktree, kept as the historical near-miss.
+
+    Under the old construction this path agreed with the naive mirror by ONE
+    character, which is why the divergence went unnoticed for so long.  There
+    is no near-miss any more because there is no boundary any more: the slug is
+    truncated at 72 and a hash is always appended, so this key and the naive
+    one differ structurally rather than by luck.
+    """
     p = "/Users/chad/Projects/keyreply/kira-cloudflare/scratch/worktrees/resolver-7359f23"
     key = project_key(Path(p))
-    assert len(key) == 79
-    assert key == _naive_key(p), (
-        "at 79 chars the two transforms agree — this vector documents the "
-        "near-miss that made the bug look absent"
+    assert key == "users-chad-projects-keyreply-kira-cloudflare-scratch-worktrees-resolver-047d71e"
+    assert len(key) == 79, (
+        "71-char slug (the 72-char cut lands on a hyphen and rstrip drops it) "
+        "+ 1 separator + 7 hash chars"
+    )
+    assert key != _naive_key(p), (
+        "the one-character agreement that hid the bug is gone"
     )
 
 
@@ -115,9 +157,11 @@ def test_a_path_over_the_cap_is_hashed_and_diverges() -> None:
         "this vector's 72-char cut lands on a hyphen, so rstrip makes it 79 — "
         "pinned because it is the easiest detail for a mirror to get wrong"
     )
-    assert key.endswith("-3bd7ec7"), (
-        "the tail is the first 7 chars of sha1(lowercased absolute path); a "
-        "mirror implementation must reproduce this exact string"
+    assert key.endswith("-bc07129"), (
+        "the tail is the first 7 chars of sha1 over the EXACT, case-preserving "
+        "absolute path. It changed from -3bd7ec7 at C1 because the old hash "
+        "input was lowercased, which would have left APP.ONE and app.one "
+        "sharing a key. A mirror must hash the un-lowercased path."
     )
     assert key != _naive_key(p), (
         "this is the divergence: 0 of 5 exit records were reachable on rezmac "
@@ -150,14 +194,24 @@ def test_keys_are_deterministic() -> None:
 
 # ── AC-3: the boundary itself ───────────────────────────────────────────────
 
-def test_agreement_holds_below_the_cap_and_fails_above_it() -> None:
-    """One assertion carrying the whole shape of the defect.
+def test_agreement_now_fails_at_every_length() -> None:
+    """One assertion carrying the whole shape of the change.
 
-    Anyone changing `project_key` should see this fail and understand that a
-    consumer in another repo depends on the exact transform.
+    The old version of this test asserted agreement BELOW the cap and
+    divergence above it — a boundary that existed only because the hash was
+    conditional. C1 removed the condition, so both sides now diverge, and the
+    length ceiling is the only thing the two transforms still have in common.
+
+    Anyone changing `project_key` should still see this fail and understand
+    that a consumer in another repo depends on the exact transform. The remedy
+    has not changed and is now the only remedy: call `--project-key`.
     """
     below = "/Users/chad/Projects/github/inluck-net/gh-resolve/tests/fixtures/cli-term"
     above = "/Users/chad/Projects/keyreply/kira-cloudflare/scratch/worktrees/resolver-abcdef1234"
-    assert project_key(Path(below)) == _naive_key(below)
+    assert project_key(Path(below)) != _naive_key(below), (
+        "below the old cap the mirror used to agree; it no longer does"
+    )
     assert project_key(Path(above)) != _naive_key(above)
     assert len(_naive_key(above)) > 80 >= len(project_key(Path(above)))
+    for p in (below, above):
+        assert len(project_key(Path(p))) <= 80

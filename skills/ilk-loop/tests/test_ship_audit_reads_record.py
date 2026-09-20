@@ -70,7 +70,7 @@ def _head_sha(path: Path) -> str:
     """Return the current HEAD sha."""
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=path,
-        capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     return result.stdout.strip()
 

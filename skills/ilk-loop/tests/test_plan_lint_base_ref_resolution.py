@@ -34,11 +34,11 @@ from plan_lint import lint_scope_path_off_base_branch, lint_one_batch_one_branch
 
 def _git_init(tmp_path: Path) -> None:
     subprocess.run(["git", "init"], cwd=tmp_path, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "config", "user.email", "test@test.local"],
-                   cwd=tmp_path, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", )
+                   cwd=tmp_path, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "config", "user.name", "Test"],
-                   cwd=tmp_path, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", )
+                   cwd=tmp_path, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def _make_stale_local_repo(tmp_path: Path) -> Path:
@@ -65,26 +65,26 @@ def _make_stale_local_repo(tmp_path: Path) -> Path:
     # Initial commit on main.
     (work / "main.txt").write_text("initial\n")
     subprocess.run(["git", "add", "."], cwd=work, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "commit", "-m", "initial"], cwd=work, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "branch", "-M", "dev"], cwd=work, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "push", "-u", "origin", "dev"], cwd=work, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
 
     # Push feature.txt to origin/dev only — local dev stays behind.
     (work / "feature.txt").write_text("on origin/dev only\n")
     subprocess.run(["git", "add", "."], cwd=work, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "commit", "-m", "add feature"], cwd=work, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "push", "origin", "dev"], cwd=work, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
 
     # Move local dev back one commit so it's stale.
     subprocess.run(["git", "reset", "--hard", "HEAD~1"], cwd=work, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
 
     return work
 
@@ -94,20 +94,20 @@ def _make_repo_with_feature_branch(tmp_path: Path) -> Path:
     _git_init(tmp_path)
     (tmp_path / "a.txt").write_text("a\n")
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "checkout", "-b", "feature"], cwd=tmp_path, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
     (tmp_path / "b.txt").write_text("b\n")
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "commit", "-m", "add b"], cwd=tmp_path, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "checkout", "main"], cwd=tmp_path, check=True,
-                   capture_output=True, text=True, encoding="utf-8", errors="replace", )
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
     return tmp_path
 
 

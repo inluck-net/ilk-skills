@@ -121,8 +121,27 @@ def lint_source(source: str, path: str = "<unknown>") -> list[Violation]:
     """Lint one python source string.  Returns a list of violations."""
     try:
         tree = ast.parse(source, filename=path)
-    except SyntaxError:
-        return []
+        # `ast.parse` is the PARSE stage only.  `keyword argument repeated` —
+        # the exact shape that broke 35 files on 2026-09-20 — is raised by the
+        # compiler, not the parser, so ast.parse accepts it happily.  Compiling
+        # the tree we already built runs codegen without re-parsing the source.
+        compile(tree, path, "exec")
+    except SyntaxError as exc:
+        # A file that does not parse is NOT a file with zero violations.
+        # Returning [] here is how the FM-0003 remediation pass on 2026-09-20
+        # broke 35 of 370 tracked .py files while `--scan skills tools` still
+        # exited 0: every edit that made a file unparseable simultaneously
+        # removed that file from the check meant to verify the edit.
+        #
+        # Report rather than raise — `scan_paths` walks many files, and one
+        # bad file must be counted, not allowed to abort the whole scan.
+        return [Violation(
+            path=path,
+            lineno=exc.lineno or 0,
+            func_name="<unparseable>",
+            reason=(f"file does not parse or compile ({exc.msg}) — the lint cannot "
+                    "certify a file it cannot read"),
+        )]
     violations: list[Violation] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):

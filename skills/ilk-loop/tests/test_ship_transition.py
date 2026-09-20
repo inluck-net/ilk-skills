@@ -44,7 +44,7 @@ def _mod():
 
 def _git(repo: Path, *args: str) -> str:
     cp = subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace",  check=True,
+        ["git", *args], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     return cp.stdout.strip()
 

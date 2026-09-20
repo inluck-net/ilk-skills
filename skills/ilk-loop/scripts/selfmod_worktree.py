@@ -23,6 +23,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,15 @@ class BranchMovedError(RuntimeError):
 #: passed alone and in skills/ilk-loop/tests/ (1798 passed), and failed in
 #: the full suite.  Production never passes this; the default is the
 #: contract.
+#:
+#: That 2026-09-17 note pinned the symptom in the tests and left production
+#: matching the whole world.  On 2026-09-20 the same defect landed in
+#: production: kira-cloudflare running pv5-verify all day made EVERY
+#: ilk-skills run end ``selfmod_merge_failed`` ("MERGE BLOCKED: live loop(s)
+#: detected", merge exited 2), stranding 11 commits in the selfmod worktree.
+#: The pattern is no longer the whole test — see ``_find_live_ilk_pids``,
+#: which now also requires the candidate to be driving the repo being
+#: merged.
 DEFAULT_PROBE_PATTERN = "run_ilk_loop"
 
 #: Command-line substring identifying a live scheduler daemon (the launchd
@@ -119,23 +129,21 @@ DEFAULT_PROBE_PATTERN = "run_ilk_loop"
 DAEMON_PROBE_PATTERN = "scheduler_scan"
 
 
-def _find_live_ilk_pids(pattern: str = DEFAULT_PROBE_PATTERN) -> list[int]:
-    """Detect live ilk runner processes.
+#: The runner flag whose VALUE names the project a runner is driving.  The
+#: path must appear in this role, never as a bare substring: every runner of
+#: every project carries the *script* path in its argv, which is what made
+#: the bare-substring probe match the world.
+PROJECT_PATH_FLAG = "--project-path"
 
-    Uses ``pgrep -f`` to find processes whose command line matches the
-    runner pattern.  ``pgrep`` exit 1 means "none found"; exit >1 is an
-    error and must raise — a broken probe and a true zero must not be
-    byte-identical (fail-closed invariant).
+
+def _pgrep(pattern: str) -> list[int]:
+    """Return PIDs whose command line matches *pattern*, or raise.
+
+    ``pgrep`` exit 1 means "none found"; exit >1 is an error and must raise —
+    a broken probe and a true zero must not be byte-identical (fail-closed
+    invariant).
 
     Note: macOS ``pgrep`` has no ``-c`` flag.
-
-    Returns:
-        List of PIDs of live ilk runners.
-
-    Raises:
-        RuntimeError: If the probe itself fails (broken pgrep, permission
-            error, etc.).  The caller must treat this as "unknown liveness"
-            and refuse to merge.
     """
     try:
         result = subprocess.run(
@@ -150,7 +158,6 @@ def _find_live_ilk_pids(pattern: str = DEFAULT_PROBE_PATTERN) -> list[int]:
         ) from exc
 
     if result.returncode == 0:
-        # PIDs found — one per line.
         pids = []
         for line in result.stdout.strip().splitlines():
             line = line.strip()
@@ -177,10 +184,16 @@ def _find_live_daemon_pids(
 ) -> list[int]:
     """Detect live scheduler daemon processes.
 
-    Uses the same ``pgrep -f`` strategy as :func:`_find_live_ilk_pids` but
-    matches the daemon pattern (``scheduler_scan`` by default).  The two
+    Uses the same ``pgrep -f`` strategy as :func:`_find_any_live_ilk_pids`
+    but matches the daemon pattern (``scheduler_scan`` by default).  The two
     probes are deliberately separate: loop liveness means "refuse" while
     daemon liveness means "bounce".
+
+    Deliberately world-scoped, so it delegates to
+    :func:`_find_any_live_ilk_pids` and NOT to :func:`_find_live_ilk_pids`:
+    a scheduler daemon is a per-box singleton that carries no
+    ``--project-path``, so the repo-scoped probe would match none and
+    silently skip the bounce.
 
     Returns:
         List of PIDs of live scheduler daemons.
@@ -188,7 +201,226 @@ def _find_live_daemon_pids(
     Raises:
         RuntimeError: If the probe itself fails.
     """
-    return _find_live_ilk_pids(pattern)
+    return _find_any_live_ilk_pids(pattern)
+
+def _candidate_roots(repo_path: "Path | str | Iterable[Path | str]") -> list[str]:
+    """Every spelling of *repo_path* a runner's argv might carry.
+
+    Three sources of divergence, all real:
+
+    * The runner normalises with ``cd && pwd``
+      (``run_ilk_loop_claude.sh:215``), which does NOT resolve symlinks,
+      while ``SelfmodWorktree.__init__`` calls ``Path.resolve()``, which
+      does.  And argv is fixed at exec time, before even that — so the
+      caller's original spelling is passed in alongside the resolved one.
+    * macOS hands out ``/var/folders/...`` for ``/private/var/folders/...``;
+      the alias is added in both directions.
+    * A trailing slash is handled by the matcher, not here.
+
+    Mirrors the ``norm``/``resolved`` pair in
+    ``_ilk_pid.sh:ilk_project_runners``.  A spelling nobody uses is harmless:
+    it still has to appear verbatim in some argv to match.
+    """
+    if repo_path is None:
+        given: list[Path | str] = []
+    elif isinstance(repo_path, (str, Path)):
+        given = [repo_path]
+    else:
+        given = list(repo_path)
+
+    roots: list[str] = []
+
+    def _add(spelling: str) -> None:
+        if spelling and spelling not in roots:
+            roots.append(spelling)
+
+    for item in given:
+        if item is None:
+            continue
+        # Strip whitespace BEFORE the emptiness test: "   " survives
+        # rstrip("/") and would become a root, which Path().resolve() then
+        # turns into cwd/"   " — a spelling no runner has, so the probe
+        # silently matches nothing.  Fail-open again, by another route.
+        raw = str(item).strip().rstrip("/")
+        if not raw:
+            continue
+        _add(raw)
+        try:
+            _add(str(Path(item).resolve()).rstrip("/"))
+        except OSError:  # pragma: no cover - unreadable path
+            pass
+
+    for spelling in list(roots):
+        if spelling.startswith("/private/"):
+            _add(spelling[len("/private"):])
+        else:
+            _add("/private" + spelling)
+
+    return roots
+
+
+def _cmdline_drives_repo(cmdline: str, roots: list[str]) -> bool:
+    """True when *cmdline* passes one of *roots* as the --project-path value.
+
+    Literal ``str.find`` with an explicit end boundary, never a regex: a regex
+    would treat the path as a pattern, so a project path containing ``.``
+    (``tmp.EVYaXMrl92``, any dotted directory) would match a DIFFERENT
+    project's runner.  Verified 2026-08-12 in ``_ilk_pid.sh``: with ``~``,
+    querying ``/…/ilk.test`` matched a live runner whose real path was
+    ``/…/ilkAtest``.
+
+    The end boundary is what keeps ``--project-path /a/repo`` from matching a
+    runner driving ``/a/repo-2``.  A trailing slash on the value is accepted
+    as the same path.
+    """
+    for root in roots:
+        for prefix in (PROJECT_PATH_FLAG + " ", PROJECT_PATH_FLAG + "="):
+            needle = prefix + root
+            start = 0
+            while True:
+                idx = cmdline.find(needle, start)
+                if idx < 0:
+                    break
+                end = idx + len(needle)
+                if end < len(cmdline) and cmdline[end] == "/":
+                    end += 1
+                if end == len(cmdline) or cmdline[end].isspace():
+                    return True
+                start = idx + len(needle)
+    return False
+
+
+def _pid_cmdline(pid: int) -> str:
+    """The full command line of *pid*, or "" when it cannot be read.
+
+    An unreadable command line yields "", which fails the role check and so
+    drops the candidate.  That is the safe direction here only because the
+    candidate already matched the probe pattern by a different route; the
+    conservative side of this function is ``_self_and_ancestor_pids``, which
+    over-blocks when it cannot see.
+    """
+    result = subprocess.run(
+        ["ps", "-p", str(pid), "-o", "command="],
+        capture_output=True,
+        text=True,
+        encoding="utf-8", errors="replace",
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def _self_and_ancestor_pids() -> set[int]:
+    """This process and every ancestor of it.
+
+    The merge runs *inside* the very loop it is merging for:
+    ``run_ilk_loop_claude.sh:3301`` calls the merge CLI, and that runner's own
+    argv carries ``--project-path <this repo>``.  Without this exclusion a
+    repo-scoped probe would report the merging run itself and self-block every
+    selfmod merge — strictly worse than the world-match it replaces.
+
+    When the walk cannot complete (``ps`` fails, a PID vanishes) it returns
+    what it has.  That under-excludes, which over-blocks, which is the
+    fail-closed direction.
+    """
+    pids: set[int] = set()
+    import os  # noqa: PLC0415
+
+    pid = os.getpid()
+    while pid > 1 and pid not in pids:
+        pids.add(pid)
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "ppid="],
+            capture_output=True,
+            text=True,
+            encoding="utf-8", errors="replace",
+        )
+        if result.returncode != 0:
+            break
+        try:
+            pid = int(result.stdout.strip())
+        except ValueError:
+            break
+    return pids
+
+
+def _find_any_live_ilk_pids(pattern: str = DEFAULT_PROBE_PATTERN) -> list[int]:
+    """Every live ilk runner on this box, regardless of which repo it drives.
+
+    This is the "quiet box" probe — the question
+    ``migrate_project_keys.live_loop_pids`` asks, where ANY live loop is
+    disqualifying because it resolves its paths through ``project_key``
+    mid-run.  It is deliberately world-scoped; the merge-back wants
+    ``_find_live_ilk_pids`` instead.
+
+    Raises:
+        RuntimeError: If the probe itself fails (broken pgrep, permission
+            error, etc.).  The caller must treat this as "unknown liveness"
+            and refuse.
+    """
+    return _pgrep(pattern)
+
+
+def _find_live_ilk_pids(
+    repo_path: "Path | str | Iterable[Path | str]",
+    pattern: str = DEFAULT_PROBE_PATTERN,
+) -> list[int]:
+    """Live ilk runners driving *repo_path*, excluding this process tree.
+
+    Three filters, in order:
+
+    1. ``pgrep -f pattern`` — the runner shape.  Production never passes
+       *pattern*; tests pin it so the assertion is about their own fakes.
+    2. ``--project-path <repo_path>`` in the candidate's argv — the role
+       check.  This is the fix for 2026-09-20: another project's runner
+       carries ``run_ilk_loop_claude.sh`` too, and used to block this repo's
+       merge.
+    3. Not this process or one of its ancestors — the merge runs inside the
+       loop it merges for.
+
+    A second loop on THIS repo that is not in our own ancestry still blocks;
+    the narrowing is about other repos, not a blanket exemption.
+
+    Args:
+        repo_path: The repo being merged — one path, or several spellings
+            of the same repo (the resolved form and the one the caller was
+            handed).  Required, and a value that yields no usable spelling
+            raises: a probe that does not know what it is protecting is the
+            defect this replaced, and an empty one never blocks at all.
+        pattern: Command-line substring identifying a runner.
+
+    Returns:
+        List of PIDs of live ilk runners driving *repo_path*.
+
+    Raises:
+        ValueError: If *repo_path* yields no usable spelling.
+        RuntimeError: If the probe itself fails (broken pgrep, permission
+            error, etc.).  The caller must treat this as "unknown liveness"
+            and refuse to merge.
+    """
+    roots = _candidate_roots(repo_path)
+    if not roots:
+        # An empty root makes every role check fail, so the probe would
+        # return [] for every candidate — a probe that never blocks, which
+        # reads exactly like a quiet box.  That is the fail-OPEN direction
+        # and it is worse than the world-match this replaced: it would merge
+        # under a live loop.  Refuse instead.  Covers None, "", "/" and an
+        # empty sequence in one place.
+        raise ValueError(
+            "_find_live_ilk_pids requires the repo being protected; "
+            f"got {repo_path!r}"
+        )
+
+    candidates = _pgrep(pattern)
+    if not candidates:
+        return []
+
+    excluded = _self_and_ancestor_pids()
+
+    return [
+        pid for pid in candidates
+        if pid not in excluded and _cmdline_drives_repo(_pid_cmdline(pid), roots)
+    ]
 
 
 # ── Git helpers ──────────────────────────────────────────────────────────────
@@ -240,6 +472,10 @@ class SelfmodWorktree:
         worktree_path: Path,
         branch: str = "selfmod-batch",
     ) -> None:
+        #: The spelling the caller handed us, kept alongside the resolved
+        #: form: the liveness probe compares against a runner's argv, and the
+        #: launcher may have been given the unresolved path.
+        self.repo_path_as_given = Path(repo_path)
         self.repo_path = repo_path.resolve()
         self.worktree_path = worktree_path.resolve()
         self.branch = branch
@@ -331,6 +567,8 @@ class SelfmodWorktree:
             check_branch: Whether to check if the branch moved (default True).
             probe_pattern: Command-line substring the liveness probe matches.
                 Defaults to the production contract; pinned only by tests.
+                The probe is scoped to ``self.repo_path`` regardless: a
+                runner driving another project never blocks this merge.
             bounce_daemons_path: Optional path to ``bounce_daemons.sh``.  If
                 set and a live scheduler daemon is detected, the bouncer is
                 called and the merge proceeds on success.  On bounce failure
@@ -339,7 +577,9 @@ class SelfmodWorktree:
         """
         # Step 1a: Loop liveness check — refuse if loops are live.
         try:
-            live_pids = _find_live_ilk_pids(probe_pattern)
+            live_pids = _find_live_ilk_pids(
+                (self.repo_path, self.repo_path_as_given), probe_pattern
+            )
         except RuntimeError as exc:
             # Broken probe — fail closed.
             raise MergeBlockedError(blocking_pids=[-1]) from exc
