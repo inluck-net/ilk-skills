@@ -383,6 +383,7 @@ _SUMMARY_RE = re.compile(
     r"^=+\s(.*?)\sin\s[\d.]+s.*?=+$", re.MULTILINE)
 _COUNT_RE = re.compile(r"(\d+)\s+(passed|failed|error|errors|skipped|xfailed|xpassed)")
 _NODE_RE = re.compile(r"^(?:FAILED|ERROR)\s+(\S+)", re.MULTILINE)
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def parse_pytest_output(out: str) -> dict:
@@ -393,6 +394,14 @@ def parse_pytest_output(out: str) -> dict:
     those are different.  Returning zeros here is the exact substitution this
     module exists to remove.
     """
+    # Strip ANSI color escapes BEFORE matching: pytest on some hosts emits
+    # color into pipes (measured 2026-09-20 on chad-mbp: the banner line
+    # opens with \x1b[32m before the ==== rule), and both _SUMMARY_RE's
+    # ^=+ anchor and _NODE_RE's ^FAILED anchor then never match — the tool
+    # parsed its own captured suite as "no summary" and left the unmeasured
+    # stub on every attempt of the selfmod-merge-visibility batch.
+    out = _ANSI_RE.sub("", out)
+
     m = _SUMMARY_RE.search(out)
     if not m:
         raise ValueError(
