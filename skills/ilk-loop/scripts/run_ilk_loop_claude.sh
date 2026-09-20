@@ -2231,21 +2231,34 @@ invoke_claude_iteration() {
 
   claude_args+=("$prompt_text")
 
-  # Run claude with optional env clear and gtimeout.
-  # The subshell (cd ...) keeps the cwd change local.
+  # Run claude with the worker home's settings env applied EXPLICITLY.
+  # Measured 2026-09-20: stripping the ambient ANTHROPIC_* vars and trusting
+  # the CLI to apply settings.json's env block left every scheduler-driven
+  # worker on the CLI default endpoint (Anthropic official, opus-5) while
+  # records claimed the configured model — the loops burned the account's
+  # five-hour window to exhaustion without ever reaching the configured
+  # endpoint (operator-confirmed). Exporting the settings env here makes the
+  # endpoint and model actually used the ones configured; the display Model
+  # line and reality cannot diverge by this route. Empty exports (no settings
+  # env block) is a no-op.
   local exit_code=0
+  local settings_env_exports=""
   if [[ "$SETTINGS_HAS_ENV" -eq 1 ]]; then
-    (cd "$cwd" && { [[ -z "$PATH_PRELUDE" ]] || eval "$PATH_PRELUDE"; } \
-      && env -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL -u ANTHROPIC_MODEL \
-      gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
-      | tee "$jsonl_log" | python3 "$renderer" | tee "$iter_log" \
-      || exit_code=$?
-  else
-    (cd "$cwd" && { [[ -z "$PATH_PRELUDE" ]] || eval "$PATH_PRELUDE"; } \
-      && gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
-      | tee "$jsonl_log" | python3 "$renderer" | tee "$iter_log" \
-      || exit_code=$?
+    settings_env_exports=$(SETTINGS_JSON="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json" python3 -c '
+import json, os, shlex
+try:
+    d = json.load(open(os.environ["SETTINGS_JSON"]))
+except Exception:
+    raise SystemExit(0)
+for k, v in sorted(d.get("env", {}).items()):
+    print("export %s=%s;" % (k, shlex.quote(str(v))))
+') || settings_env_exports=""
   fi
+  (cd "$cwd" && { [[ -z "$PATH_PRELUDE" ]] || eval "$PATH_PRELUDE"; } \
+      && eval "$settings_env_exports" \
+      && gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
+    | tee "$jsonl_log" | python3 "$renderer" | tee "$iter_log" \
+    || exit_code=$?
 
   # Detect budget-exhausted via the terminal result's terminal_reason field only.
   # Phrase-based patterns ("budget exhausted") match agent thinking/output that
