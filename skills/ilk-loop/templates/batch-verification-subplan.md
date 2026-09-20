@@ -121,6 +121,44 @@ count to zero. If one of them is true, the rerun says so: the test fails at base
 too. If the rerun says it passed at base, the batch broke it, and which commit
 did it is found by `git bisect`, not by reading the diff and forming a view.
 
+## Growing the exemption list — baseline_red, timeout sizing, and designed stops
+
+Every batch's verification should make the next one cheaper. Three rules,
+applied during step 0, accumulate savings across batches rather than
+re-paying them:
+
+**1. Every unattributed failure appends to baseline_red.** When the
+at-base rerun shows a row with `at base: failed` and `attributed: no` —
+meaning the test was already broken before this batch — add a
+`baseline_red` entry to `.ilk-launch.json` as part of the same step:
+a file-level `node_id` (the test file or class, not the individual test
+— the matcher is substring-both-ways), `reason` copied from the
+at-base table row, and `as_of` set to the batch date. Record each
+addition in Findings, never silently: "appended `tests/test_foo.py` to
+`baseline_red` (failed at base, Windows-only typing error)". This is the
+mechanism that ensures the at-base exemption set covers known reds by the
+next batch — the cap cannot fire when coverage is complete.
+
+**2. Size per-test timeouts from `--durations`, not defaults.** When a
+project's suite flags carry a per-test timeout (e.g. `--timeout=60`)
+chosen without measurement, run the suite once with `--durations` to
+find the slowest legitimate test, then set the per-test timeout to
+`max(slowest_test_duration × 2, 15)`. Measure before applying — the
+`--durations` output is the evidence; `--timeout=60` is a hang-absorber
+sized for a different project. Record the measured slowest duration and
+the resulting timeout in the record, so the next operator does not
+re-derive it.
+
+**3. `at_base_cap_exceeded` is a designed stop, not a transient failure.**
+`verification_record.py` enforces `AT_BASE_CAP` — a ceiling on
+uncovered failing node ids. When the cap fires, the record says
+`at_base_cap_exceeded` (not `suite did not finish`). The remedy is
+deliberate: **complete the `baseline_red` coverage first** (rule 1 above),
+then re-run. A cap-exceeded record that retries without growing the
+exemption list re-derives the same wall each iteration. If coverage is
+already complete and the cap still fires, the batch is failing too widely
+— escalate to a human with the cap-exceeded record as evidence.
+
 **A project-specific amnesty binds to `failed == 0`, never to the exit code
 alone.** Some projects have a known non-zero exit with an empty failure list — a
 host-level guard tripping on a live mutation, say. Where this sub-plan documents
