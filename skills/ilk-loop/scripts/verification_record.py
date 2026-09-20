@@ -679,7 +679,8 @@ def _in_baseline_red(node_id: str, baseline_red: list[dict]) -> bool:
 
 def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   invocation: str, scope: dict, results: dict,
-                  at_base: dict, baseline_red: list[str]) -> str:
+                  at_base: dict, baseline_red: list[str],
+                  at_base_error: str | None = None) -> str:
     """Render the complete record.  Measurements only — no verdict column.
 
     The ``attributed`` column is deliberately absent.  It was the cell that
@@ -687,6 +688,12 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
     that passed at base were excused by a parenthetical.  With no cell to write
     into, that outcome is not fixed — it is unrepresentable.  The checker
     derives attribution from the two measurements beside each node id.
+
+    ``at_base_error`` carries the error message when the at-base phase could
+    not complete.  A cap-exceeded stop writes its own named classification
+    instead of the generic ``_(suite did not finish)_`` stub, so the checker
+    and the operator can distinguish a designed human-escalation from a
+    transient timeout.
     """
     c = results["counts"]
     lines = [
@@ -709,7 +716,15 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
         "## At-base rerun",
         "",
     ]
-    if not at_base:
+    if at_base_error and "exceeds the" in at_base_error and "cap" in at_base_error:
+        # Designed human-escalation: name the stop, not the symptom.
+        uncovered = c['failed'] + c['errors']
+        lines += [
+            f"at_base_cap_exceeded: {uncovered} uncovered (>50 cap) — complete "
+            f"ship.baseline_red coverage for the pre-existing families and re-run",
+            "",
+        ]
+    elif not at_base:
         lines += ["_(no failures)_", ""]
     else:
         lines += ["| node id | at base | in baseline_red |",
@@ -803,6 +818,18 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
         at_base = run_at_base(project, args.base_sha, nodes, invocation,
                               baseline_red=baseline_red)
     except (ValueError, RuntimeError) as exc:
+        if "exceeds the" in str(exc) and "cap" in str(exc):
+            # Designed human-escalation: write the named stop, not the stub.
+            record.write_text(render_record(
+                batch=args.batch or record.stem,
+                head=head, tree=tree, base_sha=args.base_sha,
+                invocation=invocation, scope=scope, results=results,
+                at_base={}, baseline_red=baseline_red,
+                at_base_error=str(exc),
+            ), encoding="utf-8")
+            print(f"ERROR: at-base cap exceeded — named stop written to {record}",
+                  file=sys.stderr)
+            return 1
         print(f"ERROR: at-base rerun could not run: {exc}", file=sys.stderr)
         print(f"stub record left at {record}", file=sys.stderr)
         return 1
