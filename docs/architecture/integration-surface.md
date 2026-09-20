@@ -98,10 +98,17 @@ python status_progress.py --project-path <abs-root> [--json]
   timestamps in `git log`; `null` until ≥2 step-commits exist.
 
 ### 2.3 `status_all.py` — all projects
-`skills/ilk-launcher/scripts/status_all.py` — reads the launcher's
+`skills/ilk-loop/scripts/status_all.py` — reads the launcher's
 `projects.json` registry and prints a per-project table
 (`project | state | plan-status | window-pid`), where `state` ∈
 `running | stale-running | idle`. Always exits `0`.
+
+With `--json`, each entry additionally carries the batch context the
+tray/xbar render (added 2026-09-20): `batch` (the `master_plan` slug
+minus its leading date, e.g. `pv5-rereview`), `subplan_index` /
+`subplan_count` (M/N — the registry position of the rendered sub-plan,
+counting shipped ones, over the registry total), and `pending_batches`
+(masters the loop still owes: active or queued, current included).
 
 ### 2.4 Sentinel — `last-exit.json`
 `~/.ilk-data/projects/<key>/runtime/last-exit.json` — the terminal record of the

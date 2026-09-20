@@ -288,8 +288,10 @@ def _blocked_info(
     }
 
 
-def _resolve_next_subplan(plans_dir: Path, master_text: str) -> tuple[str, str]:
-    """Return (next_subplan_slug, step_string) for the first RUNNABLE sub-plan.
+def _resolve_next_subplan(
+    plans_dir: Path, master_text: str
+) -> tuple[str, str, int, int]:
+    """Return (next_subplan_slug, step_string, subplan_index, subplan_count).
 
     "Runnable" — not merely "un-shipped".  A ``blocked`` sub-plan is outstanding
     work that nothing the loop does will advance until a human unblocks it, so
@@ -299,9 +301,15 @@ def _resolve_next_subplan(plans_dir: Path, master_text: str) -> tuple[str, str]:
     keeping a second copy, because the two drifting apart is exactly the defect
     observed on 2026-08-14 (the tray showed a blocked ``2/4`` sub-plan while the
     loop was working a different one at ``1/5``).
+
+    ``subplan_index`` is the 1-based registry position of the returned sub-plan
+    — counting shipped ones, so it reads "sub-plan 3 of 7 in the batch" — and
+    ``subplan_count`` is the registry total.  The tray/xbar render them as
+    ``<batch> M/N`` ahead of the sub-plan name.
     """
     ordered = extract_master_order(master_text)
-    for fname in ordered:
+    total = len(ordered)
+    for pos, fname in enumerate(ordered, start=1):
         path = plans_dir / fname
         if not path.exists():
             continue
@@ -315,8 +323,28 @@ def _resolve_next_subplan(plans_dir: Path, master_text: str) -> tuple[str, str]:
         slug = fm.get("plan", fname.replace(".md", ""))
         cur = fm.get("current_step", "?")
         est = fm.get("estimated_steps", "?")
-        return slug, f"{cur}/{est}"
-    return "", ""
+        return slug, f"{cur}/{est}", pos, total
+    return "", "", 0, 0
+
+
+_BATCH_DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[a-z]?-")
+
+
+def _batch_display_name(master_text: str) -> str:
+    """Short batch label for the panel: the ``master_plan`` slug minus its
+    leading date (``2026-09-19-pv5-rereview`` → ``pv5-rereview``).
+
+    Display choice (2026-09-20): the date is dropped for brevity.  Only
+    unfinished masters render a sub-plan row at all, and two unfinished
+    batches sharing a dateless name have not coexisted; if that ever
+    reads ambiguously, keep the ``b`` suffix — not the full date.
+    """
+    fm = parse_frontmatter(master_text)
+    # Older masters (pre-convention-change) carry `slug:` instead of
+    # `master_plan:` — measured live 2026-09-20: state-ownership and the
+    # gh-resolve masters rendered a blank batch until this fallback.
+    name = (fm.get("master_plan") or fm.get("slug") or "").strip()
+    return _BATCH_DATE_PREFIX_RE.sub("", name)
 
 
 def _resolve_repo_path(project_dir: Path, key: str) -> str | None:
@@ -405,6 +433,10 @@ def resolve_project_status(project_dir: Path) -> dict:
     active_master = ""
     next_subplan = ""
     step = ""
+    batch = ""
+    subplan_index = 0
+    subplan_count = 0
+    pending_batches = 0
     master_is_active = False
     queued_has_work = False
     if plans_dir.is_dir():
@@ -426,7 +458,10 @@ def resolve_project_status(project_dir: Path) -> dict:
                 if cstatus in ("active", "queued"):
                     active_master = chosen.name
                     master_is_active = cstatus == "active"
-                    next_subplan, step = _resolve_next_subplan(plans_dir, ctext)
+                    batch = _batch_display_name(ctext)
+                    next_subplan, step, subplan_index, subplan_count = (
+                        _resolve_next_subplan(plans_dir, ctext)
+                    )
             except (OSError, IndexError, ValueError):
                 pass
 
@@ -435,15 +470,22 @@ def resolve_project_status(project_dir: Path) -> dict:
         # is itself queued (the common case — that is exactly the project a
         # human can `/ilk`), and a master chosen as `active` cannot match the
         # `queued` test below, so no skip is needed.
+        pending_batches = 0
         for mp in masters:
             try:
                 mtext = mp.read_text(encoding="utf-8-sig")
             except OSError:
                 continue
-            if normalize_master_status(
+            mstatus = normalize_master_status(
                 parse_frontmatter(mtext).get("status") or ""
-            ) == "queued":
-                q_slug, _ = _resolve_next_subplan(plans_dir, mtext)
+            )
+            # Pending = a batch the loop still owes: active (being driven)
+            # or queued (dispatchable).  Draft/parked/shipped are excluded —
+            # invisible, human-held, and done respectively.
+            if mstatus in ("active", "queued"):
+                pending_batches += 1
+            if mstatus == "queued":
+                q_slug, _, _, _ = _resolve_next_subplan(plans_dir, mtext)
                 if q_slug:
                     queued_has_work = True
                     break
@@ -532,6 +574,10 @@ def resolve_project_status(project_dir: Path) -> dict:
         "active_master": active_master,
         "next_subplan": next_subplan,
         "step": step,
+        "batch": batch,
+        "subplan_index": subplan_index,
+        "subplan_count": subplan_count,
+        "pending_batches": pending_batches,
         "sentinel": sentinel,
         "last_class": last_class,
         "model": model,

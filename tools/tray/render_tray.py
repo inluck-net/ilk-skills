@@ -61,6 +61,10 @@ def render_tray(entries: list[dict]) -> dict:
         state = sent.get("state", "none")
         step = e.get("step", "")
         next_sp = e.get("next_subplan", "")
+        batch = e.get("batch", "")
+        sp_idx = e.get("subplan_index", 0)
+        sp_cnt = e.get("subplan_count", 0)
+        pending = e.get("pending_batches", 0)
 
         # Determine per-project icon_state.
         # Blocked (needs-human) is the highest-priority category.
@@ -96,10 +100,14 @@ def render_tray(entries: list[dict]) -> dict:
                 except Exception:
                     pass
         else:
+            if batch and sp_cnt:
+                label += f"  {batch} {sp_idx}/{sp_cnt}"
             if step:
                 label += f"  {step}"
             if next_sp:
                 label += f"  {next_sp}"
+            if pending > 1:
+                label += f"  (+{pending} batches)"
             # Run-state suffix, driven by the computed icon (not the raw sentinel
             # state), so an idle/stale project is unambiguous: its step/next_subplan
             # is the NEXT pending work, which otherwise reads like a running task

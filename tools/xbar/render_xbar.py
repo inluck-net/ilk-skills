@@ -125,6 +125,10 @@ def render_xbar(
         state = sent.get("state", "none")
         step = e.get("step", "")
         next_sp = e.get("next_subplan", "")
+        batch = e.get("batch", "")
+        sp_idx = e.get("subplan_index", 0)
+        sp_cnt = e.get("subplan_count", 0)
+        pending = e.get("pending_batches", 0)
 
         # Status icon
         if e.get("blocked"):
@@ -146,14 +150,25 @@ def render_xbar(
 
         # Row text: key + icon + step info
         model = e.get("model") or ""
-        # Sub-plan then step, matching /ilk-status ("<slug> 3/5").  The
-        # reverse order read as "3/5 a-draft-is-checked-…", which parses as a
-        # step count applied to nothing.
+        # Batch M/N then sub-plan then step.  The batch fragment ("pv5 3/7")
+        # reads as "sub-plan 3 of 7 of batch pv5" and sits AHEAD of the
+        # sub-plan name by operator request (2026-09-20) — the sub-plan's
+        # own step count ("0/4") would otherwise be mistaken for the batch
+        # position.  Sub-plan then step matches /ilk-status ("<slug> 3/5");
+        # the reverse order read as "3/5 a-draft-is-checked-…", which parses
+        # as a step count applied to nothing.
         row = f"{icon} {key}"
+        if batch and sp_cnt:
+            row += f"  {batch} {sp_idx}/{sp_cnt}"
         if next_sp:
             row += f"  {next_sp}"
         if step:
             row += f"  {step}"
+        # Pending batches: how many masters the loop still owes (active or
+        # queued), current one included.  Only rendered above 1 — a lone
+        # current batch adds no information and costs menu-bar width.
+        if pending > 1:
+            row += f"  (+{pending} batches)"
 
         # Add state suffix for non-obvious states
         if is_alive and model:
