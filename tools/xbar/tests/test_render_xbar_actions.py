@@ -287,7 +287,7 @@ class TestModelLabel:
                             model="claude-sonnet-4-20250514")
         text = _render(entry)
         lines = text.splitlines()
-        project_line = [l for l in lines if l.startswith("- * proj")][0]
+        project_line = [l for l in lines if l.startswith("* proj")][0]
         assert "claude-sonnet-4-20250514" not in project_line
         assert "worker model: claude-sonnet-4-20250514" in lines
         # No per-row "--model:" item: it rendered only on running rows,
@@ -299,7 +299,7 @@ class TestModelLabel:
         entry = _make_entry("proj", alive=True, state="running")
         text = _render(entry)
         lines = text.splitlines()
-        project_line = [l for l in lines if l.startswith("- * proj")][0]
+        project_line = [l for l in lines if l.startswith("* proj")][0]
         assert "running on" not in project_line
 
     def test_idle_row_with_model_no_suffix(self) -> None:

@@ -186,17 +186,7 @@ def render_xbar(
         # current included), rendered only when N > 1 — at N=1 the row's own
         # batch name already says everything the badge would.
         badge = f"+{pending} " if pending > 1 else ""
-        # The leading '-' is the MENU-ITEM MARKER, not decoration: a
-        # top-level line without it and without action params renders as
-        # disabled text whose '--' children cannot attach (SwiftBar,
-        # 2026-09-20 — running '*' and blocked '!' rows were dead submenus
-        # for exactly this reason; idle '-' rows worked only because their
-        # icon coincidentally WAS the marker). The liveness glyph follows
-        # the marker; idle rows omit it, preserving their old exact look.
-        if icon == "-":
-            row = f"- {badge}{short_key}"
-        else:
-            row = f"- {icon} {badge}{short_key}"
+        row = f"{icon} {badge}{short_key}"
         # Batch M/N then sub-plan then step.  The batch fragment ("pv5 3/7")
         # reads as "sub-plan 3 of 7 of batch pv5" and sits AHEAD of the
         # sub-plan name by operator request (2026-09-20) — the sub-plan's
