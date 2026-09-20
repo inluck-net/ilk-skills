@@ -64,9 +64,9 @@ def _write_meta(meta_dir: Path, repos: list[tuple[str, str]], name: str | None =
 
 # ── tests ────────────────────────────────────────────────────────────────────
 
-def test_single_mode_unchanged(tmp: Path) -> None:
+def test_single_mode_unchanged(tmp_dir: Path) -> None:
     print("test_single_mode_unchanged:")
-    repo = tmp / "myproj"
+    repo = tmp_dir / "myproj"
     _mk_fake_repo(repo)
     nested = repo / "src" / "deep" / "place"
     nested.mkdir(parents=True)
@@ -84,9 +84,9 @@ def test_single_mode_unchanged(tmp: Path) -> None:
     _check("project_key is stable", key == ip.resolve_project_key(nested))
 
 
-def test_meta_mode_basic(tmp: Path) -> None:
+def test_meta_mode_basic(tmp_dir: Path) -> None:
     print("test_meta_mode_basic:")
-    meta = tmp / "umbrella"
+    meta = tmp_dir / "umbrella"
     meta.mkdir()
     _mk_fake_repo(meta / "api")
     _mk_fake_repo(meta / "portal")
@@ -126,14 +126,14 @@ def test_meta_mode_basic(tmp: Path) -> None:
     _check("member at meta root is None", member_at_root is None, f"got {member_at_root}")
 
 
-def test_meta_with_worktree_member(tmp: Path) -> None:
+def test_meta_with_worktree_member(tmp_dir: Path) -> None:
     """A meta member can itself be a git worktree (`.git` is a file).
 
     The worktree story for individual member repos must keep working
     under a meta umbrella.
     """
     print("test_meta_with_worktree_member:")
-    meta = tmp / "umbrella2"
+    meta = tmp_dir / "umbrella2"
     meta.mkdir()
     main_repo = meta / "service"
     _mk_fake_repo(main_repo)
@@ -150,11 +150,11 @@ def test_meta_with_worktree_member(tmp: Path) -> None:
     _check("member resolves to service-feat", member is not None and member["name"] == "service-feat", f"got {member}")
 
 
-def test_invalid_marker_rejected(tmp: Path) -> None:
+def test_invalid_marker_rejected(tmp_dir: Path) -> None:
     print("test_invalid_marker_rejected:")
 
     # (1) marker points at a path that doesn't exist
-    bad1 = tmp / "bad1"
+    bad1 = tmp_dir / "bad1"
     bad1.mkdir()
     _write_meta(bad1, [("ghost", "ghost")])
     _check("ghost path → meta_root None", ip.meta_root(bad1) is None)
@@ -186,12 +186,12 @@ def test_invalid_marker_rejected(tmp: Path) -> None:
     _check("duplicate names → meta_root None", ip.meta_root(bad5) is None)
 
 
-def test_invalid_outer_does_not_block_valid_inner(tmp: Path) -> None:
+def test_invalid_outer_does_not_block_valid_inner(tmp_dir: Path) -> None:
     """If an outer marker is invalid but an inner one is valid,
     meta_root returns the inner one. (Practically defensive — protects
     against a stray ~/.ilk-meta.json swallowing a real project.)"""
     print("test_invalid_outer_does_not_block_valid_inner:")
-    outer = tmp / "outer"
+    outer = tmp_dir / "outer"
     outer.mkdir()
     _write_meta(outer, [("ghost", "ghost")])  # invalid: no such dir
 
@@ -204,9 +204,9 @@ def test_invalid_outer_does_not_block_valid_inner(tmp: Path) -> None:
     _check("inner valid marker wins", found == inner.resolve(), f"got {found}")
 
 
-def test_no_project_anywhere(tmp: Path) -> None:
+def test_no_project_anywhere(tmp_dir: Path) -> None:
     print("test_no_project_anywhere:")
-    empty = tmp / "nothing" / "here"
+    empty = tmp_dir / "nothing" / "here"
     empty.mkdir(parents=True)
     root, kind = ip.find_project_root(empty)
     _check("root is None", root is None)
@@ -214,12 +214,12 @@ def test_no_project_anywhere(tmp: Path) -> None:
     _check("project_key is None", ip.resolve_project_key(empty) is None)
 
 
-def test_plans_dir_uses_meta_key(tmp: Path) -> None:
+def test_plans_dir_uses_meta_key(tmp_dir: Path) -> None:
     """find_plans_dir should look under the META-derived key, not the
     member-repo-derived key. We don't actually write plans here — we
     just confirm the external path it would check is the meta one."""
     print("test_plans_dir_uses_meta_key:")
-    meta = tmp / "ufpr"
+    meta = tmp_dir / "ufpr"
     meta.mkdir()
     _mk_fake_repo(meta / "api")
     _write_meta(meta, [("api", "api")])
@@ -253,7 +253,7 @@ def test_plans_dir_uses_meta_key(tmp: Path) -> None:
 
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="ilk-meta-test-") as raw:
-        tmp = Path(raw).resolve()
+        tmp_dir = Path(raw).resolve()
         tests = [
             test_single_mode_unchanged,
             test_meta_mode_basic,
@@ -264,7 +264,7 @@ def main() -> int:
             test_plans_dir_uses_meta_key,
         ]
         for t in tests:
-            t_tmp = tmp / t.__name__
+            t_tmp = tmp_dir / t.__name__
             t_tmp.mkdir()
             try:
                 t(t_tmp)
