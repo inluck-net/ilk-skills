@@ -152,5 +152,6 @@
       "rezmac"
     ]
   },
-  "iteration_timeout_min": 60
+  "iteration_timeout_min": 60,
+  "worker_engine": "claude-manager"
 }
