@@ -98,6 +98,10 @@ class TestCreatePath:
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
 
+            def list_records(self, **kwargs):
+                return []
+            def batch_delete_records(self, record_ids):
+                return {}
         with (
             mock.patch.object(cli, "create_bitable", return_value=created_result) as m_create,
             mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
@@ -179,6 +183,10 @@ class TestReusePath:
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
 
+            def list_records(self, **kwargs):
+                return []
+            def batch_delete_records(self, record_ids):
+                return {}
         with (
             mock.patch.object(cli, "create_bitable") as m_create,
             mock.patch.object(cli, "_probe_tables", return_value=True),
@@ -283,6 +291,10 @@ class TestRefuseUnreachable:
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
 
+            def list_records(self, **kwargs):
+                return []
+            def batch_delete_records(self, record_ids):
+                return {}
         with (
             mock.patch.object(cli, "create_bitable", return_value=created_result) as m_create,
             mock.patch.object(cli, "_probe_tables", return_value=False),
@@ -451,6 +463,10 @@ class TestKanbanCreated:
                 self.calls.append(("patch_form_meta", form_id, body))
                 return {"form": {"shared_url": "https://form.url"}}
 
+            def list_records(self, **kwargs):
+                return []
+            def batch_delete_records(self, record_ids):
+                return {}
         mock_client = MockClient()
 
         with (
@@ -526,6 +542,10 @@ class TestFormCreated:
                 self.calls.append(("patch_form_meta", form_id, body))
                 return {"form": {"shared_url": "https://form.url", "shared_limit": "tenant_editable"}}
 
+            def list_records(self, **kwargs):
+                return []
+            def batch_delete_records(self, record_ids):
+                return {}
         mock_client = MockClient()
 
         with (
@@ -606,6 +626,10 @@ class TestIdempotentSkip:
                 self.calls.append(("patch_form_meta", form_id, body))
                 return {"form": {"shared_url": "https://form.url"}}
 
+            def list_records(self, **kwargs):
+                return []
+            def batch_delete_records(self, record_ids):
+                return {}
         mock_client = MockClient()
 
         with (
@@ -670,6 +694,10 @@ class TestFolderResolution:
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
 
+            def list_records(self, **kwargs):
+                return []
+            def batch_delete_records(self, record_ids):
+                return {}
         with (
             mock.patch.object(cli, "create_bitable", return_value=created_result) as m_create,
             mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
@@ -722,6 +750,10 @@ class TestFolderResolution:
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
 
+            def list_records(self, **kwargs):
+                return []
+            def batch_delete_records(self, record_ids):
+                return {}
         with (
             mock.patch.object(cli, "create_bitable", return_value=created_result) as m_create,
             mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
@@ -774,6 +806,10 @@ class TestEditableWarning:
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
 
+            def list_records(self, **kwargs):
+                return []
+            def batch_delete_records(self, record_ids):
+                return {}
         with (
             mock.patch.object(cli, "create_bitable", return_value=created_result),
             mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
@@ -822,6 +858,10 @@ class TestEditableWarning:
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
 
+            def list_records(self, **kwargs):
+                return []
+            def batch_delete_records(self, record_ids):
+                return {}
         with (
             mock.patch.object(cli, "create_bitable", return_value=created_result),
             mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
@@ -931,6 +971,10 @@ class TestGrantNonFatal:
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
 
+            def list_records(self, **kwargs):
+                return []
+            def batch_delete_records(self, record_ids):
+                return {}
         with (
             mock.patch.object(cli, "create_bitable", return_value=created_result),
             mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
@@ -1059,6 +1103,10 @@ class TestOperatorGrant:
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
 
+            def list_records(self, **kwargs):
+                return []
+            def batch_delete_records(self, record_ids):
+                return {}
         with (
             mock.patch.object(cli, "create_bitable", return_value=created_result),
             mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
@@ -1122,6 +1170,10 @@ class TestOperatorGrant:
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
 
+            def list_records(self, **kwargs):
+                return []
+            def batch_delete_records(self, record_ids):
+                return {}
         with (
             mock.patch.object(cli, "create_bitable", return_value=created_result),
             mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
@@ -1188,6 +1240,10 @@ class TestOperatorGrant:
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
 
+            def list_records(self, **kwargs):
+                return []
+            def batch_delete_records(self, record_ids):
+                return {}
         with (
             mock.patch.object(cli, "create_bitable", return_value=created_result),
             mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
@@ -1251,6 +1307,10 @@ class TestOperatorGrant:
             def patch_form_meta(self, *args, **kwargs):
                 return {"form": {"shared_url": "https://form.url"}}
 
+            def list_records(self, **kwargs):
+                return []
+            def batch_delete_records(self, record_ids):
+                return {}
         with (
             mock.patch.object(cli, "create_bitable") as m_create,
             mock.patch.object(cli, "_probe_tables", return_value=True),
@@ -1529,6 +1589,10 @@ class TestSharingOnCreate:
                 self.calls.append(("patch_form_meta", form_id, body))
                 return {"form": {"shared_url": "https://form.url", "shared_limit": body.get("shared_limit")}}
 
+            def list_records(self, **kwargs):
+                return []
+            def batch_delete_records(self, record_ids):
+                return {}
         mock_client = MockClient()
 
         with (
@@ -1595,6 +1659,10 @@ class TestSharingOnCreate:
                 self.calls.append(("patch_form_meta", form_id, body))
                 return {"form": {"shared_url": "https://form.url"}}
 
+            def list_records(self, **kwargs):
+                return []
+            def batch_delete_records(self, record_ids):
+                return {}
         mock_client = MockClient()
 
         with (
