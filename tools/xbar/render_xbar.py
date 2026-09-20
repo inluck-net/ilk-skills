@@ -22,7 +22,6 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parent.parent
 _DEFAULT_RUN_SCRIPT = str(_REPO_ROOT / "skills" / "ilk-runner" / "scripts" / "ilk-run.sh")
-_DEFAULT_COPY_SCRIPT = str(_REPO_ROOT / "tools" / "xbar" / "copy_ref.sh")
 _DEFAULT_RESUME_SCRIPT = str(_REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "blacklist_status.py")
 
 # Interpreter used to launch shell actions.  Absolute so the row does not
@@ -230,21 +229,23 @@ def render_xbar(
         # state from disk.  Grammar documented in
         # docs/architecture/integration-surface.md §2.6.
         #
-        # THREE SwiftBar constraints, paid for in two dead attempts
-        # (2026-09-20): params split on every '|' (killed the '|'-
-        # separated ref and `| pbcopy`); quotes nested inside quoted
-        # values break the parser (killed osascript's inner double
-        # quotes); so the grammar is now SPACE-FREE —
-        # ilk-ref:<key>/<master-file>/<sub-file> — and every param in
-        # this action is bare: no spaces, no quotes, no pipes.
+        # TWO SwiftBar constraints shape this action (first attempt
+        # 2026-09-20 shipped params the menu silently dropped):
+        #   1. NO '|' inside param values — SwiftBar splits the line's
+        #      params on every pipe, quoted or not, so the REF's
+        #      separator is '/', not '|', and the copy is osascript
+        #      (direct clipboard set) rather than `printf | pbcopy`.
+        #   2. Values with spaces are quoted; the osascript string uses
+        #      inner double quotes, so python repr yields single-quoted
+        #      params — the same style the Start-now row already uses.
         master_file = e.get("active_master") or ""
         sub_file = e.get("next_subplan_file") or ""
-        if master_file and sub_file and os.path.isfile(_DEFAULT_COPY_SCRIPT):
-            ref = f"ilk-ref:{key}/{master_file}/{sub_file}"
+        if master_file and sub_file:
+            ref = f"ilk-ref: {key} / {master_file} / {sub_file}"
+            osa = f'set the clipboard to "{ref}"'
             lines.append(
-                f"--Copy reference | bash={_BASH!r}"
-                f" param1={_DEFAULT_COPY_SCRIPT!r} param2={ref}"
-                f" terminal=false refresh=false"
+                f"--Copy reference | bash=/usr/bin/osascript"
+                f" param1=-e param2={osa!r} terminal=false refresh=false"
             )
 
         # ── Action sub-items: Start now / Resume ─────────────────────

@@ -132,15 +132,14 @@ The panel's per-row **Copy reference** action puts one line on the
 clipboard:
 
 ```
-ilk-ref:<project-key>/<master-filename>/<subplan-filename>
+ilk-ref: <project-key> / <master-filename> / <subplan-filename>
 ```
 
-e.g. `ilk-ref:users-chad-projects-keyreply-kira-cloudflare/MASTER-2026-09-19-pv5-rereview-execution-plan.md/2026-09-19-pv5-audio-lifecycle.md`.
-No spaces anywhere — a deliberate constraint of the panel action that
-produces it: SwiftBar splits menu params on every `|` and breaks on
-quotes nested inside quoted values, so the ref must be expressible as
-one bare param (`tools/xbar/copy_ref.sh` does the clipboard work).
-Split on `/` — no component ever contains one.
+e.g. `ilk-ref: users-chad-projects-keyreply-kira-cloudflare /
+MASTER-2026-09-19-pv5-rereview-execution-plan.md /
+2026-09-19-pv5-audio-lifecycle.md`. The separator is `/`, not `|`:
+SwiftBar splits menu params on every pipe, so a pipe inside the copied
+line would be unactionable from the panel that produced it.
 
 The reference names **files, not display slugs and not live state** —
 identity survives the copy-paste round-trip and any iterations that land
