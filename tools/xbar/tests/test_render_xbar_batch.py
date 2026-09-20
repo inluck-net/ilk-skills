@@ -94,8 +94,16 @@ def test_copy_reference_action_names_files_not_slugs() -> None:
     line = copy_lines[0]
     # Identity by FILE, not display slug, and no live state in the ref:
     # both survive the copy-paste round-trip and later iterations.
-    assert "ilk-ref: proj | MASTER-2026-09-19-x-execution-plan.md | 2026-09-19-x-sub.md" in line
-    assert "pbcopy" in line and "refresh=false" in line
+    assert "ilk-ref: proj / MASTER-2026-09-19-x-execution-plan.md / 2026-09-19-x-sub.md" in line
+    # SwiftBar splits params on EVERY '|' — a pipe inside a param value
+    # silently kills the action (the shipped-not-working first attempt).
+    # The copy must therefore be pipe-free: osascript sets the clipboard
+    # directly; no `| pbcopy`, and the ref separates with '/'.
+    assert "pbcopy" not in line and "osascript" in line
+    assert "refresh=false" in line
+    params = line.split("|")[1:]
+    for prm in params[3:]:
+        assert " | " not in prm and "|" not in prm.replace("||", "")
 
 
 def test_no_copy_reference_without_file_identities() -> None:
