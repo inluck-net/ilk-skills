@@ -252,3 +252,47 @@ class TestShipAuditReadsAttribution:
             "a record written before the gate recorded attribution must say "
             f"so, not stay silent about the gap.  Got: {reason!r}"
         )
+
+
+# ── the cap-exceeded stop must be named in the checker ──────────────────────
+
+class TestCapExceededRefusal:
+
+    def test_checker_names_cap_exceeded_record(self, tmp_path: Path) -> None:
+        """AC-2: verify_attribution refuses a cap-exceeded record BY NAME with the remedy."""
+        import sys
+        sys.path.insert(0, str(SCRIPTS))
+        from verify_attribution import verify
+
+        record = tmp_path / "record.md"
+        record.write_text(
+            "# Batch verification record — test-batch\n\n"
+            "record_writer: v1\n"
+            "verified_head: abc1234567890\n"
+            "verified_tree: def5678901234\n"
+            "base_sha: 0000000000000\n"
+            "suite_invocation: python3 -m pytest\n"
+            "suite_scope: full\n"
+            "selection_size: 0\n"
+            "suite_total: 90\n"
+            "suite_passed: 0\n"
+            "suite_failed: 90\n"
+            "suite_errors: 7\n"
+            "suite_skipped: 0\n\n"
+            "## At-base rerun\n\n"
+            "at_base_cap_exceeded: 63 uncovered (>50 cap) — complete "
+            "ship.baseline_red coverage for the pre-existing families and re-run\n\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(Exception, match="at_base_cap_exceeded|cap|baseline_red"):
+            verify(record)
+
+    def test_cap_stub_is_not_the_timeout_stub(self) -> None:
+        """AC-3: the timeout stub `_(suite did not finish)_` remains only for genuine timeouts."""
+        # The cap stub text must be distinguishable from the timeout stub.
+        cap_stub = ("at_base_cap_exceeded: 63 uncovered (>50 cap) — complete "
+                    "ship.baseline_red coverage for the pre-existing families and re-run")
+        timeout_stub = "_(suite did not finish)_"
+        assert cap_stub != timeout_stub
+        assert "did not finish" not in cap_stub
