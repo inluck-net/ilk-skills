@@ -47,7 +47,7 @@ def _row(entries: list[dict]) -> str:
     lines = [
         l.split("|", 1)[0].strip()
         for l in out.splitlines()
-        if l.startswith("* ") or l.startswith("- ")
+        if l.startswith("- ")
     ]
     return lines[0]
 
@@ -68,12 +68,13 @@ def test_pending_badge_ahead_of_name_only_above_one() -> None:
     multi = _row([_entry(
         batch="b", subplan_index=1, subplan_count=2, pending_batches=3,
     )])
-    assert multi.startswith("* +3 proj")
+    assert multi.startswith("- * +3 proj")
     assert "batches" not in multi
     lone = _row([_entry(
         batch="b", subplan_index=1, subplan_count=2, pending_batches=1,
     )])
-    assert lone.startswith("* proj")
+    # Fixture is alive=True, so the glyph is *; lone batch -> no badge.
+    assert lone.startswith("- * proj")
     assert "+1" not in lone
 
 
