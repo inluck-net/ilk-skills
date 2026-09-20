@@ -81,3 +81,41 @@ def test_stale_payload_without_batch_fields_renders_unchanged() -> None:
     row = _row([_entry()])
     assert "some-subplan" in row and "2/6" in row
     assert "/" not in row.split("some-subplan")[0].replace("* proj", "")
+
+
+# ── row action + Copy reference (operator request, re-added 2026-09-20) ──
+
+
+def _raw_line(entries: list[dict], prefix: str) -> str:
+    for l in render_xbar(entries).splitlines():
+        if l.startswith(prefix):
+            return l
+    return ""
+
+
+def test_every_row_carries_refresh_action() -> None:
+    # Actionless rows are disabled by AppKit and a disabled item does not
+    # open its submenu — the "running rows' sub-panels won't open" defect.
+    # `refresh=true` keeps rows enabled; the submenu still wins the click.
+    line = _raw_line([_entry()], "* ")
+    assert line.endswith("| refresh=true")
+
+
+def test_copy_reference_child_mirrors_start_now_quoting() -> None:
+    out = render_xbar([_entry(next_subplan_file="2026-09-19-pv5-audio.md")])
+    copy_lines = [l for l in out.splitlines() if l.startswith("--Copy reference")]
+    assert len(copy_lines) == 1
+    l = copy_lines[0]
+    # Same invocation shape as the proven-working Start-now action.
+    assert "bash='/bin/bash'" in l
+    assert "terminal=false refresh=false" in l
+    ref = l.split("param2='", 1)[1].split("'", 1)[0]
+    assert ref == "ilk-ref:proj/MASTER-x.md/2026-09-19-pv5-audio.md"
+    # Space-free and pipe-free by grammar: the parser ends unquoted values
+    # at spaces and splits the params blob on pipes.
+    assert " " not in ref and "|" not in ref
+
+
+def test_copy_reference_absent_without_subplan_file() -> None:
+    out = render_xbar([_entry()])
+    assert not [l for l in out.splitlines() if l.startswith("--Copy reference")]

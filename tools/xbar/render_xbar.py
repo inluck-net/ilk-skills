@@ -22,6 +22,7 @@ _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parent.parent
 _DEFAULT_RUN_SCRIPT = str(_REPO_ROOT / "skills" / "ilk-runner" / "scripts" / "ilk-run.sh")
 _DEFAULT_RESUME_SCRIPT = str(_REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "blacklist_status.py")
+_DEFAULT_COPY_SCRIPT = str(_REPO_ROOT / "tools" / "xbar" / "copy_ref.sh")
 
 # Interpreter used to launch shell actions.  Absolute so the row does not
 # depend on SwiftBar's PATH, which is not a login shell's PATH.
@@ -211,6 +212,16 @@ def render_xbar(
         # and the eye tracks a trailing field better than an interior one.
         row += _heartbeat_fragment(e)
 
+        # Every row carries a trivial action so SwiftBar/AppKit keeps it
+        # ENABLED. Actionless items with no attached submenu are disabled by
+        # AppKit, and a disabled item does not track its submenu — which is
+        # why running rows' sub-panels would not open (2026-09-20): their
+        # submenu attach raced the enable decision. An item with BOTH an
+        # action and a submenu opens the submenu on click; the refresh
+        # action itself never fires for such items, and would be harmless
+        # (a panel refresh) if it did.
+        row += " | refresh=true"
+
         lines.append(row)
 
         # ── Info sub-items: everything the compact top line gave up ──────
@@ -220,6 +231,27 @@ def render_xbar(
             lines.append(f"--model: {model}")
         if pending:
             lines.append(f"--batches owed: {pending}")
+
+        # ── Copy reference: a pastable ilk-ref for this row ─────────────
+        # Grammar: ilk-ref:<project-key>/<master-file>/<subplan-file> —
+        # space-free by necessity (bare or quoted params alike end at
+        # spaces, and pipes would split the params blob). Mirrors the
+        # Start-now action's quoting, the one invocation shape proven to
+        # fire in this panel.
+        master_file = e.get("active_master") or ""
+        sub_file = e.get("next_subplan_file") or ""
+        if (
+            master_file
+            and sub_file
+            and all(" " not in p and "|" not in p for p in (key, master_file, sub_file))
+            and os.path.isfile(_DEFAULT_COPY_SCRIPT)
+        ):
+            ref = f"ilk-ref:{key}/{master_file}/{sub_file}"
+            lines.append(
+                f"--Copy reference | bash={_BASH!r}"
+                f" param1={_DEFAULT_COPY_SCRIPT!r} param2={ref!r}"
+                " terminal=false refresh=false"
+            )
 
         # ── Action sub-items: Start now / Resume ─────────────────────
         # Start now: manually_runnable & not running — dispatchable work exists.

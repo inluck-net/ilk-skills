@@ -131,6 +131,24 @@ treat as crashed, not healthy.**
 `stop_reason`, and `local_checks[]` (each: `slug`, `step`, `outcome`,
 `exit_code`, `raw`). This is your event stream for a live feed.
 
+### 2.6 `ilk-ref` — a pastable row reference
+
+The panel's per-row **Copy reference** action puts one line on the
+clipboard:
+
+```
+ilk-ref:<project-key>/<master-filename>/<subplan-filename>
+```
+
+No spaces anywhere — a constraint of the panel action that produces it:
+SwiftBar ends unquoted param values at spaces and splits the params blob
+on pipes, so the ref must be one bare value (`tools/xbar/copy_ref.sh`
+does the clipboard work). Split on `/`; no component ever contains one.
+The reference names **files, not live state** — re-read step/status from
+`~/.ilk-data/projects/<key>/plans/` at question time, never trust the
+clipboard beyond the filenames. Every project row also carries a trivial
+`refresh=true` action so AppKit keeps the row (and its submenu) enabled.
+
 ---
 
 ## 3. Control surface

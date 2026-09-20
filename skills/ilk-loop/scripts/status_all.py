@@ -96,31 +96,47 @@ def _latest_postmortem_class(launcher_dir: Path) -> str | None:
 
 
 def _latest_jsonl_model(logs_dir: Path) -> str:
-    """Return the ``model`` from the most recent JSONL summary record, or ``""``.
+    """Return the most recent non-empty ``model`` from the JSONL log, or ``""``.
 
     The runner appends one JSON object per iteration to
     ``<logs_dir>/.ilk-loop.log``.  Each record carries a ``model`` field
     populated by ``resolve_worker_model.py``.  We read only the last
-    non-empty line to keep this O(seek) rather than O(n).
+    ~4 KiB to keep this O(seek) rather than O(n).
+
+    Records with an empty ``model`` are skipped, walking backwards: a
+    record written by an older runner that never populated the field must
+    not blank the panel's worker-model line while a live run's iteration
+    is still in flight (its record lands only at iteration end).  The
+    most recent record that actually names a model is the honest answer
+    to "what does the worker run".
     """
     jsonl_path = logs_dir / ".ilk-loop.log"
     if not jsonl_path.is_file():
         return ""
     try:
-        # Seek from end: read last ~4 KiB to find the final JSONL line.
+        # Seek from end: read the last ~64 KiB. The window must be wide
+        # enough to reach past a burst of model-less records (a morning of
+        # crashed retrials can write dozens) to the newest record that
+        # actually names a model — the 4 KiB window failed exactly that
+        # way on 2026-09-20.
         size = jsonl_path.stat().st_size
         if size == 0:
             return ""
-        read_start = max(0, size - 4096)
+        read_start = max(0, size - 65536)
         with jsonl_path.open("rb") as fh:
             fh.seek(read_start)
             tail = fh.read().decode("utf-8", errors="replace")
-        # Last non-empty line is the most recent record.
         lines = [l for l in tail.splitlines() if l.strip()]
-        if not lines:
-            return ""
-        rec = json.loads(lines[-1])
-        return rec.get("model") or ""
+        # Newest first; first record that names a model wins.
+        for line in reversed(lines):
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            m = rec.get("model") or ""
+            if m:
+                return m
+        return ""
     except (json.JSONDecodeError, OSError):
         return ""
 
@@ -290,8 +306,9 @@ def _blocked_info(
 
 def _resolve_next_subplan(
     plans_dir: Path, master_text: str
-) -> tuple[str, str, int, int]:
-    """Return (next_subplan_slug, step_string, subplan_index, subplan_count).
+) -> tuple[str, str, int, int, str]:
+    """Return (next_subplan_slug, step_string, subplan_index, subplan_count,
+    next_subplan_file).
 
     "Runnable" — not merely "un-shipped".  A ``blocked`` sub-plan is outstanding
     work that nothing the loop does will advance until a human unblocks it, so
@@ -305,7 +322,9 @@ def _resolve_next_subplan(
     ``subplan_index`` is the 1-based registry position of the returned sub-plan
     — counting shipped ones, so it reads "sub-plan 3 of 7 in the batch" — and
     ``subplan_count`` is the registry total.  The tray/xbar render them as
-    ``<batch> M/N`` ahead of the sub-plan name.
+    ``<batch> M/N`` ahead of the sub-plan name.  ``next_subplan_file`` is the
+    sub-plan's filename, carried for references that must survive a
+    copy-paste round-trip (the panel's ilk-ref, §2.6 of the integration doc).
     """
     ordered = extract_master_order(master_text)
     total = len(ordered)
@@ -323,8 +342,8 @@ def _resolve_next_subplan(
         slug = fm.get("plan", fname.replace(".md", ""))
         cur = fm.get("current_step", "?")
         est = fm.get("estimated_steps", "?")
-        return slug, f"{cur}/{est}", pos, total
-    return "", "", 0, 0
+        return slug, f"{cur}/{est}", pos, total, fname
+    return "", "", 0, 0, ""
 
 
 _BATCH_DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[a-z]?-")
@@ -432,6 +451,7 @@ def resolve_project_status(project_dir: Path) -> dict:
     # `runnable`, which the AC-6 guards in test_status_all_actions.py catch.
     active_master = ""
     next_subplan = ""
+    next_subplan_file = ""
     step = ""
     batch = ""
     subplan_index = 0
@@ -459,7 +479,8 @@ def resolve_project_status(project_dir: Path) -> dict:
                     active_master = chosen.name
                     master_is_active = cstatus == "active"
                     batch = _batch_display_name(ctext)
-                    next_subplan, step, subplan_index, subplan_count = (
+                    (next_subplan, step, subplan_index, subplan_count,
+                     next_subplan_file) = (
                         _resolve_next_subplan(plans_dir, ctext)
                     )
             except (OSError, IndexError, ValueError):
@@ -485,7 +506,7 @@ def resolve_project_status(project_dir: Path) -> dict:
             if mstatus in ("active", "queued"):
                 pending_batches += 1
             if mstatus == "queued":
-                q_slug, _, _, _ = _resolve_next_subplan(plans_dir, mtext)
+                q_slug, _, _, _, _ = _resolve_next_subplan(plans_dir, mtext)
                 if q_slug:
                     queued_has_work = True
                     break
@@ -573,6 +594,7 @@ def resolve_project_status(project_dir: Path) -> dict:
         "orphaned": orphaned,
         "active_master": active_master,
         "next_subplan": next_subplan,
+        "next_subplan_file": next_subplan_file,
         "step": step,
         "batch": batch,
         "subplan_index": subplan_index,
