@@ -3489,7 +3489,15 @@ print(json.dumps(d))
   echo "JSONL:    $JSONL_LOG"
   echo ""
   echo "Final loop_status:"
-  (cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" 2>&1) || true
+  # Anchor the report to the RECORDED project root, not the mutable
+  # PROJECT_PATH: after a failed selfmod merge PROJECT_PATH still points
+  # at the isolated worktree, whose own project key has no plans dir, and
+  # the report printed "no plans dir found" (run 20260920-111204, log
+  # lines 304-305) while the same run's startup had resolved fine. On a
+  # successful merge PROJECT_PATH is already restored to this same root;
+  # non-selfmod runs take the :- fallback unchanged.
+  local _status_root="${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
+  (cd "$_status_root" && python3 "$LOOP_STATUS_SCRIPT" 2>&1) || true
 
   if [[ "$stop_reason" == "all-shipped" ]]; then
     # Batch-end gate: run the suite once before the master is done (SP1)
