@@ -209,3 +209,72 @@ class TestProbeIsScopedToItsRepo:
             f"a runner for this repo (pid {this_pid}) was not reported live "
             f"for {this_repo}; probe returned {pids}"
         )
+
+
+# ── The role check's boundary ───────────────────────────────────────────────
+
+class TestRoleMatchBoundary:
+    """A path is matched as a whole value, never as a prefix or a substring."""
+
+    def test_script_path_in_argv_is_not_the_role(self) -> None:
+        """The runner script lives inside ilk-skills, so EVERY runner's argv
+        contains the ilk-skills path.  That is what made the old probe match
+        the world; it must not count as driving ilk-skills.
+
+        Verbatim from the live process table, 2026-09-20.
+        """
+        cmdline = (
+            "bash /Users/chad/Projects/github/inluck-net/ilk-skills/skills/"
+            "ilk-loop/scripts/run_ilk_loop_claude.sh "
+            "--project-path /Users/chad/Projects/keyreply/kira-cloudflare "
+            "--max-iterations 30"
+        )
+        roots = selfmod_worktree._candidate_roots(
+            "/Users/chad/Projects/github/inluck-net/ilk-skills"
+        )
+
+        assert not selfmod_worktree._cmdline_drives_repo(cmdline, roots), (
+            "a kira runner was read as driving ilk-skills because the script "
+            "path happens to live there"
+        )
+
+    def test_sibling_prefix_does_not_match(self) -> None:
+        """`--project-path /a/repo` must not match a runner on `/a/repo-2`.
+
+        The same false-match class `_ilk_pid.sh` hit on 2026-08-12, where
+        querying `/…/ilk.test` matched a runner whose real path was
+        `/…/ilkAtest`.
+        """
+        cmdline = "bash run_ilk_loop_claude.sh --project-path /a/repo-2 --max-iterations 1"
+        roots = selfmod_worktree._candidate_roots("/a/repo")
+
+        assert not selfmod_worktree._cmdline_drives_repo(cmdline, roots)
+
+    def test_exact_value_matches_with_or_without_trailing_slash(self) -> None:
+        """The same repo spelled with a trailing slash is the same repo."""
+        roots = selfmod_worktree._candidate_roots("/a/repo")
+
+        for cmdline in (
+            "bash run_ilk_loop_claude.sh --project-path /a/repo",
+            "bash run_ilk_loop_claude.sh --project-path /a/repo ",
+            "bash run_ilk_loop_claude.sh --project-path /a/repo --max-iterations 1",
+            "bash run_ilk_loop_claude.sh --project-path /a/repo/ --max-iterations 1",
+            "bash run_ilk_loop_claude.sh --project-path=/a/repo --max-iterations 1",
+        ):
+            assert selfmod_worktree._cmdline_drives_repo(cmdline, roots), cmdline
+
+
+# ── A probe that cannot scope must refuse, not return [] ────────────────────
+
+class TestProbeRefusesWithoutARepo:
+    """An unscoped probe returns [] for everything, which reads as 'quiet'."""
+
+    @pytest.mark.parametrize("bad", [None, "", "   ", "/", []])
+    def test_unusable_repo_path_raises(self, bad) -> None:
+        """Fail loud, never fail open.
+
+        Returning [] here would be worse than the world-match this replaced:
+        the world-match over-blocked, this would merge under a live loop.
+        """
+        with pytest.raises(ValueError):
+            selfmod_worktree._find_live_ilk_pids(bad)

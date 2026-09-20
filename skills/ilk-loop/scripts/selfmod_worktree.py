@@ -23,6 +23,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -165,22 +166,59 @@ def _pgrep(pattern: str) -> list[int]:
     )
 
 
-def _candidate_roots(repo_path: Path | str) -> list[str]:
-    """The spellings of *repo_path* a runner's argv might carry.
+def _candidate_roots(repo_path: "Path | str | Iterable[Path | str]") -> list[str]:
+    """Every spelling of *repo_path* a runner's argv might carry.
 
-    macOS hands out ``/var/folders/...`` which resolves to
-    ``/private/var/folders/...``; a runner launched with one spelling must
-    still be recognised when the merge is asked about the other.  Mirrors the
-    ``norm``/``resolved`` pair in ``_ilk_pid.sh:ilk_project_runners``.
+    Three sources of divergence, all real:
+
+    * The runner normalises with ``cd && pwd``
+      (``run_ilk_loop_claude.sh:215``), which does NOT resolve symlinks,
+      while ``SelfmodWorktree.__init__`` calls ``Path.resolve()``, which
+      does.  And argv is fixed at exec time, before even that — so the
+      caller's original spelling is passed in alongside the resolved one.
+    * macOS hands out ``/var/folders/...`` for ``/private/var/folders/...``;
+      the alias is added in both directions.
+    * A trailing slash is handled by the matcher, not here.
+
+    Mirrors the ``norm``/``resolved`` pair in
+    ``_ilk_pid.sh:ilk_project_runners``.  A spelling nobody uses is harmless:
+    it still has to appear verbatim in some argv to match.
     """
-    raw = str(repo_path).rstrip("/") or "/"
-    roots = [raw]
-    try:
-        resolved = str(Path(repo_path).resolve()).rstrip("/") or "/"
-    except OSError:  # pragma: no cover - unreadable path
-        resolved = raw
-    if resolved not in roots:
-        roots.append(resolved)
+    if repo_path is None:
+        given: list[Path | str] = []
+    elif isinstance(repo_path, (str, Path)):
+        given = [repo_path]
+    else:
+        given = list(repo_path)
+
+    roots: list[str] = []
+
+    def _add(spelling: str) -> None:
+        if spelling and spelling not in roots:
+            roots.append(spelling)
+
+    for item in given:
+        if item is None:
+            continue
+        # Strip whitespace BEFORE the emptiness test: "   " survives
+        # rstrip("/") and would become a root, which Path().resolve() then
+        # turns into cwd/"   " — a spelling no runner has, so the probe
+        # silently matches nothing.  Fail-open again, by another route.
+        raw = str(item).strip().rstrip("/")
+        if not raw:
+            continue
+        _add(raw)
+        try:
+            _add(str(Path(item).resolve()).rstrip("/"))
+        except OSError:  # pragma: no cover - unreadable path
+            pass
+
+    for spelling in list(roots):
+        if spelling.startswith("/private/"):
+            _add(spelling[len("/private"):])
+        else:
+            _add("/private" + spelling)
+
     return roots
 
 
@@ -287,7 +325,7 @@ def _find_any_live_ilk_pids(pattern: str = DEFAULT_PROBE_PATTERN) -> list[int]:
 
 
 def _find_live_ilk_pids(
-    repo_path: Path | str,
+    repo_path: "Path | str | Iterable[Path | str]",
     pattern: str = DEFAULT_PROBE_PATTERN,
 ) -> list[int]:
     """Live ilk runners driving *repo_path*, excluding this process tree.
@@ -307,23 +345,39 @@ def _find_live_ilk_pids(
     the narrowing is about other repos, not a blanket exemption.
 
     Args:
-        repo_path: The repo being merged.  Required — a probe that does not
-            know what it is protecting is the defect this replaced.
+        repo_path: The repo being merged — one path, or several spellings
+            of the same repo (the resolved form and the one the caller was
+            handed).  Required, and a value that yields no usable spelling
+            raises: a probe that does not know what it is protecting is the
+            defect this replaced, and an empty one never blocks at all.
         pattern: Command-line substring identifying a runner.
 
     Returns:
         List of PIDs of live ilk runners driving *repo_path*.
 
     Raises:
+        ValueError: If *repo_path* yields no usable spelling.
         RuntimeError: If the probe itself fails (broken pgrep, permission
             error, etc.).  The caller must treat this as "unknown liveness"
             and refuse to merge.
     """
+    roots = _candidate_roots(repo_path)
+    if not roots:
+        # An empty root makes every role check fail, so the probe would
+        # return [] for every candidate — a probe that never blocks, which
+        # reads exactly like a quiet box.  That is the fail-OPEN direction
+        # and it is worse than the world-match this replaced: it would merge
+        # under a live loop.  Refuse instead.  Covers None, "", "/" and an
+        # empty sequence in one place.
+        raise ValueError(
+            "_find_live_ilk_pids requires the repo being protected; "
+            f"got {repo_path!r}"
+        )
+
     candidates = _pgrep(pattern)
     if not candidates:
         return []
 
-    roots = _candidate_roots(repo_path)
     excluded = _self_and_ancestor_pids()
 
     return [
@@ -381,6 +435,10 @@ class SelfmodWorktree:
         worktree_path: Path,
         branch: str = "selfmod-batch",
     ) -> None:
+        #: The spelling the caller handed us, kept alongside the resolved
+        #: form: the liveness probe compares against a runner's argv, and the
+        #: launcher may have been given the unresolved path.
+        self.repo_path_as_given = Path(repo_path)
         self.repo_path = repo_path.resolve()
         self.worktree_path = worktree_path.resolve()
         self.branch = branch
@@ -471,7 +529,9 @@ class SelfmodWorktree:
         """
         # Step 1: Liveness check — fail closed.
         try:
-            live_pids = _find_live_ilk_pids(self.repo_path, probe_pattern)
+            live_pids = _find_live_ilk_pids(
+                (self.repo_path, self.repo_path_as_given), probe_pattern
+            )
         except RuntimeError as exc:
             # Broken probe — fail closed.
             raise MergeBlockedError(blocking_pids=[-1]) from exc
