@@ -23,18 +23,73 @@
       },
       {
         "node_id": "skills/ilk-watchdog/tests/test_label_action_totality.py",
-        "reason": "2 failed — Windows-only: spawns `powershell`, absent on macOS (FileNotFoundError). Platform-inherited, not a regression.",
+        "reason": "2 failed \u2014 Windows-only: spawns `powershell`, absent on macOS (FileNotFoundError). Platform-inherited, not a regression.",
         "as_of": "2026-08-26"
       },
       {
         "node_id": "skills/ilk-watchdog/tests/test_watchdog_log_utf8.py::TestUtf8RoundTrip::test_write_read_utf8_no_bom",
-        "reason": "1 failed — Windows-only: spawns `powershell`, absent on macOS. Platform-inherited, not a regression.",
+        "reason": "1 failed \u2014 Windows-only: spawns `powershell`, absent on macOS. Platform-inherited, not a regression.",
         "as_of": "2026-08-26"
       },
       {
         "node_id": "skills/ilk-loop/tests/test_vl_describe.py::TestSmokeGateway::test_hello_image_returns_answer",
         "reason": "1 failed - live VL-gateway smoke test; the service returns a '...does not exist' error with its own request_id echoed, so the failure is service-side, not code. Verified failing at base 21e846d in a detached worktree on 2026-09-03 (before MASTER-2026-09-03-gate-identity landed), and that batch's 10 changed files do not include vl_describe.py or its test. Environment-dependent, not a regression.",
         "as_of": "2026-09-03"
+      },
+      {
+        "node_id": "skills/ilk-loop/tests/test_plan_lint_gate_budget.py",
+        "reason": "1 pre-existing failure at both base 13d1b4d and HEAD 14e7f15; consistently failing",
+        "as_of": "2026-09-20"
+      },
+      {
+        "node_id": "skills/ilk-loop/tests/test_status_all_json.py",
+        "reason": "3 pre-existing failures at both base 13d1b4d and HEAD 14e7f15; consistently failing",
+        "as_of": "2026-09-20"
+      },
+      {
+        "node_id": "skills/ilk-watchdog/tests/test_watchdog_classify.py",
+        "reason": "7 pre-existing failures at both base 13d1b4d and HEAD 14e7f15; consistently failing",
+        "as_of": "2026-09-20"
+      },
+      {
+        "node_id": "skills/ilk-watchdog/tests/test_watchdog_stale_race_sh.py",
+        "reason": "2 pre-existing failures at both base 13d1b4d and HEAD 14e7f15; consistently failing",
+        "as_of": "2026-09-20"
+      },
+      {
+        "node_id": "skills/ilk-loop/tests/test_status_all_skips_blocked.py",
+        "reason": "4 pre-existing failures at both base 13d1b4d and HEAD 14e7f15; consistently failing",
+        "as_of": "2026-09-20"
+      },
+      {
+        "node_id": "skills/ilk-loop/tests/test_data_home_sandbox.py",
+        "reason": "1 pre-existing failure at both base 13d1b4d and HEAD 14e7f15",
+        "as_of": "2026-09-20"
+      },
+      {
+        "node_id": "skills/ilk-loop/tests/test_red_gate_stops_the_run.py",
+        "reason": "1 pre-existing failure at both base 13d1b4d and HEAD 14e7f15",
+        "as_of": "2026-09-20"
+      },
+      {
+        "node_id": "skills/ilk-watchdog/tests/test_scheduler_state_file.py",
+        "reason": "8 pre-existing failures at both base 13d1b4d and HEAD 14e7f15; consistently failing",
+        "as_of": "2026-09-20"
+      },
+      {
+        "node_id": "skills/ilk-feedback/tests/",
+        "reason": "42 pre-existing failures at both base 13d1b4d and HEAD 14e7f15; consistently failing across both runs",
+        "as_of": "2026-09-20"
+      },
+      {
+        "node_id": "skills/ilk-loop/tests/test_native_io_hygiene_lint.py::TestCleanTree::test_clean_ps1_scripts",
+        "reason": "pre-existing: ps1 lint warn present at base 13d1b4d and HEAD 2026-09-20; measured both trees",
+        "as_of": "2026-09-20"
+      },
+      {
+        "node_id": "skills/ilk-watchdog/tests/test_watchdog_log_utf8.py",
+        "reason": "pre-existing family: spawns powershell, absent on macOS; measured at base 13d1b4d and HEAD 2026-09-20",
+        "as_of": "2026-09-20"
       }
     ],
     "hosts": [
