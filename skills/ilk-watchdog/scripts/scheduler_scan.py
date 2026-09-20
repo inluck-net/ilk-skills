@@ -379,28 +379,28 @@ def _scan_one_project(project_dir: Path) -> dict | None:
     if not masters:
         return None
 
-    # Reconcile pass: auto-flip any all-shipped master to status: shipped.
+    # Reconcile pass: auto-flip any all-shipped master to status: shipped,
+    # and keep registry rows honest (a stale row is what an external
+    # consumer reads to decide whether work is finished).
     # Idempotent + best-effort (tolerates concurrent writes).
-    # When a master flips, dispatch a planner verification session so
-    # that ``verified: true`` can be set automatically (the drain→verify
-    # join).  The dispatch is idempotent (marker file) and skips
-    # supervised_only / blacklisted projects.
-    just_reconciled: list[Path] = []
     for m in masters:
         try:
-            if reconcile_master_status(m, plans_dir):
-                just_reconciled.append(m)
-            # Keep the registry rows honest too — a stale row is what an
-            # external consumer reads to decide whether work is finished. Not
-            # added to just_reconciled: that list drives shipped-master
-            # follow-up, and a row rewrite is not a status transition.
+            reconcile_master_status(m, plans_dir)
             reconcile_master_registry(m, plans_dir)
         except OSError:
             pass
 
-    for m in just_reconciled:
+    # Dispatch verification for any shipped master that has not yet been
+    # dispatched.  State-driven (marker file), not event-driven
+    # (just_reconciled): a read that consumed the reconcile trigger (step 1's
+    # defect) no longer blocks dispatch, and a failed dispatch is retried on
+    # the next scan until the marker is written.
+    for m in masters:
         try:
-            _dispatch_verification_on_drain(project_dir, m, plans_dir)
+            m_text = m.read_text(encoding="utf-8-sig")
+            m_fm = parse_frontmatter(m_text)
+            if normalize_master_status(m_fm.get("status", "")) == "shipped":
+                _dispatch_verification_on_drain(project_dir, m, plans_dir)
         except Exception:
             pass
 
