@@ -111,8 +111,13 @@ counting shipped ones, over the registry total), and `pending_batches`
 (masters the loop still owes: active or queued, current included).
 
 ### 2.4 Sentinel — `last-exit.json`
-`~/.ilk-data/projects/<key>/runtime/last-exit.json` — the terminal record of the
-**last** run. Keys: `state`, `pid`, `run_id`, `started_at`, `ended_at`,
+`~/.ilk-data/projects/<key>/runtime/launcher/last-exit.json` — the terminal record of the
+**last** run. (Canonical path is `ilk_paths.sentinel_path(key)`; a bare
+`runtime/last-exit.json` join is a documented bug — a legacy file at that
+older path may exist and does NOT drive the panel. Measured 2026-09-20:
+six stale `running` sentinels at the canonical path kept dead projects on
+the panel as blocked rows after their legacy twins said `all-shipped`.)
+Keys: `state`, `pid`, `run_id`, `started_at`, `ended_at`,
 `iterations`, `project_path`, `cli`, `jsonl_log`. `state` is the stop reason
 (`all-shipped`, `max-iterations`, `no-progress`, `timeout`, `budget-exhausted`,
 `interrupted`, …). **A `running` state with a dead PID is a stale sentinel —
@@ -174,8 +179,10 @@ Resolver + key derivation: `skills/ilk-loop/scripts/ilk_paths.py`.
 ~/.ilk-data/projects/<project-key>/
   ├── plans/                 MASTER-*.md + YYYY-MM-DD-slug.md
   ├── runtime/
-  │   ├── last-exit.json     terminal sentinel (§2.4)
-  │   ├── launcher/running.pid
+  │   ├── launcher/
+  │   │   ├── last-exit.json  terminal sentinel (§2.4) — canonical path
+  │   │   ├── running.pid     + run.lock (per-run mutex)
+  │   │   └── last-launch.json
   │   └── watchdog/watchdog.pid
   └── logs/
       ├── .ilk-loop.log      JSONL summary, all runs (§2.5)
