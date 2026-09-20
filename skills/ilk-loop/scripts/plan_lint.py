@@ -4444,25 +4444,28 @@ def lint_batch_has_no_suite(
 
 # ── Batch-verification sub-plan lint (SP6, decomposition-principles §12/§16) ──
 
-# Sub-plan filenames carry an OPTIONAL same-day letter (`2026-08-29b-...`).
-# Import the shape from plan_slug rather than re-inlining it: a hand-written
-# `\d{4}-\d{2}-\d{2}` misses every same-day batch, which is exactly what
-# test_plan_slug_same_day.py guards -- and this master is itself a `b` batch.
+# What counts as a sub-plan reference in a master body is ONE rule, and it
+# lives in plan_slug: a dated filename carrying an OPTIONAL same-day letter
+# (`2026-08-29b-...`) that is NOT reached through a path.  Import the whole
+# compiled pattern, not a fragment of it -- importing only `DATE_PREFIX` and
+# re-inlining the lead as `\b` is exactly how these two drifted apart: `/`
+# satisfies `\b`, so a master citing `docs/plans/2026-09-08-retro.md` was read
+# as a registry entry.  Pinned by test_plan_slug_same_day.py.
 try:  # plan_slug lives beside this script
-    from plan_slug import DATE_PREFIX  # type: ignore[import-untyped]
+    from plan_slug import SUBPLAN_REF_RE  # type: ignore[import-untyped]
 except ImportError:  # pragma: no cover - direct-script invocation
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from plan_slug import DATE_PREFIX  # type: ignore[import-untyped]
-
-_SUBPLAN_FILENAME_RE = re.compile(rf"\b({DATE_PREFIX}-[a-z0-9-]+\.md)")
+    from plan_slug import SUBPLAN_REF_RE  # type: ignore[import-untyped]
 
 
 def _extract_registry_order(master_text: str) -> list[str]:
     """Return ordered sub-plan filenames as they appear in the master body.
 
     Strips YAML frontmatter first so ``slug:`` fields are not misread as
-    registry entries.  The rule is the same one ``loop_status.py`` uses:
-    appearance order of ``YYYY-MM-DD-*.md`` references in the body.
+    registry entries.  The rule is the same one ``loop_status.py`` uses --
+    literally: both go through ``plan_slug.SUBPLAN_REF_RE``, so a dated
+    filename reached through a path (an ADR, a retrospective) is cited, not
+    registered, and does not appear here.
     """
     body = master_text
     lines = body.split("\n")
@@ -4472,7 +4475,7 @@ def _extract_registry_order(master_text: str) -> list[str]:
                 body = "\n".join(lines[i + 1:])
                 break
     seen: list[str] = []
-    for m in _SUBPLAN_FILENAME_RE.finditer(body):
+    for m in SUBPLAN_REF_RE.finditer(body):
         fname = m.group(1)
         if fname not in seen:
             seen.append(fname)
