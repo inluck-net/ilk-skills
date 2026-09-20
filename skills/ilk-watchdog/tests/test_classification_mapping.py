@@ -182,13 +182,24 @@ def classify_action(label: str) -> str:
     and `test_classification_stdout_contract.py` already use) because sourcing
     `watchdog.sh` runs its CLI argument parsing.
     """
-    script = (
-        f'eval "$(sed -n \'/^normalize_classification()/,/^}}/p\' {_WATCHDOG_SH})"\n'
-        f'eval "$(sed -n \'/^classify_action()/,/^}}/p\' {_WATCHDOG_SH})"\n'
-        f'classify_action "$1"\n'
-    )
+    return _call_watchdog_fn("classify_action", label)
+
+
+def describe_classification(value: str, source: str) -> str:
+    """Call the real `describe_classification` out of `watchdog.sh`."""
+    return _call_watchdog_fn("describe_classification", value, source)
+
+
+_EXTRACT = "\n".join(
+    f'eval "$(sed -n \'/^{fn}()/,/^}}/p\' {_WATCHDOG_SH})"'
+    for fn in ("normalize_classification", "describe_classification", "classify_action")
+)
+
+
+def _call_watchdog_fn(fn: str, *args: str) -> str:
+    script = f'{_EXTRACT}\n{fn} "$@"\n'
     proc = subprocess.run(
-        ["/bin/bash", "-c", script, "_", label],
+        ["/bin/bash", "-c", script, "_", *args],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -197,7 +208,7 @@ def classify_action(label: str) -> str:
     )
     if proc.returncode != 0:
         raise RuntimeError(
-            f"classify_action({label!r}) exited {proc.returncode}: "
+            f"{fn}{args!r} exited {proc.returncode}: "
             f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
         )
     return proc.stdout.strip()
@@ -291,6 +302,48 @@ class TestOneActionSet:
         )
 
 
+class TestFallbackSaysItIsOne:
+    """A stand-in must not read like a verdict.
+
+    Before `describe_classification`, a label collect.py had concluded and a
+    raw sentinel state substituted because collect.py failed printed the same
+    word in the log, the banner and the notification. The one that wants
+    investigating was the one that looked identical to the routine case.
+    """
+
+    def test_postmortem_source_is_not_annotated(self):
+        assert describe_classification("stuck-no-progress", "postmortem") == (
+            "stuck-no-progress"
+        )
+
+    def test_empty_source_does_not_invent_an_annotation(self):
+        """An un-plumbed caller loses the annotation; it never gains a false one."""
+        assert describe_classification("stuck-no-progress", "") == "stuck-no-progress"
+
+    @pytest.mark.parametrize("source", ["sentinel-fallback", "sentinel-legacy-pid"])
+    def test_fallback_source_is_marked_unclassified(self, source: str):
+        out = describe_classification("stuck-no-progress", source)
+        assert "unclassified" in out, (
+            f"describe_classification('stuck-no-progress', {source!r}) → {out!r} "
+            f"is indistinguishable from a postmortem verdict."
+        )
+        assert source in out, f"{out!r} does not say which fallback path produced it."
+
+    def test_fallback_shows_both_spellings_when_normalized(self):
+        """The raw word is evidence — it says what the runner actually wrote."""
+        out = describe_classification("max-iterations", "sentinel-fallback")
+        assert "max-iter-bound" in out, f"{out!r} omits the normalized label"
+        assert "max-iterations" in out, f"{out!r} omits the raw sentinel state"
+
+    @pytest.mark.parametrize("raw", sorted(_RAW_STATES))
+    def test_every_raw_state_is_marked_on_the_fallback_path(self, raw: str):
+        out = describe_classification(raw, "sentinel-fallback")
+        assert "unclassified" in out, (
+            f"Sentinel state {raw!r} renders as {out!r} on the fallback path — "
+            f"no marker that nobody classified this run."
+        )
+
+
 class TestTotality:
     """Whatever the mapping decides, it must decide something."""
 
@@ -314,4 +367,20 @@ class TestTotality:
         assert classify_action(raw) != "relaunch", (
             f"Sentinel state {raw!r} has no normalization in collect.py yet "
             f"resolves to 'relaunch' — an unclassified stop is being retried."
+        )
+
+    @pytest.mark.parametrize(
+        "unknown", ["some-future-label", "", "   ", "definitely-not-a-state"]
+    )
+    def test_a_word_nobody_knows_still_blocks(self, unknown: str):
+        """Normalizing must not have widened relaunch to unknown input.
+
+        `normalize_classification` passes unrecognised words through unchanged,
+        so they still reach `classify_action`'s `*` fail-safe. Pinned because
+        the obvious way to "finish" the mapping later — a permissive default —
+        would turn every unknown stop into a retry.
+        """
+        assert classify_action(unknown) == "block", (
+            f"Unknown classification {unknown!r} → {classify_action(unknown)!r}; "
+            f"the fail-safe must stay 'block'."
         )
