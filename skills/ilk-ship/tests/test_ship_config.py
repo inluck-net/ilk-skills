@@ -480,7 +480,7 @@ class TestCLI:
         proc = subprocess.run(
             [sys.executable, str(SCRIPTS_DIR / "ship_config.py"),
              "--validate", "--project", str(project)],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         assert proc.returncode == 2
         assert "not configured" in proc.stdout.lower() or "not configured" in proc.stderr.lower()
@@ -495,7 +495,7 @@ class TestCLI:
         proc = subprocess.run(
             [sys.executable, str(SCRIPTS_DIR / "ship_config.py"),
              "--validate", "--project", str(project)],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         assert proc.returncode == 0
         assert ".ilk-launch.json" in proc.stdout

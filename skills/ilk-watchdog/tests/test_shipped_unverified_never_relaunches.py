@@ -50,7 +50,7 @@ def _classify_action(label: str) -> str:
     declare -F classify_action >/dev/null || {{ echo "FN_MISSING"; exit 90; }}
     classify_action '{label}'
     """
-    proc = subprocess.run(["bash", "-c", script], capture_output=True,
+    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, encoding="utf-8", errors="replace",
                           text=True, timeout=60)
     out = proc.stdout.strip().splitlines()
     assert "FN_MISSING" not in proc.stdout, (

@@ -39,11 +39,13 @@ def _make_project(tmp: Path, command: str, timeout: int | None = None) -> Path:
     project = tmp / "project"
     project.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=project, check=True,
-                   capture_output=True)
+                   capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     subprocess.run(
         ["git", "-c", "user.email=t@example.com", "-c", "user.name=t",
          "commit", "-q", "--allow-empty", "-m", "init"],
         cwd=project, check=True, capture_output=True,
+            encoding="utf-8", errors="replace",
     )
     suite: dict = {"command": command}
     if timeout is not None:

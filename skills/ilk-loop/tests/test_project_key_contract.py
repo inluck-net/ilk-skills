@@ -72,7 +72,7 @@ def test_cli_agrees_with_the_function(path: str) -> None:
     """
     proc = subprocess.run(
         [sys.executable, str(_CLI), "--project-key", "--start", path],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == project_key(Path(path)), (

@@ -73,26 +73,26 @@ last_updated: 2026-08-10
 def _seed_repo(repo: Path) -> None:
     """Initialise a git repo with two step commits."""
     repo.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init"], cwd=str(repo), capture_output=True, check=True)
+    subprocess.run(["git", "init"], cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test"],
-        cwd=str(repo), capture_output=True, check=True,
+        cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
-        cwd=str(repo), capture_output=True, check=True,
+        cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     (repo / "README.md").write_text("test\n")
-    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True, check=True)
+    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     subprocess.run(
         ["git", "commit", "-m", "chore(plans): example step 0 [plan:2026-08-10-example#step-0]"],
-        cwd=str(repo), capture_output=True, check=True,
+        cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     (repo / "README.md").write_text("test updated\n")
-    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True, check=True)
+    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     subprocess.run(
         ["git", "commit", "-m", "chore(plans): example step 1 [plan:2026-08-10-example#step-1]"],
-        cwd=str(repo), capture_output=True, check=True,
+        cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
 
 
@@ -213,20 +213,20 @@ def test_genuine_zero_not_flagged_as_scan_failed(tmp_path: Path) -> None:
     The distinction is the whole point of AC-4."""
     repo = tmp_path / "myrepo"
     repo.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init"], cwd=str(repo), capture_output=True, check=True)
+    subprocess.run(["git", "init"], cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test"],
-        cwd=str(repo), capture_output=True, check=True,
+        cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
-        cwd=str(repo), capture_output=True, check=True,
+        cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     (repo / "README.md").write_text("test\n")
-    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True, check=True)
+    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     subprocess.run(
         ["git", "commit", "-m", "initial commit"],
-        cwd=str(repo), capture_output=True, check=True,
+        cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
 
     plans_dir = tmp_path / "external" / "plans"

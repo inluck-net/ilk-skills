@@ -95,7 +95,7 @@ def _merge_cli(
         cmd.extend(["--probe-pattern", probe_pattern])
     if env is None:
         env = {**os.environ, **(env_extra or {})}
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=30,
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=30,
                           env=env)
 
 
@@ -103,12 +103,14 @@ def _commit_in(path: Path, filename: str, content: str, msg: str) -> str:
     """Create a file, add, commit, and return the full SHA."""
     (path / filename).write_text(content, encoding="utf-8")
     subprocess.run(["git", "add", filename], cwd=path,
-                   check=True, capture_output=True)
+                   check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "commit", "-m", msg], cwd=path,
-                   check=True, capture_output=True)
+                   check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=path,
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
     )
     return result.stdout.strip()
 
@@ -116,7 +118,7 @@ def _commit_in(path: Path, filename: str, content: str, msg: str) -> str:
 def _head_sha(repo: Path) -> str:
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=repo,
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
     )
     return result.stdout.strip()
 
@@ -152,7 +154,7 @@ class TestLandingHappyPath:
         subprocess.run(
             [sys.executable, str(_SELFMOD), "create",
              str(repo), str(worktree_path)],
-            check=True, capture_output=True, text=True, timeout=30,
+            check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env=env,
         )
 
@@ -179,7 +181,7 @@ class TestLandingHappyPath:
         # Every worktree SHA must be reachable from the clone's HEAD.
         clone_log = subprocess.run(
             ["git", "rev-list", base_sha + "..HEAD"], cwd=repo,
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
         )
         clone_shas = set(clone_log.stdout.strip().splitlines())
         for expected in (sha1, sha2, sha3):
@@ -195,7 +197,7 @@ class TestLandingHappyPath:
         subprocess.run(
             [sys.executable, str(_SELFMOD), "remove",
              str(repo), str(worktree_path)],
-            check=True, capture_output=True, text=True, timeout=30,
+            check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env=env,
         )
         assert not worktree_path.exists()
@@ -220,7 +222,7 @@ class TestLandingBlockedByLiveLoop:
         subprocess.run(
             [sys.executable, str(_SELFMOD), "create",
              str(repo), str(worktree_path)],
-            check=True, capture_output=True, text=True, timeout=30,
+            check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env=env,
         )
 
@@ -282,7 +284,7 @@ class TestLandingRefusedOnBranchMoved:
         subprocess.run(
             [sys.executable, str(_SELFMOD), "create",
              str(repo), str(worktree_path)],
-            check=True, capture_output=True, text=True, timeout=30,
+            check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env=env,
         )
 
@@ -351,7 +353,7 @@ class TestLandingFailClosedOnBrokenProbe:
         subprocess.run(
             [sys.executable, str(_SELFMOD), "create",
              str(repo), str(worktree_path)],
-            check=True, capture_output=True, text=True, timeout=30,
+            check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env=env,
         )
 
@@ -395,7 +397,7 @@ class TestLandingMergeLock:
         subprocess.run(
             [sys.executable, str(_SELFMOD), "create",
              str(repo), str(worktree_path)],
-            check=True, capture_output=True, text=True, timeout=30,
+            check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env=env,
         )
 

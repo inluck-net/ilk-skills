@@ -129,9 +129,11 @@ class TestAC1OnceOnly:
         project.mkdir()
         # Init a git repo so _git_head_sha works
         import subprocess
-        subprocess.run(["git", "init"], cwd=project, capture_output=True)
+        subprocess.run(["git", "init"], cwd=project, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
         subprocess.run(["git", "commit", "--allow-empty", "-m", "init"],
-                       cwd=project, capture_output=True)
+                       cwd=project, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
 
         runtime = tmp_path / "runtime"
 
@@ -179,9 +181,11 @@ class TestAC1OnceOnly:
         project = tmp_path / "project"
         project.mkdir()
         import subprocess
-        subprocess.run(["git", "init"], cwd=project, capture_output=True)
+        subprocess.run(["git", "init"], cwd=project, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
         subprocess.run(["git", "commit", "--allow-empty", "-m", "init"],
-                       cwd=project, capture_output=True)
+                       cwd=project, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
 
         (project / ".ilk-launch.json").write_text(json.dumps({
             "ship": {

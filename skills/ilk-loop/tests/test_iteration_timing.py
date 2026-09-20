@@ -94,7 +94,7 @@ class TestPerIterationOutput:
         """AC-1: --json flag produces valid JSON with expected keys."""
         proc = subprocess.run(
             [sys.executable, str(SCRIPT), "--run", str(FIXTURES / "clean_paired.jsonl"), "--json"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         assert proc.returncode == 0, f"stderr: {proc.stderr[:500]}"
         data = json.loads(proc.stdout)
@@ -183,7 +183,7 @@ class TestBaselineMode:
         """--baseline reports how many iterations were unusable with denominator."""
         proc = subprocess.run(
             [sys.executable, str(SCRIPT), "--baseline", "--json"],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
         )
         assert proc.returncode == 0, f"stderr: {proc.stderr[:500]}"
         data = json.loads(proc.stdout)

@@ -34,11 +34,13 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 def _project(tmp: Path, baseline_red: list[dict], suite_cmd: str) -> Path:
     proj = tmp / "proj"
     proj.mkdir()
-    subprocess.run(["git", "init", "-q"], cwd=proj, check=True, capture_output=True)
+    subprocess.run(["git", "init", "-q"], cwd=proj, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     subprocess.run(
         ["git", "-c", "user.email=t@e.com", "-c", "user.name=t",
          "commit", "-q", "--allow-empty", "-m", "init"],
-        cwd=proj, check=True, capture_output=True)
+        cwd=proj, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     (proj / ".ilk-launch.json").write_text(json.dumps({
         "ship": {"suite": {"command": suite_cmd, "timeout": 60},
                  "baseline_red": baseline_red}

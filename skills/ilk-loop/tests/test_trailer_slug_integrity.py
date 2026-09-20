@@ -28,19 +28,24 @@ def _init_repo(tmp: Path) -> Path:
     """Create a minimal git repo with one initial commit."""
     repo = tmp / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            text=True, encoding="utf-8", errors="replace")
     subprocess.run(
         ["git", "config", "user.email", "test@test"], cwd=repo, check=True,
         capture_output=True,
+            encoding="utf-8", errors="replace",
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"], cwd=repo, check=True,
         capture_output=True,
+            encoding="utf-8", errors="replace",
     )
     (repo / "README.md").write_text("init\n")
-    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            text=True, encoding="utf-8", errors="replace")
     subprocess.run(
         ["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True,
+            encoding="utf-8", errors="replace",
     )
     return repo
 
@@ -48,14 +53,17 @@ def _init_repo(tmp: Path) -> Path:
 def _commit_with_trailer(repo: Path, filename: str, content: str, trailer: str) -> str:
     """Create a commit with a plan trailer. Returns short SHA."""
     (repo / filename).write_text(content)
-    subprocess.run(["git", "add", filename], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "add", filename], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            text=True, encoding="utf-8", errors="replace")
     msg = f"feat({filename}): change\n\n{trailer}"
     subprocess.run(
         ["git", "commit", "-m", msg], cwd=repo, check=True, capture_output=True,
+            encoding="utf-8", errors="replace",
     )
     result = subprocess.run(
         ["git", "rev-parse", "--short", "HEAD"], cwd=repo, check=True,
         capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
     )
     return result.stdout.strip()
 
@@ -70,10 +78,12 @@ def _commit_with_subject_trailer(repo: Path, filename: str, content: str,
     near-miss diagnostic could regress without any test noticing.
     """
     (repo / filename).write_text(content)
-    subprocess.run(["git", "add", filename], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "add", filename], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            text=True, encoding="utf-8", errors="replace")
     msg = f"feat({filename}): change {trailer}"
     subprocess.run(
         ["git", "commit", "-m", msg], cwd=repo, check=True, capture_output=True,
+            encoding="utf-8", errors="replace",
     )
     result = subprocess.run(
         ["git", "rev-parse", "--short", "HEAD"], cwd=repo, check=True,
@@ -385,7 +395,7 @@ class TestPin3UnknownSlugDetection:
         # Extract trailer slugs from git log
         result = subprocess.run(
             ["git", "log", "--format=%s%n%b", "--all"],
-            cwd=repo, capture_output=True, text=True, check=True,
+            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, check=True,
         )
         import re
         trailer_re = re.compile(r"\[plan:([^#]+)#")
@@ -427,7 +437,7 @@ class TestPin3BashDriver:
         )
         return subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True, timeout=30, cwd=str(cwd),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", text=True, timeout=30, cwd=str(cwd),
         )
 
     def test_unknown_slug_detected(self, typo_repo: tuple[Path, Path]) -> None:
@@ -436,11 +446,11 @@ class TestPin3BashDriver:
         # Get before/after SHAs (init commit vs HEAD)
         before = subprocess.run(
             ["git", "rev-parse", "HEAD~4"], cwd=str(repo), capture_output=True,
-            text=True, check=True,
+            text=True, encoding="utf-8", errors="replace", check=True,
         ).stdout.strip()
         after = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=str(repo), capture_output=True,
-            text=True, check=True,
+            text=True, encoding="utf-8", errors="replace", check=True,
         ).stdout.strip()
 
         result = self._source_and_call(
@@ -460,11 +470,11 @@ class TestPin3BashDriver:
         repo, plans_dir = clean_repo
         before = subprocess.run(
             ["git", "rev-parse", "HEAD~4"], cwd=str(repo), capture_output=True,
-            text=True, check=True,
+            text=True, encoding="utf-8", errors="replace", check=True,
         ).stdout.strip()
         after = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=str(repo), capture_output=True,
-            text=True, check=True,
+            text=True, encoding="utf-8", errors="replace", check=True,
         ).stdout.strip()
 
         result = self._source_and_call(

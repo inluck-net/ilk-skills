@@ -43,11 +43,13 @@ def _make_project(tmp: Path, suite_command: str | None) -> Path:
     project = tmp / "project"
     project.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=project, check=True,
-                   capture_output=True)
+                   capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     subprocess.run(
         ["git", "-c", "user.email=t@example.com", "-c", "user.name=t",
          "commit", "-q", "--allow-empty", "-m", "init"],
         cwd=project, check=True, capture_output=True,
+            encoding="utf-8", errors="replace",
     )
     if suite_command is not None:
         (project / ".ilk-launch.json").write_text(
@@ -321,6 +323,7 @@ class TestD4LockLifecycle:
             ["git", "-c", "user.email=t@example.com", "-c", "user.name=t",
              "commit", "-q", "--allow-empty", "-m", "next"],
             cwd=project, check=True, capture_output=True,
+            encoding="utf-8", errors="replace",
         )
         second = run_batch_gate(project, runtime,
                                 _wait_helper=REAL_WAIT_HELPER, _poll_timeout=30)
