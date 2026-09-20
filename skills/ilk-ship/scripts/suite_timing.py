@@ -231,13 +231,15 @@ def capture_environment(project_path: Path) -> dict[str, Any]:
         if platform.system() == "Darwin":
             result = subprocess.run(
                 ["sysctl", "-n", "hw.ncpu"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=5,
             )
             env["ncpu"] = int(result.stdout.strip()) if result.returncode == 0 else None
         else:
             result = subprocess.run(
                 ["nproc"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=5,
             )
             env["ncpu"] = int(result.stdout.strip()) if result.returncode == 0 else None
     except (subprocess.TimeoutExpired, OSError, ValueError):
@@ -250,7 +252,8 @@ def capture_environment(project_path: Path) -> dict[str, Any]:
     try:
         result = subprocess.run(
             [sys.executable, "-m", "pytest", "--version"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=10,
         )
         env["pytest_version"] = result.stdout.strip() if result.returncode == 0 else None
     except (subprocess.TimeoutExpired, OSError):
@@ -266,7 +269,8 @@ def capture_environment(project_path: Path) -> dict[str, Any]:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=10,
             cwd=project_path,
         )
         env["head"] = result.stdout.strip() if result.returncode == 0 else None
@@ -345,6 +349,7 @@ def _default_runner(invocation: str, cwd: Path) -> tuple[int, str, float]:
             invocation.split(),
             capture_output=True,
             text=True,
+                encoding="utf-8", errors="replace",
             cwd=cwd,
             timeout=3600,  # 1 hour max per run
         )
@@ -437,13 +442,15 @@ def check_idle(ncpu: int | None = None) -> None:
             if platform.system() == "Darwin":
                 result = subprocess.run(
                     ["sysctl", "-n", "hw.ncpu"],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=5,
                 )
                 ncpu = int(result.stdout.strip()) if result.returncode == 0 else None
             else:
                 result = subprocess.run(
                     ["nproc"],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=5,
                 )
                 ncpu = int(result.stdout.strip()) if result.returncode == 0 else None
         except (subprocess.TimeoutExpired, OSError, ValueError):
@@ -468,7 +475,8 @@ def check_idle(ncpu: int | None = None) -> None:
     try:
         result = subprocess.run(
             ["ps", "-eo", "pid,comm"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=5,
         )
         if result.returncode == 0:
             loop_pids: list[int] = []

@@ -798,6 +798,7 @@ def loop_status_exit(project_path: Path) -> int:
             cwd=str(project_path),
             capture_output=True,
             text=True,
+                encoding="utf-8", errors="replace",
             timeout=30,
             encoding="utf-8", errors="replace",
         )
@@ -1781,6 +1782,7 @@ def detect_uncommitted_changes(project_path: Path) -> list[dict[str, Any]]:
             cwd=project_path,
             capture_output=True,
             text=True,
+                encoding="utf-8", errors="replace",
             timeout=10,
         )
         if result.returncode != 0:
@@ -1884,6 +1886,7 @@ def probe_head_dependency(
             cwd=project_path,
             capture_output=True,
             text=True,
+                encoding="utf-8", errors="replace",
             encoding="utf-8",
             errors="replace",
             timeout=30,

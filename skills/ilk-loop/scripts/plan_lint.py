@@ -833,7 +833,8 @@ def _project_has_ship_suite(project_root: Path) -> bool:
         result = subprocess.run(
             [sys.executable, str(_SHIP_CONFIG_SCRIPT),
              "--validate", "--project", str(project_root)],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=15,
         )
         return result.returncode == 0  # 0 = ShipConfig (configured)
     except (subprocess.TimeoutExpired, OSError):
@@ -1813,6 +1814,7 @@ def _find_importers(module_name: str, project_root: Path) -> list[str]:
             ["grep", "-Ern", "--include=*.py", "-l", pattern, str(project_root)],
             capture_output=True,
             text=True,
+                encoding="utf-8", errors="replace",
             timeout=15,
         )
         if result.returncode != 0:
@@ -2064,6 +2066,7 @@ def _run_git(args: list[str], cwd: Path) -> tuple[int, str, str]:
             cwd=cwd,
             capture_output=True,
             text=True,
+                encoding="utf-8", errors="replace",
             timeout=15,
         )
         return r.returncode, r.stdout.strip(), r.stderr.strip()
@@ -3047,7 +3050,8 @@ def _get_effective_path_dirs(project: Path) -> tuple[list[str] | None, str]:
     # 1. getconf PATH — the POSIX-guaranteed floor.
     try:
         result = subprocess.run(
-            ["getconf", "PATH"], capture_output=True, text=True, timeout=10
+            ["getconf", "PATH"], capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=10
         )
         if result.returncode != 0:
             return None, f"getconf PATH exited {result.returncode}"

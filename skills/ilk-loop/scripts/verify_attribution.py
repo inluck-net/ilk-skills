@@ -373,7 +373,7 @@ def _git(project: Path, *args: str) -> str | None:
     import subprocess
     try:
         r = subprocess.run(["git", *args], cwd=project, capture_output=True,
-                           text=True, timeout=30)
+                           text=True, encoding="utf-8", errors="replace", timeout=30)
     except (OSError, subprocess.SubprocessError):
         return None
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
