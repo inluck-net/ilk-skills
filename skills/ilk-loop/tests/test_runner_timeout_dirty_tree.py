@@ -317,19 +317,28 @@ class TestAC3FrontMatterUntouched:
             "plan file must not be modified by preservation"
 
     def test_no_plan_references_in_function(self, env: dict) -> None:
-        """The function source contains no references to plan/front-matter."""
+        """The function source references plan-aware helpers ONLY through the
+        re-entry stamp path (get_active_subplan_targets + _stamp_reentry_note).
+
+        The function MUST NOT inline plan parsing — that logic lives in the
+        dedicated helper so the preservation core stays focused on git.
+        """
         script = textwrap.dedent(f"""
             export ILK_DOTSOURCE_ONLY=1
             source '{RUNNER}' 2>/dev/null
-            type preserve_dirty_tree_on_timeout | grep -iE 'plan|front.?matter|current_step|status:' && echo "REFERENCED" || echo "CLEAN"
+            # Inline plan/frontmatter parsing is forbidden; references to
+            # get_active_subplan_targets and _stamp_reentry_note are allowed
+            # because they are dedicated helpers for the re-entry stamp.
+            type preserve_dirty_tree_on_timeout | grep -iE 'front.?matter|current_step|status:' && echo "REFERENCED" || echo "CLEAN"
         """)
         result = subprocess.run(
             ["bash", "-c", script],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env={**env, "ILK_DOTSOURCE_ONLY": "1"},
         )
-        assert "CLEAN" in result.stdout, \
-            "function must not reference plan files or front-matter"
+        assert "CLEAN" in result.stdout, (
+            "function must not inline plan/frontmatter parsing — use dedicated helpers"
+        )
 
 
 # ── AC-6: next iteration resumes from preserved state ───────────────────────
@@ -988,3 +997,159 @@ def test_captured_value_survives_int_conversion(repo: Path, env: dict) -> None:
             f"lost when this happens. Value was {raw!r}"
         ) from exc
     assert parsed == 1
+
+
+# ── AC-14: the WIP preserve stamps re-entry state ──────────────────────────
+#
+# Regression for the 2026-09-20 lark thrash: three G2 iterations each
+# re-derived the prior iterations' state because the timeout WIP-preserve
+# said only [wip:timeout] files=N.  The next session's only memory is the
+# plan file plus the tree; nothing tells it which step was in flight, what
+# completed, or what remained — so it re-derives (~16 min of a 30-min
+# window measured at 22:30-22:46).
+#
+# The fix: the WIP-preserve path stamps a re-entry note into the active
+# sub-plan's Findings section AND extends the commit message with
+# `step=<slug>#<N>` (machine-parseable for ship_audit's ledger rules).
+
+def _setup_plans_dir(project: Path, plan_body: str) -> Path:
+    """Create a docs/plans/ dir with one master and one sub-plan."""
+    plans_dir = project / "docs" / "plans"
+    plans_dir.mkdir(parents=True, exist_ok=True)
+    master = plans_dir / "MASTER-test.md"
+    master.write_text(textwrap.dedent("""\
+        ---
+        title: test
+        slug: test
+        created: 2026-09-20T23:10:00+08:00
+        status: active
+        priority: null
+        pause_after_ship: false
+        supervised_only: false
+        base_branch: main
+        branch: null
+        goal: test
+        out_of_scope: []
+        cross_cutting_invariants: []
+        ---
+
+        # MASTER plan: test
+
+        ## Sub-plan registry
+
+        | # | Sub-plan | File | Status |
+        |---|---|---|---|
+        | 1 | sub-a | 2026-09-20-sub-a.md | in-progress |
+    """), encoding="utf-8")
+    sub = plans_dir / "2026-09-20-sub-a.md"
+    sub.write_text(textwrap.dedent(plan_body), encoding="utf-8")
+    return plans_dir
+
+
+ACTIVE_SUB_PLAN = """\
+    ---
+    plan: sub-a
+    status: in-progress
+    current_step: 1
+    tickets: []
+    priority: P0
+    estimated_steps: 3
+    last_updated: 2026-09-20
+    ---
+
+    # Sub-plan: fix the mocks
+
+    ## Steps
+
+    ### Step 0 — classify failures
+    - Run the failing tests and classify every failure.
+
+    ```yaml
+    local_checks:
+      - command: python3 -m pytest skills/ilk-lark-tickets/tests/test_init_project.py -q
+        timeout: 120
+    ```
+
+    ### Step 1 — fix get_tenant_access_token mock
+    - Update mock expectations to match the client's actual call shape.
+    - The remaining commit line for step 1.
+
+    ```yaml
+    local_checks:
+      - command: python3 -m pytest skills/ilk-lark-tickets/tests/test_init_project.py -q
+        timeout: 120
+    ```
+
+    ### Step 2 — run full suite
+    - Run the full suite and verify all green.
+
+    ## Findings
+"""
+
+
+def _run_preservation_with_plans(
+    repo: Path, env: dict, project: Path
+) -> tuple[int, str, str]:
+    """Call preserve_dirty_tree_on_timeout with REPOS and PROJECT_PATH.
+
+    Returns (wip_count, stderr, commit_message).
+    """
+    env_copy = dict(env)
+    env_copy["ILK_DOTSOURCE_ONLY"] = "1"
+    env_copy["REPOS"] = str(repo)
+    env_copy["PROJECT_PATH"] = str(project)
+
+    script = textwrap.dedent(f"""
+        export ILK_DOTSOURCE_ONLY=1
+        source '{RUNNER}' 2>/dev/null
+        REPOS=('{repo}')
+        PROJECT_PATH='{project}'
+        preserve_dirty_tree_on_timeout
+    """)
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=30, env=env_copy,
+    )
+    stdout_lines = result.stdout.strip().splitlines()
+    wip_count = int(stdout_lines[-1]) if stdout_lines else 0
+    commit_msg = subprocess.run(
+        ["git", "-C", str(repo), "log", "-1", "--format=%B"],
+        capture_output=True, text=True, timeout=10,
+    ).stdout
+    return wip_count, result.stderr, commit_msg
+
+
+class TestAC14ReentryStamp:
+    """The WIP preserve stamps re-entry state into the plan and commit message."""
+
+    def test_commit_message_carries_step_slug(self, tmp_path: Path, env: dict) -> None:
+        """WIP commit message contains step=<slug>#<N> from the active sub-plan."""
+        project = tmp_path / "project"
+        _init_repo(project)
+        _setup_plans_dir(project, ACTIVE_SUB_PLAN)
+        (project / "work.txt").write_text("uncommitted\n")
+
+        _wip_count, stderr, commit_msg = _run_preservation_with_plans(project, env, project)
+
+        assert "step=sub-a#1" in commit_msg, (
+            f"Expected 'step=sub-a#1' in WIP commit message, got:\n{commit_msg}"
+        )
+
+    def test_findings_section_stamped(self, tmp_path: Path, env: dict) -> None:
+        """The active sub-plan's Findings section gets a re-entry note."""
+        project = tmp_path / "project"
+        _init_repo(project)
+        _setup_plans_dir(project, ACTIVE_SUB_PLAN)
+        (project / "work.txt").write_text("uncommitted\n")
+
+        _run_preservation_with_plans(project, env, project)
+
+        sub = project / "docs" / "plans" / "2026-09-20-sub-a.md"
+        body = sub.read_text(encoding="utf-8")
+        assert "### Re-entry" in body, (
+            "Expected '### Re-entry' heading in Findings section after WIP preserve."
+        )
+        assert "step 1 killed at its bound" in body.lower(), (
+            "Expected 'step 1 killed at its bound' in re-entry note."
+        )
