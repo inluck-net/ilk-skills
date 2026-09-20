@@ -210,8 +210,9 @@ class TestLandingBlockedByLiveLoop:
     """AC-2: a live loop detected → exit 2, worktree survives, PID named."""
 
     def test_merge_blocked_by_live_loop(self, tmp_path: Path) -> None:
-        """With a live process matching ``pgrep -f run_ilk_loop``,
-        the merge CLI must exit ``_EXIT_BLOCKED`` and name the blocking PID.
+        """With a live process matching ``pgrep -f run_ilk_loop`` *and*
+        driving this repo, the merge CLI must exit ``_EXIT_BLOCKED`` and name
+        the blocking PID.
 
         The worktree is left intact — it holds the only copy of the work.
         """
@@ -229,10 +230,14 @@ class TestLandingBlockedByLiveLoop:
         _commit_in(worktree_path, "batch.txt", "work", "batch commit")
         wt_sha = _head_sha(worktree_path)
 
-        # Spawn a blocker whose filename matches pgrep -f.
+        # Spawn a blocker whose filename matches pgrep -f AND which claims
+        # this repo via --project-path.  Both halves are load-bearing since
+        # 2026-09-20: the probe narrowed from "any runner on the box" to
+        # "a runner driving the repo being merged", so a blocker without the
+        # role is no longer a blocker.  The script ignores its argv.
         script = _make_blocker_script(tmp_path)
         blocker = subprocess.Popen(
-            [sys.executable, str(script)],
+            [sys.executable, str(script), "--project-path", str(repo)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         try:

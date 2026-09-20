@@ -24,7 +24,7 @@ Operator contract
 * **Dry-run by default.**  ``--apply`` is opt-in, mirroring ``install.sh``.
 * **Refuses to run while any loop is live.**  A loop resolves its paths
   through ``project_key`` mid-run; renaming under it strands the run.
-  Liveness comes from ``selfmod_worktree._find_live_ilk_pids``: ``pgrep``
+  Liveness comes from ``selfmod_worktree._find_any_live_ilk_pids``: ``pgrep``
   exit 1 means "none", exit >1 raises, and a raised probe is treated as
   *unknown* and refuses — a broken probe and a true zero must never be
   byte-identical.
@@ -304,9 +304,12 @@ def plan_migration(projects: list[dict], data_root: Path) -> Plan:
 
 def live_loop_pids() -> list[int]:
     """PIDs of live ilk runners.  Raises ``RuntimeError`` if the probe fails."""
-    from selfmod_worktree import _find_live_ilk_pids  # noqa: PLC0415
+    from selfmod_worktree import _find_any_live_ilk_pids  # noqa: PLC0415
 
-    return _find_live_ilk_pids()
+    # World-scoped on purpose: the question here is "is the box quiet", not
+    # "is anyone driving one particular repo".  ``_find_live_ilk_pids`` is
+    # the repo-scoped probe the merge-back wants and is the wrong one here.
+    return _find_any_live_ilk_pids()
 
 
 # ── applying ─────────────────────────────────────────────────────────────────
