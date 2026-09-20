@@ -319,6 +319,9 @@ def project_key(root: Path) -> str:
     all of them did. An all-lowercase over-cap path (``/home/...`` on Linux)
     keeps its key, and the migration reports it as ``unchanged-key`` rather
     than renaming a directory onto itself.
+
+    Operator procedure, the refusals, the git-worktree repair step and the
+    cross-repo consumers: ``docs/re-keying-project-state.md``.
     """
     abs_str = str(Path(root).resolve())
     h = hashlib.sha1(abs_str.encode("utf-8")).hexdigest()[:_KEY_HASH_LEN]

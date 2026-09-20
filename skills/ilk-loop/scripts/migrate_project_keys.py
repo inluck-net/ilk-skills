@@ -52,6 +52,10 @@ Exit codes::
     1  refused — at least one project cannot be migrated safely
     2  unsafe — a loop is live, or liveness could not be determined
 
+Operator procedure in full — quiet-box requirements, the git-worktree repair
+step, the second host, and the cross-repo consumers of the key:
+``docs/re-keying-project-state.md``.
+
 Sub-plan: a-project-key-that-cannot-collide, step 2.
 """
 from __future__ import annotations
