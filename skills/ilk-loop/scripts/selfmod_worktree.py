@@ -130,6 +130,8 @@ def _find_live_ilk_pids(pattern: str = DEFAULT_PROBE_PATTERN) -> list[int]:
             ["pgrep", "-f", pattern],
             capture_output=True,
             text=True,
+                encoding="utf-8", errors="replace",
+            encoding="utf-8", errors="replace",
         )
     except FileNotFoundError as exc:
         raise RuntimeError(
@@ -169,6 +171,7 @@ def _git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str
         cwd=cwd,
         capture_output=True,
         text=True,
+                encoding="utf-8", errors="replace",
         check=False,
     )
 

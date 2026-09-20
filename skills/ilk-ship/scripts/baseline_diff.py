@@ -276,6 +276,7 @@ def run_with_timeout(
             cwd=cwd,
             capture_output=True,
             text=True,
+                encoding="utf-8", errors="replace",
             timeout=timeout,
         )
         output = result.stdout + "\n" + result.stderr
@@ -334,6 +335,7 @@ def run_collect_only(
             cwd=cwd,
             capture_output=True,
             text=True,
+                encoding="utf-8", errors="replace",
             timeout=timeout,
         )
         output = result.stdout + "\n" + result.stderr
@@ -374,6 +376,7 @@ def resolve_last_tag(cwd: Optional[Path] = None) -> Optional[str]:
             cwd=cwd,
             capture_output=True,
             text=True,
+                encoding="utf-8", errors="replace",
             timeout=10,
         )
         if result.returncode == 0:

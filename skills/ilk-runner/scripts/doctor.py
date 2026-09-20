@@ -421,7 +421,8 @@ def _gate_lock_holders(project_data: Path) -> GateResult:
 
     # Check if lsof is available.
     try:
-        subprocess.run(["lsof", "--version"], capture_output=True, timeout=5)
+        subprocess.run(["lsof", "--version"], capture_output=True,
+                       encoding="utf-8", errors="replace", timeout=5)
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return GateResult(
             name="lock-holders",
@@ -433,7 +434,8 @@ def _gate_lock_holders(project_data: Path) -> GateResult:
     try:
         result = subprocess.run(
             ["lsof", str(lock_path)],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=10,
         )
     except subprocess.TimeoutExpired:
         return GateResult(
@@ -485,7 +487,8 @@ def _gate_process_set(project_path: Path) -> GateResult:
         result = subprocess.run(
             ["bash", "-c",
              f'source "{pid_script}" && ilk_project_runners "{norm}"'],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=15,
         )
     except subprocess.TimeoutExpired:
         return GateResult(

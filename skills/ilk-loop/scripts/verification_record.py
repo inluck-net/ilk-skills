@@ -34,7 +34,7 @@ def _git(project: Path, *args: str) -> str | None:
     """Run a read-only git command, returning stripped stdout or None."""
     try:
         r = subprocess.run(["git", *args], cwd=project, capture_output=True,
-                           text=True, timeout=30)
+                           text=True, encoding="utf-8", errors="replace", timeout=30)
     except (OSError, subprocess.SubprocessError):
         return None
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
@@ -48,6 +48,7 @@ def read_head_from_git(project: Path) -> str | None:
             cwd=project,
             capture_output=True,
             text=True,
+                encoding="utf-8", errors="replace",
             timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
@@ -127,7 +128,8 @@ def compute_suite_scope(project: Path, base_sha: str) -> dict:
     try:
         r = subprocess.run(
             ["git", "diff", "--name-only", f"{base_sha}..HEAD"],
-            cwd=project, capture_output=True, text=True, timeout=30,
+            cwd=project, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
         return {"mode": "full", "count": 0,
@@ -485,7 +487,8 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
     try:
         add = subprocess.run(
             ["git", "worktree", "add", "--detach", str(wt), base_sha],
-            cwd=project, capture_output=True, text=True, timeout=180)
+            cwd=project, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=180)
         if add.returncode != 0:
             raise RuntimeError(
                 f"could not create a worktree at {base_sha}: "
@@ -496,8 +499,8 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
         runner = re.sub(r"\s-n\s+\S+|\s--dist\s+\S+", "", invocation)
         for nid in node_ids:
             r = subprocess.run(f"{runner} {nid}", shell=True, cwd=wt,
-                               capture_output=True, text=True, timeout=timeout,
-                               encoding="utf-8", errors="replace")
+                               capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=timeout)
             blob = (r.stdout or "") + (r.stderr or "")
             # Distinguish "this test did not exist at base" from "this test
             # exists and its module fails to import". Both produce "no tests
@@ -522,7 +525,8 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
                 verdicts[nid] = "failed"
     finally:
         subprocess.run(["git", "worktree", "remove", "--force", str(wt)],
-                       cwd=project, capture_output=True, text=True)
+                       cwd=project, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
         shutil.rmtree(tmp, ignore_errors=True)
     verdicts.update(verdicts_declared)
     return verdicts
