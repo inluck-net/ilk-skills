@@ -26,19 +26,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 LOOP_STATUS = REPO_ROOT / "skills" / "ilk-loop" / "scripts" / "loop_status.py"
 STATUS_ALL = REPO_ROOT / "skills" / "ilk-loop" / "scripts" / "status_all.py"
 
-# Compute project_key inline (avoid import path gymnastics).
-import hashlib
-import re as _re
-
-_KEY_PUNCT = _re.compile(r"[^a-z0-9]+")
-
-def _project_key(root: Path) -> str:
-    abs_str = str(root.resolve()).lower()
-    slug = _KEY_PUNCT.sub("-", abs_str).strip("-")
-    if len(slug) <= 80:
-        return slug
-    h = hashlib.sha1(abs_str.encode("utf-8")).hexdigest()[:7]
-    return slug[: 80 - 8].rstrip("-") + "-" + h
+# project_key imported, not reimplemented. The inline copy below was the
+# pre-2026-09-08b construction (conditional hash over the LOWERCASED path);
+# when ilk_paths.project_key became collide-proof (unconditional hash over
+# the case-preserving path) this fixture kept writing plans under a key the
+# resolver no longer computes — every loop_status.py subprocess in this file
+# exited 2 "no plans dir found". A second copy of the key derivation is
+# exactly that drift; the resolver is one import away.
+sys.path.insert(0, str(REPO_ROOT / "skills" / "ilk-loop" / "scripts"))
+from ilk_paths import project_key as _project_key  # noqa: E402
 
 
 # We use a fixed scratch dir inside the repo (gitignored).

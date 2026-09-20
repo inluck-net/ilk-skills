@@ -95,12 +95,15 @@ def test_blocked_subplan_is_not_the_next_subplan(tmp_path):
     _write_subplan(plans, "2026-08-13d-first-party-means-our-repo.md",
                    status="pending", current_step=1, estimated_steps=5)
 
-    slug, step = status_all._resolve_next_subplan(plans, master_text)
+    slug, step, pos, total, fname = status_all._resolve_next_subplan(plans, master_text)
 
     assert slug == "2026-08-13d-first-party-means-our-repo", (
         f"reported a non-runnable sub-plan as next: {slug!r} at {step!r}"
     )
     assert step == "1/5", step
+    # pos counts shipped sub-plans too — "sub-plan 3 of 3 in the batch".
+    assert (pos, total) == (3, 3), (pos, total)
+    assert fname == "2026-08-13d-first-party-means-our-repo.md", fname
 
 
 def test_in_progress_subplan_is_runnable(tmp_path):
@@ -111,9 +114,11 @@ def test_in_progress_subplan_is_runnable(tmp_path):
     _write_subplan(plans, "2026-08-14-a.md", status="blocked", current_step=1, estimated_steps=3)
     _write_subplan(plans, "2026-08-14-b.md", status="in-progress", current_step=2, estimated_steps=4)
 
-    slug, step = status_all._resolve_next_subplan(plans, master_text)
+    slug, step, pos, total, fname = status_all._resolve_next_subplan(plans, master_text)
     assert slug == "2026-08-14-b"
     assert step == "2/4"
+    assert (pos, total) == (2, 2), (pos, total)
+    assert fname == "2026-08-14-b.md", fname
 
 
 def test_all_blocked_reports_nothing_runnable(tmp_path):
@@ -128,9 +133,11 @@ def test_all_blocked_reports_nothing_runnable(tmp_path):
     _write_subplan(plans, "2026-08-14b-a.md", status="shipped", current_step=3, estimated_steps=3)
     _write_subplan(plans, "2026-08-14b-b.md", status="blocked", current_step=0, estimated_steps=2)
 
-    slug, step = status_all._resolve_next_subplan(plans, master_text)
+    slug, step, pos, total, fname = status_all._resolve_next_subplan(plans, master_text)
     assert slug == "", f"blocked-only master reported {slug!r} as runnable"
     assert step == ""
+    assert (pos, total) == (0, 0), (pos, total)
+    assert fname == "", fname
 
 
 def test_all_shipped_reports_nothing(tmp_path):
@@ -140,9 +147,11 @@ def test_all_shipped_reports_nothing(tmp_path):
                                 ["2026-08-14c-a.md"])
     _write_subplan(plans, "2026-08-14c-a.md", status="shipped", current_step=2, estimated_steps=2)
 
-    slug, step = status_all._resolve_next_subplan(plans, master_text)
+    slug, step, pos, total, fname = status_all._resolve_next_subplan(plans, master_text)
     assert slug == ""
     assert step == ""
+    assert (pos, total) == (0, 0), (pos, total)
+    assert fname == "", fname
 
 
 def test_agrees_with_plan_status_runnable_definition():
