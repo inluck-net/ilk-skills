@@ -2402,6 +2402,98 @@ local_check_outcome() {
 # AC-2: WIP commit identifiable by message shape.
 # AC-4: untracked files inside the repo are included (git add -A).
 # AC-7: failures inside this function must not abort the run (set +e).
+_stamp_reentry_note() {
+  # Append a re-entry note to the active sub-plan's Findings section.
+  # Called by preserve_dirty_tree_on_timeout when slug+step are resolved.
+  # Args: $1=slug $2=step
+  local slug="$1" step="$2"
+
+  # Resolve plans dir.
+  local resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
+  local plans_dir
+  plans_dir=$(python3 "$resolver" --start "$PROJECT_PATH" 2>/dev/null | \
+    python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('external_plans_dir') or d.get('plans_dir') or '')" 2>/dev/null) || plans_dir=""
+  if [[ -z "$plans_dir" || ! -d "$plans_dir" ]]; then
+    # Try in-tree fallback.
+    if [[ -d "$PROJECT_PATH/docs/plans" ]]; then
+      plans_dir="$PROJECT_PATH/docs/plans"
+    else
+      return 0  # no plans dir — nothing to stamp
+    fi
+  fi
+
+  # Find the sub-plan file by slug.
+  local sub_file
+  sub_file=$(grep -rl "^plan: $slug" "$plans_dir"/*.md 2>/dev/null | head -1) || true
+  if [[ -z "$sub_file" || ! -f "$sub_file" ]]; then
+    return 0  # sub-plan file not found — nothing to stamp
+  fi
+
+  # Read the step heading for the re-entry note.
+  local step_heading
+  step_heading=$(grep -m1 "^### Step $step" "$sub_file" 2>/dev/null) || step_heading=""
+
+  # Read remaining commit line from the step body.
+  local remaining_line
+  remaining_line=$(python3 -c "
+import re, sys
+text = open(sys.argv[1], encoding='utf-8').read()
+body = re.sub(r'^---\n.*?\n---\n', '', text, flags=re.S)
+step_re = re.compile(r'^### Step \Q$step\E\b.*$', re.M)
+m = step_re.search(body)
+if m:
+    # Find the first bullet after the heading
+    after = body[m.end():]
+    for line in after.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('- '):
+            print(stripped)
+            break
+" "$sub_file" 2>/dev/null) || remaining_line=""
+
+  # Build the re-entry note.
+  local timestamp
+  timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+  local note="### Re-entry $timestamp — step $step killed at its bound"
+  if [[ -n "$step_heading" ]]; then
+    note="$note
+- Step in flight: $step_heading"
+  fi
+  if [[ -n "$remaining_line" ]]; then
+    note="$note
+- $remaining_line"
+  fi
+
+  # Append to Findings section. If ## Findings exists and is the last section,
+  # append after it; otherwise append at end of file.
+  if grep -q "^## Findings" "$sub_file" 2>/dev/null; then
+    # Insert the note after the ## Findings line.
+    python3 -c "
+import sys
+path = sys.argv[1]
+note = sys.argv[2]
+text = open(path, encoding='utf-8').read()
+# Find ## Findings and append after it.
+idx = text.find('## Findings')
+if idx >= 0:
+    # Find end of the line
+    eol = text.find('\n', idx)
+    if eol >= 0:
+        text = text[:eol+1] + '\n' + note + '\n' + text[eol+1:]
+open(path, 'w', encoding='utf-8').write(text)
+" "$sub_file" "$note" 2>/dev/null
+  else
+    # No Findings section — append at end of file.
+    echo "" >> "$sub_file"
+    echo "## Findings" >> "$sub_file"
+    echo "" >> "$sub_file"
+    echo "$note" >> "$sub_file"
+  fi
+
+  echo "[runner] re-entry note stamped in $(basename "$sub_file") for step $step" >&2
+  return 0
+}
+
 #
 # Globals read: REPOS, PROJECT_PATH
 # Globals modified: none
@@ -2409,6 +2501,17 @@ local_check_outcome() {
 preserve_dirty_tree_on_timeout() {
   local wip_count=0
   local repo
+
+  # Resolve the active sub-plan slug and step for re-entry stamping
+  # (retro-2026-09-20-a-step-that-outgrew-its-window P3).
+  local _reentry_slug="" _reentry_step=""
+  local _targets
+  _targets=$(get_active_subplan_targets 2>/dev/null) || true
+  if [[ -n "$_targets" ]]; then
+    _reentry_slug="${_targets%% *}"
+    _reentry_step="${_targets#* }"
+  fi
+
   for repo in "${REPOS[@]}"; do
     # Must be a git repo
     git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || continue
@@ -2438,12 +2541,19 @@ preserve_dirty_tree_on_timeout() {
       file_count=$(git -C "$repo" diff --cached --name-only 2>/dev/null | wc -l | tr -d ' ')
       local diff_stat
       diff_stat=$(git -C "$repo" diff --cached --stat 2>/dev/null | tail -1)
+
+      # Build trailer: [wip:timeout] files=N ... step=<slug>#<N>
+      local _wip_trailer="[wip:timeout] files=$file_count $diff_stat"
+      if [[ -n "$_reentry_slug" && -n "$_reentry_step" ]]; then
+        _wip_trailer="$_wip_trailer step=$_reentry_slug#$_reentry_step"
+      fi
+
       git -C "$repo" commit -m "WIP: preserve timed-out iteration changes
 
 Preserved by ilk-runner on timeout.  This commit is NOT a gate pass —
 the next iteration will re-run verification.
 
-[wip:timeout] files=$file_count $diff_stat" >/dev/null 2>&1
+$_wip_trailer" >/dev/null 2>&1
       # stdout MUST be redirected, not just stderr: this function ends with
       # `echo "$wip_count"`, so its stdout is the return value that :2182
       # captures into _WIP_PRESERVED.  A successful `git commit` prints
@@ -2459,6 +2569,13 @@ the next iteration will re-run verification.
     # Count even if the commit failed — the attempt is what matters for telemetry
     wip_count=$((wip_count + 1))
   done
+
+  # Stamp re-entry state into the active sub-plan's Findings section
+  # (retro-2026-09-20-a-step-that-outgrew-its-window P3).
+  if [[ -n "$_reentry_slug" && -n "$_reentry_step" ]]; then
+    _stamp_reentry_note "$_reentry_slug" "$_reentry_step" || true
+  fi
+
   echo "$wip_count"
 }
 

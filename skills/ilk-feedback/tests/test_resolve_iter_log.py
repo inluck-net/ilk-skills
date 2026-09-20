@@ -26,16 +26,16 @@ _COLLECT_PY = _REPO_ROOT / "skills" / "ilk-feedback" / "scripts" / "collect.py"
 
 # Same regex as ilk_paths.project_key — duplicated here to avoid import gymnastics.
 _KEY_PUNCT = re.compile(r"[^a-z0-9]+")
+_KEY_HASH_LEN = 7
+_KEY_SLUG_MAX = 80 - 1 - _KEY_HASH_LEN  # 72
 
 
 def _project_key(project_path: Path) -> str:
-    """Replicate ilk_paths.project_key logic (pure, no subprocess)."""
-    abs_str = str(project_path.resolve()).lower()
-    slug = _KEY_PUNCT.sub("-", abs_str).strip("-")
-    if len(slug) <= 80:
-        return slug
-    h = hashlib.sha1(abs_str.encode("utf-8")).hexdigest()[:7]
-    return slug[: 80 - 8].rstrip("-") + "-" + h
+    """Mirror ilk_paths.project_key: always append a 7-char SHA1 suffix."""
+    abs_str = str(project_path.resolve())
+    h = hashlib.sha1(abs_str.encode("utf-8")).hexdigest()[:_KEY_HASH_LEN]
+    slug = _KEY_PUNCT.sub("-", abs_str.lower()).strip("-")[:_KEY_SLUG_MAX].rstrip("-")
+    return f"{slug}-{h}" if slug else h
 
 
 @pytest.fixture(autouse=True)
