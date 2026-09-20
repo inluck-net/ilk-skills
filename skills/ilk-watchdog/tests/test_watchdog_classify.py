@@ -535,6 +535,7 @@ def test_classify_action_bash_parity(label, expected_action):
     result = subprocess.run(
         [
             "bash", "-c",
+            f'eval "$(sed -n "/^normalize_classification()/,/^}}/p" "{_WATCHDOG_SH}")"; '
             f'eval "$(sed -n "/^classify_action()/,/^}}/p" "{_WATCHDOG_SH}")"; classify_action "{label}"',
         ],
         capture_output=True,

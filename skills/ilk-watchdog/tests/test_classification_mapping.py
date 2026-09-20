@@ -23,11 +23,13 @@ run — not merely how it names it. Measured at HEAD, 2026-09-20:
     max-iterations            block  | max-iter-bound          relaunch
     ship_integrity_violation  block  | shipped-unverified      needs-human
     shipped-unproven          block  | shipped-unverified      needs-human
-    timeout                   triage | timeout-bound           relaunch
 
 Every divergence fails in the safe direction (it refuses to relaunch rather
 than wrongly relaunching), so the cost is a stalled unattended recovery that
 needs a human — which is exactly what unattended operation is meant to remove.
+
+`timeout` → `timeout-bound` looks like a fourth divergence and is not one; see
+`CONDITIONALLY_NORMALIZED` below. It is pinned as an exclusion instead.
 
 **This file is deliberately RED at step 0.** Its step-0 gate asserts only that
 it COLLECTS. It goes green at step 1, when both vocabularies are routed through
@@ -66,6 +68,20 @@ VALID_ACTIONS = frozenset(
 # `running` is the non-terminal state; the watchdog polls it rather than
 # classifying it, so it has no taxonomy counterpart by construction.
 NON_TERMINAL_STATES = frozenset({"running"})
+
+# Raw states whose taxonomy label collect.py only assigns CONDITIONALLY, on
+# evidence the fallback path does not have.  They are excluded from the
+# agreement assertion and pinned as exclusions instead — normalizing them would
+# assert something the watchdog cannot know at the moment it decides.
+#
+#   timeout → timeout-bound  requires `bool(iters)`:
+#       collect.py:1358  _timeout_authoritative = sentinel_state == "timeout" \
+#                                                 and bool(iters)
+#   The raw-state fallback fires exactly when collect.py produced NO
+#   classification, i.e. when a record-bearing run is exactly what we do not
+#   have.  `timeout-bound` relaunches; the evidence-free case must not.
+#   watchdog.sh's `no-evidence|never-ran|timeout) → triage` arm says the same.
+CONDITIONALLY_NORMALIZED = {"timeout": "timeout-bound"}
 
 # Anchors, measured at HEAD on 2026-09-20.  These are a FLOOR on what the scan
 # must find, not the enumeration itself — if the scanner regresses to matching
@@ -111,9 +127,10 @@ def sentinel_normalizations() -> dict[str, str]:
 
     `_SENTINEL_FAILURE_MAP` is a function-local annotated assignment, so it is
     lifted with `ast` rather than imported.  Two states are normalized in code
-    rather than in that dict (`classify_run`, collect.py:1360-1380) and are
-    added here; `_assert_inline_specials_still_exist` keeps that addition
-    honest by failing if either disappears from the source.
+    rather than in that dict (`classify_run`, collect.py:1345-1385);
+    `local_checks_failed` is added here, and `timeout` is deliberately not —
+    see `CONDITIONALLY_NORMALIZED`.  `test_inline_specials_still_exist` keeps
+    both decisions honest by failing if either in-code special disappears.
     """
     try:
         tree = ast.parse(_COLLECT_PY.read_text(encoding="utf-8"))
@@ -138,10 +155,12 @@ def sentinel_normalizations() -> dict[str, str]:
         return {}
 
     # Normalized in code, not in the dict.  `local_checks_failed` splits into
-    # local-checks-stuck / local-checks-broken; both are blacklist labels with
-    # the same action, so either stands in for the pair here.
-    mapping.setdefault("timeout", "timeout-bound")
+    # local-checks-stuck / local-checks-broken on evidence the fallback lacks,
+    # but both are blacklist labels with the same action, so the split does not
+    # change what the watchdog does and either stands in for the pair here.
     mapping.setdefault("local_checks_failed", "local-checks-stuck")
+    for state in CONDITIONALLY_NORMALIZED:
+        mapping.pop(state, None)
     return mapping
 
 
@@ -164,6 +183,7 @@ def classify_action(label: str) -> str:
     `watchdog.sh` runs its CLI argument parsing.
     """
     script = (
+        f'eval "$(sed -n \'/^normalize_classification()/,/^}}/p\' {_WATCHDOG_SH})"\n'
         f'eval "$(sed -n \'/^classify_action()/,/^}}/p\' {_WATCHDOG_SH})"\n'
         f'classify_action "$1"\n'
     )
@@ -236,6 +256,27 @@ class TestOneActionSet:
             f"Vocabulary divergence: sentinel state {raw!r} → {raw_action!r} but "
             f"its normalized label {label!r} → {label_action!r}. A failed "
             f"collect.py therefore changes what the watchdog DOES about this run."
+        )
+
+    @pytest.mark.parametrize("raw,label", sorted(CONDITIONALLY_NORMALIZED.items()))
+    def test_conditionally_normalized_states_are_not_widened(self, raw: str, label: str):
+        """The exclusions are exclusions, not oversights.
+
+        A state collect.py normalizes only on evidence must NOT inherit that
+        label's action on the fallback path, where the evidence is by
+        definition absent. Asserting the divergence keeps someone from
+        "finishing the mapping" later and quietly widening relaunch.
+        """
+        raw_action = classify_action(raw)
+        assert raw_action != "relaunch", (
+            f"Sentinel state {raw!r} now resolves to 'relaunch'. Its label "
+            f"{label!r} is only assigned by collect.py when the run left "
+            f"records, and the fallback path runs when it did not."
+        )
+        assert raw_action != classify_action(label), (
+            f"Sentinel state {raw!r} and label {label!r} now agree on "
+            f"{raw_action!r}. If that is intended, delete the entry from "
+            f"CONDITIONALLY_NORMALIZED and say why the guard no longer applies."
         )
 
     def test_max_iterations_is_the_named_pair(self):

@@ -20,6 +20,9 @@ fail() { failures+=("$1"); echo "FAIL: $1"; }
 pass() { echo "PASS: $1"; }
 
 # ── Extract classify_action from watchdog.sh ──────────────────────────────────
+# classify_action routes every input through normalize_classification, so the
+# harness needs both or the extracted function reports "command not found".
+eval "$(sed -n '/^normalize_classification()/,/^}/p' "$WATCHDOG_SH")"
 eval "$(sed -n '/^classify_action()/,/^}/p' "$WATCHDOG_SH")"
 
 # ── AC-1: empty string → block ───────────────────────────────────────────────

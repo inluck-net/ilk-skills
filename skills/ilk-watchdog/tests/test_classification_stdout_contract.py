@@ -268,6 +268,7 @@ def _classify_action_case_labels() -> set[str]:
 
 def _classify_action(label: str) -> str:
     script = (
+        f'eval "$(sed -n \'/^normalize_classification()/,/^}}/p\' "{_WATCHDOG_SH}")"\n'
         f'eval "$(sed -n \'/^classify_action()/,/^}}/p\' "{_WATCHDOG_SH}")"\n'
         f'classify_action "{label}"\n'
     )

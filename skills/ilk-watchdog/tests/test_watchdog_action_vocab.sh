@@ -10,6 +10,9 @@ fail=false
 
 # Extract classify_action function from watchdog.sh (it's defined before main).
 # Source just the function definition.
+# classify_action routes every input through normalize_classification, so the
+# harness needs both or the extracted function reports "command not found".
+eval "$(sed -n '/^normalize_classification()/,/^}/p' "$WATCHDOG_SH")"
 eval "$(sed -n '/^classify_action()/,/^}/p' "$WATCHDOG_SH")"
 
 assert_eq() {

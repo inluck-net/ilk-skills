@@ -294,8 +294,72 @@ except Exception:
 "
 }
 
-classify_action() {
+# Normalize a RAW SENTINEL STATE to the taxonomy label that means the same
+# thing, so both vocabularies reach classify_action through one door.
+#
+# The watchdog names a terminal run in two vocabularies: collect.py's taxonomy
+# label on the normal path, and run_ilk_loop_claude.sh's `stop_reason` --
+# written verbatim to last-exit.json `state` at :3404 -- on the fallback path
+# below at :~1010.  They are not the same set of words, so before this function
+# existed a *classification failure* silently changed the watchdog's ACTION:
+# `max-iterations` blocked where `max-iter-bound` would have relaunched, and
+# `ship_integrity_violation` blocked where `shipped-unverified` would have
+# paged a human with the right banner.
+#
+# The mapping is the UNCONDITIONAL half of collect.py's `_SENTINEL_FAILURE_MAP`
+# (:1315-1343).  Taxonomy labels and unknown words pass through unchanged, so
+# this is idempotent and safe to apply to every input.
+#
+# `timeout` is deliberately NOT mapped to `timeout-bound`.  collect.py's
+# normalization of it is CONDITIONAL -- `_timeout_authoritative = sentinel_state
+# == "timeout" and bool(iters)` -- so `timeout-bound` means "timed out AND left
+# records".  The fallback path fires precisely when collect.py produced no
+# classification, i.e. when that evidence is exactly what is missing; mapping it
+# here would widen relaunch to a run that never said anything about itself.  It
+# keeps its own `triage` arm below, for the reasons spelled out there.
+normalize_classification() {
   local label="$1"
+  case "$label" in
+    max-iterations)
+      # Hit the iteration cap with work still pending: recoverable.
+      echo "max-iter-bound"
+      ;;
+    ship_integrity_violation|shipped-unproven)
+      # A ship whose gate never proved it -- needs a human, not a block banner.
+      echo "shipped-unverified"
+      ;;
+    selfmod_merge_failed)
+      echo "merge-conflict"
+      ;;
+    local_checks_failed)
+      # collect.py splits this into local-checks-stuck / local-checks-broken on
+      # evidence the fallback path does not have.  Both are blacklist labels,
+      # so the ACTION is the same either way; the stuck form is the safe
+      # stand-in because it claims less (the agent failed, not the gate).
+      echo "local-checks-stuck"
+      ;;
+    budget_exhausted)
+      # collect.py's key is underscored; the runner emits the hyphenated form
+      # (_decide_iter_stop_reason, :2207).  Accept both spellings here.
+      echo "budget-exhausted"
+      ;;
+    *)
+      echo "$label"
+      ;;
+  esac
+}
+
+classify_action() {
+  # A test harness that `sed`-extracts classify_action alone gets an undefined
+  # normalize_classification, an empty label, and the `""` arm -- i.e. `block`
+  # for every input, which reads exactly like a real fail-safe verdict.  Say so
+  # instead of returning a plausible wrong answer.
+  if ! declare -F normalize_classification >/dev/null 2>&1; then
+    echo "classify_action: normalize_classification is not defined -- extract both functions" >&2
+    return 2
+  fi
+  local label
+  label=$(normalize_classification "$1")
   case "$label" in
     running)
       echo "sleep"
