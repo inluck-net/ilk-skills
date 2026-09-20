@@ -45,7 +45,16 @@ from pathlib import Path
 _log = logging.getLogger(__name__)
 
 # --- import ilk_paths from sibling ilk-loop/scripts/ ---
+# The scan's OWN location wins. A scan run from a repo checkout must
+# dispatch through that checkout's launcher; the home-dir fallbacks serve
+# only installs that genuinely live in a skills dir. Under launchd the
+# scheduler runs with no ILK_SKILL_HOME, and this list used to put
+# ~/.codex/skills first — so the repo scheduler dispatched verification
+# sessions through a months-old codex install (2026-09-20: stale
+# ``running`` sentinels across six projects, double-driven repos).
+_HERE_SKILLS = Path(__file__).resolve().parent.parent.parent
 _SKILL_ROOT_CANDIDATES = [
+    _HERE_SKILLS,
     Path.home() / ".codex" / "skills",
     Path.home() / ".cursor" / "skills",
     Path.home() / ".claude" / "skills",
@@ -298,6 +307,35 @@ def _dispatch_verification_on_drain(
         # Blacklist check failure is non-fatal — treat as not blacklisted.
         _log.debug("blacklist check failed for %s: continuing as not blacklisted",
                     project_dir.name)
+
+    # --- a project mid-run must not get a second engine ---
+    # The normal dispatch path refuses to double-dispatch (scheduler.sh's
+    # skip-busy); this function used to Popen blind, which is how a busy
+    # project received extra verification engines (kira: five launches
+    # inside five seconds, 2026-09-20 10:10:35-40). A live-PID ``running``
+    # sentinel means busy; a dead-PID one is stale and safe to replace.
+    try:
+        _sentinel = json.loads(
+            (project_dir / "runtime" / "launcher" / "last-exit.json")
+            .read_text(encoding="utf-8-sig")
+        )
+        if _sentinel.get("state") == "running":
+            _spid = _sentinel.get("pid") or 0
+            if _spid:
+                try:
+                    os.kill(_spid, 0)
+                except ProcessLookupError:
+                    pass  # dead pid: stale sentinel, safe to dispatch
+                except PermissionError:
+                    _spid = 0  # alive but not ours: fall through to busy
+                else:
+                    _log.info(
+                        "[verify-dispatch] %s busy (pid %s) — skipping",
+                        project_dir.name, _spid,
+                    )
+                    return
+    except (OSError, ValueError):
+        pass  # no/unreadable sentinel: nothing to be busy with
 
     # --- dispatch the planner verification ---
     skill_root = _SKILL_ROOT
