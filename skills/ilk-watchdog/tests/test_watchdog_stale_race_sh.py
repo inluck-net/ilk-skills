@@ -17,9 +17,6 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import hashlib
-import re
-
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -31,21 +28,18 @@ pytestmark = pytest.mark.skipif(
     reason="bash not available",
 )
 
-_KEY_PUNCT = re.compile(r"[^a-z0-9]+")
+# Use the REAL project_key from ilk_paths — the test's old _project_key
+# helper diverged from the canonical algorithm and produced a key that the
+# spawned watchdog (which uses ilk_paths.project_key) could not find.
+# See: one-classification-mapping (699a6c3..70ca5fb).
+_ILK_LOOP_SCRIPTS = _REPO_ROOT / "skills" / "ilk-loop" / "scripts"
+if str(_ILK_LOOP_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_ILK_LOOP_SCRIPTS))
+from ilk_paths import project_key as _project_key  # noqa: E402
 
 
 def _bash_exe() -> str:
     return shutil.which("bash") or "bash"
-
-
-def _project_key(project_path: Path) -> str:
-    """Compute the project key from the absolute path (same algorithm as ilk_paths.py)."""
-    abs_str = str(project_path.resolve()).lower()
-    slug = _KEY_PUNCT.sub("-", abs_str).strip("-")
-    if len(slug) <= 80:
-        return slug
-    h = hashlib.sha1(abs_str.encode("utf-8")).hexdigest()[:7]
-    return slug[: 80 - 8].rstrip("-") + "-" + h
 
 
 def _dirs(data_home: Path, key: str):
