@@ -228,24 +228,16 @@ def render_xbar(
         # loop iterations in between; the receiving session re-reads
         # state from disk.  Grammar documented in
         # docs/architecture/integration-surface.md §2.6.
-        #
-        # TWO SwiftBar constraints shape this action (first attempt
-        # 2026-09-20 shipped params the menu silently dropped):
-        #   1. NO '|' inside param values — SwiftBar splits the line's
-        #      params on every pipe, quoted or not, so the REF's
-        #      separator is '/', not '|', and the copy is osascript
-        #      (direct clipboard set) rather than `printf | pbcopy`.
-        #   2. Values with spaces are quoted; the osascript string uses
-        #      inner double quotes, so python repr yields single-quoted
-        #      params — the same style the Start-now row already uses.
         master_file = e.get("active_master") or ""
         sub_file = e.get("next_subplan_file") or ""
         if master_file and sub_file:
-            ref = f"ilk-ref: {key} / {master_file} / {sub_file}"
-            osa = f'set the clipboard to "{ref}"'
+            ref = f"ilk-ref: {key} | {master_file} | {sub_file}"
+            # pbcopy, not `echo | pbcopy`: no trailing newline, so the
+            # paste lands as one clean line.
+            copy_cmd = f"printf %s {shlex.quote(ref)} | pbcopy"
             lines.append(
-                f"--Copy reference | bash=/usr/bin/osascript"
-                f" param1=-e param2={osa!r} terminal=false refresh=false"
+                f"--Copy reference | bash={_BASH!r} param1=-c"
+                f" param2={copy_cmd!r} terminal=false refresh=false"
             )
 
         # ── Action sub-items: Start now / Resume ─────────────────────
