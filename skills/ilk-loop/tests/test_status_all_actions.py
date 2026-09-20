@@ -65,10 +65,15 @@ def _setup_project(
     run_id: str = "test-run-001",
     blacklist_class: str | None = None,
     supervised_only: bool = False,
+    parked_reason: str | None = None,
 ) -> Path:
     """Create a git project + external plans/runtime under ILK_DATA.
 
     Returns the git project root (cwd for status_all.py).
+
+    `parked_reason` stamps the master the way park_master._stamp does
+    (parked_at + quoted parked_reason at the end of the frontmatter), so
+    fixtures reproduce the on-disk shape a violation-park leaves behind.
     """
     root = _make_git_project(name)
     key = _project_key(root)
@@ -82,6 +87,10 @@ def _setup_project(
     slug = f"t{name}"
     sub_fname = f"2026-06-07-{slug}-sub.md"
     supervised_line = "supervised_only: true\n" if supervised_only else ""
+    parked_line = (
+        "parked_at: 2026-09-20T16:30:00\n"
+        f'parked_reason: "{parked_reason}"\n' if parked_reason else ""
+    )
     master = (
         "---\n"
         f"title: Test {name}\n"
@@ -95,6 +104,7 @@ def _setup_project(
         "goal: test fixture\n"
         "out_of_scope: []\n"
         "cross_cutting_invariants: []\n"
+        f"{parked_line}"
         "---\n"
         f"\n# Test {name}\n\n"
         "## Sub-plan registry\n\n"
@@ -270,6 +280,38 @@ class TestStateParked:
                        blacklist_class="local-checks-stuck")
         entry = _get_status("pkt")
         assert entry["parked"] is True
+
+
+# ── g2-parked-batches-stay-visible AC-1: violation-parked master ────
+
+class TestViolationParkedBatchVisible:
+    """A violation-parked master (blocked + parked_reason + owed sub-plans)
+    surfaces as owed work instead of vanishing from the payload.
+
+    Regression pin (2026-09-20): kira's pv6 master was parked by a
+    ship-integrity violation — one sub-plan in-progress, verify pending —
+    and the panel showed nothing for the project. resolve_project_status
+    accepted batch context only for active/queued masters, so the blocked
+    master yielded batch="", pending_batches=0, parked=False, and the
+    panel's idle filter dropped the row.
+    """
+
+    def test_parked_master_surfaces_as_owed_work(self):
+        _setup_project(
+            "pv6",
+            master_status="blocked",
+            sub_status="in-progress",
+            pid=99999999,
+            state="shipped",
+            parked_reason=(
+                "ship_integrity_violation: run 20260920-162655 "
+                "slugs=[pv6-seam-pass]"
+            ),
+        )
+        entry = _get_status("pv6")
+        assert entry["parked"] is True
+        assert entry["batch"] != ""
+        assert entry["pending_batches"] == 1
 
 
 # ── AC-1: supervised_only queued master yields manually_runnable ──────
