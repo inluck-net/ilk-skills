@@ -281,3 +281,131 @@ def test_ship_integrity_violation_classifies_as_shipped_unverified() -> None:
         "on the relaunch whitelist or a run that shipped unproven work is "
         "restarted as if nothing happened"
     )
+
+
+# ── a rejected gate invalidates the ship intent ─────────────────────────────
+#
+# Sub-plan `a-rejected-gate-invalidates-ship-intent`, step 0 — RED-FIRST.
+#
+# `b587507` closed the *recovery* half: `retire_completed_intent()` retires an
+# intent whose transition demonstrably completed, on the next `repair()` pass.
+# This is the *write-path* half. The runner calls `converge_ship_transition` at
+# run_ilk_loop_claude.sh:3273, deliberately BEFORE integrity enforcement, so
+# the retirement lands on the pass after the one a gate rejection is racing.
+# Clearing the intent where the revert happens makes the invariant true at the
+# moment the decision is made rather than true again later.
+#
+# Three fixtures below each drive the REAL runner once, because the change
+# lives in a Bash branch and a test that imports `ship_transition` never
+# executes it.
+
+INTENT_FILENAME = ".ship-intent.json"
+OTHER_SLUG = "a-different-subplan-entirely"
+
+
+def _red_gate_run_with_intent(root: Path, intent_slug: str) -> dict:
+    """One real runner iteration over a red-gate ship, with an intent present.
+
+    The intent is written BEFORE the run, naming *intent_slug* — either the
+    slug whose gate will be rejected, or an unrelated one.
+    """
+    world = _build_world(root)
+    (world["plans"] / INTENT_FILENAME).write_text(
+        json.dumps({"slug": intent_slug,
+                    "repo": str(world["project"]),
+                    "pid": 999999}),
+        encoding="utf-8",
+    )
+    proc = _run_one_iteration(world, root)
+    return {
+        "proc": proc,
+        "intent": world["plans"] / INTENT_FILENAME,
+        "subplan": world["plans"] / f"{STEM}.md",
+    }
+
+
+@pytest.fixture(scope="module")
+def rejected_with_own_intent(tmp_path_factory: pytest.TempPathFactory) -> dict:
+    """An intent naming the very slug whose gate comes back red."""
+    return _red_gate_run_with_intent(
+        tmp_path_factory.mktemp("red-gate-own-intent"), SLUG
+    )
+
+
+@pytest.fixture(scope="module")
+def rejected_with_other_intent(tmp_path_factory: pytest.TempPathFactory) -> dict:
+    """An intent naming a DIFFERENT slug, in flight while A is rejected."""
+    return _red_gate_run_with_intent(
+        tmp_path_factory.mktemp("red-gate-other-intent"), OTHER_SLUG
+    )
+
+
+@_NEEDS_GTIMEOUT
+def test_a_rejected_gate_clears_the_intent_for_its_own_slug(
+    rejected_with_own_intent: dict,
+) -> None:
+    """Objective 1 — the intent for a rejected slug does not survive the run."""
+    d = rejected_with_own_intent
+    tail = "\n".join((d["proc"].stdout + d["proc"].stderr).splitlines()[-30:])
+    assert not d["intent"].exists(), (
+        f"{INTENT_FILENAME} still names {SLUG!r} after its gate was rejected "
+        "and its status reverted. A surviving intent is positive evidence of "
+        "an interrupted transition, so the next `repair(--only-interrupted)` "
+        "reads a deliberate un-ship as a crash and re-ships it.\n"
+        f"intent={d['intent'].read_text(encoding='utf-8') if d['intent'].exists() else ''}\n"
+        f"last 30 lines:\n{tail}"
+    )
+
+
+@_NEEDS_GTIMEOUT
+def test_a_rejection_does_not_disturb_another_slugs_intent(
+    rejected_with_other_intent: dict,
+) -> None:
+    """Objective 3 — rejecting A must not destroy an intent naming B.
+
+    The falsifier for a fix that over-reaches: clearing unconditionally is
+    cheaper to write and re-creates the class of bug this batch is closing,
+    because B's transition may be genuinely in flight.
+    """
+    d = rejected_with_other_intent
+    tail = "\n".join((d["proc"].stdout + d["proc"].stderr).splitlines()[-30:])
+    assert d["intent"].exists(), (
+        f"the intent naming {OTHER_SLUG!r} was destroyed by a gate rejection "
+        f"for {SLUG!r}. Only the rejected slug's own intent is stale; another "
+        "slug's may describe a transition that is still mid-write.\n"
+        f"last 30 lines:\n{tail}"
+    )
+    payload = json.loads(d["intent"].read_text(encoding="utf-8"))
+    assert payload.get("slug") == OTHER_SLUG, (
+        f"the intent survived but no longer names {OTHER_SLUG!r}: {payload!r}"
+    )
+
+
+@_NEEDS_GTIMEOUT
+def test_the_revert_also_moves_current_step_back(
+    rejected_with_own_intent: dict,
+) -> None:
+    """The 2026-09-15 addendum — status and pointer must revert together.
+
+    On kira-cloudflare run 20260915-112812 step 1's gate went red at 12:19:53
+    while the agent had written `current_step: 2` at 12:19:13, 40 seconds
+    earlier. The status was reverted; the pointer was not, so the plan recorded
+    the red step as done and a resume started past it.
+
+    Read BOTH fields: a revert that leaves the pointer ahead of the status is
+    the defect, and either field alone is satisfiable without the other.
+    """
+    d = rejected_with_own_intent
+    body = d["subplan"].read_text(encoding="utf-8")
+    status = (re.search(r"^status:\s*(\S+)", body, re.MULTILINE) or [None, "<none>"])[1]
+    step = (re.search(r"^current_step:\s*(\S+)", body, re.MULTILINE) or [None, "<none>"])[1]
+    tail = "\n".join((d["proc"].stdout + d["proc"].stderr).splitlines()[-30:])
+
+    assert (status, step) == ("in-progress", "0"), (
+        f"after the gate for step 0 was rejected the sub-plan reads "
+        f"status={status!r} current_step={step!r}; expected "
+        f"('in-progress', '0'). The stub agent bumped the pointer to 1 before "
+        "the gate fired, and a pointer left ahead of the reverted status means "
+        "the red step is never revalidated.\n"
+        f"last 30 lines:\n{tail}"
+    )
