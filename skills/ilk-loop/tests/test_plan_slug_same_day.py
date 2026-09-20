@@ -144,3 +144,69 @@ def test_no_stale_inline_date_literals_remain():
         "these files re-inline the date-prefix regex without the optional "
         f"same-day letter; import from plan_slug instead: {offenders}"
     )
+
+
+# ── one sub-plan-reference rule, not two ─────────────────────────────────────
+#
+# ``plan_lint._extract_registry_order`` and ``plan_slug.SUBPLAN_REF_RE`` both
+# answer "what counts as a sub-plan reference in a master body".  They must
+# answer identically: a bare filename IS a reference, a filename reached
+# through a path is NOT (it lives in a subdirectory, so it is a retrospective
+# or an ADR the master merely cites).  When they disagreed, any master citing
+# a dated ``.md`` by path was read as a registry entry appearing after the
+# registry, and plan_lint went HARD with "batch-verification sub-plan is not
+# last in registry order".
+
+#: ``(probe body, expected references in appearance order)``.
+REFERENCE_PROBES = [
+    # A bare filename in a registry table row.
+    (f"| 1 | {SAME_DAY_FILE} | pending |", [SAME_DAY_FILE]),
+    (f"- [ ] {PLAIN_FILE}", [PLAIN_FILE]),
+    # A relative link to a sibling sub-plan is still a reference.
+    (f"[the plan](./{SAME_DAY_FILE})", [SAME_DAY_FILE]),
+    # A filename reached through a path is NOT a sub-plan reference.
+    ("see docs/plans/2026-09-08-retro.md for the write-up", []),
+    ("[retro](../archive/2026-09-08b-retro.md)", []),
+    # Mixed: the registry entry counts, the cited path does not.
+    (
+        f"| {SAME_DAY_FILE} |\n\nBackground: docs/adr/2026-01-02-decision.md",
+        [SAME_DAY_FILE],
+    ),
+    # Appearance order, de-duplicated.
+    (
+        f"{PLAIN_FILE}\n{SAME_DAY_FILE}\n{PLAIN_FILE}",
+        [PLAIN_FILE, SAME_DAY_FILE],
+    ),
+]
+
+
+def _plan_lint():
+    import plan_lint
+    return plan_lint
+
+
+@pytest.mark.parametrize("body,expected", REFERENCE_PROBES)
+def test_plan_lint_registry_order_matches_plan_slug(body, expected):
+    """plan_lint's registry extraction answers what plan_slug's pattern does."""
+    # De-duplicated appearance order, the same normalisation _extract_registry_order
+    # applies, so the two are compared on equal footing.
+    slug_refs: list[str] = []
+    for ref in plan_slug.SUBPLAN_REF_RE.findall(body):
+        if ref not in slug_refs:
+            slug_refs.append(ref)
+
+    assert slug_refs == expected, "probe expectation disagrees with plan_slug"
+    assert _plan_lint()._extract_registry_order(body) == expected
+
+
+def test_plan_lint_imports_the_reference_pattern():
+    """plan_lint must import the shape, not rebuild it from the fragment.
+
+    Rebuilding is how the two drifted: plan_lint imported ``DATE_PREFIX`` but
+    re-inlined the lead as ``\\b``, and ``/`` satisfies ``\\b``.
+    """
+    src = (_SCRIPTS / "plan_lint.py").read_text(encoding="utf-8")
+    assert "SUBPLAN_REF_RE" in src, (
+        "plan_lint rebuilds the sub-plan-reference pattern from DATE_PREFIX "
+        "instead of importing plan_slug.SUBPLAN_REF_RE"
+    )
