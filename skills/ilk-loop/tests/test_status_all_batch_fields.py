@@ -93,3 +93,51 @@ def test_batch_display_name_handles_letter_suffix() -> None:
 
 def test_batch_display_name_empty_when_absent() -> None:
     assert _batch_display_name("---\nstatus: active\n---\nbody") == ""
+
+
+def test_blocked_only_master_keeps_batch_context(tmp_path, monkeypatch):
+    """A master whose sub-plans are all shipped/blocked still renders
+    project-batch-subplan on the panel (display fallback), while the
+    scheduler-facing flags never see blocked work as dispatchable.
+
+    2026-09-20: the state-ownership tail went blocked and the stopped
+    panel row rendered bare — `! +2 ilk-skills (selfmod_merge_failed)`.
+    """
+    import importlib
+
+    monkeypatch.setenv("ILK_DATA_HOME", str(tmp_path / "ilkdata"))
+    proj = tmp_path / "projects" / "blocked-demo"
+    plans = proj / "plans"
+    plans.mkdir(parents=True)
+    (plans / "MASTER-x.md").write_text(
+        "---\n"
+        "title: MASTER-x.md\n"
+        "slug: 2026-09-20-blocked-demo\n"
+        "created: 2026-09-20T00:00:00+08:00\n"
+        "status: active\n"
+        "priority: 0\n"
+        "---\n"
+        "\n# MASTER-x.md\n"
+        "\n## Sub-plan registry\n"
+        "\n| # | Sub-plan | Status |\n"
+        "|---|---|---|\n"
+        "| 1 | [2026-09-20-one.md](./2026-09-20-one.md) | shipped |\n"
+        "| 2 | [2026-09-20-two.md](./2026-09-20-two.md) | blocked |\n",
+        encoding="utf-8",
+    )
+    (plans / "2026-09-20-one.md").write_text(
+        "---\nplan: one\nstatus: shipped\ncurrent_step: 2\nestimated_steps: 2\n---\n",
+        encoding="utf-8",
+    )
+    (plans / "2026-09-20-two.md").write_text(
+        "---\nplan: two\nstatus: blocked\ncurrent_step: 4\nestimated_steps: 5\n---\n",
+        encoding="utf-8",
+    )
+    sa = importlib.import_module("status_all")
+    e = sa.resolve_project_status(proj)
+    assert e["batch"], "batch name must survive a nothing-runnable master"
+    assert e["next_subplan"] == "two (blocked)"
+    assert e["step"] == "4/5"
+    assert (e["subplan_index"], e["subplan_count"]) == (2, 2)
+    assert e["runnable"] is False
+    assert e["manually_runnable"] is False

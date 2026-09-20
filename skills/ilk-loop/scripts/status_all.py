@@ -459,6 +459,7 @@ def resolve_project_status(project_dir: Path) -> dict:
     pending_batches = 0
     master_is_active = False
     queued_has_work = False
+    display_fallback = None
     if plans_dir.is_dir():
         masters = sorted(plans_dir.glob("MASTER-*.md"))
         if masters:
@@ -483,6 +484,35 @@ def resolve_project_status(project_dir: Path) -> dict:
                      next_subplan_file) = (
                         _resolve_next_subplan(plans_dir, ctext)
                     )
+                    # Display-only fallback for a master with nothing
+                    # runnable (every sub-plan shipped or blocked): capture
+                    # the first non-shipped sub-plan for the panel row.
+                    # Applied AFTER the scheduler flags below — runnable /
+                    # manually_runnable consume the runnable-semantic
+                    # `next_subplan` and must never see blocked work as
+                    # dispatchable (2026-09-20: the state-ownership tail
+                    # went blocked and the stopped row lost its
+                    # batch-M/N-subplan context entirely).
+                    if not next_subplan:
+                        ordered = extract_master_order(ctext)
+                        for pos, fname in enumerate(ordered, start=1):
+                            try:
+                                fm2 = parse_frontmatter(
+                                    (plans_dir / fname).read_text(
+                                        encoding="utf-8-sig")
+                                )
+                            except OSError:
+                                continue
+                            st2 = fm2.get("status", "pending")
+                            if st2 != "shipped":
+                                display_fallback = (
+                                    f"{fm2.get('plan', fname.replace('.md', ''))}"
+                                    f" ({st2})",
+                                    f"{fm2.get('current_step', '?')}/"
+                                    f"{fm2.get('estimated_steps', '?')}",
+                                    pos, len(ordered), fname,
+                                )
+                                break
             except (OSError, IndexError, ValueError):
                 pass
 
@@ -572,6 +602,12 @@ def resolve_project_status(project_dir: Path) -> dict:
         and not sentinel.get("alive")
         and not blocked.get("blocked")
     )
+
+    # Apply the display-only fallback now — after every scheduler-facing
+    # flag above has consumed the runnable-semantic `next_subplan`.
+    if not next_subplan and display_fallback is not None:
+        (next_subplan, step, subplan_index, subplan_count,
+         next_subplan_file) = display_fallback
 
     # Orphaned data dir: the source repo this project was launched from is
     # gone.  Nothing here can be acted on — "Start now" has no repo to cd into
