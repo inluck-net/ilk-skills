@@ -2015,15 +2015,76 @@ if m:
 " "$f" 2>/dev/null)
       echo "  [ship-integrity VIOLATION] $slug: $si_out" >&2
       # Revert status to in-progress (Python — BSD sed -i requires explicit suffix)
-      python3 -c "
-import re, sys
+      #
+      # The pointer reverts WITH the status. A red gate that moved only
+      # `status` leaves the plan recording the red step as done, and a resume
+      # starts past it and never revalidates it — measured on kira-cloudflare
+      # run 20260915-112812, where step 1's gate went red at 12:19:53 while
+      # `current_step: 2` had been written at 12:19:13, 40 seconds earlier.
+      #
+      # The target is DERIVED from the gate records being enforced — the
+      # lowest step of this slug whose gate came back fail/error — never by
+      # decrementing. An iteration may have advanced several steps, and
+      # `current_step - 1` would silently skip the ones in between.
+      #
+      # Two deliberate refusals:
+      #   - No gate record for the slug (the `skip` path, where the violation
+      #     is step-commit-only) means there is no evidence about WHICH step is
+      #     bad. Leave the pointer alone rather than guess.
+      #   - Never move the pointer forward. A derived step at or past the
+      #     current value is not a revert, and writing it would be this bug in
+      #     the other direction.
+      local revert_out=""
+      revert_out=$(python3 -c "
+import json, re, sys
 from pathlib import Path
-p = Path(sys.argv[1])
+
+subplan, lc_file, slug = sys.argv[1], sys.argv[2], sys.argv[3]
+p = Path(subplan)
 body = p.read_text()
 body = re.sub(r'^(status:\s*)shipped', r'\1in-progress', body, count=1, flags=re.MULTILINE)
+
+failed_steps = []
+if lc_file and slug:
+    try:
+        for raw in Path(lc_file).read_text().splitlines():
+            if not raw.strip():
+                continue
+            try:
+                rec = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if rec.get('slug') != slug:
+                continue
+            if rec.get('outcome') not in ('fail', 'error'):
+                continue
+            step = rec.get('step')
+            if isinstance(step, bool) or not isinstance(step, int):
+                continue
+            failed_steps.append(step)
+    except OSError:
+        pass
+
+note = ''
+if failed_steps:
+    target = min(failed_steps)
+    m = re.search(r'^current_step:\s*(\d+)\s*\$', body, re.MULTILINE)
+    if m is None:
+        note = 'no current_step field to revert'
+    elif int(m.group(1)) <= target:
+        note = 'pointer already at or behind step %d' % target
+    else:
+        body = re.sub(r'^current_step:\s*\d+\s*\$', 'current_step: %d' % target,
+                      body, count=1, flags=re.MULTILINE)
+        note = 'current_step %s -> %d (gate for step %d was red)' % (
+            m.group(1), target, target)
+else:
+    note = 'no gate record for this slug; pointer left untouched'
+
 p.write_text(body)
-" "$f"
-      echo "  [ship-integrity] reverted $slug to in-progress" >&2
+print(note)
+" "$f" "$lc_file" "$slug" 2>/dev/null)
+      echo "  [ship-integrity] reverted $slug to in-progress; ${revert_out:-pointer unchanged}" >&2
       # A rejected gate invalidates the ship intent for the slug it rejects.
       #
       # Contract note (§7h): this adds a new *writer* of the ship-intent file,
