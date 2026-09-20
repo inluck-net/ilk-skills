@@ -85,9 +85,14 @@ def render_tray(entries: list[dict]) -> dict:
             icon = "idle"
             idle_count += 1
 
-        # Row label: mirror render_xbar's text convention.
-        label = key
+        # Row label: mirror render_xbar's text convention — queue badge
+        # ahead of the SHORT key (repo dir name; full key lost to '/'→'-'
+        # flattening), model dropped from the top line (2026-09-20).
+        rp = (e.get("repo_path") or "").replace("\\", "/").rstrip("/")
+        short_key = rp.rsplit("/", 1)[-1] if rp else key
         model = e.get("model") or ""
+        badge = f"+{pending} " if pending > 1 else ""
+        label = f"{badge}{short_key}"
         if e.get("blocked"):
             classification = e.get("classification") or "unknown"
             label += f"  BLOCKED: {classification}  -> /ilk-resume"
@@ -106,14 +111,15 @@ def render_tray(entries: list[dict]) -> dict:
                 label += f"  {step}"
             if next_sp:
                 label += f"  {next_sp}"
-            if pending > 1:
-                label += f"  (+{pending} batches)"
             # Run-state suffix, driven by the computed icon (not the raw sentinel
             # state), so an idle/stale project is unambiguous: its step/next_subplan
             # is the NEXT pending work, which otherwise reads like a running task
             # (the tooltip-says-idle vs popup-looks-running mismatch). A 'running'
             # row needs no suffix — the icon conveys it.
             if icon == "running" and model:
+                # Model kept in the Windows tray row: it has no submenu
+                # info block to move it into (view-spec rows carry only
+                # label + action), and dropping it outright loses data.
                 label += f"  running on {model}"
             elif icon == "idle":
                 label += "  (idle)"

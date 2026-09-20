@@ -50,7 +50,8 @@ def test_batch_position_precedes_subplan_name() -> None:
     label = _first_label(spec)
     assert "pv5-rereview 3/7" in label
     assert label.index("pv5-rereview 3/7") < label.index("some-subplan")
-    assert "(+2 batches)" in label
+    # Badge AHEAD of the (short) key, not trailing (operator spec 2026-09-20).
+    assert label.startswith("+2 proj")
 
 
 def test_stale_payload_without_batch_fields_renders_unchanged() -> None:

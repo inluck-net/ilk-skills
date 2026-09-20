@@ -62,15 +62,19 @@ def test_batch_position_precedes_subplan_name() -> None:
     assert "pv5-rereview 3/7  some-subplan  2/6" in row
 
 
-def test_pending_batches_suffix_only_above_one() -> None:
+def test_pending_badge_ahead_of_name_only_above_one() -> None:
+    # Operator spec 2026-09-20: "+N" AHEAD of the project name, rendered
+    # only when N > 1; N counts total owed incl. the current batch.
     multi = _row([_entry(
         batch="b", subplan_index=1, subplan_count=2, pending_batches=3,
     )])
-    assert "(+3 batches)" in multi
+    assert multi.startswith("* +3 proj")
+    assert "batches" not in multi
     lone = _row([_entry(
         batch="b", subplan_index=1, subplan_count=2, pending_batches=1,
     )])
-    assert "batches" not in lone
+    assert lone.startswith("* proj")
+    assert "+1" not in lone
 
 
 def test_stale_payload_without_batch_fields_renders_unchanged() -> None:

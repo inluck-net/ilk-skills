@@ -275,16 +275,22 @@ class TestActionPath:
 # ---------------------------------------------------------------------------
 
 class TestModelLabel:
-    """AC-5: running row includes 'running on <model>' when model is present."""
+    """The model lives on ONE header line + the row's submenu, not per-row.
 
-    def test_running_row_with_model(self) -> None:
+    Moved 2026-09-20 (operator): concurrent loops share a model in practice,
+    and the per-row copy cost menu width that macOS truncates without
+    wrapping. The row itself must stay model-free.
+    """
+
+    def test_model_on_header_line_not_row(self) -> None:
         entry = _make_entry("proj", alive=True, state="running",
                             model="claude-sonnet-4-20250514")
         text = _render(entry)
-        # First non-separator line after "---" is the project row.
         lines = text.splitlines()
         project_line = [l for l in lines if l.startswith("* proj")][0]
-        assert "running on claude-sonnet-4-20250514" in project_line
+        assert "claude-sonnet-4-20250514" not in project_line
+        assert "worker model: claude-sonnet-4-20250514" in lines
+        assert "--model: claude-sonnet-4-20250514" in lines
 
     def test_running_row_without_model(self) -> None:
         entry = _make_entry("proj", alive=True, state="running")
