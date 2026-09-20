@@ -175,8 +175,19 @@ def _drain_loop(plans_dir: Path, project_root: Path | None = None, max_iters: in
     cwd = project_root or plans_dir
 
     from loop_status import resolve_status
+    from plan_status import reconcile_master_status
+    from promote_next_master import main as promote_main
 
     for i in range(max_iters):
+        # 0. Reconcile + promote EXPLICITLY. Pre-2026-09-20 these were side
+        # effects of resolve_status; batch a-status-read-does-not-mutate
+        # removed them (status reads report, they do not reconcile). The
+        # real runtime drives them from the scan/watchdog, so this harness
+        # must too — mirroring scheduler_scan's reconcile pass and the
+        # watchdog's post-exit promote.
+        for mpath in sorted(plans_dir.glob("MASTER-*.md")):
+            reconcile_master_status(mpath, plans_dir)
+        promote_main(["--plans-dir", str(plans_dir)])
         # 1. Resolve status to find next runnable sub-plan.
         data = resolve_status(cwd)
         next_info = data.get("next")

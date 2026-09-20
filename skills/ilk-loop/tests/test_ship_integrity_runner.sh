@@ -145,6 +145,112 @@ assert "red gate on non-shipped gamma -> no violations (rc=0, got $rc)" "$([[ $r
 assert "gamma still in-progress" \
   "$([[ "$(status_of 2026-02-02-gamma.md)" == "in-progress" ]] && echo 0 || echo 1)"
 
+# ── a rejected gate invalidates the ship intent ──────────────────────────────
+#
+# Sub-plan `a-rejected-gate-invalidates-ship-intent`, step 2.
+#
+# `test_red_gate_stops_the_run.py` already drives the whole runner CLI for the
+# own-slug and other-slug cases, one `bash run_ilk_loop_claude.sh` subprocess
+# per fixture. What it does NOT cover is the rest of the matrix: the cases
+# where no rejection is enforced at all. Those are cheap here and expensive
+# there, because this harness calls the real `test_ship_integrity` bash
+# function directly over a plans dir instead of paying for a runner iteration.
+#
+# Nothing below is stubbed. `test_ship_integrity` is the production function,
+# dot-sourced from the runner at the top of this file, and the intent is
+# cleared by the same `ship_transition.invalidate_intent` call the runner makes.
+
+INTENT="$PLANS/.ship-intent.json"
+
+write_intent() {
+  # $1 = slug the intent names
+  python3 -c "
+import json, sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps(
+    {'slug': sys.argv[2], 'repo': sys.argv[3], 'pid': 1}, indent=2) + '\\n',
+    encoding='utf-8')
+" "$INTENT" "$1" "$TMP"
+}
+
+clear_intent_file() { rm -f "$INTENT"; }
+
+intent_slug_of() {
+  python3 -c "
+import json, sys
+from pathlib import Path
+try:
+    print(json.loads(Path(sys.argv[1]).read_text(encoding='utf-8')).get('slug', ''))
+except Exception:
+    print('<unreadable>')
+" "$INTENT"
+}
+
+# --- AC-6: a rejection clears the intent naming the slug it rejects.
+reset_fixtures; clear_intent_file
+write_intent "alpha"
+LC="$TMP/lc-intent-own.jsonl"
+printf '%s\n' '{"slug": "alpha", "outcome": "fail"}' > "$LC"
+test_ship_integrity "$PLANS" "$LC" >/dev/null 2>&1
+assert "red gate on alpha -> alpha reverted (got '$(status_of 2026-02-02-alpha.md)')" \
+  "$([[ "$(status_of 2026-02-02-alpha.md)" == "in-progress" ]] && echo 0 || echo 1)"
+assert "red gate on alpha -> alpha's own intent is gone" \
+  "$([[ ! -e "$INTENT" ]] && echo 0 || echo 1)"
+
+# --- AC-7: a rejection of A must not touch an intent naming B.
+# The over-reach falsifier. An intent naming another slug may describe a
+# transition still in flight; destroying it re-creates the bug this closes.
+reset_fixtures; clear_intent_file
+write_intent "zeta"
+LC="$TMP/lc-intent-other.jsonl"
+printf '%s\n' '{"slug": "alpha", "outcome": "fail"}' > "$LC"
+test_ship_integrity "$PLANS" "$LC" >/dev/null 2>&1
+assert "rejection of alpha -> zeta's intent survives" \
+  "$([[ -e "$INTENT" ]] && echo 0 || echo 1)"
+assert "rejection of alpha -> surviving intent still names zeta (got '$(intent_slug_of)')" \
+  "$([[ "$(intent_slug_of)" == "zeta" ]] && echo 0 || echo 1)"
+
+# --- AC-8: a GREEN gate leaves the intent alone.
+# Only a *rejection* makes an intent stale. A green gate's intent is describing
+# a transition that is completing normally, and `ship()` clears it as its last
+# act; invalidating it here would race that.
+reset_fixtures; clear_intent_file
+write_intent "alpha"
+LC="$TMP/lc-intent-green.jsonl"
+printf '%s\n' '{"slug": "alpha", "outcome": "pass"}' > "$LC"
+test_ship_integrity "$PLANS" "$LC" >/dev/null 2>&1
+assert "green gate on alpha -> alpha still shipped" \
+  "$([[ "$(status_of 2026-02-02-alpha.md)" == "shipped" ]] && echo 0 || echo 1)"
+assert "green gate on alpha -> alpha's intent survives" \
+  "$([[ -e "$INTENT" ]] && echo 0 || echo 1)"
+
+# --- AC-9: no revert, no invalidation.
+# gamma is not shipped, so AC-5 already pins that its red gate reverts nothing.
+# The intent must follow the revert, not the gate result: an intent naming a
+# slug that was never unwound is not stale.
+reset_fixtures; clear_intent_file
+write_intent "gamma"
+LC="$TMP/lc-intent-gamma.jsonl"
+printf '%s\n' '{"slug": "gamma", "outcome": "fail"}' > "$LC"
+test_ship_integrity "$PLANS" "$LC" >/dev/null 2>&1
+assert "red gate on non-shipped gamma -> gamma's intent survives (nothing was unwound)" \
+  "$([[ -e "$INTENT" ]] && echo 0 || echo 1)"
+
+# --- AC-10: a prior batch's intent is not collateral damage.
+# AC-1 pins that a rejection of alpha leaves the prior batch's STATUS alone.
+# Its intent has to be left alone for the same reason.
+reset_fixtures; clear_intent_file
+write_intent "prior-batch"
+LC="$TMP/lc-intent-prior.jsonl"
+printf '%s\n' '{"slug": "alpha", "outcome": "fail"}' > "$LC"
+test_ship_integrity "$PLANS" "$LC" >/dev/null 2>&1
+assert "rejection of alpha -> prior batch still shipped" \
+  "$([[ "$(status_of 2026-01-01-prior-batch.md)" == "shipped" ]] && echo 0 || echo 1)"
+assert "rejection of alpha -> prior batch's intent survives (got '$(intent_slug_of)')" \
+  "$([[ "$(intent_slug_of)" == "prior-batch" ]] && echo 0 || echo 1)"
+
+clear_intent_file
+
 echo
 if [[ $fail -eq 0 ]]; then
   echo "ALL PASS ($pass_count assertions)"

@@ -96,7 +96,7 @@ def test_bouncer_resolves_repo_from_script_location(tmp_path, scheduler_sandbox)
         cwd=str(home),
         env=env,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         timeout=30,
     )
 

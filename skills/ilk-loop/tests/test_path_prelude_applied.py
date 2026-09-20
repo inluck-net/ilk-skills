@@ -165,21 +165,25 @@ class TestDriverAppliesPreludeToAgentEnv:
         )
 
     def test_every_claude_invocation_applies_it(self) -> None:
-        """AC-4b: BOTH claude invocation arms eval the prelude.
+        """AC-4b: every claude invocation arm evals the prelude.
 
-        The driver has two arms (env-clear and plain). An arm that forgets the
-        eval is the whole defect, reachable only on projects with settings env.
+        The driver once had two arms (env-clear and plain); d451f07 merged
+        them into one — the settings env is applied via
+        `eval "$settings_env_exports"` inside the single arm, with the
+        prelude eval on the arm's first line and the gtimeout-claude call on
+        a continuation line. Pin coverage (each arm has an eval), not the
+        arm count: an arm added later without the eval is still the whole
+        defect, reachable only on projects with settings env.
         """
         text = DRIVER.read_text(encoding="utf-8")
         invocations = [ln for ln in text.splitlines()
                        if 'gtimeout "${timeout_sec}s" claude' in ln]
-        assert len(invocations) == 2, (
-            f"expected 2 claude invocation arms, found {len(invocations)} — "
-            "update this test if the driver's shape changed"
-        )
+        assert invocations, "no claude invocation arm found in the driver"
         evals = text.count('eval "$PATH_PRELUDE"')
-        assert evals == 2, (
-            f"expected both arms to eval the prelude, found {evals} eval(s)"
+        assert evals >= len(invocations), (
+            f"{len(invocations)} claude invocation arm(s) but only {evals} "
+            'eval "$PATH_PRELUDE" site(s) — an arm that forgets the prelude '
+            "is the whole defect, reachable only on projects with settings env"
         )
 
     def test_unconfigured_project_is_a_noop(self, tmp_path: Path) -> None:

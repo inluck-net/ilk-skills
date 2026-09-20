@@ -47,7 +47,7 @@ def test_sentinel_path_accessor_exists():
     result = subprocess.run(
         [sys.executable, str(_RESOLVER),
          "--start", str(_REPO_ROOT), "--sentinel-path"],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
     )
     assert result.returncode == 0, (
         f"ilk_paths.py --sentinel-path failed (exit {result.returncode}):\n"
@@ -71,7 +71,7 @@ def test_sentinel_path_in_json_payload():
     """
     result = subprocess.run(
         [sys.executable, str(_RESOLVER), "--start", str(_REPO_ROOT)],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
     )
     assert result.returncode == 0, (
         f"ilk_paths.py --start failed:\n"
@@ -142,12 +142,12 @@ def test_status_progress_uses_accessor_path(tmp_path: Path):
     # Create a git repo for the project root
     repo = tmp_path / "myrepo"
     repo.mkdir()
-    subprocess.run(["git", "init"], cwd=str(repo), capture_output=True, check=True)
-    subprocess.run(["git", "config", "user.email", "t@t"], cwd=str(repo), capture_output=True, check=True)
-    subprocess.run(["git", "config", "user.name", "T"], cwd=str(repo), capture_output=True, check=True)
+    subprocess.run(["git", "init"], cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     (repo / "README.md").write_text("x\n")
-    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True, check=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), capture_output=True, check=True)
+    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
 
     key = ilk_paths.project_key(repo)
     data_home = tmp_path / ".ilk-data"
@@ -206,12 +206,12 @@ def test_stale_orphan_does_not_change_report(tmp_path: Path):
     # Create a git repo for the project root
     repo = tmp_path / "myrepo"
     repo.mkdir()
-    subprocess.run(["git", "init"], cwd=str(repo), capture_output=True, check=True)
-    subprocess.run(["git", "config", "user.email", "t@t"], cwd=str(repo), capture_output=True, check=True)
-    subprocess.run(["git", "config", "user.name", "T"], cwd=str(repo), capture_output=True, check=True)
+    subprocess.run(["git", "init"], cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     (repo / "README.md").write_text("x\n")
-    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True, check=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), capture_output=True, check=True)
+    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
 
     # Compute the key the way build_json does
     key = ilk_paths.project_key(repo)

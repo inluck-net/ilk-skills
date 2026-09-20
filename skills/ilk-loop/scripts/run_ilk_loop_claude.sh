@@ -1230,7 +1230,13 @@ write_ship_proof_records() {
   # productive iteration.  The honest predicate is whether the probe actually
   # ANSWERED -- i.e. whether stdout parses as JSON.
   local probe_rc=0
-  status_json=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json) || probe_rc=$?
+  # Anchor to the recorded pre-isolation root: under selfmod isolation
+  # $PROJECT_PATH is the worktree, whose project key has no plans dir, so the
+  # probe exits 2 on every productive iteration (measured 20260920-133041:
+  # "probe did not answer (exit 2) -- writing no ledger rows"). Same recorded
+  # root merge_selfmod_worktree restores from; :- fallback keeps non-selfmod
+  # runs probing $PROJECT_PATH exactly as before.
+  status_json=$(cd "${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}" && python3 "$LOOP_STATUS_SCRIPT" --json) || probe_rc=$?
   if (( probe_rc >= 2 )) || [[ -z "$status_json" ]] \
      || ! printf '%s' "$status_json" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then
     echo "  ! [ship-proof] loop_status --json probe did not answer (exit ${probe_rc}) -- writing no ledger rows for iteration ${iteration}. A row asserting zero progress would be a false negative, not a safe default." >&2
@@ -1472,6 +1478,18 @@ invoke_local_checks() {
     return
   fi
 
+  # Plans-dir resolution anchors to the recorded pre-isolation root: under
+  # selfmod isolation $project is the worktree, whose own project key has no
+  # plans dir — find_subplan returns None and the gate errors out as a
+  # harness failure (measured 2026-09-20, runs 131919/132454/133041: every
+  # post-iteration gate of the batch died "sub-plan not found" while the same
+  # checks pass from the clone root; B2 confirm-before-block then reproduced
+  # the deterministic error and ship-integrity reverted a green, committed
+  # ship). The TREE the gate isolates and verifies stays $project — that is
+  # where the iteration's commits live; the clone's HEAD is pre-merge at
+  # gate time.
+  local plans_root="${SELFMOD_ORIGINAL_PROJECT_PATH:-$project}"
+
   # Derive outer cap from declared per-check timeouts (B2 false-stop fix).
   # Each target's declared timeout is read from the sub-plan; the overall
   # deadline is max(totalDeclared + 60s margin, outer_timeout_sec).
@@ -1504,7 +1522,7 @@ invoke_local_checks() {
     fi
     # Per-target: use declared timeout + margin as floor for remaining time
     local declared
-    declared=$(get_step_declared_timeout "$project" "$slug" "$step")
+    declared=$(get_step_declared_timeout "$plans_root" "$slug" "$step")
     if [[ "$declared" -gt 0 ]]; then
       local per_target=$((declared + 60))
       if [[ "$per_target" -gt "$remain_sec" ]]; then
@@ -1516,7 +1534,7 @@ invoke_local_checks() {
     tmp_out=$(mktemp)
 
     local check_exit=0
-    gtimeout "${remain_sec}s" python3 "$helper_script" --project "$project" --slug "$slug" --step "$step" > "$tmp_out" 2>&1 || check_exit=$?
+    gtimeout "${remain_sec}s" python3 "$helper_script" --project "$plans_root" --repo-root "$project" --slug "$slug" --step "$step" > "$tmp_out" 2>&1 || check_exit=$?
 
     local outcome=""
     # gtimeout exits 124 when it kills the process (outer timeout fired).
@@ -2015,15 +2033,96 @@ if m:
 " "$f" 2>/dev/null)
       echo "  [ship-integrity VIOLATION] $slug: $si_out" >&2
       # Revert status to in-progress (Python — BSD sed -i requires explicit suffix)
-      python3 -c "
-import re, sys
+      #
+      # The pointer reverts WITH the status. A red gate that moved only
+      # `status` leaves the plan recording the red step as done, and a resume
+      # starts past it and never revalidates it — measured on kira-cloudflare
+      # run 20260915-112812, where step 1's gate went red at 12:19:53 while
+      # `current_step: 2` had been written at 12:19:13, 40 seconds earlier.
+      #
+      # The target is DERIVED from the gate records being enforced — the
+      # lowest step of this slug whose gate came back fail/error — never by
+      # decrementing. An iteration may have advanced several steps, and
+      # `current_step - 1` would silently skip the ones in between.
+      #
+      # Two deliberate refusals:
+      #   - No gate record for the slug (the `skip` path, where the violation
+      #     is step-commit-only) means there is no evidence about WHICH step is
+      #     bad. Leave the pointer alone rather than guess.
+      #   - Never move the pointer forward. A derived step at or past the
+      #     current value is not a revert, and writing it would be this bug in
+      #     the other direction.
+      local revert_out=""
+      revert_out=$(python3 -c "
+import json, re, sys
 from pathlib import Path
-p = Path(sys.argv[1])
+
+subplan, lc_file, slug = sys.argv[1], sys.argv[2], sys.argv[3]
+p = Path(subplan)
 body = p.read_text()
 body = re.sub(r'^(status:\s*)shipped', r'\1in-progress', body, count=1, flags=re.MULTILINE)
+
+failed_steps = []
+if lc_file and slug:
+    try:
+        for raw in Path(lc_file).read_text().splitlines():
+            if not raw.strip():
+                continue
+            try:
+                rec = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if rec.get('slug') != slug:
+                continue
+            if rec.get('outcome') not in ('fail', 'error'):
+                continue
+            step = rec.get('step')
+            if isinstance(step, bool) or not isinstance(step, int):
+                continue
+            failed_steps.append(step)
+    except OSError:
+        pass
+
+note = ''
+if failed_steps:
+    target = min(failed_steps)
+    m = re.search(r'^current_step:\s*(\d+)\s*\$', body, re.MULTILINE)
+    if m is None:
+        note = 'no current_step field to revert'
+    elif int(m.group(1)) <= target:
+        note = 'pointer already at or behind step %d' % target
+    else:
+        body = re.sub(r'^current_step:\s*\d+\s*\$', 'current_step: %d' % target,
+                      body, count=1, flags=re.MULTILINE)
+        note = 'current_step %s -> %d (gate for step %d was red)' % (
+            m.group(1), target, target)
+else:
+    note = 'no gate record for this slug; pointer left untouched'
+
 p.write_text(body)
-" "$f"
-      echo "  [ship-integrity] reverted $slug to in-progress" >&2
+print(note)
+" "$f" "$lc_file" "$slug" 2>/dev/null)
+      echo "  [ship-integrity] reverted $slug to in-progress; ${revert_out:-pointer unchanged}" >&2
+      # A rejected gate invalidates the ship intent for the slug it rejects.
+      #
+      # Contract note (§7h): this adds a new *writer* of the ship-intent file,
+      # so per references/detached-component-contracts.md the filename and
+      # lifecycle stay owned by ship_transition.py — we call through
+      # invalidate_intent() and never unlink by path.
+      #
+      # Scoped to THIS slug on purpose. converge_ship_transition runs before
+      # this enforcement (see the ordering comment at its call site), so an
+      # intent naming another slug may describe a transition still in flight;
+      # clearing it unconditionally re-creates the bug this closes.
+      if [[ -n "$slug" ]]; then
+        python3 -c "
+import sys
+sys.path.insert(0, sys.argv[3])
+from ship_transition import invalidate_intent
+if invalidate_intent(sys.argv[1], sys.argv[2]):
+    print('  [ship-integrity] invalidated ship intent for ' + sys.argv[2])
+" "$plans_dir" "$slug" "${_SKILL_ROOT}/ilk-loop/scripts" >&2 || true
+      fi
       violations=1
     fi
   done
@@ -2150,21 +2249,34 @@ invoke_claude_iteration() {
 
   claude_args+=("$prompt_text")
 
-  # Run claude with optional env clear and gtimeout.
-  # The subshell (cd ...) keeps the cwd change local.
+  # Run claude with the worker home's settings env applied EXPLICITLY.
+  # Measured 2026-09-20: stripping the ambient ANTHROPIC_* vars and trusting
+  # the CLI to apply settings.json's env block left every scheduler-driven
+  # worker on the CLI default endpoint (Anthropic official, opus-5) while
+  # records claimed the configured model — the loops burned the account's
+  # five-hour window to exhaustion without ever reaching the configured
+  # endpoint (operator-confirmed). Exporting the settings env here makes the
+  # endpoint and model actually used the ones configured; the display Model
+  # line and reality cannot diverge by this route. Empty exports (no settings
+  # env block) is a no-op.
   local exit_code=0
+  local settings_env_exports=""
   if [[ "$SETTINGS_HAS_ENV" -eq 1 ]]; then
-    (cd "$cwd" && { [[ -z "$PATH_PRELUDE" ]] || eval "$PATH_PRELUDE"; } \
-      && env -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL -u ANTHROPIC_MODEL \
-      gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
-      | tee "$jsonl_log" | python3 "$renderer" | tee "$iter_log" \
-      || exit_code=$?
-  else
-    (cd "$cwd" && { [[ -z "$PATH_PRELUDE" ]] || eval "$PATH_PRELUDE"; } \
-      && gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
-      | tee "$jsonl_log" | python3 "$renderer" | tee "$iter_log" \
-      || exit_code=$?
+    settings_env_exports=$(SETTINGS_JSON="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json" python3 -c '
+import json, os, shlex
+try:
+    d = json.load(open(os.environ["SETTINGS_JSON"]))
+except Exception:
+    raise SystemExit(0)
+for k, v in sorted(d.get("env", {}).items()):
+    print("export %s=%s;" % (k, shlex.quote(str(v))))
+') || settings_env_exports=""
   fi
+  (cd "$cwd" && { [[ -z "$PATH_PRELUDE" ]] || eval "$PATH_PRELUDE"; } \
+      && eval "$settings_env_exports" \
+      && gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
+    | tee "$jsonl_log" | python3 "$renderer" | tee "$iter_log" \
+    || exit_code=$?
 
   # Detect budget-exhausted via the terminal result's terminal_reason field only.
   # Phrase-based patterns ("budget exhausted") match agent thinking/output that
@@ -3302,6 +3414,21 @@ print(json.dumps(d))
     if ! test_ship_integrity "$(get_plans_dir)" "$local_checks_results"; then
       stop_reason="ship_integrity_violation"
       iter_stop_reason="ship_integrity_violation"
+      # Park the master instead of leaving it queued.  Without this call
+      # the scheduler re-dispatches the batch immediately — the 13-re-
+      # dispatch cycle measured on kira pv3 2026-09-18.
+      local _violating_slugs=""
+      if [[ -n "$local_checks_results" && -s "$local_checks_results" ]]; then
+        _violating_slugs=$(python3 -c "
+import json, sys
+slugs = [json.loads(l).get('slug','') for l in sys.stdin if l.strip()]
+print(','.join(s for s in slugs if s))
+" < "$local_checks_results" 2>/dev/null) || true
+      fi
+      local _park_reason="ship_integrity_violation: run ${RUN_ID} slugs=[${_violating_slugs}]"
+      python3 "${_SKILL_ROOT}/ilk-loop/scripts/park_master.py" \
+        --plans-dir "$(get_plans_dir)" \
+        --reason "$_park_reason" 2>/dev/null || true
     fi
     # After a ship-integrity revert, reconcile the master so it no longer
     # claims "shipped" when a sub-plan was un-shipped.  Without this call,
@@ -3380,7 +3507,15 @@ print(json.dumps(d))
   echo "JSONL:    $JSONL_LOG"
   echo ""
   echo "Final loop_status:"
-  (cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" 2>&1) || true
+  # Anchor the report to the RECORDED project root, not the mutable
+  # PROJECT_PATH: after a failed selfmod merge PROJECT_PATH still points
+  # at the isolated worktree, whose own project key has no plans dir, and
+  # the report printed "no plans dir found" (run 20260920-111204, log
+  # lines 304-305) while the same run's startup had resolved fine. On a
+  # successful merge PROJECT_PATH is already restored to this same root;
+  # non-selfmod runs take the :- fallback unchanged.
+  local _status_root="${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
+  (cd "$_status_root" && python3 "$LOOP_STATUS_SCRIPT" 2>&1) || true
 
   if [[ "$stop_reason" == "all-shipped" ]]; then
     # Batch-end gate: run the suite once before the master is done (SP1)

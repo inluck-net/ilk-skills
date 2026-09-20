@@ -52,7 +52,7 @@ class TestHelperBehaviour:
         )
         result = subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
         assert result.returncode == 0, f"helper failed to source: {result.stderr}"
         out = result.stdout
@@ -80,7 +80,7 @@ class TestHelperBehaviour:
         )
         result = subprocess.run(
             ["bash", "-c", script],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
         assert result.returncode == 0, f"helper failed: {result.stderr}"
         logs_dir = root / ".ilk-data" / "logs"
@@ -164,7 +164,7 @@ class TestNotCollected:
                 "--collect-only", "-q",
                 "--rootdir", str(_ROOT),
             ],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
             cwd=str(_ROOT),
         )
         # The output lists collected node ids.  Filter to lines that look

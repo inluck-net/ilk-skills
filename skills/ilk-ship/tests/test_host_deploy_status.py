@@ -704,7 +704,7 @@ class TestCliEntryPoint:
         ], exit_code=0)
         result = subprocess.run(
             [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT), "--bouncer", str(fake)],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env={**os.environ, "BOUNCER_LOG": "/dev/null"},
         )
         assert result.returncode == 0
@@ -717,7 +717,7 @@ class TestCliEntryPoint:
         ], exit_code=0)
         result = subprocess.run(
             [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT), "--bouncer", str(fake)],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env={**os.environ, "BOUNCER_LOG": "/dev/null"},
         )
         assert result.returncode == 1
@@ -730,7 +730,7 @@ class TestCliEntryPoint:
         ], exit_code=2)
         result = subprocess.run(
             [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT), "--bouncer", str(fake)],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env={**os.environ, "BOUNCER_LOG": "/dev/null"},
         )
         assert result.returncode == 2
@@ -744,7 +744,7 @@ class TestCliEntryPoint:
         result = subprocess.run(
             [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT),
              "--bouncer", str(fake), "--bounce-hosts"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env={**os.environ, "BOUNCER_LOG": "/dev/null"},
         )
         # With --bounce-hosts, the bouncer is invoked without --check.
@@ -759,7 +759,7 @@ class TestCliEntryPoint:
         ], exit_code=0)
         result = subprocess.run(
             [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT), "--bouncer", str(fake)],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env={**os.environ, "BOUNCER_LOG": "/dev/null"},
         )
         assert result.returncode == 0
@@ -771,7 +771,7 @@ class TestCliEntryPoint:
         ], exit_code=0)
         result = subprocess.run(
             [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT), "--bouncer", str(fake)],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env={**os.environ, "BOUNCER_LOG": "/dev/null"},
         )
         assert result.returncode == 1
@@ -783,7 +783,7 @@ class TestCliEntryPoint:
         ], exit_code=2)
         result = subprocess.run(
             [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT), "--bouncer", str(fake)],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env={**os.environ, "BOUNCER_LOG": "/dev/null"},
         )
         assert result.returncode == 2
@@ -792,7 +792,7 @@ class TestCliEntryPoint:
         """AC-4: --help exits 0 and names both flags."""
         result = subprocess.run(
             [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT), "--help"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         assert result.returncode == 0
         assert "--bouncer" in result.stdout
@@ -802,7 +802,7 @@ class TestCliEntryPoint:
         """AC-4: No arguments exits 2 with a usage/error message, not a traceback."""
         result = subprocess.run(
             [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT)],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         assert result.returncode == 2
         combined = (result.stderr + result.stdout).lower()
@@ -831,7 +831,7 @@ class TestCliEntryPoint:
             cmd.extend(["--local-host", host])
         return subprocess.run(
             cmd,
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env={**os.environ, "BOUNCER_LOG": "/dev/null"},
         )
 
@@ -1206,7 +1206,7 @@ class TestAC12CliNamesTheTransport:
             exit_code=0,
         )
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=60,
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
             env={
                 **os.environ,
                 "BOUNCER_LOG": "/dev/null",
@@ -1354,7 +1354,7 @@ class TestRequireTagCli:
         result = subprocess.run(
             [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT),
              "--bouncer", str(fake), "--require-tag", "v1.0.0"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env={**os.environ, "BOUNCER_LOG": "/dev/null"},
         )
         # The CLI should accept the flag without error.
@@ -1366,7 +1366,7 @@ class TestRequireTagCli:
         """--require-tag appears in --help output."""
         result = subprocess.run(
             [sys.executable, str(_HOST_DEPLOY_STATUS_SCRIPT), "--help"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         assert result.returncode == 0
         assert "--require-tag" in result.stdout

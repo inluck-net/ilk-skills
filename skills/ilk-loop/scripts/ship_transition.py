@@ -258,6 +258,42 @@ def clear_intent(plans_dir: Path) -> None:
         pass
 
 
+def invalidate_intent(plans_dir: Path, slug: str) -> bool:
+    """Clear the intent IF it names *slug*. Returns True when it did.
+
+    The write-path half of the guarantee `retire_completed_intent` provides on
+    the recovery path. When a gate rejects a ship and the runner reverts
+    ``status: shipped`` -> ``in-progress``, the intent for that slug has by
+    definition stopped describing anything in flight: the transition it
+    attested to has been deliberately unwound, not interrupted.
+
+    Leaving it costs a re-ship. ``repair()`` treats a surviving intent as
+    positive evidence that the pair "died mid-write rather than one a gate
+    deliberately unwound", so ``repair(apply=True, only_interrupted=True)``
+    on the next pass restores exactly the ship the gate refused.
+
+    `retire_completed_intent` already covers this, but only on the next
+    ``repair()`` — and the runner calls ``converge_ship_transition``
+    deliberately BEFORE integrity enforcement, so that pass is the one the
+    rejection is racing. Clearing here makes the invariant true when the
+    decision is made instead of true again later.
+
+    **Only the named slug.** An intent naming a different slug may describe a
+    genuinely in-flight transition; destroying it re-creates the class of bug
+    this closes. A rejection of A is not evidence about B.
+    """
+    slug = (slug or "").strip()
+    if not slug:
+        return False
+    intent = read_intent(Path(plans_dir))
+    if not intent:
+        return False
+    if str(intent.get("slug") or "").strip() != slug:
+        return False
+    clear_intent(Path(plans_dir))
+    return True
+
+
 def retire_completed_intent(plans_dir: Path, repo: Path) -> str | None:
     """Clear an intent whose transition demonstrably COMPLETED.
 

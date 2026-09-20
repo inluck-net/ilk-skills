@@ -3,10 +3,12 @@
   Preflight gate for manual /ilk-run launches.
 
 .DESCRIPTION
-  Enforces three checks before the runner launches the loop:
-    (a) supervised_only master + live scheduler → HARD STOP
-    (b) queued master, none active → promote (reuse Invoke-Promote)
-    (c) stale idle host windows + terminal sentinels → surface as warnings
+  Enforces two checks before the runner launches the loop:
+    (a) queued master, none active → promote (reuse Invoke-Promote)
+    (b) stale idle host windows + terminal sentinels → surface as warnings
+
+  The supervised_only × live-scheduler hard-stop was retired 2026-09-20
+  (v0.9.107 worktree isolation + merge bounce made it vestigial).
 
   Exposes Get-PreflightDecision (pure) via ILK_DOTSOURCE_ONLY guard for testing.
 
@@ -32,15 +34,7 @@ if ($env:ILK_DOTSOURCE_ONLY -eq '1') {
       [bool]$Supervised,
       [bool]$SchedulerAlive
     )
-    # (a) supervised + scheduler alive → block
-    if ($Supervised -and $SchedulerAlive) {
-      return @{
-        block   = $true
-        reason  = "A cross-project scheduler is alive. Stop it before running a supervised_only master."
-        promote = $false
-      }
-    }
-    # (b-i) draft → block (held deliberately)
+    # (a) draft → block (held deliberately)
     if ($MasterStatus -eq 'draft') {
       return @{
         block   = $true
@@ -158,13 +152,6 @@ function Get-PreflightDecision {
     [bool]$Supervised,
     [bool]$SchedulerAlive
   )
-  if ($Supervised -and $SchedulerAlive) {
-    return @{
-      block   = $true
-      reason  = "A cross-project scheduler is alive. Stop it before running a supervised_only master."
-      promote = $false
-    }
-  }
   if ($MasterStatus -eq 'draft') {
     return @{
       block   = $true

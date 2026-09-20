@@ -49,7 +49,8 @@ def _git(repo: Path, *args: str) -> str:
 def _repo(tmp: Path) -> Path:
     repo = tmp / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True,
+                   capture_output=True, encoding="utf-8", errors="replace")
     _git(repo, "commit", "-q", "--allow-empty", "-m", "init")
     (repo / ".ilk-remote-type").write_text("shared\n", encoding="utf-8")
     return repo

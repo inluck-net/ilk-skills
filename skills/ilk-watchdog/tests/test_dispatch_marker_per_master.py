@@ -108,7 +108,9 @@ def _setup_project(
     _write_master(
         plans_dir,
         master_name,
-        status="active",
+        # shipped, not active: the dispatcher only fires for drained
+        # masters, and the active-work skip (2026-09-20) enforces it.
+        status="shipped",
         subplans=[subplan_name],
     )
     # Minimal sub-plan.
@@ -364,7 +366,7 @@ class TestDispatchMarkerLifecycle:
         _write_master(
             plans_dir,
             "MASTER-B.md",
-            status="active",
+            status="shipped",
             subplans=["2026-07-29-next.md"],
         )
         master_b = plans_dir / "MASTER-B.md"

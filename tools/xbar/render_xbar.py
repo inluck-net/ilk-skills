@@ -22,6 +22,7 @@ _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parent.parent
 _DEFAULT_RUN_SCRIPT = str(_REPO_ROOT / "skills" / "ilk-runner" / "scripts" / "ilk-run.sh")
 _DEFAULT_RESUME_SCRIPT = str(_REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "blacklist_status.py")
+_DEFAULT_COPY_SCRIPT = str(_REPO_ROOT / "tools" / "xbar" / "copy_ref.sh")
 
 # Interpreter used to launch shell actions.  Absolute so the row does not
 # depend on SwiftBar's PATH, which is not a login shell's PATH.
@@ -109,6 +110,24 @@ def render_xbar(
 
     lines = [title, "---"]
 
+    # Global worker-model line (operator, 2026-09-20): one line, not one per
+    # row — concurrent loops share a model in practice, and the per-row copy
+    # cost width that the menu then truncated.  Derived purely from the
+    # payload's per-iteration ``model`` fields (what iterations ACTUALLY ran
+    # — when config and reality diverge, reality is the thing worth seeing),
+    # never read from disk here: the renderer stays pure by contract.
+    live_models = [
+        e.get("model")
+        for e in entries
+        if e.get("sentinel", {}).get("alive")
+        and e.get("model")
+        and not e.get("orphaned")
+    ]
+    if live_models:
+        uniq = sorted(set(live_models))
+        shown = uniq[0] if len(uniq) == 1 else " | ".join(uniq)
+        lines.append(f"worker model: {shown}")
+
     for e in entries:
         # ── Orphan filter: the source repo is gone ───────────────────
         # status_all marks a project orphaned when its resolved repo_path no
@@ -125,6 +144,10 @@ def render_xbar(
         state = sent.get("state", "none")
         step = e.get("step", "")
         next_sp = e.get("next_subplan", "")
+        batch = e.get("batch", "")
+        sp_idx = e.get("subplan_index", 0)
+        sp_cnt = e.get("subplan_count", 0)
+        pending = e.get("pending_batches", 0)
 
         # Status icon
         if e.get("blocked"):
@@ -144,28 +167,102 @@ def render_xbar(
         if icon == "-" and not e.get("manually_runnable") and not e.get("blocked"):
             continue
 
-        # Row text: key + icon + step info
+        # ── Residue filter: blocked but owing nothing ─────────────────
+        # A finished project (every master shipped, pending == 0) shows a
+        # blocked row only as residue — typically a verification run that
+        # died without writing terminal state, re-flagging it on every
+        # retry. Hidden by operator request 2026-09-20. Two classes stay
+        # visible on purpose: a blocked project that still owes a batch
+        # (real signal), and a parked one (human-held work whose Resume
+        # action lives in this very row).
+        if icon == "!" and pending == 0 and not e.get("parked"):
+            continue
+
+        # Row text: icon + queue badge + SHORT key + batch context.
         model = e.get("model") or ""
-        # Sub-plan then step, matching /ilk-status ("<slug> 3/5").  The
-        # reverse order read as "3/5 a-draft-is-checked-…", which parses as a
-        # step count applied to nothing.
-        row = f"{icon} {key}"
+        # Short display key: the source repo's directory name
+        # ("users-chad-projects-keyreply-kira-cloudflare" → "kira-cloudflare").
+        # Derived from repo_path, not parsed out of the flattened key — the
+        # key's '/'→'-' flattening loses dir boundaries ("inluck-net" is one
+        # dir, "gh-resolve" is two dashes).  The full key moves to the row's
+        # submenu info block.  macOS menus truncate without wrapping, and the
+        # full keys alone ran ~40 chars per row (operator, 2026-09-20).
+        short_key = key
+        rp = (e.get("repo_path") or "").replace("\\", "/").rstrip("/")
+        if rp:
+            short_key = rp.rsplit("/", 1)[-1]
+        # Queue badge, AHEAD of the project name (operator spec 2026-09-20):
+        # "+N" = total batches the project still owes (active or queued,
+        # current included), rendered only when N > 1 — at N=1 the row's own
+        # batch name already says everything the badge would.
+        badge = f"+{pending} " if pending > 1 else ""
+        row = f"{icon} {badge}{short_key}"
+        # Batch M/N then sub-plan then step.  The batch fragment ("pv5 3/7")
+        # reads as "sub-plan 3 of 7 of batch pv5" and sits AHEAD of the
+        # sub-plan name by operator request (2026-09-20) — the sub-plan's
+        # own step count ("0/4") would otherwise be mistaken for the batch
+        # position.  Sub-plan then step matches /ilk-status ("<slug> 3/5");
+        # the reverse order read as "3/5 a-draft-is-checked-…", which parses
+        # as a step count applied to nothing.
+        if batch and sp_cnt:
+            row += f"  {batch} {sp_idx}/{sp_cnt}"
         if next_sp:
             row += f"  {next_sp}"
         if step:
             row += f"  {step}"
 
-        # Add state suffix for non-obvious states
-        if is_alive and model:
-            row += f"  running on {model}"
-        elif state not in ("running", "none"):
+        # State suffix for non-obvious states.  The model no longer prefixes
+        # the running state: concurrent loops share one model in practice, so
+        # it repeated on every row (width, 2026-09-20) — it lives in the
+        # submenu info block; the `*` icon plus the heartbeat fragment carry
+        # "running".
+        if state not in ("running", "none"):
             row += f"  ({state})"
 
         # Sub-step liveness, last: it is the fastest-changing part of the row
         # and the eye tracks a trailing field better than an interior one.
         row += _heartbeat_fragment(e)
 
+        # Every row carries a trivial action so SwiftBar/AppKit keeps it
+        # ENABLED. Actionless items with no attached submenu are disabled by
+        # AppKit, and a disabled item does not track its submenu — which is
+        # why running rows' sub-panels would not open (2026-09-20): their
+        # submenu attach raced the enable decision. An item with BOTH an
+        # action and a submenu opens the submenu on click; the refresh
+        # action itself never fires for such items, and would be harmless
+        # (a panel refresh) if it did.
+        row += " | refresh=true"
+
         lines.append(row)
+
+        # ── Info sub-items: everything the compact top line gave up ──────
+        if short_key != key:
+            lines.append(f"--key: {key}")
+        if model:
+            lines.append(f"--model: {model}")
+        if pending:
+            lines.append(f"--batches owed: {pending}")
+
+        # ── Copy reference: a pastable ilk-ref for this row ─────────────
+        # Grammar: ilk-ref:<project-key>/<master-file>/<subplan-file> —
+        # space-free by necessity (bare or quoted params alike end at
+        # spaces, and pipes would split the params blob). Mirrors the
+        # Start-now action's quoting, the one invocation shape proven to
+        # fire in this panel.
+        master_file = e.get("active_master") or ""
+        sub_file = e.get("next_subplan_file") or ""
+        if (
+            master_file
+            and sub_file
+            and all(" " not in p and "|" not in p for p in (key, master_file, sub_file))
+            and os.path.isfile(_DEFAULT_COPY_SCRIPT)
+        ):
+            ref = f"ilk-ref:{key}/{master_file}/{sub_file}"
+            lines.append(
+                f"--Copy reference | bash={_BASH!r}"
+                f" param1={_DEFAULT_COPY_SCRIPT!r} param2={ref!r}"
+                " terminal=false refresh=false"
+            )
 
         # ── Action sub-items: Start now / Resume ─────────────────────
         # Start now: manually_runnable & not running — dispatchable work exists.

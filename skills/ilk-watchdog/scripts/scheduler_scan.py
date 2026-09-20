@@ -45,7 +45,16 @@ from pathlib import Path
 _log = logging.getLogger(__name__)
 
 # --- import ilk_paths from sibling ilk-loop/scripts/ ---
+# The scan's OWN location wins. A scan run from a repo checkout must
+# dispatch through that checkout's launcher; the home-dir fallbacks serve
+# only installs that genuinely live in a skills dir. Under launchd the
+# scheduler runs with no ILK_SKILL_HOME, and this list used to put
+# ~/.codex/skills first — so the repo scheduler dispatched verification
+# sessions through a months-old codex install (2026-09-20: stale
+# ``running`` sentinels across six projects, double-driven repos).
+_HERE_SKILLS = Path(__file__).resolve().parent.parent.parent
 _SKILL_ROOT_CANDIDATES = [
+    _HERE_SKILLS,
     Path.home() / ".codex" / "skills",
     Path.home() / ".cursor" / "skills",
     Path.home() / ".claude" / "skills",
@@ -260,28 +269,58 @@ def _dispatch_verification_on_drain(
     exactly one dispatch (AC-1).
 
     **Skips:**
-    - ``supervised_only: true`` masters (AC-3) — a self-modifying batch
-      must not auto-verify itself.
     - Blacklisted projects (AC-4) — a blocked project must not spawn work.
 
     Errors are logged and non-fatal (AC-7 — the scheduler continues
     draining other projects).
     """
     # --- idempotency guard (AC-1, per-master) ---
-    # The marker stores which master it was written for.  A mismatch means
-    # "not yet dispatched for this master", not "already handled".  Fail
-    # closed on unreadable or malformed markers: treat as "unknown" and
-    # dispatch — the caller will write a fresh marker on success.
+    # The marker records EVERY master dispatched for (``masters`` map);
+    # ``master`` keeps the legacy single-master field for back-compat.
+    # A master not in the record means "not yet dispatched for this master",
+    # not "already handled".  Fail closed on unreadable or malformed markers:
+    # treat as "unknown" and dispatch — the caller writes a fresh record on
+    # success.  (The single-master marker was the 2026-09-20 respawn engine:
+    # a project with N shipped masters re-dispatched on every scan pass,
+    # each pass mismatching the one remembered name — ilk-skills bounced
+    # every 5 minutes, each launch burning primary-account quota.)
     marker_path = project_dir / "runtime" / _VERIFICATION_DISPATCH_MARKER
     if marker_path.exists():
         try:
             marker_data = json.loads(
                 marker_path.read_text(encoding="utf-8-sig"),
             )
-            if marker_data.get("master") == master_path.name:
-                return  # same master — already dispatched
+            dispatched = set(marker_data.get("masters", {}))
+            dispatched.add(marker_data.get("master"))
+            dispatched.discard(None)
+            if master_path.name in dispatched:
+                return  # this master — already dispatched
         except (OSError, json.JSONDecodeError):
             pass  # unreadable → dispatch
+
+    # --- active-work skip (2026-09-20) ---
+    # A project whose current master is active or queued is being driven by
+    # the loop; its batch-verification sub-plan is the sanctioned verifier.
+    # Verify-dispatching alongside it double-drives the repo and, with
+    # --engine claude (pre-worker-home), burned the primary account's quota
+    # in 4-second bounces.  Skip until the queue is empty.
+    try:
+        for other in sorted(plans_dir.glob("MASTER-*.md")):
+            try:
+                other_fm = parse_frontmatter(
+                    other.read_text(encoding="utf-8-sig"))
+            except OSError:
+                continue
+            if normalize_master_status(
+                    other_fm.get("status", "")) in ("active", "queued"):
+                _log.info(
+                    "[verify-dispatch] %s still has active/queued work "
+                    "(%s) — verification belongs to its batch sub-plan",
+                    project_dir.name, other.name,
+                )
+                return
+    except OSError:
+        pass
 
     # --- read master frontmatter ---
     try:
@@ -289,10 +328,6 @@ def _dispatch_verification_on_drain(
     except OSError:
         return
     fm = parse_frontmatter(master_text)
-
-    # --- supervised_only skip (AC-3) ---
-    if (fm.get("supervised_only") or "").strip().lower() in ("true", "yes", "1"):
-        return
 
     # --- blacklist skip (AC-4) ---
     try:
@@ -304,6 +339,35 @@ def _dispatch_verification_on_drain(
         # Blacklist check failure is non-fatal — treat as not blacklisted.
         _log.debug("blacklist check failed for %s: continuing as not blacklisted",
                     project_dir.name)
+
+    # --- a project mid-run must not get a second engine ---
+    # The normal dispatch path refuses to double-dispatch (scheduler.sh's
+    # skip-busy); this function used to Popen blind, which is how a busy
+    # project received extra verification engines (kira: five launches
+    # inside five seconds, 2026-09-20 10:10:35-40). A live-PID ``running``
+    # sentinel means busy; a dead-PID one is stale and safe to replace.
+    try:
+        _sentinel = json.loads(
+            (project_dir / "runtime" / "launcher" / "last-exit.json")
+            .read_text(encoding="utf-8-sig")
+        )
+        if _sentinel.get("state") == "running":
+            _spid = _sentinel.get("pid") or 0
+            if _spid:
+                try:
+                    os.kill(_spid, 0)
+                except ProcessLookupError:
+                    pass  # dead pid: stale sentinel, safe to dispatch
+                except PermissionError:
+                    _spid = 0  # alive but not ours: fall through to busy
+                else:
+                    _log.info(
+                        "[verify-dispatch] %s busy (pid %s) — skipping",
+                        project_dir.name, _spid,
+                    )
+                    return
+    except (OSError, ValueError):
+        pass  # no/unreadable sentinel: nothing to be busy with
 
     # --- dispatch the planner verification ---
     skill_root = _SKILL_ROOT
@@ -328,7 +392,13 @@ def _dispatch_verification_on_drain(
     cmd = [
         "bash", str(launcher),
         "--project-path", repo_path,
-        "--engine", "claude",
+        # claude-manager (2026-09-20, operator): verification sessions run
+        # under the manager home — the designated replacement for paths
+        # that previously launched as the PRIMARY account (--engine claude)
+        # and burned the official quota window. Loops proper stay on the
+        # claude-worker engine; the manager engine shares the runner but
+        # swaps the session identity only.
+        "--engine", "claude-manager",
         "--max-iterations", "1",
     ]
 
@@ -351,12 +421,26 @@ def _dispatch_verification_on_drain(
         )
         return
 
-    # --- write idempotency marker ---
+    # --- write idempotency marker (per-master, merged) ---
     try:
         marker_path.parent.mkdir(parents=True, exist_ok=True)
+        existing: dict = {}
+        if marker_path.exists():
+            try:
+                existing = json.loads(
+                    marker_path.read_text(encoding="utf-8-sig"))
+            except (OSError, json.JSONDecodeError):
+                existing = {}
+        masters_map = dict(existing.get("masters", {}))
+        if existing.get("master"):
+            masters_map.setdefault(existing["master"], existing.get(
+                "dispatched_at", datetime.now().isoformat()))
+        now = datetime.now().isoformat()
+        masters_map[master_path.name] = now
         marker_data = {
             "master": master_path.name,
-            "dispatched_at": datetime.now().isoformat(),
+            "masters": masters_map,
+            "dispatched_at": now,
             "project_key": project_dir.name,
         }
         tmp = marker_path.with_suffix(".tmp")
@@ -385,28 +469,28 @@ def _scan_one_project(project_dir: Path) -> dict | None:
     if not masters:
         return None
 
-    # Reconcile pass: auto-flip any all-shipped master to status: shipped.
+    # Reconcile pass: auto-flip any all-shipped master to status: shipped,
+    # and keep registry rows honest (a stale row is what an external
+    # consumer reads to decide whether work is finished).
     # Idempotent + best-effort (tolerates concurrent writes).
-    # When a master flips, dispatch a planner verification session so
-    # that ``verified: true`` can be set automatically (the drain→verify
-    # join).  The dispatch is idempotent (marker file) and skips
-    # supervised_only / blacklisted projects.
-    just_reconciled: list[Path] = []
     for m in masters:
         try:
-            if reconcile_master_status(m, plans_dir):
-                just_reconciled.append(m)
-            # Keep the registry rows honest too — a stale row is what an
-            # external consumer reads to decide whether work is finished. Not
-            # added to just_reconciled: that list drives shipped-master
-            # follow-up, and a row rewrite is not a status transition.
+            reconcile_master_status(m, plans_dir)
             reconcile_master_registry(m, plans_dir)
         except OSError:
             pass
 
-    for m in just_reconciled:
+    # Dispatch verification for any shipped master that has not yet been
+    # dispatched.  State-driven (marker file), not event-driven
+    # (just_reconciled): a read that consumed the reconcile trigger (step 1's
+    # defect) no longer blocks dispatch, and a failed dispatch is retried on
+    # the next scan until the marker is written.
+    for m in masters:
         try:
-            _dispatch_verification_on_drain(project_dir, m, plans_dir)
+            m_text = m.read_text(encoding="utf-8-sig")
+            m_fm = parse_frontmatter(m_text)
+            if normalize_master_status(m_fm.get("status", "")) == "shipped":
+                _dispatch_verification_on_drain(project_dir, m, plans_dir)
         except Exception:
             pass
 
@@ -422,13 +506,6 @@ def _scan_one_project(project_dir: Path) -> dict | None:
 
         fm = parse_frontmatter(master_text)
         master_status = normalize_master_status(fm.get("status") or "")
-
-        # `supervised_only` masters are never autonomously dispatched.
-        # They edit the loop's own infrastructure (or are otherwise
-        # sensitive) and must be run by a human via manual `/ilk`. The
-        # manual path (loop_status) deliberately still selects them.
-        if (fm.get("supervised_only") or "").strip().lower() in ("true", "yes", "1"):
-            continue
 
         # Only masters with at least one runnable sub-plan are dispatched.
         # master_has_runnable (not master_has_nonshipped) prevents a master

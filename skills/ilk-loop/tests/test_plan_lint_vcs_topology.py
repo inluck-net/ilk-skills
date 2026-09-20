@@ -31,14 +31,16 @@ _PLAN_LINT = _HERE.parent / "scripts" / "plan_lint.py"
 def _git_init(tmp_path: Path) -> None:
     """Initialise a hermetic git repo in *tmp_path*."""
     subprocess.run(["git", "init"], cwd=tmp_path, check=True,
-                   capture_output=True, text=True)
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(
         ["git", "config", "user.email", "test@test.local"],
         cwd=tmp_path, check=True, capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
         cwd=tmp_path, check=True, capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
     )
 
 
@@ -49,19 +51,19 @@ def _make_repo_with_branch(tmp_path: Path) -> None:
     base_file = tmp_path / "base.txt"
     base_file.write_text("base content\n")
     subprocess.run(["git", "add", "base.txt"], cwd=tmp_path, check=True,
-                   capture_output=True, text=True)
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "commit", "-m", "add base"], cwd=tmp_path,
-                   check=True, capture_output=True, text=True)
+                   check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "checkout", "-b", "feature"], cwd=tmp_path,
-                   check=True, capture_output=True, text=True)
+                   check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     branch_file = tmp_path / "branch_only.txt"
     branch_file.write_text("only on feature\n")
     subprocess.run(["git", "add", "branch_only.txt"], cwd=tmp_path,
-                   check=True, capture_output=True, text=True)
+                   check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "commit", "-m", "add branch file"], cwd=tmp_path,
-                   check=True, capture_output=True, text=True)
+                   check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     subprocess.run(["git", "checkout", "main"], cwd=tmp_path,
-                   check=True, capture_output=True, text=True)
+                   check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def _make_non_git_dir(tmp_path: Path) -> Path:

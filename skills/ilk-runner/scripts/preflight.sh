@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Preflight gate for manual /ilk-run launches (macOS/Linux).
 #
-# Enforces three checks before the runner launches the loop:
-#   (a) supervised_only master + live scheduler → HARD STOP
-#   (b) queued master, none active → promote
-#   (c) stale idle host windows + terminal sentinels → surface as warnings
+# Enforces two checks before the runner launches the loop:
+#   (a) queued master, none active → promote
+#   (b) stale idle host windows + terminal sentinels → surface as warnings
+#
+# The supervised_only × live-scheduler hard-stop was retired 2026-09-20
+# (v0.9.107 worktree isolation + merge bounce made it vestigial).
 #
 # Exposes preflight_decision (pure) via ILK_DOTSOURCE_ONLY guard for testing.
 
@@ -17,12 +19,7 @@ if [[ "${ILK_DOTSOURCE_ONLY:-}" == "1" ]]; then
   preflight_decision() {
     local master_status="$1" has_active="$2" supervised="$3" scheduler_alive="$4"
 
-    # (a) supervised + scheduler alive → block
-    if [[ "$supervised" == "true" && "$scheduler_alive" == "true" ]]; then
-      printf "block=true\nreason=A cross-project scheduler is alive. Stop it before running a supervised_only master.\npromote=false\n"
-      return
-    fi
-    # (b-i) draft → block (held deliberately)
+    # (a) draft → block (held deliberately)
     if [[ "$master_status" == "draft" ]]; then
       printf "block=true\nreason=Master is draft (held). Set it queued/active before launching.\npromote=false\n"
       return
@@ -52,10 +49,6 @@ PROJECT_ROOT="${1:-}"
 preflight_decision() {
   local master_status="$1" has_active="$2" supervised="$3" scheduler_alive="$4"
 
-  if [[ "$supervised" == "true" && "$scheduler_alive" == "true" ]]; then
-    printf "block=true\nreason=A cross-project scheduler is alive. Stop it before running a supervised_only master.\npromote=false\n"
-    return
-  fi
   if [[ "$master_status" == "draft" ]]; then
     printf "block=true\nreason=Master is draft (held). Set it queued/active before launching.\npromote=false\n"
     return

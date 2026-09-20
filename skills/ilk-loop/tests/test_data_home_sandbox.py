@@ -81,7 +81,7 @@ class TestSubprocessResolvesInsideSandbox:
         )
         proc = subprocess.run(
             [os.sys.executable, "-c", script],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env=scheduler_sandbox.env,
         )
         assert proc.returncode == 0, proc.stderr
@@ -120,7 +120,7 @@ class TestSchedulerWritesToSandbox:
         """
         result = subprocess.run(
             ["bash", str(SCHEDULER), "--once", "--dry-run"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env=scheduler_sandbox.env,
         )
         assert result.returncode == 0, (
@@ -148,7 +148,7 @@ class TestSchedulerWritesToSandbox:
     def test_logs_in_sandbox(self, scheduler_sandbox):
         result = subprocess.run(
             ["bash", str(SCHEDULER), "--once", "--dry-run"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env=scheduler_sandbox.env,
         )
         assert result.returncode == 0, result.stderr
@@ -183,7 +183,7 @@ class TestRealDaemonUntouched:
         # Run a scheduler cycle to exercise the env.
         subprocess.run(
             ["bash", str(SCHEDULER), "--once", "--dry-run"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env=scheduler_sandbox.env,
         )
         assert self._mtime_ns(self.pidfile) == self.pid_mtime
@@ -191,7 +191,7 @@ class TestRealDaemonUntouched:
     def test_scheduler_state_unchanged(self, scheduler_sandbox):
         subprocess.run(
             ["bash", str(SCHEDULER), "--once", "--dry-run"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             env=scheduler_sandbox.env,
         )
         assert self._mtime_ns(self.statefile) == self.state_mtime

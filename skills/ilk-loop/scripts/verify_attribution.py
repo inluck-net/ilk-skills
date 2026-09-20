@@ -61,6 +61,10 @@ _SUITE_LINE_RE = re.compile(r"^Suite:.*?\b([0-9]+)[ \t]+failed\b", re.MULTILINE)
 # The "no failures" marker step 0 writes for a green suite.
 _NO_FAILURES_RE = re.compile(r"_\(\s*no failures\s*\)_", re.IGNORECASE)
 
+# A designed human-escalation from the at-base cap.  The record names the stop;
+# the checker refuses it with the remedy, not the generic row-count mismatch.
+_CAP_EXCEEDED_RE = re.compile(r"at_base_cap_exceeded:\s*(\d+)\s*uncovered", re.IGNORECASE)
+
 # An argument still carrying a template placeholder, e.g. `<record path>`.
 _PLACEHOLDER_RE = re.compile(r"<[^>]*>")
 
@@ -285,6 +289,20 @@ def verify(record_path: Path) -> tuple[str, int]:
 
     failed = parse_failure_count(text)
     section = extract_section(text)
+
+    # A designed human-escalation must be refused by name, not by the generic
+    # row-count mismatch that a transient timeout would also produce.
+    cap_m = _CAP_EXCEEDED_RE.search(section)
+    if cap_m:
+        uncovered = cap_m.group(1)
+        raise VerificationError(
+            f"at_base_cap_exceeded: {uncovered} uncovered failures exceed the "
+            f"AT_BASE_CAP threshold — the at-base rerun cannot proceed without "
+            f"complete ship.baseline_red coverage for the pre-existing families. "
+            f"Add the uncovered node ids to baseline_red (or fix the tests) and "
+            f"re-run step 0."
+        )
+
     rows = parse_rows(section)
 
     if failed == 0:
@@ -373,7 +391,7 @@ def _git(project: Path, *args: str) -> str | None:
     import subprocess
     try:
         r = subprocess.run(["git", *args], cwd=project, capture_output=True,
-                           text=True, timeout=30)
+                           text=True, encoding="utf-8", errors="replace", timeout=30)
     except (OSError, subprocess.SubprocessError):
         return None
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None

@@ -61,7 +61,8 @@ def _git(repo: Path, *args: str) -> str:
 def _repo(tmp: Path) -> Path:
     repo = tmp / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     _git(repo, "commit", "-q", "--allow-empty", "-m", "init")
     return repo
 

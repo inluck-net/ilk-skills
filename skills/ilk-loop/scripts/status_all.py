@@ -96,31 +96,47 @@ def _latest_postmortem_class(launcher_dir: Path) -> str | None:
 
 
 def _latest_jsonl_model(logs_dir: Path) -> str:
-    """Return the ``model`` from the most recent JSONL summary record, or ``""``.
+    """Return the most recent non-empty ``model`` from the JSONL log, or ``""``.
 
     The runner appends one JSON object per iteration to
     ``<logs_dir>/.ilk-loop.log``.  Each record carries a ``model`` field
     populated by ``resolve_worker_model.py``.  We read only the last
-    non-empty line to keep this O(seek) rather than O(n).
+    ~4 KiB to keep this O(seek) rather than O(n).
+
+    Records with an empty ``model`` are skipped, walking backwards: a
+    record written by an older runner that never populated the field must
+    not blank the panel's worker-model line while a live run's iteration
+    is still in flight (its record lands only at iteration end).  The
+    most recent record that actually names a model is the honest answer
+    to "what does the worker run".
     """
     jsonl_path = logs_dir / ".ilk-loop.log"
     if not jsonl_path.is_file():
         return ""
     try:
-        # Seek from end: read last ~4 KiB to find the final JSONL line.
+        # Seek from end: read the last ~64 KiB. The window must be wide
+        # enough to reach past a burst of model-less records (a morning of
+        # crashed retrials can write dozens) to the newest record that
+        # actually names a model — the 4 KiB window failed exactly that
+        # way on 2026-09-20.
         size = jsonl_path.stat().st_size
         if size == 0:
             return ""
-        read_start = max(0, size - 4096)
+        read_start = max(0, size - 65536)
         with jsonl_path.open("rb") as fh:
             fh.seek(read_start)
             tail = fh.read().decode("utf-8", errors="replace")
-        # Last non-empty line is the most recent record.
         lines = [l for l in tail.splitlines() if l.strip()]
-        if not lines:
-            return ""
-        rec = json.loads(lines[-1])
-        return rec.get("model") or ""
+        # Newest first; first record that names a model wins.
+        for line in reversed(lines):
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            m = rec.get("model") or ""
+            if m:
+                return m
+        return ""
     except (json.JSONDecodeError, OSError):
         return ""
 
@@ -288,8 +304,11 @@ def _blocked_info(
     }
 
 
-def _resolve_next_subplan(plans_dir: Path, master_text: str) -> tuple[str, str]:
-    """Return (next_subplan_slug, step_string) for the first RUNNABLE sub-plan.
+def _resolve_next_subplan(
+    plans_dir: Path, master_text: str
+) -> tuple[str, str, int, int, str]:
+    """Return (next_subplan_slug, step_string, subplan_index, subplan_count,
+    next_subplan_file).
 
     "Runnable" — not merely "un-shipped".  A ``blocked`` sub-plan is outstanding
     work that nothing the loop does will advance until a human unblocks it, so
@@ -299,9 +318,17 @@ def _resolve_next_subplan(plans_dir: Path, master_text: str) -> tuple[str, str]:
     keeping a second copy, because the two drifting apart is exactly the defect
     observed on 2026-08-14 (the tray showed a blocked ``2/4`` sub-plan while the
     loop was working a different one at ``1/5``).
+
+    ``subplan_index`` is the 1-based registry position of the returned sub-plan
+    — counting shipped ones, so it reads "sub-plan 3 of 7 in the batch" — and
+    ``subplan_count`` is the registry total.  The tray/xbar render them as
+    ``<batch> M/N`` ahead of the sub-plan name.  ``next_subplan_file`` is the
+    sub-plan's filename, carried for references that must survive a
+    copy-paste round-trip (the panel's ilk-ref, §2.6 of the integration doc).
     """
     ordered = extract_master_order(master_text)
-    for fname in ordered:
+    total = len(ordered)
+    for pos, fname in enumerate(ordered, start=1):
         path = plans_dir / fname
         if not path.exists():
             continue
@@ -315,8 +342,28 @@ def _resolve_next_subplan(plans_dir: Path, master_text: str) -> tuple[str, str]:
         slug = fm.get("plan", fname.replace(".md", ""))
         cur = fm.get("current_step", "?")
         est = fm.get("estimated_steps", "?")
-        return slug, f"{cur}/{est}"
-    return "", ""
+        return slug, f"{cur}/{est}", pos, total, fname
+    return "", "", 0, 0, ""
+
+
+_BATCH_DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[a-z]?-")
+
+
+def _batch_display_name(master_text: str) -> str:
+    """Short batch label for the panel: the ``master_plan`` slug minus its
+    leading date (``2026-09-19-pv5-rereview`` → ``pv5-rereview``).
+
+    Display choice (2026-09-20): the date is dropped for brevity.  Only
+    unfinished masters render a sub-plan row at all, and two unfinished
+    batches sharing a dateless name have not coexisted; if that ever
+    reads ambiguously, keep the ``b`` suffix — not the full date.
+    """
+    fm = parse_frontmatter(master_text)
+    # Older masters (pre-convention-change) carry `slug:` instead of
+    # `master_plan:` — measured live 2026-09-20: state-ownership and the
+    # gh-resolve masters rendered a blank batch until this fallback.
+    name = (fm.get("master_plan") or fm.get("slug") or "").strip()
+    return _BATCH_DATE_PREFIX_RE.sub("", name)
 
 
 def _resolve_repo_path(project_dir: Path, key: str) -> str | None:
@@ -404,9 +451,15 @@ def resolve_project_status(project_dir: Path) -> dict:
     # `runnable`, which the AC-6 guards in test_status_all_actions.py catch.
     active_master = ""
     next_subplan = ""
+    next_subplan_file = ""
     step = ""
+    batch = ""
+    subplan_index = 0
+    subplan_count = 0
+    pending_batches = 0
     master_is_active = False
     queued_has_work = False
+    display_fallback = None
     if plans_dir.is_dir():
         masters = sorted(plans_dir.glob("MASTER-*.md"))
         if masters:
@@ -426,7 +479,40 @@ def resolve_project_status(project_dir: Path) -> dict:
                 if cstatus in ("active", "queued"):
                     active_master = chosen.name
                     master_is_active = cstatus == "active"
-                    next_subplan, step = _resolve_next_subplan(plans_dir, ctext)
+                    batch = _batch_display_name(ctext)
+                    (next_subplan, step, subplan_index, subplan_count,
+                     next_subplan_file) = (
+                        _resolve_next_subplan(plans_dir, ctext)
+                    )
+                    # Display-only fallback for a master with nothing
+                    # runnable (every sub-plan shipped or blocked): capture
+                    # the first non-shipped sub-plan for the panel row.
+                    # Applied AFTER the scheduler flags below — runnable /
+                    # manually_runnable consume the runnable-semantic
+                    # `next_subplan` and must never see blocked work as
+                    # dispatchable (2026-09-20: the state-ownership tail
+                    # went blocked and the stopped row lost its
+                    # batch-M/N-subplan context entirely).
+                    if not next_subplan:
+                        ordered = extract_master_order(ctext)
+                        for pos, fname in enumerate(ordered, start=1):
+                            try:
+                                fm2 = parse_frontmatter(
+                                    (plans_dir / fname).read_text(
+                                        encoding="utf-8-sig")
+                                )
+                            except OSError:
+                                continue
+                            st2 = fm2.get("status", "pending")
+                            if st2 != "shipped":
+                                display_fallback = (
+                                    f"{fm2.get('plan', fname.replace('.md', ''))}"
+                                    f" ({st2})",
+                                    f"{fm2.get('current_step', '?')}/"
+                                    f"{fm2.get('estimated_steps', '?')}",
+                                    pos, len(ordered), fname,
+                                )
+                                break
             except (OSError, IndexError, ValueError):
                 pass
 
@@ -435,15 +521,22 @@ def resolve_project_status(project_dir: Path) -> dict:
         # is itself queued (the common case — that is exactly the project a
         # human can `/ilk`), and a master chosen as `active` cannot match the
         # `queued` test below, so no skip is needed.
+        pending_batches = 0
         for mp in masters:
             try:
                 mtext = mp.read_text(encoding="utf-8-sig")
             except OSError:
                 continue
-            if normalize_master_status(
+            mstatus = normalize_master_status(
                 parse_frontmatter(mtext).get("status") or ""
-            ) == "queued":
-                q_slug, _ = _resolve_next_subplan(plans_dir, mtext)
+            )
+            # Pending = a batch the loop still owes: active (being driven)
+            # or queued (dispatchable).  Draft/parked/shipped are excluded —
+            # invisible, human-held, and done respectively.
+            if mstatus in ("active", "queued"):
+                pending_batches += 1
+            if mstatus == "queued":
+                q_slug, _, _, _, _ = _resolve_next_subplan(plans_dir, mtext)
                 if q_slug:
                     queued_has_work = True
                     break
@@ -510,6 +603,12 @@ def resolve_project_status(project_dir: Path) -> dict:
         and not blocked.get("blocked")
     )
 
+    # Apply the display-only fallback now — after every scheduler-facing
+    # flag above has consumed the runnable-semantic `next_subplan`.
+    if not next_subplan and display_fallback is not None:
+        (next_subplan, step, subplan_index, subplan_count,
+         next_subplan_file) = display_fallback
+
     # Orphaned data dir: the source repo this project was launched from is
     # gone.  Nothing here can be acted on — "Start now" has no repo to cd into
     # and any sentinel left behind is unfalsifiable.  Surfaced as a field
@@ -531,7 +630,12 @@ def resolve_project_status(project_dir: Path) -> dict:
         "orphaned": orphaned,
         "active_master": active_master,
         "next_subplan": next_subplan,
+        "next_subplan_file": next_subplan_file,
         "step": step,
+        "batch": batch,
+        "subplan_index": subplan_index,
+        "subplan_count": subplan_count,
+        "pending_batches": pending_batches,
         "sentinel": sentinel,
         "last_class": last_class,
         "model": model,

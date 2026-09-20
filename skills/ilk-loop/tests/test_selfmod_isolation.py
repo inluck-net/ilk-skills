@@ -55,7 +55,7 @@ def _toolkit_clone_from_runner() -> Path:
             f"realpath \"$_SKILL_ROOT/..\" 2>/dev/null || "
             f"echo \"$_SKILL_ROOT/..\""
         )],
-        capture_output=True, text=True, timeout=15, env=env,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15, env=env,
     )
     assert result.returncode == 0, (
         f"failed to resolve toolkit clone: {result.stderr}"
@@ -78,7 +78,7 @@ echo "RC=$?"
 """
     return subprocess.run(
         ["bash", "-c", script],
-        capture_output=True, text=True, timeout=120, env=env,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, env=env,
         cwd=str(project),
     )
 
@@ -134,6 +134,27 @@ class TestSelfmodIsolationPredicate:
         )
 
 
+def _remove_worktree(repo: Path, worktree_path: Path) -> None:
+    """Deregister *worktree_path* from *repo*.
+
+    This test drives the real toolkit clone (the selfmod predicate requires a
+    toolkit repo), so the worktree it creates is registered in that repo's
+    metadata — not in tmp_path.  pytest deleting its tmp dir therefore leaves
+    a *prunable* entry behind forever: 23 of them had accumulated by
+    2026-09-20, all from this one test.
+
+    `remove --force` rather than `prune`: it names the entry this test
+    created instead of sweeping every stale one, so it cannot mask a leak
+    from somewhere else.  Best-effort — a teardown failure must not turn a
+    passing test red.
+    """
+    subprocess.run(
+        ["git", "worktree", "remove", "--force", str(worktree_path)],
+        cwd=str(repo), capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    )
+
+
 class TestSelfmodWorktreeIdempotency:
     """AC-3: a second create reuses an existing worktree."""
 
@@ -168,17 +189,20 @@ RC2=$?
 echo "RC1=$RC1"
 echo "RC2=$RC2"
 """
-        result = subprocess.run(
-            ["bash", "-c", script],
-            capture_output=True, text=True, timeout=120, env=env,
-            cwd=str(toolkit),
-        )
-        assert result.returncode == 0, (
-            f"dot-source or function call failed: {result.stderr}"
-        )
-        assert "RC1=0" in result.stdout, (
-            f"first create failed: {result.stdout}"
-        )
-        assert "RC2=0" in result.stdout, (
-            f"second create should be idempotent: {result.stdout}"
-        )
+        try:
+            result = subprocess.run(
+                ["bash", "-c", script],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, env=env,
+                cwd=str(toolkit),
+            )
+            assert result.returncode == 0, (
+                f"dot-source or function call failed: {result.stderr}"
+            )
+            assert "RC1=0" in result.stdout, (
+                f"first create failed: {result.stdout}"
+            )
+            assert "RC2=0" in result.stdout, (
+                f"second create should be idempotent: {result.stdout}"
+            )
+        finally:
+            _remove_worktree(toolkit, worktree_root / "selfmod-batch")

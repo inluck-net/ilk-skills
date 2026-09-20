@@ -212,6 +212,34 @@ def live_ilk_pid():
                 proc.wait(timeout=10)
 
 
+@pytest.fixture(scope="session")
+def live_daemon_pid():
+    """PID of a live process that reads as a scheduler daemon.
+
+    Mirrors ``live_ilk_pid`` but the stub's filename contains
+    ``scheduler_scan`` instead of ``run_ilk_loop``, so the daemon probe
+    (``_find_live_daemon_pids``) matches it while the loop probe
+    (``_find_live_ilk_pids``) does not.  Used by
+    ``test_merge_bounces_scheduler.py`` to verify AC-1 and AC-3.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        stub = Path(tmpdir) / "scheduler_scan_stub.py"
+        stub.write_text(_STUB_SRC, encoding="utf-8")
+        proc = subprocess.Popen(
+            [sys.executable, str(stub)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        try:
+            yield proc.pid
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)
+
+
 def pytest_collectstart(collector) -> None:
     """Evict ambiguous modules so each test file re-imports its own copy.
 

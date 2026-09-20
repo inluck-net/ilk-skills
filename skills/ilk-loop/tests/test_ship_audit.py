@@ -37,7 +37,7 @@ def _source_runner_and_call(func_call: str, env_extra: dict | None = None) -> su
     )
     return subprocess.run(
         ["bash", "-c", script],
-        capture_output=True, text=True, timeout=30, env=env,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, env=env,
     )
 
 
@@ -152,21 +152,21 @@ import ship_audit
 
 def _init_repo(path: Path) -> None:
     """Create a git repo with an initial commit so ``git log`` works."""
-    subprocess.run(["git", "init"], cwd=path, capture_output=True, check=True)
+    subprocess.run(["git", "init"], cwd=path, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test"], cwd=path,
-        capture_output=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"], cwd=path,
-        capture_output=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     (path / ".gitkeep").write_text("")
     subprocess.run(
-        ["git", "add", ".gitkeep"], cwd=path, capture_output=True, check=True,
+        ["git", "add", ".gitkeep"], cwd=path, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     subprocess.run(
-        ["git", "commit", "-m", "init"], cwd=path, capture_output=True, check=True,
+        ["git", "commit", "-m", "init"], cwd=path, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
 
 
@@ -174,12 +174,12 @@ def _commit_with_message(path: Path, subject: str, body: str = "") -> None:
     """Create a commit with a specific subject and optional body."""
     (path / "marker.txt").write_text(subject)
     subprocess.run(
-        ["git", "add", "marker.txt"], cwd=path, capture_output=True, check=True,
+        ["git", "add", "marker.txt"], cwd=path, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     msg = subject if not body else f"{subject}\n\n{body}"
     subprocess.run(
         ["git", "commit", "-m", msg, "--allow-empty"],
-        cwd=path, capture_output=True, check=True,
+        cwd=path, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
 
 

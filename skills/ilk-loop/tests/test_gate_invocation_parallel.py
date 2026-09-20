@@ -99,8 +99,15 @@ class TestBaselineRedPlausibility:
         Returns the path if the file exists, else None.
         """
         prefix = node_id.split("::")[0]
-        candidate = PROJECT_ROOT / prefix
-        return candidate if candidate.is_file() else None
+        candidate = PROJECT_ROOT / prefix.rstrip("/")
+        # A dir-level declaration (e.g. `skills/ilk-feedback/tests/`) is
+        # runtime-legal: _in_baseline_red covers by substring, so one entry
+        # exonerates every node id under it (verification_record.py:586).
+        # The plausibility check is that the entry points at something real,
+        # file or dir — not that it names a file.
+        if candidate.is_file() or candidate.is_dir():
+            return candidate
+        return None
 
     def test_all_baseline_red_files_exist(self, ship_cfg):
         baseline_red = ship_cfg.ship.get("baseline_red", [])

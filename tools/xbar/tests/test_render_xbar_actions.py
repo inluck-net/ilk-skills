@@ -45,6 +45,7 @@ def _make_entry(
     parked: bool = False,
     path: str = "",
     model: str = "",
+    pending_batches: int = 0,
 ) -> dict:
     """Build a single status_all entry dict with action flags."""
     return {
@@ -64,6 +65,7 @@ def _make_entry(
         "runnable": runnable,
         "manually_runnable": manually_runnable,
         "parked": parked,
+        "pending_batches": pending_batches,
     }
 
 
@@ -275,16 +277,22 @@ class TestActionPath:
 # ---------------------------------------------------------------------------
 
 class TestModelLabel:
-    """AC-5: running row includes 'running on <model>' when model is present."""
+    """The model lives on ONE header line + the row's submenu, not per-row.
 
-    def test_running_row_with_model(self) -> None:
+    Moved 2026-09-20 (operator): concurrent loops share a model in practice,
+    and the per-row copy cost menu width that macOS truncates without
+    wrapping. The row itself must stay model-free.
+    """
+
+    def test_model_on_header_line_not_row(self) -> None:
         entry = _make_entry("proj", alive=True, state="running",
                             model="claude-sonnet-4-20250514")
         text = _render(entry)
-        # First non-separator line after "---" is the project row.
         lines = text.splitlines()
         project_line = [l for l in lines if l.startswith("* proj")][0]
-        assert "running on claude-sonnet-4-20250514" in project_line
+        assert "claude-sonnet-4-20250514" not in project_line
+        assert "worker model: claude-sonnet-4-20250514" in lines
+        assert "--model: claude-sonnet-4-20250514" in lines
 
     def test_running_row_without_model(self) -> None:
         entry = _make_entry("proj", alive=True, state="running")
@@ -302,7 +310,9 @@ class TestModelLabel:
 
     def test_blocked_row_with_model_no_suffix(self) -> None:
         """Non-running rows (e.g. blocked) don't show model suffix."""
-        entry = _make_entry("proj", blocked=True,
+        # pending_batches=1: a blocked row that owes work stays visible
+        # under the residue filter (owing-nothing rows are hidden).
+        entry = _make_entry("proj", blocked=True, pending_batches=1,
                             model="claude-sonnet-4-20250514")
         text = _render(entry)
         lines = text.splitlines()
@@ -334,7 +344,7 @@ class TestIdleFilter:
         entries = [
             _make_entry("idle-proj"),
             _make_entry("running-proj", alive=True, state="running"),
-            _make_entry("blocked-proj", blocked=True),
+            _make_entry("blocked-proj", blocked=True, pending_batches=1),
             _make_entry("runnable-proj", manually_runnable=True, step="1/4"),
         ]
         text = _render(*entries)

@@ -44,7 +44,7 @@ def _mod():
 
 def _git(repo: Path, *args: str) -> str:
     cp = subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=True,
+        ["git", *args], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     return cp.stdout.strip()
 
@@ -376,7 +376,7 @@ class TestRepair:
         rc = subprocess.run(
             [sys.executable, str(SCRIPTS / "ship_transition.py"), "--repair",
              "--plans-dir", str(plans), "--repo", str(repo)],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         assert rc.returncode != 0, rc.stdout + rc.stderr
         assert "conflict-batch-verify" in rc.stdout + rc.stderr
@@ -438,7 +438,7 @@ class TestCli:
         """Smoke, not proof — the proof is the repair tests above."""
         cp = subprocess.run(
             [sys.executable, str(SCRIPTS / "ship_transition.py"), "--help"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         assert cp.returncode == 0
         assert "--repair" in cp.stdout and "--apply" in cp.stdout
@@ -463,7 +463,7 @@ class TestCli:
         cp = subprocess.run(
             [sys.executable, str(SCRIPTS / "ship_transition.py"), "--repair",
              "--plans-dir", str(plans), "--repo", str(repo)],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
 
         assert cp.returncode != 0, "refusals must still exit non-zero"
@@ -484,7 +484,7 @@ class TestCli:
         cp = subprocess.run(
             [sys.executable, str(SCRIPTS / "ship_transition.py"), "--repair",
              "--plans-dir", str(plans), "--repo", str(repo), "--json"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         payload = json.loads(cp.stdout)
         assert payload["actions"][0]["slug"] == "conflict-batch-verify"

@@ -120,6 +120,7 @@ def _default_tag_resolver(sha: str) -> str | None:
             ["git", "tag", "--points-at", sha],
             capture_output=True,
             text=True,
+                encoding="utf-8", errors="replace",
             timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -225,6 +226,7 @@ def resolve_host(
             cmd,
             capture_output=True,
             text=True,
+                encoding="utf-8", errors="replace",
             timeout=timeout_s,
             env={**base_env, **env_extra},
         )

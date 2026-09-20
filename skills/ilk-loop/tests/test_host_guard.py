@@ -31,14 +31,14 @@ class TestGuardRefusesHostMutatingBinary:
     def test_popen_run_is_refused(self) -> None:
         """AC-2: ``subprocess.run`` funnels through Popen; raises BaseException."""
         with pytest.raises(BaseException, match="host-mutating binary"):
-            subprocess.run(["launchctl", "list"], capture_output=True)
+            subprocess.run(["launchctl", "list"], capture_output=True, text=True, encoding="utf-8", errors="replace")
 
     @pytest.mark.expects_blocked_host
 
     def test_basename_absolute_path_is_matched(self) -> None:
         """AC-1: basename matching — /bin/launchctl → launchctl."""
         with pytest.raises(BaseException, match="host-mutating binary"):
-            subprocess.run(["/bin/launchctl", "list"], capture_output=True)
+            subprocess.run(["/bin/launchctl", "list"], capture_output=True, text=True, encoding="utf-8", errors="replace")
 
     @pytest.mark.expects_blocked_host
     def test_shell_form_is_matched(self) -> None:
@@ -47,6 +47,7 @@ class TestGuardRefusesHostMutatingBinary:
             subprocess.run(
                 "launchctl list net.inluck.ilk.scheduler",
                 shell=True, capture_output=True,
+            encoding="utf-8", errors="replace",
             )
 
     @pytest.mark.expects_blocked_host
@@ -78,7 +79,7 @@ class TestGuardRefusesHostMutatingBinary:
         """
         with pytest.raises(BaseException, match="host-mutating binary"):
             try:
-                subprocess.run(["launchctl", "list"], capture_output=True)
+                subprocess.run(["launchctl", "list"], capture_output=True, text=True, encoding="utf-8", errors="replace")
             except Exception:  # noqa: BLE001 — the point of the test
                 pytest.fail("HostMutationBlocked was swallowed by except Exception")
 
@@ -90,18 +91,18 @@ class TestGuardLetsLocalBinariesThrough:
     """git is the property under test in many files; it must never be blocked."""
 
     def test_git_is_allowed(self) -> None:
-        out = subprocess.run(["git", "--version"], capture_output=True, text=True)
+        out = subprocess.run(["git", "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace")
         assert out.returncode == 0, "git must pass through the guard untouched"
 
     def test_bash_is_allowed(self) -> None:
-        out = subprocess.run(["bash", "-c", "echo ok"], capture_output=True, text=True)
+        out = subprocess.run(["bash", "-c", "echo ok"], capture_output=True, text=True, encoding="utf-8", errors="replace")
         assert out.returncode == 0
         assert "ok" in out.stdout
 
     def test_python3_is_allowed(self) -> None:
         out = subprocess.run(
             [os.path.realpath(subprocess.sys.executable or "python3"), "-c", "print(42)"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         assert out.returncode == 0
         assert "42" in out.stdout
@@ -134,7 +135,7 @@ class TestSessionLedger:
 
         before = len(ledger)
         with pytest.raises(BaseException):
-            subprocess.run(["launchctl", "list"], capture_output=True)
+            subprocess.run(["launchctl", "list"], capture_output=True, text=True, encoding="utf-8", errors="replace")
         assert len(ledger) > before, "blocked call must be recorded in the ledger"
 
 
@@ -149,7 +150,7 @@ class TestMarkerExemption:
         """The marker exempts this test — launchctl should pass through."""
         # launchctl list without args is safe — returns 0 and lists jobs.
         # This proves the marker works without mutating anything.
-        out = subprocess.run(["launchctl", "list"], capture_output=True, text=True)
+        out = subprocess.run(["launchctl", "list"], capture_output=True, text=True, encoding="utf-8", errors="replace")
         # launchctl list may return 0 or 3 depending on the label; just
         # verify it didn't raise the guard.
         assert out.returncode in (0, 3), f"unexpected returncode: {out.returncode}"
@@ -173,7 +174,7 @@ class TestReportOnlyMode:
         the session ledger so pytest_sessionfinish doesn't double-count it.
         """
         monkeypatch.setenv("ILK_TEST_GUARD_REPORT", "1")
-        result = subprocess.run(["launchctl", "list"], capture_output=True, text=True, timeout=5)
+        result = subprocess.run(["launchctl", "list"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
         # launchctl list may return 0 or 3; either way it ran (no guard raise).
         assert result.returncode in (0, 3), f"unexpected returncode: {result.returncode}"
 

@@ -107,6 +107,7 @@ def _acquire_lock(lockfile: Path, wait: float = 2.0) -> subprocess.Popen:
          "--lock", str(lockfile),
          "--", "sleep", str(int(wait))],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        encoding="utf-8", errors="replace",
     )
     # Give the lock time to acquire
     import time
@@ -226,6 +227,7 @@ def test_lock_loser_does_not_overwrite_winner_pid(tmp_path):
              "--lock", str(lock_file),
              "--", "sleep", "1"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            encoding="utf-8", errors="replace",
             env=env,
         )
         loser.wait(timeout=5)

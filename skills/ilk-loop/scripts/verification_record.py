@@ -34,7 +34,7 @@ def _git(project: Path, *args: str) -> str | None:
     """Run a read-only git command, returning stripped stdout or None."""
     try:
         r = subprocess.run(["git", *args], cwd=project, capture_output=True,
-                           text=True, timeout=30)
+                           text=True, encoding="utf-8", errors="replace", timeout=30)
     except (OSError, subprocess.SubprocessError):
         return None
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
@@ -48,6 +48,7 @@ def read_head_from_git(project: Path) -> str | None:
             cwd=project,
             capture_output=True,
             text=True,
+                encoding="utf-8", errors="replace",
             timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
@@ -127,7 +128,8 @@ def compute_suite_scope(project: Path, base_sha: str) -> dict:
     try:
         r = subprocess.run(
             ["git", "diff", "--name-only", f"{base_sha}..HEAD"],
-            cwd=project, capture_output=True, text=True, timeout=30,
+            cwd=project, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
         return {"mode": "full", "count": 0,
@@ -381,6 +383,7 @@ _SUMMARY_RE = re.compile(
     r"^=+\s(.*?)\sin\s[\d.]+s.*?=+$", re.MULTILINE)
 _COUNT_RE = re.compile(r"(\d+)\s+(passed|failed|error|errors|skipped|xfailed|xpassed)")
 _NODE_RE = re.compile(r"^(?:FAILED|ERROR)\s+(\S+)", re.MULTILINE)
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def parse_pytest_output(out: str) -> dict:
@@ -391,6 +394,14 @@ def parse_pytest_output(out: str) -> dict:
     those are different.  Returning zeros here is the exact substitution this
     module exists to remove.
     """
+    # Strip ANSI color escapes BEFORE matching: pytest on some hosts emits
+    # color into pipes (measured 2026-09-20 on chad-mbp: the banner line
+    # opens with \x1b[32m before the ==== rule), and both _SUMMARY_RE's
+    # ^=+ anchor and _NODE_RE's ^FAILED anchor then never match — the tool
+    # parsed its own captured suite as "no summary" and left the unmeasured
+    # stub on every attempt of the selfmod-merge-visibility batch.
+    out = _ANSI_RE.sub("", out)
+
     m = _SUMMARY_RE.search(out)
     if not m:
         raise ValueError(
@@ -408,6 +419,73 @@ def parse_pytest_output(out: str) -> dict:
     counts["total"] = (counts["passed"] + counts["failed"] + counts["skipped"]
                        + counts["xfailed"] + counts["xpassed"])
     return {"counts": counts, "failing_nodes": nodes}
+
+
+_VITEST_TESTS_RE = re.compile(r"^\s*Tests\s+(.*?\(\s*\d+\s*\))", re.MULTILINE)
+_VITEST_FAIL_RE = re.compile(r"^\s*FAIL\s+(\S+)", re.MULTILINE)
+_VITEST_COUNT_RE = re.compile(
+    r"(\d+)\s+(passed|failed|skipped|todo|errored)")
+
+
+def parse_vitest_output(out: str) -> dict:
+    """Extract counts and failing files from vitest output.
+
+    Same contract as ``parse_pytest_output``: raise on an unreadable run
+    rather than reporting zeros.  The difference the gate depends on:
+    ``counts["failed"]`` counts FAIL LINES — failing FILES — not the
+    Tests line's per-test failure count, because a file path is the unit
+    ``run_at_base`` can pass back to ``vitest run``; ``render_record``
+    writes ``suite_failed = failed + errors`` and one table row per
+    failing node, so the two must be equal by construction.  The Tests
+    line still fills ``passed``/``skipped``/``total`` (per-test, the only
+    place vitest states them).
+    """
+    out = _ANSI_RE.sub("", out)
+
+    m = _VITEST_TESTS_RE.search(out)
+    if not m:
+        raise ValueError(
+            "no vitest summary line found in the suite output; the record "
+            "cannot state a failure count it did not measure"
+        )
+    counts = {"passed": 0, "failed": 0, "errors": 0, "skipped": 0,
+              "xfailed": 0, "xpassed": 0}
+    for n, word in _VITEST_COUNT_RE.findall(m.group(1)):
+        if word == "todo":
+            counts["skipped"] += int(n)
+        elif word == "errored":
+            counts["errors"] += int(n)
+        else:
+            counts[word] = int(n)
+    # A detail section repeats `FAIL  <file> > suite > test` per test; the
+    # first token is the file either way, and fromkeys de-dupes to files.
+    nodes = list(dict.fromkeys(_VITEST_FAIL_RE.findall(out)))
+    tests_line_failed = counts["failed"] + counts["errors"]
+    if tests_line_failed and not nodes:
+        # A reporter shape whose FAIL lines this regex does not know: the
+        # run failed but no rerun unit can be named. That is unreadable,
+        # not zero — the same rule as the missing summary.
+        raise ValueError(
+            "vitest reported failing tests but no FAIL file lines parsed; "
+            "the record cannot name what it would re-run at base"
+        )
+    counts["failed"] = len(nodes)
+    counts["total"] = counts["passed"] + counts["skipped"] + counts["failed"]
+    return {"counts": counts, "failing_nodes": nodes}
+
+
+def _is_vitest(invocation: str) -> bool:
+    return "vitest" in invocation
+
+
+def _parse_for(invocation: str):
+    """Pick the output parser by invocation shape, never by output sniffing.
+
+    Sniffing would guess "pytest" for a vitest run that crashed before its
+    summary — the wrong parser's error, hiding the real one.  The invocation
+    names the runner; the record carries it in ``suite_invocation``.
+    """
+    return parse_vitest_output if _is_vitest(invocation) else parse_pytest_output
 
 
 def run_suite(project: Path, invocation: str, timeout: int,
@@ -434,7 +512,7 @@ def run_suite(project: Path, invocation: str, timeout: int,
             f"suite exceeded {timeout}s; the record keeps `suite_failed: "
             f"unmeasured` rather than a count nothing measured"
         )
-    return {**parse_pytest_output((r.stdout or "") + (r.stderr or "")),
+    return {**_parse_for(invocation)((r.stdout or "") + (r.stderr or "")),
             "exit_code": r.returncode}
 
 
@@ -485,7 +563,8 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
     try:
         add = subprocess.run(
             ["git", "worktree", "add", "--detach", str(wt), base_sha],
-            cwd=project, capture_output=True, text=True, timeout=180)
+            cwd=project, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=180)
         if add.returncode != 0:
             raise RuntimeError(
                 f"could not create a worktree at {base_sha}: "
@@ -496,8 +575,8 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
         runner = re.sub(r"\s-n\s+\S+|\s--dist\s+\S+", "", invocation)
         for nid in node_ids:
             r = subprocess.run(f"{runner} {nid}", shell=True, cwd=wt,
-                               capture_output=True, text=True, timeout=timeout,
-                               encoding="utf-8", errors="replace")
+                               capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=timeout)
             blob = (r.stdout or "") + (r.stderr or "")
             # Distinguish "this test did not exist at base" from "this test
             # exists and its module fails to import". Both produce "no tests
@@ -514,7 +593,21 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
             # "no tests ran" and marked all 7 test_meta_paths.py collection
             # errors absent — the file exists at base (`git cat-file -e` proves
             # it), so all 7 were false attributions.
-            if r.returncode == 4 or "error: not found:" in blob.lower():
+            if _is_vitest(runner):
+                # vitest exits nonzero for a failing file AND for a missing
+                # one ("no test files found") — exit codes cannot tell
+                # absent-at-base from failed, and the difference decides
+                # attribution (absent ⇒ the batch's own damage). The
+                # worktree AT base is the ground truth: a file that is not
+                # there did not exist at base. Node ids are file paths for
+                # vitest (see parse_vitest_output), so this is exact.
+                if r.returncode == 0:
+                    verdicts[nid] = "passed"
+                elif not (wt / nid).exists():
+                    verdicts[nid] = "absent-at-base"
+                else:
+                    verdicts[nid] = "failed"
+            elif r.returncode == 4 or "error: not found:" in blob.lower():
                 verdicts[nid] = "absent-at-base"
             elif r.returncode == 0:
                 verdicts[nid] = "passed"
@@ -522,7 +615,8 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
                 verdicts[nid] = "failed"
     finally:
         subprocess.run(["git", "worktree", "remove", "--force", str(wt)],
-                       cwd=project, capture_output=True, text=True)
+                       cwd=project, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
         shutil.rmtree(tmp, ignore_errors=True)
     verdicts.update(verdicts_declared)
     return verdicts
@@ -585,7 +679,8 @@ def _in_baseline_red(node_id: str, baseline_red: list[dict]) -> bool:
 
 def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   invocation: str, scope: dict, results: dict,
-                  at_base: dict, baseline_red: list[str]) -> str:
+                  at_base: dict, baseline_red: list[str],
+                  at_base_error: str | None = None) -> str:
     """Render the complete record.  Measurements only — no verdict column.
 
     The ``attributed`` column is deliberately absent.  It was the cell that
@@ -593,6 +688,12 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
     that passed at base were excused by a parenthetical.  With no cell to write
     into, that outcome is not fixed — it is unrepresentable.  The checker
     derives attribution from the two measurements beside each node id.
+
+    ``at_base_error`` carries the error message when the at-base phase could
+    not complete.  A cap-exceeded stop writes its own named classification
+    instead of the generic ``_(suite did not finish)_`` stub, so the checker
+    and the operator can distinguish a designed human-escalation from a
+    transient timeout.
     """
     c = results["counts"]
     lines = [
@@ -615,7 +716,15 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
         "## At-base rerun",
         "",
     ]
-    if not at_base:
+    if at_base_error and "exceeds the" in at_base_error and "cap" in at_base_error:
+        # Designed human-escalation: name the stop, not the symptom.
+        uncovered = c['failed'] + c['errors']
+        lines += [
+            f"at_base_cap_exceeded: {uncovered} uncovered (>50 cap) — complete "
+            f"ship.baseline_red coverage for the pre-existing families and re-run",
+            "",
+        ]
+    elif not at_base:
         lines += ["_(no failures)_", ""]
     else:
         lines += ["| node id | at base | in baseline_red |",
@@ -709,6 +818,18 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
         at_base = run_at_base(project, args.base_sha, nodes, invocation,
                               baseline_red=baseline_red)
     except (ValueError, RuntimeError) as exc:
+        if "exceeds the" in str(exc) and "cap" in str(exc):
+            # Designed human-escalation: write the named stop, not the stub.
+            record.write_text(render_record(
+                batch=args.batch or record.stem,
+                head=head, tree=tree, base_sha=args.base_sha,
+                invocation=invocation, scope=scope, results=results,
+                at_base={}, baseline_red=baseline_red,
+                at_base_error=str(exc),
+            ), encoding="utf-8")
+            print(f"ERROR: at-base cap exceeded — named stop written to {record}",
+                  file=sys.stderr)
+            return 1
         print(f"ERROR: at-base rerun could not run: {exc}", file=sys.stderr)
         print(f"stub record left at {record}", file=sys.stderr)
         return 1

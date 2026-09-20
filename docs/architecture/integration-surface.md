@@ -98,14 +98,26 @@ python status_progress.py --project-path <abs-root> [--json]
   timestamps in `git log`; `null` until ≥2 step-commits exist.
 
 ### 2.3 `status_all.py` — all projects
-`skills/ilk-launcher/scripts/status_all.py` — reads the launcher's
+`skills/ilk-loop/scripts/status_all.py` — reads the launcher's
 `projects.json` registry and prints a per-project table
 (`project | state | plan-status | window-pid`), where `state` ∈
 `running | stale-running | idle`. Always exits `0`.
 
+With `--json`, each entry additionally carries the batch context the
+tray/xbar render (added 2026-09-20): `batch` (the `master_plan` slug
+minus its leading date, e.g. `pv5-rereview`), `subplan_index` /
+`subplan_count` (M/N — the registry position of the rendered sub-plan,
+counting shipped ones, over the registry total), and `pending_batches`
+(masters the loop still owes: active or queued, current included).
+
 ### 2.4 Sentinel — `last-exit.json`
-`~/.ilk-data/projects/<key>/runtime/last-exit.json` — the terminal record of the
-**last** run. Keys: `state`, `pid`, `run_id`, `started_at`, `ended_at`,
+`~/.ilk-data/projects/<key>/runtime/launcher/last-exit.json` — the terminal record of the
+**last** run. (Canonical path is `ilk_paths.sentinel_path(key)`; a bare
+`runtime/last-exit.json` join is a documented bug — a legacy file at that
+older path may exist and does NOT drive the panel. Measured 2026-09-20:
+six stale `running` sentinels at the canonical path kept dead projects on
+the panel as blocked rows after their legacy twins said `all-shipped`.)
+Keys: `state`, `pid`, `run_id`, `started_at`, `ended_at`,
 `iterations`, `project_path`, `cli`, `jsonl_log`. `state` is the stop reason
 (`all-shipped`, `max-iterations`, `no-progress`, `timeout`, `budget-exhausted`,
 `interrupted`, …). **A `running` state with a dead PID is a stale sentinel —
@@ -118,6 +130,24 @@ treat as crashed, not healthy.**
 `new_commits_total`, `new_commits` (per-repo map), `log` (path to `iter-NN.log`),
 `stop_reason`, and `local_checks[]` (each: `slug`, `step`, `outcome`,
 `exit_code`, `raw`). This is your event stream for a live feed.
+
+### 2.6 `ilk-ref` — a pastable row reference
+
+The panel's per-row **Copy reference** action puts one line on the
+clipboard:
+
+```
+ilk-ref:<project-key>/<master-filename>/<subplan-filename>
+```
+
+No spaces anywhere — a constraint of the panel action that produces it:
+SwiftBar ends unquoted param values at spaces and splits the params blob
+on pipes, so the ref must be one bare value (`tools/xbar/copy_ref.sh`
+does the clipboard work). Split on `/`; no component ever contains one.
+The reference names **files, not live state** — re-read step/status from
+`~/.ilk-data/projects/<key>/plans/` at question time, never trust the
+clipboard beyond the filenames. Every project row also carries a trivial
+`refresh=true` action so AppKit keeps the row (and its submenu) enabled.
 
 ---
 
@@ -167,8 +197,10 @@ Resolver + key derivation: `skills/ilk-loop/scripts/ilk_paths.py`.
 ~/.ilk-data/projects/<project-key>/
   ├── plans/                 MASTER-*.md + YYYY-MM-DD-slug.md
   ├── runtime/
-  │   ├── last-exit.json     terminal sentinel (§2.4)
-  │   ├── launcher/running.pid
+  │   ├── launcher/
+  │   │   ├── last-exit.json  terminal sentinel (§2.4) — canonical path
+  │   │   ├── running.pid     + run.lock (per-run mutex)
+  │   │   └── last-launch.json
   │   └── watchdog/watchdog.pid
   └── logs/
       ├── .ilk-loop.log      JSONL summary, all runs (§2.5)

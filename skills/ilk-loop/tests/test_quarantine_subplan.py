@@ -68,7 +68,7 @@ def _run_quarantine(plans: Path, slug: str, check: str = "pytest -q",
             "--slug", slug, "--failing-check", check]
     if threshold is not None:
         args += ["--threshold", str(threshold)]
-    r = subprocess.run(args, capture_output=True, text=True, timeout=60)
+    r = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     assert r.returncode == 0, f"CLI exited {r.returncode}: {r.stderr}"
     return json.loads(r.stdout)
 
@@ -109,7 +109,7 @@ def test_ilk_paths_rejects_the_flag_the_driver_passes() -> None:
     """Documents the mechanism. ``--plans-dir`` is not a flag ilk_paths has."""
     r = subprocess.run(
         [sys.executable, str(_ILK_PATHS), "--start", str(Path.cwd()), "--plans-dir"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
     )
     if r.returncode == 0 and r.stdout.strip():
         pytest.skip("ilk_paths now supports --plans-dir; the driver call is fine")
@@ -148,7 +148,7 @@ def test_the_driver_resolves_a_real_plans_dir_for_quarantine(tmp_path: Path) -> 
         "---\nmaster_plan: 2026-09-08-quarantine-probe\nstatus: active\n---\n"
         "# quarantine probe\n", encoding="utf-8",
     )
-    subprocess.run(["git", "init"], cwd=project, capture_output=True, check=True)
+    subprocess.run(["git", "init"], cwd=project, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
 
     # Source the driver so the resolution runs in its real context (it may
     # legitimately be rewritten to use the driver's own get_plans_dir helper).
@@ -162,8 +162,8 @@ def test_the_driver_resolves_a_real_plans_dir_for_quarantine(tmp_path: Path) -> 
         {line}
         echo "RESOLVED=[$q_plans_dir]"
     """)
-    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
-                         timeout=120, encoding="utf-8", errors="replace")
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                         timeout=120)
     resolved = ""
     for l in out.stdout.splitlines():
         if l.startswith("RESOLVED="):

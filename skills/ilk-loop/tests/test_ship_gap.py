@@ -18,19 +18,19 @@ def _make_git_repo(tmp_path: Path) -> Path:
     """Create a minimal git repo with one committed file."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "test@test"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    subprocess.run(["git", "config", "user.email", "test@test"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     (repo / "init.txt").write_text("init", encoding="utf-8")
-    subprocess.run(["git", "add", "init.txt"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "add", "init.txt"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     return repo
 
 
 def _head(repo: Path) -> str:
     cp = subprocess.run(
         ["git", "rev-parse", "HEAD"],
-        cwd=repo, capture_output=True, text=True, check=True,
+        cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     return cp.stdout.strip()
 
@@ -177,7 +177,7 @@ class TestDriverParses:
             pytest.skip("driver script not found")
         result = subprocess.run(
             ["bash", "-n", str(driver)],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         assert result.returncode == 0, (
             f"bash -n failed on {driver}:\n{result.stderr}"

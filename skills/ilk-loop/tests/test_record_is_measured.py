@@ -39,6 +39,23 @@ class TestParsePytestOutput:
         assert r["failing_nodes"] == ["tests/test_a.py::test_one",
                                       "tests/test_b.py::test_two"]
 
+    def test_colored_output_parses(self) -> None:
+        """pytest on some hosts emits color into pipes (measured 2026-09-20
+        on chad-mbp: the banner opens with \\x1b[32m before the ==== rule).
+        The ^=+ and ^FAILED anchors must find their lines after stripping.
+        """
+        out = (
+            "\x1b[31mFAILED\x1b[0m tests/test_a.py::test_one - assert 1 == 2\n"
+            "\x1b[32m============================== \x1b[1m2 failed\x1b[0m\x1b[32m, "
+            "\x1b[0m\x1b[1m40 passed\x1b[0m\x1b[32m, \x1b[0m\x1b[1m3 skipped\x1b[0m"
+            "\x1b[32m in 12.34s \x1b[0m==============================\x1b[0m\n"
+        )
+        r = vr.parse_pytest_output(out)
+        assert r["counts"]["failed"] == 2
+        assert r["counts"]["passed"] == 40
+        assert r["counts"]["total"] == 45
+        assert r["failing_nodes"] == ["tests/test_a.py::test_one"]
+
     def test_a_node_reported_twice_is_one_failure(self) -> None:
         """FAILED and ERROR for the same id is one failing test, not two."""
         out = ("FAILED tests/t.py::x\nERROR tests/t.py::x\n"
@@ -49,6 +66,87 @@ class TestParsePytestOutput:
         """The whole point. Zero failures must be a measurement, never a default."""
         with pytest.raises(ValueError, match="no pytest summary"):
             vr.parse_pytest_output("the suite fell over before it could report\n")
+
+
+# ── vitest suites parse too — selected by invocation shape ──────────────────
+#
+# MEASURED 2026-09-20: verification_record.py had 0 vitest references while
+# kira-cloudflare's ship.suite is `bunx vitest run -c tests/convex-tests/
+# vitest.config.ts` — its pv6 verify would have died at "no pytest summary
+# line found" and left the unmeasured stub, the same disease the ANSI fix
+# removed for pytest. The parser keeps the gate's invariant: counts["failed"]
+# counts failing FILES (the rerun unit vitest accepts), so
+# suite_failed == len(failing_nodes) by construction.
+
+class TestParseVitestOutput:
+    def test_reads_counts_and_failing_files(self) -> None:
+        out = (
+            "\x1b[31mFAIL\x1b[0m  tests/convex-tests/rooms.test.ts > rooms > joins a room\n"
+            "\x1b[31mFAIL\x1b[0m  tests/convex-tests/auth.test.ts "
+            "[ tests/convex-tests/auth.test.ts.1 ]\n"
+            " \x1b[2mTest Files\x1b[0m  \x1b[31m2 failed\x1b[0m | "
+            "\x1b[32m10 passed\x1b[0m (12)\n"
+            "      \x1b[2mTests\x1b[0m  \x1b[31m5 failed\x1b[0m | "
+            "\x1b[32m200 passed\x1b[0m | 3 skipped (208)\n"
+        )
+        r = vr.parse_vitest_output(out)
+        # failed counts FAIL LINES (files), not the Tests-line's 5 — the
+        # file is what run_at_base can pass back to vitest.
+        assert r["counts"]["failed"] == 2
+        assert r["counts"]["passed"] == 200
+        assert r["counts"]["skipped"] == 3
+        assert r["failing_nodes"] == ["tests/convex-tests/rooms.test.ts",
+                                      "tests/convex-tests/auth.test.ts"]
+
+    def test_unreadable_output_raises_rather_than_reporting_zero(self) -> None:
+        with pytest.raises(ValueError, match="no vitest summary"):
+            vr.parse_vitest_output("vitest crashed before reporting\n")
+
+    def test_parser_is_selected_by_invocation_shape(self) -> None:
+        assert vr._parse_for(
+            "bunx vitest run -c tests/convex-tests/vitest.config.ts"
+        ) is vr.parse_vitest_output
+        assert vr._parse_for("python3 -m pytest --timeout=60") is vr.parse_pytest_output
+
+    def test_vitest_missing_file_at_base_is_absent_not_failed(
+            self, tmp_path, monkeypatch) -> None:
+        """vitest exits nonzero for missing AND failing files; the worktree
+        at base decides. A batch-added failing test must read absent
+        (attributed — the batch's own damage), a base-present failing one
+        reads failed (exonerated). Getting this backwards manufactures or
+        destroys a regression, the exact asymmetry run_at_base exists for.
+        """
+        import subprocess as sp
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        def g(*a):
+            return sp.run(["git", *a], cwd=repo, capture_output=True,
+                          text=True, encoding="utf-8", errors="replace")
+        g("init"); g("config", "user.email", "t@t"); g("config", "user.name", "t")
+        (repo / "tests").mkdir()
+        (repo / "tests" / "old.test.ts").write_text("old\n", encoding="utf-8")
+        g("add", "-A"); g("commit", "-m", "base")
+        base = g("rev-parse", "HEAD").stdout.strip()
+
+        class R:
+            returncode, stdout, stderr = 1, "", ""
+
+        real = sp.run
+
+        def fake(cmd, *a, **kw):
+            if isinstance(cmd, list):
+                return real(cmd, *a, **kw)  # worktree add/remove: real git
+            return R()                      # the vitest rerun: rc 1
+        monkeypatch.setattr(sp, "run", fake)
+
+        out = vr.run_at_base(
+            repo, base,
+            ["tests/old.test.ts", "tests/new-this-batch.test.ts"],
+            "bunx vitest run -c tests/convex-tests/vitest.config.ts",
+            baseline_red=[])
+        assert out == {"tests/old.test.ts": "failed",
+                       "tests/new-this-batch.test.ts": "absent-at-base"}, out
 
 
 # ── the record carries no verdict cell ──────────────────────────────────────

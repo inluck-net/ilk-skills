@@ -34,11 +34,13 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 def _project(tmp: Path, baseline_red: list[dict], suite_cmd: str) -> Path:
     proj = tmp / "proj"
     proj.mkdir()
-    subprocess.run(["git", "init", "-q"], cwd=proj, check=True, capture_output=True)
+    subprocess.run(["git", "init", "-q"], cwd=proj, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     subprocess.run(
         ["git", "-c", "user.email=t@e.com", "-c", "user.name=t",
          "commit", "-q", "--allow-empty", "-m", "init"],
-        cwd=proj, check=True, capture_output=True)
+        cwd=proj, check=True, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     (proj / ".ilk-launch.json").write_text(json.dumps({
         "ship": {"suite": {"command": suite_cmd, "timeout": 60},
                  "baseline_red": baseline_red}
@@ -166,4 +168,55 @@ class TestExcusingIsAnnounced:
         assert "test_new.py::test_regression" in combined, (
             "a failing gate must name the undeclared failures so the operator "
             f"knows what to fix.  Got: {combined!r}"
+        )
+
+
+# ── the at-base cap stop must name itself ───────────────────────────────────
+
+class TestAtBaseCapNamesItself:
+
+    def test_cap_exceeded_raises_with_count(self, tmp_path: Path) -> None:
+        """AC-1: >CAP uncovered ids → ValueError names the count and cap."""
+        import sys
+        sys.path.insert(0, str(SCRIPTS))
+        from verification_record import run_at_base, AT_BASE_CAP
+
+        proj = _project(tmp_path, [], "true")
+        # Generate >CAP node ids, none in baseline_red
+        node_ids = [f"tests/test_{i}.py::test_a" for i in range(AT_BASE_CAP + 10)]
+
+        with pytest.raises(ValueError, match=str(AT_BASE_CAP)):
+            run_at_base(proj, "HEAD", node_ids, "python3 -m pytest",
+                        baseline_red=[])
+
+    def test_cap_exceeded_record_carries_named_stop(self, tmp_path: Path) -> None:
+        """AC-1: the rendered record carries `at_base_cap_exceeded`, not the timeout stub."""
+        import sys
+        sys.path.insert(0, str(SCRIPTS))
+        from verification_record import render_record, AT_BASE_CAP
+
+        failures = {f"tests/test_{i}.py::test_a" for i in range(AT_BASE_CAP + 10)}
+        results = {
+            "counts": {"total": len(failures), "passed": 0,
+                       "failed": len(failures), "errors": 0, "skipped": 0},
+            "failing_nodes": list(failures),
+        }
+        record = render_record(
+            batch="test-batch", head="abc1234", tree="def5678",
+            base_sha="0000000", invocation="python3 -m pytest",
+            scope={"mode": "full", "count": 0},
+            results=results,
+            at_base={},
+            at_base_error=f"{len(failures)} failing node ids exceeds the {AT_BASE_CAP} cap; "
+                          f"a batch failing this widely needs a human, not an at-base rerun",
+            baseline_red=[],
+        )
+        assert "at_base_cap_exceeded" in record, (
+            f"record must carry 'at_base_cap_exceeded', got: {record[:500]}"
+        )
+        assert "_(suite did not finish)_" not in record, (
+            "the cap stop must not surface as the timeout stub"
+        )
+        assert f"uncovered: {len(failures)}" in record or str(len(failures)) in record, (
+            f"record must carry the uncovered count. Got: {record[:500]}"
         )

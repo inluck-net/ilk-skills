@@ -196,19 +196,23 @@ def _setup_violation_project(tmp_path: Path) -> tuple[Path, dict]:
     Returns (project_path, env) suitable for subprocess calls to collect.py.
     """
     import os
-    import hashlib
 
     project_path = tmp_path / "kira-cloudflare"
     project_path.mkdir()
 
-    # Compute the project key the same way ilk_paths does.
-    abs_str = str(project_path.resolve()).lower()
-    slug = __import__("re").sub(r"[^a-z0-9]+", "-", abs_str).strip("-")
-    if len(slug) <= 80:
-        key = slug
-    else:
-        h = hashlib.sha1(abs_str.encode("utf-8")).hexdigest()[:7]
-        key = slug[:72].rstrip("-") + "-" + h
+    # Compute the project key by CALLING ilk_paths, never by imitating it.
+    # The hand-rolled copy below hashed the lowercased path while
+    # ilk_paths.project_key hashes the case-preserving one (ilk_paths.py:303)
+    # — on macOS tmp paths the uppercase /T/ segment made every fixture key
+    # wrong, collect.py read a different state dir than the fixture wrote,
+    # and all three AC tests were red from birth (the authoring batch
+    # shipped without a verify sub-plan; measured 2026-09-20).
+    import sys as _sys
+    _scripts = Path(__file__).resolve().parent.parent / "scripts"
+    if str(_scripts) not in _sys.path:
+        _sys.path.insert(0, str(_scripts))
+    from ilk_paths import project_key as _ilk_project_key
+    key = _ilk_project_key(project_path)
 
     data_home = tmp_path / "ilk-data"
     launcher_dir = data_home / "projects" / key / "runtime" / "launcher"

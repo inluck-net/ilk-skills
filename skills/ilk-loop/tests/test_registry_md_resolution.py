@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+
 # Repo root — three levels up from this file (tests/ → ilk-loop/ → skills/ → root).
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 LOOP_STATUS = REPO_ROOT / "skills" / "ilk-loop" / "scripts" / "loop_status.py"
@@ -26,12 +28,13 @@ _KEY_PUNCT = re.compile(r"[^a-z0-9]+")
 
 
 def _project_key(root: Path) -> str:
-    abs_str = str(root.resolve()).lower()
-    slug = _KEY_PUNCT.sub("-", abs_str).strip("-")
-    if len(slug) <= 80:
-        return slug
-    h = hashlib.sha1(abs_str.encode("utf-8")).hexdigest()[:7]
-    return slug[: 80 - 8].rstrip("-") + "-" + h
+    # The REAL transform, not a re-typed copy: this local reimplementation
+    # of the pre-C1 key (lowercased, hash only over 80 chars) broke when
+    # C1 landed the unconditional hash suffix — the fixture wrote plans
+    # under a key the runner stopped computing ('no plans dir found',
+    # 2026-09-20). Single source of truth: ilk_paths.project_key.
+    import ilk_paths
+    return ilk_paths.project_key(str(root))
 
 
 # Fixed scratch dir inside the repo (gitignored).

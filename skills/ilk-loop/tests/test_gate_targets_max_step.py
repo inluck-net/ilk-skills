@@ -54,7 +54,7 @@ LEDGER_FUNC = "get_ledger_check_targets"
 def _git(repo: Path, *args: str) -> str:
     proc = subprocess.run(
         ["git", "-C", str(repo), *args],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
     )
     assert proc.returncode == 0, f"git {' '.join(args)} failed: {proc.stderr}"
     return proc.stdout.strip()
@@ -88,7 +88,7 @@ def _sandbox_env(root: Path) -> dict[str, str]:
 def _launcher_dir(project: Path, env: dict[str, str]) -> Path:
     proc = subprocess.run(
         ["python3", str(SCRIPTS / "ilk_paths.py"), "--start", str(project)],
-        capture_output=True, text=True, timeout=60, env=env,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, env=env,
     )
     assert proc.returncode == 0, proc.stderr
     return Path(json.loads(proc.stdout)["external_launcher_dir"])
@@ -157,7 +157,7 @@ set +e
 """
     return subprocess.run(
         ["bash", "-c", prelude + script],
-        capture_output=True, text=True, timeout=120, env=env, cwd=str(project),
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, env=env, cwd=str(project),
     )
 
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """plan_lint supervised_only scope guard (decomposition-principles.md §13).
 
-`supervised_only: true` is warranted by exactly one thing: a sub-plan whose
-`scope_paths` modifies the loop's own dispatch machinery. It is NOT a readiness
-gate, a risk gate, or a "needs human review" marker — and mis-setting it costs
-both autonomous dispatch and (with a scheduler alive) the manual /ilk-run
-fallback. These tests pin both directions of the check.
+Retired 2026-09-20: the flag's hazard was a self-modifying batch dispatched
+under a running scheduler.  Worktree isolation (v0.9.107) + merge bounce
+(sub-plan 1) removed the hazard; the dispatch skip and preflight hard-stop
+were removed in sub-plan 2, step 1.  The lint now treats ANY
+`supervised_only: true` as unwarranted.
 
 Field evidence for the guard: two shipped non-toolkit masters carried the flag
 on risk-prose rationale alone (kira-cloudflare authz batch; robot-voice
@@ -104,7 +104,7 @@ def _findings(result) -> str:
     return result.stdout + result.stderr
 
 
-# --- AC-1: flag set, no infra in scope → hard finding ------------------------
+# --- AC-1: flag set → always unwarranted (retired 2026-09-20) ---------------
 
 def test_unwarranted_supervised_only_flagged(tmp_path):
     """The misuse this guard exists for: risk-prose rationale, no infra scope."""
@@ -114,8 +114,8 @@ def test_unwarranted_supervised_only_flagged(tmp_path):
         f"stdout={result.stdout}\nstderr={result.stderr}"
     )
     out = _findings(result)
-    assert "supervised_only" in out and "no sub-plan" in out, (
-        f"Expected an unwarranted-flag finding.\nstdout={out}"
+    assert "supervised_only" in out and "retired" in out, (
+        f"Expected a retired-flag finding.\nstdout={out}"
     )
 
 
@@ -134,37 +134,39 @@ def test_trailing_comment_does_not_hide_the_flag(tmp_path):
     )
 
 
-# --- AC-2: infra in scope, flag absent/false → hard finding ------------------
+# --- AC-2: infra in scope, flag absent/false → clean (direction (b) gone) ---
 
-def test_infra_scope_without_flag_flagged(tmp_path):
-    """A self-modifying batch must not be autonomously dispatchable."""
+def test_infra_scope_without_flag_clean(tmp_path):
+    """Direction (b) removed: infra scope no longer demands the flag."""
     result = _run(tmp_path, _master("false"), {"infra.md": _SUBPLAN_INFRA})
+    assert result.returncode == 0, (
+        f"Infra scope without flag must lint clean (retired).\n{_findings(result)}"
+    )
+
+
+def test_infra_scope_with_flag_absent_clean(tmp_path):
+    """Absent frontmatter key → no flag → clean."""
+    result = _run(tmp_path, _master(None), {"infra.md": _SUBPLAN_INFRA})
+    assert result.returncode == 0, (
+        f"Absent flag must be treated as unset and lint clean.\n{_findings(result)}"
+    )
+
+
+# --- AC-3: flag set + infra in scope → unwarranted (was the one legit use) ---
+
+def test_infra_scope_with_flag_set_unwarranted(tmp_path):
+    """Retired: even infra scope + flag set is now a finding."""
+    result = _run(tmp_path, _master("true"), {"infra.md": _SUBPLAN_INFRA})
     assert result.returncode == 1, (
-        f"Expected non-zero exit for infra scope with flag off.\n{_findings(result)}"
+        f"Warranted supervised_only must now be a finding (retired).\n{_findings(result)}"
     )
     out = _findings(result)
-    assert "loop-infra" in out and "not set" in out, (
-        f"Expected a missing-flag finding.\nstdout={out}"
+    assert "retired" in out, (
+        f"Expected a retired-flag finding.\nstdout={out}"
     )
 
 
-def test_infra_scope_with_flag_absent_flagged(tmp_path):
-    """Absent frontmatter key behaves as false."""
-    result = _run(tmp_path, _master(None), {"infra.md": _SUBPLAN_INFRA})
-    assert result.returncode == 1, (
-        f"Absent flag must be treated as unset.\n{_findings(result)}"
-    )
-
-
-# --- AC-3: warranted combinations → clean -----------------------------------
-
-def test_infra_scope_with_flag_set_clean(tmp_path):
-    """The one legitimate use: infra scope + flag set."""
-    result = _run(tmp_path, _master("true"), {"infra.md": _SUBPLAN_INFRA})
-    assert result.returncode == 0, (
-        f"Warranted supervised_only must lint clean.\n{_findings(result)}"
-    )
-
+# --- AC-4: app scope without flag → clean ------------------------------------
 
 def test_app_scope_without_flag_clean(tmp_path):
     """The autonomous default: product work, flag off."""
@@ -174,10 +176,10 @@ def test_app_scope_without_flag_clean(tmp_path):
     )
 
 
-# --- AC-4: narrowness — importing infra is not modifying it -----------------
+# --- AC-5: narrowness — importing infra is not modifying it -----------------
 
 def test_test_only_infra_reference_does_not_demand_flag(tmp_path):
-    """§13: a test that imports loop_status.py does not warrant the flag."""
+    """Direction (b) removed: a test file does not demand the flag."""
     result = _run(tmp_path, _master("false"), {"t.md": _SUBPLAN_INFRA_TEST_ONLY})
     assert result.returncode == 0, (
         "A test file named after an infra module must not demand "
@@ -185,9 +187,8 @@ def test_test_only_infra_reference_does_not_demand_flag(tmp_path):
     )
 
 
-def test_glob_scope_covering_infra_justifies_flag(tmp_path):
-    """A directory glob that pulls in infra makes the flag defensible (no
-    unwarranted-flag finding), but is too loose to *demand* it."""
+def test_glob_scope_covering_infra_flag_set_unwarranted(tmp_path):
+    """Retired: even a glob covering infra + flag set is a finding."""
     subplan = """\
     ---
     plan: broad-glob
@@ -204,16 +205,35 @@ def test_glob_scope_covering_infra_justifies_flag(tmp_path):
     - `skills/ilk-loop/references/orchestration-collaboration.md`
     """
     set_result = _run(tmp_path, _master("true"), {"g.md": subplan})
-    assert set_result.returncode == 0, (
-        f"Glob covering infra must justify the flag.\n{_findings(set_result)}"
+    assert set_result.returncode == 1, (
+        f"Glob covering infra + flag set must be a finding (retired).\n{_findings(set_result)}"
     )
+
+
+def test_glob_scope_covering_infra_flag_off_clean(tmp_path):
+    """Direction (b) removed: glob alone must not demand the flag."""
+    subplan = """\
+    ---
+    plan: broad-glob
+    scope_paths:
+      - "skills/ilk-loop/scripts/**"
+    ---
+
+    # Sub-plan: broad
+
+    Touches the scripts dir.
+
+    ## Reference reading
+
+    - `skills/ilk-loop/references/orchestration-collaboration.md`
+    """
     off_result = _run(tmp_path, _master("false"), {"g2.md": subplan})
     assert off_result.returncode == 0, (
-        f"Glob alone must not demand the flag.\n{_findings(off_result)}"
+        f"Glob alone must not demand the flag (retired).\n{_findings(off_result)}"
     )
 
 
-# --- AC-5: no --master → check is inert -------------------------------------
+# --- AC-6: no --master → check is inert -------------------------------------
 
 def test_check_requires_master_context(tmp_path):
     """Without --master there is no flag to evaluate; stay silent."""

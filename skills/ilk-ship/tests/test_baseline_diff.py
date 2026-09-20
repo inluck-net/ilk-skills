@@ -378,7 +378,7 @@ class TestCollectionFloor:
         result = subprocess.run(
             [sys.executable, "-m", "pytest", str(fixture_dir), "--collect-only"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=30,
         )
         output = result.stdout + "\n" + result.stderr

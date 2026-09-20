@@ -41,7 +41,7 @@ RUNNER = SCRIPTS / "run_ilk_loop_claude.sh"
 def _git(project: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
-        cwd=project, capture_output=True, text=True, check=True,
+        cwd=project, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     ).stdout.strip()
 
 
@@ -49,7 +49,8 @@ def _make_project(tmp: Path) -> Path:
     project = tmp / "project"
     project.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=project, check=True,
-                   capture_output=True)
+                   capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
     _git(project, "commit", "-q", "--allow-empty", "-m", "init")
     (project / ".ilk-launch.json").write_text(
         json.dumps({"ship": {"suite": {
@@ -156,7 +157,7 @@ class TestD5OneRecordLocation:
             f"_SKILL_ROOT='{skill_root}'; set +e; "
             f"invoke_batch_gate '{tmp_path}' '{launcher_dir}'"
         )
-        subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+        subprocess.run(["bash", "-c", script], capture_output=True, text=True, encoding="utf-8", errors="replace",
                        timeout=30, env={"ILK_DOTSOURCE_ONLY": "1"})
 
         assert argv_dump.is_file(), "stub gate was never invoked"

@@ -294,8 +294,103 @@ except Exception:
 "
 }
 
-classify_action() {
+# Normalize a RAW SENTINEL STATE to the taxonomy label that means the same
+# thing, so both vocabularies reach classify_action through one door.
+#
+# The watchdog names a terminal run in two vocabularies: collect.py's taxonomy
+# label on the normal path, and run_ilk_loop_claude.sh's `stop_reason` --
+# written verbatim to last-exit.json `state` at :3404 -- on the fallback path
+# below at :~1010.  They are not the same set of words, so before this function
+# existed a *classification failure* silently changed the watchdog's ACTION:
+# `max-iterations` blocked where `max-iter-bound` would have relaunched, and
+# `ship_integrity_violation` blocked where `shipped-unverified` would have
+# paged a human with the right banner.
+#
+# The mapping is the UNCONDITIONAL half of collect.py's `_SENTINEL_FAILURE_MAP`
+# (:1315-1343).  Taxonomy labels and unknown words pass through unchanged, so
+# this is idempotent and safe to apply to every input.
+#
+# `timeout` is deliberately NOT mapped to `timeout-bound`.  collect.py's
+# normalization of it is CONDITIONAL -- `_timeout_authoritative = sentinel_state
+# == "timeout" and bool(iters)` -- so `timeout-bound` means "timed out AND left
+# records".  The fallback path fires precisely when collect.py produced no
+# classification, i.e. when that evidence is exactly what is missing; mapping it
+# here would widen relaunch to a run that never said anything about itself.  It
+# keeps its own `triage` arm below, for the reasons spelled out there.
+normalize_classification() {
   local label="$1"
+  case "$label" in
+    max-iterations)
+      # Hit the iteration cap with work still pending: recoverable.
+      echo "max-iter-bound"
+      ;;
+    ship_integrity_violation|shipped-unproven)
+      # A ship whose gate never proved it -- needs a human, not a block banner.
+      echo "shipped-unverified"
+      ;;
+    selfmod_merge_failed)
+      echo "merge-conflict"
+      ;;
+    local_checks_failed)
+      # collect.py splits this into local-checks-stuck / local-checks-broken on
+      # evidence the fallback path does not have.  Both are blacklist labels,
+      # so the ACTION is the same either way; the stuck form is the safe
+      # stand-in because it claims less (the agent failed, not the gate).
+      echo "local-checks-stuck"
+      ;;
+    budget_exhausted)
+      # collect.py's key is underscored; the runner emits the hyphenated form
+      # (_decide_iter_stop_reason, :2207).  Accept both spellings here.
+      echo "budget-exhausted"
+      ;;
+    *)
+      echo "$label"
+      ;;
+  esac
+}
+
+# Render a classification for a human, carrying its PROVENANCE.
+#
+# `classification` reaches the banners and the notifications from two places
+# that used to be indistinguishable once printed: collect.py's postmortem
+# verdict, and the raw sentinel state the fallback substitutes when collect.py
+# produced nothing.  "BLOCKED — STUCK-NO-PROGRESS" read identically whether a
+# postmortem had concluded that or whether nobody had classified the run at
+# all, so after the fact there was no way to tell a verdict from a stand-in --
+# and the stand-in is the case that wants investigating.
+#
+# $1 = the value handed to classify_action; $2 = its source, one of
+# `postmortem`, `sentinel-fallback`, `sentinel-legacy-pid`.  An empty source is
+# treated as `postmortem` so an un-plumbed caller loses the annotation rather
+# than gaining a false one.
+describe_classification() {
+  local value="$1" source="${2:-}" normalized
+  normalized=$(normalize_classification "$value")
+  case "$source" in
+    postmortem|"")
+      echo "$normalized"
+      ;;
+    *)
+      if [[ "$normalized" == "$value" ]]; then
+        echo "$normalized [unclassified: raw sentinel state via $source]"
+      else
+        echo "$normalized [unclassified: normalized from raw sentinel state '$value' via $source]"
+      fi
+      ;;
+  esac
+}
+
+classify_action() {
+  # A test harness that `sed`-extracts classify_action alone gets an undefined
+  # normalize_classification, an empty label, and the `""` arm -- i.e. `block`
+  # for every input, which reads exactly like a real fail-safe verdict.  Say so
+  # instead of returning a plausible wrong answer.
+  if ! declare -F normalize_classification >/dev/null 2>&1; then
+    echo "classify_action: normalize_classification is not defined -- extract both functions" >&2
+    return 2
+  fi
+  local label
+  label=$(normalize_classification "$1")
   case "$label" in
     running)
       echo "sleep"
@@ -966,22 +1061,33 @@ Watchdog PID: $$" 36
     # classification label (matching ps1 behaviour). Fall back to the
     # raw sentinel state only if collect.py produced no classification.
     local classification=""
+    local classification_source=""
     if [[ "$sentinel_terminal" == true ]]; then
       write_log "running collect.py to classify the run..."
       classification=$(invoke_postmortem_collect "$project" "$sentinel_run_id")
       if [[ -n "$classification" ]]; then
+        classification_source="postmortem"
         write_log "classification: $classification"
       else
-        write_log "collect.py produced no classification; falling back to raw sentinel state: $sentinel_state"
         classification="$sentinel_state"
+        classification_source="sentinel-fallback"
+        write_log "collect.py produced no classification; falling back to raw sentinel state: $sentinel_state"
       fi
     else
       # Legacy PID path: no sentinel, use raw state
       classification="$sentinel_state"
+      classification_source="sentinel-legacy-pid"
     fi
 
     local action
     action=$(classify_action "$classification")
+
+    # Everything downstream shows this, not the bare word: a stand-in must not
+    # read like a verdict.  The machine value stays in $classification.
+    local classification_display classification_label
+    classification_label=$(normalize_classification "$classification")
+    classification_display=$(describe_classification "$classification" "$classification_source")
+    write_log "classification=$classification_display source=$classification_source action=$action"
 
     if [[ "$action" == "sleep" ]]; then
       sleep "$poll_sec"
@@ -995,10 +1101,10 @@ Watchdog PID: $$" 36
 
     if [[ "$action" == "stop-clean" ]]; then
       write_log "clean-success: job done. No relaunch, no red banner."
-      invoke_ilk_notify "ship" "$proj_name" "classification: $classification"
+      invoke_ilk_notify "ship" "$proj_name" "classification: $classification_display"
       write_banner "DONE — $(to_upper "$classification")" \
 "Project: $proj_name
-Classification: $classification
+Classification: $classification_display
 
 Job done. Watchdog exiting cleanly. The scheduler will promote the
 next queued master on its next cycle (if any)." 32
@@ -1007,12 +1113,15 @@ next queued master on its next cycle (if any)." 32
 
     if [[ "$action" == "needs-human" ]]; then
       local ev="needs-human"
-      [[ "$classification" == "shipped-unverified" ]] && ev="needs-verification"
+      # Match on the normalized label: `ship_integrity_violation` and
+      # `shipped-unproven` are the raw-state spellings of the same outcome and
+      # must produce the same notification event, not the generic one.
+      [[ "$classification_label" == "shipped-unverified" ]] && ev="needs-verification"
       write_log "$classification: needs human review. No relaunch."
-      invoke_ilk_notify "$ev" "$proj_name" "classification: $classification"
+      invoke_ilk_notify "$ev" "$proj_name" "classification: $classification_display"
       write_banner "NEEDS HUMAN — $(to_upper "$classification")" \
 "Project: $proj_name
-Classification: $classification
+Classification: $classification_display
 
 This outcome requires human review — no auto-relaunch.
 Read the postmortem for details." 33
@@ -1021,10 +1130,10 @@ Read the postmortem for details." 33
 
     if [[ "$action" == "triage" ]]; then
       write_log "$classification: triage required. No relaunch."
-      invoke_ilk_notify "triage" "$proj_name" "classification: $classification"
+      invoke_ilk_notify "triage" "$proj_name" "classification: $classification_display"
       write_banner "TRIAGE — $(to_upper "$classification")" \
 "Project: $proj_name
-Classification: $classification
+Classification: $classification_display
 
 This run needs manual triage — no auto-relaunch.
 Check runner logs and sentinel state." 33
@@ -1032,10 +1141,10 @@ Check runner logs and sentinel state." 33
     fi
 
     if [[ "$action" == "block" ]]; then
-      invoke_ilk_notify "blocked" "$proj_name" "classification: $classification"
+      invoke_ilk_notify "blocked" "$proj_name" "classification: $classification_display"
       write_banner "BLOCKED — $(to_upper "$classification")" \
 "Project: $proj_name
-Classification: $classification
+Classification: $classification_display
 
 Restart will not help this kind of stop. Human triage required.
 Read the report tail and decide what to do, then relaunch ilk manually." 31
@@ -1043,9 +1152,12 @@ Read the report tail and decide what to do, then relaunch ilk manually." 31
     fi
 
     # action == relaunch
-    if [[ "$last_restart_class" != "$classification" ]]; then
+    # Keyed on the normalized label so a run that alternates between a
+    # postmortem verdict and its raw-state spelling is counted as the same
+    # repeated failure rather than resetting the cap every other restart.
+    if [[ "$last_restart_class" != "$classification_label" ]]; then
       restart_count=1
-      last_restart_class="$classification"
+      last_restart_class="$classification_label"
     else
       restart_count=$((restart_count + 1))
     fi
@@ -1053,7 +1165,7 @@ Read the report tail and decide what to do, then relaunch ilk manually." 31
     if [[ $restart_count -gt $max_restarts_cap ]]; then
       write_banner "MAX RESTARTS REACHED ($max_restarts_cap)" \
 "Project: $proj_name
-Last classification: $classification
+Last classification: $classification_display
 Hard cap is in place to force human review when restarts pile up.
 Inspect postmortems under the external launcher dir to see the trend, then
 relaunch manually if it still makes sense." 31
@@ -1083,7 +1195,7 @@ relaunch manually if it still makes sense." 31
     fi
 
     write_log "WHITELIST hit ($classification). Restart $restart_count/$max_restarts_cap."
-    invoke_ilk_notify "restart" "$proj_name" "classification: $classification"
+    invoke_ilk_notify "restart" "$proj_name" "classification: $classification_display"
 
     if ! bash "$LAUNCH_SCRIPT" --project-path "$project" --force; then
       write_banner "RELAUNCH FAILED" \

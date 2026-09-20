@@ -109,7 +109,7 @@ class TestRecordEmissionFromCommands:
         script = _P(__file__).resolve().parent.parent / "scripts" / "verification_record.py"
         help_text = subprocess.run(
             [_sys.executable, str(script), "--help"],
-            capture_output=True, text=True, timeout=60).stdout
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60).stdout
         return any(m in help_text for m in self._EMITTING_MODES
                    if m in combined)
 

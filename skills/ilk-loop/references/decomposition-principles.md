@@ -607,30 +607,36 @@ below). Do not set `supervised_only: true` as a "readiness gate" or
 "because we haven't verified it yet" — that is what verification tiers
 (§12) and gated dispatch (gated autonomous `local_checks`) are for.
 
-### supervised_only is a narrow + persistent SAFETY flag
+### supervised_only — retired 2026-09-20
 
-`supervised_only` exists for one purpose: batches that **modify the
-loop's own runtime infrastructure** (`loop_status.py`,
-`scheduler_scan.py`, `promote_next_master.py`, `plan_status.py`,
-`scheduler.*`). A self-modifying batch must not be dispatched by the
-scheduler or `promote_next_master` while they are live — they would be
-reading code they are simultaneously rewriting.
+> **Historical note (pre-v0.9.107).** `supervised_only` existed for one
+> purpose: batches that **modified the loop's own runtime infrastructure**
+> (`loop_status.py`, `scheduler_scan.py`, `promote_next_master.py`,
+> `plan_status.py`, `scheduler.*`). A self-modifying batch dispatched by
+> the scheduler would be read by code the batch was simultaneously
+> rewriting. The flag blocked autonomous dispatch and (when a scheduler
+> was alive) the manual `/ilk-run` fallback.
 
-Key properties:
-- **Narrow** — only triggered when `scope_paths` (not body/prose)
-  actually *modifies* one of those files. A test that imports
-  `loop_status.py`, or prose that mentions `scheduler_scan.py`, does
-  not warrant it.
-- **Persistent** — once set, it stays set until the batch ships. It is
-  not auto-cleared by any "readiness" signal.
-- **Not a readiness gate** — never set `supervised_only: true` because
-  the batch "isn't ready yet" or "needs human review". Use `status:
-  draft` for not-yet-released, and verification tiers for trust level.
-- **Effectively toolkit-only** — in practice only a batch planned
-  against the ilk-skills clone can have those paths in `scope_paths`.
-  In any consumer project, `supervised_only: false` is the answer. Do
-  not set it in a consumer project unless the user explicitly asks for
-  it in that session.
+**What replaced it.** Two changes removed the hazard the flag guarded:
+
+1. **Worktree isolation (v0.9.107)** — a self-modifying batch now executes
+   in an isolated worktree and merges back only when no live loop exists.
+   The scheduler never reads code the batch is rewriting.
+2. **Merge bounce (2026-09-20)** — the merge liveness probe now detects
+   the scheduler daemon (not just `run_ilk_loop`) and bounces it before
+   merging, refusing if the daemon is still alive. This closed the last
+   gap: a merge landing while the daemon executes the files it edits.
+
+**Current state.** The key is **tolerated-and-ignored** in frontmatter:
+no reader honours it (scheduler_scan dispatch skip and preflight
+hard-stop removed 2026-09-20), no writer should set it, and masters that
+already carry it (the queued `state-ownership` master) parse normally.
+`plan_lint --master` treats ANY `supervised_only: true` as unwarranted.
+
+**Back-compat constraint.** Frontmatter parsing MUST NOT reject the key —
+masters in the wild still carry it. The queued `state-ownership` master
+is the live proof: it carries the key, parses in `loop_status.py`,
+`scheduler_scan.py`, and `plan_lint.py`, and is dispatched normally.
 
 ### `scope_paths` is a declaration, not a boundary
 
@@ -666,26 +672,20 @@ own decision record — not a docs edit.
 | Gate | Question it answers | Set by |
 |---|---|---|
 | `status: draft` → `queued` | Is this batch *released* for running at all? | autonomy tier (§15); a human flips it |
-| `supervised_only` | May the scheduler *self-dispatch* it? | the mechanical scope test above, nothing else |
+| ~~`supervised_only`~~ | ~~May the scheduler *self-dispatch* it?~~ | **Retired 2026-09-20** — worktree isolation + merge bounce removed the hazard |
 
-Almost every misuse is reaching for `supervised_only` when the intent was
+Almost every misuse was reaching for `supervised_only` when the intent was
 `draft`. If the sentence in your head is "a human should look at this
 first", you want `draft`.
 
-### The flag is expensive — price it before setting it
+### ~~The flag is expensive — price it before setting it~~ (retired)
 
-`supervised_only: true` costs more than it looks:
-
-1. The scheduler and `promote_next_master` skip the master **permanently**
-   — every step needs a human driving.
-2. `ilk-runner`'s preflight **hard-stops even a manual `/ilk-run`** while
-   any cross-project scheduler is alive (`preflight.sh` / `preflight.ps1`:
-   *"A cross-project scheduler is alive. Stop it before running a
-   supervised_only master."*). So once you schedule across projects, a
-   stray flag doesn't downgrade the batch to manual — it blocks both paths.
-
-That asymmetry is why an unwarranted flag is a **hard** `plan_lint`
-finding, not a warning.
+> **Historical.** Before 2026-09-20, `supervised_only: true` cost more than
+> it looked: (1) the scheduler and `promote_next_master` skipped the master
+> permanently; (2) `ilk-runner`'s preflight hard-stopped even a manual
+> `/ilk-run` while a cross-project scheduler was alive. That asymmetry
+> justified a hard `plan_lint` finding. With the dispatch skip and preflight
+> hard-stop removed, the cost is zero — the key is tolerated-and-ignored.
 
 ### Mitigate real hazards with config, not with supervision
 
@@ -711,10 +711,11 @@ batch autonomous:
 
 ### Enforcement
 
-`plan_lint.py --master <MASTER> <sub-plans...>` runs the scope test in
-both directions: unwarranted flag → hard finding; infra-modifying scope
-with the flag off → hard finding. `/ilk-plan` step 7g runs this. Prose
-alone did not hold — see the field record below.
+`plan_lint.py --master <MASTER> <sub-plans...>` now fires **unconditionally**:
+any master carrying `supervised_only: true` gets a hard finding telling the
+planner to remove it. The old direction (b) — infra scope without the flag
+— is removed (the flag no longer protects anything). `/ilk-plan` step 7g
+runs this.
 
 > Field record: before enforcement, two shipped non-toolkit masters
 > carried the flag on risk-prose rationale alone (a kira-cloudflare

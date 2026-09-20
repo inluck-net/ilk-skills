@@ -59,7 +59,7 @@ Body.
 
 def _git(repo: Path, *args: str) -> str:
     p = subprocess.run(["git", "-C", str(repo), *args],
-                       capture_output=True, text=True, timeout=60)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     assert p.returncode == 0, f"git {' '.join(args)}: {p.stderr}"
     return p.stdout.strip()
 

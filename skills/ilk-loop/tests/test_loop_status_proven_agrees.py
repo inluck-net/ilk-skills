@@ -58,14 +58,14 @@ def _make_git_repo(tmp_path: Path, slug: str = "test-slug", steps: int = 2) -> P
     """Create a minimal git repo with step commits so check_step_commits passes."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "init"], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test"],
-        cwd=repo, capture_output=True, check=True,
+        cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
-        cwd=repo, capture_output=True, check=True,
+        cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     # A ship config, so a `pass` verdict is a REACHABLE state for this repo.
     #
@@ -84,18 +84,18 @@ def _make_git_repo(tmp_path: Path, slug: str = "test-slug", steps: int = 2) -> P
     )
     # Initial commit.
     (repo / "placeholder").write_text("init\n")
-    subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     subprocess.run(
         ["git", "commit", "-m", "init"],
-        cwd=repo, capture_output=True, check=True,
+        cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     # Step commits — one per step, with the [plan:<slug>#step-N] trailer.
     for i in range(steps):
         (repo / f"step-{i}").write_text(f"step {i}\n")
-        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
         subprocess.run(
             ["git", "commit", "-m", f"feat: step {i} [plan:{slug}#step-{i}]"],
-            cwd=repo, capture_output=True, check=True,
+            cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         )
     return repo
 
@@ -103,7 +103,7 @@ def _make_git_repo(tmp_path: Path, slug: str = "test-slug", steps: int = 2) -> P
 def _current_head(repo: Path) -> str:
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
-        cwd=repo, capture_output=True, text=True, check=True,
+        cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     )
     return result.stdout.strip()
 
