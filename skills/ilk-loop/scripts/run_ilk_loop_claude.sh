@@ -2013,6 +2013,26 @@ body = re.sub(r'^(status:\s*)shipped', r'\1in-progress', body, count=1, flags=re
 p.write_text(body)
 " "$f"
       echo "  [ship-integrity] reverted $slug to in-progress" >&2
+      # A rejected gate invalidates the ship intent for the slug it rejects.
+      #
+      # Contract note (§7h): this adds a new *writer* of the ship-intent file,
+      # so per references/detached-component-contracts.md the filename and
+      # lifecycle stay owned by ship_transition.py — we call through
+      # invalidate_intent() and never unlink by path.
+      #
+      # Scoped to THIS slug on purpose. converge_ship_transition runs before
+      # this enforcement (see the ordering comment at its call site), so an
+      # intent naming another slug may describe a transition still in flight;
+      # clearing it unconditionally re-creates the bug this closes.
+      if [[ -n "$slug" ]]; then
+        python3 -c "
+import sys
+sys.path.insert(0, sys.argv[3])
+from ship_transition import invalidate_intent
+if invalidate_intent(sys.argv[1], sys.argv[2]):
+    print('  [ship-integrity] invalidated ship intent for ' + sys.argv[2])
+" "$plans_dir" "$slug" "${_SKILL_ROOT}/ilk-loop/scripts" >&2 || true
+      fi
       violations=1
     fi
   done
