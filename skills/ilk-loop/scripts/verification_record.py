@@ -421,6 +421,73 @@ def parse_pytest_output(out: str) -> dict:
     return {"counts": counts, "failing_nodes": nodes}
 
 
+_VITEST_TESTS_RE = re.compile(r"^\s*Tests\s+(.*?\(\s*\d+\s*\))", re.MULTILINE)
+_VITEST_FAIL_RE = re.compile(r"^\s*FAIL\s+(\S+)", re.MULTILINE)
+_VITEST_COUNT_RE = re.compile(
+    r"(\d+)\s+(passed|failed|skipped|todo|errored)")
+
+
+def parse_vitest_output(out: str) -> dict:
+    """Extract counts and failing files from vitest output.
+
+    Same contract as ``parse_pytest_output``: raise on an unreadable run
+    rather than reporting zeros.  The difference the gate depends on:
+    ``counts["failed"]`` counts FAIL LINES — failing FILES — not the
+    Tests line's per-test failure count, because a file path is the unit
+    ``run_at_base`` can pass back to ``vitest run``; ``render_record``
+    writes ``suite_failed = failed + errors`` and one table row per
+    failing node, so the two must be equal by construction.  The Tests
+    line still fills ``passed``/``skipped``/``total`` (per-test, the only
+    place vitest states them).
+    """
+    out = _ANSI_RE.sub("", out)
+
+    m = _VITEST_TESTS_RE.search(out)
+    if not m:
+        raise ValueError(
+            "no vitest summary line found in the suite output; the record "
+            "cannot state a failure count it did not measure"
+        )
+    counts = {"passed": 0, "failed": 0, "errors": 0, "skipped": 0,
+              "xfailed": 0, "xpassed": 0}
+    for n, word in _VITEST_COUNT_RE.findall(m.group(1)):
+        if word == "todo":
+            counts["skipped"] += int(n)
+        elif word == "errored":
+            counts["errors"] += int(n)
+        else:
+            counts[word] = int(n)
+    # A detail section repeats `FAIL  <file> > suite > test` per test; the
+    # first token is the file either way, and fromkeys de-dupes to files.
+    nodes = list(dict.fromkeys(_VITEST_FAIL_RE.findall(out)))
+    tests_line_failed = counts["failed"] + counts["errors"]
+    if tests_line_failed and not nodes:
+        # A reporter shape whose FAIL lines this regex does not know: the
+        # run failed but no rerun unit can be named. That is unreadable,
+        # not zero — the same rule as the missing summary.
+        raise ValueError(
+            "vitest reported failing tests but no FAIL file lines parsed; "
+            "the record cannot name what it would re-run at base"
+        )
+    counts["failed"] = len(nodes)
+    counts["total"] = counts["passed"] + counts["skipped"] + counts["failed"]
+    return {"counts": counts, "failing_nodes": nodes}
+
+
+def _is_vitest(invocation: str) -> bool:
+    return "vitest" in invocation
+
+
+def _parse_for(invocation: str):
+    """Pick the output parser by invocation shape, never by output sniffing.
+
+    Sniffing would guess "pytest" for a vitest run that crashed before its
+    summary — the wrong parser's error, hiding the real one.  The invocation
+    names the runner; the record carries it in ``suite_invocation``.
+    """
+    return parse_vitest_output if _is_vitest(invocation) else parse_pytest_output
+
+
 def run_suite(project: Path, invocation: str, timeout: int,
               selection: list[str] | None = None) -> dict:
     """Run the project's configured suite and return parsed results.
@@ -445,7 +512,7 @@ def run_suite(project: Path, invocation: str, timeout: int,
             f"suite exceeded {timeout}s; the record keeps `suite_failed: "
             f"unmeasured` rather than a count nothing measured"
         )
-    return {**parse_pytest_output((r.stdout or "") + (r.stderr or "")),
+    return {**_parse_for(invocation)((r.stdout or "") + (r.stderr or "")),
             "exit_code": r.returncode}
 
 
@@ -526,7 +593,21 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
             # "no tests ran" and marked all 7 test_meta_paths.py collection
             # errors absent — the file exists at base (`git cat-file -e` proves
             # it), so all 7 were false attributions.
-            if r.returncode == 4 or "error: not found:" in blob.lower():
+            if _is_vitest(runner):
+                # vitest exits nonzero for a failing file AND for a missing
+                # one ("no test files found") — exit codes cannot tell
+                # absent-at-base from failed, and the difference decides
+                # attribution (absent ⇒ the batch's own damage). The
+                # worktree AT base is the ground truth: a file that is not
+                # there did not exist at base. Node ids are file paths for
+                # vitest (see parse_vitest_output), so this is exact.
+                if r.returncode == 0:
+                    verdicts[nid] = "passed"
+                elif not (wt / nid).exists():
+                    verdicts[nid] = "absent-at-base"
+                else:
+                    verdicts[nid] = "failed"
+            elif r.returncode == 4 or "error: not found:" in blob.lower():
                 verdicts[nid] = "absent-at-base"
             elif r.returncode == 0:
                 verdicts[nid] = "passed"
