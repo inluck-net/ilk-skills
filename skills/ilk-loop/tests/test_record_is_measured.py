@@ -39,6 +39,23 @@ class TestParsePytestOutput:
         assert r["failing_nodes"] == ["tests/test_a.py::test_one",
                                       "tests/test_b.py::test_two"]
 
+    def test_colored_output_parses(self) -> None:
+        """pytest on some hosts emits color into pipes (measured 2026-09-20
+        on chad-mbp: the banner opens with \\x1b[32m before the ==== rule).
+        The ^=+ and ^FAILED anchors must find their lines after stripping.
+        """
+        out = (
+            "\x1b[31mFAILED\x1b[0m tests/test_a.py::test_one - assert 1 == 2\n"
+            "\x1b[32m============================== \x1b[1m2 failed\x1b[0m\x1b[32m, "
+            "\x1b[0m\x1b[1m40 passed\x1b[0m\x1b[32m, \x1b[0m\x1b[1m3 skipped\x1b[0m"
+            "\x1b[32m in 12.34s \x1b[0m==============================\x1b[0m\n"
+        )
+        r = vr.parse_pytest_output(out)
+        assert r["counts"]["failed"] == 2
+        assert r["counts"]["passed"] == 40
+        assert r["counts"]["total"] == 45
+        assert r["failing_nodes"] == ["tests/test_a.py::test_one"]
+
     def test_a_node_reported_twice_is_one_failure(self) -> None:
         """FAILED and ERROR for the same id is one failing test, not two."""
         out = ("FAILED tests/t.py::x\nERROR tests/t.py::x\n"
