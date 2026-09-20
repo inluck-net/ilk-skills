@@ -20,7 +20,7 @@ LAUNCHER_DIR="${_SKILL_ROOT}/ilk-launcher"
 PROJECTS_JSON="${LAUNCHER_DIR}/projects.json"
 DEFAULT_MAX_ITER=30
 DEFAULT_TIMEOUT=30
-VALID_ENGINES="claude codex claude-worker"
+VALID_ENGINES="claude codex claude-worker claude-manager"
 DEFAULT_ENGINE="claude"
 
 # Runner scripts keyed by engine name
@@ -29,6 +29,12 @@ runner_script_for_engine() {
   case "$engine" in
     claude)        echo "${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_claude.sh" ;;
     claude-worker) echo "${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_claude.sh" ;;
+    # claude-manager (2026-09-20, operator): same runner, but the session
+    # runs under the manager home (~/.claude-manager) — the designated
+    # replacement for paths that previously launched as the PRIMARY
+    # account (--engine claude) and burned the official quota window.
+    # Toolkit stays this checkout's (ILK_SKILL_HOME is NOT redirected).
+    claude-manager) echo "${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_claude.sh" ;;
     codex)         echo "${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_codex.sh" ;;
     *)             echo "Error: Unknown engine '$engine'" >&2; exit 1 ;;
   esac
@@ -634,6 +640,14 @@ start_ilk_window() {
   local env_prefix=""
   local display_config_dir="(default ~/.claude)"
   local display_skill_home="(default)"
+  if [[ "$engine" == "claude-manager" ]]; then
+    # Manager home for the session identity only — the toolkit stays this
+    # checkout's (no ILK_SKILL_HOME redirect), unlike the worker engine.
+    local manager_home="${CLAUDE_MANAGER_HOME:-$HOME/.claude-manager}"
+    env_prefix="export CLAUDE_CONFIG_DIR='$manager_home'; "
+    display_config_dir="$manager_home"
+    display_skill_home="(this checkout)"
+  fi
   if [[ "$engine" == "claude-worker" ]]; then
     # Resolve worker home: flag > env > default.
     local worker_home=""

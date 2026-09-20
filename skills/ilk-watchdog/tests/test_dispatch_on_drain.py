@@ -199,7 +199,7 @@ class TestDispatchOnDrain:
                        launch_fn=capture_launch)
         assert len(dispatches) == 1, "exactly one dispatch on first pass"
         assert "--engine" in dispatches[0]
-        assert "claude-worker" in dispatches[0]
+        assert "claude-manager" in dispatches[0]
 
         # Verify marker was written.
         marker = project_dir / "runtime" / "verification-dispatched.json"
@@ -384,8 +384,8 @@ class TestDispatchOnDrain:
         # provider/model — never the primary ~/.claude account, whose quota
         # window --engine claude burned in 4-second bounces all afternoon.
         engine_idx = cmd.index("--engine")
-        assert cmd[engine_idx + 1] == "claude-worker", (
-            "must dispatch with --engine claude-worker (worker home), "
+        assert cmd[engine_idx + 1] == "claude-manager", (
+            "must dispatch with --engine claude-manager (manager home), "
             "not claude (primary account home)"
         )
         # Verify one-shot: max-iterations 1 prevents the session from looping.

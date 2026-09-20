@@ -180,9 +180,10 @@ def test_marker_is_per_master_not_singleton(tmp_path):
     assert set(marker["masters"]) == {"MASTER-test.md", "MASTER-second.md"}
 
 
-def test_verify_dispatch_uses_worker_engine(tmp_path):
-    """The verify session must draw on the worker home, never the primary
-    account (--engine claude burned the primary quota window, 2026-09-20)."""
+def test_verify_dispatch_uses_manager_engine(tmp_path):
+    """The verify session draws on the manager home (2026-09-20, operator
+    architecture): loops run claude-worker/mimo; paths that previously
+    launched as the primary account run claude-manager/glm instead."""
     scan = _import_scan()
     project_dir = _setup_project(tmp_path, sentinel_pid=None)
     plans = project_dir / "plans"
@@ -193,4 +194,4 @@ def test_verify_dispatch_uses_worker_engine(tmp_path):
     )
     assert len(launched) == 1
     cmd = launched[0]
-    assert "--engine" in cmd and cmd[cmd.index("--engine") + 1] == "claude-worker"
+    assert "--engine" in cmd and cmd[cmd.index("--engine") + 1] == "claude-manager"

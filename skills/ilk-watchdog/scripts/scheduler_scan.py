@@ -392,13 +392,13 @@ def _dispatch_verification_on_drain(
     cmd = [
         "bash", str(launcher),
         "--project-path", repo_path,
-        # claude-worker, not claude: the verify session must draw on the
-        # worker home (its configured provider/model), never the primary
-        # ~/.claude account. --engine claude launched as the operator's
-        # interactive identity and burned the primary quota window
-        # (2026-09-20). launch.sh defaults the worker home when the engine
-        # is claude-worker.
-        "--engine", "claude-worker",
+        # claude-manager (2026-09-20, operator): verification sessions run
+        # under the manager home — the designated replacement for paths
+        # that previously launched as the PRIMARY account (--engine claude)
+        # and burned the official quota window. Loops proper stay on the
+        # claude-worker engine; the manager engine shares the runner but
+        # swaps the session identity only.
+        "--engine", "claude-manager",
         "--max-iterations", "1",
     ]
 
