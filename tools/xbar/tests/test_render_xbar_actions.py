@@ -282,7 +282,7 @@ class TestModelLabel:
     wrapping. The row itself must stay model-free.
     """
 
-    def test_model_on_header_line_only(self) -> None:
+    def test_model_on_header_line_not_row(self) -> None:
         entry = _make_entry("proj", alive=True, state="running",
                             model="claude-sonnet-4-20250514")
         text = _render(entry)
@@ -290,10 +290,7 @@ class TestModelLabel:
         project_line = [l for l in lines if l.startswith("* proj")][0]
         assert "claude-sonnet-4-20250514" not in project_line
         assert "worker model: claude-sonnet-4-20250514" in lines
-        # No per-row "--model:" item: it rendered only on running rows,
-        # and running-row blocks were exactly the ones SwiftBar disabled
-        # (2026-09-20). The header line carries the model once.
-        assert not any(l.startswith("--model:") for l in lines)
+        assert "--model: claude-sonnet-4-20250514" in lines
 
     def test_running_row_without_model(self) -> None:
         entry = _make_entry("proj", alive=True, state="running")

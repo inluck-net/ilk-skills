@@ -218,14 +218,8 @@ def render_xbar(
         # ── Info sub-items: everything the compact top line gave up ──────
         if short_key != key:
             lines.append(f"--key: {key}")
-        # NOTE: no per-row "--model:" item.  It appeared ONLY on running
-        # rows (model is empty when idle) — and running-row blocks were
-        # the ones SwiftBar rendered disabled with a dead submenu while
-        # identical-except-model pending blocks worked (2026-09-20).  It
-        # was also redundant: the header already carries the worker model
-        # (one line, not one per row).  If running blocks still misrender
-        # after this, the next suspect is the parent line's heartbeat
-        # fragment — bisect one variable at a time.
+        if model:
+            lines.append(f"--model: {model}")
         if pending:
             lines.append(f"--batches owed: {pending}")
 
@@ -247,14 +241,9 @@ def render_xbar(
         sub_file = e.get("next_subplan_file") or ""
         if master_file and sub_file and os.path.isfile(_DEFAULT_COPY_SCRIPT):
             ref = f"ilk-ref:{key}/{master_file}/{sub_file}"
-            # param2 QUOTED like Start-now's proven form: the value is
-            # space-free and quote-free, so single-quoting it can never
-            # nest (attempt 2's killer) — and attempt 3's bare long value
-            # is the only remaining delta from the one action known to
-            # work, so it goes too. (2026-09-20, third iteration.)
             lines.append(
                 f"--Copy reference | bash={_BASH!r}"
-                f" param1={_DEFAULT_COPY_SCRIPT!r} param2={ref!r}"
+                f" param1={_DEFAULT_COPY_SCRIPT!r} param2={ref}"
                 f" terminal=false refresh=false"
             )
 
