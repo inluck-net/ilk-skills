@@ -20,6 +20,9 @@ LAUNCHER_DIR="${_SKILL_ROOT}/ilk-launcher"
 PROJECTS_JSON="${LAUNCHER_DIR}/projects.json"
 DEFAULT_MAX_ITER=30
 DEFAULT_TIMEOUT=30
+# Hard ceiling so a typo'd sub-plan declaration cannot pin a slot forever.
+# Kept in sync with _resolve_effective_window.ILK_MAX_ITERATION_TIMEOUT_MIN.
+ILK_MAX_ITERATION_TIMEOUT_MIN=120
 VALID_ENGINES="claude codex claude-worker claude-manager"
 DEFAULT_ENGINE="claude"
 
@@ -298,6 +301,19 @@ resolve_params() {
     timeout="$cli_timeout"
   elif [[ -n "$cfg_timeout" ]]; then
     timeout="$cfg_timeout"
+  fi
+
+  # Resolve sub-plan declarations (retro-2026-09-20: the declared window
+  # is the window).  The module returns max(config, max declarations) capped
+  # at ILK_MAX_ITERATION_TIMEOUT_MIN.
+  local decl_timeout
+  decl_timeout=$(python3 "${LAUNCHER_DIR}/scripts/_resolve_effective_window.py" "$project_path" 2>/dev/null || echo "0")
+  if [[ "$decl_timeout" -gt "$timeout" ]]; then
+    timeout="$decl_timeout"
+  fi
+  # Hard ceiling — even a CLI override cannot exceed the cap.
+  if [[ "$timeout" -gt "$ILK_MAX_ITERATION_TIMEOUT_MIN" ]]; then
+    timeout="$ILK_MAX_ITERATION_TIMEOUT_MIN"
   fi
 
   echo "${max_iter} ${timeout}"
@@ -687,7 +703,11 @@ start_ilk_window() {
     echo "[$project_name] DRY RUN — would launch:"
     echo "  ProjectPath: $project_path"
     echo "  MaxIterations: $max_iterations"
-    echo "  IterationTimeoutMin: $timeout_min"
+    # Resolve source tag for the effective window (retro-2026-09-20).
+    local timeout_source_info
+    timeout_source_info=$(python3 "${LAUNCHER_DIR}/scripts/_resolve_effective_window.py" --source "$project_path" 2>/dev/null || echo "$timeout_min default")
+    local timeout_source="${timeout_source_info##* }"
+    echo "  Iter timeout: $timeout_min min (from: $timeout_source)"
     echo "  WorkerEngine: $engine"
     echo "  ClaudeConfigDir: $display_config_dir"
     echo "  IlkSkillHome: $display_skill_home"
@@ -935,7 +955,11 @@ for p in d:
   local timeout_min="${params##* }"
 
   echo "[$RESOLVED_NAME] Resolved path: $RESOLVED_PATH"
-  echo "[$RESOLVED_NAME] MaxIterations: $max_iter    IterationTimeoutMin: $timeout_min"
+  # Resolve source tag for the effective window (retro-2026-09-20).
+  local timeout_source_info
+  timeout_source_info=$(python3 "${LAUNCHER_DIR}/scripts/_resolve_effective_window.py" --source "$RESOLVED_PATH" 2>/dev/null || echo "$timeout_min default")
+  local timeout_source="${timeout_source_info##* }"
+  echo "[$RESOLVED_NAME] MaxIterations: $max_iter    Iter timeout: $timeout_min min (from: $timeout_source)"
 
   local engine
   engine=$(resolve_engine "$RESOLVED_PATH" "$CLI_ENGINE")

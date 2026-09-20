@@ -45,9 +45,12 @@ def _make_project(
 ) -> Path:
     """Create a minimal project with plans dir and config.
 
+    Uses the in-tree fallback layout (``docs/plans/``) so that
+    ``find_plans_dir``'s walk-up resolution finds it without needing a
+    git repository or external plans directory.
     Returns the project root path.
     """
-    plans_dir = tmp_path / "plans"
+    plans_dir = tmp_path / "docs" / "plans"
     plans_dir.mkdir(parents=True, exist_ok=True)
 
     # .ilk-launch.json
