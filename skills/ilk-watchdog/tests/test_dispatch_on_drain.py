@@ -108,7 +108,10 @@ def _setup_project(
     tmp_path: Path,
     key: str = "test-proj",
     *,
-    master_status: str = "active",
+    # shipped, not active: the dispatcher only ever fires for a drained
+    # (all-shipped) master, and the active-work skip (2026-09-20) now
+    # enforces that at the function boundary.
+    master_status: str = "shipped",
     subplan_status: str = "shipped",
     supervised_only: bool = False,
     blacklisted: bool = False,
@@ -183,7 +186,7 @@ class TestDispatchOnDrain:
     def test_dispatch_on_reconcile(self, tmp_path):
         """AC-1: a master that flips to shipped triggers exactly one dispatch."""
         dispatches: list[list[str]] = []
-        project_dir = _setup_project(tmp_path, master_status="active")
+        project_dir = _setup_project(tmp_path, master_status="shipped")
 
         def capture_launch(cmd):
             dispatches.append(cmd)
@@ -196,7 +199,7 @@ class TestDispatchOnDrain:
                        launch_fn=capture_launch)
         assert len(dispatches) == 1, "exactly one dispatch on first pass"
         assert "--engine" in dispatches[0]
-        assert "claude" in dispatches[0]
+        assert "claude-worker" in dispatches[0]
 
         # Verify marker was written.
         marker = project_dir / "runtime" / "verification-dispatched.json"
@@ -207,7 +210,7 @@ class TestDispatchOnDrain:
     def test_idempotent_second_pass(self, tmp_path):
         """AC-1: second dispatch call is a no-op (marker blocks it)."""
         dispatches: list[list[str]] = []
-        project_dir = _setup_project(tmp_path, master_status="active")
+        project_dir = _setup_project(tmp_path, master_status="shipped")
 
         def capture_launch(cmd):
             dispatches.append(cmd)
@@ -244,7 +247,7 @@ class TestDispatchOnDrain:
             return MockProc()
 
         project_dir = _setup_project(
-            tmp_path, master_status="active", subplan_status="shipped",
+            tmp_path, master_status="shipped", subplan_status="shipped",
         )
 
         # Patch scheduler_scan's subprocess for both passes.
@@ -278,7 +281,7 @@ class TestDispatchOnDrain:
         The master IS dispatched — the flag no longer gates dispatch."""
         dispatches: list[list[str]] = []
         project_dir = _setup_project(
-            tmp_path, master_status="active", supervised_only=True,
+            tmp_path, master_status="shipped", supervised_only=True,
         )
 
         def capture_launch(cmd):
@@ -297,7 +300,7 @@ class TestDispatchOnDrain:
         """AC-4: blacklisted project is NOT dispatched."""
         dispatches: list[list[str]] = []
         project_dir = _setup_project(
-            tmp_path, master_status="active", blacklisted=True,
+            tmp_path, master_status="shipped", blacklisted=True,
         )
 
         def capture_launch(cmd):
@@ -314,7 +317,7 @@ class TestDispatchOnDrain:
 
     def test_no_launcher_no_crash(self, tmp_path):
         """AC-7: missing launcher script is non-fatal (no exception)."""
-        project_dir = _setup_project(tmp_path, master_status="active")
+        project_dir = _setup_project(tmp_path, master_status="shipped")
         plans_dir = project_dir / "plans"
         master_path = plans_dir / "MASTER-test.md"
 
@@ -335,7 +338,7 @@ class TestDispatchOnDrain:
     def test_no_repo_path_no_crash(self, tmp_path):
         """AC-7: unresolvable repo_path is non-fatal."""
         project_dir = _setup_project(
-            tmp_path, master_status="active", last_launch_path=None,
+            tmp_path, master_status="shipped", last_launch_path=None,
         )
         plans_dir = project_dir / "plans"
         master_path = plans_dir / "MASTER-test.md"
@@ -345,7 +348,7 @@ class TestDispatchOnDrain:
 
     def test_launch_failure_non_fatal(self, tmp_path):
         """AC-7: launcher raising is non-fatal."""
-        project_dir = _setup_project(tmp_path, master_status="active")
+        project_dir = _setup_project(tmp_path, master_status="shipped")
         plans_dir = project_dir / "plans"
         master_path = plans_dir / "MASTER-test.md"
 
@@ -363,7 +366,7 @@ class TestDispatchOnDrain:
         ``resolve_engine`` function maps it to the correct home.
         Also verifies --max-iterations 1 (one-shot verification)."""
         dispatches: list[list[str]] = []
-        project_dir = _setup_project(tmp_path, master_status="active")
+        project_dir = _setup_project(tmp_path, master_status="shipped")
 
         def capture_launch(cmd):
             dispatches.append(cmd)
@@ -376,11 +379,14 @@ class TestDispatchOnDrain:
         assert len(dispatches) == 1
         cmd = dispatches[0]
 
-        # Verify engine is claude (planner), not claude-worker.
+        # Verify engine is claude-worker (2026-09-20 operator change): the
+        # verify session draws on the worker home and its configured
+        # provider/model — never the primary ~/.claude account, whose quota
+        # window --engine claude burned in 4-second bounces all afternoon.
         engine_idx = cmd.index("--engine")
-        assert cmd[engine_idx + 1] == "claude", (
-            "must dispatch with --engine claude (planner home, ~/.claude), "
-            "not claude-worker (worker home, ~/.claude-worker)"
+        assert cmd[engine_idx + 1] == "claude-worker", (
+            "must dispatch with --engine claude-worker (worker home), "
+            "not claude (primary account home)"
         )
         # Verify one-shot: max-iterations 1 prevents the session from looping.
         iter_idx = cmd.index("--max-iterations")

@@ -44,7 +44,7 @@ def _setup_project(tmp_path: Path, *, sentinel_pid: int | None) -> Path:
         "---\n"
         "title: MASTER-test.md\n"
         "created: 2026-07-29T00:00:00+08:00\n"
-        "status: active\n"
+        "status: shipped\n"
         "priority: 0\n"
         "---\n"
         "\n# MASTER-test.md\n"
@@ -114,3 +114,83 @@ def test_stale_running_sentinel_still_dispatches(tmp_path):
         _launch_fn=launched.append,
     )
     assert len(launched) == 1
+
+
+def test_active_master_suppresses_verify_dispatch(tmp_path):
+    """A project with active/queued work is the loop's to drive; its
+    batch-verification sub-plan is the sanctioned verifier. Verify-dispatch
+    alongside it double-drove the repo every scan pass (2026-09-20)."""
+    scan = _import_scan()
+    project_dir = _setup_project(tmp_path, sentinel_pid=None)
+    plans = project_dir / "plans"
+    # A second, ACTIVE master alongside the shipped one under test.
+    (plans / "MASTER-live.md").write_text(
+        "---\n"
+        "title: MASTER-live.md\n"
+        "created: 2026-09-20T01:00:00+08:00\n"
+        "status: active\n"
+        "priority: 0\n"
+        "---\n",
+        encoding="utf-8",
+    )
+    launched = []
+    scan._dispatch_verification_on_drain(
+        project_dir,
+        project_dir / "plans" / "MASTER-test.md",
+        project_dir / "plans",
+        _launch_fn=launched.append,
+    )
+    assert launched == []
+    assert not (project_dir / "runtime" / "verification-dispatched.json").exists()
+
+
+def test_marker_is_per_master_not_singleton(tmp_path):
+    """Two distinct shipped masters dispatch exactly once EACH. The
+    single-master marker re-dispatched one of them on every scan pass."""
+    scan = _import_scan()
+    project_dir = _setup_project(tmp_path, sentinel_pid=None)
+    plans = project_dir / "plans"
+    second = plans / "MASTER-second.md"
+    second.write_text(
+        "---\n"
+        "title: MASTER-second.md\n"
+        "created: 2026-09-20T00:30:00+08:00\n"
+        "status: shipped\n"
+        "priority: 0\n"
+        "---\n"
+        "\n## Sub-plan registry\n"
+        "\n| # | Sub-plan | Status |\n"
+        "|---|---|---|\n"
+        "| 1 | [2026-09-20-work.md](./2026-09-20-work.md) | shipped |\n",
+        encoding="utf-8",
+    )
+    launched = []
+    for master in ("MASTER-test.md", "MASTER-second.md", "MASTER-test.md"):
+        scan._dispatch_verification_on_drain(
+            project_dir, plans / master, plans,
+            _launch_fn=launched.append,
+        )
+    # First two calls dispatch (different masters); the third is a
+    # per-master idempotent re-entry and must NOT.
+    assert len(launched) == 2
+    import json as _json
+    marker = _json.loads(
+        (project_dir / "runtime" / "verification-dispatched.json")
+        .read_text(encoding="utf-8-sig"))
+    assert set(marker["masters"]) == {"MASTER-test.md", "MASTER-second.md"}
+
+
+def test_verify_dispatch_uses_worker_engine(tmp_path):
+    """The verify session must draw on the worker home, never the primary
+    account (--engine claude burned the primary quota window, 2026-09-20)."""
+    scan = _import_scan()
+    project_dir = _setup_project(tmp_path, sentinel_pid=None)
+    plans = project_dir / "plans"
+    launched = []
+    scan._dispatch_verification_on_drain(
+        project_dir, plans / "MASTER-test.md", plans,
+        _launch_fn=launched.append,
+    )
+    assert len(launched) == 1
+    cmd = launched[0]
+    assert "--engine" in cmd and cmd[cmd.index("--engine") + 1] == "claude-worker"

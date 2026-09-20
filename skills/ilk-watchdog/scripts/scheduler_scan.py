@@ -275,20 +275,52 @@ def _dispatch_verification_on_drain(
     draining other projects).
     """
     # --- idempotency guard (AC-1, per-master) ---
-    # The marker stores which master it was written for.  A mismatch means
-    # "not yet dispatched for this master", not "already handled".  Fail
-    # closed on unreadable or malformed markers: treat as "unknown" and
-    # dispatch — the caller will write a fresh marker on success.
+    # The marker records EVERY master dispatched for (``masters`` map);
+    # ``master`` keeps the legacy single-master field for back-compat.
+    # A master not in the record means "not yet dispatched for this master",
+    # not "already handled".  Fail closed on unreadable or malformed markers:
+    # treat as "unknown" and dispatch — the caller writes a fresh record on
+    # success.  (The single-master marker was the 2026-09-20 respawn engine:
+    # a project with N shipped masters re-dispatched on every scan pass,
+    # each pass mismatching the one remembered name — ilk-skills bounced
+    # every 5 minutes, each launch burning primary-account quota.)
     marker_path = project_dir / "runtime" / _VERIFICATION_DISPATCH_MARKER
     if marker_path.exists():
         try:
             marker_data = json.loads(
                 marker_path.read_text(encoding="utf-8-sig"),
             )
-            if marker_data.get("master") == master_path.name:
-                return  # same master — already dispatched
+            dispatched = set(marker_data.get("masters", {}))
+            dispatched.add(marker_data.get("master"))
+            dispatched.discard(None)
+            if master_path.name in dispatched:
+                return  # this master — already dispatched
         except (OSError, json.JSONDecodeError):
             pass  # unreadable → dispatch
+
+    # --- active-work skip (2026-09-20) ---
+    # A project whose current master is active or queued is being driven by
+    # the loop; its batch-verification sub-plan is the sanctioned verifier.
+    # Verify-dispatching alongside it double-drives the repo and, with
+    # --engine claude (pre-worker-home), burned the primary account's quota
+    # in 4-second bounces.  Skip until the queue is empty.
+    try:
+        for other in sorted(plans_dir.glob("MASTER-*.md")):
+            try:
+                other_fm = parse_frontmatter(
+                    other.read_text(encoding="utf-8-sig"))
+            except OSError:
+                continue
+            if normalize_master_status(
+                    other_fm.get("status", "")) in ("active", "queued"):
+                _log.info(
+                    "[verify-dispatch] %s still has active/queued work "
+                    "(%s) — verification belongs to its batch sub-plan",
+                    project_dir.name, other.name,
+                )
+                return
+    except OSError:
+        pass
 
     # --- read master frontmatter ---
     try:
@@ -360,7 +392,13 @@ def _dispatch_verification_on_drain(
     cmd = [
         "bash", str(launcher),
         "--project-path", repo_path,
-        "--engine", "claude",
+        # claude-worker, not claude: the verify session must draw on the
+        # worker home (its configured provider/model), never the primary
+        # ~/.claude account. --engine claude launched as the operator's
+        # interactive identity and burned the primary quota window
+        # (2026-09-20). launch.sh defaults the worker home when the engine
+        # is claude-worker.
+        "--engine", "claude-worker",
         "--max-iterations", "1",
     ]
 
@@ -383,12 +421,26 @@ def _dispatch_verification_on_drain(
         )
         return
 
-    # --- write idempotency marker ---
+    # --- write idempotency marker (per-master, merged) ---
     try:
         marker_path.parent.mkdir(parents=True, exist_ok=True)
+        existing: dict = {}
+        if marker_path.exists():
+            try:
+                existing = json.loads(
+                    marker_path.read_text(encoding="utf-8-sig"))
+            except (OSError, json.JSONDecodeError):
+                existing = {}
+        masters_map = dict(existing.get("masters", {}))
+        if existing.get("master"):
+            masters_map.setdefault(existing["master"], existing.get(
+                "dispatched_at", datetime.now().isoformat()))
+        now = datetime.now().isoformat()
+        masters_map[master_path.name] = now
         marker_data = {
             "master": master_path.name,
-            "dispatched_at": datetime.now().isoformat(),
+            "masters": masters_map,
+            "dispatched_at": now,
             "project_key": project_dir.name,
         }
         tmp = marker_path.with_suffix(".tmp")
