@@ -933,6 +933,13 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--no-isolate", action="store_true",
                     help="skip tree isolation to HEAD; for debugging only — "
                          "results say nothing about what will ship")
+    ap.add_argument("--repo-root", type=Path, default=None,
+                    help="tree the gate isolates and runs in, when it differs "
+                         "from the plans-resolution root (--project). The "
+                         "selfmod-isolation case: --project is the recorded "
+                         "original root (whose project key owns the plans "
+                         "dir), --repo-root is the isolated worktree holding "
+                         "the commits being gated. Single-repo projects only.")
     args = ap.parse_args(argv)
 
     project = args.project.resolve()
@@ -952,6 +959,26 @@ def main(argv: list[str]) -> int:
     if repo_error:
         print(json.dumps({"error": repo_error, "slug": slug, "subplan_path": str(subplan)}))
         return 2
+
+    # Selfmod isolation decouples the two roots (measured 2026-09-20, runs
+    # 20260920-131919/-132454/-133041): plans resolve from the recorded
+    # original root (--project, whose project key owns the plans dir), while
+    # the gate must isolate and verify the WORKTREE tree (--repo-root) — the
+    # clone's HEAD is pre-merge at gate time, so gating the clone would
+    # verify a tree without the iteration's commits. Honoured in single mode
+    # only: a meta project's run cwd comes from `repo:` frontmatter and must
+    # not be overridden.
+    if args.repo_root is not None:
+        _root, _kind = find_project_root(project)
+        if _kind != "single":
+            print(json.dumps({
+                "error": "--repo-root is only valid for single-repo projects; "
+                         "meta projects derive the run cwd from `repo:` frontmatter",
+                "slug": slug,
+                "subplan_path": str(subplan),
+            }))
+            return 2
+        run_cwd = args.repo_root.resolve()
 
     subplan_checks = parse_local_checks_block(fm_text)
     step_checks: list[dict] = []
@@ -992,7 +1019,8 @@ def main(argv: list[str]) -> int:
         return 2
 
     results: list[CheckResult] = []
-    iso_ctx = contextlib.nullcontext(IsolationState()) if args.no_isolate else isolate_to_head(project)
+    iso_tree = args.repo_root if args.repo_root is not None else project
+    iso_ctx = contextlib.nullcontext(IsolationState()) if args.no_isolate else isolate_to_head(iso_tree)
     with iso_ctx as iso:
         for c in subplan_checks:
             results.append(run_one(c, "subplan", run_cwd))

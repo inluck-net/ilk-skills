@@ -1230,7 +1230,13 @@ write_ship_proof_records() {
   # productive iteration.  The honest predicate is whether the probe actually
   # ANSWERED -- i.e. whether stdout parses as JSON.
   local probe_rc=0
-  status_json=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json) || probe_rc=$?
+  # Anchor to the recorded pre-isolation root: under selfmod isolation
+  # $PROJECT_PATH is the worktree, whose project key has no plans dir, so the
+  # probe exits 2 on every productive iteration (measured 20260920-133041:
+  # "probe did not answer (exit 2) -- writing no ledger rows"). Same recorded
+  # root merge_selfmod_worktree restores from; :- fallback keeps non-selfmod
+  # runs probing $PROJECT_PATH exactly as before.
+  status_json=$(cd "${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}" && python3 "$LOOP_STATUS_SCRIPT" --json) || probe_rc=$?
   if (( probe_rc >= 2 )) || [[ -z "$status_json" ]] \
      || ! printf '%s' "$status_json" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then
     echo "  ! [ship-proof] loop_status --json probe did not answer (exit ${probe_rc}) -- writing no ledger rows for iteration ${iteration}. A row asserting zero progress would be a false negative, not a safe default." >&2
@@ -1472,6 +1478,18 @@ invoke_local_checks() {
     return
   fi
 
+  # Plans-dir resolution anchors to the recorded pre-isolation root: under
+  # selfmod isolation $project is the worktree, whose own project key has no
+  # plans dir — find_subplan returns None and the gate errors out as a
+  # harness failure (measured 2026-09-20, runs 131919/132454/133041: every
+  # post-iteration gate of the batch died "sub-plan not found" while the same
+  # checks pass from the clone root; B2 confirm-before-block then reproduced
+  # the deterministic error and ship-integrity reverted a green, committed
+  # ship). The TREE the gate isolates and verifies stays $project — that is
+  # where the iteration's commits live; the clone's HEAD is pre-merge at
+  # gate time.
+  local plans_root="${SELFMOD_ORIGINAL_PROJECT_PATH:-$project}"
+
   # Derive outer cap from declared per-check timeouts (B2 false-stop fix).
   # Each target's declared timeout is read from the sub-plan; the overall
   # deadline is max(totalDeclared + 60s margin, outer_timeout_sec).
@@ -1504,7 +1522,7 @@ invoke_local_checks() {
     fi
     # Per-target: use declared timeout + margin as floor for remaining time
     local declared
-    declared=$(get_step_declared_timeout "$project" "$slug" "$step")
+    declared=$(get_step_declared_timeout "$plans_root" "$slug" "$step")
     if [[ "$declared" -gt 0 ]]; then
       local per_target=$((declared + 60))
       if [[ "$per_target" -gt "$remain_sec" ]]; then
@@ -1516,7 +1534,7 @@ invoke_local_checks() {
     tmp_out=$(mktemp)
 
     local check_exit=0
-    gtimeout "${remain_sec}s" python3 "$helper_script" --project "$project" --slug "$slug" --step "$step" > "$tmp_out" 2>&1 || check_exit=$?
+    gtimeout "${remain_sec}s" python3 "$helper_script" --project "$plans_root" --repo-root "$project" --slug "$slug" --step "$step" > "$tmp_out" 2>&1 || check_exit=$?
 
     local outcome=""
     # gtimeout exits 124 when it kills the process (outer timeout fired).
