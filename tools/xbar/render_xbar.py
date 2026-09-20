@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shlex
 import sys
 from pathlib import Path
 
@@ -221,24 +220,6 @@ def render_xbar(
             lines.append(f"--model: {model}")
         if pending:
             lines.append(f"--batches owed: {pending}")
-
-        # ── Copy reference: stable identity for pasting into a chat ─────
-        # The ref names FILES (not display slugs, not live step state):
-        # identity survives the copy-paste round-trip and any number of
-        # loop iterations in between; the receiving session re-reads
-        # state from disk.  Grammar documented in
-        # docs/architecture/integration-surface.md §2.6.
-        master_file = e.get("active_master") or ""
-        sub_file = e.get("next_subplan_file") or ""
-        if master_file and sub_file:
-            ref = f"ilk-ref: {key} | {master_file} | {sub_file}"
-            # pbcopy, not `echo | pbcopy`: no trailing newline, so the
-            # paste lands as one clean line.
-            copy_cmd = f"printf %s {shlex.quote(ref)} | pbcopy"
-            lines.append(
-                f"--Copy reference | bash={_BASH!r} param1=-c"
-                f" param2={copy_cmd!r} terminal=false refresh=false"
-            )
 
         # ── Action sub-items: Start now / Resume ─────────────────────
         # Start now: manually_runnable & not running — dispatchable work exists.

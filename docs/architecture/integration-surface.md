@@ -126,26 +126,6 @@ treat as crashed, not healthy.**
 `stop_reason`, and `local_checks[]` (each: `slug`, `step`, `outcome`,
 `exit_code`, `raw`). This is your event stream for a live feed.
 
-### 2.6 `ilk-ref` — a pastable row reference
-
-The panel's per-row **Copy reference** action puts one line on the
-clipboard:
-
-```
-ilk-ref: <project-key> | <master-filename> | <subplan-filename>
-```
-
-e.g. `ilk-ref: users-chad-projects-keyreply-kira-cloudflare |
-MASTER-2026-09-19-pv5-rereview-execution-plan.md |
-2026-09-19-pv5-audio-lifecycle.md`.
-
-The reference names **files, not display slugs and not live state** —
-identity survives the copy-paste round-trip and any iterations that land
-in between. To resolve one: the key names
-`~/.ilk-data/projects/<key>/`, the master and sub-plan filenames are
-readable inside its `plans/` dir; step/status are re-read from those
-files at question time, never trusted from the clipboard.
-
 ---
 
 ## 3. Control surface

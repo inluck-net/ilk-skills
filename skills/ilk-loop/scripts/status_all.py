@@ -290,7 +290,7 @@ def _blocked_info(
 
 def _resolve_next_subplan(
     plans_dir: Path, master_text: str
-) -> tuple[str, str, int, int, str]:
+) -> tuple[str, str, int, int]:
     """Return (next_subplan_slug, step_string, subplan_index, subplan_count).
 
     "Runnable" — not merely "un-shipped".  A ``blocked`` sub-plan is outstanding
@@ -305,9 +305,7 @@ def _resolve_next_subplan(
     ``subplan_index`` is the 1-based registry position of the returned sub-plan
     — counting shipped ones, so it reads "sub-plan 3 of 7 in the batch" — and
     ``subplan_count`` is the registry total.  The tray/xbar render them as
-    ``<batch> M/N`` ahead of the sub-plan name.  The trailing ``fname`` is
-    the sub-plan FILENAME — the panel's "Copy reference" action needs the
-    on-disk identity, not the display slug.
+    ``<batch> M/N`` ahead of the sub-plan name.
     """
     ordered = extract_master_order(master_text)
     total = len(ordered)
@@ -325,8 +323,8 @@ def _resolve_next_subplan(
         slug = fm.get("plan", fname.replace(".md", ""))
         cur = fm.get("current_step", "?")
         est = fm.get("estimated_steps", "?")
-        return slug, f"{cur}/{est}", pos, total, fname
-    return "", "", 0, 0, ""
+        return slug, f"{cur}/{est}", pos, total
+    return "", "", 0, 0
 
 
 _BATCH_DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[a-z]?-")
@@ -438,7 +436,6 @@ def resolve_project_status(project_dir: Path) -> dict:
     batch = ""
     subplan_index = 0
     subplan_count = 0
-    next_subplan_file = ""
     pending_batches = 0
     master_is_active = False
     queued_has_work = False
@@ -462,10 +459,9 @@ def resolve_project_status(project_dir: Path) -> dict:
                     active_master = chosen.name
                     master_is_active = cstatus == "active"
                     batch = _batch_display_name(ctext)
-                    (
-                        next_subplan, step, subplan_index, subplan_count,
-                        next_subplan_file,
-                    ) = _resolve_next_subplan(plans_dir, ctext)
+                    next_subplan, step, subplan_index, subplan_count = (
+                        _resolve_next_subplan(plans_dir, ctext)
+                    )
             except (OSError, IndexError, ValueError):
                 pass
 
@@ -489,7 +485,7 @@ def resolve_project_status(project_dir: Path) -> dict:
             if mstatus in ("active", "queued"):
                 pending_batches += 1
             if mstatus == "queued":
-                q_slug, _, _, _, _ = _resolve_next_subplan(plans_dir, mtext)
+                q_slug, _, _, _ = _resolve_next_subplan(plans_dir, mtext)
                 if q_slug:
                     queued_has_work = True
                     break
@@ -577,7 +573,6 @@ def resolve_project_status(project_dir: Path) -> dict:
         "orphaned": orphaned,
         "active_master": active_master,
         "next_subplan": next_subplan,
-        "next_subplan_file": next_subplan_file,
         "step": step,
         "batch": batch,
         "subplan_index": subplan_index,

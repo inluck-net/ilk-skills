@@ -81,23 +81,3 @@ def test_stale_payload_without_batch_fields_renders_unchanged() -> None:
     row = _row([_entry()])
     assert "some-subplan" in row and "2/6" in row
     assert "/" not in row.split("some-subplan")[0].replace("* proj", "")
-
-
-def test_copy_reference_action_names_files_not_slugs() -> None:
-    out = render_xbar([_entry(
-        batch="b", subplan_index=1, subplan_count=2,
-        active_master="MASTER-2026-09-19-x-execution-plan.md",
-        next_subplan_file="2026-09-19-x-sub.md",
-    )])
-    copy_lines = [l for l in out.splitlines() if "Copy reference" in l]
-    assert len(copy_lines) == 1
-    line = copy_lines[0]
-    # Identity by FILE, not display slug, and no live state in the ref:
-    # both survive the copy-paste round-trip and later iterations.
-    assert "ilk-ref: proj | MASTER-2026-09-19-x-execution-plan.md | 2026-09-19-x-sub.md" in line
-    assert "pbcopy" in line and "refresh=false" in line
-
-
-def test_no_copy_reference_without_file_identities() -> None:
-    out = render_xbar([_entry()])
-    assert "Copy reference" not in out
