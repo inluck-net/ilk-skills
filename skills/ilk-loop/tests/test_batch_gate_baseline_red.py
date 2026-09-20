@@ -206,6 +206,7 @@ class TestAtBaseCapNamesItself:
             base_sha="0000000", invocation="python3 -m pytest",
             scope={"mode": "full", "count": 0},
             results=results,
+            at_base={},
             at_base_error=f"{len(failures)} failing node ids exceeds the {AT_BASE_CAP} cap; "
                           f"a batch failing this widely needs a human, not an at-base rerun",
             baseline_red=[],
