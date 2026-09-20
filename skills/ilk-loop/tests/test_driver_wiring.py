@@ -208,7 +208,15 @@ class TestLoopStatusCwd:
 
     def test_every_loop_status_call_is_cwd_scoped(self) -> None:
         """AC-4: each `python3 "$LOOP_STATUS_SCRIPT"` execution sits inside a
-        `cd "$PROJECT_PATH"` construct.
+        `cd` into an ANCHORED root — $PROJECT_PATH, the SELFMOD fallback, or
+        $_status_root (itself defined as that fallback).
+
+        The selfmod-merge-visibility batch anchored two invocations to
+        `${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}`: after a failed
+        selfmod merge PROJECT_PATH still points at the isolated worktree,
+        whose own project key has no plans dir (run 20260920-111204, driver
+        comment at the final-status block). Those lines satisfy this AC; a
+        literal `cd "$PROJECT_PATH"` match would not.
 
         `[[ -f "$LOOP_STATUS_SCRIPT" ]]` existence guards reference the
         variable without executing it, so they are skipped.
@@ -228,14 +236,27 @@ class TestLoopStatusCwd:
             'no `python3 "$LOOP_STATUS_SCRIPT"` executions found — the parser '
             "matches nothing; check the driver's invocation style"
         )
+        anchored_forms = (
+            'cd "$PROJECT_PATH"',
+            'cd "${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"',
+            'cd "$_status_root"',
+        )
         unwrapped = [
-            line for line in executions if 'cd "$PROJECT_PATH"' not in line
+            line for line in executions
+            if not any(form in line for form in anchored_forms)
         ]
         assert not unwrapped, (
             f'{len(unwrapped)} of {len(executions)} `python3 '
             f'"$LOOP_STATUS_SCRIPT"` invocations resolve from the launcher\'s '
-            f"cwd instead of $PROJECT_PATH: {unwrapped}"
+            f"cwd instead of an anchored root: {unwrapped}"
         )
+        # Accepting `cd "$_status_root"` is only sound while _status_root is
+        # itself anchored; pin its definition so a future reassignment to a
+        # cwd-relative root fails here rather than passing on the variable.
+        assert (
+            '_status_root="${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"'
+            in text
+        ), "_status_root no longer derives from the anchored project root"
 
     def test_final_status_resolves_project_not_cwd(self, tmp_path: Path) -> None:
         """AC-5: the driver's final-status code path, run from a launcher cwd
@@ -265,8 +286,16 @@ class TestLoopStatusCwd:
         # The driver's own final-status lines, executed verbatim from the
         # launcher's cwd. The driver declares PROJECT_PATH itself; the env
         # stands in for it exactly as the loop would have set it.
+        # The snippet now contains `local _status_root=...` (the batch's
+        # anchored final-status block): `local` is legal in the driver's
+        # function context but rejected at `bash -c` top level, where the
+        # variable silently stays unset, `cd ""` is a no-op, and the status
+        # call runs from the outside cwd — the exact defect this test pins.
+        # So run the verbatim lines inside a function, their natural context.
         proc = subprocess.run(
-            ["bash", "-c", _final_status_snippet()],
+            ["bash", "-c",
+             "ilk_final_status() {\n" + _final_status_snippet()
+             + "\n}\nilk_final_status"],
             cwd=outside,
             env={
                 **env,
