@@ -99,11 +99,11 @@ class TestCreatePath:
                 return {"form": {"shared_url": "https://form.url"}}
 
         with (
-            mock.patch("cli.create_bitable", return_value=created_result) as m_create,
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "create_bitable", return_value=created_result) as m_create,
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
             mock.patch("init_bitable.seed_schema") as m_seed,
-            mock.patch("cli.BitableClient", return_value=MockClient()),
+            mock.patch.object(cli, "BitableClient", return_value=MockClient()),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj", "--repo", str(repo_dir),
@@ -180,12 +180,12 @@ class TestReusePath:
                 return {"form": {"shared_url": "https://form.url"}}
 
         with (
-            mock.patch("cli.create_bitable") as m_create,
-            mock.patch("cli._probe_tables", return_value=True),
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "create_bitable") as m_create,
+            mock.patch.object(cli, "_probe_tables", return_value=True),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
             mock.patch("init_bitable.seed_schema") as m_seed,
-            mock.patch("cli.BitableClient", return_value=MockClient()),
+            mock.patch.object(cli, "BitableClient", return_value=MockClient()),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj", "--repo", str(repo_dir),
@@ -224,10 +224,10 @@ class TestRefuseUnreachable:
         repo_dir.mkdir()
 
         with (
-            mock.patch("cli.create_bitable") as m_create,
-            mock.patch("cli._probe_tables", return_value=False),
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "create_bitable") as m_create,
+            mock.patch.object(cli, "_probe_tables", return_value=False),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj", "--repo", str(repo_dir),
@@ -284,12 +284,12 @@ class TestRefuseUnreachable:
                 return {"form": {"shared_url": "https://form.url"}}
 
         with (
-            mock.patch("cli.create_bitable", return_value=created_result) as m_create,
-            mock.patch("cli._probe_tables", return_value=False),
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "create_bitable", return_value=created_result) as m_create,
+            mock.patch.object(cli, "_probe_tables", return_value=False),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
             mock.patch("init_bitable.seed_schema"),
-            mock.patch("cli.BitableClient", return_value=MockClient()),
+            mock.patch.object(cli, "BitableClient", return_value=MockClient()),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj",
@@ -454,11 +454,11 @@ class TestKanbanCreated:
         mock_client = MockClient()
 
         with (
-            mock.patch("cli.create_bitable", return_value=created_result),
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "create_bitable", return_value=created_result),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
             mock.patch("init_bitable.seed_schema"),
-            mock.patch("cli.BitableClient", return_value=mock_client),
+            mock.patch.object(cli, "BitableClient", return_value=mock_client),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj", "--repo", str(repo_dir),
@@ -529,11 +529,11 @@ class TestFormCreated:
         mock_client = MockClient()
 
         with (
-            mock.patch("cli.create_bitable", return_value=created_result),
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "create_bitable", return_value=created_result),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
             mock.patch("init_bitable.seed_schema"),
-            mock.patch("cli.BitableClient", return_value=mock_client),
+            mock.patch.object(cli, "BitableClient", return_value=mock_client),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj", "--repo", str(repo_dir),
@@ -609,11 +609,11 @@ class TestIdempotentSkip:
         mock_client = MockClient()
 
         with (
-            mock.patch("cli.create_bitable", return_value=created_result),
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "create_bitable", return_value=created_result),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
             mock.patch("init_bitable.seed_schema"),
-            mock.patch("cli.BitableClient", return_value=mock_client),
+            mock.patch.object(cli, "BitableClient", return_value=mock_client),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj", "--repo", str(repo_dir),
@@ -671,11 +671,11 @@ class TestFolderResolution:
                 return {"form": {"shared_url": "https://form.url"}}
 
         with (
-            mock.patch("cli.create_bitable", return_value=created_result) as m_create,
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "create_bitable", return_value=created_result) as m_create,
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
             mock.patch("init_bitable.seed_schema"),
-            mock.patch("cli.BitableClient", return_value=MockClient()),
+            mock.patch.object(cli, "BitableClient", return_value=MockClient()),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj", "--repo", str(repo_dir),
@@ -723,11 +723,11 @@ class TestFolderResolution:
                 return {"form": {"shared_url": "https://form.url"}}
 
         with (
-            mock.patch("cli.create_bitable", return_value=created_result) as m_create,
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "create_bitable", return_value=created_result) as m_create,
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
             mock.patch("init_bitable.seed_schema"),
-            mock.patch("cli.BitableClient", return_value=MockClient()),
+            mock.patch.object(cli, "BitableClient", return_value=MockClient()),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj", "--repo", str(repo_dir),
@@ -775,11 +775,11 @@ class TestEditableWarning:
                 return {"form": {"shared_url": "https://form.url"}}
 
         with (
-            mock.patch("cli.create_bitable", return_value=created_result),
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "create_bitable", return_value=created_result),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
             mock.patch("init_bitable.seed_schema"),
-            mock.patch("cli.BitableClient", return_value=MockClient()),
+            mock.patch.object(cli, "BitableClient", return_value=MockClient()),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj", "--repo", str(repo_dir),
@@ -823,11 +823,11 @@ class TestEditableWarning:
                 return {"form": {"shared_url": "https://form.url"}}
 
         with (
-            mock.patch("cli.create_bitable", return_value=created_result),
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "create_bitable", return_value=created_result),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
             mock.patch("init_bitable.seed_schema"),
-            mock.patch("cli.BitableClient", return_value=MockClient()),
+            mock.patch.object(cli, "BitableClient", return_value=MockClient()),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj", "--repo", str(repo_dir),
@@ -932,12 +932,12 @@ class TestGrantNonFatal:
                 return {"form": {"shared_url": "https://form.url"}}
 
         with (
-            mock.patch("cli.create_bitable", return_value=created_result),
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "create_bitable", return_value=created_result),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
             mock.patch("init_bitable.seed_schema"),
-            mock.patch("cli.BitableClient", return_value=MockClient()),
-            mock.patch("cli._request", side_effect=mock_request),
+            mock.patch.object(cli, "BitableClient", return_value=MockClient()),
+            mock.patch.object(cli, "_request", side_effect=mock_request),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj", "--repo", str(repo_dir),
@@ -1060,12 +1060,12 @@ class TestOperatorGrant:
                 return {"form": {"shared_url": "https://form.url"}}
 
         with (
-            mock.patch("cli.create_bitable", return_value=created_result),
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "create_bitable", return_value=created_result),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
             mock.patch("init_bitable.seed_schema"),
-            mock.patch("cli.BitableClient", return_value=MockClient()),
-            mock.patch("cli._request", side_effect=mock_request),
+            mock.patch.object(cli, "BitableClient", return_value=MockClient()),
+            mock.patch.object(cli, "_request", side_effect=mock_request),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj", "--repo", str(repo_dir),
@@ -1123,12 +1123,12 @@ class TestOperatorGrant:
                 return {"form": {"shared_url": "https://form.url"}}
 
         with (
-            mock.patch("cli.create_bitable", return_value=created_result),
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "create_bitable", return_value=created_result),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
             mock.patch("init_bitable.seed_schema"),
-            mock.patch("cli.BitableClient", return_value=MockClient()),
-            mock.patch("cli._request", side_effect=mock_request),
+            mock.patch.object(cli, "BitableClient", return_value=MockClient()),
+            mock.patch.object(cli, "_request", side_effect=mock_request),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj", "--repo", str(repo_dir),
@@ -1189,12 +1189,12 @@ class TestOperatorGrant:
                 return {"form": {"shared_url": "https://form.url"}}
 
         with (
-            mock.patch("cli.create_bitable", return_value=created_result),
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "create_bitable", return_value=created_result),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
             mock.patch("init_bitable.seed_schema"),
-            mock.patch("cli.BitableClient", return_value=MockClient()),
-            mock.patch("cli._request", side_effect=mock_request),
+            mock.patch.object(cli, "BitableClient", return_value=MockClient()),
+            mock.patch.object(cli, "_request", side_effect=mock_request),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj", "--repo", str(repo_dir),
@@ -1252,13 +1252,13 @@ class TestOperatorGrant:
                 return {"form": {"shared_url": "https://form.url"}}
 
         with (
-            mock.patch("cli.create_bitable") as m_create,
-            mock.patch("cli._probe_tables", return_value=True),
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "create_bitable") as m_create,
+            mock.patch.object(cli, "_probe_tables", return_value=True),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
             mock.patch("init_bitable.seed_schema"),
-            mock.patch("cli.BitableClient", return_value=MockClient()),
-            mock.patch("cli._request", side_effect=mock_request),
+            mock.patch.object(cli, "BitableClient", return_value=MockClient()),
+            mock.patch.object(cli, "_request", side_effect=mock_request),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj", "--repo", str(repo_dir),
@@ -1307,9 +1307,9 @@ class TestShowMembers:
             return fake_members
 
         with (
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
-            mock.patch("cli._request", side_effect=mock_request),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
+            mock.patch.object(cli, "_request", side_effect=mock_request),
         ):
             args = cli.build_parser().parse_args([
                 "show-members", "--project", "myproj",
@@ -1328,8 +1328,8 @@ class TestShowMembers:
         _write_config(env["config_path"], cfg)
 
         with (
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
         ):
             args = cli.build_parser().parse_args([
                 "show-members", "--project", "no_such_proj",
@@ -1532,11 +1532,11 @@ class TestSharingOnCreate:
         mock_client = MockClient()
 
         with (
-            mock.patch("cli.create_bitable", return_value=created_result),
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "create_bitable", return_value=created_result),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
             mock.patch("init_bitable.seed_schema"),
-            mock.patch("cli.BitableClient", return_value=mock_client),
+            mock.patch.object(cli, "BitableClient", return_value=mock_client),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj", "--repo", str(repo_dir),
@@ -1598,11 +1598,11 @@ class TestSharingOnCreate:
         mock_client = MockClient()
 
         with (
-            mock.patch("cli.create_bitable", return_value=created_result),
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
+            mock.patch.object(cli, "create_bitable", return_value=created_result),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
             mock.patch("init_bitable.seed_schema"),
-            mock.patch("cli.BitableClient", return_value=mock_client),
+            mock.patch.object(cli, "BitableClient", return_value=mock_client),
         ):
             args = cli.build_parser().parse_args([
                 "init-project", "--project", "myproj", "--repo", str(repo_dir),
@@ -1660,9 +1660,9 @@ class TestPullNewFilter:
             return {}
 
         with (
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
-            mock.patch("cli._request", side_effect=mock_request),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
+            mock.patch.object(cli, "_request", side_effect=mock_request),
             mock.patch("lark_client._request", side_effect=mock_request),
             mock.patch("lark_client.get_tenant_access_token", return_value="tok"),
         ):
@@ -1735,9 +1735,9 @@ class TestPullNewBackfill:
             return {}
 
         with (
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
-            mock.patch("cli._request", side_effect=mock_request),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
+            mock.patch.object(cli, "_request", side_effect=mock_request),
             mock.patch("lark_client._request", side_effect=mock_request),
             mock.patch("lark_client.get_tenant_access_token", return_value="tok"),
         ):
@@ -1794,9 +1794,9 @@ class TestPullNewBackfill:
             return {}
 
         with (
-            mock.patch("cli.get_tenant_access_token", return_value="tok"),
-            mock.patch("cli.load_config", return_value=cfg),
-            mock.patch("cli._request", side_effect=mock_request),
+            mock.patch.object(cli, "get_tenant_access_token", return_value="tok"),
+            mock.patch.object(cli, "load_config", return_value=cfg),
+            mock.patch.object(cli, "_request", side_effect=mock_request),
             mock.patch("lark_client._request", side_effect=mock_request),
             mock.patch("lark_client.get_tenant_access_token", return_value="tok"),
         ):
