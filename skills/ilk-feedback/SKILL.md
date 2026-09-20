@@ -145,6 +145,7 @@ The `recommended_*` fields are what `ilk-launcher` Step 1.5 reads.
 | `never-ran` | `stop_reason="no-progress"` AND `num_turns=0` AND zero input/output tokens AND result matches a startup-failure pattern (`Unknown command`, `command not found`, `No such file`) | The run failed before the model was ever invoked — environment/startup fault (missing command, incomplete worker home). NOT blacklisted; routes to triage. A restart will NOT help until the cause is fixed. |
 | `no-evidence` | run started (sentinel present) but left no usable JSONL records — possibly crashed before iter 1 completed | The run exists in the sentinel but produced no iteration data. Triage the runner output / branch-setup logs to find the crash cause. |
 | `throttled` | `stop_reason="no-progress"` AND non-trivial rate-limit event count in JSONL AND output rate < 5 tokens/sec | The run was rate-limited, not stalled. Transient condition; relaunch after the rate-limit window expires. NOT blacklisted; routes to relaunch with standard MaxRestarts cap. |
+| `merge-conflict` | sentinel state `selfmod_merge_failed` | A selfmod worktree's merge-back failed — committed work is parked in a worktree and cannot be recovered by relaunching. Watchdog routes to needs-human; relaunch alone won't recover the stranded commits. |
 
 ## Standard workflow
 
