@@ -104,22 +104,42 @@ providers_json() {
   printf '%s' "$out"
 }
 
-# Render the provider table, marking the one the worker is on.
+# Why a provider row cannot be switched to, or "" when it can. A dropped row
+# that vanishes silently is indistinguishable from one CCSwitch never had —
+# at 2am, hunting a fallback, that difference is the whole question.
+CW_UNAVAILABLE_PY='
+def unavailable(r):
+    if r.get("category") == "official":
+        return ("official Claude OAuth identity — a worker/manager home must not "
+                "borrow the planner\x27s account (bootstrap.sh --allow-official overrides)")
+    missing = [f for f in ("base_url", "model") if not r.get(f)]
+    if missing:
+        return "CCSwitch row has no " + " or ".join(missing)
+    return ""
+'
+
+# Render the provider table, marking the one the worker is on. Selectable rows
+# are numbered 1..N; unavailable rows print below with their reason and no
+# number, so the numbering a caller types stays the selectable list.
 list_providers() {
   local rows_json
   rows_json="$(providers_json)" || return 2
-  CW_ROWS="$rows_json" python3 - "$settings_file" <<'PYLIST'
+  CW_ROWS="$rows_json" CW_UNAVAIL_PY="$CW_UNAVAILABLE_PY" python3 - "$settings_file" <<'PYLIST'
 import json, os, sys
-rows = json.loads(os.environ["CW_ROWS"])
-rows = [r for r in rows if r.get("base_url") and r.get("model")]
+exec(os.environ["CW_UNAVAIL_PY"])
+all_rows = json.loads(os.environ["CW_ROWS"])
+rows = [r for r in all_rows if not unavailable(r)]
+blocked = [r for r in all_rows if unavailable(r)]
 try:
     cur = (json.load(open(sys.argv[1])).get("env") or {}).get("ANTHROPIC_BASE_URL", "")
 except Exception:
     cur = ""
-width = max((len(r["name"]) for r in rows), default=4)
+width = max((len(r["name"]) for r in all_rows), default=4)
 for i, r in enumerate(rows, 1):
     mark = "*" if cur and r["base_url"] == cur else " "
     print(f" {mark} {i:2}) {r['name']:<{width}}  {r['model']:<22}  {r['base_url']}")
+for r in blocked:
+    print(f"   --) {r['name']:<{width}}  unavailable: {unavailable(r)}")
 PYLIST
 }
 
@@ -129,11 +149,21 @@ PYLIST
 resolve_target() {
   local rows_json
   rows_json="$(providers_json)" || return 2
-  CW_TARGET="$1" CW_ROWS="$rows_json" python3 - <<'PYRES'
+  CW_TARGET="$1" CW_ROWS="$rows_json" CW_UNAVAIL_PY="$CW_UNAVAILABLE_PY" python3 - <<'PYRES'
 import json, os, sys
+exec(os.environ["CW_UNAVAIL_PY"])
 q = os.environ["CW_TARGET"]
-rows = json.loads(os.environ["CW_ROWS"])
-rows = [r for r in rows if r.get("base_url") and r.get("model")]
+all_rows = json.loads(os.environ["CW_ROWS"])
+rows = [r for r in all_rows if not unavailable(r)]
+
+# A query naming a row that exists but cannot be used gets its reason, not
+# "no provider matches" — the latter sends the reader looking for a typo.
+for r in all_rows:
+    why = unavailable(r)
+    if why and (r["id"] == q or r["name"].lower() == q.lower()
+                or (not q.isdigit() and q.lower() in r["name"].lower())):
+        print(f"error: '{r['name']}' cannot be selected: {why}", file=sys.stderr)
+        sys.exit(2)
 
 if q.isdigit():
     i = int(q)
