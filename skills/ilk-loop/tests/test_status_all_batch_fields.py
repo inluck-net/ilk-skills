@@ -59,10 +59,13 @@ def plans_dir(tmp_path: Path) -> Path:
 
 def test_resolver_returns_position_counting_shipped(plans_dir: Path) -> None:
     master = (plans_dir / "MASTER-x.md").read_text(encoding="utf-8")
-    slug, step, idx, cnt = _resolve_next_subplan(plans_dir, master)
+    slug, step, idx, cnt, fname = _resolve_next_subplan(plans_dir, master)
     # "two" is the first RUNNABLE; it sits at registry position 2 of 3 —
-    # "one" shipped but still counts toward N.
-    assert (slug, step, idx, cnt) == ("two", "0/4", 2, 3)
+    # "one" shipped but still counts toward N — and the trailing fname is
+    # the on-disk identity the Copy-reference action needs.
+    assert (slug, step, idx, cnt, fname) == (
+        "two", "0/4", 2, 3, "2026-09-19-two.md",
+    )
 
 
 def test_resolver_empty_when_nothing_runnable(plans_dir: Path) -> None:
@@ -73,7 +76,7 @@ def test_resolver_empty_when_nothing_runnable(plans_dir: Path) -> None:
         SUBPLAN_TMPL.format(slug="three", status="shipped"), encoding="utf-8"
     )
     master = (plans_dir / "MASTER-x.md").read_text(encoding="utf-8")
-    assert _resolve_next_subplan(plans_dir, master) == ("", "", 0, 0)
+    assert _resolve_next_subplan(plans_dir, master) == ("", "", 0, 0, "")
 
 
 def test_batch_display_name_strips_date_prefix() -> None:
