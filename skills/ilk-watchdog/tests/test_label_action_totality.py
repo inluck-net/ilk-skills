@@ -88,6 +88,10 @@ class TestClassificationLabelsExist:
             assert isinstance(lbl, str), f"Non-string label: {lbl!r}"
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="spawns powershell — Windows-only",
+)
 class TestActionTotality:
     """AC-2 / AC-3: every label resolves to a known watchdog action."""
 

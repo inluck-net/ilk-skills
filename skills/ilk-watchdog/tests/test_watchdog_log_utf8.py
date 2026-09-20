@@ -30,6 +30,10 @@ _NON_ASCII_LINE = "iteration 3 — stopped → 重试中"
 class TestUtf8RoundTrip:
     """Non-ASCII content must survive a write-read cycle as UTF-8."""
 
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="spawns powershell — Windows-only",
+    )
     def test_write_read_utf8_no_bom(self, tmp_path):
         """Write non-ASCII via BOM-free UTF-8 StreamWriter, read back as
         utf-8-sig. Content must match and file must not have a BOM."""
