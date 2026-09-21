@@ -220,7 +220,14 @@ def test_custom_budget_appears_in_finding() -> None:
 # ── AC-8: baseline regression check ──────────────────────────────────────────
 
 def test_baseline_unchanged() -> None:
-    """AC-8: existing findings over the fixed corpus are unchanged except for new budget findings."""
+    """AC-8: existing findings over the fixed corpus are unchanged except for new budget findings.
+
+    Timeout note (suite-greens-last-reds step 2, measured 2026-09-21): this
+    test runs plan_lint over the full external-corpus (~20 files).  It passes
+    at 60s pytest timeout and at 120s, but fails at the 17s gate timeout
+    set in .ilk-launch.json ship.suite.flags --timeout.  The 17s budget is
+    too tight for the corpus size; the test itself is correct.
+    """
     baseline_path = Path(__file__).resolve().parent / "fixtures" / "gate_budget_baseline.json"
     baseline = json.loads(baseline_path.read_text())
 
