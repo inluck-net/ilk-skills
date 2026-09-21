@@ -329,6 +329,23 @@ def _missing_step_reason(subplan: Path) -> str | None:
         _present, missing = check_step_commits(
             slug, authored, cwd=resolved_root, ledger_records=ledger,
         )
+        # The trailerless union: when the frontmatter slug has gaps, also try
+        # the filename-derived slug.  On a shared remote the ledger row may be
+        # keyed by either identity (pv-5611: filename `pv5-verify` vs
+        # frontmatter `pv5-round5-verify`).  Fail-closed: both must have gaps
+        # to produce a violation.
+        if missing:
+            from plan_status import (  # type: ignore[import-untyped]
+                _slug_from_filename,
+            )
+            filename_slug = _slug_from_filename(subplan.name)
+            if filename_slug and filename_slug != slug:
+                _present2, missing2 = check_step_commits(
+                    filename_slug, authored,
+                    cwd=resolved_root, ledger_records=ledger,
+                )
+                if not missing2:
+                    return None
         if not missing:
             return None
         word = "step" if len(missing) == 1 else "steps"
