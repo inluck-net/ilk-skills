@@ -190,7 +190,15 @@ def render_xbar(
         short_key = key
         rp = (e.get("repo_path") or "").replace("\\", "/").rstrip("/")
         if rp:
-            short_key = rp.rsplit("/", 1)[-1]
+            parts = rp.rsplit("/", 2)
+            # Worktree-keyed project: repo_path ends with
+            # <repo>/worktrees/<name> or <repo>/scratch-worktrees/<name>.
+            # Display as "repo-name [worktree-name]" — the bare worktree
+            # dir (e.g. "pv-5611") is uninformative on its own.
+            if len(parts) >= 3 and parts[-2] in ("worktrees", "scratch-worktrees"):
+                short_key = f"{parts[-3]} [{parts[-1]}]"
+            else:
+                short_key = rp.rsplit("/", 1)[-1]
         # Queue badge, AHEAD of the project name (operator spec 2026-09-20):
         # "+N" = total batches the project still owes (active or queued,
         # current included), rendered only when N > 1 — at N=1 the row's own
