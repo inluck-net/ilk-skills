@@ -833,32 +833,34 @@ class EnvEnumerate:
         os.chmod(bin_dir / "claude", 0o755)
 
         # Fake ccswitch_import: returns two providers.
+        # Keys match provider_summary() output from ccswitch_import.py
+        # (base_url, auth_token, model — NOT the env var names).
         glm_export = json.dumps({
             "id": "glm",
             "name": "Zhipu GLM",
             "category": "custom",
             "is_official": False,
-            "ANTHROPIC_BASE_URL": self.GLM_URL,
-            "ANTHROPIC_AUTH_TOKEN": self.GLM_TOKEN,
-            "ANTHROPIC_MODEL": self.GLM_MODEL,
+            "base_url": self.GLM_URL,
+            "auth_token": self.GLM_TOKEN,
+            "model": self.GLM_MODEL,
         }, indent=2)
         mimo_export = json.dumps({
             "id": "mimo",
             "name": "Xiaomi MiMo V2.5 - Pro",
             "category": "custom",
             "is_official": False,
-            "ANTHROPIC_BASE_URL": self.MIMO_URL,
-            "ANTHROPIC_AUTH_TOKEN": self.MIMO_TOKEN,
-            "ANTHROPIC_MODEL": self.MIMO_MODEL,
+            "base_url": self.MIMO_URL,
+            "auth_token": self.MIMO_TOKEN,
+            "model": self.MIMO_MODEL,
         }, indent=2)
         official_export = json.dumps({
             "id": "official",
             "name": "Claude Official",
             "category": "official",
             "is_official": True,
-            "ANTHROPIC_BASE_URL": "",
-            "ANTHROPIC_AUTH_TOKEN": "",
-            "ANTHROPIC_MODEL": "opus",
+            "base_url": "",
+            "auth_token": "",
+            "model": "opus",
         }, indent=2)
         (bin_dir / "ccswitch_import").write_text(
             "#!/usr/bin/env bash\n"
@@ -1045,13 +1047,13 @@ class TestProviders:
 
 
 class TestValidationErrorListsOptions:
-    """SP3 step-0 red: naming an unknown role or provider must exit non-zero
+    """SP3 step-2: naming an unknown role or provider must exit non-zero
     and print the full list of valid values."""
 
     def test_unknown_role_prints_valid_roles(self, tmp_path: Path):
         """use <bad-role> must list the valid role names in the error.
 
-        RED: resolve_target prints 'known: …' but this sub-plan wants
+        resolve_target prints 'known: …' but this sub-plan wants
         the full list, not just the error.
         """
         env = EnvEnumerate(tmp_path)
@@ -1060,3 +1062,97 @@ class TestValidationErrorListsOptions:
         out = result.stdout + result.stderr
         assert "manager" in out, f"error must list valid roles: {out}"
         assert "coder" in out, f"error must list valid roles: {out}"
+
+
+class TestShowJson:
+    """SP3 step-2: show gains --json."""
+
+    def test_show_json_parses_and_contains_homes(self, tmp_path: Path):
+        """show --json must return a JSON array with home and model fields.
+
+        RED: show does not accept --json today.
+        """
+        env = Env(tmp_path, MODEL_TARGET)
+        result = env.run("show", "--json")
+        assert result.returncode == 0, result.stdout + result.stderr
+        data = json.loads(result.stdout)
+        assert isinstance(data, list), f"expected JSON array, got {type(data)}"
+        homes_found = {e.get("home", "") for e in data}
+        assert any(".claude-worker" in h for h in homes_found), (
+            f"expected main worker home in output: {homes_found}")
+
+    def test_show_json_includes_model_and_host(self, tmp_path: Path):
+        """Each entry must carry model and base_url_host.
+
+        RED: show does not accept --json today.
+        """
+        env = Env(tmp_path, MODEL_TARGET)
+        result = env.run("show", "--json")
+        assert result.returncode == 0, result.stdout + result.stderr
+        data = json.loads(result.stdout)
+        for entry in data:
+            assert "model" in entry, f"entry missing 'model': {entry}"
+            assert "base_url_host" in entry, (
+                f"entry missing 'base_url_host': {entry}")
+
+
+class TestRolesShow:
+    """SP3 step-2: roles <name> shows one role; unknown name lists valid values."""
+
+    def test_unknown_role_exits_nonzero_and_lists_valid(self, tmp_path: Path):
+        """AC4: naming an unknown role exits non-zero and prints every
+        valid role name."""
+        env = EnvEnumerate(tmp_path)
+        result = env.run("roles", "no-such-role")
+        assert result.returncode != 0
+        out = result.stdout + result.stderr
+        assert "manager" in out, f"must list valid roles: {out}"
+        assert "coder" in out, f"must list valid roles: {out}"
+
+    def test_known_role_returns_entry(self, tmp_path: Path):
+        """roles <valid-name> returns the single role entry."""
+        env = EnvEnumerate(tmp_path)
+        result = env.run("roles", "manager")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "manager" in result.stdout
+
+    def test_known_role_json(self, tmp_path: Path):
+        """roles <valid-name> --json returns a JSON object."""
+        env = EnvEnumerate(tmp_path)
+        result = env.run("roles", "coder", "--json")
+        assert result.returncode == 0, result.stdout + result.stderr
+        data = json.loads(result.stdout)
+        assert data["name"] == "coder"
+        assert "model" in data
+
+
+class TestProvidersShow:
+    """SP3 step-2: providers <name> shows one provider; unknown name lists
+    valid values."""
+
+    def test_unknown_provider_exits_nonzero_and_lists_valid(self, tmp_path: Path):
+        """AC4: naming an unknown provider exits non-zero and prints every
+        valid provider id and name."""
+        env = EnvEnumerate(tmp_path)
+        result = env.run("providers", "no-such-provider")
+        assert result.returncode != 0
+        out = result.stdout + result.stderr
+        # Must list at least the ids from the fake ccswitch_import.
+        assert "glm" in out, f"must list valid providers: {out}"
+        assert "mimo" in out, f"must list valid providers: {out}"
+
+    def test_known_provider_returns_entry(self, tmp_path: Path):
+        """providers <valid-id> returns the single provider entry."""
+        env = EnvEnumerate(tmp_path)
+        result = env.run("providers", "glm")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "Zhipu GLM" in result.stdout
+
+    def test_known_provider_json(self, tmp_path: Path):
+        """providers <valid-id> --json returns a JSON object."""
+        env = EnvEnumerate(tmp_path)
+        result = env.run("providers", "mimo", "--json")
+        assert result.returncode == 0, result.stdout + result.stderr
+        data = json.loads(result.stdout)
+        assert data["id"] == "mimo"
+        assert data["token_present"] is True

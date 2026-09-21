@@ -201,14 +201,34 @@ def stop_live_loops(live: dict) -> None:
 
 # ── show ─────────────────────────────────────────────────────────────────────
 
-def cmd_show(home_base: Path, registry_path: Path) -> int:
+def cmd_show(home_base: Path, registry_path: Path, as_json: bool = False) -> int:
     roles = None
     try:
         roles = load_registry(registry_path)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(f"[registry] unreadable: {exc}", file=sys.stderr)
+        if not as_json:
+            print(f"[registry] unreadable: {exc}", file=sys.stderr)
 
     homes = worker_homes(home_base)
+    if as_json:
+        entries = []
+        for home in homes:
+            env = read_env_block(home)
+            model = env.get("ANTHROPIC_MODEL", "(unset)")
+            host = base_url_host(env.get("ANTHROPIC_BASE_URL", ""))
+            entry = {"home": str(home), "model": model, "base_url_host": host}
+            if roles is not None:
+                for role_name, role in roles.items():
+                    role_home = expand_home(str(role.get("home", "")), home_base)
+                    if role_home == home and role.get("model") != model:
+                        entry["mismatch"] = {
+                            "role": role_name,
+                            "registry_model": role.get("model"),
+                        }
+            entries.append(entry)
+        print(json.dumps(entries, indent=2))
+        return EXIT_OK
+
     if not homes:
         print(f"no worker homes under {home_base} "
               f"(looked for .claude-worker and .claude-worker-<n>)")
@@ -270,6 +290,41 @@ def cmd_roles(home_base: Path, registry_path: Path, as_json: bool) -> int:
     return EXIT_OK
 
 
+def cmd_roles_show(name: str, home_base: Path, registry_path: Path,
+                   as_json: bool) -> int:
+    """Show one role by name.  AC4: exit non-zero and list all valid values
+    when the name is unknown."""
+    try:
+        roles = load_registry(registry_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"error: cannot read role registry: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+
+    role = roles.get(name)
+    if role is None:
+        valid = sorted(roles.keys())
+        print(f"error: '{name}' is not a role in the registry; "
+              f"known: {', '.join(valid)}", file=sys.stderr)
+        return EXIT_USAGE
+
+    home = expand_home(str(role.get("home", "")), home_base)
+    env = read_env_block(home) if home.is_dir() else {}
+    entry = {
+        "name": name,
+        "tier": role.get("tier", ""),
+        "home": str(home),
+        "model": env.get("ANTHROPIC_MODEL", role.get("model", "")),
+        "auth": role.get("auth", "custom"),
+    }
+
+    if as_json:
+        print(json.dumps(entry, indent=2))
+    else:
+        print(f"  {entry['name']}  tier={entry['tier']}  home={entry['home']}")
+        print(f"    model: {entry['model']}  auth: {entry['auth']}")
+    return EXIT_OK
+
+
 def cmd_providers(as_json: bool) -> int:
     """List every CCSwitch Claude provider with token_present (never the raw token)."""
     import subprocess as _sp
@@ -312,6 +367,63 @@ def cmd_providers(as_json: bool) -> int:
             print(f"  {e['id']}  {e['name']}")
             print(f"    model: {e['model']}  base_url: {e['base_url'] or '(not set)'}"
                   f"  token: {present}")
+    return EXIT_OK
+
+
+def cmd_providers_show(name: str, as_json: bool) -> int:
+    """Show one provider by id or name.  AC4: exit non-zero and list all
+    valid values when the name is unknown."""
+    import subprocess as _sp
+    try:
+        result = _sp.run(
+            ["ccswitch_import", "list", "--format", "json"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30,
+        )
+    except FileNotFoundError:
+        print("error: ccswitch_import not found on PATH", file=sys.stderr)
+        return EXIT_USAGE
+    if result.returncode != 0:
+        print(f"error: ccswitch_import failed: {result.stderr}", file=sys.stderr)
+        return EXIT_USAGE
+
+    try:
+        raw = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        print(f"error: ccswitch_import returned invalid JSON: {result.stdout}",
+              file=sys.stderr)
+        return EXIT_USAGE
+
+    # Match by id or name (case-insensitive).
+    match = None
+    for p in raw:
+        if p.get("id") == name or p.get("name", "").lower() == name.lower():
+            match = p
+            break
+
+    if match is None:
+        valid = sorted({p.get("id", "") for p in raw} |
+                       {p.get("name", "") for p in raw} - {""})
+        print(f"error: '{name}' is not a provider; "
+              f"known: {', '.join(valid)}", file=sys.stderr)
+        return EXIT_USAGE
+
+    token_raw = match.get("auth_token", "")
+    entry = {
+        "id": match.get("id", ""),
+        "name": match.get("name", ""),
+        "model": match.get("model", ""),
+        "base_url": match.get("base_url", ""),
+        "token_present": bool(token_raw and token_raw != "(missing)"),
+    }
+
+    if as_json:
+        print(json.dumps(entry, indent=2))
+    else:
+        present = "yes" if entry["token_present"] else "no"
+        print(f"  {entry['id']}  {entry['name']}")
+        print(f"    model: {entry['model']}  base_url: {entry['base_url'] or '(not set)'}"
+              f"  token: {present}")
     return EXIT_OK
 
 
@@ -583,7 +695,9 @@ def main(argv=None) -> int:
         prog="ilk-worker-model",
         description="Switch the loop worker's model in one command.")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("show", help="report every worker home's live model")
+    show_p = sub.add_parser("show", help="report every worker home's live model")
+    show_p.add_argument("--json", action="store_true", dest="as_json",
+                        help="output as JSON")
     use_p = sub.add_parser("use", help="switch every worker home to a target")
     use_p.add_argument("target", help="<role> or <model>@<role>")
     use_p.add_argument("--now", action="store_true",
@@ -592,9 +706,13 @@ def main(argv=None) -> int:
                        help="skip probe verification (air-gapped) — says so")
     sub.add_parser("restore", help="restore the newest backup per home")
     roles_p = sub.add_parser("roles", help="list registry roles")
+    roles_p.add_argument("name", nargs="?", default=None,
+                         help="role name to show")
     roles_p.add_argument("--json", action="store_true", dest="as_json",
                          help="output as JSON")
     providers_p = sub.add_parser("providers", help="list CCSwitch providers")
+    providers_p.add_argument("name", nargs="?", default=None,
+                             help="provider id or name to show")
     providers_p.add_argument("--json", action="store_true", dest="as_json",
                              help="output as JSON")
     args = ap.parse_args(argv)
@@ -605,13 +723,18 @@ def main(argv=None) -> int:
                      or Path(home_base / ".ilk-data"))
 
     if args.cmd == "show":
-        return cmd_show(home_base, registry_path)
+        return cmd_show(home_base, registry_path, as_json=args.as_json)
     if args.cmd == "use":
         return cmd_use(args.target, args.now, args.skip_probe,
                        home_base, registry_path, data_home)
     if args.cmd == "roles":
+        if args.name:
+            return cmd_roles_show(args.name, home_base, registry_path,
+                                  args.as_json)
         return cmd_roles(home_base, registry_path, args.as_json)
     if args.cmd == "providers":
+        if args.name:
+            return cmd_providers_show(args.name, args.as_json)
         return cmd_providers(args.as_json)
     return cmd_restore(home_base)
 
