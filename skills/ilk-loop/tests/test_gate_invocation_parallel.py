@@ -129,7 +129,15 @@ class TestBaselineRedPlausibility:
     def test_baseline_red_count(self, ship_cfg):
         """Guard against accidental removal of baseline_red entries."""
         baseline_red = ship_cfg.ship.get("baseline_red", [])
-        assert len(baseline_red) >= 5, (
-            f"expected >= 5 baseline_red entries (sub-plan documents 5), "
+        # Floor 5 -> 2 on 2026-09-21 (g2-baseline-red-shrinks step 1): all 27
+        # entries re-measured at HEAD f4fb90a — 271 tests, 267 passed, 1
+        # legitimately skipped, 3 failed — and only the 2 Windows-only
+        # watchdog entries still describe failing tests.  A floor of 5 would
+        # force the list to keep entries that lie about the suite.  Kept as a
+        # lower bound, not equality, so verification-cost SP1 can still add
+        # entries for new known-reds.
+        assert len(baseline_red) >= 2, (
+            f"expected >= 2 baseline_red entries (2 measured still-red "
+            f"2026-09-21, g2-baseline-red-shrinks step 0), "
             f"got {len(baseline_red)}"
         )

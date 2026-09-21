@@ -59,3 +59,28 @@ def test_stale_payload_without_batch_fields_renders_unchanged() -> None:
     label = _first_label(spec)
     assert "some-subplan" in label and "2/6" in label
     assert "batches" not in label
+
+
+def test_parked_payload_renders_without_crashing() -> None:
+    # g2-parked-batches-stay-visible: status_all grew `parked_reason` and
+    # now sets parked=True for violation-parked masters. The tray reads the
+    # payload via .get and must tolerate both — no KeyError, no crash —
+    # and must keep the row VISIBLE (blocked rows bypass the idle filter)
+    # with its Resume action row. Batch-context layout stays the xbar
+    # twin's job; the tray's blocked-label shape is out of scope by plan.
+    spec = render_tray([_entry(
+        blocked=True,
+        blocked_reason="parked:ship_integrity_violation:",
+        parked=True,
+        parked_reason="ship_integrity_violation: run X slugs=[pv6-seam-pass]",
+        batch="pv6",
+        subplan_index=1,
+        subplan_count=2,
+        pending_batches=1,
+        manually_runnable=False,
+    )])
+    assert spec["rows"], "parked row must render, not vanish"
+    first = spec["rows"][0]
+    assert first["icon_state"] == "attention"
+    assert first["label"].startswith("proj")
+    assert any(r["label"] == "Resume" for r in spec["rows"])

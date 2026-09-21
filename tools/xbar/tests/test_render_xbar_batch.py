@@ -133,3 +133,52 @@ def test_blocked_row_owing_work_stays_visible() -> None:
     # still owes a batch.
     line = _raw_line([_entry(blocked=True, pending_batches=1)], "! ")
     assert line.startswith("! proj")
+
+
+# ── g2-parked-batches-stay-visible AC-2: the parked batch row ────────
+
+
+def _parked_entry() -> dict:
+    """The payload shape status_all emits for a violation-parked master
+    (blocked + parked_reason + owed sub-plans) — the kira pv6 shape the
+    panel dropped entirely before the fix."""
+    return _entry(
+        blocked=True,
+        blocked_reason="parked:ship_integrity_violation:",
+        parked=True,
+        parked_reason=(
+            "ship_integrity_violation: run 20260920-162655 slugs=[pv6-seam-pass]"
+        ),
+        batch="pv6",
+        subplan_index=1,
+        subplan_count=2,
+        next_subplan="pv6-seam-pass (in-progress)",
+        next_subplan_file="2026-09-20-pv6-seam-pass.md",
+        step="3/3",
+        pending_batches=1,
+        manually_runnable=False,
+        active_master="MASTER-2026-09-20-pv6.md",
+    )
+
+
+def test_violation_parked_batch_row_visible_with_context() -> None:
+    # Icon "!", batch name + M/N, first owed sub-plan with its step — the
+    # loudest row in the panel, not an invisible one.
+    line = _raw_line([_parked_entry()], "! ")
+    assert line.startswith("! proj")
+    assert "pv6 1/2" in line
+    assert "pv6-seam-pass (in-progress)  3/3" in line
+
+
+def test_violation_parked_batch_row_names_its_reason() -> None:
+    # The submenu carries the full park sentence; the row line has no room.
+    out = render_xbar([_parked_entry()])
+    reason = [l for l in out.splitlines() if l.startswith("--parked:")]
+    assert len(reason) == 1
+    assert "ship_integrity_violation: run 20260920-162655" in reason[0]
+
+
+def test_violation_parked_batch_row_offers_resume() -> None:
+    # Parked work is human-held: the Resume action lives in this row.
+    out = render_xbar([_parked_entry()])
+    assert [l for l in out.splitlines() if l.startswith("--Resume ")]

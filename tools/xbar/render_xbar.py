@@ -242,6 +242,11 @@ def render_xbar(
             lines.append(f"--model: {model}")
         if pending:
             lines.append(f"--batches owed: {pending}")
+        # Why a parked row is parked (violation-park or operator park): the
+        # row line carries position, the submenu carries the sentence.  Read
+        # via .get — payloads from an older status_all predate the field.
+        if e.get("parked_reason"):
+            lines.append(f"--parked: {e['parked_reason']}")
 
         # ── Copy reference: a pastable ilk-ref for this row ─────────────
         # Grammar: ilk-ref:<project-key>/<master-file>/<subplan-file> —

@@ -1115,7 +1115,8 @@ def _run_preservation_with_plans(
     wip_count = int(stdout_lines[-1]) if stdout_lines else 0
     commit_msg = subprocess.run(
         ["git", "-C", str(repo), "log", "-1", "--format=%B"],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=10,
     ).stdout
     return wip_count, result.stderr, commit_msg
 

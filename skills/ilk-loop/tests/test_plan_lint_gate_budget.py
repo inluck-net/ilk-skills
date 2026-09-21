@@ -11,6 +11,7 @@ AC-8: baseline regression check — existing findings unchanged except for new b
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,6 +22,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import plan_lint  # noqa: E402
+from ilk_paths import ilk_data_root, project_key  # noqa: E402
 from plan_lint import lint_gate_budget  # noqa: E402
 
 
@@ -222,8 +224,33 @@ def test_baseline_unchanged() -> None:
     baseline_path = Path(__file__).resolve().parent / "fixtures" / "gate_budget_baseline.json"
     baseline = json.loads(baseline_path.read_text())
 
-    # Run plan_lint over the corpus.
-    plans_dir = Path.home() / ".ilk-data" / "projects" / "users-chad-projects-github-inluck-net-ilk-skills" / "plans"
+    # Run plan_lint over the corpus. The corpus is THIS project's own external
+    # plans dir — resolve the key with the canonical project_key, never a
+    # hardcoded literal. The old literal was the pre-2026-09-20 rekeying key
+    # (users-chad-projects-github-inluck-net-ilk-skills, no sha1 tail); once
+    # migrate_project_keys renamed the dir to ...-ilk-skills-604d727, every
+    # corpus path silently failed f.exists() and the test reported its first
+    # baseline row as "lost" — a message naming the lint, not the missing dir.
+    #
+    # The root must be the MAIN checkout, not __file__: this suite also runs
+    # inside selfmod worktrees (v0.9.107), and a worktree path keys to its
+    # own mangled data dir, not the project's. --git-common-dir is the main
+    # .git in a worktree and the local .git in a plain checkout.
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    common_dir = subprocess.run(
+        ["git", "rev-parse", "--git-common-dir"],
+        cwd=repo_root, capture_output=True, text=True, check=True,
+        encoding="utf-8",
+    ).stdout.strip()
+    main_root = (repo_root / common_dir).resolve().parent
+    plans_dir = (
+        ilk_data_root() / "projects" / project_key(main_root) / "plans"
+    )
+    assert plans_dir.is_dir(), (
+        f"corpus plans dir {plans_dir} does not exist — the corpus this "
+        "baseline pins is unreachable, so 'no findings' would read as "
+        "'baseline unchanged'"
+    )
     corpus_files = [plans_dir / f for f in baseline["corpus"]]
     master_file = plans_dir / baseline["master"]
 

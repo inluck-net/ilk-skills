@@ -2481,7 +2481,12 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     $parkScript = Join-Path (Split-Path $PSCommandPath -Parent) "park_master.py"
     $pDir = Get-PlansDir -Project $ProjectPath
     if ($pDir -and (Test-Path $parkScript)) {
-      & python $parkScript --plans-dir $pDir --reason $parkReason 2>$null
+      # PS 5.1 wraps native stderr as NativeCommandError under $EAP='Stop'.
+      # Script-level: save/restore (not in a function, so no auto-restore).
+      $savedEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+      try {
+        & python $parkScript --plans-dir $pDir --reason $parkReason 2>$null
+      } catch {} finally { $ErrorActionPreference = $savedEAP }
     }
     break
   }

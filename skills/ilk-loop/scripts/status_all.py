@@ -42,8 +42,11 @@ from loop_status import (  # noqa: E402
 )
 # Single source of truth for "which sub-plan statuses can the loop pick up".
 # Imported rather than copied: a second literal here is what let the tray and
-# loop_status disagree about the next sub-plan (2026-08-14).
+# loop_status disagree about the next sub-plan (2026-08-14).  Kept on ONE line
+# — test_status_all_skips_blocked pins the import's source text to prevent a
+# re-declared literal sneaking back in.
 from plan_status import _RUNNABLE_SUBPLAN_STATUSES, normalize_master_status  # noqa: E402
+from plan_status import master_has_nonshipped  # noqa: E402
 
 
 # ── sentinel state vocabulary ──────────────────────────────────────────
@@ -234,6 +237,7 @@ def _blocked_info(
     sentinel: dict,
     active_master: str,
     next_subplan: str,
+    master_parked_reason: str = "",
 ) -> dict:
     """Derive needs-human blocked state for one project.
 
@@ -241,7 +245,9 @@ def _blocked_info(
       1. Blacklist-class postmortem within backoff → blocked (within-backoff).
       2. Sentinel state=running + dead PID → blocked (stale-running).
       3. Active master exists but no runnable sub-plan → blocked (stalled).
-      4. Otherwise → not blocked.
+      4. Master park stamp present (blocked + parked_reason with owed
+         sub-plans) → blocked (parked:<first token of the reason>).
+      5. Otherwise → not blocked.
 
     Errors in the blacklist check are swallowed (default to not blocked)
     so one broken project never takes down the whole status output.
@@ -280,6 +286,18 @@ def _blocked_info(
         ):
             blocked = True
             blocked_reason = "stalled"
+
+        # 4. Parked master: a park stamp is a human-held hold on owed work.
+        # The first token of the reason names the parker —
+        # "ship_integrity_violation:" vs an operator ilk-park reason — which
+        # is all the width a blocked_reason has; the full text rides the
+        # payload's parked_reason field.
+        if not blocked and master_parked_reason:
+            first_token = master_parked_reason.split()[:1]
+            blocked = True
+            blocked_reason = (
+                f"parked:{first_token[0]}" if first_token else "parked:"
+            )
 
         # Latest postmortem path (for tray click-to-open).
         pm_dir = project_data_dir / "runtime" / "launcher" / "postmortems"
@@ -347,6 +365,39 @@ def _resolve_next_subplan(
 
 
 _BATCH_DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[a-z]?-")
+
+
+def _first_nonshipped_display(
+    plans_dir: Path, master_text: str
+) -> tuple[str, str, int, int, str] | None:
+    """Display-only fallback: the first non-shipped registered sub-plan.
+
+    Returns the ``(slug (status), cur/est, 1-based position, registry total,
+    filename)`` tuple `resolve_project_status` keeps as ``display_fallback``,
+    or None when every registered sub-plan is shipped (or none parses).
+    Deliberately NOT the runnable-semantic scan `_resolve_next_subplan`
+    does: this is for masters the loop will not drive right now — blocked,
+    or fully un-runnable — whose owed work the panel must still name.
+    ``blocked`` sub-plans are outstanding work a human owes a decision on,
+    so they display here while `_resolve_next_subplan` rightly skips them.
+    """
+    ordered = extract_master_order(master_text)
+    for pos, fname in enumerate(ordered, start=1):
+        try:
+            fm = parse_frontmatter(
+                (plans_dir / fname).read_text(encoding="utf-8-sig")
+            )
+        except OSError:
+            continue
+        st = fm.get("status", "pending")
+        if st != "shipped":
+            return (
+                f"{fm.get('plan', fname.replace('.md', ''))} ({st})",
+                f"{fm.get('current_step', '?')}/"
+                f"{fm.get('estimated_steps', '?')}",
+                pos, len(ordered), fname,
+            )
+    return None
 
 
 def _batch_display_name(master_text: str) -> str:
@@ -460,15 +511,20 @@ def resolve_project_status(project_dir: Path) -> dict:
     master_is_active = False
     queued_has_work = False
     display_fallback = None
+    # Master-level park stamp (``blocked`` + ``parked_reason``): empty string
+    # when the chosen master is not parked.  Set only when the parked master
+    # still owes registered sub-plans — a parked master with everything
+    # shipped is residue, not signal (same shape the panel's residue filter
+    # already hides for blocked-but-owing-nothing projects).
+    master_parked_reason = ""
     if plans_dir.is_dir():
         masters = sorted(plans_dir.glob("MASTER-*.md"))
         if masters:
             try:
                 chosen, _qv = pick_active_master(masters, json_mode=True)
                 ctext = chosen.read_text(encoding="utf-8-sig")
-                cstatus = normalize_master_status(
-                    parse_frontmatter(ctext).get("status") or ""
-                )
+                cfm = parse_frontmatter(ctext)
+                cstatus = normalize_master_status(cfm.get("status") or "")
                 # Accept only a master the loop would actually drive.
                 # pick_active_master's rules 4-5 fall back to newest-by-mtime
                 # among paused/shipped/draft/legacy masters purely so its table
@@ -494,25 +550,33 @@ def resolve_project_status(project_dir: Path) -> dict:
                     # went blocked and the stopped row lost its
                     # batch-M/N-subplan context entirely).
                     if not next_subplan:
-                        ordered = extract_master_order(ctext)
-                        for pos, fname in enumerate(ordered, start=1):
-                            try:
-                                fm2 = parse_frontmatter(
-                                    (plans_dir / fname).read_text(
-                                        encoding="utf-8-sig")
-                                )
-                            except OSError:
-                                continue
-                            st2 = fm2.get("status", "pending")
-                            if st2 != "shipped":
-                                display_fallback = (
-                                    f"{fm2.get('plan', fname.replace('.md', ''))}"
-                                    f" ({st2})",
-                                    f"{fm2.get('current_step', '?')}/"
-                                    f"{fm2.get('estimated_steps', '?')}",
-                                    pos, len(ordered), fname,
-                                )
-                                break
+                        display_fallback = _first_nonshipped_display(
+                            plans_dir, ctext
+                        )
+                elif (
+                    cstatus == "blocked"
+                    # park_master._stamp quotes the reason so it survives
+                    # parse_frontmatter round-trip; unwrap on read.
+                    and (cfm.get("parked_reason") or "").strip().strip('"').strip("'")
+                    and master_has_nonshipped(chosen, plans_dir)
+                ):
+                    # A PARKED master with owed sub-plans is pending
+                    # diagnosis, not finished: a ship-integrity violation
+                    # parks a mid-flight batch (v0.9.110), an operator park
+                    # holds it by hand — both owe the panel their loudest
+                    # row, yet `blocked` used to yield batch=""/pending=0
+                    # and the idle filter dropped the project entirely
+                    # (kira pv6, 2026-09-20).  Display context comes from
+                    # the display_fallback path, never the runnable scan:
+                    # this master is not dispatchable and must not look it.
+                    master_parked_reason = (
+                        cfm.get("parked_reason", "").strip().strip('"').strip("'")
+                    )
+                    active_master = chosen.name
+                    batch = _batch_display_name(ctext)
+                    display_fallback = _first_nonshipped_display(
+                        plans_dir, ctext
+                    )
             except (OSError, IndexError, ValueError):
                 pass
 
@@ -527,13 +591,21 @@ def resolve_project_status(project_dir: Path) -> dict:
                 mtext = mp.read_text(encoding="utf-8-sig")
             except OSError:
                 continue
-            mstatus = normalize_master_status(
-                parse_frontmatter(mtext).get("status") or ""
-            )
-            # Pending = a batch the loop still owes: active (being driven)
-            # or queued (dispatchable).  Draft/parked/shipped are excluded —
-            # invisible, human-held, and done respectively.
+            mfm = parse_frontmatter(mtext)
+            mstatus = normalize_master_status(mfm.get("status") or "")
+            # Pending = a batch the loop still owes: active (being driven),
+            # queued (dispatchable), or parked with owed sub-plans
+            # (blocked + parked_reason — a violation-parked batch is
+            # pending diagnosis, not done; invisible-but-owed was the kira
+            # pv6 gap).  Draft/paused/shipped are excluded — not-yet-ready,
+            # human-held without a park stamp, and done respectively.
             if mstatus in ("active", "queued"):
+                pending_batches += 1
+            elif (
+                mstatus == "blocked"
+                and (mfm.get("parked_reason") or "").strip().strip('"').strip("'")
+                and master_has_nonshipped(mp, plans_dir)
+            ):
                 pending_batches += 1
             if mstatus == "queued":
                 q_slug, _, _, _, _ = _resolve_next_subplan(plans_dir, mtext)
@@ -588,15 +660,27 @@ def resolve_project_status(project_dir: Path) -> dict:
     # drain is the promotion gate's problem (promote_next_master's
     # master_is_drainable check), not a needs-human alert on this panel.
     strict_active = active_master if master_is_active else ""
-    blocked = _blocked_info(project_dir, sentinel, strict_active, next_subplan)
+    blocked = _blocked_info(
+        project_dir, sentinel, strict_active, next_subplan,
+        master_parked_reason=master_parked_reason,
+    )
 
     # Action flags for tray/xbar (SP1: tray-actions-render).
     # runnable: has a dispatchable master with pending/in-progress work AND not currently running AND not blocked.
-    # parked: blacklisted with no valid resolve-ack (project needs /ilk-resume).
+    # parked: blacklisted with no valid resolve-ack (project needs /ilk-resume),
+    #   OR master-level parked (blocked + parked_reason with owed sub-plans —
+    #   the violation-park shape; visibility is the point, hiding it was the
+    #   kira pv6 gap).
     # manually_runnable: has a queued/active master with work AND not alive AND not blocked.
     #   Includes supervised_only masters (which scan_projects() filters out).
     runnable = bool(strict_active and next_subplan and not sentinel.get("alive") and not blocked.get("blocked"))
-    parked = blocked.get("blocked") and blocked.get("blocked_reason") == "within-backoff"
+    parked = bool(
+        master_parked_reason
+        or (
+            blocked.get("blocked")
+            and blocked.get("blocked_reason") == "within-backoff"
+        )
+    )
     manually_runnable = bool(
         (strict_active and next_subplan or queued_has_work)
         and not sentinel.get("alive")
@@ -641,6 +725,7 @@ def resolve_project_status(project_dir: Path) -> dict:
         "model": model,
         "runnable": runnable,
         "parked": parked,
+        "parked_reason": master_parked_reason,
         "manually_runnable": manually_runnable,
         **liveness,
         **blocked,
