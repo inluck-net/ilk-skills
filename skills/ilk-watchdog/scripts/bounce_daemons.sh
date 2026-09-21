@@ -122,10 +122,10 @@ else
       script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || true
       if [[ -n "$script_dir" ]]; then
         toolkit_path="$script_dir"
-        while [[ "$toolkit_path" != "/" && ! -d "$toolkit_path/.git" ]]; do
+        while [[ "$toolkit_path" != "/" && ! -e "$toolkit_path/.git" ]]; do
           toolkit_path="$(dirname "$toolkit_path")"
         done
-        if [[ ! -d "$toolkit_path/.git" ]]; then
+        if [[ ! -e "$toolkit_path/.git" ]]; then
           toolkit_path="."
         fi
       else

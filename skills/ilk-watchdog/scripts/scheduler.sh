@@ -37,10 +37,10 @@ write_scheduler_state() {
   if [[ -n "$script_dir" ]]; then
     # Walk up to find the repo root (the dir containing .git).
     local repo_dir="$script_dir"
-    while [[ "$repo_dir" != "/" && ! -d "$repo_dir/.git" ]]; do
+    while [[ "$repo_dir" != "/" && ! -e "$repo_dir/.git" ]]; do
       repo_dir="$(dirname "$repo_dir")"
     done
-    if [[ -d "$repo_dir/.git" ]]; then
+    if [[ -e "$repo_dir/.git" ]]; then
       toolkit_head="$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null)" || toolkit_head=""
     fi
   fi
