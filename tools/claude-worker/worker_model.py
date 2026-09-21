@@ -81,6 +81,37 @@ def worker_homes(home_base: Path) -> list:
     return homes
 
 
+def _homes_for_roles(roles: dict, home_base: Path) -> list:
+    """Collect every home referenced by a registry role, including non-worker roles.
+
+    For worker-tier roles, also sweeps numeric worker slots (e.g.
+    ~/.claude-worker-2) that share the same base path.
+
+    Returns a deduplicated list of Path objects for homes that exist on disk.
+    """
+    seen = set()
+    homes = []
+    for role_name, role in roles.items():
+        home = expand_home(str(role.get("home", "")), home_base)
+        resolved = home.resolve()
+        if resolved not in seen and home.is_dir():
+            seen.add(resolved)
+            homes.append(home)
+        # For worker-tier roles, also sweep numeric slots.
+        if role.get("tier") == "worker":
+            # home.name is like ".claude-worker", so we look for
+            # ".claude-worker-<digits>" siblings.
+            pattern = f"{home.name}-*"
+            for child in sorted(home_base.glob(pattern)):
+                suffix = child.name[len(f"{home.name}-"):]
+                if suffix.isdigit() and child.is_dir():
+                    child_resolved = child.resolve()
+                    if child_resolved not in seen:
+                        seen.add(child_resolved)
+                        homes.append(child)
+    return homes
+
+
 def load_registry(path: Path) -> dict:
     data = json.loads(path.read_text(encoding="utf-8"))
     roles = data.get("roles") or {}
@@ -116,6 +147,59 @@ def read_env_block(home: Path) -> dict:
         return (json.loads(settings.read_text(encoding="utf-8")) or {}).get("env") or {}
     except (json.JSONDecodeError, OSError):
         return {}
+
+
+def resolve_provider_env(provider_id: str) -> dict:
+    """Resolve provider env from ccswitch_import export --machine.
+
+    Returns a dict with ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN,
+    ANTHROPIC_MODEL, and any extra env fields.  Raises ValueError
+    if the provider is not found or has incomplete env.
+    """
+    import subprocess as _sp
+    try:
+        result = _sp.run(
+            ["ccswitch_import", "export", "--provider", provider_id, "--machine"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=30,
+        )
+    except FileNotFoundError:
+        raise ValueError("ccswitch_import not found on PATH")
+    if result.returncode != 0:
+        raise ValueError(f"ccswitch_import export failed: {result.stderr.strip()}")
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        raise ValueError(f"ccswitch_import returned invalid JSON: {result.stdout[:200]}")
+    # The export payload includes metadata (id, name, category, is_official)
+    # plus the env fields.  We only want the env fields.
+    env_keys = {"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL"}
+    env = {k: v for k, v in data.items() if k.startswith("ANTHROPIC_")}
+    missing = env_keys - set(env.keys())
+    if missing:
+        raise ValueError(f"provider {provider_id!r} missing env fields: {missing}")
+    return env
+
+
+def resolve_provider_env_or_home(
+    provider_id: str, home: Path
+) -> dict:
+    """Resolve provider env from ccswitch_import, falling back to the home.
+
+    If ccswitch_import is not available or fails, reads the env block
+    from the home's settings.json as a fallback.
+    """
+    try:
+        return resolve_provider_env(provider_id)
+    except ValueError:
+        pass
+    # Fallback: read from the home.
+    env = read_env_block(home)
+    if not env:
+        raise ValueError(
+            f"ccswitch_import unavailable and home {home} has no env block"
+        )
+    return env
 
 
 def base_url_host(url: str) -> str:
@@ -849,14 +933,20 @@ def cmd_use(target: str, now: bool, skip_probe: bool, home_base: Path,
     if role is None:
         return EXIT_USAGE
 
-    source_home = expand_home(str(role.get("home", "")), home_base)
-    source_env = read_env_block(source_home)
-    if not source_env:
-        print(f"error: role '{role_name}' home {source_home} has no settings.json "
-              f"env block to source from", file=sys.stderr)
+    # Resolve provider env from ccswitch_import, falling back to the home.
+    provider_id = role.get("provider", "")
+    if not provider_id:
+        print(f"error: role '{role_name}' has no provider in registry",
+              file=sys.stderr)
         return EXIT_USAGE
-    target_env = dict(source_env)
-    target_env["ANTHROPIC_MODEL"] = model
+    source_home = expand_home(str(role.get("home", "")), home_base)
+    try:
+        target_env = resolve_provider_env_or_home(provider_id, source_home)
+    except ValueError as exc:
+        print(f"error: cannot resolve provider {provider_id!r}: {exc}",
+              file=sys.stderr)
+        return EXIT_USAGE
+
     print(f"target: {model} (role '{role_name}' @ {source_home}, "
           f"base-url {base_url_host(target_env.get('ANTHROPIC_BASE_URL', ''))})")
 
@@ -871,9 +961,11 @@ def cmd_use(target: str, now: bool, skip_probe: bool, home_base: Path,
         print(f"[--now] stopping live loops: {keys}")
         stop_live_loops(live)
 
-    homes = worker_homes(home_base)
+    # Sweep homes by registry role, including non-worker roles.
+    homes = _homes_for_roles(roles, home_base)
     if not homes:
-        print(f"error: no worker homes under {home_base}", file=sys.stderr)
+        print(f"error: no homes found for registry roles under {home_base}",
+              file=sys.stderr)
         return EXIT_USAGE
 
     stamp = time.strftime("%Y%m%d%H%M%S")
@@ -897,10 +989,11 @@ def cmd_use(target: str, now: bool, skip_probe: bool, home_base: Path,
     if skip_probe:
         print("[probe] SKIPPED (--skip-probe) — switch is UNVERIFIED")
     else:
+        target_model = target_env.get("ANTHROPIC_MODEL", model)
         for home in homes:
             cfg_ok, cfg_detail = probe_config(home)
             live_ok, live_detail = probe_live(home)
-            if cfg_ok and cfg_detail != model:
+            if cfg_ok and cfg_detail != target_model:
                 cfg_ok = False
             if not cfg_ok or not live_ok:
                 print(f"error: probe under {home} — "
