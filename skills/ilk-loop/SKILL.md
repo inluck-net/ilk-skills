@@ -219,6 +219,12 @@ helper is idempotent — running it twice does not duplicate files.
 - **If a step uncovers a new bug**: file it in the tracker as a new ticket
   and add a one-line note under "Out of scope" in the current sub-plan.
   Do NOT silently expand the plan.
+- **A no-diff step declares itself.** A step whose only deliverable is
+  `## Findings` prose — or a record written under `~/.ilk-data`, outside
+  the repo by design — produces no repo diff. A plain `git commit` has
+  nothing to commit and the step ends uncommitted. To prevent this, a
+  no-diff step must carry `git commit --allow-empty -m "... [plan:<slug>#step-N]"`
+  in its commit line. `plan_lint` enforces this at plan time.
 
 ## A hook is a gate: never bypass it silently, never bypass it first
 
