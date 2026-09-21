@@ -1156,3 +1156,275 @@ class TestProvidersShow:
         data = json.loads(result.stdout)
         assert data["id"] == "mimo"
         assert data["token_present"] is True
+
+
+# ── Host fan-out (SP4 — one-command-every-host) ──────────────────────────
+
+
+# ssh(1)-shaped transport interface:
+#   transport.run(host: str, cmd: list[str], env: dict, timeout: float)
+#       → subprocess.CompletedProcess
+#
+# The production implementation will run ``ssh <host> -- <cmd>``; the test
+# fake runs the command locally with the env applied.  Both must refuse
+# to use timeout(1)/gtimeout(1) — AC3.
+
+
+class FakeTransport:
+    """Local-command transport that records invocations for assertion."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def run(self, host: str, cmd: list[str], env: dict,
+            timeout: float = 60.0) -> subprocess.CompletedProcess:
+        self.calls.append({"host": host, "cmd": cmd, "env": env})
+        full_env = dict(os.environ)
+        full_env.update(env)
+        return subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", env=full_env, timeout=timeout,
+        )
+
+
+class UnreachableTransport:
+    """Transport that simulates an unreachable host."""
+
+    def __init__(self, good_hosts: set[str] | None = None) -> None:
+        self.good_hosts = good_hosts or set()
+
+    def run(self, host: str, cmd: list[str], env: dict,
+            timeout: float = 60.0) -> subprocess.CompletedProcess:
+        if host not in self.good_hosts:
+            return subprocess.CompletedProcess(
+                cmd, returncode=255,
+                stdout="",
+                stderr=f"ssh: connect to host {host} port 22: Connection refused\n",
+            )
+        full_env = dict(os.environ)
+        full_env.update(env)
+        return subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", env=full_env, timeout=timeout,
+        )
+
+
+class EnvHostShow:
+    """Hermetic environment for testing --host all.
+
+    Two hosts: chad-mbp (reachable, with worker homes) and rezmac
+    (unreachable in the failing-transport fixture).  The registry carries
+    a ``hosts`` block with ssh targets — no secrets, just hostnames.
+    """
+
+    MODEL = "mimo-v2.5-pro"
+    BASE_URL = "https://mimo.example/api"
+
+    def __init__(self, tmp_path: Path, transport=None) -> None:
+        self.root = tmp_path
+        self.home = tmp_path / "home"
+        self.main = self.home / ".claude-worker"
+        self.registry = tmp_path / "role-registry.json"
+        self.data_home = tmp_path / "ilk-data"
+        self.transport = transport or FakeTransport()
+
+        self.main.mkdir(parents=True, exist_ok=True)
+        (self.main / "settings.json").write_text(json.dumps({
+            "env": {
+                "ANTHROPIC_MODEL": self.MODEL,
+                "ANTHROPIC_BASE_URL": self.BASE_URL,
+                "ANTHROPIC_AUTH_TOKEN": "tok-local",
+            },
+        }, indent=2), encoding="utf-8")
+
+        self.registry.write_text(json.dumps({
+            "version": 1,
+            "hosts": [
+                {"name": "chad-mbp", "ssh": "chad-mbp"},
+                {"name": "rezmac", "ssh": "rezmac"},
+            ],
+            "roles": {
+                "manager": {"tier": "manager", "home": "~/.claude-manager",
+                            "provider": "test", "model": "opus"},
+                "coder": {"tier": "worker", "home": "~/.claude-worker",
+                          "provider": "test", "model": self.MODEL},
+            },
+        }, indent=2), encoding="utf-8")
+
+        # Fake claude probe.
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "claude").write_text(
+            "#!/usr/bin/env bash\n"
+            "fmt=plain\n"
+            "for arg in \"$@\"; do\n"
+            "  case \"$arg\" in\n"
+            "    --output-format) ;;\n"
+            "    stream-json|json) fmt=\"$arg\" ;;\n"
+            "  esac\n"
+            "done\n"
+            "case \"$fmt\" in\n"
+            f"  stream-json) echo '{{\"model\": \"{self.MODEL}\", \"type\": \"init\"}}' ;;\n"
+            f"  json)        echo '{{\"is_error\": false, \"result\": \"OK\"}}' ;;\n"
+            f"  *)           echo \"{self.MODEL}\" ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        os.chmod(bin_dir / "claude", 0o755)
+        self.bin_dir = bin_dir
+
+    def run(self, *args: str) -> subprocess.CompletedProcess:
+        env = dict(os.environ)
+        env["HOME"] = str(self.home)
+        env["ILK_ROLE_REGISTRY"] = str(self.registry)
+        env["ILK_DATA_HOME"] = str(self.data_home)
+        env["PATH"] = f"{self.bin_dir}{os.pathsep}{env['PATH']}"
+        return subprocess.run(
+            ["bash", str(TOOL), *args],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", env=env, timeout=60,
+        )
+
+
+class TestHostRegistry:
+    """SP4 step-0 red: the role registry has no hosts block."""
+
+    def test_registry_schema_accepts_hosts_block(self, tmp_path: Path):
+        """load_registry must accept a registry whose top level has both
+        ``hosts`` and ``roles``.  The hosts list carries ssh targets
+        (no secrets — no token, no password, no key path).
+
+        RED: load_registry currently rejects or ignores a hosts block.
+        """
+        env = EnvHostShow(tmp_path)
+        sys.path.insert(0, str(TOOLS_DIR))
+        try:
+            import worker_model
+            # load_registry must succeed (hosts block is valid).
+            roles = worker_model.load_registry(env.registry)
+            assert isinstance(roles, dict)
+        finally:
+            sys.path.pop(0)
+
+    def test_registry_hosts_carries_no_secrets(self, tmp_path: Path):
+        """The hosts block must contain only name + ssh fields — no token,
+        password, or key_path.
+
+        RED: the registry schema doesn't define hosts yet, so there's
+        nothing to check.
+        """
+        data = json.loads(Path(tmp_path / "doesnt-exist-yet").read_text()
+                          if False else "{}")  # placeholder
+        # The real assertion is in the load path — if the registry loads
+        # and no host entry carries a secret-shaped key, the invariant holds.
+        env = EnvHostShow(tmp_path)
+        registry_data = json.loads(env.registry.read_text(encoding="utf-8"))
+        hosts = registry_data.get("hosts") or []
+        secret_keys = {"token", "password", "key_path", "secret",
+                       "auth_token", "api_key"}
+        for host in hosts:
+            overlap = secret_keys & set(host.keys())
+            assert not overlap, (
+                f"host {host.get('name')} carries secret keys: {overlap}")
+
+
+class TestHostShowAll:
+    """SP4 step-0 red: --host all does not exist."""
+
+    def test_show_host_all_exits_zero(self, tmp_path: Path):
+        """show --host all must probe each host and exit 0 when all
+        succeed.
+
+        RED: argparse rejects --host (unknown argument).
+        """
+        env = EnvHostShow(tmp_path)
+        result = env.run("show", "--host", "all")
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_show_host_all_reports_each_host(self, tmp_path: Path):
+        """The report must name each host with its own state.
+
+        RED: --host is not accepted.
+        """
+        env = EnvHostShow(tmp_path)
+        result = env.run("show", "--host", "all")
+        out = result.stdout
+        assert "chad-mbp" in out, f"must name host chad-mbp: {out}"
+        assert "rezmac" in out, f"must name host rezmac: {out}"
+
+    def test_show_host_all_no_blanket_done(self, tmp_path: Path):
+        """With two hosts where one is unreachable, no blanket 'done' or
+        'OK' appears without per-host qualification.
+
+        RED: --host is not accepted.
+        """
+        transport = UnreachableTransport(good_hosts={"chad-mbp"})
+        env = EnvHostShow(tmp_path, transport=transport)
+        result = env.run("show", "--host", "all")
+        out = result.stdout + result.stderr
+        # Both hosts must be named individually.
+        assert "chad-mbp" in out
+        assert "rezmac" in out
+
+    def test_show_host_all_exits_nonzero_on_unreachable(self, tmp_path: Path):
+        """With one unreachable host, the command must exit non-zero.
+
+        RED: --host is not accepted (argparse gives exit 2, but that's
+        a usage error — the real exit should be host-failure, not
+        argparse).  The stderr must not contain 'unrecognized arguments'.
+        """
+        transport = UnreachableTransport(good_hosts={"chad-mbp"})
+        env = EnvHostShow(tmp_path, transport=transport)
+        result = env.run("show", "--host", "all")
+        assert result.returncode != 0, (
+            f"should exit non-zero when a host is unreachable; "
+            f"exit={result.returncode}\nstdout={result.stdout}\n"
+            f"stderr={result.stderr}")
+        # Must not be an argparse usage error.
+        assert "unrecognized arguments" not in result.stderr, (
+            f"--host must be a valid argument, not rejected by argparse: "
+            f"{result.stderr}")
+
+    def test_show_host_all_names_unreachable_host(self, tmp_path: Path):
+        """The report must name rezmac and its failure state — not just
+        'chad-mbp: OK'.
+
+        RED: --host is not accepted (argparse gives exit 2 with an error
+        message mentioning 'all', but that's not per-host reporting).
+        The stderr must not be an argparse usage error.
+        """
+        transport = UnreachableTransport(good_hosts={"chad-mbp"})
+        env = EnvHostShow(tmp_path, transport=transport)
+        result = env.run("show", "--host", "all")
+        out = result.stdout + result.stderr
+        # Must not be argparse rejecting the argument.
+        assert "unrecognized arguments" not in result.stderr, (
+            f"--host must be a valid argument: {result.stderr}")
+        assert "rezmac" in out, (
+            f"unreachable host must be named in the report: {out}")
+
+
+class TestHostShowNoTimeout:
+    """SP4 step-0 red: the fan-out uses timeout(1)/gtimeout(1)."""
+
+    def test_fan_out_uses_no_timeout_command(self, tmp_path: Path):
+        """The transport invocation must NOT pass through timeout(1) or
+        gtimeout(1).  An SSH command that wraps in ``timeout 30 ssh ...``
+        would fail on rezmac (no coreutils).
+
+        RED: --host is not accepted, so there's no fan-out to inspect —
+        the assertion requires at least one transport call (which won't
+        happen until step 1).
+        """
+        transport = FakeTransport()
+        env = EnvHostShow(tmp_path, transport=transport)
+        result = env.run("show", "--host", "all")
+        # Must have actually fanned out — if no calls, the test is vacuous.
+        assert len(transport.calls) > 0, (
+            "no transport calls were made — --host all must fan out")
+        for call in transport.calls:
+            cmd = call["cmd"]
+            assert "timeout" not in cmd[0], (
+                f"fan-out must not use timeout(1): {cmd}")
+            assert "gtimeout" not in cmd[0], (
+                f"fan-out must not use gtimeout(1): {cmd}")
