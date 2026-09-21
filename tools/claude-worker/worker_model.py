@@ -89,6 +89,17 @@ def load_registry(path: Path) -> dict:
     return roles
 
 
+def load_hosts(path: Path) -> list:
+    """Read the ``hosts`` block from the role registry.
+
+    Each entry has ``name`` and ``ssh`` fields — no secrets (no token,
+    password, or key_path).  Returns an empty list when the registry has
+    no ``hosts`` key.
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return data.get("hosts") or []
+
+
 def expand_home(path_str: str, home_base: Path) -> Path:
     if path_str == "~":
         return home_base
@@ -255,6 +266,149 @@ def cmd_show(home_base: Path, registry_path: Path, as_json: bool = False) -> int
                 print(f"  !! DRIFT: {home.name} says {model}, main home says "
                       f"{main_model}")
     return EXIT_OK
+
+
+# ── host fan-out (SP4 — one-command-every-host) ────────────────────────────
+
+
+class SshTransport:
+    """Run a command on a remote host via ssh(1).
+
+    Does NOT use timeout(1)/gtimeout(1) — AC3.  The caller is responsible
+    for any time-boxing.
+    """
+
+    def run(self, host: str, cmd: list[str], env: dict,
+            timeout: float = 60.0) -> subprocess.CompletedProcess:
+        # Inject the script directory so the remote side can find
+        # worker_model.py without computing a relative path from HOME.
+        env = dict(env)
+        env.setdefault("ILK_SCRIPT_DIR", str(SCRIPT_DIR))
+        # Build environment prefix: VAR='value' ssh host -- cmd ...
+        env_parts = []
+        for key, val in sorted(env.items()):
+            env_parts.append(f"{key}={val}")
+        remote_cmd = env_parts + cmd
+        return subprocess.run(
+            ["ssh", host, "--", *remote_cmd],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=timeout,
+        )
+
+
+def _resolve_transport(name: str | None):
+    """Return a transport instance by name (for test injection via CLI)."""
+    if name == "local":
+        return _LocalTransport()
+    return SshTransport()
+
+
+class _LocalTransport:
+    """Run a command locally (test double for SshTransport).
+
+    Sets ILK_SCRIPT_DIR so ``sh -c 'python3 "$ILK_SCRIPT_DIR/…"'`` resolves.
+    """
+
+    def run(self, host: str, cmd: list[str], env: dict,
+            timeout: float = 60.0) -> subprocess.CompletedProcess:
+        full_env = dict(os.environ)
+        full_env.update(env)
+        full_env.setdefault("ILK_SCRIPT_DIR", str(SCRIPT_DIR))
+        return subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", env=full_env, timeout=timeout,
+        )
+
+
+def cmd_show_host_all(
+    home_base: Path,
+    registry_path: Path,
+    data_home: Path,
+    as_json: bool,
+    transport=None,
+) -> int:
+    """Fan out ``show --json`` to every host in the registry's hosts block.
+
+    Each host runs its own probes locally (via ssh).  The report names
+    every host with its own state — no blanket "done" when any host fails.
+    Exit non-zero when any host is unreachable (AC2).
+    """
+    transport = transport or SshTransport()
+    try:
+        hosts = load_hosts(registry_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"error: cannot read role registry: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+
+    if not hosts:
+        print("no hosts in registry", file=sys.stderr)
+        return EXIT_USAGE
+
+    results: list[dict] = []
+    any_unreachable = False
+    for host_entry in hosts:
+        host_name = host_entry.get("name") or host_entry.get("ssh", "")
+        ssh_target = host_entry.get("ssh", host_name)
+
+        # ILK_SCRIPT_DIR is injected by the transport so the remote side
+        # can locate worker_model.py without a relative path from HOME.
+        env = {
+            "HOME": str(home_base),
+            "ILK_ROLE_REGISTRY": str(registry_path),
+            "ILK_DATA_HOME": str(data_home),
+        }
+        cmd = ["sh", "-c",
+               'python3 "$ILK_SCRIPT_DIR/worker_model.py" show --json']
+
+        try:
+            proc = transport.run(ssh_target, cmd, env)
+        except subprocess.TimeoutExpired:
+            results.append({"host": host_name, "error": "timeout"})
+            any_unreachable = True
+            continue
+
+        if proc.returncode != 0:
+            results.append({
+                "host": host_name,
+                "error": proc.stderr.strip() or f"exit {proc.returncode}",
+            })
+            any_unreachable = True
+            continue
+
+        try:
+            host_homes = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            results.append({
+                "host": host_name,
+                "error": f"invalid JSON from remote: {proc.stdout[:200]}",
+            })
+            any_unreachable = True
+            continue
+
+        results.append({"host": host_name, "homes": host_homes})
+
+    # Print the report.
+    if as_json:
+        print(json.dumps(results, indent=2))
+    else:
+        for entry in results:
+            host_name = entry["host"]
+            if "error" in entry:
+                print(f"  {host_name}: UNREACHABLE — {entry['error']}")
+            else:
+                for home in entry.get("homes", []):
+                    h = home.get("home", "")
+                    model = home.get("model", "")
+                    url_host = home.get("base_url_host", "")
+                    mismatch = home.get("mismatch")
+                    line = f"  {host_name}: {h} model={model}  base-url-host={url_host}"
+                    if mismatch:
+                        line += (f"  !! MISMATCH: registry role "
+                                 f"'{mismatch['role']}' says "
+                                 f"{mismatch['registry_model']}")
+                    print(line)
+
+    return EXIT_USAGE if any_unreachable else EXIT_OK
 
 
 # ── roles & providers (SP3 — roles-and-providers-enumerable) ────────────────
@@ -698,6 +852,10 @@ def main(argv=None) -> int:
     show_p = sub.add_parser("show", help="report every worker home's live model")
     show_p.add_argument("--json", action="store_true", dest="as_json",
                         help="output as JSON")
+    show_p.add_argument("--host", default=None,
+                        help="fan out to a host or 'all' (reads hosts from registry)")
+    show_p.add_argument("--transport", default=None, choices=["ssh", "local"],
+                        help="transport for --host (default: ssh; local = test double)")
     use_p = sub.add_parser("use", help="switch every worker home to a target")
     use_p.add_argument("target", help="<role> or <model>@<role>")
     use_p.add_argument("--now", action="store_true",
@@ -723,6 +881,11 @@ def main(argv=None) -> int:
                      or Path(home_base / ".ilk-data"))
 
     if args.cmd == "show":
+        if args.host == "all":
+            transport = _resolve_transport(getattr(args, "transport", None))
+            return cmd_show_host_all(
+                home_base, registry_path, data_home, as_json=args.as_json,
+                transport=transport)
         return cmd_show(home_base, registry_path, as_json=args.as_json)
     if args.cmd == "use":
         return cmd_use(args.target, args.now, args.skip_probe,
