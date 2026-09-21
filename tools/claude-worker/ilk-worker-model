@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Switch / inspect the loop WORKER's model — one command (macOS/Linux).
+#
+# Thin wrapper over worker_model.py, the ilk-worker-mcp house pattern. The
+# manual sequence this replaces (config key vs engine-flag precedence,
+# watchdog-first stop ordering, hand-mirrored env blocks, hand-written
+# backups, by-hand probe) is in
+# docs/retros/retro-2026-09-21-switching-the-worker-model.md.
+#
+#   show                    every worker home's live model, cross-checked
+#                           against role-registry.json (mismatch = loud)
+#   use <role|model@role>   switch every home; --now stops watchdogs first,
+#                           then runners; verifies via a probe session per
+#                           home and rolls back on mismatch
+#   restore                 newest settings.json.bak-<ts> per home
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PY="$SCRIPT_DIR/worker_model.py"
+[[ -f "$PY" ]] || { echo "worker_model.py not found: $PY" >&2; exit 1; }
+
+PYBIN="python3"
+command -v python3 >/dev/null 2>&1 || PYBIN="python"
+
+exec "$PYBIN" "$PY" "$@"

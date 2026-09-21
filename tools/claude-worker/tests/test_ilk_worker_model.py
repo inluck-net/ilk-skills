@@ -38,7 +38,8 @@ BASE_URL_TARGET = "https://glm.example/api"
 TOKEN_TARGET = "tok-glm"
 
 
-def _write_settings(home: Path, model: str, base_url: str) -> None:
+def _write_settings(home: Path, model: str, base_url: str,
+                    token: str = "tok-before") -> None:
     """A worker home's settings.json: an env block plus unrelated keys that
     a rewrite must preserve."""
     home.mkdir(parents=True, exist_ok=True)
@@ -47,7 +48,7 @@ def _write_settings(home: Path, model: str, base_url: str) -> None:
         "env": {
             "ANTHROPIC_MODEL": model,
             "ANTHROPIC_BASE_URL": base_url,
-            "ANTHROPIC_AUTH_TOKEN": "tok-before",
+            "ANTHROPIC_AUTH_TOKEN": token,
         },
         "includeCoAuthoredBy": False,
     }, indent=2), encoding="utf-8")
@@ -90,7 +91,8 @@ class Env:
 
         _write_settings(self.main, MODEL_BEFORE_MAIN, BASE_URL_BEFORE)
         _write_settings(self.slot2, MODEL_BEFORE_SLOT, BASE_URL_BEFORE)
-        _write_settings(self.manager, MODEL_TARGET, BASE_URL_TARGET)
+        _write_settings(self.manager, MODEL_TARGET, BASE_URL_TARGET,
+                        token=TOKEN_TARGET)
         _make_registry(self.registry)
 
         # Fake claude: reports the canned model, and logs each probe's
