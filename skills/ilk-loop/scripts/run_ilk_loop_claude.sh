@@ -2287,6 +2287,72 @@ for k, v in sorted(d.get("env", {}).items()):
     budget_exhausted=1
   fi
 
+  # Detect quota exhaustion via the SP6 classifier (quota_detect.py).
+  # The classifier is a pure function over parsed JSON — no file reads, no
+  # subprocesses, no clock other than the injected now.
+  # Only writes through SP5's writer (provider_state.py) when exhausted;
+  # writes nothing when not exhausted.
+  local quota_exhausted=0
+  if [[ -f "$jsonl_log" ]]; then
+    local runtime_dir
+    runtime_dir="$(get_ilk_runtime_dir)" || runtime_dir=""
+    local provider_state_path=""
+    if [[ -n "$runtime_dir" ]]; then
+      provider_state_path="${runtime_dir}/provider-state.json"
+    fi
+    local _quota_result
+    _quota_result="$(python3 -c "
+import json, sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, '${_SKILL_ROOT}/ilk-loop/scripts')
+from quota_detect import classify
+
+log_path = Path('$jsonl_log')
+if not log_path.is_file():
+    sys.exit(0)
+
+lines = []
+for line in log_path.read_text(encoding='utf-8-sig').splitlines():
+    line = line.strip()
+    if line:
+        try:
+            lines.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+
+if not lines:
+    sys.exit(0)
+
+now = datetime.now(timezone.utc)
+result = classify(lines, now=now)
+if result['exhausted']:
+    print('exhausted')
+    # Write through SP5's writer.
+    state_path = Path('$provider_state_path')
+    if state_path.parent.exists():
+        try:
+            from provider_state import read_state, write_state, ProviderStateError
+            try:
+                state = read_state(state_path)
+            except ProviderStateError:
+                state = {'version': 1, 'homes': {}}
+            # Record the exhaustion verdict.
+            state['exhausted_provider'] = {
+                'reset_at': result.get('reset_at'),
+                'detected_at': now.isoformat(),
+                'evidence': str(log_path),
+            }
+            write_state(state_path, state)
+        except Exception:
+            pass  # Best-effort; do not crash the runner
+" 2>/dev/null)" || _quota_result=""
+    if [[ "$_quota_result" == "exhausted" ]]; then
+      quota_exhausted=1
+    fi
+  fi
+
   # gtimeout returns 124 on timeout
   local completed=1
   if [[ "$exit_code" -eq 124 ]]; then
@@ -2297,6 +2363,7 @@ for k, v in sorted(d.get("env", {}).items()):
   ITER_COMPLETED=$completed
   ITER_EXIT_CODE=$exit_code
   ITER_BUDGET_EXHAUSTED=$budget_exhausted
+  ITER_QUOTA_EXHAUSTED=$quota_exhausted
 }
 
 # Decide the iteration stop reason from the iteration's outcome.
@@ -2305,18 +2372,22 @@ for k, v in sorted(d.get("env", {}).items()):
 #   $2 = total_new       (new commit count this iteration)
 #   $3 = budget_exhausted (1 = hit --max-budget-usd)
 #   $4 = no_progress_streak (consecutive zero-commit iterations before this one)
+#   $5 = quota_exhausted (1 = provider quota cap detected)
 # Prints: the stop reason, or empty string to continue.
 _decide_iter_stop_reason() {
   local completed="$1"
   local total_new="$2"
   local budget_exhausted="$3"
   local current_streak="$4"
+  local quota_exhausted="${5:-0}"
 
   if [[ "$completed" -eq 0 && "$total_new" -eq 0 ]]; then
     # Boundary kill with no new commits — a genuine barren timeout.
     echo "timeout"
   elif [[ "$budget_exhausted" -eq 1 ]]; then
     echo "budget-exhausted"
+  elif [[ "$quota_exhausted" -eq 1 ]]; then
+    echo "quota-exhausted"
   elif [[ "$total_new" -eq 0 ]]; then
     local new_streak=$((current_streak + 1))
     if [[ "$new_streak" -ge 3 ]]; then
@@ -3134,7 +3205,7 @@ print(json.dumps({
     # Stall detection — extracted to _decide_iter_stop_reason for testability.
     local iter_stop_reason=""
     iter_stop_reason=$(_decide_iter_stop_reason \
-      "$ITER_COMPLETED" "$total_new" "$ITER_BUDGET_EXHAUSTED" "$no_progress_streak")
+      "$ITER_COMPLETED" "$total_new" "$ITER_BUDGET_EXHAUSTED" "$no_progress_streak" "$ITER_QUOTA_EXHAUSTED")
 
     # Preserve any dirty tree as a WIP commit on boundary kills so the
     # next iteration can resume from a recoverable state (AC-1, AC-2, AC-4).

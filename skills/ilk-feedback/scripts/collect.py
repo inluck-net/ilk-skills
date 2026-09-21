@@ -1074,6 +1074,10 @@ def _classify_core(
             "iter_at_stop": last.get("iteration"),
             "max_budget_usd": last.get("max_budget_usd"),
         }
+    if last_stop == "quota-exhausted":
+        return "quota-exhausted", {
+            "iter_at_stop": last.get("iteration"),
+        }
     if last_stop == "already-shipped":
         return "clean-success", {
             "iters": iter_count,
@@ -1340,6 +1344,12 @@ def classify(
         # classify_action arms (→ block), and reused here to avoid adding a
         # new branch.
         "selfmod_merge_failed": "merge-conflict",
+        # Provider quota cap detected by the SP6 classifier (quota_detect.py).
+        # The runner writes this when the terminal payload carries a future
+        # reset timestamp or N consecutive api_error with 0 tokens.
+        # Label: "quota-exhausted" → watchdog blocks + parks (same as
+        # budget-exhausted; needs human or /ilk-resume).
+        "quota-exhausted": "quota-exhausted",
     }
     if sentinel is not None:
         sentinel_state = (sentinel.get("state") or "").strip()

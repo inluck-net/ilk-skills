@@ -343,6 +343,10 @@ normalize_classification() {
       # (_decide_iter_stop_reason, :2207).  Accept both spellings here.
       echo "budget-exhausted"
       ;;
+    quota-exhausted)
+      # Provider quota cap detected by the SP6 classifier.
+      echo "quota-exhausted"
+      ;;
     *)
       echo "$label"
       ;;
@@ -440,7 +444,7 @@ classify_action() {
       # Whitelist: transient failures safe to retry.
       echo "relaunch"
       ;;
-    stuck-no-progress|api-blocked|budget-exhausted|local-checks-stuck|local-checks-broken|dependency-unreachable|merge-conflict)
+    stuck-no-progress|api-blocked|budget-exhausted|quota-exhausted|local-checks-stuck|local-checks-broken|dependency-unreachable|merge-conflict)
       # Blacklist: structural failures where a restart won't help.
       echo "block"
       ;;
