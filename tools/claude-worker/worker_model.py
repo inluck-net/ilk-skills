@@ -239,6 +239,45 @@ def cmd_show(home_base: Path, registry_path: Path) -> int:
 
 # ── use ──────────────────────────────────────────────────────────────────────
 
+
+def _sync_registry(
+    registry_path: Path,
+    roles: dict,
+    homes: list,
+    home_base: Path,
+    model: str,
+    source_role: dict,
+) -> None:
+    """Update the role registry to match the live state after a verified switch.
+
+    For every role whose home matches one of the worker homes we just switched,
+    update the model and provider to match the source role.  Atomic: writes to
+    a tmp file then renames.  Preserves 2-space indent and key order.
+    """
+    # Build a set of switched home paths for matching.
+    switched = {h.resolve() for h in homes}
+
+    # Read the raw JSON so we can preserve key order.
+    data = json.loads(registry_path.read_text(encoding="utf-8"))
+    changed = False
+    for role_name, role in data.get("roles", {}).items():
+        role_home = expand_home(str(role.get("home", "")), home_base).resolve()
+        if role_home in switched:
+            if role.get("model") != model:
+                role["model"] = model
+                changed = True
+            # Sync provider from the source role.
+            src_provider = source_role.get("provider", "")
+            if role.get("provider") != src_provider:
+                role["provider"] = src_provider
+                changed = True
+
+    if changed:
+        tmp = registry_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(registry_path)
+        print(f"[registry] synced {registry_path.name}")
+
 def resolve_target(target: str, roles: dict) -> tuple:
     """'<model>@<role>' or '<role>' -> (role_name, model, role_dict)."""
     if "@" in target:
@@ -343,6 +382,11 @@ def cmd_use(target: str, now: bool, skip_probe: bool, home_base: Path,
                     print(f"[rollback] {h}: restored {b.name}", file=sys.stderr)
                 return EXIT_PROBE
             print(f"[probe] {home}: reports {reported} ✓")
+
+    # Sync the role registry: update every role whose home matches a worker
+    # home we just switched.  This closes the gap where the registry says one
+    # model while the homes run another (retro hazard 6).
+    _sync_registry(registry_path, roles, homes, home_base, model, role)
 
     print("switch verified for every home above.")
     print("engine-precedence facts:")

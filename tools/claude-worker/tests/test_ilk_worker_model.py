@@ -366,10 +366,18 @@ class TestRegistrySync:
 
     def test_show_no_mismatch_after_registry_sync(self, env_ok_probe: Env):
         """AC1: after sync, show prints no mismatch line for the matched role."""
-        env_ok_probe.run("use", "manager")
+        use_result = env_ok_probe.run("use", "manager")
+        assert use_result.returncode == 0, use_result.stdout + use_result.stderr
         result = env_ok_probe.run("show")
         assert result.returncode == 0
-        assert "mismatch" not in result.stdout.lower()
+        # Check for the emitted marker, not the bare word — the test's own
+        # tmpdir name contains "mismatch" (from the function name) and show
+        # prints the absolute path, so a bare substring check always fires.
+        assert "!! MISMATCH" not in result.stdout, (
+            f"use output:\n{use_result.stdout}\n"
+            f"registry after use:\n{env_ok_probe.registry.read_text()}\n"
+            f"show output:\n{result.stdout}"
+        )
 
     def test_failed_probe_rolls_back_registry(self, env_bad_probe: Env):
         """AC2: a probe that reports the wrong model rolls back the registry
