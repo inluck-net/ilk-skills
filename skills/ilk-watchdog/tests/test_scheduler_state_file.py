@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -259,11 +260,14 @@ def test_fail_open_logs_degradation(tmp_path, scheduler_sandbox):
 
 def test_fail_open_on_no_git(tmp_path, scheduler_sandbox):
     """AC-5: if HEAD can't be resolved, scheduler still starts."""
-    # Use a non-existent skill home so git rev-parse fails.
-    fake_skills = tmp_path / "no-git-skills"
-    fake_skills.mkdir()
-    env_extra = {"ILK_SKILL_HOME": str(fake_skills)}
-    res = _run_scheduler(scheduler_sandbox, extra_env=env_extra, timeout=30)
+    # Override GIT_DIR so git rev-parse HEAD fails — the scheduler should
+    # still start (fail-open).
+    env = {**scheduler_sandbox.env, "GIT_DIR": str(tmp_path / "nonexistent")}
+    res = subprocess.run(
+        ["bash", str(SCHEDULER), "--once", "--dry-run"],
+        capture_output=True, text=True, timeout=30,
+        env=env, encoding="utf-8",
+    )
     assert res.returncode == 0, (
         f"scheduler crashed when HEAD can't be resolved: rc={res.returncode}"
     )
@@ -271,10 +275,14 @@ def test_fail_open_on_no_git(tmp_path, scheduler_sandbox):
 
 def test_fail_open_no_git_logs_degradation(tmp_path, scheduler_sandbox):
     """AC-5: unresolvable HEAD should be logged."""
-    fake_skills = tmp_path / "no-git-skills"
-    fake_skills.mkdir()
-    env_extra = {"ILK_SKILL_HOME": str(fake_skills)}
-    res = _run_scheduler(scheduler_sandbox, extra_env=env_extra, timeout=30)
+    # Override GIT_DIR so git rev-parse HEAD fails — the scheduler should
+    # log a degradation warning.
+    env = {**scheduler_sandbox.env, "GIT_DIR": str(tmp_path / "nonexistent")}
+    res = subprocess.run(
+        ["bash", str(SCHEDULER), "--once", "--dry-run"],
+        capture_output=True, text=True, timeout=30,
+        env=env, encoding="utf-8",
+    )
     combined = res.stdout + res.stderr
     assert any(
         word in combined.lower()
