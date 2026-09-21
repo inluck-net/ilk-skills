@@ -236,3 +236,83 @@ def test_hyphenated_scratch_worktree_composite_renders_correctly() -> None:
         repo_path="/Users/chad/Projects/keyreply/kira-cloudflare-scratch-worktrees/resolver",
     )])
     assert "kira-cloudflare [resolver]" in row, f"got: {row}"
+
+
+# ── tray-shows-and-switches step-0: Models section (RED) ─────────────
+
+
+def _entry_with_roles(**extra) -> dict:
+    """Entry carrying a roles block — the payload shape step 1 produces."""
+    e = _entry()
+    e["roles"] = [
+        {
+            "role": "worker",
+            "home": "~/.claude-worker",
+            "configured_model": "mimo-v2.5-pro",
+            "provider_host": "zhipu",
+            "auth_mode": "api_key",
+        },
+    ]
+    e.update(extra)
+    return e
+
+
+def test_models_section_renders_one_row_per_role() -> None:
+    """AC-2: the renderer emits one Models row per role.
+
+    This is the red test for tray-shows-and-switches step 0.  Step 2
+    adds the Models section; today the output does not contain per-role
+    model rows with provider submenus — this test FAILS.
+    """
+    out = render_xbar([_entry_with_roles()])
+    model_rows = [
+        l for l in out.splitlines()
+        if l.strip().startswith("-") and "Models" in l
+    ]
+    assert model_rows, (
+        "expected a 'Models' separator row in the submenu; got none"
+    )
+
+
+def test_provider_submenu_invokes_use_command() -> None:
+    """AC-2: each provider submenu item invokes
+    ``ilk-worker-model use <role> <provider>`` with no ``--now``.
+
+    This is the red test for tray-shows-and-switches step 0.  Step 2
+    adds the provider submenu; today no such action exists — this test
+    FAILS.
+    """
+    out = render_xbar([_entry_with_roles()])
+    provider_actions = [
+        l for l in out.splitlines()
+        if "ilk-worker-model use" in l
+    ]
+    assert provider_actions, (
+        "expected submenu items invoking 'ilk-worker-model use <role> <provider>'; "
+        "got none"
+    )
+    # No --now: the action is config-only, applies from next iteration.
+    for action in provider_actions:
+        assert "--now" not in action, (
+            f"provider switch must not carry --now: {action}"
+        )
+
+
+def test_divergence_renders_both_models() -> None:
+    """AC-3: when configured model ≠ last observed model, both are shown.
+
+    The existing ``worker model:`` line shows what iterations ACTUALLY ran.
+    The new per-role row shows what is configured.  When they differ, the
+    renderer renders the divergence — neither value is dropped.
+
+    This is the red test for step 0.  Step 2 adds this rendering; today
+    the configured model does not appear — this test FAILS.
+    """
+    entry = _entry_with_roles(model="claude-sonnet-4-20250514")
+    out = render_xbar([entry])
+    # The live model line still shows the iteration model.
+    assert "claude-sonnet-4-20250514" in out, "live model must stay in output"
+    # The configured model must ALSO appear (per-role row).
+    assert "mimo-v2.5-pro" in out, (
+        "configured model 'mimo-v2.5-pro' must appear in the Models section"
+    )

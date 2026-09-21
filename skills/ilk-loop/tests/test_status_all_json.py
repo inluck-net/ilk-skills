@@ -500,3 +500,34 @@ class TestStaleExitReasonPairing:
         assert entry["sentinel"]["state"] == "ship_integrity_violation", (
             f"violation state must surface: {entry['sentinel']}"
         )
+
+
+# ── tray-shows-and-switches step-0: roles block absent (RED) ─────────
+
+
+class TestRolesBlockAbsent:
+    """status_all --json must publish a roles block per registry role.
+
+    AC-1 of tray-shows-and-switches: per role the payload carries home,
+    configured model, provider host, auth mode.  This red test asserts
+    the field does NOT yet exist — the next step (step 1) adds it.
+    """
+
+    def test_roles_key_absent_in_payload(self):
+        """A project entry must carry a 'roles' list once the feature lands.
+
+        Today (step 0) the key is missing — this test is intentionally red.
+        """
+        _setup_project("roles-absent", pid=os.getpid())
+        entry = _status_all("roles-absent")
+        assert "roles" in entry, (
+            "payload missing 'roles' key — expected a list of role dicts "
+            "with home, configured_model, provider_host, auth_mode"
+        )
+
+    def test_roles_is_a_list(self):
+        """The roles value must be a list (possibly empty if no registry)."""
+        _setup_project("roles-type", pid=os.getpid())
+        entry = _status_all("roles-type")
+        roles = entry.get("roles")
+        assert isinstance(roles, list), f"roles should be a list, got {type(roles)}"
