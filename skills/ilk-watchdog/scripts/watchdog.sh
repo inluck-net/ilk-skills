@@ -547,6 +547,37 @@ for line in open('$rp_py', encoding='utf-8'):
   echo "$klass"
 }
 
+# ----- Relaunch with engine --------------------------------------------------
+# Reads worker_engine from the dead run's last-launch.json and passes --engine
+# to the launch script so the respawn uses the same engine.  Without this,
+# resolve_engine falls through to DEFAULT_ENGINE and lands on the primary
+# account (the 2026-09-20 burn documented in retro-2026-09-21).
+_relaunch_with_engine() {
+  local project="$1"
+  local launch_script="$2"
+  shift 2
+  local extra_args=("$@")
+
+  local engine=""
+  local launcher_dir
+  launcher_dir=$(get_ilk_launcher_dir "$project")
+  if [[ -n "$launcher_dir" && -f "${launcher_dir}/last-launch.json" ]]; then
+    engine=$($PYTHON -c "import json,sys; print(json.load(sys.stdin).get('worker_engine',''))" \
+      < "${launcher_dir}/last-launch.json" 2>/dev/null) || true
+  fi
+
+  local engine_flag=""
+  if [[ -n "$engine" ]]; then
+    engine_flag="--engine $engine"
+    write_log "relaunch engine: $engine (from last-launch.json)"
+  else
+    write_log "relaunch engine: (none recorded; launch.sh will resolve)"
+  fi
+
+  # shellcheck disable=SC2086
+  bash "$launch_script" --project-path "$project" $engine_flag "${extra_args[@]}"
+}
+
 # ----- Promotion helper ------------------------------------------------------
 
 handle_promote() {
@@ -585,7 +616,7 @@ Expected launcher: $LAUNCH_SCRIPT
 Cannot auto-relaunch. Run ilk-launcher manually." 33
       return
     fi
-    if ! bash "$LAUNCH_SCRIPT" --project-path "$project" --force; then
+    if ! _relaunch_with_engine "$project" "$LAUNCH_SCRIPT" --force; then
       write_banner "QUEUE ADVANCED — RELAUNCH FAILED" \
 "Project: $proj_name
 Promoted: $promoted
@@ -1197,7 +1228,7 @@ relaunch manually if it still makes sense." 31
     write_log "WHITELIST hit ($classification). Restart $restart_count/$max_restarts_cap."
     invoke_ilk_notify "restart" "$proj_name" "classification: $classification_display"
 
-    if ! bash "$LAUNCH_SCRIPT" --project-path "$project" --force; then
+    if ! _relaunch_with_engine "$project" "$LAUNCH_SCRIPT" --force; then
       write_banner "RELAUNCH FAILED" \
         "Project: $proj_name\nLaunch script exited non-zero.\nWatchdog blocking." 31
       return

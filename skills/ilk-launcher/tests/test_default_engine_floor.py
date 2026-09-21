@@ -56,11 +56,20 @@ def _resolve_engine(project_path: str, cli_engine: str = "") -> str:
     read_cfg_fn = _extract_function(_LAUNCH_SH, "read_project_config")
     get_ext_fn = _extract_function(_LAUNCH_SH, "get_external_plans_dir")
 
+    # Read the actual DEFAULT_ENGINE from launch.sh so the test tracks
+    # the source of truth rather than hardcoding a stale value.
+    result_grep = subprocess.run(
+        ["bash", "-c", f'grep "^DEFAULT_ENGINE=" "{_LAUNCH_SH}" | head -1'],
+        capture_output=True, text=True, timeout=5,
+        encoding="utf-8", errors="replace",
+    )
+    default_engine_line = result_grep.stdout.strip() or 'DEFAULT_ENGINE="claude"'
+
     script = textwrap.dedent(f"""\
         set -euo pipefail
         # Provide the globals resolve_engine reads.
         VALID_ENGINES="claude codex claude-worker claude-manager"
-        DEFAULT_ENGINE="claude"
+        {default_engine_line}
         _SKILL_ROOT=""
         ILK_DEFAULT_ENGINE=""
         # Stub read_project_config to return {{}} (no config).

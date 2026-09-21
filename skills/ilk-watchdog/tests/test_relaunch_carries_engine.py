@@ -83,8 +83,6 @@ def _run_watchdog_relaunch(
     tmp_path: Path,
     fake_launcher: Path,
     launcher_dir: Path,
-    *,
-    path: str = "whitelist",
 ) -> subprocess.CompletedProcess:
     """Drive one watchdog relaunch path in a subshell.
 
@@ -99,49 +97,25 @@ def _run_watchdog_relaunch(
     project = str(launcher_dir.parent.parent)
     # The watchdog resolves LAUNCH_SCRIPT from the launcher dir at runtime.
     # We override it directly via variable injection.
-    if path == "whitelist":
-        # The whitelist relaunch is inside run_watchdog_loop's inner while.
-        # We replicate just the relaunch call with the same variable names.
-        script = textwrap.dedent(f"""\
-            set -euo pipefail
-            _SKILL_ROOT=""
-            write_log() {{ echo "[LOG] $*" >&2; }}
-            write_banner() {{ echo "[BANNER] $*" >&2; }}
-            invoke_ilk_notify() {{ true; }}
-            project="{project}"
-            proj_name="test-proj"
-            LAUNCH_SCRIPT="{fake_launcher}"
-            # Source get_ilk_launcher_dir so last-launch.json resolution works
-            eval "$(sed -n '/^get_ilk_launcher_dir()/,/^}}/p' "{_WATCHDOG_SH}")"
-            # Source the relaunch-with-engine helper if it exists
-            if grep -q '_relaunch_with_engine' "{_WATCHDOG_SH}" 2>/dev/null; then
-              eval "$(sed -n '/^_relaunch_with_engine()/,/^}}/p' "{_WATCHDOG_SH}")"
-              _relaunch_with_engine "$project" "$LAUNCH_SCRIPT" "--force"
-            else
-              # Current code: no --engine (RED)
-              bash "$LAUNCH_SCRIPT" --project-path "$project" --force
-            fi
-        """)
-    elif path == "queue-advance":
-        script = textwrap.dedent(f"""\
-            set -euo pipefail
-            _SKILL_ROOT=""
-            write_log() {{ echo "[LOG] $*" >&2; }}
-            write_banner() {{ echo "[BANNER] $*" >&2; }}
-            project="{project}"
-            proj_name="test-proj"
-            LAUNCH_SCRIPT="{fake_launcher}"
-            eval "$(sed -n '/^get_ilk_launcher_dir()/,/^}}/p' "{_WATCHDOG_SH}")"
-            if grep -q '_relaunch_with_engine' "{_WATCHDOG_SH}" 2>/dev/null; then
-              eval "$(sed -n '/^_relaunch_with_engine()/,/^}}/p' "{_WATCHDOG_SH}")"
-              _relaunch_with_engine "$project" "$LAUNCH_SCRIPT" "--force"
-            else
-              bash "$LAUNCH_SCRIPT" --project-path "$project" --force
-            fi
-        """)
-    else:
-        raise ValueError(f"Unknown path: {path}")
-
+    launcher_dir_str = str(launcher_dir)
+    # Both paths share the same relaunch mechanism; only the surrounding
+    # watchdog context differs, and we stub that out.
+    script = textwrap.dedent(f"""\
+        set -euo pipefail
+        _SKILL_ROOT=""
+        PYTHON="$(command -v python3)"
+        write_log() {{ echo "[LOG] $*" >&2; }}
+        write_banner() {{ echo "[BANNER] $*" >&2; }}
+        invoke_ilk_notify() {{ true; }}
+        project="{project}"
+        proj_name="test-proj"
+        LAUNCH_SCRIPT="{fake_launcher}"
+        # Stub get_ilk_launcher_dir to return our fixture dir.
+        get_ilk_launcher_dir() {{ echo "{launcher_dir_str}"; }}
+        # Source the relaunch-with-engine helper from watchdog.sh
+        eval "$(sed -n '/^_relaunch_with_engine()/,/^}}/p' "{_WATCHDOG_SH}")"
+        _relaunch_with_engine "$project" "$LAUNCH_SCRIPT" "--force"
+    """)
     return subprocess.run(
         ["bash", "-c", script],
         capture_output=True,
@@ -164,9 +138,7 @@ class TestRelaunchCarriesEngine:
         _write_last_launch(launcher_dir, "claude-manager")
         fake_launcher = _make_fake_launcher(tmp_path)
 
-        result = _run_watchdog_relaunch(
-            tmp_path, fake_launcher, launcher_dir, path="whitelist"
-        )
+        result = _run_watchdog_relaunch(tmp_path, fake_launcher, launcher_dir)
         assert result.returncode == 0, (
             f"Relaunch exited {result.returncode}.\n"
             f"stdout: {result.stdout}\nstderr: {result.stderr}"
@@ -185,9 +157,7 @@ class TestRelaunchCarriesEngine:
         _write_last_launch(launcher_dir, "claude-manager")
         fake_launcher = _make_fake_launcher(tmp_path)
 
-        result = _run_watchdog_relaunch(
-            tmp_path, fake_launcher, launcher_dir, path="queue-advance"
-        )
+        result = _run_watchdog_relaunch(tmp_path, fake_launcher, launcher_dir)
         assert result.returncode == 0, (
             f"Relaunch exited {result.returncode}.\n"
             f"stdout: {result.stdout}\nstderr: {result.stderr}"
@@ -209,7 +179,7 @@ class TestRelaunchCarriesEngine:
         fake_launcher = _make_fake_launcher(tmp_path)
 
         result = _run_watchdog_relaunch(
-            tmp_path, fake_launcher, launcher_dir, path="whitelist"
+            tmp_path, fake_launcher, launcher_dir
         )
         assert result.returncode == 0, (
             f"Relaunch without last-launch.json exited {result.returncode}.\n"
@@ -229,7 +199,7 @@ class TestRelaunchLogNamesEngine:
         fake_launcher = _make_fake_launcher(tmp_path)
 
         result = _run_watchdog_relaunch(
-            tmp_path, fake_launcher, launcher_dir, path="whitelist"
+            tmp_path, fake_launcher, launcher_dir
         )
         # The log goes to stderr via our stub write_log.
         log_output = result.stderr

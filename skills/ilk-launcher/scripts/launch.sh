@@ -24,7 +24,10 @@ DEFAULT_TIMEOUT=30
 # Kept in sync with _resolve_effective_window.ILK_MAX_ITERATION_TIMEOUT_MIN.
 ILK_MAX_ITERATION_TIMEOUT_MIN=120
 VALID_ENGINES="claude codex claude-worker claude-manager"
-DEFAULT_ENGINE="claude"
+# Deliberate: a forgot-the-flag spawn lands on a worker home, never the
+# primary account.  The engine system exists to keep loops OFF the primary
+# (see resolve_engine precedence below); the default must match that intent.
+DEFAULT_ENGINE="claude-worker"
 
 # Runner scripts keyed by engine name
 runner_script_for_engine() {
