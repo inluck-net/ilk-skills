@@ -217,3 +217,22 @@ def test_plain_repo_path_unchanged() -> None:
     assert "kira-cloudflare" in row
     # Must NOT contain brackets — that's the worktree grammar.
     assert "[" not in row, f"plain path got worktree format: {row}"
+
+
+def test_hyphenated_worktree_composite_renders_correctly() -> None:
+    """The resolver creates hyphenated composites on disk:
+    ``…/kira-cloudflare-worktrees/pv-5611``.  Strip the suffix to recover
+    the repo name.
+    """
+    row = _row([_entry(
+        repo_path="/Users/chad/Projects/keyreply/kira-cloudflare-worktrees/pv-5611",
+    )])
+    assert "kira-cloudflare [pv-5611]" in row, f"got: {row}"
+
+
+def test_hyphenated_scratch_worktree_composite_renders_correctly() -> None:
+    """Same for ``scratch-worktrees`` composites."""
+    row = _row([_entry(
+        repo_path="/Users/chad/Projects/keyreply/kira-cloudflare-scratch-worktrees/resolver",
+    )])
+    assert "kira-cloudflare [resolver]" in row, f"got: {row}"

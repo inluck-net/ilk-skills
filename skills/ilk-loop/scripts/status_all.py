@@ -665,6 +665,25 @@ def resolve_project_status(project_dir: Path) -> dict:
         master_parked_reason=master_parked_reason,
     )
 
+    # ── stale terminal state clearing ──────────────────────────────────
+    # When the sentinel carries a terminal state from a previous run but
+    # the current batch is active with work, the exit reason is stale —
+    # the batch was queued after that exit and never ran.  Clear the
+    # display state so the renderer doesn't pair a stale exit reason
+    # with the current batch name (tray-names-what-it-names defect 2).
+    #
+    # ship_integrity_violation is EXCLUDED: a violation-parked batch is
+    # owed work that needs human diagnosis — hiding it was the kira pv6
+    # gap.  parked_reason already carries the park sentence; the state
+    # must stay visible so the renderer shows it.
+    if (
+        sentinel.get("state") not in ("running", "none")
+        and strict_active
+        and next_subplan
+        and sentinel.get("state") != "ship_integrity_violation"
+    ):
+        sentinel = {**sentinel, "state": "none"}
+
     # Action flags for tray/xbar (SP1: tray-actions-render).
     # runnable: has a dispatchable master with pending/in-progress work AND not currently running AND not blocked.
     # parked: blacklisted with no valid resolve-ack (project needs /ilk-resume),

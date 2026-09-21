@@ -190,13 +190,30 @@ def render_xbar(
         short_key = key
         rp = (e.get("repo_path") or "").replace("\\", "/").rstrip("/")
         if rp:
-            parts = rp.rsplit("/", 2)
-            # Worktree-keyed project: repo_path ends with
-            # <repo>/worktrees/<name> or <repo>/scratch-worktrees/<name>.
-            # Display as "repo-name [worktree-name]" — the bare worktree
-            # dir (e.g. "pv-5611") is uninformative on its own.
-            if len(parts) >= 3 and parts[-2] in ("worktrees", "scratch-worktrees"):
-                short_key = f"{parts[-3]} [{parts[-1]}]"
+            # Worktree-keyed project: the parent dir's basename contains
+            # "worktrees" or "scratch-worktrees" — either as a nested
+            # directory (…/kira-cloudflare/worktrees/pv-5611) or as a
+            # hyphenated composite (…/kira-cloudflare-worktrees/pv-5611,
+            # the form the resolver actually creates on disk).  Display
+            # as "repo-name [worktree-name]" — the bare worktree dir
+            # (e.g. "pv-5611") is uninformative on its own.
+            rp_path = Path(rp)
+            parent = rp_path.parent.name
+            wt = None
+            # Case 1: nested dir (…/kira-cloudflare/worktrees/pv-5611 or
+            # …/kira-cloudflare/scratch-worktrees/resolver).  Checked FIRST
+            # because "scratch-worktrees" ends with "-worktrees" — the suffix
+            # case would strip to "scratch" instead of using the grandparent.
+            if parent in ("worktrees", "scratch-worktrees"):
+                wt = rp_path.parent.parent.name
+            # Case 2: hyphenated composite (…/kira-cloudflare-worktrees/pv-5611)
+            if wt is None:
+                for suffix in ("-scratch-worktrees", "-worktrees"):
+                    if parent.endswith(suffix):
+                        wt = parent[: -len(suffix)].rstrip("-") or parent
+                        break
+            if wt:
+                short_key = f"{wt} [{rp_path.name}]"
             else:
                 short_key = rp.rsplit("/", 1)[-1]
         # Queue badge, AHEAD of the project name (operator spec 2026-09-20):
