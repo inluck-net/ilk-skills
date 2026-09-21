@@ -3978,6 +3978,121 @@ def lint_batch_verification_scope_mismatch(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── No-diff step must declare --allow-empty ─────────────────────────────────
+#
+# A step whose only deliverable is ``## Findings`` prose — or a record written
+# under ``~/.ilk-data``, outside the repo by design — produces **no repo diff**,
+# so a plain ``git commit`` has nothing to commit and the step ends uncommitted.
+# The sub-plan is then reverted *after* the work is done, the code change
+# survives as an orphan, and the iteration is spent.
+#
+# Measured on gh-resolve 2026-09-22: ``handoff-verify-gate-empty`` ran
+# 01:23:02-01:35:38, changed ``handoff.py``, committed ``#step-1``, ``#step-2``,
+# ``#ship`` — and no ``#step-0``, because step 0's deliverable was Findings prose.
+#
+# The fix: a no-diff step declares itself and carries
+# ``git commit --allow-empty -m "... [plan:<slug>#step-N]"``.
+# See decomposition-principles.md §8.
+
+# Patterns that indicate a step's deliverable is non-repo (only Findings or
+# external data root paths).
+_FINDINGS_ONLY_RE = re.compile(
+    r"##\s*Findings\b", re.IGNORECASE
+)
+
+# External data root patterns (~/.ilk-data, $ILK_DATA_HOME, etc.).
+_EXTERNAL_DATA_ROOT_RE = re.compile(
+    r"~/\.ilk-data"
+    r"|\$ILK_DATA_HOME"
+    r"|\$ILK_DATA_DIR",
+    re.IGNORECASE,
+)
+
+# A commit line in a step (the ``- Commit: `...` `` pattern).
+_COMMIT_LINE_RE = re.compile(
+    r"^\s*-\s*Commit:\s*`([^`]+)`", re.MULTILINE
+)
+
+# A repo file path indicator (has a file extension or path separator).
+_REPO_FILE_PATH_RE = re.compile(
+    r"(?:^|\s)(?:[-*+]\s*)?(?:Edit|Write|Create|Modify|Update|Change)\s+`([^`]+)`",
+    re.IGNORECASE,
+)
+
+
+def _extract_step_sections(body: str) -> list[tuple[int, str, str]]:
+    """Return (step_no, heading, section_text) for each ``### Step N`` section."""
+    steps: list[tuple[int, str, str]] = []
+    for m in re.finditer(r"^###\s+Step\s+(\d+)\b[^\n]*", body, re.MULTILINE):
+        step_no = int(m.group(1))
+        heading = m.group(0).strip()
+        start = m.start()
+        # Find the next step heading or end of body.
+        next_step = re.search(r"^###\s+Step\s+\d+\b", body[m.end():], re.MULTILINE)
+        end = m.end() + next_step.start() if next_step else len(body)
+        section = body[start:end]
+        steps.append((step_no, heading, section))
+    return steps
+
+
+def _step_has_repo_diff(step_text: str) -> bool:
+    """True if the step describes editing/writing a repo file."""
+    # Check for explicit file-editing verbs.
+    if _REPO_FILE_PATH_RE.search(step_text):
+        return True
+    # Check for path-like tokens that are NOT under external data root.
+    # A step that mentions a .py, .ts, .js, etc. file is likely editing it.
+    file_ext_re = re.compile(
+        r"`([^`]*)\.(?:py|ts|js|tsx|jsx|mjs|json|yaml|yml|md|sh|ps1|css|html|vue|jsx)`"
+    )
+    for m in file_ext_re.finditer(step_text):
+        path = m.group(1) + m.group(0).split(".")[-1].rstrip("`")
+        # Skip paths that are under the external data root.
+        if _EXTERNAL_DATA_ROOT_RE.search(path):
+            continue
+        # This is a repo file path.
+        return True
+    return False
+
+
+def lint_no_diff_step(text: str, slug: str) -> list[str]:
+    """Flag a step whose deliverable is non-repo but lacks --allow-empty in its commit line."""
+    findings: list[str] = []
+    body = _strip_frontmatter(text)
+
+    for step_no, heading, section in _extract_step_sections(body):
+        # Check if the step describes a non-repo deliverable.
+        has_findings = bool(_FINDINGS_ONLY_RE.search(section))
+        has_external_data = bool(_EXTERNAL_DATA_ROOT_RE.search(section))
+        has_repo_file = _step_has_repo_diff(section)
+
+        # A step is non-repo if it names Findings or external data AND has no repo file edits.
+        is_non_repo = (has_findings or has_external_data) and not has_repo_file
+        if not is_non_repo:
+            continue
+
+        # Extract the commit line for this step.
+        commit_match = _COMMIT_LINE_RE.search(section)
+        if not commit_match:
+            continue  # No commit line at all — not our concern (other lints handle this).
+
+        commit_cmd = commit_match.group(1)
+        # Check if --allow-empty is present.
+        if "--allow-empty" in commit_cmd:
+            continue  # Properly declared — no finding.
+
+        # This is a no-diff step without --allow-empty — flag it.
+        findings.append(
+            f"{slug}: {heading} describes a non-repo deliverable "
+            f"(Findings prose or external data root path) but its commit line "
+            f"lacks --allow-empty. A step with no repo diff needs "
+            f"'git commit --allow-empty -m \"... [plan:<slug>#step-N]\"' "
+            f"to satisfy ship_integrity. See decomposition-principles.md §8."
+        )
+
+    return findings
+
+
 ALL_CHECKS = (
     lint_gate_budget,
     lint_verification_attribution_unmeasured,
@@ -4006,6 +4121,7 @@ ALL_CHECKS = (
     lint_gate_executable_on_driver_path,
     lint_gate_placeholder_unresolved,
     lint_redfirst_step0_under_frontmatter_gate,
+    lint_no_diff_step,
     lint_exit_status_discarded,
     lint_broken_process_wait,
     lint_wholesuite_gate_outside_verification_subplan,
