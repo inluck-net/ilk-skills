@@ -48,6 +48,14 @@ from loop_status import (  # noqa: E402
 from plan_status import _RUNNABLE_SUBPLAN_STATUSES, normalize_master_status  # noqa: E402
 from plan_status import master_has_nonshipped  # noqa: E402
 
+# ── role registry reader ─────────────────────────────────────────────
+# The role registry is the single source of truth for role→provider
+# mapping.  status_all reads it to populate the `roles` block that the
+# tray consumes for the Models section.  Design: role-tier-registry-design.md §3.
+_ROLE_REGISTRY_CANDIDATES = [
+    Path.home() / ".ilk-data" / "role-registry.json",
+]
+
 
 # ── sentinel state vocabulary ──────────────────────────────────────────
 # The runner's Finalize-Sentinel treats "running" as the ONLY live state;
@@ -56,6 +64,123 @@ from plan_status import master_has_nonshipped  # noqa: E402
 # not "running" means the run is over, regardless of PID — the PID may
 # have been recycled by the OS.  See master-status-vocab-and-stale-sentinel.
 LIVE_SENTINEL_STATES = {"running"}
+
+
+# ── role registry helpers ─────────────────────────────────────────────
+
+def _expand_home(path_str: str) -> Path:
+    """Expand ~ to the real home directory."""
+    if path_str.startswith("~/"):
+        return Path.home() / path_str[2:]
+    if path_str == "~":
+        return Path.home()
+    return Path(path_str)
+
+
+def _base_url_host(url: str) -> str:
+    """Extract the host portion from an ANTHROPIC_BASE_URL."""
+    url = url or ""
+    if "://" not in url:
+        return url or "(unset)"
+    tail = url.split("://", 1)[1]
+    return tail.split("/", 1)[0] or "(unset)"
+
+
+def _read_role_registry() -> dict:
+    """Read the role registry from the first candidate path that exists.
+
+    Returns the parsed JSON dict (with a ``roles`` key), or an empty
+    dict on any failure.  Never raises: status_all feeds a 10s refresh
+    and a missing registry must not blank the panel for every project.
+    """
+    env_override = os.environ.get("ILK_ROLE_REGISTRY")
+    candidates = (
+        [Path(env_override)] if env_override else _ROLE_REGISTRY_CANDIDATES
+    )
+    for p in candidates:
+        try:
+            if p.is_file():
+                data = json.loads(p.read_text(encoding="utf-8-sig"))
+                if isinstance(data, dict) and data.get("version") == 1:
+                    return data
+        except (OSError, json.JSONDecodeError, ValueError):
+            continue
+    return {}
+
+
+def _roles_block() -> list[dict]:
+    """Build the ``roles`` payload for the tray's Models section.
+
+    Returns a list of dicts, one per registry role, each carrying:
+    ``name``, ``home``, ``model``, ``provider_host``, ``auth``.
+    Design: provider-switching-and-quota-fallback.md §10, AC1.
+    """
+    registry = _read_role_registry()
+    roles = registry.get("roles", {})
+    if not isinstance(roles, dict):
+        return []
+
+    result = []
+    for role_name in sorted(roles):
+        role = roles[role_name]
+        home = _expand_home(str(role.get("home", "")))
+        # Read the env block from the home's settings.json to get the
+        # live configured model and base URL.
+        env = {}
+        settings = home / "settings.json"
+        if settings.is_file():
+            try:
+                env = (json.loads(settings.read_text(encoding="utf-8-sig"))
+                       or {}).get("env") or {}
+            except (OSError, json.JSONDecodeError):
+                pass
+        model = env.get("ANTHROPIC_MODEL") or role.get("model", "")
+        provider_host = _base_url_host(env.get("ANTHROPIC_BASE_URL", ""))
+        auth = role.get("auth", "custom")
+        result.append({
+            "name": role_name,
+            "home": str(home),
+            "model": model,
+            "provider_host": provider_host,
+            "auth": auth,
+        })
+    return result
+
+
+def _providers_block() -> list[dict]:
+    """Build the ``providers`` payload for the tray's Models submenu.
+
+    Returns a list of dicts, one per CCSwitch provider, each carrying:
+    ``id``, ``name``, ``model``, ``base_url_host``.
+    Design: provider-switching-and-quota-fallback.md §10, AC2.
+
+    Never raises: status_all feeds a 10s refresh and a missing ccswitch
+    must not blank the panel for every project.
+    """
+    import subprocess as _sp
+    try:
+        result = _sp.run(
+            ["ccswitch_import", "list", "--format", "json"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=30,
+        )
+        if result.returncode != 0:
+            return []
+        providers = json.loads(result.stdout)
+        if not isinstance(providers, list):
+            return []
+        return [
+            {
+                "id": p.get("id", ""),
+                "name": p.get("name", ""),
+                "model": p.get("model", ""),
+                "base_url_host": _base_url_host(p.get("base_url", "")),
+            }
+            for p in providers
+            if p.get("id")  # skip entries without an id
+        ]
+    except (OSError, json.JSONDecodeError, ValueError, FileNotFoundError):
+        return []
 
 
 # ── pid liveness (cross-platform) ───────────────────────────────────
@@ -726,6 +851,17 @@ def resolve_project_status(project_dir: Path) -> dict:
     repo_path = _resolve_repo_path(project_dir, key)
     orphaned = bool(repo_path) and not Path(repo_path).exists()
 
+    # Roles block: per-registry-role provider state for the tray's Models
+    # section.  Populated once per project (the registry is shared across
+    # all projects, but each project's status_all call reads it fresh).
+    # Design: provider-switching-and-quota-fallback.md §10, AC1.
+    roles = _roles_block()
+
+    # Providers block: all available CCSwitch providers for the tray's
+    # Models submenu.  Shared across all projects (the ccswitch store is
+    # per-host, not per-project).  Design: §10, AC2.
+    providers = _providers_block()
+
     return {
         "project_key": key,
         "path": str(project_dir),
@@ -742,6 +878,8 @@ def resolve_project_status(project_dir: Path) -> dict:
         "sentinel": sentinel,
         "last_class": last_class,
         "model": model,
+        "roles": roles,
+        "providers": providers,
         "runnable": runnable,
         "parked": parked,
         "parked_reason": master_parked_reason,

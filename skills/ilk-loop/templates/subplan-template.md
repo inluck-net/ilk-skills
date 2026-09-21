@@ -230,6 +230,9 @@ local_checks:
 - Commit: `<type>(<scope>): <summary> [plan:<slug>#step-0]`
   **Note:** If the remote is shared (check `.ilk-remote-type`), omit the
   `[plan:<slug>#step-N]` trailer from the commit message.
+  **No-diff step:** If this step's only deliverable is `## Findings` prose
+  or a record under `~/.ilk-data` (no repo diff), use
+  `git commit --allow-empty -m "..."` to satisfy ship_integrity.
 
 > **Red-first step-0 rule.** If this step's purpose is to *record* failing
 > tests (the gate command is designed to exit non-zero), the gate MUST assert

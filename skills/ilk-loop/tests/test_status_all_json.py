@@ -502,32 +502,116 @@ class TestStaleExitReasonPairing:
         )
 
 
-# ── tray-shows-and-switches step-0: roles block absent (RED) ─────────
+# ── AC-roles: status_all.py --json carries a roles block ─────────────
 
+class TestRolesBlock:
+    """status_all.py --json includes a roles block per registry role.
 
-class TestRolesBlockAbsent:
-    """status_all --json must publish a roles block per registry role.
-
-    AC-1 of tray-shows-and-switches: per role the payload carries home,
-    configured model, provider host, auth mode.  This red test asserts
-    the field does NOT yet exist — the next step (step 1) adds it.
+    AC1: status_all.py --json carries, per registry role: home,
+    configured model, provider host, auth mode.
     """
 
-    def test_roles_key_absent_in_payload(self):
-        """A project entry must carry a 'roles' list once the feature lands.
+    def _make_role_registry(self, roles: dict) -> Path:
+        """Write a role-registry.json to ILK_DATA and return its path."""
+        registry = {"version": 1, "roles": roles}
+        path = ILK_DATA / "role-registry.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(registry, indent=2), encoding="utf-8")
+        return path
 
-        Today (step 0) the key is missing — this test is intentionally red.
-        """
-        _setup_project("roles-absent", pid=os.getpid())
-        entry = _status_all("roles-absent")
-        assert "roles" in entry, (
-            "payload missing 'roles' key — expected a list of role dicts "
-            "with home, configured_model, provider_host, auth_mode"
+    def _status_all_with_registry(self, name: str, roles: dict) -> dict:
+        """Run status_all --json with a custom role registry."""
+        registry_path = self._make_role_registry(roles)
+        env = {
+            **os.environ,
+            "ILK_DATA_HOME": str(ILK_DATA),
+            "ILK_ROLE_REGISTRY": str(registry_path),
+        }
+        result = subprocess.run(
+            [sys.executable, str(STATUS_ALL), "--json"],
+            capture_output=True, text=True, env=env,
+            encoding="utf-8", errors="replace",
         )
+        assert result.returncode == 0, f"exit {result.returncode}: {result.stderr}"
+        key = _project_key(SCRATCH / "projects" / name)
+        data = json.loads(result.stdout)
+        return next(e for e in data if e["project_key"] == key)
 
-    def test_roles_is_a_list(self):
-        """The roles value must be a list (possibly empty if no registry)."""
-        _setup_project("roles-type", pid=os.getpid())
-        entry = _status_all("roles-type")
-        roles = entry.get("roles")
-        assert isinstance(roles, list), f"roles should be a list, got {type(roles)}"
+    def test_roles_block_present_with_registry(self):
+        """When a role registry exists, the payload carries a roles list."""
+        _setup_project("roles-basic", pid=99999999, state="none")
+        entry = self._status_all_with_registry("roles-basic", {
+            "coder": {
+                "tier": "worker",
+                "home": "~/.claude-worker",
+                "provider": "Xiaomi MiMo V2.5 - Pro",
+                "model": "mimo-v2.5-pro",
+            },
+        })
+        assert "roles" in entry, f"missing roles key: {entry.keys()}"
+        assert isinstance(entry["roles"], list)
+        assert len(entry["roles"]) >= 1
+
+    def test_roles_block_has_required_fields(self):
+        """Each role entry carries name, home, model, provider_host, auth."""
+        _setup_project("roles-fields", pid=99999999, state="none")
+        entry = self._status_all_with_registry("roles-fields", {
+            "manager": {
+                "tier": "manager",
+                "home": "~/.claude-manager",
+                "provider": "Claude Official",
+                "model": "opus",
+                "auth": "official",
+            },
+        })
+        roles = entry["roles"]
+        assert len(roles) >= 1
+        role = next(r for r in roles if r["name"] == "manager")
+        for key in ("name", "home", "model", "provider_host", "auth"):
+            assert key in role, f"role missing '{key}': {role}"
+        assert role["auth"] == "official"
+
+    def test_roles_block_sorted_by_name(self):
+        """Roles are sorted alphabetically by name."""
+        _setup_project("roles-sorted", pid=99999999, state="none")
+        entry = self._status_all_with_registry("roles-sorted", {
+            "zebra": {"tier": "worker", "home": "~/.z", "model": "m"},
+            "alpha": {"tier": "worker", "home": "~/.a", "model": "m"},
+            "middle": {"tier": "worker", "home": "~/.m", "model": "m"},
+        })
+        names = [r["name"] for r in entry["roles"]]
+        assert names == sorted(names), f"roles not sorted: {names}"
+
+    def test_roles_block_empty_without_registry(self):
+        """Without a role registry, roles is an empty list."""
+        _setup_project("roles-empty", pid=99999999, state="none")
+        # Use a non-existent registry path.
+        env = {
+            **os.environ,
+            "ILK_DATA_HOME": str(ILK_DATA),
+            "ILK_ROLE_REGISTRY": str(ILK_DATA / "nonexistent-registry.json"),
+        }
+        result = subprocess.run(
+            [sys.executable, str(STATUS_ALL), "--json"],
+            capture_output=True, text=True, env=env,
+            encoding="utf-8", errors="replace",
+        )
+        assert result.returncode == 0, f"exit {result.returncode}: {result.stderr}"
+        key = _project_key(SCRATCH / "projects" / "roles-empty")
+        data = json.loads(result.stdout)
+        entry = next(e for e in data if e["project_key"] == key)
+        assert entry["roles"] == [], f"expected empty roles, got {entry['roles']}"
+
+    def test_roles_block_auth_defaults_to_custom(self):
+        """Roles without an explicit auth field get auth='custom'."""
+        _setup_project("roles-auth-default", pid=99999999, state="none")
+        entry = self._status_all_with_registry("roles-auth-default", {
+            "coder": {
+                "tier": "worker",
+                "home": "~/.claude-worker",
+                "provider": "MiMo",
+                "model": "mimo-v2.5-pro",
+            },
+        })
+        role = next(r for r in entry["roles"] if r["name"] == "coder")
+        assert role["auth"] == "custom", f"expected auth='custom', got {role['auth']}"

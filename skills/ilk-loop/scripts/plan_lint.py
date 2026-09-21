@@ -3868,114 +3868,228 @@ def lint_duplicate_frontmatter_key(text: str, slug: str) -> list[str]:
     return findings
 
 
-# ── Slug identity agreement (AC4) ────────────────────────────────────────────
+# ── Slug-identity mismatch guard ──────────────────────────────────────────────
 #
-# A sub-plan has two derivable identities: the filename-derived slug
-# (after stripping the YYYY-MM-DD prefix) and the frontmatter `plan:` field.
-# When they differ, the trailerless ledger union (ship_integrity) and the
-# plan-time reader disagree on which slug to look up.  pv-5611 measured this:
-# the run reverted correct work because the ledger was keyed by filename slug
-# while ship_integrity looked up frontmatter slug.
+# A sub-plan has two derivable identities:
+#   1. ``_slug_from_filename(fname)`` — strips date prefix + .md extension
+#   2. ``frontmatter plan:`` — the explicit field
 #
-# This lint catches NEW plans that introduce the split.  Existing files whose
-# two identities already agree are unaffected.
+# When they disagree, readers that pick different identities silently diverge.
+# This parked the pv-5611 batch for ~19 hours (measured 2026-09-22): the
+# filename was ``2026-09-21-pv5-verify.md`` (slug ``pv5-verify``) but the
+# frontmatter said ``plan: pv5-round5-verify``.  The ledger row was keyed
+# ``pv5-verify`` (the filename slug), but ship_integrity looked up
+# ``pv5-round5-verify`` (the frontmatter slug) and reverted the work.
+#
+# This lint catches the divergence at plan time so new plans cannot introduce
+# the split.  The union in ship_integrity (step 1) rescues existing plans
+# already on disk.
 
-_DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:[a-z])?-")
+try:  # plan_slug lives beside this script
+    from plan_slug import strip_date_prefix as _strip_date_prefix  # type: ignore[import-untyped]
+except ImportError:  # pragma: no cover - direct-script invocation
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from plan_slug import strip_date_prefix as _strip_date_prefix  # type: ignore[import-untyped]
 
 
-def lint_slug_identity_agreement(text: str, slug: str) -> list[str]:
+def _extract_plan_field(text: str) -> str:
+    """Return the frontmatter ``plan:`` value, or empty string if absent."""
+    m = re.match(r"^---\n.*?\n---\n", text, re.S)
+    if not m:
+        return ""
+    fm = text[m.start():m.end()]
+    for line in fm.splitlines():
+        s = line.strip()
+        if s.startswith("plan:"):
+            return s[len("plan:"):].strip().strip("'\"")
+    return ""
+
+
+def lint_slug_identity_mismatch(text: str, slug: str) -> list[str]:
     """HARD finding when frontmatter plan: differs from filename-derived slug.
 
-    AC-4: the two identities must agree, or the trailerless ledger union
-    and the plan reader will disagree on which slug to look up.
+    *slug* is the filename stem (e.g. ``2026-09-21-pv5-verify``).  The
+    filename-derived slug strips the date prefix: ``pv5-verify``.
     """
     findings: list[str] = []
-    # slug is the filename stem (e.g. "2026-09-21-pv5-verify").
-    filename_slug = _DATE_PREFIX_RE.sub("", slug)
-    plan_field = ""
-    for line in text.splitlines():
-        s = line.strip()
-        if s.startswith("plan:") and not plan_field:
-            plan_field = s[len("plan:"):].strip().strip("'\"")
-            break
-    # Strip date prefix from the plan field too — many plans carry the full
-    # date-prefixed slug in frontmatter (e.g. "plan: 2026-06-15-foo").  That
-    # is the same identity as "foo" after stripping.  Only flag genuinely
-    # different slugs (the pv-5611 shape: "pv5-round5-verify" vs "pv5-verify").
-    plan_slug = _DATE_PREFIX_RE.sub("", plan_field) if plan_field else ""
-    # Skip template placeholders (e.g. "<short-slug>" in README.md).
-    if plan_field and "<" in plan_field:
-        return findings
-    if plan_slug and plan_slug != filename_slug:
-        findings.append(
-            f"HARD {slug}: frontmatter `plan: {plan_field}` differs from "
-            f"filename-derived slug `{filename_slug}` (both after date-prefix "
-            f"stripping).  The trailerless ledger union and the plan reader "
-            f"will disagree on which identity to look up (pv-5611).  Either "
-            f"rename the file to match the plan field, or change the plan "
-            f"field to match the filename."
-        )
+    plan_field = _extract_plan_field(text)
+    if not plan_field:
+        return findings  # no plan: field — other lints catch that
+    filename_slug = _strip_date_prefix(slug)
+    if not filename_slug:
+        return findings  # no date prefix to strip — not a dated sub-plan
+    if filename_slug == plan_field:
+        return findings  # identities agree
+    findings.append(
+        f"HARD {slug}: sub-plan's two slug identities disagree — "
+        f"filename-derived '{filename_slug}' vs frontmatter plan: '{plan_field}'. "
+        f"Readers that pick different identities silently diverge "
+        f"(pv-5611 parked 19h). Either rename the file to match plan:, "
+        f"or change plan: to match the filename."
+    )
     return findings
 
 
-# ── Batch-verification scope mismatch (AC6) ─────────────────────────────────
+# ── Batch-verification / scope-auto mismatch guard ───────────────────────────
 #
 # A verification sub-plan that says "full suite" in its body but gates with
-# --scope auto is mechanically detectable: auto selects a subset, so it
-# cannot enforce a full-suite mandate.  Measured 2026-09-21 on gh-resolve:
-# auto selected 9 files / 228 tests against 5608 collected, wrote
-# verdict: pass, and a tree with 11 real failures reported green.
+# ``--scope auto`` has two halves that disagree about what it is.  Measured
+# 2026-09-21 on gh-resolve: ``auto`` selected 9 files / 228 tests against
+# 5608 collected, wrote ``verdict: pass``, and a tree with 11 real failures
+# reported green.
+#
+# Same family as the slug-identity mismatch: two halves of a plan disagree.
 
 _FULL_SUITE_BODY_RE = re.compile(
-    r"full\s+(?:test\s+)?suite|full\s+pass|run\s+(?:the\s+)?(?:entire|full)\s+suite",
-    re.IGNORECASE,
+    r"\bfull[\s-]*suite\b", re.IGNORECASE
 )
-_AUTO_SCOPE_GATE_RE = re.compile(r"--scope\s+auto\b")
+
+_SCOPE_AUTO_RE = re.compile(
+    r"--scope\s+auto\b"
+)
 
 
 def lint_batch_verification_scope_mismatch(text: str, slug: str) -> list[str]:
-    """HARD finding when a batch-verification sub-plan mandates a full suite
-    but gates with --scope auto.
-
-    AC-6: the two halves disagree about what the gate enforces.
-    """
+    """HARD finding when batch_verification + full-suite body + --scope auto."""
     findings: list[str] = []
-    # Check 1: batch_verification: true in frontmatter.
-    has_batch_verification = False
-    in_frontmatter = False
-    for line in text.splitlines():
-        s = line.strip()
-        if s == "---":
-            in_frontmatter = not in_frontmatter
-            continue
-        if in_frontmatter and s.startswith("batch_verification:"):
-            val = s[len("batch_verification:"):].strip().strip("'\"")
-            if val.lower() in ("true", "yes", "1"):
-                has_batch_verification = True
-            break
-    if not has_batch_verification:
+    # Must have batch_verification: true in frontmatter.
+    m = re.match(r"^---\n.*?\n---\n", text, re.S)
+    if not m:
         return findings
+    fm = text[m.start():m.end()]
+    if not re.search(r"^batch_verification:\s*true\s*$", fm, re.M):
+        return findings  # not a verification sub-plan
+    body = text[m.end():]
+    # Body must mandate a full suite.
+    if not _FULL_SUITE_BODY_RE.search(body):
+        return findings
+    # Gate must use --scope auto.
+    commands = _extract_all_local_checks_commands(text)
+    has_auto = any(_SCOPE_AUTO_RE.search(cmd) for cmd in commands)
+    if not has_auto:
+        return findings
+    findings.append(
+        f"HARD {slug}: verification sub-plan mandates a full suite in its "
+        f"body but gates with '--scope auto'. auto selects a subset and "
+        f"can miss real failures (gh-resolve 2026-09-21: 228/5608 tests, "
+        f"11 real failures reported green). Use '--scope full' when the "
+        f"plan mandates one."
+    )
+    return findings
 
+
+# ── No-diff step must declare --allow-empty ─────────────────────────────────
+#
+# A step whose only deliverable is ``## Findings`` prose — or a record written
+# under ``~/.ilk-data``, outside the repo by design — produces **no repo diff**,
+# so a plain ``git commit`` has nothing to commit and the step ends uncommitted.
+# The sub-plan is then reverted *after* the work is done, the code change
+# survives as an orphan, and the iteration is spent.
+#
+# Measured on gh-resolve 2026-09-22: ``handoff-verify-gate-empty`` ran
+# 01:23:02-01:35:38, changed ``handoff.py``, committed ``#step-1``, ``#step-2``,
+# ``#ship`` — and no ``#step-0``, because step 0's deliverable was Findings prose.
+#
+# The fix: a no-diff step declares itself and carries
+# ``git commit --allow-empty -m "... [plan:<slug>#step-N]"``.
+# See decomposition-principles.md §8.
+
+# Patterns that indicate a step's deliverable is non-repo (only Findings or
+# external data root paths).
+_FINDINGS_ONLY_RE = re.compile(
+    r"##\s*Findings\b", re.IGNORECASE
+)
+
+# External data root patterns (~/.ilk-data, $ILK_DATA_HOME, etc.).
+_EXTERNAL_DATA_ROOT_RE = re.compile(
+    r"~/\.ilk-data"
+    r"|\$ILK_DATA_HOME"
+    r"|\$ILK_DATA_DIR",
+    re.IGNORECASE,
+)
+
+# A commit line in a step (the ``- Commit: `...` `` pattern).
+_COMMIT_LINE_RE = re.compile(
+    r"^\s*-\s*Commit:\s*`([^`]+)`", re.MULTILINE
+)
+
+# A repo file path indicator (has a file extension or path separator).
+_REPO_FILE_PATH_RE = re.compile(
+    r"(?:^|\s)(?:[-*+]\s*)?(?:Edit|Write|Create|Modify|Update|Change)\s+`([^`]+)`",
+    re.IGNORECASE,
+)
+
+
+def _extract_step_sections(body: str) -> list[tuple[int, str, str]]:
+    """Return (step_no, heading, section_text) for each ``### Step N`` section."""
+    steps: list[tuple[int, str, str]] = []
+    for m in re.finditer(r"^###\s+Step\s+(\d+)\b[^\n]*", body, re.MULTILINE):
+        step_no = int(m.group(1))
+        heading = m.group(0).strip()
+        start = m.start()
+        # Find the next step heading or end of body.
+        next_step = re.search(r"^###\s+Step\s+\d+\b", body[m.end():], re.MULTILINE)
+        end = m.end() + next_step.start() if next_step else len(body)
+        section = body[start:end]
+        steps.append((step_no, heading, section))
+    return steps
+
+
+def _step_has_repo_diff(step_text: str) -> bool:
+    """True if the step describes editing/writing a repo file."""
+    # Check for explicit file-editing verbs.
+    if _REPO_FILE_PATH_RE.search(step_text):
+        return True
+    # Check for path-like tokens that are NOT under external data root.
+    # A step that mentions a .py, .ts, .js, etc. file is likely editing it.
+    file_ext_re = re.compile(
+        r"`([^`]*)\.(?:py|ts|js|tsx|jsx|mjs|json|yaml|yml|md|sh|ps1|css|html|vue|jsx)`"
+    )
+    for m in file_ext_re.finditer(step_text):
+        path = m.group(1) + m.group(0).split(".")[-1].rstrip("`")
+        # Skip paths that are under the external data root.
+        if _EXTERNAL_DATA_ROOT_RE.search(path):
+            continue
+        # This is a repo file path.
+        return True
+    return False
+
+
+def lint_no_diff_step(text: str, slug: str) -> list[str]:
+    """Flag a step whose deliverable is non-repo but lacks --allow-empty in its commit line."""
+    findings: list[str] = []
     body = _strip_frontmatter(text)
 
-    # Check 2: body mandates a full suite.
-    has_full_suite_mandate = bool(_FULL_SUITE_BODY_RE.search(body))
+    for step_no, heading, section in _extract_step_sections(body):
+        # Check if the step describes a non-repo deliverable.
+        has_findings = bool(_FINDINGS_ONLY_RE.search(section))
+        has_external_data = bool(_EXTERNAL_DATA_ROOT_RE.search(section))
+        has_repo_file = _step_has_repo_diff(section)
 
-    # Check 3: a gate command uses --scope auto.
-    has_auto_scope = False
-    for cmd in _extract_all_local_checks_commands(text):
-        if _AUTO_SCOPE_GATE_RE.search(cmd):
-            has_auto_scope = True
-            break
+        # A step is non-repo if it names Findings or external data AND has no repo file edits.
+        is_non_repo = (has_findings or has_external_data) and not has_repo_file
+        if not is_non_repo:
+            continue
 
-    if has_full_suite_mandate and has_auto_scope:
+        # Extract the commit line for this step.
+        commit_match = _COMMIT_LINE_RE.search(section)
+        if not commit_match:
+            continue  # No commit line at all — not our concern (other lints handle this).
+
+        commit_cmd = commit_match.group(1)
+        # Check if --allow-empty is present.
+        if "--allow-empty" in commit_cmd:
+            continue  # Properly declared — no finding.
+
+        # This is a no-diff step without --allow-empty — flag it.
         findings.append(
-            f"HARD {slug}: batch_verification sub-plan mandates a full suite "
-            f"in its body but gates with `--scope auto`.  Auto selects a "
-            f"subset and cannot enforce a full-suite mandate (gh-resolve "
-            f"2026-09-21: 228/5608 tests, 11 real failures missed).  "
-            f"Change the gate to `--scope full` or relax the body mandate."
+            f"{slug}: {heading} describes a non-repo deliverable "
+            f"(Findings prose or external data root path) but its commit line "
+            f"lacks --allow-empty. A step with no repo diff needs "
+            f"'git commit --allow-empty -m \"... [plan:<slug>#step-N]\"' "
+            f"to satisfy ship_integrity. See decomposition-principles.md §8."
         )
+
     return findings
 
 
@@ -4007,13 +4121,14 @@ ALL_CHECKS = (
     lint_gate_executable_on_driver_path,
     lint_gate_placeholder_unresolved,
     lint_redfirst_step0_under_frontmatter_gate,
+    lint_no_diff_step,
     lint_exit_status_discarded,
     lint_broken_process_wait,
     lint_wholesuite_gate_outside_verification_subplan,
     lint_verification_subplan_hardcodes_suite,
     lint_tier_forbids_its_evidence,
     lint_duplicate_frontmatter_key,
-    lint_slug_identity_agreement,
+    lint_slug_identity_mismatch,
     lint_batch_verification_scope_mismatch,
 )
 

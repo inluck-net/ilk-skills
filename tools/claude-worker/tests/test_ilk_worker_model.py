@@ -222,12 +222,13 @@ class TestUse:
             )["env"]
             assert backup_env["ANTHROPIC_MODEL"] == before
 
-        # The probe ran under every worker home before success was reported.
+        # The probe ran under every registry home before success was reported.
         # Each home gets two probes: probe_config + probe_live.
         probed = env_ok_probe.probe_homes()
         assert sorted(probed) == sorted([
             str(env_ok_probe.main), str(env_ok_probe.main),
-            str(env_ok_probe.slot2), str(env_ok_probe.slot2)])
+            str(env_ok_probe.slot2), str(env_ok_probe.slot2),
+            str(env_ok_probe.manager), str(env_ok_probe.manager)])
         # Engine-precedence facts are part of the success report.
         assert "claude-worker" in result.stdout
 
