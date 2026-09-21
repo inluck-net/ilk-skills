@@ -434,3 +434,69 @@ class TestQueuedMasterIsCurrent:
         entry = _status_all("q-draft")
         assert entry["active_master"] == "", entry
         assert entry["blocked"] is False, entry
+
+
+# ── tray-names-what-it-names AC-2: stale exit-reason pairing ────────
+
+
+class TestStaleExitReasonPairing:
+    """A queued batch must NOT wear a previous batch's exit reason.
+
+    Defect measured 2026-09-21: the ilk-skills row showed
+    ``worker-model-switch … (selfmod_merge_failed)`` — that sentinel
+    state is run ``20260921-015814``'s exit (02:02), which predates the
+    batch queued at 11:5x.  The row asserts a failure the named batch
+    never had.
+
+    The fix is in ``status_all.py``: when the sentinel carries a
+    terminal state but the current batch was queued after the exit (the
+    sentinel's run predates the batch), the derived ``state`` must be
+    cleared — the renderer is pure and merely formats what status_all
+    provides.
+    """
+
+    def test_terminal_state_clears_for_active_batch(self):
+        """sentinel.state=selfmod_merge_failed + active master with work
+        → state should be cleared (the exit predates the current batch)."""
+        _setup_project(
+            "stale-exit", master_status="active",
+            sub_status="pending", pid=99999999,
+            state="selfmod_merge_failed", run_id="20260921-015814",
+        )
+        entry = _status_all("stale-exit")
+        # The sentinel's terminal state must NOT surface as the row's
+        # display state — the batch was queued after that exit.
+        assert entry["sentinel"]["state"] != "selfmod_merge_failed", (
+            f"stale terminal state leaked to payload: {entry['sentinel']}"
+        )
+
+    def test_terminal_state_surfaces_when_no_active_batch(self):
+        """sentinel.state=selfmod_merge_failed + no active/queued master
+        → state must still surface (there is no newer batch to supersede it)."""
+        _setup_project(
+            "no-batch-exit", master_status="shipped",
+            sub_status="shipped", pid=99999999,
+            state="selfmod_merge_failed", run_id="20260921-015814",
+        )
+        entry = _status_all("no-batch-exit")
+        # No active batch → the terminal state IS the current state.
+        assert entry["sentinel"]["state"] == "selfmod_merge_failed", (
+            f"terminal state should surface when no batch supersedes: {entry['sentinel']}"
+        )
+
+    def test_ship_integrity_violation_surfaces_even_with_active_batch(
+        self, live_ilk_pid
+    ):
+        """sentinel.state=ship_integrity_violation + active master
+        → state MUST surface (a violation-parked batch is owed work that
+        needs human diagnosis — hiding it was the kira pv6 gap)."""
+        _setup_project(
+            "violation-exit", master_status="active",
+            sub_status="in-progress", pid=live_ilk_pid,
+            state="ship_integrity_violation",
+            run_id="20260920-162655",
+        )
+        entry = _status_all("violation-exit")
+        assert entry["sentinel"]["state"] == "ship_integrity_violation", (
+            f"violation state must surface: {entry['sentinel']}"
+        )

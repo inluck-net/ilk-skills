@@ -182,3 +182,38 @@ def test_violation_parked_batch_row_offers_resume() -> None:
     # Parked work is human-held: the Resume action lives in this row.
     out = render_xbar([_parked_entry()])
     assert [l for l in out.splitlines() if l.startswith("--Resume ")]
+
+
+# ── tray-names-what-it-names AC-1: worktree-keyed project naming ─────
+
+
+def test_worktree_keyed_row_shows_repo_name_plus_bracketed_worktree() -> None:
+    """A project whose repo_path sits under a ``worktrees/`` parent must
+    render as ``<repo-name> [<worktree>]`` — e.g. ``kira-cloudflare [pv-5611]``.
+
+    Today's code (``render_xbar.py:193``) does ``rp.rsplit("/", 1)[-1]``,
+    which yields the bare worktree dir name ``pv-5611`` — the defect
+    measured by the operator on 2026-09-21.
+    """
+    row = _row([_entry(
+        repo_path="/Users/chad/Projects/keyreply/kira-cloudflare/worktrees/pv-5611",
+    )])
+    assert "kira-cloudflare [pv-5611]" in row, f"got: {row}"
+
+
+def test_scratch_worktree_keyed_row_shows_repo_name_plus_bracketed() -> None:
+    """Same fix for ``scratch-worktrees/`` — e.g. ``kira-cloudflare [resolver]``."""
+    row = _row([_entry(
+        repo_path="/Users/chad/Projects/keyreply/kira-cloudflare/scratch-worktrees/resolver",
+    )])
+    assert "kira-cloudflare [resolver]" in row, f"got: {row}"
+
+
+def test_plain_repo_path_unchanged() -> None:
+    """A plain repo path (no worktrees parent) renders exactly as today."""
+    row = _row([_entry(
+        repo_path="/Users/chad/Projects/keyreply/kira-cloudflare",
+    )])
+    assert "kira-cloudflare" in row
+    # Must NOT contain brackets — that's the worktree grammar.
+    assert "[" not in row, f"plain path got worktree format: {row}"
