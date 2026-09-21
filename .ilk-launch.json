@@ -10,18 +10,7 @@
       "timeout": 900,
       "path_prelude": "export PATH=\"/opt/homebrew/bin:$PATH\""
     },
-    "baseline_red": [
-      {
-        "node_id": "skills/ilk-watchdog/tests/test_label_action_totality.py",
-        "reason": "2 of 4 tests fail — Windows-only: spawn `powershell`, absent on macOS (FileNotFoundError). Re-measured 2026-09-21 at HEAD f4fb90a (g2-baseline-red-shrinks step 0): same 2 nodes fail, the file's other 2 pass.",
-        "as_of": "2026-09-21"
-      },
-      {
-        "node_id": "skills/ilk-watchdog/tests/test_watchdog_log_utf8.py::TestUtf8RoundTrip::test_write_read_utf8_no_bom",
-        "reason": "1 failed — Windows-only: spawns `powershell`, absent on macOS (FileNotFoundError). Re-measured 2026-09-21 at HEAD f4fb90a (g2-baseline-red-shrinks step 0): fails the same way; the file's other 4 tests pass.",
-        "as_of": "2026-09-21"
-      }
-    ],
+    "baseline_red": [],
     "hosts": [
       "chad-mbp",
       "rezmac"
