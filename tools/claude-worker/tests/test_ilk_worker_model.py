@@ -299,3 +299,96 @@ class TestRestore:
         assert result.returncode == 0, result.stdout + result.stderr
         assert _read_env(env_ok_probe.main)["ANTHROPIC_MODEL"] == MODEL_BEFORE_MAIN
         assert _read_env(env_ok_probe.slot2)["ANTHROPIC_MODEL"] == MODEL_BEFORE_SLOT
+
+
+# ── Registry sync (SP4 — registry-honest-after-switch) ────────────────────
+
+
+def _read_registry(env: Env) -> dict:
+    """Read the role registry as a dict."""
+    return json.loads(env.registry.read_text(encoding="utf-8"))
+
+
+def _registry_role_model(env: Env, role_name: str) -> str:
+    """Read a role's model from the registry."""
+    data = _read_registry(env)
+    return data["roles"][role_name]["model"]
+
+
+class TestRegistrySync:
+    """AC1-AC3 for registry-honest-after-switch.
+
+    Red-first: ``use`` currently does NOT update the registry.  These tests
+    assert the expected post-switch registry state so step 1 can implement
+    the sync and turn them green.
+    """
+
+    def test_use_updates_registry_model_for_matched_role(
+        self, env_ok_probe: Env
+    ):
+        """AC1: after a verified switch, the matched role's model in the
+        registry must match the target — not the stale pre-switch value."""
+        # Pre-condition: registry says mimo-v2.5-pro for coder.
+        assert _registry_role_model(env_ok_probe, "coder") == "mimo-v2.5-pro"
+
+        result = env_ok_probe.run("use", "manager")
+        assert result.returncode == 0, result.stdout + result.stderr
+
+        # After switch, registry must reflect the actual model.
+        assert _registry_role_model(env_ok_probe, "coder") == MODEL_TARGET
+
+    def test_use_updates_registry_provider_for_matched_role(
+        self, env_ok_probe: Env
+    ):
+        """AC1: provider field is synced alongside model."""
+        data_before = _read_registry(env_ok_probe)
+        assert data_before["roles"]["coder"]["provider"] == "Xiaomi MiMo V2.5 - Pro"
+
+        env_ok_probe.run("use", "manager")
+
+        data_after = _read_registry(env_ok_probe)
+        # Provider must come from the source role (manager).
+        assert data_after["roles"]["coder"]["provider"] == data_after["roles"]["manager"]["provider"]
+
+    def test_use_preserves_registry_formatting(self, env_ok_probe: Env):
+        """AC1: the registry rewrite preserves 2-space indent and key order."""
+        before = env_ok_probe.registry.read_text(encoding="utf-8")
+        env_ok_probe.run("use", "manager")
+        after = env_ok_probe.registry.read_text(encoding="utf-8")
+        # Must still be valid JSON with indent=2.
+        data = json.loads(after)
+        assert "roles" in data
+        assert "coder" in data["roles"]
+        # Key order within the role must be preserved (tier, home, provider, model).
+        role_keys = list(data["roles"]["coder"].keys())
+        assert role_keys.index("tier") < role_keys.index("home")
+        assert role_keys.index("provider") < role_keys.index("model")
+
+    def test_show_no_mismatch_after_registry_sync(self, env_ok_probe: Env):
+        """AC1: after sync, show prints no mismatch line for the matched role."""
+        env_ok_probe.run("use", "manager")
+        result = env_ok_probe.run("show")
+        assert result.returncode == 0
+        assert "mismatch" not in result.stdout.lower()
+
+    def test_failed_probe_rolls_back_registry(self, env_bad_probe: Env):
+        """AC2: a probe that reports the wrong model rolls back the registry
+        to byte-identical to its pre-attempt state."""
+        registry_before = env_bad_probe.registry.read_bytes()
+        result = env_bad_probe.run("use", "manager")
+        assert result.returncode != 0  # probe failed
+
+        registry_after = env_bad_probe.registry.read_bytes()
+        assert registry_after == registry_before, (
+            "registry changed after a failed probe — must be rolled back"
+        )
+
+    def test_failed_probe_rolls_back_homes(self, env_bad_probe: Env):
+        """AC2: homes are also rolled back on probe failure."""
+        env_main_before = _read_env(env_bad_probe.main)
+        env_slot_before = _read_env(env_bad_probe.slot2)
+
+        env_bad_probe.run("use", "manager")
+
+        assert _read_env(env_bad_probe.main) == env_main_before
+        assert _read_env(env_bad_probe.slot2) == env_slot_before
