@@ -199,13 +199,23 @@ class TestPureFunction:
 
     def test_now_injection_controls_reset_comparison(self):
         """The same payload should be exhausted in one 'now' and not in another."""
-        payload = _cap_with_future_reset()
+        # Build a payload with a specific reset time.
+        reset = "2026-09-22T15:00:00+08:00"
+        payload = [
+            {
+                "type": "result",
+                "is_error": True,
+                "error": f"429 · quota exceeded, reset at {reset}",
+                "reset_at": reset,
+                "total_tokens": 0,
+            },
+        ]
         # When now is before the reset, it's exhausted.
-        early = datetime(2026, 9, 21, 0, 0, 0,
+        early = datetime(2026, 9, 22, 14, 0, 0,
                          tzinfo=timezone(timedelta(hours=8)))
         assert classify(payload, now=early)["exhausted"] is True
         # When now is after the reset, it's not.
-        late = datetime(2026, 9, 23, 0, 0, 0,
+        late = datetime(2026, 9, 22, 16, 0, 0,
                         tzinfo=timezone(timedelta(hours=8)))
         assert classify(payload, now=late)["exhausted"] is False
 
