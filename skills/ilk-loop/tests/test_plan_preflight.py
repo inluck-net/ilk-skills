@@ -91,7 +91,8 @@ local_checks:
 - Commit: `test(gate): verify admission gate [plan:alpha#step-1]`
 """
 
-# A sub-plan whose step has neither a repo artifact nor --allow-empty.
+# A sub-plan whose step 0 has neither a repo artifact nor --allow-empty.
+# Step 0 is purely investigative prose; step 1 has a repo artifact.
 NO_ARTIFACT_NO_ALLOW_EMPTY = """\
 ---
 plan: findings-only
@@ -105,12 +106,16 @@ estimated_steps: 2
 ## Steps
 
 ### Step 0 — investigate
-- Read the current implementation and document findings.
+- Read the current implementation and document findings in `## Findings` below.
 - Commit: `docs(investigate): document findings [plan:findings-only#step-0]`
 
 ### Step 1 — fix
 - Edit `src/module.py` to apply the fix.
 - Commit: `fix(module): apply fix [plan:findings-only#step-1]`
+
+## Findings
+
+_(empty)_
 """
 
 # A sub-plan that is clean — has repo artifacts and valid test paths.
@@ -223,7 +228,7 @@ class TestPreflightCleanBatch:
         """A sub-plan with repo artifacts and valid paths passes."""
         # Use a real plans dir so the test path can resolve.
         real_tests_dir = Path(__file__).resolve().parent
-        real_project_root = real_tests_dir.parent.parent  # ilk-skills root
+        real_project_root = real_tests_dir.parent.parent.parent  # ilk-skills root
         real_plans_dir = real_project_root / "docs" / "plans"
         if not real_plans_dir.exists():
             real_plans_dir = real_project_root  # fallback
