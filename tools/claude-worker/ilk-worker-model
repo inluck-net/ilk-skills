@@ -13,6 +13,8 @@
 #                           then runners; verifies via a probe session per
 #                           home and rolls back on mismatch
 #   restore                 newest settings.json.bak-<ts> per home
+#   roles [--json]          list registry roles with tier, home, model, auth
+#   providers [--json]      list CCSwitch providers with token_present
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -237,6 +237,84 @@ def cmd_show(home_base: Path, registry_path: Path) -> int:
     return EXIT_OK
 
 
+# ── roles & providers (SP3 — roles-and-providers-enumerable) ────────────────
+
+
+def cmd_roles(home_base: Path, registry_path: Path, as_json: bool) -> int:
+    """List every registry role with its resolved home, model, tier, and auth."""
+    try:
+        roles = load_registry(registry_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"error: cannot read role registry: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+
+    entries = []
+    for role_name in sorted(roles):
+        role = roles[role_name]
+        home = expand_home(str(role.get("home", "")), home_base)
+        env = read_env_block(home) if home.is_dir() else {}
+        entries.append({
+            "name": role_name,
+            "tier": role.get("tier", ""),
+            "home": str(home),
+            "model": env.get("ANTHROPIC_MODEL", role.get("model", "")),
+            "auth": role.get("auth", "custom"),
+        })
+
+    if as_json:
+        print(json.dumps(entries, indent=2))
+    else:
+        for e in entries:
+            print(f"  {e['name']}  tier={e['tier']}  home={e['home']}")
+            print(f"    model: {e['model']}  auth: {e['auth']}")
+    return EXIT_OK
+
+
+def cmd_providers(as_json: bool) -> int:
+    """List every CCSwitch Claude provider with token_present (never the raw token)."""
+    import subprocess as _sp
+    try:
+        result = _sp.run(
+            ["ccswitch_import", "list", "--format", "json"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30,
+        )
+    except FileNotFoundError:
+        print("error: ccswitch_import not found on PATH", file=sys.stderr)
+        return EXIT_USAGE
+    if result.returncode != 0:
+        print(f"error: ccswitch_import failed: {result.stderr}", file=sys.stderr)
+        return EXIT_USAGE
+
+    try:
+        raw = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        print(f"error: ccswitch_import returned invalid JSON: {result.stdout}",
+              file=sys.stderr)
+        return EXIT_USAGE
+
+    entries = []
+    for p in raw:
+        token_raw = p.get("auth_token", "")
+        entries.append({
+            "id": p.get("id", ""),
+            "name": p.get("name", ""),
+            "model": p.get("model", ""),
+            "base_url": p.get("base_url", ""),
+            "token_present": bool(token_raw and token_raw != "(missing)"),
+        })
+
+    if as_json:
+        print(json.dumps(entries, indent=2))
+    else:
+        for e in entries:
+            present = "yes" if e["token_present"] else "no"
+            print(f"  {e['id']}  {e['name']}")
+            print(f"    model: {e['model']}  base_url: {e['base_url'] or '(not set)'}"
+                  f"  token: {present}")
+    return EXIT_OK
+
+
 # ── use ──────────────────────────────────────────────────────────────────────
 
 
@@ -513,6 +591,12 @@ def main(argv=None) -> int:
     use_p.add_argument("--skip-probe", action="store_true",
                        help="skip probe verification (air-gapped) — says so")
     sub.add_parser("restore", help="restore the newest backup per home")
+    roles_p = sub.add_parser("roles", help="list registry roles")
+    roles_p.add_argument("--json", action="store_true", dest="as_json",
+                         help="output as JSON")
+    providers_p = sub.add_parser("providers", help="list CCSwitch providers")
+    providers_p.add_argument("--json", action="store_true", dest="as_json",
+                             help="output as JSON")
     args = ap.parse_args(argv)
 
     home_base = Path.home()
@@ -525,6 +609,10 @@ def main(argv=None) -> int:
     if args.cmd == "use":
         return cmd_use(args.target, args.now, args.skip_probe,
                        home_base, registry_path, data_home)
+    if args.cmd == "roles":
+        return cmd_roles(home_base, registry_path, args.as_json)
+    if args.cmd == "providers":
+        return cmd_providers(args.as_json)
     return cmd_restore(home_base)
 
 
