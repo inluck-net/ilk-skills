@@ -328,11 +328,27 @@ already carries actions (`bash=… param1=… terminal=false refresh=true`).
   uninstall+reinstall from a context carrying neither secret and stripped the
   token three times on 2026-08-28; its fix is an env-wins-then-file
   `read_secret`. Anything ilk-skills writes into a plist inherits that bug
-  unless it copies the pattern. **To check:** whether any ilk installer path
-  re-renders `net.inluck.ilk.scheduler.plist`.
-- **rezmac has no working official credential** (403 with the plist token;
-  `OAuth session expired` on its default home), so `manager → official` is
-  currently viable only on chad-mbp.
+  unless it copies the pattern. **Answered 2026-09-22:** ilk writes
+  `CLAUDE_CODE_OAUTH_TOKEN` in **0 places** across `install.sh` and `skills/`,
+  so that plist was created by hand and an ilk upgrade cannot strip it. The
+  flip side is that nothing re-renders it either, and it bit the same day: the
+  rezmac rotation refreshed the six `gh-resolve` agents through
+  `install_launch_agents.sh --live` and left `net.inluck.ilk.scheduler` on the
+  dead token until it was set by hand. **It is the only copy no installer will
+  fix.** `net.inluck.ilk.scheduler.plist.ROTATION.md` now sits beside it on
+  rezmac carrying the four-write checklist and the current token's md5 prefix
+  — a sibling file rather than an XML comment, because `PlistBuddy -c Set`
+  rewrites the plist and drops comments, so an inline note would vanish on the
+  first rotation. chad-mbp's copy of the plist carries no token at all (PATH
+  and HOME only), so the hazard is rezmac-only.
+- ~~**rezmac has no working official credential**~~ — **resolved 2026-09-22.**
+  A `claude setup-token` credential minted on rezmac (md5 `558ffa02`) now backs
+  `~/.claude`, `~/.claude-manager`, `~/.gh-resolve-data/claude-token` (and
+  through it the six gh-resolve agents) and the ilk scheduler plist. Both homes
+  return `authMethod: oauth_token` **and** a live `OK`; all seven LaunchAgents
+  report `last_exit=0`, including `net.inluck.gh-resolve.triage`, which had
+  been exiting 1 since 14:40 the previous day. The hosts hold separate tokens,
+  so revoking one does not affect the other.
 - **What we copy rather than couple** (~100 lines, none published as a
   module): `role_tiers.py`'s validate-and-fail-closed loader, doctor's
   per-home identity probe, the D-170 launchd-vs-ssh credential-store text,
