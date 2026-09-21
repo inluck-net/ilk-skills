@@ -400,3 +400,164 @@ class TestRegistrySync:
 
         assert _read_env(env_bad_probe.main) == env_main_before
         assert _read_env(env_bad_probe.slot2) == env_slot_before
+
+
+# ── Config + live probes (SP1 — probes-tell-the-truth) ────────────────────
+
+
+class EnvProbe:
+    """A hermetic probe-test environment with a stream-json fake claude.
+
+    Unlike ``Env`` (whose fake claude echoes a plain-text model id),
+    this fixture's fake claude emits a stream-json init event with the
+    model field — matching the real ``claude --output-format stream-json``
+    that ``probe_config`` will read.
+    """
+
+    def __init__(self, tmp_path: Path, config_model: str, live_ok: bool) -> None:
+        self.root = tmp_path
+        self.home = tmp_path / "home"
+        self.main = self.home / ".claude-worker"
+        self.manager = self.home / ".claude-manager"
+        self.registry = tmp_path / "role-registry.json"
+        self.data_home = tmp_path / "ilk-data"
+
+        # The home under test: config_model is what settings.json says.
+        self.main.mkdir(parents=True, exist_ok=True)
+        (self.main / "settings.json").write_text(json.dumps({
+            "env": {
+                "ANTHROPIC_MODEL": config_model,
+                "ANTHROPIC_BASE_URL": "https://a.example/api",
+                "ANTHROPIC_AUTH_TOKEN": "tok-a",
+            },
+        }, indent=2), encoding="utf-8")
+
+        # Manager env block (the source role for use).
+        self.manager.mkdir(parents=True, exist_ok=True)
+        (self.manager / "settings.json").write_text(json.dumps({
+            "env": {
+                "ANTHROPIC_MODEL": config_model,
+                "ANTHROPIC_BASE_URL": "https://b.example/api",
+                "ANTHROPIC_AUTH_TOKEN": "tok-b",
+            },
+        }, indent=2), encoding="utf-8")
+
+        self.registry.write_text(json.dumps({
+            "version": 1,
+            "roles": {
+                "manager": {"tier": "manager", "home": "~/.claude-manager",
+                            "provider": "test", "model": config_model},
+                "coder": {"tier": "worker", "home": "~/.claude-worker",
+                          "provider": "test", "model": "other"},
+            },
+        }, indent=2), encoding="utf-8")
+
+        # Fake claude: emits stream-json init event + live probe result.
+        self.probe_log = tmp_path / "probe.log"
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        live_result = "OK" if live_ok else "403 Request not allowed"
+        live_exit = "0" if live_ok else "1"
+        (bin_dir / "claude").write_text(
+            "#!/usr/bin/env bash\n"
+            f"printf '%s\\n' \"{self.probe_log}\" \"$CLAUDE_CONFIG_DIR\" "
+            f">> \"{self.probe_log}\"\n"
+            # Stream-json init event (probe_config reads this).
+            f"echo '{{\"model\": \"{config_model}\", \"type\": \"init\"}}'\n"
+            # Live probe result (probe_live reads is_error / result).
+            f"echo '{{\"is_error\": {str(not live_ok).lower()}, "
+            f"\"result\": \"{live_result}\"}}'\n"
+            f"exit {live_exit}\n",
+            encoding="utf-8",
+        )
+        os.chmod(bin_dir / "claude", 0o755)
+        self.bin_dir = bin_dir
+
+    def run(self, *args: str) -> subprocess.CompletedProcess:
+        env = dict(os.environ)
+        env["HOME"] = str(self.home)
+        env["ILK_ROLE_REGISTRY"] = str(self.registry)
+        env["ILK_DATA_HOME"] = str(self.data_home)
+        env["PATH"] = f"{self.bin_dir}{os.pathsep}{env['PATH']}"
+        return subprocess.run(
+            ["bash", str(TOOL), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env=env, timeout=60,
+        )
+
+    def probe_homes(self) -> list:
+        """CLAUDE_CONFIG_DIR values the probe was invoked with, in order."""
+        if not self.probe_log.exists():
+            return []
+        rows = self.probe_log.read_text(encoding="utf-8").splitlines()
+        return [rows[i] for i in range(1, len(rows), 2)]
+
+
+class TestConfigProbe:
+    """AC1: probe_config reads the init-event model, not the model's self-report."""
+
+    def test_config_probe_reads_init_event_not_self_report(self, tmp_path: Path):
+        """The fake claude's settings.json names the target model.
+        The probe must read the init event's model field (which matches)
+        rather than asking the model to state its own id (which would
+        return whatever the fake emits as plain text).
+
+        This test is RED: probe_model today asks the model to self-report
+        and compares the last line of plain text — it will either fail
+        or return a garbage comparison against the stream-json output.
+        """
+        probe_env = EnvProbe(tmp_path, "mimo-v2.5-pro", live_ok=True)
+        # Import the module to call probe_config directly.
+        sys.path.insert(0, str(TOOLS_DIR))
+        try:
+            import worker_model
+            ok, detail = worker_model.probe_config(probe_env.main)
+        finally:
+            sys.path.pop(0)
+        assert ok is True, f"probe_config should match; got ok={ok}, detail={detail!r}"
+        assert detail == "mimo-v2.5-pro"
+
+
+class TestLiveProbe:
+    """AC2: probe_live returns (ok, detail) from is_error / result."""
+
+    def test_live_probe_reports_ok_on_success(self, tmp_path: Path):
+        """Fake claude exits 0 with is_error=false → probe_live returns (True, 'OK')."""
+        probe_env = EnvProbe(tmp_path, "mimo-v2.5-pro", live_ok=True)
+        sys.path.insert(0, str(TOOLS_DIR))
+        try:
+            import worker_model
+            ok, detail = worker_model.probe_live(probe_env.main)
+        finally:
+            sys.path.pop(0)
+        assert ok is True
+        assert detail == "OK"
+
+    def test_live_probe_reports_failure_on_403(self, tmp_path: Path):
+        """Fake claude exits non-zero with is_error=true → probe_live returns
+        (False, detail) — the 403 case from the 2026-09-21 incident."""
+        probe_env = EnvProbe(tmp_path, "mimo-v2.5-pro", live_ok=False)
+        sys.path.insert(0, str(TOOLS_DIR))
+        try:
+            import worker_model
+            ok, detail = worker_model.probe_live(probe_env.main)
+        finally:
+            sys.path.pop(0)
+        assert ok is False
+        assert "403" in detail
+
+
+class TestSkipProbeMessage:
+    """AC4: --skip-probe prints UNVERIFIED, never 'switch verified'."""
+
+    def test_skip_probe_says_unverified(self, tmp_path: Path):
+        """With --skip-probe, the command must print UNVERIFIED and must
+        NOT print 'switch verified for every home above.'"""
+        probe_env = EnvProbe(tmp_path, "mimo-v2.5-pro", live_ok=True)
+        result = probe_env.run("use", "manager", "--skip-probe")
+        assert result.returncode == 0, result.stdout + result.stderr
+        out = result.stdout
+        assert "UNVERIFIED" in out, (
+            f"--skip-probe must print UNVERIFIED; got:\n{out}")
+        assert "switch verified for every home above" not in out, (
+            f"--skip-probe must NOT print 'switch verified'; got:\n{out}")
