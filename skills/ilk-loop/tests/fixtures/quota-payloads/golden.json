@@ -1,0 +1,49 @@
+[
+  {
+    "name": "transient-429s-then-success",
+    "now": "2026-09-22T12:00:00+08:00",
+    "payload": [
+      {"type": "api_retry", "status": 429, "attempt": 1},
+      {"type": "api_retry", "status": 429, "attempt": 2},
+      {"type": "api_retry", "status": 429, "attempt": 3},
+      {"type": "api_retry", "status": 429, "attempt": 4},
+      {"type": "api_retry", "status": 429, "attempt": 5},
+      {"type": "api_retry", "status": 429, "attempt": 6},
+      {"type": "api_retry", "status": 429, "attempt": 7},
+      {"type": "api_retry", "status": 429, "attempt": 8},
+      {"type": "api_retry", "status": 429, "attempt": 9},
+      {"type": "api_retry", "status": 429, "attempt": 10},
+      {"type": "result", "is_error": false, "result": "ok", "total_tokens": 42}
+    ],
+    "expected": false
+  },
+  {
+    "name": "glm-cap-future-reset-2026-09-21",
+    "now": "2026-09-22T12:00:00+08:00",
+    "payload": [
+      {"type": "api_retry", "status": 429, "attempt": 1},
+      {
+        "type": "result",
+        "is_error": true,
+        "error": "429 · [1310] 您已达到每周/每月使用上限，您的限额将在 2026-09-22 15:16:35 重置",
+        "reset_at": "2026-09-22T15:16:35+08:00",
+        "total_tokens": 0
+      }
+    ],
+    "expected": true
+  },
+  {
+    "name": "cap-past-reset",
+    "now": "2026-09-22T12:00:00+08:00",
+    "payload": [
+      {
+        "type": "result",
+        "is_error": true,
+        "error": "429 · [1310] 您已达到每周/每月使用上限，您的限额将在 2026-09-21 15:16:35 重置",
+        "reset_at": "2026-09-21T15:16:35+08:00",
+        "total_tokens": 0
+      }
+    ],
+    "expected": false
+  }
+]
