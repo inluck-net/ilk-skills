@@ -147,6 +147,42 @@ def _roles_block() -> list[dict]:
     return result
 
 
+def _providers_block() -> list[dict]:
+    """Build the ``providers`` payload for the tray's Models submenu.
+
+    Returns a list of dicts, one per CCSwitch provider, each carrying:
+    ``id``, ``name``, ``model``, ``base_url_host``.
+    Design: provider-switching-and-quota-fallback.md §10, AC2.
+
+    Never raises: status_all feeds a 10s refresh and a missing ccswitch
+    must not blank the panel for every project.
+    """
+    import subprocess as _sp
+    try:
+        result = _sp.run(
+            ["ccswitch_import", "list", "--format", "json"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=30,
+        )
+        if result.returncode != 0:
+            return []
+        providers = json.loads(result.stdout)
+        if not isinstance(providers, list):
+            return []
+        return [
+            {
+                "id": p.get("id", ""),
+                "name": p.get("name", ""),
+                "model": p.get("model", ""),
+                "base_url_host": _base_url_host(p.get("base_url", "")),
+            }
+            for p in providers
+            if p.get("id")  # skip entries without an id
+        ]
+    except (OSError, json.JSONDecodeError, ValueError, FileNotFoundError):
+        return []
+
+
 # ── pid liveness (cross-platform) ───────────────────────────────────
 # Both come from pid_health, the single implementation shared with
 # status_progress/ilk_watch; `pid_alive` is re-exported because
@@ -821,6 +857,11 @@ def resolve_project_status(project_dir: Path) -> dict:
     # Design: provider-switching-and-quota-fallback.md §10, AC1.
     roles = _roles_block()
 
+    # Providers block: all available CCSwitch providers for the tray's
+    # Models submenu.  Shared across all projects (the ccswitch store is
+    # per-host, not per-project).  Design: §10, AC2.
+    providers = _providers_block()
+
     return {
         "project_key": key,
         "path": str(project_dir),
@@ -838,6 +879,7 @@ def resolve_project_status(project_dir: Path) -> dict:
         "last_class": last_class,
         "model": model,
         "roles": roles,
+        "providers": providers,
         "runnable": runnable,
         "parked": parked,
         "parked_reason": master_parked_reason,

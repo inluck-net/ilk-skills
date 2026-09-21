@@ -128,6 +128,85 @@ def render_xbar(
         shown = uniq[0] if len(uniq) == 1 else " | ".join(uniq)
         lines.append(f"worker model: {shown}")
 
+    # ── Models section: one row per registry role ─────────────────────
+    # Design: provider-switching-and-quota-fallback.md §10, AC2-AC5.
+    # The roles block comes from the first non-orphaned entry that has it
+    # (the registry is shared across all projects).  The providers block
+    # comes from the same entry.
+    roles = []
+    providers = []
+    for e in entries:
+        if e.get("orphaned"):
+            continue
+        if e.get("roles"):
+            roles = e["roles"]
+            providers = e.get("providers", [])
+            break
+
+    if roles:
+        lines.append("--Models | size=14")
+        for role in roles:
+            name = role.get("name", "?")
+            configured_model = role.get("model", "")
+            provider_host = role.get("provider_host", "")
+            auth = role.get("auth", "custom")
+
+            # Build the row: "role: model" or "role: model (live_model)"
+            # when configured and live models diverge.
+            row = f"--{name}: {configured_model}"
+            if provider_host and provider_host != "(unset)":
+                row += f"  [{provider_host}]"
+            if auth == "official":
+                row += "  (official)"
+
+            # Divergence: if any live entry is running this role's home
+            # with a different model, show both.
+            home = role.get("home", "")
+            for e in entries:
+                if (e.get("sentinel", {}).get("alive")
+                        and e.get("model")
+                        and home
+                        and home in (e.get("path") or "")):
+                    live_model = e.get("model")
+                    if live_model and live_model != configured_model:
+                        row += f"  (live: {live_model})"
+                    break
+
+            # Provider submenu: each provider invokes
+            # `ilk-worker-model use <role> <provider>` with no --now.
+            # "applies from next iteration" — literally true per §2.2.
+            lines.append(f"{row} | size=12")
+            for prov in providers:
+                prov_id = prov.get("id", "")
+                prov_name = prov.get("name", "")
+                prov_model = prov.get("model", "")
+                if not prov_id:
+                    continue
+                # Mark the current provider with a checkmark.
+                if prov_name == role.get("provider", ""):
+                    prefix = "✓"
+                else:
+                    prefix = " "
+                lines.append(
+                    f"--  {prefix} {prov_name} ({prov_model})"
+                    f" | bash=ilk-worker-model"
+                    f" param1=use"
+                    f" param2={name!r}"
+                    f" param3={prov_id!r}"
+                    " terminal=false refresh=true"
+                )
+            lines.append(
+                f"--  applies from next iteration | size=11 color=gray"
+            )
+
+        # Last switch result: if any entry has a switch_result field,
+        # show it.  The action writes a result line, and the panel
+        # renders the last outcome.
+        for e in entries:
+            if e.get("switch_result"):
+                lines.append(f"--Last switch: {e['switch_result']} | size=11")
+                break
+
     for e in entries:
         # ── Orphan filter: the source repo is gone ───────────────────
         # status_all marks a project orphaned when its resolved repo_path no
