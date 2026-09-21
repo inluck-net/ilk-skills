@@ -209,6 +209,24 @@ Rules, each with a reason:
   stale file fails closed. `role_tiers.py`'s loader is the reference shape.
 - **No secret ever enters this file** — same rule as the registry.
 
+### Shipped schema (v1)
+
+The JSON example above is the canonical shape.  The code in
+`tools/claude-worker/provider_state.py` enforces it at read and write time;
+`ProviderStateError` is raised on any defect (wrong version, missing keys,
+malformed JSON) — fail closed, no defaults.
+
+Field names: the prose above uses `observed_at`; the JSON example and the
+shipped code use **`at`** (shorter, same semantics).  `at` is the canonical
+name; `observed_at` is the prose alias.
+
+**Staleness rule.** Each probe carries its own `at` timestamp so a consumer
+can judge freshness itself.  The writer stamps `at` at probe time; the
+reader does not enforce a staleness window — that is the consumer's
+decision, because different consumers have different tolerances (a tray
+polling every 10s is stale after 30s; a scheduler polling every 5 minutes
+is stale after 15).
+
 ## 7. The credential cache — `providers.json` (not the contract)
 
 Autonomous fallback on a remote host needs that host to hold the credentials
