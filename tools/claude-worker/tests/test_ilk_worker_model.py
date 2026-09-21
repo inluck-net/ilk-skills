@@ -581,6 +581,168 @@ class TestLiveProbe:
         assert "403" in detail
 
 
+# ── Provider switch (SP2 — use-switches-providers) ────────────────────────
+
+
+class EnvProviderSwitch:
+    """Hermetic switch environment with a fake ccswitch_import on PATH.
+
+    Two providers: glm (base url GLM_URL, token tok-glm) and mimo
+    (base url MIMO_URL, token tok-mimo).  The registry names a `coder`
+    role whose home carries glm-shaped env; ``use coder mimo`` should
+    resolve the mimo env from ccswitch_import, not from the home.
+    """
+
+    GLM_URL = "https://glm.example/api"
+    MIMO_URL = "https://mimo.example/api"
+    MIMO_TOKEN = "tok-mimo"
+    MIMO_MODEL = "mimo-v2.5-pro"
+    GLM_MODEL = "glm-5.3"
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.root = tmp_path
+        self.home = tmp_path / "home"
+        self.main = self.home / ".claude-worker"
+        self.manager = self.home / ".claude-manager"
+        self.registry = tmp_path / "role-registry.json"
+        self.data_home = tmp_path / "ilk-data"
+
+        # Coder home: glm-shaped env (the "old" provider).
+        _write_settings(self.main, self.GLM_MODEL, self.GLM_URL,
+                        token="tok-glm")
+        # Manager home: already on mimo.
+        _write_settings(self.manager, self.MIMO_MODEL, self.MIMO_URL,
+                        token=self.MIMO_TOKEN)
+
+        self.registry.write_text(json.dumps({
+            "version": 1,
+            "roles": {
+                "manager": {"tier": "manager", "home": "~/.claude-manager",
+                            "provider": "Xiaomi MiMo V2.5 - Pro",
+                            "model": self.MIMO_MODEL},
+                "coder": {"tier": "worker", "home": "~/.claude-worker",
+                          "provider": "Zhipu GLM", "model": self.GLM_MODEL},
+            },
+        }, indent=2), encoding="utf-8")
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+
+        # Fake claude (probe reports target model).
+        (bin_dir / "claude").write_text(
+            "#!/usr/bin/env bash\n"
+            "fmt=plain\n"
+            "for arg in \"$@\"; do\n"
+            "  case \"$arg\" in\n"
+            "    --output-format) ;;\n"
+            "    stream-json|json) fmt=\"$arg\" ;;\n"
+            "  esac\n"
+            "done\n"
+            "case \"$fmt\" in\n"
+            f"  stream-json) echo '{{\"model\": \"{self.MIMO_MODEL}\", \"type\": \"init\"}}' ;;\n"
+            f"  json)        echo '{{\"is_error\": false, \"result\": \"OK\"}}' ;;\n"
+            f"  *)           echo \"{self.MIMO_MODEL}\" ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        os.chmod(bin_dir / "claude", 0o755)
+
+        # Fake ccswitch_import: returns the mimo provider's env.
+        mimo_export = json.dumps({
+            "id": "mimo",
+            "name": "Xiaomi MiMo V2.5 - Pro",
+            "category": "",
+            "is_official": False,
+            "ANTHROPIC_BASE_URL": self.MIMO_URL,
+            "ANTHROPIC_AUTH_TOKEN": self.MIMO_TOKEN,
+            "ANTHROPIC_MODEL": self.MIMO_MODEL,
+        }, indent=2)
+        (bin_dir / "ccswitch_import").write_text(
+            "#!/usr/bin/env bash\n"
+            f"echo '{mimo_export}'\n",
+            encoding="utf-8",
+        )
+        os.chmod(bin_dir / "ccswitch_import", 0o755)
+        self.bin_dir = bin_dir
+
+    def run(self, *args: str) -> subprocess.CompletedProcess:
+        env = dict(os.environ)
+        env["HOME"] = str(self.home)
+        env["ILK_ROLE_REGISTRY"] = str(self.registry)
+        env["ILK_DATA_HOME"] = str(self.data_home)
+        env["PATH"] = f"{self.bin_dir}{os.pathsep}{env['PATH']}"
+        return subprocess.run(
+            ["bash", str(TOOL), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env=env, timeout=60,
+        )
+
+
+class TestUseProviderSwitch:
+    """SP2 step-0 red: a provider switch keeps the old base url."""
+
+    def test_switch_writes_provider_base_url_not_home_url(self, tmp_path: Path):
+        """After switching coder from glm to mimo, the env must carry the
+        mimo base url — not the glm url that was in the home before.
+
+        This is RED: cmd_use today reads env from the role's home (glm),
+        so the written base url stays GLM_URL.
+        """
+        env = EnvProviderSwitch(tmp_path)
+        result = env.run("use", "coder")
+        assert result.returncode == 0, result.stdout + result.stderr
+        env_now = _read_env(env.main)
+        assert env_now["ANTHROPIC_BASE_URL"] == env.MIMO_URL, (
+            f"base url should be mimo's ({env.MIMO_URL}), "
+            f"got {env_now['ANTHROPIC_BASE_URL']} — "
+            f"cmd_use reads from the home, not from ccswitch_import"
+        )
+
+    def test_switch_writes_provider_token(self, tmp_path: Path):
+        """Auth token must come from the provider, not the old home.
+
+        This is RED: same root cause (env sourced from home).
+        """
+        env = EnvProviderSwitch(tmp_path)
+        result = env.run("use", "coder")
+        assert result.returncode == 0, result.stdout + result.stderr
+        env_now = _read_env(env.main)
+        assert env_now["ANTHROPIC_AUTH_TOKEN"] == env.MIMO_TOKEN
+
+    def test_switch_writes_provider_model(self, tmp_path: Path):
+        """Model must come from the provider export, not the registry row alone.
+
+        This is RED: same root cause.
+        """
+        env = EnvProviderSwitch(tmp_path)
+        result = env.run("use", "coder")
+        assert result.returncode == 0, result.stdout + result.stderr
+        env_now = _read_env(env.main)
+        assert env_now["ANTHROPIC_MODEL"] == env.MIMO_MODEL
+
+
+class TestUseManagerSweep:
+    """SP2 step-0 red: the sweep misses ~/.claude-manager."""
+
+    def test_sweep_includes_manager_home_from_registry(self, tmp_path: Path):
+        """When the registry names ~/.claude-manager, the switch must
+        rewrite that home too — not just .claude-worker*.
+
+        This is RED: worker_homes() globs ~/.claude-worker* and misses
+        ~/.claude-manager entirely.
+        """
+        env = EnvProviderSwitch(tmp_path)
+        result = env.run("use", "coder")
+        assert result.returncode == 0, result.stdout + result.stderr
+        # If the manager home was swept, its env carries the mimo provider
+        # values (resolved from ccswitch_import).
+        mgr_env = _read_env(env.manager)
+        assert mgr_env["ANTHROPIC_BASE_URL"] == env.MIMO_URL, (
+            f"manager home not swept: base url is {mgr_env['ANTHROPIC_BASE_URL']}, "
+            f"expected {env.MIMO_URL}"
+        )
+
+
 class TestSkipProbeMessage:
     """AC4: --skip-probe prints UNVERIFIED, never 'switch verified'."""
 
@@ -595,3 +757,306 @@ class TestSkipProbeMessage:
             f"--skip-probe must print UNVERIFIED; got:\n{out}")
         assert "switch verified for every home above" not in out, (
             f"--skip-probe must NOT print 'switch verified'; got:\n{out}")
+
+
+# ── Roles & providers enumerable (SP3 — roles-and-providers-enumerable) ──
+
+
+class EnvEnumerate:
+    """Hermetic environment for testing roles and providers subcommands.
+
+    Two roles (manager, coder) with homes carrying distinct env blocks,
+    plus a fake ccswitch_import that returns two providers (glm, mimo).
+    The official entry has no base url and token_present: false.
+    """
+
+    GLM_URL = "https://glm.example/api"
+    GLM_TOKEN = "sk-ant-glm-secret-token-abcdef"
+    GLM_MODEL = "glm-5.3"
+    MIMO_URL = "https://mimo.example/api"
+    MIMO_TOKEN = "tp-mimo-secret-token-12345678"
+    MIMO_MODEL = "mimo-v2.5-pro"
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.root = tmp_path
+        self.home = tmp_path / "home"
+        self.manager = self.home / ".claude-manager"
+        self.main = self.home / ".claude-worker"
+        self.registry = tmp_path / "role-registry.json"
+        self.data_home = tmp_path / "ilk-data"
+
+        # Manager home: official (no base url, no token).
+        self.manager.mkdir(parents=True, exist_ok=True)
+        (self.manager / "settings.json").write_text(json.dumps({
+            "env": {
+                "ANTHROPIC_MODEL": "opus",
+                "ANTHROPIC_AUTH_TOKEN": "sk-ant-official-secret",
+            },
+        }, indent=2), encoding="utf-8")
+
+        # Coder home: custom provider.
+        _write_settings(self.main, self.GLM_MODEL, self.GLM_URL,
+                        token=self.GLM_TOKEN)
+
+        # Role registry.
+        self.registry.write_text(json.dumps({
+            "version": 1,
+            "roles": {
+                "manager": {"tier": "manager", "home": "~/.claude-manager",
+                             "provider": "Claude Official", "model": "opus",
+                             "auth": "official"},
+                "coder": {"tier": "worker", "home": "~/.claude-worker",
+                           "provider": "Zhipu GLM", "model": self.GLM_MODEL},
+            },
+        }, indent=2), encoding="utf-8")
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+
+        # Fake claude (probe).
+        (bin_dir / "claude").write_text(
+            "#!/usr/bin/env bash\n"
+            "fmt=plain\n"
+            "for arg in \"$@\"; do\n"
+            "  case \"$arg\" in\n"
+            "    --output-format) ;;\n"
+            "    stream-json|json) fmt=\"$arg\" ;;\n"
+            "  esac\n"
+            "done\n"
+            "case \"$fmt\" in\n"
+            f"  stream-json) echo '{{\"model\": \"{self.MIMO_MODEL}\", \"type\": \"init\"}}' ;;\n"
+            f"  json)        echo '{{\"is_error\": false, \"result\": \"OK\"}}' ;;\n"
+            f"  *)           echo \"{self.MIMO_MODEL}\" ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        os.chmod(bin_dir / "claude", 0o755)
+
+        # Fake ccswitch_import: returns two providers.
+        glm_export = json.dumps({
+            "id": "glm",
+            "name": "Zhipu GLM",
+            "category": "custom",
+            "is_official": False,
+            "ANTHROPIC_BASE_URL": self.GLM_URL,
+            "ANTHROPIC_AUTH_TOKEN": self.GLM_TOKEN,
+            "ANTHROPIC_MODEL": self.GLM_MODEL,
+        }, indent=2)
+        mimo_export = json.dumps({
+            "id": "mimo",
+            "name": "Xiaomi MiMo V2.5 - Pro",
+            "category": "custom",
+            "is_official": False,
+            "ANTHROPIC_BASE_URL": self.MIMO_URL,
+            "ANTHROPIC_AUTH_TOKEN": self.MIMO_TOKEN,
+            "ANTHROPIC_MODEL": self.MIMO_MODEL,
+        }, indent=2)
+        official_export = json.dumps({
+            "id": "official",
+            "name": "Claude Official",
+            "category": "official",
+            "is_official": True,
+            "ANTHROPIC_BASE_URL": "",
+            "ANTHROPIC_AUTH_TOKEN": "",
+            "ANTHROPIC_MODEL": "opus",
+        }, indent=2)
+        (bin_dir / "ccswitch_import").write_text(
+            "#!/usr/bin/env bash\n"
+            "case \"$1\" in\n"
+            "  list)\n"
+            f"    echo '[{glm_export},{mimo_export},{official_export}]'\n"
+            "    ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        os.chmod(bin_dir / "ccswitch_import", 0o755)
+        self.bin_dir = bin_dir
+
+    def run(self, *args: str) -> subprocess.CompletedProcess:
+        env = dict(os.environ)
+        env["HOME"] = str(self.home)
+        env["ILK_ROLE_REGISTRY"] = str(self.registry)
+        env["ILK_DATA_HOME"] = str(self.data_home)
+        env["PATH"] = f"{self.bin_dir}{os.pathsep}{env['PATH']}"
+        return subprocess.run(
+            ["bash", str(TOOL), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env=env, timeout=60,
+        )
+
+
+# Token-shaped patterns that must never appear in human output.
+_TOKEN_PATTERNS = ["sk-ant-", "tp-", "sk-"]
+
+
+def _assert_no_tokens_in_lines(output: str) -> None:
+    """Fail if any output line contains a token-shaped string.
+
+    A token-shaped string is: a line matching any of the known prefixes
+    (sk-ant-, tp-, sk-), OR any line containing a 40+ character opaque
+    alphanumeric+dash+underscore run that isn't a known word.
+    """
+    import re
+    opaque_re = re.compile(r"[A-Za-z0-9_-]{40,}")
+    for i, line in enumerate(output.splitlines(), 1):
+        for pat in _TOKEN_PATTERNS:
+            assert pat not in line, (
+                f"line {i} contains token prefix {pat!r}: {line!r}")
+        for match in opaque_re.finditer(line):
+            val = match.group(0)
+            # Allow known non-token long strings (URLs, paths, json keys).
+            if val.startswith("http") or "/" in val or val == "permissions":
+                continue
+            assert False, (
+                f"line {i} contains opaque 40+ char string: {val!r} in {line!r}")
+
+
+class TestRoles:
+    """SP3 step-0 red: the roles subcommand does not exist yet."""
+
+    def test_roles_json_parses_and_contains_expected_keys(self, tmp_path: Path):
+        """roles --json must return a JSON array where each entry has
+        name, tier, home, model, and auth.
+
+        RED: the 'roles' subcommand does not exist — argparse rejects it.
+        """
+        env = EnvEnumerate(tmp_path)
+        result = env.run("roles", "--json")
+        assert result.returncode == 0, (
+            f"roles --json failed: {result.stdout}\n{result.stderr}")
+        data = json.loads(result.stdout)
+        assert isinstance(data, list), f"expected JSON array, got {type(data)}"
+        assert len(data) >= 2, f"expected at least 2 roles, got {len(data)}"
+        for entry in data:
+            for key in ("name", "tier", "home", "model"):
+                assert key in entry, (
+                    f"role entry missing {key!r}: {entry}")
+
+    def test_roles_json_includes_auth_field(self, tmp_path: Path):
+        """Each role entry must carry an auth field (official / custom / ...).
+
+        RED: subcommand does not exist.
+        """
+        env = EnvEnumerate(tmp_path)
+        result = env.run("roles", "--json")
+        assert result.returncode == 0, result.stdout + result.stderr
+        data = json.loads(result.stdout)
+        for entry in data:
+            assert "auth" in entry, (
+                f"role entry missing 'auth': {entry}")
+
+    def test_roles_text_lists_every_registry_role(self, tmp_path: Path):
+        """The text form must name every role in the registry.
+
+        RED: subcommand does not exist.
+        """
+        env = EnvEnumerate(tmp_path)
+        result = env.run("roles")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "manager" in result.stdout
+        assert "coder" in result.stdout
+
+    def test_roles_output_has_no_tokens(self, tmp_path: Path):
+        """Neither text nor JSON form may contain token-shaped strings.
+
+        RED: subcommand does not exist.
+        """
+        env = EnvEnumerate(tmp_path)
+        for args in [("roles",), ("roles", "--json")]:
+            result = env.run(*args)
+            _assert_no_tokens_in_lines(result.stdout)
+
+
+class TestProviders:
+    """SP3 step-0 red: the providers subcommand does not exist yet."""
+
+    def test_providers_json_parses_and_contains_expected_keys(
+        self, tmp_path: Path
+    ):
+        """providers --json must return a JSON array where each entry has
+        id, name, model, base_url, and token_present.
+
+        RED: the 'providers' subcommand does not exist — argparse rejects it.
+        """
+        env = EnvEnumerate(tmp_path)
+        result = env.run("providers", "--json")
+        assert result.returncode == 0, (
+            f"providers --json failed: {result.stdout}\n{result.stderr}")
+        data = json.loads(result.stdout)
+        assert isinstance(data, list), f"expected JSON array, got {type(data)}"
+        assert len(data) >= 2, f"expected at least 2 providers, got {len(data)}"
+        for entry in data:
+            for key in ("id", "name", "model", "base_url", "token_present"):
+                assert key in entry, (
+                    f"provider entry missing {key!r}: {entry}")
+
+    def test_providers_json_token_present_is_bool(self, tmp_path: Path):
+        """token_present must be true/false, never the raw token value.
+
+        RED: subcommand does not exist.
+        """
+        env = EnvEnumerate(tmp_path)
+        result = env.run("providers", "--json")
+        assert result.returncode == 0, result.stdout + result.stderr
+        data = json.loads(result.stdout)
+        for entry in data:
+            val = entry.get("token_present")
+            assert isinstance(val, bool), (
+                f"token_present must be bool, got {type(val)}: {val!r}")
+
+    def test_providers_official_entry_has_no_base_url(self, tmp_path: Path):
+        """The official provider entry must show empty base_url and
+        token_present: false.
+
+        RED: subcommand does not exist.
+        """
+        env = EnvEnumerate(tmp_path)
+        result = env.run("providers", "--json")
+        assert result.returncode == 0, result.stdout + result.stderr
+        data = json.loads(result.stdout)
+        official = [e for e in data if e.get("name") == "Claude Official"]
+        assert len(official) == 1, (
+            f"expected one 'Claude Official' entry, got {official}")
+        assert official[0]["base_url"] in ("", None), (
+            f"official base_url must be empty: {official[0]}")
+        assert official[0]["token_present"] is False, (
+            f"official token_present must be False: {official[0]}")
+
+    def test_providers_output_has_no_tokens(self, tmp_path: Path):
+        """Neither text nor JSON form may contain token-shaped strings.
+
+        RED: subcommand does not exist.
+        """
+        env = EnvEnumerate(tmp_path)
+        for args in [("providers",), ("providers", "--json")]:
+            result = env.run(*args)
+            _assert_no_tokens_in_lines(result.stdout)
+
+    def test_providers_text_lists_every_ccswitch_provider(self, tmp_path: Path):
+        """The text form must name every provider.
+
+        RED: subcommand does not exist.
+        """
+        env = EnvEnumerate(tmp_path)
+        result = env.run("providers")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "Zhipu GLM" in result.stdout
+        assert "Claude Official" in result.stdout
+
+
+class TestValidationErrorListsOptions:
+    """SP3 step-0 red: naming an unknown role or provider must exit non-zero
+    and print the full list of valid values."""
+
+    def test_unknown_role_prints_valid_roles(self, tmp_path: Path):
+        """use <bad-role> must list the valid role names in the error.
+
+        RED: resolve_target prints 'known: …' but this sub-plan wants
+        the full list, not just the error.
+        """
+        env = EnvEnumerate(tmp_path)
+        result = env.run("use", "no-such-role")
+        assert result.returncode != 0
+        out = result.stdout + result.stderr
+        assert "manager" in out, f"error must list valid roles: {out}"
+        assert "coder" in out, f"error must list valid roles: {out}"
