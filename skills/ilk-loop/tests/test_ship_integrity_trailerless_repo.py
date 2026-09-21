@@ -75,6 +75,36 @@ def _subplan(tmp: Path, slug: str, *, steps: int, status: str = "shipped") -> Pa
     return sp
 
 
+def _subplan_with_plan_field(
+    tmp: Path,
+    filename_slug: str,
+    plan_field: str,
+    *,
+    steps: int,
+    status: str = "shipped",
+) -> Path:
+    """Create a sub-plan whose filename and frontmatter plan: differ.
+
+    This is the pv-5611 shape: the filename-derived slug
+    (``_slug_from_filename(fname)``) and the frontmatter ``plan:`` field
+    carry different identities.
+    """
+    body = "\n".join(
+        f"### Step {n} - do thing {n}\n\n"
+        "```yaml\nlocal_checks:\n  - command: python3 -c \"pass\"\n"
+        "    timeout: 60\n```\n- work\n"
+        for n in range(steps)
+    )
+    # Filename uses filename_slug (date-prefixed so _slug_from_filename strips it).
+    sp = tmp / f"2026-09-21-{filename_slug}.md"
+    sp.write_text(
+        f"---\nplan: {plan_field}\nstatus: {status}\ncurrent_step: {steps}\n"
+        f"estimated_steps: {steps}\nlocal_checks: []\n---\n\n# {plan_field}\n\n{body}",
+        encoding="utf-8",
+    )
+    return sp
+
+
 def _ledger(repo: Path, slug: str, step_from: int, step_to: int) -> Path:
     """Write a loop-executed ship-proof row where the runner would put it."""
     # Resolve the path with the toolkit's own resolver, never by hand-rolling
@@ -161,3 +191,38 @@ class TestGuardStillHolds:
         _ledger(repo, "redgate-slug", 0, 2)
         r = _run(sp, repo, gate="false")
         assert "VIOLATION" in r.stdout + r.stderr
+
+
+class TestSlugIdentityUnion:
+    """AC-1: trailerless repo + ledger keyed by filename slug + frontmatter
+    plan: naming something else => the sub-plan ships.
+
+    This is the pv-5611 shape: the file is ``2026-09-21-pv5-verify.md``
+    (filename slug ``pv5-verify``) but its frontmatter says
+    ``plan: pv5-round5-verify``.  The ledger row is keyed ``pv5-verify``.
+    Today: VIOLATION. After step 1: ships.
+    """
+
+    def test_filename_slug_in_ledger_frontmatter_different_ships(
+        self, sandbox: Path
+    ) -> None:
+        """The union must accept a ledger row under EITHER slug identity."""
+        repo = _repo(sandbox)
+        # The filename is ``2026-09-21-pv5-verify.md`` —
+        # _slug_from_filename yields ``pv5-verify``.
+        # The frontmatter says ``plan: pv5-round5-verify`` — a different slug.
+        sp = _subplan_with_plan_field(
+            sandbox, filename_slug="pv5-verify",
+            plan_field="pv5-round5-verify", steps=2,
+        )
+        _git(repo, "commit", "-q", "--allow-empty", "-m", "feat: step 0")
+        _git(repo, "commit", "-q", "--allow-empty", "-m", "feat: step 1")
+        # Ledger row keyed by the filename-derived slug.
+        _ledger(repo, "pv5-verify", 0, 2)
+
+        r = _run(sp, repo, gate="true")
+
+        assert "VIOLATION" not in r.stdout + r.stderr, (
+            "the trailerless union must accept a ledger row under the "
+            "filename-derived slug even when frontmatter plan: differs — "
+            f"this is the pv-5611 shape.\nSTDOUT {r.stdout}\nSTDERR {r.stderr}")

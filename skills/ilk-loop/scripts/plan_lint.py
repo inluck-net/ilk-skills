@@ -3868,6 +3868,116 @@ def lint_duplicate_frontmatter_key(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── Slug-identity mismatch guard ──────────────────────────────────────────────
+#
+# A sub-plan has two derivable identities:
+#   1. ``_slug_from_filename(fname)`` — strips date prefix + .md extension
+#   2. ``frontmatter plan:`` — the explicit field
+#
+# When they disagree, readers that pick different identities silently diverge.
+# This parked the pv-5611 batch for ~19 hours (measured 2026-09-22): the
+# filename was ``2026-09-21-pv5-verify.md`` (slug ``pv5-verify``) but the
+# frontmatter said ``plan: pv5-round5-verify``.  The ledger row was keyed
+# ``pv5-verify`` (the filename slug), but ship_integrity looked up
+# ``pv5-round5-verify`` (the frontmatter slug) and reverted the work.
+#
+# This lint catches the divergence at plan time so new plans cannot introduce
+# the split.  The union in ship_integrity (step 1) rescues existing plans
+# already on disk.
+
+try:  # plan_slug lives beside this script
+    from plan_slug import strip_date_prefix as _strip_date_prefix  # type: ignore[import-untyped]
+except ImportError:  # pragma: no cover - direct-script invocation
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from plan_slug import strip_date_prefix as _strip_date_prefix  # type: ignore[import-untyped]
+
+
+def _extract_plan_field(text: str) -> str:
+    """Return the frontmatter ``plan:`` value, or empty string if absent."""
+    m = re.match(r"^---\n.*?\n---\n", text, re.S)
+    if not m:
+        return ""
+    fm = text[m.start():m.end()]
+    for line in fm.splitlines():
+        s = line.strip()
+        if s.startswith("plan:"):
+            return s[len("plan:"):].strip().strip("'\"")
+    return ""
+
+
+def lint_slug_identity_mismatch(text: str, slug: str) -> list[str]:
+    """HARD finding when frontmatter plan: differs from filename-derived slug.
+
+    *slug* is the filename stem (e.g. ``2026-09-21-pv5-verify``).  The
+    filename-derived slug strips the date prefix: ``pv5-verify``.
+    """
+    findings: list[str] = []
+    plan_field = _extract_plan_field(text)
+    if not plan_field:
+        return findings  # no plan: field — other lints catch that
+    filename_slug = _strip_date_prefix(slug)
+    if not filename_slug:
+        return findings  # no date prefix to strip — not a dated sub-plan
+    if filename_slug == plan_field:
+        return findings  # identities agree
+    findings.append(
+        f"HARD {slug}: sub-plan's two slug identities disagree — "
+        f"filename-derived '{filename_slug}' vs frontmatter plan: '{plan_field}'. "
+        f"Readers that pick different identities silently diverge "
+        f"(pv-5611 parked 19h). Either rename the file to match plan:, "
+        f"or change plan: to match the filename."
+    )
+    return findings
+
+
+# ── Batch-verification / scope-auto mismatch guard ───────────────────────────
+#
+# A verification sub-plan that says "full suite" in its body but gates with
+# ``--scope auto`` has two halves that disagree about what it is.  Measured
+# 2026-09-21 on gh-resolve: ``auto`` selected 9 files / 228 tests against
+# 5608 collected, wrote ``verdict: pass``, and a tree with 11 real failures
+# reported green.
+#
+# Same family as the slug-identity mismatch: two halves of a plan disagree.
+
+_FULL_SUITE_BODY_RE = re.compile(
+    r"\bfull[\s-]*suite\b", re.IGNORECASE
+)
+
+_SCOPE_AUTO_RE = re.compile(
+    r"--scope\s+auto\b"
+)
+
+
+def lint_batch_verification_scope_mismatch(text: str, slug: str) -> list[str]:
+    """HARD finding when batch_verification + full-suite body + --scope auto."""
+    findings: list[str] = []
+    # Must have batch_verification: true in frontmatter.
+    m = re.match(r"^---\n.*?\n---\n", text, re.S)
+    if not m:
+        return findings
+    fm = text[m.start():m.end()]
+    if not re.search(r"^batch_verification:\s*true\s*$", fm, re.M):
+        return findings  # not a verification sub-plan
+    body = text[m.end():]
+    # Body must mandate a full suite.
+    if not _FULL_SUITE_BODY_RE.search(body):
+        return findings
+    # Gate must use --scope auto.
+    commands = _extract_all_local_checks_commands(text)
+    has_auto = any(_SCOPE_AUTO_RE.search(cmd) for cmd in commands)
+    if not has_auto:
+        return findings
+    findings.append(
+        f"HARD {slug}: verification sub-plan mandates a full suite in its "
+        f"body but gates with '--scope auto'. auto selects a subset and "
+        f"can miss real failures (gh-resolve 2026-09-21: 228/5608 tests, "
+        f"11 real failures reported green). Use '--scope full' when the "
+        f"plan mandates one."
+    )
+    return findings
+
+
 ALL_CHECKS = (
     lint_gate_budget,
     lint_verification_attribution_unmeasured,
@@ -3902,6 +4012,8 @@ ALL_CHECKS = (
     lint_verification_subplan_hardcodes_suite,
     lint_tier_forbids_its_evidence,
     lint_duplicate_frontmatter_key,
+    lint_slug_identity_mismatch,
+    lint_batch_verification_scope_mismatch,
 )
 
 
