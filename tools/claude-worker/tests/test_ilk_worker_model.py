@@ -1481,3 +1481,150 @@ class TestHostShowNoTimeout:
                 f"fan-out must not use timeout(1): {cmd}")
             assert "gtimeout" not in cmd[0], (
                 f"fan-out must not use gtimeout(1): {cmd}")
+
+
+# ── Credential cache (SP4 — providers.json) ──────────────────────────────
+
+
+class EnvProvidersCache:
+    """Hermetic environment for testing providers-cache.
+
+    A fake ccswitch_import that returns two providers (with tokens),
+    plus a role registry with hosts.
+    """
+
+    GLM_TOKEN = "sk-ant-glm-secret-token-abcdef1234567890"
+    MIMO_TOKEN = "tp-mimo-secret-token-0987654321fedcba"
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.root = tmp_path
+        self.home = tmp_path / "home"
+        self.registry = tmp_path / "role-registry.json"
+        self.data_home = tmp_path / "ilk-data"
+
+        self.registry.write_text(json.dumps({
+            "version": 1,
+            "hosts": [
+                {"name": "chad-mbp", "ssh": "chad-mbp"},
+                {"name": "rezmac", "ssh": "rezmac"},
+            ],
+            "roles": {
+                "manager": {"tier": "manager", "home": "~/.claude-manager",
+                            "provider": "test", "model": "opus"},
+                "coder": {"tier": "worker", "home": "~/.claude-worker",
+                          "provider": "test", "model": "mimo-v2.5-pro"},
+            },
+        }, indent=2), encoding="utf-8")
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+
+        # Fake ccswitch_import with full tokens.
+        glm = json.dumps({
+            "id": "glm", "name": "Zhipu GLM",
+            "base_url": "https://glm.example/api",
+            "auth_token": self.GLM_TOKEN, "model": "glm-5.3",
+        })
+        mimo = json.dumps({
+            "id": "mimo", "name": "Xiaomi MiMo V2.5 - Pro",
+            "base_url": "https://mimo.example/api",
+            "auth_token": self.MIMO_TOKEN, "model": "mimo-v2.5-pro",
+        })
+        (bin_dir / "ccswitch_import").write_text(
+            "#!/usr/bin/env bash\n"
+            "case \"$1\" in\n"
+            "  list) echo '[" + glm + "," + mimo + "]' ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        os.chmod(bin_dir / "ccswitch_import", 0o755)
+
+        # Fake claude (not needed for cache but keeps env consistent).
+        (bin_dir / "claude").write_text(
+            "#!/usr/bin/env bash\necho mimo-v2.5-pro\n",
+            encoding="utf-8",
+        )
+        os.chmod(bin_dir / "claude", 0o755)
+        self.bin_dir = bin_dir
+
+    def run(self, *args: str) -> subprocess.CompletedProcess:
+        env = dict(os.environ)
+        env["HOME"] = str(self.home)
+        env["ILK_ROLE_REGISTRY"] = str(self.registry)
+        env["ILK_DATA_HOME"] = str(self.data_home)
+        env["PATH"] = f"{self.bin_dir}{os.pathsep}{env['PATH']}"
+        return subprocess.run(
+            ["bash", str(TOOL), *args],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", env=env, timeout=60,
+        )
+
+
+class TestProvidersCache:
+    """SP4 step-2: providers.json credential cache."""
+
+    def test_cache_writes_providers_json_with_tokens(self, tmp_path: Path):
+        """providers-cache must write a JSON file containing full provider
+        env blocks including auth tokens.
+
+        AC4: providers.json contains provider env blocks.
+        """
+        env = EnvProvidersCache(tmp_path)
+        out = tmp_path / "providers.json"
+        result = env.run("providers-cache", "--out", str(out))
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert out.exists(), "providers.json not written"
+        data = json.loads(out.read_text(encoding="utf-8"))
+        assert len(data) >= 2, f"expected >= 2 providers, got {len(data)}"
+        # Must contain the actual tokens, not just token_present.
+        tokens = {e.get("auth_token", "") for e in data}
+        assert env.GLM_TOKEN in tokens, "GLM token missing from cache"
+        assert env.MIMO_TOKEN in tokens, "MIMO token missing from cache"
+
+    def test_cache_file_is_0600(self, tmp_path: Path):
+        """AC4: providers.json must be mode 0600 (owner read/write only).
+        """
+        env = EnvProvidersCache(tmp_path)
+        out = tmp_path / "providers.json"
+        env.run("providers-cache", "--out", str(out))
+        mode = oct(out.stat().st_mode)[-3:]
+        assert mode == "600", f"expected 0600, got {mode}"
+
+    def test_cache_contains_base_url_and_model(self, tmp_path: Path):
+        """Each cache entry must carry base_url and model (not just id/name).
+        """
+        env = EnvProvidersCache(tmp_path)
+        out = tmp_path / "providers.json"
+        env.run("providers-cache", "--out", str(out))
+        data = json.loads(out.read_text(encoding="utf-8"))
+        for entry in data:
+            assert "base_url" in entry, f"missing base_url: {entry}"
+            assert "model" in entry, f"missing model: {entry}"
+
+    def test_cache_default_path_is_next_to_registry(self, tmp_path: Path):
+        """Without --out, the cache is written next to role-registry.json.
+        """
+        env = EnvProvidersCache(tmp_path)
+        result = env.run("providers-cache")
+        assert result.returncode == 0, result.stdout + result.stderr
+        default_path = env.registry.parent / "providers.json"
+        assert default_path.exists(), (
+            f"providers.json not at default path: {default_path}")
+
+
+class TestProvidersCacheNoTokensInRegistry:
+    """The registry hosts block must never contain secrets."""
+
+    def test_registry_hosts_no_tokens(self, tmp_path: Path):
+        """AC4: the hosts block in role-registry.json has no token/password
+        fields — only name and ssh.
+        """
+        env = EnvProvidersCache(tmp_path)
+        registry_data = json.loads(env.registry.read_text(encoding="utf-8"))
+        hosts = registry_data.get("hosts") or []
+        secret_keys = {"token", "password", "key_path", "secret",
+                       "auth_token", "api_key"}
+        for host in hosts:
+            overlap = secret_keys & set(host.keys())
+            assert not overlap, (
+                f"host {host.get('name')} has secret keys: {overlap}")

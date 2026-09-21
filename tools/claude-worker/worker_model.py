@@ -268,6 +268,114 @@ def cmd_show(home_base: Path, registry_path: Path, as_json: bool = False) -> int
     return EXIT_OK
 
 
+# ── credential cache (SP4 — one-command-every-host) ────────────────────────
+
+
+def cmd_providers_cache(
+    out_path: Path | None,
+    push_hosts: list[str] | None,
+    registry_path: Path,
+    home_base: Path,
+    data_home: Path,
+    transport=None,
+) -> int:
+    """Write a ``providers.json`` credential cache (0600) and optionally
+    push it to remote hosts.
+
+    The cache contains full provider env blocks (including tokens) so a
+    remote host without a cc-switch store can still switch providers.
+    It is private to this repo's tooling — never referenced by the
+    published contract of SP5.
+    """
+    import subprocess as _sp
+    transport = transport or SshTransport()
+
+    # Read providers from ccswitch_import with full tokens.
+    try:
+        result = _sp.run(
+            ["ccswitch_import", "list", "--format", "json"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=30,
+        )
+    except FileNotFoundError:
+        print("error: ccswitch_import not found on PATH", file=sys.stderr)
+        return EXIT_USAGE
+    if result.returncode != 0:
+        print(f"error: ccswitch_import failed: {result.stderr}",
+              file=sys.stderr)
+        return EXIT_USAGE
+
+    try:
+        raw = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        print(f"error: ccswitch_import returned invalid JSON: "
+              f"{result.stdout}", file=sys.stderr)
+        return EXIT_USAGE
+
+    # Build the cache entries — same shape as the provider export but
+    # with the full env block (base_url, auth_token, model).
+    cache = []
+    for p in raw:
+        cache.append({
+            "id": p.get("id", ""),
+            "name": p.get("name", ""),
+            "base_url": p.get("base_url", ""),
+            "auth_token": p.get("auth_token", ""),
+            "model": p.get("model", ""),
+        })
+
+    # Default output path: next to the role registry.
+    if out_path is None:
+        out_path = registry_path.parent / "providers.json"
+
+    # Write with 0600 permissions (owner read/write only).
+    out_path.write_text(json.dumps(cache, indent=2) + "\n",
+                        encoding="utf-8")
+    out_path.chmod(0o600)
+    print(f"[cache] wrote {out_path} (0600, {len(cache)} providers)")
+
+    # Push to remote hosts if requested.
+    if push_hosts:
+        try:
+            hosts = load_hosts(registry_path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"error: cannot read hosts from registry: {exc}",
+                  file=sys.stderr)
+            return EXIT_USAGE
+
+        target_hosts = [h for h in hosts
+                        if h.get("name") in push_hosts
+                        or h.get("ssh") in push_hosts]
+        if not target_hosts:
+            print(f"error: no matching hosts for {push_hosts}",
+                  file=sys.stderr)
+            return EXIT_USAGE
+
+        for host_entry in target_hosts:
+            host_name = host_entry.get("name") or host_entry.get("ssh", "")
+            ssh_target = host_entry.get("ssh", host_name)
+            env = {"HOME": str(home_base)}
+            # Write the cache on the remote host via ssh + cat.
+            cache_content = out_path.read_text(encoding="utf-8")
+            remote_path = f"$HOME/.ilk-data/providers.json"
+            cmd = ["sh", "-c",
+                   f'mkdir -p "$(dirname {remote_path})" && '
+                   f'cat > {remote_path} && chmod 600 {remote_path}']
+            try:
+                proc = transport.run(ssh_target, cmd, env,
+                                     input=cache_content)
+                if proc.returncode == 0:
+                    print(f"[cache] pushed to {host_name}:{remote_path}")
+                else:
+                    print(f"[cache] push to {host_name} failed: "
+                          f"{proc.stderr}", file=sys.stderr)
+            except Exception as exc:
+                print(f"[cache] push to {host_name} error: {exc}",
+                      file=sys.stderr)
+
+    return EXIT_OK
+
+
 # ── host fan-out (SP4 — one-command-every-host) ────────────────────────────
 
 
@@ -279,7 +387,8 @@ class SshTransport:
     """
 
     def run(self, host: str, cmd: list[str], env: dict,
-            timeout: float = 60.0) -> subprocess.CompletedProcess:
+            timeout: float = 60.0, input: str | None = None,
+            ) -> subprocess.CompletedProcess:
         # Inject the script directory so the remote side can find
         # worker_model.py without computing a relative path from HOME.
         env = dict(env)
@@ -292,7 +401,7 @@ class SshTransport:
         return subprocess.run(
             ["ssh", host, "--", *remote_cmd],
             capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=timeout,
+            errors="replace", timeout=timeout, input=input,
         )
 
 
@@ -310,13 +419,14 @@ class _LocalTransport:
     """
 
     def run(self, host: str, cmd: list[str], env: dict,
-            timeout: float = 60.0) -> subprocess.CompletedProcess:
+            timeout: float = 60.0, input: str | None = None,
+            ) -> subprocess.CompletedProcess:
         full_env = dict(os.environ)
         full_env.update(env)
         full_env.setdefault("ILK_SCRIPT_DIR", str(SCRIPT_DIR))
         return subprocess.run(
             cmd, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", env=full_env, timeout=timeout,
+            errors="replace", env=full_env, timeout=timeout, input=input,
         )
 
 
@@ -873,6 +983,13 @@ def main(argv=None) -> int:
                              help="provider id or name to show")
     providers_p.add_argument("--json", action="store_true", dest="as_json",
                              help="output as JSON")
+    cache_p = sub.add_parser(
+        "providers-cache",
+        help="write a 0600 providers.json credential cache")
+    cache_p.add_argument("--out", default=None, type=Path,
+                         help="output path (default: next to registry)")
+    cache_p.add_argument("--push", nargs="*", default=None,
+                         help="push cache to named hosts")
     args = ap.parse_args(argv)
 
     home_base = Path.home()
@@ -899,6 +1016,12 @@ def main(argv=None) -> int:
         if args.name:
             return cmd_providers_show(args.name, args.as_json)
         return cmd_providers(args.as_json)
+    if args.cmd == "providers-cache":
+        return cmd_providers_cache(
+            out_path=getattr(args, "out", None),
+            push_hosts=getattr(args, "push", None),
+            registry_path=registry_path, home_base=home_base,
+            data_home=data_home)
     return cmd_restore(home_base)
 
 
