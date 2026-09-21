@@ -2,7 +2,10 @@
 
 > **Status:** accepted 2026-09-18 — implemented by batch-2026-09-18b
 > (ilk-skills `MASTER-2026-09-18-manager-tier-role-registry`).
-> **Last updated:** 2026-09-18.
+> **Last updated:** 2026-09-21 — schema amended with the optional `auth`
+> field (§3); see
+> [`provider-switching-and-quota-fallback.md`](provider-switching-and-quota-fallback.md)
+> for the switching design that motivated it.
 > **Driving request:** handoffs inbox entry `2026-09-18 —
 > manager-tier-role-registry-and-judgement-boundary`. Extends
 > [`model-worker-framework.md`](model-worker-framework.md) §2c (registry row)
@@ -59,7 +62,8 @@ manager`, because a floor is a *minimum rank*:
     "planner": {"tier": "planner", "home": "~/.claude",
                  "provider": "Claude Official", "model": "opus-4.8"},
     "manager": {"tier": "manager", "home": "~/.claude-manager",
-                 "provider": "Zhipu GLM", "model": "glm-5.3",
+                 "provider": "Claude Official", "model": "opus",
+                 "auth": "official",
                  "path_command": "claude-manager"},
     "coder":   {"tier": "worker", "home": "~/.claude-worker",
                  "provider": "Xiaomi MiMo V2.5 - Pro", "model": "mimo-v2.5-pro",
@@ -81,6 +85,17 @@ Rules:
 - `path_command` (optional) names a command the installer puts on PATH for
   that role. Roles without one are reached by `CLAUDE_CONFIG_DIR` dispatch,
   not a wrapper.
+- `auth` (optional, added 2026-09-21) ∈ `{official}`. It declares that the
+  role runs on the official Claude account, i.e. that its home carries **no**
+  provider env and authenticates by OAuth (Keychain login, or
+  `CLAUDE_CODE_OAUTH_TOKEN` in the environment). Absence means a
+  token-provider home, which is the fail-closed default: `claude-worker.sh`'s
+  preflight requires `ANTHROPIC_BASE_URL` / `AUTH_TOKEN` / `MODEL` for every
+  home the registry does not mark, so an *accidental* fallback to the
+  planner's identity is still refused. For a marked home the checks invert —
+  a LEFTOVER base url or token is the error, because it would mean the home
+  is still on a third-party provider while the registry claims otherwise.
+  Rationale and incident: `provider-switching-and-quota-fallback.md` §5.
 - **No secret ever enters this file.** Provider and model names only; tokens
   stay in each home's `settings.json` (framework §0 secrets rule — cc-switch
   is a reference to copy from, never a runtime source).
