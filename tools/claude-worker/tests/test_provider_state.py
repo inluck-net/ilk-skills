@@ -30,7 +30,8 @@ from provider_state import (
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 # A token-shaped string the writer must never emit.
-TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{20,}$")
+# Requires at least one digit and no hyphens (UUIDs have hyphens, tokens don't).
+TOKEN_RE = re.compile(r"^(?=.*\d)[A-Za-z0-9_]{20,}$")
 
 SAMPLE_HOME = "/Users/chad/.claude-worker"
 SAMPLE_HOME_2 = "/Users/chad/.claude-manager"
