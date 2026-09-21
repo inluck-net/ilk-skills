@@ -1012,9 +1012,27 @@ autonomous runs of supervised/draft work).
 
 The MASTER was written `status: draft` in step 6, so the live scheduler/loop
 could not pick it up while you authored and QC'd it. **Now that step-7 QC has
-passed**, flip the MASTER's front-matter `status: draft → queued` so it
-becomes runnable. Skip this only if QC produced an unresolved hard finding —
-then leave it `draft` and tell the user what to fix.
+passed**, run the preflight before releasing:
+
+```bash
+python "<skill-root>/ilk-loop/scripts/plan_preflight.py" \
+  "<external_plans_dir>/MASTER-*.md" \
+  --plans-dir "<external_plans_dir>" \
+  --project-root "<project_root>"
+```
+
+The preflight runs the loop's **own readers** against the authored batch:
+registry parity (extract_subplan_files agrees with the table), declared test
+paths exist, step-commit feasibility (repo artifact or --allow-empty), and
+gate executable resolvability.  **A failing preflight leaves the master
+`draft`** and names which reader disagreed.  Do NOT flip to `queued` while
+any preflight check fails — the loop would halt on the structural defect
+the preflight caught.
+
+If the preflight passes clean, flip the MASTER's front-matter
+`status: draft → queued` so it becomes runnable. Skip this only if QC
+or preflight produced an unresolved hard finding — then leave it `draft`
+and tell the user what to fix.
 
 > ⚠️ A `queued` master is immediately dispatchable by a running scheduler. For
 > a **self-modifying** batch (edits `loop_status.py` / `scheduler_scan.py` /
