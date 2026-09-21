@@ -311,20 +311,52 @@ _data_tmp_prefix: str | None = None
 _data_probe_error: str | None = None
 
 
+# Directories whose contents are never project DATA, wherever they appear.
+# A build cache is not proof material and cannot be read back as one.
+_ENTRY_STAT_IGNORED_DIRS = frozenset({"__pycache__", ".pytest_cache"})
+
+
 def _entry_stat(entry: Path) -> tuple[int, float]:
     """(file count, newest mtime) for one project entry, recursive.
 
     A full walk of this tree measured 5340 files in 15ms on chad-mbp, so the
     guard watches contents rather than names and does not need to scope itself
     to runtime/ to stay cheap.
+
+    Two subtrees are EXCLUDED, and the exclusion is the point rather than an
+    optimisation (retro-2026-09-21-the-gate-cannot-pass-from-the-worktree):
+
+    * ``runtime/launcher/worktrees/`` — a selfmod batch runs in a git worktree
+      created INSIDE the data root. A checkout is not data: nothing under it is
+      read back as proof (the proof record is ``runtime/batch-gate.json`` and
+      ``runtime/launcher/ship-proof.jsonl``, both above this path).
+    * ``__pycache__`` / ``.pytest_cache`` anywhere.
+
+    Without these, ``pytest`` run with its cwd inside the worktree writes
+    ``.pytest_cache`` there, the guard counts the RUNNER'S OWN artifacts as a
+    leak, and ``session.exitstatus = 1`` fails a session whose tests all
+    passed. Measured 2026-09-21 at HEAD 3019617, same four test files, same
+    command: 69 passed / exit 0 from the clone, 69 passed / exit 0 from
+    /tmp/ilk-traycheck, 69 passed / **exit 1** from a worktree under
+    ``~/.ilk-data/projects/<key>/runtime/launcher/worktrees/`` with
+    ``GAINED FILES files=3381 (was 3377)``. That closed the loop on every
+    self-modifying batch: the gate could not pass from the only directory the
+    loop was allowed to run it in, so four parks in one afternoon were a guard
+    firing on its own cache.
     """
     n, newest = 0, 0.0
+    worktrees = entry / "runtime" / "launcher" / "worktrees"
     try:
         for f in entry.rglob("*"):
             try:
-                if f.is_file():
-                    n += 1
-                    newest = max(newest, f.stat().st_mtime)
+                if not f.is_file():
+                    continue
+                if _ENTRY_STAT_IGNORED_DIRS.intersection(f.parts):
+                    continue
+                if worktrees in f.parents:
+                    continue
+                n += 1
+                newest = max(newest, f.stat().st_mtime)
             except OSError:
                 continue
     except OSError:

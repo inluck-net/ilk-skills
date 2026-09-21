@@ -284,3 +284,53 @@ def test_a_touched_real_key_is_reported_not_failed(monkeypatch, tmp_path, capsys
     assert "TOUCHED" in err and "reported only" in err, (
         f"it must still be reported; the limit is attribution, not detection\n{err}"
     )
+
+
+# --- the worktree/cache exclusion (retro-2026-09-21-the-gate-cannot-pass-from-the-worktree)
+
+
+def test_entry_stat_ignores_the_selfmod_worktree_and_build_caches(tmp_path):
+    """A selfmod batch's own checkout and caches are not project DATA.
+
+    The worktree lives INSIDE the data root
+    (``<key>/runtime/launcher/worktrees/selfmod-batch``), so a gate run with
+    its cwd there writes ``.pytest_cache`` under a real project key. Counting
+    those made the guard fail every gate a selfmod batch could run — 69 passed
+    / exit 1, measured 2026-09-21 — which no red test can produce and no
+    in-loop fix could clear.
+    """
+    mod = _load_conftest()
+    entry = tmp_path / "users-chad-projects-github-inluck-net-ilk-skills-604d727"
+    launcher = entry / "runtime" / "launcher"
+    launcher.mkdir(parents=True)
+    (launcher / "ship-proof.jsonl").write_text('{"slug": "x"}\n', encoding="utf-8")
+
+    wt = launcher / "worktrees" / "selfmod-batch"
+    (wt / ".pytest_cache" / "v").mkdir(parents=True)
+    (wt / ".pytest_cache" / "v" / "lastfailed").write_text("{}", encoding="utf-8")
+    (wt / "skills").mkdir(parents=True)
+    (wt / "skills" / "anything.py").write_text("# a checkout, not data\n", encoding="utf-8")
+
+    pycache = entry / "plans" / "__pycache__"
+    pycache.mkdir(parents=True)
+    (pycache / "plan_status.cpython-39.pyc").write_bytes(b"\x00")
+
+    n, _newest = mod._entry_stat(entry)
+    assert n == 1, (
+        "only ship-proof.jsonl is project data; the worktree checkout, its "
+        f".pytest_cache and a __pycache__ must not be counted (got {n})"
+    )
+
+
+def test_entry_stat_still_counts_real_project_data(tmp_path):
+    """The exclusion must not blind the guard to what it exists to catch."""
+    mod = _load_conftest()
+    entry = tmp_path / "users-chad-projects-keyreply-kira-cloudflare-1851f78"
+    (entry / "runtime" / "launcher").mkdir(parents=True)
+    (entry / "runtime" / "batch-gate.json").write_text("{}", encoding="utf-8")
+    (entry / "runtime" / "launcher" / "ship-proof.jsonl").write_text("{}\n", encoding="utf-8")
+    (entry / "plans").mkdir(parents=True)
+    (entry / "plans" / "MASTER-x.md").write_text("# m\n", encoding="utf-8")
+
+    n, _newest = mod._entry_stat(entry)
+    assert n == 3, f"a test writing real project state must still be counted (got {n})"
