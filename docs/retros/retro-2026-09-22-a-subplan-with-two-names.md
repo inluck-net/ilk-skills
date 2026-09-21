@@ -123,6 +123,42 @@ resolution is weaker than its verdict.** Fail-closed is right when the
 question was asked correctly; when the lookup is wrong, fail-closed converts
 a naming inconsistency into a parked batch.
 
+## A sibling found by the same re-measurement — `--scope auto`
+
+The parallel session, re-checking its own diagnosis with a corrected
+instrument, turned up a second member of the family in gh-resolve's
+2026-09-21 batch. Its verification sub-plan is titled *batch verification —
+full suite* and its gate passes `--scope auto`:
+
+```
+verification_record.py --project . --batch batch-2026-09-21 \
+  --base-sha 67fcf359... --run-suite --scope auto --suite-timeout 1800
+```
+
+Two occurrences of `--scope auto` in that file, zero of `--scope full`.
+`auto` let the diff choose; it chose **9 files / 228 tests against 5608
+collected**, and that selection was written to `runtime/batch-gate.json` as
+`verdict: pass` while the tree carried **11 real failures**. The template
+already says to pass `--scope full` when the plan mandates a full suite —
+nothing enforced it.
+
+Same shape as the slug defect: **a plan whose two halves disagree about what
+it is**, with no mechanical check that they agree. Folded into
+`one-subplan-one-slug` as AC6, because one lint pass can cover both.
+
+It also changed this batch. `provider-switching-tier12-verify` was written
+with `--scope auto`, internally consistent with a body that said "scoped to
+the changed area" — so the proposed lint would NOT have fired on it, and it
+would still have been wrong: this batch modifies
+`run_ilk_loop_claude.sh`, a **bash** runner whose consumers no Python import
+oracle can resolve. A scope computed from importers systematically
+under-counts a shell change. Switched to `--scope full`, with the basis
+recorded in the sub-plan (430.0s / 3486 collected on chad-mbp, paid once per
+batch) and the falsifier stated.
+
+The general lesson: *internal consistency is not correctness*. A plan can
+agree with itself and still describe the wrong gate.
+
 ## What would have caught it sooner
 
 Reading the violation string. It names step commits; the repo is `shared`;
