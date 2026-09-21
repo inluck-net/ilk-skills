@@ -22,9 +22,9 @@ Environment:
                      to this script)
   ILK_DATA_HOME      loop data home scanned for live loops (canonical
                      override; default ~/.ilk-data)
-  HOME               base for worker homes (~/.claude-worker,
-                     ~/.claude-worker-<n> for slots n>=2 — scheduler.sh's
-                     get_slot_home layout) and for "~" in registry homes
+  HOME               base for worker homes (~/.claude-worker plus every
+                     existing ~/.claude-worker-<digits> sibling — see
+                     worker_homes) and for "~" in registry homes
 
 Exit codes: 0 ok · 2 usage / unresolvable target · 3 live loop refused ·
 4 probe mismatch (rolled back).
@@ -60,11 +60,15 @@ EXIT_PROBE = 4
 # ── homes, registry, settings ────────────────────────────────────────────────
 
 def worker_homes(home_base: Path) -> list:
-    """Every existing worker home: main + numeric slots (scheduler.sh
-    get_slot_home: slot 1 = ~/.claude-worker, slot i>=2 = ~/.claude-worker-<i>).
+    """Every existing worker home: main + numeric-suffix siblings.
 
-    Numeric suffixes only — ~/.claude-worker-draw is the art ROLE's home,
-    not a coder slot, and is not swept.
+    scheduler.sh's get_slot_home maps slot 1 → ~/.claude-worker and slot
+    i>=2 → ~/.claude-worker-<i>, but the sweep is deliberately wider: any
+    existing ~/.claude-worker-<digits> counts (this host has a live
+    ~/.claude-worker-1 from worker-slot provisioning). A home that exists
+    but is skipped silently keeps the old model — the retro's hazard 5.
+    Non-numeric suffixes (~/.claude-worker-draw) are other ROLES' homes,
+    not coder slots, and are not swept.
     """
     homes = []
     main = home_base / ".claude-worker"
@@ -72,7 +76,7 @@ def worker_homes(home_base: Path) -> list:
         homes.append(main)
     for child in sorted(home_base.glob(".claude-worker-*")):
         suffix = child.name[len(".claude-worker-"):]
-        if suffix.isdigit() and int(suffix) >= 2 and child.is_dir():
+        if suffix.isdigit() and child.is_dir():
             homes.append(child)
     return homes
 
