@@ -132,7 +132,11 @@ def test_lint_file_reads_and_flags(tmp_path: Path):
 
 
 def test_lint_file_bom(tmp_path: Path):
-    p = tmp_path / "sp.md"
+    # The filename must agree with the fixture's `plan:` field. This test is
+    # about BOM decoding, but lint_file also runs the slug-identity check
+    # (one-subplan-one-slug), and a name mismatch here would fail the test for
+    # a reason that has nothing to do with BOMs.
+    p = tmp_path / "needs-browser.md"
     p.write_text(HARD_NO_FALLBACK, encoding="utf-8-sig")
     assert lint_file(p) == []
 
