@@ -312,6 +312,77 @@ def probe_model(home: Path, timeout: float = 30.0) -> str:
     return lines[-1] if lines else "(probe returned nothing)"
 
 
+def probe_config(home: Path, timeout: float = 30.0,
+                  extra_env: dict | None = None) -> tuple[bool, str]:
+    """Read the model from the stream-json init event — what the process
+    loaded, not what the model says about itself.
+
+    Returns (ok, detail): ok=True when the first event's model field is
+    non-empty, detail is the model string (or an error message).
+    """
+    env = dict(os.environ)
+    if extra_env:
+        env.update(extra_env)
+    env["CLAUDE_CONFIG_DIR"] = str(home)
+    try:
+        result = subprocess.run(
+            ["claude", "-p", "--output-format", "stream-json",
+             "--verbose", "--max-turns", "1", "hi"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env=env, timeout=timeout,
+        )
+    except FileNotFoundError:
+        return False, "claude not found on PATH"
+    except subprocess.TimeoutExpired:
+        return False, "probe timed out"
+    if result.returncode != 0:
+        return False, f"exit {result.returncode}"
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict) and "model" in event:
+            return True, str(event["model"])
+    return False, "no init event found"
+
+
+def probe_live(home: Path, timeout: float = 30.0,
+               extra_env: dict | None = None) -> tuple[bool, str]:
+    """One real round-trip to confirm auth and quota are alive.
+
+    Returns (ok, detail): ok=True when the call succeeds, detail is the
+    result text or a diagnostic string on failure (403, 429, etc.).
+    """
+    env = dict(os.environ)
+    if extra_env:
+        env.update(extra_env)
+    env["CLAUDE_CONFIG_DIR"] = str(home)
+    try:
+        result = subprocess.run(
+            ["claude", "-p", "--output-format", "json", "--max-turns", "1",
+             "Say OK"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env=env, timeout=timeout,
+        )
+    except FileNotFoundError:
+        return False, "claude not found on PATH"
+    except subprocess.TimeoutExpired:
+        return False, "probe timed out"
+    try:
+        data = json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError):
+        if result.returncode != 0:
+            return False, f"exit {result.returncode}, non-JSON output"
+        return False, "non-JSON output from live probe"
+    if data.get("is_error"):
+        return False, data.get("result", "unknown error")
+    return True, data.get("result", "ok")
+
+
 def cmd_use(target: str, now: bool, skip_probe: bool, home_base: Path,
             registry_path: Path, data_home: Path) -> int:
     try:
@@ -373,22 +444,31 @@ def cmd_use(target: str, now: bool, skip_probe: bool, home_base: Path,
         print("[probe] SKIPPED (--skip-probe) — switch is UNVERIFIED")
     else:
         for home in homes:
-            reported = probe_model(home)
-            if reported != model:
-                print(f"error: probe under {home} reported '{reported}', "
-                      f"expected '{model}' — ROLLING BACK", file=sys.stderr)
+            cfg_ok, cfg_detail = probe_config(home)
+            live_ok, live_detail = probe_live(home)
+            if cfg_ok and cfg_detail != model:
+                cfg_ok = False
+            if not cfg_ok or not live_ok:
+                print(f"error: probe under {home} — "
+                      f"config={'OK: ' + cfg_detail if cfg_ok else cfg_detail}, "
+                      f"live={'OK' if live_ok else live_detail} — "
+                      f"ROLLING BACK", file=sys.stderr)
                 for h, b in backups.items():
                     shutil.copy2(b, h / "settings.json")
                     print(f"[rollback] {h}: restored {b.name}", file=sys.stderr)
                 return EXIT_PROBE
-            print(f"[probe] {home}: reports {reported} ✓")
+            print(f"[probe] {home}: config={cfg_detail}, live=OK ✓")
+
+    if skip_probe:
+        print("switch is UNVERIFIED — skipped probe.")
+    else:
+        print("switch verified for every home above.")
 
     # Sync the role registry: update every role whose home matches a worker
     # home we just switched.  This closes the gap where the registry says one
     # model while the homes run another (retro hazard 6).
     _sync_registry(registry_path, roles, homes, home_base, model, role)
 
-    print("switch verified for every home above.")
     print("engine-precedence facts:")
     print("  - the scheduler dispatches with an explicit --engine claude-worker "
           "(hardcoded flag, scheduler.sh)")

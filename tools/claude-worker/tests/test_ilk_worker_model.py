@@ -97,13 +97,27 @@ class Env:
 
         # Fake claude: reports the canned model, and logs each probe's
         # CLAUDE_CONFIG_DIR so tests can assert the probe ran per home.
+        # Handles --output-format for probe_config (stream-json) and
+        # probe_live (json) in addition to plain-text probe_model.
         self.probe_log = tmp_path / "probe.log"
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
         (bin_dir / "claude").write_text(
             "#!/usr/bin/env bash\n"
-            f"printf '%s\\n' \"{self.probe_log}\" \"$CLAUDE_CONFIG_DIR\" >> \"{self.probe_log}\"\n"
-            f"echo \"{fake_claude_model}\"\n",
+            f"printf '%s\\n' \"{self.probe_log}\" \"$CLAUDE_CONFIG_DIR\" "
+            f">> \"{self.probe_log}\"\n"
+            "fmt=plain\n"
+            "for arg in \"$@\"; do\n"
+            "  case \"$arg\" in\n"
+            "    --output-format) ;;\n"
+            "    stream-json|json) fmt=\"$arg\" ;;\n"
+            "  esac\n"
+            "done\n"
+            "case \"$fmt\" in\n"
+            f"  stream-json) echo '{{\"model\": \"{fake_claude_model}\", \"type\": \"init\"}}' ;;\n"
+            f"  json)        echo '{{\"is_error\": false, \"result\": \"OK\"}}' ;;\n"
+            f"  *)           echo \"{fake_claude_model}\" ;;\n"
+            "esac\n",
             encoding="utf-8",
         )
         os.chmod(bin_dir / "claude", 0o755)
@@ -209,9 +223,11 @@ class TestUse:
             assert backup_env["ANTHROPIC_MODEL"] == before
 
         # The probe ran under every worker home before success was reported.
+        # Each home gets two probes: probe_config + probe_live.
         probed = env_ok_probe.probe_homes()
         assert sorted(probed) == sorted([
-            str(env_ok_probe.main), str(env_ok_probe.slot2)])
+            str(env_ok_probe.main), str(env_ok_probe.main),
+            str(env_ok_probe.slot2), str(env_ok_probe.slot2)])
         # Engine-precedence facts are part of the success report.
         assert "claude-worker" in result.stdout
 
@@ -452,7 +468,8 @@ class EnvProbe:
             },
         }, indent=2), encoding="utf-8")
 
-        # Fake claude: emits stream-json init event + live probe result.
+        # Fake claude: emits stream-json init event for probe_config
+        # and plain JSON for probe_live, based on --output-format.
         self.probe_log = tmp_path / "probe.log"
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
@@ -462,12 +479,19 @@ class EnvProbe:
             "#!/usr/bin/env bash\n"
             f"printf '%s\\n' \"{self.probe_log}\" \"$CLAUDE_CONFIG_DIR\" "
             f">> \"{self.probe_log}\"\n"
-            # Stream-json init event (probe_config reads this).
-            f"echo '{{\"model\": \"{config_model}\", \"type\": \"init\"}}'\n"
-            # Live probe result (probe_live reads is_error / result).
-            f"echo '{{\"is_error\": {str(not live_ok).lower()}, "
-            f"\"result\": \"{live_result}\"}}'\n"
-            f"exit {live_exit}\n",
+            "fmt=plain\n"
+            "for arg in \"$@\"; do\n"
+            "  case \"$arg\" in\n"
+            "    --output-format) ;;\n"
+            "    stream-json|json) fmt=\"$arg\" ;;\n"
+            "  esac\n"
+            "done\n"
+            "case \"$fmt\" in\n"
+            f"  stream-json) echo '{{\"model\": \"{config_model}\", \"type\": \"init\"}}' ;;\n"
+            f"  json)        echo '{{\"is_error\": {str(not live_ok).lower()}, "
+            f"\"result\": \"{live_result}\"}}'; exit {live_exit} ;;\n"
+            f"  *)           echo \"{config_model}\" ;;\n"
+            "esac\n",
             encoding="utf-8",
         )
         os.chmod(bin_dir / "claude", 0o755)
@@ -508,10 +532,14 @@ class TestConfigProbe:
         """
         probe_env = EnvProbe(tmp_path, "mimo-v2.5-pro", live_ok=True)
         # Import the module to call probe_config directly.
+        # Pass extra_env so the probe finds the fake claude on PATH.
         sys.path.insert(0, str(TOOLS_DIR))
         try:
             import worker_model
-            ok, detail = worker_model.probe_config(probe_env.main)
+            ok, detail = worker_model.probe_config(
+                probe_env.main,
+                extra_env={"PATH": f"{probe_env.bin_dir}{os.pathsep}{os.environ['PATH']}"},
+            )
         finally:
             sys.path.pop(0)
         assert ok is True, f"probe_config should match; got ok={ok}, detail={detail!r}"
@@ -527,7 +555,10 @@ class TestLiveProbe:
         sys.path.insert(0, str(TOOLS_DIR))
         try:
             import worker_model
-            ok, detail = worker_model.probe_live(probe_env.main)
+            ok, detail = worker_model.probe_live(
+                probe_env.main,
+                extra_env={"PATH": f"{probe_env.bin_dir}{os.pathsep}{os.environ['PATH']}"},
+            )
         finally:
             sys.path.pop(0)
         assert ok is True
@@ -540,7 +571,10 @@ class TestLiveProbe:
         sys.path.insert(0, str(TOOLS_DIR))
         try:
             import worker_model
-            ok, detail = worker_model.probe_live(probe_env.main)
+            ok, detail = worker_model.probe_live(
+                probe_env.main,
+                extra_env={"PATH": f"{probe_env.bin_dir}{os.pathsep}{os.environ['PATH']}"},
+            )
         finally:
             sys.path.pop(0)
         assert ok is False
