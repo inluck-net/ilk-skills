@@ -130,10 +130,34 @@ ProjectKind = Literal["single", "meta"]
 
 
 def git_root(start: Path) -> Path | None:
-    """First ancestor of `start` that contains a `.git` (dir or file)."""
+    """First ancestor of `start` that contains a `.git` (dir or file).
+
+    For git worktrees, resolves back to the original project root by
+    parsing the `.git` file's `gitdir:` entry. This ensures that
+    selfmod worktrees (under `~/.ilk-data/projects/<key>/runtime/`)
+    resolve to the same project key as the original project.
+    """
     cur = Path(start).resolve()
     while True:
-        if (cur / ".git").exists():
+        git_entry = cur / ".git"
+        if git_entry.exists():
+            # If this is a worktree (`.git` is a file, not a directory),
+            # parse the gitdir entry to find the original project root.
+            if git_entry.is_file():
+                try:
+                    content = git_entry.read_text().strip()
+                    if content.startswith("gitdir:"):
+                        gitdir = Path(content[len("gitdir:"):].strip())
+                        # The gitdir is typically `<original>/.git/worktrees/<name>`
+                        # Walk up from gitdir to find the `.git` directory.
+                        # gitdir.parent = worktrees, gitdir.parent.parent = .git
+                        git_dir = gitdir.parent.parent
+                        if git_dir.name == ".git":
+                            original_root = git_dir.parent
+                            if original_root != cur and original_root.exists():
+                                return original_root
+                except (OSError, ValueError):
+                    pass
             return cur
         if cur.parent == cur:
             return None

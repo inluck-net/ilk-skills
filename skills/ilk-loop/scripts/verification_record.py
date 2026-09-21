@@ -143,10 +143,11 @@ def compute_suite_scope(project: Path, base_sha: str) -> dict:
     if not changed:
         return {"mode": "scoped", "count": 0, "reason": "empty diff"}
 
-    # Direct test-file changes.
+    # Direct test-file changes (Python test files only).
     test_files = {p for p in changed
-                  if "/test" in p.replace("\\", "/")
-                  or p.replace("\\", "/").endswith("_test.py")}
+                  if p.endswith(".py")
+                  and ("/test" in p.replace("\\", "/")
+                       or p.replace("\\", "/").endswith("_test.py"))}
 
     # Non-test Python files: try to map to their test counterparts.
     non_test_py = [p for p in changed
