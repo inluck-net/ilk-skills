@@ -196,6 +196,39 @@ PY
   sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\(.*\)\".*/\1/p" "$file" | head -n1
 }
 
+# Name the role that OWNS this home, if the role registry declares it to run
+# on the official Claude account ("auth": "official"). Prints the role name;
+# prints nothing for every other home. Silence is the fail-closed answer: an
+# unreadable registry, a missing Python, or a home no role claims all keep the
+# strict provider-env preflight below, so an ACCIDENTAL fallback to the
+# planner's OAuth identity is still refused. Only a home the registry names is
+# allowed to carry no provider env.
+official_role_for_home() {
+  local home="$1" registry py
+  registry="${ILK_ROLE_REGISTRY:-$SCRIPT_DIR/role-registry.json}"
+  [[ -f "$registry" ]] || return 0
+  py="$(resolve_python)" || return 0
+  [[ "$py" == "py" ]] && py="py -3"
+  $py - "$registry" "$home" <<'PYROLE'
+import json, os, sys
+registry, home = sys.argv[1], sys.argv[2]
+try:
+    with open(registry) as fh:
+        roles = (json.load(fh) or {}).get("roles") or {}
+except Exception:
+    sys.exit(0)
+want = os.path.realpath(os.path.expanduser(home))
+for name, role in roles.items():
+    if not isinstance(role, dict):
+        continue
+    if str(role.get("auth", "")).lower() != "official":
+        continue
+    if os.path.realpath(os.path.expanduser(str(role.get("home", "")))) == want:
+        sys.stdout.write(name)
+        break
+PYROLE
+}
+
 # --- argument parsing -------------------------------------------------------
 # Recognized wrapper flags are consumed; everything else is forwarded to
 # claude verbatim (preserved in claude_args).
@@ -269,9 +302,22 @@ info "base url:        ${base_url:-(missing)}"
 info "auth token:      $(mask_secret "$auth_token")"
 info "model:           ${model:-(missing)}"
 
-[[ -z "$base_url" ]]   && problems+=("ANTHROPIC_BASE_URL missing from $settings_file")
-[[ -z "$auth_token" ]] && problems+=("ANTHROPIC_AUTH_TOKEN missing from $settings_file")
-[[ -z "$model" ]]      && problems+=("ANTHROPIC_MODEL missing from $settings_file")
+# A home the registry declares official runs ON the official OAuth identity
+# deliberately, so the three provider-env checks below would refuse exactly
+# the configuration it is supposed to have. The checks invert instead: a
+# leftover base url or token would mean the home is still on a third-party
+# provider while the registry claims otherwise — the same silent-identity bug
+# pointing the other way.
+official_role="$(official_role_for_home "$worker_home")"
+if [[ -n "$official_role" ]]; then
+  info "identity:        Claude Official (OAuth) - role '$official_role'"
+  [[ -n "$base_url" ]] && problems+=("ANTHROPIC_BASE_URL is set in $settings_file, but role '$official_role' is declared auth=official - remove it, or drop the declaration")
+  [[ -n "$auth_token" ]] && problems+=("ANTHROPIC_AUTH_TOKEN is set in $settings_file, but role '$official_role' is declared auth=official - remove it, or drop the declaration")
+else
+  [[ -z "$base_url" ]]   && problems+=("ANTHROPIC_BASE_URL missing from $settings_file")
+  [[ -z "$auth_token" ]] && problems+=("ANTHROPIC_AUTH_TOKEN missing from $settings_file")
+  [[ -z "$model" ]]      && problems+=("ANTHROPIC_MODEL missing from $settings_file")
+fi
 
 if [[ ! -d "$skill_home/ilk-runner" ]]; then
   problems+=("ilk-runner skill not found at $skill_home/ilk-runner (run install.sh --claude-home \"$worker_home\" --only-claude)")

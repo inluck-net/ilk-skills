@@ -157,6 +157,62 @@ assert_output_contains "missing BASE_URL → names 'ANTHROPIC_BASE_URL'" \
 # Restore.
 mv "$FAKE_HOME/settings.json.bak" "$FAKE_HOME/settings.json"
 
+# === Test 6: a registry-declared official home needs NO provider env (AC1) ===
+# The manager role runs on the official OAuth account deliberately, so the
+# three provider-env checks must not refuse the configuration it is meant to
+# have — while an unregistered env-less home (Test 5) still fails closed.
+echo ""
+echo "=== Test 6: registry-declared official home passes with no provider env ==="
+
+REGISTRY="$REPO_ROOT/scratch/preflight-test/role-registry.json"
+cat > "$REGISTRY" <<REG
+{"version": 1, "roles": {
+  "manager": {"tier": "manager", "home": "$FAKE_HOME",
+              "provider": "Claude Official", "model": "opus",
+              "auth": "official"}
+}}
+REG
+
+cp "$FAKE_HOME/settings.json" "$FAKE_HOME/settings.json.bak"
+cat > "$FAKE_HOME/settings.json" <<'SET'
+{
+  "env": {},
+  "model": "opus"
+}
+SET
+
+assert_exit_code "official home, no provider env -> exit 0" 0 \
+  env ILK_ROLE_REGISTRY="$REGISTRY" bash "$WORKER_SCRIPT" --preflight-only --home "$FAKE_HOME"
+
+assert_output_contains "official home -> names the identity" \
+  "Claude Official" \
+  env ILK_ROLE_REGISTRY="$REGISTRY" bash "$WORKER_SCRIPT" --preflight-only --home "$FAKE_HOME"
+
+# === Test 7: official home that still carries a provider env is refused (AC3) ===
+# A leftover base url means the home is still on a third-party provider while
+# the registry claims official — the silent-identity bug pointing the other way.
+echo ""
+echo "=== Test 7: official home with a leftover provider env is refused ==="
+
+cat > "$FAKE_HOME/settings.json" <<'SET'
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://leftover.example.com/anthropic"
+  },
+  "model": "opus"
+}
+SET
+
+assert_exit_code "official home + leftover BASE_URL -> exit 3" 3 \
+  env ILK_ROLE_REGISTRY="$REGISTRY" bash "$WORKER_SCRIPT" --preflight-only --home "$FAKE_HOME"
+
+assert_output_contains "official home + leftover BASE_URL -> names auth=official" \
+  "auth=official" \
+  env ILK_ROLE_REGISTRY="$REGISTRY" bash "$WORKER_SCRIPT" --preflight-only --home "$FAKE_HOME"
+
+# Restore.
+mv "$FAKE_HOME/settings.json.bak" "$FAKE_HOME/settings.json"
+
 # === Results ===
 echo ""
 echo "=== Results: $pass passed, $fail failed ==="
