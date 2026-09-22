@@ -39,6 +39,7 @@ a requirement, and must be updated in the same commit as the fix.
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -49,6 +50,7 @@ _SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(_SCRIPTS))
 
 from ilk_paths import (  # noqa: E402
+    external_plans_dir,
     find_project_root,
     git_root,
     project_key,
@@ -288,3 +290,137 @@ def test_a_plain_repo_with_no_marker_is_unaffected(tmp_path: Path) -> None:
     assert resolve_project_key(repo) == project_key(repo)
     assert git_root(repo) is not None
     assert git_root(repo).resolve() == repo.resolve()
+
+
+# ── The seam itself (step 2): a pin makes a path its own project ─────────────
+#
+# Sub-plan: pin-a-path-as-its-own-project, step 2.  AC-1, AC-2 and AC-5, plus
+# the property step 0 recorded as its reference — a pin in the worktree must
+# not move the clone.  Each test below reuses `_make_clone_with_linked_worktree`
+# and differs from the no-marker pins above by exactly one file, which is the
+# whole seam.
+
+
+def test_a_linked_worktree_with_the_marker_resolves_to_itself(tmp_path: Path) -> None:
+    """AC-1 — the marker makes the worktree its own project root.
+
+    Paired with `test_a_linked_worktree_without_a_marker_resolves_to_its_clone`:
+    same fixture, one file different.  With the marker the worktree resolves to
+    itself and reports kind "single"; without it, to its clone.
+    """
+    clone, worktree = _make_clone_with_linked_worktree(tmp_path)
+    (worktree / PIN_MARKER).touch()
+
+    root, kind = find_project_root(worktree)
+    assert root is not None and root.resolve() == worktree.resolve(), (
+        "a worktree carrying %r must resolve to itself, not to its clone; "
+        "got %r for worktree %r" % (PIN_MARKER, root, worktree)
+    )
+    assert kind == "single"
+
+
+def test_a_pin_gives_the_worktree_its_own_key_and_plans_dir(tmp_path: Path) -> None:
+    """AC-2 — everything keyed off `project_root` follows from the pin.
+
+    A shared key would mean a shared plans dir, runtime dir, log stream and
+    lock — the collision this seam exists to let a caller avoid.  `external_plans_dir`
+    is asserted on the key's position in the path, not merely on inequality,
+    so a fix that keys the plans dir off something other than the pinned root
+    cannot pass.
+    """
+    clone, worktree = _make_clone_with_linked_worktree(tmp_path)
+    (worktree / PIN_MARKER).touch()
+
+    clone_key = project_key(clone)
+    wt_key = resolve_project_key(worktree)
+    assert wt_key is not None and wt_key != clone_key, (
+        "a pinned worktree must not share its clone's key; both resolved to %r"
+        % (wt_key,)
+    )
+
+    wt_plans = external_plans_dir(wt_key)
+    clone_plans = external_plans_dir(clone_key)
+    assert wt_plans != clone_plans, (
+        "the pinned worktree and its clone must not share a plans dir: %r"
+        % (wt_plans,)
+    )
+    assert wt_key in wt_plans.parts, (
+        "external_plans_dir must be keyed by the pinned root's key %r; got %r"
+        % (wt_key, wt_plans)
+    )
+    assert clone_key not in wt_plans.parts, (
+        "the pinned worktree's plans dir must not be keyed by the clone's key "
+        "%r; got %r" % (clone_key, wt_plans)
+    )
+
+
+def test_a_pin_in_the_worktree_does_not_move_the_clone(tmp_path: Path) -> None:
+    """The property step 0 recorded as its reference, re-asserted after the pin.
+
+    Pinning is opt-in for the caller holding the worktree path.  It must not
+    retroactively re-key the clone the worktree was carved from — the clone's
+    state directory is where all its history lives.
+    """
+    clone, worktree = _make_clone_with_linked_worktree(tmp_path)
+    assert resolve_project_key(clone) == project_key(clone), (
+        "precondition: step 0's reference property"
+    )
+
+    (worktree / PIN_MARKER).touch()
+
+    assert resolve_project_key(clone) == project_key(clone), (
+        "adding a pin inside the worktree moved the clone's own key"
+    )
+    root, _kind = find_project_root(clone)
+    assert root is not None and root.resolve() == clone.resolve(), (
+        "adding a pin inside the worktree moved the clone's own root: %r" % (root,)
+    )
+
+
+def test_the_cli_reports_the_pinned_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """AC-5 — `ilk_paths.py --start <pinned>` answers about the pin.
+
+    Runs the real CLI entrypoint rather than the functions, because the JSON
+    shape is what cross-repo consumers read (Contract 6b), and a library that
+    pins while the CLI still reports the clone would be the defect in a
+    different costume.  A planted MASTER file makes `find_plans_dir` resolve
+    to the external dir, so `resolved_plans_dir` is asserted rather than
+    merely present.
+
+    `ILK_DATA_HOME` points at tmp_path so nothing is written under the real
+    `~/.ilk-data` — `conftest.py`'s DATA-ROOT LEAK detector is watching for
+    exactly that.
+    """
+    clone, worktree = _make_clone_with_linked_worktree(tmp_path)
+    (worktree / PIN_MARKER).touch()
+
+    data_home = tmp_path / "ilk-data"
+    monkeypatch.setenv("ILK_DATA_HOME", str(data_home))
+    monkeypatch.delenv("ILK_DATA_DIR", raising=False)
+
+    wt_key = project_key(worktree)
+    plans = data_home / "projects" / wt_key / "plans"
+    plans.mkdir(parents=True)
+    (plans / "MASTER-2026-01-01-execution-plan.md").write_text(
+        "master\n", encoding="utf-8"
+    )
+
+    proc = subprocess.run(
+        [sys.executable, str(_SCRIPTS / "ilk_paths.py"), "--start", str(worktree)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(proc.stdout)
+
+    assert payload["project_root"] == str(worktree.resolve())
+    assert payload["project_kind"] == "single"
+    assert payload["project_key"] == wt_key
+    assert payload["project_key"] != project_key(clone), (
+        "the CLI must answer about the pin, not the clone"
+    )
+    assert payload["resolved_plans_dir"] == str(plans), (
+        "resolved_plans_dir must follow the pinned root's key; got %r want %r"
+        % (payload["resolved_plans_dir"], str(plans))
+    )
+    assert payload["resolved_source"] == "external"
