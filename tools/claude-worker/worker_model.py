@@ -211,6 +211,11 @@ def resolve_provider_env_or_home(
         pass
     # Fallback: read from the home, optionally overriding the model.
     env = read_env_block(home)
+    if not env and fallback_model:
+        # Official-auth homes have an empty env block and no CCSwitch
+        # provider env.  Return a minimal dict so the caller can still
+        # update the model (via the top-level settings.json "model" key).
+        return {"ANTHROPIC_MODEL": fallback_model}
     if not env:
         raise ValueError(
             f"ccswitch_import unavailable and home {home} has no env block"
@@ -987,8 +992,34 @@ def cmd_use(target: str, now: bool, skip_probe: bool, home_base: Path,
         print(f"[--now] stopping live loops: {keys}")
         stop_live_loops(live)
 
-    # Sweep homes by registry role, including non-worker roles.
-    homes = _homes_for_roles(roles, home_base)
+    # Switch only the target role's homes — its declared home and any
+    # numeric siblings (e.g. ~/.claude-worker, ~/.claude-worker-1, -2).
+    # Scoped to the named role: use mimo-v2.6-pro@coder must never touch
+    # ~/.claude or ~/.claude-manager.  Sweeping all roles redirected the
+    # planner to the worker's endpoint.  Measured on chad-mbp 2026-09-22.
+    #
+    # Match exact name or name-<digits> (numeric worker slots).  A bare
+    # prefix match is wrong: .claude-manager.startswith(".claude") is True,
+    # so use opus@planner would sweep the manager and worker homes too.
+    target_base = source_home.resolve()
+    target_name = target_base.name
+
+    def _is_target_sibling(h: Path) -> bool:
+        hr = h.resolve()
+        if hr == target_base:
+            return True
+        if hr.parent != target_base.parent:
+            return False
+        name = hr.name
+        if not name.startswith(target_name + "-"):
+            return False
+        suffix = name[len(target_name) + 1:]
+        return suffix.isdigit()
+
+    homes = [h for h in _homes_for_roles(roles, home_base)
+             if _is_target_sibling(h)]
+    if not homes:
+        homes = [source_home] if source_home.is_dir() else []
     if not homes:
         print(f"error: no homes found for registry roles under {home_base}",
               file=sys.stderr)
@@ -1009,6 +1040,7 @@ def cmd_use(target: str, now: bool, skip_probe: bool, home_base: Path,
         except (json.JSONDecodeError, OSError):
             data = {}
         data["env"] = target_env
+        data["model"] = model
         settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         print(f"[switch] {home}: env rewritten (backup {backup.name})")
 

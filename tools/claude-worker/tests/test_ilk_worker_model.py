@@ -196,20 +196,24 @@ class TestShow:
 
 
 class TestUse:
-    def test_rewrites_every_home_backs_up_probes_reports_success(
+    def test_rewrites_target_role_homes_backs_up_probes_reports_success(
         self, env_ok_probe: Env
     ):
-        """AC1 happy path: use <role> sweeps main + slot, preserves keys,
-        writes backups, probes each home, then reports success."""
-        result = env_ok_probe.run("use", "manager")
+        """AC1 happy path: use <role>@<role> touches only that role's homes
+        (declared home + numeric siblings), preserves keys, writes backups,
+        probes each home, then reports success.  Does NOT touch other roles.
+        """
+        result = env_ok_probe.run("use", MODEL_TARGET + "@coder")
         assert result.returncode == 0, result.stdout + result.stderr
 
         for home, before in ((env_ok_probe.main, MODEL_BEFORE_MAIN),
                              (env_ok_probe.slot2, MODEL_BEFORE_SLOT)):
             env_now = _read_env(home)
             assert env_now["ANTHROPIC_MODEL"] == MODEL_TARGET
-            assert env_now["ANTHROPIC_BASE_URL"] == BASE_URL_TARGET
-            assert env_now["ANTHROPIC_AUTH_TOKEN"] == TOKEN_TARGET
+            # Without ccswitch_import on PATH the fallback keeps the home's
+            # base_url and token; only the model is overridden.
+            assert env_now["ANTHROPIC_BASE_URL"] == BASE_URL_BEFORE
+            assert env_now["ANTHROPIC_AUTH_TOKEN"] == "tok-before"
             # Rewrite touches ONLY the env block.
             settings = _read_settings(home)
             assert settings["permissions"] == {"allow": ["Bash(ls:*)"]}
@@ -222,13 +226,16 @@ class TestUse:
             )["env"]
             assert backup_env["ANTHROPIC_MODEL"] == before
 
-        # The probe ran under every registry home before success was reported.
+        # Manager home is NOT touched — scoped to the coder role.
+        mgr_backups = sorted(env_ok_probe.manager.glob("settings.json.bak-*"))
+        assert len(mgr_backups) == 0, mgr_backups
+
+        # The probe ran under the coder's homes before success was reported.
         # Each home gets two probes: probe_config + probe_live.
         probed = env_ok_probe.probe_homes()
         assert sorted(probed) == sorted([
             str(env_ok_probe.main), str(env_ok_probe.main),
-            str(env_ok_probe.slot2), str(env_ok_probe.slot2),
-            str(env_ok_probe.manager), str(env_ok_probe.manager)])
+            str(env_ok_probe.slot2), str(env_ok_probe.slot2)])
         # Engine-precedence facts are part of the success report.
         assert "claude-worker" in result.stdout
 
@@ -292,7 +299,7 @@ class TestRollback:
     ):
         """AC3: the probe reports the wrong model → no home keeps the new
         env, exit non-zero, and the failure is said out loud."""
-        result = env_bad_probe.run("use", "manager")
+        result = env_bad_probe.run("use", MODEL_TARGET + "@coder")
         assert result.returncode != 0
         out = result.stdout + result.stderr
         assert "probe" in out.lower() or "rollback" in out.lower()
@@ -311,7 +318,7 @@ class TestRestore:
         stale.write_text(json.dumps({"env": {
             "ANTHROPIC_MODEL": "garbage-ancient"}}), encoding="utf-8")
 
-        assert env_ok_probe.run("use", "manager").returncode == 0
+        assert env_ok_probe.run("use", MODEL_TARGET + "@coder").returncode == 0
         result = env_ok_probe.run("restore")
         assert result.returncode == 0, result.stdout + result.stderr
         assert _read_env(env_ok_probe.main)["ANTHROPIC_MODEL"] == MODEL_BEFORE_MAIN
@@ -348,7 +355,7 @@ class TestRegistrySync:
         # Pre-condition: registry says mimo-v2.5-pro for coder.
         assert _registry_role_model(env_ok_probe, "coder") == "mimo-v2.5-pro"
 
-        result = env_ok_probe.run("use", "manager")
+        result = env_ok_probe.run("use", MODEL_TARGET + "@coder")
         assert result.returncode == 0, result.stdout + result.stderr
 
         # After switch, registry must reflect the actual model.
@@ -361,16 +368,16 @@ class TestRegistrySync:
         data_before = _read_registry(env_ok_probe)
         assert data_before["roles"]["coder"]["provider"] == "Xiaomi MiMo V2.5 - Pro"
 
-        env_ok_probe.run("use", "manager")
+        env_ok_probe.run("use", MODEL_TARGET + "@coder")
 
         data_after = _read_registry(env_ok_probe)
-        # Provider must come from the source role (manager).
-        assert data_after["roles"]["coder"]["provider"] == data_after["roles"]["manager"]["provider"]
+        # Provider is synced from the source role (coder).
+        assert data_after["roles"]["coder"]["provider"] == "Xiaomi MiMo V2.5 - Pro"
 
     def test_use_preserves_registry_formatting(self, env_ok_probe: Env):
         """AC1: the registry rewrite preserves 2-space indent and key order."""
         before = env_ok_probe.registry.read_text(encoding="utf-8")
-        env_ok_probe.run("use", "manager")
+        env_ok_probe.run("use", MODEL_TARGET + "@coder")
         after = env_ok_probe.registry.read_text(encoding="utf-8")
         # Must still be valid JSON with indent=2.
         data = json.loads(after)
@@ -383,7 +390,7 @@ class TestRegistrySync:
 
     def test_show_no_mismatch_after_registry_sync(self, env_ok_probe: Env):
         """AC1: after sync, show prints no mismatch line for the matched role."""
-        use_result = env_ok_probe.run("use", "manager")
+        use_result = env_ok_probe.run("use", MODEL_TARGET + "@coder")
         assert use_result.returncode == 0, use_result.stdout + use_result.stderr
         result = env_ok_probe.run("show")
         assert result.returncode == 0
@@ -400,7 +407,7 @@ class TestRegistrySync:
         """AC2: a probe that reports the wrong model rolls back the registry
         to byte-identical to its pre-attempt state."""
         registry_before = env_bad_probe.registry.read_bytes()
-        result = env_bad_probe.run("use", "manager")
+        result = env_bad_probe.run("use", MODEL_TARGET + "@coder")
         assert result.returncode != 0  # probe failed
 
         registry_after = env_bad_probe.registry.read_bytes()
@@ -413,7 +420,7 @@ class TestRegistrySync:
         env_main_before = _read_env(env_bad_probe.main)
         env_slot_before = _read_env(env_bad_probe.slot2)
 
-        env_bad_probe.run("use", "manager")
+        env_bad_probe.run("use", MODEL_TARGET + "@coder")
 
         assert _read_env(env_bad_probe.main) == env_main_before
         assert _read_env(env_bad_probe.slot2) == env_slot_before
