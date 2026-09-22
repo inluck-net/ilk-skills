@@ -547,6 +547,7 @@ CLASSIFICATION_LABELS: tuple[str, ...] = (
     "timeout-bound",
     "budget-exhausted",
     "clean-success",
+    "already-shipped-noop",
     "dependency-unreachable",
     "model-incapability",
     "api-blocked",
@@ -665,6 +666,32 @@ def _is_never_ran_iter(rec: dict) -> bool:
         return False
     # Match a startup-failure shape in the result string.
     return bool(STARTUP_FAILURE_RE.search(result))
+
+
+def _is_degenerate_shipped(rec: dict) -> bool:
+    """Return True when an ``already-shipped`` record shows a run that never ran.
+
+    Keyed on the observable shape only — iteration 0 with no elapsed time,
+    no turns, and no commits.  Must NOT key on ``result`` text: the measured
+    gh-resolve record (run 20260922-110127) carries ``result: null``, which is
+    exactly why :func:`_is_never_ran_iter` (it matches ``STARTUP_FAILURE_RE``
+    on ``result``) cannot see this case.
+
+    Accepts both JSONL spellings — the runner writes ``new_commits`` /
+    ``elapsed_sec``; collect.py's own aggregates use ``new_commits_total`` /
+    ``duration_sec``.  A measurement that is absent counts as zero; a
+    measurement that is present and non-zero means work happened.
+    """
+    if rec.get("iteration") not in (0, None):
+        return False
+    measurements = (
+        rec.get("elapsed_sec"),
+        rec.get("duration_sec"),
+        rec.get("num_turns"),
+        rec.get("new_commits"),
+        rec.get("new_commits_total"),
+    )
+    return all(v in (None, 0) for v in measurements)
 
 
 def detect_never_ran(lines: list[str]) -> bool:
@@ -1079,6 +1106,16 @@ def _classify_core(
             "iter_at_stop": last.get("iteration"),
         }
     if last_stop == "already-shipped":
+        # A run that never ran must not inherit the label of a run that
+        # worked.  A degenerate already-shipped record is correct, complete
+        # evidence of *nothing happening* — its own label, not clean-success
+        # (that one claims work shipped) and not no-evidence (that one says
+        # go look for the log).
+        if _is_degenerate_shipped(last):
+            return "already-shipped-noop", {
+                "iters": iter_count,
+                "commits": new_commits_total,
+            }
         return "clean-success", {
             "iters": iter_count,
             "commits": new_commits_total,
@@ -2324,6 +2361,13 @@ def render_report(
 def _label_narrative(label: str, facts: dict[str, Any]) -> str:
     if label == "clean-success":
         return "All sub-plans shipped. Loop ended naturally on `all-shipped`."
+    if label == "already-shipped-noop":
+        return (
+            "The loop started, found the previous batch already fully shipped, "
+            "and exited without running an iteration. Nothing happened and "
+            "nothing needs to — this is an absence of work, not a run that "
+            "shipped. There is nothing to carry forward."
+        )
     if label == "shipped-unverified":
         subs = facts.get("unverified_sub_plans", [])
         names = ", ".join(

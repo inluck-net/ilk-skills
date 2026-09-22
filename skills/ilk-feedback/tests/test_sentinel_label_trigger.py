@@ -259,3 +259,44 @@ class TestDegenerateAlreadyShipped:
                 os.environ["ILK_DATA_HOME"] = old_data
             else:
                 os.environ.pop("ILK_DATA_HOME", None)
+
+    def test_genuine_already_shipped_stays_clean_success(self, tmp_path):
+        """AC-2 regression guard: a real already-shipped run — one that shows
+        iterations, elapsed time and commits — is still clean-success. Without
+        this, the fix could simply relabel every already-shipped run."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        data_home = tmp_path / "ilk-data"
+        data_home.mkdir()
+        old_home = os.environ.get("HOME")
+        old_data = os.environ.get("ILK_DATA_HOME")
+        try:
+            os.environ["HOME"] = str(fake_home)
+            os.environ["ILK_DATA_HOME"] = str(data_home)
+
+            project_path = tmp_path / "repo"
+            project_path.mkdir()
+            iters = [{
+                "run_id": "20260922-120000",
+                "iteration": 3,
+                "stop_reason": "already-shipped",
+                "exit_code": 0,
+                "new_commits": 4,
+                "elapsed_sec": 512.0,
+                "num_turns": 12,
+                "result": "shipped",
+            }]
+            label, facts = collect.classify(iters, None, project_path)
+            assert label == "clean-success", (
+                f"a genuine already-shipped run with work on the record must "
+                f"stay clean-success, got {label}: {facts}"
+            )
+        finally:
+            if old_home is not None:
+                os.environ["HOME"] = old_home
+            else:
+                os.environ.pop("HOME", None)
+            if old_data is not None:
+                os.environ["ILK_DATA_HOME"] = old_data
+            else:
+                os.environ.pop("ILK_DATA_HOME", None)

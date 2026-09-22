@@ -129,6 +129,7 @@ The `recommended_*` fields are what `ilk-launcher` Step 1.5 reads.
 | Label | Trigger condition | What it means |
 |---|---|---|
 | `clean-success` | `loop_status.py` exit 0 after run | All sub-plans shipped. |
+| `already-shipped-noop` | `stop_reason="already-shipped"` AND the record shows nothing happened: iteration 0, null/zero elapsed, null/zero turns, zero commits | The loop started, found the previous batch already fully shipped, and exited without running an iteration. Correct, complete evidence of *nothing happening* — NOT `clean-success` (that claims work shipped) and NOT `no-evidence` (that says go look for the log). Nothing to carry forward. |
 | `shipped-unverified` | would-be `clean-success` AND ≥1 shipped sub-plan has `verification_tier ∈ {compile-only, device-manual}` | Loop shipped but some sub-plans need a human + device pass. The postmortem lists which ones. Does NOT auto-relaunch. |
 | `max-iter-bound` | iteration count == MaxIterations AND not all-shipped | Ran out of iterations. Bump `MaxIterations` or break sub-plan smaller. |
 | `timeout-bound` | last iter's `stop_reason="timeout"` | An iter hit `IterationTimeoutMin`. Bump timeout. |
