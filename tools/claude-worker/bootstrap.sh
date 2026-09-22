@@ -21,6 +21,14 @@
 #   --auth-token <token>  ANTHROPIC_AUTH_TOKEN  user-supplied provider token
 #   --model      <id>     ANTHROPIC_MODEL       worker model id
 #
+# Extra provider env (flags-only path; repeatable; ignored by --from-ccswitch,
+# which already imports these keys and cannot be combined with --env):
+#   --env KEY=VALUE       an ANTHROPIC_* or CLAUDE_CODE_* key the provider
+#                         serves -- e.g. ANTHROPIC_DEFAULT_OPUS=glm-5.3,
+#                         CLAUDE_CODE_MAX_CONTEXT_TOKENS=200000. Any other
+#                         prefix is refused. The three keys with dedicated
+#                         flags above are refused too (use those flags).
+#
 # Flags:
 #   --home <dir>        worker Claude home (default: ~/.claude-worker; also
 #                       honors CLAUDE_WORKER_HOME)
@@ -74,12 +82,17 @@ allow_official=0
 force=0
 clone_slot=""
 clone_from=""
+# Extra --env KEY=VALUE pairs for the flags-only path (aliases and harness
+# settings the provider serves). Validated at parse time against the same
+# keep filter the CCSwitch path uses. Empty on the --from-ccswitch path.
+extra_env=()
 # Full provider env block (JSON object) when imported from CCSwitch; empty for
-# the flag/env path, where it is synthesized from base_url/auth_token/model.
+# the flag/env path, where it is synthesized from base_url/auth_token/model
+# plus any --env pairs.
 provider_env_json=""
 
 usage() {
-  sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,59p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # Mask a secret for logs: keep nothing but a length-bucketed placeholder so
@@ -91,6 +104,39 @@ mask_secret() {
   else
     echo "***set (${#v} chars)***"
   fi
+}
+
+# Record one --env KEY=VALUE pair into the flags-only provider env block.
+# Accepted: ANTHROPIC_* / CLAUDE_CODE_* keys -- the same keep filter the
+# CCSwitch import applies, so both entrances share one rule. The three keys
+# with dedicated flags are refused: two ways to set one value is how they
+# disagree, and --model must remain the only source of truth for the model.
+add_env_pair() {
+  local pair="$1"
+  if [[ "$pair" != *=* ]]; then
+    echo "error: --env requires KEY=VALUE, got: $pair" >&2
+    exit 2
+  fi
+  local key="${pair%%=*}"
+  case "$key" in
+    ANTHROPIC_BASE_URL)
+      echo "error: --env ANTHROPIC_BASE_URL is not accepted -- use --base-url." >&2
+      exit 2 ;;
+    ANTHROPIC_AUTH_TOKEN)
+      echo "error: --env ANTHROPIC_AUTH_TOKEN is not accepted -- use --auth-token." >&2
+      exit 2 ;;
+    ANTHROPIC_MODEL)
+      echo "error: --env ANTHROPIC_MODEL is not accepted -- use --model." >&2
+      exit 2 ;;
+  esac
+  case "$key" in
+    ANTHROPIC_*|CLAUDE_CODE_*) ;;
+    *)
+      echo "error: --env key '$key' is not accepted -- only ANTHROPIC_* and" >&2
+      echo "       CLAUDE_CODE_* keys may be set (mirrors the CCSwitch keep filter)." >&2
+      exit 2 ;;
+  esac
+  extra_env+=("$pair")
 }
 
 while [[ $# -gt 0 ]]; do
@@ -122,6 +168,12 @@ while [[ $# -gt 0 ]]; do
       model="$1"
       ;;
     --model=*)       model="${1#--model=}" ;;
+    --env)
+      shift
+      [[ $# -eq 0 ]] && { echo "error: --env requires KEY=VALUE" >&2; exit 2; }
+      add_env_pair "$1"
+      ;;
+    --env=*)         add_env_pair "${1#--env=}" ;;
     --repo)
       shift
       [[ $# -eq 0 ]] && { echo "error: --repo requires a directory argument" >&2; exit 2; }
@@ -156,6 +208,17 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+# --env is the flags-only entrance. --from-ccswitch already carries every
+# ANTHROPIC_* / CLAUDE_CODE_* key the provider defines; combining the two
+# would make the imported block silently overridable. Refuse rather than pick
+# a winner.
+if [[ $from_ccswitch -eq 1 && ${#extra_env[@]} -gt 0 ]]; then
+  echo "error: --env cannot be combined with --from-ccswitch." >&2
+  echo "       The CCSwitch import already carries the provider's ANTHROPIC_* /" >&2
+  echo "       CLAUDE_CODE_* keys; --env is the flags-only entrance." >&2
+  exit 2
+fi
 
 # --- Slot-home clone (--clone-slot <n>) -------------------------------------
 # Clone the base worker home into a per-slot home (e.g. ~/.claude-worker-2).
@@ -445,14 +508,24 @@ write_worker_config() {
   backup_if_present "$settings_file"
 
   # The env block to install. When imported from CCSwitch this carries every
-  # ANTHROPIC_* key the provider defines; otherwise just the three flag values.
+  # ANTHROPIC_* key the provider defines; otherwise the three flag values plus
+  # any --env KEY=VALUE pairs (DEFAULT_* aliases, CLAUDE_CODE_* harness
+  # settings) -- keys already validated against the CCSwitch keep filter.
   local env_json="$provider_env_json"
   if [[ -z "$env_json" ]]; then
+    local extras_json=""
+    local pair
+    if [[ ${#extra_env[@]} -gt 0 ]]; then
+      for pair in "${extra_env[@]}"; do
+        extras_json+=",
+  \"$(json_escape "${pair%%=*}")\": \"$(json_escape "${pair#*=}")\""
+      done
+    fi
     env_json="$(cat <<ENVEOF
 {
   "ANTHROPIC_BASE_URL": "$(json_escape "$base_url")",
   "ANTHROPIC_AUTH_TOKEN": "$(json_escape "$auth_token")",
-  "ANTHROPIC_MODEL": "$(json_escape "$model")"
+  "ANTHROPIC_MODEL": "$(json_escape "$model")"${extras_json}
 }
 ENVEOF
 )"
