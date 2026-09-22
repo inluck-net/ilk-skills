@@ -44,6 +44,19 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_REGISTRY = SCRIPT_DIR / "role-registry.json"
 
+
+def _ccswitch_cmd(*args: str) -> list[str]:
+    """Build a subprocess command for ccswitch_import.
+
+    Tries the bare command on PATH first (respects test fakes and manual
+    installs), then falls back to invoking the .py script next to this file
+    with the current interpreter.
+    """
+    bare = shutil.which("ccswitch_import")
+    if bare:
+        return [bare, *args]
+    return [sys.executable, str(SCRIPT_DIR / "ccswitch_import.py"), *args]
+
 # Mirror stop_watchdog.sh: TERM the process group and the pid, wait up to
 # 3s, then KILL. The wait between the watchdog stop and the runner stop is
 # what makes the ordering observable (and safe — a half-dead watchdog can
@@ -156,10 +169,9 @@ def resolve_provider_env(provider_id: str) -> dict:
     ANTHROPIC_MODEL, and any extra env fields.  Raises ValueError
     if the provider is not found or has incomplete env.
     """
-    import subprocess as _sp
     try:
-        result = _sp.run(
-            ["ccswitch_import", "export", "--provider", provider_id, "--machine"],
+        result = subprocess.run(
+            _ccswitch_cmd("export", "--provider", provider_id, "--machine"),
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=30,
         )
@@ -377,7 +389,7 @@ def cmd_providers_cache(
     # Read providers from ccswitch_import with full tokens.
     try:
         result = _sp.run(
-            ["ccswitch_import", "list", "--format", "json"],
+            _ccswitch_cmd("list", "--format", "json"),
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=30,
         )
@@ -678,7 +690,7 @@ def cmd_providers(as_json: bool) -> int:
     import subprocess as _sp
     try:
         result = _sp.run(
-            ["ccswitch_import", "list", "--format", "json"],
+            _ccswitch_cmd("list", "--format", "json"),
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=30,
         )
@@ -724,7 +736,7 @@ def cmd_providers_show(name: str, as_json: bool) -> int:
     import subprocess as _sp
     try:
         result = _sp.run(
-            ["ccswitch_import", "list", "--format", "json"],
+            _ccswitch_cmd("list", "--format", "json"),
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=30,
         )
@@ -990,11 +1002,18 @@ def cmd_use(target: str, now: bool, skip_probe: bool, home_base: Path,
         print("[probe] SKIPPED (--skip-probe) — switch is UNVERIFIED")
     else:
         target_model = target_env.get("ANTHROPIC_MODEL", model)
+        worker_home_resolved = {h.resolve() for h in worker_homes(home_base)}
         for home in homes:
             cfg_ok, cfg_detail = probe_config(home)
             live_ok, live_detail = probe_live(home)
-            if cfg_ok and cfg_detail != target_model:
-                cfg_ok = False
+            # Config-mismatch check only for worker-tier homes.  Non-worker
+            # roles (planner, manager) use their own auth mechanisms
+            # (official/OAuth) and the probe session may report a different
+            # model than the env block we just wrote — that is expected, not
+            # a rollback condition.
+            if home.resolve() in worker_home_resolved:
+                if cfg_ok and cfg_detail != target_model:
+                    cfg_ok = False
             if not cfg_ok or not live_ok:
                 print(f"error: probe under {home} — "
                       f"config={'OK: ' + cfg_detail if cfg_ok else cfg_detail}, "

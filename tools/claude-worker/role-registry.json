@@ -1,20 +1,42 @@
 {
   "version": 1,
   "hosts": [
-    {"name": "chad-mbp", "ssh": "chad-mbp"},
-    {"name": "rezmac", "ssh": "rezmac"}
+    {
+      "name": "chad-mbp",
+      "ssh": "chad-mbp"
+    },
+    {
+      "name": "rezmac",
+      "ssh": "rezmac"
+    }
   ],
   "roles": {
-    "planner": {"tier": "planner", "home": "~/.claude",
-                 "provider": "Claude Official", "model": "opus-4.8"},
-    "manager": {"tier": "manager", "home": "~/.claude-manager",
-                 "provider": "Claude Official", "model": "opus",
-                 "auth": "official",
-                 "path_command": "claude-manager"},
-    "coder":   {"tier": "worker", "home": "~/.claude-worker",
-                 "provider": "Xiaomi MiMo V2.5 - Pro", "model": "mimo-v2.5-pro",
-                 "path_command": "claude-worker"},
-    "art":     {"tier": "worker", "home": "~/.claude-worker-draw",
-                 "provider": "MiniMax", "model": "MiniMax-M3"}
+    "planner": {
+      "tier": "planner",
+      "home": "~/.claude",
+      "provider": "Xiaomi MiMo V2.6 - Pro",
+      "model": "mimo-v2.6-pro"
+    },
+    "manager": {
+      "tier": "manager",
+      "home": "~/.claude-manager",
+      "provider": "Xiaomi MiMo V2.6 - Pro",
+      "model": "mimo-v2.6-pro",
+      "auth": "official",
+      "path_command": "claude-manager"
+    },
+    "coder": {
+      "tier": "worker",
+      "home": "~/.claude-worker",
+      "provider": "Xiaomi MiMo V2.6 - Pro",
+      "model": "mimo-v2.6-pro",
+      "path_command": "claude-worker"
+    },
+    "art": {
+      "tier": "worker",
+      "home": "~/.claude-worker-draw",
+      "provider": "MiniMax",
+      "model": "MiniMax-M3"
+    }
   }
 }

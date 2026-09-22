@@ -70,7 +70,7 @@ manager`, because a floor is a *minimum rank*:
                  "auth": "official",
                  "path_command": "claude-manager"},
     "coder":   {"tier": "worker", "home": "~/.claude-worker",
-                 "provider": "Xiaomi MiMo V2.5 - Pro", "model": "mimo-v2.5-pro",
+                 "provider": "Xiaomi MiMo V2.6 - Pro", "model": "mimo-v2.6-pro",
                  "path_command": "claude-worker"},
     "art":     {"tier": "worker", "home": "~/.claude-worker-draw",
                  "provider": "MiniMax", "model": "MiniMax-M3"}
