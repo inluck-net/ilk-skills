@@ -1918,3 +1918,215 @@ class TestProvidersCacheNoTokensInRegistry:
             overlap = secret_keys & set(host.keys())
             assert not overlap, (
                 f"host {host.get('name')} has secret keys: {overlap}")
+
+
+# ── Switch tool + preflight agree (AC-7) ─────────────────────────────────
+
+
+PREFLIGHT_SCRIPT = TOOLS_DIR / "claude-worker.sh"
+
+
+class EnvSwitchPreflight:
+    """Hermetic env in which BOTH shipped tools can run against one home.
+
+    AC-7 is an agreement assertion: the pair ``ilk-worker-model use`` leaves
+    behind must be accepted by ``claude-worker.sh --preflight-only``.  That
+    is only meaningful against the real script — a re-implementation of its
+    rules would agree with anything — so ``run_preflight`` invokes it.
+
+    The manager home carries the preflight-required files (skills/ilk-runner,
+    commands/ilk.md) so a rejection is about the identity branch, not a
+    missing skill.  The registry starts in the D1 state: the manager row
+    claims ``auth: "official"``.
+    """
+
+    GLM_URL = "https://glm.example/api"
+    GLM_TOKEN = "tok-glm"
+    GLM_MODEL = "glm-5.3"
+    GLM_NAME = "Zhipu GLM"
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.root = tmp_path
+        self.home = tmp_path / "home"
+        self.manager = self.home / ".claude-manager"
+        self.registry = tmp_path / "role-registry.json"
+        self.data_home = tmp_path / "ilk-data"
+
+        self.manager.mkdir(parents=True, exist_ok=True)
+        (self.manager / "skills" / "ilk-runner").mkdir(parents=True)
+        (self.manager / "skills" / "ilk-runner" / "SKILL.md").write_text(
+            "skill-content\n", encoding="utf-8")
+        (self.manager / "commands").mkdir()
+        (self.manager / "commands" / "ilk.md").write_text("# /ilk\n",
+                                                          encoding="utf-8")
+
+        self.seed_official_pair()
+        self.write_registry(official=True)
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        # Fake claude reports whatever model the home's settings.json loaded
+        # — so a probe that passed did so because the rewrite landed.
+        (bin_dir / "claude").write_text(
+            "#!/usr/bin/env bash\n"
+            "model=$(python3 -c 'import json,os; print(json.load(open("
+            "os.path.join(os.environ[\"CLAUDE_CONFIG_DIR\"],"
+            "\"settings.json\"))).get(\"env\", {}).get("
+            "\"ANTHROPIC_MODEL\", \"\"))')\n"
+            "fmt=plain\n"
+            "for arg in \"$@\"; do\n"
+            "  case \"$arg\" in\n"
+            "    --output-format) ;;\n"
+            "    stream-json|json) fmt=\"$arg\" ;;\n"
+            "  esac\n"
+            "done\n"
+            "case \"$fmt\" in\n"
+            "  stream-json) echo \"{\\\"model\\\": \\\"$model\\\", "
+            "\\\"type\\\": \\\"init\\\"}\" ;;\n"
+            "  json)        echo '{\"is_error\": false, \"result\": \"OK\"}' ;;\n"
+            "  *)           echo \"$model\" ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        os.chmod(bin_dir / "claude", 0o755)
+
+        glm_export = json.dumps({
+            "id": "glm", "name": self.GLM_NAME, "category": "",
+            "is_official": False,
+            "ANTHROPIC_BASE_URL": self.GLM_URL,
+            "ANTHROPIC_AUTH_TOKEN": self.GLM_TOKEN,
+            "ANTHROPIC_MODEL": self.GLM_MODEL,
+        }, indent=2)
+        (bin_dir / "ccswitch_import").write_text(
+            "#!/usr/bin/env bash\n"
+            "prov=\"\"\n"
+            "prev=\"\"\n"
+            "for arg in \"$@\"; do\n"
+            "  if [ \"$prev\" = \"--provider\" ]; then prov=\"$arg\"; fi\n"
+            "  prev=\"$arg\"\n"
+            "done\n"
+            "case \"$prov\" in\n"
+            f"  \"{self.GLM_NAME}\") echo '{glm_export}' ;;\n"
+            "  *) echo \"unknown provider: $prov\" >&2; exit 1 ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        os.chmod(bin_dir / "ccswitch_import", 0o755)
+        self.bin_dir = bin_dir
+
+    def seed_official_pair(self) -> None:
+        """A genuinely official home: no provider env at all."""
+        (self.manager / "settings.json").write_text(json.dumps({
+            "model": "opus-stale",
+            "permissions": {"allow": ["Bash(ls:*)"]},
+        }, indent=2), encoding="utf-8")
+
+    def seed_d1_leftover_pair(self) -> None:
+        """The D1 state the pre-fix switch left behind: the home carries a
+        provider env while the registry still claims ``auth: official``."""
+        (self.manager / "settings.json").write_text(json.dumps({
+            "model": self.GLM_MODEL,
+            "env": {
+                "ANTHROPIC_MODEL": self.GLM_MODEL,
+                "ANTHROPIC_BASE_URL": self.GLM_URL,
+                "ANTHROPIC_AUTH_TOKEN": self.GLM_TOKEN,
+            },
+        }, indent=2), encoding="utf-8")
+
+    def write_registry(self, *, official: bool) -> None:
+        role = {"tier": "manager", "home": "~/.claude-manager",
+                "provider": "Claude Official" if official else self.GLM_NAME,
+                "model": "opus-stale" if official else self.GLM_MODEL}
+        if official:
+            role["auth"] = "official"
+        self.registry.write_text(json.dumps(
+            {"version": 1, "roles": {"manager": role}}, indent=2) + "\n",
+            encoding="utf-8")
+
+    def read_manager_role(self) -> dict:
+        return json.loads(
+            self.registry.read_text(encoding="utf-8"))["roles"]["manager"]
+
+    def _env(self) -> dict:
+        env = dict(os.environ)
+        env["HOME"] = str(self.home)
+        env["ILK_ROLE_REGISTRY"] = str(self.registry)
+        env["ILK_DATA_HOME"] = str(self.data_home)
+        env["PATH"] = f"{self.bin_dir}{os.pathsep}{env['PATH']}"
+        return env
+
+    def run_use(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(TOOL), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env=self._env(), timeout=60,
+        )
+
+    def run_preflight(self) -> subprocess.CompletedProcess:
+        """The real claude-worker.sh preflight — not a re-implementation."""
+        return subprocess.run(
+            ["bash", str(PREFLIGHT_SCRIPT), "--preflight-only",
+             "--home", str(self.manager)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env=self._env(), timeout=60,
+        )
+
+
+class TestSwitchAndPreflightAgree:
+    """AC-7: the switch tool's success path leaves a pair the launcher accepts.
+
+    Asserted against the real ``claude-worker.sh``.  D1 was precisely a
+    disagreement: ``use`` reported success while ``--preflight-only`` refused
+    the state it left behind — both branches of that inversion are covered
+    here (provider-backed accept, official accept, official-plus-leftover
+    refuse).
+    """
+
+    def test_post_switch_pair_is_accepted_by_real_preflight(
+        self, tmp_path: Path
+    ):
+        """AC-7: run the real switch, then the real preflight.  If either
+        tool's view of the pair diverges, this fails."""
+        env = EnvSwitchPreflight(tmp_path)
+        use = env.run_use(
+            "use", "--provider", env.GLM_NAME, env.GLM_MODEL + "@manager")
+        assert use.returncode == 0, use.stdout + use.stderr
+        role = env.read_manager_role()
+        assert "auth" not in role, (
+            f"switch left the registry claiming auth: {role} — that is the "
+            f"D1 state the preflight refuses")
+
+        pre = env.run_preflight()
+        assert pre.returncode == 0, (
+            f"the switch tool's success path left a pair the real preflight "
+            f"refuses (exit {pre.returncode}) — the D1 disagreement.\n"
+            f"registry: {env.registry.read_text()}\n"
+            f"settings: {(env.manager / 'settings.json').read_text()}\n"
+            f"preflight stdout:\n{pre.stdout}\n"
+            f"preflight stderr:\n{pre.stderr}"
+        )
+
+    def test_official_pair_is_accepted_by_the_inverted_branch(
+        self, tmp_path: Path
+    ):
+        """Both branches agree, half one: a home the registry declares
+        official, carrying no provider env, is accepted — the inversion
+        must still hold now that ``use`` can drop the declaration."""
+        env = EnvSwitchPreflight(tmp_path)
+        pre = env.run_preflight()
+        assert pre.returncode == 0, pre.stdout + pre.stderr
+
+    def test_d1_leftover_pair_is_refused_by_real_preflight(
+        self, tmp_path: Path
+    ):
+        """Both branches agree, half two: the pair the pre-fix switch left
+        (provider env at home, registry still claiming official) is refused
+        by the real script — which is what makes the post-switch assertion
+        above a real constraint rather than a tautology."""
+        env = EnvSwitchPreflight(tmp_path)
+        env.seed_d1_leftover_pair()
+        pre = env.run_preflight()
+        assert pre.returncode == 3, (
+            f"expected the real preflight to refuse the D1 leftover pair, "
+            f"got exit {pre.returncode}:\n{pre.stdout}\n{pre.stderr}")
+        assert "auth=official" in (pre.stdout + pre.stderr)

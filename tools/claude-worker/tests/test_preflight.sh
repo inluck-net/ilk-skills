@@ -213,6 +213,61 @@ assert_output_contains "official home + leftover BASE_URL -> names auth=official
 # Restore.
 mv "$FAKE_HOME/settings.json.bak" "$FAKE_HOME/settings.json"
 
+# === Test 8: post-switch provider-backed manager pair is accepted (AC-7) ===
+# The state `ilk-worker-model use --provider ...` leaves behind: the registry
+# row names the provider and carries NO auth key, and the home has the full
+# provider env.  claude-worker.sh must accept that pair — this is the shape
+# the switch tool's success path produces, and Test 7 above already covers
+# the disagreement shape it must never produce.
+echo ""
+echo "=== Test 8: post-switch provider-backed manager pair is accepted ==="
+
+cat > "$REGISTRY" <<REG
+{"version": 1, "roles": {
+  "manager": {"tier": "manager", "home": "$FAKE_HOME",
+              "provider": "Zhipu GLM", "model": "glm-5.3"}
+}}
+REG
+
+cat > "$FAKE_HOME/settings.json" <<'SET'
+{
+  "model": "glm-5.3",
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://glm.example/anthropic",
+    "ANTHROPIC_AUTH_TOKEN": "tok-glm",
+    "ANTHROPIC_MODEL": "glm-5.3"
+  }
+}
+SET
+
+assert_exit_code "post-switch manager pair -> exit 0" 0 \
+  env ILK_ROLE_REGISTRY="$REGISTRY" bash "$WORKER_SCRIPT" --preflight-only --home "$FAKE_HOME"
+
+assert_output_contains "post-switch manager pair -> Preflight OK" \
+  "Preflight OK" \
+  env ILK_ROLE_REGISTRY="$REGISTRY" bash "$WORKER_SCRIPT" --preflight-only --home "$FAKE_HOME"
+
+# Same pair, but the registry still claims auth=official — the D1 leftover.
+# Must land in the inverted branch and be refused (exit 3), which is what
+# makes the exit 0 above a real constraint and not a tautology.
+echo ""
+echo "=== Test 9: the same home with a stale auth=official claim is refused ==="
+
+cat > "$REGISTRY" <<REG
+{"version": 1, "roles": {
+  "manager": {"tier": "manager", "home": "$FAKE_HOME",
+              "provider": "Zhipu GLM", "model": "glm-5.3",
+              "auth": "official"}
+}}
+REG
+
+assert_exit_code "stale auth=official over a provider env -> exit 3" 3 \
+  env ILK_ROLE_REGISTRY="$REGISTRY" bash "$WORKER_SCRIPT" --preflight-only --home "$FAKE_HOME"
+
+assert_output_contains "stale auth=official -> names auth=official" \
+  "auth=official" \
+  env ILK_ROLE_REGISTRY="$REGISTRY" bash "$WORKER_SCRIPT" --preflight-only --home "$FAKE_HOME"
+
 # === Results ===
 echo ""
 echo "=== Results: $pass passed, $fail failed ==="
