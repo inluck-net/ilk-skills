@@ -1029,41 +1029,6 @@ print(int((ea-sa).total_seconds()))
         continue
       fi
 
-      # --- no-progress dispatch bound (independent of postmortems) -------
-      # Placed past every skip gate, so it advances ONCE PER DISPATCH rather
-      # than once per poll: reaching this point means the project is genuinely
-      # about to be launched (not busy, not cooling down, not blacklisted).
-      # Counting per poll would trip the bound within minutes regardless of
-      # how many launches actually happened.
-      local _np_file _np_count _np_sig _np_updated _np_cur _np_ack
-      local _np_progressed="false" _np_clean="false" _np_new _np_decision
-      _np_file="$(no_progress_state_file "$path")"
-      read -r _np_count _np_sig _np_updated <<<"$(read_no_progress_state "$_np_file")"
-      _np_cur="$(progress_signature_for_project "$path")"
-      _np_ack="$(read_resolve_ack_epoch "$path")"
-      _np_clean="$(sentinel_exit_was_clean "$path")"
-      # First sight of a project ("none") is not evidence of no progress.
-      if [[ "$_np_sig" == "none" || "$_np_cur" != "$_np_sig" ]]; then
-        _np_progressed="true"
-      fi
-
-      if [[ "$(no_progress_cleared_by_ack "$_np_updated" "$_np_ack")" == "true" ]]; then
-        # An operator vouched for it — reset and let it through (AC-8).
-        write_no_progress_state "$_np_file" 0 "$_np_cur" "$now_epoch"
-      else
-        read -r _np_new _np_decision <<<"$(get_no_progress_verdict "$_np_count" "$_np_progressed" "$_np_clean")"
-        write_no_progress_state "$_np_file" "$_np_new" "$_np_cur" "$now_epoch"
-        if [[ "$_np_decision" == "block" ]]; then
-          write_no_progress_refusal "$key" "$_np_new"
-          if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
-            echo "{\"decision\":\"no-progress-bound\",\"key\":\"$key\",\"count\":$_np_new}"
-          else
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] no-progress-bound: $key (count=$_np_new)"
-          fi
-          continue
-        fi
-      fi
-
       # Cannot dispatch a project whose source repo path is unknown
       # (never launched + not in projects.json). Skip, don't guess.
       if [[ -z "$repo" ]]; then
@@ -1092,6 +1057,52 @@ print(int((ea-sa).total_seconds()))
           write_scheduler_log "skip-missing-path" "$key"
         fi
         continue
+      fi
+
+      # --- no-progress dispatch bound (independent of postmortems) -------
+      # Placed past EVERY skip gate -- including skip-unresolved and
+      # skip-missing-path above -- so it advances ONCE PER DISPATCH rather
+      # than once per poll: reaching this point means the project is genuinely
+      # about to be launched (not busy, not cooling down, not blacklisted,
+      # and resolvable to a repo that exists).  Counting per poll would trip
+      # the bound within minutes regardless of how many launches happened.
+      #
+      # It sat ABOVE the two resolution gates until 2026-09-22.  An
+      # unregistered project (repo_path null) therefore bumped the counter on
+      # every poll without ever launching, and after `threshold` polls the
+      # honest `skip-unresolved: no repo path` diagnosis was replaced by
+      # `N consecutive launches ended non-clean with no plan progress` -- a
+      # count of launches that had never happened, naming a remedy
+      # (/ilk-resume) that could not work, because the ack resets the counter
+      # but the project is still unresolvable on the very next poll.
+      # Measured on rezmac: 93 projects bounded this way, one of them at 375.
+      local _np_file _np_count _np_sig _np_updated _np_cur _np_ack
+      local _np_progressed="false" _np_clean="false" _np_new _np_decision
+      _np_file="$(no_progress_state_file "$path")"
+      read -r _np_count _np_sig _np_updated <<<"$(read_no_progress_state "$_np_file")"
+      _np_cur="$(progress_signature_for_project "$path")"
+      _np_ack="$(read_resolve_ack_epoch "$path")"
+      _np_clean="$(sentinel_exit_was_clean "$path")"
+      # First sight of a project ("none") is not evidence of no progress.
+      if [[ "$_np_sig" == "none" || "$_np_cur" != "$_np_sig" ]]; then
+        _np_progressed="true"
+      fi
+
+      if [[ "$(no_progress_cleared_by_ack "$_np_updated" "$_np_ack")" == "true" ]]; then
+        # An operator vouched for it — reset and let it through (AC-8).
+        write_no_progress_state "$_np_file" 0 "$_np_cur" "$now_epoch"
+      else
+        read -r _np_new _np_decision <<<"$(get_no_progress_verdict "$_np_count" "$_np_progressed" "$_np_clean")"
+        write_no_progress_state "$_np_file" "$_np_new" "$_np_cur" "$now_epoch"
+        if [[ "$_np_decision" == "block" ]]; then
+          write_no_progress_refusal "$key" "$_np_new"
+          if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+            echo "{\"decision\":\"no-progress-bound\",\"key\":\"$key\",\"count\":$_np_new}"
+          else
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] no-progress-bound: $key (count=$_np_new)"
+          fi
+          continue
+        fi
       fi
 
       # Fill free slots: collect while capacity remains.

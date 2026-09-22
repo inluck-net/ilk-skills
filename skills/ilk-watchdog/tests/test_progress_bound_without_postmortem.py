@@ -133,6 +133,35 @@ def test_consecutive_no_progress_launches_stop_dispatch_with_no_postmortem(sched
     )
 
 
+def test_the_bound_sits_below_every_skip_gate() -> None:
+    """The counter must not advance on a path that cannot launch.
+
+    The pin above only proved the bound sits somewhere after `skip-busy`,
+    while its own message claimed "past the skip gates".  Two gates —
+    skip-unresolved and skip-missing-path — sat BELOW the bound, so an
+    unregistered project bumped the counter on every poll with zero
+    launches, and the accurate `skip-unresolved` diagnosis was replaced by
+    a launch count that had never happened.
+
+    Ordering is the whole fix, so ordering is what this asserts.
+    """
+    src = _SCHEDULER_SH.read_text()
+
+    bound_at = src.index("_np_file=\"$(no_progress_state_file")
+    for marker in (
+        'write_scheduler_log "skip-unresolved"',
+        'write_scheduler_log "skip-missing-path"',
+        'write_scheduler_log "skip-busy"',
+        'write_scheduler_log "skip-cooldown"',
+    ):
+        gate_at = src.index(marker)
+        assert gate_at < bound_at, (
+            f"the no-progress bound runs BEFORE {marker}: a project that "
+            f"skips there never launches, so the counter would advance "
+            f"without a launch and the refusal would misreport why."
+        )
+
+
 # ---------------------------------------------------------------------------
 # AC-3
 # ---------------------------------------------------------------------------
