@@ -426,6 +426,71 @@ class TestRegistrySync:
         assert _read_env(env_bad_probe.slot2) == env_slot_before
 
 
+class TestSyncRegistryManagerAuth:
+    """D1 (found 2026-09-22): `_sync_registry` skips every non-worker role.
+
+    The manager now runs on a third-party provider, so a successful switch
+    must leave the registry describing that reality.  Today the tier guard
+    (worker_model.py:830) skips it and the registry keeps claiming
+    ``auth: official`` — the exact state claude-worker.sh:314-321 refuses
+    to launch.
+    """
+
+    def test_sync_registry_updates_manager_and_drops_official_auth(
+        self, tmp_path: Path
+    ):
+        """A manager role declared ``auth: official``, switched onto a
+        provider env, must come out of `_sync_registry` with the new model
+        and provider and NO ``auth`` key.  The planner role must be
+        untouched."""
+        home_base = tmp_path / "home"
+        mgr_home = home_base / ".claude-manager"
+        # The fake switch already happened: the home carries a provider env
+        # (what cmd_use writes before it calls _sync_registry).
+        _write_settings(mgr_home, "glm-5.3", "https://glm.example/api",
+                        token="tok-glm")
+        registry = tmp_path / "role-registry.json"
+        registry.write_text(json.dumps({
+            "version": 1,
+            "roles": {
+                "planner": {"tier": "planner", "home": "~/.claude",
+                            "provider": "Claude Official"},
+                "manager": {"tier": "manager", "home": "~/.claude-manager",
+                            "auth": "official",
+                            "provider": "Claude Official",
+                            "model": "opus-stale"},
+            },
+        }, indent=2), encoding="utf-8")
+
+        sys.path.insert(0, str(TOOLS_DIR))
+        try:
+            import worker_model
+            roles = worker_model.load_registry(registry)
+            source_role = {"tier": "manager", "home": "~/.claude-manager",
+                           "provider": "Zhipu GLM", "model": "glm-5.3"}
+            worker_model._sync_registry(
+                registry, roles, [mgr_home], home_base, "glm-5.3", source_role)
+        finally:
+            sys.path.pop(0)
+
+        data = json.loads(registry.read_text(encoding="utf-8"))
+        role = data["roles"]["manager"]
+        assert "auth" not in role and role.get("model") == "glm-5.3", (
+            f"post-sync manager role: {role} — expected model glm-5.3 and no "
+            f"auth key; _sync_registry skips non-worker tiers "
+            f"(worker_model.py:830), so the switch tool's success path leaves "
+            f"the registry claiming auth=official — the state claude-worker.sh "
+            f"refuses to launch"
+        )
+        assert role.get("provider") == "Zhipu GLM", (
+            f"provider not synced from the source role: {role.get('provider')!r}"
+        )
+        assert data["roles"]["planner"] == {
+            "tier": "planner", "home": "~/.claude",
+            "provider": "Claude Official",
+        }, "planner must never be touched by a manager switch (AC-5)"
+
+
 # ── Config + live probes (SP1 — probes-tell-the-truth) ────────────────────
 
 
