@@ -15,6 +15,7 @@ Covers:
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import textwrap
@@ -27,6 +28,19 @@ _PLAN_LINT = _HERE.parent / "scripts" / "plan_lint.py"
 
 
 # ── helpers ───────────────────────────────────────────────────────────
+
+def _slug_aligned_name(filename: str, content: str) -> str:
+    """Filename whose derived slug matches the fixture's own `plan:` field.
+
+    Added 2026-09-22 — see the identical helper in the sibling plan_lint
+    tests. plan_lint's slug-identity check is a HARD finding when the two
+    disagree; these fixtures predate it and used arbitrary tmp names.
+    """
+    if filename.startswith("MASTER"):
+        return filename
+    m = re.search(r"^\s*plan:\s*(\S+)\s*$", content, re.M)
+    return (m.group(1).strip("'\"") + ".md") if m else filename
+
 
 def _git_init(tmp_path: Path) -> None:
     """Initialise a hermetic git repo in *tmp_path*."""
@@ -77,7 +91,7 @@ def _make_non_git_dir(tmp_path: Path) -> Path:
 def _run_lint_on_fixture(tmp_path: Path, content: str,
                          filename: str = "test-plan.md") -> subprocess.CompletedProcess:
     """Write a temp sub-plan and run plan_lint.py against it."""
-    p = tmp_path / filename
+    p = tmp_path / _slug_aligned_name(filename, textwrap.dedent(content))
     p.write_text(textwrap.dedent(content), encoding="utf-8")
     return subprocess.run(
         [sys.executable, str(_PLAN_LINT), str(p)],
@@ -215,7 +229,8 @@ class TestCliReachability:
 
     def test_cli_clean_for_base_path(self) -> None:
         """A fixture sub-plan with a base-branch scope_path is clean via CLI."""
-        p = self.tmp_path / "test-plan-clean.md"
+        # filename must match the fixture's `plan: test-cli-clean`
+        p = self.tmp_path / "test-cli-clean.md"
         p.write_text(textwrap.dedent("""\
             ---
             plan: test-cli-clean

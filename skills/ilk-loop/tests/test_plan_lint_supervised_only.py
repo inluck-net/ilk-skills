@@ -14,6 +14,7 @@ API-contract batch), plus a near-miss on gh-resolve.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import textwrap
@@ -23,13 +24,26 @@ _HERE = Path(__file__).resolve().parent
 _PLAN_LINT = _HERE.parent / "scripts" / "plan_lint.py"
 
 
+def _slug_aligned_name(filename: str, content: str) -> str:
+    """Filename whose derived slug matches the fixture's own `plan:` field.
+
+    Added 2026-09-22 — see the identical helper in the sibling plan_lint
+    tests. plan_lint's slug-identity check is a HARD finding when the two
+    disagree; these fixtures predate it and used arbitrary tmp names.
+    """
+    if filename.startswith("MASTER"):
+        return filename
+    m = re.search(r"^\s*plan:\s*(\S+)\s*$", content, re.M)
+    return (m.group(1).strip("'\"") + ".md") if m else filename
+
+
 def _run(tmp_path: Path, master: str, subplans: dict[str, str]):
     """Write a MASTER + sub-plans, run plan_lint with --master, return result."""
     mp = tmp_path / "MASTER-2026-07-26-execution-plan.md"
     mp.write_text(textwrap.dedent(master), encoding="utf-8")
     paths = []
     for name, content in subplans.items():
-        sp = tmp_path / name
+        sp = tmp_path / _slug_aligned_name(name, textwrap.dedent(content))
         sp.write_text(textwrap.dedent(content), encoding="utf-8")
         paths.append(str(sp))
     return subprocess.run(
@@ -237,7 +251,7 @@ def test_glob_scope_covering_infra_flag_off_clean(tmp_path):
 
 def test_check_requires_master_context(tmp_path):
     """Without --master there is no flag to evaluate; stay silent."""
-    sp = tmp_path / "app.md"
+    sp = tmp_path / _slug_aligned_name("app.md", textwrap.dedent(_SUBPLAN_APP))
     sp.write_text(textwrap.dedent(_SUBPLAN_APP), encoding="utf-8")
     result = subprocess.run(
         [sys.executable, str(_PLAN_LINT), str(sp)],

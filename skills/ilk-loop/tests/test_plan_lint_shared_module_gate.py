@@ -9,6 +9,7 @@ AC-5: docs-only sub-plan -> silent
 """
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import textwrap
@@ -26,6 +27,19 @@ from plan_lint import lint_file  # noqa: E402
 
 # ── helpers ───────────────────────────────────────────────────────────
 
+def _slug_aligned_name(filename: str, content: str) -> str:
+    """Filename whose derived slug matches the fixture's own `plan:` field.
+
+    Added 2026-09-22 — see the identical helper in the sibling plan_lint
+    tests. plan_lint's slug-identity check is a HARD finding when the two
+    disagree; these fixtures predate it and used arbitrary tmp names.
+    """
+    if filename.startswith("MASTER"):
+        return filename
+    m = re.search(r"^\s*plan:\s*(\S+)\s*$", content, re.M)
+    return (m.group(1).strip("'\"") + ".md") if m else filename
+
+
 def _run_lint(subplan_text: str, tmp_path: Path,
               project_files: dict[str, str] | None = None) -> list[str]:
     """Write a sub-plan (and optional project files) to *tmp_path*, run lint.
@@ -42,7 +56,7 @@ def _run_lint(subplan_text: str, tmp_path: Path,
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(textwrap.dedent(content), encoding="utf-8")
 
-    sp = tmp_path / "test-subplan.md"
+    sp = tmp_path / _slug_aligned_name("test-subplan.md", subplan_text)
     sp.write_text(textwrap.dedent(subplan_text), encoding="utf-8")
 
     old_root = _pl._PROJECT_ROOT

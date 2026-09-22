@@ -10,6 +10,7 @@ Part of sub-plan 2026-06-28-spec-ac-traceability, step 0.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import textwrap
@@ -26,9 +27,24 @@ from plan_lint import lint_spec_pillar_traceability  # noqa: E402
 _PLAN_LINT = SCRIPTS_DIR / "plan_lint.py"
 
 
+def _slug_aligned_name(filename: str, content: str) -> str:
+    """Filename whose derived slug matches the fixture's own `plan:` field.
+
+    Added 2026-09-22. plan_lint's slug-identity check (one-subplan-one-slug)
+    is a HARD finding when the filename-derived slug disagrees with
+    frontmatter `plan:`. These fixtures predate the lint and used arbitrary
+    tmp names, so tests asserting "clean" failed for a reason unrelated to
+    what they test. MASTER-* names and fixtures with no `plan:` are untouched.
+    """
+    if filename.startswith("MASTER"):
+        return filename
+    m = re.search(r"^\s*plan:\s*(\S+)\s*$", content, re.M)
+    return (m.group(1).strip("'\"") + ".md") if m else filename
+
+
 def _run_lint(tmp_path: Path, filename: str, content: str) -> subprocess.CompletedProcess:
     """Write a temp spec file and run plan_lint.py --spec against it."""
-    p = tmp_path / filename
+    p = tmp_path / _slug_aligned_name(filename, content)
     p.write_text(textwrap.dedent(content), encoding="utf-8")
     return subprocess.run(
         [sys.executable, str(_PLAN_LINT), "--spec", str(p)],

@@ -15,6 +15,7 @@ Covers:
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import textwrap
@@ -28,6 +29,19 @@ _MASTER_TEMPLATE = _HERE.parent / "templates" / "master-template.md"
 
 
 # ── helpers ───────────────────────────────────────────────────────────
+
+def _slug_aligned_name(filename: str, content: str) -> str:
+    """Filename whose derived slug matches the fixture's own `plan:` field.
+
+    Added 2026-09-22 — see the identical helper in the sibling plan_lint
+    tests. plan_lint's slug-identity check is a HARD finding when the two
+    disagree; these fixtures predate it and used arbitrary tmp names.
+    """
+    if filename.startswith("MASTER"):
+        return filename
+    m = re.search(r"^\s*plan:\s*(\S+)\s*$", content, re.M)
+    return (m.group(1).strip("'\"") + ".md") if m else filename
+
 
 def _git_init(tmp_path: Path) -> None:
     """Initialise a hermetic git repo in *tmp_path*."""
@@ -76,7 +90,7 @@ def _run_master(tmp_path: Path, master: str,
     mp.write_text(textwrap.dedent(master), encoding="utf-8")
     paths = []
     for name, content in subplans.items():
-        sp = tmp_path / name
+        sp = tmp_path / _slug_aligned_name(name, textwrap.dedent(content))
         sp.write_text(textwrap.dedent(content), encoding="utf-8")
         paths.append(str(sp))
     return subprocess.run(

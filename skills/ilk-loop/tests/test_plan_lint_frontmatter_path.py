@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+import re
 import importlib.util
 import subprocess
 import sys
@@ -23,6 +24,21 @@ _HERE = Path(__file__).resolve().parent
 _PLAN_LINT = _HERE.parent / "scripts" / "plan_lint.py"
 
 
+def _slug_aligned_name(filename: str, content: str) -> str:
+    """Filename whose derived slug matches the fixture's own `plan:` field.
+
+    Added 2026-09-22. plan_lint's slug-identity check (one-subplan-one-slug)
+    is a HARD finding when the filename-derived slug disagrees with
+    frontmatter `plan:`. These fixtures predate the lint and used arbitrary
+    tmp names, so tests asserting "clean" failed for a reason unrelated to
+    what they test. MASTER-* names and fixtures with no `plan:` are untouched.
+    """
+    if filename.startswith("MASTER"):
+        return filename
+    m = re.search(r"^\s*plan:\s*(\S+)\s*$", content, re.M)
+    return (m.group(1).strip("'\"") + ".md") if m else filename
+
+
 def _run_lint(tmp_path: Path, filename: str, content: str) -> subprocess.CompletedProcess:
     """Write a temp sub-plan and run plan_lint.py against it."""
     # Seed a pytest.ini so the broad-suite-in-unbounded-project lint
@@ -30,7 +46,7 @@ def _run_lint(tmp_path: Path, filename: str, content: str) -> subprocess.Complet
     (tmp_path / "pytest.ini").write_text(
         "[pytest]\naddopts = --timeout=60\n", encoding="utf-8",
     )
-    p = tmp_path / filename
+    p = tmp_path / _slug_aligned_name(filename, content)
     p.write_text(textwrap.dedent(content), encoding="utf-8")
     return subprocess.run(
         [sys.executable, str(_PLAN_LINT), str(p)],
