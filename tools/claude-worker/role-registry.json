@@ -14,8 +14,7 @@
     "planner": {
       "tier": "planner",
       "home": "~/.claude",
-      "provider": "Claude Official",
-      "model": "opus"
+      "provider": "Claude Official"
     },
     "manager": {
       "tier": "manager",
