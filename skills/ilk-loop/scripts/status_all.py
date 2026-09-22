@@ -158,9 +158,19 @@ def _providers_block() -> list[dict]:
     must not blank the panel for every project.
     """
     import subprocess as _sp
+    # Resolve the script by path, not by PATH. `ccswitch_import` is a script
+    # under tools/claude-worker/, not an installed command — invoking it by
+    # bare name raised FileNotFoundError, the except below returned [], and
+    # the Models submenu silently rendered nothing in production while the
+    # fixtures passed. Measured 2026-09-22: `command -v ccswitch_import` finds
+    # nothing; the script itself returns 8 providers.
+    _toolkit = Path(__file__).resolve().parents[3]
+    _ccswitch = _toolkit / "tools" / "claude-worker" / "ccswitch_import.py"
+    if not _ccswitch.is_file():
+        return []
     try:
         result = _sp.run(
-            ["ccswitch_import", "list", "--format", "json"],
+            [sys.executable, str(_ccswitch), "list", "--format", "json"],
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=30,
         )

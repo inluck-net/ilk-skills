@@ -244,14 +244,26 @@ def test_hyphenated_scratch_worktree_composite_renders_correctly() -> None:
 def _entry_with_roles(**extra) -> dict:
     """Entry carrying a roles block — the payload shape step 1 produces."""
     e = _entry()
+    # Field names MUST match what status_all._roles_block() actually emits
+    # (name / home / model / provider_host / auth) — the status_all→renderer
+    # boundary is a contract surface, and a fixture that invents its own
+    # names tests nothing the pipeline does. Verified against
+    # skills/ilk-loop/scripts/status_all.py:111-148 on 2026-09-22.
     e["roles"] = [
         {
-            "role": "worker",
+            "name": "coder",
             "home": "~/.claude-worker",
-            "configured_model": "mimo-v2.5-pro",
-            "provider_host": "zhipu",
-            "auth_mode": "api_key",
+            "model": "mimo-v2.5-pro",
+            "provider_host": "token-plan-cn.xiaomimimo.com",
+            "auth": "custom",
+            "provider": "Xiaomi MiMo V2.5 - Pro",
         },
+    ]
+    # The submenu is built from the providers block status_all publishes
+    # alongside roles (status_all._providers_block()).
+    e["providers"] = [
+        {"id": "66f41c76", "name": "Xiaomi MiMo V2.5 - Pro", "model": "mimo-v2.5-pro"},
+        {"id": "0d101427", "name": "Zhipu GLM", "model": "glm-5.3"},
     ]
     e.update(extra)
     return e
@@ -283,9 +295,13 @@ def test_provider_submenu_invokes_use_command() -> None:
     FAILS.
     """
     out = render_xbar([_entry_with_roles()])
+    # SwiftBar actions are param-separated: `bash=<cmd> param1=.. param2=..`,
+    # never a contiguous command string (see the "Start now" action in
+    # render_xbar.py). Matching the literal "ilk-worker-model use" asserts a
+    # shape SwiftBar cannot express.
     provider_actions = [
         l for l in out.splitlines()
-        if "ilk-worker-model use" in l
+        if "bash=ilk-worker-model" in l and "param1=use" in l
     ]
     assert provider_actions, (
         "expected submenu items invoking 'ilk-worker-model use <role> <provider>'; "
