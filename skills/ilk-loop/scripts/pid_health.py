@@ -145,6 +145,44 @@ def ilk_pid_alive(pid: int) -> bool:
     return any(pat in low for pat in ILK_PROCESS_PATTERNS)
 
 
+def detect_stale_running(state: object, pid: object) -> tuple[bool, str, str | None]:
+    """Shared stale-running detection for ``last-exit.json`` sentinels.
+
+    Returns ``(stale, reported_state, raw_state)``.
+
+    A sentinel whose ``state`` is ``"running"`` while its pid is not a live
+    ilk process is a crash artifact: the runner died before
+    ``Finalize-Sentinel`` wrote a terminal state.  Callers report
+    ``reported_state`` (``"unknown"`` when stale) so a consumer that reads
+    only ``.state`` is not told a dead run is live, and ``raw_state`` keeps
+    the original for diagnosis (``None`` when not stale).
+
+    Command-verified on purpose (``ilk_pid_alive``, not ``pid_alive``): a
+    recycled PID that now belongs to an unrelated process is the same
+    defect as a dead one (gh-triage 2026-08-13: sentinel PID 18920 had
+    become ``/bin/zsh -c … pytest``).
+
+    Shared by ``status_progress.detect_sentinel_health`` (display) and
+    ``collect.read_sentinel`` (postmortem).  Two components with their own
+    notions of "stale" is how a crashed run laundered into clean-success
+    while the status line said STALE-RUNNING (2026-09-22, pid 26627 while
+    ``ps -p 26627`` returned rc=1).
+
+    A non-int pid cannot be probed (a JSON sentinel can hold anything) and
+    is treated like an absent one: fail toward "not stale", the same
+    direction ``ilk_pid_alive`` takes for an unreadable command line.
+    """
+    sentinel_state = state or ""
+    probeable = isinstance(pid, int) and not isinstance(pid, bool)
+    stale = False
+    if sentinel_state == "running" and probeable:
+        if not ilk_pid_alive(pid):
+            stale = True
+    reported_state = "unknown" if stale else (sentinel_state or "unknown")
+    raw_state = sentinel_state if stale else None
+    return stale, reported_state, raw_state
+
+
 def _pid_command_name(pid: int) -> str | None:
     """Return the base command name for *pid*, or ``None`` if unavailable."""
     if sys.platform == "win32":

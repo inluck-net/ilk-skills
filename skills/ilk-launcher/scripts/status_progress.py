@@ -36,7 +36,18 @@ from pathlib import Path
 from typing import Any
 
 HOME = Path(os.path.expanduser("~"))
-LOOP_SCRIPTS = HOME / ".cursor" / "skills" / "ilk-loop" / "scripts"
+# Prefer the sibling ilk-loop skill (the tree this file is part of).
+# ~/.cursor/skills/ilk-loop is an install.sh symlink into whichever checkout
+# was installed last; inserting it first shadows a worktree/clone's own code
+# (observed 2026-09-22: pid_health.detect_stale_running was invisible from
+# here — the import got the main checkout's copy).  Installed layouts resolve
+# to the same directory either way.
+_LOCAL_LOOP_SCRIPTS = Path(__file__).resolve().parent.parent.parent / "ilk-loop" / "scripts"
+LOOP_SCRIPTS = (
+    _LOCAL_LOOP_SCRIPTS
+    if _LOCAL_LOOP_SCRIPTS.is_dir()
+    else HOME / ".cursor" / "skills" / "ilk-loop" / "scripts"
+)
 LAUNCHER_DIR = HOME / ".cursor" / "skills" / "ilk-launcher"
 PROJECTS_JSON = LAUNCHER_DIR / "projects.json"
 
@@ -44,7 +55,7 @@ PROJECTS_JSON = LAUNCHER_DIR / "projects.json"
 sys.path.insert(0, str(LOOP_SCRIPTS))
 from loop_status import find_plans_dir, parse_frontmatter, extract_master_order, pick_active_master  # type: ignore
 from ilk_paths import find_project_root, project_key, sentinel_path  # type: ignore
-from pid_health import ilk_pid_alive  # type: ignore
+from pid_health import detect_stale_running, ilk_pid_alive  # type: ignore
 from plan_slug import DATE_PREFIX  # type: ignore
 
 BAR_WIDTH = 10
@@ -392,17 +403,19 @@ def detect_sentinel_health(
     sentinel_state = (sentinel.get("state") or "") if sentinel else ""
     last_exit_path = str(runtime_dir / "last-exit.json")
 
-    stale = False
-    if sentinel_state == "running" and launcher_pid is not None:
-        # ilk_pid_alive: a run killed before Finalize-Sentinel leaves
-        # state="running" forever, so a recycled PID hides the staleness.
-        if not ilk_pid_alive(launcher_pid):
-            stale = True
+    # Shared with collect.read_sentinel via pid_health: one notion of
+    # "stale" across the display and the postmortem.  A run killed before
+    # Finalize-Sentinel leaves state="running" forever, so a recycled PID
+    # hides the staleness — and a second, drifting definition of stale is
+    # how the postmortem laundered a crashed run into clean-success while
+    # this printed ⚠ STALE-RUNNING (2026-09-22, pid 26627).
+    stale, reported_state, raw_state = detect_stale_running(
+        sentinel_state, launcher_pid
+    )
 
     # When stale, report state as "unknown" so consumers that read only
     # .state are not told a dead run is live.  The raw value is preserved
     # in raw_state so no diagnostic information is lost.  (AC-8)
-    reported_state = "unknown" if stale else (sentinel_state or "unknown")
     result: dict[str, Any] = {
         "state": reported_state,
         "stale": stale,
@@ -410,7 +423,7 @@ def detect_sentinel_health(
         "last_exit_path": last_exit_path,
     }
     if stale:
-        result["raw_state"] = sentinel_state
+        result["raw_state"] = raw_state
     return result
 
 

@@ -318,3 +318,179 @@ class TestReadSentinelProbesLiveness:
                 os.environ["ILK_DATA_HOME"] = old_data
             else:
                 os.environ.pop("ILK_DATA_HOME", None)
+
+    def test_running_with_live_runner_pid_is_not_stale(self, tmp_path, live_ilk_pid):
+        """AC-6: a live runner pid is NOT reported stale (mirror-image guard).
+
+        The plan phrases this as "the current process id", but the probe is
+        command-verified (``pid_health.ilk_pid_alive``): pytest's own pid is
+        precisely the unrelated command a recycled PID lands on, so it reads
+        as stale — see the test below and ``conftest.py:live_ilk_pid``.  The
+        positive control is therefore a live runner-shaped pid.  A probe that
+        could not see one would report every sentinel stale — the mirror
+        image of the bug this class exists for.
+        """
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        data_home = tmp_path / "ilk-data"
+        data_home.mkdir()
+        project_path = tmp_path / "repo"
+        project_path.mkdir()
+        with patch.dict(
+            os.environ,
+            {"HOME": str(fake_home), "ILK_DATA_HOME": str(data_home)},
+        ):
+            _write_raw_sentinel(project_path, {
+                "state": "running",
+                "pid": live_ilk_pid,
+                "run_id": "20260922-110200",
+                "iteration": 1,
+                "exit_code": None,
+                "generated_at": "2026-09-22T12:00:00+08:00",
+            })
+            rec = collect.read_sentinel(project_path)
+
+        assert rec is not None, "sentinel file was written; reader returned None"
+        assert rec.get("stale") is False, (
+            f"a live runner pid {live_ilk_pid} must not read as stale, got {rec}"
+        )
+        assert rec.get("state") == "running", (
+            f"a non-stale sentinel must keep its state, got {rec.get('state')!r}"
+        )
+        assert "raw_state" not in rec, (
+            f"raw_state is only preserved on a stale sentinel, got {rec}"
+        )
+
+    def test_current_pid_reads_as_recycled_not_live(self, tmp_path):
+        """os.getpid() is NOT a valid live control (AC-6's phrasing, corrected).
+
+        Liveness is command-verified: a sentinel pid that now belongs to an
+        unrelated process is the gh-triage recycling bug (2026-08-13, PID
+        18920 → ``/bin/zsh -c … pytest``), i.e. stale.  pytest's own pid is
+        that unrelated process, so ``state=running`` + ``os.getpid()`` must
+        report stale.  Pinned so that "fixing" AC-6 by switching the probe to
+        bare ``pid_alive`` — which would make every recycled pid read live —
+        goes red.
+        """
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        data_home = tmp_path / "ilk-data"
+        data_home.mkdir()
+        project_path = tmp_path / "repo"
+        project_path.mkdir()
+        foreign = os.getpid()  # alive, but not an ilk process
+        with patch.dict(
+            os.environ,
+            {"HOME": str(fake_home), "ILK_DATA_HOME": str(data_home)},
+        ):
+            _write_raw_sentinel(project_path, {
+                "state": "running",
+                "pid": foreign,
+                "run_id": "20260922-110300",
+                "iteration": 1,
+                "exit_code": None,
+                "generated_at": "2026-09-22T12:00:00+08:00",
+            })
+            rec = collect.read_sentinel(project_path)
+
+        assert rec is not None, "sentinel file was written; reader returned None"
+        assert rec.get("stale") is True, (
+            f"a foreign live pid {foreign} must read as recycled/stale, got {rec}"
+        )
+        assert rec.get("state") == "unknown", (
+            f"a stale sentinel must report state 'unknown', got {rec.get('state')!r}"
+        )
+        assert rec.get("raw_state") == "running", (
+            f"the original state must survive in raw_state, got {rec.get('raw_state')!r}"
+        )
+
+
+# ── AC-7: a stale sentinel refuses the clean-success claim (sub-plan D3) ──────
+
+
+class TestStaleSentinelClassification:
+    """A stale-running sentinel must never launder into clean-success.
+
+    Measured 2026-09-22: last-exit.json read ``{"state": "running",
+    "pid": 26627, ...}`` while ``ps -p 26627`` returned nothing (rc=1,
+    positive control confirmed the probe works).  status_progress printed
+    ⚠ STALE-RUNNING; /ilk-feedback reported clean-success.
+    """
+
+    def test_stale_sentinel_is_not_clean_success(self):
+        """AC-7: stale sentinel ⇒ classification is not clean-success.
+
+        The iters alone classify clean-success (see
+        ``test_no_sentinel_preserves_existing_behavior``).  A run whose
+        sentinel is stale-running died before ``Finalize-Sentinel`` and did
+        not stop cleanly, so the postmortem must not claim one.
+        """
+        iters = _make_clean_iters()
+        sentinel = {
+            "state": "unknown",
+            "raw_state": "running",
+            "stale": True,
+            "pid": 26627,
+            "run_id": "20260617-100000",
+            "iteration": 1,
+        }
+
+        with patch.object(collect, "read_sentinel", return_value=sentinel):
+            with patch.object(collect, "collect_self_hosting_facts", return_value={}):
+                label, facts = collect.classify(iters, None, Path("/tmp/fake-project"))
+
+        assert label != "clean-success", (
+            f"A stale-running sentinel (state=running, pid 26627 dead) must not "
+            f"classify as clean-success, got {label}: {facts}"
+        )
+        assert label == "interrupted", (
+            f"Expected interrupted for a stale-running sentinel, got {label}. "
+            "judgment call: reuse `interrupted` (no new label) because the run "
+            "did not reach a natural stop and `interrupted` is already routed "
+            "by both watchdogs; wrong if a stale sentinel should park/block "
+            "instead — that needs its own label + watchdog arm."
+        )
+        assert facts.get("sentinel_stale") is True, (
+            f"the staleness must be visible in facts even though it does not "
+            f"own the label, got {facts}"
+        )
+
+    def test_stale_sentinel_keeps_more_specific_labels(self):
+        """judgment-call pin: stale only refuses the clean-success claim.
+
+        The measured gh-resolve shape (degenerate already-shipped record +
+        stale sentinel) must still label ``already-shipped-noop`` (D1) — the
+        stale flag is a fact, not a label override, so the more specific
+        action (nothing to carry forward) survives.
+        """
+        iters = [{
+            "run_id": "20260922-110127",
+            "iteration": 0,
+            "stop_reason": "already-shipped",
+            "exit_code": None,
+            "new_commits": None,
+            "elapsed_sec": None,
+            "num_turns": None,
+            "result": None,
+        }]
+        sentinel = {
+            "state": "unknown",
+            "raw_state": "running",
+            "stale": True,
+            "pid": 26627,
+            "run_id": "20260922-110127",
+            "iteration": 0,
+        }
+
+        with patch.object(collect, "read_sentinel", return_value=sentinel):
+            with patch.object(collect, "collect_self_hosting_facts", return_value={}):
+                label, facts = collect.classify(iters, None, Path("/tmp/fake-project"))
+
+        assert label == "already-shipped-noop", (
+            f"a degenerate already-shipped run keeps its own label under a "
+            f"stale sentinel (stale is a fact, not a label override), got "
+            f"{label}: {facts}"
+        )
+        assert facts.get("sentinel_stale") is True, (
+            f"the staleness must still be visible in facts, got {facts}"
+        )

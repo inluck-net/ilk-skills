@@ -107,7 +107,17 @@ def _subplan_ref_re():
 # detection is consistent across the suite. Falls back to the legacy
 # walk-up in resolve_by_cwd() if the import fails (e.g. running from a
 # repo clone before install.sh symlinks are in place).
-_ILK_PATHS_DIR = HOME / ".cursor" / "skills" / "ilk-loop" / "scripts"
+#
+# Prefer the sibling tree this file is part of: ~/.cursor/skills/ilk-loop is
+# an install.sh symlink into whichever checkout was installed last, and
+# inserting it first shadows a worktree/clone's own code (observed 2026-09-22:
+# pid_health.detect_stale_running was invisible from here — the import got the
+# main checkout's copy and read_sentinel silently skipped its liveness probe).
+_LOCAL_LOOP_SCRIPTS = Path(__file__).resolve().parent.parent.parent / "ilk-loop" / "scripts"
+_INSTALLED_LOOP_SCRIPTS = HOME / ".cursor" / "skills" / "ilk-loop" / "scripts"
+_ILK_PATHS_DIR = (
+    _LOCAL_LOOP_SCRIPTS if _LOCAL_LOOP_SCRIPTS.is_dir() else _INSTALLED_LOOP_SCRIPTS
+)
 if _ILK_PATHS_DIR.is_dir():
     sys.path.insert(0, str(_ILK_PATHS_DIR))
 try:
@@ -130,6 +140,14 @@ except ImportError:
     archive_run_dir = None  # type: ignore
     project_key = None  # type: ignore
     _skill_root = None  # type: ignore
+
+# Same directory as ilk_paths: the shared stale-running probe.  Deliberately
+# not re-implemented here — status_progress.detect_sentinel_health and this
+# module must agree on what "stale" means (pid_health.detect_stale_running).
+try:
+    from pid_health import detect_stale_running  # type: ignore
+except ImportError:
+    detect_stale_running = None  # type: ignore
 
 # How many lines of the last problematic iter's log to embed in the report.
 TAIL_LINES = 80
@@ -255,6 +273,15 @@ def read_sentinel(project_path: Path) -> dict | None:
     Returns the parsed dict if the sentinel exists, None otherwise.
     The sentinel proves a run *started* (even if it died before iter 1
     wrote any JSONL record).
+
+    Also probes pid liveness, sharing status_progress's notion of a
+    stale-running sentinel (``pid_health.detect_stale_running``):
+    ``state="running"`` with a dead (or recycled, non-ilk) pid means the
+    runner died before ``Finalize-Sentinel``.  Those report
+    ``state="unknown"`` + ``stale=True`` with the original preserved in
+    ``raw_state``.  Without this the postmortem believed a crashed run was
+    live and laundered it into clean-success (2026-09-22, pid 26627 while
+    ``ps -p 26627`` returned rc=1 — the status line said ⚠ STALE-RUNNING).
     """
     if external_runtime_dir is None or project_key is None:
         return None
@@ -262,9 +289,18 @@ def read_sentinel(project_path: Path) -> dict | None:
     if not f.exists():
         return None
     try:
-        return json.loads(f.read_text(encoding="utf-8-sig"))
+        rec = json.loads(f.read_text(encoding="utf-8-sig"))
     except (json.JSONDecodeError, OSError):
         return None
+    if isinstance(rec, dict) and detect_stale_running is not None:
+        stale, reported_state, raw_state = detect_stale_running(
+            rec.get("state"), rec.get("pid")
+        )
+        rec["stale"] = stale
+        rec["state"] = reported_state
+        if stale:
+            rec["raw_state"] = raw_state
+    return rec
 
 
 def _jsonl_log_candidates(project_path: Path, last_launch: dict | None = None) -> list[Path]:
@@ -1458,6 +1494,32 @@ def classify(
             label = "shipped-unverified"
             facts["unverified_sub_plans"] = unverified
 
+    # Stale-running sentinel (D3): state="running" but the pid is not a live
+    # ilk process — the runner died before Finalize-Sentinel.  read_sentinel
+    # has already rewritten state to "unknown", which is why this case never
+    # reaches the terminal-state map above.  A run that never finalised did
+    # not stop cleanly, so the clean-success claim would be asserting a
+    # natural stop that did not happen (2026-09-22: status_progress printed
+    # ⚠ STALE-RUNNING for pid 26627 while this returned clean-success).
+    # Only the clean-success claim is refused: a more specific label
+    # (already-shipped-noop, local-checks-*, self-hosting-drift, …) already
+    # carries the better action, and the staleness rides in facts either way.
+    if sentinel is not None and sentinel.get("stale"):
+        facts["sentinel_stale"] = True
+        if sentinel.get("raw_state") is not None:
+            facts["sentinel_raw_state"] = sentinel.get("raw_state")
+        if label == "clean-success":
+            # judgment call: `interrupted` (no new label) because the run did
+            # not reach a natural stop and `interrupted` is already routed by
+            # both watchdogs; wrong if a stale sentinel should park/block —
+            # that needs its own label + watchdog arm.
+            label = "interrupted"
+            facts["note"] = (
+                "sentinel state=running with a dead pid — the runner died "
+                "before Finalize-Sentinel, so the end state is unknown. Clean "
+                "the stale sentinel before relaunching."
+            )
+
     assert label in CLASSIFICATION_LABELS, (
         f"Classification label '{label}' not in CLASSIFICATION_LABELS — "
         f"add it to the vocabulary constant in collect.py"
@@ -1778,7 +1840,8 @@ def recommend_params(
 
     if label == "interrupted":
         return cur_max, cur_to, (
-            "loop didn't reach a natural stop (window killed externally). "
+            "loop didn't reach a natural stop (window killed externally, or "
+            "the runner died before Finalize-Sentinel — see the note). "
             "Params unchanged; resume when ready."
         )
 
