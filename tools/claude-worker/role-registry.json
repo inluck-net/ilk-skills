@@ -14,14 +14,14 @@
     "planner": {
       "tier": "planner",
       "home": "~/.claude",
-      "provider": "Xiaomi MiMo V2.6 - Pro",
-      "model": "mimo-v2.6-pro"
+      "provider": "Claude Official",
+      "model": "opus"
     },
     "manager": {
       "tier": "manager",
       "home": "~/.claude-manager",
-      "provider": "Xiaomi MiMo V2.6 - Pro",
-      "model": "mimo-v2.6-pro",
+      "provider": "Claude Official",
+      "model": "opus",
       "auth": "official",
       "path_command": "claude-manager"
     },

@@ -64,7 +64,7 @@ manager`, because a floor is a *minimum rank*:
   ],
   "roles": {
     "planner": {"tier": "planner", "home": "~/.claude",
-                 "provider": "Claude Official", "model": "opus-4.8"},
+                 "provider": "Claude Official", "model": "opus"},
     "manager": {"tier": "manager", "home": "~/.claude-manager",
                  "provider": "Claude Official", "model": "opus",
                  "auth": "official",

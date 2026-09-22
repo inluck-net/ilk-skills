@@ -194,23 +194,29 @@ def resolve_provider_env(provider_id: str) -> dict:
 
 
 def resolve_provider_env_or_home(
-    provider_id: str, home: Path
+    provider_id: str, home: Path, *, fallback_model: str | None = None
 ) -> dict:
     """Resolve provider env from ccswitch_import, falling back to the home.
 
     If ccswitch_import is not available or fails, reads the env block
-    from the home's settings.json as a fallback.
+    from the home's settings.json as a fallback.  When *fallback_model*
+    is given, the fallback overrides ANTHROPIC_MODEL with it — without
+    this, the fallback always returns the home's stale model, which makes
+    every ``use`` call a silent no-op on hosts where CCSwitch is not
+    installed.
     """
     try:
         return resolve_provider_env(provider_id)
     except ValueError:
         pass
-    # Fallback: read from the home.
+    # Fallback: read from the home, optionally overriding the model.
     env = read_env_block(home)
     if not env:
         raise ValueError(
             f"ccswitch_import unavailable and home {home} has no env block"
         )
+    if fallback_model:
+        env = {**env, "ANTHROPIC_MODEL": fallback_model}
     return env
 
 
@@ -800,9 +806,12 @@ def _sync_registry(
 ) -> None:
     """Update the role registry to match the live state after a verified switch.
 
-    For every role whose home matches one of the worker homes we just switched,
-    update the model and provider to match the source role.  Atomic: writes to
-    a tmp file then renames.  Preserves 2-space indent and key order.
+    For every worker-tier role whose home matches one of the homes we just
+    switched, update the model and provider to match the source role.
+    Non-worker roles (planner, manager) are skipped: they use their own
+    auth mechanisms and their model is not controlled by CCSwitch.
+    Atomic: writes to a tmp file then renames.  Preserves 2-space indent
+    and key order.
     """
     # Build a set of switched home paths for matching.
     switched = {h.resolve() for h in homes}
@@ -811,6 +820,10 @@ def _sync_registry(
     data = json.loads(registry_path.read_text(encoding="utf-8"))
     changed = False
     for role_name, role in data.get("roles", {}).items():
+        # Skip non-worker roles — their model is not controlled by the
+        # CCSwitch provider switch.
+        if role.get("tier") != "worker":
+            continue
         role_home = expand_home(str(role.get("home", "")), home_base).resolve()
         if role_home in switched:
             if role.get("model") != model:
@@ -953,7 +966,8 @@ def cmd_use(target: str, now: bool, skip_probe: bool, home_base: Path,
         return EXIT_USAGE
     source_home = expand_home(str(role.get("home", "")), home_base)
     try:
-        target_env = resolve_provider_env_or_home(provider_id, source_home)
+        target_env = resolve_provider_env_or_home(
+            provider_id, source_home, fallback_model=model)
     except ValueError as exc:
         print(f"error: cannot resolve provider {provider_id!r}: {exc}",
               file=sys.stderr)
