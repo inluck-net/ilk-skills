@@ -58,6 +58,10 @@ manager`, because a floor is a *minimum rank*:
 ```json
 {
   "version": 1,
+  "hosts": [
+    {"name": "chad-mbp", "ssh": "chad-mbp"},
+    {"name": "rezmac", "ssh": "rezmac"}
+  ],
   "roles": {
     "planner": {"tier": "planner", "home": "~/.claude",
                  "provider": "Claude Official", "model": "opus-4.8"},

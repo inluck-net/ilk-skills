@@ -10,7 +10,18 @@
       "timeout": 900,
       "path_prelude": "export PATH=\"/opt/homebrew/bin:$PATH\""
     },
-    "baseline_red": [],
+    "baseline_red": [
+      {
+        "node_id": "skills/ilk-loop/tests/test_plan_lint_gate_budget.py::test_baseline_unchanged",
+        "reason": "gate budget, not a code red: plan_lint over the ~20-file external corpus passes at 60s and 120s pytest timeouts and fails at the 17s ship.suite --timeout. Stated in the test's own docstring (suite-greens-last-reds step 2, measured 2026-09-21); re-measured green in isolation at 4a3ce68.",
+        "as_of": "2026-09-22"
+      },
+      {
+        "node_id": "skills/ilk-loop/tests/test_smoothness_report.py::TestCollectRuns::test_reads_real_corpus",
+        "reason": "test-order pollution, not a code red: asserts the real data root holds postmortems in the last 48h and gets 0, while that dir holds 97 files. Passes in isolation at BOTH 50ce6c9 and 4a3ce68, fails only under full-suite order where an earlier test leaves HOME/ILK_DATA_HOME pinned. Fixing the isolation leak is separate work.",
+        "as_of": "2026-09-22"
+      }
+    ],
     "hosts": [
       "chad-mbp",
       "rezmac"
