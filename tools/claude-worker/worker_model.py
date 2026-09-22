@@ -1066,16 +1066,17 @@ def cmd_use(target: str, now: bool, skip_probe: bool, home_base: Path,
         print("[probe] SKIPPED (--skip-probe) — switch is UNVERIFIED")
     else:
         target_model = target_env.get("ANTHROPIC_MODEL", model)
-        worker_home_resolved = {h.resolve() for h in worker_homes(home_base)}
+        # Config-mismatch check for every provider-backed home.  A genuinely
+        # official home (no ANTHROPIC_BASE_URL in the env we just wrote) runs
+        # on its own auth mechanism and its session may report a different
+        # model than the env block — expected, not a rollback condition.
+        # Keying on tier instead exempted the manager exactly when it moved
+        # onto a third-party provider (D3, found 2026-09-22).
+        provider_backed = bool(target_env.get("ANTHROPIC_BASE_URL"))
         for home in homes:
             cfg_ok, cfg_detail = probe_config(home)
             live_ok, live_detail = probe_live(home)
-            # Config-mismatch check only for worker-tier homes.  Non-worker
-            # roles (planner, manager) use their own auth mechanisms
-            # (official/OAuth) and the probe session may report a different
-            # model than the env block we just wrote — that is expected, not
-            # a rollback condition.
-            if home.resolve() in worker_home_resolved:
+            if provider_backed:
                 if cfg_ok and cfg_detail != target_model:
                     cfg_ok = False
             if not cfg_ok or not live_ok:

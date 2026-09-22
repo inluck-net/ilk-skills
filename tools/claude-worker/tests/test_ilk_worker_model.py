@@ -307,6 +307,37 @@ class TestRollback:
         assert _read_env(env_bad_probe.slot2)["ANTHROPIC_MODEL"] == MODEL_BEFORE_SLOT
 
 
+class TestProviderBackedManagerProbe:
+    """D3 (found 2026-09-22): the config-model check exempted every
+    non-worker home.  With the manager on a third-party provider that
+    exemption removes the one check that catches a wrong model written to
+    it — it must key on "does this home carry provider env", not on tier.
+    """
+
+    def test_config_mismatch_on_manager_home_rolls_back(
+        self, env_bad_probe: Env
+    ):
+        """AC-6: a manager home carrying provider env is probed like a
+        worker home; a config-model mismatch rolls the switch back."""
+        registry_before = env_bad_probe.registry.read_bytes()
+        home_before = _read_env(env_bad_probe.manager)
+        result = env_bad_probe.run("use", MODEL_TARGET + "@manager")
+        assert result.returncode != 0, (
+            f"a wrong config model under a provider-backed manager home must "
+            f"roll back, not succeed; got exit 0:\n"
+            f"{result.stdout}\n{result.stderr}"
+        )
+        assert _read_env(env_bad_probe.manager) == home_before, (
+            "manager home kept the bad switch — rollback did not restore it"
+        )
+        assert env_bad_probe.registry.read_bytes() == registry_before, (
+            "registry changed after a failed probe — must be rolled back"
+        )
+        # The config + live probes did run under that home (it is not exempt).
+        assert sorted(env_bad_probe.probe_homes()) == [
+            str(env_bad_probe.manager), str(env_bad_probe.manager)]
+
+
 class TestRestore:
     def test_restore_returns_every_home_to_its_backup(
         self, env_ok_probe: Env
