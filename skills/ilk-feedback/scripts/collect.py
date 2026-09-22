@@ -1626,14 +1626,30 @@ def recommend_params(
     label: str,
     iters: list[dict],
     last_launch: dict | None,
-) -> tuple[int, int, str]:
-    """Return (max_iter, timeout_min, rationale)."""
+) -> tuple[int | None, int | None, str]:
+    """Return (max_iter, timeout_min, rationale).
+
+    Either recommendation may be ``None``, meaning *no* recommendation — a
+    field that is absent/null is honest; a number is a measurement claim.
+    """
     cur_max = (last_launch or {}).get("max_iterations") or 30
     cur_to = (last_launch or {}).get("iteration_timeout_min") or 30
 
     durations_min = [(r.get("duration_sec") or 0) / 60.0 for r in iters]
     max_dur = max(durations_min) if durations_min else 0
     avg_dur = sum(durations_min) / len(durations_min) if durations_min else 0
+
+    if label == "already-shipped-noop":
+        # The run exercised nothing: it exited at startup on already-shipped.
+        # Not 30, not the previous value — nothing was measured, so nothing
+        # can be recommended. Emitting a default here is a measurement claim
+        # with no measurement behind it.
+        return None, None, (
+            "no recommendation — this run exercised nothing (already-shipped "
+            "at startup, zero iterations/elapsed/commits), so there is "
+            "nothing to carry forward and no basis for a default. Params for "
+            "the next launch are the caller's own estimate."
+        )
 
     if label == "clean-success":
         return cur_max, cur_to, "kept previous params; run shipped clean"
@@ -2116,8 +2132,8 @@ def render_report(
     last_launch: dict | None,
     label: str,
     facts: dict[str, Any],
-    rec_max: int,
-    rec_to: int,
+    rec_max: int | None,
+    rec_to: int | None,
     rationale: str,
     tail: list[str],
     last_log_path: str | None = None,
@@ -2312,8 +2328,10 @@ def render_report(
             body_lines.append("")
 
     body_lines.append("## Recommendation for next launch\n")
-    body_lines.append(f"- `MaxIterations`: **{rec_max}** (was {max_iter_cfg if max_iter_cfg else 'unknown'})")
-    body_lines.append(f"- `IterationTimeoutMin`: **{rec_to}** (was {to_cfg if to_cfg else 'unknown'})")
+    rec_max_disp = rec_max if rec_max is not None else "none"
+    rec_to_disp = rec_to if rec_to is not None else "none"
+    body_lines.append(f"- `MaxIterations`: **{rec_max_disp}** (was {max_iter_cfg if max_iter_cfg else 'unknown'})")
+    body_lines.append(f"- `IterationTimeoutMin`: **{rec_to_disp}** (was {to_cfg if to_cfg else 'unknown'})")
     body_lines.append(f"- Rationale: {rationale}")
     body_lines.append("")
 
@@ -2325,7 +2343,12 @@ def render_report(
         body_lines.append("- (c) Relaunch from a stable/snapshot runner when available")
     else:
         body_lines.append("Pick one (the agent will surface this as a 3-way question):")
-        body_lines.append(f"- (a) Resume now with `-MaxIterations {rec_max} -IterationTimeoutMin {rec_to}`")
+        if rec_max is None and rec_to is None:
+            # No measurement, no flags to resume with — offering
+            # `-MaxIterations none` would be a fabricated instruction.
+            body_lines.append("- (a) Resume now (no parameter recommendation — the previous run exercised nothing)")
+        else:
+            body_lines.append(f"- (a) Resume now with `-MaxIterations {rec_max} -IterationTimeoutMin {rec_to}`")
         body_lines.append("- (b) Investigate the tail below first; resume later")
         body_lines.append("- (c) Manual handling — leave the loop idle, decide outside this skill")
     body_lines.append("")
@@ -3099,7 +3122,7 @@ def main() -> int:
         print(f"[ilk-feedback] classification: {label}")
         print(f"[ilk-feedback] iters: {len(iters)} / {(last_launch or {}).get('max_iterations', '?')}")
         print(f"[ilk-feedback] new_commits_total: {sum((r.get('new_commits_total') or 0) for r in iters)}")
-        print(f"[ilk-feedback] recommendation: MaxIterations={rec_max} IterationTimeoutMin={rec_to}")
+        print(f"[ilk-feedback] recommendation: MaxIterations={rec_max if rec_max is not None else 'none'} IterationTimeoutMin={rec_to if rec_to is not None else 'none'}")
         print(f"[ilk-feedback] rationale: {rationale}")
     print(str(out_path))
     return 0

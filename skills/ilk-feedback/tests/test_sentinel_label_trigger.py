@@ -300,3 +300,60 @@ class TestDegenerateAlreadyShipped:
                 os.environ["ILK_DATA_HOME"] = old_data
             else:
                 os.environ.pop("ILK_DATA_HOME", None)
+
+    def test_no_recommendation_from_unexercised_run(self, tmp_path):
+        """AC-3: a run that exercised nothing emits NO numeric recommendation.
+
+        Not 30, not the previous value — a number is a measurement claim and
+        nothing was measured. The rationale must say there is nothing to
+        carry forward.
+        """
+        iters = [{
+            "run_id": "20260922-110127",
+            "iteration": 0,
+            "stop_reason": "already-shipped",
+            "exit_code": None,
+            "new_commits": None,
+            "elapsed_sec": None,
+            "num_turns": None,
+            "result": None,
+        }]
+        rec_max, rec_to, rationale = collect.recommend_params(
+            "already-shipped-noop", iters, None
+        )
+        assert rec_max is None, (
+            f"an unexercised run must emit no recommended_max_iterations, "
+            f"got {rec_max}"
+        )
+        assert rec_to is None, (
+            f"an unexercised run must emit no recommended timeout, got {rec_to}"
+        )
+        assert "nothing to carry forward" in rationale, (
+            f"the rationale must name why there is no recommendation, "
+            f"got {rationale!r}"
+        )
+
+    def test_clean_success_recommendation_unchanged(self, tmp_path):
+        """AC-4 regression guard: recommend_params for a real clean-success
+        is untouched — same numbers, same rationale. Without this, the fix
+        could strip every recommendation rather than just the unearned one."""
+        iters = [{
+            "run_id": "20260922-120000",
+            "iteration": 3,
+            "stop_reason": "already-shipped",
+            "exit_code": 0,
+            "new_commits": 4,
+            "elapsed_sec": 512.0,
+            "num_turns": 12,
+            "result": "shipped",
+        }]
+        last_launch = {"max_iterations": 45, "iteration_timeout_min": 25}
+        rec_max, rec_to, rationale = collect.recommend_params(
+            "clean-success", iters, last_launch
+        )
+        assert (rec_max, rec_to) == (45, 25), (
+            f"clean-success must keep the previous params, got {(rec_max, rec_to)}"
+        )
+        assert rationale == "kept previous params; run shipped clean", (
+            f"clean-success rationale changed: {rationale!r}"
+        )
