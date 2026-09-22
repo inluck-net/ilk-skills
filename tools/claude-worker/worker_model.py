@@ -811,33 +811,47 @@ def _sync_registry(
 ) -> None:
     """Update the role registry to match the live state after a verified switch.
 
-    For every worker-tier role whose home matches one of the homes we just
-    switched, update the model and provider to match the source role.
-    Non-worker roles (planner, manager) are skipped: they use their own
-    auth mechanisms and their model is not controlled by CCSwitch.
+    For every role whose home matches one of the homes we just switched,
+    update the model and provider to match the source role.  Membership in
+    the switched set selects the roles — not tier: a manager on a third-party
+    provider goes stale exactly like a worker does, and a registry row that
+    no longer describes its home is the hazard either way.  Roles whose homes
+    were not switched keep their row untouched (the planner stays safe via
+    cmd_use's per-role home scoping).
+    When the env written to a switched home carries ANTHROPIC_BASE_URL, a
+    leftover ``auth: "official"`` is dropped in the same atomic write: a
+    registry that records a provider while still claiming official auth is
+    the state claude-worker.sh's preflight refuses to launch.  The comparison
+    is case-insensitive, matching official_role_for_home (claude-worker.sh).
     Atomic: writes to a tmp file then renames.  Preserves 2-space indent
     and key order.
     """
     # Build a set of switched home paths for matching.
     switched = {h.resolve() for h in homes}
+    # The env cmd_use just wrote into each switched home — the trigger for
+    # dropping a stale auth below.
+    written_env = {h.resolve(): read_env_block(h) for h in homes}
 
     # Read the raw JSON so we can preserve key order.
     data = json.loads(registry_path.read_text(encoding="utf-8"))
     changed = False
     for role_name, role in data.get("roles", {}).items():
-        # Skip non-worker roles — their model is not controlled by the
-        # CCSwitch provider switch.
-        if role.get("tier") != "worker":
-            continue
         role_home = expand_home(str(role.get("home", "")), home_base).resolve()
-        if role_home in switched:
-            if role.get("model") != model:
-                role["model"] = model
-                changed = True
-            # Sync provider from the source role.
-            src_provider = source_role.get("provider", "")
-            if role.get("provider") != src_provider:
-                role["provider"] = src_provider
+        if role_home not in switched:
+            continue
+        if role.get("model") != model:
+            role["model"] = model
+            changed = True
+        # Sync provider from the source role.
+        src_provider = source_role.get("provider", "")
+        if role.get("provider") != src_provider:
+            role["provider"] = src_provider
+            changed = True
+        # A provider env in the home makes a leftover auth: official a lie
+        # about how this role authenticates — drop it in the same write.
+        if written_env.get(role_home, {}).get("ANTHROPIC_BASE_URL"):
+            if str(role.get("auth", "")).lower() == "official":
+                del role["auth"]
                 changed = True
 
     if changed:
