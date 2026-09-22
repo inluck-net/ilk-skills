@@ -125,6 +125,7 @@ def skill_root(*, from_file: str | os.PathLike | None = None) -> Path:
 # ── project-root derivation ──────────────────────────────────────────────────
 
 META_MARKER = ".ilk-meta.json"
+PIN_MARKER = ".ilk-project-root"
 
 ProjectKind = Literal["single", "meta"]
 
@@ -181,6 +182,29 @@ def meta_root(start: Path) -> Path | None:
                 # Invalid marker — keep walking; an outer valid marker
                 # might still claim this tree, otherwise fall through.
                 pass
+        if cur.parent == cur:
+            return None
+        cur = cur.parent
+
+
+def pin_root(start: Path) -> Path | None:
+    """First ancestor of `start` that carries a `.ilk-project-root` marker.
+
+    Presence-only: the marker's content is ignored. A JSON marker would
+    need parsing, and a malformed one would have to mean something; a
+    reader that answers "no pin" for input it failed to accept is the
+    bug class this repo has hit six times. Presence cannot be misparsed,
+    so the check is ``exists()`` — any entry at that name pins, whatever
+    it contains and whatever its type.
+
+    Mirrors `meta_root`'s walk shape, minus the validation. Returns None
+    when no ancestor carries the marker, in which case resolution falls
+    through to the meta/git logic unchanged.
+    """
+    cur = Path(start).resolve()
+    while True:
+        if (cur / PIN_MARKER).exists():
+            return cur
         if cur.parent == cur:
             return None
         cur = cur.parent
@@ -252,12 +276,26 @@ def read_meta_manifest(meta_dir: Path) -> dict:
 
 
 def find_project_root(start: Path) -> tuple[Path | None, ProjectKind]:
-    """Locate the project root for `start`, preferring meta over single.
+    """Locate the project root for `start`: a pin first, then meta, then git.
 
-    Returns `(root, kind)`. `kind` is "meta" when a valid `.ilk-meta.json`
-    marker covers `start`, else "single" when a `.git` ancestor exists,
-    else `(None, "single")`.
+    Returns `(root, kind)`. `kind` is "single" for a pinned root or a
+    `.git` ancestor, "meta" when a valid `.ilk-meta.json` marker covers
+    `start`, else `(None, "single")`.
+
+    Why the default still resolves worktrees to their clone
+    ------------------------------------------------------
+    `git_root` walks a linked worktree back to its main clone so that
+    selfmod worktrees under `~/.ilk-data/projects/<key>/runtime/` share
+    the original project's key, plans dir and runtime state — the loop
+    editing its own toolkit must not fork its state. That stays the
+    default. Pinning is opt-in and explicit: a directory carrying
+    `.ilk-project-root` is its own project root (and reports kind
+    "single"), while a directory without one resolves exactly as it did
+    before this seam existed.
     """
+    p = pin_root(start)
+    if p is not None:
+        return p, "single"
     m = meta_root(start)
     if m is not None:
         return m, "meta"
