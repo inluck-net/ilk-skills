@@ -27,6 +27,10 @@ human-searchable slug or by making keys non-deterministic.
 
 Sub-plan: a-project-key-that-cannot-collide, step 0.
 
+Second section (added 2026-09-22) — project-ROOT resolution, not the key
+transform above.  Sub-plan: pin-a-path-as-its-own-project, step 0.  See the
+section header below for why the selfmod worktree invariant is pinned here.
+
 Note for step 1 — ``test_project_key_contract.py`` pins the CURRENT transform
 as a cross-repo contract (gh-resolve ``reconcile.py:41`` mirrors it, and its
 AC-2/AC-3 assert that short paths are the *plain* slug).  Making the hash
@@ -35,6 +39,7 @@ a requirement, and must be updated in the same commit as the fix.
 """
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -43,7 +48,12 @@ import pytest
 _SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(_SCRIPTS))
 
-from ilk_paths import project_key  # noqa: E402
+from ilk_paths import (  # noqa: E402
+    find_project_root,
+    git_root,
+    project_key,
+    resolve_project_key,
+)
 
 
 # The four paths reproduced on 2026-09-08, verbatim from the sub-plan.
@@ -176,3 +186,105 @@ def test_a_key_is_filesystem_safe() -> None:
         assert re.fullmatch(r"[a-z0-9][a-z0-9-]*", key), (
             "%r -> %r is not a safe directory name" % (path, key)
         )
+
+
+# ── Project-root resolution: the selfmod worktree invariant ──────────────────
+#
+# Sub-plan: pin-a-path-as-its-own-project, step 0.  A different concern from
+# the key transform above; it lives here because this module already owns
+# project-key identity and the two meet at `resolve_project_key`.
+#
+# ``ilk_paths.git_root`` resolves a linked worktree back to its main clone by
+# parsing the worktree's ``.git`` file.  That is deliberate and load-bearing:
+# selfmod worktrees under ``~/.ilk-data/projects/<key>/runtime/`` must resolve
+# to the same project key as the original project, so the loop editing its own
+# toolkit does not fork its state.
+#
+# Step 1 adds a ``.ilk-project-root`` marker that makes pinning possible.  The
+# default must not move: a directory without the marker resolves exactly as it
+# does today.  AC-3 and AC-4 below are that guarantee, pinned BEFORE the seam
+# exists.  Both pass against unmodified ``ilk_paths.py`` — these are pins, not
+# red-first.
+
+# Marker name, from the sub-plan's pre-resolved design decisions.  Spelled out
+# here rather than imported: step 1 adds ``ilk_paths.PIN_MARKER``, and a pin
+# that only passed by importing the implementation it constrains would prove
+# less than this one does.
+PIN_MARKER = ".ilk-project-root"
+
+
+def _git(*argv: str, cwd: Path) -> None:
+    subprocess.run(
+        ["git", *argv], cwd=cwd, check=True, capture_output=True, text=True
+    )
+
+
+def _make_plain_repo(path: Path) -> Path:
+    """A minimal git repo with one commit, so HEAD exists for `git worktree add`."""
+    path.mkdir(parents=True)
+    _git("init", cwd=path)
+    (path / "README.md").write_text("repo\n", encoding="utf-8")
+    _git("add", "README.md", cwd=path)
+    _git("commit", "-m", "initial", cwd=path)
+    return path
+
+
+def _make_clone_with_linked_worktree(tmp_path: Path):
+    """A real clone plus a `git worktree add` linked worktree beside it."""
+    clone = _make_plain_repo(tmp_path / "clone")
+    worktree = tmp_path / "linked"
+    _git("worktree", "add", str(worktree), cwd=clone)
+    return clone, worktree
+
+
+def test_a_linked_worktree_without_a_marker_resolves_to_its_clone(
+    tmp_path: Path,
+) -> None:
+    """AC-3 — the selfmod invariant, captured before there is any way to break it.
+
+    A caller holding a worktree path gets the CLONE's root and the CLONE's
+    key.  Without this, a caller registering a worktree writes plans under the
+    clone's key and neither half can dispatch (measured on rezmac, 2026-09-22),
+    and the loop's timeout safety net is sent to the wrong tree.
+    """
+    clone, worktree = _make_clone_with_linked_worktree(tmp_path)
+    assert not (worktree / PIN_MARKER).exists(), (
+        "precondition: this pin is the no-marker case; the marker is step 1's seam"
+    )
+
+    # The clone's own key is the reference the worktree must agree with — and
+    # the value step 2 must prove a pin cannot move.
+    assert resolve_project_key(clone) == project_key(clone)
+
+    root, kind = find_project_root(worktree)
+    assert root is not None, "a linked worktree must resolve to a project root"
+    assert root.resolve() == clone.resolve(), (
+        "a worktree without a marker must resolve to its clone, not to itself "
+        "— selfmod worktrees share the original project's state directory; "
+        "got %r for worktree %r" % (root, worktree)
+    )
+    assert kind == "single"
+    assert resolve_project_key(worktree) == project_key(clone), (
+        "the worktree's key must be the clone's key, or its plans/runtime/log "
+        "state forks away from the project it is editing"
+    )
+
+
+def test_a_plain_repo_with_no_marker_is_unaffected(tmp_path: Path) -> None:
+    """AC-4 — an additive seam must not move a repo that carries no marker.
+
+    No repo carries ``.ilk-project-root`` today, so this is the whole existing
+    population.  Passing before step 1 and after it is what makes the seam
+    additive rather than a behaviour change.
+    """
+    repo = _make_plain_repo(tmp_path / "plain")
+    assert not (repo / PIN_MARKER).exists(), (
+        "precondition: this pin is the no-marker case"
+    )
+
+    root, kind = find_project_root(repo)
+    assert root is not None and root.resolve() == repo.resolve()
+    assert kind == "single"
+    assert resolve_project_key(repo) == project_key(repo)
+    assert git_root(repo) is not None
+    assert git_root(repo).resolve() == repo.resolve()
