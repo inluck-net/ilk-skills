@@ -1291,3 +1291,175 @@ class TestPinnedWorktreePreservation:
             "the clone's dirty state must be left alone — preservation targets "
             f"the worktree, not the clone. status: {_git_status(clone)!r}"
         )
+
+
+# ── the-pin-reaches-the-driver AC-1 / AC-2 / AC-3: the pin reaches the driver ─
+#
+# `get_plans_dir` and `REPOS` both derive from `ilk_paths.project_root`, so
+# once #1 landed the pin seam they inherit it without a second resolution
+# path. These cases pin that down so a future reader cannot bypass `ilk_paths`
+# unnoticed.
+
+def _isolated_data_env(env: dict, tmp_path: Path) -> dict:
+    """env with ILK_DATA_HOME pinned under tmp_path.
+
+    These cases CREATE files under ``<data_home>/projects/<key>/plans``, so
+    they must never resolve the ambient data root — that is a live
+    ``~/.ilk-data`` write. ``ilk_data_root()`` reads ``ILK_DATA_HOME`` before
+    falling back to ``$HOME``, so pin the primary variable and drop the
+    ``ILK_DATA_DIR`` alias so the two cannot disagree.
+    """
+    e = dict(env)
+    data_home = tmp_path / "ilk-data"
+    data_home.mkdir(parents=True, exist_ok=True)
+    e["ILK_DATA_HOME"] = str(data_home)
+    e.pop("ILK_DATA_DIR", None)
+    e["ILK_DOTSOURCE_ONLY"] = "1"
+    return e
+
+
+def _ilk_paths_json(start: Path, env: dict) -> dict:
+    """Run ilk_paths.py --start and return its JSON payload."""
+    resolver = RUNNER.parent / "ilk_paths.py"
+    result = subprocess.run(
+        ["python3", str(resolver), "--start", str(start)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, env=env,
+    )
+    assert result.returncode == 0, f"ilk_paths.py failed: {result.stderr}"
+    return json.loads(result.stdout)
+
+
+def _seed_external_plans(data_home: Path, key: str) -> Path:
+    """Create ``<data_home>/projects/<key>/plans`` holding one MASTER plan."""
+    plans = data_home / "projects" / key / "plans"
+    plans.mkdir(parents=True, exist_ok=True)
+    (plans / "MASTER-2026-09-22-test.md").write_text(textwrap.dedent("""\
+        ---
+        master_plan: 2026-09-22-test
+        batch_date: 2026-09-22
+        status: active
+        supervised_only: false
+        current_subplan: 2026-09-22-test-sub
+        cross_cutting_invariants: []
+        ---
+
+        # Test master
+
+        ## Sub-plan registry
+
+        | # | File | Sub-plan |
+        |---|---|---|
+        | 1 | 2026-09-22-test-sub.md | test-sub |
+    """), encoding="utf-8")
+    return plans
+
+
+def _run_get_plans_dir(project_path: Path, env: dict) -> str:
+    """Call get_plans_dir with PROJECT_PATH set; return its stdout, stripped."""
+    script = textwrap.dedent(f"""
+        export ILK_DOTSOURCE_ONLY=1
+        source '{RUNNER}' 2>/dev/null
+        PROJECT_PATH='{project_path}'
+        get_plans_dir
+    """)
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, env=env,
+    )
+    assert result.returncode == 0, (
+        f"get_plans_dir failed: rc={result.returncode} "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    return result.stdout.strip()
+
+
+def _run_discover_repos(project_path: Path, env: dict) -> list[str]:
+    """Call discover_git_repos with PROJECT_PATH set; return REPOS."""
+    script = textwrap.dedent(f"""
+        export ILK_DOTSOURCE_ONLY=1
+        source '{RUNNER}' 2>/dev/null
+        PROJECT_PATH='{project_path}'
+        discover_git_repos
+        printf '%s\\n' "${{REPOS[@]}}"
+    """)
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, env=env,
+    )
+    assert result.returncode == 0, (
+        f"discover_git_repos failed: rc={result.returncode} "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    return [ln for ln in result.stdout.splitlines() if ln.strip()]
+
+
+class TestPinReachesTheDriver:
+    """the-pin-reaches-the-driver AC-1 / AC-2 / AC-3.
+
+    AC-1: `get_plans_dir` on a pinned worktree returns the pinned external
+          plans dir.
+    AC-2: same, unpinned ⇒ the clone's plans dir (regression guard).
+    AC-3: `REPOS` is the pinned worktree when pinned, the clone when not.
+    """
+
+    def test_ac1_get_plans_dir_returns_the_pinned_external_plans_dir(self, tmp_path: Path, env: dict) -> None:
+        """A pinned worktree's plans dir is keyed by the worktree, not the clone."""
+        clone, worktree = _init_clone_with_worktree(tmp_path, pinned=True)
+        env = _isolated_data_env(env, tmp_path)
+        info = _ilk_paths_json(worktree, env)
+        assert info["project_root"] == str(worktree), (
+            f"expected the pin to win, project_root={info['project_root']!r}"
+        )
+        plans = _seed_external_plans(Path(env["ILK_DATA_HOME"]), info["project_key"])
+
+        got = _run_get_plans_dir(worktree, env)
+
+        assert got == str(plans), (
+            f"get_plans_dir must return the pinned worktree's external plans dir, "
+            f"got {got!r}, expected {str(plans)!r}"
+        )
+
+    def test_ac2_get_plans_dir_unpinned_returns_the_clone_plans_dir(self, tmp_path: Path, env: dict) -> None:
+        """Regression guard: without a pin the worktree still resolves to the clone."""
+        clone, worktree = _init_clone_with_worktree(tmp_path, pinned=False)
+        env = _isolated_data_env(env, tmp_path)
+        clone_plans = clone / "docs" / "plans"
+        clone_plans.mkdir(parents=True, exist_ok=True)
+        (clone_plans / "MASTER-2026-09-22-test.md").write_text(
+            "---\nmaster_plan: 2026-09-22-test\nbatch_date: 2026-09-22\n"
+            "status: active\nsupervised_only: false\n"
+            "current_subplan: 2026-09-22-test-sub\ncross_cutting_invariants: []\n---\n\n"
+            "# Test master\n",
+            encoding="utf-8",
+        )
+
+        got = _run_get_plans_dir(worktree, env)
+
+        assert got == str(clone_plans), (
+            f"unpinned worktree must still resolve to the clone's plans dir, "
+            f"got {got!r}, expected {str(clone_plans)!r}"
+        )
+
+    def test_ac3_repos_is_the_pinned_worktree(self, tmp_path: Path, env: dict) -> None:
+        """REPOS contains the pinned root, so preservation targets it."""
+        clone, worktree = _init_clone_with_worktree(tmp_path, pinned=True)
+        env = _isolated_data_env(env, tmp_path)
+
+        repos = _run_discover_repos(worktree, env)
+
+        assert repos == [str(worktree)], (
+            f"REPOS must be the pinned worktree, got {repos!r} "
+            f"(expected {[str(worktree)]!r})"
+        )
+
+    def test_ac3_repos_is_the_clone_when_unpinned(self, tmp_path: Path, env: dict) -> None:
+        """Regression guard: without a pin REPOS is still the clone."""
+        clone, worktree = _init_clone_with_worktree(tmp_path, pinned=False)
+        env = _isolated_data_env(env, tmp_path)
+
+        repos = _run_discover_repos(worktree, env)
+
+        assert repos == [str(clone)], (
+            f"unpinned worktree must resolve REPOS to the clone, got {repos!r} "
+            f"(expected {[str(clone)]!r})"
+        )
