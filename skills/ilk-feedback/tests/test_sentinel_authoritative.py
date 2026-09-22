@@ -13,6 +13,9 @@ Acceptance criteria:
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -24,6 +27,12 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "ilk-feedback" / 
 sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import collect  # noqa: E402
+
+_LOOP_SCRIPTS = Path(__file__).resolve().parent.parent.parent / "ilk-loop" / "scripts"
+if str(_LOOP_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_LOOP_SCRIPTS))
+
+from ilk_paths import external_launcher_dir, project_key  # noqa: E402
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -235,3 +244,77 @@ def test_interrupted_sentinel():
     assert label == "interrupted", (
         f"Expected interrupted for interrupted sentinel, got {label}"
     )
+
+
+# ── AC-5: read_sentinel probes liveness (sub-plan a-no-op-run-is-not-a-clean-run)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _dead_pid() -> int:
+    """Return a PID that has been reaped — measured dead, not assumed."""
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    return proc.pid
+
+
+def _write_raw_sentinel(project_path: Path, payload: dict) -> None:
+    launcher_dir = external_launcher_dir(project_key(project_path))
+    launcher_dir.mkdir(parents=True, exist_ok=True)
+    (launcher_dir / "last-exit.json").write_text(json.dumps(payload))
+
+
+class TestReadSentinelProbesLiveness:
+    """read_sentinel must agree with status_progress's stale-running detection.
+
+    Measured 2026-09-22: a sentinel reading state=running/pid=26627 while
+    ps -p 26627 returned nothing (rc=1). status_progress printed
+    ⚠ STALE-RUNNING; /ilk-feedback reported clean-success.
+    """
+
+    def test_running_with_dead_pid_is_stale(self, tmp_path):
+        """state=running + dead pid ⇒ stale True, reported state "unknown"."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        data_home = tmp_path / "ilk-data"
+        data_home.mkdir()
+        old_home = os.environ.get("HOME")
+        old_data = os.environ.get("ILK_DATA_HOME")
+        try:
+            os.environ["HOME"] = str(fake_home)
+            os.environ["ILK_DATA_HOME"] = str(data_home)
+
+            project_path = tmp_path / "repo"
+            project_path.mkdir()
+            dead = _dead_pid()
+            # Precondition: the pid must actually be dead, or the probe under
+            # test is not the thing being exercised.
+            with pytest.raises(ProcessLookupError):
+                os.kill(dead, 0)
+
+            _write_raw_sentinel(project_path, {
+                "state": "running",
+                "pid": dead,
+                "run_id": "20260922-110127",
+                "iteration": 0,
+                "exit_code": None,
+                "generated_at": "2026-09-22T12:00:00+08:00",
+            })
+
+            rec = collect.read_sentinel(project_path)
+            assert rec is not None, "sentinel file was written; reader returned None"
+            assert rec.get("stale") is True, (
+                f"state=running with dead pid {dead} must report stale, got {rec}"
+            )
+            assert rec.get("state") == "unknown", (
+                f"a stale sentinel must report state 'unknown' so readers that "
+                f"only read state are not misled, got {rec.get('state')!r}"
+            )
+        finally:
+            if old_home is not None:
+                os.environ["HOME"] = old_home
+            else:
+                os.environ.pop("HOME", None)
+            if old_data is not None:
+                os.environ["ILK_DATA_HOME"] = old_data
+            else:
+                os.environ.pop("ILK_DATA_HOME", None)
