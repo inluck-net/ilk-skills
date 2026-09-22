@@ -1154,3 +1154,140 @@ class TestAC14ReentryStamp:
         assert "step 1 killed at its bound" in body.lower(), (
             "Expected 'step 1 killed at its bound' in re-entry note."
         )
+
+
+# ── the-pin-reaches-the-driver AC-4 / AC-5: preserve the pinned worktree ─────
+#
+# Sub-plan `2026-09-22-the-pin-reaches-the-driver`.  The existing cases above
+# set `REPOS` by hand, which is exactly the gap: `preserve_dirty_tree_on_timeout`
+# trusts that global, and the runner fills it from `discover_git_repos` →
+# `ilk_paths.project_root`.  A linked worktree without a pin resolves to its
+# clone (`git_root` parses the `gitdir:` entry back), so a timeout staged the
+# clone's junk and left the agent's real output untracked in the worktree.
+#
+# Measured on rezmac 2026-09-22 (gh-resolve, kira-cloudflare#6200): a
+# 30-minute iteration timed out; `gc_push_failures.json` was committed to the
+# clone's `dev` (`50bc6c223`, 0 remotes contain it) while a 666-line test
+# file written nine minutes before the timeout sat untracked in the worktree
+# and was not preserved.
+#
+# The fixtures build real git state — a real clone and a real
+# `git worktree add` — because a fake `.git` file would test the fixture.
+
+def _git_head(repo: Path) -> str:
+    """Return the repo's HEAD sha."""
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+    )
+    return result.stdout.strip()
+
+
+def _init_clone_with_worktree(tmp_path: Path, *, pinned: bool) -> tuple[Path, Path]:
+    """A real clone and a real linked worktree; optionally pin the worktree.
+
+    The worktree's `.git` file points at `<clone>/.git/worktrees/<name>`, which
+    is the entry `git_root` walks back to the clone.  That parse is the
+    defect's mechanism, so the fixture must produce it for real.
+    """
+    clone = tmp_path / "clone"
+    _init_repo(clone)
+    worktree = tmp_path / "worktree"
+    subprocess.run(
+        ["git", "worktree", "add", str(worktree), "-b", "feature"],
+        cwd=clone, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+    )
+    if pinned:
+        (worktree / ".ilk-project-root").write_text("\n")
+    return clone, worktree
+
+
+def _run_discover_and_preserve(project_path: Path, env: dict) -> tuple[str, int, str]:
+    """Derive REPOS the way the runner does, then run preservation.
+
+    Unlike `_run_preservation`, this does NOT set `REPOS` by hand — that would
+    bypass the derivation under test.  Returns (repos_line, wip_count, stderr).
+    """
+    env_copy = dict(env)
+    env_copy["ILK_DOTSOURCE_ONLY"] = "1"
+    script = textwrap.dedent(f"""
+        export ILK_DOTSOURCE_ONLY=1
+        source '{RUNNER}' 2>/dev/null
+        PROJECT_PATH='{project_path}'
+        discover_git_repos
+        echo "REPOS:${{REPOS[*]}}"
+        preserve_dirty_tree_on_timeout
+    """)
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, env=env_copy,
+    )
+    repos_line = ""
+    wip_count = 0
+    for ln in result.stdout.splitlines():
+        if ln.startswith("REPOS:"):
+            repos_line = ln[len("REPOS:"):].strip()
+        else:
+            try:
+                wip_count = int(ln.strip())
+            except ValueError:
+                continue
+    return repos_line, wip_count, result.stderr
+
+
+class TestPinnedWorktreePreservation:
+    """the-pin-reaches-the-driver AC-4 / AC-5.
+
+    AC-4: `preserve_dirty_tree_on_timeout` commits the WORKTREE's untracked file.
+    AC-5: in AC-4 the clone gains **no** commit.
+
+    AC-5 is the one that names the observed damage.  AC-4 passing without AC-5
+    would still commit `gc_push_failures.json` to the clone every timeout.
+    """
+
+    def test_ac4_wip_commit_lands_in_the_worktree(self, tmp_path: Path, env: dict) -> None:
+        """The worktree's untracked file is preserved in the worktree's WIP commit."""
+        clone, worktree = _init_clone_with_worktree(tmp_path, pinned=True)
+        # Both trees dirty — the measured failure had dirt on each side.
+        (clone / "gc_push_failures.json").write_text("stray\n")
+        (worktree / "new_test.py").write_text("def test_foo(): pass\n")
+
+        repos_line, wip_count, _stderr = _run_discover_and_preserve(worktree, env)
+
+        assert wip_count == 1, f"expected one WIP attempt, got {wip_count} (REPOS={repos_line!r})"
+        messages = _git_log(worktree)
+        assert any("WIP: preserve timed-out iteration" in m for m in messages), (
+            "Expected a WIP commit in the WORKTREE "
+            f"(REPOS={repos_line!r}), got worktree log: {messages}"
+        )
+        show = subprocess.run(
+            ["git", "show", "--stat", "HEAD"],
+            cwd=worktree, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+        )
+        assert "new_test.py" in show.stdout, (
+            "the worktree's untracked file must be in the WIP commit; "
+            f"commit contents:\n{show.stdout}"
+        )
+        assert not _is_dirty(worktree), "worktree should be clean after its WIP commit"
+
+    def test_ac5_the_clone_gains_no_commit(self, tmp_path: Path, env: dict) -> None:
+        """The clone's HEAD is unchanged: timeout preservation never touches it."""
+        clone, worktree = _init_clone_with_worktree(tmp_path, pinned=True)
+        (clone / "gc_push_failures.json").write_text("stray\n")
+        (worktree / "new_test.py").write_text("def test_foo(): pass\n")
+        clone_head_before = _git_head(clone)
+
+        repos_line, _wip_count, _stderr = _run_discover_and_preserve(worktree, env)
+
+        clone_head_after = _git_head(clone)
+        assert clone_head_after == clone_head_before, (
+            "the clone gained a commit on timeout — exactly the observed damage "
+            f"(gc_push_failures.json committed to the clone's branch). "
+            f"HEAD {clone_head_before} -> {clone_head_after}, REPOS={repos_line!r}, "
+            f"clone log: {_git_log(clone)}"
+        )
+        # The clone's stray file is still there, untracked and untouched.
+        assert "gc_push_failures.json" in _git_status(clone), (
+            "the clone's dirty state must be left alone — preservation targets "
+            f"the worktree, not the clone. status: {_git_status(clone)!r}"
+        )
