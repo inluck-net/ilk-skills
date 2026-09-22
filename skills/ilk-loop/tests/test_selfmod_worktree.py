@@ -392,6 +392,65 @@ class TestBranchMovement:
 
             assert exc_info.value.branch == "selfmod-batch"
 
+    def test_second_merge_on_reused_worktree_still_lands(
+        self, tmp_path: Path
+    ) -> None:
+        """A clone fast-forwarded by an earlier merge is not a divergence.
+
+        Regression: the guard used to compare the clone's HEAD against the
+        SHA recorded at worktree *creation*.  The first merge fast-forwards
+        the clone to the worktree tip, but ``create()`` re-reads the stale
+        marker on reuse -- so every later merge on that worktree refused a
+        clean fast-forward.  Measured on ilk-skills 2026-09-22: 43 of 57
+        failed merge-backs, 24 consecutive.
+        """
+        from selfmod_worktree import SelfmodWorktree
+
+        repo = _create_throwaway_repo(tmp_path)
+        worktree_path = tmp_path / "selfmod-worktree"
+
+        sw = SelfmodWorktree(repo, worktree_path)
+        sw.create()
+
+        def _commit(name: str, body: str) -> None:
+            (worktree_path / name).write_text(body, encoding="utf-8")
+            subprocess.run(
+                ["git", "add", name], cwd=worktree_path, check=True,
+                capture_output=True, text=True,
+                encoding="utf-8", errors="replace",
+            )
+            subprocess.run(
+                ["git", "commit", "-m", f"worktree {name}"],
+                cwd=worktree_path, check=True, capture_output=True,
+                text=True, encoding="utf-8", errors="replace",
+            )
+
+        with patch("selfmod_worktree._find_live_ilk_pids", return_value=[]):
+            _commit("first.txt", "one")
+            sw.merge_back()
+
+            # The clone is now AT the worktree tip; the creation marker still
+            # names the original SHA.  Reuse the worktree, as a later run does.
+            sw_reused = SelfmodWorktree(repo, worktree_path)
+            sw_reused.create()
+
+            _commit("second.txt", "two")
+            sw_reused.merge_back()
+
+        assert (repo / "second.txt").is_file(), (
+            "the second batch of worktree work never reached the clone"
+        )
+        def _head(path: Path) -> str:
+            return subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=path, check=True,
+                capture_output=True, text=True,
+                encoding="utf-8", errors="replace",
+            ).stdout.strip()
+
+        assert _head(repo) == _head(worktree_path), (
+            "clone should be fast-forwarded to the worktree tip"
+        )
+
     def test_merge_fails_on_diverged_base_when_branch_check_disabled(
         self, tmp_path: Path
     ) -> None:

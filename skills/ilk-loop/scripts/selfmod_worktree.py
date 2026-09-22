@@ -454,6 +454,32 @@ def _resolve_head_sha(repo_path: Path) -> str:
     return _git_checked("rev-parse", "HEAD", cwd=repo_path)
 
 
+def _is_ancestor(repo_path: Path, maybe_ancestor: str, descendant: str) -> bool:
+    """Return True when *maybe_ancestor* is reachable from *descendant*.
+
+    ``git merge-base --is-ancestor`` exits 0 for yes and 1 for no; any other
+    exit is a broken probe and must raise, so that "not an ancestor" and
+    "could not tell" are never byte-identical (the fail-closed invariant the
+    liveness probe follows too).
+
+    A worktree shares its clone's object store, so either path resolves both
+    SHAs.
+    """
+    result = _git(
+        "merge-base", "--is-ancestor", maybe_ancestor, descendant,
+        cwd=repo_path,
+    )
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    raise RuntimeError(
+        f"git merge-base --is-ancestor {maybe_ancestor[:8]} {descendant[:8]} "
+        f"exited {result.returncode}: "
+        f"{result.stderr.strip() or result.stdout.strip()}"
+    )
+
+
 # ── SelfmodWorktree ─────────────────────────────────────────────────────────
 
 
@@ -626,16 +652,42 @@ class SelfmodWorktree:
                         ),
                     )
 
-        # Step 2: Branch movement check.
-        head_at_creation = self._head_at_creation
-        if head_at_creation is None:
-            head_at_creation = self._read_saved_head()
-        if check_branch and head_at_creation is not None:
+        # Step 2: Branch divergence check.
+        #
+        # The precondition :meth:`_do_merge` actually needs is the one ``git
+        # merge --ff-only`` enforces: the clone's HEAD must be reachable from
+        # the worktree's HEAD.  Comparing the clone's HEAD against the SHA
+        # recorded at *creation* is strictly stronger than that, and it
+        # latches.  ``create()`` re-reads the persisted marker on reuse and
+        # never refreshes it (:meth:`create`, the ``_is_valid_worktree``
+        # branch), so the marker still names the original SHA after a merge
+        # has fast-forwarded the clone to the worktree tip.  Every later run
+        # reusing that worktree then refuses a merge that is a clean
+        # fast-forward, and nothing short of deleting the worktree clears it.
+        #
+        # Measured on ilk-skills 2026-09-22: of 57 failed merge-backs since
+        # the feature landed 2026-09-17, 43 were this refusal -- 24 of them
+        # consecutive, stranding a 12-sub-plan batch.
+        #
+        # Ancestry answers the real question and needs no persisted state:
+        #   - clone HEAD reachable from worktree HEAD -> fast-forward is safe
+        #   - worktree HEAD reachable from clone HEAD -> already landed
+        #   - neither -> genuine divergence, which is what this guard is for
+        if check_branch:
             current_sha = _resolve_head_sha(self.repo_path)
-            if current_sha != head_at_creation:
+            worktree_sha = _resolve_head_sha(self.worktree_path)
+            diverged = not _is_ancestor(
+                self.repo_path, current_sha, worktree_sha
+            ) and not _is_ancestor(
+                self.repo_path, worktree_sha, current_sha
+            )
+            if diverged:
+                head_at_creation = self._head_at_creation
+                if head_at_creation is None:
+                    head_at_creation = self._read_saved_head()
                 raise BranchMovedError(
                     branch=self.branch,
-                    expected_sha=head_at_creation,
+                    expected_sha=head_at_creation or worktree_sha,
                     current_sha=current_sha,
                 )
 
