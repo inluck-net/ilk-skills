@@ -19,9 +19,8 @@
     "manager": {
       "tier": "manager",
       "home": "~/.claude-manager",
-      "provider": "Claude Official",
-      "model": "opus",
-      "auth": "official",
+      "provider": "Zhipu GLM",
+      "model": "glm-5.3",
       "path_command": "claude-manager"
     },
     "coder": {
