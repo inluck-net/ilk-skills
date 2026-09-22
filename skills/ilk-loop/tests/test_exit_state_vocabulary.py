@@ -20,46 +20,77 @@ _BASH_RUNNER = _REPO_ROOT / "skills" / "ilk-loop" / "scripts" / "run_ilk_loop_cl
 _PS_RUNNER = _REPO_ROOT / "skills" / "ilk-loop" / "scripts" / "run_ilk_loop_claude.ps1"
 
 
-def _extract_state_literals(*paths: Path) -> set[str]:
-    """Extract state literal strings from runner source files.
+# The contract document carries TWO state-shaped tables under one parent
+# section: the driver's own vocabulary, and a `collect.py` label disposition
+# table.  Only the first declares exit states, so the search space for
+# "is this state declared?" is that section alone -- matching anywhere in the
+# file would let a state count as declared because a *label* of the same name
+# appears in the second table.
+_VOCAB_HEADING = "### State vocabulary"
+_LABEL_HEADING = "### Sentinel state"
 
-    Matches patterns like: "no-progress", 'all-shipped', etc.
-    Only captures states that are assigned to stop_reason or iterStopReason.
+
+def _contract_vocabulary_section(contract_text: str) -> str:
+    start = contract_text.index(_VOCAB_HEADING)
+    end = contract_text.index(_LABEL_HEADING, start)
+    return contract_text[start:end]
+
+
+def _extract_state_literals(*paths: Path) -> set[str]:
+    """Derive the exit states the runners actually write, from source.
+
+    This used to be a hand-written set sitting next to an unused extractor,
+    which is the same defect the contract document itself warns about: a
+    second hand-kept list drifts exactly the way the first one did.
+    `quota-exhausted` (run_ilk_loop_claude.sh, `_decide_iter_stop_reason`)
+    was emitted, recorded in the sentinel, and consumed by collect.py and
+    watchdog.sh while this file's list named nine other states and not it.
+
+    Three shapes, because the runners write states three ways:
+      1. `echo "<state>"` inside `_decide_iter_stop_reason` (bash).
+      2. assignment to stop_reason / iter_stop_reason / $stopReason.
+      3. a `stop_reason` literal inside an early-exit JSONL record.
     """
     states: set[str] = set()
-    state_pattern = re.compile(r"""['"]([a-z_-]+)['"]""")
-    # Context patterns: lines that assign to stop_reason or iterStopReason
-    assignment_pattern = re.compile(
-        r"(?:stop_reason|iterStopReason|stopReason|iter_stop_reason)\s*=\s*"
+    assign_re = re.compile(
+        r"""(?:stop_reason|iter_stop_reason|stopReason|iterStopReason|StopReason)"""
+        r"""\s*=\s*["']([a-z_-]+)["']"""
     )
+    jsonl_re = re.compile(r"""stop_reason\\?["']\s*:\s*\\?["']([a-z_-]+)""")
+    echo_re = re.compile(r'echo\s+"([a-z_-]+)"')
 
     for path in paths:
         text = path.read_text(encoding="utf-8")
+        in_decide = False
         for line in text.splitlines():
-            if assignment_pattern.search(line):
-                for m in state_pattern.finditer(line):
-                    candidate = m.group(1)
-                    # Filter out non-state strings (commands, paths, etc.)
-                    if len(candidate) > 3 and "-" in candidate or "_" in candidate:
-                        states.add(candidate)
-
+            if "_decide_iter_stop_reason" in line and "()" in line:
+                in_decide = True
+                continue
+            if in_decide:
+                if line.strip() == "}":
+                    in_decide = False
+                else:
+                    m = echo_re.search(line)
+                    if m:
+                        states.add(m.group(1))
+            if line.lstrip().startswith("#"):
+                continue
+            for rx in (assign_re, jsonl_re):
+                for m in rx.finditer(line):
+                    states.add(m.group(1))
     return states
 
 
-# States known to be written by the runner to the sentinel.
-# This is the authoritative list — the test asserts each appears in the contract.
-LAUNCHER_EXIT_STATES = {
-    "no-progress",
-    "all-shipped",
-    "interrupted",
-    "timeout",
-    "local_checks_failed",
-    "ship_integrity_violation",
-    "budget-exhausted",
-    "max-iterations",
-    "blocked-no-runnable",
-    "already-shipped",
-}
+LAUNCHER_EXIT_STATES = _extract_state_literals(_BASH_RUNNER, _PS_RUNNER)
+
+# Positive control.  An extractor that silently matched nothing would make
+# every assertion below vacuous -- the parametrize list would be empty and
+# the file would report all-green while enforcing nothing.  These four are
+# written by four different mechanisms (echo-inside-a-function, assignment,
+# JSONL literal, the PS runner), so losing any one shape trips this.
+_DERIVATION_ANCHORS = frozenset(
+    {"quota-exhausted", "ship_integrity_violation", "already-shipped", "timeout"}
+)
 
 
 @pytest.fixture()
@@ -71,17 +102,27 @@ def test_contract_file_exists():
     assert _CONTRACT_PATH.exists(), f"Contract file not found: {_CONTRACT_PATH}"
 
 
+def test_derivation_is_not_vacuous():
+    """The extractor must actually extract -- see _DERIVATION_ANCHORS."""
+    missing = _DERIVATION_ANCHORS - LAUNCHER_EXIT_STATES
+    assert not missing, (
+        f"state derivation lost {sorted(missing)} -- the extractor no longer "
+        f"matches how the runners write states, so every assertion in this "
+        f"file is weaker than it looks. Derived: {sorted(LAUNCHER_EXIT_STATES)}"
+    )
+
+
 @pytest.mark.parametrize("state", sorted(LAUNCHER_EXIT_STATES))
 def test_state_in_contract(state: str, contract_text: str):
-    """Each launcher exit state must appear in the contract document.
+    """Each state a runner writes must be declared in Contract 1's table.
 
-    The state must appear as a quoted literal (e.g. "no-progress" or 'no-progress')
-    so it's unambiguous and greppable.
+    The state must appear as a quoted literal (e.g. "no-progress") inside the
+    `### State vocabulary` section -- not merely somewhere in the file.
     """
-    # Check for the state as a quoted literal in the contract
-    assert f'"{state}"' in contract_text or f"'{state}'" in contract_text, (
-        f"Exit state '{state}' not found in {_CONTRACT_PATH.name}. "
-        f"Add it to the state vocabulary table under Contract 1."
+    section = _contract_vocabulary_section(contract_text)
+    assert f'"{state}"' in section or f"'{state}'" in section, (
+        f"Exit state '{state}' is written by a runner but not declared in the "
+        f"{_VOCAB_HEADING} table of {_CONTRACT_PATH.name}. Add a row for it."
     )
 
 

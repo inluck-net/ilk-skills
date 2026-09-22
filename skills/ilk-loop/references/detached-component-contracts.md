@@ -82,6 +82,7 @@ about the same file — this doc makes the implicit contracts explicit.
 | `"error"` | Unexpected runner error | Terminal |
 | `"max-iterations"` | Hit iteration budget | Terminal |
 | `"budget-exhausted"` | Hit `--max-budget-usd` cap | Terminal |
+| `"quota-exhausted"` | Provider quota cap detected (`quota_detect.py`); imposed from outside the run and clears on the provider's schedule | Terminal |
 | `"startup-hang"` | Pre-iteration-1 hang detected | Terminal |
 | `"timeout"` | `gtimeout` killed the iteration before it completed | Terminal |
 | `"ship_integrity_violation"` | A sub-plan was `shipped` with its declared gate red; the driver reverted it to `in-progress` **and parked the master** (`blocked` + `parked_reason` with run_id + violating slugs via `park_master.py`) | Terminal |
@@ -93,33 +94,45 @@ about the same file — this doc makes the implicit contracts explicit.
 | `"selfmod_merge_failed"` | A selfmod worktree's merge-back failed; committed work is parked in the worktree | Terminal |
 
 **Naming conventions are intentional.** The hyphenated states (`no-progress`,
-`all-shipped`, `timeout`, `budget-exhausted`, `blocked-no-runnable`,
-`already-shipped`) and the underscored states (`local_checks_failed`,
-`ship_integrity_violation`) come from two writers in two languages (bash and
+`all-shipped`, `timeout`, `budget-exhausted`, `quota-exhausted`,
+`blocked-no-runnable`, `already-shipped`) and the underscored states
+(`local_checks_failed`, `ship_integrity_violation`) come from two writers in
+two languages (bash and
 PowerShell). A consumer already reads the underscore forms; do not normalise
 them to one convention.
 
-**Sentinel state → postmortem label.** `collect.py`'s `_SENTINEL_FAILURE_MAP`
-is the only place this mapping lives; a terminal state missing from it falls
-through to the generic heuristics, which is how a failed run gets classified
-`clean-success`.
+### Sentinel state → postmortem label
+
+**This is a second, different vocabulary — not more exit states.** The table
+under *State vocabulary* above is the driver's own, written to
+`last-exit.json` as `state` and to the JSONL as `stop_reason`. In the table
+below only the **first** column holds those states; the middle column holds
+`collect.py` postmortem labels (`CLASSIFICATION_LABELS`) and the right column
+holds `watchdog.sh` actions. A reader extracting the driver's vocabulary
+mechanically must take the table above and stop at this heading — treating
+both tables as one yields the sum of their rows as if every row were a state.
+
+`collect.py`'s `_SENTINEL_FAILURE_MAP` is the only place this mapping lives; a
+terminal state missing from it falls through to the generic heuristics, which
+is how a failed run gets classified `clean-success`.
 
 | Sentinel `state` | `collect.py` label | `watchdog.sh` action |
 |---|---|---|
 | `"budget_exhausted"` | `budget-exhausted` | `block` |
+| `"quota-exhausted"` | `quota-exhausted` | `block` |
 | `"max-iterations"` | `max-iter-bound` | `relaunch` |
 | `"interrupted"` | `interrupted` | `relaunch` |
 | `"local_checks_failed"` | `local-checks-broken` (broken-gate result in checks) / `local-checks-stuck` | `block` |
 | `"ship_integrity_violation"` | `shipped-unverified` | `needs-human` |
 | `"shipped-unproven"` | `shipped-unverified` | `needs-human` |
 | `"selfmod_merge_failed"` | `merge-conflict` | `block` |
+| `"timeout"` | *(none — falls through)* | `triage` |
 
 `selfmod_merge_failed` was in **0** consumer files until 2026-09-17 — the
 third instance of identical drift (after `ship_integrity_violation` and
 `timeout`), and the first to escape to another project (gh-resolve's
 `doctor --strict` failed 8 of its tests).  Added to `_SENTINEL_FAILURE_MAP` in
 sub-plan `a-new-terminal-state-cannot-ship-unknown`.
-| `"timeout"` | *(none — falls through)* | `triage` |
 
 `ship_integrity_violation` is written by `run_ilk_loop_claude.sh` and
 `run_ilk_loop_claude.ps1` only. It was in **0** classifier files until
