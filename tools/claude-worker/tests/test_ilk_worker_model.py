@@ -832,6 +832,192 @@ class TestSkipProbeMessage:
             f"--skip-probe must NOT print 'switch verified'; got:\n{out}")
 
 
+class EnvProviderChoice:
+    """Hermetic switch env whose fake ccswitch_import answers per --provider.
+
+    Two providers with different env.  The registry's coder row names GLM,
+    so a resolution that uses the flag is distinguishable from one that
+    uses the row.  A planner home sits at ~/.claude (official, no provider
+    env) and must never be touched.
+    """
+
+    GLM_URL = "https://glm.example/api"
+    GLM_TOKEN = "tok-glm"
+    GLM_MODEL = "glm-5.3"
+    GLM_NAME = "Zhipu GLM"
+    MIMO_URL = "https://mimo.example/api"
+    MIMO_TOKEN = "tok-mimo"
+    MIMO_MODEL = "mimo-v2.5-pro"
+    MIMO_NAME = "Xiaomi MiMo V2.5 - Pro"
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.root = tmp_path
+        self.home = tmp_path / "home"
+        self.main = self.home / ".claude-worker"
+        self.planner = self.home / ".claude"
+        self.registry = tmp_path / "role-registry.json"
+        self.data_home = tmp_path / "ilk-data"
+
+        _write_settings(self.main, self.GLM_MODEL, self.GLM_URL,
+                        token=self.GLM_TOKEN)
+        # Planner: official, no provider env — the shape the scoping bug
+        # (v0.9.118) once rewrote out from under us.
+        self.planner.mkdir(parents=True, exist_ok=True)
+        (self.planner / "settings.json").write_text(json.dumps({
+            "model": "opus",
+            "permissions": {"allow": ["Bash(ls:*)"]},
+        }, indent=2), encoding="utf-8")
+        self.planner_before = (self.planner / "settings.json").read_bytes()
+
+        self.registry.write_text(json.dumps({
+            "version": 1,
+            "roles": {
+                "planner": {"tier": "planner", "home": "~/.claude",
+                            "provider": "Claude Official"},
+                "coder": {"tier": "worker", "home": "~/.claude-worker",
+                          "provider": self.GLM_NAME,
+                          "model": self.GLM_MODEL},
+            },
+        }, indent=2), encoding="utf-8")
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+
+        # Fake claude: reports the model the home's settings.json loaded.
+        (bin_dir / "claude").write_text(
+            "#!/usr/bin/env bash\n"
+            "model=$(python3 -c 'import json,os; print(json.load(open("
+            "os.path.join(os.environ[\"CLAUDE_CONFIG_DIR\"],"
+            "\"settings.json\"))).get(\"env\", {}).get("
+            "\"ANTHROPIC_MODEL\", \"\"))')\n"
+            "fmt=plain\n"
+            "for arg in \"$@\"; do\n"
+            "  case \"$arg\" in\n"
+            "    --output-format) ;;\n"
+            "    stream-json|json) fmt=\"$arg\" ;;\n"
+            "  esac\n"
+            "done\n"
+            "case \"$fmt\" in\n"
+            "  stream-json) echo \"{\\\"model\\\": \\\"$model\\\", "
+            "\\\"type\\\": \\\"init\\\"}\" ;;\n"
+            "  json)        echo '{\"is_error\": false, \"result\": \"OK\"}' ;;\n"
+            "  *)           echo \"$model\" ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        os.chmod(bin_dir / "claude", 0o755)
+
+        glm_export = json.dumps({
+            "id": "glm", "name": self.GLM_NAME, "category": "",
+            "is_official": False,
+            "ANTHROPIC_BASE_URL": self.GLM_URL,
+            "ANTHROPIC_AUTH_TOKEN": self.GLM_TOKEN,
+            "ANTHROPIC_MODEL": self.GLM_MODEL,
+        }, indent=2)
+        mimo_export = json.dumps({
+            "id": "mimo", "name": self.MIMO_NAME, "category": "",
+            "is_official": False,
+            "ANTHROPIC_BASE_URL": self.MIMO_URL,
+            "ANTHROPIC_AUTH_TOKEN": self.MIMO_TOKEN,
+            "ANTHROPIC_MODEL": self.MIMO_MODEL,
+        }, indent=2)
+        # Fake ccswitch_import: answers only for a named --provider, exits 1
+        # for anything else — so a wrong resolution fails loudly instead of
+        # silently falling back to the home.
+        (bin_dir / "ccswitch_import").write_text(
+            "#!/usr/bin/env bash\n"
+            "prov=\"\"\n"
+            "prev=\"\"\n"
+            "for arg in \"$@\"; do\n"
+            "  if [ \"$prev\" = \"--provider\" ]; then prov=\"$arg\"; fi\n"
+            "  prev=\"$arg\"\n"
+            "done\n"
+            "case \"$prov\" in\n"
+            f"  \"{self.GLM_NAME}\") echo '{glm_export}' ;;\n"
+            f"  \"{self.MIMO_NAME}\") echo '{mimo_export}' ;;\n"
+            "  *) echo \"unknown provider: $prov\" >&2; exit 1 ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        os.chmod(bin_dir / "ccswitch_import", 0o755)
+        self.bin_dir = bin_dir
+
+    def run(self, *args: str) -> subprocess.CompletedProcess:
+        env = dict(os.environ)
+        env["HOME"] = str(self.home)
+        env["ILK_ROLE_REGISTRY"] = str(self.registry)
+        env["ILK_DATA_HOME"] = str(self.data_home)
+        env["PATH"] = f"{self.bin_dir}{os.pathsep}{env['PATH']}"
+        return subprocess.run(
+            ["bash", str(TOOL), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env=env, timeout=60,
+        )
+
+
+class TestUseProviderFlag:
+    """D2 (found 2026-09-22): --provider moves a role to a new provider.
+
+    Design (pre-resolved): the flag is explicit and never inferred from a
+    model id — inference is how a GLM model string ends up pointed at the
+    mimo endpoint.  Absent the flag, behaviour is exactly today's.
+    """
+
+    def test_provider_flag_writes_flagged_provider_env_and_records_it(
+        self, tmp_path: Path
+    ):
+        """AC-1: the flag, not the registry row, selects the provider env,
+        and the resolved name is what the registry records afterwards."""
+        env = EnvProviderChoice(tmp_path)
+        result = env.run(
+            "use", "--provider", env.MIMO_NAME, env.MIMO_MODEL + "@coder")
+        assert result.returncode == 0, result.stdout + result.stderr
+        env_now = _read_env(env.main)
+        assert env_now["ANTHROPIC_BASE_URL"] == env.MIMO_URL, (
+            f"base url should be the flagged provider's ({env.MIMO_URL}), "
+            f"got {env_now['ANTHROPIC_BASE_URL']} — the registry row names "
+            f"{env.GLM_NAME}, and --provider must win over it"
+        )
+        assert env_now["ANTHROPIC_AUTH_TOKEN"] == env.MIMO_TOKEN
+        assert env_now["ANTHROPIC_MODEL"] == env.MIMO_MODEL
+        role = json.loads(
+            env.registry.read_text(encoding="utf-8"))["roles"]["coder"]
+        assert role["provider"] == env.MIMO_NAME, (
+            f"registry must record the resolved provider name; got {role}")
+        assert role["model"] == env.MIMO_MODEL
+
+    def test_absent_provider_flag_still_resolves_registry_provider(
+        self, tmp_path: Path
+    ):
+        """AC-4/AC-1 contrast: without the flag the registry's provider is
+        what resolves — the flag changes which provider, not the grammar."""
+        env = EnvProviderChoice(tmp_path)
+        result = env.run("use", env.GLM_MODEL + "@coder")
+        assert result.returncode == 0, result.stdout + result.stderr
+        env_now = _read_env(env.main)
+        assert env_now["ANTHROPIC_BASE_URL"] == env.GLM_URL, (
+            f"expected the registry provider's env ({env.GLM_URL}), "
+            f"got {env_now['ANTHROPIC_BASE_URL']}"
+        )
+        assert env_now["ANTHROPIC_AUTH_TOKEN"] == env.GLM_TOKEN
+
+    def test_provider_flag_never_touches_planner_home(self, tmp_path: Path):
+        """AC-5: the planner home (official, no provider env) is not
+        rewritten by a coder switch — the v0.9.118 sweep bug must not come
+        back through --provider's widening of the tool."""
+        env = EnvProviderChoice(tmp_path)
+        result = env.run(
+            "use", "--provider", env.MIMO_NAME, env.MIMO_MODEL + "@coder")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (env.planner / "settings.json").read_bytes() == \
+            env.planner_before, "planner home rewritten"
+        assert sorted(env.planner.glob("settings.json.bak-*")) == []
+        planner = json.loads(
+            env.registry.read_text(encoding="utf-8"))["roles"]["planner"]
+        assert planner == {"tier": "planner", "home": "~/.claude",
+                           "provider": "Claude Official"}, planner
+
+
 # ── Roles & providers enumerable (SP3 — roles-and-providers-enumerable) ──
 
 

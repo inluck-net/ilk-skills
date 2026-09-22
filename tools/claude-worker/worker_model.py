@@ -966,7 +966,8 @@ def probe_live(home: Path, timeout: float = 30.0,
 
 
 def cmd_use(target: str, now: bool, skip_probe: bool, home_base: Path,
-            registry_path: Path, data_home: Path) -> int:
+            registry_path: Path, data_home: Path,
+            provider: str | None = None) -> int:
     try:
         roles = load_registry(registry_path)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -978,7 +979,10 @@ def cmd_use(target: str, now: bool, skip_probe: bool, home_base: Path,
         return EXIT_USAGE
 
     # Resolve provider env from ccswitch_import, falling back to the home.
-    provider_id = role.get("provider", "")
+    # --provider is explicit and never inferred from the model id: inference
+    # is how a GLM model string ends up pointed at the mimo endpoint.  Absent
+    # the flag, the registry's provider is what resolves (today's behaviour).
+    provider_id = provider or role.get("provider", "")
     if not provider_id:
         print(f"error: role '{role_name}' has no provider in registry",
               file=sys.stderr)
@@ -1092,8 +1096,10 @@ def cmd_use(target: str, now: bool, skip_probe: bool, home_base: Path,
 
     # Sync the role registry: update every role whose home matches a worker
     # home we just switched.  This closes the gap where the registry says one
-    # model while the homes run another (retro hazard 6).
-    _sync_registry(registry_path, roles, homes, home_base, model, role)
+    # model while the homes run another (retro hazard 6).  A --provider switch
+    # records the resolved name, not the registry's stale one.
+    sync_source = role if not provider else {**role, "provider": provider_id}
+    _sync_registry(registry_path, roles, homes, home_base, model, sync_source)
 
     print("engine-precedence facts:")
     print("  - the scheduler dispatches with an explicit --engine claude-worker "
@@ -1140,6 +1146,10 @@ def main(argv=None) -> int:
                         help="transport for --host (default: ssh; local = test double)")
     use_p = sub.add_parser("use", help="switch every worker home to a target")
     use_p.add_argument("target", help="<role> or <model>@<role>")
+    use_p.add_argument("--provider", default=None,
+                       help="provider name to resolve env from and record in "
+                            "the registry — explicit only, never inferred "
+                            "from the model id")
     use_p.add_argument("--now", action="store_true",
                        help="stop live loops (watchdogs first, then runners)")
     use_p.add_argument("--skip-probe", action="store_true",
@@ -1178,7 +1188,8 @@ def main(argv=None) -> int:
         return cmd_show(home_base, registry_path, as_json=args.as_json)
     if args.cmd == "use":
         return cmd_use(args.target, args.now, args.skip_probe,
-                       home_base, registry_path, data_home)
+                       home_base, registry_path, data_home,
+                       provider=getattr(args, "provider", None))
     if args.cmd == "roles":
         if args.name:
             return cmd_roles_show(args.name, home_base, registry_path,
