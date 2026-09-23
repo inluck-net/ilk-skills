@@ -143,7 +143,6 @@ def test_step_declared_timeout_pure():
 # ── Defect B: gate-first marker repo ─────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="commit_gate_first_marker ignores selfmod worktree")
 def test_marker_lands_in_selfmod_worktree(tmp_path: Path):
     """With SELFMOD_ISOLATED=1 the marker commit must land on the worktree."""
     # Build real repos: clone + worktree.

@@ -1586,7 +1586,7 @@ raise SystemExit(0)
 # git's own stdout is silenced so a success line cannot leak into a caller.
 commit_gate_first_marker() {
   local slug="$1" step="$2"
-  local repo="${REPOS[0]:-$PROJECT_PATH}"
+  local repo; repo=$(selfmod_effective_repo "${REPOS[0]:-$PROJECT_PATH}")
   [[ -n "$repo" ]] || repo="$PROJECT_PATH"
   local msg="chore(loop): gate-first marker [plan:${slug}#step-${step}]"
   if git -C "$repo" commit --allow-empty -m "$msg" >/dev/null 2>&1; then
