@@ -1,9 +1,11 @@
-"""Red-first pin: a green gate-first step must not invoke the agent.
+"""Pins for the gate-first fast path and its red escape hatch.
 
-Part of sub-plan `a-gate-first-step-runs-before-the-agent` (step 0 of 4).
+Part of sub-plan `a-gate-first-step-runs-before-the-agent` (steps 0-2 of 4).
 
 AC-1: a sub-plan whose current step declares ``gate_first: true`` and whose
       gate passes advances ``current_step`` with ZERO agent invocations.
+AC-2: the same sub-plan with a FAILING gate invokes the agent exactly once,
+      and ``current_step`` does not advance on the gate's account.
 
 RED today — the driver dispatches unconditionally (``invoke_claude_iteration``
 at ``run_ilk_loop_claude.sh:3133``), so the stub agent runs and the counter
@@ -64,13 +66,14 @@ def _git(repo: Path, *args: str) -> None:
     )
 
 
-def _build_world(root: Path) -> dict:
+def _build_world(root: Path, gate_command: str = "true") -> dict:
     """A project + isolated data home + a counting stub `claude`.
 
     The sub-plan is in-progress at step 0, and step 0 declares
-    `gate_first: true` with a trivially green gate (`true`). The stub agent
-    appends to a counter file every time it runs and nothing else — if the
-    driver honours the marker, that file never appears.
+    `gate_first: true` with gate command ``gate_command`` — trivially green
+    `true` by default, `false` for the red escape-hatch fixture. The stub
+    agent appends to a counter file every time it runs and nothing else: on
+    the green path that file never appears, on the red path it appears once.
     """
     project = root / "project"
     project.mkdir(parents=True)
@@ -111,7 +114,7 @@ def _build_world(root: Path) -> dict:
         "```yaml\n"
         "gate_first: true\n"
         "local_checks:\n"
-        "  - command: \"true\"\n"
+        f"  - command: \"{gate_command}\"\n"
         "    timeout: 30\n"
         "```\n\n"
         "Body.\n\n"
@@ -233,6 +236,68 @@ def test_a_green_gate_first_step_invokes_no_agent(tmp_path: Path) -> None:
     assert os.access(world["bin"] / "claude", os.X_OK), (
         "the stub agent is not executable — an absent counter would mean "
         "the harness never offered it, not that the driver skipped it"
+    )
+    assert re.search(r"MAIN_RC=", proc.stdout), (
+        f"main() did not run to a recorded exit — harness failure, not a "
+        f"gate-first verdict.\nlast 40 lines:\n{tail}"
+    )
+
+
+# ── AC-2: a red gate-first gate still reaches the agent ─────────────────────
+
+@_NEEDS_GTIMEOUT
+def test_a_red_gate_first_gate_still_reaches_the_agent(tmp_path: Path) -> None:
+    """The escape hatch. Gate-first is a fast path, not a replacement: the
+    agent is needed when the suite cannot start at all (typecheck/compile
+    failure) and when step 1 has attributed failures to fix. A red gate must
+    fall through to exactly one agent invocation and must NOT advance
+    `current_step` on the gate's account.
+    """
+    world = _build_world(tmp_path, gate_command="false")
+    proc = _run_one_iteration(world)
+
+    tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-40:])
+    counter = world["counter"]
+    assert counter.exists(), (
+        "the gate-first gate was RED but the stub agent never ran. A red "
+        "gate must fall through to the agent — that is the escape hatch for "
+        "a suite that cannot start at all (typecheck/compile failure) or "
+        "attributed failures to fix.\n"
+        f"last 40 lines:\n{tail}"
+    )
+    invocations = [
+        line for line in counter.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(invocations) == 1, (
+        f"expected exactly ONE agent invocation for a red gate-first gate, "
+        f"got {len(invocations)}: {invocations!r}. The fast path must fall "
+        f"through once, not retry and not skip.\nlast 40 lines:\n{tail}"
+    )
+    # The step did not advance on the gate's account. The only advance is
+    # `advance_subplan_current_step` on the green path; the stub agent does
+    # not move the pointer either, so `current_step` must still read 0. An
+    # advance here would mean a RED gate discharged the step.
+    sub_file = world["plans"] / f"{STEM}.md"
+    body = sub_file.read_text(encoding="utf-8")
+    m = re.search(r"^current_step:[ \t]*(\d+)[ \t]*$", body, re.MULTILINE)
+    assert m, f"the sub-plan lost its current_step pointer:\n{body}"
+    assert int(m.group(1)) == 0, (
+        f"current_step advanced to {m.group(1)} after a RED gate-first gate. "
+        f"The fast path's marker-commit + advance is only for a green gate — "
+        f"a red gate must leave the pointer alone so the step stays "
+        f"outstanding for the agent.\nlast 40 lines:\n{tail}"
+    )
+    # Non-vacuity: every assertion above also holds for an ordinary dispatch
+    # that never entered the fast path. The pin only means something if the
+    # gate-first path ENGAGED and then fell through — which is what the
+    # driver's own line emits once `step_declares_gate_first` has matched.
+    assert "declares gate_first: true" in proc.stdout, (
+        "the gate-first fast path never engaged (no "
+        "'[gate-first] ... declares gate_first: true' line). An ordinary "
+        "dispatch would satisfy every assertion above, so this pin would be "
+        "vacuous. The marker was not seen on the fixture's step 0.\n"
+        f"last 40 lines:\n{tail}"
     )
     assert re.search(r"MAIN_RC=", proc.stdout), (
         f"main() did not run to a recorded exit — harness failure, not a "
