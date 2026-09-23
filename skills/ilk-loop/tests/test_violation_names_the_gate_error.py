@@ -69,7 +69,6 @@ def _run_integrity(
     return r.returncode, r.stdout + r.stderr
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: --gate-results-file not implemented")
 def test_violation_names_the_gate_error(tmp_path: Path) -> None:
     """AC-1: the violation reason names the command and error, not 'unreadable'."""
     sp = _make_gated_subplan(tmp_path)

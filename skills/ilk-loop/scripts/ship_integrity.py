@@ -89,11 +89,21 @@ def evaluate_ship(
     # Then check all_passed.
     if not last_gate_result.get("all_passed", False):
         # Try to name the failing checks for a clearer message.
-        failing = [
-            r.get("command", "?")
-            for r in last_gate_result.get("results", [])
-            if not r.get("passed", False)
-        ]
+        # When the error field is present (e.g. "timeout after 120s"),
+        # include it: "<command> (<error>)".  Otherwise fall back to
+        # "<command> (exit <n>)" or bare "<command>".
+        failing = []
+        for r in last_gate_result.get("results", []):
+            if not r.get("passed", False):
+                cmd = r.get("command", "?")
+                err = r.get("error")
+                exit_code = r.get("exit_code")
+                if err:
+                    failing.append(f"{cmd} ({err})")
+                elif exit_code is not None:
+                    failing.append(f"{cmd} (exit {exit_code})")
+                else:
+                    failing.append(cmd)
         if not failing:
             # results empty or absent — the record itself is unreadable.
             has_results = "results" in last_gate_result
@@ -494,6 +504,20 @@ def _cli(argv: list[str]) -> int:
              "iteration: the gate half is not enforced, the step-commit half "
              "still is. Takes precedence over --gate-json when given.",
     )
+    ap.add_argument(
+        "--gate-results-file",
+        type=Path,
+        default=None,
+        help="path to the per-iteration local_checks JSONL file. When given "
+             "with --slug, ship_integrity reads the full gate record itself "
+             "and builds a results list (command, passed, error). Takes "
+             "precedence over --gate-passed for the error detail only.",
+    )
+    ap.add_argument(
+        "--slug",
+        default=None,
+        help="sub-plan slug to look up in --gate-results-file.",
+    )
     args = ap.parse_args(argv)
 
     # Resolve status + checks from file or explicit args.
@@ -549,6 +573,38 @@ def _cli(argv: list[str]) -> int:
         except json.JSONDecodeError as exc:
             print(f"error: invalid --gate-json: {exc}", file=sys.stderr)
             return 2
+
+    # Enrich the scalar gate_result with full records from the JSONL when
+    # --gate-results-file and --slug are given.  This lets evaluate_ship
+    # name the failing command and error instead of reporting "unreadable".
+    # The scalar --gate-passed path is preserved for the PowerShell runner
+    # (out of scope) — enrichment is additive, not a replacement.
+    if (gate_result is not None
+            and args.gate_results_file is not None
+            and args.slug
+            and "results" not in gate_result):
+        try:
+            results_list: list[dict[str, Any]] = []
+            for raw in args.gate_results_file.read_text(
+                    encoding="utf-8-sig").splitlines():
+                raw = raw.strip()
+                if not raw:
+                    continue
+                rec = json.loads(raw)
+                if rec.get("slug") == args.slug:
+                    entry: dict[str, Any] = {
+                        "command": rec.get("command", "?"),
+                        "passed": rec.get("outcome") == "pass",
+                    }
+                    if rec.get("error"):
+                        entry["error"] = rec["error"]
+                    if rec.get("exit_code") is not None:
+                        entry["exit_code"] = rec["exit_code"]
+                    results_list.append(entry)
+            if results_list:
+                gate_result["results"] = results_list
+        except (OSError, json.JSONDecodeError):
+            pass  # enrichment is best-effort; fall back to scalar
 
     verdict = (ShipVerdict(ok=True, reason="no gate ran this iteration — gate half not enforced")
                if skip_gate_half

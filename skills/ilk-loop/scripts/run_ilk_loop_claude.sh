@@ -2237,7 +2237,26 @@ print(gate_passed)
     fi
 
     si_exit=0
-    si_out=$(python3 "$ship_integrity_script" --subplan "$f" --gate-passed "$gate_passed" 2>&1) || si_exit=$?
+    # Extract slug for the enrichment args (same pattern as the Python block
+    # above, but as a shell variable so we can pass it to ship_integrity).
+    local _enrich_slug
+    _enrich_slug=$(python3 -c "
+import re, sys
+from pathlib import Path
+body = Path(sys.argv[1]).read_text()
+m = re.search(r'^---\s*\n(.*?)\n---', body, re.DOTALL)
+if m:
+    for line in m.group(1).splitlines():
+        if line.strip().startswith('plan:'):
+            print(line.split(':', 1)[1].strip()); break
+" "$f" 2>/dev/null) || true
+    local _si_args=("--subplan" "$f" "--gate-passed" "$gate_passed")
+    # Pass the results file and slug so ship_integrity can read the full
+    # gate record and name the error in the violation reason.
+    if [[ -n "$lc_file" && -n "$_enrich_slug" ]]; then
+      _si_args+=("--gate-results-file" "$lc_file" "--slug" "$_enrich_slug")
+    fi
+    si_out=$(python3 "$ship_integrity_script" "${_si_args[@]}" 2>&1) || si_exit=$?
     if [[ $si_exit -eq 0 && "$si_out" == *"WARN RECORD ABSENT"* ]]; then
       echo "  [ship-integrity WARN] $(basename "$f"): $si_out" >&2
     fi
