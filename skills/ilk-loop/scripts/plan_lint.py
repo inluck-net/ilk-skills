@@ -3374,6 +3374,7 @@ def lint_wholesuite_gate_outside_verification_subplan(text: str, slug: str) -> l
 _TEMPLATES = Path(__file__).resolve().parent.parent / "templates"
 _TEMPLATE_EXAMPLE_NODE_IDS_RE = re.compile(
     r"tests/test_foo\.py::test_bar|tests/test_baz\.py::test_qux"
+    r"|tests/test_declared\.py::test_known"
 )
 
 

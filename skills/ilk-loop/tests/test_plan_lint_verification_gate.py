@@ -170,10 +170,11 @@ WT="$(mktemp -d)/base-wt"
 git worktree add --detach "$WT" abc123
 ( cd "$WT" && pytest tests/test_foo.py::test_bar tests/test_baz.py::test_qux )
 
-| node id | at base | in baseline_red | attributed |
-|---|---|---|---|
-| tests/test_foo.py::test_bar | passed | no | YES |
-| tests/test_baz.py::test_qux | failed | no | no |
+| node id | at base | in baseline_red | head reruns | batch touched file |
+|---|---|---|---|---|
+| tests/test_foo.py::test_bar | passed | no | 3/3 | yes |
+| tests/test_baz.py::test_qux | failed | no | — | — |
+| tests/test_declared.py::test_known | declared-at-base | yes | — | — |
 """
 
 

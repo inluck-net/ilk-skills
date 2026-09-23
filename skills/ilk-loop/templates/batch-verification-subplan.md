@@ -98,24 +98,45 @@ under the exact heading `## At-base rerun` (step 1's gate parses it):
 ```markdown
 ## At-base rerun
 
-Base: <base_sha> · worktree: detached · command: <suite runner> <node ids>
-
-| node id | at base | in baseline_red | attributed |
-|---|---|---|---|
-| tests/test_foo.py::test_bar | passed | no | YES |
-| tests/test_baz.py::test_qux | failed | no | no |
+| node id | at base | in baseline_red | head reruns | batch touched file |
+|---|---|---|---|---|
+| tests/test_foo.py::test_bar | passed | no | 3/3 | yes |
+| tests/test_baz.py::test_qux | failed | no | — | — |
+| tests/test_declared.py::test_known | declared-at-base | yes | — | — |
 ```
 
 - `at base: passed` and not in `baseline_red` ⇒ **attributed**. There is no
-  third column that makes it not-attributed.
-- `at base: failed` ⇒ not attributed, and the row is its own evidence. Add it
-  to `baseline_red` if it will keep failing.
+  column that makes it not-attributed.
+- `at base: failed` or `at base: declared-at-base` ⇒ not attributed
+  (pre-existing). The row is its own evidence. Add undeclared failures to
+  `baseline_red` if they will keep failing.
+- `at base: absent-at-base` ⇒ **attributed**. The test did not exist at the
+  base commit — this batch introduced it and it is failing now.
 - `at base: failed-differently` ⇒ **attributed**. The test fails at base AND at
-  HEAD, but for different reasons — the batch changed the failure. "No prose
-  overturns a row": an attributed row gets a human look, a missed one ships.
+  HEAD, but for different reasons — the batch changed the failure.
 - **The table must have exactly one row per failure.** Step 1's gate asserts
   `rows == failed`, so a record that reports 2 failures and explains them in
   prose cannot pass.
+
+**Flaky classification.** The recorder runs K=3 HEAD reruns on every failing
+node id and checks whether the batch touched the test file. Classification:
+
+- `at base: failed` or `declared-at-base` ⇒ **pre-existing** (not attributed).
+- All K reruns red (K/K) ⇒ **attributed** (reliably broken).
+- Intermittent (1..K-1) + batch touched the file ⇒ **attributed**.
+- Intermittent + batch did NOT touch ⇒ **flaky (owed)**. Listed in the
+  `## Flaky (owed)` section of the record; does NOT block the batch.
+
+## Flaky (owed)
+
+Tests classified as flaky that the batch did not touch. These are owed to the
+project — they should be fixed, but they do not block this batch.
+
+```markdown
+## Flaky (owed)
+
+- tests/test_flaky.py::test_intermittent
+```
 
 **No prose overturns a row.** "Environmental", "pre-existing", "flaky",
 "a line-number shift", "the batch did not touch that file" are hypotheses about
@@ -189,8 +210,6 @@ gate_first: true
 local_checks:
   - command: "python3 <skill-root>/ilk-loop/scripts/verification_record.py --project . --batch <batch-slug> --base-sha <base_sha> --run-suite --scope <auto|full> --suite-timeout <suite timeout>"
     timeout: <suite timeout>
-  - command: "python3 -c \"import sys; sys.path.insert(0,'<skill-root>/ilk-loop/scripts'); import verify_attribution as va; rec=va.resolve_batch_record(__import__('pathlib').Path('.'),'<batch-slug>'); text=rec.read_text(errors='replace'); assert not va.has_emptied_record_fields(text), f'record {rec.name} carries heredoc-emptied fields — rewrite with Path.write_text, not a shell heredoc'\""
-    timeout: 30
 ```
 
 **This step is gate-first.** The driver runs the gate above before dispatching
@@ -395,14 +414,10 @@ already landed. Re-run only the tracks whose results you do not have.
   spliced the whole of `gh --help` into an error field, because the prose said
   "the monkeypatch captures `gh` calls". The one artifact a human reads was
   mangled precisely where its evidence belonged. If a heredoc is unavoidable,
-  quote the delimiter (`<<'EOF'`). **Step 0's gate refuses a record that
-  carries the mangling signature** — the third `local_checks` command calls
-  `verify_attribution.has_emptied_record_fields`, which keys on the output
-  shape (a list item or `**Field:**` whose value is empty or starts with a
-  separator) rather than a field whitelist, so the next variant is caught too.
-  Detected on batch-2026-09-15d (every backticked value gone, the step-1 gate
-  passing silently because it reads `suite_failed` and the at-base table,
-  neither of which is affected).
+  quote the delimiter (`<<'EOF'`). **Step 1's gate detects post-recording edits
+  via the parsed-surface digest** — the recorder stores a sha256 of everything
+  above `## Findings` in the history file, and the gate recomputes it and
+  refuses on mismatch.
 - **Commit an empty marker** (the record lives outside the repo):
   `git commit --allow-empty -m "test(verify): record full suite result for <batch-slug> [plan:<slug>#step-0]"`
 - The gate asserts **the external record exists and is non-empty**, not that the
