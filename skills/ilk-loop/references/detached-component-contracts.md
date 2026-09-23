@@ -150,6 +150,17 @@ usually `shipped` at park time because reconcile runs after).  Zero owners ⇒
 exit 1 with JSON naming the slug and every master searched; the driver prints
 the refusal and continues (the run still stops `ship_integrity_violation`).
 
+**Declared work_tree (`work_tree.py`).**  Master frontmatter
+`work_tree: <absolute path>` declares the tree the driver observes, gates,
+and ledgeres.  Absent or empty ⇒ behaviour unchanged.  Present ⇒ must be an
+absolute path to an existing git work tree whose `git rev-parse
+--git-common-dir` equals `--project-path`'s.  Otherwise the driver refuses
+the iteration (stop reason `work_tree_invalid`, sentinel written, loud stderr
+naming the path and which check failed).  Resolved once per iteration via
+`work_tree.py`; `selfmod_effective_repo` maps through it when set.
+Plans, ledger location, sentinel, project key: unchanged (they key off
+`--project-path`).  Only *which tree is observed and gated* changes.
+
 `shipped-unproven` was added 2026-09-08. Before it, `all-shipped` never
 consulted proof: the loop printed `SHIP PROOF MISSING: 2 sub-plans shipped
 without proof` and `[ilk] ALL SHIPPED — nothing to run. Do NOT relaunch.` in

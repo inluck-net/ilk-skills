@@ -92,6 +92,7 @@ total_tickets: 21
 status: draft | queued | active | shipped   # lifecycle: draft (authored, not yet released — non-runnable) → queued → active → shipped (also: paused). Legacy `pending` is accepted as `queued` for back-compat.
 supervised_only: false   # RETIRED 2026-09-20 — no reader honours it. The key is tolerated for back-compat (state-ownership still carries it until its post-batch flip). The flag's hazard was a self-modifying batch dispatched under a running scheduler; worktree isolation (v0.9.107) removed the edit hazard, and merge bounce (scheduler→daemon) closed the liveness gap. The dispatch skip in scheduler_scan and the preflight hard-stop were removed 2026-09-20. plan_lint --master now treats ANY supervised_only: true as unwarranted (decomposition-principles.md §13).
 current_subplan: YYYY-MM-DD-<slug>   # cached pointer; loop_status verifies
+work_tree: /abs/path/to/worktree    # optional: tree to observe/gate/ledger; absent = --project-path (back-compat)
 ---
 ```
 
