@@ -232,7 +232,7 @@ def _read_ship_proof(world: dict) -> list[dict]:
 # ── AC-1: declared work_tree is observed and gated (xfail) ──────────────────
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(strict=True, reason="red-first: work_tree not read")
+
 def test_declared_work_tree_is_observed_and_gated(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
@@ -251,8 +251,9 @@ def test_declared_work_tree_is_observed_and_gated(
     )
 
     jsonl = _read_jsonl(world)
-    iter_rows = [r for r in jsonl if r.get("iteration") is not None]
-    assert iter_rows, f"no iteration rows in JSONL.\n{tail}"
+    # The iteration record carries new_commits_total; sentinel writes do not.
+    iter_rows = [r for r in jsonl if "new_commits_total" in r]
+    assert iter_rows, f"no iteration records with new_commits_total in JSONL.\n{tail}"
     last = iter_rows[-1]
     assert last.get("new_commits_total", 0) >= 1, (
         f"new_commits_total={last.get('new_commits_total')}; "
@@ -283,8 +284,8 @@ def test_absent_work_tree_uses_clone(
     assert sentinel is not None, f"no sentinel written.\n{tail}"
 
     jsonl = _read_jsonl(world)
-    iter_rows = [r for r in jsonl if r.get("iteration") is not None]
-    assert iter_rows, f"no iteration rows in JSONL.\n{tail}"
+    iter_rows = [r for r in jsonl if "new_commits_total" in r]
+    assert iter_rows, f"no iteration records with new_commits_total in JSONL.\n{tail}"
     last = iter_rows[-1]
     # Without work_tree, the driver looks at the clone where the worker
     # did NOT commit, so new_commits_total should be 0.
@@ -304,7 +305,7 @@ def test_absent_work_tree_uses_clone(
 # ── AC-3: invalid work_tree ⇒ work_tree_invalid (xfail) ────────────────────
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(strict=True, reason="red-first: work_tree not read")
+
 @pytest.mark.parametrize("bad_path", [
     "/nonexistent/path/to/nowhere",
     pytest.param("relative/path", id="relative"),

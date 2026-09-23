@@ -947,11 +947,21 @@ ensure_fresh_base_ref() {
 # only the path read from changes.
 selfmod_effective_repo() {
   local r="$1"
+  # Selfmod isolation takes precedence: the selfmod worktree is the
+  # driver's own editing tree.
   if [[ "${SELFMOD_ISOLATED:-0}" -eq 1 \
         && -n "${SELFMOD_WORKTREE_PATH:-}" \
         && "$r" == "${SELFMOD_ORIGINAL_PROJECT_PATH:-}" \
         && -d "${SELFMOD_WORKTREE_PATH}" ]]; then
     printf '%s\n' "$SELFMOD_WORKTREE_PATH"
+    return
+  fi
+  # Declared work_tree: the consumer's per-issue worktree (e.g. gh-resolve).
+  # Only applies when $r matches PROJECT_PATH — other repos (if any) are
+  # not affected.
+  if [[ -n "${DECLARED_WORK_TREE:-}" \
+        && "$r" == "${PROJECT_PATH:-}" ]]; then
+    printf '%s\n' "$DECLARED_WORK_TREE"
     return
   fi
   printf '%s\n' "$r"
@@ -3217,6 +3227,33 @@ main() {
     heads_after_file="${RUN_LOG_DIR}/heads-after-${i}.tmp"
 
     get_repo_heads "$heads_before_file"
+
+    # -- Declared work_tree resolution -----------------------------------
+    # A master may declare `work_tree: <abs path>` — the tree the driver
+    # must observe, gate, and ledger.  Without this, gh-resolve's per-issue
+    # worktree is invisible to the driver (rezmac 20260923-150625).
+    # Resolved once per iteration; the active master changes between batches.
+    DECLARED_WORK_TREE=""
+    local _wt_json
+    _wt_json=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/work_tree.py" \
+      --plans-dir "$(get_plans_dir)" --project-path "$PROJECT_PATH" --json 2>/dev/null) || true
+    if [[ -n "$_wt_json" ]]; then
+      local _wt_path _wt_error
+      _wt_path=$(echo "$_wt_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('path','') or '')" 2>/dev/null) || true
+      _wt_error=$(echo "$_wt_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error','') or '')" 2>/dev/null) || true
+      if [[ -n "$_wt_error" ]]; then
+        # Invalid work_tree is a terminal stop — refuse the iteration.
+        echo "  ! [work_tree] invalid: $_wt_error" >&2
+        stop_reason="work_tree_invalid"
+        iter_stop_reason="work_tree_invalid"
+        finalize_sentinel "work_tree_invalid"
+        break
+      fi
+      if [[ -n "$_wt_path" ]]; then
+        DECLARED_WORK_TREE="$_wt_path"
+        echo "  [work_tree] observing $_wt_path (declared by active master)"
+      fi
+    fi
 
     # Capture the sub-plan this iteration is about to work, BEFORE the agent
     # runs. It is the gate's fallback target when the commit carries no

@@ -92,6 +92,7 @@ about the same file — this doc makes the implicit contracts explicit.
 | `"blocked-no-runnable"` | All remaining sub-plans are `blocked`; nothing to dispatch | Terminal |
 | `"already-shipped"` | Nothing to do at launch time (all sub-plans already shipped) | Terminal |
 | `"selfmod_merge_failed"` | A selfmod worktree's merge-back failed; committed work is parked in the worktree | Terminal |
+| `"work_tree_invalid"` | Master declared `work_tree:` but the path is missing, not a work tree, or shares no git objects with `--project-path` | Terminal |
 
 **Naming conventions are intentional.** The hyphenated states (`no-progress`,
 `all-shipped`, `timeout`, `budget-exhausted`, `quota-exhausted`,
