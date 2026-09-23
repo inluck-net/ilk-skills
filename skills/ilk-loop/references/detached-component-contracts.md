@@ -1215,6 +1215,25 @@ correct one-line fix (declare the node id) was dismissed as useless.
 Fixed in sub-plan `a-batch-verdict-names-its-blockers` (2026-09-03) by
 invariants 1 and 2.
 
+### batch-gate.json writers
+
+One verdict per tree. The verification record (written by
+`verify_attribution.write_gate_record`) wins: when one exists for HEAD's
+tree with `writer: "verify_attribution"`, `verdict: "pass"`, and the
+expected `invocation`, the batch-end gate defers — it prints
+`already verified` and writes nothing.
+
+When the batch-end gate does run and the existing record is from
+`verify_attribution` (same or different tree), the gate writes its result
+to `batch-gate.batch_gate.json` beside it, preserving the verification
+record. Readers (`ship_audit`, `loop_status`) keep reading
+`batch-gate.json`, which is the verification record's file.
+
+The batch-end gate is the fallback for masters without a
+batch-verification sub-plan. When a verification sub-plan exists and
+its gate-first path discharged, the batch-end gate should find a
+`verify_attribution` record and defer.
+
 ---
 
 ## Contract 9: The commit trailer (`[plan:<slug>#step-N]`)

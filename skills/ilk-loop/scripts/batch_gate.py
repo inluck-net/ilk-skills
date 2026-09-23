@@ -56,6 +56,12 @@ from typing import Optional
 
 REQUIRED_FIELDS = ("verdict", "head_sha", "invocation", "timestamp")
 
+#: Returned by `run_batch_gate` when an existing verify_attribution pass at
+#: the current tree means the suite need not re-run.  Distinct from `None`
+#: (re-entry: a batch_gate record already exists at this HEAD) so the CLI
+#: can print "already verified" rather than the generic re-entry message.
+VERIFY_DEFERRED = object()
+
 #: Stamped into every record this module writes.  Its ABSENCE is the signal:
 #: a record without it was not written by `write_record`, and on 2026-09-09 a
 #: worker session hand-authored one (see `_claims_a_run_without_naming_it`).
@@ -622,6 +628,31 @@ def _skill_root() -> Path:
     )
 
 
+def _resolve_expected_invocation(project_path: Path) -> Optional[str]:
+    """Resolve the expected suite invocation from ship.suite.command.
+
+    Returns the full command string, or None if the suite is not configured.
+    Uses the same ship_config loader as _run_gate_inner.
+    """
+    try:
+        sys_path_backup = list(__import__("sys").path)
+        try:
+            __import__("sys").path.insert(
+                0, str(_skill_root() / "ilk-ship" / "scripts"))
+            from ship_config import MalformedConfig, NotConfigured, load_ship_config  # type: ignore[import-untyped]
+        finally:
+            __import__("sys").path[:] = sys_path_backup
+
+        config = load_ship_config(project_path)
+        if isinstance(config, (NotConfigured, MalformedConfig)):
+            return None
+        invocation = config.ship["suite"]["command"]
+        flags = config.ship["suite"].get("flags", [])
+        return invocation if not flags else f"{invocation} {' '.join(flags)}"
+    except Exception:
+        return None
+
+
 # ── main entry point ─────────────────────────────────────────────────────────
 
 def _parse_failing_node_ids(output_path: Path) -> list[str]:
@@ -657,6 +688,43 @@ def _undeclared_failures(node_ids: list[str], baseline_red: list) -> list[str]:
     return out
 
 
+def _is_verify_deferral(
+    existing: BatchGateRecord,
+    project_path: Path,
+) -> bool:
+    """Should the batch-end gate defer to an existing verification pass?
+
+    Deferral requires ALL of:
+    - writer is "verify_attribution"
+    - verdict is "pass"
+    - tree_sha matches HEAD's tree
+    - invocation matches the expected suite command
+
+    A batch_gate-written record at the same tree does NOT qualify —
+    the deferral is only to a verification pass (AC-3).
+    """
+    if existing.writer != "verify_attribution":
+        return False
+    if existing.verdict != "pass":
+        return False
+    current_tree = _git_head_tree(project_path)
+    if not current_tree or existing.tree_sha != current_tree:
+        return False
+    expected_inv = _resolve_expected_invocation(project_path)
+    if not expected_inv or existing.invocation != expected_inv:
+        return False
+    return True
+
+
+def _alternate_record_path(runtime_dir: Path) -> Path:
+    """Return the alternate path for a batch_gate record.
+
+    When the existing record is from verify_attribution for the same tree,
+    the batch gate writes here to preserve the verification record.
+    """
+    return runtime_dir / "batch-gate.batch_gate.json"
+
+
 def run_batch_gate(
     project_path: Path,
     runtime_dir: Path,
@@ -666,8 +734,10 @@ def run_batch_gate(
 ) -> Optional[BatchGateRecord]:
     """Run the batch-end gate: resolve suite, execute, persist verdict.
 
-    Returns the record written, or None if re-entry was detected (the
-    gate already ran).  The runner calls this at the ALL-SHIPPED point.
+    Returns the record written, None if re-entry was detected (the
+    gate already ran), or VERIFY_DEFERRED when an existing
+    verify_attribution pass at the current tree means the suite need
+    not re-run.  The runner calls this at the ALL-SHIPPED point.
 
     AC-1: runs exactly once per batch — guarded by the persisted record,
           which is keyed on the HEAD the suite ran against.
@@ -676,16 +746,42 @@ def run_batch_gate(
     head_sha = _git_head_sha(project_path)
 
     # ── re-entry guard (AC-1) ────────────────────────────────────────────
-    # The *record* is the guard: this batch's HEAD already has a verdict, so
+    # The *record* is the guard: this batch's tree already has a verdict, so
     # re-running would only re-derive it.  The running marker is a separate
     # thing — an in-flight lock, released below.  Conflating the two is what
     # made one run disable the gate permanently.
+    #
+    # The guard uses TREE comparison (not head_sha): the gate certifies code,
+    # and an empty marker commit moves head_sha while leaving the tree
+    # identical.  Comparing head_sha would invalidate the proof after every
+    # marker commit.
+    #
+    # If the existing record is a verify_attribution pass for the same tree
+    # with the expected invocation, defer to it (the verification already
+    # certified this code).  A batch_gate-written record at the same tree
+    # does NOT qualify — the deferral is only to a verification pass (AC-3).
+    # A record at a DIFFERENT tree means the code changed — run the suite.
     existing = read_record(runtime_dir)
-    if existing is not None and existing.head_sha == head_sha:
-        return None  # already ran for this HEAD
+    if existing is not None:
+        current_tree = _git_head_tree(project_path)
+        same_tree = (
+            existing.tree_sha and current_tree
+            and existing.tree_sha == current_tree
+        )
+        if same_tree and _is_verify_deferral(existing, project_path):
+            # A verify_attribution pass at the same tree with the expected
+            # invocation already certified this code.  Defer.
+            return VERIFY_DEFERRED
+        if existing.head_sha == head_sha:
+            # Same HEAD — the gate already ran.  Re-entry.
+            return None
 
     if not _acquire_gate_lock(runtime_dir):
         return None  # a gate process is running right now
+
+    # Capture the existing record before running the suite, so we can
+    # decide whether to write to the alternate path (AC-4).
+    existing_before = existing
 
     try:
         rec = _run_gate_inner(
@@ -707,7 +803,23 @@ def run_batch_gate(
     # AC-3: persist on EVERY path.  A verdict that is computed and returned
     # but never written is a verdict nobody can read — the gate reported
     # `fail` to stdout on 2026-08-25 while disk kept a 3-hour-old `pass`.
-    write_record(rec, runtime_dir)
+    #
+    # AC-4: never overwrite a verification record.
+    # If the existing record (before the suite ran) is from
+    # verify_attribution, write to batch-gate.batch_gate.json beside it
+    # and print both verdicts.  The verification record may be at a
+    # different tree (the suite re-ran because the code changed), and it
+    # still must not be overwritten.
+    if (existing_before is not None
+            and existing_before.writer == "verify_attribution"):
+        alt = _alternate_record_path(runtime_dir)
+        alt.write_text(json.dumps(rec.to_dict(), indent=2) + "\n",
+                       encoding="utf-8")
+        print(f"[batch-gate] verify_attribution record preserved at "
+              f"{record_path(runtime_dir).name}")
+        print(f"[batch-gate] batch_gate verdict written to {alt.name}")
+    else:
+        write_record(rec, runtime_dir)
     return rec
 
 
@@ -884,6 +996,12 @@ def main() -> None:
         runtime = resolved
 
     rec = run_batch_gate(project, runtime, _poll_timeout=args.poll_timeout)
+    if rec is VERIFY_DEFERRED:
+        tree = _git_head_tree(project)
+        print(f"[batch-gate] already verified at tree "
+              f"{tree[:12] if tree else '???'} by verify_attribution "
+              f"— suite not re-run")
+        return
     if rec is None:
         print("[batch-gate] Re-entry detected — gate already ran. Skipping.")
         return

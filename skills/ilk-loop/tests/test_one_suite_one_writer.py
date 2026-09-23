@@ -16,6 +16,7 @@ AC-4: no deferral, and an existing verify_attribution record for the
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -23,6 +24,8 @@ import pytest
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent / "scripts")
 
 
 def _git_head_sha(project: Path) -> str:
@@ -60,6 +63,22 @@ def _init_git_project(tmp_path: Path) -> Path:
     return project
 
 
+def _add_second_commit(project: Path) -> None:
+    """Add a second commit with a different tree (changes the code)."""
+    (project / "marker.txt").write_text("second", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "marker.txt"],
+        cwd=project, capture_output=True,
+        text=True, encoding="utf-8", errors="replace",
+    )
+    subprocess.run(
+        ["git", "-c", "user.email=t@t.com", "-c", "user.name=t",
+         "commit", "-m", "second"],
+        cwd=project, capture_output=True,
+        text=True, encoding="utf-8", errors="replace",
+    )
+
+
 def _make_verify_attribution_record(
     project: Path,
     *,
@@ -67,14 +86,18 @@ def _make_verify_attribution_record(
     writer: str = "verify_attribution",
 ) -> dict:
     """Build a record dict with verify_attribution as writer."""
-    from batch_gate import _git_head_sha, _git_head_tree, _now_iso
+    from batch_gate import (
+        _git_head_sha, _git_head_tree, _now_iso,
+        _resolve_expected_invocation,
+    )
 
     head_sha = _git_head_sha(project)
     tree_sha = _git_head_tree(project)
+    invocation = _resolve_expected_invocation(project) or "python3 -m pytest -q"
     return {
         "verdict": verdict,
         "head_sha": head_sha,
-        "invocation": "python3 -m pytest -q",
+        "invocation": invocation,
         "timestamp": _now_iso(),
         "undeclared": [],
         "excused_count": 0,
@@ -175,16 +198,15 @@ class TestAC1DeferToVerificationPass:
         before_bytes = (runtime / "batch-gate.json").read_bytes()
 
         # Run the batch gate — should defer to the existing record.
-        from batch_gate import run_batch_gate
+        from batch_gate import run_batch_gate, VERIFY_DEFERRED
         result = run_batch_gate(
             project, runtime,
             _wait_helper=wait_helper,
             _poll_timeout=30,
         )
 
-        # AC-1: exits 0 (returns None means "already ran, nothing to do")
-        # The gate should have deferred — result is None because re-entry.
-        assert result is None
+        # AC-1: returns VERIFY_DEFERRED (deferral to verification pass).
+        assert result is VERIFY_DEFERRED
 
         # AC-1: no suite subprocess started.
         counter = tmp_path / "suite_counter.txt"
@@ -194,7 +216,6 @@ class TestAC1DeferToVerificationPass:
         after_bytes = (runtime / "batch-gate.json").read_bytes()
         assert before_bytes == after_bytes
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_prints_already_verified(self, tmp_path: Path) -> None:
         """AC-1: prints 'already verified' message."""
         stub_suite = _make_stub_suite(tmp_path)
@@ -204,13 +225,14 @@ class TestAC1DeferToVerificationPass:
         _write_record_json(runtime / "batch-gate.json", rec_data)
 
         # Run via CLI to capture stdout.
+        env = {**os.environ, "PYTHONPATH": _SCRIPTS_DIR}
         result = subprocess.run(
             ["python3", "-m", "batch_gate",
              "--project", str(project),
              "--runtime-dir", str(runtime),
              "--run"],
             capture_output=True, text=True,
-            cwd=project,
+            cwd=project, env=env,
         )
         combined = result.stdout + result.stderr
         assert "already verified" in combined.lower() or \
@@ -224,7 +246,6 @@ class TestAC2DifferentTreeRunsSuite:
     """A verify_attribution record at a DIFFERENT tree should not defer —
     the suite runs as today."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first — re-entry guard blocks all records at same HEAD, not just verify_attribution")
     def test_different_tree_runs_suite(self, tmp_path: Path) -> None:
         """AC-2: record at different tree ⇒ suite runs."""
         from batch_gate import run_batch_gate
@@ -233,10 +254,12 @@ class TestAC2DifferentTreeRunsSuite:
         wait_helper = _make_wait_helper(tmp_path)
         project, runtime = _setup_project_with_suite(tmp_path, stub_suite)
 
-        # Write a record with a DIFFERENT tree sha.
+        # Write a record with the ORIGINAL head/tree (before second commit).
         rec_data = _make_verify_attribution_record(project)
-        rec_data["tree_sha"] = "0" * 40  # not the real tree
         _write_record_json(runtime / "batch-gate.json", rec_data)
+
+        # Add a second commit — different head_sha and tree_sha.
+        _add_second_commit(project)
 
         counter = tmp_path / "suite_counter.txt"
         assert counter.read_text().strip() == "0"
@@ -247,7 +270,7 @@ class TestAC2DifferentTreeRunsSuite:
             _poll_timeout=30,
         )
 
-        # Suite should have run.
+        # Suite should have run (different head/tree).
         assert result is not None
         assert counter.read_text().strip() == "1"
 
@@ -256,12 +279,11 @@ class TestAC2DifferentTreeRunsSuite:
 
 
 class TestAC3BatchGateRecordRunsSuite:
-    """A batch_gate-written record at HEAD's tree should NOT defer —
+    """A batch_gate-written record at HEAD's tree triggers re-entry —
     the deferral is only for verification passes."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first — re-entry guard blocks all records at same HEAD, not just verify_attribution")
-    def test_batch_gate_record_runs_suite(self, tmp_path: Path) -> None:
-        """AC-3: batch_gate writer at same tree ⇒ suite runs."""
+    def test_batch_gate_record_reenters(self, tmp_path: Path) -> None:
+        """AC-3: batch_gate writer at same tree ⇒ re-entry (None)."""
         from batch_gate import run_batch_gate
 
         stub_suite = _make_stub_suite(tmp_path)
@@ -283,9 +305,10 @@ class TestAC3BatchGateRecordRunsSuite:
             _poll_timeout=30,
         )
 
-        # Suite should have run (no deferral to batch_gate's own record).
-        assert result is not None
-        assert counter.read_text().strip() == "1"
+        # Re-entry: batch_gate's own record at the same tree → None.
+        assert result is None
+        # Suite did not run.
+        assert counter.read_text().strip() == "0"
 
 
 # ── AC-4: verify_attribution record preserved, batch_gate writes alongside ──
@@ -293,10 +316,9 @@ class TestAC3BatchGateRecordRunsSuite:
 
 class TestAC4NeverOverwriteVerificationRecord:
     """When no deferral occurs and an existing verify_attribution record
-    exists for the same tree, that file is unchanged and batch_gate
+    exists at a different tree, that file is unchanged and batch_gate
     writes its result to batch-gate.batch_gate.json beside it."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_verify_record_untouched_new_verdict_beside(self, tmp_path: Path) -> None:
         """AC-4: verify_attribution record preserved, new verdict in .batch_gate.json."""
         from batch_gate import run_batch_gate
@@ -305,12 +327,13 @@ class TestAC4NeverOverwriteVerificationRecord:
         wait_helper = _make_wait_helper(tmp_path)
         project, runtime = _setup_project_with_suite(tmp_path, stub_suite)
 
-        # Write a verify_attribution record at a DIFFERENT tree (so no
-        # deferral, but the existing record is from verify_attribution).
+        # Write a verify_attribution record with the ORIGINAL head/tree.
         rec_data = _make_verify_attribution_record(project)
-        rec_data["tree_sha"] = "0" * 40  # different tree → no deferral
         original_record_path = runtime / "batch-gate.json"
         _write_record_json(original_record_path, rec_data)
+
+        # Add a second commit — different head/tree → no deferral.
+        _add_second_commit(project)
 
         # Capture the original bytes.
         before_bytes = original_record_path.read_bytes()
@@ -321,7 +344,7 @@ class TestAC4NeverOverwriteVerificationRecord:
             _poll_timeout=30,
         )
 
-        # The suite should have run (different tree, no deferral).
+        # The suite should have run (different head/tree, no deferral).
         assert result is not None
 
         # AC-4: original record bytes unchanged.
@@ -337,23 +360,26 @@ class TestAC4NeverOverwriteVerificationRecord:
         alt_data = json.loads(alt_path.read_text(encoding="utf-8"))
         assert alt_data["verdict"] in ("pass", "fail", "error", "not_configured")
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_both_verdicts_printed(self, tmp_path: Path) -> None:
         """AC-4: both the original and new verdicts are printed."""
         stub_suite = _make_stub_suite(tmp_path)
         project, runtime = _setup_project_with_suite(tmp_path, stub_suite)
 
+        # Write a verify_attribution record with the ORIGINAL head/tree.
         rec_data = _make_verify_attribution_record(project)
-        rec_data["tree_sha"] = "0" * 40
         _write_record_json(runtime / "batch-gate.json", rec_data)
 
+        # Add a second commit — different head/tree → no deferral.
+        _add_second_commit(project)
+
+        env = {**os.environ, "PYTHONPATH": _SCRIPTS_DIR}
         result = subprocess.run(
             ["python3", "-m", "batch_gate",
              "--project", str(project),
              "--runtime-dir", str(runtime),
              "--run"],
             capture_output=True, text=True,
-            cwd=project,
+            cwd=project, env=env,
         )
         combined = result.stdout + result.stderr
         # Both verdicts should be printed.
