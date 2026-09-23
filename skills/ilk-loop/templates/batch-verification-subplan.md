@@ -110,6 +110,9 @@ Base: <base_sha> · worktree: detached · command: <suite runner> <node ids>
   third column that makes it not-attributed.
 - `at base: failed` ⇒ not attributed, and the row is its own evidence. Add it
   to `baseline_red` if it will keep failing.
+- `at base: failed-differently` ⇒ **attributed**. The test fails at base AND at
+  HEAD, but for different reasons — the batch changed the failure. "No prose
+  overturns a row": an attributed row gets a human look, a missed one ships.
 - **The table must have exactly one row per failure.** Step 1's gate asserts
   `rows == failed`, so a record that reports 2 failures and explains them in
   prose cannot pass.
@@ -131,13 +134,16 @@ re-paying them:
 at-base rerun shows a row with `at base: failed` and `attributed: no` —
 meaning the test was already broken before this batch — add a
 `baseline_red` entry to `.ilk-launch.json` as part of the same step:
-a file-level `node_id` (the test file or class, not the individual test
-— the matcher is substring-both-ways), `reason` copied from the
-at-base table row, and `as_of` set to the batch date. Record each
-addition in Findings, never silently: "appended `tests/test_foo.py` to
-`baseline_red` (failed at base, Windows-only typing error)". This is the
-mechanism that ensures the at-base exemption set covers known reds by the
-next batch — the cap cannot fire when coverage is complete.
+a test-level `node_id` (the fully qualified test id, e.g.
+`tests/test_foo.py::test_bar`, not the file or class — exact matching
+prevents a declaration from excusing tests that did not exist when it was
+written; parametrisations like `test_bar[1]` are covered by the prefix
+`test_bar[`), `reason` copied from the at-base table row, and `as_of`
+set to the batch date. Record each addition in Findings, never silently:
+"appended `tests/test_foo.py::test_bar` to `baseline_red` (failed at
+base, Windows-only typing error)". This is the mechanism that ensures the
+at-base exemption set covers known reds by the next batch — the cap
+cannot fire when coverage is complete.
 
 **2. Size per-test timeouts from `--durations`, not defaults.** When a
 project's suite flags carry a per-test timeout (e.g. `--timeout=60`)
