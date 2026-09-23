@@ -4868,12 +4868,18 @@ def lint_batch_has_no_suite(
         __import__("sys").path.insert(
             0, str(_SHIP_CONFIG_SCRIPT.parent))
         from ship_config import (  # type: ignore[import-untyped]
-            NotConfigured, load_ship_config,
+            MalformedConfig, NotConfigured, load_ship_config,
         )
     finally:
         __import__("sys").path[:] = sys_path_backup
 
     config = load_ship_config(project_root)
+    if isinstance(config, MalformedConfig):
+        path_str = str(config.resolved_path) if config.resolved_path else "unknown"
+        findings.append(
+            f"malformed ship config at {path_str}: {config.detail}"
+        )
+        return findings
     if not isinstance(config, NotConfigured):
         return findings  # AC-2: ship.suite declared — batch gate will run.
 

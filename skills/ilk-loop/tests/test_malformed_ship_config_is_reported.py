@@ -45,26 +45,25 @@ def _make_launch_json(tmp_path: Path, *, missing_node_id: bool = False) -> Path:
     return launch
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: MalformedConfig unhandled")
+
 def test_resolve_expected_invocation_raises_for_malformed(tmp_path: Path) -> None:
     """AC-1: raises ValueError naming the problem."""
-    from ship_config import load_ship_config
     from ship_audit import _resolve_expected_invocation
 
     _make_launch_json(tmp_path, missing_node_id=True)
-    config = load_ship_config(tmp_path)
     with pytest.raises(ValueError, match="node_id"):
-        _resolve_expected_invocation(config, tmp_path)
+        _resolve_expected_invocation(tmp_path)
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: MalformedConfig unhandled")
+
 def test_batch_gate_returns_malformed_config_verdict(tmp_path: Path) -> None:
     """AC-2: verdict == 'malformed_config', no exception."""
     from batch_gate import run_batch_gate
 
     _make_launch_json(tmp_path, missing_node_id=True)
-    # run_batch_gate should not raise on malformed config.
-    result = run_batch_gate(tmp_path)
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(exist_ok=True)
+    result = run_batch_gate(tmp_path, runtime_dir)
     assert result is not None
     assert hasattr(result, "verdict"), f"no verdict on result: {result}"
     assert result.verdict == "malformed_config", (
@@ -72,12 +71,12 @@ def test_batch_gate_returns_malformed_config_verdict(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: MalformedConfig unhandled")
+
 def test_plan_lint_emits_finding_for_malformed(tmp_path: Path) -> None:
     """AC-3: plan_lint emits a finding containing the detail."""
-    from plan_lint import lint_project
+    from plan_lint import lint_batch_has_no_suite
 
     _make_launch_json(tmp_path, missing_node_id=True)
-    findings = lint_project(tmp_path)
-    mal = [f for f in findings if "node_id" in str(getattr(f, "message", ""))]
+    findings = lint_batch_has_no_suite("", [], tmp_path)
+    mal = [f for f in findings if "node_id" in str(f)]
     assert mal, f"no finding about node_id in {findings}"

@@ -717,7 +717,7 @@ def _run_gate_inner(
     try:
         __import__("sys").path.insert(
             0, str(_skill_root() / "ilk-ship" / "scripts"))
-        from ship_config import NotConfigured, load_ship_config  # type: ignore[import-untyped]
+        from ship_config import MalformedConfig, NotConfigured, load_ship_config  # type: ignore[import-untyped]
     finally:
         __import__("sys").path[:] = sys_path_backup
 
@@ -734,6 +734,17 @@ def _run_gate_inner(
             verdict="not_configured",
             head_sha=head_sha,
             invocation=inv,
+            timestamp=_now_iso(),
+            tree_sha=_git_head_tree(project_path),
+            writer=WRITER_ID,
+        )
+
+    if isinstance(config, MalformedConfig):
+        path_str = str(config.resolved_path) if config.resolved_path else "unknown"
+        return BatchGateRecord(
+            verdict="malformed_config",
+            head_sha=head_sha,
+            invocation=f"malformed_config: {config.detail} ({path_str})",
             timestamp=_now_iso(),
             tree_sha=_git_head_tree(project_path),
             writer=WRITER_ID,

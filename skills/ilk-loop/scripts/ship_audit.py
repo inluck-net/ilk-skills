@@ -329,12 +329,16 @@ def _resolve_expected_invocation(project_path: Path) -> str:
         sys_path_backup = list(sys.path)
         try:
             sys.path.insert(0, str(_skill_root() / "ilk-ship" / "scripts"))
-            from ship_config import NotConfigured, load_ship_config  # type: ignore[import-untyped]
+            from ship_config import MalformedConfig, NotConfigured, load_ship_config  # type: ignore[import-untyped]
         finally:
             sys.path[:] = sys_path_backup
         config = load_ship_config(project_path)
         if isinstance(config, NotConfigured):
             return ""
+        if isinstance(config, MalformedConfig):
+            raise ValueError(
+                f"malformed ship config at {config.resolved_path}: {config.detail}"
+            )
         invocation = config.ship["suite"]["command"]
         flags = config.ship["suite"].get("flags", [])
         return invocation if not flags else f"{invocation} {' '.join(flags)}"
