@@ -484,6 +484,21 @@ gate is distinguishable from a gate that never ran.
    `invoke_local_checks`; the helper's stdout may fill a blank but never
    override.
 
+7. **The driver's gate cap equals the helper's declared budget.**
+   `invoke_local_checks` sizes its outer deadline as
+   `max(total_declared + 60, LOCAL_CHECKS_TIMEOUT_SEC)`, where
+   `total_declared` is the sum of every `timeout:` the sub-plan declares —
+   frontmatter `local_checks` AND per-step fences — counted by
+   `gate_declared_timeout` in `run_local_checks.py`. An undeclared check
+   counts as the runner's default (120s), never 0, so the cap never kills a
+   check before the runner's own `run_one` timeout would. If the cap kills
+   the helper (gtimeout exit 124), the outcome is `inconclusive` — a
+   non-verdict, not a failure. A sub-plan shipped in the same iteration
+   with an inconclusive gate is reverted to `in-progress` (pointer
+   untouched) and the revert does NOT count toward `auto_block_fails`
+   (the driver's cap caused it, not the code). A sub-plan shipped in a
+   prior run keeps the `skip` behaviour (the 2026-08-20 scoping rule).
+
 ### Bug reference (kira-cloudflare 20260828-211346)
 
 Three defects, one silent ship. The driver log's two consecutive lines:
