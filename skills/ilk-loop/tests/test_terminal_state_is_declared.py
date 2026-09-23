@@ -57,8 +57,8 @@ _NON_TERMINAL = frozenset({"running"})
 # A state listed here MUST have a comment explaining why.
 _KNOWN_BYPASS: dict[str, str] = {
     "all-shipped": "clean exit; collect.py handles via success-sentinel short-circuit",
-    "already-shipped": "clean exit; handled by early-exit JSONL path",
-    "blocked-no-runnable": "driver early exit; EXIT trap → interrupted (mapped)",
+    "already-shipped": "clean exit; writes terminal sentinel via _write_terminal_sentinel",
+    "blocked-no-runnable": "driver early exit; writes terminal sentinel via _write_terminal_sentinel",
     "no-progress": "3-barren-iterations exit; EXIT trap → interrupted (mapped)",
     # Naming-convention mismatch: bash runner writes "budget-exhausted" (hyphen)
     # but _SENTINEL_FAILURE_MAP keys on "budget_exhausted" (underscore, from

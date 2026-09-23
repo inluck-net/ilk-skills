@@ -35,8 +35,13 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
-def _build_world_shipped_unproven(root: Path) -> dict:
-    """World where all sub-plans are shipped but no ship-proof exists."""
+def _build_world_shipped(root: Path, *, with_steps: bool = True) -> dict:
+    """World where all sub-plans are shipped.
+
+    *with_steps=True*: sub-plan has step headings ⇒ audit expects step commits
+    (shipped-unproven when none exist).
+    *with_steps=False*: no step headings ⇒ trivially proven (already-shipped).
+    """
     project = root / "project"
     (project / "docs").mkdir(parents=True)
     _git(project.parent, "init", "-q", str(project))
@@ -63,7 +68,10 @@ def _build_world_shipped_unproven(root: Path) -> dict:
         f"| # | Slug |\n|---|---|\n| 1 | [{SLUG}](./{STEM}.md) |\n",
         encoding="utf-8",
     )
-    # Sub-plan already shipped, no proof
+    steps_section = (
+        "\n## Steps\n\n### Step 0 — do the thing\n\nBody.\n"
+        if with_steps else "\n\nBody.\n"
+    )
     (plans / f"{STEM}.md").write_text(
         "---\n"
         f"plan: {SLUG}\n"
@@ -71,8 +79,7 @@ def _build_world_shipped_unproven(root: Path) -> dict:
         "current_step: 1\n"
         "estimated_steps: 1\n"
         "verification_tier: loop-verified\n"
-        "---\n\n"
-        f"# {SLUG}\n\nBody.\n",
+        f"---\n\n# {SLUG}{steps_section}",
         encoding="utf-8",
     )
 
@@ -111,17 +118,18 @@ def _run_one_iteration(world: dict, root: Path) -> subprocess.CompletedProcess:
 
 def _read_sentinel(world: dict) -> dict:
     runtime = world["data_home"] / "projects" / world["key"] / "runtime"
-    candidates = list(runtime.glob("run-*/last-exit.json"))
-    assert candidates, f"no sentinel found in {runtime}"
-    return json.loads(candidates[-1].read_text(encoding="utf-8"))
+    # Sentinel lives at runtime/launcher/last-exit.json
+    sentinel = runtime / "launcher" / "last-exit.json"
+    assert sentinel.exists(), f"no sentinel found at {sentinel}"
+    return json.loads(sentinel.read_text(encoding="utf-8"))
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: pre-loop exit leaves running")
+
 def test_shipped_unproven_writes_terminal_sentinel(tmp_path: Path) -> None:
     """AC-1: all shipped, no proof ⇒ state == shipped-unproven."""
     root = tmp_path / "harness"
     root.mkdir()
-    world = _build_world_shipped_unproven(root)
+    world = _build_world_shipped(root, with_steps=True)
     result = _run_one_iteration(world, root)
     sentinel = _read_sentinel(world)
     assert sentinel["state"] == "shipped-unproven", (
@@ -132,19 +140,13 @@ def test_shipped_unproven_writes_terminal_sentinel(tmp_path: Path) -> None:
     assert sentinel.get("pid") != os.getpid(), "pid should not be the runner's live pid"
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: pre-loop exit leaves running")
+
 def test_already_shipped_writes_terminal_sentinel(tmp_path: Path) -> None:
     """AC-2a: all shipped with proof ⇒ state == already-shipped."""
     root = tmp_path / "harness"
     root.mkdir()
-    world = _build_world_shipped_unproven(root)
-    # Add ship-proof ledger entry so it becomes "already-shipped"
-    ledger = world["data_home"] / "projects" / world["key"] / "ship-proof-ledger.jsonl"
-    ledger.parent.mkdir(parents=True, exist_ok=True)
-    ledger.write_text(
-        json.dumps({"slug": SLUG, "head_sha": "abc123", "verdict": "pass"}) + "\n",
-        encoding="utf-8",
-    )
+    # No step headings ⇒ audit considers it trivially proven (already-shipped).
+    world = _build_world_shipped(root, with_steps=False)
     result = _run_one_iteration(world, root)
     sentinel = _read_sentinel(world)
     assert sentinel["state"] == "already-shipped", (

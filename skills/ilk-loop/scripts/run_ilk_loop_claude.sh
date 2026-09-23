@@ -1396,15 +1396,37 @@ record_err_context() {
   _LAST_ERR_CONTEXT="line $1: $2"
 }
 
+_write_terminal_sentinel() {
+  # Write a terminal sentinel for pre-loop exits (all-shipped, shipped-unproven,
+  # blocked-no-runnable).  These exits happen before the main loop starts, so
+  # the EXIT-trap finalize_sentinel never fires (main returns 0 and the trap
+  # sees state != running).  Factor the write here so each exit path names
+  # its real stop reason instead of leaving state=running.
+  local state="$1"
+  local rd="$2"
+  local ts
+  ts=$(date +%Y-%m-%dT%H:%M:%S%z)
+  python3 -c "import json; print(json.dumps({
+    'state': '$state',
+    'pid': $$,
+    'run_id': '$RUN_ID',
+    'started_at': '${loop_started_at:-}',
+    'ended_at': '$ts',
+    'iterations': 0,
+    'project_path': '$PROJECT_PATH',
+    'cli': 'claude'
+  }))" > "${rd}/last-exit.json.tmp" && mv -f "${rd}/last-exit.json.tmp" "${rd}/last-exit.json"
+  echo "Sentinel: ${rd}/last-exit.json (state=$state, iters=0)"
+}
+
 finalize_sentinel() {
   # On EXIT (signal, error, or normal), if the sentinel is still state=running,
   # rewrite it to a terminal state so stale-running sentinels never survive.
   # Safe to call multiple times — idempotent (no-op when state != running).
-  # `runtime_dir` is local to main(); when this EXIT trap fires after main
-  # returns it is out of scope, so default-expand to stay safe under `set -u`
-  # (otherwise the quick all-shipped exit path errors: "runtime_dir: unbound").
-  [[ -z "${runtime_dir:-}" ]] && return 0
-  local target="${runtime_dir}/last-exit.json"
+  # `runtime_dir` is local to main(); main stores the sentinel path in
+  # _ILK_SENTINEL_PATH so this function survives after main returns.
+  [[ -z "${_ILK_SENTINEL_PATH:-}" ]] && return 0
+  local target="${_ILK_SENTINEL_PATH}"
   [[ -f "$target" ]] || return 0
 
   local cur_state
@@ -3170,6 +3192,8 @@ main() {
       'cli': 'claude'
     }))" > "${runtime_dir}/last-exit.json.tmp" && mv -f "${runtime_dir}/last-exit.json.tmp" "${runtime_dir}/last-exit.json"
     echo "Sentinel: ${runtime_dir}/last-exit.json (state=running)"
+    # Store in a global so finalize_sentinel survives after main returns.
+    _ILK_SENTINEL_PATH="${runtime_dir}/last-exit.json"
 
     # Ensure the sentinel is never left as "running" on abnormal exit.
     # finalize_sentinel is idempotent — no-op when a clean path already set
@@ -3192,6 +3216,7 @@ main() {
     local ts
     ts=$(date +%Y-%m-%dT%H:%M:%S%z)
     write_jsonl_record "{\"run_id\":\"$RUN_ID\",\"cli\":\"claude\",\"iteration\":0,\"timestamp\":\"$ts\",\"project\":\"$PROJECT_PATH\",\"stop_reason\":\"already-shipped\"}"
+    [[ -n "$runtime_dir" ]] && _write_terminal_sentinel "already-shipped" "$runtime_dir"
     return 0
   elif [[ "$CLASSIFIED_STATUS" == "shipped-unproven" ]]; then
     # Every sub-plan reports shipped and at least one has no proof. That is not
@@ -3201,6 +3226,7 @@ main() {
     local ts
     ts=$(date +%Y-%m-%dT%H:%M:%S%z)
     write_jsonl_record "{\"run_id\":\"$RUN_ID\",\"cli\":\"claude\",\"iteration\":0,\"timestamp\":\"$ts\",\"project\":\"$PROJECT_PATH\",\"stop_reason\":\"shipped-unproven\"}"
+    [[ -n "$runtime_dir" ]] && _write_terminal_sentinel "shipped-unproven" "$runtime_dir"
     return 0
   elif [[ "$CLASSIFIED_STATUS" == "blocked-no-runnable" ]]; then
     local blocked_count
@@ -3210,6 +3236,7 @@ main() {
     local ts
     ts=$(date +%Y-%m-%dT%H:%M:%S%z)
     write_jsonl_record "{\"run_id\":\"$RUN_ID\",\"cli\":\"claude\",\"iteration\":0,\"timestamp\":\"$ts\",\"project\":\"$PROJECT_PATH\",\"stop_reason\":\"blocked-no-runnable\"}"
+    [[ -n "$runtime_dir" ]] && _write_terminal_sentinel "blocked-no-runnable" "$runtime_dir"
     return 0
   fi
 

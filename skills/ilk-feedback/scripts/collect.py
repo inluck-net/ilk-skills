@@ -1423,6 +1423,11 @@ def classify(
         # Label: "quota-exhausted" → watchdog blocks + parks (same as
         # budget-exhausted; needs human or /ilk-resume).
         "quota-exhausted": "quota-exhausted",
+        # The declared work_tree path is invalid (not a dir, not a git worktree,
+        # or common-dir mismatch).  Added with the work_tree feature (sub-plan
+        # a-master-declares-its-work-tree).  Same label as shipped-unverified:
+        # a config error that needs human intervention, not a restart.
+        "work_tree_invalid": "shipped-unverified",
     }
     if sentinel is not None:
         sentinel_state = (sentinel.get("state") or "").strip()
