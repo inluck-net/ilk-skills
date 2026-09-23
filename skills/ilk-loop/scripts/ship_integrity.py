@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -206,68 +207,7 @@ def _missing_step_reason(subplan: Path) -> str | None:
         # repo), so Path.cwd() would cause the probe to fail and the check
         # to silently skip — measured 18 skips vs 18 fires on 2026-09-16.
         # Record which input won so a silent fallback is diagnosable.
-        from ilk_paths import find_project_root, git_root as _git_root
-        resolved_root: Path | None = None
-        _root_src = "none"
-        # 1. Walk up from the sub-plan's parent (the plans dir).
-        candidate, _kind = find_project_root(subplan.parent)
-        if candidate is not None:
-            probe = subprocess.run(
-                ["git", "rev-parse", "--is-inside-work-tree"],
-                capture_output=True, text=True, cwd=candidate, encoding="utf-8",
-            )
-            if probe.returncode == 0 and probe.stdout.strip() == "true":
-                resolved_root = candidate
-                _root_src = "subplan_parent"
-        # 2. The registry: map the plans dir's project KEY back to its root.
-        #
-        # This is the candidate that makes the check work in production. Plans
-        # live at ~/.ilk-data/projects/<key>/plans, which has no .git ancestor
-        # by design (toolkit data never enters a consumer repo), so candidate 1
-        # cannot resolve for any project on the external layout — which is every
-        # project. Without this, resolution fell through to cwd, and the runner
-        # invokes this from outside the repo.
-        #
-        # Measured 2026-09-16 on ilk-skills: two sub-plans shipped with missing
-        # step commits (authored-steps step 2; the-step-commit-check steps 3-4)
-        # because this check silently skipped. The batch that shipped candidate 1
-        # tested it against the IN-TREE layout (<repo>/docs/plans), so its AC
-        # passed while production still could not resolve.
-        if resolved_root is None:
-            key = None
-            for parent in subplan.resolve().parents:
-                if parent.name == "plans" and parent.parent.parent.name == "projects":
-                    key = parent.parent.name
-                    break
-            if key:
-                try:
-                    import json as _json
-                    from ilk_paths import project_key as _project_key, skill_root
-                    # Resolve the registry, never guess it: register_project.py
-                    # writes <skill-root>/ilk-launcher/projects.json. An earlier
-                    # draft of this block guessed ~/.ilk-data/projects.json and
-                    # silently resolved nothing.
-                    reg = skill_root() / "ilk-launcher" / "projects.json"
-                    if reg.is_file():
-                        entries = _json.loads(reg.read_text(encoding="utf-8"))
-                        if isinstance(entries, dict):
-                            entries = entries.get("projects", [])
-                        for e in entries or []:
-                            path = Path(str(e.get("path", "")))
-                            if path.is_dir() and _project_key(path) == key:
-                                resolved_root = path
-                                _root_src = "registry"
-                                break
-                except Exception:  # noqa: BLE001 - resolution is best-effort
-                    pass
-
-        # 3. Trust cwd — the runner's project root when it has not cd'd
-        #    into the plans dir.
-        if resolved_root is None:
-            candidate = _git_root(Path.cwd())
-            if candidate is not None:
-                resolved_root = candidate
-                _root_src = "cwd"
+        resolved_root, _root_src = _resolve_project_root(subplan)
 
         if resolved_root is None:
             print(
@@ -359,6 +299,160 @@ def _missing_step_reason(subplan: Path) -> str | None:
         print(
             f"warning: step-commit check could not run ({exc}); "
             "ship-integrity fell back to the gate check alone",
+            file=sys.stderr,
+        )
+        return None
+
+
+def _resolve_project_root(subplan: Path) -> tuple[Path | None, str]:
+    """Resolve the project root from a sub-plan's location.
+
+    Returns ``(resolved_root, source)`` where *source* names which candidate
+    won (``"subplan_parent"``, ``"registry"``, ``"cwd"``, or ``"none"``).
+    Shared by ``_missing_step_reason`` and ``_missing_record_reason`` so the
+    two checks cannot disagree about the root (decomposition-principles §8).
+
+    Fails open: returns ``(None, "none")`` on any internal error.  A guard
+    that blocks a legitimate ship because of its own resolution bug is worse
+    than the gap it closes.
+    """
+    try:
+        from ilk_paths import find_project_root, git_root as _git_root
+    except ImportError:
+        return None, "none"
+
+    resolved_root: Path | None = None
+    root_src = "none"
+
+    # 1. Walk up from the sub-plan's parent (the plans dir).
+    candidate, _kind = find_project_root(subplan.parent)
+    if candidate is not None:
+        probe = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            capture_output=True, text=True, cwd=candidate, encoding="utf-8",
+        )
+        if probe.returncode == 0 and probe.stdout.strip() == "true":
+            resolved_root = candidate
+            root_src = "subplan_parent"
+
+    # 2. The registry: map the plans dir's project KEY back to its root.
+    #
+    # This is the candidate that makes the check work in production. Plans
+    # live at ~/.ilk-data/projects/<key>/plans, which has no .git ancestor
+    # by design (toolkit data never enters a consumer repo), so candidate 1
+    # cannot resolve for any project on the external layout — which is every
+    # project. Without this, resolution fell through to cwd, and the runner
+    # invokes this from outside the repo.
+    if resolved_root is None:
+        key = None
+        for parent in subplan.resolve().parents:
+            if parent.name == "plans" and parent.parent.parent.name == "projects":
+                key = parent.parent.name
+                break
+        if key:
+            try:
+                import json as _json
+                from ilk_paths import project_key as _project_key, skill_root
+                reg = skill_root() / "ilk-launcher" / "projects.json"
+                if reg.is_file():
+                    entries = _json.loads(reg.read_text(encoding="utf-8"))
+                    if isinstance(entries, dict):
+                        entries = entries.get("projects", [])
+                    for e in entries or []:
+                        path = Path(str(e.get("path", "")))
+                        if path.is_dir() and _project_key(path) == key:
+                            resolved_root = path
+                            root_src = "registry"
+                            break
+            except Exception:  # noqa: BLE001 - resolution is best-effort
+                pass
+
+    # 3. Trust cwd — the runner's project root when it has not cd'd
+    #    into the plans dir.
+    if resolved_root is None:
+        candidate = _git_root(Path.cwd())
+        if candidate is not None:
+            resolved_root = candidate
+            root_src = "cwd"
+
+    return resolved_root, root_src
+
+
+# ── batch-verification record check ──────────────────────────────────────────
+
+ENFORCE_RECORD_REQUIRED = False
+"""Flip to True only after rezmac shows ``verification_record.py --run-suite``
+in a newly generated batch-verification sub-plan (gh-resolve#29).  The check
+reports the refusal loudly regardless; this switch gates whether it blocks the
+ship."""
+
+_BATCH_ARG_RE = re.compile(r"--batch[ =](\S+)")
+
+
+def _missing_record_reason(subplan: Path) -> str | None:
+    """Reason string when a *shipped* ``batch_verification`` sub-plan has no
+    record on disk.
+
+    Returns ``None`` when the sub-plan is not shipped, when it is not a
+    ``batch_verification`` sub-plan, when the record exists, or when the check
+    cannot run.  Fails open (same rationale as ``_missing_step_reason``).
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from run_local_checks import (  # type: ignore[import-untyped]
+            collect_declared_local_checks as _collect_checks,
+            read_text as _read_text,
+            split_frontmatter as _split_fm,
+        )
+        from verify_attribution import (  # type: ignore[import-untyped]
+            VerificationError,
+            resolve_batch_record,
+        )
+
+        full = _read_text(subplan)
+        fm_text, body = _split_fm(full)
+
+        status = ""
+        batch_verification = False
+        for line in fm_text.splitlines():
+            s = line.strip()
+            if s.startswith("status:") and not status:
+                status = s[len("status:"):].strip().strip("'\"")
+            elif s.startswith("batch_verification:"):
+                val = s[len("batch_verification:"):].strip().lower()
+                batch_verification = val in ("true", "yes", "1")
+
+        if status != "shipped" or not batch_verification:
+            return None
+
+        checks = _collect_checks(fm_text, body)
+        slugs: list[str] = []
+        for chk in checks:
+            cmd = chk.get("command", "")
+            slugs.extend(_BATCH_ARG_RE.findall(cmd))
+
+        if not slugs:
+            return (
+                "batch_verification sub-plan declares no --batch gate — "
+                "record cannot be located"
+            )
+
+        resolved_root, _ = _resolve_project_root(subplan)
+        if resolved_root is None:
+            # Fail open — same as _missing_step_reason.
+            return None
+
+        for slug in slugs:
+            try:
+                resolve_batch_record(resolved_root, slug)
+            except VerificationError as exc:
+                return f"verification record absent — {exc}"
+
+        return None
+    except Exception as exc:  # noqa: BLE001 - fail open, but loudly
+        print(
+            f"warning: record-absence check could not run ({exc}); "
+            "ship-integrity fell back to the other checks alone",
             file=sys.stderr,
         )
         return None
@@ -468,7 +562,17 @@ def _cli(argv: list[str]) -> int:
     # which steps are done.
     step_reason = _missing_step_reason(args.subplan) if args.subplan else None
 
+    # Record-absence half.  A batch_verification sub-plan must leave its record.
+    # While warn-only (ENFORCE_RECORD_REQUIRED is False), report loudly but do
+    # not block the ship.
+    rec_reason = _missing_record_reason(args.subplan) if args.subplan else None
+
     reasons = [r for r in (step_reason, None if verdict.ok else verdict.reason) if r]
+    if rec_reason:
+        if ENFORCE_RECORD_REQUIRED:
+            reasons.append(rec_reason)
+        else:
+            print(f"WARN RECORD ABSENT: {rec_reason}", file=sys.stderr)
     if reasons:
         print(f"VIOLATION: {'; '.join(reasons)}", file=sys.stderr)
         return 1

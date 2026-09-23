@@ -2228,6 +2228,9 @@ print(gate_passed)
 
     si_exit=0
     si_out=$(python3 "$ship_integrity_script" --subplan "$f" --gate-passed "$gate_passed" 2>&1) || si_exit=$?
+    if [[ $si_exit -eq 0 && "$si_out" == *"WARN RECORD ABSENT"* ]]; then
+      echo "  [ship-integrity WARN] $(basename "$f"): $si_out" >&2
+    fi
     if [[ $si_exit -ne 0 ]]; then
       local slug
       slug=$(python3 -c "

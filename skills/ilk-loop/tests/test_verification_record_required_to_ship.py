@@ -81,16 +81,12 @@ def _run(subplan: Path, repo: Path, gate: str = "true") -> subprocess.CompletedP
     )
 
 
-# ── red-first pins (xfail markers removed by step 1) ────────────────────────
+# ── record-absence tests (step 1: xfail markers removed) ────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="AttributeError: _missing_record_reason not yet implemented — step 1 removes this marker",
-)
 def test_absent_record_is_reported_with_resolved_path(tmp_path: Path, monkeypatch) -> None:
     """_missing_record_reason must name the resolved directory it checked."""
-    from ship_integrity import _missing_record_reason  # type: ignore[attr-defined]
+    from ship_integrity import _missing_record_reason
 
     proj, vdir, _ = _project_with_record(tmp_path, monkeypatch, body=None)
     sp = _subplan_with_batch_gate(proj)
@@ -100,10 +96,6 @@ def test_absent_record_is_reported_with_resolved_path(tmp_path: Path, monkeypatc
     assert str(vdir) in result
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="WARN RECORD ABSENT path not yet wired — step 1 removes this marker",
-)
 def test_absent_record_is_warn_only_while_not_enforcing(tmp_path: Path, monkeypatch) -> None:
     """While ENFORCE_RECORD_REQUIRED is False, CLI exits 0 with a warning."""
     proj, _, _ = _project_with_record(tmp_path, monkeypatch, body=None)
@@ -112,6 +104,20 @@ def test_absent_record_is_warn_only_while_not_enforcing(tmp_path: Path, monkeypa
     result = _run(sp, proj)
     assert result.returncode == 0
     assert "WARN RECORD ABSENT" in result.stderr
+
+
+def test_absent_record_refuses_when_enforcing(tmp_path: Path, monkeypatch) -> None:
+    """When ENFORCE_RECORD_REQUIRED is True, absent record blocks the ship."""
+    import ship_integrity
+    from ship_integrity import _cli
+
+    monkeypatch.setattr(ship_integrity, "ENFORCE_RECORD_REQUIRED", True)
+    proj, _, _ = _project_with_record(tmp_path, monkeypatch, body=None)
+    sp = _subplan_with_batch_gate(proj)
+
+    # Call _cli directly so the monkeypatch is visible (subprocess won't see it).
+    exit_code = _cli(["--subplan", str(sp), "--gate-passed", "true"])
+    assert exit_code == 1
 
 
 # ── positive controls (green today) ─────────────────────────────────────────
