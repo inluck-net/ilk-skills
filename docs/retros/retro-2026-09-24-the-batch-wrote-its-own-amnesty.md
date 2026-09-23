@@ -98,6 +98,13 @@ narrative ("no parser reads this section"), so today's damage is to the audit
 trail, not the verdict. But the check exists precisely because heredoc
 emptying has hit parsed fields before.
 
+**Correction (same day, measured):** wiring it into the gate would not have
+caught this instance. `has_emptied_record_fields` returns **False** on the
+exact damaged Findings text ("Base SHA:  (parent of first batch commit )."),
+because its signature is list items and `**Field:**` lines only. The real gap
+is broader: nothing stops a hand edit to the *parsed* surface (the header and
+the at-base rows) after the recorder writes it.
+
 ## What went right
 
 - `verify_attribution` refused at 00:06:13 with the right count and names.
@@ -128,8 +135,12 @@ emptying has hit parsed fields before.
    base in any attempt stays attributed. A genuine flake then needs a human,
    which is the template's stated intent ("an attributed row gets a human
    look").
-4. **R4:** `verify_attribution` calls `has_emptied_record_fields` on the
-   record it judges, as part of the gate.
+4. **R4, corrected: the gate verifies the recorder wrote what it reads.** The
+   recorder stores a sha256 of the machine-read surface (everything above
+   `## Findings`) in the history entry. `verify_attribution` recomputes it and
+   refuses on mismatch, so any edit to a row or header after recording is
+   caught. `has_emptied_record_fields` also runs in the gate, for the class it
+   does detect.
 5. **Template:** remove the worker-run integrity snippet (now in the gate).
    State next to rule 1 that an entry added during the batch takes effect
    from the next batch.
