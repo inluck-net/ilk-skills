@@ -1586,7 +1586,7 @@ raise SystemExit(1)
 # is a gate that never ran -- Contract 2b's own distinction.  Neither is green.
 gate_first_results_are_green() {
   local results_file="$1"
-  [[ -s "$results_file" ]] || return 1
+  [[ -s "$results_file" ]] || { echo "  [gate-first] falling through to the agent — results file empty or missing" >&2; return 1; }
   python3 -c '
 import json, sys
 path = sys.argv[1]
@@ -1600,15 +1600,20 @@ try:
             try:
                 recs.append(json.loads(raw))
             except ValueError:
+                print("  [gate-first] falling through to the agent — results file has invalid JSON", file=sys.stderr)
                 raise SystemExit(1)
 except OSError:
+    print("  [gate-first] falling through to the agent — results file unreadable", file=sys.stderr)
     raise SystemExit(1)
 if not recs:
+    print("  [gate-first] falling through to the agent — results file has no records", file=sys.stderr)
     raise SystemExit(1)
 for r in recs:
     if r.get("outcome") != "pass":
+        print("  [gate-first] falling through to the agent — gate not green", file=sys.stderr)
         raise SystemExit(1)
     if not r.get("command"):
+        print("  [gate-first] falling through to the agent — result has no command", file=sys.stderr)
         raise SystemExit(1)
 raise SystemExit(0)
 ' "$results_file"

@@ -302,13 +302,11 @@ class TestAC3NoGateIsUnchanged:
 class TestAC4PlanLint:
     """plan_lint must report HARD for shapes the runtime cannot extract."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_ac2_json_fence_reports_hard(self) -> None:
         findings = lint_gate_extractable(AC2_FIXTURE, "test-ac2-json-fence")
         hard_findings = [f for f in findings if f.startswith("HARD")]
         assert hard_findings, f"AC-4: expected HARD finding for json fence, got {findings}"
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_duplicate_heading_reports_hard(self) -> None:
         findings = lint_gate_extractable(DUPLICATE_HEADING_FIXTURE, "test-duplicate-heading-lint")
         hard_findings = [f for f in findings if f.startswith("HARD")]
@@ -326,7 +324,6 @@ class TestAC4PlanLint:
 class TestAC5PlanPreflight:
     """plan_preflight must report FAIL for a fixture the runtime cannot extract."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_ac2_json_fence_preflight_fails(self, tmp_path: Path) -> None:
         master = tmp_path / "MASTER.md"
         master.write_text(
@@ -344,8 +341,8 @@ class TestAC5PlanPreflight:
             project_root=tmp_path,
             subplan_texts={"test-ac2-json-fence.md": AC2_FIXTURE},
         )
-        fail_findings = [f for f in result.findings if "FAIL" in f and "json" in f.lower()]
-        assert fail_findings, f"AC-5: expected FAIL for json fence, got {result.findings}"
+        fail_findings = [f for f in result.failures if "FAIL" in f and "json" in f.lower()]
+        assert fail_findings, f"AC-5: expected FAIL for json fence, got {result.failures}"
 
 
 # ── AC-6: gate-first says why it falls through ─────────────────────────────
@@ -353,7 +350,6 @@ class TestAC5PlanPreflight:
 class TestAC6GateFirstSaysWhy:
     """gate_first_results_are_green must print the reason on fall-through."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_no_command_prints_reason(self, tmp_path: Path) -> None:
         """A gate result with no `command` key must print the fall-through reason."""
         import subprocess
@@ -364,9 +360,10 @@ class TestAC6GateFirstSaysWhy:
             encoding="utf-8",
         )
         # Call gate_first_results_are_green via the shell function
+        # ILK_DOTSOURCE_ONLY=1 sources the driver without running main.
         proc = subprocess.run(
             ["bash", "-c",
-             f"source '{SCRIPTS_DIR / 'run_ilk_loop_claude.sh'}' 2>/dev/null; "
+             f"ILK_DOTSOURCE_ONLY=1 source '{SCRIPTS_DIR / 'run_ilk_loop_claude.sh'}' 2>/dev/null; "
              f"gate_first_results_are_green '{results_file}'"],
             capture_output=True, text=True, timeout=30,
         )

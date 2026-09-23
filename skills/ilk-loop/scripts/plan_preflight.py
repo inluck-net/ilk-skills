@@ -258,6 +258,41 @@ def _check_gate_executables(
     return findings
 
 
+# ── Step gates extractable ─────────────────────────────────────────────────
+
+
+def _check_step_gates_extract(
+    subplan_texts: dict[str, str],
+) -> list[str]:
+    """AC5: every step that declares local_checks is extractable by the loop's locator.
+
+    Uses :func:`run_local_checks.step_gate_fence` — the same locator the
+    runtime uses — so the preflight and the gate runner always agree.
+    """
+    from run_local_checks import step_gate_fence  # noqa: E811
+
+    findings: list[str] = []
+    step_heading_re = re.compile(r"^###\s+Step\s+(\d+)", re.MULTILINE)
+
+    for slug, text in subplan_texts.items():
+        body = _strip_frontmatter(text)
+        seen_steps: set[int] = set()
+        for shm in step_heading_re.finditer(body):
+            sn = int(shm.group(1))
+            if sn in seen_steps:
+                continue
+            seen_steps.add(sn)
+            gate = step_gate_fence(body, sn)
+            if gate.declares_local_checks and gate.fence_text is None:
+                findings.append(
+                    f"FAIL {slug}: ### Step {sn} declares local_checks in a "
+                    f"shape the runtime locator cannot extract "
+                    f"(e.g. a json fence)."
+                )
+
+    return findings
+
+
 # ── Main entry point ────────────────────────────────────────────────────────
 
 
@@ -300,6 +335,9 @@ def preflight_batch(
 
     # AC4: Gate resolvability.
     result.failures.extend(_check_gate_executables(subplan_texts))
+
+    # AC5: Step gates extractable.
+    result.failures.extend(_check_step_gates_extract(subplan_texts))
 
     return result
 

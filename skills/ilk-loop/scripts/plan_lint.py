@@ -2378,6 +2378,33 @@ def lint_gate_extractable(text: str, slug: str) -> list[str]:
                 f"but the runtime parser extracts 0 commands from it."
             )
 
+    # ── Unified step-gate check (step_gate_fence) ────────────────────────
+    # The per-step yaml regex above only catches ```yaml fences.  A step
+    # that declares local_checks inside a ```json fence (or any other
+    # non-yaml fence) still "declares" a gate the runtime cannot extract.
+    # Use the loop's own locator (step_gate_fence) to find these.
+    # Also flag duplicate headings (heading_count > 1): the locator uses
+    # the LAST match, which may not be the real step.
+    from run_local_checks import step_gate_fence  # noqa: E811
+    step_heading_re = re.compile(r"^###\s+Step\s+(\d+)", re.MULTILINE)
+    seen_steps: set[int] = set()
+    for shm in step_heading_re.finditer(body):
+        sn = int(shm.group(1))
+        if sn in seen_steps:
+            continue
+        seen_steps.add(sn)
+        gate = step_gate_fence(body, sn)
+        if gate.heading_count > 1:
+            findings.append(
+                f"HARD {slug}: ### Step {sn} appears {gate.heading_count} times; "
+                f"the locator uses the last match, which may not be the real step."
+            )
+        if gate.declares_local_checks and gate.fence_text is None:
+            findings.append(
+                f"HARD {slug}: ### Step {sn} declares local_checks in a shape "
+                f"the runtime locator cannot extract (e.g. non-yaml fence)."
+            )
+
     # ── Count mismatch (AC-5) ─────────────────────────────────────────────
     # Count command: lines the body DECLARES in gate blocks via regex,
     # then compare against what the runtime parser actually extracts.

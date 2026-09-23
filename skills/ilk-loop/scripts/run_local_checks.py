@@ -470,7 +470,7 @@ def step_gate_fence(body: str, step_n: int) -> StepGate:
     # Detect any local_checks declaration: YAML list (indented items) or
     # JSON array (opening bracket).  Excludes `local_checks: []` which is
     # a deliberate "no gate" marker.
-    _lc_re = re.compile(r"^\s*['\"]?local_checks['\"]?\s*:\s*(?:\n\s+\S|\[)", re.MULTILINE)
+    _lc_re = re.compile(r"^\s*['\"]?local_checks['\"]?\s*:\s*(?:\n\s+\S|\[(?!\s*\]))", re.MULTILINE)
     declares_local_checks = bool(_lc_re.search(region))
 
     # Scan for fences with open/close tracking.
