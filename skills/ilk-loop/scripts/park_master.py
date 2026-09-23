@@ -37,6 +37,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ilk_paths import find_plans_dir as _resolve_plans_dir  # noqa: E402
 from plan_status import (  # noqa: E402
+    _slug_from_filename,
+    extract_subplan_files,
     normalize_master_status,
     parse_frontmatter,
 )
@@ -46,6 +48,9 @@ PARKED = "blocked"
 # Statuses a park can act on. `shipped` is done, not parked; `draft` is
 # already invisible to the scheduler.
 PARKABLE = {"queued", "active"}
+# --owner-of widens the status filter: the violating master is usually
+# `shipped` at park time because the reconcile runs after.
+OWNER_OF_STATUSES = PARKABLE | {"shipped"}
 
 
 def _yaml_scalar(value: str) -> str:
@@ -109,6 +114,47 @@ def _masters(plans_dir: Path) -> list[tuple[Path, dict]]:
     return rows
 
 
+def _find_owners(
+    plans_dir: Path,
+    slug: str,
+    rows: list[tuple[Path, dict]],
+) -> list[tuple[Path, dict]]:
+    """Return masters whose registry contains a sub-plan matching *slug*.
+
+    A match is: ``plan:`` frontmatter equals *slug*, or the filename-derived
+    slug (date-stripped) equals *slug*.  Status filter is ``OWNER_OF_STATUSES``
+    — wider than ``PARKABLE`` because the violating master is usually
+    ``shipped`` at park time.
+    """
+    out: list[tuple[Path, dict]] = []
+    for path, fm in rows:
+        if normalize_master_status(fm.get("status") or "") not in OWNER_OF_STATUSES:
+            continue
+        try:
+            body = path.read_text(encoding="utf-8-sig")
+        except OSError:
+            continue
+        owns = False
+        for fname in extract_subplan_files(body):
+            # Match by frontmatter plan: slug
+            sp_path = plans_dir / fname
+            if sp_path.is_file():
+                try:
+                    sp_fm = parse_frontmatter(sp_path.read_text(encoding="utf-8-sig"))
+                except OSError:
+                    sp_fm = {}
+                if sp_fm.get("plan", "") == slug:
+                    owns = True
+                    break
+            # Match by filename-derived slug (date-stripped)
+            if _slug_from_filename(fname) == slug:
+                owns = True
+                break
+        if owns:
+            out.append((path, fm))
+    return out
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1].strip())
     ap.add_argument("--project", type=Path, default=Path.cwd(),
@@ -117,6 +163,9 @@ def main(argv: list[str]) -> int:
                     help="explicit plans directory (skips resolution)")
     ap.add_argument("--master", default=None,
                     help="master filename; default = the single parkable one")
+    ap.add_argument("--owner-of", action="append", default=[], dest="owner_of",
+                    help="slug whose owning master to park (repeatable); "
+                         "widens status filter to include shipped")
     ap.add_argument("--reason", default=None, help="why this is parked (recorded)")
     ap.add_argument("--unpark", action="store_true",
                     help="return a parked master to `queued`")
@@ -149,6 +198,48 @@ def main(argv: list[str]) -> int:
                          "parked_reason": fm.get("parked_reason")} for p, fm in rows],
         }, indent=2))
         return 0
+
+    # --owner-of: find and park the master(s) owning the given slug(s).
+    # Widens the status filter to include shipped (the violating master is
+    # usually shipped at park time because reconcile runs after).
+    if a.owner_of:
+        results: list[dict] = []
+        exit_code = 0
+        for slug in a.owner_of:
+            owners = _find_owners(plans_dir, slug, rows)
+            if not owners:
+                results.append({
+                    "error": "no master owns this slug",
+                    "slug": slug,
+                    "masters_searched": [
+                        {"master": p.name,
+                         "status": normalize_master_status(fm.get("status") or "")}
+                        for p, fm in rows],
+                })
+                exit_code = 1
+                continue
+            reason = a.reason or f"owner-of {slug}"
+            when = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+            for target, fm in owners:
+                plan: dict = {
+                    "plans_dir": str(plans_dir),
+                    "master": target.name,
+                    "slug": slug,
+                    "from": normalize_master_status(fm.get("status") or ""),
+                    "to": PARKED,
+                    "reason": reason,
+                    "dry_run": a.dry_run,
+                }
+                if not a.dry_run:
+                    try:
+                        write_status(target, PARKED)
+                        _stamp(target, reason, when)
+                    except Exception as e:  # noqa: BLE001
+                        plan["error"] = f"{type(e).__name__}: {e}"
+                        exit_code = 2
+                results.append(plan)
+        print(json.dumps(results if len(results) != 1 else results[0], indent=2))
+        return exit_code
 
     want = PARKED if a.unpark else None  # unpark looks for blocked; park for parkable
     if a.unpark:

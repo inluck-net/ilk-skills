@@ -96,7 +96,7 @@ def two_masters(tmp_path: Path) -> Path:
 
 # ── AC-1: --owner-of parks the master owning the slug ────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: --owner-of not implemented")
+
 def test_owner_of_parks_the_master_registering_the_slug(
     two_masters: Path,
 ) -> None:
@@ -116,7 +116,7 @@ def test_owner_of_parks_the_master_registering_the_slug(
     assert (two_masters / "MASTER-issue-6396.md").read_bytes() == b_before
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: --owner-of not implemented")
+
 def test_owner_of_includes_shipped_masters(
     two_masters: Path,
 ) -> None:
@@ -131,7 +131,7 @@ def test_owner_of_includes_shipped_masters(
 
 # ── AC-2: --owner-of nobody ⇒ informative failure ────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: --owner-of not implemented")
+
 def test_owner_of_nobody_exits_1_with_slug_and_searched(
     two_masters: Path,
 ) -> None:
@@ -245,7 +245,7 @@ def _build_world_two_masters(root: Path) -> dict:
 
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(strict=True, reason="red-first: --owner-of not implemented")
+
 def test_e2e_violation_parks_the_owning_master(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:

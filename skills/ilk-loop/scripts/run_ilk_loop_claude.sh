@@ -3848,25 +3848,34 @@ print(json.dumps(d))
       SELFMOD_ISOLATED=0
     fi
 
-    if ! test_ship_integrity "$(get_plans_dir)" "$local_checks_results"; then
+    local _si_stderr=""
+    _si_stderr=$(test_ship_integrity "$(get_plans_dir)" "$local_checks_results" 2>&1 1>/dev/null) || {
       stop_reason="ship_integrity_violation"
       iter_stop_reason="ship_integrity_violation"
-      # Park the master instead of leaving it queued.  Without this call
-      # the scheduler re-dispatches the batch immediately — the 13-re-
-      # dispatch cycle measured on kira pv3 2026-09-18.
-      local _violating_slugs=""
-      if [[ -n "$local_checks_results" && -s "$local_checks_results" ]]; then
-        _violating_slugs=$(python3 -c "
-import json, sys
-slugs = [json.loads(l).get('slug','') for l in sys.stdin if l.strip()]
-print(','.join(s for s in slugs if s))
-" < "$local_checks_results" 2>/dev/null) || true
+      # Print the violation details to the runner's stderr so they are
+      # visible in the iteration log (the subshell swallowed them).
+      if [[ -n "$_si_stderr" ]]; then
+        echo "$_si_stderr" >&2
       fi
-      local _park_reason="ship_integrity_violation: run ${RUN_ID} slugs=[${_violating_slugs}]"
-      python3 "${_SKILL_ROOT}/ilk-loop/scripts/park_master.py" \
-        --plans-dir "$(get_plans_dir)" \
-        --reason "$_park_reason" 2>/dev/null || true
-    fi
+      # Park the master that OWNS each violating slug, not whichever
+      # master happens to be the sole queued one.  Without --owner-of the
+      # scheduler parks an unrelated master and re-dispatches the violator
+      # (rezmac 20260923-150625).
+      local _violating_slugs=""
+      _violating_slugs=$(echo "$_si_stderr" | sed -n 's/.*\[ship-integrity VIOLATION\] \([^ :]*\):.*/\1/p' | tr '\n' ' ')
+      if [[ -n "$_violating_slugs" ]]; then
+        local _park_reason="ship_integrity_violation: run ${RUN_ID} slugs=[${_violating_slugs}]"
+        for _slug in $_violating_slugs; do
+          local _park_out
+          _park_out=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/park_master.py" \
+            --plans-dir "$(get_plans_dir)" \
+            --owner-of "$_slug" \
+            --reason "$_park_reason" 2>&1) || {
+            echo "  ! [ship-integrity] park refused for ${_slug}: ${_park_out}" >&2
+          }
+        done
+      fi
+    }
     # After a ship-integrity revert, reconcile the master so it no longer
     # claims "shipped" when a sub-plan was un-shipped.  Without this call,
     # reconcile_master_status (now symmetric) is never reached and the
