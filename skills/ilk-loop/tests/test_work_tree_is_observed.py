@@ -339,3 +339,103 @@ def test_invalid_work_tree_stops_the_run(
     assert not gate_rows, (
         f"gate ran despite invalid work_tree: {gate_rows}.\n{tail}"
     )
+
+
+# ── Unit tests for resolve_work_tree ─────────────────────────────────────────
+
+sys.path.insert(0, str(_REPO / "skills" / "ilk-loop" / "scripts"))
+from work_tree import resolve_work_tree  # noqa: E402
+
+
+class TestResolveWorkTree:
+    """Unit tests for the resolver module."""
+
+    def _make_plans(self, tmp_path: Path, work_tree: str | None = None) -> tuple[Path, Path]:
+        """Create a minimal plans dir with one master and return (plans_dir, clone)."""
+        clone = tmp_path / "clone"
+        clone.mkdir()
+        subprocess.run(["git", "init"], cwd=clone, check=True,
+                       capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
+        (clone / "README.md").write_text("x\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=clone, check=True,
+                       capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
+        subprocess.run(["git", "-c", "user.email=t@t.com", "-c", "user.name=t",
+                        "commit", "-m", "init"], cwd=clone, check=True,
+                       capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
+
+        plans = tmp_path / "plans"
+        plans.mkdir()
+        wt_line = f"work_tree: {work_tree}\n" if work_tree else ""
+        (plans / "MASTER-test.md").write_text(
+            "---\ntitle: test\nstatus: active\n"
+            f"{wt_line}"
+            "---\n\n# test\n",
+            encoding="utf-8",
+        )
+        return plans, clone
+
+    def test_absent_work_tree_returns_none(self, tmp_path: Path) -> None:
+        plans, clone = self._make_plans(tmp_path)
+        result = resolve_work_tree(plans, clone)
+        assert result["path"] is None
+        assert result["error"] is None
+
+    def test_valid_sibling_worktree(self, tmp_path: Path) -> None:
+        plans, clone = self._make_plans(tmp_path)
+        sibling = tmp_path / "sibling"
+        subprocess.run(
+            ["git", "worktree", "add", str(sibling), "-b", "work"],
+            cwd=clone, check=True, capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+        )
+        result = resolve_work_tree(plans, sibling)
+        # Need to re-create plans with the sibling path.
+        (plans / "MASTER-test.md").write_text(
+            "---\ntitle: test\nstatus: active\n"
+            f"work_tree: {sibling}\n"
+            "---\n\n# test\n",
+            encoding="utf-8",
+        )
+        result = resolve_work_tree(plans, clone)
+        assert result["path"] == str(sibling)
+        assert result["error"] is None
+
+    def test_missing_dir_returns_error(self, tmp_path: Path) -> None:
+        plans, clone = self._make_plans(tmp_path, "/nonexistent/path")
+        result = resolve_work_tree(plans, clone)
+        assert result["path"] is None
+        assert "does not exist" in result["error"]
+
+    def test_relative_path_returns_error(self, tmp_path: Path) -> None:
+        plans, clone = self._make_plans(tmp_path, "relative/path")
+        result = resolve_work_tree(plans, clone)
+        assert result["path"] is None
+        assert "not absolute" in result["error"]
+
+    def test_unrelated_repo_returns_error(self, tmp_path: Path) -> None:
+        plans, clone = self._make_plans(tmp_path)
+        unrelated = tmp_path / "unrelated"
+        unrelated.mkdir()
+        subprocess.run(["git", "init"], cwd=unrelated, check=True,
+                       capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
+        (unrelated / "README.md").write_text("x\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=unrelated, check=True,
+                       capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
+        subprocess.run(["git", "-c", "user.email=t@t.com", "-c", "user.name=t",
+                        "commit", "-m", "init"], cwd=unrelated, check=True,
+                       capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
+        (plans / "MASTER-test.md").write_text(
+            "---\ntitle: test\nstatus: active\n"
+            f"work_tree: {unrelated}\n"
+            "---\n\n# test\n",
+            encoding="utf-8",
+        )
+        result = resolve_work_tree(plans, clone)
+        assert result["path"] is None
+        assert "git-common-dir" in result["error"]
