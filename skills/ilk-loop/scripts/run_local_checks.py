@@ -454,6 +454,15 @@ def extract_step_local_checks(body: str, step_n: int) -> list[dict]:
     return parse_local_checks_block(fence.group(1))
 
 
+def step_declared_timeout(body: str, step_n: int) -> int:
+    """Sum of ``timeout:`` over step N's declared checks (0 when none declare one).
+
+    Same parser as the gate runner, so the driver's outer cap and the gate
+    it bounds read the same declaration.
+    """
+    return sum(int(c.get("timeout") or 0) for c in extract_step_local_checks(body, step_n))
+
+
 def count_step_local_checks_items(body: str, step_n: int) -> int:
     """Item count for a per-step fence — the step-scoped twin of
     :func:`count_local_checks_items`."""

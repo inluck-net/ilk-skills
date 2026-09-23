@@ -1439,22 +1439,18 @@ get_step_declared_timeout() {
   for f in "$plans_dir"/*.md; do
     [[ -f "$f" ]] || continue
     local plan_slug
-    plan_slug=$(grep -m1 '^plan:' "$f" 2>/dev/null | sed 's/^plan:\s*//')
+    plan_slug=$(grep -m1 '^plan:' "$f" 2>/dev/null | sed 's/^plan:[[:space:]]*//')
     if [[ "$plan_slug" == "$slug" ]]; then
       # Extract step heading → fenced yaml → timeout: values
       local sum
-      sum=$(awk -v step="$step" '
-        BEGIN { in_step=0; in_fence=0; in_lc=0; sum=0 }
-        /^### Step / && $3 == step { in_step=1; next }
-        /^### Step / && in_step { in_step=0 }
-        in_step && /^```/ { in_fence=!in_fence; next }
-        in_fence && /^local_checks:/ { in_lc=1; next }
-        in_fence && in_lc && /^\s*( - )?timeout:\s*[0-9]+/ {
-          match($0, /timeout:\s*([0-9]+)/, a); sum += a[1]
-        }
-        in_fence && in_lc && /^[^ ]/ && !/^\s/ { in_lc=0 }
-        END { print sum+0 }
-      ' "$f" 2>/dev/null)
+      sum=$(python3 -c '
+import sys
+sys.path.insert(0, sys.argv[3])
+import run_local_checks as r
+_, body = r.split_frontmatter(r.read_text(__import__("pathlib").Path(sys.argv[1])))
+print(r.step_declared_timeout(body, int(sys.argv[2])))
+' "$f" "$step" "${_SKILL_ROOT}/ilk-loop/scripts" 2>/dev/null) || sum=0
+      [[ "$sum" =~ ^[0-9]+$ ]] || sum=0
       echo "$sum"
       return
     fi

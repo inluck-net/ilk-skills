@@ -68,7 +68,6 @@ def _source_fns(*names: str) -> str:
 # ── Defect A: timeout summing under macOS awk ────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="macOS awk lacks 3-arg match(); prints empty string")
 def test_declared_timeouts_are_summed_under_system_awk(tmp_path: Path):
     """get_step_declared_timeout must sum timeout: values under /usr/bin/awk."""
     # Build a fake skill root with a resolver that prints the plans dir.
@@ -130,12 +129,10 @@ def test_timeoutless_gate_sums_to_zero(tmp_path: Path):
     assert result.stdout.strip() == "0", f"got {result.stdout.strip()!r}"
 
 
-@pytest.mark.xfail(strict=True, reason="step_declared_timeout does not exist yet")
 def test_step_declared_timeout_pure():
     """The pure Python function sums timeouts correctly."""
-    # This import will fail until step 1 adds the function.
-    import importlib
-    rlc = importlib.import_module("run_local_checks")
+    sys.path.insert(0, str(_SCRIPTS))
+    import run_local_checks as rlc
     body = (
         "### Step 0\n\n```yaml\nlocal_checks:\n"
         "  - command: echo ok\n    timeout: 900\n  - command: echo ok\n    timeout: 30\n```\n"
