@@ -463,6 +463,35 @@ def step_declared_timeout(body: str, step_n: int) -> int:
     return sum(int(c.get("timeout") or 0) for c in extract_step_local_checks(body, step_n))
 
 
+#: Default per-check timeout when a gate item declares none.  Used by both
+#: :func:`run_one` (its ``default_timeout`` signature default) and
+#: :func:`gate_declared_timeout` (to count undeclared checks), so the driver's
+#: cap and the runner's own budget agree on what an undeclared check costs.
+DEFAULT_CHECK_TIMEOUT_S = 120
+
+
+def gate_declared_timeout(body: str, step_n: int) -> int:
+    """Total declared budget the helper *actually* executes for step ``step_n``.
+
+    The helper (:func:`run_one` loop in ``main``) runs BOTH the frontmatter
+    ``local_checks`` block and the per-step block, sequentially.  This
+    function sums their declared timeouts — exactly the pair the helper
+    executes — so the driver's outer cap matches the helper's real budget.
+
+    Each check contributes its declared ``timeout`` if present, else
+    :data:`DEFAULT_CHECK_TIMEOUT_S` (the same value :func:`run_one` uses).
+    """
+    fm_text, body_text = split_frontmatter(body)
+    fm_checks = parse_local_checks_block(fm_text)
+    step_checks = extract_step_local_checks(body_text, step_n)
+    total = 0
+    for c in fm_checks:
+        total += int(c.get("timeout") or DEFAULT_CHECK_TIMEOUT_S)
+    for c in step_checks:
+        total += int(c.get("timeout") or DEFAULT_CHECK_TIMEOUT_S)
+    return total
+
+
 def count_step_local_checks_items(body: str, step_n: int) -> int:
     """Item count for a per-step fence — the step-scoped twin of
     :func:`count_local_checks_items`."""
@@ -578,7 +607,8 @@ def _read_path_prelude(project: Path) -> str:
     return ""
 
 
-def run_one(check: dict, scope: str, project: Path, default_timeout: int = 120) -> CheckResult:
+def run_one(check: dict, scope: str, project: Path,
+            default_timeout: int = DEFAULT_CHECK_TIMEOUT_S) -> CheckResult:
     cmd = check.get("command", "")
     timeout = int(check.get("timeout", default_timeout))
     if not cmd:

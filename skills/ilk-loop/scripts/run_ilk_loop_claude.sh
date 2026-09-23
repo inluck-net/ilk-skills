@@ -1455,9 +1455,9 @@ print(json.dumps({
   echo "[runner] finalize_sentinel: wrote terminal state (interrupted)" >&2
 }
 
-# Read declared per-check timeout(s) from a sub-plan step's local_checks.
-# Mirrors the PowerShell Get-StepDeclaredTimeout; returns sum of timeout:
-# values or 0 if not found.
+# Read declared per-check timeout(s) from a sub-plan step's local_checks,
+# including frontmatter checks.  Mirrors the PowerShell
+# Get-StepDeclaredTimeout; returns sum of timeout: values or 0 if not found.
 get_step_declared_timeout() {
   local project="$1" slug="$2" step="$3"
   local resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
@@ -1473,14 +1473,16 @@ get_step_declared_timeout() {
     local plan_slug
     plan_slug=$(grep -m1 '^plan:' "$f" 2>/dev/null | sed 's/^plan:[[:space:]]*//')
     if [[ "$plan_slug" == "$slug" ]]; then
-      # Extract step heading → fenced yaml → timeout: values
+      # Extract total declared budget (frontmatter + step checks).
+      # gate_declared_timeout does its own split_frontmatter, so pass
+      # the full file text — not the body-only output of split_frontmatter.
       local sum
       sum=$(python3 -c '
 import sys
 sys.path.insert(0, sys.argv[3])
 import run_local_checks as r
-_, body = r.split_frontmatter(r.read_text(__import__("pathlib").Path(sys.argv[1])))
-print(r.step_declared_timeout(body, int(sys.argv[2])))
+text = r.read_text(__import__("pathlib").Path(sys.argv[1]))
+print(r.gate_declared_timeout(text, int(sys.argv[2])))
 ' "$f" "$step" "${_SKILL_ROOT}/ilk-loop/scripts" 2>/dev/null) || sum=0
       [[ "$sum" =~ ^[0-9]+$ ]] || sum=0
       echo "$sum"

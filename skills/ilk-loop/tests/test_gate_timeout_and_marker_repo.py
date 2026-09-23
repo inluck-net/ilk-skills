@@ -126,7 +126,10 @@ def test_timeoutless_gate_sums_to_zero(tmp_path: Path):
         ["bash", "-c", script], capture_output=True, text=True, env=env, timeout=30,
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
-    assert result.stdout.strip() == "0", f"got {result.stdout.strip()!r}"
+    # An undeclared timeout counts as the runner's default (120), not 0.
+    # Judgment call in a-gate-is-bounded-by-what-it-declares: the cap must
+    # never kill a check before the runner's own timeout would.
+    assert result.stdout.strip() == "120", f"got {result.stdout.strip()!r}"
 
 
 def test_step_declared_timeout_pure():

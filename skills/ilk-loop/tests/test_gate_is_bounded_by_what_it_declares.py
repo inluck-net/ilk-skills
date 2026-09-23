@@ -27,6 +27,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from unittest.mock import patch
+
 import pytest
 
 _TESTS = Path(__file__).resolve().parent
@@ -91,8 +93,12 @@ def _make_master(plans: Path, stem: str, slug: str) -> None:
 
 
 def _build_world(root: Path, *, fm_checks: str = "", step_body: str = "",
-                 status: str = "in-progress") -> dict:
-    """A project + isolated data home for one iteration."""
+                 status: str = "shipped") -> dict:
+    """A project + isolated data home for one iteration.
+
+    Default status is ``shipped`` (matching ``test_red_gate_stops_the_run``):
+    the stub agent just needs to land a trailered commit, not change status.
+    """
     project = root / "project"
     (project / "docs").mkdir(parents=True)
     _git(project.parent, "init", "-q", str(project))
@@ -102,9 +108,7 @@ def _build_world(root: Path, *, fm_checks: str = "", step_body: str = "",
 
     data_home = root / ".ilk-data"
     import ilk_paths
-    with __import__("unittest.mock").patch.dict(
-        os.environ, {"ILK_DATA_HOME": str(data_home)}, clear=False
-    ):
+    with patch.dict(os.environ, {"ILK_DATA_HOME": str(data_home)}, clear=False):
         key = ilk_paths.project_key(project)
     plans = data_home / "projects" / key / "plans"
     _make_master(plans, "2026-09-23-test-slug", "test-slug")
@@ -117,7 +121,25 @@ def _build_world(root: Path, *, fm_checks: str = "", step_body: str = "",
     )
 
     return {"project": project, "plans": plans, "data_home": data_home,
-            "key": key}
+            "key": key, "bin": root / "bin"}
+
+
+def _make_stub(root: Path, world: dict, *,
+               stub_script: str | None = None) -> None:
+    """Create the stub ``claude`` binary in the world's bin dir."""
+    bin_dir = world["bin"]
+    bin_dir.mkdir(exist_ok=True)
+    stub = bin_dir / "claude"
+    if stub_script is None:
+        # Default: land a trailered commit so gate discovery finds the slug.
+        stub_script = (
+            "#!/usr/bin/env bash\n"
+            "git -c user.email=t@example.com -c user.name=t commit -q "
+            "--allow-empty -m 'feat: the work [plan:test-slug#step-0]'\n"
+            "echo 'stub agent done'\n"
+        )
+    stub.write_text(stub_script, encoding="utf-8")
+    stub.chmod(0o755)
 
 
 def _run_iteration(world: dict, root: Path,
@@ -127,18 +149,11 @@ def _run_iteration(world: dict, root: Path,
         "HOME": str(root),
         "ILK_DATA_HOME": str(world["data_home"]),
         "ILK_SKILL_HOME": str(_REPO / "skills"),
-        "PATH": os.environ.get("PATH", ""),
+        "PATH": f"{world['bin']}{os.pathsep}{os.environ.get('PATH', '')}",
         "CLAUDE_CONFIG_DIR": str(root / ".claude"),
     }
     env.pop("ILK_DATA_DIR", None)
     (root / ".claude").mkdir(exist_ok=True)
-
-    bin_dir = root / "bin"
-    bin_dir.mkdir(exist_ok=True)
-    stub = bin_dir / "claude"
-    stub.write_text("#!/usr/bin/env bash\necho 'stub agent: noop'\n", encoding="utf-8")
-    stub.chmod(0o755)
-    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
 
     cmd = [
         "bash", str(_RUNNER),
@@ -158,7 +173,6 @@ def _run_iteration(world: dict, root: Path,
 
 # ── AC-1: gate_declared_timeout sums frontmatter + step ─────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: #41 — gate_declared_timeout does not exist yet")
 class TestAC1GateDeclaredTimeout:
 
     def test_sums_two_frontmatter_timeouts_no_step(self, tmp_path: Path) -> None:
@@ -213,7 +227,6 @@ class TestAC1GateDeclaredTimeout:
 
 # ── AC-2: frontmatter-only gate within declared timeout passes ──────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: #41 — cap does not count frontmatter yet")
 @_NeedsGtimeout
 @_SLOW
 class TestAC2FrontmatterGatePasses:
@@ -229,36 +242,27 @@ class TestAC2FrontmatterGatePasses:
             "  - command: \"sleep 8 && true\"\n"
             "    timeout: 30\n"
         )
-        world = _build_world(tmp_path, fm_checks=fm_checks)
+        world = _build_world(tmp_path, fm_checks=fm_checks, status="in-progress")
+        _make_stub(tmp_path, world)
         result = _run_iteration(world, tmp_path,
                                 extra_args=["--local-checks-timeout-sec", "5"])
 
-        # The gate should have run and passed — look in the local_checks JSONL.
-        lc_results = list((tmp_path / ".claude").glob("**/local_checks*.jsonl"))
-        if not lc_results:
-            # Fallback: search the data home for results files
-            lc_results = list(world["data_home"].rglob("local_checks*.jsonl"))
-
-        assert lc_results, (
-            f"no local_checks results file found. stderr={result.stderr[-500:]}"
+        # The gate should have run and passed.  The driver prints
+        # [local_checks OK] <slug> step <N> -> pass  cmd: <command>
+        # on a green gate, or INCONCLUSIVE / FAIL on a red one.
+        # The results file is a temp file deleted after the iteration, so
+        # we check the driver's stdout instead.
+        output = result.stdout + result.stderr
+        assert "[local_checks OK] test-slug step 0 -> pass" in output, (
+            "the frontmatter gate should have passed. "
+            f"cap = max(30+60, 5) = 90s covers the 8s sleep.\n"
+            f"output={output[-500:]}"
         )
-
-        records = []
-        for f in lc_results:
-            for line in f.read_text().splitlines():
-                line = line.strip()
-                if line:
-                    records.append(json.loads(line))
-
-        gate_outcomes = [r.get("outcome") for r in records
-                         if r.get("slug") == "test-slug"]
-        assert gate_outcomes, (
-            f"no gate record for test-slug in {records}. "
-            f"stderr={result.stderr[-500:]}"
-        )
-        assert gate_outcomes[0] == "pass", (
-            f"expected pass, got {gate_outcomes[0]}. "
-            f"The frontmatter timeout: 30 should cover the 8s sleep."
+        # Verify it was NOT inconclusive
+        assert "INCONCLUSIVE" not in output, (
+            "the gate should not be inconclusive — the frontmatter timeout "
+            "should cover the sleep.\n"
+            f"output={output[-500:]}"
         )
 
 
@@ -292,15 +296,12 @@ class TestAC3CapKillRevertsSelfShip:
             "  - command: \"echo gate\"\n"
             "    timeout: 1\n"
         )
-        world = _build_world(tmp_path, fm_checks=fm_checks)
+        # Start at in-progress; the stub ships in-iteration.
+        world = _build_world(tmp_path, fm_checks=fm_checks, status="in-progress")
 
         # The stub agent sets the sub-plan shipped before the gate runs.
-        # Write a stub that marks it shipped.
-        bin_dir = tmp_path / "bin"
-        bin_dir.mkdir(exist_ok=True)
-        stub = bin_dir / "claude"
         plans = world["plans"]
-        stub.write_text(
+        _make_stub(tmp_path, world, stub_script=(
             "#!/usr/bin/env bash\n"
             f"SP={str(plans / '2026-09-23-test-slug.md')!r}\n"
             "python3 - \"$SP\" <<'EOP'\n"
@@ -312,10 +313,8 @@ class TestAC3CapKillRevertsSelfShip:
             "EOP\n"
             "git -c user.email=t@example.com -c user.name=t commit -q "
             "--allow-empty -m 'feat: the work [plan:test-slug#step-0]'\n"
-            "echo 'stub agent done'\n",
-            encoding="utf-8",
-        )
-        stub.chmod(0o755)
+            "echo 'stub agent done'\n"
+        ))
 
         result = _run_iteration(
             world, tmp_path,
