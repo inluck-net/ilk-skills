@@ -653,6 +653,11 @@ per-step `local_checks` yaml block. Warn on each occurrence:
   step 1 so the first step ends in a constructive commit, or give
   step 0 a concrete artifact + `local_checks` it must produce. This
   check reads each sub-plan's step structure, not just `local_checks`.
+- **Red-first step 0 whose per-step gate demands green** (`plan_lint`:
+  `lint_redfirst_step0_per_step_gate_demands_green`) — a red-first step 0
+  whose per-step gate runs its own test file with exit-0 semantics is
+  required to fail. Either mark the pins `@pytest.mark.xfail(strict=True)`
+  (preferred) or assert the red count with a grep gate.
 - **per-file-only gate on a shared module** — a `local_check` that runs
   only the new file's tests while the change touches a shared/imported
   module hides integration + test-state-leak bugs (decomposition-principles

@@ -291,15 +291,22 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   Real case: gh-resolve `a-terminal-run-keeps-its-unshipped-commits` step 0,
   commit `b0b129b` — body reads "Red-first: 4 failed, 2 passed of 6 tests",
   yet `current_step` advanced to 3 with `--run-local-checks` active.
-  **Fix:** gate on the **red count** instead of exit 0.  A command that greps
-  the pytest summary for the expected failure count asserts something *true*
-  about the red state, catches drift (fewer or more failures), and uses
-  standard exit-code semantics:
+  **Preferred fix:** mark the pins `@pytest.mark.xfail(strict=True, reason="...")`.
+  The gate stays a plain `pytest <file> -q`, and `strict=True` makes the pin
+  fail (XPASS) the moment the fix lands, so it cannot outlive its purpose.
+  **Alternative:** gate on the **red count** instead of exit 0.  A command
+  that greps the pytest summary for the expected failure count asserts
+  something *true* about the red state, catches drift (fewer or more
+  failures), and uses standard exit-code semantics:
   `python3 -m pytest tests/test_foo.py -q 2>&1 | tail -5 | grep -q '4 failed'`.
   The rejected alternative (`expected_red` marker that inverts the gate's
   meaning) was not chosen because it adds no information — the gate still
   runs the same command, it just flips the pass/fail interpretation without
   asserting anything about the actual red state.
+  `plan_lint` (`lint_redfirst_step0_per_step_gate_demands_green`) now emits a
+  HARD finding when a red-first step 0's per-step gate runs its own test file
+  with exit-0 semantics and neither instructs `xfail(strict=True)` nor asserts
+  a failure count.
 
   **And keep the red out of the frontmatter gate's scope.** Frontmatter
   `local_checks` run at every step (see the note opening this section), so a

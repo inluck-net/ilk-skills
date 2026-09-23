@@ -235,19 +235,25 @@ local_checks:
   `git commit --allow-empty -m "..."` to satisfy ship_integrity.
 
 > **Red-first step-0 rule.** If this step's purpose is to *record* failing
-> tests (the gate command is designed to exit non-zero), the gate MUST assert
-> the **red count**, not exit 0. A gate that checks `exit 0` on a step
-> designed to fail always fails and blocks the loop — the agent has already
-> committed before the gate fires. Instead, grep the pytest summary for the
-> expected failure count:
+> tests (the gate command is designed to exit non-zero), the gate MUST NOT
+> demand exit 0.  **Preferred:** mark the pins with `@pytest.mark.xfail(strict=True)`
+> — the gate stays a plain `pytest <file> -q`, and `strict=True` makes the pin
+> fail (XPASS) the moment the fix lands, so it cannot outlive its purpose:
+> ```python
+> @pytest.mark.xfail(strict=True, reason="reproduces the bug")
+> def test_the_bug():
+>     ...
+> ```
+> **Alternative:** gate on the red count instead of exit 0 — grep the pytest
+> summary for the expected failure count:
 > ```yaml
 > local_checks:
 >   - command: "python3 -m pytest tests/test_foo.py -q 2>&1 | tail -5 | grep -q '4 failed'"
 >     timeout: 300
 > ```
-> This asserts something *true*: the expected number of tests failed. It
-> catches drift (fewer or more failures than expected) and uses standard
-> exit-code semantics. See decomposition-principles.md §8 for the full rule.
+> `plan_lint` (`lint_redfirst_step0_per_step_gate_demands_green`) rejects a
+> red-first step 0 whose per-step gate runs its own test file with exit-0
+> semantics. See decomposition-principles.md §8 for the full rule.
 
 ### Step 1 — <short title>
 - <bullet>
