@@ -4093,6 +4093,89 @@ def lint_no_diff_step(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── gate_first requires a gate ────────────────────────────────────────────────
+#
+# A step may declare ``gate_first: true`` beside its ``local_checks`` in the
+# per-step yaml fence; the driver then runs that gate BEFORE dispatching an
+# agent (``attempt_gate_first_fast_path``).  A marker with no gate beside it
+# promises a fast path that can never fire: ``gate_first_results_are_green``
+# requires at least one pass record naming a command, so zero declared checks
+# always falls through to the agent.  The marker is read from the step's fence
+# only (``step_declares_gate_first``, run_ilk_loop_claude.sh:1519-1552) — a
+# frontmatter marker is not read, and the unit is the step.
+#
+# "Has a gate" is decided by ``run_local_checks.parse_local_checks_block`` — the
+# same runtime parser the driver uses, and the oracle ``lint_gate_extractable``
+# already trusts.  Empty, absent, and ``local_checks: []`` all extract 0
+# commands and are therefore all findings.  A command with no ``timeout:`` is a
+# real gate (gh-resolve's ``handoff.py:422-499`` omits ``timeout:`` when it has
+# no basis — omission is honest, a default is a lie) and must stay silent.
+
+_GATE_FIRST_MARKER_RE = re.compile(r"gate_first:\s*(true|yes|1)\s*$", re.IGNORECASE)
+
+
+def _step_first_yaml_fence(body: str, step_no: int) -> str | None:
+    """Text of *step_no*'s first fenced block, or None if there is none.
+
+    Mirrors the driver's window exactly — ``step_declares_gate_first``
+    (run_ilk_loop_claude.sh:1519-1552) reads ONE fence per step: the first
+    ``` block after the ``### Step N`` heading, ending at the next ``### ``
+    heading.  A marker or gate outside that window is invisible to the
+    runtime, so it must not count here either.
+    """
+    pat = re.compile(
+        r"^###\s+Step\s+" + re.escape(str(step_no)) + r"(?![0-9])", re.MULTILINE
+    )
+    m = pat.search(body)
+    if not m:
+        return None
+    after = body[m.end():]
+    next_heading = re.search(r"^###\s+", after, re.MULTILINE)
+    region = after[: next_heading.start()] if next_heading else after
+    fence = re.search(
+        r"^```(?:yaml|yml)?\s*\n(.*?)^```", region, re.MULTILINE | re.DOTALL
+    )
+    return fence.group(1) if fence else None
+
+
+def lint_gate_first_requires_a_gate(text: str, slug: str) -> list[str]:
+    """HARD when a step declares ``gate_first: true`` but no extractable gate.
+
+    AC-1: ``gate_first: true`` with absent ``local_checks`` → HARD finding.
+    AC-2: ``gate_first: true`` beside ``local_checks: []`` → HARD finding.
+    AC-3: ``gate_first: true`` beside a real gate command → no finding.
+    AC-4: a timeout-less gate (command, no ``timeout:``) is a gate → no finding.
+    AC-5: registered in ALL_CHECKS.
+    """
+    findings: list[str] = []
+    body = _strip_frontmatter(text)
+    for step_no, heading, _section in _extract_step_sections(body):
+        fence = _step_first_yaml_fence(body, step_no)
+        if fence is None:
+            continue
+        marker = False
+        for line in fence.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if _GATE_FIRST_MARKER_RE.match(stripped):
+                marker = True
+                break
+        if not marker:
+            continue
+        if parse_local_checks_block(fence):
+            continue  # a real gate beside the marker
+        findings.append(
+            f"HARD {slug}: {heading} declares gate_first: true but its "
+            f"local_checks gate is empty or absent — a gate_first step with "
+            f"nothing to run can never take the fast path (the driver needs "
+            f"at least one pass record naming a command) and always falls "
+            f"through to the agent. Declare a real local_checks command "
+            f"beside the marker, or drop gate_first."
+        )
+    return findings
+
+
 ALL_CHECKS = (
     lint_gate_budget,
     lint_verification_attribution_unmeasured,
@@ -4121,6 +4204,7 @@ ALL_CHECKS = (
     lint_gate_executable_on_driver_path,
     lint_gate_placeholder_unresolved,
     lint_redfirst_step0_under_frontmatter_gate,
+    lint_gate_first_requires_a_gate,
     lint_no_diff_step,
     lint_exit_status_discarded,
     lint_broken_process_wait,

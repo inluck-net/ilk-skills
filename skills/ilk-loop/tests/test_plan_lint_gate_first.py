@@ -19,16 +19,15 @@ and are therefore all findings; a command with no ``timeout:`` is a real gate
 (gh-resolve's ``handoff.py:422-499`` omits ``timeout:`` when it has no basis —
 omission is honest, a default is a lie) and must stay silent.
 
-**Red-first under a per-step gate.**  This file is step 0's own gate, and the
-check does not exist yet.  Every pin that asserts the finding fires is marked
-``xfail(strict=True)`` so the gate is green while the defect stands.  When
-step 1 lands the lint, those pins XPASS, ``strict=True`` turns that into a
-failure, and step 1's gate forces the marker off — the pin cannot silently
-outlive its purpose.  Step 1 must DELETE the marker, not loosen it.
+**Red-first under a per-step gate — markers removed by step 1.**  Step 0 wrote
+the pins as ``xfail(strict=True)`` so the gate could be green while the check
+did not exist.  Step 1 landed ``lint_gate_first_requires_a_gate`` and DELETED
+those markers (not loosened to ``strict=False``): with the fix in place they
+would XPASS and ``strict=True`` would fail the gate.
 
-The negative controls carry no marker: they must pass today and after.  That
-is deliberate — if they were xfail, a lint that wrongly fires on a healthy
-gate would be reported as an expected failure and step 1 could ship broken.
+The negative controls never carried a marker.  That is deliberate — if they
+were xfail, a lint that wrongly fires on a healthy gate would be reported as
+an expected failure and the fix could ship broken.
 """
 from __future__ import annotations
 
@@ -101,20 +100,13 @@ def _gate_first_findings(findings: list[str]) -> list[str]:
     return [f for f in findings if "gate_first" in f.lower()]
 
 
-# ── Red-first pins: the finding must fire ───────────────────────────────────
+# ── Pins: the finding must fire ─────────────────────────────────────────────
 #
-# Both shapes the sub-plan names — empty AND absent — are findings.  Marked
-# xfail(strict=True) because the check does not exist yet; step 1 removes the
-# marker.
+# Both shapes the sub-plan names — empty AND absent — are findings.  Written
+# red-first in step 0 as xfail(strict=True); step 1 landed the lint and deleted
+# the markers.
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "plan_lint has no gate_first-requires-a-gate check — "
-        "step 1 of the-verification-template-declares-gate-first removes this marker"
-    ),
-)
 def test_gate_first_with_absent_local_checks_is_a_hard_finding(tmp_path: Path) -> None:
     """A step declaring ``gate_first: true`` and no ``local_checks`` key at all."""
     findings = _lint(
@@ -130,13 +122,6 @@ def test_gate_first_with_absent_local_checks_is_a_hard_finding(tmp_path: Path) -
     assert any("HARD" in f for f in gf), f"finding must be HARD, got {gf!r}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "plan_lint has no gate_first-requires-a-gate check — "
-        "step 1 of the-verification-template-declares-gate-first removes this marker"
-    ),
-)
 def test_gate_first_with_empty_local_checks_is_a_hard_finding(tmp_path: Path) -> None:
     """A step declaring ``gate_first: true`` beside ``local_checks: []``."""
     findings = _lint(
