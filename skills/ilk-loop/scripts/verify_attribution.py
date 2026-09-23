@@ -45,6 +45,8 @@ Two subtleties, both learned by getting them wrong (2026-09-15):
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import re
 import sys
 from pathlib import Path
@@ -334,6 +336,89 @@ def attributed_rows(rows: list[list[str]]) -> list[list[str]]:
     return bad
 
 
+def _compute_record_digest(text: str) -> str:
+    """SHA-256 of the machine-readable surface (everything above ``## Findings``).
+
+    Must match the recorder's ``_compute_record_digest`` exactly.
+    """
+    surface = text.split("## Findings")[0] if "## Findings" in text else text
+    return hashlib.sha256(surface.encode("utf-8")).hexdigest()
+
+
+def _history_path(record_path: Path) -> Path:
+    """Return the history file path for a record."""
+    return record_path.with_suffix(".history.jsonl")
+
+
+def _read_history(record_path: Path) -> list[dict]:
+    """Read the history file for a record.  Returns [] if missing."""
+    hist = _history_path(record_path)
+    if not hist.is_file():
+        return []
+    entries: list[dict] = []
+    for line in hist.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    return entries
+
+
+def _check_history(record_path: Path, text: str, current_failed: int,
+                   current_nodes: set[str]) -> None:
+    """Verify attempt history (R3/R4).
+
+    Raises VerificationError if:
+    - The record claims ``attempt: N`` (N>=2) but history file is missing (R4)
+    - The latest history entry's digest doesn't match the record (R4)
+    - Previous attempts had failures not in the current record (R3)
+
+    ``current_nodes`` is the set of node ids in the current record's at-base
+    table (for non-zero failure records).
+    """
+    import re as _re
+    attempt_m = _re.search(r"^attempt:\s*(\d+)", text, _re.MULTILINE)
+    if not attempt_m:
+        return  # No attempt header — legacy record, skip history check.
+    attempt = int(attempt_m.group(1))
+
+    history = _read_history(record_path)
+
+    if attempt >= 2 and not history:
+        raise VerificationError(
+            f"record claims attempt {attempt} but history file is missing: "
+            f"{_history_path(record_path)}. A retry that erases its own "
+            f"evidence is refused."
+        )
+
+    if history:
+        latest = history[-1]
+        current_digest = _compute_record_digest(text)
+        if latest.get("digest") != current_digest:
+            raise VerificationError(
+                f"record digest mismatch: gate computed {current_digest[:16]}… "
+                f"but history says {latest.get('digest', '?')[:16]}…. "
+                f"The record was edited after recording."
+            )
+
+    # R3: carry forward failures from previous attempts.
+    # If any historical failure is NOT in the current record's table, it was
+    # "fixed" without being measured — the attribution must persist.
+    if history:
+        all_historical: set[str] = set()
+        for entry in history:
+            all_historical.update(entry.get("failing_nodes", []))
+        missing = all_historical - current_nodes
+        if missing:
+            raise VerificationError(
+                f"{len(missing)} failure(s) from previous attempt(s) "
+                f"still attributed: {', '.join(sorted(missing))}. "
+                f"A retry cannot erase an attribution."
+            )
+
+
 def verify(record_path: Path) -> tuple[str, int]:
     """Raise VerificationError unless the record establishes a clean batch.
 
@@ -363,6 +448,10 @@ def verify(record_path: Path) -> tuple[str, int]:
         )
 
     rows = parse_rows(section)
+
+    # R3/R4: check attempt history before attribution.
+    current_nodes = {r[0] for r in rows if r}
+    _check_history(record_path, text, failed, current_nodes)
 
     if failed == 0:
         # excused_count is the number of failures the record accounted for and

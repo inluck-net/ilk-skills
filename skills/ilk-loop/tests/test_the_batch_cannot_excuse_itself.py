@@ -358,7 +358,6 @@ def test_ac4_flaky_touched_stops_the_batch(repo: Path, vdir: Path,
 
 # ── AC-5: a retry cannot erase an attribution ────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: R3")
 def test_ac5_retry_cannot_erase_attribution(repo: Path, vdir: Path,
                                              tmp_path: Path, monkeypatch) -> None:
     """Attempt 1 is red.  A non-code change makes test_a pass, but the gate
@@ -411,11 +410,17 @@ def test_ac5_retry_cannot_erase_attribution(repo: Path, vdir: Path,
 
 # ── AC-6: post-recording edit is refused ─────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: R4")
 def test_ac6_post_recording_edit_is_refused(repo: Path, vdir: Path,
                                              monkeypatch) -> None:
-    """Changing a row's ``passed`` to ``failed`` after recording ⇒ exit 1."""
+    """Changing a row's ``at base`` value after recording ⇒ exit 1.
+
+    The recorder stores a sha256 of the machine-readable surface in the
+    history file.  The gate recomputes it and refuses on mismatch.
+    """
+    # Break a test at HEAD so the record has a table row to tamper with.
+    _write_test(repo, "test_x.py", "def test_a(): assert False\n")
     _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "break test_a")
 
     monkeypatch.setattr(vr, "_resolve_project_verification_dir",
                         lambda p: vdir)
@@ -424,13 +429,13 @@ def test_ac6_post_recording_edit_is_refused(repo: Path, vdir: Path,
 
     rc = _run_main(vr, [
         "--project", str(repo), "--batch", "b6",
-        "--base-sha", _head(repo),
+        "--base-sha", _base(repo, "HEAD~1"),
         "--run-suite", "--scope", "full"])
     assert rc == 0
 
     rec_path = vdir / "b6-batch.md"
     rec = rec_path.read_text(encoding="utf-8")
-    # Tamper: change a passed row to failed.
+    # Tamper: change the at-base value from "passed" to "failed".
     tampered = rec.replace("| passed |", "| failed |")
     rec_path.write_text(tampered, encoding="utf-8")
 
@@ -442,11 +447,13 @@ def test_ac6_post_recording_edit_is_refused(repo: Path, vdir: Path,
 
 # ── AC-7: missing history file ⇒ exit 1 ─────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: R4")
 def test_ac7_missing_history_file_is_refused(repo: Path, vdir: Path,
                                               monkeypatch) -> None:
     """Record says ``attempt: 2`` but history file was deleted ⇒ exit 1."""
+    # Add a second commit so base_sha != HEAD.
+    _write_test(repo, "test_y.py", "def test_b(): assert True\n")
     _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "add test_b")
 
     monkeypatch.setattr(vr, "_resolve_project_verification_dir",
                         lambda p: vdir)
@@ -455,15 +462,14 @@ def test_ac7_missing_history_file_is_refused(repo: Path, vdir: Path,
 
     rc = _run_main(vr, [
         "--project", str(repo), "--batch", "b7",
-        "--base-sha", _head(repo),
+        "--base-sha", _base(repo, "HEAD~1"),
         "--run-suite", "--scope", "full"])
     assert rc == 0
 
     rec_path = vdir / "b7-batch.md"
     rec = rec_path.read_text(encoding="utf-8")
-    # Inject an attempt header.
-    tampered = rec.replace(
-        "record_writer:", "attempt: 2\nrecord_writer:")
+    # Tamper: change attempt 1 to attempt 2.
+    tampered = rec.replace("attempt: 1", "attempt: 2")
     rec_path.write_text(tampered, encoding="utf-8")
 
     # Delete the history file if it exists.

@@ -24,6 +24,8 @@ appending a second copy.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import re
 import subprocess
 import sys
@@ -923,6 +925,52 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
     return "\n".join(lines)
 
 
+def _compute_record_digest(text: str) -> str:
+    """SHA-256 of the machine-readable surface (everything above ``## Findings``).
+
+    The gate recomputes this and refuses on mismatch, so any edit to a row or
+    header after recording is caught (R4).
+    """
+    surface = text.split("## Findings")[0] if "## Findings" in text else text
+    return hashlib.sha256(surface.encode("utf-8")).hexdigest()
+
+
+def _history_path(record: Path) -> Path:
+    """Return the history file path for a record."""
+    return record.with_suffix(".history.jsonl")
+
+
+def _append_history_entry(record: Path, attempt: int, digest: str,
+                          failing_nodes: list[str]) -> None:
+    """Append one attempt's metadata to the history file (R3).
+
+    The history is append-only; each line is a JSON object with the attempt
+    number, the record's digest, and the failing node ids.
+    """
+    import os
+    hist = _history_path(record)
+    entry = {"attempt": attempt, "digest": digest,
+             "failing_nodes": sorted(failing_nodes)}
+    with open(hist, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, sort_keys=True) + "\n")
+
+
+def _read_history(record: Path) -> list[dict]:
+    """Read the history file for a record.  Returns [] if missing."""
+    hist = _history_path(record)
+    if not hist.is_file():
+        return []
+    entries: list[dict] = []
+    for line in hist.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    return entries
+
+
 def _write_measured_record(project: Path, record: Path, args) -> int:
     """Own the whole machine-read surface: measure it, then write it.
 
@@ -1038,7 +1086,11 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
             print(f"WARNING: HEAD reruns could not run: {exc}", file=sys.stderr)
             # Continue without flaky classification — the record is still valid.
 
-    record.write_text(render_record(
+    # R3: determine attempt number and write history.
+    history = _read_history(record)
+    attempt = len(history) + 1
+
+    record_text = render_record(
         batch=args.batch or record.stem,
         head=head, tree=tree, base_sha=args.base_sha,
         invocation=invocation, scope=scope, results=results,
@@ -1046,7 +1098,18 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
         head_reruns=head_reruns or None,
         batch_touched=batch_touched or None,
         flaky_owed=flaky_owed or None,
-    ), encoding="utf-8")
+    )
+    # Inject attempt header after the batch line.
+    record_text = record_text.replace(
+        "record_writer:", f"attempt: {attempt}\nrecord_writer:", 1)
+    record.write_text(record_text, encoding="utf-8")
+
+    # R4: compute digest and append to history.
+    # Use the raw suite failures (nodes), not the at-base classification.
+    # A test that fails at HEAD but passes at base is an attributed regression
+    # that must be carried forward if the next attempt "fixes" it.
+    digest = _compute_record_digest(record_text)
+    _append_history_entry(record, attempt, digest, nodes)
 
     c = results["counts"]
     print(f"recorded: {c['passed']} passed, {c['failed']} failed, "
