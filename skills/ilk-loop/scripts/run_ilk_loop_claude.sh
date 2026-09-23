@@ -1660,6 +1660,44 @@ raise SystemExit(0)
 ' "$sub_file" "$step"
 }
 
+# Does the sub-plan's frontmatter carry `batch_verification: true`?  Exit 0
+# = yes.  Used after gate-first advances to decide whether the driver should
+# ship the sub-plan when every step is discharged.
+sub_plan_has_batch_verification() {
+  local slug="$1"
+  local plans_dir sub_file
+  plans_dir=$(_gate_first_plans_dir) || return 1
+  sub_file=$(find_subplan_file_by_slug "$plans_dir" "$slug") || return 1
+  python3 -c '
+import re, sys
+body = open(sys.argv[1], encoding="utf-8").read()
+fm = re.match(r"^---\n(.*?)\n---", body, re.DOTALL)
+if not fm:
+    raise SystemExit(1)
+for line in fm.group(1).splitlines():
+    if re.match(r"batch_verification:\s*(true|yes|1)\s*$", line, re.IGNORECASE):
+        raise SystemExit(0)
+raise SystemExit(1)
+' "$sub_file"
+}
+
+# Count the number of `### Step N` headings in a sub-plan.  Uses #1's
+# step_gate_fence locator to iterate until heading_count == 0.  Prints the
+# count to stdout.
+count_step_headings() {
+  local slug="$1"
+  local plans_dir sub_file
+  plans_dir=$(_gate_first_plans_dir) || return 1
+  sub_file=$(find_subplan_file_by_slug "$plans_dir" "$slug") || return 1
+  python3 -c '
+import re, sys
+body = open(sys.argv[1], encoding="utf-8").read()
+pat = re.compile(r"^###\s+Step\s+(\d+)(?!\d)", re.MULTILINE)
+matches = pat.findall(body)
+print(len(matches))
+' "$sub_file"
+}
+
 # The whole fast path.  Returns 0 only when the gate passed AND the step was
 # advanced with no agent invocation.  Any other outcome returns 1 and leaves
 # durable state untouched (the results file is the caller's to discard), so
@@ -1689,6 +1727,33 @@ attempt_gate_first_fast_path() {
 
   commit_gate_first_marker "$slug" "$step" || return 1
   advance_subplan_current_step "$slug" "$step" || return 1
+
+  # If this is a batch_verification sub-plan and every step is now
+  # discharged, ship it from the driver — no worker needed.
+  if sub_plan_has_batch_verification "$slug"; then
+    local new_step=$((step + 1))
+    local total_steps
+    total_steps=$(count_step_headings "$slug") || total_steps=0
+    if [[ "$total_steps" -gt 0 && "$new_step" -eq "$total_steps" ]]; then
+      local plans_dir repo ship_script
+      plans_dir=$(_gate_first_plans_dir) || return 0
+      repo=$(selfmod_effective_repo "${REPOS[0]:-$PROJECT_PATH}")
+      [[ -n "$repo" ]] || repo="$PROJECT_PATH"
+      ship_script="${_SKILL_ROOT}/ilk-loop/scripts/ship_transition.py"
+      if [[ -f "$ship_script" ]]; then
+        local ship_out=""
+        ship_out=$(python3 "$ship_script" --ship "$slug" \
+          --plans-dir "$plans_dir" --repo "$repo" 2>&1)
+        if [[ $? -eq 0 ]]; then
+          echo "[gate-first] $slug: final step discharged — shipped by the driver"
+        else
+          echo "  [gate-first] $slug: ship_transition failed — $ship_out" >&2
+          # Leave the sub-plan as-is; the next iteration's worker ships it.
+        fi
+      fi
+    fi
+  fi
+
   return 0
 }
 

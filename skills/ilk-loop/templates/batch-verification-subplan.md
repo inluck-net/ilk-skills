@@ -427,10 +427,18 @@ already landed. Re-run only the tracks whose results you do not have.
 ### Step 1 — Fix every attributed failure
 
 ```yaml
+gate_first: true
 local_checks:
   - command: "python3 <skill-root>/ilk-loop/scripts/verify_attribution.py --batch <batch-slug>"
     timeout: 120
 ```
+
+**This step is gate-first.** The driver runs the gate above before dispatching
+an agent; green → the step commits and advances with no model turn. When this
+is the last step of a ``batch_verification: true`` sub-plan, a green gate
+ships the sub-plan with no worker — the driver calls ``ship_transition.py``
+directly. The agent is reached only when the gate is red (attributed failures
+to fix).
 
 **`--batch` takes the same `<batch-slug>` step 0 writes its record under**, and
 resolves `<ext logs>/verification/<batch-slug>-batch.md` itself. Do not pass an

@@ -227,7 +227,6 @@ def _read_subplan_status(world: dict) -> tuple[int, str]:
 
 # ── AC-1 (xfail): batch_verification green ⇒ shipped by the driver ─────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 @_NEEDS_GTIMEOUT
 def test_batch_verification_green_ships_without_worker(tmp_path: Path) -> None:
     """A ``batch_verification: true`` sub-plan whose gates are all green is
