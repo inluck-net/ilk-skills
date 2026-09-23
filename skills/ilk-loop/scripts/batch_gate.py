@@ -105,6 +105,11 @@ class BatchGateRecord:
     #: Which component wrote this record.  Absent on legacy records and on
     #: anything not written by `write_record`.
     writer: Optional[str] = None
+    #: Flaky tests that do NOT block the batch.  Written by verify_attribution
+    #: when the flaky classifier determines a failing test is intermittent and
+    #: the batch did not touch its file.  Ship and Phase 1 surface this list
+    #: so the owed fix is not forgotten.
+    flaky_owed: Optional[list] = None
 
     def to_dict(self) -> dict:
         d = {
@@ -122,6 +127,8 @@ class BatchGateRecord:
             d["tree_sha"] = self.tree_sha
         if self.writer:
             d["writer"] = self.writer
+        if self.flaky_owed is not None:
+            d["flaky_owed"] = list(self.flaky_owed)
         return d
 
 
@@ -201,6 +208,7 @@ def read_record(runtime_dir: Path) -> Optional[BatchGateRecord]:
         excused_count=_optional_int(data.get("excused_count")),
         tree_sha=data.get("tree_sha") or None,
         writer=data.get("writer") or None,
+        flaky_owed=_optional_str_list(data.get("flaky_owed")),
     )
 
 

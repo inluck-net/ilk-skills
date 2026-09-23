@@ -60,7 +60,7 @@ def test_failed_differently_is_attributed(tmp_path: Path) -> None:
     from verify_attribution import derive_attributed
 
     rows = [["tests/test_x.py::test_a", "failed-differently", "no"]]
-    bad = derive_attributed(rows)
+    bad, _flaky = derive_attributed(rows)
     assert len(bad) == 1, f"expected 1 attributed row, got {len(bad)}"
 
 

@@ -188,26 +188,28 @@ class TestDerivedAttribution:
         return [list(t) for t in triples]
 
     def test_passed_at_base_and_not_red_is_attributed(self) -> None:
-        bad = va.derive_attributed(self._rows(("t.py::x", "passed", "no")))
+        bad, _flaky = va.derive_attributed(self._rows(("t.py::x", "passed", "no")))
         assert len(bad) == 1
 
     def test_failed_at_base_is_not_attributed(self) -> None:
-        assert va.derive_attributed(self._rows(("t.py::x", "failed", "no"))) == []
+        bad, _flaky = va.derive_attributed(self._rows(("t.py::x", "failed", "no")))
+        assert bad == []
 
     def test_in_baseline_red_is_not_attributed(self) -> None:
         """New rule: passed + yes IS attributed (the test passed at base, so
         the batch broke it).  Only declared-at-base + yes is not attributed."""
-        bad = va.derive_attributed(self._rows(("t.py::x", "passed", "yes")))
+        bad, _flaky = va.derive_attributed(self._rows(("t.py::x", "passed", "yes")))
         assert len(bad) == 1
 
     def test_declared_at_base_with_yes_is_not_attributed(self) -> None:
         """declared-at-base + yes: pre-existing, exonerated."""
-        assert va.derive_attributed(
-            self._rows(("t.py::x", "declared-at-base", "yes"))) == []
+        bad, _flaky = va.derive_attributed(
+            self._rows(("t.py::x", "declared-at-base", "yes")))
+        assert bad == []
 
     def test_absent_at_base_is_attributed(self) -> None:
         """A test this batch introduced, failing now, is the batch's own damage."""
-        bad = va.derive_attributed(self._rows(("t.py::x", "absent-at-base", "no")))
+        bad, _flaky = va.derive_attributed(self._rows(("t.py::x", "absent-at-base", "no")))
         assert len(bad) == 1
 
     def test_no_fixed_cannot_be_expressed(self) -> None:
@@ -224,7 +226,7 @@ class TestDerivedAttribution:
             va.derive_attributed(self._rows(("t.py::x", "N/A", "no")))
 
     def test_short_row_is_refused(self) -> None:
-        with pytest.raises(va.VerificationError, match="expected 3"):
+        with pytest.raises(va.VerificationError, match="expected at least 3"):
             va.derive_attributed([["t.py::x", "passed"]])
 
 
@@ -243,12 +245,12 @@ class TestEndToEnd:
         return p
 
     def test_green_record_verifies(self, tmp_path: Path) -> None:
-        msg, excused = va.verify(self._write(tmp_path, {}, 0))
+        msg, excused, _flaky = va.verify(self._write(tmp_path, {}, 0))
         assert "none attributed" in msg and excused == 0
 
     def test_exonerated_record_verifies(self, tmp_path: Path) -> None:
         rec = self._write(tmp_path, {"t.py::x": "failed"}, 1)
-        msg, excused = va.verify(rec)
+        msg, excused, _flaky = va.verify(rec)
         assert excused == 1
 
     def test_attributed_record_is_refused(self, tmp_path: Path) -> None:
@@ -264,7 +266,7 @@ class TestEndToEnd:
             "| node id | at base | in baseline_red | attributed |\n|---|---|---|---|\n"
             "| t.py::x | failed | no | no |\n", encoding="utf-8")
         assert not va.is_signed(p.read_text())
-        msg, _ = va.verify(p)
+        msg, _, _flaky = va.verify(p)
         assert "1 failure" in msg
 
 

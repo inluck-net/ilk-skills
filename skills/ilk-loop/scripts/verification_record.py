@@ -519,6 +519,11 @@ def run_suite(project: Path, invocation: str, timeout: int,
 
 AT_BASE_CAP = 50
 
+# Judgment call: K = 3.  Basis: keeps the worst case at 3 small pytest
+# processes over the failing set only.  Wrong if a 1-in-4 flake routinely
+# reads 3/3; then raise K, which is a single module constant.
+FLAKY_RERUN_COUNT = 3
+
 
 def run_at_base(project: Path, base_sha: str, node_ids: list[str],
                 invocation: str, timeout: int = 600,
@@ -707,6 +712,76 @@ def read_baseline_red_at(project: Path, sha: str) -> list[dict]:
     return out
 
 
+def run_head_reruns(project: Path, node_ids: list[str], invocation: str,
+                    K: int = FLAKY_RERUN_COUNT,
+                    timeout: int = 600) -> dict[str, int]:
+    """Run failing node ids at HEAD K times and return {node_id: red_count}.
+
+    Each rerun is ONE pytest process over all the given ids, using the suite's
+    own invocation and flags (xdist included).  A test run on its own does not
+    reproduce suite load, which is how gh-resolve 23d's 3 failures "passed on
+    rerun".
+
+    Returns ``{node_id: <number of times it failed>}`` out of K reruns.
+    """
+    if not node_ids:
+        return {}
+    runner = re.sub(r"\s-n\s+\S+|\s--dist\s+\S+", "", invocation)
+    red_counts: dict[str, int] = {nid: 0 for nid in node_ids}
+    for _ in range(K):
+        r = subprocess.run(f"{runner} {' '.join(node_ids)}", shell=True,
+                           cwd=project, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=timeout)
+        blob = (r.stdout or "") + (r.stderr or "")
+        # Parse which ids failed in this rerun.
+        failed_this_run = set(_NODE_RE.findall(blob))
+        for nid in node_ids:
+            if nid in failed_this_run:
+                red_counts[nid] += 1
+    return red_counts
+
+
+def batch_touched_files(project: Path, base_sha: str,
+                        node_ids: list[str]) -> dict[str, bool]:
+    """For each node id, check whether the batch touched its test file.
+
+    Uses ``git diff --name-only <base_sha> HEAD`` to get the changed file set,
+    then checks whether each node id's file path appears in that set.
+
+    Returns ``{node_id: True/False}``.
+    """
+    if not node_ids:
+        return {}
+    changed = _git(project, "diff", "--name-only", base_sha, "HEAD") or ""
+    changed_set = set(changed.splitlines())
+    result: dict[str, bool] = {}
+    for nid in node_ids:
+        file_path = nid.split("::")[0]
+        result[nid] = file_path in changed_set
+    return result
+
+
+def classify_flaky(node_id: str, at_base: str, head_red_count: int,
+                   K: int, batch_touched: bool) -> str | None:
+    """Classify a failing node id's flaky status.
+
+    Returns one of:
+    - ``"pre-existing"`` — failed or declared-at-base at base; not attributed
+    - ``"attributed"`` — red every time (K/K), or intermittent with batch touch
+    - ``"flaky-owed"`` — intermittent or did-not-reproduce, batch did NOT touch
+    - ``None`` — not a flaky test (passed at base and no reruns needed)
+    """
+    if at_base in ("failed", "declared-at-base"):
+        return "pre-existing"
+    # at_base is passed, absent-at-base, or failed-differently.
+    if head_red_count == K:
+        return "attributed"
+    # Intermittent (1..K-1) or did-not-reproduce (0).
+    if batch_touched:
+        return "attributed"
+    return "flaky-owed"
+
+
 def _in_baseline_red(node_id: str, baseline_red: list[dict]) -> bool:
     """Is this node id covered by a declared entry?
 
@@ -755,7 +830,10 @@ def normalise_signature(text: str) -> str:
 def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   invocation: str, scope: dict, results: dict,
                   at_base: dict, base_red: list[dict], head_red: list[dict],
-                  at_base_error: str | None = None) -> str:
+                  at_base_error: str | None = None,
+                  head_reruns: dict[str, int] | None = None,
+                  batch_touched: dict[str, bool] | None = None,
+                  flaky_owed: list[str] | None = None) -> str:
     """Render the complete record.  Measurements only — no verdict column.
 
     The ``attributed`` column is deliberately absent.  It was the cell that
@@ -808,8 +886,13 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
     elif not at_base:
         lines += ["_(no failures)_", ""]
     else:
-        lines += ["| node id | at base | in baseline_red |",
-                  "|---|---|---|"]
+        has_reruns = head_reruns is not None and batch_touched is not None
+        if has_reruns:
+            lines += ["| node id | at base | in baseline_red | head reruns | batch touched file |",
+                      "|---|---|---|---|---|"]
+        else:
+            lines += ["| node id | at base | in baseline_red |",
+                      "|---|---|---|"]
         for nid, verdict in at_base.items():
             in_base = _in_baseline_red(nid, base_red)
             in_head = _in_baseline_red(nid, head_red)
@@ -819,7 +902,17 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                 red = "added"
             else:
                 red = "no"
-            lines.append(f"| {nid} | {verdict} | {red} |")
+            if has_reruns and head_reruns is not None and batch_touched is not None:
+                rerun_str = f"{head_reruns.get(nid, 0)}/{FLAKY_RERUN_COUNT}"
+                touched_str = "yes" if batch_touched.get(nid, False) else "no"
+                lines.append(f"| {nid} | {verdict} | {red} | {rerun_str} | {touched_str} |")
+            else:
+                lines.append(f"| {nid} | {verdict} | {red} |")
+        lines.append("")
+    if flaky_owed:
+        lines += ["## Flaky (owed)", ""]
+        for nid in flaky_owed:
+            lines.append(f"- {nid}")
         lines.append("")
     lines += [
         "## Findings",
@@ -923,11 +1016,36 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
         print(f"stub record left at {record}", file=sys.stderr)
         return 1
 
+    # Run HEAD reruns for non-declared failing nodes to classify flaky tests.
+    non_declared = [nid for nid, v in at_base.items()
+                    if v != "declared-at-base"]
+    head_reruns: dict[str, int] = {}
+    batch_touched: dict[str, bool] = {}
+    flaky_owed: list[str] = []
+    if non_declared:
+        try:
+            head_reruns = run_head_reruns(project, non_declared, invocation)
+            batch_touched = batch_touched_files(project, args.base_sha,
+                                                non_declared)
+            for nid in non_declared:
+                cls = classify_flaky(
+                    nid, at_base.get(nid, "failed"),
+                    head_reruns.get(nid, 0), FLAKY_RERUN_COUNT,
+                    batch_touched.get(nid, False))
+                if cls == "flaky-owed":
+                    flaky_owed.append(nid)
+        except (TimeoutError, subprocess.SubprocessError) as exc:
+            print(f"WARNING: HEAD reruns could not run: {exc}", file=sys.stderr)
+            # Continue without flaky classification — the record is still valid.
+
     record.write_text(render_record(
         batch=args.batch or record.stem,
         head=head, tree=tree, base_sha=args.base_sha,
         invocation=invocation, scope=scope, results=results,
         at_base=at_base, base_red=base_red, head_red=head_red,
+        head_reruns=head_reruns or None,
+        batch_touched=batch_touched or None,
+        flaky_owed=flaky_owed or None,
     ), encoding="utf-8")
 
     c = results["counts"]

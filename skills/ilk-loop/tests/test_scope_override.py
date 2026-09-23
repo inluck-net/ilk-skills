@@ -123,7 +123,7 @@ def test_ac1_scope_full_overrides_scoped(project, monkeypatch: pytest.MonkeyPatc
         "verification_record.run_suite", _run_suite_scoped,
     )
     monkeypatch.setattr(
-        "verification_record.run_at_base", lambda *a, **kw: [],
+        "verification_record.run_at_base", lambda *a, **kw: {},
     )
     monkeypatch.setattr(
         "verification_record.read_baseline_red", lambda *a, **kw: {},
@@ -155,7 +155,7 @@ def test_ac2_scope_auto_uses_computed(project, monkeypatch: pytest.MonkeyPatch):
         "verification_record.run_suite", _run_suite_scoped,
     )
     monkeypatch.setattr(
-        "verification_record.run_at_base", lambda *a, **kw: [],
+        "verification_record.run_at_base", lambda *a, **kw: {},
     )
     monkeypatch.setattr(
         "verification_record.read_baseline_red", lambda *a, **kw: {},
@@ -186,7 +186,7 @@ def test_ac2_scope_omitted_uses_computed(project, monkeypatch: pytest.MonkeyPatc
         "verification_record.run_suite", _run_suite_scoped,
     )
     monkeypatch.setattr(
-        "verification_record.run_at_base", lambda *a, **kw: [],
+        "verification_record.run_at_base", lambda *a, **kw: {},
     )
     monkeypatch.setattr(
         "verification_record.read_baseline_red", lambda *a, **kw: {},
@@ -218,7 +218,7 @@ def test_ac3_scope_full_records_full_total(project, monkeypatch: pytest.MonkeyPa
         "verification_record.run_suite", _run_suite_scoped,
     )
     monkeypatch.setattr(
-        "verification_record.run_at_base", lambda *a, **kw: [],
+        "verification_record.run_at_base", lambda *a, **kw: {},
     )
     monkeypatch.setattr(
         "verification_record.read_baseline_red", lambda *a, **kw: {},

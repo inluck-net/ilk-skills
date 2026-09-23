@@ -185,36 +185,38 @@ def is_signed(text: str) -> bool:
     return bool(_SIGNED_RE.search(text))
 
 
-def derive_attributed(rows: list[list[str]]) -> list[list[str]]:
+def derive_attributed(rows: list[list[str]]) -> tuple[list[list[str]], list[str]]:
     """Apply the attribution rule to a SIGNED record's measurements.
 
-    Signed rows are ``| node id | at base | in baseline_red |`` — three
-    measurements and no verdict.  Attribution is *derived* here:
+    Signed rows are ``| node id | at base | in baseline_red |`` (3-column,
+    legacy) or ``| node id | at base | in baseline_red | head reruns | batch
+    touched file |`` (5-column, current).  Attribution is *derived* here:
 
+    **3-column (legacy):**
         passed / absent-at-base / failed-differently  ⇒  attributed
         failed  ⇒  not attributed
         declared-at-base + yes  ⇒  not attributed (pre-existing, exonerated)
         declared-at-base + anything else  ⇒  VerificationError (inconsistent)
 
+    **5-column (current):** adds flaky classification:
+        failed / declared-at-base at base  ⇒  pre-existing, not attributed
+        otherwise, head reruns = K/K  ⇒  attributed (red every time)
+        otherwise (intermittent 1..K-1, or 0/K) + batch touched file: yes  ⇒  attributed
+        otherwise  ⇒  flaky, fix owed: does NOT block
+
     The ``in baseline_red`` cell takes three values: ``yes`` (in the base
     commit's list), ``added`` (declared during this batch — does NOT excuse),
-    ``no``.  A test that passed at base and is in the base's list is still
-    attributed — ``yes`` only excuses when the at-base measurement is
-    ``declared-at-base`` (the batch did not measure it) or ``failed`` (it was
-    already broken).
+    ``no``.
 
-    ``absent-at-base`` counts as attributed: a test this batch introduced, and
-    that fails now, is the batch's own damage, not an exoneration.
-
-    There is no verdict cell to write into, so ``no (fixed)`` — four of which
-    excused real regressions on gh-resolve's layer-3 batch — cannot be
-    expressed at all.  An unrecognised measurement raises rather than passing.
+    Returns ``(bad_rows, flaky_owed)`` where ``bad_rows`` are attributed
+    regressions and ``flaky_owed`` are node ids classified as flaky.
     """
     bad: list[list[str]] = []
+    flaky_owed: list[str] = []
     for r in rows:
         if len(r) < 3:
             raise VerificationError(
-                f"signed record row has {len(r)} cells, expected 3 "
+                f"signed record row has {len(r)} cells, expected at least 3 "
                 f"(node id | at base | in baseline_red): {r}"
             )
         node, at_base, in_red = r[0], r[1].strip().lower(), r[2].strip().lower()
@@ -241,12 +243,43 @@ def derive_attributed(rows: list[list[str]]) -> list[list[str]]:
                 )
             # declared-at-base + yes ⇒ not attributed (pre-existing).
             continue
-        # failed-differently: the test fails at base AND at HEAD, but for
-        # different reasons — the batch changed the failure.  Attributed:
-        # "No prose overturns a row" (template :117).
+
+        # 5-column layout: apply the flaky classifier.
+        if len(r) >= 5:
+            rerun_str = r[3].strip()
+            touched_str = r[4].strip().lower()
+            # Parse "N/K" format.
+            try:
+                red_count, K = rerun_str.split("/")
+                red_count, K = int(red_count), int(K)
+            except (ValueError, AttributeError):
+                raise VerificationError(
+                    f"unrecognised `head reruns` value {r[3]!r} for {node}; "
+                    f"expected N/K format (e.g. 3/3)."
+                )
+            if touched_str not in {"yes", "no"}:
+                raise VerificationError(
+                    f"unrecognised `batch touched file` value {r[4]!r} for {node}; "
+                    f"expected yes or no."
+                )
+            batch_touched = touched_str == "yes"
+            # Pre-existing: failed or declared-at-base at base.
+            if at_base in ("failed",):
+                # failed at base ⇒ not attributed (pre-existing).
+                continue
+            # at_base is passed, absent-at-base, or failed-differently.
+            if red_count == K:
+                bad.append(r)
+            elif batch_touched:
+                bad.append(r)
+            else:
+                flaky_owed.append(node)
+            continue
+
+        # 3-column (legacy) path.
         if at_base in {"passed", "absent-at-base", "failed-differently"}:
             bad.append(r)
-    return bad
+    return bad, flaky_owed
 
 
 _ATTRIB_OK = {"YES", "NO"}
@@ -345,7 +378,7 @@ def verify(record_path: Path) -> tuple[str, int]:
             # Prose in the section with no rows and no marker is tolerated only
             # when the section is genuinely empty; say so rather than guess.
             pass
-        return ("attribution verified: 0 failures, none attributed", 0)
+        return ("attribution verified: 0 failures, none attributed", 0, [])
 
     if len(rows) != failed:
         raise VerificationError(
@@ -355,7 +388,11 @@ def verify(record_path: Path) -> tuple[str, int]:
             f"pass."
         )
 
-    bad = derive_attributed(rows) if is_signed(text) else attributed_rows(rows)
+    flaky_owed: list[str] = []
+    if is_signed(text):
+        bad, flaky_owed = derive_attributed(rows)
+    else:
+        bad = attributed_rows(rows)
     if bad:
         names = ", ".join(r[0] for r in bad)
         raise VerificationError(
@@ -364,7 +401,10 @@ def verify(record_path: Path) -> tuple[str, int]:
             f"batch broke it."
         )
 
-    return (f"attribution verified: {failed} failure(s), none attributed", failed)
+    msg = f"attribution verified: {failed} failure(s), none attributed"
+    if flaky_owed:
+        msg += f"; {len(flaky_owed)} flaky (owed): {', '.join(flaky_owed)}"
+    return (msg, failed, flaky_owed)
 
 
 
@@ -503,7 +543,8 @@ def check_verified_tree(project: Path, record_path: Path) -> tuple[bool, str]:
     )
 
 
-def write_gate_record(project: Path, excused: int) -> tuple[bool, str]:
+def write_gate_record(project: Path, excused: int,
+                      flaky_owed: list[str] | None = None) -> tuple[bool, str]:
     """Record the verified verdict where the PROOF CHECK actually reads it.
 
     Verification and proof were two different files. This script validates
@@ -567,6 +608,7 @@ def write_gate_record(project: Path, excused: int) -> tuple[bool, str]:
         excused_count=excused,
         tree_sha=batch_gate._git_head_tree(project),
         writer="verify_attribution",
+        flaky_owed=list(flaky_owed) if flaky_owed else None,
     )
     try:
         written = batch_gate.write_record(record, runtime_dir)
@@ -624,7 +666,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             reject_placeholder(args.record)
             record_path = Path(args.record)
-        message, excused = verify(record_path)
+        message, excused, flaky_owed = verify(record_path)
     except VerificationError as exc:
         print(f"ATTRIBUTION FAILED: {exc}", file=sys.stderr)
         return 1
@@ -643,7 +685,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"PROOF NOT RECORDED: {why}", file=sys.stderr)
         return 0
 
-    ok, detail = write_gate_record(project, excused)
+    ok, detail = write_gate_record(project, excused, flaky_owed=flaky_owed)
     if ok:
         print(f"{message}; batch-gate record written to {detail}")
     else:

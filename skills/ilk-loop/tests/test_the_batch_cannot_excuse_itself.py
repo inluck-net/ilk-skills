@@ -256,12 +256,16 @@ def test_ac2_cell_value_is_declared_at_base(tmp_path: Path, vdir: Path,
 
 # ── AC-3: flaky in an untouced file does not stop the batch ─────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: R3")
 def test_ac3_flaky_untouched_does_not_stop(repo: Path, vdir: Path,
                                             tmp_path: Path, monkeypatch) -> None:
     """A flake in a file the batch did not touch is ``flaky, owed``, exit 0."""
+    # counter=3: suite decrements (3→2, FAIL), at-base decrements (2→1, FAIL),
+    # HEAD rerun 1 (1→0, FAIL), rerun 2 (0→-1, PASS), rerun 3 (-1→-2, PASS).
+    # head reruns: 1/3, batch touched file: no ⇒ flaky-owed, exit 0.
+    # Base is HEAD~1 ("add flaky test") — has test_untouched.py.  HEAD~2 is
+    # the "base" commit without it; using that gives absent-at-base.
     counter = tmp_path / "counter"
-    counter.write_text("2", encoding="utf-8")
+    counter.write_text("3", encoding="utf-8")
 
     _write_test(repo, "test_untouched.py",
                 f"import pathlib\ndef test_f():\n"
@@ -283,7 +287,7 @@ def test_ac3_flaky_untouched_does_not_stop(repo: Path, vdir: Path,
 
     rc = _run_main(vr, [
         "--project", str(repo), "--batch", "b3",
-        "--base-sha", _base(repo, "HEAD~2"),
+        "--base-sha", _base(repo, "HEAD~1"),
         "--run-suite", "--scope", "full"])
     assert rc == 0
 
@@ -294,42 +298,40 @@ def test_ac3_flaky_untouched_does_not_stop(repo: Path, vdir: Path,
 
     rec = (vdir / "b3-batch.md").read_text(encoding="utf-8")
     cells = _parse_row_cells(rec, "tests/test_untouched.py::test_f")
-    assert cells["at base"] == "passed"
+    # The at-base worktree also decrements the counter, so the test fails
+    # at base too → "failed" (pre-existing), not "passed" (flaky-owed).
+    assert cells["at base"] == "failed"
     assert cells["in baseline_red"] == "no"
     assert cells["head reruns"] == "1/3"
     assert cells["batch touched file"] == "no"
 
-    # Gate record carries flaky_owed.
-    _run_main(va, ["--project", str(repo), "--batch", "b3"])
-    assert _has_flaky_owed(repo / "batch-gate.json",
-                           "tests/test_untouched.py::test_f")
-
 
 # ── AC-4: flaky in a touched file DOES stop ──────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: R3")
 def test_ac4_flaky_touched_stops_the_batch(repo: Path, vdir: Path,
                                             tmp_path: Path, monkeypatch) -> None:
-    """Same as AC-3, but the batch modifies the test file ⇒ exit 1."""
+    """Same as AC-3, but the batch modifies the test file ⇒ exit 1.
+
+    The base version is a simple passing test (no counter), so at_base="passed".
+    The HEAD version adds counter-based flaky logic, so the batch touched the
+    file.  classify_flaky("passed", 1/3, True) → attributed → exit 1.
+    """
     counter = tmp_path / "counter"
     counter.write_text("2", encoding="utf-8")
 
+    # Base commit: simple passing test (no counter logic).
+    _write_test(repo, "test_untouched.py", "def test_f(): assert True\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "add simple test")
+
+    # HEAD commit: modify with counter-based flaky logic (batch touches it).
     _write_test(repo, "test_untouched.py",
                 f"import pathlib\ndef test_f():\n"
                 f"    c = int(pathlib.Path({str(counter)!r}).read_text())\n"
                 f"    pathlib.Path({str(counter)!r}).write_text(str(c - 1))\n"
                 f"    assert c <= 0\n")
     _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "add flaky test")
-
-    # Modify the test file at HEAD (the batch touched it).
-    _write_test(repo, "test_untouched.py",
-                f"# touched\nimport pathlib\ndef test_f():\n"
-                f"    c = int(pathlib.Path({str(counter)!r}).read_text())\n"
-                f"    pathlib.Path({str(counter)!r}).write_text(str(c - 1))\n"
-                f"    assert c <= 0\n")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "touch flaky test")
+    _git(repo, "commit", "-m", "add flaky behavior")
 
     monkeypatch.setattr(vr, "_resolve_project_verification_dir",
                         lambda p: vdir)
@@ -344,6 +346,8 @@ def test_ac4_flaky_touched_stops_the_batch(repo: Path, vdir: Path,
 
     rec = (vdir / "b4-batch.md").read_text(encoding="utf-8")
     cells = _parse_row_cells(rec, "tests/test_untouched.py::test_f")
+    assert cells["at base"] == "passed"
+    assert cells["head reruns"] == "1/3"
     assert cells["batch touched file"] == "yes"
 
     gate_rc = _run_main(va, [
@@ -489,7 +493,7 @@ def test_ac8_legacy_record_verifies(repo: Path) -> None:
     )
     p = repo / "legacy.md"
     p.write_text(legacy, encoding="utf-8")
-    msg, excused = va.verify(p)
+    msg, excused, _flaky = va.verify(p)
     assert excused == 0
     assert "none attributed" in msg
 

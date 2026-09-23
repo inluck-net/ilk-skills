@@ -81,7 +81,7 @@ class TestSectionAndRows:
 
     def test_green_passes(self, tmp_path: Path) -> None:
         rec = _write(tmp_path, "suite_failed: 0\n\n## At-base rerun\n\n_(no failures)_\n")
-        msg, excused = va.verify(rec)
+        msg, excused, _flaky = va.verify(rec)
         assert "none attributed" in msg
         assert excused == 0
 
@@ -122,7 +122,7 @@ class TestAttributionCell:
         rec = _write(tmp_path, "suite_failed: 2\n\n## At-base rerun\n\n" + TABLE_HEAD +
                                "| a::t1 | failed | no | no |\n"
                                "| b::t2 | failed | yes | no |\n")
-        msg, excused = va.verify(rec)
+        msg, excused, _flaky = va.verify(rec)
         assert "2 failure(s), none attributed" in msg
         assert excused == 2, "both rows were accounted for and exonerated"
 
