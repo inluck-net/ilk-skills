@@ -2226,6 +2226,39 @@ print(gate_passed)
 " "$f" "$lc_file" "${_SKILL_ROOT}/ilk-loop/scripts" 2>&1) || si_exit=$?
 
     local gate_passed="$si_out"
+    # Also capture the raw outcome from the JSONL for the inconclusive-revert
+    # path.  gate_passed maps inconclusive to 'skip'; the raw outcome is
+    # needed to distinguish "driver cap killed the gate" from "no gate ran".
+    local _raw_gate_outcome=""
+    local _si_slug
+    _si_slug=$(python3 -c "
+import re, sys
+from pathlib import Path
+body = Path(sys.argv[1]).read_text()
+m = re.search(r'^---\s*\n(.*?)\n---', body, re.DOTALL)
+if m:
+    for line in m.group(1).splitlines():
+        if line.strip().startswith('plan:'):
+            print(line.split(':', 1)[1].strip()); break
+" "$f" 2>/dev/null) || true
+    if [[ -n "$lc_file" && -n "$_si_slug" ]]; then
+      _raw_gate_outcome=$(python3 -c "
+import json, sys
+from pathlib import Path
+slug = sys.argv[2]
+for raw in Path(sys.argv[1]).read_text().splitlines():
+    raw = raw.strip()
+    if not raw:
+        continue
+    try:
+        rec = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        continue
+    if rec.get('slug') == slug:
+        print(rec.get('outcome', ''))
+        break
+" "$lc_file" "$_si_slug" 2>/dev/null) || true
+    fi
     # Scope to THIS iteration's ships only: enforce on sub-plans whose gate
     # actually ran this iteration (present in the local_checks JSONL). A
     # sub-plan shipped in a PRIOR run has no current-iteration gate result --
@@ -2258,6 +2291,47 @@ print(gate_passed)
       else
         continue
       fi
+    fi
+
+    # Inconclusive revert: a gate killed by the driver's own cap (gtimeout
+    # exit 124) recorded "inconclusive".  A sub-plan the worker shipped in
+    # THIS iteration must not stand on a non-verdict — revert to
+    # in-progress with the pointer untouched, but do NOT count it toward
+    # auto_block_fails (the driver's cap caused it, not the code).
+    # A sub-plan shipped in a PRIOR run keeps today's skip behaviour
+    # (the 2026-08-20 mass-revert shape — decomposition-principles §8).
+    if [[ "$_raw_gate_outcome" == "inconclusive" ]]; then
+      # Check if this sub-plan was shipped in THIS iteration by comparing
+      # with the pre-iteration baseline.  PRE_ITER_ALL_STEPS captures
+      # every non-shipped sub-plan and its step before the agent runs.
+      # Match by slug (not filename) since the baseline emits slugs.
+      local _was_unshipped_before=""
+      if [[ -n "${PRE_ITER_ALL_STEPS:-}" && -n "$_si_slug" ]]; then
+        _was_unshipped_before=$(printf '%s\n' "$PRE_ITER_ALL_STEPS" | \
+          grep -F "$_si_slug" | head -1) || true
+      fi
+      # If the sub-plan was NOT in the pre-iteration baseline (i.e. it was
+      # already shipped before this iteration), skip the revert.
+      if [[ -z "$_was_unshipped_before" ]]; then
+        # Sub-plan was already shipped before this iteration — skip.
+        echo "  [ship-integrity] $_si_slug: gate inconclusive (driver cap) — prior-run ship, not reverted" >&2
+      else
+        # Sub-plan was unshipped before this iteration and is now shipped —
+        # the worker shipped it this iteration.  Revert.
+        # Revert shipped → in-progress, pointer untouched.
+        python3 -c "
+import re, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+body = p.read_text()
+body = re.sub(r'^(status:\s*)shipped', r'\1in-progress', body, count=1, flags=re.MULTILINE)
+p.write_text(body)
+" "$f" 2>/dev/null
+        echo "  [ship-integrity] $_si_slug: gate inconclusive (driver cap) — self-ship reverted, not counted toward quarantine" >&2
+      fi
+      # Skip ship_integrity.py for inconclusive gates — the revert above
+      # is the enforcement.  Do NOT fall through to the violation path.
+      continue
     fi
 
     si_exit=0
@@ -3961,6 +4035,11 @@ print(json.dumps(d))
         done
       fi
     }
+    # Print ship-integrity diagnostics even on success (e.g. inconclusive
+    # revert messages). The subshell captured them; surface them now.
+    if [[ -n "$_si_stderr" ]]; then
+      echo "$_si_stderr" >&2
+    fi
     # After a ship-integrity revert, reconcile the master so it no longer
     # claims "shipped" when a sub-plan was un-shipped.  Without this call,
     # reconcile_master_status (now symmetric) is never reached and the

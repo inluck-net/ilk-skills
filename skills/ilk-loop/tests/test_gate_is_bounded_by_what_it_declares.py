@@ -268,7 +268,6 @@ class TestAC2FrontmatterGatePasses:
 
 # ── AC-3: cap-killed gate reverts same-iteration self-ship ──────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: #41 — inconclusive revert not implemented")
 @_NeedsGtimeout
 @_SLOW
 class TestAC3CapKillRevertsSelfShip:
@@ -338,7 +337,12 @@ class TestAC3CapKillRevertsSelfShip:
             f"auto_block_fails should not be bumped on inconclusive. stderr={stderr[-500:]}"
         )
 
-        # Verify the revert line is present.
+        # The revert message is printed to the iteration's stderr, which the
+        # driver redirects to a log file.  The status revert above is the
+        # primary assertion; the message is a secondary diagnostic.
+        # Verify it's in stderr (the test captures output, so the log file
+        # may not contain the driver's stderr messages).
+        stderr = result.stderr
         assert "gate inconclusive" in stderr or "self-ship reverted" in stderr, (
             f"expected revert line in stderr. stderr={stderr[-500:]}"
         )
