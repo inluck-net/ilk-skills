@@ -152,13 +152,13 @@ class TestParseVitestOutput:
 # ── the record carries no verdict cell ──────────────────────────────────────
 
 class TestRenderedRecord:
-    def _render(self, at_base, baseline_red=()):
+    def _render(self, at_base, base_red=(), head_red=()):
         return vr.render_record(
             batch="batch-test", head="a" * 40, tree="b" * 40, base_sha="c" * 40,
             invocation="python3 -m pytest", scope={"mode": "full", "count": 10},
             results={"counts": {"passed": 8, "failed": len(at_base), "errors": 0,
                                 "skipped": 0, "total": 8 + len(at_base)}},
-            at_base=at_base, baseline_red=list(baseline_red))
+            at_base=at_base, base_red=list(base_red), head_red=list(head_red))
 
     def test_is_signed(self) -> None:
         assert f"record_writer: {vr.RECORD_WRITER}" in self._render({})
@@ -195,7 +195,15 @@ class TestDerivedAttribution:
         assert va.derive_attributed(self._rows(("t.py::x", "failed", "no"))) == []
 
     def test_in_baseline_red_is_not_attributed(self) -> None:
-        assert va.derive_attributed(self._rows(("t.py::x", "passed", "yes"))) == []
+        """New rule: passed + yes IS attributed (the test passed at base, so
+        the batch broke it).  Only declared-at-base + yes is not attributed."""
+        bad = va.derive_attributed(self._rows(("t.py::x", "passed", "yes")))
+        assert len(bad) == 1
+
+    def test_declared_at_base_with_yes_is_not_attributed(self) -> None:
+        """declared-at-base + yes: pre-existing, exonerated."""
+        assert va.derive_attributed(
+            self._rows(("t.py::x", "declared-at-base", "yes"))) == []
 
     def test_absent_at_base_is_attributed(self) -> None:
         """A test this batch introduced, failing now, is the batch's own damage."""
@@ -223,14 +231,15 @@ class TestDerivedAttribution:
 # ── end to end, and the legacy path survives ────────────────────────────────
 
 class TestEndToEnd:
-    def _write(self, tmp_path, at_base, failed, baseline_red=()):
+    def _write(self, tmp_path, at_base, failed, base_red=(), head_red=()):
         p = tmp_path / "rec.md"
         p.write_text(vr.render_record(
             batch="b", head="a" * 40, tree="b" * 40, base_sha="c" * 40,
             invocation="python3 -m pytest", scope={"mode": "full", "count": 9},
             results={"counts": {"passed": 9, "failed": failed, "errors": 0,
                                 "skipped": 0, "total": 9 + failed}},
-            at_base=at_base, baseline_red=list(baseline_red)), encoding="utf-8")
+            at_base=at_base, base_red=list(base_red), head_red=list(head_red)),
+            encoding="utf-8")
         return p
 
     def test_green_record_verifies(self, tmp_path: Path) -> None:
@@ -360,7 +369,9 @@ class TestBaselineRedIsRead:
 
         run_at_base must return its verdict WITHOUT spawning a subprocess —
         and must still return a row, because the table keeps one row per
-        failure.
+        failure.  Deliberate change: the cell now reads ``declared-at-base``
+        instead of ``failed``, because ``failed`` dresses a declaration as a
+        measurement.
         """
         # Test-level ids: declarations match exactly since the
         # driver-watches-the-work batch (a file-level id no longer covers).
@@ -370,8 +381,8 @@ class TestBaselineRedIsRead:
             tmp_path, "deadbeef",
             ["tests/test_known.py::test_a", "tests/test_known.py::test_b"],
             "python3 -m pytest", baseline_red=declared)
-        assert out == {"tests/test_known.py::test_a": "failed",
-                       "tests/test_known.py::test_b": "failed"}, out
+        assert out == {"tests/test_known.py::test_a": "declared-at-base",
+                       "tests/test_known.py::test_b": "declared-at-base"}, out
 
     def test_undeclared_node_ids_are_still_measured(self, tmp_path: Path) -> None:
         """Not a weakening: anything undeclared still gets a real rerun.

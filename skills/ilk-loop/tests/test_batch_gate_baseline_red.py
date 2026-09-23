@@ -209,7 +209,7 @@ class TestAtBaseCapNamesItself:
             at_base={},
             at_base_error=f"{len(failures)} failing node ids exceeds the {AT_BASE_CAP} cap; "
                           f"a batch failing this widely needs a human, not an at-base rerun",
-            baseline_red=[],
+            base_red=[], head_red=[],
         )
         assert "at_base_cap_exceeded" in record, (
             f"record must carry 'at_base_cap_exceeded', got: {record[:500]}"

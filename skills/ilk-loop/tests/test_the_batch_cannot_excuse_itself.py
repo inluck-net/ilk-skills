@@ -127,7 +127,6 @@ def vdir(tmp_path: Path):
 
 # ── AC-1: the 23d sequence ──────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: R1")
 def test_ac1_base_pass_head_fail_then_baseline_red(
         repo: Path, vdir: Path, monkeypatch) -> None:
     """At base test_a passes; at HEAD it fails.  Record ⇒ passed | no, exit 1.
@@ -221,25 +220,31 @@ def test_ac2_declared_skip_no_rerun(repo: Path, vdir: Path,
     assert "at base" in cells
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: R2")
-def test_ac2_cell_value_is_declared_at_base(repo: Path, vdir: Path,
+def test_ac2_cell_value_is_declared_at_base(tmp_path: Path, vdir: Path,
                                              monkeypatch) -> None:
-    """The cell reads ``declared-at-base``, not ``failed``."""
-    _write_ship_config(repo, baseline_red=[
-        {"node_id": "tests/test_x.py::test_a", "reason": "platform"}])
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "add baseline_red")
+    """The cell reads ``declared-at-base``, not ``failed``.
 
-    _write_test(repo, "test_x.py", "def test_a(): assert False\n")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "break test_a")
+    baseline_red must be in the BASE commit's list for the entry to be skipped.
+    """
+    r = _init_repo(tmp_path, "repo-ac2c")
+    # Base commit: baseline_red already lists test_a, and test_a fails.
+    _write_ship_config(r, baseline_red=[
+        {"node_id": "tests/test_x.py::test_a", "reason": "platform"}])
+    _write_test(r, "test_x.py", "def test_a(): assert False\n")
+    _git(r, "add", "-A")
+    _git(r, "commit", "-m", "base with baseline_red and failing test_a")
+
+    # HEAD: still failing (no change to test_a).
+    _write_test(r, "test_y.py", "def test_b(): assert True\n")
+    _git(r, "add", "-A")
+    _git(r, "commit", "-m", "add unrelated test")
 
     monkeypatch.setattr(vr, "_resolve_project_verification_dir",
                         lambda p: vdir)
 
     rc = _run_main(vr, [
-        "--project", str(repo), "--batch", "b2c",
-        "--base-sha", _base(repo, "HEAD~2"),
+        "--project", str(r), "--batch", "b2c",
+        "--base-sha", _base(r, "HEAD~1"),
         "--run-suite", "--scope", "full"])
     assert rc == 0
 
@@ -491,7 +496,6 @@ def test_ac8_legacy_record_verifies(repo: Path) -> None:
 
 # ── AC-9: test_record_is_measured change ─────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: R2")
 def test_ac9_declared_node_ids_return_declared_at_base(tmp_path: Path) -> None:
     """run_at_base returns ``declared-at-base`` for ids in the base's list.
 

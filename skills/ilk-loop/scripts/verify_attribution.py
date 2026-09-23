@@ -171,7 +171,8 @@ def parse_rows(section: str) -> list[list[str]]:
 
 _SIGNED_RE = re.compile(r"^record_writer:[ \t]*(\S+)", re.MULTILINE)
 
-_AT_BASE_OK = {"passed", "failed", "absent-at-base", "failed-differently"}
+_AT_BASE_OK = {"passed", "failed", "absent-at-base", "failed-differently",
+               "declared-at-base"}
 
 
 def is_signed(text: str) -> bool:
@@ -190,7 +191,17 @@ def derive_attributed(rows: list[list[str]]) -> list[list[str]]:
     Signed rows are ``| node id | at base | in baseline_red |`` — three
     measurements and no verdict.  Attribution is *derived* here:
 
-        at_base in {passed, absent-at-base}  AND  NOT in_baseline_red
+        passed / absent-at-base / failed-differently  ⇒  attributed
+        failed  ⇒  not attributed
+        declared-at-base + yes  ⇒  not attributed (pre-existing, exonerated)
+        declared-at-base + anything else  ⇒  VerificationError (inconsistent)
+
+    The ``in baseline_red`` cell takes three values: ``yes`` (in the base
+    commit's list), ``added`` (declared during this batch — does NOT excuse),
+    ``no``.  A test that passed at base and is in the base's list is still
+    attributed — ``yes`` only excuses when the at-base measurement is
+    ``declared-at-base`` (the batch did not measure it) or ``failed`` (it was
+    already broken).
 
     ``absent-at-base`` counts as attributed: a test this batch introduced, and
     that fails now, is the batch's own damage, not an exoneration.
@@ -213,15 +224,27 @@ def derive_attributed(rows: list[list[str]]) -> list[list[str]]:
                 f"values are {sorted(_AT_BASE_OK)}. A cell the checker cannot "
                 f"read is not an exoneration — re-run the at-base rerun."
             )
-        if in_red not in {"yes", "no"}:
+        if in_red not in {"yes", "added", "no"}:
             raise VerificationError(
                 f"unrecognised `in baseline_red` value {r[2]!r} for {node}; "
-                f"expected yes or no."
+                f"expected yes, added, or no."
             )
+        # declared-at-base: the batch skipped the rerun because the test was
+        # in the base's baseline_red.  Only `yes` (in the base's list) is
+        # consistent — `added` or `no` means the record is inconsistent.
+        if at_base == "declared-at-base":
+            if in_red != "yes":
+                raise VerificationError(
+                    f"inconsistent record: {node} has `at base: declared-at-base` "
+                    f"but `in baseline_red: {in_red}`.  A declared-at-base entry "
+                    f"must be in the base's list (`yes`)."
+                )
+            # declared-at-base + yes ⇒ not attributed (pre-existing).
+            continue
         # failed-differently: the test fails at base AND at HEAD, but for
         # different reasons — the batch changed the failure.  Attributed:
         # "No prose overturns a row" (template :117).
-        if at_base in {"passed", "absent-at-base", "failed-differently"} and in_red == "no":
+        if at_base in {"passed", "absent-at-base", "failed-differently"}:
             bad.append(r)
     return bad
 

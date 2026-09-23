@@ -530,9 +530,11 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
     the base sha from the master, the runner from config — and "did this node
     id pass at base" is a measurement, not a judgment.  So it is code.
 
-    Returns ``{node_id: "passed" | "failed" | "absent-at-base"}``.
+    Returns ``{node_id: "passed" | "failed" | "absent-at-base" | "declared-at-base"}``.
     ``absent-at-base`` means the test did not exist at the base commit, which
     makes a present failure this batch's own damage rather than an exoneration.
+    ``declared-at-base`` means the test was in the base commit's ``baseline_red``
+    and is already exonerated — no subprocess is spawned.
     """
     import shutil
     import subprocess
@@ -540,16 +542,19 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
     if not node_ids:
         return {}
 
-    # A declared baseline_red entry is ALREADY an exoneration — re-measuring it
-    # pays a subprocess to rediscover a recorded fact. MEASURED 2026-09-16: 24
-    # of 25 at-base rows had verdict "failed", i.e. 24 individual pytest runs
-    # confirming known-failing tests.
+    # A declared baseline_red entry at the BASE commit is ALREADY an exoneration
+    # — re-measuring it pays a subprocess to rediscover a recorded fact.
+    # MEASURED 2026-09-16: 24 of 25 at-base rows had verdict "failed", i.e. 24
+    # individual pytest runs confirming known-failing tests.
     #
     # Declared entries are still RECORDED as rows (the table keeps one row per
     # failure), with the verdict taken from the declaration rather than a rerun.
+    #
+    # Only entries in the BASE's list are skipped.  Entries added during this
+    # batch (present in head_red but not base_red) are MEASURED like any other.
     declared = {n for n in node_ids if _in_baseline_red(n, baseline_red or [])}
     node_ids = [n for n in node_ids if n not in declared]
-    verdicts_declared = {n: "failed" for n in declared}
+    verdicts_declared = {n: "declared-at-base" for n in declared}
     if not node_ids:
         return verdicts_declared
 
@@ -665,6 +670,43 @@ def read_baseline_red(project: Path) -> list[dict]:
     return out
 
 
+def read_baseline_red_at(project: Path, sha: str) -> list[dict]:
+    """Read ``ship.baseline_red`` from ``.ilk-launch.json`` at a specific commit.
+
+    This is the base-commit version of :func:`read_baseline_red`.  It parses
+    ``git show <sha>:.ilk-launch.json`` with the same shape rules.  If the
+    file does not exist at *sha*, returns ``[]``.  If it is unreadable (bad
+    JSON, encoding error), raises — an unreadable base list is not an empty
+    one, and the record must say so.
+    """
+    import json
+    r = subprocess.run(
+        ["git", "show", f"{sha}:.ilk-launch.json"],
+        cwd=project, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=30)
+    if r.returncode != 0:
+        # File did not exist at that commit — treat as empty.
+        return []
+    raw_text = r.stdout
+    try:
+        data = json.loads(raw_text)
+    except (ValueError, OSError) as exc:
+        raise RuntimeError(
+            f".ilk-launch.json at {sha[:12]} is not valid JSON: {exc}"
+        ) from exc
+    ship = data.get("ship")
+    raw = (ship or {}).get("baseline_red") if isinstance(ship, dict) else None
+    if raw is None:
+        raw = data.get("baseline_red")
+    out: list[dict] = []
+    for e in (raw or []):
+        if isinstance(e, dict) and e.get("node_id"):
+            out.append(e)
+        elif isinstance(e, str) and e.strip():
+            out.append({"node_id": e, "reason": "(legacy string entry)"})
+    return out
+
+
 def _in_baseline_red(node_id: str, baseline_red: list[dict]) -> bool:
     """Is this node id covered by a declared entry?
 
@@ -712,7 +754,7 @@ def normalise_signature(text: str) -> str:
 
 def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   invocation: str, scope: dict, results: dict,
-                  at_base: dict, baseline_red: list[str],
+                  at_base: dict, base_red: list[dict], head_red: list[dict],
                   at_base_error: str | None = None) -> str:
     """Render the complete record.  Measurements only — no verdict column.
 
@@ -727,6 +769,12 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
     instead of the generic ``_(suite did not finish)_`` stub, so the checker
     and the operator can distinguish a designed human-escalation from a
     transient timeout.
+
+    ``base_red`` is the baseline_red list from the BASE commit (excuses in
+    this batch).  ``head_red`` is the list from HEAD (includes entries added
+    during this batch).  The ``in baseline_red`` cell takes three values:
+    ``yes`` (in base_red), ``added`` (only in head_red — declared during this
+    batch, does NOT excuse), ``no``.
     """
     c = results["counts"]
     lines = [
@@ -763,7 +811,14 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
         lines += ["| node id | at base | in baseline_red |",
                   "|---|---|---|"]
         for nid, verdict in at_base.items():
-            red = "yes" if _in_baseline_red(nid, baseline_red) else "no"
+            in_base = _in_baseline_red(nid, base_red)
+            in_head = _in_baseline_red(nid, head_red)
+            if in_base:
+                red = "yes"
+            elif in_head:
+                red = "added"
+            else:
+                red = "no"
             lines.append(f"| {nid} | {verdict} | {red} |")
         lines.append("")
     lines += [
@@ -847,9 +902,10 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
 
     nodes = results["failing_nodes"]
     try:
-        baseline_red = read_baseline_red(project)
+        base_red = read_baseline_red_at(project, args.base_sha)
+        head_red = read_baseline_red(project)
         at_base = run_at_base(project, args.base_sha, nodes, invocation,
-                              baseline_red=baseline_red)
+                              baseline_red=base_red)
     except (ValueError, RuntimeError) as exc:
         if "exceeds the" in str(exc) and "cap" in str(exc):
             # Designed human-escalation: write the named stop, not the stub.
@@ -857,7 +913,7 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
                 batch=args.batch or record.stem,
                 head=head, tree=tree, base_sha=args.base_sha,
                 invocation=invocation, scope=scope, results=results,
-                at_base={}, baseline_red=baseline_red,
+                at_base={}, base_red=base_red, head_red=head_red,
                 at_base_error=str(exc),
             ), encoding="utf-8")
             print(f"ERROR: at-base cap exceeded — named stop written to {record}",
@@ -871,7 +927,7 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
         batch=args.batch or record.stem,
         head=head, tree=tree, base_sha=args.base_sha,
         invocation=invocation, scope=scope, results=results,
-        at_base=at_base, baseline_red=baseline_red,
+        at_base=at_base, base_red=base_red, head_red=head_red,
     ), encoding="utf-8")
 
     c = results["counts"]
