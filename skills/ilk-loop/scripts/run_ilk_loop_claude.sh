@@ -1632,7 +1632,25 @@ data = json.loads(sys.stdin.read())
 subplans = data.get('subplans', [])
 runnable = [s for s in subplans if s.get('status') in ('pending', 'in-progress')]
 blocked = [s for s in subplans if s.get('status') not in ('shipped', 'pending', 'in-progress')]
-if runnable:
+# 'stalled' is loop_status's own verdict that outstanding work exists and
+# NONE of it is runnable (loop_status.py:558 -- next_pending excludes blocked
+# AND blocked-dependent sub-plans, :395-402).  It must win over the per-status
+# scan below, which cannot see depends_on: a 'pending' sub-plan whose
+# dependency is 'blocked' reads as runnable here while loop_status reports
+# 'zero runnable, 1 blocked-dependent'.  On gh-resolve 2026-09-23 that
+# disagreement dispatched three agent iterations per run (1010s and about
+# 1.7 USD for one of them) that could only conclude 'ask the human', exited
+# 'no-progress', and was re-dispatched hourly through the night.
+# NOTE: keep dollar-sign characters OUT of this comment -- it lives
+# inside a double-quoted bash string under `set -u`, so a dollar
+# followed by a digit expands to an unbound positional parameter and
+# kills the whole command substitution, silently falling back to
+# 'runnable'.  Caught by
+# test_classification_is_not_all_shipped_when_a_subplan_is_unproven
+# on 2026-09-23, before it shipped.
+if data.get('stalled'):
+    print('blocked-no-runnable')
+elif runnable:
     print('runnable')
 elif blocked:
     print('blocked-no-runnable')

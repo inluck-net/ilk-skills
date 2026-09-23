@@ -52,14 +52,19 @@ def _write_master(plans_dir: Path, name: str, *, status: str = "queued",
 
 
 def _write_subplan(plans_dir: Path, name: str, *, status: str = "pending",
-                   current_step: int = 0, estimated_steps: int = 3) -> None:
+                   current_step: int = 0, estimated_steps: int = 3,
+                   depends_on: list[str] | None = None) -> None:
     plans_dir.mkdir(parents=True, exist_ok=True)
+    deps = ""
+    if depends_on:
+        deps = "depends_on:\n" + "".join(f"  - {d}\n" for d in depends_on)
     body = (
         "---\n"
         f"plan: {name.replace('.md', '')}\n"
         f"status: {status}\n"
         f"current_step: {current_step}\n"
         f"estimated_steps: {estimated_steps}\n"
+        f"{deps}"
         f"last_updated: 2026-08-12\n"
         "---\n"
         f"\n# {name}\n"
@@ -176,6 +181,56 @@ class TestMasterHasRunnable:
                        current_step=0, estimated_steps=4)
         master_path = plans / "MASTER-2026-08-12-test.md"
         assert ps.master_has_runnable(master_path, plans) is False
+
+    def test_pending_but_dependency_blocked_returns_false(self, tmp_path):
+        """A `pending` sub-plan whose depends_on is blocked is NOT runnable.
+
+        Measured on gh-resolve 2026-09-23 (MASTER-2026-09-23): sub-plan
+        `master-lookup-follows-the-recorded-key` went `blocked` awaiting an
+        operator decision, and `reap-refusal-batch-verify` stayed `pending`
+        with that slug in its `depends_on`. `loop_status.py` reported
+        "zero runnable, 1 blocked-dependent" and `stalled: true`, but this
+        predicate saw a `pending` status and said runnable — so the scheduler
+        re-dispatched the project hourly through the night. Each dispatch
+        spent three full agent iterations (1010s and $1.67 for one of them)
+        that could only conclude "ask the human", then exited `no-progress`.
+
+        This is the exact failure this function's own docstring warns about
+        ("or it dispatches a no-op forever"), one level deeper: the blocker
+        is not the sub-plan's own status but its dependency's.
+        """
+        ps = _import_plan_status()
+        plans = tmp_path / "plans"
+        _write_master(plans, "MASTER-2026-08-12-test.md", status="active",
+                      subplans=["2026-08-12-task-a.md", "2026-08-12-task-b.md",
+                                "2026-08-12-task-c.md"])
+        _write_subplan(plans, "2026-08-12-task-a.md", status="shipped",
+                       current_step=3, estimated_steps=3)
+        _write_subplan(plans, "2026-08-12-task-b.md", status="blocked",
+                       current_step=0, estimated_steps=4)
+        _write_subplan(plans, "2026-08-12-task-c.md", status="pending",
+                       current_step=1, estimated_steps=2,
+                       depends_on=["task-b"])
+        master_path = plans / "MASTER-2026-08-12-test.md"
+        assert ps.master_has_runnable(master_path, plans) is False
+
+    def test_pending_with_shipped_dependency_returns_true(self, tmp_path):
+        """Positive control: the same shape with the dependency SHIPPED runs.
+
+        Without this, the assertion above could be satisfied by a predicate
+        that simply returns False whenever depends_on is present.
+        """
+        ps = _import_plan_status()
+        plans = tmp_path / "plans"
+        _write_master(plans, "MASTER-2026-08-12-test.md", status="active",
+                      subplans=["2026-08-12-task-b.md", "2026-08-12-task-c.md"])
+        _write_subplan(plans, "2026-08-12-task-b.md", status="shipped",
+                       current_step=4, estimated_steps=4)
+        _write_subplan(plans, "2026-08-12-task-c.md", status="pending",
+                       current_step=1, estimated_steps=2,
+                       depends_on=["task-b"])
+        master_path = plans / "MASTER-2026-08-12-test.md"
+        assert ps.master_has_runnable(master_path, plans) is True
 
     def test_pending_returns_true(self, tmp_path):
         """AC-2: at least one pending sub-plan → True."""

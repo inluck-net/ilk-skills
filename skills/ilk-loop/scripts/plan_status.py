@@ -221,34 +221,27 @@ def master_has_runnable(master_path: Path, plans_dir: Path) -> bool:
     will advance it until a human unblocks it.  The scheduler needs
     "runnable", not "un-shipped", or it dispatches a no-op forever.
 
-    Conservative fallbacks mirror master_has_nonshipped exactly:
-    no registered sub-plans → True; a registered file missing on disk →
-    True; an unreadable file → ``continue``.
+    **A dependency is part of "could pick up."**  Until 2026-09-23 this
+    checked each sub-plan's own status and nothing else, so a ``pending``
+    sub-plan whose ``depends_on`` named a ``blocked`` sibling counted as
+    runnable.  On gh-resolve that dispatched the same stalled master hourly
+    through a night: ``loop_status`` correctly reported ``stalled: true`` and
+    "zero runnable, 1 blocked-dependent" while this predicate said runnable,
+    and every dispatch burned three agent iterations (1010s / $1.67 for one)
+    that could only conclude "ask the human".  The condition the docstring
+    above already warned about, one level deeper.
 
-    Any status not in ``_RUNNABLE_SUBPLAN_STATUSES`` and not ``shipped``
-    (e.g. ``blocked``, ``skipped``) is treated as not runnable.
+    :func:`master_is_drainable` is that same question asked correctly, and
+    ``promote_next_master`` has used it since L4.  Two predicates for one
+    question is how they drifted, so this is now a thin alias — kept as a
+    separate name because ``scheduler_scan``, ``doctor`` and ``status_all``
+    call it and "has runnable" reads better at those call sites.
+
+    Conservative fallbacks are unchanged and live in
+    :func:`master_is_drainable`: no registered sub-plans → True; a
+    registered file missing or unreadable on disk → True.
     """
-    try:
-        master_text = master_path.read_text(encoding="utf-8-sig")
-    except OSError:
-        return False
-    registered = extract_subplan_files(master_text)
-    if not registered:
-        # No sub-plan references — treat as "has work" (legacy fallback).
-        return True
-    for fname in registered:
-        sub_path = plans_dir / fname
-        if not sub_path.exists():
-            return True
-        try:
-            sub_text = sub_path.read_text(encoding="utf-8-sig")
-        except OSError:
-            continue
-        fm = parse_frontmatter(sub_text)
-        status = fm.get("status", "pending")
-        if status in _RUNNABLE_SUBPLAN_STATUSES:
-            return True
-    return False
+    return master_is_drainable(master_path, plans_dir)
 
 
 # ── depends_on-aware drain predicates (L4) ───────────────────────────────────
