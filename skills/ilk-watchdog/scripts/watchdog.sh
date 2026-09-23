@@ -324,8 +324,11 @@ normalize_classification() {
       # Hit the iteration cap with work still pending: recoverable.
       echo "max-iter-bound"
       ;;
-    ship_integrity_violation|shipped-unproven)
+    ship_integrity_violation|shipped-unproven|work_tree_invalid)
       # A ship whose gate never proved it -- needs a human, not a block banner.
+      # work_tree_invalid (a master's declared work tree failed validation) is
+      # the same class: a config error no restart can fix. collect.py already
+      # labels it shipped-unverified; the raw state must agree.
       echo "shipped-unverified"
       ;;
     selfmod_merge_failed)

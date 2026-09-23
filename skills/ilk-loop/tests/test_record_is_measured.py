@@ -334,12 +334,22 @@ class TestBaselineRedIsRead:
         assert len(vr.read_baseline_red(proj)) == 1
 
     def test_dict_entries_do_not_raise(self, tmp_path: Path) -> None:
-        """The old substring match would have raised on the first real entry."""
+        """The old substring match would have raised on the first real entry.
+
+        Contract changed in the driver-watches-the-work batch (sub-plan
+        the-verify-step-reloads-what-it-edits): declarations match EXACTLY, or
+        as a parametrisation prefix. A file-level entry no longer excuses the
+        tests in its file — that is how one declaration hid four new offenders
+        (gh-resolve cdf319d).
+        """
         proj = self._cfg(tmp_path, {"ship": {"baseline_red": [
-            {"node_id": "tests/test_x.py", "reason": "r"}]}})
+            {"node_id": "tests/test_x.py::TestA::test_b", "reason": "r"},
+            {"node_id": "tests/test_y.py", "reason": "r"}]}})
         b = vr.read_baseline_red(proj)
-        assert vr._in_baseline_red("tests/test_x.py::TestA::test_b", b), (
-            "a file-level declaration must cover its node ids"
+        assert vr._in_baseline_red("tests/test_x.py::TestA::test_b", b)
+        assert vr._in_baseline_red("tests/test_x.py::TestA::test_b[1]", b)
+        assert not vr._in_baseline_red("tests/test_y.py::test_new", b), (
+            "a file-level declaration must NOT cover tests in its file"
         )
 
     def test_absent_config_is_empty_not_a_crash(self, tmp_path: Path) -> None:
@@ -352,7 +362,10 @@ class TestBaselineRedIsRead:
         and must still return a row, because the table keeps one row per
         failure.
         """
-        declared = [{"node_id": "tests/test_known.py", "reason": "platform"}]
+        # Test-level ids: declarations match exactly since the
+        # driver-watches-the-work batch (a file-level id no longer covers).
+        declared = [{"node_id": "tests/test_known.py::test_a", "reason": "platform"},
+                    {"node_id": "tests/test_known.py::test_b", "reason": "platform"}]
         out = vr.run_at_base(
             tmp_path, "deadbeef",
             ["tests/test_known.py::test_a", "tests/test_known.py::test_b"],

@@ -31,7 +31,8 @@ STEM = f"2026-09-23-{SLUG}"
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=30,
+        ["git", *args], cwd=str(cwd), capture_output=True, text=True,
+        encoding="utf-8", timeout=30,
     )
 
 
