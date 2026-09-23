@@ -1462,6 +1462,201 @@ get_step_declared_timeout() {
   echo 0
 }
 
+# ----- Gate-first fast path ---------------------------------------------------
+#
+# A step may declare `gate_first: true` beside its `local_checks` in the
+# per-step yaml fence.  When the CURRENT step of the active sub-plan carries
+# the marker, the driver runs that step's gate BEFORE dispatching an agent:
+#
+#   green -> an empty marker commit carrying [plan:<slug>#step-N],
+#            current_step advances, and the model is never invoked.
+#   red   -> fall through to the agent exactly as today.  The agent is needed
+#            when the suite cannot start at all (typecheck/compile failure)
+#            and when there are attributed failures to fix.
+#
+# Opt-in only: a step without the marker is untouched.  Motivated by the
+# batch-verification step 0, whose gate IS the work
+# (`verification_record.py --run-suite`) -- measured 2026-09-23 across both
+# hosts at 89 iterations / 22.8h of agent wall-clock spent dispatching a
+# model before the one command that does the work.
+#
+# NOTE: the inline python below lives inside single-quoted bash strings on
+# purpose.  A dollar sign followed by a digit inside a double-quoted string
+# under `set -u` expands to an unbound positional parameter and kills the
+# whole command substitution -- see the warning in classify_loop_status.
+
+# Resolve the plans dir the gate-first helpers read.  Anchors to the recorded
+# pre-isolation root, same as invoke_local_checks: under selfmod isolation
+# PROJECT_PATH is the worktree, whose own project key has no plans dir.
+# Captured by callers -- stdout is the return value, nothing else.
+_gate_first_plans_dir() {
+  local plans_root="${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
+  local resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
+  [[ -f "$resolver" ]] || return 1
+  local plans_dir
+  plans_dir=$(python3 "$resolver" --start "$plans_root" 2>/dev/null | \
+    python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('resolved_plans_dir') or '')" 2>/dev/null) || return 1
+  [[ -n "$plans_dir" && -d "$plans_dir" ]] || return 1
+  printf '%s\n' "$plans_dir"
+}
+
+# Locate a sub-plan file by its frontmatter `plan:` slug.  Echoes the path.
+find_subplan_file_by_slug() {
+  local plans_dir="$1" slug="$2"
+  [[ -n "$plans_dir" && -d "$plans_dir" ]] || return 1
+  local f plan_slug
+  for f in "$plans_dir"/*.md; do
+    [[ -f "$f" ]] || continue
+    plan_slug=$(grep -m1 '^plan:' "$f" 2>/dev/null | sed 's/^plan:[[:space:]]*//')
+    if [[ "$plan_slug" == "$slug" ]]; then
+      printf '%s\n' "$f"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Does the step's fenced yaml declare `gate_first: true`?  Exit 0 = declared.
+# Mirrors run_local_checks.extract_step_local_checks' heading + fence window
+# (that parser reads `local_checks:` out of the same fence; this reads the
+# `gate_first:` key beside it).  A marker in frontmatter is NOT read -- the
+# unit is the step, and a step that opts in is a step whose gate is the work.
+step_declares_gate_first() {
+  local slug="$1" step="$2"
+  local plans_dir sub_file
+  plans_dir=$(_gate_first_plans_dir) || return 1
+  sub_file=$(find_subplan_file_by_slug "$plans_dir" "$slug") || return 1
+  python3 -c '
+import re, sys
+body = open(sys.argv[1], encoding="utf-8").read()
+step = sys.argv[2]
+pat = re.compile(r"^###\s+Step\s+" + re.escape(step) + r"(?![0-9])", re.MULTILINE)
+m = pat.search(body)
+if not m:
+    raise SystemExit(1)
+after = body[m.end():]
+next_heading = re.search(r"^###\s+", after, re.MULTILINE)
+region = after[: next_heading.start()] if next_heading else after
+fence = re.search(r"^```(?:yaml|yml)?\s*\n(.*?)^```", region, re.MULTILINE | re.DOTALL)
+if not fence:
+    raise SystemExit(1)
+for line in fence.group(1).splitlines():
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        continue
+    if re.match(r"gate_first:\s*(true|yes|1)\s*$", stripped, re.IGNORECASE):
+        raise SystemExit(0)
+raise SystemExit(1)
+' "$sub_file" "$step"
+}
+
+# Green iff the Contract 2b results file carries at least one `pass` record
+# naming its command.  The command check is load-bearing: `all([])` over zero
+# declared checks reports all_passed=True, and a pass record naming no command
+# is a gate that never ran -- Contract 2b's own distinction.  Neither is green.
+gate_first_results_are_green() {
+  local results_file="$1"
+  [[ -s "$results_file" ]] || return 1
+  python3 -c '
+import json, sys
+path = sys.argv[1]
+recs = []
+try:
+    with open(path, encoding="utf-8") as fh:
+        for raw in fh:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                recs.append(json.loads(raw))
+            except ValueError:
+                raise SystemExit(1)
+except OSError:
+    raise SystemExit(1)
+if not recs:
+    raise SystemExit(1)
+for r in recs:
+    if r.get("outcome") != "pass":
+        raise SystemExit(1)
+    if not r.get("command"):
+        raise SystemExit(1)
+raise SystemExit(0)
+' "$results_file"
+}
+
+# The green path's marker: an empty commit carrying the step trailer.  The
+# verification record lands outside the repo by design, so the commit is the
+# only in-repo proof that the step was discharged (Contract 9).  Not captured;
+# git's own stdout is silenced so a success line cannot leak into a caller.
+commit_gate_first_marker() {
+  local slug="$1" step="$2"
+  local repo="${REPOS[0]:-$PROJECT_PATH}"
+  [[ -n "$repo" ]] || repo="$PROJECT_PATH"
+  local msg="chore(loop): gate-first marker [plan:${slug}#step-${step}]"
+  if git -C "$repo" commit --allow-empty -m "$msg" >/dev/null 2>&1; then
+    echo "[gate-first] marker commit for ${slug} step ${step}"
+    return 0
+  fi
+  echo "  ! [gate-first] marker commit failed for ${slug} step ${step} -- falling through to the agent" >&2
+  return 1
+}
+
+# Bump current_step from $step to step+1, but only when the pointer still
+# reads $step.  A pointer that moved underneath us is not ours to guess at
+# (same refusal as test_ship_integrity's revert: never invent a step).
+advance_subplan_current_step() {
+  local slug="$1" step="$2"
+  local plans_dir sub_file
+  plans_dir=$(_gate_first_plans_dir) || return 1
+  sub_file=$(find_subplan_file_by_slug "$plans_dir" "$slug") || return 1
+  python3 -c '
+import re, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+step = int(sys.argv[2])
+body = p.read_text(encoding="utf-8")
+m = re.search(r"^current_step:[ \t]*(\d+)[ \t]*$", body, re.MULTILINE)
+if not m:
+    raise SystemExit(1)
+if int(m.group(1)) != step:
+    raise SystemExit(1)
+p.write_text(body[:m.start()] + "current_step: " + str(step + 1) + body[m.end():], encoding="utf-8")
+raise SystemExit(0)
+' "$sub_file" "$step"
+}
+
+# The whole fast path.  Returns 0 only when the gate passed AND the step was
+# advanced with no agent invocation.  Any other outcome returns 1 and leaves
+# durable state untouched (the results file is the caller's to discard), so
+# the caller falls through to the agent exactly as today.
+attempt_gate_first_fast_path() {
+  local results_file="$1"
+  : > "$results_file"
+
+  local target_line slug step
+  target_line="${PRE_ITER_TARGET:-}"
+  [[ -n "$target_line" ]] || return 1
+  slug="${target_line%% *}"
+  step="${target_line#* }"
+  [[ -n "$slug" && "$step" =~ ^[0-9]+$ ]] || return 1
+
+  step_declares_gate_first "$slug" "$step" || return 1
+
+  echo "[gate-first] $slug step $step declares gate_first: true -- running its gate before the agent"
+
+  local tf
+  tf=$(mktemp)
+  printf '%s %s\n' "$slug" "$step" > "$tf"
+  invoke_local_checks "$PROJECT_PATH" "$tf" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$results_file"
+  rm -f "$tf"
+
+  gate_first_results_are_green "$results_file" || return 1
+
+  commit_gate_first_marker "$slug" "$step" || return 1
+  advance_subplan_current_step "$slug" "$step" || return 1
+  return 0
+}
+
 invoke_local_checks() {
   local project="$1"
   local targets_file="$2"
@@ -3130,7 +3325,35 @@ print(json.dumps({
       create_selfmod_worktree
     fi
 
-    invoke_claude_iteration "$PROJECT_PATH" "$iter_log" "$iter_prompt" "$timeout_sec" "$MAX_BUDGET_USD" "$MODEL"
+    # -- Gate-first fast path (opt-in: gate_first: true on the step) --------
+    #
+    # Run the current step's declared gate BEFORE dispatching the agent when
+    # the step opts in.  Green advances with an empty marker and zero model
+    # turns; red falls through to the agent exactly as today.  A step without
+    # the marker never reaches this branch.
+    local GATE_FIRST_GREEN=0
+    local gate_first_results=""
+    if [[ "$RUN_LOCAL_CHECKS" == true ]]; then
+      gate_first_results=$(mktemp)
+      if attempt_gate_first_fast_path "$gate_first_results"; then
+        GATE_FIRST_GREEN=1
+        echo "[gate-first] green -- advancing without invoking the agent"
+        # invoke_claude_iteration normally sets these; without an agent turn
+        # they stay at their pre-loop defaults and _decide_iter_stop_reason
+        # reads the iteration as a boundary kill.
+        ITER_COMPLETED=1
+        ITER_EXIT_CODE=0
+        ITER_BUDGET_EXHAUSTED=0
+        ITER_QUOTA_EXHAUSTED=0
+      else
+        rm -f "$gate_first_results"
+        gate_first_results=""
+      fi
+    fi
+
+    if [[ "$GATE_FIRST_GREEN" -eq 0 ]]; then
+      invoke_claude_iteration "$PROJECT_PATH" "$iter_log" "$iter_prompt" "$timeout_sec" "$MAX_BUDGET_USD" "$MODEL"
+    fi
 
     local iter_end iter_dur_sec
     iter_end=$(date +%s)
@@ -3254,6 +3477,14 @@ print(json.dumps({
     # all-shipped over two unproven sub-plans.
     local local_checks_results=""
     if [[ "$RUN_LOCAL_CHECKS" == true ]]; then
+      if [[ "$GATE_FIRST_GREEN" -eq 1 && -n "$gate_first_results" ]]; then
+        # The gate already ran on the fast path and passed.  Re-running it
+        # here would double the exact cost the fast path just saved (the
+        # batch-verification gate is a whole suite).  Its Contract 2b record
+        # is the record this iteration reports and enforces.
+        local_checks_results="$gate_first_results"
+        gate_first_results=""
+      else
       local all_targets_file
       all_targets_file=$(mktemp)
       for r in "${REPOS[@]}"; do
@@ -3318,6 +3549,7 @@ print(json.dumps({
         invoke_local_checks "$PROJECT_PATH" "$merged_targets_file" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$local_checks_results"
       fi
       rm -f "$all_targets_file" "$merged_targets_file"
+      fi
 
       # B2 enforcement: a gate that ERRORED or FAILED must BLOCK. Do NOT break
       # here — set iter_stop_reason and let the post-record check below (after
