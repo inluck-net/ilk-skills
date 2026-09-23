@@ -45,9 +45,12 @@ def _subplan(
     if step0_gate:
         gate_block = f"\n```yaml\n{step0_gate}\n```\n"
     prose = f"\n{step0_prose}\n" if step0_prose else ""
+    # plan: must match the date-stripped filename stem to avoid lint_slug_identity_mismatch.
+    import re as _re
+    plan_slug = _re.sub(r"^\d{4}-\d{2}-\d{2}-", "", name)
     return (
         "---\n"
-        f"plan: {name}\n"
+        f"plan: {plan_slug}\n"
         "status: pending\n"
         "current_step: 0\n"
         "tickets: []\n"
@@ -105,7 +108,6 @@ def _demands_green_findings(findings: list[str]) -> list[str]:
 # deleted the markers.
 
 
-@pytest.mark.xfail(strict=True, reason="lint does not exist yet")
 def test_redfirst_step0_plain_pytest_gate_is_a_hard_finding(tmp_path: Path) -> None:
     """A red-first step 0 whose per-step gate is ``pytest <file> -q``."""
     findings = _lint(
@@ -213,7 +215,6 @@ def test_non_redfirst_step0_is_not_a_finding(tmp_path: Path) -> None:
 # ── Registration ───────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="lint does not exist yet")
 def test_check_is_registered_in_all_checks() -> None:
     """An unregistered lint never runs — the defect it guards stays open."""
     names = [c.__name__ for c in plan_lint.ALL_CHECKS]

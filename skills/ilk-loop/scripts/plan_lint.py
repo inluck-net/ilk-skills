@@ -4176,6 +4176,67 @@ def lint_gate_first_requires_a_gate(text: str, slug: str) -> list[str]:
     return findings
 
 
+def lint_redfirst_step0_per_step_gate_demands_green(text: str, slug: str) -> list[str]:
+    """HARD when a red-first step 0's per-step gate demands green on its own tests.
+
+    A red-first step 0 writes a failing test.  If the same step's per-step
+    ``local_checks`` runs that test file with plain exit-0 semantics, the step
+    is required to fail: the driver exits ``local_checks_failed`` and the
+    scheduler blacklists the project.
+
+    Exempt when the step instructs ``xfail(strict=True)`` (the pin will XPASS
+    the moment the fix lands, so the gate stays green without demanding exit 0),
+    or when the gate asserts a red count (``grep -q 'N failed'``).
+    """
+    findings: list[str] = []
+
+    body = _strip_frontmatter(text)
+    step0 = _extract_step_section(body, 0)
+    if not step0:
+        return findings
+
+    # Is step 0 red-first?  Check heading + commit lines for markers that
+    # _RED_FIRST_RE does not cover ("pin", "reproduce"), plus the body regex.
+    heading_m = re.search(r"^###\s+Step\s+0\b.*?$", body, re.MULTILINE)
+    heading = heading_m.group(0) if heading_m else ""
+    commit_lines = _COMMIT_LINE_RE.findall(step0)
+    extra_text = heading + " " + " ".join(commit_lines)
+    red_first = bool(
+        _RED_FIRST_RE.search(step0)
+        or re.search(r"red-first|\bred\b|\bpin(?:s|ned|ning)?\b|\breproduc", extra_text, re.IGNORECASE)
+    )
+    if not red_first:
+        return findings
+
+    # Exempt: the step instructs xfail(strict=True)
+    if "xfail(strict=True" in step0:
+        return findings
+
+    fence = _step_first_yaml_fence(body, 0)
+    if not fence:
+        return findings
+
+    for entry in parse_local_checks_block(fence):
+        cmd = entry.get("command", "") if isinstance(entry, dict) else str(entry)
+        if "pytest" not in cmd:
+            continue
+        test_paths = _test_paths_in(cmd)
+        if not test_paths:
+            continue
+        # Exempt: the gate asserts a failure count (red-count grep).
+        # Matches both literal "4 failed" and regex patterns like "[0-9]+ failed".
+        if re.search(r"\d+\s+failed|\[\d[\d-]*\]\+?\s+failed", cmd):
+            continue
+        findings.append(
+            f"HARD {slug}: step 0 is red-first but its per-step gate "
+            f"`{cmd.strip()}` demands green (exit 0) on the tests it makes "
+            f"red. Write the pins as @pytest.mark.xfail(strict=True) or "
+            f"assert the red count."
+        )
+
+    return findings
+
+
 ALL_CHECKS = (
     lint_gate_budget,
     lint_verification_attribution_unmeasured,
@@ -4204,6 +4265,7 @@ ALL_CHECKS = (
     lint_gate_executable_on_driver_path,
     lint_gate_placeholder_unresolved,
     lint_redfirst_step0_under_frontmatter_gate,
+    lint_redfirst_step0_per_step_gate_demands_green,
     lint_gate_first_requires_a_gate,
     lint_no_diff_step,
     lint_exit_status_discarded,
