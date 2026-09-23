@@ -215,3 +215,35 @@ def test_lint_file_is_actually_running_checks(tmp_path: Path) -> None:
         f"fails the oracle is not running and every 'no finding' assertion "
         f"above is vacuous. Got {findings!r}"
     )
+
+
+# ── Template smoke: the shipped template carries the marker ──────────────
+
+_TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "batch-verification-subplan.md"
+
+
+def _strip_frontmatter(text: str) -> str:
+    """Return *text* with leading ``---``/``---`` frontmatter removed."""
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 4)
+        if end != -1:
+            return text[end + 5:]
+    return text
+
+
+def test_template_step0_declares_gate_first() -> None:
+    """The batch-verification template's step 0 carries ``gate_first: true``."""
+    raw = _TEMPLATE.read_text(encoding="utf-8")
+    body = _strip_frontmatter(raw)
+    fence = plan_lint._step_first_yaml_fence(body, 0)
+    assert fence, "_step_first_yaml_fence returned None for the template"
+    stripped = [ln.strip() for ln in fence.splitlines()]
+    assert any(plan_lint._GATE_FIRST_MARKER_RE.match(ln) for ln in stripped), (
+        "template step 0 yaml fence must carry the gate_first marker; "
+        f"fence: {fence!r}"
+    )
+    # The template has a real gate beside the marker — lint must be silent.
+    findings = plan_lint.lint_gate_first_requires_a_gate(raw, "batch-verification-subplan")
+    assert findings == [], (
+        f"lint_gate_first_requires_a_gate must be empty for the template, got {findings!r}"
+    )

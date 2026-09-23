@@ -179,12 +179,18 @@ section headed "exit 1 with zero failures is not a regression", the run recorded
 ### Step 0 — Run the full suite, record the result
 
 ```yaml
+gate_first: true
 local_checks:
   - command: "python3 <skill-root>/ilk-loop/scripts/verification_record.py --project . --batch <batch-slug> --base-sha <base_sha> --run-suite --scope <auto|full> --suite-timeout <suite timeout>"
     timeout: <suite timeout>
   - command: "python3 -c \"import sys; sys.path.insert(0,'<skill-root>/ilk-loop/scripts'); import verify_attribution as va; rec=va.resolve_batch_record(__import__('pathlib').Path('.'),'<batch-slug>'); text=rec.read_text(errors='replace'); assert not va.has_emptied_record_fields(text), f'record {rec.name} carries heredoc-emptied fields — rewrite with Path.write_text, not a shell heredoc'\""
     timeout: 30
 ```
+
+**This step is gate-first.** The driver runs the gate above before dispatching
+an agent; green → the step commits and advances with no model turn. The agent
+is reached only when the gate is red, and its job then is to read the record
+and triage, not to re-run the suite.
 
 **`--scope full` when the plan demands it.** The `--scope` flag overrides
 `compute_suite_scope`'s auto-detection. Set `--scope full` when the MASTER or
