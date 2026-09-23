@@ -503,9 +503,11 @@ def run_suite(project: Path, invocation: str, timeout: int,
     `selection_size` a claim about something that never happened.
     """
     import subprocess
+    import time
     cmd = invocation
     if selection:
         cmd = f"{invocation} {' '.join(selection)}"
+    t0 = time.monotonic()
     try:
         r = subprocess.run(cmd, shell=True, cwd=project, timeout=timeout,
                            capture_output=True, text=True, encoding="utf-8",
@@ -515,8 +517,10 @@ def run_suite(project: Path, invocation: str, timeout: int,
             f"suite exceeded {timeout}s; the record keeps `suite_failed: "
             f"unmeasured` rather than a count nothing measured"
         )
+    elapsed = round(time.monotonic() - t0)
     return {**_parse_for(invocation)((r.stdout or "") + (r.stderr or "")),
-            "exit_code": r.returncode}
+            "exit_code": r.returncode,
+            "suite_duration_sec": elapsed}
 
 
 AT_BASE_CAP = 50
@@ -835,7 +839,9 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   at_base_error: str | None = None,
                   head_reruns: dict[str, int] | None = None,
                   batch_touched: dict[str, bool] | None = None,
-                  flaky_owed: list[str] | None = None) -> str:
+                  flaky_owed: list[str] | None = None,
+                  suite_duration_sec: int | None = None,
+                  suite_budget: tuple[int, str] | None = None) -> str:
     """Render the complete record.  Measurements only — no verdict column.
 
     The ``attributed`` column is deliberately absent.  It was the cell that
@@ -873,6 +879,13 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
         f"suite_failed: {c['failed'] + c['errors']}",
         f"suite_errors: {c['errors']}",
         f"suite_skipped: {c['skipped']}",
+    ]
+    if suite_duration_sec is not None:
+        lines.append(f"suite_duration_sec: {suite_duration_sec}")
+    if suite_budget is not None:
+        budget_val, budget_src = suite_budget
+        lines.append(f"suite_budget: {budget_val} ({budget_src})")
+    lines += [
         "",
         "## At-base rerun",
         "",
@@ -905,8 +918,16 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
             else:
                 red = "no"
             if has_reruns and head_reruns is not None and batch_touched is not None:
-                rerun_str = f"{head_reruns.get(nid, 0)}/{FLAKY_RERUN_COUNT}"
-                touched_str = "yes" if batch_touched.get(nid, False) else "no"
+                rerun_val = head_reruns.get(nid, 0)
+                touched_val = batch_touched.get(nid, False)
+                if rerun_val == "—":
+                    rerun_str = "—"
+                else:
+                    rerun_str = f"{rerun_val}/{FLAKY_RERUN_COUNT}"
+                if touched_val == "—":
+                    touched_str = "—"
+                else:
+                    touched_str = "yes" if touched_val else "no"
                 lines.append(f"| {nid} | {verdict} | {red} | {rerun_str} | {touched_str} |")
             else:
                 lines.append(f"| {nid} | {verdict} | {red} |")
@@ -941,7 +962,8 @@ def _history_path(record: Path) -> Path:
 
 
 def _append_history_entry(record: Path, attempt: int, digest: str,
-                          failing_nodes: list[str]) -> None:
+                          failing_nodes: list[str],
+                          suite_duration_sec: int | None = None) -> None:
     """Append one attempt's metadata to the history file (R3).
 
     The history is append-only; each line is a JSON object with the attempt
@@ -951,6 +973,8 @@ def _append_history_entry(record: Path, attempt: int, digest: str,
     hist = _history_path(record)
     entry = {"attempt": attempt, "digest": digest,
              "failing_nodes": sorted(failing_nodes)}
+    if suite_duration_sec is not None:
+        entry["suite_duration_sec"] = suite_duration_sec
     with open(hist, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, sort_keys=True) + "\n")
 
@@ -969,6 +993,69 @@ def _read_history(record: Path) -> list[dict]:
             except json.JSONDecodeError:
                 pass
     return entries
+
+
+# ── Measured suite budget ──────────────────────────────────────────────────
+
+# Judgment call: 2×, [600, 3600].  Basis: ilk-skills' suite measured ~9-12 min
+# and gh-resolve's ~4-5 min on this host, and 2× absorbs load without letting a
+# hang run for an hour.  Wrong if a project's suite varies more than 2× run to
+# run; then its `ship.suite.timeout` should be passed explicitly.
+_SUITE_BUDGET_MULTIPLIER = 2
+_SUITE_BUDGET_MIN = 600
+_SUITE_BUDGET_MAX = 3600
+_SUITE_BUDGET_DEFAULT = 1800
+_SUITE_BUDGET_HISTORY_COUNT = 5
+
+
+def _read_historical_suite_durations(project: Path) -> list[int]:
+    """Read suite_duration_sec from the last N history entries across all
+    batches in this project's verification directory.
+
+    Returns a list of durations (may be empty).
+    """
+    try:
+        vdir = _resolve_project_verification_dir(project)
+    except FileNotFoundError:
+        return []
+    durations: list[int] = []
+    # Scan all batch records' history files, newest first.
+    for hist_file in sorted(vdir.glob("*-batch.history.jsonl"), reverse=True):
+        for line in hist_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            dur = entry.get("suite_duration_sec")
+            if isinstance(dur, int) and dur > 0:
+                durations.append(dur)
+                if len(durations) >= _SUITE_BUDGET_HISTORY_COUNT:
+                    return durations
+    return durations
+
+
+def compute_suite_budget(project: Path, explicit_timeout: int | None) -> tuple[int, str]:
+    """Compute the suite budget.
+
+    Returns ``(budget_sec, source)`` where source is ``"explicit"``,
+    ``"measured"``, or ``"default"``.
+
+    When ``explicit_timeout`` is not None, it is used as-is.  Otherwise the
+    budget is ``clamp(2 × max(last 5 durations), 600, 3600)``, falling back
+    to 1800 when there is no history.
+    """
+    if explicit_timeout is not None:
+        return explicit_timeout, "explicit"
+    durations = _read_historical_suite_durations(project)
+    if not durations:
+        return _SUITE_BUDGET_DEFAULT, "default"
+    measured = max(durations)
+    budget = measured * _SUITE_BUDGET_MULTIPLIER
+    budget = max(_SUITE_BUDGET_MIN, min(budget, _SUITE_BUDGET_MAX))
+    return budget, "measured"
 
 
 def _write_measured_record(project: Path, record: Path, args) -> int:
@@ -1034,7 +1121,11 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
     try:
         # Apply the scope, do not merely record it.
         selection = scope.get("selection") if scope.get("mode") == "scoped" else None
-        results = run_suite(project, invocation, args.suite_timeout,
+        # Compute the suite budget: explicit if --suite-timeout was passed,
+        # measured from history otherwise.
+        suite_budget, suite_budget_source = compute_suite_budget(
+            project, args.suite_timeout)
+        results = run_suite(project, invocation, suite_budget,
                             selection=selection)
     except (TimeoutError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -1065,11 +1156,18 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
         return 1
 
     # Run HEAD reruns for non-declared failing nodes to classify flaky tests.
+    # Declared-at-base rows (already in baseline_red) get — in head reruns
+    # and batch touched file — no subprocess is spawned for them.
     non_declared = [nid for nid, v in at_base.items()
                     if v != "declared-at-base"]
+    declared = [nid for nid, v in at_base.items()
+                if v == "declared-at-base"]
     head_reruns: dict[str, int] = {}
     batch_touched: dict[str, bool] = {}
     flaky_owed: list[str] = []
+    # Mark declared rows with — (no rerun).
+    declared_reruns: dict[str, str] = {nid: "—" for nid in declared}
+    declared_touched: dict[str, str] = {nid: "—" for nid in declared}
     if non_declared:
         try:
             head_reruns = run_head_reruns(project, non_declared, invocation)
@@ -1090,14 +1188,21 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
     history = _read_history(record)
     attempt = len(history) + 1
 
+    # Merge declared-row markers (—) into the reruns/touched dicts so
+    # render_record shows — for already-classified rows.
+    all_reruns: dict = {**head_reruns, **declared_reruns}
+    all_touched: dict = {**batch_touched, **declared_touched}
+
     record_text = render_record(
         batch=args.batch or record.stem,
         head=head, tree=tree, base_sha=args.base_sha,
         invocation=invocation, scope=scope, results=results,
         at_base=at_base, base_red=base_red, head_red=head_red,
-        head_reruns=head_reruns or None,
-        batch_touched=batch_touched or None,
+        head_reruns=all_reruns or None,
+        batch_touched=all_touched or None,
         flaky_owed=flaky_owed or None,
+        suite_duration_sec=results.get("suite_duration_sec"),
+        suite_budget=(suite_budget, suite_budget_source),
     )
     # Inject attempt header after the batch line.
     record_text = record_text.replace(
@@ -1109,7 +1214,8 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
     # A test that fails at HEAD but passes at base is an attributed regression
     # that must be carried forward if the next attempt "fixes" it.
     digest = _compute_record_digest(record_text)
-    _append_history_entry(record, attempt, digest, nodes)
+    _append_history_entry(record, attempt, digest, nodes,
+                          suite_duration_sec=results.get("suite_duration_sec"))
 
     c = results["counts"]
     print(f"recorded: {c['passed']} passed, {c['failed']} failed, "
@@ -1146,8 +1252,8 @@ def main(argv: list[str] | None = None) -> int:
         help="run the suite, re-run failures at base, and WRITE the whole record",
     )
     ap.add_argument(
-        "--suite-timeout", type=int, default=1800, metavar="SEC",
-        help="bound on the suite run (default 1800)",
+        "--suite-timeout", type=int, default=None, metavar="SEC",
+        help="bound on the suite run (default: measured from history, 1800 if no history)",
     )
     ap.add_argument(
         "--scope", default="auto", choices=("full", "auto"),

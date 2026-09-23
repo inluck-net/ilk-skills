@@ -208,8 +208,8 @@ section headed "exit 1 with zero failures is not a regression", the run recorded
 ```yaml
 gate_first: true
 local_checks:
-  - command: "python3 <skill-root>/ilk-loop/scripts/verification_record.py --project . --batch <batch-slug> --base-sha <base_sha> --run-suite --scope <auto|full> --suite-timeout <suite timeout>"
-    timeout: <suite timeout>
+  - command: "python3 <skill-root>/ilk-loop/scripts/verification_record.py --project . --batch <batch-slug> --base-sha <base_sha> --run-suite --scope <auto|full>"
+    timeout: 3660
 ```
 
 **This step is gate-first.** The driver runs the gate above before dispatching

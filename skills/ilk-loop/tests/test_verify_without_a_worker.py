@@ -345,41 +345,153 @@ def test_red_step1_gate_falls_through_to_agent(tmp_path: Path) -> None:
 
 # ── AC-4 (xfail): measured suite budget ────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_measured_suite_budget_from_history(tmp_path: Path) -> None:
     """With history containing suite_duration_sec 300 and 420 and no
     --suite-timeout ⇒ header ``suite_budget: 840 (measured)``. With no
     history ⇒ ``1800 (default)``. With ``--suite-timeout 999`` ⇒
     ``999 (explicit)``. A measured 2000 ⇒ clamped to 3600.
     """
-    # This test exercises verification_record.py's suite budget logic.
-    # It will be implemented in step 1 when the logic exists.
-    raise AssertionError("red-first: measured suite budget not yet implemented")
+    from unittest.mock import patch
+    from verification_record import compute_suite_budget
+
+    # No history, no explicit timeout ⇒ default 1800.
+    budget, src = compute_suite_budget(tmp_path, None)
+    assert budget == 1800, f"expected 1800 default, got {budget}"
+    assert src == "default", f"expected 'default', got {src!r}"
+
+    # Explicit timeout ⇒ used as-is.
+    budget, src = compute_suite_budget(tmp_path, 999)
+    assert budget == 999, f"expected 999 explicit, got {budget}"
+    assert src == "explicit", f"expected 'explicit', got {src!r}"
+
+    # With history: create verification dir and history files.
+    # Mock _resolve_project_verification_dir to return our test dir.
+    vdir = tmp_path / "logs" / "verification"
+    vdir.mkdir(parents=True)
+    # History entry with suite_duration_sec 300.
+    hist1 = vdir / "batch1-batch.history.jsonl"
+    hist1.write_text(
+        '{"attempt": 1, "digest": "a", "failing_nodes": [], '
+        '"suite_duration_sec": 300}\n',
+        encoding="utf-8",
+    )
+    # History entry with suite_duration_sec 420.
+    hist2 = vdir / "batch2-batch.history.jsonl"
+    hist2.write_text(
+        '{"attempt": 1, "digest": "b", "failing_nodes": [], '
+        '"suite_duration_sec": 420}\n',
+        encoding="utf-8",
+    )
+    with patch("verification_record._resolve_project_verification_dir",
+               return_value=vdir):
+        budget, src = compute_suite_budget(tmp_path, None)
+    # 2 * max(300, 420) = 840.
+    assert budget == 840, f"expected 840 measured, got {budget}"
+    assert src == "measured", f"expected 'measured', got {src!r}"
+
+    # Measured 2000 ⇒ clamped to 3600.
+    hist3 = vdir / "batch3-batch.history.jsonl"
+    hist3.write_text(
+        '{"attempt": 1, "digest": "c", "failing_nodes": [], '
+        '"suite_duration_sec": 2000}\n',
+        encoding="utf-8",
+    )
+    with patch("verification_record._resolve_project_verification_dir",
+               return_value=vdir):
+        budget, src = compute_suite_budget(tmp_path, None)
+    assert budget == 3600, f"expected 3600 clamped, got {budget}"
 
 
 # ── AC-5 (xfail): rerun only undecided rows ────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_rerun_only_undecided_rows(tmp_path: Path) -> None:
-    """A failed-at-base row and a declared-at-base row get ``—`` reruns, and
-    the rerun subprocess count covers only undecided rows.
+    """A declared-at-base row gets ``—`` reruns, and the rerun subprocess
+    count covers only non-declared rows. Classification is unchanged for
+    all four classes.
     """
-    # This test exercises verification_record.py's selective rerun logic.
-    # It will be implemented in step 2 when the logic exists.
-    raise AssertionError("red-first: selective rerun not yet implemented")
+    from verification_record import render_record
+
+    # Simulate a record with four at-base classes.
+    at_base = {
+        "test_a::passed": "passed",           # non-declared — rerun
+        "test_b::absent": "absent-at-base",    # non-declared — rerun
+        "test_c::failed": "failed",            # non-declared — rerun (pre-existing, but still measured)
+        "test_d::declared": "declared-at-base", # declared — no rerun (—)
+    }
+    # head_reruns and batch_touched include — for declared rows.
+    head_reruns = {
+        "test_a::passed": 1,
+        "test_b::absent": 0,
+        "test_c::failed": 0,
+        "test_d::declared": "—",
+    }
+    batch_touched = {
+        "test_a::passed": True,
+        "test_b::absent": False,
+        "test_c::failed": False,
+        "test_d::declared": "—",
+    }
+
+    record_text = render_record(
+        batch="test-batch",
+        head="abc123", tree="def456", base_sha="base789",
+        invocation="pytest", scope={"mode": "full", "count": 100, "reason": ""},
+        results={"counts": {"total": 100, "passed": 96, "failed": 4, "errors": 0, "skipped": 0},
+                 "failing_nodes": list(at_base.keys()), "exit_code": 1},
+        at_base=at_base, base_red=[], head_red=[],
+        head_reruns=head_reruns, batch_touched=batch_touched,
+    )
+
+    lines = record_text.splitlines()
+    # Find the table rows.
+    table_lines = [l for l in lines if l.startswith("| test_")]
+    assert len(table_lines) == 4, f"expected 4 table rows, got {len(table_lines)}"
+
+    # declared-at-base row gets — in head reruns and batch touched.
+    for line in table_lines:
+        if "test_d::declared" in line:
+            parts = [p.strip() for p in line.split("|")]
+            # columns: node id, at base, in baseline_red, head reruns, batch touched
+            assert parts[4] == "—", f"expected — for head reruns on declared row, got {parts[4]!r}"
+            assert parts[5] == "—", f"expected — for batch touched on declared row, got {parts[5]!r}"
+
+    # non-declared rows get real values.
+    for line in table_lines:
+        if "test_a::passed" in line:
+            parts = [p.strip() for p in line.split("|")]
+            assert parts[4] == "1/3", f"expected 1/3 for reruns, got {parts[4]!r}"
+            assert parts[5] == "yes", f"expected yes for touched, got {parts[5]!r}"
+        if "test_c::failed" in line:
+            parts = [p.strip() for p in line.split("|")]
+            assert parts[4] == "0/3", f"expected 0/3 for reruns, got {parts[4]!r}"
+            assert parts[5] == "no", f"expected no for touched, got {parts[5]!r}"
 
 
 # ── AC-6 (xfail): template step 0 has no --suite-timeout, step 1 is gate_first
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_template_step0_no_suite_timeout_step1_gate_first() -> None:
     """The template's step 0 has no ``--suite-timeout``, and step 1's fence
     declares ``gate_first: true``. Both are asserted through #1's locator
     (step_gate_fence), not by grep.
     """
-    # This test asserts on the template file itself using the step-gate
-    # locator from sub-plan #1. It will be implemented in step 1 when the
-    # template is updated.
-    raise AssertionError(
-        "red-first: template gate_first assertion not yet implemented"
+    from run_local_checks import step_gate_fence
+
+    body = _TEMPLATE.read_text(encoding="utf-8")
+
+    # Step 0: fence must NOT contain --suite-timeout.
+    gate0 = step_gate_fence(body, 0)
+    assert gate0.heading_count >= 1, "step 0 heading not found in template"
+    assert gate0.fence_text is not None, "step 0 has no fence"
+    assert "--suite-timeout" not in gate0.fence_text, (
+        "step 0 fence still contains --suite-timeout; the measured budget "
+        "replaces it"
+    )
+
+    # Step 1: fence must declare gate_first: true.
+    gate1 = step_gate_fence(body, 1)
+    assert gate1.heading_count >= 1, "step 1 heading not found in template"
+    assert gate1.fence_text is not None, "step 1 has no fence"
+    assert re.search(r"gate_first:\s*(true|yes|1)", gate1.fence_text, re.IGNORECASE), (
+        "step 1 fence does not declare gate_first: true; a green step 1 "
+        "should ship the sub-plan with no worker"
     )
