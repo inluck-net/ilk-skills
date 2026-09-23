@@ -30,10 +30,9 @@ sys.path.insert(0, str(SHIP_SCRIPTS))
 # ── AC-1: MalformedConfig on missing node_id ──────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: config not reloaded")
 def test_verify_attribution_rejects_missing_node_id(tmp_path: Path) -> None:
     """AC-1: baseline_red without node_id ⇒ exit 1, output names node_id."""
-    from verify_attribution import verify_attribution_main
+    from verify_attribution import main
 
     launch = tmp_path / ".ilk-launch.json"
     launch.write_text(
@@ -44,15 +43,13 @@ def test_verify_attribution_rejects_missing_node_id(tmp_path: Path) -> None:
     record = tmp_path / "record.md"
     record.write_text("# Verification record\n\nNo failures.\n", encoding="utf-8")
 
-    with pytest.raises(SystemExit) as exc_info:
-        verify_attribution_main(tmp_path, record)
-    assert exc_info.value.code == 1
+    rc = main([str(record), "--project", str(tmp_path)])
+    assert rc == 1, f"expected exit 1, got {rc}"
 
 
 # ── AC-2: failed-differently is attributed ─────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: failed-differently not in _AT_BASE_OK")
 def test_failed_differently_is_attributed(tmp_path: Path) -> None:
     """AC-2: row 'failed-differently' ⇒ attributed (not rejected as unrecognized).
 
@@ -70,7 +67,6 @@ def test_failed_differently_is_attributed(tmp_path: Path) -> None:
 # ── AC-3: exact matching ──────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: substring matching")
 def test_file_level_entry_does_not_excuse_new_test() -> None:
     """AC-3a: file-level entry does not cover new test in same file."""
     from verification_record import _in_baseline_red
@@ -90,7 +86,6 @@ def test_parametrisation_prefix_matches() -> None:
 # ── AC-4: signature normalisation ─────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: normaliser not implemented")
 def test_signature_normalises_tmp_paths() -> None:
     """AC-4a: different tmp dirs give the same signature."""
     from verification_record import normalise_signature
@@ -104,7 +99,6 @@ def test_signature_normalises_tmp_paths() -> None:
     assert sig1 == sig2
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: normaliser not implemented")
 def test_signature_changes_on_different_failure() -> None:
     """AC-4b: adding a second assertion message changes the signature."""
     from verification_record import normalise_signature

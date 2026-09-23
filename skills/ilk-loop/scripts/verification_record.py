@@ -668,14 +668,46 @@ def read_baseline_red(project: Path) -> list[dict]:
 def _in_baseline_red(node_id: str, baseline_red: list[dict]) -> bool:
     """Is this node id covered by a declared entry?
 
-    Substring either way, so a file-level declaration covers its tests:
-    `tests/test_x.py` matches `tests/test_x.py::TestA::test_b`.
+    Exact match, or prefix match for parametrisations:
+    ``tests/test_x.py::test_a`` covers ``tests/test_x.py::test_a[1]``
+    (``id`` starts with ``node_id + "["``).  File-level and class-level
+    entries no longer excuse individual tests — exact matching prevents
+    a declaration from excusing tests that did not exist when it was written.
     """
     for e in baseline_red:
         nid = (e.get("node_id") or "").strip()
-        if nid and (nid in node_id or node_id in nid):
+        if not nid:
+            continue
+        if node_id == nid:
+            return True
+        if node_id.startswith(nid + "["):
             return True
     return False
+
+
+# ── Signature normalisation for "failed-differently" detection ──────────
+
+_TMP_DIR_RE = re.compile(r"/tmp/[^\s]+")
+_HEX_ADDR_RE = re.compile(r"0x[0-9a-fA-F]+")
+_TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[^\s]*")
+
+
+def normalise_signature(text: str) -> str:
+    """Normalise a pytest failure signature for stable comparison.
+
+    Replaces volatile substrings so two runs of the same failing test in
+    different tmp dirs, with different hex addresses or timestamps, produce
+    the same signature.
+
+    Normalisations:
+    - Absolute paths under ``/tmp/…`` → ``<tmp>``
+    - Hex addresses (``0x…``) → ``<addr>``
+    - Timestamps (ISO-like) → ``<t>``
+    """
+    text = _TMP_DIR_RE.sub("<tmp>", text)
+    text = _HEX_ADDR_RE.sub("<addr>", text)
+    text = _TIMESTAMP_RE.sub("<t>", text)
+    return text
 
 
 def render_record(*, batch: str, head: str, tree: str, base_sha: str,

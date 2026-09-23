@@ -171,7 +171,7 @@ def parse_rows(section: str) -> list[list[str]]:
 
 _SIGNED_RE = re.compile(r"^record_writer:[ \t]*(\S+)", re.MULTILINE)
 
-_AT_BASE_OK = {"passed", "failed", "absent-at-base"}
+_AT_BASE_OK = {"passed", "failed", "absent-at-base", "failed-differently"}
 
 
 def is_signed(text: str) -> bool:
@@ -218,7 +218,10 @@ def derive_attributed(rows: list[list[str]]) -> list[list[str]]:
                 f"unrecognised `in baseline_red` value {r[2]!r} for {node}; "
                 f"expected yes or no."
             )
-        if at_base in {"passed", "absent-at-base"} and in_red == "no":
+        # failed-differently: the test fails at base AND at HEAD, but for
+        # different reasons — the batch changed the failure.  Attributed:
+        # "No prose overturns a row" (template :117).
+        if at_base in {"passed", "absent-at-base", "failed-differently"} and in_red == "no":
             bad.append(r)
     return bad
 
@@ -566,6 +569,24 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     project = Path(args.project).resolve()
+
+    # Load ship config early — MalformedConfig must be caught before any
+    # verdict is derived, so the error names the problem instead of crashing
+    # mid-verification (gh-resolve 23fa13e).
+    scripts_dir = Path(__file__).resolve().parent
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    try:
+        from ship_config import load_ship_config, MalformedConfig  # type: ignore[import-untyped]
+        config = load_ship_config(project)
+        if isinstance(config, MalformedConfig):
+            path_str = str(config.resolved_path) if config.resolved_path else "unknown"
+            print(f"ATTRIBUTION FAILED: malformed ship config at {path_str}: "
+                  f"{config.detail}", file=sys.stderr)
+            return 1
+    except ImportError:
+        pass  # ship_config unavailable; proceed without the check
+
     if bool(args.record) == bool(args.batch):
         # Both or neither. Neither leaves nothing to check; both invites a plan
         # that passes a stale path next to a correct slug and gets the stale one.
