@@ -431,27 +431,96 @@ def resolve_run_cwd(project: Path, subplan: Path, fm_text: str) -> tuple[Path, s
     )
 
 
-def extract_step_local_checks(body: str, step_n: int) -> list[dict]:
-    """
-    Extract local_checks declared inside a per-step yaml fence.
+@dataclass
+class StepGate:
+    """Result of :func:`step_gate_fence`: what the locator found for one step."""
+    heading_count: int
+    fence_text: str | None = None
+    declares_local_checks: bool = False
 
-    Looks for `### Step <N>` (or `### Step <N> —`) heading, then the next
-    fenced block (```yaml or ``` ) immediately following, and parses
-    local_checks from it.
+
+def step_gate_fence(body: str, step_n: int) -> StepGate:
+    r"""Unified locator for a step's gate fence.
+
+    Returns a :class:`StepGate` describing what was found for ``step_n``.
+
+    * heading: ``^###\s+Step\s+N(?!\d)`` — any punctuation after N, and
+      ``Step 1`` does not match ``Step 10``.
+    * ``heading_count`` counts every match; the region runs from the LAST
+      match to the next ``^###\s`` heading.  **Judgment call: last wins.**
+      Basis: C3's spurious heading sits in quoted prose before the real one.
+    * fences: a line scanner that tracks open/close state.  `````<lang>```
+      opens, ```` ``` ```` closes, so a closer is never an opener.  The
+      chosen fence is the first yaml or untagged fence whose content has a
+      ``^\s*local_checks:`` line.
+    * ``declares_local_checks`` = any line in the region matching
+      ``^\s*local_checks:`` with list content, inside or outside a fence.
     """
-    # Find the heading
-    pat = re.compile(rf"^###\s+Step\s+{step_n}(\s|—|-|$)", re.MULTILINE)
-    m = pat.search(body)
-    if not m:
+    heading_re = re.compile(rf"^###\s+Step\s+{step_n}(?!\d)", re.MULTILINE)
+    matches = list(heading_re.finditer(body))
+    heading_count = len(matches)
+    if heading_count == 0:
+        return StepGate(heading_count=0)
+
+    region_start = matches[-1].end()
+    next_heading = re.search(r"^###\s+", body[region_start:], re.MULTILINE)
+    region = body[region_start:region_start + next_heading.start()] if next_heading else body[region_start:]
+
+    # Check if the region declares local_checks at all (inside or outside a fence).
+    # Detect any local_checks declaration: YAML list (indented items) or
+    # JSON array (opening bracket).  Excludes `local_checks: []` which is
+    # a deliberate "no gate" marker.
+    _lc_re = re.compile(r"^\s*['\"]?local_checks['\"]?\s*:\s*(?:\n\s+\S|\[)", re.MULTILINE)
+    declares_local_checks = bool(_lc_re.search(region))
+
+    # Scan for fences with open/close tracking.
+    fence_re = re.compile(r"^(```\w*)\s*$", re.MULTILINE)
+    pos = 0
+    in_fence = False
+    fence_lang = ""
+    fence_start = -1
+    while pos < len(region):
+        fm = fence_re.search(region, pos)
+        if not fm:
+            break
+        line = fm.group(1).strip()
+        if in_fence:
+            if line == "```":
+                # Close the current fence
+                fence_content = region[fence_start:fm.start()]
+                if fence_lang in ("", "yaml", "yml"):
+                    if re.search(r"^\s*local_checks:", fence_content, re.MULTILINE):
+                        parsed = parse_local_checks_block(fence_content)
+                        if any(c.get("command") for c in parsed):
+                            return StepGate(
+                                heading_count=heading_count,
+                                fence_text=fence_content,
+                                declares_local_checks=declares_local_checks,
+                            )
+                in_fence = False
+                pos = fm.end()
+            else:
+                # A ```<lang> while already in a fence is NOT a closer — skip
+                pos = fm.end()
+        else:
+            # Open a new fence
+            in_fence = True
+            fence_lang = line[3:] if len(line) > 3 else ""
+            fence_start = fm.end()
+            pos = fm.end()
+
+    return StepGate(heading_count=heading_count, declares_local_checks=declares_local_checks)
+
+
+def extract_step_local_checks(body: str, step_n: int) -> list[dict]:
+    """Extract local_checks declared inside a per-step yaml fence.
+
+    Delegates to :func:`step_gate_fence` for the unified locator.
+    """
+    gate = step_gate_fence(body, step_n)
+    if gate.fence_text is None:
         return []
-    after = body[m.end():]
-    # Find the next fenced block before the next ### heading
-    next_heading = re.search(r"^###\s+", after, re.MULTILINE)
-    region = after[: next_heading.start()] if next_heading else after
-    fence = re.search(r"^```(?:yaml|yml)?\s*\n(.*?)^```", region, re.MULTILINE | re.DOTALL)
-    if not fence:
-        return []
-    return parse_local_checks_block(fence.group(1))
+    return parse_local_checks_block(gate.fence_text)
 
 
 def step_declared_timeout(body: str, step_n: int) -> int:
@@ -494,18 +563,14 @@ def gate_declared_timeout(body: str, step_n: int) -> int:
 
 def count_step_local_checks_items(body: str, step_n: int) -> int:
     """Item count for a per-step fence — the step-scoped twin of
-    :func:`count_local_checks_items`."""
-    pat = re.compile(rf"^###\s+Step\s+{step_n}(\s|—|-|$)", re.MULTILINE)
-    m = pat.search(body)
-    if not m:
+    :func:`count_local_checks_items`.
+
+    Delegates to :func:`step_gate_fence` for the unified locator.
+    """
+    gate = step_gate_fence(body, step_n)
+    if gate.fence_text is None:
         return 0
-    after = body[m.end():]
-    next_heading = re.search(r"^###\s+", after, re.MULTILINE)
-    region = after[: next_heading.start()] if next_heading else after
-    fence = re.search(r"^```(?:yaml|yml)?\s*\n(.*?)^```", region, re.MULTILINE | re.DOTALL)
-    if not fence:
-        return 0
-    return count_local_checks_items(fence.group(1))
+    return count_local_checks_items(gate.fence_text)
 
 
 # ── runner ───────────────────────────────────────────────────────────────────
@@ -1038,11 +1103,19 @@ def main(argv: list[str]) -> int:
             f"{len(subplan_checks)} parsed"
         )
     if step is not None:
+        step_gate = step_gate_fence(body, step)
         step_items = count_step_local_checks_items(body, step)
         if step_items > len(step_checks):
             malformed.append(
                 f"step {step} local_checks declares {step_items} item(s) but "
                 f"{len(step_checks)} parsed"
+            )
+        # A step whose region declares local_checks in a shape the locator
+        # cannot resolve (e.g. the list sits in a ```json fence) ⇒ refuse.
+        if step_gate.declares_local_checks and len(step_checks) == 0:
+            malformed.append(
+                f"step {step} declares local_checks but 0 were extracted — "
+                f"heading or fence shape"
             )
     if malformed:
         print(json.dumps({

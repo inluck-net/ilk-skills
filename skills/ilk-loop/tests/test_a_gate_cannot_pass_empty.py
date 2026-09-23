@@ -237,17 +237,14 @@ local_checks:
 class TestAC1FixtureExtraction:
     """Each shape must extract exactly 1 check from step 0."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_c1_colon_extracts_one_check(self) -> None:
         checks = rlc.extract_step_local_checks(C1_FIXTURE, step_n=0)
         assert len(checks) == 1, f"C1 colon: expected 1 check, got {len(checks)}"
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_c2_fence_before_yaml_extracts_one_check(self) -> None:
         checks = rlc.extract_step_local_checks(C2_FIXTURE, step_n=0)
         assert len(checks) == 1, f"C2 fence-before-yaml: expected 1 check, got {len(checks)}"
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_c3_duplicate_heading_extracts_real_step_check(self) -> None:
         checks = rlc.extract_step_local_checks(C3_FIXTURE, step_n=0)
         assert len(checks) == 1, f"C3: expected 1 check, got {len(checks)}"
@@ -263,7 +260,6 @@ class TestAC2DeclaredButUnextractedRefuses:
     """A step that declares local_checks in a shape the locator cannot resolve
     (e.g. a json fence) must exit 2 with 'malformed' naming the step."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_json_fence_exits_2_with_malformed(
         self, tmp_path: Path, monkeypatch
     ) -> None:
@@ -392,23 +388,22 @@ class TestAC7ExtractionGoesFromZeroToDeclared:
     """Over C1-C3 shapes, step_gate_fence must extract the declared checks.
     Today they extract 0; after the fix they must extract the declared count."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_c1_declared_count_matches_extracted(self) -> None:
-        declared = C1_FIXTURE.count("command:")
+        gate = rlc.step_gate_fence(C1_FIXTURE, step_n=0)
+        declared = gate.fence_text.count("command:") if gate.fence_text else 0
         extracted = len(rlc.extract_step_local_checks(C1_FIXTURE, step_n=0))
         assert extracted == declared, (
             f"AC-7 C1: declared {declared} commands, extracted {extracted}"
         )
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_c2_declared_count_matches_extracted(self) -> None:
-        declared = C2_FIXTURE.count("command:")
+        gate = rlc.step_gate_fence(C2_FIXTURE, step_n=0)
+        declared = gate.fence_text.count("command:") if gate.fence_text else 0
         extracted = len(rlc.extract_step_local_checks(C2_FIXTURE, step_n=0))
         assert extracted == declared, (
             f"AC-7 C2: declared {declared} commands, extracted {extracted}"
         )
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_c3_extracts_real_step_command(self) -> None:
         # C3 has a spurious heading (quoted prose) before the real step.
         # The locator must use the LAST heading and extract the real step's fence.
