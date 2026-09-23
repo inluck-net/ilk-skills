@@ -1,15 +1,16 @@
 """Pins for the gate-first fast path and its red escape hatch.
 
-Part of sub-plan `a-gate-first-step-runs-before-the-agent` (steps 0-2 of 4).
+Part of sub-plan `a-gate-first-step-runs-before-the-agent` (steps 0-3 of 4).
 
 AC-1: a sub-plan whose current step declares ``gate_first: true`` and whose
       gate passes advances ``current_step`` with ZERO agent invocations.
 AC-2: the same sub-plan with a FAILING gate invokes the agent exactly once,
       and ``current_step`` does not advance on the gate's account.
+AC-4: the green path leaves a commit carrying ``[plan:<slug>#step-N]``, created
+      with ``--allow-empty``, and advances ``current_step`` on disk.
 
-RED today — the driver dispatches unconditionally (``invoke_claude_iteration``
-at ``run_ilk_loop_claude.sh:3133``), so the stub agent runs and the counter
-file appears.
+The fast path itself landed in step 1 (``attempt_gate_first_fast_path`` at
+``run_ilk_loop_claude.sh:1632``); these pins hold it to its contract.
 
 Harness: source the driver under ``ILK_DOTSOURCE_ONLY=1`` and run its real
 ``main`` for one iteration (the ``test_exit_state_vocabulary.py`` pattern,
@@ -299,6 +300,96 @@ def test_a_red_gate_first_gate_still_reaches_the_agent(tmp_path: Path) -> None:
         "vacuous. The marker was not seen on the fixture's step 0.\n"
         f"last 40 lines:\n{tail}"
     )
+    assert re.search(r"MAIN_RC=", proc.stdout), (
+        f"main() did not run to a recorded exit — harness failure, not a "
+        f"gate-first verdict.\nlast 40 lines:\n{tail}"
+    )
+
+
+# ── AC-4: the green path's marker commit and step advance are real ──────────
+
+@_NEEDS_GTIMEOUT
+def test_the_green_path_commits_a_marker_and_advances_current_step(tmp_path: Path) -> None:
+    """AC-4. The green path's two durable effects live on disk, not on stdout.
+
+    The verification record lands outside the repo by design (Contract 2b), so
+    an ``--allow-empty`` commit carrying ``[plan:<slug>#step-N]`` is the only
+    in-repo proof the step was discharged (Contract 9) — and the sub-plan's
+    ``current_step`` pointer is the only record that the step is no longer
+    outstanding. A driver that printed "[gate-first] green" and wrote neither
+    would re-run a gate that already passed on the next iteration, which is
+    exactly the 89-iteration / 22.8h cost this sub-plan removes.
+    """
+    world = _build_world(tmp_path)
+    proc = _run_one_iteration(world)
+
+    tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-40:])
+    trailer = f"[plan:{SLUG}#step-0]"
+
+    def _git_out(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(world["project"]), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            check=True,
+        ).stdout
+
+    # Non-vacuity: the fast path must have run to GREEN. Both effects are
+    # written inside `attempt_gate_first_fast_path` only after
+    # `gate_first_results_are_green` — a partial or never-entered run must
+    # not satisfy the assertions below.
+    assert "declares gate_first: true" in proc.stdout, (
+        "the gate-first fast path never engaged (no "
+        "'[gate-first] ... declares gate_first: true' line). Without it the "
+        "assertions below would be checking an ordinary dispatch.\n"
+        f"last 40 lines:\n{tail}"
+    )
+    assert "[gate-first] green -- advancing without invoking the agent" in proc.stdout, (
+        "the fast path did not reach its GREEN epilogue. The marker commit "
+        "and the pointer advance are only written after the gate passes; a "
+        "partial run must not count.\n"
+        f"last 40 lines:\n{tail}"
+    )
+
+    # -- the marker commit exists and carries the step trailer (Contract 9).
+    # Match over the FULL message (`%B` == subject + body), as
+    # `ship_audit.check_step_commits` does — a subject-only predicate misses
+    # body-placed trailers.
+    marker_shas = [
+        sha for sha in _git_out("rev-list", "HEAD").split()
+        if trailer in _git_out("log", "-1", "--format=%B", sha)
+    ]
+    assert marker_shas, (
+        f"no commit carries the step trailer {trailer!r}. The green path's "
+        f"only in-repo proof is this marker commit — ship_audit matches it "
+        f"with re.escape'd exact equality and reports the step unproven "
+        f"without it.\nlog:\n{_git_out('log', '--oneline')}\n"
+        f"last 40 lines:\n{tail}"
+    )
+
+    # -- and it is empty: `--allow-empty` is the contract (AC-4), not a
+    # detail. The verification record lands outside the repo, so the commit
+    # must carry no diff of its own.
+    for sha in marker_shas:
+        names = _git_out("diff-tree", "--no-commit-id", "--name-only", "-r", sha)
+        assert not names.strip(), (
+            f"marker commit {sha[:12]} changes files ({names.strip()!r}). It "
+            f"must be created with --allow-empty: the verification record "
+            f"lands outside the repo (Contract 2b), so this commit carries no "
+            f"diff.\nlast 40 lines:\n{tail}"
+        )
+
+    # -- current_step advanced in the sub-plan file on disk --
+    sub_file = world["plans"] / f"{STEM}.md"
+    body = sub_file.read_text(encoding="utf-8")
+    m = re.search(r"^current_step:[ \t]*(\d+)[ \t]*$", body, re.MULTILINE)
+    assert m, f"the sub-plan lost its current_step pointer:\n{body}"
+    assert int(m.group(1)) == 1, (
+        f"current_step reads {m.group(1)} after a GREEN gate-first gate that "
+        f"discharged step 0. The pointer must advance to step+1 — an "
+        f"unchanged pointer leaves the step outstanding and the next "
+        f"iteration re-runs a gate that already passed.\nlast 40 lines:\n{tail}"
+    )
+
     assert re.search(r"MAIN_RC=", proc.stdout), (
         f"main() did not run to a recorded exit — harness failure, not a "
         f"gate-first verdict.\nlast 40 lines:\n{tail}"
