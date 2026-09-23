@@ -53,5 +53,32 @@ project's `~/.ilk-data/projects/<key>/logs/.ilk-loop.log`.
    Target: a clean verify costs about one suite run.
 3. Then re-measure with the method above and update this table.
 
+## Found while shipping batch 1 (v0.9.125, 2026-09-24)
+
+Batch 1's own verify took 14 min: the full suite once, run by a worker. These
+feed batch 2:
+
+- **A step whose gate extracts 0 checks "passes".**
+  `extract_step_local_checks` (`run_local_checks.py:443`) does not match
+  `### Step N:`, so the step's `local_checks` fence is invisible and the helper
+  records `pass` on 0 checks, with no `command`. On chad-mbp that is 13 steps
+  in 6 of 1132 plan files: 7 from batch 1 (the author's headings), 3 in
+  gh-resolve 23c, and 3 with another cause. `plan_lint` and `plan_preflight`
+  did not flag it. This is **unexcusable** (a vacuous gate) and **smooth**
+  (see the next point) at once.
+- **The gate-first fast path falls through silently.**
+  `gate_first_results_are_green` (`run_ilk_loop_claude.sh:1587-1616`)
+  requires a `command`. On the vacuous gate it returned 1, printed nothing,
+  and dispatched a worker, which reran the full recorder itself (12 min).
+- **The driver's batch-end gate is a second suite and a second writer.**
+  After `all-shipped`, `invoke_batch_gate` runs `batch_gate.py --run`: the full
+  suite again, excusing only via the working tree's `baseline_red`. It
+  overwrote `verify_attribution`'s pass with `fail` (the 2 tests that failed
+  at base). It appears in 87 launcher logs since 2026-08-25, and 11 of those
+  show a pass.
+- **The classifier reruns more than it needs to.** HEAD reruns also ran for
+  rows that failed at base or were declared, where the class is already
+  decided.
+
 Design input for item 2 and the classifier: gh-resolve-21's proposal
 (2026-09-24), items 1-4 and the file-touched rule.
