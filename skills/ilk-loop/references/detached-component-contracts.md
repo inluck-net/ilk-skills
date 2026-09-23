@@ -138,6 +138,17 @@ sub-plan `a-new-terminal-state-cannot-ship-unknown`.
 `run_ilk_loop_claude.ps1` only. It was in **0** classifier files until
 2026-08-29 — see the bug reference under Contract 2b.
 
+**Park writer: `park_master.py --owner-of <slug>`.**  On a
+`ship_integrity_violation` the driver parks the master that **owns** the
+violating slug (its registry lists a sub-plan whose `plan:` or filename-derived
+slug matches).  Without `--owner-of` the driver parked whichever master was the
+sole `queued` one — an unrelated master got parked while the violator was
+reconciled back to `queued` and re-dispatched (rezmac 20260923-150625).
+Ownership status filter: `PARKABLE | {shipped}` (the violating master is
+usually `shipped` at park time because reconcile runs after).  Zero owners ⇒
+exit 1 with JSON naming the slug and every master searched; the driver prints
+the refusal and continues (the run still stops `ship_integrity_violation`).
+
 `shipped-unproven` was added 2026-09-08. Before it, `all-shipped` never
 consulted proof: the loop printed `SHIP PROOF MISSING: 2 sub-plans shipped
 without proof` and `[ilk] ALL SHIPPED — nothing to run. Do NOT relaunch.` in
