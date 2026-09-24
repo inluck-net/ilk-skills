@@ -958,9 +958,14 @@ selfmod_effective_repo() {
   fi
   # Declared work_tree: the consumer's per-issue worktree (e.g. gh-resolve).
   # Only applies when $r matches PROJECT_PATH — other repos (if any) are
-  # not affected.
+  # not affected.  Normalize both paths (macOS /var -> /private/var symlink)
+  # so the comparison succeeds even when work_tree.py returns a
+  # non-canonical path.
+  local _r_canonical _proj_canonical
+  _r_canonical="$(cd "$r" 2>/dev/null && pwd)" || _r_canonical="$r"
+  _proj_canonical="$(cd "${PROJECT_PATH:-}" 2>/dev/null && pwd)" || _proj_canonical="${PROJECT_PATH:-}"
   if [[ -n "${DECLARED_WORK_TREE:-}" \
-        && "$r" == "${PROJECT_PATH:-}" ]]; then
+        && "$_r_canonical" == "$_proj_canonical" ]]; then
     printf '%s\n' "$DECLARED_WORK_TREE"
     return
   fi

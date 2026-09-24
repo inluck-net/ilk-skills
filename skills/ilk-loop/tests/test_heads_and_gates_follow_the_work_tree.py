@@ -257,6 +257,11 @@ def _find_heads_before(world: dict, iteration: int = 1) -> Path | None:
     candidate = log_dir / f"heads-before-{iteration}.tmp"
     if candidate.is_file():
         return candidate
+    # Search in run-specific subdirectories (logs/runs/<run-id>/)
+    for run_dir in log_dir.glob("runs/*/"):
+        candidate = run_dir / f"heads-before-{iteration}.tmp"
+        if candidate.is_file():
+            return candidate
     # Fallback: search in runtime
     runtime = world["data_home"] / "projects" / world["key"] / "runtime"
     for d in [runtime, runtime / "launcher"]:
@@ -286,6 +291,10 @@ def test_heads_before_uses_work_tree_head(
     """
     root = tmp_path_factory.mktemp("heads-before-work-tree")
     world = _build_world(root, work_tree="sibling")
+    # Capture HEADs BEFORE the runner executes — the runner writes
+    # heads-before at iteration start, before the stub agent commits.
+    sibling_head = _head(world["sibling"])
+    clone_head = _head(world["project"])
     proc = _run_one_iteration(world, root)
     tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-40:])
 
@@ -294,9 +303,6 @@ def test_heads_before_uses_work_tree_head(
     assert sentinel.get("state") != "work_tree_invalid", (
         f"work_tree valid but got {sentinel['state']}.\n{tail}"
     )
-
-    sibling_head = _head(world["sibling"])
-    clone_head = _head(world["project"])
 
     # The two HEADs must differ for the test to be meaningful.
     assert sibling_head != clone_head, (
@@ -393,16 +399,27 @@ def test_ship_gap_scans_work_tree(
     sentinel = _read_sentinel(world)
     assert sentinel is not None, f"no sentinel.\n{tail}"
 
-    # The sibling's dirty file should appear in ship-gap output.
-    assert "dirty-sibling.txt" in combined, (
-        "ship-gap did not report dirty-sibling.txt in the work tree.\n"
+    # ship-gap reports COUNTS (tree_paths, committed_paths, gap) — it never
+    # prints individual file names.  Verify that it ran against the work tree
+    # (not the clone) by checking the ship-gap message.
+    #
+    # If ship-gap scanned the CLONE: committed_paths=3 (the 3 foreign
+    # commits), tree_paths>=1 (dirty-clone.txt), gap>=1 → the message would
+    # say "uncommitted at iteration end".
+    #
+    # If ship-gap scanned the SIBLING: committed_paths=1 (marker.txt),
+    # tree_paths=1 (dirty-sibling.txt), gap=0 → the message says
+    # "0 uncommitted at iteration end" (gap=0 because committed >= tree).
+    #
+    # So the assertion is: ship-gap ran AND reported 0 uncommitted, which
+    # only happens when it scans the sibling.
+    assert "[ship-gap]" in combined, (
+        "ship-gap message not found in output.\n"
         f"{tail}"
     )
-    # The clone's dirty file should NOT appear (ship-gap should scan the
-    # sibling, not the clone).
-    assert "dirty-clone.txt" not in combined, (
-        "ship-gap reported dirty-clone.txt from the clone — "
-        "it should scan the work tree, not the clone.\n"
+    assert "0 uncommitted at iteration end" in combined, (
+        "ship-gap did not report 0 uncommitted — it may have scanned the "
+        "clone instead of the sibling.\n"
         f"{tail}"
     )
 
