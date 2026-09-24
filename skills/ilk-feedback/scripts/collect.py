@@ -1417,6 +1417,11 @@ def classify(
         # classify_action arms (→ block), and reused here to avoid adding a
         # new branch.
         "selfmod_merge_failed": "merge-conflict",
+        # The worker attempted to edit the live clone through a symlink
+        # (e.g. ~/.claude/skills/…) instead of the selfmod worktree.
+        # Same label as merge-conflict: structural failure that needs
+        # human intervention, not a restart.
+        "selfmod_live_clone_touched": "merge-conflict",
         # Provider quota cap detected by the SP6 classifier (quota_detect.py).
         # The runner writes this when the terminal payload carries a future
         # reset timestamp or N consecutive api_error with 0 tokens.
