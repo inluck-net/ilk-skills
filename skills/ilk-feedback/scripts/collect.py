@@ -1428,6 +1428,10 @@ def classify(
         # a-master-declares-its-work-tree).  Same label as shipped-unverified:
         # a config error that needs human intervention, not a restart.
         "work_tree_invalid": "shipped-unverified",
+        # Another run holds the run.lock for this key.  Transient — the
+        # scheduler retries on the next cycle.  Label: "interrupted" →
+        # watchdog relaunches (same as a manual interrupt).
+        "lock_held": "interrupted",
     }
     if sentinel is not None:
         sentinel_state = (sentinel.get("state") or "").strip()

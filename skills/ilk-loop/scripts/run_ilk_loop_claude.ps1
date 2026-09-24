@@ -2057,7 +2057,9 @@ $profileMasterFile = $null
 $profilePlansDir = $null
 try {
   Push-Location $ProjectPath
+  $savedEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
   $profileStatusJson = & python $LoopStatusScript --json 2>$null
+  $ErrorActionPreference = $savedEAP
   Pop-Location
   if ($profileStatusJson) {
     $profileStatusObj = ($profileStatusJson -join "`n") | ConvertFrom-Json -ErrorAction Stop
@@ -2088,7 +2090,9 @@ if ($profileMasterFile -and (Test-Path $profileMasterFile)) {
         "--exit-state", "profile_unsupported"
       )
       try {
+        $savedEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
         & python @resultArgs 2>&1 | ForEach-Object { Write-Host $_ }
+        $ErrorActionPreference = $savedEAP
       } catch {
         Write-Host "[unattended] result write failed: $_" -ForegroundColor Red
       }
