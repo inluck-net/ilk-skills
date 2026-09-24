@@ -95,6 +95,31 @@ check_edit_path() {
   return 0
 }
 
+# ----- Selfmod guard: check_live_clone_touched --------------------------------
+# Post-iteration guard for selfmod workers.  Checks whether the live clone
+# has been modified (tracked files dirty or HEAD moved) since the iteration
+# began.  If so, stops the run with a named exit state and logs the file list.
+#
+# Usage:  check_live_clone_touched '<clone_path>'
+# Returns: 0 = clean, 1 = touched (files listed on stdout).
+check_live_clone_touched() {
+  local clone="$1"
+  if [[ -z "$clone" || ! -d "$clone" ]]; then
+    return 0
+  fi
+
+  # Check for tracked-file modifications (porcelain format: XY filename).
+  local dirty_files
+  dirty_files="$(git -C "$clone" status --porcelain 2>/dev/null)" || return 0
+
+  if [[ -n "$dirty_files" ]]; then
+    echo "$dirty_files"
+    return 1
+  fi
+
+  return 0
+}
+
 # ----- Argument parsing ------------------------------------------------------
 
 usage() {
@@ -466,7 +491,8 @@ create_selfmod_worktree() {
 # On failure: leaves the worktree intact and reports the reason.
 # Exit codes (from selfmod_worktree.py merge CLI):
 #   0 = merged, 2 = live loop blocked, 3 = branch moved,
-#   4 = broken probe (fail-closed), 5 = lock contention
+#   4 = broken probe (fail-closed), 5 = lock contention,
+#   6 = live clone dirty (tracked files modified)
 merge_selfmod_worktree() {
   local wt_path="${SELFMOD_WORKTREE_PATH:-}"
   local orig_path="${SELFMOD_ORIGINAL_PROJECT_PATH:-}"
@@ -516,6 +542,11 @@ merge_selfmod_worktree() {
       ;;
     5)
       echo "[selfmod] MERGE FAILED: lock contention." >&2
+      echo "$merge_output" >&2
+      echo "[selfmod] worktree left at $wt_path (holds unmerged work)" >&2
+      ;;
+    6)
+      echo "[selfmod] MERGE REFUSED: live clone dirty (tracked files modified)." >&2
       echo "$merge_output" >&2
       echo "[selfmod] worktree left at $wt_path (holds unmerged work)" >&2
       ;;
@@ -4518,6 +4549,20 @@ for p in Path(sys.argv[1]).glob('*.md'):
       # (The || branch already set iter_stop_reason above.)
       if [[ -z "$_merge_blocked_reason" && "$stop_reason" == "ship_integrity_violation" ]]; then
         _merge_blocked_reason="ship-integrity violation"
+      fi
+
+      # Live-clone check: did the worker modify the live clone?
+      if [[ -z "$_merge_blocked_reason" ]]; then
+        local _live_clone_touched_files
+        _live_clone_touched_files="$(check_live_clone_touched "${SELFMOD_ORIGINAL_PROJECT_PATH:-}")" && true
+        local _lct_rc=$?
+        if [[ $_lct_rc -ne 0 && -n "$_live_clone_touched_files" ]]; then
+          _merge_blocked_reason="live clone touched"
+          echo "[selfmod] LIVE CLONE TOUCHED: worker modified tracked files in the live clone." >&2
+          echo "$_live_clone_touched_files" >&2
+          iter_stop_reason="selfmod_live_clone_touched"
+          stop_reason="selfmod_live_clone_touched"
+        fi
       fi
 
       if [[ -z "$_merge_blocked_reason" ]]; then

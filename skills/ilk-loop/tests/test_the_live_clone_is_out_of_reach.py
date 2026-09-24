@@ -196,7 +196,6 @@ class TestTouchedLiveCloneStopsRun:
     ⇒ the run ends ``selfmod_live_clone_touched``, the log names the file,
     and no merge is attempted."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_modified_tracked_file_stops_run(self, tmp_path: Path) -> None:
         """Modifying a tracked file in the live clone must stop the run
         with the named exit state."""
@@ -229,7 +228,6 @@ class TestMergeDirtyCloneExits6:
     """AC-4: ``selfmod_worktree.py merge`` against a dirty clone exits 6 with
     the file names."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_merge_dirty_clone_exits_6(self, tmp_path: Path) -> None:
         """Merging into a dirty live clone must exit with code 6 and name
         the dirty files."""
@@ -259,8 +257,8 @@ class TestMergeDirtyCloneExits6:
             f"stdout: {result.stdout}\nstderr: {result.stderr}"
         )
         # merge should name the dirty file.
-        assert "README.md" in result.stdout, (
-            f"merge should name the dirty file: {result.stdout!r}"
+        assert "README.md" in result.stderr, (
+            f"merge should name the dirty file: {result.stderr!r}"
         )
 
 

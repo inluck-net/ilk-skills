@@ -92,6 +92,7 @@ about the same file — this doc makes the implicit contracts explicit.
 | `"blocked-no-runnable"` | All remaining sub-plans are `blocked`; nothing to dispatch | Terminal |
 | `"already-shipped"` | Nothing to do at launch time (all sub-plans already shipped) | Terminal |
 | `"selfmod_merge_failed"` | A selfmod worktree's merge-back failed; committed work is parked in the worktree | Terminal |
+| `"selfmod_live_clone_touched"` | A selfmod worker modified tracked files in the live clone; the run stops without merging and logs the file list | Terminal |
 | `"work_tree_invalid"` | Master declared `work_tree:` but the path is missing, not a work tree, or shares no git objects with `--project-path` | Terminal |
 | `"lock_held"` | Another runner holds this project's run lock; the unattended result file (if `ILK_MASTER` set) records `exit_state: lock_held` | Terminal |
 | `"profile_unsupported"` | Windows runner: the master carries `ilk_profile: unattended` which the PS1 runner does not implement; result file written, no other action | Terminal |
@@ -129,6 +130,7 @@ is how a failed run gets classified `clean-success`.
 | `"ship_integrity_violation"` | `shipped-unverified` | `needs-human` |
 | `"shipped-unproven"` | `shipped-unverified` | `needs-human` |
 | `"selfmod_merge_failed"` | `merge-conflict` | `block` |
+| `"selfmod_live_clone_touched"` | `merge-conflict` | `block` |
 | `"timeout"` | *(none — falls through)* | `triage` |
 
 `selfmod_merge_failed` was in **0** consumer files until 2026-09-17 — the

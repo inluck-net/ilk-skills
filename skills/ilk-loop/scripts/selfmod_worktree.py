@@ -817,6 +817,23 @@ class SelfmodWorktree:
                 files.append(line[3:].strip())
         return files
 
+    def _dirty_files_in_repo(self) -> list[str]:
+        """List uncommitted files in the main repo (the live clone)."""
+        result = _git(
+            "status",
+            "--porcelain",
+            cwd=self.repo_path,
+        )
+        if result.returncode != 0:
+            return []
+        files = []
+        for line in result.stdout.splitlines():
+            # Porcelain format: XY filename (X and Y are status chars, then space)
+            line = line.rstrip("\n")
+            if len(line) >= 3:
+                files.append(line[3:].strip())
+        return files
+
 
 # ── CLI entry point ──────────────────────────────────────────────────────────
 
@@ -866,6 +883,17 @@ def main() -> None:
     elif args.command == "merge":
         sw = SelfmodWorktree(args.repo, args.worktree)
         sw.create()  # idempotent — captures _head_at_creation for branch check
+        # Check for dirty clone before merging.
+        dirty = sw._dirty_files_in_repo()
+        if dirty:
+            file_list = ", ".join(dirty[:10])
+            if len(dirty) > 10:
+                file_list += f" (+{len(dirty) - 10} more)"
+            print(
+                f"ERROR: Live clone dirty — tracked files modified: {file_list}",
+                file=sys.stderr,
+            )
+            sys.exit(6)
         try:
             sw.merge_back(lock_path=args.lock,
                           probe_pattern=args.probe_pattern)
