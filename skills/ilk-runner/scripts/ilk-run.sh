@@ -10,8 +10,8 @@ SKILL_ROOT="$(ilk_skill_root)"
 PATHS_PY="$SKILL_ROOT/ilk-loop/scripts/ilk_paths.py"
 LOOP_STATUS_PY="$SKILL_ROOT/ilk-loop/scripts/loop_status.py"
 PROMOTE_PY="$SKILL_ROOT/ilk-loop/scripts/promote_next_master.py"
-LAUNCH_SH="$SKILL_ROOT/ilk-launcher/scripts/launch.sh"
-WATCHDOG_SH="$SKILL_ROOT/ilk-watchdog/scripts/watchdog.sh"
+LAUNCH_SH="${LAUNCH_SH:-$SKILL_ROOT/ilk-launcher/scripts/launch.sh}"
+WATCHDOG_SH="${WATCHDOG_SH:-$SKILL_ROOT/ilk-watchdog/scripts/watchdog.sh}"
 
 START="${1:-.}"
 MAX_ITER="${MAX_ITERATIONS:-0}"
@@ -105,7 +105,7 @@ fi
 # --- Preflight gate ---
 echo ""
 echo "Running preflight..."
-bash "$SCRIPT_DIR/preflight.sh" "$PROJECT_ROOT"
+bash "${PREFLIGHT_SH:-$SCRIPT_DIR/preflight.sh}" "$PROJECT_ROOT"
 if [[ $? -ne 0 ]]; then
   echo ""
   echo "Preflight failed. Aborting launch." >&2

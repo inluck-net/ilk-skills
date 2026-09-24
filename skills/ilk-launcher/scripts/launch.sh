@@ -702,6 +702,9 @@ start_ilk_window() {
   # Pass resolved log paths so the runner writes to external locations
   runner_cmd="$runner_cmd --log-dir \"$per_run_dir\" --jsonl-log \"$jsonl_log\""
 
+  local pid_file
+  pid_file=$(get_pid_file_path "$project_path")
+
   if [[ "$dry_run" == "true" ]]; then
     echo "[$project_name] DRY RUN — would launch:"
     echo "  ProjectPath: $project_path"
@@ -726,8 +729,6 @@ start_ilk_window() {
     fi
     echo "  LogFile: $log_file"
     echo "  JsonlLog: $jsonl_log"
-    local pid_file
-    pid_file=$(get_pid_file_path "$project_path")
     echo "  PID file: $pid_file"
     return 0
   fi

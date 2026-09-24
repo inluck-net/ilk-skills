@@ -25,13 +25,16 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 _HERE = Path(__file__).resolve().parent
 _SKILLS = _HERE.parent.parent  # skills/
+sys.path.insert(0, str(_SKILLS / "ilk-loop" / "scripts"))
 _LAUNCH_SH = _SKILLS / "ilk-launcher" / "scripts" / "launch.sh"
 _ILK_RUN_SH = _SKILLS / "ilk-runner" / "scripts" / "ilk-run.sh"
 
@@ -91,7 +94,6 @@ def _run_start_ilk_window(
 
 # ── AC-1: non-dry launch exits 0 with expected lines ────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: pid_file unbound in non-dry path")
 def test_non_dry_launch_exits_cleanly(tmp_path: Path) -> None:
     """AC-1: a non-dry launch exits 0, stdout has PID/Log/JSONL lines with
     non-empty values, and stderr has no 'unbound variable'."""
@@ -119,7 +121,6 @@ def test_non_dry_launch_exits_cleanly(tmp_path: Path) -> None:
 
 # ── AC-2: ilk-run.sh reaches its watchdog step ──────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: launch dies before watchdog")
 def test_ilk_run_reaches_watchdog(tmp_path: Path) -> None:
     """AC-2: ilk-run.sh reaches its watchdog step instead of exiting after
     the launch.
@@ -164,7 +165,7 @@ def test_ilk_run_reaches_watchdog(tmp_path: Path) -> None:
 
     # Create a minimal plans dir so loop_status doesn't exit 2.
     import ilk_paths
-    with __import__("unittest.mock").patch.dict(
+    with patch.dict(
         os.environ, {"ILK_DATA_HOME": str(tmp_path / ".ilk-data")}, clear=False
     ):
         key = ilk_paths.project_key(project)
@@ -182,10 +183,17 @@ def test_ilk_run_reaches_watchdog(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    # Drive ilk-run.sh with stubs injected via variable overrides.
+    # Stub preflight.sh: always succeed (must be a bash script, not a binary).
+    stub_preflight = tmp_path / "stub-preflight.sh"
+    stub_preflight.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    os.chmod(stub_preflight, 0o755)
+
+    # Drive ilk-run.sh with stubs injected via env-var overrides.
+    # ilk-run.sh respects LAUNCH_SH, WATCHDOG_SH, PREFLIGHT_SH when set.
     script = textwrap.dedent(f"""\
-        LAUNCH_SH="{stub_launch}"
-        WATCHDOG_SH="{stub_watchdog}"
+        export LAUNCH_SH="{stub_launch}"
+        export WATCHDOG_SH="{stub_watchdog}"
+        export PREFLIGHT_SH="{stub_preflight}"
         source "{_ILK_RUN_SH}"
     """)
     result = subprocess.run(
