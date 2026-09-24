@@ -63,10 +63,13 @@ def _build_world(
     work_tree: str | None = None,
     dirty_in_sibling: bool = False,
     dirty_in_clone: bool = False,
+    hang: bool = False,
 ) -> dict:
     """Clone + sibling worktree + isolated data home + stub agent.
 
     The stub agent records its cwd to ``cwd.txt`` in the project root.
+    With ``hang`` it instead sleeps past the iteration bound, so the
+    driver's timeout path (and WIP-preserve) actually runs.
     """
     clone = root / "clone"
     clone.mkdir()
@@ -133,6 +136,13 @@ def _build_world(
     bin_dir.mkdir()
     stub = bin_dir / "claude"
     # Stub agent: records cwd, then commits.
+    if hang:
+        stub.write_text("#!/usr/bin/env bash\nexec sleep 60\n", encoding="utf-8")
+        stub.chmod(0o755)
+        return {
+            "project": clone, "plans": plans, "data_home": data_home,
+            "key": key, "bin": bin_dir, "sibling": sibling,
+        }
     stub.write_text(
         "#!/usr/bin/env bash\n"
         "# Record cwd for AC-1.\n"
@@ -161,7 +171,9 @@ def _build_world(
     }
 
 
-def _run_one_iteration(world: dict, root: Path) -> subprocess.CompletedProcess:
+def _run_one_iteration(
+    world: dict, root: Path, *, timeout_sec: int | None = None,
+) -> subprocess.CompletedProcess:
     env = {
         **os.environ,
         "HOME": str(root),
@@ -171,6 +183,9 @@ def _run_one_iteration(world: dict, root: Path) -> subprocess.CompletedProcess:
         "CLAUDE_CONFIG_DIR": str(root / ".claude"),
     }
     env.pop("ILK_DATA_DIR", None)
+    if timeout_sec is not None:
+        # Test affordance (resolve_iteration_timeout_sec): a sub-minute bound.
+        env["ILK_ITERATION_TIMEOUT_SEC"] = str(timeout_sec)
     (root / ".claude").mkdir(exist_ok=True)
     return subprocess.run(
         ["bash", str(RUNNER),
@@ -230,10 +245,11 @@ def test_wip_preserved_in_work_tree(
     HEAD unchanged.
     """
     root = tmp_path_factory.mktemp("wip-work-tree")
-    world = _build_world(root, work_tree="sibling", dirty_in_sibling=True)
+    world = _build_world(root, work_tree="sibling", dirty_in_sibling=True,
+                         hang=True)
     clone_head_before = _head(world["project"])
 
-    proc = _run_one_iteration(world, root)
+    proc = _run_one_iteration(world, root, timeout_sec=3)
     tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-30:])
 
     # The sibling should have a WIP commit.
@@ -262,10 +278,11 @@ def test_only_clone_dirty_no_commit(
     "clone dirty, not preserved" line.
     """
     root = tmp_path_factory.mktemp("wip-clone-only")
-    world = _build_world(root, work_tree="sibling", dirty_in_clone=True)
+    world = _build_world(root, work_tree="sibling", dirty_in_clone=True,
+                         hang=True)
     clone_head_before = _head(world["project"])
 
-    proc = _run_one_iteration(world, root)
+    proc = _run_one_iteration(world, root, timeout_sec=3)
     combined = proc.stdout + proc.stderr
     tail = "\n".join(combined.splitlines()[-30:])
 
