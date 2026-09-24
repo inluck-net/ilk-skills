@@ -384,6 +384,22 @@ def detect(plans_dir: Path, repo: Path) -> list[Divergence]:
 
 # ── the ordered writer ───────────────────────────────────────────────────────
 
+def _check_iteration_subplan(slug: str) -> None:
+    """Refuse a ship that mismatches the dispatched iteration sub-plan.
+
+    When the driver sets ``ILK_ITERATION_SUBPLAN``, the worker may only ship
+    that slug.  An empty or unset value means "no constraint" (manual ``/ilk``
+    sessions, the driver's own converge/repair calls).
+    """
+    dispatched = os.environ.get("ILK_ITERATION_SUBPLAN", "").strip()
+    if dispatched and dispatched != slug:
+        raise ShipTransitionError(
+            f"this iteration was dispatched for {dispatched!r}; "
+            f"shipping {slug!r} is refused — end your turn and let the "
+            f"driver dispatch it"
+        )
+
+
 def ship(
     plans_dir: Path,
     repo: Path,
@@ -402,10 +418,15 @@ def ship(
     slug names no sub-plan — a marker commit for work that does not exist is
     exactly the forgery ``ship_audit`` would then have to believe.
 
+    Also raises ``ShipTransitionError`` when ``ILK_ITERATION_SUBPLAN`` is set
+    and differs from *slug*: the worker may only ship the sub-plan the driver
+    dispatched it for.
+
     ``_write_status`` is a seam for the tests that pin the write order; it is
     not part of the public contract.
     """
     plans_dir, repo = Path(plans_dir), Path(repo)
+    _check_iteration_subplan(slug)  # refuses before anything is written
     subplan = find_subplan(plans_dir, slug)  # refuses before anything is written
     writer = _write_status or _write_status_shipped
 

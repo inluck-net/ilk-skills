@@ -22,7 +22,7 @@ Four acceptance criteria:
   AC-4  the driver's gate-first final-step ship of a verification sub-plan
         still works (``test_verify_without_a_worker.py`` green).
 
-RED-FIRST: AC-1 and AC-3 are ``xfail(strict=True)`` until step 1 lands.
+Step 1 landed: AC-1 and AC-3 are no longer xfail.
 """
 from __future__ import annotations
 
@@ -145,7 +145,6 @@ def _marker_exists(repo: Path, slug: str) -> bool:
 # ── AC-1: ILK_ITERATION_SUBPLAN=b ⇒ --ship b works, --ship c refused ────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 class TestRefuseWrongSlug:
     """AC-1: with ``ILK_ITERATION_SUBPLAN=a``, ``ship_transition.py --ship b``
     exits 2 with the refusal message, and b's front-matter and marker are
@@ -269,7 +268,6 @@ class TestShipWhenSlugMatches:
 # ── AC-3: e2e — stub worker ships first, second refused ─────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 class TestStubWorkerShipsOneSubPlan:
     """AC-3: a stub worker that tries to ship its dispatched sub-plan AND
     the next one ⇒ only the first is ``shipped``, the second stays

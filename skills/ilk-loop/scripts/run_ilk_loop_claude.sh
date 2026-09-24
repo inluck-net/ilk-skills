@@ -3511,6 +3511,19 @@ main() {
     # ledger row, not an empty project.
     PRE_ITER_ALL_STEPS="$(get_all_subplan_steps || true)"
 
+    # Export the dispatched sub-plan slug so ship_transition.py refuses any
+    # worker attempt to ship a different sub-plan.  Empty when there is no
+    # target (all shipped, or the loop is finishing).
+    local _iter_slug=""
+    if [[ -n "${PRE_ITER_TARGET:-}" ]]; then
+      _iter_slug="${PRE_ITER_TARGET%% *}"
+    fi
+    if [[ -n "$_iter_slug" ]]; then
+      export ILK_ITERATION_SUBPLAN="$_iter_slug"
+    else
+      unset ILK_ITERATION_SUBPLAN
+    fi
+
     local iter_log
     iter_log="${RUN_LOG_DIR}/iter-$(printf '%02d' $i).log"
 
@@ -3630,6 +3643,10 @@ print(json.dumps({
     if [[ "$GATE_FIRST_GREEN" -eq 0 ]]; then
       invoke_claude_iteration "$(selfmod_effective_repo "$PROJECT_PATH")" "$iter_log" "$iter_prompt" "$timeout_sec" "$MAX_BUDGET_USD" "$MODEL"
     fi
+
+    # The iteration is over — clear the dispatched-slug guard so the
+    # driver's own converge/repair/integrity calls are unconstrained.
+    unset ILK_ITERATION_SUBPLAN
 
     local iter_end iter_dur_sec
     iter_end=$(date +%s)
