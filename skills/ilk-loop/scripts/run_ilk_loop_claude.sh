@@ -4111,22 +4111,6 @@ print(json.dumps(d))
     # --only-interrupted note in converge_ship_transition).
     converge_ship_transition "$(get_plans_dir)"
 
-    # -- Selfmod merge-back: land or report --------------------------------
-    # After the ship transition converges, merge the worktree back into the
-    # clone.  On success, PROJECT_PATH is restored and the worktree removed.
-    # On failure, the worktree is left intact and the reason is on stderr.
-    if [[ "${SELFMOD_ISOLATED:-0}" -eq 1 ]]; then
-      merge_rc=0
-      merge_selfmod_worktree || merge_rc=$?
-      if [[ $merge_rc -ne 0 ]]; then
-        echo "[selfmod] merge exited $merge_rc — batch did not land." >&2
-        iter_stop_reason="selfmod_merge_failed"
-        stop_reason="selfmod_merge_failed"
-      fi
-      # Reset for next iteration (merge only runs once per batch).
-      SELFMOD_ISOLATED=0
-    fi
-
     local _si_stderr=""
     _si_stderr=$(test_ship_integrity "$(get_plans_dir)" "$local_checks_results" 2>&1 1>/dev/null) || {
       stop_reason="ship_integrity_violation"
@@ -4160,6 +4144,48 @@ print(json.dumps(d))
     if [[ -n "$_si_stderr" ]]; then
       echo "$_si_stderr" >&2
     fi
+
+    # -- Selfmod merge-back: land or report --------------------------------
+    # After ship-integrity runs, merge the worktree back into the clone
+    # ONLY when the iteration is green.  On success, PROJECT_PATH is
+    # restored and the worktree removed.  On a red gate or ship-integrity
+    # violation, the worktree is kept so the red work does not land in the
+    # live clone.  The next run reuses the worktree ("Reusing existing
+    # worktree" path).
+    if [[ "${SELFMOD_ISOLATED:-0}" -eq 1 ]]; then
+      # Gate check: was any local_checks outcome fail or error?
+      local _merge_blocked_reason=""
+      if [[ "$iter_stop_reason" == "local_checks_failed" ]]; then
+        _merge_blocked_reason="red gate"
+      fi
+      # Double-check the JSONL in case iter_stop_reason was overwritten.
+      if [[ -z "$_merge_blocked_reason" && -n "$local_checks_results" && -s "$local_checks_results" ]]; then
+        local _blocking_script="${_SKILL_ROOT}/ilk-loop/scripts/blocking_checks.py"
+        if [[ -f "$_blocking_script" ]] && python3 "$_blocking_script" "$local_checks_results" --any 2>/dev/null; then
+          _merge_blocked_reason="red gate: $(python3 "$_blocking_script" "$local_checks_results" --describe 2>/dev/null || echo 'unknown')"
+        fi
+      fi
+      # Ship-integrity check: did test_ship_integrity find violations?
+      # (The || branch already set iter_stop_reason above.)
+      if [[ -z "$_merge_blocked_reason" && "$stop_reason" == "ship_integrity_violation" ]]; then
+        _merge_blocked_reason="ship-integrity violation"
+      fi
+
+      if [[ -z "$_merge_blocked_reason" ]]; then
+        merge_rc=0
+        merge_selfmod_worktree || merge_rc=$?
+        if [[ $merge_rc -ne 0 ]]; then
+          echo "[selfmod] merge exited $merge_rc — batch did not land." >&2
+          iter_stop_reason="selfmod_merge_failed"
+          stop_reason="selfmod_merge_failed"
+        fi
+      else
+        echo "[selfmod] not merging: ${_merge_blocked_reason} — worktree kept at ${SELFMOD_WORKTREE_PATH:-unknown}" >&2
+      fi
+      # Reset for next iteration (merge only runs once per batch).
+      SELFMOD_ISOLATED=0
+    fi
+
     # After a ship-integrity revert, reconcile the master so it no longer
     # claims "shipped" when a sub-plan was un-shipped.  Without this call,
     # reconcile_master_status (now symmetric) is never reached and the
