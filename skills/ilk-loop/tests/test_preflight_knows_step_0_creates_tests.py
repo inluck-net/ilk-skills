@@ -81,7 +81,6 @@ unit_test_targets:
 # ── tests ────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_step0_creates_absent_file_is_info_not_fail(tmp_path: Path) -> None:
     """AC-1: step 0 writes `tests/test_new.py`, file absent => 0 FAILs, 1 INFO."""
     project_root = tmp_path
@@ -110,6 +109,86 @@ def test_unmentioned_absent_file_still_fails(tmp_path: Path) -> None:
     assert len(fails) == 1, (
         f"Expected 1 FAIL for unmentioned absent file, got: {findings}"
     )
+
+
+# Gate command variant: step 0 creates a test file referenced in local_checks.
+GATE_CMD_STEP0_WRITES = """\
+---
+plan: gamma
+status: pending
+current_step: 0
+estimated_steps: 2
+---
+
+# Sub-plan: gamma
+
+## Steps
+
+### Step 0 — red-first pins
+- Write `tests/test_gate.py`. AC-1 gets @pytest.mark.xfail.
+- Commit: `test(gamma): pin [plan:gamma#step-0]`
+
+### Step 1 — implement
+
+```yaml
+local_checks:
+  - command: "python3 -m pytest tests/test_gate.py -q"
+    timeout: 300
+```
+
+- Edit `src/module.py`.
+- Commit: `feat(gamma): implement [plan:gamma#step-1]`
+"""
+
+
+def test_gate_cmd_step0_creates_absent_file_is_info(tmp_path: Path) -> None:
+    """Gate command referencing step-0-created file => 0 FAILs, 1 INFO."""
+    findings = _check_declared_paths(
+        {"gamma": GATE_CMD_STEP0_WRITES},
+        tmp_path,
+    )
+    fails = [f for f in findings if "does not exist" in f]
+    assert fails == [], f"Expected 0 FAILs, got: {fails}"
+    infos = [f for f in findings if "INFO" in f and "step 0" in f.lower()]
+    assert len(infos) == 1, f"Expected 1 INFO, got: {findings}"
+
+
+GATE_CMD_UNMENTIONED = """\
+---
+plan: delta
+status: pending
+current_step: 0
+estimated_steps: 2
+---
+
+# Sub-plan: delta
+
+## Steps
+
+### Step 0 — implement
+- Edit `src/module.py`.
+- Commit: `feat(delta): implement [plan:delta#step-0]`
+
+### Step 1 — verify
+
+```yaml
+local_checks:
+  - command: "python3 -m pytest tests/test_missing.py -q"
+    timeout: 300
+```
+
+- Commit: `test(delta): verify [plan:delta#step-1]`
+"""
+
+
+def test_gate_cmd_unmentioned_absent_file_still_fails(tmp_path: Path) -> None:
+    """Gate command referencing unmentioned absent file => FAIL."""
+    findings = _check_declared_paths(
+        {"delta": GATE_CMD_UNMENTIONED},
+        tmp_path,
+    )
+    fails = [f for f in findings if "does not exist" in f]
+    assert len(fails) == 1, f"Expected 1 FAIL, got: {findings}"
 
 
 def test_present_file_has_no_finding(tmp_path: Path) -> None:

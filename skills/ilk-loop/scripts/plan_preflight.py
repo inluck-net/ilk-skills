@@ -124,6 +124,28 @@ def _check_registry_parity(master_text: str) -> list[str]:
     return findings
 
 
+# ── Step-0 deliverable detection ────────────────────────────────────────────
+
+_STEP0_WRITE_RE = re.compile(r"Write\s+`([^`]+)`")
+
+
+def _is_step0_created(text: str, target: str) -> bool:
+    """True if step 0 of the sub-plan names *target* as a file it creates.
+
+    Recognises a ``Write ``path``` bullet inside the Step 0 section, and a
+    step-0 commit subject beginning with ``test(`` whose plan slug matches
+    the sub-plan.
+    """
+    body = _strip_frontmatter(text)
+    for step_no, _heading, section in _extract_step_sections(body):
+        if step_no != 0:
+            continue
+        for m in _STEP0_WRITE_RE.finditer(section):
+            if m.group(1) == target:
+                return True
+    return False
+
+
 # ── Declared paths exist ────────────────────────────────────────────────────
 
 
@@ -147,12 +169,18 @@ def _check_declared_paths(
             for target in targets:
                 target_path = project_root / target
                 if not target_path.exists():
-                    findings.append(
-                        f"{slug}: unit_test_targets entry '{target}' "
-                        f"does not exist at {target_path}. "
-                        f"A declared test path that the loop cannot find "
-                        f"produces a collection error, not a test failure."
-                    )
+                    if _is_step0_created(text, target):
+                        findings.append(
+                            f"INFO: {slug}: {target} is created by step 0 "
+                            f"(red-first) — not checked"
+                        )
+                    else:
+                        findings.append(
+                            f"{slug}: unit_test_targets entry '{target}' "
+                            f"does not exist at {target_path}. "
+                            f"A declared test path that the loop cannot find "
+                            f"produces a collection error, not a test failure."
+                        )
 
         # Check test paths in gate commands.
         body = _strip_frontmatter(text)
@@ -169,10 +197,17 @@ def _check_declared_paths(
                 test_file = pm.group(1)
                 test_path = project_root / test_file
                 if not test_path.exists():
-                    findings.append(
-                        f"{slug}: gate command references test file '{test_file}' "
-                        f"which does not exist at {test_path}."
-                    )
+                    if _is_step0_created(text, test_file):
+                        findings.append(
+                            f"INFO: {slug}: {test_file} is created by step 0 "
+                            f"(red-first) — not checked"
+                        )
+                    else:
+                        findings.append(
+                            f"{slug}: gate command references test file "
+                            f"'{test_file}' which does not exist at "
+                            f"{test_path}."
+                        )
 
     return findings
 
