@@ -443,7 +443,7 @@ classify_action() {
       # HAS records for a timed-out run; that one relaunches.
       echo "triage"
       ;;
-    timeout-bound|max-iter-bound|api-flaky|interrupted|throttled)
+    timeout-bound|max-iter-bound|api-flaky|interrupted|throttled|lock_held)
       # Whitelist: transient failures safe to retry.
       echo "relaunch"
       ;;
