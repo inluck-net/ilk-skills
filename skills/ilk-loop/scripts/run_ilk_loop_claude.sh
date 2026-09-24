@@ -2850,7 +2850,7 @@ for k, v in sorted(d.get("env", {}).items()):
   fi
   (cd "$cwd" && { [[ -z "$PATH_PRELUDE" ]] || eval "$PATH_PRELUDE"; } \
       && eval "$settings_env_exports" \
-      && gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
+      && ILK_WORKER_SESSION=1 gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
     | tee "$jsonl_log" | python3 "$renderer" | tee "$iter_log" \
     || exit_code=$?
 

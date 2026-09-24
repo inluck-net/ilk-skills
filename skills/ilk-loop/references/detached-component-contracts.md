@@ -1876,3 +1876,38 @@ profile's no-park semantics, and write no file.
 3. **Never written by the worker.** Only the runner writes this file.
 4. **`provenance` is always `"runner"`.** gh-resolve uses this to
    distinguish runner-written files from any other source.
+
+## Contract 13: The worker session marker (`ILK_WORKER_SESSION`)
+
+`ILK_WORKER_SESSION=1` is set in the environment of the spawned claude
+process (the worker), but NOT in the runner's own environment. This
+ensures that the gate-first fast path and post-iteration `local_checks`
+do not see the variable.
+
+### Who writes
+
+- **`run_ilk_loop_claude.sh`** (`invoke_claude_iteration`) — prepends
+  `ILK_WORKER_SESSION=1` to the `gtimeout ... claude ...` command line.
+  It is set only for that child process, not exported into the runner.
+
+### Who reads
+
+- **`verification_record.py`** — when `--run-suite` is passed and
+  `ILK_WORKER_SESSION=1`, refuses to run the suite (returns nonzero,
+  prints `ILK-CHECK: unmeasured refused in a worker session`). The suite
+  must run in the driver, not inside a worker session.
+- **`verify_attribution.py`** — when `--remeasure-if-stale` triggers a
+  re-measure and `ILK_WORKER_SESSION=1`, refuses with the same marker.
+  The worker must commit its fix and end its turn; the driver re-measures
+  on the next iteration.
+
+### Contract: `--remeasure-if-stale`
+
+`verify_attribution.py` gains `--remeasure-if-stale`. The record is
+stale when it is missing, when its `verified_head` is not HEAD, or when
+its `suite_failed` is not an integer. In that case (and outside a worker
+session) the flag calls `verification_record.main()` to re-measure with
+the record's `base_sha` and `suite_scope` (or `--base-sha` / `--scope`
+when the record is missing and they were passed), then attributes as
+today. Inside a worker session the flag does NOT re-measure: it fails
+with the same refusal as `--run-suite` in a worker session.

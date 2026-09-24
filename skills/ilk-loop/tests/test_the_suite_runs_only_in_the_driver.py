@@ -338,7 +338,6 @@ class TestAC7DriverSetsWorkerEnv:
     local_checks does not.
     """
 
-    @pytest.mark.xfail(strict=True, reason="red-first: driver env export not yet implemented")
     def test_invoke_claude_iteration_exports_worker_session(self) -> None:
         """Parse the runner script and assert invoke_claude_iteration's claude
         command line includes ILK_WORKER_SESSION=1.
@@ -382,7 +381,6 @@ class TestAC8TemplateStep1:
     turn", and does not contain "rerun step 0".
     """
 
-    @pytest.mark.xfail(strict=True, reason="red-first: template update not yet done")
     def test_step1_has_remeasure_flag(self) -> None:
         template = (
             Path(__file__).resolve().parent.parent / "templates"
@@ -397,7 +395,6 @@ class TestAC8TemplateStep1:
             "step 1 should contain --remeasure-if-stale"
         )
 
-    @pytest.mark.xfail(strict=True, reason="red-first: template update not yet done")
     def test_step1_says_end_your_turn(self) -> None:
         template = (
             Path(__file__).resolve().parent.parent / "templates"

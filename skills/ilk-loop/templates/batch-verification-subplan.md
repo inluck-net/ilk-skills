@@ -429,8 +429,8 @@ already landed. Re-run only the tracks whose results you do not have.
 ```yaml
 gate_first: true
 local_checks:
-  - command: "python3 <skill-root>/ilk-loop/scripts/verify_attribution.py --batch <batch-slug>"
-    timeout: 120
+  - command: "python3 <skill-root>/ilk-loop/scripts/verify_attribution.py --batch <batch-slug> --remeasure-if-stale"
+    timeout: 3660
 ```
 
 **This step is gate-first.** The driver runs the gate above before dispatching
@@ -473,7 +473,8 @@ also matches the `yes` in `in baseline_red`, failing a correctly-exonerated row)
 and a record whose failure count cannot be parsed must **refuse** rather than
 read as zero. One tested implementation beats a copy per sub-plan — the same
 reason step 0 resolves the suite command instead of hand-typing it. The timeout
-is 120s because this parses a file; it does not run tests.
+matches step 0's suite budget because `--remeasure-if-stale` may re-run the
+suite when the record is stale.
 
 The gate **re-derives** the verdict from step 0's `## At-base rerun` table. It
 must NOT grep the record for a sentence like `Attributed regressions: 0` — that
@@ -494,11 +495,13 @@ things, all of them measurements:
   ```
   git commit --allow-empty -m "fix(verify): no attributed regressions [plan:<slug>#step-1]"
   ```
-- Otherwise — the table attributes at least one failure — fix each one, re-run
-  the suite, re-run the failing selection at base, and update the table. Find
-  the culprit commit with `git bisect` over the batch's own commits; on
-  gh-resolve batch-2026-09-07 that was four reruns of one 0.07s test and it
-  named the commit exactly. Do not infer it from the diff.
+- Otherwise — the table attributes at least one failure — fix within the
+  batch's diff, commit, **end your turn**, and never run
+  `verification_record.py` or the suite yourself — the driver re-measures
+  on the next iteration. Find the culprit commit with `git bisect` over the
+  batch's own commits; on gh-resolve batch-2026-09-07 that was four reruns
+  of one 0.07s test and it named the commit exactly. Do not infer it from
+  the diff.
 - **Never make a test pass by weakening it.** If a test from this batch blocks a
   correct fix, read it — it may be the test that is wrong, in which case update
   it to the new contract with a comment saying why. That judgment goes in
