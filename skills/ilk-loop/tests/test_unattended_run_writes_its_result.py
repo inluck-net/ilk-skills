@@ -243,7 +243,6 @@ def _read_master_fm(world: dict) -> dict:
 
 # ── AC-1: e2e unattended run writes result, does not park ─────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: run_result.py does not exist yet")
 @_NEEDS_GTIMEOUT
 def test_e2e_unattended_run_writes_result_instead_of_parking(
     tmp_path_factory: pytest.TempPathFactory,
@@ -332,7 +331,6 @@ def test_without_profile_parks_as_today(
 
 # ── AC-3: SIGTERM ⇒ result file with interrupted ─────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: run_result.py does not exist yet")
 @_NEEDS_GTIMEOUT
 def test_sigterm_under_profile_writes_interrupted_result(
     tmp_path_factory: pytest.TempPathFactory,
@@ -355,7 +353,6 @@ def test_sigterm_under_profile_writes_interrupted_result(
 
 # ── AC-4: relative result_file ⇒ refused, no file, no park ───────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: run_result.py does not exist yet")
 @_NEEDS_GTIMEOUT
 def test_relative_result_file_is_refused(
     tmp_path_factory: pytest.TempPathFactory,
@@ -386,7 +383,6 @@ def test_relative_result_file_is_refused(
 
 # ── AC-5: run_result.py unit tests ────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: run_result.py does not exist yet")
 class TestRunResultUnit:
     """Unit tests for ``run_result.py`` writer rules.
 
@@ -420,7 +416,8 @@ class TestRunResultUnit:
         r = subprocess.run(
             [sys.executable, str(self.SCRIPT), "write",
              "--result-file", str(rf),
-             "--run-id", "t", "--master", "m", "--exit-state", "ok"],
+             "--run-id", "t", "--master", "m", "--exit-state", "ok",
+             "--pinned"],
             capture_output=True, text=True, encoding="utf-8",
             timeout=30, env=env,
         )
@@ -592,7 +589,6 @@ def test_ps1_skipped_when_pwsh_absent_is_not_a_silent_pass() -> None:
 
 # ── AC-7: vocabulary includes new states ──────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: lock_held and profile_unsupported not yet in vocabulary")
 def test_exit_state_vocabulary_includes_new_states() -> None:
     """AC-7: test_exit_state_vocabulary.py passes with ``lock_held`` and
     ``profile_unsupported`` in the derived set."""

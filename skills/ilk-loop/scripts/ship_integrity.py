@@ -518,6 +518,13 @@ def _cli(argv: list[str]) -> int:
         default=None,
         help="sub-plan slug to look up in --gate-results-file.",
     )
+    ap.add_argument(
+        "--record-only",
+        action="store_true",
+        default=False,
+        help="Print VIOLATION lines and exit 1 as usual, but the caller "
+             "should NOT park or revert. Used by the unattended profile.",
+    )
     args = ap.parse_args(argv)
 
     # Resolve status + checks from file or explicit args.

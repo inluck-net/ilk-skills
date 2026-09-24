@@ -1424,6 +1424,126 @@ _write_terminal_sentinel() {
   echo "Sentinel: ${rd}/last-exit.json (state=$state, iters=0)"
 }
 
+# ── Unattended profile helpers ──────────────────────────────────────────────
+
+# Read the master's frontmatter for ilk_profile and result_file.
+# Sets _UNATTENDED_PROFILE (0 or 1) and _UNATTENDED_RESULT_FILE (path or empty).
+_read_unattended_profile() {
+  _UNATTENDED_PROFILE=0
+  _UNATTENDED_RESULT_FILE=""
+  _UNATTENDED_MASTER_SLUG=""
+
+  local plans_dir
+  plans_dir=$(get_plans_dir) || return 0
+  [[ -n "$plans_dir" && -d "$plans_dir" ]] || return 0
+
+  # Resolve the active master name from loop_status --json.
+  local status_json master_name
+  status_json=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null) || true
+  master_name=$(echo "$status_json" | jq -r '.master // empty' 2>/dev/null)
+  [[ -n "$master_name" ]] || return 0
+
+  local master_file="$plans_dir/$master_name"
+  [[ -f "$master_file" ]] || return 0
+
+  _UNATTENDED_MASTER_SLUG="$master_name"
+
+  # Parse frontmatter for ilk_profile and result_file.
+  local profile result_file
+  profile=$(python3 -c "
+import sys; sys.path.insert(0, sys.argv[2])
+from plan_status import parse_frontmatter
+fm = parse_frontmatter(open(sys.argv[1], encoding='utf-8-sig').read())
+print(fm.get('ilk_profile', ''))
+" "$master_file" "${_SKILL_ROOT}/ilk-loop/scripts" 2>/dev/null) || profile=""
+
+  if [[ "$profile" != "unattended" ]]; then
+    return 0
+  fi
+
+  _UNATTENDED_PROFILE=1
+
+  result_file=$(python3 -c "
+import sys; sys.path.insert(0, sys.argv[2])
+from plan_status import parse_frontmatter
+fm = parse_frontmatter(open(sys.argv[1], encoding='utf-8-sig').read())
+print(fm.get('result_file', ''))
+" "$master_file" "${_SKILL_ROOT}/ilk-loop/scripts" 2>/dev/null) || result_file=""
+
+  if [[ -z "$result_file" ]]; then
+    echo "[unattended] profile active but no result_file declared — no result will be written" >&2
+    return 0
+  fi
+
+  # Validate result_file: must be absolute and outside project root + worktree.
+  if [[ "$result_file" != /* ]]; then
+    echo "[unattended] result_file refused: not absolute ($result_file)" >&2
+    _UNATTENDED_RESULT_FILE=""
+    return 0
+  fi
+
+  # Check parent directory exists or is creatable.
+  local rf_parent
+  rf_parent=$(dirname "$result_file")
+  if [[ ! -d "$rf_parent" ]]; then
+    mkdir -p "$rf_parent" 2>/dev/null || {
+      echo "[unattended] result_file refused: parent dir not creatable ($rf_parent)" >&2
+      _UNATTENDED_RESULT_FILE=""
+      return 0
+    }
+  fi
+
+  _UNATTENDED_RESULT_FILE="$result_file"
+  echo "[unattended] profile active, result_file=$result_file"
+}
+
+# Write the unattended result file via run_result.py.
+# Args: $1=exit_state  $2=started_at  $3=iterations
+# Idempotent: a second call is a no-op (finalize_sentinel and the normal
+# exit path both call this; the first writer wins).
+_RESULT_FILE_WRITTEN=0
+_write_unattended_result() {
+  [[ "$_UNATTENDED_PROFILE" -eq 1 ]] || return 0
+  [[ -n "$_UNATTENDED_RESULT_FILE" ]] || return 0
+  [[ "$_RESULT_FILE_WRITTEN" -eq 0 ]] || return 0
+
+  local exit_state="$1"
+  local started_at="$2"
+  local iterations="${3:-0}"
+
+  local result_script="${_SKILL_ROOT}/ilk-loop/scripts/run_result.py"
+  [[ -f "$result_script" ]] || { echo "[unattended] run_result.py not found" >&2; return 0; }
+
+  local args=(
+    write
+    --result-file "$_UNATTENDED_RESULT_FILE"
+    --run-id "$RUN_ID"
+    --master "$_UNATTENDED_MASTER_SLUG"
+    --exit-state "$exit_state"
+    --started-at "$started_at"
+    --project-path "$PROJECT_PATH"
+    --iterations "$iterations"
+    --gate-resolution "${_GATE_RESOLUTION:-none}"
+  )
+  if [[ -n "${ILK_MASTER:-}" ]]; then
+    args+=(--pinned)
+  fi
+  # Collect per-iteration checks JSONL files.
+  if [[ -n "${_RUN_CHECKS_JSONL:-}" ]]; then
+    args+=(--checks-jsonl $_RUN_CHECKS_JSONL)
+  fi
+  # Collect integrity violations.
+  if [[ -n "${_INTEGRITY_VIOLATIONS_FILE:-}" ]]; then
+    args+=(--integrity-jsonl $_INTEGRITY_VIOLATIONS_FILE)
+  fi
+
+  if python3 "$result_script" "${args[@]}"; then
+    _RESULT_FILE_WRITTEN=1
+  else
+    echo "[unattended] result write failed" >&2
+  fi
+}
+
 finalize_sentinel() {
   # On EXIT (signal, error, or normal), if the sentinel is still state=running,
   # rewrite it to a terminal state so stale-running sentinels never survive.
@@ -1458,6 +1578,12 @@ print(json.dumps({
 }))
 " > "${target}.tmp" && mv -f "${target}.tmp" "$target" || true
   echo "[runner] finalize_sentinel: wrote terminal state (interrupted)" >&2
+
+  # Write the unattended result file on signal/abnormal exit.
+  _write_unattended_result "interrupted" "${_ILK_LOOP_STARTED_AT:-}" "${_ILK_ITER_COUNTER:-0}"
+
+  # Clean up unattended temp files (finalize_sentinel runs on EXIT).
+  rm -f "${_INTEGRITY_VIOLATIONS_FILE:-}" "${_RUN_CHECKS_JSONL:-}"
 }
 
 # Read declared per-check timeout(s) from a sub-plan step's local_checks,
@@ -2469,6 +2595,19 @@ if m:
             print(line.split(':', 1)[1].strip()); break
 " "$f" 2>/dev/null)
       echo "  [ship-integrity VIOLATION] $slug: $si_out" >&2
+      # Under the unattended profile, record the violation but do NOT revert
+      # or park. The result file captures the violation with enforced: false.
+      if [[ "${_UNATTENDED_PROFILE:-0}" -eq 1 ]]; then
+        echo "  [unattended] $slug: violation recorded (not reverted, not parked)" >&2
+        # Append to the integrity violations JSONL for the result file.
+        local _violation_json
+        _violation_json=$(python3 -c "import json; print(json.dumps({'slug': '$slug', 'violation': $(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$si_out"), 'enforced': False}))" 2>/dev/null) || true
+        if [[ -n "$_violation_json" ]]; then
+          echo "$_violation_json" >> "${_INTEGRITY_VIOLATIONS_FILE:-/dev/null}"
+        fi
+        violations=1
+        continue
+      fi
       # Revert status to in-progress (Python — BSD sed -i requires explicit suffix)
       #
       # The pointer reverts WITH the status. A red gate that moved only
@@ -3327,6 +3466,51 @@ main() {
       # If we get here, the lock was NOT acquired.
       if [[ $lock_rc -eq 3 ]]; then
         echo "[runner] another runner holds this project's lock. Exiting." >&2
+        # Write lock_held to sentinel and result file when ILK_MASTER is set
+        # (the profile can be read). gh-resolve reads a missing file as
+        # runner_died.
+        local _lock_rd=""
+        _lock_rd=$(get_ilk_runtime_dir 2>/dev/null) || true
+        if [[ -n "$_lock_rd" ]]; then
+          local _lock_ts
+          _lock_ts=$(date +%Y-%m-%dT%H:%M:%S%z)
+          local _lock_run_id="${RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
+          local stop_reason="lock_held"
+          python3 -c "import json; print(json.dumps({
+            'state': '$stop_reason',
+            'pid': $$,
+            'run_id': '$_lock_run_id',
+            'started_at': '$_lock_ts',
+            'ended_at': '$_lock_ts',
+            'project_path': '$PROJECT_PATH',
+            'cli': 'claude'
+          }))" > "${_lock_rd}/last-exit.json.tmp" && mv -f "${_lock_rd}/last-exit.json.tmp" "${_lock_rd}/last-exit.json" || true
+        fi
+        if [[ -n "${ILK_MASTER:-}" ]]; then
+          local _lock_plans_dir=""
+          _lock_plans_dir=$(get_plans_dir 2>/dev/null) || true
+          if [[ -n "$_lock_plans_dir" && -d "$_lock_plans_dir" ]]; then
+            local _lock_master_file="$_lock_plans_dir/$ILK_MASTER"
+            if [[ -f "$_lock_master_file" ]]; then
+              local _lock_rf=""
+              _lock_rf=$(python3 -c "
+import sys; sys.path.insert(0, sys.argv[2])
+from plan_status import parse_frontmatter
+fm = parse_frontmatter(open(sys.argv[1], encoding='utf-8-sig').read())
+print(fm.get('result_file', ''))
+" "$_lock_master_file" "${_SKILL_ROOT}/ilk-loop/scripts" 2>/dev/null) || _lock_rf=""
+              if [[ -n "$_lock_rf" && "$_lock_rf" == /* ]]; then
+                local _lock_run_id="${RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
+                python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_result.py" write \
+                  --result-file "$_lock_rf" \
+                  --run-id "$_lock_run_id" \
+                  --master "$ILK_MASTER" \
+                  --exit-state "lock_held" \
+                  --pinned 2>/dev/null || true
+              fi
+            fi
+          fi
+        fi
         exit 3
       fi
       echo "[runner] lock helper failed (exit $lock_rc)" >&2
@@ -3377,7 +3561,9 @@ main() {
   runtime_dir=$(get_ilk_runtime_dir) || runtime_dir=""
   local loop_started_at
   loop_started_at=$(date +%Y-%m-%dT%H:%M:%S%z)
+  _ILK_LOOP_STARTED_AT="$loop_started_at"
   local iter_counter=0
+  _ILK_ITER_COUNTER=0
 
   if [[ -n "$runtime_dir" ]]; then
     mkdir -p "$runtime_dir"
@@ -3409,6 +3595,20 @@ main() {
 
   # Initial check: classify the loop status into runnable / all-shipped / blocked.
   classify_loop_status
+
+  # Read the unattended profile from the master frontmatter (if any).
+  _read_unattended_profile
+
+  # Set up temp files for accumulating checks and integrity violations
+  # across iterations (used by the unattended result writer).
+  _INTEGRITY_VIOLATIONS_FILE=""
+  _RUN_CHECKS_JSONL=""
+  _GATE_RESOLUTION="none"
+  if [[ "$_UNATTENDED_PROFILE" -eq 1 ]]; then
+    _INTEGRITY_VIOLATIONS_FILE=$(mktemp "${TMPDIR:-/tmp}/ilk-integrity-XXXXXX")
+    _RUN_CHECKS_JSONL=$(mktemp "${TMPDIR:-/tmp}/ilk-checks-XXXXXX")
+  fi
+
   if [[ "$CLASSIFIED_STATUS" == "all-shipped" ]]; then
     echo "All sub-plans already shipped. Nothing to do."
     # Batch-end gate: run the suite once before the master is done (SP1)
@@ -3425,21 +3625,31 @@ main() {
     # Every sub-plan reports shipped and at least one has no proof. That is not
     # a clean finish and must not read as one.
     echo "Sub-plans report shipped, but proof is missing. Not a clean finish."
-    echo "[ilk] SHIPPED WITHOUT PROOF — ${UNPROVEN_SUBPLANS:-unknown}. No gate ran for these; the ship claim is unverified. Do NOT relaunch; this needs a human." >&2
+    if [[ "$_UNATTENDED_PROFILE" -eq 1 ]]; then
+      echo "[unattended] exit_state=shipped-unproven — see $_UNATTENDED_RESULT_FILE" >&2
+    else
+      echo "[ilk] SHIPPED WITHOUT PROOF — ${UNPROVEN_SUBPLANS:-unknown}. No gate ran for these; the ship claim is unverified. Do NOT relaunch; this needs a human." >&2
+    fi
     local ts
     ts=$(date +%Y-%m-%dT%H:%M:%S%z)
     write_jsonl_record "{\"run_id\":\"$RUN_ID\",\"cli\":\"claude\",\"iteration\":0,\"timestamp\":\"$ts\",\"project\":\"$PROJECT_PATH\",\"stop_reason\":\"shipped-unproven\"}"
     [[ -n "$runtime_dir" ]] && _write_terminal_sentinel "shipped-unproven" "$runtime_dir"
+    _write_unattended_result "shipped-unproven" "$loop_started_at" 0
     return 0
   elif [[ "$CLASSIFIED_STATUS" == "blocked-no-runnable" ]]; then
     local blocked_count
     blocked_count=$(echo "$BLOCKED_SUBPLANS" | wc -w | tr -d ' ')
     echo "Blocked — ${blocked_count} sub-plan(s) parked for a human, 0 runnable: ${BLOCKED_SUBPLANS}. Nothing to do."
-    echo "[ilk] BLOCKED — ${blocked_count} sub-plan(s) parked for a human, 0 runnable: ${BLOCKED_SUBPLANS}. Do NOT relaunch."
+    if [[ "$_UNATTENDED_PROFILE" -eq 1 ]]; then
+      echo "[unattended] exit_state=blocked-no-runnable — see $_UNATTENDED_RESULT_FILE" >&2
+    else
+      echo "[ilk] BLOCKED — ${blocked_count} sub-plan(s) parked for a human, 0 runnable: ${BLOCKED_SUBPLANS}. Do NOT relaunch."
+    fi
     local ts
     ts=$(date +%Y-%m-%dT%H:%M:%S%z)
     write_jsonl_record "{\"run_id\":\"$RUN_ID\",\"cli\":\"claude\",\"iteration\":0,\"timestamp\":\"$ts\",\"project\":\"$PROJECT_PATH\",\"stop_reason\":\"blocked-no-runnable\"}"
     [[ -n "$runtime_dir" ]] && _write_terminal_sentinel "blocked-no-runnable" "$runtime_dir"
+    _write_unattended_result "blocked-no-runnable" "$loop_started_at" 0
     return 0
   fi
 
@@ -3450,6 +3660,7 @@ main() {
 
   for ((i = 1; i <= MAX_ITERATIONS; i++)); do
     iter_counter=$i
+    _ILK_ITER_COUNTER=$i
     echo ""
     echo "--- Iteration $i / $MAX_ITERATIONS ---"
 
@@ -4107,6 +4318,11 @@ print(json.dumps(d))
     # Quality gates
     # TODO: step 6+ (invoke_quality_gates_if_needed)
 
+    # Accumulate this iteration's checks for the unattended result file.
+    if [[ "$_UNATTENDED_PROFILE" -eq 1 && -n "${_RUN_CHECKS_JSONL:-}" && -s "${local_checks_results:-}" ]]; then
+      cat "$local_checks_results" >> "$_RUN_CHECKS_JSONL" 2>/dev/null || true
+    fi
+
     # Ship-integrity enforcement runs BEFORE the early break on
     # iter_stop_reason, not after it.  A red gate sets
     # iter_stop_reason="local_checks_failed" a few lines up, so the one case
@@ -4151,19 +4367,27 @@ print(json.dumps(d))
       # master happens to be the sole queued one.  Without --owner-of the
       # scheduler parks an unrelated master and re-dispatches the violator
       # (rezmac 20260923-150625).
-      local _violating_slugs=""
-      _violating_slugs=$(echo "$_si_stderr" | sed -n 's/.*\[ship-integrity VIOLATION\] \([^ :]*\):.*/\1/p' | tr '\n' ' ')
-      if [[ -n "$_violating_slugs" ]]; then
-        for _slug in $_violating_slugs; do
-          local _park_reason="ship_integrity_violation: run ${RUN_ID} slug=${_slug}"
-          local _park_out
-          _park_out=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/park_master.py" \
-            --plans-dir "$(get_plans_dir)" \
-            --owner-of "$_slug" \
-            --reason "$_park_reason" 2>&1) || {
-            echo "  ! [ship-integrity] park refused for ${_slug}: ${_park_out}" >&2
-          }
-        done
+      #
+      # Under the unattended profile, skip park — the violations are already
+      # recorded in _INTEGRITY_VIOLATIONS_FILE by test_ship_integrity and
+      # will be written to the result file.
+      if [[ "${_UNATTENDED_PROFILE:-0}" -ne 1 ]]; then
+        local _violating_slugs=""
+        _violating_slugs=$(echo "$_si_stderr" | sed -n 's/.*\[ship-integrity VIOLATION\] \([^ :]*\):.*/\1/p' | tr '\n' ' ')
+        if [[ -n "$_violating_slugs" ]]; then
+          for _slug in $_violating_slugs; do
+            local _park_reason="ship_integrity_violation: run ${RUN_ID} slug=${_slug}"
+            local _park_out
+            _park_out=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/park_master.py" \
+              --plans-dir "$(get_plans_dir)" \
+              --owner-of "$_slug" \
+              --reason "$_park_reason" 2>&1) || {
+              echo "  ! [ship-integrity] park refused for ${_slug}: ${_park_out}" >&2
+            }
+          done
+        fi
+      else
+        echo "[unattended] park skipped under profile; violations recorded in result file" >&2
       fi
     }
     # Print ship-integrity diagnostics even on success (e.g. inconclusive
@@ -4218,7 +4442,11 @@ print(json.dumps(d))
     # reconcile_master_status (now symmetric) is never reached and the
     # master stays stranded — the scheduler sees "shipped" and stops
     # dispatching the batch.  Idempotent: a clean pass is a no-op.
-    python3 -c "
+    #
+    # Under the unattended profile, skip reconciliation — the master's
+    # frontmatter is not modified; the result file records the outcome.
+    if [[ "${_UNATTENDED_PROFILE:-0}" -ne 1 ]]; then
+      python3 -c "
 import sys
 sys.path.insert(0, sys.argv[1])
 from pathlib import Path
@@ -4228,6 +4456,7 @@ masters = sorted(plans_dir.glob('MASTER-*.md'))
 for mp in masters:
     reconcile_master_status(mp, plans_dir)
 " "${_SKILL_ROOT}/ilk-loop/scripts" "$(get_plans_dir)" 2>/dev/null || true
+    fi
     # Every reader in this iteration is done with it.
     rm -f "$local_checks_results"
 
@@ -4307,12 +4536,23 @@ print(json.dumps(d))
     fi
     echo "[ilk] ALL SHIPPED — nothing to run. Do NOT relaunch."
   elif [[ "$stop_reason" == "shipped-unproven" ]]; then
-    echo "[ilk] SHIPPED WITHOUT PROOF — ${UNPROVEN_SUBPLANS:-unknown}. No gate ran for these; the ship claim is unverified. Do NOT relaunch; this needs a human." >&2
+    if [[ "$_UNATTENDED_PROFILE" -eq 1 ]]; then
+      echo "[unattended] exit_state=shipped-unproven — see $_UNATTENDED_RESULT_FILE" >&2
+    else
+      echo "[ilk] SHIPPED WITHOUT PROOF — ${UNPROVEN_SUBPLANS:-unknown}. No gate ran for these; the ship claim is unverified. Do NOT relaunch; this needs a human." >&2
+    fi
   elif [[ "$stop_reason" == "blocked-no-runnable" ]]; then
     local blocked_count
     blocked_count=$(echo "$BLOCKED_SUBPLANS" | wc -w | tr -d ' ')
-    echo "[ilk] BLOCKED — ${blocked_count} sub-plan(s) parked for a human, 0 runnable: ${BLOCKED_SUBPLANS}. Do NOT relaunch."
+    if [[ "$_UNATTENDED_PROFILE" -eq 1 ]]; then
+      echo "[unattended] exit_state=blocked-no-runnable — see $_UNATTENDED_RESULT_FILE" >&2
+    else
+      echo "[ilk] BLOCKED — ${blocked_count} sub-plan(s) parked for a human, 0 runnable: ${BLOCKED_SUBPLANS}. Do NOT relaunch."
+    fi
   fi
+
+  # Write the unattended result file on normal terminal exit.
+  _write_unattended_result "$stop_reason" "$loop_started_at" "$iter_counter"
 
   # Sentinel teardown (state=<stop_reason>)
   if [[ -n "$runtime_dir" ]]; then

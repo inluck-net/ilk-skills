@@ -69,12 +69,15 @@ def build_record(
         stdout = failing_check.get("stdout_tail", "")
         stderr = failing_check.get("stderr_tail", "")
         error = failing_check.get("error", "")
+        reason = failing_check.get("reason", "")
         if stdout:
             rec["stdout_tail"] = stdout[-4096:] if len(stdout) > 4096 else stdout
         if stderr:
             rec["stderr_tail"] = stderr[-4096:] if len(stderr) > 4096 else stderr
         if error:
             rec["error"] = error[-4096:] if len(error) > 4096 else error
+        if reason:
+            rec["reason"] = reason
 
     return rec
 

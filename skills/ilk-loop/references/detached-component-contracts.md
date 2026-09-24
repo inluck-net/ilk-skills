@@ -93,6 +93,8 @@ about the same file — this doc makes the implicit contracts explicit.
 | `"already-shipped"` | Nothing to do at launch time (all sub-plans already shipped) | Terminal |
 | `"selfmod_merge_failed"` | A selfmod worktree's merge-back failed; committed work is parked in the worktree | Terminal |
 | `"work_tree_invalid"` | Master declared `work_tree:` but the path is missing, not a work tree, or shares no git objects with `--project-path` | Terminal |
+| `"lock_held"` | Another runner holds this project's run lock; the unattended result file (if `ILK_MASTER` set) records `exit_state: lock_held` | Terminal |
+| `"profile_unsupported"` | Windows runner: the master carries `ilk_profile: unattended` which the PS1 runner does not implement; result file written, no other action | Terminal |
 
 **Naming conventions are intentional.** The hyphenated states (`no-progress`,
 `all-shipped`, `timeout`, `budget-exhausted`, `quota-exhausted`,
@@ -1749,3 +1751,128 @@ passes `--master` when `active_master_name` is non-empty in the scan output.
 - A missing pinned master file emits a notice but falls back (does not stall).
 - A pinned master that is all-shipped or terminal yields that state (no rollover).
 - The pin is per-run, not persistent — it lives only in the runner's environment.
+
+---
+
+## Contract 13: Run result file (unattended profile)
+
+### Purpose
+
+An opt-in feature for gh-resolve-dispatched runs: when the master carries
+`ilk_profile: unattended` and `result_file: <abs path>`, the runner writes a
+structured JSON result file on every exit path. gh-resolve reads this file to
+determine the run's outcome instead of parsing the sentinel or postmortems.
+
+Without the profile, behaviour is byte-for-byte identical to today.
+
+### Format
+
+```json
+{
+  "schema_version": 1,
+  "provenance": "runner",
+  "pinned": false,
+  "run_id": "",
+  "master_slug": "",
+  "project_key": "",
+  "worktree": "",
+  "base_sha": "",
+  "head_sha": "",
+  "commits": [{"sha": "", "subject": ""}],
+  "checks": [{"slug": "", "step": 0, "cmd": "", "cwd": "",
+               "outcome": "pass|fail|unmeasured", "exit_code": null,
+               "failed_count": null, "duration_s": 0.0, "reason": null,
+               "path_prelude_applied": false}],
+  "gate_resolution": "trailer|ledger|pre_iter|active|none",
+  "proof": {"trailer_found": false, "ledger_rows": 0,
+            "verification_record": null, "record_suite_failed": null},
+  "integrity": [{"slug": "", "violation": "", "enforced": false}],
+  "exit_state": "", "iterations": 0, "started_at": "", "ended_at": ""
+}
+```
+
+### Who writes
+
+- **`run_result.py`** — the sole writer. Called by the runner on every exit
+  path (normal terminal, `finalize_sentinel` for signal/abnormal exit,
+  and lock refusal when `ILK_MASTER` is set).
+- **The runner** (`run_ilk_loop_claude.sh`) — invokes `run_result.py write`
+  with the accumulated checks JSONL and integrity violations JSONL.
+
+### Who reads
+
+- **gh-resolve** — reads the file to determine the run's outcome. A missing
+  file is interpreted as `runner_died`.
+
+### Check outcome vocabulary
+
+The result file uses a **tri-state** vocabulary distinct from the internal
+four-state `{pass, fail, error, skipped}`:
+
+| Internal | Result file | Rules |
+|---|---|---|
+| `pass` | `pass` | — |
+| `fail` | `fail` | keeps `exit_code` and `failed_count` |
+| `error` | `unmeasured` | requires `reason` |
+| `skipped` | `unmeasured` | requires `reason` |
+| `inconclusive` | `unmeasured` | requires `reason` |
+
+A timeout is never `fail` in the result file. `unmeasured` rows without a
+`reason` are refused (the writer raises).
+
+### Exit states
+
+Every exit path writes one of:
+
+| Exit state | Meaning |
+|---|---|
+| `all-shipped` | Clean finish |
+| `shipped-unproven` | Sub-plans shipped without proof |
+| `blocked-no-runnable` | All remaining sub-plans blocked |
+| `ship_integrity_violation` | Gate red on a shipped sub-plan (record-only under profile) |
+| `local_checks_failed` | Gate failed |
+| `interrupted` | Signal/abnormal exit (from `finalize_sentinel`) |
+| `lock_held` | Another runner holds the lock |
+| `profile_unsupported` | PS1 runner: profile not implemented |
+| `max-iterations` | Hit iteration budget |
+| `timeout` | Iteration timeout |
+| `no-progress` | 3 consecutive barren iterations |
+
+### Atomicity
+
+The writer uses `tmp` + `os.replace`. A crash between the write and the
+replace leaves no partial file (the tmp is cleaned up by the OS eventually).
+
+### Profile semantics
+
+When `ilk_profile: unattended` is set:
+- **No park, no revert.** `ship_integrity.py --record-only` prints violations
+  but does not modify front-matter. The runner skips `park_master.py`.
+  Violations are recorded in the result file's `integrity[]` with
+  `enforced: false`.
+- **No needs-human dead ends.** `shipped-unproven` and `blocked-no-runnable`
+  still stop the run. They are recorded as exit_states, and the "Do NOT
+  relaunch; this needs a human" lines are replaced by
+  `[unattended] exit_state=<x> — see <result_file>`.
+- **`pinned`** is `true` iff `ILK_MASTER` was set for this run.
+
+### Validation
+
+`result_file` must be:
+- Absolute (starts with `/`).
+- Outside the project root and the selfmod worktree.
+- Its parent directory must exist or be creatable.
+
+Invalid ⇒ log `[unattended] result_file refused: <reason>`, keep the
+profile's no-park semantics, and write no file.
+
+### Invariants
+
+1. **One file per run.** The file is written once on the terminal exit path.
+   Multiple writes (e.g. from `finalize_sentinel` and the normal exit) are
+   idempotent — the last write wins, and both carry the same data.
+2. **Missing file = runner died.** gh-resolve interprets a missing result
+   file as the runner crashing without finalizing.
+3. **Never written by the worker.** Only the runner writes this file.
+4. **`provenance` is always `"runner"`.** gh-resolve uses this to
+   distinguish runner-written files from any other source.
