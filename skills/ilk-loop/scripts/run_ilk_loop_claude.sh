@@ -56,6 +56,45 @@ ITER_COMPLETED=0
 ITER_EXIT_CODE=0
 ITER_BUDGET_EXHAUSTED=0
 
+# ----- Selfmod skill home (ILK_SKILL_HOME) -----------------------------------
+# In selfmod mode, the worker session's skill root must point at the worktree's
+# skills dir, not the live clone.  Always export (empty default) so ``set -u``
+# does not trip on $引用.  The real resolution is at the end of the file, after
+# SELFMOD_WORKTREE_PATH may have been set by a sourcing test harness.
+export ILK_SKILL_HOME="${ILK_SKILL_HOME:-}"
+
+# ----- Selfmod guard: check_edit_path ----------------------------------------
+# PreToolUse guard for selfmod workers.  Resolves symlinks via ``realpath`` and
+# refuses edits whose resolved path falls inside the live clone
+# (``SELFMOD_ORIGINAL_PROJECT_PATH``).
+#
+# Usage:  check_edit_path '<file_path>'
+# Returns: 0 = allowed, non-zero = refused (edit targets the live clone).
+check_edit_path() {
+  local file_path="$1"
+  local clone="${SELFMOD_ORIGINAL_PROJECT_PATH:-}"
+  if [[ -z "$clone" ]]; then
+    # Not in selfmod mode — allow everything.
+    return 0
+  fi
+
+  # Resolve symlinks.  ``realpath`` is POSIX on macOS 13+ and Linux.
+  local resolved
+  resolved="$(realpath "$file_path" 2>/dev/null)" || {
+    # Cannot resolve — allow (the edit will fail on its own).
+    return 0
+  }
+
+  # Normalise clone path: strip trailing slash for prefix comparison.
+  local clone_norm="${clone%/}/"
+  if [[ "$resolved" == "$clone_norm"* || "$resolved" == "$clone" ]]; then
+    echo "REFUSED: edit targets the live clone (resolved $resolved -> clone $clone)" >&2
+    return 1
+  fi
+
+  return 0
+}
+
 # ----- Argument parsing ------------------------------------------------------
 
 usage() {
@@ -414,6 +453,10 @@ create_selfmod_worktree() {
   }
 
   PROJECT_PATH="$wt_path"
+  # The worker's skill root must be the worktree, not the live clone.
+  if [[ -d "${wt_path}/skills" ]]; then
+    export ILK_SKILL_HOME="${wt_path}/skills"
+  fi
   echo "[selfmod] working directory switched to worktree: $wt_path"
 }
 
@@ -4631,6 +4674,13 @@ print(json.dumps(d))
     rm -f "${runtime_dir}/running.pid"
   fi
 }
+
+# ----- Selfmod skill home resolution (end of file) ---------------------------
+# Runs after all defaults, arg parsing, and function definitions.  A test
+# harness that sets SELFMOD_WORKTREE_PATH after sourcing sees this.
+if [[ -n "${SELFMOD_WORKTREE_PATH:-}" && -d "${SELFMOD_WORKTREE_PATH}/skills" ]]; then
+  export ILK_SKILL_HOME="${SELFMOD_WORKTREE_PATH}/skills"
+fi
 
 # Dot-source guard: when ILK_DOTSOURCE_ONLY=1, functions are defined but
 # main() does not execute. Lets tests source this script to call internal

@@ -24,7 +24,7 @@ Five acceptance criteria:
 
   AC-5  ``test_exit_state_vocabulary.py`` green.
 
-Step 0 landed: all ACs are xfail (red-first).
+Step 0 landed: AC-1 and AC-2 are green; AC-3 and AC-4 are xfail (red-first).
 """
 from __future__ import annotations
 
@@ -116,7 +116,6 @@ class TestSkillRootIsWorktree:
     """AC-1: in selfmod mode, the worker process's environment resolves the
     skill root to the worktree."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_worker_env_skill_root_points_to_worktree(self, tmp_path: Path) -> None:
         """The driver must set ILK_SKILL_HOME to the worktree's skills dir."""
         clone = _make_clone(tmp_path)
@@ -129,9 +128,10 @@ class TestSkillRootIsWorktree:
         env = _sandbox_env(tmp_path)
         script = f"""
 export ILK_DOTSOURCE_ONLY=1
+# Set before source so the bottom-of-file selfmod resolution sees it.
+SELFMOD_WORKTREE_PATH='{wt}'
 source '{_RUNNER}'
 PROJECT_PATH='{clone}'
-SELFMOD_WORKTREE_PATH='{wt}'
 
 # Simulate what the driver does for selfmod mode.
 # The worker's ILK_SKILL_HOME should be the worktree's skills dir.
@@ -156,7 +156,6 @@ class TestGuardRefusesSymlinkToLiveClone:
     """AC-2: the guard refuses an Edit whose path is a symlink into the live
     clone."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_guard_refuses_live_clone_symlink(self, tmp_path: Path) -> None:
         """A symlink from the worktree to the live clone must be refused by
         the PreToolUse guard.  The guard must exist and return a refusal."""
@@ -175,6 +174,7 @@ class TestGuardRefusesSymlinkToLiveClone:
 
         # Call the guard function — it must exist and refuse.
         env = _sandbox_env(tmp_path)
+        env["SELFMOD_ORIGINAL_PROJECT_PATH"] = str(clone)
         result = _run_driver_func(
             "check_edit_path", wt, env, args=f"'{symlink}'"
         )
