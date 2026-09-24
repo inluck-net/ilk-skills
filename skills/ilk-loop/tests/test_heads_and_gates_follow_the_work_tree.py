@@ -4,11 +4,11 @@ Reproduces rezmac run 20260924-072803 where ``get_repo_heads`` ran before
 ``DECLARED_WORK_TREE`` was resolved, the gate judged the clone instead of
 the work tree, and ship-gap scanned the clone.
 
-AC-1  (xfail) iteration 1's heads-before names the work tree's HEAD; the
+AC-1  iteration 1's heads-before names the work tree's HEAD; the
       launcher log has 0 trailer-slug warnings for foreign-slug and 0
       [local_checks] rows for it.
-AC-2  (xfail) the step gate records cwd inside the work tree — both
-      gate-first and post-iteration variants.
+AC-2  the step gate records cwd inside the work tree — both gate-first
+      and post-iteration variants.
 AC-3  (xfail) dirty file only in clone ⇒ ship-gap silent; dirty file only
       in work tree ⇒ ship-gap reports it.
 AC-4  (passes today) no ``work_tree`` ⇒ selfmod behaviour unchanged
@@ -277,7 +277,6 @@ def _read_launcher_log(world: dict) -> str:
 # ── AC-1: heads-before names the work tree's HEAD ────────────────────────────
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_heads_before_uses_work_tree_head(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
@@ -340,7 +339,6 @@ def test_heads_before_uses_work_tree_head(
 # ── AC-2: gate records cwd inside the work tree ─────────────────────────────
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_gate_cwd_is_in_work_tree(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:

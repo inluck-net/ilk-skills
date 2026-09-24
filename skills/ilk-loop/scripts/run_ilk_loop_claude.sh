@@ -1720,7 +1720,7 @@ attempt_gate_first_fast_path() {
   local tf
   tf=$(mktemp)
   printf '%s %s\n' "$slug" "$step" > "$tf"
-  invoke_local_checks "$PROJECT_PATH" "$tf" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$results_file"
+  invoke_local_checks "$(selfmod_effective_repo "$PROJECT_PATH")" "$tf" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$results_file" "${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
   rm -f "$tf"
 
   gate_first_results_are_green "$results_file" || return 1
@@ -1763,6 +1763,7 @@ invoke_local_checks() {
   local helper_script="$3"
   local outer_timeout_sec="${4:-180}"
   local results_file="$5"
+  local plans_root="${6:-}"
 
   : > "$results_file"
 
@@ -1773,17 +1774,16 @@ invoke_local_checks() {
     return
   fi
 
-  # Plans-dir resolution anchors to the recorded pre-isolation root: under
-  # selfmod isolation $project is the worktree, whose own project key has no
-  # plans dir — find_subplan returns None and the gate errors out as a
-  # harness failure (measured 2026-09-20, runs 131919/132454/133041: every
-  # post-iteration gate of the batch died "sub-plan not found" while the same
-  # checks pass from the clone root; B2 confirm-before-block then reproduced
-  # the deterministic error and ship-integrity reverted a green, committed
-  # ship). The TREE the gate isolates and verifies stays $project — that is
-  # where the iteration's commits live; the clone's HEAD is pre-merge at
-  # gate time.
-  local plans_root="${SELFMOD_ORIGINAL_PROJECT_PATH:-$project}"
+  # Plans-dir resolution: when the caller passes plans_root (the clone /
+  # pre-isolation root), use it; otherwise fall back to the selfmod anchor.
+  # Under selfmod isolation $project is the worktree, whose own project key
+  # has no plans dir — find_subplan returns None and the gate errors out as a
+  # harness failure (measured 2026-09-20, runs 131919/132454/133041).
+  # The TREE the gate isolates and verifies stays $project — that is where
+  # the iteration's commits live.
+  if [[ -z "$plans_root" ]]; then
+    plans_root="${SELFMOD_ORIGINAL_PROJECT_PATH:-$project}"
+  fi
 
   # Derive outer cap from declared per-check timeouts (B2 false-stop fix).
   # Each target's declared timeout is read from the sub-plan; the overall
@@ -1791,7 +1791,7 @@ invoke_local_checks() {
   local total_declared=0
   local s s_step d
   while read -r s s_step; do
-    d=$(get_step_declared_timeout "$project" "$s" "$s_step")
+    d=$(get_step_declared_timeout "$plans_root" "$s" "$s_step")
     total_declared=$((total_declared + d))
   done < "$targets_file"
   local effective_timeout=$((total_declared + 60))
@@ -3414,17 +3414,12 @@ main() {
     local iter_start
     iter_start=$(date +%s)
 
-    local heads_before_file heads_after_file
-    heads_before_file="${RUN_LOG_DIR}/heads-before-${i}.tmp"
-    heads_after_file="${RUN_LOG_DIR}/heads-after-${i}.tmp"
-
-    get_repo_heads "$heads_before_file"
-
     # -- Declared work_tree resolution -----------------------------------
     # A master may declare `work_tree: <abs path>` — the tree the driver
     # must observe, gate, and ledger.  Without this, gh-resolve's per-issue
     # worktree is invisible to the driver (rezmac 20260923-150625).
-    # Resolved once per iteration; the active master changes between batches.
+    # Resolved ONCE per iteration, BEFORE get_repo_heads so iteration 1's
+    # before-heads come from the work tree, not the clone.
     DECLARED_WORK_TREE=""
     local _wt_json
     _wt_json=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/work_tree.py" \
@@ -3446,6 +3441,12 @@ main() {
         echo "  [work_tree] observing $_wt_path (declared by active master)"
       fi
     fi
+
+    local heads_before_file heads_after_file
+    heads_before_file="${RUN_LOG_DIR}/heads-before-${i}.tmp"
+    heads_after_file="${RUN_LOG_DIR}/heads-after-${i}.tmp"
+
+    get_repo_heads "$heads_before_file"
 
     # Capture the sub-plan this iteration is about to work, BEFORE the agent
     # runs. It is the gate's fallback target when the commit carries no
@@ -3774,7 +3775,7 @@ print(json.dumps({
       if [[ -s "$all_targets_file" ]]; then
         sort -t' ' -k1,1 -k2,2nr "$all_targets_file" | awk '!seen[$1]++ {print $1, $2}' > "$merged_targets_file"
         local_checks_results=$(mktemp)
-        invoke_local_checks "$PROJECT_PATH" "$merged_targets_file" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$local_checks_results"
+        invoke_local_checks "$(selfmod_effective_repo "$PROJECT_PATH")" "$merged_targets_file" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$local_checks_results" "${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
       fi
       rm -f "$all_targets_file" "$merged_targets_file"
       fi
@@ -3805,7 +3806,7 @@ print(json.dumps({
           local rerun_results=""
           if [[ -s "$blocking_targets" ]]; then
             rerun_results=$(mktemp)
-            invoke_local_checks "$PROJECT_PATH" "$blocking_targets" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$rerun_results"
+            invoke_local_checks "$(selfmod_effective_repo "$PROJECT_PATH")" "$blocking_targets" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$rerun_results" "${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
           fi
 
           # Call confirm_b2_block via run_local_checks.py --confirm-b2
