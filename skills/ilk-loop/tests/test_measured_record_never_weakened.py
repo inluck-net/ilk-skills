@@ -1,7 +1,7 @@
 """Red-first pins: a measured record is never weakened by a re-run.
 
 Part of `a-measured-record-is-never-weakened` step 0.
-Tests marked ``xfail(strict=True)`` are red-first pins that step 1 removes.
+Tests marked ``xfail(strict=True)`` are red-first pins that step 2 removes.
 
 Drives ``verification_record.py`` in a temp git repo with a fake
 ``ship.suite`` invocation.  HOME and ILK_DATA_HOME are pinned together
@@ -117,7 +117,6 @@ class TestAC1MeasuredRecordSurvives:
     nonzero, and stderr contains ``ILK-CHECK: unmeasured``.
     """
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_measured_record_not_overwritten(self, tmp_path: Path,
                                               monkeypatch) -> None:
         project, base_sha, head_sha = _make_repo(tmp_path, monkeypatch)

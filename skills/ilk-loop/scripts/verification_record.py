@@ -27,6 +27,8 @@ import argparse
 import hashlib
 import json
 import re
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -1066,6 +1068,40 @@ def compute_suite_budget(project: Path, explicit_timeout: int | None) -> tuple[i
     return budget, "measured"
 
 
+def _existing_record_is_measured(record: Path, head: str) -> bool:
+    """Return True when *record* exists, names *head*, and carries a numeric
+    ``suite_failed`` — i.e. the suite was actually measured, not a stub.
+
+    A measured record is never replaced by a stub or a weaker outcome.
+    """
+    if not record.is_file():
+        return False
+    try:
+        text = record.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    # Extract verified_head.
+    m = re.search(r"^verified_head:\s*(\S+)", text, re.MULTILINE)
+    if not m or m.group(1) != head:
+        return False
+    # Extract suite_failed — must be numeric (an int), not "unmeasured".
+    m = re.search(r"^suite_failed:\s*(.+)$", text, re.MULTILINE)
+    if not m:
+        return False
+    try:
+        int(m.group(1).strip())
+        return True
+    except ValueError:
+        return False
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Write *text* to *path* atomically via ``<path>.tmp`` + ``os.replace``."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def _write_measured_record(project: Path, record: Path, args) -> int:
     """Own the whole machine-read surface: measure it, then write it.
 
@@ -1076,9 +1112,17 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
     "record missing" for a reason that has nothing to do with the code.  The
     stub is refused by the checker (``unmeasured`` is not a count), which is the
     correct outcome — loudly incomplete beats silently absent.
+
+    The stub only fills a vacuum: it is written only when no record exists, or
+    the existing record names a different ``verified_head``.  A measured record
+    (numeric ``suite_failed``) for the same HEAD is never replaced by a stub
+    or a weaker outcome.  All writes are atomic (``<record>.tmp`` +
+    ``os.replace``).  Every non-measured exit prints ``ILK-CHECK: unmeasured``
+    on stderr so the runner can classify the exit without reading the record.
     """
     if not args.base_sha:
         print("ERROR: --run-suite requires --base-sha", file=sys.stderr)
+        print("ILK-CHECK: unmeasured no base-sha", file=sys.stderr)
         return 2
 
     scripts = Path(__file__).resolve().parent
@@ -1088,6 +1132,7 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
         from ship_audit import _resolve_expected_invocation
     except ImportError as exc:
         print(f"ERROR: cannot import ship_audit: {exc}", file=sys.stderr)
+        print("ILK-CHECK: unmeasured import error", file=sys.stderr)
         return 1
 
     invocation = (_resolve_expected_invocation(project) or "").strip()
@@ -1095,17 +1140,20 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
         print("ERROR: ship.suite is not configured; refusing to invent a suite "
               "command. A record naming no invocation cannot be verified.",
               file=sys.stderr)
+        print("ILK-CHECK: unmeasured not configured", file=sys.stderr)
         return 1
 
     head = read_head_from_git(project)
     tree = _git(project, "rev-parse", "HEAD^{tree}")
     if not head or not tree:
         print(f"ERROR: cannot read HEAD/tree from git in {project}", file=sys.stderr)
+        print("ILK-CHECK: unmeasured git error", file=sys.stderr)
         return 1
     if head.startswith(args.base_sha) or args.base_sha.startswith(head):
         print(f"ERROR: base_sha equals HEAD ({head[:12]}); the comparison would "
               f"be HEAD against itself and could not detect a regression.",
               file=sys.stderr)
+        print("ILK-CHECK: unmeasured base equals head", file=sys.stderr)
         return 1
 
     scope = compute_suite_scope(project, args.base_sha)
@@ -1124,7 +1172,11 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
             f"suite_scope: {scope['mode']}\n"
             f"suite_failed: unmeasured\n\n"
             f"## At-base rerun\n\n_(suite did not finish)_\n")
-    record.write_text(stub, encoding="utf-8")
+    # The stub only fills a vacuum: write it only when there is no record,
+    # or the existing record names a different HEAD.  A measured record
+    # (numeric suite_failed) for the same HEAD is never replaced by a stub.
+    if not _existing_record_is_measured(record, head):
+        _atomic_write(record, stub)
 
     try:
         # Apply the scope, do not merely record it.
@@ -1137,6 +1189,8 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
                             selection=selection)
     except (TimeoutError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
+        reason = "timeout" if isinstance(exc, TimeoutError) else "no summary line"
+        print(f"ILK-CHECK: unmeasured {reason}", file=sys.stderr)
         print(f"stub record left at {record}", file=sys.stderr)
         return 1
 
@@ -1149,17 +1203,19 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
     except (ValueError, RuntimeError) as exc:
         if "exceeds the" in str(exc) and "cap" in str(exc):
             # Designed human-escalation: write the named stop, not the stub.
-            record.write_text(render_record(
+            _atomic_write(record, render_record(
                 batch=args.batch or record.stem,
                 head=head, tree=tree, base_sha=args.base_sha,
                 invocation=invocation, scope=scope, results=results,
                 at_base={}, base_red=base_red, head_red=head_red,
                 at_base_error=str(exc),
-            ), encoding="utf-8")
+            ))
             print(f"ERROR: at-base cap exceeded — named stop written to {record}",
                   file=sys.stderr)
+            print("ILK-CHECK: unmeasured at-base cap exceeded", file=sys.stderr)
             return 1
         print(f"ERROR: at-base rerun could not run: {exc}", file=sys.stderr)
+        print("ILK-CHECK: unmeasured at-base rerun failed", file=sys.stderr)
         print(f"stub record left at {record}", file=sys.stderr)
         return 1
 
@@ -1215,7 +1271,7 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
     # Inject attempt header after the batch line.
     record_text = record_text.replace(
         "record_writer:", f"attempt: {attempt}\nrecord_writer:", 1)
-    record.write_text(record_text, encoding="utf-8")
+    _atomic_write(record, record_text)
 
     # R4: compute digest and append to history.
     # Use the raw suite failures (nodes), not the at-base classification.
