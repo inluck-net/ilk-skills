@@ -3728,7 +3728,9 @@ print(json.dumps({
     # next iteration can resume from a recoverable state (AC-1, AC-2, AC-4).
     local wip_preserved=0
     if [[ "$ITER_COMPLETED" -eq 0 ]]; then
-      wip_preserved=$(preserve_dirty_tree_on_timeout 2>/dev/null) || wip_preserved=0
+      # stderr is NOT discarded: the function's "clone ... is dirty, not
+      # preserved" warning goes there, and 2>/dev/null made it unreachable.
+      wip_preserved=$(preserve_dirty_tree_on_timeout) || wip_preserved=0
     fi
 
     # Update no-progress streak
