@@ -3,12 +3,12 @@
 Reproduces rezmac where the worker ran in the main clone (L1:22) and
 WIP-preserve committed dc49ac2ba onto the clone's dev.
 
-AC-1  (xfail) with work_tree declared, the stub worker records its cwd ⇒
-      it is the work tree.
-AC-2  (xfail) timeout with a dirty work tree ⇒ the [wip:timeout] commit
-      is in the work tree's history, clone HEAD unchanged.
-AC-3  (xfail) timeout with only the clone dirty ⇒ no commit, one "clone
-      dirty, not preserved" line.
+AC-1  with work_tree declared, the stub worker records its cwd ⇒ it is
+      the work tree.
+AC-2  timeout with a dirty work tree ⇒ the [wip:timeout] commit is in
+      the work tree's history, clone HEAD unchanged.
+AC-3  timeout with only the clone dirty ⇒ no commit, one "clone dirty,
+      not preserved" line.
 AC-4  (passes today) no work_tree ⇒ today's behaviour.
 """
 from __future__ import annotations
@@ -193,10 +193,9 @@ def _read_sentinel(world: dict) -> dict | None:
     return None
 
 
-# ── AC-1: worker cwd is the work tree (xfail) ───────────────────────────────
+# ── AC-1: worker cwd is the work tree ───────────────────────────────────────
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_worker_cwd_is_work_tree(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
@@ -221,10 +220,9 @@ def test_worker_cwd_is_work_tree(
     )
 
 
-# ── AC-2: WIP preserved in work tree (xfail) ────────────────────────────────
+# ── AC-2: WIP preserved in work tree ────────────────────────────────────────
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_wip_preserved_in_work_tree(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
@@ -254,10 +252,9 @@ def test_wip_preserved_in_work_tree(
     )
 
 
-# ── AC-3: only clone dirty ⇒ no commit, warning (xfail) ─────────────────────
+# ── AC-3: only clone dirty ⇒ no commit, warning ─────────────────────────────
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_only_clone_dirty_no_commit(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:

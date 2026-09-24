@@ -3005,6 +3005,28 @@ preserve_dirty_tree_on_timeout() {
   fi
 
   for repo in "${REPOS[@]}"; do
+    # Resolve to the effective repo: under a declared work_tree, preserve
+    # WIP in the work tree, not the clone.  If the clone is also dirty,
+    # print a warning and leave it alone (the clone is not where this
+    # master works).
+    local effective_repo
+    effective_repo="$(selfmod_effective_repo "$repo")"
+
+    # When a work tree is declared and the clone differs from the effective
+    # repo, check if the clone itself is dirty and warn.
+    if [[ -n "${DECLARED_WORK_TREE:-}" && "$effective_repo" != "$repo" ]]; then
+      local clone_dirty=0
+      if ! git -C "$repo" diff --quiet 2>/dev/null || \
+         ! git -C "$repo" diff --cached --quiet 2>/dev/null || \
+         [[ -n "$(git -C "$repo" ls-files --others --exclude-standard 2>/dev/null)" ]]; then
+        clone_dirty=1
+      fi
+      if [[ "$clone_dirty" -eq 1 ]]; then
+        echo "  [runner] clone $repo is dirty, not preserved (work tree is $effective_repo)" >&2
+      fi
+    fi
+
+    repo="$effective_repo"
     # Must be a git repo
     git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || continue
 
@@ -3593,7 +3615,7 @@ print(json.dumps({
     fi
 
     if [[ "$GATE_FIRST_GREEN" -eq 0 ]]; then
-      invoke_claude_iteration "$PROJECT_PATH" "$iter_log" "$iter_prompt" "$timeout_sec" "$MAX_BUDGET_USD" "$MODEL"
+      invoke_claude_iteration "$(selfmod_effective_repo "$PROJECT_PATH")" "$iter_log" "$iter_prompt" "$timeout_sec" "$MAX_BUDGET_USD" "$MODEL"
     fi
 
     local iter_end iter_dur_sec
