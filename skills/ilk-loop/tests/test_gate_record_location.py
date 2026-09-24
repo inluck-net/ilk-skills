@@ -109,10 +109,11 @@ class TestD5OneRecordLocation:
             "gate CLI and ship_audit cannot disagree about the record location"
         )
 
-    def test_resolver_matches_ilk_paths_runtime_dir(self, tmp_path: Path) -> None:
+    def test_resolver_matches_ilk_paths_runtime_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         import batch_gate
         import ilk_paths
 
+        monkeypatch.setenv("ILK_DATA_HOME", str(tmp_path / "data"))
         project = _make_project(tmp_path)
         key = ilk_paths.resolve_project_key(project)
         assert key is not None
@@ -120,11 +121,12 @@ class TestD5OneRecordLocation:
         resolved = batch_gate.resolve_runtime_dir(project)
         assert resolved == ilk_paths.external_runtime_dir(key)
 
-    def test_resolver_is_not_the_launcher_dir(self, tmp_path: Path) -> None:
+    def test_resolver_is_not_the_launcher_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """The launcher dir holds launcher state; the record is project state."""
         import batch_gate
         import ilk_paths
 
+        monkeypatch.setenv("ILK_DATA_HOME", str(tmp_path / "data"))
         project = _make_project(tmp_path)
         key = ilk_paths.resolve_project_key(project)
         resolved = batch_gate.resolve_runtime_dir(project)
@@ -233,7 +235,7 @@ class TestD6AuditCliReadsRecord:
         )
         assert result.returncode != 0
 
-    def test_default_runtime_dir_is_resolved_not_none(self, tmp_path: Path) -> None:
+    def test_default_runtime_dir_is_resolved_not_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """With no flag, the CLI must resolve the dir rather than give up.
 
         Regression guard for the exact Phase 0 symptom: every sub-plan
@@ -241,6 +243,7 @@ class TestD6AuditCliReadsRecord:
         """
         import batch_gate
 
+        monkeypatch.setenv("ILK_DATA_HOME", str(tmp_path / "data"))
         project = _make_project(tmp_path)
         resolved = batch_gate.resolve_runtime_dir(project)
         assert resolved is not None
