@@ -3,7 +3,7 @@
 Reproduces rezmac run 20260924-072803 where a real ``fail`` verdict for a
 sub-plan of ANOTHER master triggered revert and parked the wrong master.
 
-AC-1  (xfail) active master A (a1 shipped, gate pass) + blocked master B
+AC-1  active master A (a1 shipped, gate pass) + blocked master B
       (b1 shipped).  Agent commits with ``[plan:b1-slug#step-0]`` trailer;
       b1's gate fails.  ⇒ b1 stays shipped, B unchanged, log has "not in
       the active master", no ``ship_integrity_violation``.
@@ -247,10 +247,9 @@ def _read_master_status(world: dict, master_name: str) -> str:
     return ""
 
 
-# ── AC-1: foreign verdict not enforced (xfail) ──────────────────────────────
+# ── AC-1: foreign verdict not enforced ──────────────────────────────────────
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_foreign_verdict_not_enforced(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:

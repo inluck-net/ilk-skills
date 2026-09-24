@@ -2329,6 +2329,18 @@ for raw in Path(sys.argv[1]).read_text().splitlines():
         break
 " "$lc_file" "$_si_slug" 2>/dev/null) || true
     fi
+
+    # Scope to the active master: skip sub-plans not in this batch.
+    # A verdict (pass or fail) for a sub-plan of ANOTHER master must never
+    # trigger revert or park.  Without this, a real fail verdict for a
+    # foreign sub-plan goes straight to ship_integrity.py and reverts it
+    # (rezmac 20260924-072803).
+    if [[ -n "$_active_subplans" ]] \
+       && ! printf '%s\n' "$_active_subplans" | grep -qxF "$(basename "$f")"; then
+      echo "  [ship-integrity] ${_si_slug:-$(basename "$f")}: not in the active master — verdict $gate_passed recorded, not enforced" >&2
+      continue
+    fi
+
     # Scope to THIS iteration's ships only: enforce on sub-plans whose gate
     # actually ran this iteration (present in the local_checks JSONL). A
     # sub-plan shipped in a PRIOR run has no current-iteration gate result --
