@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -76,7 +77,6 @@ _KEY = "users-chad-projects-github-inluck-net-gh-resolve-a7b5462"
 # ── AC-1: live loop → reported, not failed ──────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_live_loop_at_start_is_reported_not_failed(
     monkeypatch, tmp_path, capsys,
 ):
@@ -104,7 +104,6 @@ def test_live_loop_at_start_is_reported_not_failed(
 # ── AC-2: live at start, gone at end → reported ─────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_live_at_start_gone_at_end_is_reported(
     monkeypatch, tmp_path, capsys,
 ):
@@ -190,4 +189,51 @@ def test_probe_unavailable_fails(monkeypatch, tmp_path):
     assert s.exitstatus == 1, (
         "when the pid probe cannot run, the guard must fail — an "
         "unanswerable question never becomes a pass"
+    )
+
+
+# ── AC-7: hashed tmp keys classify as tmp-derived ────────────────────────────
+
+
+def test_hashed_tmp_key_classifies_as_tmp_derived(monkeypatch, tmp_path):
+    """AC-7: the key project_key(<tempdir>/pytest-of-x/pytest-1/p) classifies
+    as tmp-derived=True, and a NEW empty one is reported, not failed."""
+    import ilk_paths
+    import tempfile
+
+    # Derive what a real child tmp path's key would look like.
+    child_tmp = Path(tempfile.gettempdir()).resolve() / "pytest-of-chad" / "pytest-1" / "p"
+    child_key = ilk_paths.project_key(child_tmp)
+
+    # The parent tmp key (what _data_tmp_prefix computes).
+    parent_key = ilk_paths.project_key(Path(tempfile.gettempdir()).resolve())
+
+    # The child key must start with the slug prefix (without hash suffix).
+    slug_prefix = parent_key[:len(parent_key) - 8]
+    assert child_key.startswith(slug_prefix), (
+        f"child key {child_key!r} should start with slug prefix {slug_prefix!r}"
+    )
+
+    # A NEW empty tmp-derived key should be reported, not failed.
+    s = _run_guard(
+        monkeypatch, tmp_path,
+        entries={child_key: 0},
+        prefix=parent_key,
+    )
+    assert s.exitstatus == 0, (
+        f"a NEW empty tmp-derived key ({child_key!r}) should be reported, "
+        f"not failed"
+    )
+
+
+def test_real_project_key_stays_not_tmp_derived(monkeypatch, tmp_path):
+    """AC-7: a real-project key stays tmp-derived=False."""
+    import ilk_paths
+
+    real_key = ilk_paths.project_key(Path.home() / "Projects" / "x")
+    parent_key = ilk_paths.project_key(Path(tempfile.gettempdir()).resolve())
+
+    slug_prefix = parent_key[:len(parent_key) - 8]
+    assert not real_key.startswith(slug_prefix), (
+        f"real key {real_key!r} should NOT start with tmp slug prefix {slug_prefix!r}"
     )

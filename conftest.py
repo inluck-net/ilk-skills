@@ -81,7 +81,7 @@ def _snapshot_data_projects() -> None:
     dir is what gets watched, and writes into it are legitimate.
     """
     global _data_projects_dir, _data_snapshot, _data_probe_error
-    global _data_session_start
+    global _data_session_start, _data_pid_snapshot
     mod = _ilk_paths_module()
     if mod is None:
         # A probe that could not run is not a clean result. Say so at session
@@ -95,6 +95,10 @@ def _snapshot_data_projects() -> None:
         _data_session_start = time.time()
         _data_snapshot = {
             e.name: _entry_stat(e)
+            for e in _data_projects_dir.iterdir() if e.is_dir()
+        } if _data_projects_dir.is_dir() else {}
+        _data_pid_snapshot = {
+            e.name: _read_pidfile(e)
             for e in _data_projects_dir.iterdir() if e.is_dir()
         } if _data_projects_dir.is_dir() else {}
         _data_tmp_prefix_set(mod)
@@ -309,11 +313,29 @@ _data_snapshot: dict[str, tuple[int, float]] = {}
 _data_session_start: float = 0.0
 _data_tmp_prefix: str | None = None
 _data_probe_error: str | None = None
+# name -> pid read from running.pid at session start, or None if absent.
+# Used to detect keys with a live loop that were already running before
+# this session started.
+_data_pid_snapshot: dict[str, int | None] = {}
 
 
 # Directories whose contents are never project DATA, wherever they appear.
 # A build cache is not proof material and cannot be read back as one.
 _ENTRY_STAT_IGNORED_DIRS = frozenset({"__pycache__", ".pytest_cache"})
+
+
+def _read_pidfile(entry: Path) -> int | None:
+    """Read the pid from ``<entry>/runtime/launcher/running.pid``.
+
+    Returns the pid as an int, or None if the file is absent or unreadable.
+    A stale pidfile (dead pid) is still returned — the caller decides liveness.
+    """
+    pid_path = entry / "runtime" / "launcher" / "running.pid"
+    try:
+        text = pid_path.read_text(encoding="utf-8", errors="replace").strip()
+        return int(text) if text else None
+    except (OSError, ValueError):
+        return None
 
 
 def _entry_stat(entry: Path) -> tuple[int, float]:
@@ -690,6 +712,23 @@ def _enforce_no_data_root_leak(session) -> None:
     strict = os.environ.get("ILK_DATA_LEAK_STRICT", "").strip().lower() not in (
         "", "0", "false", "no",
     )
+
+    # Lazy import: if pid_health is unavailable, live-loop detection falls
+    # back to failing (AC-6: an unanswerable question never becomes a pass).
+    _pid_alive_fn = None
+    try:
+        from pid_health import pid_alive as _pid_alive_fn  # type: ignore[import-untyped]
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Derive the tmp-derived prefix slug WITHOUT the hash suffix.  A child
+    # tmp path's key is <parent-slug>-pytest-of-<user>-p-<hash>, so the
+    # parent's full key (which ends in its own hash) never matches.
+    _tmp_slug_prefix: str | None = None
+    if _data_tmp_prefix:
+        # The key is <slug>-<7-char-hash>.  Strip the hash suffix.
+        _tmp_slug_prefix = _data_tmp_prefix[:len(_data_tmp_prefix) - 8]
+
     rows, failing = [], []
     for name in sorted(now):
         n_files, newest = now[name]
@@ -700,7 +739,21 @@ def _enforce_no_data_root_leak(session) -> None:
         if not (is_new or gained or touched):
             continue
 
-        tmp_derived = bool(_data_tmp_prefix) and name.startswith(_data_tmp_prefix)
+        # Fix AC-7: tmp-derived detection survives key hashing.
+        tmp_derived = bool(_tmp_slug_prefix) and name.startswith(_tmp_slug_prefix)
+
+        # Check for a live loop at session start or end (AC-1, AC-2).
+        # A key with a live loop is another writer's, not this session's leak.
+        live_pid: int | None = None
+        if gained and _pid_alive_fn is not None:
+            start_pid = _data_pid_snapshot.get(name)
+            end_pid = _read_pidfile(_data_projects_dir / name)
+            # Check start pid first (AC-2: live at start, gone at end).
+            if start_pid is not None and _pid_alive_fn(start_pid):
+                live_pid = start_pid
+            elif end_pid is not None and _pid_alive_fn(end_pid):
+                live_pid = end_pid
+
         # Fail on what this session CREATED, not on what the entry contains.
         #
         # The absolute state cannot be the predicate on a host where the
@@ -718,14 +771,22 @@ def _enforce_no_data_root_leak(session) -> None:
         # from a concurrent daemon's, and guessing would either cry wolf every
         # run or invent an attribution it does not have.  TOUCHED on a
         # real-shaped key is therefore a line to READ, not noise.
-        bad = strict or (is_new and (n_files > 0 or not tmp_derived)) or gained
+        if gained and live_pid is not None:
+            # A live loop at start or end means another writer.  Report only.
+            bad = False
+        else:
+            bad = strict or (is_new and (n_files > 0 or not tmp_derived)) or gained
         what = ("NEW" if is_new else
                 "GAINED FILES" if gained else "TOUCHED")
+        live_note = ""
+        if live_pid is not None:
+            live_note = f"  live loop pid {live_pid} (reported only)"
         rows.append(
             f"  {name}\n"
             f"      {what}  files={n_files}"
             f"{'' if is_new else f' (was {was[0]})'}"
             f"  tmp-derived={tmp_derived}"
+            f"{live_note}"
             f"{'  <-- FAILS' if bad else '  (reported only)'}\n"
         )
         if bad:
