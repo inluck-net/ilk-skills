@@ -4315,6 +4315,61 @@ print(json.dumps(d))
     # Restore set -e: terminal decision logic below must be fatal.
     set -e
 
+    # One-ship-per-iteration enforcement: revert any sub-plan that went
+    # from non-shipped to shipped and is NOT the dispatched slug.
+    # This catches workers that bypass ship_transition.py and edit
+    # frontmatter directly (gh-resolve 20260924-221409 iter 6).
+    if [[ -n "${PRE_ITER_ALL_STEPS:-}" ]]; then
+      local _one_ship_plans_dir
+      _one_ship_plans_dir="$(get_plans_dir)" || true
+      if [[ -n "$_one_ship_plans_dir" && -d "$_one_ship_plans_dir" ]]; then
+        local _dispatched_slug="${_iter_slug:-}"
+        local _pre_line _pre_slug _pre_step _pre_status
+        while IFS= read -r _pre_line; do
+          _pre_slug="${_pre_line%% *}"
+          _pre_step="${_pre_line#* }"
+          [[ -z "$_pre_slug" ]] && continue
+          # Skip the dispatched slug — it is allowed to ship.
+          [[ "$_pre_slug" == "$_dispatched_slug" ]] && continue
+          # Read the current status from frontmatter.
+          _pre_status=$(python3 -c "
+import re, sys
+from pathlib import Path
+for p in Path(sys.argv[1]).glob('*.md'):
+    if p.name.startswith('MASTER'):
+        continue
+    text = p.read_text()
+    fm = {}
+    for m in re.finditer(r'^(\w[\w_-]*):\s*(.*)', text, re.MULTILINE):
+        fm[m.group(1)] = m.group(2).strip()
+    if fm.get('plan') == sys.argv[2]:
+        print(fm.get('status', ''))
+        break
+" "$_one_ship_plans_dir" "$_pre_slug" 2>/dev/null) || _pre_status=""
+          if [[ "$_pre_status" == "shipped" ]]; then
+            # This sub-plan went non-shipped → shipped and is not dispatched.
+            # Revert to its pre-iteration status.
+            python3 -c "
+import re, sys
+from pathlib import Path
+for p in Path(sys.argv[1]).glob('*.md'):
+    if p.name.startswith('MASTER'):
+        continue
+    text = p.read_text()
+    fm = {}
+    for m in re.finditer(r'^(\w[\w_-]*):\s*(.*)', text, re.MULTILINE):
+        fm[m.group(1)] = m.group(2).strip()
+    if fm.get('plan') == sys.argv[2]:
+        text = re.sub(r'^(status:\s*)shipped', r'\1in-progress', text, count=1, flags=re.MULTILINE)
+        p.write_text(text)
+        break
+" "$_one_ship_plans_dir" "$_pre_slug" 2>/dev/null || true
+            echo "[one-ship] reverted $_pre_slug: shipped by an iteration dispatched for ${_dispatched_slug:-<empty>}"
+          fi
+        done <<< "$PRE_ITER_ALL_STEPS"
+      fi
+    fi
+
     # Quality gates
     # TODO: step 6+ (invoke_quality_gates_if_needed)
 

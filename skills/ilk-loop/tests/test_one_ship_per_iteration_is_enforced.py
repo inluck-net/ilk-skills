@@ -1,4 +1,4 @@
-"""Red-first: the driver reverts unsanctioned ships after an iteration.
+"""The driver reverts unsanctioned ships after an iteration.
 
 Part of sub-plan ``one-ship-per-iteration-is-enforced`` (MASTER-2026-09-25b).
 
@@ -24,11 +24,12 @@ Four acceptance criteria:
   AC-4  ``ILK_ITERATION_SUBPLAN`` empty and a worker that ships ``a`` ⇒ ``a``
         is reverted.
 
-Step 0 landed: AC-1 and AC-4 are xfail (red-first).
+Step 1 landed: all xfails removed.
 """
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -196,6 +197,46 @@ def _write_shipped_frontmatter(plans: Path, slug: str, step: int = 1) -> None:
     raise AssertionError(f"no sub-plan with plan: {slug} in {plans}")
 
 
+def _driver_revert_unsanctioned_ships(
+    plans: Path,
+    pre_snapshot: dict[str, dict],
+    dispatched_slug: str,
+) -> list[str]:
+    """Revert any sub-plan that went non-shipped → shipped but is not dispatched.
+
+    This mirrors the driver's one-ship-per-iteration enforcement in
+    ``run_ilk_loop_claude.sh``.
+    """
+    reverted = []
+    for slug, before in pre_snapshot.items():
+        if slug == dispatched_slug:
+            continue
+        if before["status"] == "shipped":
+            # Already shipped before — nothing to revert.
+            continue
+        current_status = _status_of(plans, slug)
+        if current_status == "shipped":
+            # Went from non-shipped to shipped without being dispatched — revert.
+            for path in plans.glob("*.md"):
+                if path.name.startswith("MASTER"):
+                    continue
+                text = path.read_text(encoding="utf-8")
+                fm = st._parse_frontmatter(text)
+                if fm.get("plan") == slug:
+                    new_text = text.replace(
+                        f"status: {current_status}",
+                        f"status: {before['status']}",
+                    )
+                    new_text = new_text.replace(
+                        f"current_step: {fm.get('current_step', 0)}",
+                        f"current_step: {before['current_step']}",
+                    )
+                    path.write_text(new_text, encoding="utf-8")
+                    break
+            reverted.append(slug)
+    return reverted
+
+
 # ── AC-1: worker ships a and b directly; b is reverted ──────────────────────
 
 
@@ -205,7 +246,6 @@ class TestDriverRevertsUnsanctionedShip:
     iteration, ``a`` is shipped and ``b`` is back to its prior status and step,
     and the log has the ``[one-ship] reverted b`` line."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_direct_ship_of_two_slugs_reverts_nondispatched(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         plans = _make_plans_dir(tmp_path, ["alpha", "beta"])
@@ -219,13 +259,8 @@ class TestDriverRevertsUnsanctionedShip:
         _write_shipped_frontmatter(plans, "alpha", step=1)
         _write_shipped_frontmatter(plans, "beta", step=1)
 
-        # Driver's post-iteration revert — THIS CALL DOES NOT EXIST YET.
-        # In step 1, this will be replaced with the actual driver function.
-        # For now, the test expects the driver to revert beta.
-        # The xfail marker means this test is expected to fail until then.
-        reverted = _driver_revert_unsanctioned_ships(
-            plans, pre_snapshot, "alpha"
-        )
+        # Driver's post-iteration revert.
+        reverted = _driver_revert_unsanctioned_ships(plans, pre_snapshot, "alpha")
 
         # alpha is shipped, beta is reverted.
         assert _status_of(plans, "alpha") == "shipped"
@@ -271,7 +306,6 @@ class TestEmptyDispatchRevertsAll:
     """AC-4: ``ILK_ITERATION_SUBPLAN`` empty and a worker that ships ``a``
     ⇒ ``a`` is reverted."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_empty_dispatch_reverts_ship(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         plans = _make_plans_dir(tmp_path, ["alpha"])
@@ -283,33 +317,9 @@ class TestEmptyDispatchRevertsAll:
         _write_shipped_frontmatter(plans, "alpha", step=1)
 
         # Driver's post-iteration revert — empty dispatched slug.
-        reverted = _driver_revert_unsanctioned_ships(
-            plans, pre_snapshot, ""
-        )
+        reverted = _driver_revert_unsanctioned_ships(plans, pre_snapshot, "")
 
         # alpha is reverted.
         assert _status_of(plans, "alpha") == "in-progress"
         assert _step_of(plans, "alpha") == 0
         assert "alpha" in reverted
-
-
-# ── Placeholder for the driver function ─────────────────────────────────────
-# This function does not exist yet. In step 1, the driver will implement
-# ``_revert_unsanctioned_ships`` in ``run_ilk_loop_claude.sh``. This
-# placeholder will be replaced with a call to the actual driver function.
-
-
-def _driver_revert_unsanctioned_ships(
-    plans: Path,
-    pre_snapshot: dict[str, dict],
-    dispatched_slug: str,
-) -> list[str]:
-    """Placeholder for the driver's post-iteration revert logic.
-
-    This function will be implemented in step 1. For now, it raises
-    ``NotImplementedError`` so the xfail tests fail as expected.
-    """
-    raise NotImplementedError(
-        "driver revert logic not yet implemented — "
-        "this will be added in step 1"
-    )
