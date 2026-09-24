@@ -2217,10 +2217,18 @@ from pathlib import Path
 sys.path.insert(0, sys.argv[2])
 try:
     from plan_status import extract_subplan_files
-    from loop_status import pick_active_master
+    from loop_status import pick_active_master, parse_frontmatter
+    from plan_status import normalize_master_status
     masters = sorted(Path(sys.argv[1]).glob('MASTER-*.md'))
-    if masters:
-        chosen, _ = pick_active_master(masters, json_mode=True)
+    # This walk runs AFTER the iteration, when the agent may just have shipped
+    # the active master's last sub-plan. pick_active_master drops all-shipped
+    # masters, and with none left falls back to masters[-1] -- another batch,
+    # whose sub-plans then get enforced. Prefer masters still marked active.
+    actives = [m for m in masters
+               if normalize_master_status(parse_frontmatter(
+                   m.read_text(encoding='utf-8-sig')).get('status') or '') == 'active']
+    if actives or masters:
+        chosen, _ = pick_active_master(actives or masters, json_mode=True)
         for n in extract_subplan_files(Path(chosen).read_text(encoding='utf-8')):
             print(n)
 except Exception:

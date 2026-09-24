@@ -92,12 +92,15 @@ def _build_world(
         encoding="utf-8",
     )
 
-    # Gate for a1: always passes.
+    # Gate for a1: always passes.  a1 starts runnable (in-progress, step 0):
+    # with every sub-plan already shipped the runner exits pre-loop
+    # (shipped-unproven, iters=0) and never dispatches the agent, so the
+    # ship-integrity walk this file pins would never run.
     (plans / f"{STEM_A}.md").write_text(
         "---\n"
         f"plan: {SLUG_A}\n"
-        "status: shipped\n"
-        "current_step: 1\n"
+        "status: in-progress\n"
+        "current_step: 0\n"
         "estimated_steps: 1\n"
         "---\n\n"
         f"# {SLUG_A}\n\n"
