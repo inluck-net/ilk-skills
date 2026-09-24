@@ -243,7 +243,6 @@ def _read_subplan_status(world: dict) -> tuple[int, str]:
 
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_stale_record_reruns_step0_before_step1(tmp_path: Path) -> None:
     """A verify at current_step: 1 with an old-form step 1 gate and a record
     whose tree ≠ HEAD ⇒ the gate-first fast path runs step 0's gate first
@@ -411,7 +410,6 @@ def _build_world_ac2(root: Path) -> dict:
 
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_fresh_record_does_not_rerun_step0(tmp_path: Path) -> None:
     """A fresh record (verified_head == HEAD) ⇒ step 0's gate does NOT re-run.
     The sentinel file (created by step 0's gate) must be absent.
@@ -435,12 +433,12 @@ def test_fresh_record_does_not_rerun_step0(tmp_path: Path) -> None:
         f"last 40 lines:\n{tail}"
     )
 
-    # RED STATE: step 0's sentinel exists (step 0 was re-run for a fresh
-    # record).  The correct behavior is that step 0 does NOT re-run.
-    assert sentinel.exists(), (
-        "step 0's sentinel does not exist — the record is fresh and step 0 "
-        "correctly did NOT re-run.  This test should FAIL (red state).  "
-        "The bug it pins is: step 0 re-runs even for a fresh record.\n"
+    # Step 0's sentinel must NOT exist — the record is fresh and step 0
+    # should not re-run.
+    assert not sentinel.exists(), (
+        "step 0's sentinel exists — the record is fresh but step 0 was "
+        "re-run unnecessarily.  The stale-record fallback must skip "
+        "step 0 when the record is fresh.\n"
         f"last 40 lines:\n{tail}"
     )
 
@@ -448,7 +446,6 @@ def test_fresh_record_does_not_rerun_step0(tmp_path: Path) -> None:
 # ── AC-3 (xfail): --is-stale exit codes ─────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_is_stale_exits_zero_on_stale_record(tmp_path: Path) -> None:
     """``verify_attribution.py --is-stale --batch X`` exits 0 when the record
     is stale (verified_head != HEAD).  It never spawns the suite.
@@ -507,7 +504,6 @@ def test_is_stale_exits_zero_on_stale_record(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_is_stale_exits_one_on_fresh_record(tmp_path: Path) -> None:
     """``verify_attribution.py --is-stale --batch X`` exits 1 when the record
     is fresh (verified_head == HEAD).  It never spawns the suite.
@@ -564,7 +560,6 @@ def test_is_stale_exits_one_on_fresh_record(tmp_path: Path) -> None:
 # ── AC-4 (xfail): plan_lint WARN on old-form step 1 ─────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_plan_lint_warns_on_old_form_step1() -> None:
     """A ``batch_verification: true`` sub-plan whose step 1 gate calls
     ``verify_attribution.py`` without ``--remeasure-if-stale`` gets a WARN.
@@ -610,7 +605,6 @@ def test_plan_lint_warns_on_old_form_step1() -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_plan_lint_no_warn_on_25a_form_step1() -> None:
     """A ``batch_verification: true`` sub-plan whose step 1 gate calls
     ``verify_attribution.py --remeasure-if-stale`` does NOT get the WARN.
@@ -659,7 +653,6 @@ def test_plan_lint_no_warn_on_25a_form_step1() -> None:
 # ── AC-5 (xfail): stale record + suite_scope: full + no --scope ⇒ full ──────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_stale_record_with_suite_scope_full_respects_scope(tmp_path: Path) -> None:
     """A stale record with ``suite_scope: full`` and a gate without ``--scope``
     ⇒ the re-measure runs in full scope (the new record says
@@ -724,11 +717,18 @@ def test_stale_record_with_suite_scope_full_respects_scope(tmp_path: Path) -> No
 
     # Re-measure without --scope (defaults to "auto").
     # The record's suite_scope is "full", so the re-measure should use full.
-    ret = vat.main([
-        str(record),
-        "--project", str(project),
-        "--remeasure-if-stale",
-    ])
+    # Unset ILK_WORKER_SESSION so the re-measurement is not refused
+    # (this test may run inside a worker session).
+    saved_worker = os.environ.pop("ILK_WORKER_SESSION", None)
+    try:
+        ret = vat.main([
+            str(record),
+            "--project", str(project),
+            "--remeasure-if-stale",
+        ])
+    finally:
+        if saved_worker is not None:
+            os.environ["ILK_WORKER_SESSION"] = saved_worker
 
     # The suite should have run.
     assert sentinel.exists(), (

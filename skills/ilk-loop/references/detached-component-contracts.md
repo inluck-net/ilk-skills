@@ -1913,3 +1913,59 @@ the record's `base_sha` and `suite_scope` (or `--base-sha` / `--scope`
 when the record is missing and they were passed), then attributes as
 today. Inside a worker session the flag does NOT re-measure: it fails
 with the same refusal as `--run-suite` in a worker session.
+
+## Contract 14: The stale-record step-0 fallback (25c)
+
+A `batch_verification: true` sub-plan whose step 1 gate is the pre-25a
+form (`verify_attribution.py` without `--remeasure-if-stale`) cannot
+re-measure after a fix commit: the worker is refused by `--run-suite`,
+step 1 rejects the stale record, and step 0 never re-runs because
+`current_step` is 1. The run loops until blacklisted for no progress.
+
+### The probe: `--is-stale`
+
+`verify_attribution.py --is-stale --project . --batch <slug>` exits 0
+when the record is stale (missing, `verified_head` ≠ HEAD, or
+`suite_failed` not an integer) and exits 1 when fresh. It never runs the
+suite. Used by the gate-first fast path to decide whether to re-run
+step 0.
+
+### The fallback
+
+In the gate-first fast path (`attempt_gate_first_fast_path`), for a
+`batch_verification: true` sub-plan at `current_step >= 1` whose step
+declares `gate_first`:
+
+1. Run `--is-stale` against the batch record.
+2. If stale (exit 0), run step 0's gate first (gate-first, no worker).
+   Log `[gate-first] <slug>: record stale (<reason>) — re-running step 0
+   before step <N>`.
+3. Then run the current step's gate as normal.
+
+Step 0's gate re-measures the record. The current step's gate then sees
+a fresh record and passes.
+
+### Scope rule
+
+When `--remeasure-if-stale` re-measures and no explicit `--scope` was
+passed (args.scope is "auto"), the record's `suite_scope` takes
+precedence. If the record says `suite_scope: full`, the re-measure uses
+`--scope full`. This prevents a downgrade from full to auto when step 0
+measured full and step 1 has no `--scope` flag.
+
+### plan_lint WARN
+
+`lint_old_form_verify_step1` flags a `batch_verification: true` sub-plan
+whose step 1 gate calls `verify_attribution.py` without
+`--remeasure-if-stale`:
+
+```
+WARN <slug>: step 1 verify gate lacks --remeasure-if-stale (pre-25a form;
+safe since 25c, but it re-measures only via the driver's step-0 fallback)
+```
+
+### Contract: `--is-stale`
+
+`verify_attribution.py` gains `--is-stale`. Requires `--batch`. Exits 0
+(stale) or 1 (fresh). Never runs the suite. The driver uses it before
+dispatching the gate-first fast path's current step.

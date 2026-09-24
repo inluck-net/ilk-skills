@@ -1922,6 +1922,35 @@ attempt_gate_first_fast_path() {
 
   echo "[gate-first] $slug step $step declares gate_first: true -- running its gate before the agent"
 
+  # ── Stale-record step-0 fallback ─────────────────────────────────────
+  # For a batch_verification sub-plan at step >= 1, if the record is
+  # stale (verified_head ≠ HEAD, missing, or suite_failed not numeric),
+  # run step 0's gate first to re-measure before the current step.
+  # This prevents a deadlock when the old-form step 1 gate (no
+  # --remeasure-if-stale) rejects a stale record and step 0 never
+  # re-runs because current_step is 1.  See 25c.
+  if [[ "$step" -ge 1 ]] && sub_plan_has_batch_verification "$slug"; then
+    local batch_slug="batch-${slug}"
+    local probe_project
+    probe_project="$(selfmod_effective_repo "$PROJECT_PATH")"
+    [[ -n "$probe_project" ]] || probe_project="$PROJECT_PATH"
+    local stale_rc=0
+    python3 "${_SKILL_ROOT}/ilk-loop/scripts/verify_attribution.py" \
+      --is-stale --project "$probe_project" --batch "$batch_slug" \
+      2>/dev/null || stale_rc=$?
+    if [[ "$stale_rc" -eq 0 ]]; then
+      local reason="record stale"
+      echo "[gate-first] $slug: $reason — re-running step 0 before step $step"
+      local tf0
+      tf0=$(mktemp)
+      printf '%s %s\n' "$slug" 0 > "$tf0"
+      invoke_local_checks "$(selfmod_effective_repo "$PROJECT_PATH")" "$tf0" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$results_file" "${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
+      rm -f "$tf0"
+      # If step 0's gate failed, fall through to the agent.
+      gate_first_results_are_green "$results_file" || return 1
+    fi
+  fi
+
   local tf
   tf=$(mktemp)
   printf '%s %s\n' "$slug" "$step" > "$tf"

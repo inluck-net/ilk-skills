@@ -4006,6 +4006,62 @@ def lint_batch_verification_scope_mismatch(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── Batch verification: old-form step 1 gate lacks --remeasure-if-stale ───
+#
+# A ``batch_verification: true`` sub-plan whose step 1 gate calls
+# ``verify_attribution.py`` without ``--remeasure-if-stale`` is the pre-25a
+# form.  After 25a, the worker is refused by ``--run-suite`` inside a worker
+# session, so the only way to re-measure is the driver's step-0 fallback
+# (25c).  The old form is still safe (25c makes it safe), but it re-measures
+# only via that fallback — warn so the author knows.
+#
+# AC-4: fires on old-form fixtures, not on 25a-form ones.
+
+_VERIFY_ATTRIBUTION_RE = re.compile(
+    r"verify_attribution\.py\b", re.IGNORECASE
+)
+_REMEASURE_IF_STALE_RE = re.compile(
+    r"--remeasure-if-stale\b"
+)
+
+
+def lint_old_form_verify_step1(text: str, slug: str) -> list[str]:
+    """WARN when a batch_verification step 1 gate lacks --remeasure-if-stale."""
+    findings: list[str] = []
+    if not _has_batch_verification_marker(text):
+        return findings
+    body = _strip_frontmatter(text)
+    steps = _extract_step_sections(body)
+    for step_no, _heading, section in steps:
+        if step_no != 1:
+            continue
+        # Extract commands from the step's yaml fence.
+        fence = re.search(
+            r"^```(?:yaml|yml)?\s*\n(.*?)^```",
+            section, re.MULTILINE | re.DOTALL,
+        )
+        if not fence:
+            continue
+        for line in fence.group(1).splitlines():
+            cmd = line.strip()
+            if not cmd or cmd.startswith("#"):
+                continue
+            # Look for a local_checks command that calls verify_attribution.py.
+            if not _VERIFY_ATTRIBUTION_RE.search(cmd):
+                continue
+            if _REMEASURE_IF_STALE_RE.search(cmd):
+                continue
+            # Old-form: calls verify_attribution.py without --remeasure-if-stale.
+            findings.append(
+                f"WARN {slug}: step 1 verify gate lacks "
+                f"--remeasure-if-stale (pre-25a form; safe since 25c, "
+                f"but it re-measures only via the driver's step-0 "
+                f"fallback)"
+            )
+            return findings  # one WARN is enough
+    return findings
+
+
 # ── No-diff step must declare --allow-empty ─────────────────────────────────
 #
 # A step whose only deliverable is ``## Findings`` prose — or a record written
@@ -4304,6 +4360,7 @@ ALL_CHECKS = (
     lint_duplicate_frontmatter_key,
     lint_slug_identity_mismatch,
     lint_batch_verification_scope_mismatch,
+    lint_old_form_verify_step1,
 )
 
 
@@ -5190,6 +5247,17 @@ def lint_master_profile(
         except (OSError, ValueError):
             pass
 
+    return findings
+
+
+def lint_subplan(body: str, slug: str) -> list[str]:
+    """Run all sub-plan checks against a body string (no file I/O).
+
+    Convenience wrapper for tests and callers that already have the text.
+    """
+    findings: list[str] = []
+    for check in ALL_CHECKS:
+        findings.extend(check(body, slug))
     return findings
 
 

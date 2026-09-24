@@ -764,9 +764,48 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--scope", default="auto", choices=("full", "auto"),
                     metavar="MODE",
                     help="scope override for re-measurement (default: auto)")
+    ap.add_argument("--is-stale", action="store_true",
+                    help="probe only: exit 0 when the record is stale "
+                         "(missing, tree ≠ HEAD, or suite_failed not "
+                         "an integer), exit 1 when fresh. Never runs "
+                         "the suite.")
     args = ap.parse_args(argv)
 
     project = Path(args.project).resolve()
+
+    # ── --is-stale probe ─────────────────────────────────────────────────
+    # A driver-side staleness probe: exit 0 when the record is stale
+    # (missing, tree ≠ HEAD's tree, or suite_failed not an integer),
+    # exit 1 when fresh.  Never runs the suite.  Used by the gate-first
+    # fast path to decide whether to re-run step 0 before the current step.
+    if args.is_stale:
+        if not args.batch:
+            print("--is-stale requires --batch <batch-slug>",
+                  file=sys.stderr)
+            return 2
+        is_stale = False
+        try:
+            record_path = resolve_batch_record(project, args.batch)
+        except VerificationError:
+            is_stale = True
+            record_path = None
+        if record_path is not None and record_path.is_file():
+            text = record_path.read_text(encoding="utf-8-sig",
+                                         errors="replace")
+            head = _git(project, "rev-parse", "HEAD")
+            m = re.search(r"^verified_head:\s*(\S+)", text, re.MULTILINE)
+            rec_head = m.group(1) if m else None
+            if rec_head != head:
+                is_stale = True
+            m2 = re.search(r"^suite_failed:\s*(.+)$", text, re.MULTILINE)
+            if m2:
+                try:
+                    int(m2.group(1).strip())
+                except ValueError:
+                    is_stale = True
+            else:
+                is_stale = True
+        return 0 if is_stale else 1
 
     # Load ship config early — MalformedConfig must be caught before any
     # verdict is derived, so the error names the problem instead of crashing
@@ -813,7 +852,7 @@ def main(argv: list[str] | None = None) -> int:
             import os as _os
             is_stale = False
             base_sha = None
-            scope_mode = "auto"
+            text = None  # populated when the record file exists
 
             if record_path is None or not record_path.is_file():
                 is_stale = True
@@ -865,7 +904,18 @@ def main(argv: list[str] | None = None) -> int:
                 elif record_path:
                     vr_args += ["--record", str(record_path)]
                 vr_args += ["--base-sha", base_sha, "--run-suite"]
-                if args.scope == "full":
+                # Scope: the record's suite_scope takes precedence when
+                # no explicit --scope was passed (args.scope is "auto").
+                # Measured on gh-resolve 24f: step 0 measured full, step 1
+                # has no --scope, and the re-measure must not downgrade
+                # to auto.  25a's plan said to use the record's scope.
+                scope_mode = args.scope
+                if scope_mode == "auto" and text is not None:
+                    rec_scope_m = re.search(
+                        r"^suite_scope:\s*(\S+)", text, re.MULTILINE)
+                    if rec_scope_m and rec_scope_m.group(1) == "full":
+                        scope_mode = "full"
+                if scope_mode == "full":
                     vr_args += ["--scope", "full"]
 
                 vr_scripts = Path(__file__).resolve().parent
