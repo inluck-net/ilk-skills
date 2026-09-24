@@ -14,7 +14,6 @@ import json
 import os
 import subprocess
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -30,7 +29,7 @@ import run_local_checks as rlc  # noqa: E402
 
 
 def _make_project(tmp_path: Path, monkeypatch, *, path_prelude: str = "") -> Path:
-    """Create a temp project with plans dir and optional .ilk-launch.json.
+    """Create a temp project with plans dir, MASTER file, and optional .ilk-launch.json.
 
     Pins HOME + ILK_DATA_HOME. Returns project root.
     """
@@ -42,6 +41,11 @@ def _make_project(tmp_path: Path, monkeypatch, *, path_prelude: str = "") -> Pat
     project = tmp_path / "project"
     plans = project / "docs" / "plans"
     plans.mkdir(parents=True)
+    # MASTER file is required for plans dir resolution
+    (plans / "MASTER-2026-09-24-execution-plan.md").write_text(
+        "---\nmaster_plan: 2026-09-24-execution\nstatus: active\n---\n\n# Test master\n",
+        encoding="utf-8",
+    )
     subprocess.run(["git", "init", "-q"], cwd=project, check=True,
                    capture_output=True, text=True, encoding="utf-8",
                    errors="replace")
@@ -53,7 +57,10 @@ def _make_project(tmp_path: Path, monkeypatch, *, path_prelude: str = "") -> Pat
     )
     if path_prelude:
         (project / ".ilk-launch.json").write_text(
-            json.dumps({"ship": {"suite": {"path_prelude": path_prelude}}}),
+            json.dumps({"ship": {"suite": {
+                "command": "echo suite",
+                "path_prelude": path_prelude,
+            }}}),
             encoding="utf-8",
         )
     return project
@@ -67,27 +74,28 @@ def _write_subplan(project: Path, slug: str, checks: list[dict]) -> None:
     for c in checks:
         items.append(f"  - command: {json.dumps(c['command'])}\n"
                      f"    timeout: {c.get('timeout', 30)}")
-    yaml_block = "\n".join(items) if items else "  - command: \"echo ok\"\n    timeout: 10"
-    content = textwrap.dedent(f"""\
-        ---
-        plan: {slug}
-        status: in-progress
-        current_step: 0
-        tickets: []
-        priority: P0
-        estimated_steps: 2
-        last_updated: 2026-09-24
-        ---
-
-        # {slug}
-
-        ### Step 0
-
-        ```yaml
-        local_checks:
-        {yaml_block}
-        ```
-    """)
+    yaml_block = "\n".join(items) if items else '  - command: "echo ok"\n    timeout: 10'
+    fence = "```"
+    content = (
+        f"---\n"
+        f"plan: {slug}\n"
+        f"status: in-progress\n"
+        f"current_step: 0\n"
+        f"tickets: []\n"
+        f"priority: P0\n"
+        f"estimated_steps: 2\n"
+        f"last_updated: 2026-09-24\n"
+        f"---\n"
+        f"\n"
+        f"# {slug}\n"
+        f"\n"
+        f"### Step 0\n"
+        f"\n"
+        f"{fence}yaml\n"
+        f"local_checks:\n"
+        f"{yaml_block}\n"
+        f"{fence}\n"
+    )
     (plans / f"2026-09-24-{slug}.md").write_text(content, encoding="utf-8")
 
 
@@ -97,24 +105,33 @@ def _write_subplan(project: Path, slug: str, checks: list[dict]) -> None:
 class TestTimeoutIsError:
     """AC-1: a check that sleeps past its timeout ⇒ per-check error, rollup error."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first: outcome field not yet implemented")
-    def test_timeout_per_check_outcome_is_error(self, tmp_path: Path, monkeypatch) -> None:
+    def test_timeout_per_check_outcome_is_error(self, tmp_path: Path) -> None:
+        """A check that sleeps past its timeout has outcome=error with reason."""
+        r = rlc.run_one(
+            {"command": "sleep 60", "timeout": 2},
+            "step", tmp_path,
+        )
+        assert r.exit_code is None
+        assert r.passed is False
+        assert "timeout" in r.error
+        assert r.outcome == "error"
+        assert r.reason is not None
+        assert "timeout" in r.reason
+
+    def test_timeout_rollup_is_error(self, tmp_path: Path, monkeypatch) -> None:
+        """Sub-plan with one timeout check ⇒ rollup outcome is error, not fail."""
         project = _make_project(tmp_path, monkeypatch)
         _write_subplan(project, "slow", [
             {"command": "sleep 60", "timeout": 2},
         ])
-        result = rlc.main(["--project", str(project), "--slug", "slow", "--step", "0",
-                           "--no-isolate"])
-        data = json.loads(result) if isinstance(result, str) else None
-        # main() prints JSON and returns exit code; read stdout via capsys or parse
-        # Actually main() prints to stdout and returns int. Let's capture differently.
-        # We need to capture stdout. Let's restructure.
-        assert False, "need to capture stdout from main()"
-
-    @pytest.mark.xfail(strict=True, reason="red-first: outcome field not yet implemented")
-    def test_timeout_rollup_is_error(self, tmp_path: Path, monkeypatch) -> None:
-        """Sub-plan with one timeout check ⇒ rollup is error, not fail."""
-        assert False, "rollup outcome not yet implemented"
+        import io, contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rlc.main(["--project", str(project), "--slug", "slow", "--step", "0",
+                       "--no-isolate"])
+        data = json.loads(buf.getvalue())
+        assert data["outcome"] == "error"
+        assert data["all_passed"] is False
 
 
 # ── AC-2: command not found → error ──────────────────────────────────────────
@@ -123,30 +140,32 @@ class TestTimeoutIsError:
 class TestCommandNotFoundIsError:
     """AC-2: a missing command ⇒ per-check error with reason."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first: outcome field not yet implemented")
-    def test_missing_command_per_check_outcome_is_error(self, tmp_path: Path,
-                                                         monkeypatch) -> None:
+    def test_missing_command_per_check_outcome_is_error(self, tmp_path: Path) -> None:
+        """A missing command has outcome=error with reason containing 'command not found'."""
+        r = rlc.run_one(
+            {"command": "definitely-not-a-command-xyz", "timeout": 30},
+            "step", tmp_path,
+        )
+        assert r.passed is False
+        assert r.outcome == "error"
+        assert r.reason is not None
+        assert "command not found" in r.reason
+
+    def test_missing_command_rollup_is_error(self, tmp_path: Path,
+                                              monkeypatch) -> None:
+        """Sub-plan with one missing-command check ⇒ rollup outcome is error."""
         project = _make_project(tmp_path, monkeypatch)
         _write_subplan(project, "nocmd", [
             {"command": "definitely-not-a-command-xyz", "timeout": 30},
         ])
-        # run_one directly
-        result = rlc.run_one(
-            {"command": "definitely-not-a-command-xyz", "timeout": 30},
-            "step", project,
-        )
-        assert result.exit_code is None
-        assert result.passed is False
-        assert result.error != ""
-        # These will pass after step 1:
-        assert result.outcome == "error"  # type: ignore[attr-defined]
-        assert "command not found" in result.reason  # type: ignore[attr-defined]
-
-    @pytest.mark.xfail(strict=True, reason="red-first: rollup not yet implemented")
-    def test_missing_command_rollup_is_error(self, tmp_path: Path,
-                                              monkeypatch) -> None:
-        """Sub-plan with one missing-command check ⇒ rollup is error."""
-        assert False, "rollup outcome not yet implemented"
+        import io, contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rlc.main(["--project", str(project), "--slug", "nocmd", "--step", "0",
+                       "--no-isolate"])
+        data = json.loads(buf.getvalue())
+        assert data["outcome"] == "error"
+        assert data["all_passed"] is False
 
 
 # ── AC-3: ILK-CHECK marker on stderr → error ────────────────────────────────
@@ -155,9 +174,8 @@ class TestCommandNotFoundIsError:
 class TestIlkCheckMarkerIsError:
     """AC-3: stderr contains 'ILK-CHECK: unmeasured ...' ⇒ per-check error."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first: outcome field not yet implemented")
-    def test_marker_on_stderr_per_check_outcome_is_error(self, tmp_path: Path,
-                                                          monkeypatch) -> None:
+    def test_marker_on_stderr_per_check_outcome_is_error(self, tmp_path: Path) -> None:
+        """ILK-CHECK: unmeasured on stderr ⇒ outcome=error with captured reason."""
         marker_script = tmp_path / "marker.sh"
         marker_script.write_text(
             "#!/bin/sh\n"
@@ -166,20 +184,38 @@ class TestIlkCheckMarkerIsError:
             encoding="utf-8",
         )
         marker_script.chmod(0o755)
-        result = rlc.run_one(
+        r = rlc.run_one(
             {"command": f"sh {marker_script}", "timeout": 30},
             "step", tmp_path,
         )
-        assert result.exit_code == 1
-        assert result.passed is False
-        # These will pass after step 1:
-        assert result.outcome == "error"  # type: ignore[attr-defined]
-        assert "no vitest summary line" in result.reason  # type: ignore[attr-defined]
+        assert r.exit_code == 1
+        assert r.passed is False
+        assert r.outcome == "error"
+        assert r.reason is not None
+        assert "no vitest summary line" in r.reason
 
-    @pytest.mark.xfail(strict=True, reason="red-first: rollup not yet implemented")
     def test_marker_rollup_is_error(self, tmp_path: Path, monkeypatch) -> None:
-        """Sub-plan with one marker check ⇒ rollup is error."""
-        assert False, "rollup outcome not yet implemented"
+        """Sub-plan with one marker check ⇒ rollup outcome is error."""
+        project = _make_project(tmp_path, monkeypatch)
+        marker_script = tmp_path / "marker.sh"
+        marker_script.write_text(
+            "#!/bin/sh\n"
+            "echo 'ILK-CHECK: unmeasured no vitest summary line' >&2\n"
+            "exit 1\n",
+            encoding="utf-8",
+        )
+        marker_script.chmod(0o755)
+        _write_subplan(project, "marker", [
+            {"command": f"sh {marker_script}", "timeout": 30},
+        ])
+        import io, contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rlc.main(["--project", str(project), "--slug", "marker", "--step", "0",
+                       "--no-isolate"])
+        data = json.loads(buf.getvalue())
+        assert data["outcome"] == "error"
+        assert data["all_passed"] is False
 
 
 # ── AC-4: plain exit 1 (no marker) → fail ───────────────────────────────────
@@ -189,25 +225,17 @@ class TestPlainExit1IsFail:
     """AC-4: exit 1 without ILK-CHECK marker ⇒ per-check fail."""
 
     def test_plain_exit_1_per_check_outcome_is_fail(self, tmp_path: Path) -> None:
-        """This should already pass — exit 1 without marker is fail."""
-        result = rlc.run_one(
+        """exit 1 without marker ⇒ outcome=fail."""
+        r = rlc.run_one(
             {"command": "exit 1", "timeout": 30},
             "step", tmp_path,
         )
-        assert result.exit_code == 1
-        assert result.passed is False
-        assert result.error == ""
+        assert r.exit_code == 1
+        assert r.passed is False
+        assert r.error == ""
+        assert r.outcome == "fail"
+        assert r.reason is None
 
-    @pytest.mark.xfail(strict=True, reason="red-first: outcome field not yet implemented")
-    def test_plain_exit_1_has_fail_outcome(self, tmp_path: Path) -> None:
-        """outcome field should be 'fail' for plain exit 1."""
-        result = rlc.run_one(
-            {"command": "exit 1", "timeout": 30},
-            "step", tmp_path,
-        )
-        assert result.outcome == "fail"  # type: ignore[attr-defined]
-
-    @pytest.mark.xfail(strict=True, reason="red-first: rollup not yet implemented")
     def test_fail_beats_error_in_rollup(self, tmp_path: Path, monkeypatch) -> None:
         """One fail + one error ⇒ rollup is fail (fail > error > pass)."""
         project = _make_project(tmp_path, monkeypatch)
@@ -215,7 +243,14 @@ class TestPlainExit1IsFail:
             {"command": "exit 1", "timeout": 30},
             {"command": "definitely-not-a-command-xyz", "timeout": 30},
         ])
-        assert False, "rollup outcome not yet implemented"
+        import io, contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rlc.main(["--project", str(project), "--slug", "mixed", "--step", "0",
+                       "--no-isolate"])
+        data = json.loads(buf.getvalue())
+        assert data["outcome"] == "fail"
+        assert data["all_passed"] is False
 
 
 # ── AC-5: path_prelude_applied ───────────────────────────────────────────────
@@ -224,25 +259,25 @@ class TestPlainExit1IsFail:
 class TestPathPreludeApplied:
     """AC-5: path_prelude_applied is true when project has a path_prelude."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first: path_prelude_applied not yet on CheckResult")
     def test_path_prelude_applied_true(self, tmp_path: Path, monkeypatch) -> None:
+        """path_prelude_applied is true when project has a path_prelude."""
         project = _make_project(tmp_path, monkeypatch, path_prelude="export FOO=bar")
-        result = rlc.run_one(
+        r = rlc.run_one(
             {"command": "echo hello", "timeout": 30},
             "step", project,
         )
-        assert result.passed is True
-        assert result.path_prelude_applied is True  # type: ignore[attr-defined]
+        assert r.passed is True
+        assert r.path_prelude_applied is True
 
-    @pytest.mark.xfail(strict=True, reason="red-first: path_prelude_applied not yet on CheckResult")
     def test_path_prelude_applied_false(self, tmp_path: Path, monkeypatch) -> None:
+        """path_prelude_applied is false when project has no path_prelude."""
         project = _make_project(tmp_path, monkeypatch)
-        result = rlc.run_one(
+        r = rlc.run_one(
             {"command": "echo hello", "timeout": 30},
             "step", project,
         )
-        assert result.passed is True
-        assert result.path_prelude_applied is False  # type: ignore[attr-defined]
+        assert r.passed is True
+        assert r.path_prelude_applied is False
 
 
 # ── AC-6: local_check_outcome shell function ─────────────────────────────────
@@ -313,24 +348,64 @@ class TestLocalCheckOutcome:
 class TestRollupRule:
     """The sub-plan rollup outcome follows fail > error > pass."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first: rollup not yet implemented")
-    def test_all_pass_rollup_is_pass(self) -> None:
-        assert False, "rollup not yet implemented"
+    @staticmethod
+    def _run_and_get_outcome(project: Path, slug: str) -> dict:
+        """Run local_checks and return the parsed JSON output."""
+        import io, contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rlc.main(["--project", str(project), "--slug", slug, "--step", "0",
+                       "--no-isolate"])
+        return json.loads(buf.getvalue())
 
-    @pytest.mark.xfail(strict=True, reason="red-first: rollup not yet implemented")
-    def test_error_only_rollup_is_error(self) -> None:
-        assert False, "rollup not yet implemented"
+    def test_all_pass_rollup_is_pass(self, tmp_path: Path, monkeypatch) -> None:
+        project = _make_project(tmp_path, monkeypatch)
+        _write_subplan(project, "allpass", [
+            {"command": "echo ok", "timeout": 10},
+            {"command": "echo also ok", "timeout": 10},
+        ])
+        data = self._run_and_get_outcome(project, "allpass")
+        assert data["outcome"] == "pass"
+        assert data["all_passed"] is True
 
-    @pytest.mark.xfail(strict=True, reason="red-first: rollup not yet implemented")
-    def test_fail_only_rollup_is_fail(self) -> None:
-        assert False, "rollup not yet implemented"
+    def test_error_only_rollup_is_error(self, tmp_path: Path, monkeypatch) -> None:
+        project = _make_project(tmp_path, monkeypatch)
+        _write_subplan(project, "erronly", [
+            {"command": "definitely-not-a-command-xyz", "timeout": 10},
+        ])
+        data = self._run_and_get_outcome(project, "erronly")
+        assert data["outcome"] == "error"
+        assert data["all_passed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first: rollup not yet implemented")
-    def test_mixed_fail_error_rollup_is_fail(self) -> None:
+    def test_fail_only_rollup_is_fail(self, tmp_path: Path, monkeypatch) -> None:
+        project = _make_project(tmp_path, monkeypatch)
+        _write_subplan(project, "failonly", [
+            {"command": "exit 1", "timeout": 10},
+        ])
+        data = self._run_and_get_outcome(project, "failonly")
+        assert data["outcome"] == "fail"
+        assert data["all_passed"] is False
+
+    def test_mixed_fail_error_rollup_is_fail(self, tmp_path: Path,
+                                              monkeypatch) -> None:
         """fail > error: one fail + one error ⇒ rollup is fail."""
-        assert False, "rollup not yet implemented"
+        project = _make_project(tmp_path, monkeypatch)
+        _write_subplan(project, "mixedfe", [
+            {"command": "exit 1", "timeout": 10},
+            {"command": "definitely-not-a-command-xyz", "timeout": 10},
+        ])
+        data = self._run_and_get_outcome(project, "mixedfe")
+        assert data["outcome"] == "fail"
+        assert data["all_passed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first: rollup not yet implemented")
-    def test_mixed_error_pass_rollup_is_error(self) -> None:
+    def test_mixed_error_pass_rollup_is_error(self, tmp_path: Path,
+                                               monkeypatch) -> None:
         """error > pass: one error + one pass ⇒ rollup is error."""
-        assert False, "rollup not yet implemented"
+        project = _make_project(tmp_path, monkeypatch)
+        _write_subplan(project, "mixedep", [
+            {"command": "echo ok", "timeout": 10},
+            {"command": "definitely-not-a-command-xyz", "timeout": 10},
+        ])
+        data = self._run_and_get_outcome(project, "mixedep")
+        assert data["outcome"] == "error"
+        assert data["all_passed"] is False

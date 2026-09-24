@@ -586,6 +586,9 @@ class CheckResult:
     stdout_tail: str = ""
     stderr_tail: str = ""
     error: str = ""
+    outcome: str = ""       # "pass" | "fail" | "error" — per-check classification
+    reason: str | None = None  # human-readable why this outcome (null for pass/fail)
+    path_prelude_applied: bool = False  # true when _read_path_prelude returned non-empty
 
 
 _STEP_HEADING_ANY_RE = re.compile(r"^###\s+Step\s+(\d+)", re.MULTILINE)
@@ -672,32 +675,82 @@ def _read_path_prelude(project: Path) -> str:
     return ""
 
 
+_ILK_CHECK_RE = re.compile(r"^ILK-CHECK:\s*unmeasured\s+(.+)$", re.MULTILINE)
+
+
+def _classify_check(
+    exit_code: int | None,
+    error: str,
+    stderr_full: str,
+) -> tuple[str, str | None]:
+    """Classify a check result into (outcome, reason).
+
+    The tri-state classification:
+      - exit 0 ⇒ pass
+      - exit_code is None (timeout, spawn exception) ⇒ error, reason from error
+      - exit 126 / 127 ⇒ error, reason "command not executable" /
+        "command not found: <leading word>"
+      - stderr contains ILK-CHECK: unmeasured <text> ⇒ error, reason = captured text
+      - any other nonzero ⇒ fail
+    """
+    if exit_code is None:
+        # timeout or spawn exception
+        return "error", error
+
+    if exit_code == 0:
+        return "pass", None
+
+    # exit 126 / 127: command not found / not executable
+    if exit_code == 126:
+        return "error", "command not executable"
+    if exit_code == 127:
+        # Extract the leading word from the command for a useful reason.
+        # The error field from Exception would say "FileNotFoundError" but
+        # exit 127 comes from bash itself, not from our except block.
+        return "error", "command not found"
+
+    # ILK-CHECK: unmeasured marker on stderr
+    m = _ILK_CHECK_RE.search(stderr_full)
+    if m:
+        return "error", m.group(1).strip()
+
+    # Any other nonzero: measured failure
+    return "fail", None
+
+
 def run_one(check: dict, scope: str, project: Path,
             default_timeout: int = DEFAULT_CHECK_TIMEOUT_S) -> CheckResult:
     cmd = check.get("command", "")
     timeout = int(check.get("timeout", default_timeout))
     if not cmd:
-        return CheckResult(command="", scope=scope, timeout=timeout,
-                           exit_code=None, duration_sec=0.0, passed=False,
-                           error="empty command")
+        r = CheckResult(command="", scope=scope, timeout=timeout,
+                        exit_code=None, duration_sec=0.0, passed=False,
+                        error="empty command")
+        r.outcome, r.reason = _classify_check(r.exit_code, r.error, "")
+        return r
     bash = _resolve_bash()
     if not bash:
-        return CheckResult(command=cmd, scope=scope, timeout=timeout,
-                           exit_code=None, duration_sec=0.0, passed=False,
-                           error="bash not found (need git-bash; the WSL shim is unusable)")
+        r = CheckResult(command=cmd, scope=scope, timeout=timeout,
+                        exit_code=None, duration_sec=0.0, passed=False,
+                        error="bash not found (need git-bash; the WSL shim is unusable)")
+        r.outcome, r.reason = _classify_check(r.exit_code, r.error, "")
+        return r
     # Fail closed: a bare YAML block-scalar indicator is not a real command.
     # ``>-`` as a bash command redirects to a file named ``-`` and exits 0,
     # so a gate using it passes vacuously.  Refuse rather than run blind.
     _BARE_BLOCK_SCALAR_INDICATORS = {">", ">-", "|", "|-"}
     if cmd.strip() in _BARE_BLOCK_SCALAR_INDICATORS:
-        return CheckResult(
+        r = CheckResult(
             command=cmd, scope=scope, timeout=timeout,
             exit_code=None, duration_sec=0.0, passed=False,
             error=f"refusing to execute bare block-scalar indicator {cmd!r} — "
                   f"the gate command could not be parsed",
         )
+        r.outcome, r.reason = _classify_check(r.exit_code, r.error, "")
+        return r
     # Apply path_prelude if configured (AC-1, AC-2)
     path_prelude = _read_path_prelude(project)
+    applied = bool(path_prelude)
     effective_cmd = f"{path_prelude}; {cmd}" if path_prelude else cmd
     import time
     t0 = time.monotonic()
@@ -712,29 +765,40 @@ def run_one(check: dict, scope: str, project: Path,
             encoding="utf-8", errors="replace", timeout=timeout,
         )
         dur = time.monotonic() - t0
-        return CheckResult(
+        stderr_full = cp.stderr or ""
+        r = CheckResult(
             command=cmd, scope=scope, timeout=timeout,
             exit_code=cp.returncode, duration_sec=round(dur, 2),
             passed=cp.returncode == 0,
             stdout_tail=_tail(cp.stdout, 2000),
-            stderr_tail=_tail(cp.stderr, 2000),
+            stderr_tail=_tail(stderr_full, 2000),
+            path_prelude_applied=applied,
         )
+        r.outcome, r.reason = _classify_check(r.exit_code, r.error, stderr_full)
+        return r
     except subprocess.TimeoutExpired as e:
         dur = time.monotonic() - t0
-        return CheckResult(
+        stderr_full = (e.stderr or b"").decode("utf-8", "replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
+        r = CheckResult(
             command=cmd, scope=scope, timeout=timeout,
             exit_code=None, duration_sec=round(dur, 2), passed=False,
-            stdout_tail=_tail((e.stdout or b"").decode("utf-8", "replace"), 2000),
-            stderr_tail=_tail((e.stderr or b"").decode("utf-8", "replace"), 2000),
+            stdout_tail=_tail((e.stdout or b"").decode("utf-8", "replace") if isinstance(e.stdout, bytes) else (e.stdout or ""), 2000),
+            stderr_tail=_tail(stderr_full, 2000),
             error=f"timeout after {timeout}s",
+            path_prelude_applied=applied,
         )
+        r.outcome, r.reason = _classify_check(r.exit_code, r.error, stderr_full)
+        return r
     except Exception as e:
         dur = time.monotonic() - t0
-        return CheckResult(
+        r = CheckResult(
             command=cmd, scope=scope, timeout=timeout,
             exit_code=None, duration_sec=round(dur, 2), passed=False,
             error=f"{type(e).__name__}: {e}",
+            path_prelude_applied=applied,
         )
+        r.outcome, r.reason = _classify_check(r.exit_code, r.error, "")
+        return r
 
 
 def _tail(s: str | None, n: int) -> str:
@@ -1141,6 +1205,17 @@ def main(argv: list[str]) -> int:
 
     passed = all(r.passed for r in results)
 
+    # Rollup outcome: fail > error > pass.  Used by the runner's
+    # local_check_outcome when present; absent ⇒ fall back to all_passed.
+    rollup = "pass"
+    for r in results:
+        if r.outcome == "fail":
+            rollup = "fail"
+            break
+        if r.outcome == "error":
+            rollup = "error"
+            # don't break — a later "fail" would upgrade the rollup
+
     # AC-1/AC-3: unisolated dirty tree is not a pass; non-git is fine.
     isolation_error = None
     if not iso.isolated and iso.dirty_paths > 0:
@@ -1158,6 +1233,7 @@ def main(argv: list[str]) -> int:
         "subplan_check_count": len(subplan_checks),
         "step_check_count": len(step_checks),
         "all_passed": passed,
+        "outcome": rollup,
         "results": [asdict(r) for r in results],
         "head_sha": iso.head_sha,
         "dirty_paths": iso.dirty_paths,

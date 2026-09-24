@@ -1852,6 +1852,10 @@ function Get-LocalCheckOutcome {
     [Parameter(Mandatory=$false)] $Parsed,
     [Parameter(Mandatory=$false)] [Nullable[int]] $ExitCode
   )
+  # Prefer rollup outcome from helper JSON when available (fail > error > pass)
+  if ($null -ne $Parsed -and $Parsed.PSObject.Properties.Name -contains 'outcome') {
+    return $Parsed.outcome
+  }
   # Prefer all_passed from helper JSON when available
   if ($null -ne $Parsed -and $Parsed.PSObject.Properties.Name -contains 'all_passed') {
     if ($Parsed.all_passed) { return "pass" }

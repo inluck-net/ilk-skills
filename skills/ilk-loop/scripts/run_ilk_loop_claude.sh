@@ -1843,16 +1843,19 @@ invoke_local_checks() {
       outcome="inconclusive"
     else
       local all_passed=""
+      local rollup=""
       if [[ -s "$tmp_out" ]]; then
-        all_passed=$(python3 -c "
+        read -r all_passed rollup < <(python3 -c "
 import json, sys
 try:
   d = json.load(sys.stdin)
-  print(str(d.get('all_passed', '')).lower())
+  ap = str(d.get('all_passed', '')).lower()
+  ro = d.get('outcome', '')
+  print(f'{ap} {ro}')
 except: pass
 " < "$tmp_out" 2>/dev/null || true)
       fi
-      outcome=$(local_check_outcome "$all_passed" "$check_exit")
+      outcome=$(local_check_outcome "$all_passed" "$check_exit" "$rollup")
     fi
 
     local tag
@@ -2871,11 +2874,18 @@ print_banner() {
 
 # ----- Local checks outcome mapping ---------------------------------
 # Maps helper result + process exit code to an outcome string.
-# Usage: local_check_outcome <all_passed_or_empty> <exit_code>
-# When first arg is "true"/"false", trust that; otherwise fall back to exit code.
+# Usage: local_check_outcome <all_passed_or_empty> <exit_code> [rollup]
+# When third arg (rollup) is present and non-empty, return it directly.
+# Otherwise fall back to all_passed, then exit-code mapping.
 local_check_outcome() {
   local all_passed="$1"
   local exit_code="$2"
+  local rollup="${3:-}"
+  # Prefer rollup outcome from helper JSON when available (fail > error > pass)
+  if [[ -n "$rollup" ]]; then
+    echo "$rollup"
+    return
+  fi
   # Prefer all_passed from helper JSON when available
   if [[ "$all_passed" == "true" ]]; then
     echo "pass"

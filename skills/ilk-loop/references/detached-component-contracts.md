@@ -434,6 +434,42 @@ gate is distinguishable from a gate that never ran.
 - **`emit_jsonl_record.py`** — `build_record` + the append in `main`. The one
   writer. It replaced a hand-interpolated `echo` in the runner.
 
+### Per-check classification (added 2026-09-24)
+
+`run_local_checks.py` classifies each check result into `outcome` ∈
+{pass, fail, error} and `reason` (str or null):
+
+- exit 0 ⇒ `pass`
+- `exit_code is None` (timeout, spawn exception) ⇒ `error`, reason from
+  `error`
+- exit 126 / 127 ⇒ `error`, reason `command not executable` /
+  `command not found`
+- stderr contains a line matching `^ILK-CHECK: unmeasured (.*)$` ⇒
+  `error`, reason = the captured text. The FULL stderr is scanned, not
+  only the 2000-char tail, so the marker is not lost.
+- any other nonzero ⇒ `fail`
+
+The helper JSON also carries `path_prelude_applied: bool` (true when
+`_read_path_prelude` returned a non-empty prelude that was prepended).
+
+### Rollup rule
+
+The helper JSON includes a top-level `outcome` field — the rollup over
+all per-check outcomes. The rule is **fail > error > pass**: if any
+check is `fail`, the rollup is `fail`; else if any is `error`, the
+rollup is `error`; else `pass`.
+
+`local_check_outcome` in the runner uses the rollup when present and
+falls back to the old `all_passed` / exit-code mapping only when it is
+absent (so an old helper still works).
+
+### The `ILK-CHECK: unmeasured` opt-in
+
+A checked tool opts in to the unmeasured classification by printing a
+stderr line `ILK-CHECK: unmeasured <reason>`. This is consumed by the
+per-check classification above. The marker is not an exit-code convention
+because gates are arbitrary commands and pytest already uses exit 3.
+
 ### Who reads
 
 - **`blocking_checks.py`** — `--any` / `--targets` / `--slugs` / `--describe` /
