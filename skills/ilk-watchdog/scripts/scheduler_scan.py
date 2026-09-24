@@ -567,12 +567,26 @@ def _scan_one_project(project_dir: Path) -> dict | None:
     else:
         oldest = min(queued_ts)
 
+    # Find the active master's filename for the ILK_MASTER pin.
+    active_master_name = None
+    if has_active:
+        for master_path in masters:
+            try:
+                master_text = master_path.read_text(encoding="utf-8-sig")
+            except OSError:
+                continue
+            fm = parse_frontmatter(master_text)
+            if normalize_master_status(fm.get("status") or "") == "active":
+                active_master_name = master_path.name
+                break
+
     return {
         "key": project_dir.name,
         "path": str(project_dir),
         "repo_path": resolve_repo_path(project_dir, project_dir.name),
         "oldest_queued_ts": oldest.isoformat(),
         "has_active_master": has_active,
+        "active_master_name": active_master_name,
     }
 
 

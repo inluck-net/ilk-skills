@@ -884,17 +884,19 @@ run_scheduler() {
     local -a disp_keys=() disp_paths=() disp_repos=() disp_actives=()
 
     # Parse the JSON array and iterate
-    local keys paths repo_paths has_actives line
-    keys=(); paths=(); repo_paths=(); has_actives=()
+    local keys paths repo_paths has_actives master_names line
+    keys=(); paths=(); repo_paths=(); has_actives=(); master_names=()
     while IFS= read -r line; do keys+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p['key']) for p in d]" <<<"$scan_output" | tr -d '\r')
     while IFS= read -r line; do paths+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p['path']) for p in d]" <<<"$scan_output" | tr -d '\r')
     while IFS= read -r line; do repo_paths+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p.get('repo_path') or '') for p in d]" <<<"$scan_output" | tr -d '\r')
     while IFS= read -r line; do has_actives+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(str(p.get('has_active_master', True)).lower()) for p in d]" <<<"$scan_output" | tr -d '\r')
+    while IFS= read -r line; do master_names+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p.get('active_master_name') or '') for p in d]" <<<"$scan_output" | tr -d '\r')
 
     for i in "${!keys[@]}"; do
       local key="${keys[$i]}"
       local path="${paths[$i]}"
       local repo="${repo_paths[$i]}"
+      local master_name="${master_names[$i]}"
 
       # blacklist / backoff skip — postmortem set is FRESH this cycle (never
       # accumulated); $blacklist_skip holds only transient backoffs.
@@ -1176,19 +1178,27 @@ print(int((ea-sa).total_seconds()))
       if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
         # Use forward slashes in paths for valid JSON (Windows backslashes are invalid escapes)
         local safe_path="${drepo//\\//}"
+        local master_flag=""
+        if [[ -n "$master_name" ]]; then
+          master_flag=" --master '$master_name'"
+        fi
         write_scheduler_log "dispatch" "$dkey (slot $slot_id)"
         if [[ "$current_mux" == "tmux" ]]; then
-          local tmux_cmd="tmux new-window -t ilk -n '$dkey' 'launch.sh --project-path \\\"'$safe_path'\\\" --engine claude-worker --worker-home \\\"'$slot_home'\\\"${local_checks_flag}'"
-          echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"tmux\",\"command\":\"$tmux_cmd\",\"watchdog\":\"watchdog.sh --project-path '$safe_path' --detach\"}"
+          local tmux_cmd="tmux new-window -t ilk -n '$dkey' 'launch.sh --project-path \\\"'$safe_path'\\\" --engine claude-worker --worker-home \\\"'$slot_home'\\\"${local_checks_flag}${master_flag}'"
+          echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"tmux\",\"command\":\"$tmux_cmd\",\"watchdog\":\"watchdog.sh --project-path '$safe_path' --detach\",\"master\":\"$master_name\"}"
         else
-          echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"screen\",\"command\":\"launch.sh --project-path '$safe_path' --engine claude-worker --worker-home '$slot_home'${local_checks_flag}\",\"watchdog\":\"watchdog.sh --project-path '$safe_path' --detach\"}"
+          echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"screen\",\"command\":\"launch.sh --project-path '$safe_path' --engine claude-worker --worker-home '$slot_home'${local_checks_flag}${master_flag}\",\"watchdog\":\"watchdog.sh --project-path '$safe_path' --detach\",\"master\":\"$master_name\"}"
         fi
         set_dispatch_time "$dkey" "$(date +%s)"
       elif [[ "$DRY_RUN" == true ]]; then
+        local master_flag=""
+        if [[ -n "$master_name" ]]; then
+          master_flag=" --master $master_name"
+        fi
         if [[ "$current_mux" == "tmux" ]]; then
-          echo "[$(date '+%Y-%m-%d %H:%M:%S')] DRY-RUN [tmux]: would dispatch $dkey (slot $slot_id) via tmux new-window -t ilk -n '$dkey' '$LAUNCH_SCRIPT --project-path $drepo --engine claude-worker --worker-home $slot_home'"
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] DRY-RUN [tmux]: would dispatch $dkey (slot $slot_id) via tmux new-window -t ilk -n '$dkey' '$LAUNCH_SCRIPT --project-path $drepo --engine claude-worker --worker-home $slot_home${master_flag}'"
         else
-          echo "[$(date '+%Y-%m-%d %H:%M:%S')] DRY-RUN [screen]: would dispatch $dkey (slot $slot_id) via $LAUNCH_SCRIPT --project-path '$drepo' --engine claude-worker --worker-home '$slot_home'"
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] DRY-RUN [screen]: would dispatch $dkey (slot $slot_id) via $LAUNCH_SCRIPT --project-path '$drepo' --engine claude-worker --worker-home '$slot_home'${master_flag}"
         fi
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] DRY-RUN: would attach watchdog via $WATCHDOG_SCRIPT --project-path '$drepo' --detach"
       else
@@ -1200,7 +1210,11 @@ print(int((ea-sa).total_seconds()))
           continue
         fi
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatching $dkey (slot $slot_id) [mux=$current_mux]..."
-        local launch_cmd="bash $LAUNCH_SCRIPT --project-path '$drepo' --engine claude-worker --worker-home '$slot_home'${local_checks_flag} --force"
+        local master_flag=""
+        if [[ -n "$master_name" ]]; then
+          master_flag=" --master '$master_name'"
+        fi
+        local launch_cmd="bash $LAUNCH_SCRIPT --project-path '$drepo' --engine claude-worker --worker-home '$slot_home'${local_checks_flag}${master_flag} --force"
         if [[ "$current_mux" == "tmux" ]]; then
           ensure_ilmux_session
           if tmux new-window -t ilk -n "$dkey" "$launch_cmd"; then

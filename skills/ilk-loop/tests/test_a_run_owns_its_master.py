@@ -336,7 +336,6 @@ def project_with_master(tmp_path: Path) -> Path:
     return project
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_launch_dry_run_master_exports_ilk_master(
     project_with_master: Path,
     tmp_path: Path,
@@ -383,10 +382,17 @@ def scheduler_project(tmp_path: Path) -> dict:
     _write_subplan(plans, "2026-09-24-alpha.md", status="pending")
     project = tmp_path / "project"
     project.mkdir()
+    # Write last-launch.json so the scheduler can resolve repo_path.
+    import json as _json
+    launcher_dir = data_home / "projects" / key / "runtime" / "launcher"
+    launcher_dir.mkdir(parents=True, exist_ok=True)
+    (launcher_dir / "last-launch.json").write_text(
+        _json.dumps({"project_path": str(project)}),
+        encoding="utf-8",
+    )
     return {"project": project, "plans": plans, "data_home": data_home, "key": key}
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_scheduler_dry_run_once_dispatch_includes_master(
     scheduler_project: dict,
     tmp_path: Path,
@@ -401,7 +407,6 @@ def test_scheduler_dry_run_once_dispatch_includes_master(
     }
     result = subprocess.run(
         ["bash", str(SCHEDULER_SH),
-         "--project-path", str(scheduler_project["project"]),
          "--dry-run", "--once"],
         capture_output=True, text=True, timeout=60,
         env=env, encoding="utf-8", errors="replace",

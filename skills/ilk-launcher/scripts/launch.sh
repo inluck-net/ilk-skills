@@ -58,6 +58,7 @@ CLI_FORCE=false
 CLI_DRY_RUN=false
 CLI_ENGINE=""
 CLI_WORKER_HOME=""
+CLI_MASTER=""
 CLI_RUN_LOCAL_CHECKS=false
 CLI_NO_LOCAL_CHECKS=false
 
@@ -613,6 +614,7 @@ start_ilk_window() {
   local engine="${8:-claude}"
   local worker_home_override="${9:-}"
   local run_local_checks="${10:-false}"
+  local master_override="${11:-}"
 
   # Concurrency guard
   local live_pid
@@ -691,6 +693,9 @@ start_ilk_window() {
     display_config_dir="$worker_home"
     display_skill_home="$worker_skills"
   fi
+  if [[ -n "${master_override:-}" ]]; then
+    env_prefix="${env_prefix}export ILK_MASTER='$master_override'; "
+  fi
   local runner_cmd
   runner_cmd="${env_prefix}bash \"$loop_script\" --project-path \"$project_path\" --max-iterations $max_iterations --iteration-timeout-min $timeout_min"
   if [[ -n "$mcp_config_path" ]]; then
@@ -723,6 +728,9 @@ start_ilk_window() {
       else
         echo "  WorkerHome: MISSING (bootstrap $worker_home before a real launch)"
       fi
+    fi
+    if [[ -n "${master_override:-}" ]]; then
+      echo "  ILK_MASTER=$master_override"
     fi
     if [[ -n "$mcp_config_path" ]]; then
       echo "  McpConfigPath: $mcp_config_path"
@@ -801,6 +809,8 @@ Options:
   --engine ENGINE              Worker engine: claude (default) or codex.
   --worker-home PATH           Override worker home for claude-worker engine
                                (default: ~/.claude-worker; also CLAUDE_WORKER_HOME).
+  --master NAME                Pin to a specific MASTER-*.md basename.
+                               Exports ILK_MASTER into the runner's environment.
   --run-local-checks           Forward --run-local-checks to the runner so
                                local_checks fire after each productive iteration.
   --no-local-checks            Suppress --run-local-checks even when queued
@@ -854,6 +864,10 @@ parse_args() {
         ;;
       --worker-home)
         CLI_WORKER_HOME="$2"
+        shift 2
+        ;;
+      --master)
+        CLI_MASTER="$2"
         shift 2
         ;;
       --run-local-checks)
@@ -925,7 +939,7 @@ for p in d:
       mcp_config_path=$(build_worker_mcp_config "$ppath" "$MCP_FILTER_MODE" "$MCP_FILTER_NAMES")
       local engine
       engine=$(resolve_engine "$ppath" "$CLI_ENGINE")
-      start_ilk_window "$ppath" "$pname" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine" "$CLI_WORKER_HOME" "$CLI_RUN_LOCAL_CHECKS"
+      start_ilk_window "$ppath" "$pname" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine" "$CLI_WORKER_HOME" "$CLI_RUN_LOCAL_CHECKS" "$CLI_MASTER"
     done
     return 0
   fi
@@ -1014,13 +1028,16 @@ for p in d:
       echo "[$RESOLVED_NAME] ClaudeConfigDir: (default ~/.claude)"
       echo "[$RESOLVED_NAME] IlkSkillHome: (default)"
     fi
+    if [[ -n "${CLI_MASTER:-}" ]]; then
+      echo "[$RESOLVED_NAME] ILK_MASTER=$CLI_MASTER"
+    fi
     local pid_file
     pid_file=$(get_pid_file_path "$RESOLVED_PATH")
     echo "[$RESOLVED_NAME] PID file: $pid_file"
     return
   fi
 
-  start_ilk_window "$RESOLVED_PATH" "$RESOLVED_NAME" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine" "$CLI_WORKER_HOME" "$CLI_RUN_LOCAL_CHECKS"
+  start_ilk_window "$RESOLVED_PATH" "$RESOLVED_NAME" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine" "$CLI_WORKER_HOME" "$CLI_RUN_LOCAL_CHECKS" "$CLI_MASTER"
 }
 
 # --- dot-source guard --------------------------------------------------------

@@ -1707,3 +1707,45 @@ had the right denominator.
 A negative or a count about a *corpus* is only as good as the glob that produced
 it. For this contract the corpus is every `.md` in every project's plans dir,
 because that is what the runner walks.
+
+## Contract 12: The master pin (`ILK_MASTER`)
+
+**Writer:** `scheduler.sh` → `launch.sh --master NAME`
+
+**Readers:** `loop_status.py`, `run_ilk_loop_claude.sh`, worker `/ilk`
+
+**Purpose:** Pin a run to a specific master, preventing the scheduler from
+dispatching work on the wrong master when multiple non-terminal masters exist
+in one plans dir.
+
+### How it works
+
+1. **Scheduler resolves the master name.** `scheduler_scan.py` returns an
+   `active_master_name` field (the first active master's filename, or `null`).
+   The scheduler parses this and passes `--master <name>` to `launch.sh`.
+
+2. **launch.sh exports ILK_MASTER.** When `--master NAME` is passed,
+   `launch.sh` adds `export ILK_MASTER='NAME';` to the `env_prefix` that
+   precedes the runner command. The runner and worker inherit this env var.
+
+3. **loop_status.py honours the pin.** In `pick_active_master()`, when
+   `ILK_MASTER` is set and the file exists in the plans dir, that master is
+   the only candidate — whatever its status. A pinned all-shipped master
+   yields all-shipped; it never rolls over to another master. When the file
+   does not exist, a notice is emitted and the default pick proceeds.
+
+4. **Dry-run shows the pin.** `launch.sh --dry-run` prints `IlkMaster: NAME`
+   when the flag is passed. The scheduler's `--dry-run --once` JSON includes
+   `"master": "NAME"` in the dispatch record.
+
+### Backward compatibility
+
+When `ILK_MASTER` is unset (the default), behaviour is identical to today:
+`loop_status.py` uses its existing priority-based pick. The scheduler only
+passes `--master` when `active_master_name` is non-empty in the scan output.
+
+### Contract violations
+
+- A missing pinned master file emits a notice but falls back (does not stall).
+- A pinned master that is all-shipped or terminal yields that state (no rollover).
+- The pin is per-run, not persistent — it lives only in the runner's environment.
