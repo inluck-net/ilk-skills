@@ -2026,6 +2026,81 @@ if (Test-AllShipped -Project $ProjectPath) {
   return
 }
 
+# ----- Unattended profile check (PS1 refuses the profile) ----------------
+
+function Read-MasterFrontmatter {
+  <#
+  .SYNOPSIS
+  Read YAML frontmatter from a MASTER plan file.
+  Returns a hashtable with the parsed keys, or $null on failure.
+  #>
+  param([string]$MasterPath)
+  if (-not (Test-Path $MasterPath)) { return $null }
+  try {
+    $content = Get-Content $MasterPath -Raw -Encoding utf8 -ErrorAction Stop
+  } catch { return $null }
+  # Extract YAML between --- markers
+  if ($content -notmatch '(?s)^---\r?\n(.+?)\r?\n---') { return $null }
+  $yamlBlock = $Matches[1]
+  # Parse key: value pairs (simple YAML, no nested structures needed)
+  $result = @{}
+  foreach ($line in $yamlBlock -split '\r?\n') {
+    if ($line -match '^(\w[\w_]*):\s*(.*)$') {
+      $result[$Matches[1]] = $Matches[2].Trim()
+    }
+  }
+  return $result
+}
+
+# Resolve the active master to check for unattended profile.
+$profileMasterFile = $null
+$profilePlansDir = $null
+try {
+  Push-Location $ProjectPath
+  $profileStatusJson = & python $LoopStatusScript --json 2>$null
+  Pop-Location
+  if ($profileStatusJson) {
+    $profileStatusObj = ($profileStatusJson -join "`n") | ConvertFrom-Json -ErrorAction Stop
+    $profileMasterName = [string]$profileStatusObj.master
+    $profilePlansDir = [string]$profileStatusObj.plans_dir
+    if ($profileMasterName -and $profilePlansDir -and (Test-Path $profilePlansDir)) {
+      $profileMasterFile = Join-Path $profilePlansDir $profileMasterName
+    }
+  }
+} catch {
+  if ($profilePlansDir) { Pop-Location }
+}
+
+if ($profileMasterFile -and (Test-Path $profileMasterFile)) {
+  $masterFm = Read-MasterFrontmatter -MasterPath $profileMasterFile
+  if ($masterFm -and $masterFm['ilk_profile'] -eq 'unattended') {
+    $resultFile = $masterFm['result_file']
+    $masterSlug = [System.IO.Path]::GetFileNameWithoutExtension($profileMasterFile)
+
+    # Write result file with profile_unsupported and exit.
+    $resultScript = Join-Path $SkillRoot "ilk-loop\scripts\run_result.py"
+    if (Test-Path $resultScript) {
+      $resultArgs = @(
+        $resultScript, "write",
+        "--result-file", $resultFile,
+        "--run-id", $RunId,
+        "--master", $masterSlug,
+        "--exit-state", "profile_unsupported"
+      )
+      try {
+        & python @resultArgs 2>&1 | ForEach-Object { Write-Host $_ }
+      } catch {
+        Write-Host "[unattended] result write failed: $_" -ForegroundColor Red
+      }
+    }
+
+    Write-Host "[unattended] PS1 runner does not support ilk_profile: unattended — wrote profile_unsupported and exiting." -ForegroundColor Yellow
+    Write-Host "[unattended] exit_state=profile_unsupported — see $resultFile"
+    $stopReason = "profile_unsupported"
+    return
+  }
+}
+
 # ----- Timeout-preservation parity (AC-1/2/4/7 .sh → .ps1) ----------------
 
 function Preserve-DirtyTreeOnTimeout {

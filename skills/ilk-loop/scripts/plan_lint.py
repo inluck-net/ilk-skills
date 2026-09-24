@@ -5116,6 +5116,83 @@ def lint_scope_claim_vs_record(
     return findings
 
 
+def lint_master_profile(
+    master_text: str,
+    project_root: str | Path | None = None,
+) -> list[str]:
+    """Lint a MASTER plan's ``ilk_profile`` / ``result_file`` keys.
+
+    Rules:
+    - ``ilk_profile`` with a value other than ``unattended`` ⇒ WARN.
+    - ``ilk_profile: unattended`` with ``result_file`` missing ⇒ HARD.
+    - ``ilk_profile: unattended`` with ``result_file`` relative ⇒ HARD.
+    - ``ilk_profile: unattended`` with ``result_file`` under the project
+      root ⇒ HARD (the file must live outside the project to survive
+      worktree cleanup).
+    """
+    findings: list[str] = []
+
+    # Extract ilk_profile and result_file from frontmatter.
+    profile = ""
+    result_file = ""
+    in_fm = False
+    for line in master_text.splitlines():
+        stripped = line.strip()
+        if stripped == "---":
+            if not in_fm:
+                in_fm = True
+                continue
+            else:
+                break
+        if in_fm:
+            if stripped.startswith("ilk_profile:"):
+                profile = stripped.split(":", 1)[1].strip()
+            elif stripped.startswith("result_file:"):
+                result_file = stripped.split(":", 1)[1].strip()
+
+    if not profile:
+        return findings
+
+    if profile != "unattended":
+        findings.append(
+            f"WARN master: ilk_profile is {profile!r} "
+            f"(only 'unattended' is implemented)"
+        )
+        return findings
+
+    # unattended profile — validate result_file.
+    if not result_file:
+        findings.append(
+            "HARD master: ilk_profile: unattended but result_file is missing"
+        )
+        return findings
+
+    # Strip quotes if present.
+    rf = result_file.strip("'\"")
+
+    if not os.path.isabs(rf):
+        findings.append(
+            f"HARD master: result_file is relative ({rf!r}) — "
+            f"must be absolute and outside the project root"
+        )
+        return findings
+
+    if project_root:
+        try:
+            rf_resolved = Path(rf).resolve()
+            root_resolved = Path(project_root).resolve()
+            if rf_resolved == root_resolved or root_resolved in rf_resolved.parents:
+                findings.append(
+                    f"HARD master: result_file ({rf!r}) is under the project "
+                    f"root ({project_root!r}) — must be outside to survive "
+                    f"worktree cleanup"
+                )
+        except (OSError, ValueError):
+            pass
+
+    return findings
+
+
 def lint_file(path: str | Path, master_text: str = "") -> list[str]:
     """Run all checks against one sub-plan file. Returns finding messages.
 
@@ -5248,6 +5325,10 @@ def main() -> int:
         project_root = Path(args.project_root).resolve() if args.project_root else Path.cwd()
         subplan_texts = [text for _, text in subplans]
         for msg in lint_batch_has_no_suite(master_text, subplan_texts, project_root):
+            print(f"WARN: {msg}")
+            total += 1
+        # Unattended profile lint (result_file validation).
+        for msg in lint_master_profile(master_text, project_root=project_root):
             print(f"WARN: {msg}")
             total += 1
 

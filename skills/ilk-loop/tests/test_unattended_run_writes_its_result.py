@@ -528,7 +528,6 @@ class TestRunResultUnit:
 
 # ── AC-6: PS1 refuses the profile ─────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: PS1 refusal not implemented yet")
 @_HAS_PWSH
 def test_ps1_refuses_unattended_profile(
     tmp_path_factory: pytest.TempPathFactory,
@@ -572,7 +571,6 @@ def test_ps1_refuses_unattended_profile(
     )
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: PS1 refusal not implemented yet")
 @_HAS_PWSH
 def test_ps1_skipped_when_pwsh_absent_is_not_a_silent_pass() -> None:
     """AC-6 guard: when pwsh is available, the test must actually run (not skip).
