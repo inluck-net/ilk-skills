@@ -52,21 +52,16 @@ def _write_subplan(plans: Path, slug: str, *,
 def _quarantine_counted(plans: Path, slug: str,
                         outcome: str = "fail",
                         threshold: int = 2) -> dict:
-    """Call quarantine_subplan with the outcome as the failing-check suffix.
-
-    Step 1 will make quarantine_subplan inspect the outcome and skip
-    counting for non-fail outcomes. Today it always counts.
-    """
+    """Call quarantine_subplan with the outcome passed through."""
     return quarantine_subplan(
         plans, slug, failing_check=f"pytest -q [outcome={outcome}]",
-        threshold=threshold,
+        threshold=threshold, outcome=outcome,
     )
 
 
 # ── AC-1: three consecutive error (timeout) ⇒ counter unchanged ─────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: error should not bump counter")
 def test_three_consecutive_errors_leave_counter_at_zero(tmp_path: Path) -> None:
     """AC-1: three error (timeout) outcomes ⇒ counter unchanged, not quarantined."""
     plans = tmp_path / "plans"
@@ -81,7 +76,6 @@ def test_three_consecutive_errors_leave_counter_at_zero(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: error should not bump counter")
 def test_error_never_reaches_quarantine_threshold(tmp_path: Path) -> None:
     """Even with threshold=1, an error outcome must not quarantine."""
     plans = tmp_path / "plans"
@@ -114,7 +108,6 @@ def test_two_consecutive_fails_quarantine(tmp_path: Path) -> None:
 # ── AC-3: fail, fail, pass, fail ⇒ counter is 1 ────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: green gate should reset counter")
 def test_green_gate_resets_the_counter(tmp_path: Path) -> None:
     """AC-3: fail, fail, pass, fail ⇒ counter is 1 after the last fail.
 

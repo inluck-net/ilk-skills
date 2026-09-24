@@ -105,6 +105,7 @@ def quarantine_subplan(
     slug: str,
     failing_check: str,
     threshold: int = 2,
+    outcome: str = "fail",
 ) -> dict:
     """Check and possibly quarantine a sub-plan.
 
@@ -122,13 +123,35 @@ def quarantine_subplan(
     text = sub_path.read_text(encoding="utf-8-sig")
     fm = _read_frontmatter(text)
 
-    # If already blocked, nothing to do.
+    # If already blocked, only a pass can reset (unblock).
     if fm.get("status", "").strip() == "blocked":
+        if outcome == "pass":
+            # Green gate resets counter and unblocks.
+            text = _set_status(text, "in-progress")
+            text = _set_or_bump_fails(text, 0)
+            tmp = sub_path.with_suffix(sub_path.suffix + ".tmp")
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, sub_path)
+            return {"blocked": False, "fails": 0, "threshold": threshold,
+                    "slug": slug, "reset": True}
         return {"blocked": True, "fails": int(fm.get("auto_block_fails", 0)),
                 "threshold": threshold, "slug": slug, "already_blocked": True}
 
     current_fails = int(fm.get("auto_block_fails", "0"))
-    new_fails = current_fails + 1
+
+    # Only a measured "fail" bumps the counter.  A green gate resets it.
+    # Error/timeout/skipped outcomes are not counted toward quarantine.
+    if outcome == "pass":
+        # Reset counter on progress (green gate).
+        new_fails = 0
+    elif outcome == "fail":
+        new_fails = current_fails + 1
+    else:
+        # error, skipped, or other non-fail outcomes — not counted.
+        print(f"[quarantine] {slug}: {outcome} ({failing_check}) — not counted",
+              file=sys.stderr)
+        return {"blocked": False, "fails": current_fails, "threshold": threshold,
+                "slug": slug, "not_counted": True}
 
     # Update the counter.
     text = _set_or_bump_fails(text, new_fails)
@@ -162,9 +185,14 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--failing-check", required=True, help="description of the failing check")
     ap.add_argument("--threshold", type=int, default=2,
                     help="consecutive failures before quarantine (default: 2)")
+    ap.add_argument("--outcome", default="fail",
+                    choices=["fail", "error", "pass", "skipped"],
+                    help="gate outcome (default: fail). Only 'fail' bumps the counter; "
+                         "'pass' resets it; 'error'/'skipped' are not counted.")
     args = ap.parse_args(argv)
 
-    result = quarantine_subplan(args.plans_dir, args.slug, args.failing_check, args.threshold)
+    result = quarantine_subplan(args.plans_dir, args.slug, args.failing_check,
+                                args.threshold, args.outcome)
     print(json.dumps(result, ensure_ascii=False))
     return 0
 

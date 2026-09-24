@@ -4240,8 +4240,10 @@ print('false' if not d.get('blocked', True) else 'true')
                 failing_desc=$(python3 "$blocking_checks_script" "$local_checks_results" --describe 2>/dev/null)
                 while IFS= read -r q_slug; do
                   [[ -z "$q_slug" ]] && continue
+                  local q_outcome
+                  q_outcome=$(python3 "$blocking_checks_script" "$local_checks_results" --outcome-for-slug "$q_slug" 2>/dev/null || echo "fail")
                   local q_out
-                  q_out=$(python3 "$quarantine_script" --plans-dir "$q_plans_dir" --slug "$q_slug" --failing-check "$failing_desc" 2>/dev/null)
+                  q_out=$(python3 "$quarantine_script" --plans-dir "$q_plans_dir" --slug "$q_slug" --failing-check "$failing_desc" --outcome "$q_outcome" 2>/dev/null)
                   if [[ -n "$q_out" ]]; then
                     local q_blocked
                     q_blocked=$(python3 -c "

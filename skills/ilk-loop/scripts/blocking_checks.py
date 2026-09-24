@@ -113,6 +113,8 @@ def main(argv: list[str] | None = None) -> int:
                            "'N unattributable (no slug)' segment when anonymous records exist")
     mode.add_argument("--unattributable-count", action="store_true",
                       help="print the number of blocking records with no slug")
+    mode.add_argument("--outcome-for-slug", metavar="SLUG",
+                      help="print the outcome for a specific slug (fail or error)")
     args = ap.parse_args(argv)
 
     if args.any:
@@ -132,6 +134,16 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.unattributable_count:
         print(unattributable_count(args.results_file))
+        return 0
+
+    if args.outcome_for_slug:
+        target_slug = args.outcome_for_slug
+        for rec in attributable_records(args.results_file):
+            if rec.get("slug") == target_slug:
+                print(rec.get("outcome", "fail"))
+                return 0
+        # Slug not found in blocking records — default to "fail" for back-compat
+        print("fail")
         return 0
 
     # --describe
