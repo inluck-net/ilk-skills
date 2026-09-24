@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -277,6 +278,35 @@ def pick_active_master(masters: list[Path], json_mode: bool = False) -> tuple[Pa
     draft = by_status.get("draft", [])
 
     notices: list[str] = []
+
+    # ILK_MASTER pin: honour an explicit master override from the
+    # environment (set by launch.sh --master → ILK_MASTER).  When set
+    # and the file exists in the plans dir, that master is the only
+    # candidate — whatever its status.  A pinned all-shipped master
+    # yields all-shipped; it never rolls over to another master.
+    ilk_master = os.environ.get("ILK_MASTER", "").strip()
+    if ilk_master and plans_dir is not None:
+        pinned = plans_dir / ilk_master
+        if pinned.exists():
+            try:
+                fm = parse_frontmatter(pinned.read_text(encoding="utf-8-sig"))
+            except OSError:
+                fm = {}
+            return pinned, {
+                "active_count": len(by_status.get("active", [])),
+                "queued_count": len(queued),
+                "paused_count": len(paused),
+                "shipped_count": len(shipped),
+                "legacy_count": len(legacy),
+                "draft_count": len(draft),
+                "queued_titles": [it[0].name for it in queued],
+                "notices": notices,
+            }
+        else:
+            notices.append(
+                f"[ilk] ILK_MASTER={ilk_master!r} not found in {plans_dir}; "
+                "falling back to default pick."
+            )
 
     if len(actives) > 1:
         msg = (

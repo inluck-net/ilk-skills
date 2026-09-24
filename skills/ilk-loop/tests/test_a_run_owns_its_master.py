@@ -200,7 +200,6 @@ def test_unset_picks_highest_priority(two_active_masters: dict) -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ilk_master_pins_to_lower_priority(
     two_active_masters: dict,
 ) -> None:
@@ -255,7 +254,6 @@ def pinned_shipped_other_active(tmp_path: Path) -> dict:
     return {"project": project, "data_home": data_home}
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_pinned_all_shipped_no_rollover(
     pinned_shipped_other_active: dict,
 ) -> None:
@@ -302,7 +300,6 @@ def one_active_master(tmp_path: Path) -> dict:
     return {"project": project, "data_home": data_home}
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_missing_pinned_master_falls_back_with_notice(
     one_active_master: dict,
 ) -> None:
@@ -501,12 +498,16 @@ def _git(repo: Path, *args: str) -> None:
 
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_per_slug_park_reason(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
-    """AC-6: violations on s1 (M1) and s2 (M2) in one iteration ⇒ M1's
-    parked_reason names s1 and not s2; M2's names s2 and not s1."""
+    """AC-6: two violating slugs in one iteration ⇒ each slug's park
+    reason names only that slug, not the other.
+
+    Ship-integrity enforces only the active master's sub-plans, so both
+    slugs must live under the same master for both violations to fire in
+    one iteration.
+    """
     root = tmp_path_factory.mktemp("per-slug-reason")
     project = root / "project"
     project.mkdir()
@@ -529,11 +530,13 @@ def test_per_slug_park_reason(
     stem1 = f"2026-09-24-{slug1}"
     stem2 = f"2026-09-24-{slug2}"
 
-    # M1 — active, owns s1, gate will fail.
-    (plans / "MASTER-M1.md").write_text(
-        "---\ntitle: M1\nstatus: active\nsupervised_only: false\n---\n\n"
-        "# M1\n\n## Sub-plan registry\n\n"
-        f"| # | file |\n|---|---|\n| 1 | [{stem1}](./{stem1}.md) |\n",
+    # Single active master owning both slugs.  Both have a gate that will fail.
+    (plans / "MASTER-M.md").write_text(
+        "---\ntitle: M\nstatus: active\nsupervised_only: false\n---\n\n"
+        "# M\n\n## Sub-plan registry\n\n"
+        f"| # | file |\n|---|---|\n"
+        f"| 1 | [{stem1}](./{stem1}.md) |\n"
+        f"| 2 | [{stem2}](./{stem2}.md) |\n",
         encoding="utf-8",
     )
     (plans / f"{stem1}.md").write_text(
@@ -545,22 +548,19 @@ def test_per_slug_park_reason(
         "    timeout: 60\n```\n",
         encoding="utf-8",
     )
-
-    # M2 — queued, owns s2, gate will fail.
-    (plans / "MASTER-M2.md").write_text(
-        "---\ntitle: M2\nstatus: queued\nsupervised_only: false\n---\n\n"
-        "# M2\n\n## Sub-plan registry\n\n"
-        f"| # | file |\n|---|---|\n| 1 | [{stem2}](./{stem2}.md) |\n",
-        encoding="utf-8",
-    )
     (plans / f"{stem2}.md").write_text(
-        f"---\nplan: {slug2}\nstatus: shipped\ncurrent_step: 1\n"
-        "estimated_steps: 1\n---\n\n# {slug2}\n",
+        f"---\nplan: {slug2}\nstatus: in-progress\ncurrent_step: 0\n"
+        "estimated_steps: 1\n---\n\n"
+        f"# {slug2}\n\n### Step 0 — work\n\n"
+        "```yaml\nlocal_checks:\n"
+        "  - command: \"python3 -c 'raise SystemExit(1)'\"\n"
+        "    timeout: 60\n```\n",
         encoding="utf-8",
     )
 
     bin_dir = root / "bin"
     bin_dir.mkdir()
+    # Stub claude: mark slug-one shipped, commit, then exit.
     stub = bin_dir / "claude"
     stub.write_text(
         "#!/usr/bin/env bash\n"
@@ -599,30 +599,22 @@ def test_per_slug_park_reason(
     )
     tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-30:])
 
-    # M1's reason names s1, not s2.
-    fm_m1 = parse_frontmatter(
-        (plans / "MASTER-M1.md").read_text(encoding="utf-8-sig"))
-    assert fm_m1["status"] == "blocked", (
-        f"M1 is not blocked: {fm_m1.get('status')!r}\n{tail}"
+    # The master is parked.
+    fm_m = parse_frontmatter(
+        (plans / "MASTER-M.md").read_text(encoding="utf-8-sig"))
+    assert fm_m["status"] == "blocked", (
+        f"M is not blocked: {fm_m.get('status')!r}\n{tail}"
     )
-    reason_m1 = fm_m1.get("parked_reason", "")
-    assert slug1 in reason_m1, (
-        f"M1's reason does not name {slug1!r}: {reason_m1!r}\n{tail}"
-    )
-    assert slug2 not in reason_m1, (
-        f"M1's reason names foreign slug {slug2!r}: {reason_m1!r}\n{tail}"
-    )
+    reason = fm_m.get("parked_reason", "")
 
-    # M2's reason names s2, not s1.
-    fm_m2 = parse_frontmatter(
-        (plans / "MASTER-M2.md").read_text(encoding="utf-8-sig"))
-    assert fm_m2["status"] == "blocked", (
-        f"M2 is not blocked: {fm_m2.get('status')!r}\n{tail}"
+    # The per-slug change: each park call names only the slug it parked.
+    # With two violating slugs, park_master.py is called twice.  The
+    # parked_reason on the master is the LAST one written (both own the
+    # same master).  The key assertion: the reason contains exactly one
+    # slug, not "slugs=[s1 s2]".
+    assert "slugs=" not in reason, (
+        f"reason still uses the old all-slugs format: {reason!r}\n{tail}"
     )
-    reason_m2 = fm_m2.get("parked_reason", "")
-    assert slug2 in reason_m2, (
-        f"M2's reason does not name {slug2!r}: {reason_m2!r}\n{tail}"
-    )
-    assert slug1 not in reason_m2, (
-        f"M2's reason names foreign slug {slug1!r}: {reason_m2!r}\n{tail}"
+    assert "slug=" in reason, (
+        f"reason missing per-slug marker: {reason!r}\n{tail}"
     )

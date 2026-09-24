@@ -4154,8 +4154,8 @@ print(json.dumps(d))
       local _violating_slugs=""
       _violating_slugs=$(echo "$_si_stderr" | sed -n 's/.*\[ship-integrity VIOLATION\] \([^ :]*\):.*/\1/p' | tr '\n' ' ')
       if [[ -n "$_violating_slugs" ]]; then
-        local _park_reason="ship_integrity_violation: run ${RUN_ID} slugs=[${_violating_slugs}]"
         for _slug in $_violating_slugs; do
+          local _park_reason="ship_integrity_violation: run ${RUN_ID} slug=${_slug}"
           local _park_out
           _park_out=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/park_master.py" \
             --plans-dir "$(get_plans_dir)" \
