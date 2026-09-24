@@ -126,20 +126,19 @@ class TestAC1WorkerSessionRefuses:
     is spawned (sentinel absent).
     """
 
-    @pytest.mark.xfail(strict=True, reason="red-first: worker-session guard not yet implemented")
     def test_run_suite_refuses_in_worker_session(self, tmp_path: Path,
                                                   monkeypatch: pytest.MonkeyPatch) -> None:
         script = _make_sentinel_script(tmp_path)
         project, base_sha, head_sha = _make_repo(tmp_path, monkeypatch)
         _write_launch_json(project, str(script))
-        record = _write_existing_record(
-            _record_path(tmp_path), head_sha, suite_failed=0)
+        record = _record_path(tmp_path)
+        _write_existing_record(record, head_sha, suite_failed=0)
         record_before = record.read_bytes()
 
         monkeypatch.setenv("ILK_WORKER_SESSION", "1")
         ret = vr.main([
             "--project", str(project),
-            "--batch", "test-batch",
+            "--record", str(record),
             "--base-sha", base_sha,
             "--run-suite",
         ])
@@ -161,12 +160,13 @@ class TestAC2UnsetBehavesAsToday:
         script = _make_sentinel_script(tmp_path)
         project, base_sha, head_sha = _make_repo(tmp_path, monkeypatch)
         _write_launch_json(project, str(script))
-        _record_path(tmp_path)  # ensure parent dir exists
+        record = _record_path(tmp_path)
+        record.parent.mkdir(parents=True, exist_ok=True)
         # Ensure ILK_WORKER_SESSION is NOT set.
         monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
         ret = vr.main([
             "--project", str(project),
-            "--batch", "test-batch",
+            "--record", str(record),
             "--base-sha", base_sha,
             "--run-suite",
         ])
@@ -183,14 +183,13 @@ class TestAC3DirtyTreeRefuses:
     An untracked file alone ⇒ it runs.
     """
 
-    @pytest.mark.xfail(strict=True, reason="red-first: dirty-tree guard not yet implemented")
     def test_dirty_tracked_file_refuses(self, tmp_path: Path,
                                          monkeypatch: pytest.MonkeyPatch) -> None:
         script = _make_sentinel_script(tmp_path)
         project, base_sha, head_sha = _make_repo(tmp_path, monkeypatch)
         _write_launch_json(project, str(script))
-        record = _write_existing_record(
-            _record_path(tmp_path), head_sha, suite_failed=0)
+        record = _record_path(tmp_path)
+        _write_existing_record(record, head_sha, suite_failed=0)
         record_before = record.read_bytes()
 
         # Create a tracked file and modify it.
@@ -203,7 +202,7 @@ class TestAC3DirtyTreeRefuses:
         monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
         ret = vr.main([
             "--project", str(project),
-            "--batch", "test-batch",
+            "--record", str(record),
             "--base-sha", base_sha,
             "--run-suite",
         ])
@@ -217,7 +216,8 @@ class TestAC3DirtyTreeRefuses:
         script = _make_sentinel_script(tmp_path)
         project, base_sha, head_sha = _make_repo(tmp_path, monkeypatch)
         _write_launch_json(project, str(script))
-        _record_path(tmp_path)
+        record = _record_path(tmp_path)
+        record.parent.mkdir(parents=True, exist_ok=True)
 
         # Create an untracked file only.
         untracked = project / "scratch.txt"
@@ -226,7 +226,7 @@ class TestAC3DirtyTreeRefuses:
         monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
         ret = vr.main([
             "--project", str(project),
-            "--batch", "test-batch",
+            "--record", str(record),
             "--base-sha", base_sha,
             "--run-suite",
         ])
@@ -245,20 +245,19 @@ class TestAC4StaleRemesure:
     new record.
     """
 
-    @pytest.mark.xfail(strict=True, reason="red-first: --remeasure-if-stale not yet implemented")
     def test_stale_record_gets_remeasured(self, tmp_path: Path,
                                            monkeypatch: pytest.MonkeyPatch) -> None:
         script = _make_sentinel_script(tmp_path)
         project, base_sha, head_sha = _make_repo(tmp_path, monkeypatch)
         _write_launch_json(project, str(script))
         # Write a record pointing at base_sha (stale — HEAD is head_sha).
-        record = _write_existing_record(
-            _record_path(tmp_path), base_sha, suite_failed=0)
+        record = _record_path(tmp_path)
+        _write_existing_record(record, base_sha, suite_failed=0)
 
         monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
         # verify_attribution.py --remeasure-if-stale should re-measure.
         ret = vat.main([
-            "--batch", "test-batch",
+            str(record),
             "--project", str(project),
             "--remeasure-if-stale",
         ])
@@ -281,19 +280,18 @@ class TestAC5FreshNoRerun:
     as today.
     """
 
-    @pytest.mark.xfail(strict=True, reason="red-first: --remeasure-if-stale not yet implemented")
     def test_fresh_record_skips_remeasure(self, tmp_path: Path,
                                            monkeypatch: pytest.MonkeyPatch) -> None:
         script = _make_sentinel_script(tmp_path)
         project, base_sha, head_sha = _make_repo(tmp_path, monkeypatch)
         _write_launch_json(project, str(script))
-        _write_existing_record(
-            _record_path(tmp_path), head_sha, suite_failed=0)
+        record = _record_path(tmp_path)
+        _write_existing_record(record, head_sha, suite_failed=0)
 
         sentinel = tmp_path / "sentinel"
         monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
         ret = vat.main([
-            "--batch", "test-batch",
+            str(record),
             "--project", str(project),
             "--remeasure-if-stale",
         ])
@@ -310,19 +308,18 @@ class TestAC6RemesureInWorkerRefuses:
     record ⇒ refusal, no suite run.
     """
 
-    @pytest.mark.xfail(strict=True, reason="red-first: worker guard on remeasure not yet implemented")
     def test_remeasure_refuses_in_worker(self, tmp_path: Path,
                                           monkeypatch: pytest.MonkeyPatch) -> None:
         script = _make_sentinel_script(tmp_path)
         project, base_sha, head_sha = _make_repo(tmp_path, monkeypatch)
         _write_launch_json(project, str(script))
-        record = _write_existing_record(
-            _record_path(tmp_path), base_sha, suite_failed=0)
+        record = _record_path(tmp_path)
+        _write_existing_record(record, base_sha, suite_failed=0)
         record_before = record.read_bytes()
 
         monkeypatch.setenv("ILK_WORKER_SESSION", "1")
         ret = vat.main([
-            "--batch", "test-batch",
+            str(record),
             "--project", str(project),
             "--remeasure-if-stale",
         ])

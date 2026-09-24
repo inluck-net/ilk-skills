@@ -1125,6 +1125,38 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
         print("ILK-CHECK: unmeasured no base-sha", file=sys.stderr)
         return 2
 
+    # Guard: refuse in a worker session.  The suite runs in the driver, not
+    # in a worker.  A worker that needs a fresh record should commit its fix
+    # and end its turn — the next iteration's gate-first re-measures in the
+    # driver.
+    if os.environ.get("ILK_WORKER_SESSION") == "1":
+        print("ILK-CHECK: unmeasured refused in a worker session",
+              file=sys.stderr)
+        print("verification_record: the suite runs in the driver — commit "
+              "your fix and end your turn; the next iteration re-measures",
+              file=sys.stderr)
+        return 1
+
+    # Guard: refuse a dirty tracked tree.  A record must name the tree it
+    # measured; a dirty tree means the record's head does not match the
+    # working copy's tests.  Untracked files do not change what HEAD's tests
+    # import.
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=project, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+        dirty_lines = [l for l in (status.stdout or "").splitlines()
+                       if l.strip()]
+        if dirty_lines:
+            print(f"ILK-CHECK: unmeasured dirty tree "
+                  f"({len(dirty_lines)} tracked files modified)",
+                  file=sys.stderr)
+            return 1
+    except (OSError, subprocess.SubprocessError):
+        pass  # if git status fails, proceed — the guard is best-effort
+
     scripts = Path(__file__).resolve().parent
     if str(scripts) not in sys.path:
         sys.path.insert(0, str(scripts))

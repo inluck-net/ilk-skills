@@ -754,6 +754,16 @@ def main(argv: list[str] | None = None) -> int:
                     help="project root whose batch-gate record to update (default: cwd)")
     ap.add_argument("--no-write-gate-record", action="store_true",
                     help="verify only; do not record the verdict in batch-gate.json")
+    ap.add_argument("--remeasure-if-stale", action="store_true",
+                    help="re-run the suite when the record is stale "
+                         "(verified_head != HEAD or suite_failed not numeric); "
+                         "refuses in a worker session")
+    ap.add_argument("--base-sha", default=None, metavar="SHA",
+                    help="base sha for re-measurement (used when record is missing "
+                         "and --remeasure-if-stale is set)")
+    ap.add_argument("--scope", default="auto", choices=("full", "auto"),
+                    metavar="MODE",
+                    help="scope override for re-measurement (default: auto)")
     args = ap.parse_args(argv)
 
     project = Path(args.project).resolve()
@@ -785,10 +795,94 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.batch:
             reject_placeholder(args.batch)
-            record_path = resolve_batch_record(project, args.batch)
+            try:
+                record_path = resolve_batch_record(project, args.batch)
+            except VerificationError:
+                # Record missing — if --remeasure-if-stale, that's fine;
+                # we'll create it.  Otherwise re-raise.
+                if args.remeasure_if_stale:
+                    record_path = None
+                else:
+                    raise
         else:
             reject_placeholder(args.record)
             record_path = Path(args.record)
+
+        # ── re-measure if stale ──────────────────────────────────────────
+        if args.remeasure_if_stale:
+            import os as _os
+            is_stale = False
+            base_sha = None
+            scope_mode = "auto"
+
+            if record_path is None or not record_path.is_file():
+                is_stale = True
+                base_sha = args.base_sha
+            else:
+                text = record_path.read_text(encoding="utf-8-sig",
+                                             errors="replace")
+                head = _git(project, "rev-parse", "HEAD")
+                m = re.search(r"^verified_head:\s*(\S+)", text, re.MULTILINE)
+                rec_head = m.group(1) if m else None
+                if rec_head != head:
+                    is_stale = True
+                m2 = re.search(r"^suite_failed:\s*(.+)$", text, re.MULTILINE)
+                if m2:
+                    try:
+                        int(m2.group(1).strip())
+                    except ValueError:
+                        is_stale = True
+                else:
+                    is_stale = True
+                if is_stale:
+                    m3 = re.search(r"^base_sha:\s*(\S+)", text, re.MULTILINE)
+                    base_sha = m3.group(1) if m3 else args.base_sha
+
+            if is_stale:
+                # Refuse in a worker session.
+                if _os.environ.get("ILK_WORKER_SESSION") == "1":
+                    print("ILK-CHECK: unmeasured refused in a worker session",
+                          file=sys.stderr)
+                    print("verify_attribution: re-measurement refused in a "
+                          "worker session — commit your fix and end your turn",
+                          file=sys.stderr)
+                    return 1
+
+                if not base_sha:
+                    print("ATTRIBUTION FAILED: --remeasure-if-stale needs "
+                          "a base_sha (pass --base-sha or ensure the record "
+                          "has one)", file=sys.stderr)
+                    return 1
+
+                # Resolve batch slug for the record path.
+                batch_slug = args.batch
+
+                vr_args = [
+                    "--project", str(project),
+                ]
+                if batch_slug:
+                    vr_args += ["--batch", batch_slug]
+                elif record_path:
+                    vr_args += ["--record", str(record_path)]
+                vr_args += ["--base-sha", base_sha, "--run-suite"]
+                if args.scope == "full":
+                    vr_args += ["--scope", "full"]
+
+                vr_scripts = Path(__file__).resolve().parent
+                if str(vr_scripts) not in sys.path:
+                    sys.path.insert(0, str(vr_scripts))
+                import verification_record as _vr
+                ret = _vr.main(vr_args)
+                if ret != 0:
+                    print(f"ATTRIBUTION FAILED: re-measurement failed "
+                          f"(exit {ret})", file=sys.stderr)
+                    return ret
+
+                # Re-resolve the record path after re-measurement.
+                if args.batch:
+                    record_path = resolve_batch_record(project, args.batch)
+                # else: record_path already set
+
         message, excused, flaky_owed = verify(record_path, project=project)
     except VerificationError as exc:
         print(f"ATTRIBUTION FAILED: {exc}", file=sys.stderr)
