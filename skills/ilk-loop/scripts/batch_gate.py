@@ -173,12 +173,28 @@ def resolve_runtime_dir(project_path: Path) -> Optional[Path]:
     return external_runtime_dir(key)
 
 
+def _is_measured(record: BatchGateRecord) -> bool:
+    """Does this record claim a suite actually ran?
+
+    ``pass`` and ``fail`` assert the suite executed and produced a result.
+    ``not_configured``, ``error``, and ``malformed_config`` make no such
+    claim — they are unmeasured and legitimately replace nothing.
+    """
+    return record.verdict in ("pass", "fail")
+
+
 def write_record(record: BatchGateRecord, runtime_dir: Path) -> Path:
-    """Write a batch-gate record to disk.  Returns the path written."""
+    """Write a batch-gate record to disk.  Returns the path written.
+
+    Atomic: writes to ``<path>.tmp`` then ``os.replace``, so a killed
+    process never leaves a half-written record.
+    """
     p = record_path(runtime_dir)
     runtime_dir.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(record.to_dict(), indent=2) + "\n",
-                 encoding="utf-8")
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(record.to_dict(), indent=2) + "\n",
+                   encoding="utf-8")
+    os.replace(tmp, p)
     return p
 
 
@@ -813,13 +829,27 @@ def run_batch_gate(
     if (existing_before is not None
             and existing_before.writer == "verify_attribution"):
         alt = _alternate_record_path(runtime_dir)
-        alt.write_text(json.dumps(rec.to_dict(), indent=2) + "\n",
+        tmp = alt.with_suffix(".tmp")
+        tmp.write_text(json.dumps(rec.to_dict(), indent=2) + "\n",
                        encoding="utf-8")
+        os.replace(tmp, alt)
         print(f"[batch-gate] verify_attribution record preserved at "
               f"{record_path(runtime_dir).name}")
         print(f"[batch-gate] batch_gate verdict written to {alt.name}")
     else:
-        write_record(rec, runtime_dir)
+        # Never replace a measured record with an unmeasured one for the
+        # same HEAD.  A measured verdict (pass/fail) asserts the suite
+        # actually ran; an unmeasured one (not_configured, error) does not
+        # and must not overwrite real evidence.
+        if (existing_before is not None
+                and existing_before.head_sha == rec.head_sha
+                and _is_measured(existing_before)
+                and not _is_measured(rec)):
+            print(f"[batch-gate] existing measured record "
+                  f"({existing_before.verdict}) for same HEAD preserved; "
+                  f"not replaced by unmeasured ({rec.verdict})")
+        else:
+            write_record(rec, runtime_dir)
     return rec
 
 
