@@ -9,8 +9,8 @@ AC-1  iteration 1's heads-before names the work tree's HEAD; the
       [local_checks] rows for it.
 AC-2  the step gate records cwd inside the work tree — both gate-first
       and post-iteration variants.
-AC-3  (xfail) dirty file only in clone ⇒ ship-gap silent; dirty file only
-      in work tree ⇒ ship-gap reports it.
+AC-3  dirty file only in clone ⇒ ship-gap silent; dirty file only in work
+      tree ⇒ ship-gap reports it.
 AC-4  (passes today) no ``work_tree`` ⇒ selfmod behaviour unchanged
       (``test_selfmod_worktree.py`` and ``test_gate_first_step.py`` green).
 AC-5  (passes today) invalid ``work_tree`` still stops ``work_tree_invalid``
@@ -375,7 +375,6 @@ def test_gate_cwd_is_in_work_tree(
 # ── AC-3: ship-gap scans the work tree ──────────────────────────────────────
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ship_gap_scans_work_tree(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:

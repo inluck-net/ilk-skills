@@ -3638,7 +3638,7 @@ print(json.dumps({
       h_after=$(head_after_sha "$r" "$heads_after_file")
       if [[ -n "$h_before" && -n "$h_after" ]]; then
         gap_json=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/ship_gap.py" \
-          --repo "$r" --head-before "$h_before" --head-after "$h_after" --json 2>/dev/null) || gap_json=""
+          --repo "$(selfmod_effective_repo "$r")" --head-before "$h_before" --head-after "$h_after" --json 2>/dev/null) || gap_json=""
         if [[ -n "$gap_json" ]]; then
           _SHIP_GAP_JSON="$gap_json"
           local unexplained
