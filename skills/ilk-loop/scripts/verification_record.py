@@ -963,7 +963,9 @@ def _history_path(record: Path) -> Path:
 
 def _append_history_entry(record: Path, attempt: int, digest: str,
                           failing_nodes: list[str],
-                          suite_duration_sec: int | None = None) -> None:
+                          suite_duration_sec: int | None = None,
+                          head: str | None = None,
+                          tree: str | None = None) -> None:
     """Append one attempt's metadata to the history file (R3).
 
     The history is append-only; each line is a JSON object with the attempt
@@ -975,6 +977,12 @@ def _append_history_entry(record: Path, attempt: int, digest: str,
              "failing_nodes": sorted(failing_nodes)}
     if suite_duration_sec is not None:
         entry["suite_duration_sec"] = suite_duration_sec
+    # The gate scopes carry-forward to attempts at the same CODE, which it can
+    # only decide if each attempt names its commit (the spec's history shape).
+    if head:
+        entry["head"] = head
+    if tree:
+        entry["tree"] = tree
     with open(hist, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, sort_keys=True) + "\n")
 
@@ -1215,7 +1223,8 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
     # that must be carried forward if the next attempt "fixes" it.
     digest = _compute_record_digest(record_text)
     _append_history_entry(record, attempt, digest, nodes,
-                          suite_duration_sec=results.get("suite_duration_sec"))
+                          suite_duration_sec=results.get("suite_duration_sec"),
+                          head=head, tree=tree)
 
     c = results["counts"]
     print(f"recorded: {c['passed']} passed, {c['failed']} failed, "

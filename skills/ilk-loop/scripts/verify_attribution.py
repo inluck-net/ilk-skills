@@ -366,8 +366,37 @@ def _read_history(record_path: Path) -> list[dict]:
     return entries
 
 
+def _same_code(old_head: str | None, new_head: str | None,
+               project: Path | None) -> bool:
+    """True when two attempts ran on the same CODE.
+
+    Same code = identical head, or heads whose diff touches only
+    ``.ilk-launch.json`` (a config-only retry). Anything the gate cannot
+    establish (a missing head, an unknown commit, git unavailable) counts as
+    DIFFERENT code: carry-forward exists to stop a retry at unchanged code from
+    erasing a failure, and must not stop a real fix from clearing one.
+    """
+    import subprocess
+    if not old_head or not new_head:
+        return False
+    if old_head == new_head:
+        return True
+    try:
+        cp = subprocess.run(
+            ["git", "-C", str(project or Path.cwd()), "diff", "--name-only",
+             old_head, new_head],
+            capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if cp.returncode != 0:
+        return False
+    changed = {ln.strip() for ln in cp.stdout.splitlines() if ln.strip()}
+    return changed <= {".ilk-launch.json"}
+
+
 def _check_history(record_path: Path, text: str, current_failed: int,
-                   current_nodes: set[str]) -> None:
+                   current_nodes: set[str],
+                   project: Path | None = None) -> None:
     """Verify attempt history (R3/R4).
 
     Raises VerificationError if:
@@ -403,13 +432,18 @@ def _check_history(record_path: Path, text: str, current_failed: int,
                 f"The record was edited after recording."
             )
 
-    # R3: carry forward failures from previous attempts.
-    # If any historical failure is NOT in the current record's table, it was
-    # "fixed" without being measured — the attribution must persist.
+    # R3: carry forward failures from previous attempts AT THE SAME CODE.
+    # A failure from an earlier attempt that is absent now was "fixed" by a
+    # retry, not by a change, only when the code did not change in between; a
+    # real code change clears it (the spec's negative control). The latest
+    # history entry is the current record itself, so it is excluded.
     if history:
+        cur_m = _re.search(r"^verified_head:\s*(\S+)", text, _re.MULTILINE)
+        cur_head = cur_m.group(1) if cur_m else None
         all_historical: set[str] = set()
-        for entry in history:
-            all_historical.update(entry.get("failing_nodes", []))
+        for entry in history[:-1]:
+            if _same_code(entry.get("head"), cur_head, project):
+                all_historical.update(entry.get("failing_nodes", []))
         missing = all_historical - current_nodes
         if missing:
             raise VerificationError(
@@ -419,7 +453,7 @@ def _check_history(record_path: Path, text: str, current_failed: int,
             )
 
 
-def verify(record_path: Path) -> tuple[str, int]:
+def verify(record_path: Path, project: Path | None = None) -> tuple[str, int]:
     """Raise VerificationError unless the record establishes a clean batch.
 
     Returns ``(message, excused_count)`` — the number of failures the record
@@ -451,7 +485,7 @@ def verify(record_path: Path) -> tuple[str, int]:
 
     # R3/R4: check attempt history before attribution.
     current_nodes = {r[0] for r in rows if r}
-    _check_history(record_path, text, failed, current_nodes)
+    _check_history(record_path, text, failed, current_nodes, project=project)
 
     if failed == 0:
         # excused_count is the number of failures the record accounted for and
@@ -755,7 +789,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             reject_placeholder(args.record)
             record_path = Path(args.record)
-        message, excused, flaky_owed = verify(record_path)
+        message, excused, flaky_owed = verify(record_path, project=project)
     except VerificationError as exc:
         print(f"ATTRIBUTION FAILED: {exc}", file=sys.stderr)
         return 1

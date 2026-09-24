@@ -358,54 +358,60 @@ def test_ac4_flaky_touched_stops_the_batch(repo: Path, vdir: Path,
 
 # ── AC-5: a retry cannot erase an attribution ────────────────────────────────
 
-def test_ac5_retry_cannot_erase_attribution(repo: Path, vdir: Path,
-                                             tmp_path: Path, monkeypatch) -> None:
-    """Attempt 1 is red.  A non-code change makes test_a pass, but the gate
-    still exits 1, naming attempt 1.  Negative control: a real fix ⇒ exit 0.
-    """
-    # Break test_a at HEAD.
-    _write_test(repo, "test_x.py", "def test_a(): assert False\n")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "break test_a")
-
-    monkeypatch.setattr(vr, "_resolve_project_verification_dir",
-                        lambda p: vdir)
-    monkeypatch.setattr(va, "resolve_batch_record",
-                        lambda p, b: vdir / f"{b}-batch.md")
-
-    # Attempt 1: red record.
-    rc = _run_main(vr, [
-        "--project", str(repo), "--batch", "b5",
-        "--base-sha", _base(repo, "HEAD~1"),
-        "--run-suite", "--scope", "full"])
-    assert rc == 0
-
-    gate1 = _run_main(va, [
-        "--project", str(repo), "--batch", "b5",
-        "--no-write-gate-record"])
-    assert gate1 == 1
-
-    # Make test_a pass via a marker file outside the repo (not a code change).
-    marker = tmp_path / "marker"
-    marker.write_text("pass", encoding="utf-8")
-    # The test now reads the marker; the batch only edits .ilk-launch.json.
+def _ac5_red_attempt(repo: Path, vdir: Path, tmp_path: Path, monkeypatch,
+                     batch: str) -> Path:
+    """Attempt 1: test_a reads a marker OUTSIDE the repo and fails without it."""
+    marker = tmp_path / f"marker-{batch}"
     _write_test(repo, "test_x.py",
                 f"import pathlib\ndef test_a():\n"
                 f"    assert pathlib.Path({str(marker)!r}).exists()\n")
     _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "fix test_a")
+    _git(repo, "commit", "-m", "test_a depends on an outside marker")
+    monkeypatch.setattr(vr, "_resolve_project_verification_dir",
+                        lambda p: vdir)
+    monkeypatch.setattr(va, "resolve_batch_record",
+                        lambda p, b: vdir / f"{b}-batch.md")
+    assert _run_main(vr, ["--project", str(repo), "--batch", batch,
+                          "--base-sha", _base(repo, "HEAD~1"),
+                          "--run-suite", "--scope", "full"]) == 0
+    assert _run_main(va, ["--project", str(repo), "--batch", batch,
+                          "--no-write-gate-record"]) == 1
+    return marker
 
-    # Rerun recorder: 0 failures, but gate still exits 1 (attempt 1 is carried).
-    rc2 = _run_main(vr, [
-        "--project", str(repo), "--batch", "b5",
-        "--base-sha", _base(repo, "HEAD~2"),
-        "--run-suite", "--scope", "full"])
-    assert rc2 == 0
 
-    gate2 = _run_main(va, [
-        "--project", str(repo), "--batch", "b5",
-        "--no-write-gate-record"])
-    assert gate2 == 1, "attempt 1's attribution should carry forward"
+def test_ac5_retry_cannot_erase_attribution(repo: Path, vdir: Path,
+                                             tmp_path: Path, monkeypatch) -> None:
+    """Attempt 1 is red. The only change before the retry is .ilk-launch.json
+    (no code), and test_a now passes because an OUTSIDE marker appeared: that is
+    flake-shopping, so attempt 1's failure is carried and the gate exits 1."""
+    marker = _ac5_red_attempt(repo, vdir, tmp_path, monkeypatch, "b5")
+    marker.write_text("pass", encoding="utf-8")
+    cfg = repo / ".ilk-launch.json"   # the only file this retry changes
+    cfg.write_text(cfg.read_text(encoding="utf-8") + " ", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "config-only retry")
+    assert _run_main(vr, ["--project", str(repo), "--batch", "b5",
+                          "--base-sha", _base(repo, "HEAD~2"),
+                          "--run-suite", "--scope", "full"]) == 0
+    assert _run_main(va, ["--project", str(repo), "--batch", "b5",
+                          "--no-write-gate-record"]) == 1, \
+        "a config-only retry must not erase attempt 1's attribution"
+
+
+def test_ac5_negative_control_a_real_fix_clears(repo: Path, vdir: Path,
+                                                 tmp_path: Path, monkeypatch) -> None:
+    """The spec's negative control: a real CODE change between attempts (test_a
+    fixed in test_x.py) clears attempt 1's failure, so the gate exits 0."""
+    _ac5_red_attempt(repo, vdir, tmp_path, monkeypatch, "b5n")
+    _write_test(repo, "test_x.py", "def test_a(): assert True\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "really fix test_a")
+    assert _run_main(vr, ["--project", str(repo), "--batch", "b5n",
+                          "--base-sha", _base(repo, "HEAD~2"),
+                          "--run-suite", "--scope", "full"]) == 0
+    assert _run_main(va, ["--project", str(repo), "--batch", "b5n",
+                          "--no-write-gate-record"]) == 0, \
+        "a real code fix must clear an earlier attempt's attribution"
 
 
 # ── AC-6: post-recording edit is refused ─────────────────────────────────────
