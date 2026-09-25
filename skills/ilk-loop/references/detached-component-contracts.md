@@ -888,14 +888,30 @@ Fields:
 | `step_to` | int | The step the iteration **reached** (the sub-plan's `current_step` after the agent ran) |
 | `commits` | list[str] | SHAs in the iteration's `before..after` range |
 
+A **`gate_pass_at_head`** row carries three additional fields and has
+`commits: []`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `proof` | string | Always `"gate_pass_at_head"` — distinguishes from normal rows |
+| `head` | string | The HEAD SHA at gate time |
+| `gate_outcome` | string | Always `"pass"` — the gate ran and passed |
+
+```json
+{"run_id":"20260925-140000","iteration":1,"slug":"gate-work","repo":"/path","step_from":0,"step_to":3,"commits":[],"provenance":"loop-executed","proof":"gate_pass_at_head","head":"abc1234","gate_outcome":"pass"}
+```
+
 The step range is **half-open**: `[step_from, step_to)`.  A record with
 `step_from=0, step_to=3` proves steps 0, 1, and 2.
 
 ### Who writes
 
 - **`run_ilk_loop_claude.sh`** — `write_ship_proof_records`, called after
-  the post-iteration head capture and new-commit count.  Only writes when
-  `total_new > 0` (an unproductive iteration claims no steps).
+  the post-iteration head capture and new-commit count.  Writes a normal
+  row when `total_new > 0`.  When the gate passed with `total_new == 0`,
+  writes a `gate_pass_at_head` row so `ship_integrity` can still prove
+  the step (ilk-skills #48).  When the gate is absent or failing and
+  `total_new == 0`, writes nothing and announces on stderr.
 
 **The slug universe comes from TWO pre-iteration captures, not one**
 (v0.9.94, 2026-09-09):
@@ -959,7 +975,11 @@ guarded against in `conftest.py` rather than treated as untidiness.
 - **`ship_audit.py`** — `check_step_commits` accepts an optional
   `ledger_records` parameter.  Union semantics: a step is committed if
   the trailer regex matches **or** a ledger record covers it.  Trailer
-  matching is unchanged; the ledger only ever *adds* attribution.
+  matching is unchanged; the ledger only ever *adds* attribution.  A
+  `gate_pass_at_head` row is accepted only when `gate_outcome` is `"pass"`
+  and `proof` is `"gate_pass_at_head"`; a row with `gate_outcome != "pass"`
+  is rejected entirely (it must not fall through to the normal union, which
+  trusts any record for a trailerless slug).
 - **`ship_audit.py` CLI** — resolves the ledger path via `ilk_paths.py`
   and reads it automatically.
 
@@ -982,6 +1002,10 @@ guarded against in `conftest.py` rather than treated as untidiness.
 4. **No record for unproductive iterations.** An iteration that produced
    no commits must not write a ledger record — a record with an empty
    `commits` list would prove a step that has no commit.
+   **Exception:** a `gate_pass_at_head` row, which carries
+   `commits: []` plus `proof: "gate_pass_at_head"` and
+   `gate_outcome: "pass"`.  This row proves the step via the gate
+   rather than via commits (ilk-skills #48).
 
 5. **Compact separators.** Same contract as Contract 2b (local_checks
    JSONL): `separators=(",", ":")`.

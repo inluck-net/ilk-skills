@@ -289,6 +289,21 @@ def check_step_commits(
                 r_to = int(rec["step_to"])
             except (KeyError, TypeError, ValueError):
                 continue
+            # A gate_pass_at_head row is accepted when gate_outcome is
+            # "pass" and proof is "gate_pass_at_head".  This row proves
+            # the step even with 0 new commits (the gate ran at HEAD and
+            # passed).  It bypasses the trailer guard because the row's
+            # purpose is the 0-commit case where no trailers exist.
+            #
+            # A gate_pass_at_head row with gate_outcome != "pass" is
+            # rejected entirely — it must not fall through to the normal
+            # ledger union, which trusts any record for a trailerless slug.
+            if rec.get("proof") == "gate_pass_at_head":
+                if rec.get("gate_outcome") == "pass":
+                    for s in expected_steps:
+                        if r_from <= s < r_to:
+                            committed.add(s)
+                continue
             # Reject the record when any step in its range carries a
             # step-trailer — the record-granular 09-08c guard.
             if any(s in committed for s in range(r_from, r_to)):

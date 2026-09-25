@@ -1327,7 +1327,9 @@ write_ship_proof_records() {
   # shared-remote case).  See detached-component-contracts.md.
   #
   # $1 = heads_before_file   $2 = heads_after_file   $3 = iteration
+  # $4 = gate_outcome (optional: "pass" or "fail"; empty means gate did not run)
   local heads_before="$1" heads_after="$2" iteration="$3"
+  local gate_outcome="${4:-}"
 
   # Parse PRE_ITER_TARGET: one "<slug> <step>" per line.  Use parallel
   # arrays (slug_list / step_list) because macOS bash 3.2 lacks declare -A.
@@ -1447,14 +1449,24 @@ for sp in (d.get('subplans') or []):
     to_list+=("$to_val")
   done
 
+  # Track whether any rows were written, so we can announce when the writer
+  # produces nothing and write a gate_pass_at_head row for 0-commit green gates.
+  local rows_written=0
+
   # Resolve the ledger path once.
   local ledger_dir
   # Do NOT silence stderr: get_ilk_runtime_dir reports a missing resolver or a
   # failed resolve there, and a swallowed probe failure is not data -- it reads
   # identically to "no ledger dir configured". AC-4 of
   # test_sentinel_path_agreement.py asserts this.
-  ledger_dir=$(get_ilk_runtime_dir) || return 0
-  [[ -n "$ledger_dir" ]] || return 0
+  ledger_dir=$(get_ilk_runtime_dir) || {
+    echo "  ! [ship-proof] no rows written: runtime dir unresolved" >&2
+    return 0
+  }
+  [[ -n "$ledger_dir" ]] || {
+    echo "  ! [ship-proof] no rows written: runtime dir empty" >&2
+    return 0
+  }
   local ledger="${ledger_dir}/ship-proof.jsonl"
   mkdir -p "$ledger_dir" 2>/dev/null || return 0
 
@@ -1522,8 +1534,54 @@ print(json.dumps({
         printf '\n' >> "$ledger"
       fi
       printf '%s\n' "$record" >> "$ledger"
+      rows_written=$((rows_written + 1))
     done
   done
+
+  # When the gate passed but produced 0 new commits, the repo loop above
+  # wrote nothing (before == after ⇒ continue).  Write a gate_pass_at_head
+  # row so ship_integrity can still prove the step.  AC-1 of
+  # ship-proof-without-new-commits.
+  if [[ "$rows_written" -eq 0 && "$gate_outcome" == "pass" ]]; then
+    local gate_head
+    gate_head=$(grep -F '=' "$heads_after" 2>/dev/null | head -n1 | sed 's/^[^=]*=//')
+    if [[ -n "$gate_head" && -n "${slug_list[0]:-}" ]]; then
+      local step_from="${step_list[0]:-0}"
+      local step_to="${to_list[0]:-}"
+      if [[ -n "$step_to" ]]; then
+        local record
+        record=$(python3 -c "
+import json, sys
+print(json.dumps({
+    'run_id': sys.argv[1],
+    'iteration': int(sys.argv[2]),
+    'slug': sys.argv[3],
+    'repo': sys.argv[4],
+    'step_from': int(sys.argv[5]),
+    'step_to': int(sys.argv[6]),
+    'commits': [],
+    'provenance': 'loop-executed',
+    'proof': 'gate_pass_at_head',
+    'head': sys.argv[7],
+    'gate_outcome': 'pass',
+}, separators=(',', ':')))" "$RUN_ID" "$iteration" "${slug_list[0]}" "$r" "$step_from" "$step_to" "$gate_head" 2>/dev/null) || true
+        if [[ -n "$record" ]]; then
+          if [[ -s "$ledger" ]] && [[ -n "$(tail -c 1 "$ledger")" ]]; then
+            printf '\n' >> "$ledger"
+          fi
+          printf '%s\n' "$record" >> "$ledger"
+          rows_written=1
+        fi
+      fi
+    fi
+  fi
+
+  # Announce on stderr when no rows were written, so an empty ledger is
+  # distinguishable from "the writer skipped".  AC-4 of
+  # ship-proof-without-new-commits.
+  if [[ "$rows_written" -eq 0 ]]; then
+    echo "  ! [ship-proof] no rows written for iteration ${iteration}: no commits and no green gate" >&2
+  fi
 }
 
 get_ilk_runtime_dir() {
@@ -4350,10 +4408,21 @@ print(json.dumps({
     fi
 
     # Ship-proof ledger: record which commits belong to which step range.
-    # Only writes when there are new commits (total_new > 0) — an
-    # unproductive iteration claims no steps (AC-2).
-    if [[ "$total_new" -gt 0 ]]; then
-      write_ship_proof_records "$heads_before_file" "$heads_after_file" "$i"
+    # When there are new commits (total_new > 0), write a normal row per
+    # worked sub-plan.  When the gate passed with 0 new commits, write a
+    # gate_pass_at_head row so ship_integrity can still prove the step
+    # (AC-1 of ship-proof-without-new-commits).
+    local _gate_outcome=""
+    if [[ -s "$local_checks_results" ]]; then
+      local _bc="${_SKILL_ROOT}/ilk-loop/scripts/blocking_checks.py"
+      if python3 "$_bc" "$local_checks_results" --any 2>/dev/null; then
+        _gate_outcome="fail"
+      else
+        _gate_outcome="pass"
+      fi
+    fi
+    if [[ "$total_new" -gt 0 || "$_gate_outcome" == "pass" ]]; then
+      write_ship_proof_records "$heads_before_file" "$heads_after_file" "$i" "$_gate_outcome"
     fi
 
     # Stall detection — extracted to _decide_iter_stop_reason for testability.

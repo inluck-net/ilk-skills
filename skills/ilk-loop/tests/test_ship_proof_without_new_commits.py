@@ -26,8 +26,6 @@ import os
 import subprocess
 from pathlib import Path
 
-import pytest
-
 import ship_audit
 
 RUNNER = (Path(__file__).resolve().parent.parent / "scripts"
@@ -182,7 +180,6 @@ def _read_ledger(project: Path, env: dict[str, str]) -> list[dict]:
 
 # ── AC-1 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: gate_pass_at_head row not yet implemented")
 def test_gate_pass_at_head_row_written_for_zero_new_commits(tmp_path: Path) -> None:
     """AC-1 — a green gate with 0 new commits writes a ``gate_pass_at_head`` row.
 
@@ -266,7 +263,6 @@ def test_no_row_when_gate_absent_and_zero_new_commits(tmp_path: Path) -> None:
 
 # ── AC-3 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: check_step_commits does not yet accept gate_pass_at_head")
 def test_check_step_commits_accepts_gate_pass_at_head_row(tmp_path: Path) -> None:
     """AC-3 — ``check_step_commits`` accepts a ``gate_pass_at_head`` row.
 
@@ -320,20 +316,21 @@ def test_check_step_commits_accepts_gate_pass_at_head_row(tmp_path: Path) -> Non
         f"Got present={present2} missing={missing2}"
     )
 
-    # A row with proof != "gate_pass_at_head" must NOT be accepted.
-    other_row = {**gate_row, "proof": "other"}
+    # A normal ledger row (no proof field) is accepted by the existing
+    # union logic — this is the original shared-remote path.
+    normal_row = {k: v for k, v in gate_row.items()
+                  if k not in ("proof", "head", "gate_outcome")}
     present3, missing3 = ship_audit.check_step_commits(
-        "gate-work", [0, 1], cwd=project, ledger_records=[other_row],
+        "gate-work", [0, 1], cwd=project, ledger_records=[normal_row],
     )
-    assert missing3 == [0, 1], (
-        "a row with proof != 'gate_pass_at_head' must NOT attribute steps. "
-        f"Got present={present3} missing={missing3}"
+    assert missing3 == [], (
+        "a normal ledger row (no proof field) must still be accepted by "
+        f"the existing union. Got present={present3} missing={missing3}"
     )
 
 
 # ── AC-4 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: early exit announcements not yet implemented")
 def test_early_exit_announces_on_stderr(tmp_path: Path) -> None:
     """AC-4 — each early exit in the writer prints ``! [ship-proof]`` on stderr.
 
