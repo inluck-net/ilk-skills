@@ -39,7 +39,7 @@ def _make_single_iter(exit_code: int = 0, new_commits: int = 1) -> list[dict]:
     second instance of the same bug".
     """
     return [{
-        "run_id": "20260813-173420",
+        "run_id": "20260915-112812",
         "iteration": 1,
         "exit_code": exit_code,
         "duration_sec": 120,
@@ -78,7 +78,7 @@ def _make_three_failing_iters() -> list[dict]:
     """Three iterations, all with failing local_checks (≥3 threshold)."""
     return [
         {
-            "run_id": "20260813-173420",
+            "run_id": "20260915-112812",
             "iteration": i,
             "exit_code": 0,
             "duration_sec": 120,
@@ -95,10 +95,14 @@ def _make_three_failing_iters() -> list[dict]:
 
 
 def _sentinel(state: str = "local_checks_failed", iteration: int = 1) -> dict:
-    """Sentinel with given state and iteration."""
+    """Sentinel with given state and iteration.
+
+    run_id matches the iters produced by _make_single_iter_* fixtures so the
+    sentinel_matches check in classify() treats it as authoritative.
+    """
     return {
         "state": state,
-        "run_id": "20260813-173420",
+        "run_id": "20260915-112812",
         "iteration": iteration,
     }
 

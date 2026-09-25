@@ -1141,6 +1141,40 @@ def _classify_core(
         return "quota-exhausted", {
             "iter_at_stop": last.get("iteration"),
         }
+    # Selfmod structural failures: committed work is parked in a worktree
+    # and cannot be recovered by relaunching.  These stop_reasons appear in
+    # the run_exit record (not the per-iteration record).  Same label as
+    # the sentinel map — merge-conflict.
+    if last_stop in ("selfmod_merge_failed", "selfmod_live_clone_touched"):
+        return "merge-conflict", {
+            "iter_at_stop": last.get("iteration"),
+            "stop_reason": last_stop,
+        }
+    # Ship-integrity violation: a sub-plan was marked shipped while its gate
+    # was red.  Same label as the sentinel map — shipped-unverified.
+    # When reached via run_exit (not sentinel), carry the route so
+    # _label_narrative produces route-specific text.
+    if last_stop == "ship_integrity_violation":
+        return "shipped-unverified", {
+            "iter_at_stop": last.get("iteration"),
+            "reason": "run_exit terminal state",
+            "route": "ship_integrity_violation",
+        }
+    # Shipped-unproven: every sub-plan says shipped but at least one has no
+    # ship-proof.  Same label as the sentinel map.
+    if last_stop == "shipped-unproven":
+        return "shipped-unverified", {
+            "iter_at_stop": last.get("iteration"),
+            "reason": "run_exit terminal state",
+            "route": "shipped-unproven",
+        }
+    # Work-tree invalid: the declared work_tree path is invalid.
+    if last_stop == "work_tree_invalid":
+        return "shipped-unverified", {
+            "iter_at_stop": last.get("iteration"),
+            "reason": "run_exit terminal state",
+            "route": "work_tree_invalid",
+        }
     if last_stop == "already-shipped":
         # A run that never ran must not inherit the label of a run that
         # worked.  A degenerate already-shipped record is correct, complete
@@ -1362,6 +1396,19 @@ def _classify_self_hosting_drift(
     return "self-hosting-drift", facts
 
 
+class LiveRunError(Exception):
+    """Raised when classify() is asked to classify a run that is still live.
+
+    The run's sentinel is ``state=running`` with a live pid.  Callers should
+    catch this and exit 3 without writing a postmortem.
+    """
+
+    def __init__(self, run_id: str, pid: int) -> None:
+        super().__init__(f"run {run_id} is still running (pid {pid})")
+        self.run_id = run_id
+        self.pid = pid
+
+
 def classify(
     iters: list[dict],
     last_launch: dict | None,
@@ -1440,55 +1487,83 @@ def classify(
     }
     if sentinel is not None:
         sentinel_state = (sentinel.get("state") or "").strip()
-        # `timeout` is a terminal sentinel state written by
-        # run_ilk_loop_claude.sh (:2184 sets iter_stop_reason, :2504 promotes
-        # it) that NO classifier knew until 2026-08-29.  It reached neither
-        # this map nor watchdog.sh's classify_action arms, so a timed-out run
-        # produced no report and the watchdog fell back to a raw state that
-        # then hit its `*` unknown-label fail-safe.
-        #
-        # It is authoritative ONLY when the run left records.  A run with no
-        # records at all never got far enough to say anything about its own
-        # timeout, and "started then killed" must not collapse into "never
-        # ran" -- the two call for different actions (never-ran points at an
-        # environment fault, timeout-bound at the work itself).  An empty run
-        # therefore falls through to the generic no-evidence/never-ran
-        # heuristics below, exactly as before.
-        _timeout_authoritative = sentinel_state == "timeout" and bool(iters)
-        if (
-            sentinel_state in _SENTINEL_FAILURE_MAP
-            or sentinel_state == "local_checks_failed"
-            or _timeout_authoritative
-        ):
-            if sentinel_state == "timeout":
-                label = "timeout-bound"
-            elif sentinel_state == "local_checks_failed":
-                # A broken-gate label requires a broken-gate result.
-                # Consult _is_broken_gate_result on the recorded checks
-                # rather than iterating on count and runner exit code.
-                # See sub-plan a-label-matches-its-own-trigger.
-                has_broken_gate = any(
-                    _is_broken_gate_result(it.get("local_checks", {}))
-                    for it in iters
-                    if it.get("local_checks")
+        sentinel_run_id = sentinel.get("run_id")
+
+        # #52: The sentinel is authoritative only for the run it names.
+        # When classifying run A while the sentinel names run B (a different
+        # run), skip the sentinel and classify from run A's own records.
+        # Without this, a "running" sentinel for run B caused run A
+        # (which had its own run_exit with a real stop_reason) to be
+        # classified as "interrupted" — laundering the real cause.
+        sentinel_matches = (sentinel_run_id is None or sentinel_run_id == run_id)
+
+        # #52: no postmortem for a live run.  When the sentinel is "running"
+        # with a live pid for the SAME run, the run is still in progress —
+        # refuse to classify rather than produce an honest-looking postmortem
+        # for work that isn't done.  read_sentinel already probed the pid
+        # via detect_stale_running and set `stale` — use that rather than
+        # re-probing (which would re-check ilk_pid_alive and disagree with
+        # the sentinel's own stale field).
+        if sentinel_matches and sentinel_state == "running":
+            sentinel_pid = sentinel.get("pid")
+            if sentinel_pid and not sentinel.get("stale", False):
+                raise LiveRunError(run_id or "unknown", sentinel_pid)
+
+        if sentinel_matches:
+            # `timeout` is a terminal sentinel state written by
+            # run_ilk_loop_claude.sh (:2184 sets iter_stop_reason, :2504 promotes
+            # it) that NO classifier knew until 2026-08-29.  It reached neither
+            # this map nor watchdog.sh's classify_action arms, so a timed-out run
+            # produced no report and the watchdog fell back to a raw state that
+            # then hit its `*` unknown-label fail-safe.
+            #
+            # It is authoritative ONLY when the run left records.  A run with no
+            # records at all never got far enough to say anything about its own
+            # timeout, and "started then killed" must not collapse into "never
+            # ran" -- the two call for different actions (never-ran points at an
+            # environment fault, timeout-bound at the work itself).  An empty run
+            # therefore falls through to the generic no-evidence/never-ran
+            # heuristics below, exactly as before.
+            _timeout_authoritative = sentinel_state == "timeout" and bool(iters)
+            if (
+                sentinel_state in _SENTINEL_FAILURE_MAP
+                or sentinel_state == "local_checks_failed"
+                or _timeout_authoritative
+            ):
+                if sentinel_state == "timeout":
+                    label = "timeout-bound"
+                elif sentinel_state == "local_checks_failed":
+                    # A broken-gate label requires a broken-gate result.
+                    # Consult _is_broken_gate_result on the recorded checks
+                    # rather than iterating on count and runner exit code.
+                    # See sub-plan a-label-matches-its-own-trigger.
+                    has_broken_gate = any(
+                        _is_broken_gate_result(it.get("local_checks", {}))
+                        for it in iters
+                        if it.get("local_checks")
+                    )
+                    label = "local-checks-broken" if has_broken_gate else "local-checks-stuck"
+                else:
+                    label = _SENTINEL_FAILURE_MAP[sentinel_state]
+                facts: dict[str, Any] = {
+                    "iter_at_stop": sentinel.get("iteration"),
+                    "reason": "sentinel terminal state",
+                }
+                # Carry the originating stop_reason as "route" so
+                # _label_narrative and recommend_params can produce
+                # route-specific text for shipped-unverified.
+                if label == "shipped-unverified":
+                    facts["route"] = sentinel_state
+                if sentinel_state == "local_checks_failed":
+                    facts["has_broken_gate"] = has_broken_gate
+                # Merge self-hosting facts and return early — the sentinel is
+                # authoritative, no further classification needed.
+                facts.update(sh_facts)
+                assert label in CLASSIFICATION_LABELS, (
+                    f"Sentinel-derived label '{label}' not in CLASSIFICATION_LABELS — "
+                    f"add it to the vocabulary constant in collect.py"
                 )
-                label = "local-checks-broken" if has_broken_gate else "local-checks-stuck"
-            else:
-                label = _SENTINEL_FAILURE_MAP[sentinel_state]
-            facts: dict[str, Any] = {
-                "iter_at_stop": sentinel.get("iteration"),
-                "reason": "sentinel terminal state",
-            }
-            if sentinel_state == "local_checks_failed":
-                facts["has_broken_gate"] = has_broken_gate
-            # Merge self-hosting facts and return early — the sentinel is
-            # authoritative, no further classification needed.
-            facts.update(sh_facts)
-            assert label in CLASSIFICATION_LABELS, (
-                f"Sentinel-derived label '{label}' not in CLASSIFICATION_LABELS — "
-                f"add it to the vocabulary constant in collect.py"
-            )
-            return label, facts
+                return label, facts
 
     label, facts = _classify_core(iters, last_launch, project_path)
 
@@ -1702,12 +1777,14 @@ def recommend_params(
     label: str,
     iters: list[dict],
     last_launch: dict | None,
+    facts: dict[str, Any] | None = None,
 ) -> tuple[int | None, int | None, str]:
     """Return (max_iter, timeout_min, rationale).
 
     Either recommendation may be ``None``, meaning *no* recommendation — a
     field that is absent/null is honest; a number is a measurement claim.
     """
+    facts = facts or {}
     cur_max = (last_launch or {}).get("max_iterations") or 30
     cur_to = (last_launch or {}).get("iteration_timeout_min") or 30
 
@@ -1731,6 +1808,23 @@ def recommend_params(
         return cur_max, cur_to, "kept previous params; run shipped clean"
 
     if label == "shipped-unverified":
+        route = facts.get("route", "")
+        if route == "ship_integrity_violation":
+            return cur_max, cur_to, (
+                "a sub-plan was marked shipped while its gate was red; "
+                "the ship was reverted. Fix the gate or the sub-plan, then relaunch."
+            )
+        if route == "shipped-unproven":
+            return cur_max, cur_to, (
+                "every sub-plan says shipped, but at least one has no ship-proof. "
+                "A human must verify the unproven sub-plans before relaunching."
+            )
+        if route == "work_tree_invalid":
+            return cur_max, cur_to, (
+                "the declared work_tree is invalid. Fix the work_tree path in "
+                "the master frontmatter, then relaunch."
+            )
+        # Verification-tier route (no sentinel route) — keep today's text.
         return cur_max, cur_to, (
             "loop shipped but some sub-plans have compile-only or device-manual "
             "verification tiers — need a human + device pass before trusting."
@@ -2469,14 +2563,35 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
             "shipped. There is nothing to carry forward."
         )
     if label == "shipped-unverified":
+        route = facts.get("route", "")
+        if route == "ship_integrity_violation":
+            return (
+                "stopped: a sub-plan was marked shipped while its gate was red; "
+                "the ship was reverted and the master parked."
+            )
+        if route == "shipped-unproven":
+            return (
+                "stopped: every sub-plan says shipped, but at least one has "
+                "no ship-proof."
+            )
+        if route == "work_tree_invalid":
+            return "stopped: the declared work_tree is invalid."
+        # Verification-tier route (no sentinel route) — keep today's text.
         subs = facts.get("unverified_sub_plans", [])
-        names = ", ".join(
-            f"`{s['plan']}` ({s['tier']})" for s in subs
-        ) or "(none listed)"
+        if subs:
+            names = ", ".join(
+                f"`{s['plan']}` ({s['tier']})" for s in subs
+            )
+            return (
+                "All sub-plans shipped, but some have non-loop-verified tiers "
+                "and still need a human + device pass: " + names + ". "
+                "The loop cannot confirm these are actually working."
+            )
+        # No unverified sub-plans and no route — should not happen, but
+        # avoid the old "(none listed)" fallback.
         return (
-            "All sub-plans shipped, but some have non-loop-verified tiers "
-            "and still need a human + device pass: " + names + ". "
-            "The loop cannot confirm these are actually working."
+            "All sub-plans shipped, but the run was marked unverified. "
+            "A human pass may be needed."
         )
     if label == "timeout-bound":
         cfg_to = facts.get("configured_timeout_min")
@@ -2857,7 +2972,7 @@ def run_reclassify(args) -> int:
             _, manual_tail = split_manual_tail(existing_body)
 
             new_facts = classify(iters, None, proj_path)[1]
-            rec_max, rec_to, rationale = recommend_params(new_label, iters, None)
+            rec_max, rec_to, rationale = recommend_params(new_label, iters, None, new_facts)
 
             last = iters[-1] if iters else {}
             last_log = last.get("log")
@@ -2974,7 +3089,7 @@ def main() -> int:
                     }
                 else:
                     label, facts = classify(iters, last_launch, project_path)
-                rec_max, rec_to, rationale = recommend_params(label, iters, last_launch)
+                rec_max, rec_to, rationale = recommend_params(label, iters, last_launch, facts)
                 report = render_report(
                     project_path=project_path,
                     project_name=project_name,
@@ -3035,7 +3150,7 @@ def main() -> int:
                             "before iter 1 completed"
                         ),
                     }
-                    rec_max, rec_to, rationale = recommend_params(label, iters, last_launch)
+                    rec_max, rec_to, rationale = recommend_params(label, iters, last_launch, facts)
                     report = render_report(
                         project_path=project_path,
                         project_name=project_name,
@@ -3075,7 +3190,7 @@ def main() -> int:
                         f"match). Recent runs with records: {_avail}"
                     ),
                 }
-                rec_max, rec_to, rationale = recommend_params(label, iters, last_launch)
+                rec_max, rec_to, rationale = recommend_params(label, iters, last_launch, facts)
                 report = render_report(
                     project_path=project_path,
                     project_name=project_name,
@@ -3140,7 +3255,13 @@ def main() -> int:
         )
         return 1
 
-    label, facts = classify(iters, last_launch, project_path)
+    # #52: no postmortem for a live run.  classify() raises LiveRunError
+    # when the sentinel is "running" with a live pid for the same run.
+    try:
+        label, facts = classify(iters, last_launch, project_path)
+    except LiveRunError as exc:
+        print(str(exc), file=sys.stderr)
+        return 3
 
     # Count rate-limit events for this run (independently useful metadata).
     rl_count = count_rate_limit_events(target_run, project_path, last_launch)
@@ -3157,7 +3278,7 @@ def main() -> int:
     if hangs:
         facts["ceiling_hit_no_output"] = hangs
 
-    rec_max, rec_to, rationale = recommend_params(label, iters, last_launch)
+    rec_max, rec_to, rationale = recommend_params(label, iters, last_launch, facts)
     last_log = iters[-1].get("log") if iters else None
     if not last_log and iters:
         iter_num = iters[-1].get("iteration")
