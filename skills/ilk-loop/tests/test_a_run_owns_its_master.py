@@ -164,7 +164,7 @@ def two_active_masters(tmp_path: Path) -> dict:
     subprocess.run(
         ["git", "-c", "user.email=t@example.com", "-c", "user.name=t",
          "init", "-b", "main", str(project)],
-        check=True, capture_output=True, text=True,
+        check=True, capture_output=True, text=True, encoding="utf-8",
     )
     data_home = tmp_path / ".ilk-data"
     with patch.dict(
@@ -230,7 +230,7 @@ def pinned_shipped_other_active(tmp_path: Path) -> dict:
     subprocess.run(
         ["git", "-c", "user.email=t@example.com", "-c", "user.name=t",
          "init", "-b", "main", str(project)],
-        check=True, capture_output=True, text=True,
+        check=True, capture_output=True, text=True, encoding="utf-8",
     )
     data_home = tmp_path / ".ilk-data"
     with patch.dict(
@@ -283,7 +283,7 @@ def one_active_master(tmp_path: Path) -> dict:
     subprocess.run(
         ["git", "-c", "user.email=t@example.com", "-c", "user.name=t",
          "init", "-b", "main", str(project)],
-        check=True, capture_output=True, text=True,
+        check=True, capture_output=True, text=True, encoding="utf-8",
     )
     data_home = tmp_path / ".ilk-data"
     with patch.dict(

@@ -165,10 +165,13 @@ def test_ac1_base_pass_head_fail_then_baseline_red(
         {"node_id": "tests/test_x.py::test_a", "reason": "platform"})
     (repo / ".ilk-launch.json").write_text(
         json.dumps(cfg, indent=2), encoding="utf-8")
+    # The recorder refuses a dirty tracked tree, so the declaration is a
+    # commit; the base is now two commits back.
+    _git(repo, "commit", "-am", "declare test_a baseline_red")
 
     rc2 = _run_main(vr, [
         "--project", str(repo), "--batch", "b1",
-        "--base-sha", _base(repo, "HEAD~1"),
+        "--base-sha", _base(repo, "HEAD~2"),
         "--run-suite", "--scope", "full"])
     assert rc2 == 0
 

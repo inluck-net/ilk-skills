@@ -448,7 +448,8 @@ def test_fresh_record_does_not_rerun_step0(tmp_path: Path) -> None:
 # ── AC-3 (xfail): --is-stale exit codes ─────────────────────────────────────
 
 
-def test_is_stale_exits_zero_on_stale_record(tmp_path: Path) -> None:
+def test_is_stale_exits_zero_on_stale_record(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``verify_attribution.py --is-stale --batch X`` exits 0 when the record
     is stale (verified_head != HEAD).  It never spawns the suite.
     """
@@ -474,8 +475,10 @@ def test_is_stale_exits_zero_on_stale_record(tmp_path: Path) -> None:
     # Pin ILK_DATA_HOME and HOME.
     data_home = tmp_path / "data"
     home = tmp_path / "home"
-    os.environ["ILK_DATA_HOME"] = str(data_home)
-    os.environ["HOME"] = str(home)
+    # monkeypatch restores both.  A bare os.environ write leaked HOME and
+    # ILK_DATA_HOME into every later test in the session.
+    monkeypatch.setenv("ILK_DATA_HOME", str(data_home))
+    monkeypatch.setenv("HOME", str(home))
 
     # Write a stale record.
     with _scoped_data_home(data_home):
@@ -510,7 +513,8 @@ def test_is_stale_exits_zero_on_stale_record(tmp_path: Path) -> None:
     )
 
 
-def test_is_stale_exits_one_on_fresh_record(tmp_path: Path) -> None:
+def test_is_stale_exits_one_on_fresh_record(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``verify_attribution.py --is-stale --batch X`` exits 1 when the record
     is fresh (verified_head == HEAD).  It never spawns the suite.
     """
@@ -528,8 +532,10 @@ def test_is_stale_exits_one_on_fresh_record(tmp_path: Path) -> None:
 
     data_home = tmp_path / "data"
     home = tmp_path / "home"
-    os.environ["ILK_DATA_HOME"] = str(data_home)
-    os.environ["HOME"] = str(home)
+    # monkeypatch restores both.  A bare os.environ write leaked HOME and
+    # ILK_DATA_HOME into every later test in the session.
+    monkeypatch.setenv("ILK_DATA_HOME", str(data_home))
+    monkeypatch.setenv("HOME", str(home))
 
     with _scoped_data_home(data_home):
         key = ilk_paths.project_key(project)
@@ -706,7 +712,8 @@ def test_plan_lint_no_warn_on_25a_form_step1() -> None:
 # ── AC-5 (xfail): stale record + suite_scope: full + no --scope ⇒ full ──────
 
 
-def test_stale_record_with_suite_scope_full_respects_scope(tmp_path: Path) -> None:
+def test_stale_record_with_suite_scope_full_respects_scope(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A stale record with ``suite_scope: full`` and a gate without ``--scope``
     ⇒ the re-measure runs in full scope (the new record says
     ``suite_scope: full``).
@@ -749,8 +756,10 @@ def test_stale_record_with_suite_scope_full_respects_scope(tmp_path: Path) -> No
 
     data_home = tmp_path / "data"
     home = tmp_path / "home"
-    os.environ["ILK_DATA_HOME"] = str(data_home)
-    os.environ["HOME"] = str(home)
+    # monkeypatch restores both.  A bare os.environ write leaked HOME and
+    # ILK_DATA_HOME into every later test in the session.
+    monkeypatch.setenv("ILK_DATA_HOME", str(data_home))
+    monkeypatch.setenv("HOME", str(home))
 
     with _scoped_data_home(data_home):
         key = ilk_paths.project_key(project)
