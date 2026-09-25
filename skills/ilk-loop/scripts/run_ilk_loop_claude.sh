@@ -4412,6 +4412,7 @@ print(json.dumps({
     # worked sub-plan.  When the gate passed with 0 new commits, write a
     # gate_pass_at_head row so ship_integrity can still prove the step
     # (AC-1 of ship-proof-without-new-commits).
+    local local_checks_results=""
     local _gate_outcome=""
     if [[ -s "$local_checks_results" ]]; then
       local _bc="${_SKILL_ROOT}/ilk-loop/scripts/blocking_checks.py"
@@ -4459,7 +4460,6 @@ print(json.dumps({
     # that most needs it -- measured 2026-09-08 on a consumer host, an
     # iteration with 0 commits was never gated and the run reported
     # all-shipped over two unproven sub-plans.
-    local local_checks_results=""
     if [[ "$RUN_LOCAL_CHECKS" == true ]]; then
       if [[ "$GATE_FIRST_GREEN" -eq 1 && -n "$gate_first_results" ]]; then
         # The gate already ran on the fast path and passed.  Re-running it
