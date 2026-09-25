@@ -178,7 +178,6 @@ No finding expected.
 
 # ── tests ────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 class TestImportWalkFindsWalkedTest:
     """AC-1: module claim, importer reconcile, test imports reconcile.
 
@@ -202,14 +201,12 @@ class TestImportWalkFindsWalkedTest:
         )
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 class TestGateIncludesWalkedTest:
     """AC-2: gate includes the walked test file ⇒ no finding.
 
-    Today the lint resolves callers' tests by filename (``tests/test_reconcile.py``),
-    so it cannot recognise that ``tests/test_waits_for_runner.py`` covers
-    ``reconcile``.  After step 1 implements import-walk discovery, the lint
-    will see that the gate already covers the walked test and stay silent.
+    The import-walk discovers ``tests/test_waits_for_runner.py`` as a test
+    that imports ``reconcile``.  When the gate covers it, the lint stays
+    silent.
     """
 
     def test_no_finding_when_gate_covers_walked_test(self, tmp_path: Path) -> None:

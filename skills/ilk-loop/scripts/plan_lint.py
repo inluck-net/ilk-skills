@@ -34,6 +34,7 @@ Reads files with ``utf-8-sig`` (zh-CN Windows configs may carry a BOM).
 from __future__ import annotations
 
 import argparse
+import ast
 import os
 import re
 import subprocess
@@ -1869,6 +1870,79 @@ def _is_test_path(rel_path: str) -> bool:
     return False
 
 
+def _find_testpaths(project_root: Path) -> list[Path]:
+    """Return configured test directories, falling back to ``tests/``.
+
+    Reads ``testpaths`` from pytest.ini / setup.cfg / pyproject.toml.
+    """
+    for ini_name, section_start, key_re in [
+        ("pytest.ini", "[pytest]", r"^testpaths\s*=\s*(.+)"),
+        ("setup.cfg", "[tool:pytest]", r"^testpaths\s*=\s*(.+)"),
+    ]:
+        ini = project_root / ini_name
+        if not ini.exists():
+            continue
+        in_section = False
+        for line in ini.read_text(encoding="utf-8-sig").splitlines():
+            if line.strip().startswith("["):
+                in_section = line.strip().startswith(section_start)
+            elif in_section:
+                m = re.match(key_re, line.strip())
+                if m:
+                    return [project_root / d.strip()
+                            for d in m.group(1).split()]
+    pyproject = project_root / "pyproject.toml"
+    if pyproject.exists():
+        text = pyproject.read_text(encoding="utf-8-sig")
+        in_section = False
+        for line in text.splitlines():
+            if line.strip() == "[tool.pytest.ini_options]":
+                in_section = True
+            elif line.strip().startswith("["):
+                in_section = False
+            elif in_section:
+                m = re.match(r"^testpaths\s*=\s*\[(.+)\]", line.strip())
+                if m:
+                    return [project_root / d.strip().strip('"').strip("'")
+                            for d in m.group(1).split(",")]
+    default = project_root / "tests"
+    return [default] if default.is_dir() else []
+
+
+def _discover_tests_by_import(
+    module_name: str, project_root: Path,
+) -> set[str]:
+    """Find test files that import *module_name* via ``ast`` parsing.
+
+    Returns a set of resolved absolute paths.  Only files under the
+    project's configured ``testpaths`` (or ``tests/``) are scanned.
+    """
+    test_dirs = _find_testpaths(project_root)
+    results: set[str] = set()
+    for td in test_dirs:
+        if not td.is_dir():
+            continue
+        for py in td.rglob("test_*.py"):
+            try:
+                tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
+            except (SyntaxError, OSError):
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        top = alias.name.split(".")[0]
+                        if top == module_name:
+                            results.add(str(py))
+                            break
+                elif isinstance(node, ast.ImportFrom):
+                    if node.module:
+                        top = node.module.split(".")[0]
+                        if top == module_name:
+                            results.add(str(py))
+                            break
+    return results
+
+
 def _find_importers(module_name: str, project_root: Path) -> list[str]:
     """Find production Python files that import *module_name*.
 
@@ -2058,9 +2132,16 @@ def lint_shared_module_gate(text: str, slug: str) -> list[str]:
         for imp in importers:
             imp_module = _resolve_module_name(imp)
             if imp_module:
+                # Filename-based resolution (legacy).
                 callers_test |= _resolve_test_paths(
                     [f"tests/test_{imp_module}.py"], project_root,
                     scope_path=imp,
+                )
+                # Import-graph discovery: find test files that import the
+                # importer module (one level of production importers + test
+                # files that import them).
+                callers_test |= _discover_tests_by_import(
+                    imp_module, project_root,
                 )
 
         # NOTE (2026-08-26): this used to `continue` whenever module_test OR
@@ -2105,14 +2186,31 @@ def lint_shared_module_gate(text: str, slug: str) -> list[str]:
 
         # AC-6: finding text names the importing files and warns about baseline.
         importer_names = ", ".join(sorted(set(importers)))
+        # Name the specific test files the gate misses (import-graph walk).
+        all_gate_paths: set[str] = set()
+        for cmd in commands:
+            all_gate_paths |= _resolve_test_paths(
+                _extract_test_file_tokens(cmd), project_root,
+            )
+        missed_tests = sorted(callers_test - all_gate_paths)
+        missed_str = ""
+        if missed_tests:
+            # Show relative paths for readability.
+            root_str = str(project_root)
+            rel_missed = [
+                t[len(root_str):].lstrip("/") if t.startswith(root_str) else t
+                for t in missed_tests
+            ]
+            missed_str = f"  The gate misses: {', '.join(rel_missed)}."
         findings.append(
             f"{slug}: scope_path '{sp}' changes module '{module}' which is "
             f"imported by: {importer_names}.  Every gate in this sub-plan "
             f"runs only the module's own tests — the callers' integration "
-            f"is never exercised.  Add a gate that runs the callers' tests "
-            f"(or the full suite).  Note: widening the gate to a directory "
-            f"or whole suite will also require a 'baseline-green on "
-            f"<platform>' note (see lint_wholesuite_gate_baseline)."
+            f"is never exercised.{missed_str}  Add a gate that runs the "
+            f"callers' tests (or the full suite).  Note: widening the gate "
+            f"to a directory or whole suite will also require a "
+            f"'baseline-green on <platform>' note "
+            f"(see lint_wholesuite_gate_baseline)."
         )
 
     return findings
