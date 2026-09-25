@@ -2180,3 +2180,69 @@ gh-resolve run `20260925-085248` iter 7 committed `#step-0` and `#step-1`
 of a verify sub-plan together. The driver gated only step 1 (max-step
 rule), so step 0's driver-side suite never ran. The sub-plan shipped as
 `loop-verified` on the strength of step 1's gate alone.
+
+---
+
+## Contract 13: Red-owner attribution (`red_owner.py`)
+
+### Purpose
+
+When the widest gate goes red, the running sub-plan may not be the one
+that introduced the regression. A cross-sub-plan regression causes a
+strike (`auto_block_fails` bump) on the wrong sub-plan, which can
+quarantine it without fixing the real cause. This contract defines the
+bisect helper and the runner's no-strike-when-not-owner rule.
+
+### The helper
+
+`red_owner.py` binary-searches `git rev-list --first-parent <base>..<head>`
+to find the first commit where the failing test nodes break. It uses a
+detached worktree (never the live tree) and is bounded:
+`ceil(log2(n))+1` runs, wall-clock cap (`--budget-s`, default 300).
+
+### Format
+
+```json
+{"first_red": "<sha>", "first_red_subject": "...", "base_green": true}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `first_red` | `string \| null` | SHA of the first red commit, or `null` |
+| `first_red_subject` | `string \| null` | Commit subject, or `null` |
+| `base_green` | `bool` | `false` means the base was already red (no bisect) |
+| `reason` | `string` | Present only when `first_red` is `null` due to budget |
+
+### Who writes
+
+- **`red_owner.py`** — invoked by the runner.
+
+### Who reads
+
+- **`run_ilk_loop_claude.sh`** — after B2 confirms a gate failure, before
+  the quarantine call. Maps `first_red` to its owning sub-plan via the
+  commit's `[plan:<slug>#…]` trailer.
+
+### Invariants
+
+1. **Bisect never touches the working tree.** A detached worktree under
+   the run's log dir is used. `git status --porcelain` and
+   `git stash list` are unchanged afterwards.
+
+2. **No strike on the wrong sub-plan.** When the owner slug differs from
+   the running sub-plan, `auto_block_fails` is NOT bumped. The runner
+   appends a Findings note: `cross-sub-plan regression: <node> first red
+   at <sha> (<owner>); needs a fix sub-plan`. The run still stops
+   (gate is red).
+
+3. **Budget cap is safe.** `first_red: null` with `reason: budget` means
+   the runner falls through to today's behavior (normal strike).
+
+4. **Red at base skips bisect.** `base_green: false` means the test was
+   already broken at the master's base — no bisect, normal strike.
+
+### Bug reference (ilk-skills #51)
+
+gh-resolve MASTER-2026-09-25b sub-plan 3's widest gate went red on a
+test first broken by sub-plan 1's commit `2708654`. Sub-plan 3 took the
+strike (`auto_block_fails` 1 of 2) and could not fix it in scope.

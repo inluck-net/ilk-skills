@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -72,7 +71,7 @@ def _make_repo(tmp_path: Path) -> Path:
 
 
 def _run_red_owner(repo: Path, base: str, head: str,
-                   gate_cmd: str = "python -m pytest test_foo.py -q",
+                   gate_cmd: str = "python3 -m pytest test_foo.py -q",
                    nodes: list[str] | None = None,
                    budget: int = 300) -> dict:
     args = [
@@ -94,7 +93,6 @@ def _run_red_owner(repo: Path, base: str, head: str,
 
 # ── AC-1: bisect names the commit that broke the test ────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac1_bisect_names_commit_a(tmp_path: Path) -> None:
     repo = _make_repo(tmp_path)
     base = _git(repo, "rev-parse", "HEAD~2")
@@ -112,39 +110,59 @@ def test_ac1_bisect_names_commit_a(tmp_path: Path) -> None:
 
 # ── AC-2: red at base ⇒ no bisect ────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac2_red_at_base_skips_bisect(tmp_path: Path) -> None:
     """If the test is already red at base, bisect should not run."""
-    repo = _make_repo(tmp_path)
-    # Overwrite base to be red too
-    base_sha = _git(repo, "rev-parse", "HEAD~2")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "test@test")
+    _git(repo, "config", "user.name", "Test")
+
+    # base — RED (test already broken at base)
     (repo / "test_foo.py").write_text("def test_foo(): assert False\n")
     _git(repo, "add", ".")
-    _git(repo, "commit", "--amend", "-m", "base: red")
-    base_sha = _git(repo, "rev-parse", "HEAD~2")  # re-resolve after amend
+    _git(repo, "commit", "-m", "base: red")
+
+    # A — still broken
+    (repo / "bar.py").write_text("# a\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "feat(x): a [plan:one#step-0]")
+
+    base = _git(repo, "rev-parse", "HEAD~1")
     head = _git(repo, "rev-parse", "HEAD")
-    result = _run_red_owner(repo, base_sha, head)
+    result = _run_red_owner(repo, base, head)
     assert result.get("base_green") is False, result
     assert result["first_red"] is None, result
 
 
 # ── AC-3: owner is the running sub-plan ⇒ strikes behave as today ────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac3_owner_is_running_subplan(tmp_path: Path) -> None:
     """When the red commit belongs to the running sub-plan (``two``),
     the normal strike logic applies — the owner IS the running sub-plan.
     """
-    repo = _make_repo(tmp_path)
-    # Make commit B the one that breaks the test
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.email", "test@test")
+    _git(repo, "config", "user.name", "Test")
+
+    # base — green
     (repo / "test_foo.py").write_text("def test_foo(): assert True\n")
     _git(repo, "add", ".")
-    _git(repo, "commit", "-m", "fix: restore green")
+    _git(repo, "commit", "-m", "base: green")
+
+    # A — unrelated change, test still passes
+    (repo / "bar.py").write_text("# a\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "feat(x): unrelated [plan:one#step-0]")
+
+    # B — breaks the test (owner IS the running sub-plan)
     (repo / "test_foo.py").write_text("def test_foo(): assert False\n")
     _git(repo, "add", ".")
-    _git(repo, "commit", "-m", "feat(y): re-break [plan:two#step-0]")
+    _git(repo, "commit", "-m", "feat(y): breaks [plan:two#step-0]")
 
-    base = _git(repo, "rev-parse", "HEAD~3")
+    base = _git(repo, "rev-parse", "HEAD~2")
     head = _git(repo, "rev-parse", "HEAD")
     result = _run_red_owner(repo, base, head)
     first_red = result["first_red"]
@@ -157,7 +175,6 @@ def test_ac3_owner_is_running_subplan(tmp_path: Path) -> None:
 
 # ── AC-4: budget cap returns first_red: null ─────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac4_budget_cap_returns_null(tmp_path: Path) -> None:
     """With a budget of 0s, the bisect should give up immediately."""
     repo = _make_repo(tmp_path)
@@ -170,7 +187,6 @@ def test_ac4_budget_cap_returns_null(tmp_path: Path) -> None:
 
 # ── AC-5: bisect never touches the working tree ──────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac5_bisect_preserves_working_tree(tmp_path: Path) -> None:
     repo = _make_repo(tmp_path)
     base = _git(repo, "rev-parse", "HEAD~2")

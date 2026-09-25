@@ -4629,10 +4629,155 @@ print('false' if not d.get('blocked', True) else 'true')
           if [[ "$confirmed_blocked" == "false" ]]; then
             echo "B2 transient cleared on re-run" >&2
           else
+            # Confirmed blocking — red-owner attribution before quarantine.
+            # If the regression was introduced by a DIFFERENT sub-plan, skip
+            # the strike on the running sub-plan and log the real owner.
+            local _red_owner_script="${_SKILL_ROOT}/ilk-loop/scripts/red_owner.py"
+            local _red_owner_skip_quarantine="false"
+            if [[ -f "$_red_owner_script" && -s "$local_checks_results" ]]; then
+              # Extract master's base_sha
+              local _master_base_sha=""
+              local _active_master_file=""
+              _active_master_file=$(python3 -c "
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+try:
+    from plan_status import normalize_master_status
+    from loop_status import pick_active_master, parse_frontmatter
+    masters = sorted(Path(sys.argv[1]).glob('MASTER-*.md'))
+    actives = [m for m in masters
+               if normalize_master_status(parse_frontmatter(
+                   m.read_text(encoding='utf-8-sig')).get('status') or '') == 'active']
+    if actives or masters:
+        chosen, _ = pick_active_master(actives or masters, json_mode=True)
+        print(chosen)
+except Exception:
+    pass
+" "$plans_dir" "${_SKILL_ROOT}/ilk-loop/scripts" 2>/dev/null) || true
+
+              if [[ -n "$_active_master_file" && -f "$_active_master_file" ]]; then
+                _master_base_sha=$(python3 -c "
+import re, sys
+from pathlib import Path
+body = Path(sys.argv[1]).read_text(encoding='utf-8-sig')
+m = re.search(r'^---\s*\n(.*?)\n---', body, re.DOTALL)
+if m:
+    for line in m.group(1).splitlines():
+        if line.strip().startswith('base_sha:'):
+            print(line.split(':', 1)[1].strip()); break
+" "$_active_master_file" 2>/dev/null) || true
+              fi
+
+              # Extract failing node ids from blocking checks
+              local _failing_nodes=""
+              _failing_nodes=$(python3 -c "
+import json, sys
+from pathlib import Path
+records = []
+for raw in Path(sys.argv[1]).read_text(encoding='utf-8-sig').splitlines():
+    if not raw.strip():
+        continue
+    try:
+        rec = json.loads(raw)
+    except json.JSONDecodeError:
+        continue
+    if rec.get('outcome') in ('fail', 'error'):
+        cmd = rec.get('command', '')
+        if cmd:
+            records.append(cmd)
+# Deduplicate
+for c in sorted(set(records)):
+    print(c)
+" "$local_checks_results" 2>/dev/null) || true
+
+              if [[ -n "$_master_base_sha" && -n "$_failing_nodes" ]]; then
+                # Run the failing commands at base to verify they pass
+                local _base_red="false"
+                local _repo_path
+                _repo_path=$(selfmod_effective_repo "$PROJECT_PATH" 2>/dev/null) || _repo_path="$PROJECT_PATH"
+                while IFS= read -r _node_cmd; do
+                  [[ -z "$_node_cmd" ]] && continue
+                  if ! (cd "$_repo_path" && bash -c "$_node_cmd" >/dev/null 2>&1); then
+                    _base_red="true"
+                    break
+                  fi
+                done <<< "$_failing_nodes"
+
+                if [[ "$_base_red" == "false" ]]; then
+                  # Base is green — run the bisect
+                  local _ro_result=""
+                  _ro_result=$(python3 "$_red_owner_script" \
+                    --repo "$_repo_path" \
+                    --base "$_master_base_sha" --head "$(git -C "$_repo_path" rev-parse HEAD)" \
+                    --cmd "" \
+                    --budget-s 300 \
+                    2>/dev/null) || true
+
+                  if [[ -n "$_ro_result" ]]; then
+                    local _ro_first_red _ro_base_green
+                    _ro_first_red=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('first_red','') or '')" "$_ro_result" 2>/dev/null) || true
+                    _ro_base_green=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('base_green', True))" "$_ro_result" 2>/dev/null) || true
+
+                    if [[ -n "$_ro_first_red" && "$_ro_base_green" == "True" ]]; then
+                      # Map first_red to its owning sub-plan via trailer
+                      local _owner_slug=""
+                      _owner_slug=$(git -C "$_repo_path" log --format=%s -1 "$_ro_first_red" 2>/dev/null | grep -oE '\[plan:[^#]+#' | head -1 | sed 's/\[plan://;s/#//') || true
+
+                      if [[ -n "$_owner_slug" ]]; then
+                        local _running_slug="${PRE_ITER_TARGET%% *}"
+                        echo "  [red-owner] first red at ${_ro_first_red:0:7} (owner: $_owner_slug)" >&2
+                        if [[ "$_owner_slug" != "$_running_slug" ]]; then
+                          echo "  [red-owner] cross-sub-plan regression: $_owner_slug broke it, not $_running_slug" >&2
+                          _red_owner_skip_quarantine="true"
+                          # Append finding to the running sub-plan
+                          local _subplan_file
+                          _subplan_file=$(python3 -c "
+import sys
+from pathlib import Path
+for p in Path(sys.argv[1]).glob('*-' + sys.argv[2] + '.md'):
+    if not p.name.startswith('MASTER'):
+        print(p); break
+" "$plans_dir" "$_running_slug" 2>/dev/null) || true
+                          if [[ -n "$_subplan_file" && -f "$_subplan_file" ]]; then
+                            python3 -c "
+import re, sys
+from pathlib import Path
+
+p = Path(sys.argv[1])
+owner = sys.argv[2]
+sha = sys.argv[3]
+body = p.read_text(encoding='utf-8-sig')
+note = f'- cross-sub-plan regression: first red at {sha[:7]} ({owner}); needs a fix sub-plan'
+marker = '## Findings'
+if marker in body:
+    idx = body.find(marker)
+    after = idx + len(marker)
+    nl = body.find('\n', after)
+    if nl < 0:
+        nl = after
+    body = body[:nl+1] + note + '\n' + body[nl+1:]
+else:
+    body = body.rstrip() + '\n\n## Findings\n\n' + note + '\n'
+p.write_text(body, encoding='utf-8')
+" "$_subplan_file" "$_owner_slug" "$_ro_first_red" 2>/dev/null || true
+                          fi
+                        fi
+                      fi
+                    fi
+                  fi
+                fi
+              fi
+            fi
+
             # Confirmed blocking — try auto-quarantine before stopping.
+            # Skip quarantine if red-owner determined the regression is from
+            # a different sub-plan (no strike on the wrong sub-plan).
             local quarantine_script="${_SKILL_ROOT}/ilk-loop/scripts/quarantine_subplan.py"
             local quarantined="false"
-            if [[ -f "$quarantine_script" ]]; then
+            if [[ "$_red_owner_skip_quarantine" == "true" ]]; then
+              echo "  [red-owner] skipping quarantine: regression from different sub-plan" >&2
+            elif [[ -f "$quarantine_script" ]]; then
               local q_plans_dir
               # Resolve via the driver's own helper. `ilk_paths.py --plans-dir`
               # is NOT a flag ilk_paths has (it accepts --start, --where,
