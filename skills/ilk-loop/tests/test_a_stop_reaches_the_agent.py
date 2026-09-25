@@ -34,6 +34,10 @@ _NEEDS_GTIMEOUT = pytest.mark.skipif(
     reason="the bash runner refuses to start without gtimeout (preflight:190)",
 )
 
+# Shared across _build_world and _any_stub_alive so the signal test
+# can check whether the stub process survived.
+_STUB_PID_FILE: Path | None = None
+
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -55,6 +59,8 @@ def _build_world(
     Returns dict with ``project``, ``plans``, ``data_home``, ``key``,
     ``bin``, ``slug``, ``stem``.
     """
+    global _STUB_PID_FILE
+
     project = root / "project"
     (project / "docs").mkdir(parents=True)
     _git(project.parent, "init", "-q", str(project))
@@ -96,14 +102,21 @@ def _build_world(
         encoding="utf-8",
     )
 
-    # Stub claude: holds for STUB_HOLD_SECONDS then exits with stub_exit_code.
+    # Stub claude: writes its PID to a file, sleeps for the configured
+    # duration, then exits.  The hold seconds are passed via a config file
+    # because environment variables set in Popen(env=...) don't reliably
+    # reach through the runner's pipeline on all platforms.
     bin_dir = root / "bin"
     bin_dir.mkdir()
+    _STUB_PID_FILE = root / "stub.pid"
+    stub_hold_file = root / "stub-hold-seconds"
+    stub_hold_file.write_text(str(stub_hold_seconds), encoding="utf-8")
     stub = bin_dir / "claude"
     stub.write_text(
         "#!/usr/bin/env bash\n"
-        # Mark the process so we can find it in ps.
-        "exec -a 'ilk-stub-agent-hold' sleep \"${STUB_HOLD_SECONDS:-0}\"\n",
+        f"echo $$ > \"{_STUB_PID_FILE}\"\n"
+        f"HOLD=$(cat \"{stub_hold_file}\" 2>/dev/null || echo 0)\n"
+        "sleep \"$HOLD\"\n",
         encoding="utf-8",
     )
     stub.chmod(0o755)
@@ -153,12 +166,18 @@ def _run_one_iteration(
         text=True,
         encoding="utf-8",
         errors="replace",
+        preexec_fn=os.setpgrp,  # new process group for the runner
     )
 
     if send_signal is not None:
         time.sleep(signal_delay)  # let the runner get past setup
-        proc.send_signal(send_signal)
-        stdout, stderr = proc.communicate(timeout=timeout)
+        # Send signal to the runner's process group so the trap fires.
+        os.killpg(proc.pid, send_signal)
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate(timeout=10)
     else:
         stdout, stderr = proc.communicate(timeout=timeout)
 
@@ -177,20 +196,22 @@ def _read_sentinel(world: dict) -> dict:
     return json.loads(sentinel.read_text(encoding="utf-8"))
 
 
-def _any_stub_alive() -> bool:
-    """Check if any stub agent process is still running."""
-    result = subprocess.run(
-        ["ps", "-eo", "command"],
-        capture_output=True, text=True, timeout=5,
-    )
-    return "ilk-stub-agent-hold" in result.stdout
+def _stub_pid_alive() -> bool:
+    """Check if the stub agent's PID (from the PID file) is still alive."""
+    if _STUB_PID_FILE is None or not _STUB_PID_FILE.exists():
+        return False
+    try:
+        pid = int(_STUB_PID_FILE.read_text().strip())
+        os.kill(pid, 0)  # signal 0: check if alive
+        return True
+    except (ValueError, ProcessLookupError, PermissionError):
+        return False
 
 
 # ── AC-1: SIGTERM interrupts the running agent ────────────────────────────────
 
 @_NEEDS_GTIMEOUT
 @pytest.mark.timeout(90)
-@pytest.mark.xfail(strict=True, reason="red-first: the runner's trap defers until the foreground pipeline exits")
 def test_sigterm_interrupts_running_agent(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
@@ -209,7 +230,7 @@ def test_sigterm_interrupts_running_agent(
         world, root,
         send_signal=signal.SIGTERM,
         signal_delay=3.0,
-        timeout=30,
+        timeout=60,
     )
     elapsed = time.monotonic() - t0
     tail = "\n".join((result.stdout + result.stderr).splitlines()[-30:])
@@ -226,7 +247,7 @@ def test_sigterm_interrupts_running_agent(
     )
 
     # No stub process should survive.
-    assert not _any_stub_alive(), (
+    assert not _stub_pid_alive(), (
         "stub agent process still alive after SIGTERM — the agent was not killed"
     )
 

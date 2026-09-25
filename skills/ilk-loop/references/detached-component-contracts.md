@@ -1918,7 +1918,7 @@ Every exit path writes one of:
 | `blocked-no-runnable` | All remaining sub-plans blocked |
 | `ship_integrity_violation` | Gate red on a shipped sub-plan (record-only under profile) |
 | `local_checks_failed` | Gate failed |
-| `interrupted` | Signal/abnormal exit (from `finalize_sentinel`) |
+| `interrupted` | Signal/abnormal exit (from `finalize_sentinel`). A SIGINT or SIGTERM while the agent runs now terminates it within a 10 s grace period (TERM → wait → KILL) before writing this state. |
 | `lock_held` | Another runner holds the lock |
 | `profile_unsupported` | PS1 runner: profile not implemented |
 | `max-iterations` | Hit iteration budget |

@@ -3022,6 +3022,49 @@ invoke_batch_gate() {
   return 0
 }
 
+# _ilk_kill_children
+#
+# Kill all descendant processes of this shell (the agent pipeline and
+# its descendants).  TERM first, wait up to 5 s, then KILL.
+# Used by the INT/TERM signal traps to stop the agent quickly.
+_ilk_kill_children() {
+  local runner_pid=$$
+  # Find ALL descendants (not just direct children).
+  local desc_pids
+  desc_pids=$(pgrep -P "$runner_pid" 2>/dev/null | while read p; do
+    echo "$p"
+    pgrep -P "$p" 2>/dev/null
+  done) || true
+  # Also include direct children in case the above misses them.
+  local direct_pids
+  direct_pids=$(pgrep -P "$runner_pid" 2>/dev/null) || true
+  local all_pids="$desc_pids $direct_pids"
+  # Deduplicate and remove runner PID.
+  all_pids=$(echo "$all_pids" | tr ' ' '\n' | sort -u | grep -v "^${runner_pid}$" | grep -v '^$') || true
+  if [[ -z "$all_pids" ]]; then
+    echo "[trap] no descendants to kill" >&2
+    return 0
+  fi
+  echo "[trap] killing descendants: $all_pids" >&2
+  for pid in $all_pids; do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  local _i
+  for _i in 1 2 3 4 5; do
+    local alive=0
+    for pid in $all_pids; do
+      kill -0 "$pid" 2>/dev/null && alive=1 || true
+    done
+    [[ "$alive" -eq 0 ]] && break
+    echo "[trap] waiting $_i..." >&2
+    sleep 1
+  done
+  for pid in $all_pids; do
+    kill -KILL "$pid" 2>/dev/null || true
+  done
+  echo "[trap] descendants killed" >&2
+}
+
 invoke_claude_iteration() {
   local cwd="$1"
   local iter_log="$2"
@@ -3077,11 +3120,26 @@ for k, v in sorted(d.get("env", {}).items()):
     print("export %s=%s;" % (k, shlex.quote(str(v))))
 ') || settings_env_exports=""
   fi
+  # Run the agent pipeline in the background so a trapped SIGTERM can
+  # interrupt the `wait` instead of deferring until the foreground job
+  # finishes.  set -m gives the backgrounded pipeline its own process
+  # group so the trap can TERM the whole group.
+  set -m
   (cd "$cwd" && { [[ -z "$PATH_PRELUDE" ]] || eval "$PATH_PRELUDE"; } \
       && eval "$settings_env_exports" \
       && ILK_WORKER_SESSION=1 gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
-    | tee "$jsonl_log" | python3 "$renderer" | tee "$iter_log" \
-    || exit_code=$?
+    | tee "$jsonl_log" | python3 "$renderer" | tee "$iter_log" &
+  local _pipeline_pid=$!
+  set +m
+  # The backgrounded pipeline is in its own process group (set -m).
+  # Record the PGID (= the pipeline's PID) so the signal trap can
+  # TERM the whole group.
+  _ILK_AGENT_PGID="$_pipeline_pid"
+
+  local exit_code=0
+  wait "$_pipeline_pid" || exit_code=$?
+  # Clean up the process group (no-op if the agent already exited).
+  kill -0 "-$_ILK_AGENT_PGID" 2>/dev/null && kill -TERM "-$_ILK_AGENT_PGID" 2>/dev/null || true
 
   # Detect budget-exhausted via the terminal result's terminal_reason field only.
   # Phrase-based patterns ("budget exhausted") match agent thinking/output that
@@ -3880,11 +3938,14 @@ print(fm.get('result_file', ''))
     # a terminal state (all-shipped, error, max-iterations, etc.).
     trap 'record_err_context "$LINENO" "$BASH_COMMAND"' ERR
     trap finalize_sentinel EXIT
-    # A signal trap that returns RESUMES the script: the iteration went on to
-    # gate and overwrote the `interrupted` result with its own exit state.
-    # Finalize, then exit with the conventional 128+signal status.
-    trap 'finalize_sentinel; exit 130' INT
-    trap 'finalize_sentinel; exit 143' TERM
+    # Stop the agent first, then finalize and exit.
+    # The agent pipeline runs as a child of this shell.  Kill all
+    # descendant processes (not just direct children — the pipeline's
+    # tees and renderer are grandchildren), then `exec true` to
+    # replace the shell (exit from inside a trap doesn't reliably
+    # terminate a shell waiting on a pipeline, but exec does).
+    trap '_ilk_kill_children; finalize_sentinel; exec true' INT
+    trap '_ilk_kill_children; finalize_sentinel; exec true' TERM
   else
     echo "Sentinel: skipped (no runtime dir resolved)"
   fi
