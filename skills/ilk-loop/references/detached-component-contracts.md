@@ -230,6 +230,63 @@ showed "running" for an hour. Fixed in sub-plan #3
 
 ---
 
+## Contract 1b: Refusal sentinel (`last-refusal.json`)
+
+### Purpose
+
+When a second runner is refused because another runner holds the lock, it
+writes `last-refusal.json` instead of overwriting `last-exit.json`. This
+preserves the live runner's sentinel while recording the refusal.
+
+### Format
+
+Same shape as `last-exit.json`:
+
+```json
+{
+  "state": "lock_held",
+  "pid": 48269,
+  "run_id": "20260925-140101",
+  "started_at": "2026-09-25T14:01:01+0800",
+  "ended_at": "2026-09-25T14:01:01+0800",
+  "project_path": "/path/to/project",
+  "cli": "claude"
+}
+```
+
+### Who writes
+
+- **`run_ilk_loop_claude.sh`** — the lock wrapper, when `ilk_run_lock.py`
+  exits 3 **and** the refusal marker file exists. The marker disambiguates
+  lock-held (exit 3 from the helper) from a runner that itself exits 3.
+
+### Who reads
+
+- **`collect.py`** — may scan for refusal records to distinguish refused
+  runs from crashed runs.
+- **`status_all.py`** — does NOT read this file; it reads only
+  `last-exit.json`.
+
+### Invariants
+
+1. **`last-exit.json` has exactly one writer: the runner holding the lock.**
+   A refused runner writes `last-refusal.json`, never `last-exit.json`.
+2. **The refusal marker disambiguates exit codes.** `ilk_run_lock.py` writes
+   a marker file (`run.lock.refused-<pid>`) before exiting 3. The wrapper
+   treats rc 3 as lock_held only if the marker exists, then deletes it.
+   Without the marker, rc 3 is the runner's own exit code (passed through).
+3. **`last-refusal.json` is terminal.** Its `state` is always `"lock_held"`.
+   It is never rewritten by a subsequent run.
+
+### Bug reference (ilk-skills #45)
+
+rezmac 2026-09-25 14:01:01: a lock_held runner replaced `last-exit.json`
+while pid 95267 held `run.lock`. The live runner's sentinel was overwritten
+with `state: lock_held`, causing `status_all.py` to report the project as
+idle. Fixed by writing `last-refusal.json` instead.
+
+---
+
 ## Contract 2: JSONL logs (`.ilk-loop.log` + per-iter logs)
 
 ### Format

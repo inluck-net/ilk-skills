@@ -3730,8 +3730,10 @@ main() {
       # `interrupted`.  `<&0` keeps stdin: an async command's default stdin is
       # /dev/null.
       local lock_rc=0
+      local _refusal_marker="${runtime_dir_for_lock}/run.lock.refused-$$"
       python3 "${_SKILL_ROOT}/ilk-loop/scripts/ilk_run_lock.py" \
-        --lock "$lock_file" -- bash "$0" "$@" <&0 &
+        --lock "$lock_file" --refusal-marker "$_refusal_marker" \
+        -- bash "$0" "$@" <&0 &
       _ILK_LOCK_CHILD=$!
       trap 'kill -INT "$_ILK_LOCK_CHILD" 2>/dev/null' INT
       trap 'kill -TERM "$_ILK_LOCK_CHILD" 2>/dev/null' TERM
@@ -3745,27 +3747,28 @@ main() {
       trap - INT TERM
       [[ $lock_rc -eq 0 ]] && exit 0
       # If we get here, the lock was NOT acquired.
-      if [[ $lock_rc -eq 3 ]]; then
+      # Disambiguate: rc 3 + refusal marker = lock_held; rc 3 without
+      # marker = the runner itself exited 3 (pass through).
+      if [[ $lock_rc -eq 3 && -f "$_refusal_marker" ]]; then
+        rm -f "$_refusal_marker"
         echo "[runner] another runner holds this project's lock. Exiting." >&2
-        # Write lock_held to sentinel and result file when ILK_MASTER is set
-        # (the profile can be read). gh-resolve reads a missing file as
-        # runner_died.
+        # Write lock_held to last-refusal.json (NOT last-exit.json —
+        # the live runner owns last-exit.json).
         local _lock_rd=""
         _lock_rd=$(get_ilk_runtime_dir 2>/dev/null) || true
         if [[ -n "$_lock_rd" ]]; then
           local _lock_ts
           _lock_ts=$(date +%Y-%m-%dT%H:%M:%S%z)
           local _lock_run_id="${RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
-          local stop_reason="lock_held"
           python3 -c "import json; print(json.dumps({
-            'state': '$stop_reason',
+            'state': 'lock_held',
             'pid': $$,
             'run_id': '$_lock_run_id',
             'started_at': '$_lock_ts',
             'ended_at': '$_lock_ts',
             'project_path': '$PROJECT_PATH',
             'cli': 'claude'
-          }))" > "${_lock_rd}/last-exit.json.tmp" && mv -f "${_lock_rd}/last-exit.json.tmp" "${_lock_rd}/last-exit.json" || true
+          }))" > "${_lock_rd}/last-refusal.json.tmp" && mv -f "${_lock_rd}/last-refusal.json.tmp" "${_lock_rd}/last-refusal.json" || true
         fi
         if [[ -n "${ILK_MASTER:-}" ]]; then
           local _lock_plans_dir=""
@@ -3794,8 +3797,15 @@ print(fm.get('result_file', ''))
         fi
         exit 3
       fi
-      echo "[runner] lock helper failed (exit $lock_rc)" >&2
-      exit 1
+      # Not a marked refusal — the runner itself exited with this code.
+      # Pass it through.  The only helper-specific error is rc 1 with no
+      # refusal marker (the helper's own usage/lock-file error); print a
+      # diagnostic but still pass through.
+      if [[ $lock_rc -eq 1 ]]; then
+        echo "[runner] lock helper or runner exited with code 1" >&2
+      fi
+      rm -f "$_refusal_marker" 2>/dev/null
+      exit "$lock_rc"
     fi
   fi
 

@@ -31,6 +31,10 @@ def main():
         "--lock", required=True, help="Path to the lock file."
     )
     parser.add_argument(
+        "--refusal-marker", default=None,
+        help="Path to write a refusal marker before exit 3."
+    )
+    parser.add_argument(
         "command", nargs=argparse.REMAINDER,
         help="Command to exec (after -- separator)."
     )
@@ -71,6 +75,20 @@ def main():
             f"(pid={pid}, started={started})",
             file=sys.stderr,
         )
+        # Write refusal marker so the wrapper can distinguish lock_held
+        # (exit 3 from the helper) from a runner that exits 3 on its own.
+        if args.refusal_marker:
+            try:
+                marker_dir = os.path.dirname(args.refusal_marker) or "."
+                os.makedirs(marker_dir, exist_ok=True)
+                with open(args.refusal_marker, "w") as mf:
+                    mf.write(json.dumps({
+                        "pid": os.getpid(),
+                        "holder_pid": pid,
+                        "refused_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                    }))
+            except OSError:
+                pass  # best-effort; wrapper checks for file existence
         os.close(fd)
         sys.exit(3)
 
