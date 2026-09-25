@@ -203,3 +203,79 @@ def test_present_file_has_no_finding(tmp_path: Path) -> None:
     assert findings == [], (
         f"Expected no findings for present file, got: {findings}"
     )
+
+
+# ── the CLI: an INFO finding is not a FAIL ───────────────────────────────────
+#
+# The tests above drive _check_declared_paths and split INFO from FAIL
+# themselves.  The CLI -- what /ilk-plan runs -- printed every finding as
+# `FAIL:` and exited 1, so a sub-plan that correctly declares a file its
+# step 0 writes could never pass preflight (gh-resolve-8f, 2026-09-25).
+
+_CLI_MASTER = """\
+---
+master_plan: 2026-09-25-cli
+batch_date: 2026-09-25
+status: draft
+current_subplan: 2026-09-25-alpha
+---
+
+# MASTER plan: cli batch
+
+## Sub-plan registry
+
+| # | Sub-plan | Status |
+|---|---|---|
+| 1 | 2026-09-25-alpha.md | pending |
+"""
+
+_CLI_SUBPLAN = """\
+---
+plan: alpha
+status: pending
+current_step: 0
+estimated_steps: 2
+unit_test_targets: ["{target}"]
+---
+# Sub-plan: alpha
+
+## Steps
+
+### Step 0 — red-first pins
+{step0_bullet}
+- Commit: `test(alpha): pin [plan:alpha#step-0]`
+
+### Step 1 — implement
+- Edit `src/module.py`.
+- Commit: `feat(alpha): implement [plan:alpha#step-1]`
+"""
+
+
+def _run_cli(tmp_path: Path, step0_bullet: str) -> "subprocess.CompletedProcess[str]":
+    import subprocess
+    plans = tmp_path / "plans"
+    plans.mkdir()
+    master = plans / "MASTER-2026-09-25-cli.md"
+    master.write_text(_CLI_MASTER, encoding="utf-8")
+    (plans / "2026-09-25-alpha.md").write_text(
+        _CLI_SUBPLAN.format(target="tests/test_new.py", step0_bullet=step0_bullet),
+        encoding="utf-8")
+    return subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "plan_preflight.py"), str(master),
+         "--plans-dir", str(plans), "--project-root", str(tmp_path)],
+        capture_output=True, text=True, encoding="utf-8")
+
+
+def test_cli_passes_when_the_only_finding_is_step0_created(tmp_path: Path) -> None:
+    r = _run_cli(tmp_path, "- Write `tests/test_new.py`. AC-1 gets @pytest.mark.xfail.")
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, f"preflight exited {r.returncode}:\n{out}"
+    assert "INFO:" in out and "created by step 0" in out, out
+    assert "FAIL:" not in out, out
+
+
+def test_cli_still_fails_an_unmentioned_absent_file(tmp_path: Path) -> None:
+    r = _run_cli(tmp_path, "- Edit `src/module.py`.")
+    out = r.stdout + r.stderr
+    assert r.returncode == 1, f"preflight exited {r.returncode}:\n{out}"
+    assert "does not exist" in out, out

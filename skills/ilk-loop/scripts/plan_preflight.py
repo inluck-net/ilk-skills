@@ -44,6 +44,8 @@ from plan_status import extract_subplan_files, parse_frontmatter
 class PreflightResult:
     """Outcome of a preflight validation run."""
     failures: list[str] = field(default_factory=list)
+    # Findings that are reported but do not fail the batch (``INFO:``).
+    infos: list[str] = field(default_factory=list)
 
     @property
     def has_failures(self) -> bool:
@@ -363,7 +365,14 @@ def preflight_batch(
                 subplan_texts[fname] = fpath.read_text(encoding="utf-8-sig")
 
     # AC2: Declared paths exist.
-    result.failures.extend(_check_declared_paths(subplan_texts, project_root))
+    # An ``INFO:`` finding (a file its own step 0 creates) is reported, not
+    # failed: the CLI used to print it as ``FAIL: INFO: …`` and exit 1, so a
+    # sub-plan that declared a red-first test correctly could never pass.
+    for finding in _check_declared_paths(subplan_texts, project_root):
+        if finding.startswith("INFO:"):
+            result.infos.append(finding)
+        else:
+            result.failures.append(finding)
 
     # AC3: Step-commit feasibility.
     result.failures.extend(_check_step_commit_feasibility(subplan_texts))
@@ -404,6 +413,8 @@ def main() -> int:
 
     result = preflight_batch(master_text, plans_dir, project_root)
 
+    for info in result.infos:
+        print(info)
     if result.failures:
         for f in result.failures:
             print(f"FAIL: {f}")
