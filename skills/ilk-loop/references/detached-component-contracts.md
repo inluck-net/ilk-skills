@@ -590,7 +590,7 @@ Fixed in sub-plan `a-gate-result-carries-its-identity` (2026-09-03) by
 invariant 6: identity from the invoker, unattributable records reported
 instead of enforced.
 
-### Gate-result isolation fields (added 2026-08-30)
+### Gate-result isolation fields (added 2026-08-30, updated 2026-09-25)
 
 `run_local_checks.py` emits four fields in its output JSON that describe
 the isolation state of the working tree when the gate ran:
@@ -600,7 +600,35 @@ the isolation state of the working tree when the gate ran:
 | `head_sha` | `string \| null` | HEAD commit SHA at gate time; `null` if not a git repo |
 | `dirty_paths` | `int` | Count of uncommitted + untracked paths before isolation |
 | `isolated` | `bool` | `true` iff the tree was successfully pinned to HEAD |
-| `restore_error` | `string \| null` | Error from stash pop; `null` on success |
+| `restore_error` | `string \| null` | Error from stash apply (by SHA); `null` on success. Includes the SHA and recovery command. |
+
+**Stash message prefixes (2026-09-25):**
+
+| Prefix | Used by | Meaning |
+|---|---|---|
+| `ilk-gate-isolation <sha>` | `isolate_to_head` | Gate isolation stash; `<sha>` is HEAD at isolation time |
+| `ilk auto-stash (branch setup)` | `setup_one_branch` | Branch switch stash (tracked only since 2026-09-25) |
+
+**Restore-by-sha (2026-09-25):** `isolate_to_head` captures
+`git rev-parse refs/stash` immediately after the push and restores with
+`git stash apply --index <sha>`. Only on a successful apply does it find
+the SHA's index in `git stash list --format=%H` and drop that entry.
+Never `git stash pop` (it takes whatever is on top). A failed apply
+leaves the stash in place and puts the SHA + recovery command into
+`restore_error`.
+
+**Selective stash with snapshot (2026-09-25):** When
+`ILK_PRE_ITER_SNAPSHOT` names a readable snapshot, `isolate_to_head`
+stashes only tracked changes and untracked paths that appeared after the
+snapshot was taken (`iteration_snapshot.py changed-since`). Pre-existing
+untracked files stay in the tree. Without a snapshot, the legacy `-u`
+behaviour is preserved.
+
+**Integrity violation `gate_isolation_restore_failed` (2026-09-25):**
+When gate results carry `restore_error`, the runner prints
+`! [gate-isolation] RESTORE FAILED` and appends an integrity row
+`{"slug": <slug>, "violation": "gate_isolation_restore_failed: <sha>", "enforced": false}`
+to `_INTEGRITY_VIOLATIONS_FILE`.
 
 **Readers:**
 

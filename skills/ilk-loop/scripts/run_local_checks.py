@@ -825,7 +825,7 @@ class IsolationState:
 
 
 @contextlib.contextmanager
-def isolate_to_head(project: Path):
+def isolate_to_head(project: Path, snapshot: Path | None = None):
     """Context manager that pins the working tree to HEAD for gate execution.
 
     The driver runs the gate *after* the step's commit —
@@ -838,17 +838,25 @@ def isolate_to_head(project: Path):
       - **Tree already clean** (``dirty_paths == 0``) — the common case.
         Do nothing at all: no stash, no subprocess beyond the two probes.
         ``isolated=True``.
-      - **Tree dirty** — ``git stash push -u -m "ilk-gate-isolation <sha>"``,
-        run the checks, then ``git stash pop``.  ``isolated=True`` iff both
-        the push and the pop succeeded.
+      - **Tree dirty, snapshot provided** — stash only tracked changes and
+        untracked paths that appeared *after* the snapshot was taken
+        (``iteration_snapshot.py changed-since``).  Pre-existing untracked
+        files stay in the tree.  Restore by the stash's own SHA
+        (``git stash apply --index <sha>``, then drop).  ``isolated=True``
+        iff both the push and the restore succeeded.
+      - **Tree dirty, no snapshot** (manual ``run_local_checks.py`` call) —
+        ``git stash push -u``, then restore by SHA.  ``isolated=True`` iff
+        both succeeded.
       - **Not a git repo / git absent** — ``isolated=False``, ``head_sha=None``,
         gate still runs.  Do not crash; a non-git project must still be
         gateable.
 
     Safety rules (all non-negotiable):
-      - **Never ``git stash drop``.**  On a pop conflict the stash entry stays
-        on the stack and its ref goes into ``restore_error``, so the work is
-        recoverable by hand.
+      - **Never ``git stash pop``.**  It takes whatever is on top.  Restore
+        by the stash's own SHA, captured right after the push.
+      - **On a failed apply, leave the stash in place.**  Drop only on a
+        successful apply.  The sha goes into ``restore_error`` with a
+        recovery command.
       - **Restore runs in a ``finally``.**  A check that raises, times out, or
         is killed must still un-stash.
       - **Do not ``stash --keep-index``.**  The index is part of "not committed".
@@ -922,18 +930,106 @@ def isolate_to_head(project: Path):
         yield state
         return
 
-    # Dirty tree — stash, run checks, restore
+    # Dirty tree — stash, run checks, restore by SHA.
     stash_msg = f"ilk-gate-isolation {state.head_sha or 'unknown'}"
     stashed = False
+    stash_sha: str | None = None
     try:
-        cp = subprocess.run(
-            ["git", "stash", "push", "-u", "-m", stash_msg],
-            cwd=str(project), capture_output=True, text=True, timeout=30,
-        encoding="utf-8", errors="replace",
-        )
+        # When a snapshot is available, stash only tracked changes and
+        # untracked paths that appeared *after* the snapshot.  Pre-existing
+        # untracked files stay in the tree.
+        use_snapshot = False
+        new_paths: list[str] = []
+        if snapshot is not None and snapshot.is_file():
+            snap_script = Path(__file__).resolve().parent / "iteration_snapshot.py"
+            cp_snap = subprocess.run(
+                [sys.executable, str(snap_script),
+                 "changed-since", str(project), "--snapshot", str(snapshot)],
+                capture_output=True, text=True, timeout=15,
+                encoding="utf-8", errors="replace",
+            )
+            if cp_snap.returncode == 0:
+                new_paths = [p for p in cp_snap.stdout.split("\0") if p]
+                use_snapshot = True
+            # returncode 2 = missing/unreadable snapshot → fall through to -u
+
+        stash_args = ["git", "stash", "push", "-m", stash_msg]
+        cp = None
+        if use_snapshot and new_paths:
+            # New untracked paths since snapshot — stash tracked changes
+            # AND only those new untracked paths via --pathspec-from-file.
+            stash_args.extend(["-u", "--pathspec-file-nul"])
+            import tempfile
+            with tempfile.NamedTemporaryFile(
+                mode="wb", suffix=".txt", delete=False
+            ) as tmp:
+                tmp.write("\0".join(new_paths).encode("utf-8"))
+                tmp_path = tmp.name
+            try:
+                cp = subprocess.run(
+                    [*stash_args, f"--pathspec-from-file={tmp_path}"],
+                    cwd=str(project), capture_output=True, text=True,
+                    timeout=30, encoding="utf-8", errors="replace",
+                )
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
+            if cp is not None and cp.returncode == 0:
+                n_pre = state.dirty_paths - len(new_paths)
+                if n_pre > 0:
+                    print(
+                        f"[gate-isolation] left in place (present before this "
+                        f"iteration): {n_pre} untracked path(s)",
+                        file=sys.stderr,
+                    )
+        elif use_snapshot and not new_paths:
+            # Snapshot available but nothing changed since — only tracked
+            # changes need stashing (no -u).  If there are no tracked
+            # changes either, skip stashing entirely.
+            # Check for tracked dirty paths (not untracked).
+            cp_tracked = subprocess.run(
+                ["git", "diff", "--name-only"],
+                cwd=str(project), capture_output=True, text=True,
+                timeout=10, encoding="utf-8", errors="replace",
+            )
+            cp_cached = subprocess.run(
+                ["git", "diff", "--cached", "--name-only"],
+                cwd=str(project), capture_output=True, text=True,
+                timeout=10, encoding="utf-8", errors="replace",
+            )
+            has_tracked = bool(
+                cp_tracked.stdout.strip() or cp_cached.stdout.strip()
+            )
+            if has_tracked:
+                cp = subprocess.run(
+                    stash_args,
+                    cwd=str(project), capture_output=True, text=True,
+                    timeout=30, encoding="utf-8", errors="replace",
+                )
+            else:
+                # Nothing to stash — tree has only pre-existing untracked.
+                state.isolated = True
+                yield state
+                return
+        else:
+            # No snapshot — stash everything (legacy behaviour).
+            stash_args.insert(3, "-u")
+            cp = subprocess.run(
+                stash_args,
+                cwd=str(project), capture_output=True, text=True,
+                timeout=30, encoding="utf-8", errors="replace",
+            )
+
         if cp.returncode == 0:
             stashed = True
             state.isolated = True
+            # Capture the stash SHA immediately after push.
+            cp_sha = subprocess.run(
+                ["git", "rev-parse", "refs/stash"],
+                cwd=str(project), capture_output=True, text=True,
+                timeout=5, encoding="utf-8", errors="replace",
+            )
+            if cp_sha.returncode == 0:
+                stash_sha = cp_sha.stdout.strip()
         else:
             # Stash failed — gate runs against dirty tree, not isolated
             state.isolated = False
@@ -942,18 +1038,48 @@ def isolate_to_head(project: Path):
         yield state
 
     finally:
-        if stashed:
+        if stashed and stash_sha:
+            # Restore by SHA: apply --index, then drop.
             try:
                 cp = subprocess.run(
-                    ["git", "stash", "pop"],
-                    cwd=str(project), capture_output=True, text=True, timeout=30,
-                encoding="utf-8", errors="replace",
+                    ["git", "stash", "apply", "--index", stash_sha],
+                    cwd=str(project), capture_output=True, text=True,
+                    timeout=30, encoding="utf-8", errors="replace",
                 )
                 if cp.returncode != 0:
-                    # Pop conflict — stash entry stays on stack (never drop)
-                    state.restore_error = f"stash pop failed: {cp.stderr.strip()}"
+                    state.restore_error = (
+                        f"stash apply failed ({stash_sha[:12]}): "
+                        f"{cp.stderr.strip()}; recover with: "
+                        f"git stash apply {stash_sha}"
+                    )
+                else:
+                    # Apply succeeded — drop the entry.
+                    cp_list = subprocess.run(
+                        ["git", "stash", "list", "--format=%H"],
+                        cwd=str(project), capture_output=True, text=True,
+                        timeout=10, encoding="utf-8", errors="replace",
+                    )
+                    if cp_list.returncode == 0:
+                        for idx, line in enumerate(cp_list.stdout.splitlines()):
+                            if line.strip() == stash_sha:
+                                subprocess.run(
+                                    ["git", "stash", "drop", f"stash@{{{idx}}}"],
+                                    cwd=str(project), capture_output=True,
+                                    text=True, timeout=10,
+                                    encoding="utf-8", errors="replace",
+                                )
+                                break
             except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-                state.restore_error = f"stash pop error: {e}"
+                state.restore_error = (
+                    f"stash restore error ({stash_sha[:12]}): {e}; "
+                    f"recover with: git stash apply {stash_sha}"
+                )
+        elif stashed and not stash_sha:
+            # Pushed but couldn't capture SHA — unusual; warn.
+            state.restore_error = (
+                "stash pushed but SHA not captured; "
+                "check git stash list for ilk-gate-isolation entries"
+            )
 
 
 # ── B2 confirm-before-block decision ─────────────────────────────────────────

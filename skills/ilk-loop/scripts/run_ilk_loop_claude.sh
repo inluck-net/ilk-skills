@@ -833,8 +833,10 @@ _setup_branch_one_repo() {
       if [[ "$_current_branch" != "$BRANCH_NAME" ]]; then
         # Need to switch branches — auto-stash dirty tree to unblock.
         if [[ "$_tree_dirty" -eq 1 ]]; then
-          echo "  ! working tree dirty in $repo — auto-stashed dirty tree (branch switch to $BRANCH_NAME)" >&2
-          git -C "$repo" stash push -u -m "ilk auto-stash (branch setup)" >/dev/null 2>&1
+          local _stash_sha=""
+          git -C "$repo" stash push -m "ilk auto-stash (branch setup)" >/dev/null 2>&1
+          _stash_sha=$(git -C "$repo" rev-parse refs/stash 2>/dev/null) || _stash_sha=""
+          echo "  ! working tree dirty in $repo — auto-stashed dirty tree (branch switch to $BRANCH_NAME); stash sha=${_stash_sha:-?}; recover with: git stash apply ${_stash_sha:-refs/stash}" >&2
         fi
         if ! git -C "$repo" checkout "$BRANCH_NAME" >/dev/null 2>&1; then
           echo "Error: git checkout $BRANCH_NAME failed in $repo." >&2
@@ -850,8 +852,10 @@ _setup_branch_one_repo() {
       if [[ "$_current_branch" != "$BRANCH_NAME" ]]; then
         # Need to switch branches — auto-stash dirty tree to unblock.
         if [[ "$_tree_dirty" -eq 1 ]]; then
-          echo "  ! working tree dirty in $repo — auto-stashed dirty tree (branch switch to $BRANCH_NAME)" >&2
-          git -C "$repo" stash push -u -m "ilk auto-stash (branch setup)" >/dev/null 2>&1
+          local _stash_sha=""
+          git -C "$repo" stash push -m "ilk auto-stash (branch setup)" >/dev/null 2>&1
+          _stash_sha=$(git -C "$repo" rev-parse refs/stash 2>/dev/null) || _stash_sha=""
+          echo "  ! working tree dirty in $repo — auto-stashed dirty tree (branch switch to $BRANCH_NAME); stash sha=${_stash_sha:-?}; recover with: git stash apply ${_stash_sha:-refs/stash}" >&2
         fi
         if ! git -C "$repo" checkout "$BRANCH_NAME" >/dev/null 2>&1; then
           echo "Error: git checkout $BRANCH_NAME failed in $repo." >&2
@@ -866,8 +870,10 @@ _setup_branch_one_repo() {
   else
     # Branch absent — create from base. Auto-stash dirty tree to unblock.
     if [[ "$_tree_dirty" -eq 1 ]]; then
-      echo "  ! working tree dirty in $repo — auto-stashed dirty tree (branch create $BRANCH_NAME)" >&2
-      git -C "$repo" stash push -u -m "ilk auto-stash (branch setup)" >/dev/null 2>&1
+      local _stash_sha=""
+      git -C "$repo" stash push -m "ilk auto-stash (branch setup)" >/dev/null 2>&1
+      _stash_sha=$(git -C "$repo" rev-parse refs/stash 2>/dev/null) || _stash_sha=""
+      echo "  ! working tree dirty in $repo — auto-stashed dirty tree (branch create $BRANCH_NAME); stash sha=${_stash_sha:-?}; recover with: git stash apply ${_stash_sha:-refs/stash}" >&2
     fi
     if ! git -C "$repo" checkout -B "$BRANCH_NAME" "$BRANCH_CREATE_FROM" >/dev/null 2>&1; then
       # Non-zero exit may be a benign post-checkout hook failure (lefthook/husky).
@@ -3878,6 +3884,24 @@ print(fm.get('result_file', ''))
     local iter_start
     iter_start=$(date +%s)
 
+    # -- Orphan stash warning ──────────────────────────────────────────
+    # Warn about leftover ilk-gate-isolation or ilk auto-stash entries
+    # from previous runs.  Warn only; never drop or pop.
+    for _repo_check in "${REPOS[@]}"; do
+      local _eff_check
+      _eff_check="$(selfmod_effective_repo "$_repo_check" 2>/dev/null)" || _eff_check="$_repo_check"
+      local _stash_lines
+      _stash_lines=$(git -C "$_eff_check" stash list 2>/dev/null | grep 'ilk-gate-isolation\|ilk auto-stash' || true)
+      if [[ -n "$_stash_lines" ]]; then
+        while IFS= read -r _sl; do
+          local _ref _msg
+          _ref=$(echo "$_sl" | sed 's/:.*//')
+          _msg=$(echo "$_sl" | sed 's/^[^:]*: On [^:]*: //')
+          echo "  ! [runner] orphaned loop stash $_ref ($_msg) — inspect with: git stash show -p --include-untracked $_ref" >&2
+        done <<< "$_stash_lines"
+      fi
+    done
+
     # -- Declared work_tree resolution -----------------------------------
     # A master may declare `work_tree: <abs path>` — the tree the driver
     # must observe, gate, and ledger.  Without this, gh-resolve's per-issue
@@ -4468,6 +4492,43 @@ print(json.dumps(d))
 import json, sys
 print(json.dumps([json.loads(l) for l in sys.stdin]))
 " < "$local_checks_results")
+    fi
+
+    # ── Gate isolation restore_error check ──────────────────────────────
+    # If any gate result carries restore_error, the gate stash could not
+    # be restored.  Print a loud warning and write an integrity row.
+    if [[ -n "$local_checks_results" && -s "$local_checks_results" ]]; then
+      local _restore_errors
+      _restore_errors=$(python3 -c "
+import json, sys
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        rec = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    err = rec.get('restore_error')
+    if err:
+        slug = rec.get('slug', '?')
+        print(f'{slug}\t{err}')
+" < "$local_checks_results")
+      if [[ -n "$_restore_errors" ]]; then
+        while IFS=$'\t' read -r _re_slug _re_err; do
+          echo "  ! [gate-isolation] RESTORE FAILED in $(selfmod_effective_repo "$PROJECT_PATH" 2>/dev/null || echo "$PROJECT_PATH"): $_re_err" >&2
+          # Write integrity violation row.
+          local _violation_json
+          _violation_json=$(python3 -c "
+import json, sys
+slug, err = sys.argv[1], sys.argv[2]
+print(json.dumps({'slug': slug, 'violation': f'gate_isolation_restore_failed: {err}', 'enforced': False}))
+" "$_re_slug" "$_re_err" 2>/dev/null) || true
+          if [[ -n "$_violation_json" ]]; then
+            echo "$_violation_json" >> "${_INTEGRITY_VIOLATIONS_FILE:-/dev/null}"
+          fi
+        done <<< "$_restore_errors"
+      fi
     fi
 
     # Write JSONL record via Python to avoid bash JSON escaping issues

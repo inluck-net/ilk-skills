@@ -185,20 +185,19 @@ def _run_one_iteration(
 # ── AC-1: untracked present before snapshot stays in tree; no stash entry ────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_untracked_present_at_snapshot_stays_in_tree(tmp_path: Path) -> None:
     """AC-1: untracked file present before snapshot stays in working tree
     during and after the gate, with unchanged content, and no stash entry
     is left behind.
     """
     repo = _make_git_repo(tmp_path)
-    snap = _make_snapshot(repo, tmp_path)
 
     # Untracked file present at snapshot time.
     untracked = repo / "pre-existing.txt"
     untracked.write_text("I was here before\n", encoding="utf-8")
+    snap = _make_snapshot(repo, tmp_path)
 
-    with isolate_to_head(repo) as iso:
+    with isolate_to_head(repo, snapshot=snap) as iso:
         assert iso.isolated is True
         assert iso.restore_error is None
         # File must still exist during isolation.
@@ -223,7 +222,6 @@ def test_untracked_present_at_snapshot_stays_in_tree(tmp_path: Path) -> None:
 # ── AC-2: pre-existing untracked stays; only new-since-snapshot stashed ──────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_pre_existing_untracked_not_stashed_only_new_ones(
     tmp_path: Path,
 ) -> None:
@@ -232,17 +230,17 @@ def test_pre_existing_untracked_not_stashed_only_new_ones(
     are stashed.
     """
     repo = _make_git_repo(tmp_path)
-    snap = _make_snapshot(repo, tmp_path)
 
     # Pre-existing untracked (present at snapshot time).
     pre_existing = repo / "pre-existing.txt"
     pre_existing.write_text("I was here before\n", encoding="utf-8")
+    snap = _make_snapshot(repo, tmp_path)
 
     # New untracked (created after snapshot).
     new_file = repo / "agent-created.txt"
     new_file.write_text("agent work\n", encoding="utf-8")
 
-    with isolate_to_head(repo) as iso:
+    with isolate_to_head(repo, snapshot=snap) as iso:
         assert iso.isolated is True
         # Pre-existing file must stay in tree (not stashed).
         assert pre_existing.exists(), (
@@ -263,19 +261,17 @@ def test_pre_existing_untracked_not_stashed_only_new_ones(
 # ── AC-3: foreign stash is not the one restored ─────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_foreign_stash_not_restored(tmp_path: Path) -> None:
     """AC-3: a foreign stash pushed during the gate is not the one restored.
     Our entry is applied and dropped; the foreign entry is still on the stack.
     """
     repo = _make_git_repo(tmp_path)
+
+    # Tracked file dirty (ours to stash).
+    (repo / "marker.txt").write_text("dirty\n", encoding="utf-8")
     snap = _make_snapshot(repo, tmp_path)
 
-    # Untracked file created after snapshot (ours to stash).
-    agent_file = repo / "agent-created.txt"
-    agent_file.write_text("agent work\n", encoding="utf-8")
-
-    with isolate_to_head(repo) as iso:
+    with isolate_to_head(repo, snapshot=snap) as iso:
         assert iso.isolated is True
         # Push a foreign stash while we're isolated.
         (repo / "foreign.txt").write_text("foreign\n", encoding="utf-8")
@@ -285,9 +281,11 @@ def test_foreign_stash_not_restored(tmp_path: Path) -> None:
             encoding="utf-8", errors="replace",
         )
 
-    # Our file should be restored.
-    assert agent_file.exists(), "agent file not restored"
-    assert agent_file.read_text(encoding="utf-8") == "agent work\n"
+    # Our tracked change should be restored ("dirty"), not the foreign one.
+    content = (repo / "marker.txt").read_text(encoding="utf-8")
+    assert content == "dirty\n", (
+        f"restore should use our stash by sha, got marker.txt = {content!r}"
+    )
 
     # Foreign stash should still be on the stack.
     stash_list = subprocess.run(
@@ -307,28 +305,23 @@ def test_foreign_stash_not_restored(tmp_path: Path) -> None:
 # ── AC-4: restore-by-sha with foreign stash on top ───────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_restore_by_sha_with_foreign_stash_on_top(tmp_path: Path) -> None:
     """AC-4: when a foreign stash is pushed during the gate (after ours),
     ``isolate_to_head`` should restore OUR stash by sha, not the foreign
     one on top.
-
-    The current code uses ``git stash pop`` which takes the foreign stash.
-    The fix uses ``git stash apply --index <sha>`` captured right after
-    our push.
 
     This test drives ``isolate_to_head`` directly.  The gate pushes a
     foreign stash; on exit, the context manager should restore our tracked
     change.
     """
     repo = _make_git_repo(tmp_path)
-    snap = _make_snapshot(repo, tmp_path)
 
     # Tracked file dirty after snapshot (will be stashed by isolation).
     (repo / "marker.txt").write_text("dirty\n", encoding="utf-8")
+    snap = _make_snapshot(repo, tmp_path)
 
     iso_state = None
-    with isolate_to_head(repo) as iso:
+    with isolate_to_head(repo, snapshot=snap) as iso:
         assert iso.isolated is True
         # Gate pushes a foreign stash.
         (repo / "marker.txt").write_text("foreign dirty\n", encoding="utf-8")
@@ -352,7 +345,6 @@ def test_restore_by_sha_with_foreign_stash_on_top(tmp_path: Path) -> None:
 
 @_NEEDS_GTIMEOUT
 @pytest.mark.timeout(120)
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_runner_warns_on_orphaned_gate_stash(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
@@ -393,7 +385,6 @@ def test_runner_warns_on_orphaned_gate_stash(
 
 @_NEEDS_GTIMEOUT
 @pytest.mark.timeout(120)
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_branch_setup_preserves_untracked_files(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
@@ -403,6 +394,17 @@ def test_branch_setup_preserves_untracked_files(
     """
     root = tmp_path_factory.mktemp("ac6-branch")
     world = _build_world(root, dirty_tracked=True, dirty_untracked=True)
+
+    # Set up a bare remote so origin/main exists.
+    bare = root / "bare.git"
+    bare.mkdir()
+    subprocess.run(
+        ["git", "init", "--bare", "-b", "main", str(bare)],
+        check=True, capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    )
+    _git(world["project"], "remote", "add", "origin", str(bare))
+    _git(world["project"], "push", "origin", "main")
 
     # Set up branch configuration in the MASTER.
     plans = world["plans"]

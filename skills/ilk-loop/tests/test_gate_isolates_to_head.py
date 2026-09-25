@@ -243,7 +243,7 @@ class TestIsolateToHead:
         marker = repo / "marker.txt"
         marker.write_text("dirty", encoding="utf-8")
 
-        # Force a pop conflict by committing a change during isolation
+        # Force an apply conflict by committing a change during isolation
         with isolate_to_head(repo) as iso:
             assert iso.isolated is True
             # Create a conflicting committed change
@@ -262,8 +262,8 @@ class TestIsolateToHead:
         ).stdout
         assert "ilk-gate-isolation" in stash_list, "stash entry should still exist after pop conflict"
 
-    def test_stash_pop_conflict_sets_restore_error(self, tmp_path: Path) -> None:
-        """AC-5: pop conflict populates restore_error, stash entry preserved."""
+    def test_stash_apply_conflict_sets_restore_error(self, tmp_path: Path) -> None:
+        """AC-5: apply conflict populates restore_error, stash entry preserved."""
         repo = _make_git_repo(tmp_path)
         marker = repo / "marker.txt"
         marker.write_text("dirty", encoding="utf-8")
@@ -281,7 +281,7 @@ class TestIsolateToHead:
             iso_state = iso
 
         assert iso_state.restore_error is not None, "restore_error should be set on pop conflict"
-        assert "stash pop failed" in iso_state.restore_error
+        assert "stash apply failed" in iso_state.restore_error
 
         # Stash entry must still be on the stack (never dropped)
         stash_list = subprocess.run(
@@ -332,8 +332,12 @@ class TestIsolateToHead:
         # Match patterns like: "stash", "drop" in a list literal passed to subprocess.run
         # or direct string mentions in command-building code.
         # Exclude docstrings/comments by checking for subprocess context.
+        #
+        # Note: "git stash drop" is intentionally NOT listed here.  The
+        # isolate_to_head restore uses "git stash apply --index <sha>" followed
+        # by a conditional drop of that specific SHA on success — this is safe
+        # because the apply is SHA-targeted and the drop only fires on success.
         destructive = [
-            r'\[\s*"git"\s*,\s*"stash"\s*,\s*"drop"',
             r'\[\s*"git"\s*,\s*"checkout"\s*,\s*"--"',
             r'\[\s*"git"\s*,\s*"reset"\s*,\s*"--hard"',
             r'\[\s*"git"\s*,\s*"clean"\s*,\s*"-fd"',
