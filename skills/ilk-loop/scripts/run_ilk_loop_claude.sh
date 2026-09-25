@@ -3362,30 +3362,33 @@ preserve_dirty_tree_on_timeout() {
       set +e
 
       local _snapshot="${ILK_PRE_ITER_SNAPSHOT:-}"
-      local _changed_paths=""
       local _use_snapshot=0
+      local _changed_paths_file=""
       if [[ -n "$_snapshot" ]]; then
-        _changed_paths=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/iteration_snapshot.py" changed-since \
-          "$repo" --snapshot "$_snapshot" 2>/dev/null)
-        local _cs_rc=$?
-        if [[ "$_cs_rc" -eq 0 ]]; then
-          _use_snapshot=1
-        elif [[ "$_cs_rc" -eq 2 ]]; then
-          echo "  ! [runner] no pre-iteration snapshot — preserving the whole dirty tree" >&2
+        _changed_paths_file=$(mktemp 2>/dev/null) || _changed_paths_file=""
+        if [[ -n "$_changed_paths_file" ]]; then
+          python3 "${_SKILL_ROOT}/ilk-loop/scripts/iteration_snapshot.py" changed-since \
+            "$repo" --snapshot "$_snapshot" > "$_changed_paths_file" 2>/dev/null
+          local _cs_rc=$?
+          if [[ "$_cs_rc" -eq 0 && -s "$_changed_paths_file" ]]; then
+            _use_snapshot=1
+          elif [[ "$_cs_rc" -eq 0 ]]; then
+            # Nothing changed since the snapshot — skip the commit.
+            echo "  [runner] no changes since pre-iteration snapshot — skipping WIP preserve in $repo" >&2
+            rm -f "$_changed_paths_file"
+            continue
+          elif [[ "$_cs_rc" -eq 2 ]]; then
+            echo "  ! [runner] no pre-iteration snapshot — preserving the whole dirty tree" >&2
+          fi
         fi
       else
         echo "  ! [runner] no pre-iteration snapshot — preserving the whole dirty tree" >&2
       fi
 
       if [[ "$_use_snapshot" -eq 1 ]]; then
-        if [[ -n "$_changed_paths" ]]; then
-          # Stage only the changed-since paths (NUL-safe).
-          printf '%s\0' "$_changed_paths" | xargs -0 git -C "$repo" add -- 2>/dev/null
-        else
-          # Nothing changed since the snapshot — skip the commit.
-          echo "  [runner] no changes since pre-iteration snapshot — skipping WIP preserve in $repo" >&2
-          continue
-        fi
+        # Stage only the changed-since paths (NUL-safe via file).
+        xargs -0 git -C "$repo" add -- < "$_changed_paths_file" 2>/dev/null
+        rm -f "$_changed_paths_file"
       else
         # Fallback: snapshot unavailable, preserve everything.
         git -C "$repo" add -A 2>/dev/null

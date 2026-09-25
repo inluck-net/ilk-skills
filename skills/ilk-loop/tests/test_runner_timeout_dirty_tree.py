@@ -522,9 +522,9 @@ def _setup_scratch_project(tmp_path: Path) -> Path:
     subprocess.run(["git", "add", "."], cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     subprocess.run(["git", "commit", "-m", "initial"], cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
 
-    # Create dirty files (will be preserved on timeout)
-    (proj / "work.txt").write_text("some work in progress\n")
-    (proj / "untracked_test.py").write_text("def test_wip(): pass\n")
+    # NOTE: dirty files are NOT created here — tests that need them create
+    # them inside the mock claude (after the pre-iteration snapshot) so the
+    # WIP-preserve mechanism correctly sees them as iteration-owned changes.
 
     # Set up plans directory
     plans = proj / "docs" / "plans"
@@ -617,7 +617,9 @@ class TestLiveRunnerTimeout:
         mock_claude = mock_bin / "claude"
         mock_claude.write_text(textwrap.dedent("""\
             #!/usr/bin/env bash
-            # Mock claude: sleep until killed by gtimeout
+            # Mock claude: create dirty files (after snapshot) then sleep
+            echo "some work in progress" > work.txt
+            echo "def test_wip(): pass" > untracked_test.py
             sleep 300
         """))
         mock_claude.chmod(0o755)
@@ -661,13 +663,18 @@ class TestLiveRunnerTimeout:
         assert "WIP:" in git_log.stdout, \
             f"Expected WIP commit in git log:\n{git_log.stdout}"
 
-        # Assert: tree is clean after preservation
+        # Assert: iteration-owned files are committed (pre-existing untracked
+        # dirs like docs/ may remain — the WIP commit only takes what changed
+        # since the pre-iteration snapshot).
         git_status = subprocess.run(
             ["git", "status", "--short"],
             cwd=proj, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         )
-        assert git_status.stdout.strip() == "", \
-            f"tree should be clean after WIP commit:\n{git_status.stdout}"
+        remaining = [l for l in git_status.stdout.strip().splitlines() if l.strip()]
+        # Only pre-existing untracked paths (docs/) should remain.
+        for line in remaining:
+            assert "work.txt" not in line and "untracked_test.py" not in line, \
+                f"iteration-owned file should be committed, still untracked: {line}"
 
         # Assert: WIP commit includes both tracked and untracked files
         git_show = subprocess.run(
