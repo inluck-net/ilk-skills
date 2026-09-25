@@ -390,6 +390,65 @@ _COUNT_RE = re.compile(r"(\d+)\s+(passed|failed|error|errors|skipped|xfailed|xpa
 _NODE_RE = re.compile(r"^(?:FAILED|ERROR)\s+(\S+)", re.MULTILINE)
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
+def _extract_short_reason(out: str, node_id: str) -> str | None:
+    """Return the short reason after `` - `` on the FAILED line, or None."""
+    escaped = re.escape(node_id)
+    m = re.search(rf"^FAILED\s+{escaped}\s*-\s*(.+)$", out, re.MULTILINE)
+    return m.group(1).strip() if m else None
+
+
+def _extract_failure_excerpts(out: str, node_ids: list[str],
+                              max_chars: int = 4000) -> dict[str, str]:
+    """Return ``{node_id: excerpt}`` for each failing node id.
+
+    Each excerpt is the short-summary reason (text after `` - `` on the
+    ``FAILED`` line), or the last 20 lines of the failure block when no
+    short reason is available.  Excerpts longer than *max_chars* are
+    truncated with a ``… [truncated]`` marker.
+    """
+    out = _ANSI_RE.sub("", out)
+    excerpts: dict[str, str] = {}
+    for nid in node_ids:
+        short = _extract_short_reason(out, nid)
+        if short:
+            excerpts[nid] = (short[:max_chars] + "… [truncated]"
+                             if len(short) > max_chars else short)
+            continue
+        block = _failure_block_for_node(out, nid)
+        if block:
+            lines = block.splitlines()
+            tail = "\n".join(lines[-20:])
+            excerpts[nid] = (tail[:max_chars] + "… [truncated]"
+                             if len(tail) > max_chars else tail)
+    return excerpts
+
+
+def _failure_block_for_node(out: str, node_id: str) -> str | None:
+    """Return the ``_ ... _`` failure block following *node_id*, or None."""
+    escaped = re.escape(node_id)
+    m = re.search(rf"(?:FAILED|ERROR)\s+{escaped}\b", out)
+    if not m:
+        return None
+    after = out[m.end():]
+    # The separator is a line of underscores with spaces, e.g. ``_ _ _ _``.
+    # Use ^ with MULTILINE so we only match at line starts, not newlines
+    # within the content.
+    sep_re = re.compile(r"^_+(?: _+)*[ ]*\n", re.MULTILINE)
+    sep_m = sep_re.search(after)
+    if not sep_m:
+        return None
+    content_start = sep_m.end()
+    rest = after[content_start:]
+    # The block ends at the next separator or the summary line.
+    next_sep = sep_re.search(rest)
+    summary = _SUMMARY_RE.search(rest)
+    end = len(rest)
+    if next_sep:
+        end = min(end, next_sep.start())
+    if summary:
+        end = min(end, summary.start())
+    return rest[:end] if rest[:end].strip() else None
+
 
 def parse_pytest_output(out: str) -> dict:
     """Extract counts and failing node ids from pytest output.
@@ -520,9 +579,11 @@ def run_suite(project: Path, invocation: str, timeout: int,
             f"unmeasured` rather than a count nothing measured"
         )
     elapsed = round(time.monotonic() - t0)
-    return {**_parse_for(invocation)((r.stdout or "") + (r.stderr or "")),
+    raw_output = (r.stdout or "") + (r.stderr or "")
+    return {**_parse_for(invocation)(raw_output),
             "exit_code": r.returncode,
-            "suite_duration_sec": elapsed}
+            "suite_duration_sec": elapsed,
+            "suite_output_text": raw_output}
 
 
 AT_BASE_CAP = 50
@@ -843,7 +904,9 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   batch_touched: dict[str, bool] | None = None,
                   flaky_owed: list[str] | None = None,
                   suite_duration_sec: int | None = None,
-                  suite_budget: tuple[int, str] | None = None) -> str:
+                  suite_budget: tuple[int, str] | None = None,
+                  suite_output_path: str | None = None,
+                  suite_output_text: str | None = None) -> str:
     """Render the complete record.  Measurements only — no verdict column.
 
     The ``attributed`` column is deliberately absent.  It was the cell that
@@ -887,6 +950,8 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
     if suite_budget is not None:
         budget_val, budget_src = suite_budget
         lines.append(f"suite_budget: {budget_val} ({budget_src})")
+    if suite_output_path is not None:
+        lines.append(f"suite_output: {suite_output_path}")
     lines += [
         "",
         "## At-base rerun",
@@ -939,6 +1004,23 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
         for nid in flaky_owed:
             lines.append(f"- {nid}")
         lines.append("")
+    # Failure excerpts: one ### heading per failing node id with its short
+    # reason or the last 20 lines of its failure block.
+    if suite_output_text is not None:
+        node_ids = results.get("failing_nodes", [])
+        if node_ids:
+            excerpts = _extract_failure_excerpts(suite_output_text, node_ids)
+            if excerpts:
+                lines += ["## Failure excerpts", ""]
+                for nid in node_ids:
+                    if nid not in excerpts:
+                        continue
+                    lines.append(f"### {nid}")
+                    lines.append("")
+                    lines.append("```")
+                    lines.append(excerpts[nid])
+                    lines.append("```")
+                    lines.append("")
     lines += [
         "## Findings",
         "",
@@ -1219,6 +1301,8 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
             project, args.suite_timeout)
         results = run_suite(project, invocation, suite_budget,
                             selection=selection)
+        # Save raw suite output beside the record for failure diagnostics.
+        suite_output_text = results.get("suite_output_text", "")
     except (TimeoutError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         reason = "timeout" if isinstance(exc, TimeoutError) else "no summary line"
@@ -1284,6 +1368,10 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
     history = _read_history(record)
     attempt = len(history) + 1
 
+    # Save raw suite output beside the record for failure diagnostics.
+    suite_output_file = record.with_suffix(".suite-output.txt")
+    _atomic_write(suite_output_file, suite_output_text)
+
     # Merge declared-row markers (—) into the reruns/touched dicts so
     # render_record shows — for already-classified rows.
     all_reruns: dict = {**head_reruns, **declared_reruns}
@@ -1299,6 +1387,8 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
         flaky_owed=flaky_owed or None,
         suite_duration_sec=results.get("suite_duration_sec"),
         suite_budget=(suite_budget, suite_budget_source),
+        suite_output_path=str(suite_output_file),
+        suite_output_text=suite_output_text,
     )
     # Inject attempt header after the batch line.
     record_text = record_text.replace(

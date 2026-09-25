@@ -43,6 +43,8 @@ def _render_record_with_failures(
     *,
     at_base: dict | None = None,
     base_red: list[dict] | None = None,
+    suite_output_text: str | None = None,
+    suite_output_path: str | None = None,
 ) -> str:
     """Render a record with two failing tests (pre-existing: at base = failed)."""
     scope = {"mode": "full", "count": 10}
@@ -71,12 +73,13 @@ def _render_record_with_failures(
         scope=scope, results=results,
         at_base=at_base, base_red=base_red or [],
         head_red=[],
+        suite_output_path=suite_output_path,
+        suite_output_text=suite_output_text,
     )
 
 
 # ── AC-1 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac1_record_has_failure_excerpts_and_suite_output(tmp_path: Path):
     """AC-1: a fake suite with two failing tests ⇒ the record has both
     ``### <id>`` sections containing their messages, and a ``suite_output:``
@@ -90,7 +93,10 @@ def test_ac1_record_has_failure_excerpts_and_suite_output(tmp_path: Path):
         encoding="utf-8",
     )
 
-    record = _render_record_with_failures()
+    record = _render_record_with_failures(
+        suite_output_text=suite_out.read_text(encoding="utf-8"),
+        suite_output_path=str(suite_out),
+    )
 
     # The record must contain both ### headings with their messages
     assert "### tests/test_foo.py::test_bar" in record
@@ -154,15 +160,26 @@ def test_ac3_old_5_column_record_still_parses(tmp_path: Path):
 
 # ── AC-4 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac4_long_excerpt_is_truncated(tmp_path: Path):
     """AC-4: an excerpt longer than 4000 characters is truncated with a
     ``… [truncated]`` marker.
     """
-    long_excerpt = "x" * 5000
-    record = _render_record_with_failures()
+    # Build a single long line (5000 chars) so the excerpt is a contiguous
+    # string of 'x' chars that can be tested with `in`.
+    # Use a FAILED line without a short reason so the block is used.
+    long_line = "x" * 5000
+    suite_output = (
+        f"FAILED tests/test_foo.py::test_bar\n"
+        f"FAILED tests/test_baz.py::test_qux - KeyError: 'x'\n"
+        f"_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _\n"
+        f"{long_line}\n"
+        f"_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _\n"
+        f"= 8 passed, 2 failed in 0.10s =\n"
+    )
 
-    # The record should contain the truncated excerpt
+    record = _render_record_with_failures(suite_output_text=suite_output)
+
+    # The record should contain the truncated excerpt for the long block
     assert "… [truncated]" in record
     # The full 5000 chars must NOT appear
     assert "x" * 5000 not in record

@@ -407,6 +407,16 @@ already landed. Re-run only the tracks whose results you do not have.
   across all projects carried any head line at all, in 6 different spellings,
   two of which were prose (`current main`, `asserted and confirmed`) — which is
   why the field is now mandatory and parsed strictly as a sha.
+- **The record keeps the raw suite output beside itself:** the recorder writes
+  `<record-stem>.suite-output.txt` in the same directory, overwritten per
+  attempt.  Its path is recorded as `suite_output: <path>` in the record
+  header.  The record also includes a `## Failure excerpts` section after the
+  at-base table: one `### <node id>` heading per failing test, each with a
+  fenced block containing the short-summary reason (text after ` - ` on the
+  `FAILED` line) or the last 20 lines of the test's failure block, truncated
+  to 4000 characters with a `… [truncated]` marker.  The section is invisible
+  to `verify_attribution` (it sits between the table and `## Findings`, and
+  the parser reads only the table).
 - **Write the record with `Path.write_text`, never a shell heredoc.** An
   unquoted heredoc command-substitutes every backtick in the prose, and a
   verification record is nothing but backticked file paths and test names. On
