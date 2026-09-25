@@ -1168,6 +1168,33 @@ get_all_subplan_steps() {
   ' 2>/dev/null || true
 }
 
+_list_verify_slugs() {
+  # Print every slug whose sub-plan frontmatter has batch_verification: true.
+  local plans_dir
+  plans_dir=$(get_plans_dir 2>/dev/null) || return 0
+  [[ -d "$plans_dir" ]] || return 0
+  python3 -c '
+import re, os, sys
+plans = sys.argv[1]
+for fn in os.listdir(plans):
+    if not fn.endswith(".md"):
+        continue
+    body = open(os.path.join(plans, fn), encoding="utf-8").read()
+    fm = re.match(r"^---\n(.*?)\n---", body, re.DOTALL)
+    if not fm:
+        continue
+    slug = bv = None
+    for line in fm.group(1).splitlines():
+        m = re.match(r"^plan:\s*(\S+)", line)
+        if m:
+            slug = m.group(1)
+        if re.match(r"batch_verification:\s*(true|yes|1)\s*$", line, re.IGNORECASE):
+            bv = True
+    if slug and bv:
+        print(slug)
+' "$plans_dir" 2>/dev/null || true
+}
+
 get_local_check_targets() {
   local repo="$1"
   local before="$2"
@@ -1181,20 +1208,56 @@ get_local_check_targets() {
   msgs=$(git -C "$repo" log "${before}..${after}" --pretty=format:"%s%n%b" 2>/dev/null) || return
   [[ -z "$msgs" ]] && return
 
-  # Extract [plan:<slug>#step-<N>] tags and keep max step per slug
-  echo "$msgs" | grep -oE '\[plan:[^#]+#step-[0-9]+\]' | \
-    sed -E 's/\[plan:([^#]+)#step-([0-9]+)\]/\1 \2/' | \
-    sort -t' ' -k1,1 -k2,2nr | \
-    awk '!seen[$1]++ {print $1, $2}'
+  # Extract all [plan:<slug>#step-<N>] tags as "<slug> <step>" pairs.
+  local pairs
+  pairs=$(echo "$msgs" | grep -oE '\[plan:[^#]+#step-[0-9]+\]' | \
+    sed -E 's/\[plan:([^#]+)#step-([0-9]+)\]/\1 \2/') || return
+  [[ -n "$pairs" ]] || return
+
+  # Build the set of verify slugs once.
+  local verify_slugs
+  verify_slugs=$(_list_verify_slugs)
+
+  # Emit targets: all steps (ascending) for verify sub-plans, max step for others.
+  printf '%s\n' "$pairs" | awk -v vs="$verify_slugs" '
+    BEGIN {
+      n = split(vs, arr, "\n")
+      for (i = 1; i <= n; i++) vslugs[arr[i]] = 1
+    }
+    {
+      slug = $1; step = $2 + 0
+      if (slug in vslugs) {
+        key = slug ":" step
+        if (!seen[key]++) {
+          vkey = slug ":" step
+          verify[vkey] = 1
+          if (!(slug in vmin) || step < vmin[slug]) vmin[slug] = step
+          if (!(slug in vmax) || step > vmax[slug]) vmax[slug] = step
+        }
+      } else {
+        if (step > max[slug]) { max[slug] = step }
+      }
+    }
+    END {
+      for (s in max) print s, max[s]
+      for (s in vmin) {
+        for (st = vmin[s]; st <= vmax[s]; st++)
+          if ((s ":" st) in verify) print s, st
+      }
+    }
+  '
 }
 
 get_ledger_check_targets() {
-  # Emit "<slug> <max_step>" from the ship-proof ledger for a given iteration.
+  # Emit "<slug> <step>" from the ship-proof ledger for a given iteration.
   #
   # On a shared remote, trailer scanning returns nothing and the pre-iteration
   # capture (PRE_ITER_TARGET) gives the step the iteration STARTED on — not the
   # step it REACHED.  The ledger records the actual step_to, so this function
   # resolves the highest step the iteration committed for each slug.
+  #
+  # For batch_verification sub-plans, emits every step in [step_from, step_to)
+  # so the gate runs all committed steps in ascending order.
   #
   # $1 = run_id   $2 = iteration
   local run_id="$1" iteration="$2"
@@ -1209,10 +1272,17 @@ get_ledger_check_targets() {
   local ledger="${ledger_dir}/ship-proof.jsonl"
   [[ -f "$ledger" ]] || return 0
 
+  # Build the set of verify slugs once.
+  local verify_slugs
+  verify_slugs=$(_list_verify_slugs)
+
   python3 -c "
 import json, sys
 run_id, iteration = sys.argv[1], int(sys.argv[2])
-by_slug = {}
+verify = set(sys.argv[4].splitlines()) if sys.argv[4] else set()
+# Per-slug: max step for normal; all steps for verify.
+normal_max = {}
+verify_steps = {}  # slug -> set of steps
 for line in open(sys.argv[3], encoding='utf-8-sig'):
     line = line.strip()
     if not line:
@@ -1227,14 +1297,25 @@ for line in open(sys.argv[3], encoding='utf-8-sig'):
         continue
     slug = rec.get('slug')
     try:
+        step_from = int(rec.get('step_from', 0))
         step_to = int(rec['step_to'])
     except (KeyError, TypeError, ValueError):
         continue
-    if slug and slug != 'null':
-        by_slug[slug] = max(by_slug.get(slug, 0), step_to - 1)
-for slug, step in sorted(by_slug.items()):
+    if not slug or slug == 'null':
+        continue
+    if slug in verify:
+        if slug not in verify_steps:
+            verify_steps[slug] = set()
+        for s in range(step_from, step_to):
+            verify_steps[slug].add(s)
+    else:
+        normal_max[slug] = max(normal_max.get(slug, 0), step_to - 1)
+for slug, step in sorted(normal_max.items()):
     print(f'{slug} {step}')
-" "$run_id" "$iteration" "$ledger" 2>/dev/null || true
+for slug in sorted(verify_steps):
+    for step in sorted(verify_steps[slug]):
+        print(f'{slug} {step}')
+" "$run_id" "$iteration" "$ledger" "$verify_slugs" 2>/dev/null || true
 }
 
 write_ship_proof_records() {
@@ -4313,11 +4394,20 @@ print(json.dumps({
         fi
       fi
 
-      # Merge by slug (max step wins)
+      # Merge by slug: verify sub-plans keep all steps; others keep max step.
       local merged_targets_file
       merged_targets_file=$(mktemp)
       if [[ -s "$all_targets_file" ]]; then
-        sort -t' ' -k1,1 -k2,2nr "$all_targets_file" | awk '!seen[$1]++ {print $1, $2}' > "$merged_targets_file"
+        local _verify_slugs_merge
+        _verify_slugs_merge=$(_list_verify_slugs)
+        sort -t' ' -k1,1 -k2,2n "$all_targets_file" | awk -v vs="$_verify_slugs_merge" '
+          BEGIN { n = split(vs, arr, "\n"); for (i = 1; i <= n; i++) vslugs[arr[i]] = 1 }
+          {
+            if ($1 in vslugs) { print $1, $2 }
+            else { s = $2 + 0; if (s > max[$1]) max[$1] = s }
+          }
+          END { for (s in max) print s, max[s] }
+        ' > "$merged_targets_file"
         local_checks_results=$(mktemp)
         invoke_local_checks "$(selfmod_effective_repo "$PROJECT_PATH")" "$merged_targets_file" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$local_checks_results" "${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
       fi

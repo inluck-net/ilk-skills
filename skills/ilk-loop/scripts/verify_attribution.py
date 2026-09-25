@@ -903,14 +903,30 @@ def main(argv: list[str] | None = None) -> int:
                           file=sys.stderr)
                     return 1
 
-                if not base_sha:
-                    print("ATTRIBUTION FAILED: --remeasure-if-stale needs "
-                          "a base_sha (pass --base-sha or ensure the record "
-                          "has one)", file=sys.stderr)
-                    return 1
-
                 # Resolve batch slug for the record path.
                 batch_slug = args.batch
+
+                if not base_sha:
+                    # Name the record that's missing so the operator knows
+                    # which step was supposed to write it.
+                    if batch_slug:
+                        from ilk_paths import external_logs_dir, resolve_project_key  # type: ignore[import-untyped]
+                        try:
+                            key = resolve_project_key(project)
+                            rec_dir = external_logs_dir(key) / "verification" if key else None
+                            rec_path = rec_dir / f"{batch_slug}-batch.md" if rec_dir else "<unresolvable>"
+                        except Exception:
+                            rec_path = "<unresolvable>"
+                        print(f"ATTRIBUTION FAILED: no verification record for "
+                              f"batch {batch_slug!r} at {rec_path}; step 0 of "
+                              f"the verify writes it (did its gate run?). "
+                              f"--remeasure-if-stale also needs --base-sha to "
+                              f"measure without one.", file=sys.stderr)
+                    else:
+                        print("ATTRIBUTION FAILED: --remeasure-if-stale needs "
+                              "a base_sha (pass --base-sha or ensure the record "
+                              "has one)", file=sys.stderr)
+                    return 1
 
                 vr_args = [
                     "--project", str(project),

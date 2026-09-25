@@ -2066,3 +2066,36 @@ dirty and untracked path. On rezmac `kira-cloudflare-resolver`
 `gc_push_failures.json` — a tracked file the gc tool edits — and
 committed it in the WIP. The snapshot ensures only iteration-changed
 paths are staged.
+
+## Contract 16: Verify-sub-plan gate targeting (ascending steps)
+
+A sub-plan whose frontmatter carries `batch_verification: true` is a
+**verify sub-plan**: its step 0 writes a verification record, and step 1
+(or later) reads it. The gate must run **every committed step in ascending
+order**, not just the max step. If step 0's gate fails, later steps are
+not attempted.
+
+Normal (non-verify) sub-plans keep the existing max-step-per-slug rule:
+only the highest committed step is gated.
+
+### Sources
+
+| Source                     | Verify sub-plan       | Normal sub-plan     |
+|----------------------------|-----------------------|---------------------|
+| `get_local_check_targets`  | all committed steps   | max step per slug   |
+| `get_ledger_check_targets` | all steps in range    | max step_to-1       |
+| merge (`all_targets_file`) | all steps preserved   | max step per slug   |
+
+### Detection
+
+`_list_verify_slugs` reads every sub-plan file in the plans directory and
+returns slugs whose frontmatter has `batch_verification: true`. Called once
+per gate resolution cycle (in `get_local_check_targets`,
+`get_ledger_check_targets`, and the merge).
+
+### Bug reference (ilk-skills #43)
+
+gh-resolve run `20260925-085248` iter 7 committed `#step-0` and `#step-1`
+of a verify sub-plan together. The driver gated only step 1 (max-step
+rule), so step 0's driver-side suite never ran. The sub-plan shipped as
+`loop-verified` on the strength of step 1's gate alone.

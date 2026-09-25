@@ -18,8 +18,6 @@ import re
 import subprocess
 from pathlib import Path
 
-import pytest
-
 RUNNER = (Path(__file__).resolve().parent.parent / "scripts"
           / "run_ilk_loop_claude.sh")
 SCRIPTS = RUNNER.parent
@@ -45,7 +43,6 @@ def _sandbox_env(root: Path) -> dict[str, str]:
         "PATH": _PATH,
         "HOME": str(root),
         "ILK_DATA_HOME": str(root / ".ilk-data"),
-        "ILK_SKILL_HOME": str(root),
         "ILK_DOTSOURCE_ONLY": "1",
     }
 
@@ -176,7 +173,6 @@ set +e
 
 # ── AC-1 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_verify_sub_plan_gates_every_committed_step(tmp_path: Path) -> None:
     """AC-1 — a verify sub-plan whose iteration committed #step-0 and #step-1
     ⇒ both steps are gate targets, 0 before 1."""
@@ -202,7 +198,6 @@ def test_verify_sub_plan_gates_every_committed_step(tmp_path: Path) -> None:
 
 # ── AC-2 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_step0_gate_failure_stops_later_steps(tmp_path: Path) -> None:
     """AC-2 — step 0's gate failing ⇒ step 1's gate does not run."""
     env = _sandbox_env(tmp_path)
@@ -262,7 +257,6 @@ def test_normal_sub_plan_still_uses_max_step(tmp_path: Path) -> None:
 
 # ── AC-4 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ledger_path_gates_every_step_for_verify(tmp_path: Path) -> None:
     """AC-4 — shared remote (ledger, no trailers) emits every step for a
     verify sub-plan."""
@@ -290,7 +284,6 @@ get_ledger_check_targets '20260925-120000' 3
 
 # ── AC-5 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_verify_attribution_no_record_names_path(tmp_path: Path) -> None:
     """AC-5 — verify_attribution --remeasure-if-stale with no record file and
     no --base-sha prints the message naming the record path and exits 1."""
