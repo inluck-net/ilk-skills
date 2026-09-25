@@ -146,6 +146,9 @@ def _build_world_profile(
     sp_path = str(plans / f"{stem}.md")
     stub.write_text(
         "#!/usr/bin/env bash\n"
+        # STUB_HOLD_SECONDS keeps the agent running so a signal can land
+        # mid-iteration; unset, the stub returns at once.
+        "sleep \"${STUB_HOLD_SECONDS:-0}\"\n"
         f"SP={sp_path!r}\n"
         "python3 - \"$SP\" <<'EOP'\n"
         "import re, sys\n"
@@ -300,6 +303,27 @@ def test_e2e_unattended_run_writes_result_instead_of_parking(
     )
 
 
+@_NEEDS_GTIMEOUT
+def test_result_names_the_source_that_resolved_the_gate(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """The stub commits with a ``[plan:…#step-0]`` trailer, so the gate target
+    came from the trailer.  The runner used to write ``gate_resolution:
+    "none"`` on every run, which a reader must treat as unmeasured."""
+    root = tmp_path_factory.mktemp("gate-resolution")
+    world = _build_world_profile(root)
+
+    result = _run_one_iteration(world, root)
+    tail = "\n".join((result.stdout + result.stderr).splitlines()[-30:])
+
+    rf = world["result_path"]
+    assert rf.exists(), f"result file not written at {rf}\n{tail}"
+    data = json.loads(rf.read_text(encoding="utf-8"))
+    assert data.get("gate_resolution") == "trailer", (
+        f"gate_resolution is {data.get('gate_resolution')!r}, expected 'trailer'\n{tail}"
+    )
+
+
 # ── AC-2: without profile, parks as today ─────────────────────────────────────
 
 @_NEEDS_GTIMEOUT
@@ -340,7 +364,16 @@ def test_sigterm_under_profile_writes_interrupted_result(
     root = tmp_path_factory.mktemp("sigterm")
     world = _build_world_profile(root)
 
-    _run_one_iteration(world, root, send_signal=signal.SIGTERM)
+    # Without the hold the stub finishes in about a second and the run
+    # ends on its own before the signal is sent.
+    result = _run_one_iteration(world, root, send_signal=signal.SIGTERM,
+                                extra_env={"STUB_HOLD_SECONDS": "30"})
+    # A signal trap that returns resumes the script: the run went on to gate
+    # and ship-check the iteration it was told to abandon.
+    assert "=== Loop ended:" not in result.stdout, (
+        "the runner resumed after SIGTERM and ran to its normal end:\n"
+        + "\n".join(result.stdout.splitlines()[-15:])
+    )
 
     rf = world["result_path"]
     assert rf.exists(), f"result file not written after SIGTERM at {rf}"

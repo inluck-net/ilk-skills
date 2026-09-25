@@ -3599,12 +3599,31 @@ main() {
       local lock_file="${runtime_dir_for_lock}/run.lock"
       mkdir -p "$(dirname "$lock_file")"
       export ILK_RUN_LOCK_HELD=1
-      # The helper acquires the lock and exec's us.  On success the current
-      # process is replaced (the lines below never run).  On failure the
-      # helper exits 3 (lock held) or 1 (other error) and we see the code.
+      # The helper acquires the lock and exec's the runner in a CHILD of this
+      # shell -- this process is not replaced, it stays alive as a wrapper
+      # until the runner exits.  On failure the helper exits 3 (lock held) or
+      # 1 (other error) and we see the code.
+      #
+      # The wrapper forwards INT/TERM to that child.  Without it, a signal to
+      # the launched pid killed only the wrapper and the real runner ran on
+      # to the end of the iteration and wrote its own exit state instead of
+      # `interrupted`.  `<&0` keeps stdin: an async command's default stdin is
+      # /dev/null.
       local lock_rc=0
       python3 "${_SKILL_ROOT}/ilk-loop/scripts/ilk_run_lock.py" \
-        --lock "$lock_file" -- bash "$0" "$@" && { exit 0; } || lock_rc=$?
+        --lock "$lock_file" -- bash "$0" "$@" <&0 &
+      _ILK_LOCK_CHILD=$!
+      trap 'kill -INT "$_ILK_LOCK_CHILD" 2>/dev/null' INT
+      trap 'kill -TERM "$_ILK_LOCK_CHILD" 2>/dev/null' TERM
+      # A trapped signal interrupts `wait` (>128) while the child lives on;
+      # keep waiting until it has actually exited.
+      wait "$_ILK_LOCK_CHILD" || lock_rc=$?
+      while kill -0 "$_ILK_LOCK_CHILD" 2>/dev/null; do
+        lock_rc=0
+        wait "$_ILK_LOCK_CHILD" || lock_rc=$?
+      done
+      trap - INT TERM
+      [[ $lock_rc -eq 0 ]] && exit 0
       # If we get here, the lock was NOT acquired.
       if [[ $lock_rc -eq 3 ]]; then
         echo "[runner] another runner holds this project's lock. Exiting." >&2
@@ -3730,7 +3749,12 @@ print(fm.get('result_file', ''))
     # finalize_sentinel is idempotent — no-op when a clean path already set
     # a terminal state (all-shipped, error, max-iterations, etc.).
     trap 'record_err_context "$LINENO" "$BASH_COMMAND"' ERR
-    trap finalize_sentinel EXIT INT TERM
+    trap finalize_sentinel EXIT
+    # A signal trap that returns RESUMES the script: the iteration went on to
+    # gate and overwrote the `interrupted` result with its own exit state.
+    # Finalize, then exit with the conventional 128+signal status.
+    trap 'finalize_sentinel; exit 130' INT
+    trap 'finalize_sentinel; exit 143' TERM
   else
     echo "Sentinel: skipped (no runtime dir resolved)"
   fi
@@ -4142,6 +4166,7 @@ print(json.dumps({
         # is the record this iteration reports and enforces.
         local_checks_results="$gate_first_results"
         gate_first_results=""
+        _GATE_RESOLUTION="pre_iter"
       else
       local all_targets_file
       all_targets_file=$(mktemp)
@@ -4151,6 +4176,11 @@ print(json.dumps({
         after=$(grep -F "$r=" "$heads_after_file" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
         get_local_check_targets "$(selfmod_effective_repo "$r")" "$before" "$after" >> "$all_targets_file"
       done
+      # Which source resolved the gate target: the Contract 5 result file's
+      # gate_resolution.  The last gated iteration's value is the run's.
+      if [[ -s "$all_targets_file" ]]; then
+        _GATE_RESOLUTION="trailer"
+      fi
 
       # Check trailer slugs against plans dir — catch typos at write time.
       # Only fires when trailers were found (not on shared remotes where
@@ -4180,13 +4210,16 @@ print(json.dumps({
         # the step it started on.  On a shared remote the ledger is the only
         # source that can resolve the last step's gate (AC-7).
         get_ledger_check_targets "$RUN_ID" "$i" >> "$all_targets_file"
+        [[ -s "$all_targets_file" ]] && _GATE_RESOLUTION="ledger"
         # Fall back to the pre-iteration capture when the ledger is empty
         # (e.g. the iteration produced no commits, or the ledger write failed).
         if [[ ! -s "$all_targets_file" ]]; then
           if [[ -n "${PRE_ITER_TARGET:-}" ]]; then
             printf '%s\n' "$PRE_ITER_TARGET" >> "$all_targets_file"
+            _GATE_RESOLUTION="pre_iter"
           else
             get_active_subplan_targets >> "$all_targets_file"
+            [[ -s "$all_targets_file" ]] && _GATE_RESOLUTION="active"
           fi
         fi
         if [[ -s "$all_targets_file" ]]; then
@@ -4194,6 +4227,7 @@ print(json.dumps({
         else
           # Neither source produced a target. Say so loudly: a silent skip here
           # is what let unverified work ship as verified.
+          _GATE_RESOLUTION="none"
           echo "  ! [local_checks] NO gate target could be resolved (no commit trailers, no ledger row, no unshipped sub-plan) — gate did NOT run. This iteration made ${total_new} commit(s)." >&2
         fi
       fi
