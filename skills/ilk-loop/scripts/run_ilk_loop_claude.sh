@@ -1235,7 +1235,7 @@ get_local_check_targets() {
           if (!(slug in vmax) || step > vmax[slug]) vmax[slug] = step
         }
       } else {
-        if (step > max[slug]) { max[slug] = step }
+        if (!(slug in max) || step > max[slug]) { max[slug] = step }
       }
     }
     END {
@@ -4414,7 +4414,7 @@ print(json.dumps({
           BEGIN { n = split(vs, arr, "\n"); for (i = 1; i <= n; i++) vslugs[arr[i]] = 1 }
           {
             if ($1 in vslugs) { print $1, $2 }
-            else { s = $2 + 0; if (s > max[$1]) max[$1] = s }
+            else { s = $2 + 0; if (!($1 in max) || s > max[$1]) max[$1] = s }
           }
           END { for (s in max) print s, max[s] }
         ' > "$merged_targets_file"
