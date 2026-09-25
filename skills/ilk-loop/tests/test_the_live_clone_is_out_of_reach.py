@@ -221,6 +221,24 @@ class TestTouchedLiveCloneStopsRun:
         )
 
 
+    def test_untracked_file_alone_is_not_touched(self, tmp_path: Path) -> None:
+        """An untracked file in the live clone is not a touched clone.
+
+        Regression: an operator's uncommitted retro doc (``??`` in porcelain)
+        blocked every selfmod merge-back of batches 25b and 25c on 2026-09-25
+        (run 20260925-041215, ``selfmod_live_clone_touched``)."""
+        clone = _make_clone(tmp_path)
+        (clone / "notes.md").write_text("operator scratch\n", encoding="utf-8")
+
+        env = _sandbox_env(tmp_path)
+        result = _run_driver_func(
+            "check_live_clone_touched", clone, env, args=f"'{clone}'"
+        )
+        assert "RC=0" in result.stdout, (
+            f"an untracked file must not count as touched: {result.stdout}"
+        )
+
+
 # ── AC-4: merge against dirty clone exits 6 ─────────────────────────────────
 
 
@@ -260,6 +278,29 @@ class TestMergeDirtyCloneExits6:
         assert "README.md" in result.stderr, (
             f"merge should name the dirty file: {result.stderr!r}"
         )
+
+    def test_merge_ignores_untracked_file_in_clone(self, tmp_path: Path) -> None:
+        """An untracked file in the live clone does not block the merge."""
+        clone = _make_clone(tmp_path)
+        wt = _make_worktree(clone, tmp_path)
+        (wt / "new_file.py").write_text("x = 1\n", encoding="utf-8")
+        _git(wt, "add", "new_file.py")
+        _git(wt, "commit", "-q", "-m", "add new file")
+        (clone / "notes.md").write_text("operator scratch\n", encoding="utf-8")
+
+        env = _sandbox_env(tmp_path)
+        result = subprocess.run(
+            [sys.executable, str(_SCRIPTS / "selfmod_worktree.py"),
+             "merge", "--probe-pattern", "no-such-process-for-this-test",
+             str(clone), str(wt)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30, env={**os.environ, **env},
+        )
+        assert result.returncode == 0, (
+            f"merge should ignore an untracked file, got {result.returncode}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert (clone / "new_file.py").exists()
 
 
 # ── AC-5: exit state vocabulary ─────────────────────────────────────────────

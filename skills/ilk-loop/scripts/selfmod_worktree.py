@@ -818,10 +818,15 @@ class SelfmodWorktree:
         return files
 
     def _dirty_files_in_repo(self) -> list[str]:
-        """List uncommitted files in the main repo (the live clone)."""
+        """List modified tracked files in the main repo (the live clone).
+
+        Untracked files are excluded: they cannot be overwritten by a
+        fast-forward of tracked paths, and an operator's scratch file is not
+        a worker touching the clone."""
         result = _git(
             "status",
             "--porcelain",
+            "--untracked-files=no",
             cwd=self.repo_path,
         )
         if result.returncode != 0:

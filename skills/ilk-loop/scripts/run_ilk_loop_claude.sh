@@ -109,8 +109,10 @@ check_live_clone_touched() {
   fi
 
   # Check for tracked-file modifications (porcelain format: XY filename).
+  # Untracked files are excluded: an operator's scratch file is not a worker
+  # touching the clone (it blocked every merge-back on 2026-09-25).
   local dirty_files
-  dirty_files="$(git -C "$clone" status --porcelain 2>/dev/null)" || return 0
+  dirty_files="$(git -C "$clone" status --porcelain --untracked-files=no 2>/dev/null)" || return 0
 
   if [[ -n "$dirty_files" ]]; then
     echo "$dirty_files"
