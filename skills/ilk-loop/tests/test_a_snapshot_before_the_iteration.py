@@ -255,6 +255,7 @@ def _build_world_with_agent_work(
 
 def _run_one_iteration(
     world: dict, root: Path, *, timeout_sec: int | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     env = {
         **os.environ,
@@ -267,6 +268,8 @@ def _run_one_iteration(
     env.pop("ILK_DATA_DIR", None)
     if timeout_sec is not None:
         env["ILK_ITERATION_TIMEOUT_SEC"] = str(timeout_sec)
+    if extra_env:
+        env.update(extra_env)
     (root / ".claude").mkdir(exist_ok=True)
     return subprocess.run(
         ["bash", str(RUNNER),
@@ -291,7 +294,6 @@ def _read_sentinel(world: dict) -> dict | None:
 
 # ── AC-5: iteration_snapshot.py changed-since with unreadable snapshot ────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_changed_since_unreadable_snapshot_exits_2(
     tmp_path: Path,
 ) -> None:
@@ -328,7 +330,6 @@ def test_changed_since_unreadable_snapshot_exits_2(
 
 # ── AC-5b: iteration_snapshot.py changed-since with missing snapshot ─────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_changed_since_missing_snapshot_exits_2(
     tmp_path: Path,
 ) -> None:
@@ -360,7 +361,6 @@ def test_changed_since_missing_snapshot_exits_2(
 
 @_NEEDS_GTIMEOUT
 @pytest.mark.timeout(120)
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_wip_preserves_only_iteration_changed_tracked(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
@@ -417,7 +417,6 @@ def test_wip_preserves_only_iteration_changed_tracked(
 
 @_NEEDS_GTIMEOUT
 @pytest.mark.timeout(120)
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_pre_existing_untracked_not_committed(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
@@ -461,7 +460,6 @@ def test_pre_existing_untracked_not_committed(
 
 @_NEEDS_GTIMEOUT
 @pytest.mark.timeout(120)
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_agent_edits_pre_dirty_file_is_committed(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
@@ -502,7 +500,6 @@ def test_agent_edits_pre_dirty_file_is_committed(
 
 @_NEEDS_GTIMEOUT
 @pytest.mark.timeout(120)
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_missing_snapshot_fallback_preserves_all(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
@@ -517,15 +514,18 @@ def test_missing_snapshot_fallback_preserves_all(
         agent_creates_untracked=True,
     )
 
-    # Delete the snapshot file that the runner would have created.
-    # The snapshot lives at ${RUN_LOG_DIR}/pre-iter-snapshot-1.json.
-    # We can find it by globbing the data_home.
-    runtime = world["data_home"] / "projects" / world["key"] / "runtime"
-    # The runner creates the snapshot before we can delete it, so we
-    # patch the env to point at a non-existent snapshot path.
-    # Alternatively: run with a monkeypatch that deletes the snapshot
-    # after creation.  For the red-first pin, we just verify the
-    # fallback behavior by checking the log output.
+    # Build a stub agent that deletes the snapshot file (which the
+    # runner creates at iteration start), then hangs past the timeout.
+    # The runner names the file pre-iter-snapshot-1.json in RUN_LOG_DIR.
+    bin_dir = world["bin"]
+    stub = bin_dir / "claude"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        f"find {world['data_home']!s} -name 'pre-iter-snapshot-*.json' -delete 2>/dev/null\n"
+        "exec sleep 60\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
 
     proc = _run_one_iteration(world, root, timeout_sec=3)
     combined = proc.stdout + proc.stderr

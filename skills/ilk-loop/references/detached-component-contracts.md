@@ -1969,3 +1969,72 @@ safe since 25c, but it re-measures only via the driver's step-0 fallback)
 `verify_attribution.py` gains `--is-stale`. Requires `--batch`. Exits 0
 (stale) or 1 (fresh). Never runs the suite. The driver uses it before
 dispatching the gate-first fast path's current step.
+
+---
+
+## Contract 15: The pre-iteration snapshot (`pre-iter-snapshot-${i}.json`)
+
+### Purpose
+
+A snapshot of dirty/untracked state taken **before** the agent runs, so
+`preserve_dirty_tree_on_timeout` can commit only paths the iteration
+changed — not files that were already dirty or that another tool touched.
+
+### Format
+
+```json
+{
+  "head": "<sha>",
+  "dirty": {"<path>": "<git hash-object or \"deleted\">"},
+  "untracked": ["<path>", "..."]
+}
+```
+
+### Who writes
+
+- **`run_ilk_loop_claude.sh`** — calls `iteration_snapshot.py take` for
+  each repo in `REPOS` (resolved to its effective repo). Written at
+  iteration start, right after `get_repo_heads`. Exports
+  `ILK_PRE_ITER_SNAPSHOT=<path>` for the iteration.
+
+### Who reads
+
+- **`preserve_dirty_tree_on_timeout`** — calls
+  `iteration_snapshot.py changed-since` to get the NUL-separated list of
+  paths that are dirty/untracked NOW and either were not in the snapshot or
+  have a different content hash. Stages only those paths (`git add --`).
+- **Gate isolation** (sub-plan `gate-isolation-restores-what-it-took`) —
+  will read the same file to limit `git stash push` to new untracked paths.
+
+### Invariants
+
+1. **Writer is the runner, before the agent.** The snapshot MUST be taken
+   before `invoke_claude_iteration`. A snapshot taken after captures the
+   agent's own changes as "pre-existing" and defeats the purpose.
+2. **Missing or unreadable snapshot ⇒ fallback to `git add -A`.** The
+   runner logs `no pre-iteration snapshot — preserving the whole dirty tree`
+   and preserves everything. Losing a timed-out agent's work is worse than
+   an over-broad WIP commit.
+3. **Empty `changed-since` ⇒ skip the commit.** If nothing changed since
+   the snapshot, there is nothing to preserve.
+4. **`git hash-object` for content comparison.** Two states of the same
+   path are compared by their blob hash, not by mtime or size.
+5. **`--exclude-standard` semantics come from git.** `git status
+   --porcelain=v1 -z --untracked-files=all` already respects
+   `.gitignore` and `--exclude-standard`.
+
+### Schema
+
+The snapshot is a single JSON object. `dirty` maps paths to their
+`git hash-object` output (40-char hex) or the literal string `"deleted"`
+when the file no longer exists. `untracked` is a list of paths git
+considers untracked (respecting `.gitignore`).
+
+### Bug reference (ilk-skills #46)
+
+`preserve_dirty_tree_on_timeout` ran `git add -A` and committed every
+dirty and untracked path. On rezmac `kira-cloudflare-resolver`
+`50bc6c223` (Sep 22) and `dc49ac2ba` (Sep 24), this took
+`gc_push_failures.json` — a tracked file the gc tool edits — and
+committed it in the WIP. The snapshot ensures only iteration-changed
+paths are staged.

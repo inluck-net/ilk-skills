@@ -247,6 +247,16 @@ def test_wip_preserved_in_work_tree(
     root = tmp_path_factory.mktemp("wip-work-tree")
     world = _build_world(root, work_tree="sibling", dirty_in_sibling=True,
                          hang=True)
+    # Override the hang stub to also create a file — the snapshot now
+    # skips pre-dirty files, so the agent must produce new work.
+    stub = world["bin"] / "claude"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "echo 'agent work' > agent-created.txt\n"
+        "exec sleep 60\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
     clone_head_before = _head(world["project"])
 
     proc = _run_one_iteration(world, root, timeout_sec=3)

@@ -3348,13 +3348,43 @@ preserve_dirty_tree_on_timeout() {
       continue
     fi
 
-    # Stage everything (tracked + untracked) and commit.
+    # Stage only paths changed since the pre-iteration snapshot, then commit.
     # Wrapped in set +e so a failure (detached HEAD, hook rejection, unwritable
     # index) logs and continues to the next repo / terminal classification
     # rather than aborting the run (AC-7).
     (
       set +e
-      git -C "$repo" add -A 2>/dev/null
+
+      local _snapshot="${ILK_PRE_ITER_SNAPSHOT:-}"
+      local _changed_paths=""
+      local _use_snapshot=0
+      if [[ -n "$_snapshot" ]]; then
+        _changed_paths=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/iteration_snapshot.py" changed-since \
+          "$repo" --snapshot "$_snapshot" 2>/dev/null)
+        local _cs_rc=$?
+        if [[ "$_cs_rc" -eq 0 ]]; then
+          _use_snapshot=1
+        elif [[ "$_cs_rc" -eq 2 ]]; then
+          echo "  ! [runner] no pre-iteration snapshot — preserving the whole dirty tree" >&2
+        fi
+      else
+        echo "  ! [runner] no pre-iteration snapshot — preserving the whole dirty tree" >&2
+      fi
+
+      if [[ "$_use_snapshot" -eq 1 ]]; then
+        if [[ -n "$_changed_paths" ]]; then
+          # Stage only the changed-since paths (NUL-safe).
+          printf '%s\0' "$_changed_paths" | xargs -0 git -C "$repo" add -- 2>/dev/null
+        else
+          # Nothing changed since the snapshot — skip the commit.
+          echo "  [runner] no changes since pre-iteration snapshot — skipping WIP preserve in $repo" >&2
+          continue
+        fi
+      else
+        # Fallback: snapshot unavailable, preserve everything.
+        git -C "$repo" add -A 2>/dev/null
+      fi
+
       local file_count
       file_count=$(git -C "$repo" diff --cached --name-only 2>/dev/null | wc -l | tr -d ' ')
       local diff_stat
@@ -3881,6 +3911,30 @@ print(fm.get('result_file', ''))
     heads_after_file="${RUN_LOG_DIR}/heads-after-${i}.tmp"
 
     get_repo_heads "$heads_before_file"
+
+    # ── Pre-iteration snapshot ──────────────────────────────────────────
+    # Snapshot dirty/untracked state so preserve_dirty_tree_on_timeout can
+    # commit only what THIS iteration changed, not pre-existing dirt.
+    # Written here (before the agent runs) so the timeout path can diff
+    # against it.  One snapshot per repo, keyed by effective repo path.
+    local _pre_iter_snapshot_file="${RUN_LOG_DIR}/pre-iter-snapshot-${i}.json"
+    {
+      local _snap_ok=1
+      for _snap_repo in "${REPOS[@]}"; do
+        local _snap_eff
+        _snap_eff="$(selfmod_effective_repo "$_snap_repo")"
+        if ! python3 "${_SKILL_ROOT}/ilk-loop/scripts/iteration_snapshot.py" take \
+               "$_snap_eff" --out "$_pre_iter_snapshot_file" 2>/dev/null; then
+          _snap_ok=0
+        fi
+      done
+      if [[ "$_snap_ok" -eq 1 ]]; then
+        export ILK_PRE_ITER_SNAPSHOT="$_pre_iter_snapshot_file"
+      else
+        unset ILK_PRE_ITER_SNAPSHOT
+        echo "  ! [runner] pre-iteration snapshot failed — WIP preserve will fall back to git add -A" >&2
+      fi
+    }
 
     # Capture the sub-plan this iteration is about to work, BEFORE the agent
     # runs. It is the gate's fallback target when the commit carries no
