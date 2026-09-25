@@ -96,7 +96,9 @@ def _build_world_ac1(root: Path) -> dict:
     _git(project, "add", "-A")
     _git(project, "commit", "-q", "-m", "base")
     base_sha = _git(project, "rev-parse", "HEAD")
-    _git(project, "commit", "-q", "--allow-empty", "-m", "head")
+    (project / "fix.py").write_text("x = 1\n", encoding="utf-8")
+    _git(project, "add", "-A")
+    _git(project, "commit", "-q", "-m", "head")
     head_sha = _git(project, "rev-parse", "HEAD")
 
     data_home = root / ".ilk-data"
@@ -144,7 +146,7 @@ def _build_world_ac1(root: Path) -> dict:
         "```yaml\n"
         "gate_first: true\n"
         "local_checks:\n"
-        "  - command: \"true\"\n"
+        f"  - command: \"true --batch batch-{slug}\"\n"
         "    timeout: 30\n"
         "```\n",
         encoding="utf-8",
@@ -355,7 +357,7 @@ def _build_world_ac2(root: Path) -> dict:
         "```yaml\n"
         "gate_first: true\n"
         "local_checks:\n"
-        "  - command: \"true\"\n"
+        f"  - command: \"true --batch batch-{slug}\"\n"
         "    timeout: 30\n"
         "```\n",
         encoding="utf-8",
@@ -462,7 +464,11 @@ def test_is_stale_exits_zero_on_stale_record(tmp_path: Path) -> None:
                    errors="replace")
     _git(project, "commit", "-q", "--allow-empty", "-m", "base")
     base_sha = _git(project, "rev-parse", "HEAD")
-    _git(project, "commit", "-q", "--allow-empty", "-m", "head")
+    # HEAD must change the TREE: a head-only move (an empty marker commit)
+    # is not staleness -- see test_marker_commit_is_not_stale.
+    (project / "fix.py").write_text("x = 1\n", encoding="utf-8")
+    _git(project, "add", "-A")
+    _git(project, "commit", "-q", "-m", "head")
     head_sha = _git(project, "rev-parse", "HEAD")
 
     # Pin ILK_DATA_HOME and HOME.
@@ -555,6 +561,53 @@ def test_is_stale_exits_one_on_fresh_record(tmp_path: Path) -> None:
     assert not sentinel.exists(), (
         "--is-stale must not spawn the suite (sentinel exists)"
     )
+
+
+def test_marker_commit_is_not_stale(tmp_path: Path) -> None:
+    """An empty marker commit after the record moves HEAD but not the tree, so
+    the record is FRESH: ``--is-stale`` exits 1 and ``--remeasure-if-stale``
+    would not re-run the suite.
+
+    Regression (2026-09-25): a head comparison re-ran the suite on an unchanged
+    tree in 3 of 8 measurements of batches 25a/25b, because gate-first commits
+    an empty marker after every step."""
+    scripts = Path(__file__).resolve().parent.parent / "scripts"
+    sys.path.insert(0, str(scripts))
+    import verify_attribution as vat
+
+    project = tmp_path / "project"
+    project.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True,
+                   capture_output=True, text=True, encoding="utf-8",
+                   errors="replace")
+    (project / "code.py").write_text("x = 1\n", encoding="utf-8")
+    _git(project, "add", "-A")
+    _git(project, "commit", "-q", "-m", "code")
+    measured = _git(project, "rev-parse", "HEAD")
+    _git(project, "commit", "-q", "--allow-empty", "-m",
+         "chore(loop): gate-first marker [plan:x#step-0]")
+    assert _git(project, "rev-parse", "HEAD") != measured
+
+    data_home = tmp_path / "data"
+    with _scoped_data_home(data_home):
+        key = ilk_paths.project_key(project)
+        vdir = data_home / "projects" / key / "logs" / "verification"
+        vdir.mkdir(parents=True, exist_ok=True)
+        (vdir / "batch-marker-batch.md").write_text(
+            "# Batch verification record — batch-marker\n\n"
+            "record_writer: verification_record.py\n"
+            f"verified_head: {measured}\n"
+            f"verified_tree: {_git(project, 'rev-parse', measured + '^{tree}')}\n"
+            f"base_sha: {measured}\n"
+            "suite_invocation: echo ok\n"
+            "suite_scope: auto\n"
+            "suite_failed: 0\n\n"
+            "## At-base rerun\n\n_(no failures)_\n",
+            encoding="utf-8",
+        )
+        ret = vat.main(["--is-stale", "--project", str(project),
+                        "--batch", "batch-marker"])
+    assert ret == 1, f"a marker-only HEAD move must read fresh, got {ret}"
 
 
 # ── AC-4 (xfail): plan_lint WARN on old-form step 1 ─────────────────────────
@@ -671,7 +724,11 @@ def test_stale_record_with_suite_scope_full_respects_scope(tmp_path: Path) -> No
                    errors="replace")
     _git(project, "commit", "-q", "--allow-empty", "-m", "base")
     base_sha = _git(project, "rev-parse", "HEAD")
-    _git(project, "commit", "-q", "--allow-empty", "-m", "head")
+    # HEAD must change the TREE: a head-only move (an empty marker commit)
+    # is not staleness -- see test_marker_commit_is_not_stale.
+    (project / "fix.py").write_text("x = 1\n", encoding="utf-8")
+    _git(project, "add", "-A")
+    _git(project, "commit", "-q", "-m", "head")
     head_sha = _git(project, "rev-parse", "HEAD")
 
     # Fake suite script that prints pytest-like output.

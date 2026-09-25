@@ -586,6 +586,40 @@ def _git(project: Path, *args: str) -> str | None:
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
 
 
+_STALE_TREE_RE = re.compile(r"^verified_tree:\s*([0-9a-fA-F]{7,40})\s*$", re.MULTILINE)
+_STALE_HEAD_RE = re.compile(r"^verified_head:\s*([0-9a-fA-F]{7,40})\s*$", re.MULTILINE)
+
+
+def record_staleness(project: Path, text: str) -> str | None:
+    """Why the record no longer measures HEAD, or None when it still does.
+
+    **Compare trees, not heads** (see ``check_verified_tree``): gate-first
+    commits an empty marker after every step, so HEAD always moves while the
+    tree does not.  A head comparison re-ran the suite on an unchanged tree in
+    3 of 8 measurements of batches 25a/25b (2026-09-25).
+    """
+    m = re.search(r"^suite_failed:\s*(.+)$", text, re.MULTILINE)
+    if not m:
+        return "record has no suite_failed"
+    try:
+        int(m.group(1).strip())
+    except ValueError:
+        return f"suite_failed is {m.group(1).strip()!r}, not a count"
+    t = _STALE_TREE_RE.search(text)
+    rec_tree = t.group(1) if t else None
+    if rec_tree is None:
+        h = _STALE_HEAD_RE.search(text)
+        rec_tree = _git(project, "rev-parse", f"{h.group(1)}^{{tree}}") if h else None
+    if rec_tree is None:
+        return "record names neither verified_tree nor a resolvable verified_head"
+    head_tree = _git(project, "rev-parse", "HEAD^{tree}")
+    if head_tree is None:
+        return "HEAD's tree is unresolvable"
+    if not head_tree.startswith(rec_tree) and not rec_tree.startswith(head_tree):
+        return f"record tree {rec_tree[:12]} != HEAD tree {head_tree[:12]}"
+    return None
+
+
 def check_verified_tree(project: Path, record_path: Path) -> tuple[bool, str]:
     """Is the tree the record verified still the tree we are about to certify?
 
@@ -756,7 +790,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="verify only; do not record the verdict in batch-gate.json")
     ap.add_argument("--remeasure-if-stale", action="store_true",
                     help="re-run the suite when the record is stale "
-                         "(verified_head != HEAD or suite_failed not numeric); "
+                         "(record tree != HEAD tree, missing, or suite_failed not numeric); "
                          "refuses in a worker session")
     ap.add_argument("--base-sha", default=None, metavar="SHA",
                     help="base sha for re-measurement (used when record is missing "
@@ -792,19 +826,12 @@ def main(argv: list[str] | None = None) -> int:
         if record_path is not None and record_path.is_file():
             text = record_path.read_text(encoding="utf-8-sig",
                                          errors="replace")
-            head = _git(project, "rev-parse", "HEAD")
-            m = re.search(r"^verified_head:\s*(\S+)", text, re.MULTILINE)
-            rec_head = m.group(1) if m else None
-            if rec_head != head:
+            reason = record_staleness(project, text)
+            if reason:
                 is_stale = True
-            m2 = re.search(r"^suite_failed:\s*(.+)$", text, re.MULTILINE)
-            if m2:
-                try:
-                    int(m2.group(1).strip())
-                except ValueError:
-                    is_stale = True
-            else:
-                is_stale = True
+                print(f"stale: {reason}")
+        elif record_path is None:
+            print("stale: record missing")
         return 0 if is_stale else 1
 
     # Load ship config early — MalformedConfig must be caught before any
@@ -860,18 +887,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 text = record_path.read_text(encoding="utf-8-sig",
                                              errors="replace")
-                head = _git(project, "rev-parse", "HEAD")
-                m = re.search(r"^verified_head:\s*(\S+)", text, re.MULTILINE)
-                rec_head = m.group(1) if m else None
-                if rec_head != head:
-                    is_stale = True
-                m2 = re.search(r"^suite_failed:\s*(.+)$", text, re.MULTILINE)
-                if m2:
-                    try:
-                        int(m2.group(1).strip())
-                    except ValueError:
-                        is_stale = True
-                else:
+                if record_staleness(project, text):
                     is_stale = True
                 if is_stale:
                     m3 = re.search(r"^base_sha:\s*(\S+)", text, re.MULTILINE)

@@ -63,7 +63,11 @@ def _make_repo(tmp_path: Path, monkeypatch) -> tuple[Path, str, str]:
                    errors="replace")
     _git(project, "commit", "-q", "--allow-empty", "-m", "base")
     base_sha = _git(project, "rev-parse", "HEAD")
-    _git(project, "commit", "-q", "--allow-empty", "-m", "head")
+    # HEAD changes the TREE: staleness is a tree comparison, so a record at
+    # base must read stale at HEAD (an empty commit would leave it fresh).
+    (project / "head.txt").write_text("head\n", encoding="utf-8")
+    _git(project, "add", "head.txt")
+    _git(project, "commit", "-q", "-m", "head")
     head_sha = _git(project, "rev-parse", "HEAD")
     return project, base_sha, head_sha
 

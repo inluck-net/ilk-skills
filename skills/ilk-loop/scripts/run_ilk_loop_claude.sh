@@ -1787,6 +1787,35 @@ raise SystemExit(1)
 ' "$sub_file" "$step"
 }
 
+# The record name a verify step's gate names: the first `--batch <name>` in
+# that step's fenced yaml.  Echoes it; exit 1 when the step names none.  Same
+# heading + fence window as step_declares_gate_first.
+_verify_gate_batch_name() {
+  local slug="$1" step="$2"
+  local plans_dir sub_file
+  plans_dir=$(_gate_first_plans_dir) || return 1
+  sub_file=$(find_subplan_file_by_slug "$plans_dir" "$slug") || return 1
+  python3 -c '
+import re, sys
+body = open(sys.argv[1], encoding="utf-8").read()
+step = sys.argv[2]
+pat = re.compile(r"^###\s+Step\s+" + re.escape(step) + r"(?![0-9])", re.MULTILINE)
+m = pat.search(body)
+if not m:
+    raise SystemExit(1)
+after = body[m.end():]
+next_heading = re.search(r"^###\s+", after, re.MULTILINE)
+region = after[: next_heading.start()] if next_heading else after
+fence = re.search(r"^```(?:yaml|yml)?\s*\n(.*?)^```", region, re.MULTILINE | re.DOTALL)
+if not fence:
+    raise SystemExit(1)
+b = re.search(r"--batch\s+([A-Za-z0-9._-]+)", fence.group(1))
+if not b:
+    raise SystemExit(1)
+print(b.group(1))
+' "$sub_file" "$step"
+}
+
 # Green iff the Contract 2b results file carries at least one `pass` record
 # naming its command.  The command check is load-bearing: `all([])` over zero
 # declared checks reports all_passed=True, and a pass record naming no command
@@ -1926,22 +1955,30 @@ attempt_gate_first_fast_path() {
 
   # ── Stale-record step-0 fallback ─────────────────────────────────────
   # For a batch_verification sub-plan at step >= 1, if the record is
-  # stale (verified_head ≠ HEAD, missing, or suite_failed not numeric),
+  # stale (record tree ≠ HEAD's tree, missing, or suite_failed not numeric),
   # run step 0's gate first to re-measure before the current step.
   # This prevents a deadlock when the old-form step 1 gate (no
   # --remeasure-if-stale) rejects a stale record and step 0 never
   # re-runs because current_step is 1.  See 25c.
+  # The record is named by the gate's own `--batch <name>`, never derived
+  # from the sub-plan slug: ilk-skills names records batch-<date>-<master>,
+  # gh-resolve <slug>-<run_id>, and a derived name that matches neither reads
+  # as "record missing" and re-runs step 0 on every verify.  No --batch in
+  # the step's gate => no fallback.
+  local batch_slug=""
   if [[ "$step" -ge 1 ]] && sub_plan_has_batch_verification "$slug"; then
-    local batch_slug="batch-${slug}"
+    batch_slug="$(_verify_gate_batch_name "$slug" "$step")" || batch_slug=""
+  fi
+  if [[ -n "$batch_slug" ]]; then
     local probe_project
     probe_project="$(selfmod_effective_repo "$PROJECT_PATH")"
     [[ -n "$probe_project" ]] || probe_project="$PROJECT_PATH"
-    local stale_rc=0
-    python3 "${_SKILL_ROOT}/ilk-loop/scripts/verify_attribution.py" \
+    local stale_rc=0 stale_out=""
+    stale_out="$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/verify_attribution.py" \
       --is-stale --project "$probe_project" --batch "$batch_slug" \
-      2>/dev/null || stale_rc=$?
+      2>/dev/null)" || stale_rc=$?
     if [[ "$stale_rc" -eq 0 ]]; then
-      local reason="record stale"
+      local reason="${stale_out:-record stale}"
       echo "[gate-first] $slug: $reason — re-running step 0 before step $step"
       local tf0
       tf0=$(mktemp)
