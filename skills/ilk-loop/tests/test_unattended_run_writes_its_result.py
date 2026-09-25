@@ -356,6 +356,9 @@ def test_without_profile_parks_as_today(
 # ── AC-3: SIGTERM ⇒ result file with interrupted ─────────────────────────────
 
 @_NEEDS_GTIMEOUT
+# The stub holds 10s and the runner exits after it; the suite's 17s default
+# leaves too little room.
+@pytest.mark.timeout(60)
 def test_sigterm_under_profile_writes_interrupted_result(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
@@ -367,7 +370,7 @@ def test_sigterm_under_profile_writes_interrupted_result(
     # Without the hold the stub finishes in about a second and the run
     # ends on its own before the signal is sent.
     result = _run_one_iteration(world, root, send_signal=signal.SIGTERM,
-                                extra_env={"STUB_HOLD_SECONDS": "30"})
+                                extra_env={"STUB_HOLD_SECONDS": "10"})
     # A signal trap that returns resumes the script: the run went on to gate
     # and ship-check the iteration it was told to abandon.
     assert "=== Loop ended:" not in result.stdout, (
