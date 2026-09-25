@@ -28,6 +28,7 @@ def _build_iteration_record(
     exit_code: int = 0,
     new_commits_total: int = 3,
     stop_reason: str | None = None,
+    project: str = "/Users/chad/Projects/keyreply/kira-cloudflare",
 ) -> dict:
     """Replicate the runner's JSONL record builder (run_ilk_loop_claude.sh:3196-3246).
 
@@ -39,14 +40,14 @@ def _build_iteration_record(
         "cli": "claude",
         "iteration": iteration,
         "timestamp": timestamp,
-        "project": "/Users/chad/Projects/keyreply/kira-cloudflare",
+        "project": project,
         "model": "mimo-v2.5-pro",
         "base_url": "",
         "max_budget_usd": 0.0,
         "duration_sec": 764,
         "exit_code": exit_code,
         "new_commits_total": new_commits_total,
-        "new_commits": {"/Users/chad/Projects/keyreply/kira-cloudflare": new_commits_total},
+        "new_commits": {project: new_commits_total},
         "tool_calls": 66,
         "test_invocations": 11,
         "local_checks": [
@@ -62,6 +63,7 @@ def _build_terminal_record(
     run_id: str = "20260918-175308",
     stop_reason: str = "ship_integrity_violation",
     iters: int = 1,
+    project: str = "/Users/chad/Projects/keyreply/kira-cloudflare",
 ) -> dict:
     """Replicate the runner's run-level terminal record (run_ilk_loop_claude.sh, post :3354).
 
@@ -73,7 +75,7 @@ def _build_terminal_record(
         "cli": "claude",
         "iteration": 999999,
         "timestamp": "2026-09-18T18:06:00+0800",
-        "project": "/Users/chad/Projects/keyreply/kira-cloudflare",
+        "project": project,
         "stop_reason": stop_reason,
         "record_type": "run_exit",
         "iters": iters,
@@ -221,8 +223,12 @@ def _setup_violation_project(tmp_path: Path) -> tuple[Path, dict]:
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     # Write JSONL: per-iteration record (no stop_reason) + terminal record.
-    iter_record = _build_iteration_record(stop_reason="")
-    terminal_record = _build_terminal_record()
+    # Pass the resolved project path so read_jsonl_iters can match records
+    # (collect.py calls .resolve() on the project path, which on macOS
+    # converts /var/folders/... to /private/var/folders/...).
+    resolved = str(project_path.resolve())
+    iter_record = _build_iteration_record(stop_reason="", project=resolved)
+    terminal_record = _build_terminal_record(project=resolved)
     jsonl_path = logs_dir / ".ilk-loop.log"
     jsonl_path.write_text(
         json.dumps(iter_record) + "\n" + json.dumps(terminal_record) + "\n",
