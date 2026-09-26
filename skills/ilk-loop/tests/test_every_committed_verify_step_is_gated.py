@@ -196,6 +196,87 @@ def test_verify_sub_plan_gates_every_committed_step(tmp_path: Path) -> None:
     )
 
 
+def _add_other_verify_subplans(project: Path, n: int) -> None:
+    """Add *n* more ``batch_verification: true`` sub-plans (other batches)."""
+    plans = project / "docs" / "plans"
+    for i in range(n):
+        (plans / f"2026-09-2{i}-other-verify-{i}.md").write_text(
+            "---\n"
+            f"plan: other-verify-{i}\n"
+            "status: shipped\n"
+            "current_step: 2\n"
+            "estimated_steps: 2\n"
+            "batch_verification: true\n"
+            "---\n\n"
+            f"# Sub-plan: other-verify-{i}\n",
+            encoding="utf-8",
+        )
+    _git(project, "add", "-A")
+    _git(project, "commit", "-q", "-m", "more verify sub-plans")
+
+
+def test_many_verify_sub_plans_still_yield_targets(tmp_path: Path) -> None:
+    """A real plans dir holds one verify sub-plan per past batch (49 in
+    ilk-skills, 62 in gh-resolve on 2026-09-26).  v0.9.131 passed that list
+    to awk as a multi-line ``-v`` value; macOS awk 20200816 exits 2 on
+    "newline in string", so every iteration got 0 targets and ran no gate."""
+    env = _sandbox_env(tmp_path)
+    project = _make_verify_project(tmp_path, "personal")
+    _add_other_verify_subplans(project, 2)
+
+    before = _git(project, "rev-parse", "HEAD")
+    for n in (0, 1):
+        (project / f"file{n}.txt").write_text(f"step {n}\n", encoding="utf-8")
+        _git(project, "add", "-A")
+        _git(project, "commit", "-q", "-m",
+             f"fix(app): step {n} [plan:batch-verify#step-{n}]")
+    after = _git(project, "rev-parse", "HEAD")
+
+    proc = _dotsource(project, env,
+                      f"get_local_check_targets '{project}' '{before}' '{after}'")
+    targets = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+    assert targets == ["batch-verify 0", "batch-verify 1"], (
+        f"with 3 verify sub-plans in the plans dir, targets must still be "
+        f"emitted; got {targets!r}\nstderr: {proc.stderr}"
+    )
+
+
+def test_normal_sub_plan_gated_beside_many_verify_sub_plans(tmp_path: Path) -> None:
+    """The common case the v0.9.131 bug hit: ordinary work in a project whose
+    plans dir also holds several past verify sub-plans."""
+    env = _sandbox_env(tmp_path)
+    project = _make_normal_project(tmp_path, "personal")
+    _add_other_verify_subplans(project, 2)
+
+    before = _git(project, "rev-parse", "HEAD")
+    (project / "file.txt").write_text("step 1\n", encoding="utf-8")
+    _git(project, "add", "-A")
+    _git(project, "commit", "-q", "-m",
+         "fix(app): step 1 [plan:normal-work#step-1]")
+    after = _git(project, "rev-parse", "HEAD")
+
+    proc = _dotsource(project, env,
+                      f"get_local_check_targets '{project}' '{before}' '{after}'")
+    targets = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+    assert targets == ["normal-work 1"], (
+        f"got {targets!r}\nstderr: {proc.stderr}"
+    )
+
+
+def test_no_awk_receives_a_multiline_verify_list() -> None:
+    """Both awk sites (targets and the merge) must get the verify list
+    without newlines.  The merge site is inline in the main loop and has no
+    seam to drive directly, so this pins the source shape for both."""
+    src = RUNNER.read_text(encoding="utf-8")
+    sites = re.findall(r'awk -v vs="\$\{?(\w+)', src)
+    assert len(sites) >= 2, f"expected both awk sites, found {sites!r}"
+    for var in sites:
+        assert var.endswith("_oneline"), (
+            f"awk -v vs=\"${var}\" passes a variable not flattened to one "
+            f"line; macOS awk rejects a newline in a -v value"
+        )
+
+
 # ── AC-2 ─────────────────────────────────────────────────────────────────────
 
 def test_step0_gate_failure_stops_later_steps(tmp_path: Path) -> None:

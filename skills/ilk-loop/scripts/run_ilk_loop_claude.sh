@@ -1215,13 +1215,16 @@ get_local_check_targets() {
   [[ -n "$pairs" ]] || return
 
   # Build the set of verify slugs once.
-  local verify_slugs
-  verify_slugs=$(_list_verify_slugs)
+  # One line, space-separated: macOS awk rejects a newline in a -v value
+  # ("newline in string", exit 2), which left every iteration with 0 targets
+  # in any plans dir holding 2+ verify sub-plans (v0.9.131).
+  local verify_slugs_oneline
+  verify_slugs_oneline=$(_list_verify_slugs | tr '\n' ' ')
 
   # Emit targets: all steps (ascending) for verify sub-plans, max step for others.
-  printf '%s\n' "$pairs" | awk -v vs="$verify_slugs" '
+  printf '%s\n' "$pairs" | awk -v vs="$verify_slugs_oneline" '
     BEGIN {
-      n = split(vs, arr, "\n")
+      n = split(vs, arr, " ")
       for (i = 1; i <= n; i++) vslugs[arr[i]] = 1
     }
     {
@@ -4538,10 +4541,10 @@ print(json.dumps({
       local merged_targets_file
       merged_targets_file=$(mktemp)
       if [[ -s "$all_targets_file" ]]; then
-        local _verify_slugs_merge
-        _verify_slugs_merge=$(_list_verify_slugs)
-        sort -t' ' -k1,1 -k2,2n "$all_targets_file" | awk -v vs="$_verify_slugs_merge" '
-          BEGIN { n = split(vs, arr, "\n"); for (i = 1; i <= n; i++) vslugs[arr[i]] = 1 }
+        local _verify_slugs_merge_oneline
+        _verify_slugs_merge_oneline=$(_list_verify_slugs | tr '\n' ' ')
+        sort -t' ' -k1,1 -k2,2n "$all_targets_file" | awk -v vs="$_verify_slugs_merge_oneline" '
+          BEGIN { n = split(vs, arr, " "); for (i = 1; i <= n; i++) vslugs[arr[i]] = 1 }
           {
             if ($1 in vslugs) { print $1, $2 }
             else { s = $2 + 0; if (!($1 in max) || s > max[$1]) max[$1] = s }
