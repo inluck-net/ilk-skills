@@ -74,7 +74,19 @@ LOOP_STATUS_SCRIPT = HOME / ".cursor" / "skills" / "ilk-loop" / "scripts" / "loo
 # Import loop_status for master-resolution logic (extract_master_order,
 # pick_active_master) so batch_unverified_tiers can scope to the run's
 # active master rather than scanning every shipped sub-plan in the dir.
-_LOOP_STATUS_DIR = HOME / ".cursor" / "skills" / "ilk-loop" / "scripts"
+#
+# The sibling tree this file is part of wins, for the reason given at the
+# ilk_paths import below: ~/.cursor/skills/ilk-loop is a symlink into whichever
+# checkout was installed last, and putting it first on sys.path made every
+# module imported after this one -- loop_status, and through it plan_status --
+# the LIVE CLONE's copy.  A suite run from a worktree then collected the
+# worktree's tests against the clone's scripts (2026-09-29: ImportError for a
+# function the worktree had and the clone did not).
+_LOCAL_LOOP_STATUS_DIR = Path(__file__).resolve().parent.parent.parent / "ilk-loop" / "scripts"
+_LOOP_STATUS_DIR = (
+    _LOCAL_LOOP_STATUS_DIR if _LOCAL_LOOP_STATUS_DIR.is_dir()
+    else HOME / ".cursor" / "skills" / "ilk-loop" / "scripts"
+)
 if _LOOP_STATUS_DIR.is_dir():
     sys.path.insert(0, str(_LOOP_STATUS_DIR))
 try:
