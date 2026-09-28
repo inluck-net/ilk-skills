@@ -1658,6 +1658,77 @@ one actionable pair is not buried (69KB → 5.9KB on that run).
 
 ---
 
+## Contract 13: The selfmod merge-back host-wide probe
+
+### Purpose
+
+A selfmod merge-back replaces the files under `~/.claude-worker/skills/`
+symlinks.  Any loop running THIS clone's `run_ilk_loop_claude.sh` for another
+repo — or any worker whose argv contains `ilk please continue` — reads those
+files.  Merging under them corrupts the running loop.
+
+The per-project probe (`_find_live_ilk_pids`) matches only runners whose
+`--project-path` is THIS repo.  The host-wide probe catches the two classes
+the per-project probe misses.
+
+### What blocks a merge
+
+| class | match | example |
+|---|---|---|
+| clone runner | `<clone>/skills/ilk-loop/scripts/` appears literally in argv | `run_ilk_loop_claude.sh --project-path /other/repo` |
+| worker | `ilk please continue` appears in argv | `claude -p "ilk please continue …"` |
+
+### What does NOT block
+
+| class | reason |
+|---|---|
+| runner for a different clone | literal path prefix does not match |
+| this process or its ancestors | excluded by `_self_and_ancestor_pids()` |
+| this process's descendants | excluded (the merge runs as a child of the runner) |
+
+### Who writes
+
+- **`selfmod_worktree.py`** — `_find_live_ilk_pids_hostwide` runs after
+  `_find_live_ilk_pids` in `merge_back()`.
+
+### Who reads
+
+- **`merge_back()`** — Step 1a2, between the per-project probe (Step 1a)
+  and the daemon bounce (Step 1b).
+- **The merge CLI** — `main()`, which prints each blocking PID's category
+  (clone-runner or worker) before exiting 2.
+
+### Invariants
+
+1. **Literal path prefix, never a substring.** A dotted path must not match
+   a neighbour (`/a/repo` must not match `/a/repo-2`).  The match is
+   `scripts_dir in cmdline`, where `scripts_dir` is the resolved
+   `<clone>/skills/ilk-loop/scripts/` path.
+
+2. **Fail-closed on probe failure.** If `_pgrep` raises (broken probe,
+   permission error), the result is `MergeBlockedError(blocking_pids=[-1])`,
+   which the CLI converts to exit 4.  Never treat a probe failure as "no
+   loops".
+
+3. **Ancestor and descendant exclusion.** The probing process and its
+   ancestors are excluded (the merge runs inside the loop).  Descendants
+   are also excluded (the merge runs as a child of the runner).
+
+4. **Host-wide, not world-wide.** The probe matches THIS clone's script
+   path, not any runner.  A different clone's runner carries a different
+   script path and is not matched.
+
+### Bug reference (gh-resolve-57, 2026-09-28)
+
+Three resolver processes (pids 19829, 19834, 19850) were running
+`…/ilk-skills/skills/ilk-loop/scripts/run_ilk_loop_claude.sh` with
+`--project-path /Users/chad/Projects/keyreply/kira-cloudflare-scratch`.
+The per-project probe (`_find_live_ilk_pids`) would have let the merge
+proceed because the `--project-path` did not match.  The host-wide probe
+catches these by matching the script path prefix.
+
+---
+
 ## See also
 
 - `docs/runtime/loop-runtime-hardening.md` — broader runtime hardening notes

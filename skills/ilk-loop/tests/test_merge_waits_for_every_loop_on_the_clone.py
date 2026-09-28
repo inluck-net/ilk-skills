@@ -154,7 +154,6 @@ class TestHostWideProbe:
     A process that is neither ancestor nor descendant counts as a live loop.
     """
 
-    @pytest.mark.xfail(strict=True, reason="red-first: host-wide probe not yet implemented")
     def test_ac1_runner_with_clone_script_path_blocks(self, tmp_path: Path) -> None:
         """AC-1: a runner whose argv runs `<clone>/skills/ilk-loop/scripts/run_ilk_loop_claude.sh --project-path /other/repo` ⇒ blocked.
 
@@ -203,7 +202,6 @@ class TestHostWideProbe:
         finally:
             runners.close()
 
-    @pytest.mark.xfail(strict=True, reason="red-first: host-wide probe not yet implemented")
     def test_ac2_worker_with_ilk_please_continue_blocks(self, tmp_path: Path) -> None:
         """AC-2: a fake worker `claude -p "ilk please continue …"` ⇒ blocked.
 
@@ -322,7 +320,6 @@ class TestHostWideProbe:
         finally:
             runners.close()
 
-    @pytest.mark.xfail(strict=True, reason="red-first: host-wide probe not yet implemented")
     def test_ac5_probe_failure_exits_4(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """AC-5: the probe command fails ⇒ exit 4.
 

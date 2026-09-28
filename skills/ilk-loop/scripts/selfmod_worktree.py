@@ -361,6 +361,72 @@ def _find_any_live_ilk_pids(pattern: str = DEFAULT_PROBE_PATTERN) -> list[int]:
     return _pgrep(pattern)
 
 
+def _find_live_ilk_pids_hostwide(
+    clone_path: Path,
+    pattern: str | None = None,
+) -> list[int]:
+    """Live loops whose argv runs this clone's scripts or carries the worker prompt.
+
+    Two classes that the per-project ``_find_live_ilk_pids`` misses:
+
+    1. A runner executing THIS clone's ``run_ilk_loop_claude.sh`` for another
+       repo (``--project-path /other/repo``).  The per-project probe matches
+       only runners whose ``--project-path`` is THIS repo.
+    2. A worker whose argv contains ``ilk please continue``.  Workers carry
+       no ``--project-path`` at all.
+
+    The match is a literal path prefix on ``<clone>/skills/ilk-loop/scripts/``,
+    not the runner pattern alone.  That is what keeps a different clone's
+    runner out of scope (AC-4).
+
+    This process and its ancestors are excluded (the merge runs inside the
+    loop it merges for).  A worker that is a descendant of this process is
+    also excluded.
+
+    Args:
+        clone_path: Root of the clone being protected.
+        pattern: ``pgrep -f`` pattern.  Defaults to the host-wide alternation
+            built from *clone_path*.  Tests may pin it so assertions are about
+            their own fakes, not the host's process table.
+
+    Returns:
+        PIDs of live loops that block a merge.
+
+    Raises:
+        RuntimeError: If the probe itself fails (broken pgrep, permission
+            error, etc.).  The caller must treat this as "unknown liveness"
+            and refuse.
+    """
+    import re as _re
+
+    if pattern is None:
+        scripts_dir = str(
+            (clone_path / "skills" / "ilk-loop" / "scripts").resolve()
+        )
+        escaped = _re.escape(scripts_dir)
+        worker_prompt = _re.escape("ilk please continue")
+        pattern = f"{escaped}|{worker_prompt}"
+
+    candidates = _pgrep(pattern)
+    if not candidates:
+        return []
+
+    excluded = _self_and_ancestor_pids()
+
+    scripts_dir = str(
+        (clone_path / "skills" / "ilk-loop" / "scripts").resolve()
+    )
+    worker_prompt = "ilk please continue"
+
+    return [
+        pid for pid in candidates
+        if pid not in excluded and (
+            scripts_dir in _pid_cmdline(pid)
+            or worker_prompt in _pid_cmdline(pid)
+        )
+    ]
+
+
 def _find_live_ilk_pids(
     repo_path: "Path | str | Iterable[Path | str]",
     pattern: str = DEFAULT_PROBE_PATTERN,
@@ -601,7 +667,8 @@ class SelfmodWorktree:
                 (non-zero exit) the merge is blocked with details.  If not
                 set, daemon liveness is silently ignored (no probe runs).
         """
-        # Step 1a: Loop liveness check — refuse if loops are live.
+        # Step 1a: Loop liveness check (per-project) — refuse if loops are
+        # live on THIS repo.
         try:
             live_pids = _find_live_ilk_pids(
                 (self.repo_path, self.repo_path_as_given), probe_pattern
@@ -612,6 +679,18 @@ class SelfmodWorktree:
 
         if live_pids:
             raise MergeBlockedError(blocking_pids=live_pids)
+
+        # Step 1a2: Host-wide probe — refuse if ANY loop runs this clone's
+        # scripts (for any repo) or a worker carries the prompt.
+        try:
+            host_pids = _find_live_ilk_pids_hostwide(
+                clone_path=self.repo_path,
+            )
+        except RuntimeError as exc:
+            raise MergeBlockedError(blocking_pids=[-1]) from exc
+
+        if host_pids:
+            raise MergeBlockedError(blocking_pids=host_pids)
 
         # Step 1b: Daemon liveness check — bounce, do not refuse.
         # A live daemon at merge time is safe to interrupt: it is stateless
@@ -912,7 +991,14 @@ def main() -> None:
                 )
                 sys.exit(4)
             else:
-                print(f"ERROR: {exc}", file=sys.stderr)
+                print("MERGE BLOCKED: live loop(s) detected.", file=sys.stderr)
+                for pid in exc.blocking_pids:
+                    cmdline = _pid_cmdline(pid)
+                    if "ilk please continue" in cmdline:
+                        label = "worker"
+                    else:
+                        label = f"runner: {cmdline}"
+                    print(f"  pid {pid}: {label}", file=sys.stderr)
                 sys.exit(2)
         except BranchMovedError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
