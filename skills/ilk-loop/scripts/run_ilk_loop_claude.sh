@@ -4718,6 +4718,13 @@ print('false' if not d.get('blocked', True) else 'true')
             # the strike on the running sub-plan and log the real owner.
             local _red_owner_script="${_SKILL_ROOT}/ilk-loop/scripts/red_owner.py"
             local _red_owner_skip_quarantine="false"
+            # main() never assigns plans_dir (it is a local of other
+            # functions), so reading "$plans_dir" here aborted under set -u and
+            # `|| true` hid it: red-owner attribution silently skipped on every
+            # confirmed-blocking failure (kira-cloudflare-scratch run
+            # 20260928-144712). Resolve it the way main()'s other sites do.
+            local _ro_plans_dir=""
+            _ro_plans_dir=$(get_plans_dir 2>/dev/null) || true
             if [[ -f "$_red_owner_script" && -s "$local_checks_results" ]]; then
               # Extract master's base_sha
               local _master_base_sha=""
@@ -4738,7 +4745,7 @@ try:
         print(chosen)
 except Exception:
     pass
-" "$plans_dir" "${_SKILL_ROOT}/ilk-loop/scripts" 2>/dev/null) || true
+" "$_ro_plans_dir" "${_SKILL_ROOT}/ilk-loop/scripts" 2>/dev/null) || true
 
               if [[ -n "$_active_master_file" && -f "$_active_master_file" ]]; then
                 _master_base_sha=$(python3 -c "
@@ -4822,7 +4829,7 @@ from pathlib import Path
 for p in Path(sys.argv[1]).glob('*-' + sys.argv[2] + '.md'):
     if not p.name.startswith('MASTER'):
         print(p); break
-" "$plans_dir" "$_running_slug" 2>/dev/null) || true
+" "$_ro_plans_dir" "$_running_slug" 2>/dev/null) || true
                           if [[ -n "$_subplan_file" && -f "$_subplan_file" ]]; then
                             python3 -c "
 import re, sys
