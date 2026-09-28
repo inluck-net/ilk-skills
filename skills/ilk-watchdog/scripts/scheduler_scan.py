@@ -400,6 +400,7 @@ def _dispatch_verification_on_drain(
         # swaps the session identity only.
         "--engine", "claude-manager",
         "--max-iterations", "1",
+        "--master", master_path.name,
     ]
 
     try:
@@ -412,6 +413,10 @@ def _dispatch_verification_on_drain(
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
+        _log.info(
+            "[verify-dispatch] dispatched %s for %s",
+            project_dir.name, master_path.name,
+        )
     except Exception as exc:
         # Dispatch failure is non-fatal (AC-7).
         _log.warning(

@@ -89,7 +89,7 @@ about the same file — this doc makes the implicit contracts explicit.
 | `"no-progress"` | 3 consecutive iterations with zero new commits | Terminal |
 | `"all-shipped"` | Every registered sub-plan is shipped **and every one is proven**; loop ended naturally | Terminal |
 | `"shipped-unproven"` | Every registered sub-plan is shipped, but the ship-proof ledger holds no row for at least one — the ship claim is unverified | Terminal |
-| `"blocked-no-runnable"` | All remaining sub-plans are `blocked`; nothing to dispatch | Terminal |
+| `"blocked-no-runnable"` | All remaining sub-plans are `blocked`; nothing to dispatch. Also emitted when the master is held (non-runnable `master_status` such as `draft`) | Terminal |
 | `"already-shipped"` | Nothing to do at launch time (all sub-plans already shipped) | Terminal |
 | `"selfmod_merge_failed"` | A selfmod worktree's merge-back failed; committed work is parked in the worktree | Terminal |
 | `"selfmod_live_clone_touched"` | A selfmod worker modified tracked files in the live clone; the run stops without merging and logs the file list | Terminal |
@@ -853,6 +853,11 @@ verified: true          # <-- human-verify marker
    automatically. This is not a bug — it is the intended close of the manual
    join. A human pass is still valid and is the fallback when dispatch cannot
    happen. Absent still means unverified (invariant 1).
+5. **Verify-dispatch pins its master.** `_dispatch_verification_on_drain`
+   passes `--master <master_path.name>` to `launch.sh` so the dispatched
+   run's `loop_status` picks the shipped master that just drained, not a
+   draft or unrelated master. A successful dispatch is logged via
+   `_log.info("[verify-dispatch] dispatched <project> for <master>")`.
 
 ### Bug reference (field case: compile-only carry-forward)
 

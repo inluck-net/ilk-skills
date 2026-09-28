@@ -1116,6 +1116,14 @@ get_active_subplan_targets() {
   local status_json line slug step
   status_json=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null) || true
   [[ -n "$status_json" ]] || return 0
+  # A non-runnable master (draft, etc.) must not be gated.  Treat absent
+  # or '(none)' legacy as runnable so existing projects are unaffected.
+  local _master_status
+  _master_status=$(echo "$status_json" | jq -r '(.master_status // "")' 2>/dev/null) || _master_status=""
+  case "$_master_status" in
+    ""|"(none)"|"queued"|"active") ;; # runnable or legacy — proceed
+    *) return 0 ;; # non-runnable — no gate target
+  esac
   # --json exits non-zero when work is pending; the payload is still valid.
   line=$(echo "$status_json" | jq -r '
     [ (.subplans // [])[] | select(((.status // "") | ascii_downcase) != "shipped") ][0]
@@ -2390,6 +2398,13 @@ data = json.loads(sys.stdin.read())
 subplans = data.get('subplans', [])
 runnable = [s for s in subplans if s.get('status') in ('pending', 'in-progress')]
 blocked = [s for s in subplans if s.get('status') not in ('shipped', 'pending', 'in-progress')]
+# A non-runnable master (draft, etc.) must not be acted on regardless of
+# its sub-plans' statuses.  Treat absent or '(none)' legacy as runnable
+# so existing projects without master_status are unaffected.
+master_status = data.get('master_status', '')
+_master_not_runnable = master_status not in ('', '(none)') and master_status not in ('queued', 'active')
+if _master_not_runnable:
+    print('blocked-no-runnable')
 # 'stalled' is loop_status's own verdict that outstanding work exists and
 # NONE of it is runnable (loop_status.py:558 -- next_pending excludes blocked
 # AND blocked-dependent sub-plans, :395-402).  It must win over the per-status
@@ -2406,7 +2421,7 @@ blocked = [s for s in subplans if s.get('status') not in ('shipped', 'pending', 
 # 'runnable'.  Caught by
 # test_classification_is_not_all_shipped_when_a_subplan_is_unproven
 # on 2026-09-23, before it shipped.
-if data.get('stalled'):
+elif data.get('stalled'):
     print('blocked-no-runnable')
 elif runnable:
     print('runnable')
@@ -2685,8 +2700,8 @@ try:
     actives = [m for m in masters
                if normalize_master_status(parse_frontmatter(
                    m.read_text(encoding='utf-8-sig')).get('status') or '') == 'active']
-    if actives or masters:
-        chosen, _ = pick_active_master(actives or masters, json_mode=True)
+    if actives:
+        chosen, _ = pick_active_master(actives, json_mode=True)
         for n in extract_subplan_files(Path(chosen).read_text(encoding='utf-8')):
             print(n)
 except Exception:
@@ -4096,7 +4111,11 @@ print(fm.get('result_file', ''))
   elif [[ "$CLASSIFIED_STATUS" == "blocked-no-runnable" ]]; then
     local blocked_count
     blocked_count=$(echo "$BLOCKED_SUBPLANS" | wc -w | tr -d ' ')
-    echo "Blocked — ${blocked_count} sub-plan(s) parked for a human, 0 runnable: ${BLOCKED_SUBPLANS}. Nothing to do."
+    if [[ "$blocked_count" -eq 0 ]]; then
+      echo "No runnable master: held (non-runnable master_status). Nothing to do."
+    else
+      echo "Blocked — ${blocked_count} sub-plan(s) parked for a human, 0 runnable: ${BLOCKED_SUBPLANS}. Nothing to do."
+    fi
     if [[ "$_UNATTENDED_PROFILE" -eq 1 ]]; then
       echo "[unattended] exit_state=blocked-no-runnable — see $_UNATTENDED_RESULT_FILE" >&2
     else
@@ -4691,8 +4710,8 @@ try:
     actives = [m for m in masters
                if normalize_master_status(parse_frontmatter(
                    m.read_text(encoding='utf-8-sig')).get('status') or '') == 'active']
-    if actives or masters:
-        chosen, _ = pick_active_master(actives or masters, json_mode=True)
+    if actives:
+        chosen, _ = pick_active_master(actives, json_mode=True)
         print(chosen)
 except Exception:
     pass
@@ -5328,6 +5347,8 @@ print(json.dumps(d))
     blocked_count=$(echo "$BLOCKED_SUBPLANS" | wc -w | tr -d ' ')
     if [[ "$_UNATTENDED_PROFILE" -eq 1 ]]; then
       echo "[unattended] exit_state=blocked-no-runnable — see $_UNATTENDED_RESULT_FILE" >&2
+    elif [[ "$blocked_count" -eq 0 ]]; then
+      echo "[ilk] No runnable master: held (non-runnable master_status). Do NOT relaunch."
     else
       echo "[ilk] BLOCKED — ${blocked_count} sub-plan(s) parked for a human, 0 runnable: ${BLOCKED_SUBPLANS}. Do NOT relaunch."
     fi

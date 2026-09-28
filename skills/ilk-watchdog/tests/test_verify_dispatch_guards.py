@@ -195,3 +195,29 @@ def test_verify_dispatch_uses_manager_engine(tmp_path):
     assert len(launched) == 1
     cmd = launched[0]
     assert "--engine" in cmd and cmd[cmd.index("--engine") + 1] == "claude-manager"
+
+
+def test_verify_dispatch_pins_master(tmp_path, caplog):
+    """AC-5: the launch argv contains --master <shipped name>, and the
+    success log line is emitted on successful dispatch."""
+    import logging
+    scan = _import_scan()
+    project_dir = _setup_project(tmp_path, sentinel_pid=None)
+    plans = project_dir / "plans"
+    launched = []
+    with caplog.at_level(logging.INFO, logger="scheduler_scan"):
+        scan._dispatch_verification_on_drain(
+            project_dir, plans / "MASTER-test.md", plans,
+            _launch_fn=launched.append,
+        )
+    assert len(launched) == 1
+    cmd = launched[0]
+    assert "--master" in cmd, f"--master missing from argv: {cmd}"
+    master_idx = cmd.index("--master")
+    assert cmd[master_idx + 1] == "MASTER-test.md", (
+        f"--master value wrong: {cmd[master_idx + 1]!r}"
+    )
+    assert any(
+        "verify-dispatch" in r.message and "dispatched" in r.message
+        for r in caplog.records
+    ), f"success log line not emitted. Records: {[r.message for r in caplog.records]}"

@@ -153,7 +153,6 @@ def _run_driver_func(
 
 # ── AC-1 ───────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_draft_master_classifies_as_blocked_no_runnable(tmp_path: Path) -> None:
     """classify_loop_status over a shipped + draft master => blocked-no-runnable."""
     _make_shipped_and_draft(tmp_path)
@@ -167,7 +166,6 @@ def test_draft_master_classifies_as_blocked_no_runnable(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_draft_master_gate_target_is_empty(tmp_path: Path) -> None:
     """get_active_subplan_targets over a shipped + draft master => empty."""
     _make_shipped_and_draft(tmp_path)
@@ -180,7 +178,6 @@ def test_draft_master_gate_target_is_empty(tmp_path: Path) -> None:
 
 # ── AC-2 ───────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_pinned_draft_master_classifies_as_blocked(tmp_path: Path) -> None:
     """ILK_MASTER pinned to a draft => blocked-no-runnable."""
     plans = _make_shipped_and_draft(tmp_path)
