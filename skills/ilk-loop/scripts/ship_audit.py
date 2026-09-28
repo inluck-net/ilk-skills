@@ -554,6 +554,7 @@ def audit_ship(
     cwd: Path | None = None,
     runtime_dir: Path | None = None,
     ledger_records: list[dict[str, Any]] | None = None,
+    loop_log_path: Path | None = None,
 ) -> dict[str, Any]:
     """Audit a shipped sub-plan: step commits + gate outcome.
 
@@ -579,6 +580,10 @@ def audit_ship(
         Ship-proof ledger records for attribution when trailers are
         absent (the shared-remote case).  Passed through to
         ``check_step_commits``.
+    loop_log_path : Path | None
+        Path to the JSONL loop log.  When provided, used to check
+        per-step ``local_checks`` gate records for the final step
+        (not yet implemented — accepted but ignored today).
 
     Returns
     -------
