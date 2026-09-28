@@ -88,18 +88,18 @@ about the same file — this doc makes the implicit contracts explicit.
 | `"running"` | Loop is actively iterating | **Live** — check PID |
 | `"shipped"` | All sub-plans shipped, clean exit | Terminal |
 | `"local_checks_failed"` | A step's local_checks failed | Terminal |
-| `"interrupted"` | User or watchdog killed the run | Terminal |
+| `"interrupted"` | The run ended without a terminal state. An operator stop (INT/TERM to the runner) adds `stopped_by: "signal:<SIG>"`; its absence means a crash or an unexplained exit. The watchdog never relaunches a sentinel carrying `stopped_by` (`relaunch_guard.py`) | Terminal |
 | `"error"` | Unexpected runner error | Terminal |
 | `"max-iterations"` | Hit iteration budget | Terminal |
 | `"budget-exhausted"` | Hit `--max-budget-usd` cap | Terminal |
 | `"quota-exhausted"` | Provider quota cap detected (`quota_detect.py`); imposed from outside the run and clears on the provider's schedule | Terminal |
 | `"startup-hang"` | Pre-iteration-1 hang detected | Terminal |
 | `"timeout"` | `gtimeout` killed the iteration before it completed | Terminal |
-| `"ship_integrity_violation"` | A sub-plan was `shipped` with its declared gate red; the driver reverted it to `in-progress` **and parked the master** (`blocked` + `parked_reason` with run_id + violating slugs via `park_master.py`) | Terminal |
+| `"ship_integrity_violation"` | A sub-plan was `shipped` with its declared gate red; the driver reverted it to `in-progress` **and parked the master** (`park_master.py --owner-of <slug> --auto`; see "Park fields" below). Also: the worker changed a master's `status` / park fields, which the driver restored from its pre-dispatch snapshot (`master_snapshot.py`; no park) | Terminal |
 | `"no-progress"` | 3 consecutive iterations with zero new commits | Terminal |
 | `"all-shipped"` | Every registered sub-plan is shipped **and every one is proven**; loop ended naturally | Terminal |
 | `"shipped-unproven"` | Every registered sub-plan is shipped, but the ship-proof ledger holds no row for at least one — the ship claim is unverified | Terminal |
-| `"blocked-no-runnable"` | All remaining sub-plans are `blocked`; nothing to dispatch. Also emitted when the master is held (non-runnable `master_status` such as `draft`) | Terminal |
+| `"blocked-no-runnable"` | All remaining sub-plans are `blocked`; nothing to dispatch. Also emitted when the master is held (non-runnable `master_status` such as `draft`), and when a human park holds the project, in which case the sentinel carries an additive `held_by: "<master filename>"` | Terminal |
 | `"already-shipped"` | Nothing to do at launch time (all sub-plans already shipped) | Terminal |
 | `"selfmod_merge_failed"` | A selfmod worktree's merge-back failed; committed work is parked in the worktree | Terminal |
 | `"selfmod_live_clone_touched"` | A selfmod worker modified tracked files in the live clone; the run stops without merging and logs the file list | Terminal |
@@ -163,6 +163,38 @@ Ownership status filter: `PARKABLE | {shipped}` (the violating master is
 usually `shipped` at park time because reconcile runs after).  Zero owners ⇒
 exit 1 with JSON naming the slug and every master searched; the driver prints
 the refusal and continues (the run still stops `ship_integrity_violation`).
+
+**Park fields (D3, 2026-09-29).**  A park writes these master frontmatter
+fields next to `status: blocked`.  Only `park_master.py` and the runner write
+them; the runner restores any worker change to them (`master_snapshot.py`).
+
+| Field | Written by | Meaning |
+|---|---|---|
+| `parked_at` | every park | local time, `YYYY-MM-DDTHH:MM:SS` |
+| `parked_reason` | every park | quoted scalar; grammar below |
+| `hold: human` | a park **without** `--auto` | holds the whole **project**: `scheduler_scan` skips it (`skip-held: <key> (<master>)`, journalled in `scheduler.log`), `promote_next_master` refuses (exit 1, `refused: held`), `loop_status --json` reports `held_by`, the runner exits `blocked-no-runnable` with `held_by`, and the watchdog does not relaunch |
+| `yield: true` | `--yield` | the hold covers this master only; the project's other masters run |
+
+`plan_status.project_held_by(plans_dir)` is the one reader: the `hold` field
+alone decides, `status` is not consulted, and `yield: true` releases the
+project.  `--unpark` strips all four fields and **refuses** a master with
+`hold: human` unless `--release-hold` is passed, so an automated
+`--unpark` (gh-resolve's reaper) can lift an auto-park but never an
+operator's park.
+
+**`parked_reason` grammar.**  Free text for a human park.  A driver park is
+machine-readable, one park per violating slug:
+
+```
+ship_integrity_violation: run <RUN_ID> slug=<slug>
+```
+
+This has been the canonical form since `7744063` (`run_ilk_loop_claude.sh`).
+The older form `ship_integrity_violation: run <RUN_ID> slugs=[<slug>,<slug>]`
+named every violating slug in one park, and the PowerShell runner **still
+writes it** (`run_ilk_loop_claude.ps1`, which also parks without
+`--owner-of`).  Readers must accept both; `status_all.py` keys on the first
+token only.
 
 **Declared work_tree (`work_tree.py`).**  Master frontmatter
 `work_tree: <absolute path>` declares the tree the driver observes, gates,
