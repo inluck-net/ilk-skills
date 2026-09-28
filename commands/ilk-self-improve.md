@@ -4,9 +4,11 @@ This is the self-improvement source adapter — it reads open candidates
 emitted by `/ilk-feedback` postmortems, formats them as a task description,
 and delegates to the `/ilk-plan` core workflow on the ilk-skills repo.
 
-> **Result**: the `/ilk-plan` core auto-gates the resulting master as
-> `draft` + `supervised_only` (self-modifying batch). A human must release
-> it (`draft` → `queued`) and run it supervised after `/ilk-upgrade`.
+> **Result**: the `/ilk-plan` core writes the resulting master as
+> `status: draft` with `supervised_only: false` (the flag is retired —
+> decomposition-principles.md §13). A human releases it (`draft` → `queued`);
+> the loop runs the self-modifying batch in the selfmod worktree and merges it
+> back into the toolkit clone.
 
 Follow these steps in order.
 
@@ -50,8 +52,8 @@ End your turn with:
 
 1. Summary: "Read N open candidates from the improvement backlog, grouped
    into M sub-plans, plans pushed."
-2. Note that the resulting master is `draft` + `supervised_only` — the
-   user must run it supervised after `/ilk-upgrade`.
+2. Note that the resulting master is `draft` — the user releases it
+   (`draft` → `queued`) when ready.
 3. The output of
    `python "<skill-root>/ilk-loop/scripts/loop_status.py"`.
 

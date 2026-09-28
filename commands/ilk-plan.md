@@ -424,29 +424,20 @@ Once approved, write all files in one batch under the
     authored-but-not-yet-released; `draft` is non-runnable (invisible to the
     scheduler and `loop_status`), so a live scheduler/loop cannot grab it
     mid-authoring. It is flipped to `queued` only in step 8, after QC passes.
-  - **Write `supervised_only: false`** — this is the default and it is almost
-    always correct. Set it `true` in exactly one case: ANY sub-plan's
-    `scope_paths` *modifies* loop infrastructure (`loop_status.py`,
-    `scheduler_scan.py`, `promote_next_master.py`, `plan_status.py`,
-    `scheduler.*`). Mere mention, or an import in prose/test code, does not
-    warrant it. Such a self-modifying batch must never be autonomously
-    dispatched — the scheduler and `promote_next_master` skip
-    `supervised_only`; only manual `/ilk` runs it. Do NOT auto-flip it to
-    `queued` while a scheduler is live (keep `draft`, run supervised with the
-    scheduler stopped). Warn about this in the step-9 report.
-
-    In practice only a batch planned against the **ilk-skills toolkit clone**
-    can have those paths in scope. **In a consumer project, write
-    `supervised_only: false` and do not reconsider** unless the user explicitly
-    asks for `true` in this session. Never reach for it to mean "risky",
-    "unverified", "needs human review", "touches auth", or "external API
-    contract" — that is `status: draft` plus a verification tier
-    (decomposition-principles.md §13, §15). It is a costly flag: it removes
-    autonomous dispatch permanently AND makes `ilk-runner` preflight hard-stop
-    even a manual `/ilk-run` while a cross-project scheduler is alive. For real
+  - **Write `supervised_only: false`** (or omit the key). The flag was
+    retired 2026-09-20 — worktree isolation (v0.9.107) and the merge bounce
+    removed the self-modifying-batch hazard it guarded, and `plan_lint
+    --master` treats ANY `supervised_only: true` as a hard finding
+    (decomposition-principles.md §13). This holds for ilk-skills toolkit
+    batches too: a batch whose `scope_paths` modify loop infrastructure runs in
+    the selfmod worktree and merges back only when no live loop is detected.
+    Only set `true` if the user explicitly asks for it in this session. Never
+    reach for it to mean "risky", "unverified", "needs human review", "touches
+    auth", or "external API contract" — that is `status: draft` plus a
+    verification tier (decomposition-principles.md §13, §15). For real
     side-effect hazards (mutating a live clone, pushing to a shared remote),
     fix them in config (`clone_path` → throwaway clone) or with `--dry-run`
-    gates, and keep the batch autonomous. Step 7g enforces both directions.
+    gates, and keep the batch autonomous. Step 7g enforces this.
   - Workstream map (ascii box diagram is fine)
   - Sub-plan registry markdown table
   - Execution rationale section
@@ -942,13 +933,10 @@ surface counts in the step-9 report; fix before launching):
   directory list. Shell builtins, keywords, and `VAR=value` prefixes are
   skipped. See decomposition-principles.md §23.
 - **supervised_only scope guard** (**hard finding**, needs `--master`) — fires
-  in both directions: (a) the MASTER sets `supervised_only: true` but no
-  sub-plan's `scope_paths` modifies loop infra — the flag is unwarranted, set it
-  `false` unless the user explicitly asked for it; (b) a sub-plan's
-  `scope_paths` names a loop-infra file but the flag is off — a self-modifying
-  batch must not be autonomously dispatchable. Never resolve (a) by inventing a
-  rationale; resolve it by setting the flag `false` and using `status: draft` if
-  a human gate was what you wanted. See decomposition-principles.md §13.
+  when the MASTER sets `supervised_only: true`. The flag is retired
+  (2026-09-20), whatever the `scope_paths`. Never resolve it by inventing a
+  rationale; set the flag `false` (or remove it) and use `status: draft` if a
+  human gate was what you wanted. See decomposition-principles.md §13.
 - **scope_path off base branch** (**hard finding**, needs `--master`) — a
   sub-plan's `scope_paths` entry exists on a ref other than the master's
   declared `base_branch:`. The loop commits to whichever branch is checked
@@ -1010,8 +998,8 @@ scheduler can discover it — unless the project opts out.
 **Why this matters:** a brand-new project is `skip-unresolved` by the
 scheduler until it appears in `projects.json`. This one command makes
 it discoverable — but the scheduler still applies its own
-`active`/`queued` + `supervised_only` + `draft` gates (no surprise
-autonomous runs of supervised/draft work).
+`active`/`queued` + `draft` gates (no surprise autonomous runs of
+draft work).
 
 ### 8b. Release the master (`draft` → `queued`)
 
@@ -1039,18 +1027,15 @@ If the preflight passes clean, flip the MASTER's front-matter
 or preflight produced an unresolved hard finding — then leave it `draft`
 and tell the user what to fix.
 
-> ⚠️ A `queued` master is immediately dispatchable by a running scheduler. For
-> a **self-modifying** batch (edits `loop_status.py` / `scheduler_scan.py` /
-> `promote_next_master.py` / `scheduler.*` / `plan_status.py`), keep it `draft`
-> while the scheduler is live and run it supervised with the scheduler stopped.
-> Surface this in the step-9 report.
+> ⚠️ A `queued` master is immediately dispatchable by a running scheduler.
+> That includes a **self-modifying** ilk-skills batch: it runs in the selfmod
+> worktree, and its merge-back refuses while another live loop is detected, so
+> queueing it under a live scheduler is safe. Keep a master `draft` only when
+> it is not ready to run, and say so in the step-9 report.
 >
-> Such a batch should ALSO already carry `supervised_only: true` from step 6 —
-> but the two are separate gates and **`supervised_only` is not an alternative
-> to holding at `draft`**. `draft` = not released; `supervised_only` = never
-> self-dispatched. Do not set `supervised_only` to express "not ready" or "human
-> should review first" (decomposition-principles.md §13); that is what `draft`
-> is for, and `plan_lint` reports the substitution as a hard finding.
+> Do not set `supervised_only` to express "not ready" or "human should review
+> first" (decomposition-principles.md §13); that is what `draft` is for, and
+> `plan_lint` reports any `supervised_only: true` as a hard finding.
 
 If you (or the user) want version history for the plans themselves,
 that's a separate concern: `~/.ilk-data` can be its own git repo or
@@ -1080,7 +1065,7 @@ End your turn with:
    bullet list so the user can act.
 3. **Registration outcome** (from step 8a):
    - If registered: *"Registered `<name>` in projects.json — a running
-     scheduler can now auto-dispatch its non-`supervised_only` batches;
+     scheduler can now auto-dispatch its `queued` batches;
      remove the entry to opt out."*
    - If opted out: *"Project opted out of auto-scheduling
      (`.ilk-launch.json` `autoschedule: false`) — not registered in

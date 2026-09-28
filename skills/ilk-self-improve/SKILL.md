@@ -4,7 +4,7 @@ description: >-
   Plan toolkit improvements from the shared improvement backlog. Reads open
   candidates emitted by /ilk-feedback, formats a task description, and
   delegates to /ilk-plan on the ilk-skills repo. The resulting master is
-  auto-gated draft+supervised_only (self-modifying). Triggers:
+  written as draft; a human releases it. Triggers:
   "/ilk-self-improve", "improve ilk", "self-improve ilk", "ilk 自我改进".
 ---
 
@@ -25,16 +25,17 @@ description to `/ilk-plan`.
 ## Boundary
 
 This skill is a **planner**, not an executor. It produces a plan; a human
-releases and runs it (the master is `draft` + `supervised_only` because it
-edits the toolkit itself). It does NOT auto-apply changes.
+releases it (`draft` → `queued`). The loop runs the batch in the selfmod
+worktree because it edits the toolkit itself. It does NOT auto-apply changes.
 
 ## Workflow
 
 1. Run `build_task.py` to read open candidates from the improvement backlog.
 2. If the backlog is empty, report "nothing to improve" and stop.
 3. Otherwise, hand the task description to `/ilk-plan` on the ilk-skills repo.
-4. `/ilk-plan` auto-gates the resulting master as `draft` + `supervised_only`
-   (self-modifying batch) and auto-registers the project.
+4. `/ilk-plan` writes the resulting master as `status: draft` with
+   `supervised_only: false` (retired 2026-09-20 — decomposition-principles.md
+   §13) and auto-registers the project.
 
 ## Key files
 
