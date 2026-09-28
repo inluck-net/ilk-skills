@@ -542,6 +542,12 @@ because gates are arbitrary commands and pytest already uses exit 3.
   into `gate_passed` = `true` / `false` / `skip`.
 - The runner's `.ilk-loop.log` record build, which embeds the parsed array as
   `local_checks`.
+- **`ship_audit.audit_ship`** — when a final step is credited only by the
+  `#ship` trailer and declares per-step `local_checks`, reads the JSONL loop
+  log (via `loop_log_path`) to verify a `{slug, step: N, outcome: "pass"}`
+  record exists.  Absent or unreadable log ⇒ `proven: False`.  Also checks
+  the ship-proof ledger (Contract 5) for a `gate_pass_at_head` row covering
+  the step as an alternative proof path.
 
 ### Invariants
 

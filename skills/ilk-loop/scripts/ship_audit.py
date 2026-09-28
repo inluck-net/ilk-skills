@@ -327,6 +327,31 @@ def check_step_commits(
     return present, missing
 
 
+def _step_has_own_trailer(slug: str, step: int, cwd: Path | None = None) -> bool:
+    """Check if *step* has its own ``[plan:<slug>#step-N]`` trailer in git log.
+
+    Used by ``audit_ship`` to distinguish a step credited by its own trailer
+    from one credited only by the ``#ship`` marker.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "log", "--format=%s%n%b", "--all"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=cwd,
+        )
+        if result.returncode != 0:
+            return False
+    except FileNotFoundError:
+        return False
+    trailer_re = re.compile(
+        rf"\[plan:{re.escape(slug)}#step-{step}(?:,step-\d+)*\]"
+    )
+    return bool(trailer_re.search(result.stdout))
+
+
 # ── compose with ship_integrity for the gate half ────────────────────────────
 
 def _resolve_expected_invocation(project_path: Path) -> str:
@@ -650,6 +675,116 @@ def audit_ship(
         # defect family this predicate exists to close.
         reasons.append(gate_reason or f"gate is {gate_verdict}")
 
+    # Per-step gate check: a final step credited only by the #ship trailer
+    # (no #step-N trailer, no ledger coverage) that declares per-step
+    # local_checks must have its gate on record.  Without this check, the
+    # ship-without-bump shape (ship_transition.py flips status but does not
+    # bump current_step) silently skips the final step's gate.
+    _final_step_gate_failed = False
+    if (
+        not missing
+        and authored
+        and status == "shipped"
+        and declared_checks
+    ):
+        final_step = max(authored)
+        final_in_present = final_step in present
+        final_has_own_trailer = _step_has_own_trailer(slug, final_step, cwd=cwd)
+        final_has_ledger_gate = False
+        if ledger_records:
+            for rec in ledger_records:
+                if not isinstance(rec, dict):
+                    continue
+                if rec.get("slug") != slug:
+                    continue
+                if rec.get("proof") != "gate_pass_at_head":
+                    continue
+                if rec.get("gate_outcome") != "pass":
+                    continue
+                try:
+                    r_from = int(rec["step_from"])
+                    r_to = int(rec["step_to"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if r_from <= final_step < r_to:
+                    final_has_ledger_gate = True
+                    break
+
+        # The step is "ship-only" if it's present (committed) but only
+        # because of the #ship marker — not its own trailer, not a
+        # gate_pass_at_head ledger row.
+        final_step_ship_only = (
+            final_in_present
+            and not final_has_own_trailer
+            and not final_has_ledger_gate
+        )
+
+        if final_step_ship_only:
+            from run_local_checks import extract_step_local_checks  # type: ignore[import-untyped]
+            step_checks = extract_step_local_checks(body, final_step)
+            if step_checks:
+                # Step declares per-step local_checks; require a gate record.
+                gate_found = False
+                gate_reason_detail = ""
+
+                # Check loop log for a local_checks pass record.
+                if loop_log_path is not None:
+                    try:
+                        with open(loop_log_path, encoding="utf-8") as f:
+                            for line in f:
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                try:
+                                    rec = json.loads(line)
+                                except json.JSONDecodeError:
+                                    continue
+                                if (
+                                    isinstance(rec, dict)
+                                    and rec.get("slug") == slug
+                                    and rec.get("step") == final_step
+                                    and rec.get("outcome") == "pass"
+                                ):
+                                    gate_found = True
+                                    break
+                    except (OSError, UnicodeDecodeError) as exc:
+                        gate_reason_detail = (
+                            f"final step {final_step}: #ship commit present, "
+                            f"but its gate never ran "
+                            f"(loop log unreadable: {exc})"
+                        )
+
+                # Also check ledger for a gate_pass_at_head covering this step.
+                if not gate_found and not gate_reason_detail and ledger_records:
+                    for rec in ledger_records:
+                        if not isinstance(rec, dict):
+                            continue
+                        if rec.get("slug") != slug:
+                            continue
+                        if rec.get("proof") != "gate_pass_at_head":
+                            continue
+                        if rec.get("gate_outcome") != "pass":
+                            continue
+                        try:
+                            r_from = int(rec["step_from"])
+                            r_to = int(rec["step_to"])
+                        except (KeyError, TypeError, ValueError):
+                            continue
+                        if r_from <= final_step < r_to:
+                            gate_found = True
+                            break
+
+                if not gate_found and not gate_reason_detail:
+                    gate_reason_detail = (
+                        f"final step {final_step}: #ship commit present, "
+                        f"but its gate never ran "
+                        f"(no local_checks record for step {final_step})"
+                    )
+
+                if not gate_found:
+                    _final_step_gate_failed = True
+                    reasons.append(gate_reason_detail)
+
     # `not_configured` joins None and "pass" as non-blocking: a project with no
     # suite has no gate that could have run, so refusing on that basis is the
     # "no suite reads as suite failed" conflation SP6 named the verdict to
@@ -657,7 +792,11 @@ def audit_ship(
     # alone -- steps have commits and nothing verifies the tree.  That gap is
     # surfaced at PLAN time instead (plan_lint flags zero coverage, and
     # batch_gate still prints the verdict), which is where the design puts it.
-    proven = not missing and gate_verdict in (None, "pass", "not_configured")
+    proven = (
+        not missing
+        and not _final_step_gate_failed
+        and gate_verdict in (None, "pass", "not_configured")
+    )
     final_gate: str | None
     if declared_checks:
         final_gate = gate_verdict  # "pass" or "fail"

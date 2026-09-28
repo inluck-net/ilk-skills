@@ -31,8 +31,6 @@ import json
 import subprocess
 from pathlib import Path
 
-import pytest
-
 import ship_audit
 
 
@@ -169,7 +167,6 @@ def _audit(**kwargs) -> dict:
 
 # ── AC-1: the repro ─────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac1_ship_credited_final_step_needs_gate_record(tmp_path: Path) -> None:
     """#step-0 + #ship, step 1 declares per-step local_checks, loop log
     has a pass record for step 0 only ⇒ proven: False, reason names step 1.
@@ -292,7 +289,6 @@ def test_ac5_check_step_commits_unchanged(tmp_path: Path) -> None:
 
 # ── AC-6: loop log missing file ─────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac6_loop_log_missing_file(tmp_path: Path) -> None:
     """Loop log path points at a missing file ⇒ proven: False with
     "loop log unreadable" reason.
