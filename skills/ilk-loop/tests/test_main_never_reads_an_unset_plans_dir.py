@@ -54,11 +54,12 @@ def test_main_assigns_plans_dir_before_expanding_it() -> None:
     )
 
 
-def test_red_owner_lookup_uses_a_resolved_plans_dir() -> None:
-    # The lookup must be fed from get_plans_dir, the resolver every other
-    # main() call site uses (lock pin, gate-first, trailer-slug check).
-    body = "\n".join(l for _, l in _main_body())
-    block = body[body.index("_red_owner_script="):body.index("_failing_nodes=")]
-    assert "get_plans_dir" in block, (
-        "the red-owner block must resolve its plans dir via get_plans_dir"
-    )
+def test_the_fake_red_owner_attribution_is_gone() -> None:
+    # Superseded 2026-09-28 (design D5): the red-owner block this test used
+    # to pin re-ran failing commands at HEAD and bisected an empty command,
+    # so it could never attribute anything.  It was removed, which also
+    # removes the unset-$plans_dir read (#56) at its source.  Pin the removal:
+    # no empty-command bisect, and the log states the strike stands.
+    runner = RUNNER.read_text(encoding="utf-8")
+    assert '--cmd ""' not in runner
+    assert "at-base attribution not implemented (design D5)" in runner

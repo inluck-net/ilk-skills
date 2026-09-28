@@ -498,26 +498,26 @@ class TestProgressOverTimeGate:
         )
 
     def test_growing_file_is_progressing(self, tmp_path):
-        """Iter log appended to between samples → progressing."""
-        import threading
-        import time
+        """Iter log appended to between samples → progressing.
 
+        Deterministic: the append happens inside the injected sleep, i.e.
+        exactly between the two samples.  The previous version raced a
+        thread's 0.03 s sleep against a 0.1 s real sample and failed under
+        load (ilk-skills run 20260928-202541, where it reverted a correct
+        sub-plan).
+        """
         project_data = tmp_path / "data"
         run_dir = self._setup_run(project_data)
         iter_file = run_dir / "iter-01.jsonl"
         iter_file.write_text('{"event": "start"}\n', encoding="utf-8")
 
-        # Append to the file in a background thread during the sample interval.
-        def append_after_delay():
-            time.sleep(0.03)
+        def append_instead_of_sleeping(_seconds):
             with open(iter_file, "a", encoding="utf-8") as f:
                 f.write('{"event": "step"}\n{"event": "step2"}\n')
 
-        t = threading.Thread(target=append_after_delay)
-        t.start()
-
-        r = doctor._gate_progress_over_time(project_data, sample_interval=0.1)
-        t.join()
+        r = doctor._gate_progress_over_time(
+            project_data, sample_interval=0.1, _sleep=append_instead_of_sleeping,
+        )
 
         assert r.status == "pass"
         assert "progressing" in r.evidence

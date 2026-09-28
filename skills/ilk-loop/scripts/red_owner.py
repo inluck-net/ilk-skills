@@ -157,6 +157,12 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--budget-s", type=int, default=300,
                     help="wall-clock budget in seconds (default: 300)")
     args = ap.parse_args(argv)
+    if not args.cmd.strip():
+        # An empty command passes at every commit, so a bisect over it can
+        # only ever report "no owner" -- a verdict nobody measured.  The
+        # runner passed --cmd "" for weeks (design D5); refuse instead.
+        print("red_owner: --cmd is empty; nothing to bisect", file=sys.stderr)
+        return 2
 
     result = bisect_red_owner(
         args.repo, args.base, args.head, args.cmd, args.nodes, args.budget_s,

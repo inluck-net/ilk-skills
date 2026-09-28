@@ -25,6 +25,7 @@ Usage::
     blocking_checks.py <results-file> --slugs      # unique slugs, sorted
     blocking_checks.py <results-file> --describe   # "slug#step, slug#step"
     blocking_checks.py <results-file> --unattributable-count
+    blocking_checks.py <results-file> --confirm <rerun-file>   # B2: record both attempts
 
 Unattributable records — Contract 2b invariant 6: a record's identity must
 come from the invoker, so a blocking record with no ``slug`` names no
@@ -90,6 +91,55 @@ def unattributable_count(path: Path) -> int:
     return len(blocking_records(path)) - len(attributable_records(path))
 
 
+def confirm_rerun(first_path: Path, rerun_path: Path) -> dict[str, Any]:
+    """B2 confirm-before-block, recorded in the first-pass file itself.
+
+    A blocking check whose re-run is NOT fail/error was transient.  Its
+    record is rewritten with the re-run's outcome plus ``attempts`` (both
+    outcomes) and ``flaky: true``, so every reader of the results file --
+    ship_integrity (``outcome == "pass"``), quarantine, the JSONL record --
+    agrees with the decision B2 made.  Before 2026-09-28 the re-run file
+    was deleted and the first-pass red stayed in the results file:
+    ship_integrity then reverted correct work that B2 had already cleared
+    (ilk-skills run 20260928-202541; design D5,
+    docs/architecture/loop-state-and-ownership-design.md section 6).
+
+    A blocking check with NO re-run record is confirmed, not cleared: a
+    measurement that did not happen cannot clear a red.
+
+    Returns ``{"blocked": bool, "transient_cleared": [...]}`` -- the shape the
+    runner parsed from its old inline block.
+    """
+    first = read_records(first_path)
+    rerun = {(r.get("slug"), _step_of(r)): r for r in read_records(rerun_path)
+             if r.get("slug")}
+    confirmed: list[str] = []
+    transient: list[str] = []
+    rewritten: list[dict[str, Any]] = []
+    for rec in first:
+        if rec.get("outcome") in BLOCKING_OUTCOMES and rec.get("slug"):
+            key = (rec["slug"], _step_of(rec))
+            again = rerun.get(key)
+            first_outcome = rec.get("outcome")
+            if again is None:
+                confirmed.append(f"{key[0]}#{key[1]}")
+                rec = {**rec, "attempts": [first_outcome, "not-rerun"]}
+            elif again.get("outcome") in BLOCKING_OUTCOMES:
+                confirmed.append(f"{key[0]}#{key[1]}")
+                rec = {**rec, "attempts": [first_outcome, again.get("outcome")]}
+            else:
+                transient.append(str(key))
+                rec = {**rec, "outcome": again.get("outcome"),
+                       "attempts": [first_outcome, again.get("outcome")],
+                       "flaky": True}
+        rewritten.append(rec)
+    tmp = first_path.with_suffix(first_path.suffix + ".tmp")
+    tmp.write_text("".join(json.dumps(r) + "\n" for r in rewritten), encoding="utf-8")
+    tmp.replace(first_path)
+    return {"blocked": bool(confirmed), "transient_cleared": transient,
+            "confirmed": confirmed}
+
+
 def _step_of(rec: dict[str, Any]) -> int:
     step = rec.get("step")
     return step if isinstance(step, int) else 0
@@ -113,12 +163,19 @@ def main(argv: list[str] | None = None) -> int:
                            "'N unattributable (no slug)' segment when anonymous records exist")
     mode.add_argument("--unattributable-count", action="store_true",
                       help="print the number of blocking records with no slug")
+    mode.add_argument("--confirm", metavar="RERUN_FILE", type=Path,
+                      help="B2: compare with the re-run, rewrite cleared records with both "
+                           "attempts and flaky:true, print {blocked, transient_cleared}")
     mode.add_argument("--outcome-for-slug", metavar="SLUG",
                       help="print the outcome for a specific slug (fail or error)")
     args = ap.parse_args(argv)
 
     if args.any:
         return 0 if attributable_records(args.results_file) else 1
+
+    if args.confirm:
+        print(json.dumps(confirm_rerun(args.results_file, args.confirm)))
+        return 0
 
     if args.targets:
         for rec in attributable_records(args.results_file):

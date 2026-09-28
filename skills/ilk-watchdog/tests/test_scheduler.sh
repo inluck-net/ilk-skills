@@ -897,6 +897,38 @@ run_cap() {
   cleanup
 }
 
+run_fill_masters() {
+  echo "=== test_scheduler.sh fill-masters ==="
+  # Each dispatch must carry ITS project's master.  scheduler.sh used to read
+  # the scan loop's master_name inside the dispatch loop, so every dispatch
+  # got the LAST scanned project's master (2026-09-28: a gh-resolve loop ran
+  # with ILK_MASTER=<an ilk-skills master>).  setup_cap_projects gives every
+  # project the same master filename, which is what hid it; rename them.
+  NUM_PROJECTS=3
+  setup_cap_projects
+  for i in 1 2 3; do
+    mv "$FAKE_DATA/projects/proj-cap-$i/plans/MASTER-2026-06-06-cap-batch.md" \
+       "$FAKE_DATA/projects/proj-cap-$i/plans/MASTER-2026-06-06-cap-batch-$i.md"
+  done
+  local output
+  output=$(ILK_DATA_HOME="$FAKE_DATA" bash "$SCHEDULER_SCRIPT" --dry-run --once --max-concurrent 3 2>&1) || die "scheduler exited non-zero: $output"
+  output="${output//$'\r'/}"
+  local n=0
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    local key master command
+    key=$("$PYTHON" -c "import json,sys; print(json.loads(sys.stdin.read()).get('key',''))" <<<"$line")
+    master=$("$PYTHON" -c "import json,sys; print(json.loads(sys.stdin.read()).get('master',''))" <<<"$line")
+    command=$("$PYTHON" -c "import json,sys; print(json.loads(sys.stdin.read()).get('command',''))" <<<"$line")
+    local want="MASTER-2026-06-06-cap-batch-${key##proj-cap-}.md"
+    [[ "$master" == "$want" ]] || die "dispatch $key carries master '$master', expected '$want'. Output: $output"
+    [[ "$command" == *"$want"* ]] || die "dispatch $key command lacks its own master '$want': $command"
+    n=$((n+1))
+  done <<<"$output"
+  [[ "$n" -eq 3 ]] || die "expected 3 dispatch lines, got $n. Output: $output"
+  echo "PASS: fill-masters — 3 projects, each dispatch carries its own --master"
+}
+
 run_fill() {
   echo "=== test_scheduler.sh fill ==="
 
@@ -963,7 +995,13 @@ run_fill() {
   NUM_PROJECTS=2
   setup_cap_projects
 
-  sleep 60 &
+  # The busy pid must LOOK like a runner: test_running_pid is command-
+  # verified (ilk_pid_alive requires *run_ilk_loop* etc. in the command, so a
+  # recycled pid cannot read busy forever).  A bare `sleep 60` is correctly
+  # "not an ilk process" -- this case failed that way unseen for weeks,
+  # because the suite could not run beside a live scheduler until
+  # scheduler.sh honoured ILK_DATA_HOME (2026-09-28).
+  bash -c 'exec -a run_ilk_loop_claude.sh sleep 60' &
   local busy_pid=$!
   echo "$busy_pid" > "$FAKE_DATA/projects/proj-cap-1/runtime/launcher/running.pid"
 
@@ -1566,6 +1604,9 @@ case "${1:-all}" in
     ;;
   fill)
     run_fill
+    ;;
+  fill-masters)
+    run_fill_masters
     ;;
   gates)
     run_gates

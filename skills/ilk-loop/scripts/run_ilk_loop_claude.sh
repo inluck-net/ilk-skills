@@ -2457,8 +2457,17 @@ test_all_shipped() {
 #
 # Sets CLASSIFIED_STATUS and BLOCKED_SUBPLANS (space-separated fnames).
 classify_loop_status() {
-  local json_output
-  json_output=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null) || json_output=""
+  local json_output ls_rc=0
+  json_output=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null) || ls_rc=$?
+  # loop_status exits 1 when work is pending -- its NORMAL answer.  Only
+  # rc >= 2 (or no output) means the oracle is unavailable.  This used to
+  # read `|| json_output=""`, which WIPED the JSON on exit 1, so every check
+  # below -- held master, stalled, blocked-dependent -- was dead whenever
+  # work was pending: run 20260928-230358 dispatched a worker with every
+  # master parked.  Same rule as the ledger probe (write_ship_proof_records).
+  if (( ls_rc >= 2 )); then
+    json_output=""
+  fi
 
   if [[ -z "$json_output" ]]; then
     # Fallback: the JSON oracle is unavailable, so proof CANNOT be consulted.
@@ -3416,12 +3425,8 @@ if result['exhausted']:
     fi
   fi
 
-  # gtimeout returns 124 on timeout
-  local completed=1
-  if [[ "$exit_code" -eq 124 ]]; then
-    completed=0
-    exit_code=-1
-  fi
+  local completed
+  read -r completed exit_code <<< "$(_classify_agent_exit "$exit_code")"
 
   ITER_COMPLETED=$completed
   ITER_EXIT_CODE=$exit_code
@@ -3437,6 +3442,29 @@ if result['exhausted']:
 #   $4 = no_progress_streak (consecutive zero-commit iterations before this one)
 #   $5 = quota_exhausted (1 = provider quota cap detected)
 # Prints: the stop reason, or empty string to continue.
+# Classify the agent's exit status: prints "<completed> <exit_code>".
+#
+# completed=0 means the iteration was ended from outside (a boundary kill):
+# the runner WIP-preserves the dirty tree, and with no new commits the
+# iteration stops as "timeout".
+#  - 124: gtimeout's own alarm.  exit_code becomes -1, the timeout marker the
+#    records already use.
+#  - >=128: the agent was killed by a signal (143 SIGTERM, 137 SIGKILL, 139
+#    SIGSEGV).  Before 2026-09-28 these counted as COMPLETED, so a worker
+#    stopped by an operator lost its uncommitted work: gh-resolve-59 had to
+#    send SIGALRM to gtimeout to get it preserved.  exit_code keeps the real
+#    status so the record says how it ended.  Design D5, section 8.1.
+_classify_agent_exit() {
+  local rc="$1"
+  if [[ "$rc" -eq 124 ]]; then
+    echo "0 -1"
+  elif [[ "$rc" -ge 128 ]]; then
+    echo "0 $rc"
+  else
+    echo "1 $rc"
+  fi
+}
+
 _decide_iter_stop_reason() {
   local completed="$1"
   local total_new="$2"
@@ -4731,30 +4759,12 @@ print(json.dumps({
           # Build first-pass and rerun JSON arrays (command-less, match by slug+step)
           local confirm_out=""
           if [[ -n "$rerun_results" && -s "$rerun_results" ]]; then
-            confirm_out=$(python3 -c "
-import json, sys
-
-first_file, rerun_file = sys.argv[1], sys.argv[2]
-with open(first_file, encoding='utf-8-sig') as f:
-    first = [json.loads(l) for l in f if l.strip()]
-with open(rerun_file, encoding='utf-8-sig') as f:
-    rerun = [json.loads(l) for l in f if l.strip()]
-
-blocking = [r for r in first if r.get('outcome') in ('fail', 'error')]
-rerun_map = {(r['slug'], r.get('step', 0)): r['outcome'] for r in rerun}
-confirmed = []
-transient = []
-for b in blocking:
-    key = (b['slug'], b.get('step', 0))
-    ro = rerun_map.get(key)
-    if ro in ('fail', 'error'):
-        confirmed.append(b)
-    else:
-        transient.append(key)
-
-result = {'blocked': len(confirmed) > 0, 'transient_cleared': [str(k) for k in transient]}
-print(json.dumps(result))
-" "$local_checks_results" "$rerun_results" 2>/dev/null)
+            # blocking_checks.py --confirm records BOTH attempts in the
+            # first-pass file (cleared checks get the re-run outcome plus
+            # attempts/flaky), so ship_integrity and quarantine read the same
+            # verdict B2 reaches here.  Design D5; run 20260928-202541.
+            confirm_out=$(python3 "$blocking_checks_script" "$local_checks_results" \
+              --confirm "$rerun_results" 2>/dev/null)
           fi
 
           rm -f "$blocking_targets"
@@ -4773,153 +4783,17 @@ print('false' if not d.get('blocked', True) else 'true')
           if [[ "$confirmed_blocked" == "false" ]]; then
             echo "B2 transient cleared on re-run" >&2
           else
-            # Confirmed blocking — red-owner attribution before quarantine.
-            # If the regression was introduced by a DIFFERENT sub-plan, skip
-            # the strike on the running sub-plan and log the real owner.
-            local _red_owner_script="${_SKILL_ROOT}/ilk-loop/scripts/red_owner.py"
+            # Red-owner attribution is NOT implemented (design D5,
+            # docs/architecture/loop-state-and-ownership-design.md section 6).
+            # The block that stood here re-ran the failing commands at HEAD
+            # (labelled "at base") and bisected an EMPTY command, which passes
+            # at every commit, so it could never name an owner.  It only ran
+            # long gates a third time, and it read an unset $plans_dir (#56).
+            # Until the verdict policy attributes by measurement at
+            # base_commit, the strike stands on the running sub-plan, and the
+            # log says so rather than implying a check ran.
             local _red_owner_skip_quarantine="false"
-            # main() never assigns plans_dir (it is a local of other
-            # functions), so reading "$plans_dir" here aborted under set -u and
-            # `|| true` hid it: red-owner attribution silently skipped on every
-            # confirmed-blocking failure (kira-cloudflare-scratch run
-            # 20260928-144712). Resolve it the way main()'s other sites do.
-            local _ro_plans_dir=""
-            _ro_plans_dir=$(get_plans_dir 2>/dev/null) || true
-            if [[ -f "$_red_owner_script" && -s "$local_checks_results" ]]; then
-              # Extract master's base_sha
-              local _master_base_sha=""
-              local _active_master_file=""
-              _active_master_file=$(python3 -c "
-import sys
-from pathlib import Path
-sys.path.insert(0, sys.argv[2])
-try:
-    from plan_status import normalize_master_status
-    from loop_status import pick_active_master, parse_frontmatter
-    masters = sorted(Path(sys.argv[1]).glob('MASTER-*.md'))
-    actives = [m for m in masters
-               if normalize_master_status(parse_frontmatter(
-                   m.read_text(encoding='utf-8-sig')).get('status') or '') == 'active']
-    if actives:
-        chosen, _ = pick_active_master(actives, json_mode=True)
-        print(chosen)
-except Exception:
-    pass
-" "$_ro_plans_dir" "${_SKILL_ROOT}/ilk-loop/scripts" 2>/dev/null) || true
-
-              if [[ -n "$_active_master_file" && -f "$_active_master_file" ]]; then
-                _master_base_sha=$(python3 -c "
-import re, sys
-from pathlib import Path
-body = Path(sys.argv[1]).read_text(encoding='utf-8-sig')
-m = re.search(r'^---\s*\n(.*?)\n---', body, re.DOTALL)
-if m:
-    for line in m.group(1).splitlines():
-        if line.strip().startswith('base_sha:'):
-            print(line.split(':', 1)[1].strip()); break
-" "$_active_master_file" 2>/dev/null) || true
-              fi
-
-              # Extract failing node ids from blocking checks
-              local _failing_nodes=""
-              _failing_nodes=$(python3 -c "
-import json, sys
-from pathlib import Path
-records = []
-for raw in Path(sys.argv[1]).read_text(encoding='utf-8-sig').splitlines():
-    if not raw.strip():
-        continue
-    try:
-        rec = json.loads(raw)
-    except json.JSONDecodeError:
-        continue
-    if rec.get('outcome') in ('fail', 'error'):
-        cmd = rec.get('command', '')
-        if cmd:
-            records.append(cmd)
-# Deduplicate
-for c in sorted(set(records)):
-    print(c)
-" "$local_checks_results" 2>/dev/null) || true
-
-              if [[ -n "$_master_base_sha" && -n "$_failing_nodes" ]]; then
-                # Run the failing commands at base to verify they pass
-                local _base_red="false"
-                local _repo_path
-                _repo_path=$(selfmod_effective_repo "$PROJECT_PATH" 2>/dev/null) || _repo_path="$PROJECT_PATH"
-                while IFS= read -r _node_cmd; do
-                  [[ -z "$_node_cmd" ]] && continue
-                  if ! (cd "$_repo_path" && bash -c "$_node_cmd" >/dev/null 2>&1); then
-                    _base_red="true"
-                    break
-                  fi
-                done <<< "$_failing_nodes"
-
-                if [[ "$_base_red" == "false" ]]; then
-                  # Base is green — run the bisect
-                  local _ro_result=""
-                  _ro_result=$(python3 "$_red_owner_script" \
-                    --repo "$_repo_path" \
-                    --base "$_master_base_sha" --head "$(git -C "$_repo_path" rev-parse HEAD)" \
-                    --cmd "" \
-                    --budget-s 300 \
-                    2>/dev/null) || true
-
-                  if [[ -n "$_ro_result" ]]; then
-                    local _ro_first_red _ro_base_green
-                    _ro_first_red=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('first_red','') or '')" "$_ro_result" 2>/dev/null) || true
-                    _ro_base_green=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('base_green', True))" "$_ro_result" 2>/dev/null) || true
-
-                    if [[ -n "$_ro_first_red" && "$_ro_base_green" == "True" ]]; then
-                      # Map first_red to its owning sub-plan via trailer
-                      local _owner_slug=""
-                      _owner_slug=$(git -C "$_repo_path" log --format=%s -1 "$_ro_first_red" 2>/dev/null | grep -oE '\[plan:[^#]+#' | head -1 | sed 's/\[plan://;s/#//') || true
-
-                      if [[ -n "$_owner_slug" ]]; then
-                        local _running_slug="${PRE_ITER_TARGET%% *}"
-                        echo "  [red-owner] first red at ${_ro_first_red:0:7} (owner: $_owner_slug)" >&2
-                        if [[ "$_owner_slug" != "$_running_slug" ]]; then
-                          echo "  [red-owner] cross-sub-plan regression: $_owner_slug broke it, not $_running_slug" >&2
-                          _red_owner_skip_quarantine="true"
-                          # Append finding to the running sub-plan
-                          local _subplan_file
-                          _subplan_file=$(python3 -c "
-import sys
-from pathlib import Path
-for p in Path(sys.argv[1]).glob('*-' + sys.argv[2] + '.md'):
-    if not p.name.startswith('MASTER'):
-        print(p); break
-" "$_ro_plans_dir" "$_running_slug" 2>/dev/null) || true
-                          if [[ -n "$_subplan_file" && -f "$_subplan_file" ]]; then
-                            python3 -c "
-import re, sys
-from pathlib import Path
-
-p = Path(sys.argv[1])
-owner = sys.argv[2]
-sha = sys.argv[3]
-body = p.read_text(encoding='utf-8-sig')
-note = f'- cross-sub-plan regression: first red at {sha[:7]} ({owner}); needs a fix sub-plan'
-marker = '## Findings'
-if marker in body:
-    idx = body.find(marker)
-    after = idx + len(marker)
-    nl = body.find('\n', after)
-    if nl < 0:
-        nl = after
-    body = body[:nl+1] + note + '\n' + body[nl+1:]
-else:
-    body = body.rstrip() + '\n\n## Findings\n\n' + note + '\n'
-p.write_text(body, encoding='utf-8')
-" "$_subplan_file" "$_owner_slug" "$_ro_first_red" 2>/dev/null || true
-                          fi
-                        fi
-                      fi
-                    fi
-                  fi
-                fi
-              fi
-            fi
+            echo "  [red-owner] at-base attribution not implemented (design D5); the strike stands on the running sub-plan" >&2
 
             # Confirmed blocking — try auto-quarantine before stopping.
             # Skip quarantine if red-owner determined the regression is from

@@ -266,3 +266,26 @@ def test_pick_active_master_returns_empty_with_zero_actives(tmp_path: Path) -> N
     assert "SITE2=EMPTY" in result.stdout, (
         f"site 2 pick should return empty with 0 actives.\n{result.stdout}\n{result.stderr}"
     )
+
+# ── Pending work must not bypass the classifier (2026-09-28) ─────────────────
+
+def test_parked_master_with_pending_work_classifies_as_blocked(tmp_path: Path) -> None:
+    """loop_status exits 1 when work is pending -- its normal case.
+
+    classify_loop_status captured it with ``|| json_output=""``, which wiped
+    the JSON on exit 1 and fell back to "runnable": every check in the
+    classifier (held master, stalled, blocked-dependent) was dead whenever
+    work was pending.  Measured: ilk-skills run 20260928-230358 was
+    relaunched with both masters parked and dispatched a worker.  The draft
+    fixture above never caught it because a draft master has no next
+    sub-plan, so loop_status exits 0 there.
+    """
+    plans = _make_shipped_and_draft(tmp_path)
+    held = plans / "MASTER-2026-09-28b-c.md"
+    held.write_text(held.read_text().replace("status: draft", "status: blocked"))
+    status = _status_json(tmp_path)
+    assert status.get("master_status") == "blocked"
+    assert status.get("next"), "fixture must have pending work, so loop_status exits 1"
+    out = _run_driver_func("classify_loop_status; echo CLASSIFIED=$CLASSIFIED_STATUS", tmp_path)
+    line = [l for l in out.splitlines() if l.startswith("CLASSIFIED=")]
+    assert line == ["CLASSIFIED=blocked-no-runnable"], out

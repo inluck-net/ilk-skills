@@ -100,7 +100,7 @@ class DoctorReport:
 
 # ── Gate definitions ────────────────────────────────────────────────────────
 
-def _gate_progress_over_time(project_data: Path, sample_interval: float) -> GateResult:
+def _gate_progress_over_time(project_data: Path, sample_interval: float, *, _sleep=None) -> GateResult:
     """Gate 0: sample newest iter-NN.log twice, report byte/line deltas.
 
     Growing ⇒ ``progressing`` (and the walk stops).  Static ⇒ ``quiet``
@@ -162,8 +162,10 @@ def _gate_progress_over_time(project_data: Path, sample_interval: float) -> Gate
             artifact=artifact,
         )
 
-    # Wait for the sample interval.
-    time.sleep(sample_interval)
+    # Wait for the sample interval.  ``_sleep`` is a test seam: the test used
+    # to race a thread against a 0.1 s real sleep, lost under load, and that
+    # flake reverted correct work (ilk-skills run 20260928-202541).
+    (_sleep or time.sleep)(sample_interval)
 
     # Second sample.
     try:

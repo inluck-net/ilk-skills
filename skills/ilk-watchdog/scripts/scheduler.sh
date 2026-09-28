@@ -17,9 +17,16 @@ set -euo pipefail
 # Sourced here, not next to the skill-root resolution below: the lock is
 # acquired at source time (before that block runs) and needs ilk_pid_alive.
 source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_pid.sh"
+# The scheduler's own files follow the one data-home precedence
+# (ILK_DATA_HOME -> ILK_DATA_DIR -> ~/.ilk-data) like every other component.
+# Hardcoding ${HOME}/.ilk-data made the test suite, which pins ILK_DATA_HOME,
+# collide with a live daemon's pid file ("already running (PID 23490)") and
+# write dry-run lines into the real scheduler.log.  With neither variable set
+# the paths are unchanged, so a running daemon keeps its pid file.
+source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_data_dir.sh"
 
-SCHEDULER_PIDFILE="${HOME}/.ilk-data/scheduler.pid"
-SCHEDULER_STATE_FILE="${HOME}/.ilk-data/scheduler.state.json"
+SCHEDULER_PIDFILE="$(ilk_data_dir)/scheduler.pid"
+SCHEDULER_STATE_FILE="$(ilk_data_dir)/scheduler.state.json"
 
 write_scheduler_state() {
   # Write scheduler.state.json with {pid, started_at, toolkit_head}.
@@ -134,7 +141,7 @@ BOOTSTRAP_SCRIPT="${_SKILL_ROOT}/../tools/claude-worker/bootstrap.sh"
 NOTIFY_PY="${_SKILL_ROOT}/ilk-watchdog/scripts/ilk_notify.py"
 WATCHDOG_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/watchdog.sh"
 
-SCHEDULER_LOG_DIR="${HOME}/.ilk-data/logs"
+SCHEDULER_LOG_DIR="$(ilk_data_dir)/logs"
 SCHEDULER_LOG_FILE="${SCHEDULER_LOG_DIR}/scheduler.log"
 
 # Fire-and-forget desktop notification. Failure is swallowed.
@@ -881,7 +888,7 @@ run_scheduler() {
     now_epoch=$(date +%s)
 
     # Collect dispatchable projects (keys, paths, repos, has_actives).
-    local -a disp_keys=() disp_paths=() disp_repos=() disp_actives=()
+    local -a disp_keys=() disp_paths=() disp_repos=() disp_actives=() disp_masters=()
 
     # Parse the JSON array and iterate
     local keys paths repo_paths has_actives master_names line
@@ -1113,6 +1120,11 @@ print(int((ea-sa).total_seconds()))
         disp_paths+=("$path")
         disp_repos+=("$repo")
         disp_actives+=("${has_actives[$i]}")
+        # Each dispatch carries ITS project's master.  master_name is a scan-
+        # loop local; the dispatch loop used to read it directly, so every
+        # dispatch got the LAST scanned project's master (observed: a
+        # gh-resolve loop launched with ILK_MASTER=<an ilk-skills master>).
+        disp_masters+=("$master_name")
       fi
     done
 
@@ -1136,6 +1148,7 @@ print(int((ea-sa).total_seconds()))
       local dpath="${disp_paths[$j]}"
       local drepo="${disp_repos[$j]}"
       local dactive="${disp_actives[$j]}"
+      local dmaster="${disp_masters[$j]:-}"
       local slot_home
       slot_home="$(get_slot_home "$slot_id")"
 
@@ -1152,6 +1165,7 @@ print(int((ea-sa).total_seconds()))
               local demoted_name
               demoted_name=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('demoted','') or '')" <<<"$promo_json" | tr -d '\r')
               write_scheduler_log "promote" "$dkey -> $promoted_name"
+              dmaster="$promoted_name"
               echo "{\"decision\":\"promote\",\"key\":\"$dkey\",\"promoted\":\"$promoted_name\",\"demoted\":\"$demoted_name\"}"
             fi
           fi
@@ -1165,6 +1179,7 @@ print(int((ea-sa).total_seconds()))
             if [[ -n "$promoted_name" ]]; then
               echo "[$(date '+%Y-%m-%d %H:%M:%S')] promoted $promoted_name"
               write_scheduler_log "promote" "$dkey -> $promoted_name"
+              dmaster="$promoted_name"
             fi
           fi
         fi
@@ -1179,21 +1194,21 @@ print(int((ea-sa).total_seconds()))
         # Use forward slashes in paths for valid JSON (Windows backslashes are invalid escapes)
         local safe_path="${drepo//\\//}"
         local master_flag=""
-        if [[ -n "$master_name" ]]; then
-          master_flag=" --master '$master_name'"
+        if [[ -n "$dmaster" ]]; then
+          master_flag=" --master '$dmaster'"
         fi
         write_scheduler_log "dispatch" "$dkey (slot $slot_id)"
         if [[ "$current_mux" == "tmux" ]]; then
           local tmux_cmd="tmux new-window -t ilk -n '$dkey' 'launch.sh --project-path \\\"'$safe_path'\\\" --engine claude-worker --worker-home \\\"'$slot_home'\\\"${local_checks_flag}${master_flag}'"
-          echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"tmux\",\"command\":\"$tmux_cmd\",\"watchdog\":\"watchdog.sh --project-path '$safe_path' --detach\",\"master\":\"$master_name\"}"
+          echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"tmux\",\"command\":\"$tmux_cmd\",\"watchdog\":\"watchdog.sh --project-path '$safe_path' --detach\",\"master\":\"$dmaster\"}"
         else
-          echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"screen\",\"command\":\"launch.sh --project-path '$safe_path' --engine claude-worker --worker-home '$slot_home'${local_checks_flag}${master_flag}\",\"watchdog\":\"watchdog.sh --project-path '$safe_path' --detach\",\"master\":\"$master_name\"}"
+          echo "{\"decision\":\"dispatch\",\"key\":\"$dkey\",\"slot\":$slot_id,\"multiplexer\":\"screen\",\"command\":\"launch.sh --project-path '$safe_path' --engine claude-worker --worker-home '$slot_home'${local_checks_flag}${master_flag}\",\"watchdog\":\"watchdog.sh --project-path '$safe_path' --detach\",\"master\":\"$dmaster\"}"
         fi
         set_dispatch_time "$dkey" "$(date +%s)"
       elif [[ "$DRY_RUN" == true ]]; then
         local master_flag=""
-        if [[ -n "$master_name" ]]; then
-          master_flag=" --master $master_name"
+        if [[ -n "$dmaster" ]]; then
+          master_flag=" --master $dmaster"
         fi
         if [[ "$current_mux" == "tmux" ]]; then
           echo "[$(date '+%Y-%m-%d %H:%M:%S')] DRY-RUN [tmux]: would dispatch $dkey (slot $slot_id) via tmux new-window -t ilk -n '$dkey' '$LAUNCH_SCRIPT --project-path $drepo --engine claude-worker --worker-home $slot_home${master_flag}'"
@@ -1211,8 +1226,8 @@ print(int((ea-sa).total_seconds()))
         fi
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatching $dkey (slot $slot_id) [mux=$current_mux]..."
         local master_flag=""
-        if [[ -n "$master_name" ]]; then
-          master_flag=" --master '$master_name'"
+        if [[ -n "$dmaster" ]]; then
+          master_flag=" --master '$dmaster'"
         fi
         local launch_cmd="bash $LAUNCH_SCRIPT --project-path '$drepo' --engine claude-worker --worker-home '$slot_home'${local_checks_flag}${master_flag} --force"
         if [[ "$current_mux" == "tmux" ]]; then
