@@ -141,6 +141,24 @@ artifact, so the record is written there first, additively.
   iteration is caught by the fingerprints in the open record, which end the
   iteration.
 
+**gh-resolve's conditions** (gh-resolve-59, 2026-09-28; agreed, and binding on
+the implementation):
+1. `runtime/launcher/{run.lock, running.pid, last-exit.json, ship-proof.jsonl}`
+   keep their paths and shapes. `runs/<run_id>.json` is **additive**. Having
+   reap read the registry instead would be a separate contract change,
+   proposed first.
+2. `toolkit_sha` goes on the run's terminal record (a `last-exit.json` field,
+   joinable by `run_id`), so every artifact names the ilk version that wrote
+   it.
+3. The worker's cwd stays the project worktree. gh-resolve's reconcile finds
+   workers by cwd (`lsof -d cwd`), because a worker's argv carries no path.
+4. **Version skew between a pinned runner and plan-invoked scripts:**
+   - Plans invoke ilk scripts by clone path (`~/.claude/skills/ilk-loop/scripts/…`).
+   - The fix is that the runner exports its pinned root as `ILK_CODE_ROOT`,
+     and every plan-invoked ilk script is resolved through it. That covers
+     ilk templates, `/ilk-plan` output and gh-resolve's `handoff.py:1532`.
+   - A plan that hardcodes `~/.claude/skills` becomes a lint finding.
+
 ## 6. Verdict policy (I5, I7)
 
 - Every gate keeps all of its attempts.
