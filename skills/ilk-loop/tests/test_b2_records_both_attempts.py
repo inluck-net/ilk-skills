@@ -31,7 +31,7 @@ def _read(path: Path) -> list[dict]:
 def _confirm(first: Path, rerun: Path) -> dict:
     out = subprocess.run(
         [sys.executable, str(_SCRIPT), str(first), "--confirm", str(rerun)],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     ).stdout
     return json.loads(out)
 
@@ -99,7 +99,7 @@ def test_red_owner_refuses_an_empty_command(tmp_path: Path) -> None:
     r = subprocess.run(
         [sys.executable, str(_SCRIPT.parent / "red_owner.py"), "--repo", str(tmp_path),
          "--base", "HEAD~1", "--head", "HEAD", "--cmd", ""],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     assert r.returncode == 2
     assert "empty" in r.stderr

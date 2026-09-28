@@ -50,7 +50,7 @@ _NEEDS_GTIMEOUT = pytest.mark.skipif(
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
-                   cwd=repo, check=True, capture_output=True, text=True)
+                   cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def _keyed(data_home: Path, project: Path) -> tuple[Path, Path]:
@@ -107,7 +107,7 @@ def _guard(w: dict) -> tuple[int, dict]:
     r = subprocess.run(
         [sys.executable, str(_GUARD), "--project", str(w["project"]),
          "--launcher-dir", str(w["launcher"])],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
         env={**os.environ, "ILK_DATA_HOME": str(w["data_home"])})
     return r.returncode, json.loads(r.stdout)
 
@@ -267,7 +267,7 @@ main --project-path {shlex.quote(str(w["project"]))} \\
     env.pop("ILK_DOTSOURCE_ONLY", None)
     proc = subprocess.Popen(["bash", "-c", script], env=env, cwd=str(tmp_path),
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True)
+                            text=True, encoding="utf-8", errors="replace")
     try:
         deadline = time.time() + 90
         while not started.exists() and time.time() < deadline:
@@ -295,7 +295,7 @@ PYTHON=python3
 eval "$(sed -n '/^sentinel_path_for_data_dir()/,/^}}/p' {shlex.quote(str(_SKILLS / "ilk-watchdog" / "scripts" / "scheduler.sh"))})"
 sentinel_path_for_data_dir {shlex.quote(str(d))}
 """
-    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, encoding="utf-8", errors="replace",
                        env={**os.environ, "ILK_DATA_HOME": str(data_home)})
     assert r.stdout.strip() == str(d / "runtime" / "launcher" / "last-exit.json"), (
         r.stdout + r.stderr)

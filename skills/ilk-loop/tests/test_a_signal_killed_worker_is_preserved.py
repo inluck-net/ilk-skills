@@ -17,7 +17,7 @@ _RUNNER = Path(__file__).resolve().parent.parent / "scripts" / "run_ilk_loop_cla
 def _classify(rc: int) -> str:
     return subprocess.run(
         ["bash", "-c", f"set -uo pipefail; export ILK_DOTSOURCE_ONLY=1; source '{_RUNNER}'; _classify_agent_exit {rc}"],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
     ).stdout.strip()
 
 

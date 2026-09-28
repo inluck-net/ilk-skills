@@ -259,7 +259,7 @@ def test_promote_refuses_a_held_project(tmp_path: Path) -> None:
 def _git(cwd: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
-        cwd=cwd, check=True, capture_output=True, text=True,
+        cwd=cwd, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
     ).stdout.strip()
 
 
@@ -356,7 +356,7 @@ def test_the_runner_classifies_a_held_project_and_records_it(tmp_path: Path) -> 
         RUN_ID=R1
         _write_terminal_sentinel blocked-no-runnable '{rd}'
     """)
-    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, encoding="utf-8", errors="replace",
                        timeout=120)
     assert "CLASSIFIED=blocked-no-runnable HELD=MASTER-2026-09-29a.md" in r.stdout, (
         r.stdout + r.stderr)

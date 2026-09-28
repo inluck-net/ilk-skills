@@ -31,7 +31,7 @@ def test_collect_prefers_its_sibling_loop_status(tmp_path: Path) -> None:
     )
     r = subprocess.run(
         [sys.executable, "-c", probe, str(_COLLECT_DIR)],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
         env={**os.environ, "HOME": str(tmp_path)},
     )
     assert r.returncode == 0, r.stderr

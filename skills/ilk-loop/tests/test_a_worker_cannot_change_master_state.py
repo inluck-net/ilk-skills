@@ -41,7 +41,7 @@ from plan_status import parse_frontmatter  # noqa: E402
 
 def _snap(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, str(_SNAP), *args],
-                          capture_output=True, text=True, timeout=60)
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
 
 
 def _world(plans: Path, master_status: str = "blocked",
@@ -134,7 +134,7 @@ _NEEDS_GTIMEOUT = pytest.mark.skipif(
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
-                   cwd=repo, check=True, capture_output=True, text=True)
+                   cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def _run_main(root: Path, worker_edit: str) -> tuple[subprocess.CompletedProcess, Path, dict]:

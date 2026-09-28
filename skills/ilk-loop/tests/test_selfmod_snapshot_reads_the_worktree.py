@@ -29,7 +29,7 @@ _RUNNER = Path(__file__).resolve().parent.parent / "scripts" / "run_ilk_loop_cla
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-C", str(repo), *args], check=True,
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     ).stdout.strip()
 
 
@@ -67,7 +67,7 @@ source '{_RUNNER}'
 {body}
 """
     return subprocess.run(
-        ["bash", "-c", script], capture_output=True, text=True,
+        ["bash", "-c", script], capture_output=True, text=True, encoding="utf-8", errors="replace",
         env=env, timeout=60,
     )
 

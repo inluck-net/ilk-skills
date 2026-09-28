@@ -97,27 +97,24 @@ release_scheduler_lock() {
   rm -f "$SCHEDULER_PIDFILE" 2>/dev/null || true
 }
 
-# Acquire lock immediately at source time.
-acquire_scheduler_lock
-
-# --- skill root resolution ---------------------------------------------------
-
-source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_skill_root.sh"
-_SKILL_ROOT="$(ilk_skill_root)"
-
-# --- defaults ----------------------------------------------------------------
-
-SCAN_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/scheduler_scan.py"
-# Holds the most recent scan's stderr so the idle branch can tell
-# "no work" from "could not look". See invoke_scheduler_scan.
-_SCAN_STDERR_FILE="$(mktemp "${TMPDIR:-/tmp}/ilk-scan-stderr-XXXXXX")"
-
+# Traps are armed BEFORE the lock is taken.  The pidfile is the readiness
+# signal -- tests and operators wait for it, then signal the scheduler -- and
+# until 2026-09-29 it was written before these traps existed.  A signal in that
+# gap killed bash untrapped (exit -2 instead of 130; the SIGINT/SIGHUP cases of
+# test_ignored_ancestry_does_not_disarm_signal failed 3 of 5 runs alone) and
+# left a stale pidfile behind.
+#
 # Combined cleanup: release the pidfile lock AND remove the scan-stderr tempfile.
+# The pidfile is removed only while it holds OUR pid: the EXIT trap now also
+# fires on the "already running" exit, which must not delete the live
+# scheduler's lock.
 # WARNING: a second `trap ... EXIT` silently REPLACES the first in bash.
 # Register exactly once here; do not add another `trap ... EXIT` below.
 _scheduler_cleanup() {
-  rm -f "$SCHEDULER_PIDFILE" 2>/dev/null || true
-  rm -f "$_SCAN_STDERR_FILE" 2>/dev/null || true
+  if [[ -f "$SCHEDULER_PIDFILE" && "$(tr -d '[:space:]' < "$SCHEDULER_PIDFILE" 2>/dev/null)" == "$$" ]]; then
+    rm -f "$SCHEDULER_PIDFILE" 2>/dev/null || true
+  fi
+  rm -f "${_SCAN_STDERR_FILE:-}" 2>/dev/null || true
 }
 trap _scheduler_cleanup EXIT
 
@@ -134,6 +131,23 @@ _scheduler_handle_sig() {
 trap '_scheduler_handle_sig SIGTERM 15' TERM
 trap '_scheduler_handle_sig SIGINT 2' INT
 trap '_scheduler_handle_sig SIGHUP 1' HUP
+
+# Acquire lock immediately at source time.
+acquire_scheduler_lock
+
+# --- skill root resolution ---------------------------------------------------
+
+source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_skill_root.sh"
+_SKILL_ROOT="$(ilk_skill_root)"
+
+# --- defaults ----------------------------------------------------------------
+
+SCAN_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/scheduler_scan.py"
+# Holds the most recent scan's stderr so the idle branch can tell
+# "no work" from "could not look". See invoke_scheduler_scan.
+_SCAN_STDERR_FILE="$(mktemp "${TMPDIR:-/tmp}/ilk-scan-stderr-XXXXXX")"
+
+# The EXIT and signal traps are registered ABOVE, before the lock is taken.
 
 PROMOTE_SCRIPT="${_SKILL_ROOT}/ilk-loop/scripts/promote_next_master.py"
 LAUNCH_SCRIPT="${_SKILL_ROOT}/ilk-launcher/scripts/launch.sh"
