@@ -885,7 +885,7 @@ Fields:
 | `slug` | string | The sub-plan slug |
 | `repo` | string | Absolute path to the repository |
 | `step_from` | int | The step the iteration **started** on — the slug's *real* pre-iteration `current_step`, never a floor (see "Who writes") |
-| `step_to` | int | The step the iteration **reached** (the sub-plan's `current_step` after the agent ran) |
+| `step_to` | int | The step the iteration **reached**.  For a sub-plan shipped in this iteration (probe reports `status: shipped` or the new commits carry `[plan:<slug>#ship]`), this is `estimated_steps` — the ship transition does not bump `current_step`, so without the override the final step's per-step gate would never be targeted.  Otherwise, the sub-plan's `current_step` after the agent ran. |
 | `commits` | list[str] | SHAs in the iteration's `before..after` range |
 
 A **`gate_pass_at_head`** row carries three additional fields and has

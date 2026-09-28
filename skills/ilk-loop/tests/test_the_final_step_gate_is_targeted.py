@@ -11,12 +11,12 @@ The fix: when the probe reports ``status: shipped`` **or** the iteration's new
 commits carry ``[plan:<slug>#ship]``, use ``estimated_steps`` as ``step_to``.
 
   AC-1  shipped sub-plan, ``estimated_steps: 2``, ``current_step: 1`` ⇒
-        ``step_to: 2`` in the ledger row (xfail: red-first)
+        ``step_to: 2`` in the ledger row
   AC-2  control — not shipped, same values ⇒ ``step_to: 1`` (passes today)
   AC-3  ``#ship`` trailer in new commits but probe says ``in-progress`` ⇒
-        ``step_to: 2`` (xfail: red-first)
+        ``step_to: 2``
   AC-4  ``estimated_steps`` missing ⇒ ``step_to`` stays ``current_step``
-        and the warning line is printed (xfail: red-first)
+        and the warning line is printed
 """
 from __future__ import annotations
 
@@ -173,7 +173,6 @@ def _read_ledger(project: Path, env: dict[str, str]) -> list[dict]:
 
 # ── AC-1 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_shipped_subplan_final_step_is_targeted(tmp_path: Path) -> None:
     """AC-1 — a shipped sub-plan's ledger row has step_to == estimated_steps.
 
@@ -264,7 +263,6 @@ def test_unshipped_subplan_uses_current_step(tmp_path: Path) -> None:
 
 # ── AC-3 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ship_trailer_in_new_commits_overrides_step_to(tmp_path: Path) -> None:
     """AC-3 — ``#ship`` trailer in the iteration's commits ⇒ step_to == 2.
 
@@ -316,7 +314,6 @@ def test_ship_trailer_in_new_commits_overrides_step_to(tmp_path: Path) -> None:
 
 # ── AC-4 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_missing_estimated_steps_falls_back_to_current_step(
     tmp_path: Path,
 ) -> None:

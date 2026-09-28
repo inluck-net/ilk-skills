@@ -1431,6 +1431,7 @@ write_ship_proof_records() {
     # Empty means "not resolved".  Deliberately NOT the pre-iteration step:
     # falling back to it is what manufactured the zero-progress row above.
     local to_val=""
+    local est_steps=""
     if [[ -n "$status_json" ]]; then
       local looked
       looked=$(echo "$status_json" | python3 -c "
@@ -1439,15 +1440,42 @@ d = json.load(sys.stdin)
 for sp in (d.get('subplans') or []):
     if sp.get('slug') == sys.argv[1]:
         cs = sp.get('current_step')
+        es = sp.get('estimated_steps')
+        st = sp.get('status', '')
         try:
-            print(int(cs))
+            cs_i = int(cs)
+        except (TypeError, ValueError):
+            break
+        # When shipped this iteration, use estimated_steps so the final
+        # step's gate is targeted (the ship transition does not bump
+        # current_step).  Accept either signal: the probe's status, or
+        # the ship marker in this iteration's commits (checked below).
+        if st == 'shipped':
+            try:
+                print(int(es))
+            except (TypeError, ValueError):
+                print(cs_i)
+                print('!EST_UNRESOLVED', file=sys.stderr)
+        else:
+            print(cs_i)
+        break
+" "$s") || true
+      if [[ -n "$looked" && "$looked" =~ ^[0-9]+$ ]]; then
+        to_val="$looked"
+      fi
+      # Capture estimated_steps for the trailer-based override below.
+      est_steps=$(echo "$status_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+for sp in (d.get('subplans') or []):
+    if sp.get('slug') == sys.argv[1]:
+        es = sp.get('estimated_steps')
+        try:
+            print(int(es))
         except (TypeError, ValueError):
             pass
         break
 " "$s" 2>/dev/null) || true
-      if [[ -n "$looked" && "$looked" =~ ^[0-9]+$ ]]; then
-        to_val="$looked"
-      fi
     fi
     to_list+=("$to_val")
   done
@@ -1503,6 +1531,17 @@ for sp in (d.get('subplans') or []):
       # on any real batch this is the quiet majority of sub-plans.
       if [[ "${advanced_only[$si]}" == "1" && "$step_to" -le "$step_from" ]]; then
         continue
+      fi
+      # When the iteration's commits carry a [plan:<slug>#ship] trailer but
+      # the probe still says in-progress (e.g. the ship marker was written
+      # but the status write lagged), override step_to with estimated_steps
+      # so the final step's gate is still targeted.
+      if [[ -n "${est_steps:-}" && "$est_steps" =~ ^[0-9]+$ ]]; then
+        local _trailer_msgs
+        _trailer_msgs=$(printf '%s' "$new_shas" | xargs -I{} git -C "$r" log -1 --format='%s' {} 2>/dev/null)
+        if [[ -n "$_trailer_msgs" ]] && printf '%s' "$_trailer_msgs" | grep -qF "[plan:${slug}#ship]"; then
+          step_to="$est_steps"
+        fi
       fi
       local shas_json
       shas_json=$(printf '%s\n' "$new_shas" | jq -R . | jq -sc .)
