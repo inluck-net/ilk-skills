@@ -102,6 +102,12 @@ def test_loop_status_json_shows_proven_and_freshness_basis(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Through resolve_status, a CHANGELOG-only commit shows proven + bookkeeping-only."""
+    import importlib
+
+    import batch_gate as _bg_mod  # type: ignore[import-untyped]
+    import loop_status as _ls_mod  # type: ignore[import-untyped]
+    importlib.reload(_bg_mod)
+    importlib.reload(_ls_mod)
     from loop_status import resolve_status  # type: ignore[import-untyped]
     from ilk_paths import resolve_project_key  # type: ignore[import-untyped]
 
