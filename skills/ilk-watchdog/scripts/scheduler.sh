@@ -248,6 +248,22 @@ parse_args() {
 
 # --- helpers -----------------------------------------------------------------
 
+sentinel_path_for_data_dir() {
+  # Echo the exit sentinel's path for a project data dir
+  # (<data-root>/projects/<key>).  ilk_paths.sentinel_path is the one
+  # definition; two of this file's three readers joined runtime/last-exit.json
+  # by hand, a path nothing has written since 736d6d5 moved the sentinel under
+  # runtime/launcher/ -- so the stale-sentinel cross-check in is_project_busy
+  # and the rapid-terminal check never saw a sentinel (design §7 D4).
+  ILK_PATHS_DIR="${_SKILL_ROOT}/ilk-loop/scripts" $PYTHON -c "
+import os, sys
+sys.path.insert(0, os.environ['ILK_PATHS_DIR'])
+import ilk_paths
+d = sys.argv[1].rstrip('/')
+print(ilk_paths.sentinel_path(os.path.basename(d)))
+" "$1"
+}
+
 write_scheduler_log() {
   # Append a decision line to scheduler.log (BOM-free, timestamped).
   # Usage: write_scheduler_log "decision" ["key"] ["reason"]
@@ -299,7 +315,8 @@ test_running_pid() {
   # Stale-sentinel cross-check: even if the pid is alive, a terminal
   # last-exit.json means the loop already finished.  The lingering
   # -NoExit shell keeps the pid alive past the loop's real exit.
-  local sentinel_file="${project_data_path}/runtime/last-exit.json"
+  local sentinel_file
+  sentinel_file="$(sentinel_path_for_data_dir "$project_data_path")"
   if [[ -f "$sentinel_file" ]]; then
     local state
     # Parse "state" value — grep+sed fallback (no jq dependency).
@@ -594,7 +611,8 @@ sentinel_exit_was_clean() {
   # Echo "true" when a project's last run ended cleanly.
   # Clean means the batch finished, not merely that it exited: a killed or
   # timed-out run is NOT clean, which is the whole point of the bound.
-  local sentinel="${1}/runtime/launcher/last-exit.json"
+  local sentinel
+  sentinel="$(sentinel_path_for_data_dir "$1")"
   [[ -f "$sentinel" ]] || { echo "false"; return; }
   SENTINEL="$sentinel" $PYTHON -c "
 import json, os
@@ -952,7 +970,8 @@ run_scheduler() {
       local dispatch_epoch
       dispatch_epoch="$(dispatch_time_epoch_for_key "$key")"
       if [[ -n "$dispatch_epoch" ]]; then
-        local sentinel_file="${path}/runtime/last-exit.json"
+        local sentinel_file
+        sentinel_file="$(sentinel_path_for_data_dir "$path")"
         if [[ -f "$sentinel_file" ]]; then
           # Parse sentinel JSON fields via inline python (reuse utf-8-sig idiom).
           local started_at ended_at sentinel_state dur_sec

@@ -1920,12 +1920,16 @@ finalize_sentinel() {
   local ended_at
   ended_at=$(date +%Y-%m-%dT%H:%M:%S%z)
   local stopped_reason="runner exited without a terminal state"
-  if [[ -n "${_LAST_ERR_CONTEXT:-}" ]]; then
+  local stopped_by=""
+  if [[ -n "${_ILK_STOP_SIGNAL:-}" ]]; then
+    stopped_reason="operator stop (SIG${_ILK_STOP_SIGNAL})"
+    stopped_by="signal:${_ILK_STOP_SIGNAL}"
+  elif [[ -n "${_LAST_ERR_CONTEXT:-}" ]]; then
     stopped_reason="runner exited without a terminal state (${_LAST_ERR_CONTEXT})"
   fi
-  ILK_STOPPED_REASON="$stopped_reason" python3 -c "
+  ILK_STOPPED_REASON="$stopped_reason" ILK_STOPPED_BY="$stopped_by" python3 -c "
 import json, os
-print(json.dumps({
+d = {
     'state': 'interrupted',
     'pid': None,
     'run_id': '$RUN_ID',
@@ -1934,7 +1938,13 @@ print(json.dumps({
     'project_path': '$PROJECT_PATH',
     'cli': 'claude',
     'stopped_reason': os.environ['ILK_STOPPED_REASON']
-}))
+}
+# Additive: present only on a signal stop.  The watchdog reads it straight
+# from the sentinel, so a postmortem classification cannot launder an
+# operator stop into a relaunchable label.
+if os.environ.get('ILK_STOPPED_BY'):
+    d['stopped_by'] = os.environ['ILK_STOPPED_BY']
+print(json.dumps(d))
 " > "${target}.tmp" && mv -f "${target}.tmp" "$target" || true
   echo "[runner] finalize_sentinel: wrote terminal state (interrupted)" >&2
 
@@ -4187,8 +4197,12 @@ print(fm.get('result_file', ''))
     # tees and renderer are grandchildren), then `exec true` to
     # replace the shell (exit from inside a trap doesn't reliably
     # terminate a shell waiting on a pipeline, but exec does).
-    trap '_ilk_kill_children; finalize_sentinel; exec true' INT
-    trap '_ilk_kill_children; finalize_sentinel; exec true' TERM
+    # _ILK_STOP_SIGNAL marks the sentinel as an operator stop, which the
+    # watchdog must never relaunch (design §7 D4).  The runner runs in its
+    # own session (launch.sh start_detached_session), so a plain INT/TERM
+    # reaches it only from stop.sh or a human.
+    trap '_ILK_STOP_SIGNAL=INT; _ilk_kill_children; finalize_sentinel; exec true' INT
+    trap '_ILK_STOP_SIGNAL=TERM; _ilk_kill_children; finalize_sentinel; exec true' TERM
   else
     echo "Sentinel: skipped (no runtime dir resolved)"
   fi

@@ -22,6 +22,7 @@ PROJECTS_JSON="${LAUNCHER_DIR}/projects.json"
 LAUNCH_SCRIPT="${LAUNCHER_DIR}/scripts/launch.sh"
 LOOP_STATUS_PY="${_SKILL_ROOT}/ilk-loop/scripts/loop_status.py"
 COLLECT_PY="${_SKILL_ROOT}/ilk-feedback/scripts/collect.py"
+RELAUNCH_GUARD_PY="${_SKILL_ROOT}/ilk-watchdog/scripts/relaunch_guard.py"
 NOTIFY_PY="${_SKILL_ROOT}/ilk-watchdog/scripts/ilk_notify.py"
 
 POLL_INTERVAL_SEC=60
@@ -587,6 +588,46 @@ _relaunch_with_engine() {
   bash "$launch_script" --project-path "$project" $engine_flag "${extra_args[@]}"
 }
 
+# ----- Relaunch guard (design §7 D4) -----------------------------------------
+# Asked immediately before EVERY relaunch, after any backoff sleep: the
+# classification above it can be a postmortem's, and on 2026-09-28 that
+# relaunched two operator stops of a parked project with --force.
+# Sets RELAUNCH_GUARD_RC (0 ok, 10 alive, 11 operator stop, 12 held, other =
+# could not tell) and RELAUNCH_GUARD_OUT (the guard's JSON).
+relaunch_guard() {
+  local project="$1" launcher_dir="${2:-}"
+  RELAUNCH_GUARD_RC=0
+  RELAUNCH_GUARD_OUT=""
+  [[ -n "$launcher_dir" ]] || launcher_dir=$(get_ilk_runtime_dir "$project")
+  if [[ -z "$launcher_dir" ]]; then
+    RELAUNCH_GUARD_RC=2
+    RELAUNCH_GUARD_OUT='{"verdict": "unknown", "reason": "launcher dir not resolvable"}'
+    return 0
+  fi
+  RELAUNCH_GUARD_OUT=$($PYTHON "$RELAUNCH_GUARD_PY" --project "$project" \
+                         --launcher-dir "$launcher_dir" 2>&1) || RELAUNCH_GUARD_RC=$?
+  return 0
+}
+
+# Banner for a refused relaunch (anything but 0 or 10).  The watchdog exits
+# after it: nothing it could do next is its to decide.
+refused_relaunch_banner() {
+  local proj_name="$1" title
+  case "$RELAUNCH_GUARD_RC" in
+    11) title="STOPPED BY OPERATOR — NOT RELAUNCHING" ;;
+    12) title="HELD — NOT RELAUNCHING" ;;
+    *)  title="RELAUNCH GUARD UNREADABLE — NOT RELAUNCHING" ;;
+  esac
+  write_log "relaunch refused (guard rc=$RELAUNCH_GUARD_RC): $RELAUNCH_GUARD_OUT"
+  invoke_ilk_notify "blocked" "$proj_name" "relaunch refused: $RELAUNCH_GUARD_OUT"
+  write_banner "$title" \
+"Project: $proj_name
+Guard: $RELAUNCH_GUARD_OUT
+
+The watchdog does not relaunch an operator stop, a held project, or a
+project whose state it cannot read. Watchdog exiting." 33
+}
+
 # ----- Promotion helper ------------------------------------------------------
 
 handle_promote() {
@@ -614,6 +655,22 @@ handle_promote() {
   local queue_remaining
   queue_remaining=$($PYTHON -c "import json,sys; d=json.load(sys.stdin); print(d.get('queue_remaining',''))" <<<"$json_out")
 
+  # A refusal (held project, unmerged selfmod batch) is not a drained queue.
+  local refused
+  refused=$($PYTHON -c "import json,sys; d=json.load(sys.stdin); print(d.get('refused') or '')" <<<"$json_out")
+  if [[ -n "$refused" ]]; then
+    local refused_reason
+    refused_reason=$($PYTHON -c "import json,sys; d=json.load(sys.stdin); print(d.get('reason') or '')" <<<"$json_out")
+    write_log "promotion refused ($refused): $refused_reason"
+    invoke_ilk_notify "blocked" "$proj_name" "promotion refused: $refused"
+    write_banner "NOT ADVANCING — $(to_upper "$refused")" \
+"Project: $proj_name
+Reason: $refused_reason
+
+Promotion refused; nothing relaunched. Watchdog exiting." 33
+    exit 0
+  fi
+
   if [[ -n "$promoted" ]]; then
     write_log "queue advanced: demoted=$demoted, promoted=$promoted, queue_remaining=$queue_remaining"
     if [[ ! -f "$LAUNCH_SCRIPT" ]]; then
@@ -624,6 +681,16 @@ Expected launcher: $LAUNCH_SCRIPT
 
 Cannot auto-relaunch. Run ilk-launcher manually." 33
       return
+    fi
+    relaunch_guard "$project"
+    if [[ "$RELAUNCH_GUARD_RC" -eq 10 ]]; then
+      write_log "queue advanced but a run is already live: $RELAUNCH_GUARD_OUT — not relaunching; watching."
+      saw_alive_once=false
+      sleep "$poll_sec"
+      return
+    elif [[ "$RELAUNCH_GUARD_RC" -ne 0 ]]; then
+      refused_relaunch_banner "$proj_name"
+      exit 0
     fi
     if ! _relaunch_with_engine "$project" "$LAUNCH_SCRIPT" --force; then
       write_banner "QUEUE ADVANCED — RELAUNCH FAILED" \
@@ -1231,6 +1298,19 @@ relaunch manually if it still makes sense." 31
     if [[ ! -f "$LAUNCH_SCRIPT" ]]; then
       write_banner "LAUNCH SCRIPT MISSING" \
         "Expected: $LAUNCH_SCRIPT\nWatchdog cannot relaunch." 31
+      return
+    fi
+
+    relaunch_guard "$project" "$runtime_dir"
+    if [[ "$RELAUNCH_GUARD_RC" -eq 10 ]]; then
+      # A fresh launch (the scheduler's, during the backoff above) or a live
+      # runner: relaunching with --force over it is how duplicates start.
+      write_log "not relaunching — a run is live: $RELAUNCH_GUARD_OUT. Watching."
+      saw_alive_once=false
+      sleep "$poll_sec"
+      continue
+    elif [[ "$RELAUNCH_GUARD_RC" -ne 0 ]]; then
+      refused_relaunch_banner "$proj_name"
       return
     fi
 
