@@ -5,6 +5,16 @@ components. Written after three contract-violation bugs surfaced in run
 `20260616-175453` (math-blocks). Each bug was a writer/reader disagreement
 about the same file — this doc makes the implicit contracts explicit.
 
+> **Target design, 2026-09-28:** `docs/architecture/loop-state-and-ownership-design.md`
+> (accepted) supersedes the following parts of this document as the
+> intended behaviour: iteration tree resolution (work_tree / selfmod), the
+> ship-proof ledger (Contract 5), liveness (Contract 3 and every argv-pattern
+> probe), red-owner attribution, and plan-status ownership. This document
+> still describes the code as it stands. That design's section 7 lists every
+> current divergence. A change that adds another derivation of an iteration's
+> trees, work, state owner, liveness or verdict is a misleading patch; make
+> the consumer read the single source instead.
+
 ## Component map
 
 ```
