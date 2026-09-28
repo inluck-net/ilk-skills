@@ -202,61 +202,144 @@ class TestHostWideProbe:
         finally:
             runners.close()
 
-    def test_ac2_worker_with_ilk_please_continue_blocks(self, tmp_path: Path) -> None:
-        """AC-2: a fake worker `claude -p "ilk please continue …"` ⇒ blocked.
+    # A worker is attributed to its NEAREST runner ancestor, never to the
+    # prompt alone: every loop on the host uses the same prompt.  Unscoped,
+    # the prompt match made the whole merge suite read the host's real
+    # workers (run 20260928-185427: 10 merge tests red while a gh-resolve
+    # worker was live).  So each fake worker below is placed under a fake
+    # runner whose path decides whose worker it is.
 
-        The worker's argv contains `ilk please continue` but no
-        `--project-path`.  It is not a descendant of this process.
+    @staticmethod
+    def _spawn_runner_with_worker(
+        runner_script: Path, worker_script: Path, token: str,
+    ) -> subprocess.Popen[bytes]:
+        """A fake runner at *runner_script* whose child is a fake worker."""
+        runner_script.parent.mkdir(parents=True, exist_ok=True)
+        runner_script.write_text(
+            "#!/usr/bin/env bash\n"
+            f'bash "{worker_script}" -p "ilk please continue --token {token}" &\n'
+            "wait\n",
+            encoding="utf-8",
+        )
+        runner_script.chmod(0o755)
+        worker_script.parent.mkdir(parents=True, exist_ok=True)
+        worker_script.write_text(_FAKE_RUNNER_BODY, encoding="utf-8")
+        worker_script.chmod(0o755)
+        return subprocess.Popen(
+            ["bash", str(runner_script), "--runner-token", token],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, start_new_session=True,
+        )
+
+    @staticmethod
+    def _kill(proc: subprocess.Popen[bytes]) -> None:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:  # pragma: no cover - defensive
+            pass
+
+    @staticmethod
+    def _worker_pid(token: str) -> int | None:
+        """The pid whose argv carries the worker prompt with *token*."""
+        for pid in _wait_until_visible(f"ilk please continue --token {token}", expected=1):
+            return pid
+        return None
+
+    def test_ac2_worker_under_this_clones_runner_blocks(self, tmp_path: Path) -> None:
+        """AC-2: a worker whose runner runs THIS clone's scripts ⇒ blocked."""
+        if not _which("pgrep"):  # pragma: no cover - environment guard
+            pytest.skip("pgrep not available — the probe's substrate is missing")
+        clone = (tmp_path / "clone").resolve()
+        runner = clone / "skills" / "ilk-loop" / "scripts" / "run_ilk_loop_claude.sh"
+        token = f"ILKWORKER{uuid.uuid4().hex}"
+        proc = self._spawn_runner_with_worker(runner, tmp_path / "fakebin" / "claude", token)
+        try:
+            worker = self._worker_pid(token)
+            if worker is None:
+                pytest.skip("fake worker did not appear in the process table")
+            pids = selfmod_worktree._find_live_ilk_pids_hostwide(
+                clone_path=clone, pattern=f"ilk please continue --token {token}",
+            )
+            assert worker in pids, (
+                f"worker {worker} under this clone's runner was not returned; got {pids}"
+            )
+        finally:
+            self._kill(proc)
+
+    def test_ac2b_worker_under_another_clones_runner_does_not_block(
+        self, tmp_path: Path,
+    ) -> None:
+        """AC-2b: a worker whose nearest runner runs ANOTHER clone ⇒ not blocked.
+
+        This is the shape that turned the merge suite red: a real worker on
+        the host belongs to a real runner, never to a test's fixture clone.
         """
         if not _which("pgrep"):  # pragma: no cover - environment guard
             pytest.skip("pgrep not available — the probe's substrate is missing")
-
         clone = (tmp_path / "clone").resolve()
         clone.mkdir(parents=True)
-
-        # Write a fake worker that sleeps.
-        worker_dir = tmp_path / "fakebin"
-        worker_dir.mkdir(parents=True, exist_ok=True)
-        worker_script = worker_dir / "claude"
-        worker_script.write_text(_FAKE_RUNNER_BODY, encoding="utf-8")
-        worker_script.chmod(0o755)
-
+        other = (tmp_path / "other-clone").resolve()
+        runner = other / "skills" / "ilk-loop" / "scripts" / "run_ilk_loop_claude.sh"
         token = f"ILKWORKER{uuid.uuid4().hex}"
-        proc = subprocess.Popen(
-            ["bash", str(worker_script), "-p", f"ilk please continue --token {token}"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        proc = self._spawn_runner_with_worker(runner, tmp_path / "fakebin" / "claude", token)
         try:
-            seen = _wait_until_visible(token, expected=1)
-            if proc.pid not in seen:
-                pytest.skip(
-                    f"fake worker did not appear in the process table "
-                    f"(spawned {proc.pid}; pgrep saw {seen})"
-                )
-
-            # The host-wide probe should return this pid because its argv
-            # contains "ilk please continue".
+            worker = self._worker_pid(token)
+            if worker is None:
+                pytest.skip("fake worker did not appear in the process table")
             pids = selfmod_worktree._find_live_ilk_pids_hostwide(
-                clone_path=clone,
-                pattern=token,
+                clone_path=clone, pattern=f"ilk please continue --token {token}",
             )
-            assert proc.pid in pids, (
-                f"host-wide probe did not return worker pid {proc.pid} "
-                f"whose argv contains 'ilk please continue'; "
-                f"probe returned {pids}"
+            assert worker not in pids, (
+                f"worker {worker} under another clone's runner blocked the merge; got {pids}"
             )
         finally:
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:  # pragma: no cover - defensive
-                pass
+            self._kill(proc)
+
+    @pytest.mark.parametrize("cwd_inside", [True, False])
+    def test_ac2c_orphan_worker_blocks_only_inside_the_clone(
+        self, tmp_path: Path, cwd_inside: bool,
+    ) -> None:
+        """AC-2c: an orphan worker (no runner ancestor) ⇒ blocked iff its cwd is in the clone."""
+        if not _which("pgrep"):  # pragma: no cover - environment guard
+            pytest.skip("pgrep not available — the probe's substrate is missing")
+        clone = (tmp_path / "clone").resolve()
+        clone.mkdir(parents=True)
+        elsewhere = (tmp_path / "elsewhere").resolve()
+        elsewhere.mkdir()
+        worker_script = tmp_path / "fakebin" / "claude"
+        worker_script.parent.mkdir(parents=True)
+        worker_script.write_text(_FAKE_RUNNER_BODY, encoding="utf-8")
+        worker_script.chmod(0o755)
+        token = f"ILKWORKER{uuid.uuid4().hex}"
+        # Double fork: the worker's parent exits at once, so it reparents to 1.
+        launcher = subprocess.Popen(
+            ["bash", "-c",
+             f'( cd "{clone if cwd_inside else elsewhere}" && '
+             f'exec bash "{worker_script}" -p "ilk please continue --token {token}" ) '
+             "</dev/null >/dev/null 2>&1 &"],
+            start_new_session=True,
+        )
+        launcher.wait(timeout=5)
+        worker = self._worker_pid(token)
+        try:
+            if worker is None:
+                pytest.skip("fake orphan worker did not appear in the process table")
+            pids = selfmod_worktree._find_live_ilk_pids_hostwide(
+                clone_path=clone, pattern=f"ilk please continue --token {token}",
+            )
+            assert (worker in pids) is cwd_inside, (
+                f"orphan worker {worker} (cwd inside clone: {cwd_inside}) -> probe {pids}"
+            )
+        finally:
+            if worker is not None:
+                try:
+                    os.kill(worker, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
     def test_ac3_own_ancestor_not_blocked(self) -> None:
         """AC-3: this process's own runner ancestor ⇒ not blocked.

@@ -418,13 +418,87 @@ def _find_live_ilk_pids_hostwide(
     )
     worker_prompt = "ilk please continue"
 
-    return [
-        pid for pid in candidates
-        if pid not in excluded and (
-            scripts_dir in _pid_cmdline(pid)
-            or worker_prompt in _pid_cmdline(pid)
+    blocking: list[int] = []
+    for pid in candidates:
+        if pid in excluded:
+            continue
+        cmd = _pid_cmdline(pid)
+        if scripts_dir in cmd:
+            blocking.append(pid)
+        elif worker_prompt in cmd and _worker_belongs_to_clone(
+            pid, scripts_dir, clone_path,
+        ):
+            blocking.append(pid)
+    return blocking
+
+
+#: Bound on the ancestor walk; a real runner→worker chain is under 10 deep.
+_MAX_ANCESTOR_HOPS = 64
+
+
+def _worker_belongs_to_clone(
+    pid: int, scripts_dir: str, clone_path: Path,
+) -> bool:
+    """Is worker *pid* one of THIS clone's loops?
+
+    The prompt ``ilk please continue`` is the same for every loop on the host,
+    so on its own it names no clone.  A worker is attributed to its NEAREST
+    runner ancestor instead:
+
+    - an ancestor runs ``<clone>/skills/ilk-loop/scripts/`` ⇒ this clone's;
+    - the nearest runner runs another clone's scripts ⇒ not this clone's;
+    - no runner ancestor at all (an orphan whose runner died) ⇒ this clone's
+      only when its cwd is inside *clone_path*.
+
+    Unscoped, the prompt match made every merge test read the host: on
+    2026-09-28 run 20260928-185427 a live gh-resolve worker (pid 83399, under
+    a runner of a different path than the test fixture) turned 10 merge tests
+    red and ship-integrity reverted two shipped sub-plans.
+
+    Fails closed: an ancestor walk that cannot complete counts as this
+    clone's worker.
+    """
+    current = pid
+    for _ in range(_MAX_ANCESTOR_HOPS):
+        result = subprocess.run(
+            ["ps", "-p", str(current), "-o", "ppid="],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
         )
-    ]
+        if result.returncode != 0:
+            return True
+        try:
+            current = int(result.stdout.strip())
+        except ValueError:
+            return True
+        if current <= 1:
+            return _pid_cwd_is_inside(pid, clone_path)
+        cmd = _pid_cmdline(current)
+        if scripts_dir in cmd:
+            return True
+        if "run_ilk_loop" in cmd:
+            return False
+    return True
+
+
+def _pid_cwd_is_inside(pid: int, root: Path) -> bool:
+    """True when *pid*'s cwd is *root* or below it; True when unreadable."""
+    result = subprocess.run(
+        ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+        capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    )
+    cwd = next(
+        (line[1:] for line in result.stdout.splitlines() if line.startswith("n")),
+        None,
+    )
+    if cwd is None:
+        return True
+    try:
+        Path(cwd).resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
 
 
 def _find_live_ilk_pids(
