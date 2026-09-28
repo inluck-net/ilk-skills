@@ -443,8 +443,10 @@ classify_action() {
       # HAS records for a timed-out run; that one relaunches.
       echo "triage"
       ;;
-    timeout-bound|max-iter-bound|api-flaky|interrupted|throttled|lock_held)
+    timeout-bound|max-iter-bound|api-flaky|interrupted|throttled|lock_held|merge-deferred)
       # Whitelist: transient failures safe to retry.
+      # merge-deferred: a selfmod merge was blocked by a live loop; the
+      # scheduler relaunches when the other loop exits.
       echo "relaunch"
       ;;
     stuck-no-progress|api-blocked|budget-exhausted|quota-exhausted|local-checks-stuck|local-checks-broken|dependency-unreachable|merge-conflict|selfmod_live_clone_touched)

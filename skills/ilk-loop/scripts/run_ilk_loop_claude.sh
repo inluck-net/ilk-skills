@@ -4133,6 +4133,7 @@ print(fm.get('result_file', ''))
   local i
   local no_progress_streak=0
   local stop_reason=""
+  local merge_was_deferred=0
 
   for ((i = 1; i <= MAX_ITERATIONS; i++)); do
     iter_counter=$i
@@ -4351,6 +4352,28 @@ print(json.dumps({
       SELFMOD_WORKTREE_PATH="${runtime_dir}/worktrees/selfmod-batch"
       SELFMOD_MERGE_LOCK_PATH="${runtime_dir}/selfmod-merge.lock"
       create_selfmod_worktree
+
+      # Retry a deferred merge from a previous run before dispatching
+      # any agent.  The marker is written by the merge block when exit 2
+      # (live loop) defers the merge.
+      local _deferred_marker="${SELFMOD_WORKTREE_PATH}/.ilk-merge-deferred"
+      if [[ -f "$_deferred_marker" ]]; then
+        echo "[selfmod] retrying deferred merge from previous run..." >&2
+        local _retry_rc=0
+        merge_selfmod_worktree || _retry_rc=$?
+        if [[ $_retry_rc -eq 0 ]]; then
+          echo "[selfmod] deferred merge landed on retry." >&2
+          rm -f "$_deferred_marker"
+        elif [[ $_retry_rc -eq 2 ]]; then
+          echo "[selfmod] merge still deferred (live loop); continuing to work." >&2
+          # Marker stays; will retry again next iteration.
+        else
+          echo "[selfmod] deferred merge failed (exit $_retry_rc) — ending run." >&2
+          # Write sentinel and exit like the post-iteration merge failure.
+          stop_reason="selfmod_merge_failed"
+          break
+        fi
+      fi
     fi
 
     # -- Gate-first fast path (opt-in: gate_first: true on the step) --------
@@ -5226,7 +5249,21 @@ for p in Path(sys.argv[1]).glob('*.md'):
       if [[ -z "$_merge_blocked_reason" ]]; then
         merge_rc=0
         merge_selfmod_worktree || merge_rc=$?
-        if [[ $merge_rc -ne 0 ]]; then
+        if [[ $merge_rc -eq 2 ]]; then
+          # Exit 2 = live loop detected — deferral, not failure.
+          # Keep the work in the worktree; retry next iteration.
+          echo "[selfmod] merge deferred: live loop(s) detected; work kept in the worktree, will retry" >&2
+          # Write a deferral marker so the next run retries at start.
+          local _deferred_marker="${SELFMOD_WORKTREE_PATH:-}/.ilk-merge-deferred"
+          local _deferred_pids
+          _deferred_pids=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/selfmod_worktree.py" \
+            list-live "${SELFMOD_ORIGINAL_PROJECT_PATH:-}" 2>/dev/null || echo "unknown")
+          printf '{"live_pids": "%s", "since": "%s"}\n' \
+            "$_deferred_pids" "$(date +%Y-%m-%dT%H:%M:%S%z)" > "$_deferred_marker"
+          merge_was_deferred=1
+          # Do NOT set iter_stop_reason or stop_reason — the run continues.
+          # Do NOT reset SELFMOD_ISOLATED — next iteration still needs merge.
+        elif [[ $merge_rc -ne 0 ]]; then
           echo "[selfmod] merge exited $merge_rc — batch did not land." >&2
           iter_stop_reason="selfmod_merge_failed"
           stop_reason="selfmod_merge_failed"
@@ -5235,7 +5272,20 @@ for p in Path(sys.argv[1]).glob('*.md'):
         echo "[selfmod] not merging: ${_merge_blocked_reason} — worktree kept at ${SELFMOD_WORKTREE_PATH:-unknown}" >&2
       fi
       # Reset for next iteration (merge only runs once per batch).
-      SELFMOD_ISOLATED=0
+      # Skip the reset when the merge was deferred — the next iteration
+      # still needs SELFMOD_ISOLATED=1 to retry the merge.
+      if [[ "${merge_was_deferred:-0}" -ne 1 ]]; then
+        SELFMOD_ISOLATED=0
+      fi
+    fi
+
+    # Waste bounding: if the merge was deferred and this iteration
+    # produced no new commits, end the run instead of spinning.
+    # The scheduler re-dispatches on its normal poll.
+    if [[ "${merge_was_deferred:-0}" -eq 1 && "${total_new:-0}" -eq 0 ]]; then
+      echo "[selfmod] merge deferred + no new commits — ending run to avoid spin." >&2
+      stop_reason="blocked-no-runnable"
+      break
     fi
 
     # After a ship-integrity revert, reconcile the master so it no longer
@@ -5361,7 +5411,19 @@ print(json.dumps(d))
   if [[ -n "$runtime_dir" ]]; then
     local ended_at
     ended_at=$(date +%Y-%m-%dT%H:%M:%S%z)
-    python3 -c "import json; print(json.dumps({
+    # Build sentinel JSON.  When the merge was deferred, add the
+    # merge_deferred field so classify() can distinguish it from a
+    # hard merge failure.
+    local _merge_deferred_json="null"
+    if [[ "$merge_was_deferred" -eq 1 ]]; then
+      local _deferred_marker="${SELFMOD_WORKTREE_PATH:-}/.ilk-merge-deferred"
+      if [[ -f "$_deferred_marker" ]]; then
+        _merge_deferred_json=$(cat "$_deferred_marker")
+      else
+        _merge_deferred_json='{"live_pids": "unknown", "since": "unknown"}'
+      fi
+    fi
+    python3 -c "import json,sys; d={
       'state': '$stop_reason',
       'pid': $$,
       'run_id': '$RUN_ID',
@@ -5371,7 +5433,8 @@ print(json.dumps(d))
       'project_path': '$PROJECT_PATH',
       'cli': 'claude',
       'jsonl_log': '$JSONL_LOG'
-    }))" > "${runtime_dir}/last-exit.json.tmp" && mv -f "${runtime_dir}/last-exit.json.tmp" "${runtime_dir}/last-exit.json"
+    }; md=json.loads(sys.argv[1]); d['merge_deferred']=md if md else None; print(json.dumps(d))" \
+      "$_merge_deferred_json" > "${runtime_dir}/last-exit.json.tmp" && mv -f "${runtime_dir}/last-exit.json.tmp" "${runtime_dir}/last-exit.json"
     echo "Sentinel: ${runtime_dir}/last-exit.json (state=$stop_reason, iters=$iter_counter)"
 
     # Remove the launcher's running.pid so the scheduler does not see a

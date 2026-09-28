@@ -596,6 +596,7 @@ CLASSIFICATION_LABELS: tuple[str, ...] = (
     "never-ran",
     "throttled",
     "merge-conflict",
+    "merge-deferred",
 )
 
 LOCAL_CHECK_RE = re.compile(
@@ -1545,6 +1546,14 @@ def classify(
                     label = "local-checks-broken" if has_broken_gate else "local-checks-stuck"
                 else:
                     label = _SENTINEL_FAILURE_MAP[sentinel_state]
+                    # A deferred merge (exit 2) carries a merge_deferred
+                    # field in the sentinel.  Classify as merge-deferred
+                    # (relaunch-later) instead of merge-conflict (block).
+                    if (
+                        label == "merge-conflict"
+                        and sentinel.get("merge_deferred")
+                    ):
+                        label = "merge-deferred"
                 facts: dict[str, Any] = {
                     "iter_at_stop": sentinel.get("iteration"),
                     "reason": "sentinel terminal state",
