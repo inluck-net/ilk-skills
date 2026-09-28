@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-_REPO = Path(__file__).resolve().parent.parent.parent
+_REPO = Path(__file__).resolve().parents[3]
 _SCRIPT = _REPO / "skills" / "ilk-loop" / "scripts" / "prune_tmp_keys.py"
 
 
@@ -46,12 +46,6 @@ def _make_key_dir(data_home: Path, key: str, *, n_files: int = 0) -> None:
         d.mkdir(parents=True)
 
 
-_XFAIL = pytest.mark.xfail(
-    strict=True, reason="red-first: script not written"
-)
-
-
-@_XFAIL
 def test_dry_run_lists_only_tmp_derived(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """AC-1: dry-run lists exactly tmp-derived keys, changes nothing."""
     data_home = tmp_path / "ilk-data"
@@ -99,7 +93,6 @@ def test_dry_run_lists_only_tmp_derived(tmp_path: Path, monkeypatch: pytest.Monk
     assert data_home / "projects" / f"{prefix}abcdef2"
 
 
-@_XFAIL
 def test_apply_moves_only_tmp_derived(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """AC-2: --apply moves exactly tmp-derived keys into trash/, nothing deleted."""
     data_home = tmp_path / "ilk-data"
@@ -150,7 +143,6 @@ def test_apply_moves_only_tmp_derived(tmp_path: Path, monkeypatch: pytest.Monkey
     assert all_before == all_after
 
 
-@_XFAIL
 def test_live_pid_refuses_candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """AC-3: a tmp-derived key with a live pid is refused."""
     data_home = tmp_path / "ilk-data"
@@ -182,7 +174,6 @@ def test_live_pid_refuses_candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert key in refused_keys
 
 
-@_XFAIL
 def test_registered_key_refuses_candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """AC-4: a tmp-derived key registered in projects.json is refused."""
     data_home = tmp_path / "ilk-data"
@@ -194,11 +185,12 @@ def test_registered_key_refuses_candidate(tmp_path: Path, monkeypatch: pytest.Mo
     key = f"{prefix}abcdef1"
     _make_key_dir(data_home, key, n_files=1)
 
-    # Write a projects.json registering this key.
+    # Write a projects.json registering the actual key path so
+    # project_key(Path(entry["path"])) computes to this key.
     projects_json = data_home / "launcher" / "projects.json"
     projects_json.parent.mkdir(parents=True)
     projects_json.write_text(
-        json.dumps([{"name": "test-proj", "path": str(tmp_path / "repo")}]),
+        json.dumps([{"name": "test-proj", "path": str(data_home / "projects" / key)}]),
         encoding="utf-8",
     )
 
