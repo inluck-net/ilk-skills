@@ -579,10 +579,23 @@ class SelfmodWorktree:
         If the worktree path already exists and is a valid worktree, this
         is a no-op.  If it exists but is not a valid worktree, it is removed
         first.
+
+        When reusing, if the worktree is clean and its HEAD is a strict
+        ancestor of the clone's HEAD (no unique commits), the worktree is
+        refreshed to the clone's HEAD.  This fixes #53 where reused
+        worktrees kept a stale base.
         """
         if self._is_valid_worktree():
             logger.info("Reusing existing worktree at %s", self.worktree_path)
             self._head_at_creation = self._read_saved_head()
+
+            # Check if worktree needs refresh (fix for #53).
+            try:
+                self._maybe_refresh_worktree()
+            except Exception as exc:
+                # If any git call fails, fall back to reuse-as-today.
+                logger.warning("Failed to refresh worktree: %s", exc)
+
             return
 
         # Remove stale directory if it exists but isn't a worktree.
@@ -634,6 +647,82 @@ class SelfmodWorktree:
         if marker.exists():
             return marker.read_text(encoding="utf-8").strip()
         return None
+
+    def _maybe_refresh_worktree(self) -> None:
+        """Refresh a reused worktree if it's clean and behind main.
+
+        This implements the fix for #53: when a worktree is reused and its
+        HEAD is a strict ancestor of the clone's HEAD (no unique commits),
+        the worktree is refreshed to the clone's HEAD.
+
+        The logic:
+        - If worktree HEAD == clone HEAD: no action needed.
+        - If worktree is dirty: no refresh (preserve uncommitted work).
+        - If worktree HEAD is strict ancestor of clone HEAD: refresh.
+        - If clone HEAD is ancestor of worktree HEAD: no refresh (unique commits).
+        - If diverged: no refresh, log warning.
+        """
+        # Re-read the saved head in case marker was missing and just re-saved.
+        saved_head = self._read_saved_head()
+
+        wt_head = _resolve_head_sha(self.worktree_path)
+        clone_head = _resolve_head_sha(self.repo_path)
+
+        # If marker is missing, re-save it with the current clone HEAD.
+        if saved_head is None:
+            self._save_head(clone_head)
+            self._head_at_creation = clone_head
+            saved_head = clone_head
+
+        # Case 1: already at same HEAD — nothing to do.
+        if wt_head == clone_head:
+            return
+
+        wt_head = _resolve_head_sha(self.worktree_path)
+        clone_head = _resolve_head_sha(self.repo_path)
+
+        # Case 1: already at same HEAD — nothing to do.
+        if wt_head == clone_head:
+            return
+
+        # Case 2: worktree is dirty — don't refresh (preserve uncommitted work).
+        dirty = self._dirty_files()
+        if dirty:
+            logger.info(
+                "worktree dirty — not refreshed (%d files)", len(dirty)
+            )
+            return
+
+        # Case 3: worktree HEAD is strict ancestor of clone HEAD (no unique commits).
+        # This is the #53 fix: refresh the worktree to the clone's HEAD.
+        if _is_ancestor(self.repo_path, wt_head, clone_head):
+            logger.info(
+                "Refreshed reused worktree %s → %s (no unique work)",
+                wt_head[:7],
+                clone_head[:7],
+            )
+            # Checkout the clone's HEAD in the worktree (detached).
+            _git_checked(
+                "checkout", "--detach", clone_head,
+                cwd=self.worktree_path,
+            )
+            # Update the marker to the new HEAD.
+            self._save_head(clone_head)
+            self._head_at_creation = clone_head
+            return
+
+        # Case 4: clone HEAD is ancestor of worktree HEAD (unique commits, main not moved).
+        # This is a normal resume — no refresh needed.
+        if _is_ancestor(self.repo_path, clone_head, wt_head):
+            return
+
+        # Case 5: diverged (neither is ancestor of the other).
+        # Log a loud warning but don't refresh (preserve unique work).
+        logger.warning(
+            "WARNING: reused worktree diverged from main — "
+            "merge-back will refuse; unmerged work kept at %s",
+            self.worktree_path,
+        )
 
     def merge_back(
         self,

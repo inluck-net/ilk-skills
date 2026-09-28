@@ -65,7 +65,6 @@ def _add_commit(repo_path: Path, filename: str, content: str, message: str) -> N
 
 # ── AC-1: The #53 shape — worktree with no unique work follows main ──────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 class TestReusedWorktreeFollowsMain:
     """A reused worktree with no unique work must be refreshed to main."""
 
@@ -268,7 +267,6 @@ class TestDirtyWorktreeNotRefreshed:
 
 # ── AC-5: Marker missing but worktree valid ──────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 class TestMarkerMissingButWorktreeValid:
     """A valid worktree with missing marker must re-save the marker."""
 
