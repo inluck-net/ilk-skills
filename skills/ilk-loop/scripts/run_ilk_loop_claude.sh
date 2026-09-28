@@ -432,6 +432,91 @@ _resolve_toolkit_clone() {
 # Emits one line on stdout when isolation is required, naming the resolved
 # clone.  A silent behaviour change to where the loop executes is not
 # acceptable.
+# Record the outcome of a post-iteration selfmod merge attempt.
+#
+# Sets merge_was_deferred / iter_stop_reason / stop_reason in the caller's
+# scope (they are main()'s locals; bash dynamic scoping).  rc 0 CLEARS
+# merge_was_deferred: before 2026-09-28 it was sticky, so a run whose merge
+# was deferred once and then landed still tripped the "deferred + no new
+# commits" spin guard and ended as blocked-no-runnable.
+record_selfmod_merge_outcome() {
+  local rc="$1"
+  if [[ "$rc" -eq 0 ]]; then
+    merge_was_deferred=0
+  elif [[ "$rc" -eq 2 ]]; then
+    # Exit 2 = live loop detected — deferral, not failure.  Keep the work
+    # in the worktree and retry after the next green iteration; the marker
+    # makes the next run retry at entry.
+    echo "[selfmod] merge deferred: live loop(s) detected; work kept in the worktree, will retry" >&2
+    local _deferred_marker="${SELFMOD_WORKTREE_PATH:-}/.ilk-merge-deferred"
+    local _deferred_pids
+    _deferred_pids=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/selfmod_worktree.py" \
+      list-live "${SELFMOD_ORIGINAL_PROJECT_PATH:-}" 2>/dev/null || echo "unknown")
+    printf '{"live_pids": "%s", "since": "%s"}\n' \
+      "$_deferred_pids" "$(date +%Y-%m-%dT%H:%M:%S%z)" > "$_deferred_marker"
+    merge_was_deferred=1
+    # The run continues, and SELFMOD_ISOLATED stays 1 for the retry.
+  else
+    echo "[selfmod] merge exited $rc — batch did not land." >&2
+    iter_stop_reason="selfmod_merge_failed"
+    stop_reason="selfmod_merge_failed"
+  fi
+}
+
+# Enter (or keep) selfmod isolation for this iteration.
+#
+# Keeps isolation that is already in place: after a deferred merge the
+# post-iteration block leaves SELFMOD_ISOLATED=1 and PROJECT_PATH on the
+# worktree, and re-detecting here would compare the WORKTREE path with the
+# toolkit clone, fail, and silently drop isolation for the rest of the run
+# (no worktree snapshot, no merge retry).
+#
+# Returns 0 normally, 3 when a deferred merge retried at entry failed for a
+# reason other than a live loop (the caller ends the run).
+setup_selfmod_isolation() {
+  if [[ "${SELFMOD_ISOLATED:-0}" -eq 1 && -n "${SELFMOD_WORKTREE_PATH:-}" \
+        && -d "${SELFMOD_WORKTREE_PATH}" ]]; then
+    return 0
+  fi
+  SELFMOD_ISOLATED=0
+  if ! selfmod_isolation_required; then
+    return 0
+  fi
+  SELFMOD_ISOLATED=1
+  SELFMOD_ORIGINAL_PROJECT_PATH="$PROJECT_PATH"
+  local runtime_dir
+  runtime_dir="$(get_ilk_runtime_dir)" || {
+    echo "[selfmod] ERROR: cannot resolve runtime dir — aborting." >&2
+    exit 1
+  }
+  SELFMOD_WORKTREE_PATH="${runtime_dir}/worktrees/selfmod-batch"
+  SELFMOD_MERGE_LOCK_PATH="${runtime_dir}/selfmod-merge.lock"
+  create_selfmod_worktree
+
+  # Retry a deferred merge from a previous run before dispatching any agent.
+  # The marker is written by the merge block when exit 2 (live loop) defers.
+  local _deferred_marker="${SELFMOD_WORKTREE_PATH}/.ilk-merge-deferred"
+  if [[ -f "$_deferred_marker" ]]; then
+    echo "[selfmod] retrying deferred merge from previous run..." >&2
+    local _retry_rc=0
+    merge_selfmod_worktree || _retry_rc=$?
+    if [[ $_retry_rc -eq 0 ]]; then
+      echo "[selfmod] deferred merge landed on retry." >&2
+      rm -f "$_deferred_marker"
+      # merge_selfmod_worktree restored PROJECT_PATH to the clone and removed
+      # the worktree.  Re-enter isolation, or this iteration's worker would
+      # be dispatched into the LIVE clone.
+      create_selfmod_worktree
+    elif [[ $_retry_rc -eq 2 ]]; then
+      echo "[selfmod] merge still deferred (live loop); continuing to work." >&2
+    else
+      echo "[selfmod] deferred merge failed (exit $_retry_rc) — ending run." >&2
+      return 3
+    fi
+  fi
+  return 0
+}
+
 selfmod_isolation_required() {
   local project_resolved toolkit_resolved
 
@@ -4205,6 +4290,20 @@ print(fm.get('result_file', ''))
       fi
     fi
 
+    # -- Selfmod isolation (DP-2), BEFORE any snapshot -----------------
+    # Must precede get_repo_heads and the pre-iteration snapshot: both read
+    # through selfmod_effective_repo, which only points at the worktree once
+    # SELFMOD_ISOLATED=1.  Run 20260928-212103 took its snapshot first, so
+    # heads-before held the live clone's HEAD, the iteration counted the whole
+    # 9-commit unmerged backlog as its own, and re-gated all of it (65 min,
+    # including another master's full-suite verify).
+    local _selfmod_rc=0
+    setup_selfmod_isolation || _selfmod_rc=$?
+    if [[ $_selfmod_rc -eq 3 ]]; then
+      stop_reason="selfmod_merge_failed"
+      break
+    fi
+
     local heads_before_file heads_after_file
     heads_before_file="${RUN_LOG_DIR}/heads-before-${i}.tmp"
     heads_after_file="${RUN_LOG_DIR}/heads-after-${i}.tmp"
@@ -4336,45 +4435,6 @@ print(json.dumps({
   'status': 'started',
 }))
 " >> "$JSONL_LOG" || true
-
-    # -- Selfmod isolation (DP-2): detect and create worktree ----------
-    # If this project is the toolkit clone, run the batch in an isolated
-    # worktree so live consumer loops keep executing the stable clone.
-    SELFMOD_ISOLATED=0
-    if selfmod_isolation_required; then
-      SELFMOD_ISOLATED=1
-      SELFMOD_ORIGINAL_PROJECT_PATH="$PROJECT_PATH"
-      local runtime_dir
-      runtime_dir="$(get_ilk_runtime_dir)" || {
-        echo "[selfmod] ERROR: cannot resolve runtime dir — aborting." >&2
-        exit 1
-      }
-      SELFMOD_WORKTREE_PATH="${runtime_dir}/worktrees/selfmod-batch"
-      SELFMOD_MERGE_LOCK_PATH="${runtime_dir}/selfmod-merge.lock"
-      create_selfmod_worktree
-
-      # Retry a deferred merge from a previous run before dispatching
-      # any agent.  The marker is written by the merge block when exit 2
-      # (live loop) defers the merge.
-      local _deferred_marker="${SELFMOD_WORKTREE_PATH}/.ilk-merge-deferred"
-      if [[ -f "$_deferred_marker" ]]; then
-        echo "[selfmod] retrying deferred merge from previous run..." >&2
-        local _retry_rc=0
-        merge_selfmod_worktree || _retry_rc=$?
-        if [[ $_retry_rc -eq 0 ]]; then
-          echo "[selfmod] deferred merge landed on retry." >&2
-          rm -f "$_deferred_marker"
-        elif [[ $_retry_rc -eq 2 ]]; then
-          echo "[selfmod] merge still deferred (live loop); continuing to work." >&2
-          # Marker stays; will retry again next iteration.
-        else
-          echo "[selfmod] deferred merge failed (exit $_retry_rc) — ending run." >&2
-          # Write sentinel and exit like the post-iteration merge failure.
-          stop_reason="selfmod_merge_failed"
-          break
-        fi
-      fi
-    fi
 
     # -- Gate-first fast path (opt-in: gate_first: true on the step) --------
     #
@@ -5256,25 +5316,7 @@ for p in Path(sys.argv[1]).glob('*.md'):
       if [[ -z "$_merge_blocked_reason" ]]; then
         merge_rc=0
         merge_selfmod_worktree || merge_rc=$?
-        if [[ $merge_rc -eq 2 ]]; then
-          # Exit 2 = live loop detected — deferral, not failure.
-          # Keep the work in the worktree; retry next iteration.
-          echo "[selfmod] merge deferred: live loop(s) detected; work kept in the worktree, will retry" >&2
-          # Write a deferral marker so the next run retries at start.
-          local _deferred_marker="${SELFMOD_WORKTREE_PATH:-}/.ilk-merge-deferred"
-          local _deferred_pids
-          _deferred_pids=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/selfmod_worktree.py" \
-            list-live "${SELFMOD_ORIGINAL_PROJECT_PATH:-}" 2>/dev/null || echo "unknown")
-          printf '{"live_pids": "%s", "since": "%s"}\n' \
-            "$_deferred_pids" "$(date +%Y-%m-%dT%H:%M:%S%z)" > "$_deferred_marker"
-          merge_was_deferred=1
-          # Do NOT set iter_stop_reason or stop_reason — the run continues.
-          # Do NOT reset SELFMOD_ISOLATED — next iteration still needs merge.
-        elif [[ $merge_rc -ne 0 ]]; then
-          echo "[selfmod] merge exited $merge_rc — batch did not land." >&2
-          iter_stop_reason="selfmod_merge_failed"
-          stop_reason="selfmod_merge_failed"
-        fi
+        record_selfmod_merge_outcome "$merge_rc"
       else
         echo "[selfmod] not merging: ${_merge_blocked_reason} — worktree kept at ${SELFMOD_WORKTREE_PATH:-unknown}" >&2
       fi
