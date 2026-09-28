@@ -5,7 +5,7 @@ created: 2026-MM-DDTHH:MM:SS+08:00     # ISO 8601 with TZ + seconds — authorit
 status: queued                          # draft | queued | active | shipped (draft = authored, not yet released; non-runnable)
 priority: null                          # optional integer; lower = jumps queue
 pause_after_ship: false                 # if true, watchdog stops after this MASTER ships
-supervised_only: false                  # KEEP false unless scope_paths MODIFIES loop infra (loop_status.py / scheduler_scan.py / promote_next_master.py / plan_status.py / scheduler.*) — effectively ilk-skills only; in a consumer project leave false unless the user explicitly asks. If true: scheduler + promote never dispatch it, and ilk-runner preflight hard-stops even a manual /ilk-run while a scheduler is alive. NOT a readiness/risk/"needs review" gate — that is `status: draft`. See decomposition-principles.md §13; enforced by `plan_lint.py --master`.
+supervised_only: false                  # RETIRED 2026-09-20 — leave false (or delete the key). plan_lint.py --master treats ANY `true` as a hard finding. Self-modifying ilk-skills batches run in the selfmod worktree instead. NOT a readiness/risk/"needs review" gate — that is `status: draft`. See decomposition-principles.md §13.
 base_branch: main                       # ref that scope_paths are validated against (declared, not derived — see decomposition-principles.md §22). Distinct from branch: which is the child-branch policy.
 branch: null                            # optional child-branch policy:
 #   create_from: HEAD                   #   base ref to fork from
