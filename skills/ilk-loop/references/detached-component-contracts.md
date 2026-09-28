@@ -95,7 +95,7 @@ about the same file — this doc makes the implicit contracts explicit.
 | `"quota-exhausted"` | Provider quota cap detected (`quota_detect.py`); imposed from outside the run and clears on the provider's schedule | Terminal |
 | `"startup-hang"` | Pre-iteration-1 hang detected | Terminal |
 | `"timeout"` | `gtimeout` killed the iteration before it completed | Terminal |
-| `"ship_integrity_violation"` | A sub-plan was `shipped` with its declared gate red; the driver reverted it to `in-progress` **and parked the master** (`park_master.py --owner-of <slug> --auto`; see "Park fields" below). Also: the worker changed a master's `status` / park fields, which the driver restored from its pre-dispatch snapshot (`master_snapshot.py`; no park) | Terminal |
+| `"ship_integrity_violation"` | A sub-plan was `shipped` with its declared gate red; the driver reverted it to `in-progress` **and parked the master** (`park_master.py --owner-of <slug> --auto`; see "Park fields" below). Also: the worker changed the run's own master's `status` / park fields, which the driver restored from its pre-dispatch snapshot (`master_snapshot.py`; no park) | Terminal |
 | `"no-progress"` | 3 consecutive iterations with zero new commits | Terminal |
 | `"all-shipped"` | Every registered sub-plan is shipped **and every one is proven**; loop ended naturally | Terminal |
 | `"shipped-unproven"` | Every registered sub-plan is shipped, but the ship-proof ledger holds no row for at least one — the ship claim is unverified | Terminal |
@@ -166,7 +166,12 @@ the refusal and continues (the run still stops `ship_integrity_violation`).
 
 **Park fields (D3, 2026-09-29).**  A park writes these master frontmatter
 fields next to `status: blocked`.  Only `park_master.py` and the runner write
-them; the runner restores any worker change to them (`master_snapshot.py`).
+them.  The runner snapshots **its own run's master** (loop_status's selection,
+honouring `ILK_MASTER`) before dispatch and restores a worker change to its
+`status` / park fields after (`master_snapshot.py`).  Other masters on the key
+are deliberately not guarded: on a resolver key gh-resolve's daemons pause,
+un-park and create them while the runner is live, and a master created during
+the turn is never touched.
 
 | Field | Written by | Meaning |
 |---|---|---|

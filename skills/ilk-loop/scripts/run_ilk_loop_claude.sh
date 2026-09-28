@@ -4524,12 +4524,24 @@ print(json.dumps({
     # Master snapshot (design §7 D3): a master's status and park fields are
     # the runner's, never the worker's.  Taken right before dispatch, checked
     # right after the agent returns -- before any runner-owned write.
-    local _master_snap_file="" _master_tampered=0
+    #
+    # Only THIS run's master (loop_status's selection, which honours the
+    # ILK_MASTER pin).  Other masters on the key are not this run's to guard:
+    # on a resolver key gh-resolve's daemons legitimately pause, un-park and
+    # create them while this runner is live (gh-resolve-59, 2026-09-29).
+    local _master_snap_file="" _master_tampered=0 _snap_master=""
     if [[ "$GATE_FIRST_GREEN" -eq 0 ]]; then
+      # Capture, then parse: loop_status exits 1 when work is pending (its
+      # normal answer), which under pipefail would wipe a piped result.
+      local _snap_json=""
+      _snap_json=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null) || true
+      _snap_master=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('master') or '')" \
+                       <<<"$_snap_json" 2>/dev/null) || _snap_master=""
       _master_snap_file="${RUN_LOG_DIR}/master-snapshot-${i}.json"
-      if ! python3 "${_SKILL_ROOT}/ilk-loop/scripts/master_snapshot.py" take \
-             --plans-dir "$(get_plans_dir)" --out "$_master_snap_file" >/dev/null; then
-        echo "  ! [master-snapshot] could not snapshot masters — worker edits to master state will NOT be detected this iteration" >&2
+      if [[ -z "$_snap_master" ]] || ! python3 "${_SKILL_ROOT}/ilk-loop/scripts/master_snapshot.py" take \
+             --plans-dir "$(get_plans_dir)" --out "$_master_snap_file" \
+             --master "$_snap_master" >/dev/null; then
+        echo "  ! [master-snapshot] could not snapshot this run's master (${_snap_master:-unresolved}) — a worker edit to it will NOT be detected this iteration" >&2
         _master_snap_file=""
       fi
     fi

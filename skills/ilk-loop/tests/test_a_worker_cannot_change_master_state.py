@@ -14,6 +14,11 @@ AC-3: no change -> exit 0, nothing written.
 AC-4: through the runner's real main(): a stub worker that edits the active
       master's status is reverted, and the run ends ship_integrity_violation.
       Control: a stub that edits nothing ends some other way, master intact.
+AC-5 (scope, gh-resolve-59 2026-09-29): only the run's own master is guarded.
+      On a resolver key gh-resolve's daemons legitimately pause, un-park and
+      create OTHER masters while one runner is live.  A change to another
+      master, or a master created during the turn, is left alone and is not a
+      violation -- through restore and through the real main().
 """
 from __future__ import annotations
 
@@ -61,8 +66,9 @@ def _world(plans: Path, master_status: str = "blocked",
     return m
 
 
-def _take(plans: Path, out: Path) -> None:
-    r = _snap("take", "--plans-dir", str(plans), "--out", str(out))
+def _take(plans: Path, out: Path, master: str = "MASTER-2026-09-29a.md") -> None:
+    r = _snap("take", "--plans-dir", str(plans), "--out", str(out),
+              "--master", master)
     assert r.returncode == 0, r.stdout + r.stderr
 
 
@@ -124,6 +130,49 @@ def test_no_change_is_clean(tmp_path: Path) -> None:
     assert m.stat().st_mtime_ns == mtime
 
 
+# ── AC-5: scope ─────────────────────────────────────────────────────────────
+
+def _foreign(plans: Path, status: str = "queued") -> Path:
+    f = plans / "MASTER-2026-09-29z-issue-9999.md"
+    f.write_text(f"---\nmaster_plan: 2026-09-29z\nstatus: {status}\n---\n\n"
+                 "| # | Slug |\n|---|---|\n| 1 | 2026-09-29-aaa.md |\n")
+    return f
+
+
+def test_another_masters_change_is_left_alone(tmp_path: Path) -> None:
+    plans = tmp_path / "plans"
+    _world(plans, master_status="active")
+    foreign = _foreign(plans)
+    snap = tmp_path / "snap.json"
+    _take(plans, snap)
+    # gh-resolve outcome._pause_master, on a master this run does not own.
+    foreign.write_text(foreign.read_text().replace("status: queued", "status: paused"))
+    r = _snap("restore", "--plans-dir", str(plans), "--snapshot", str(snap))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert parse_frontmatter(foreign.read_text())["status"] == "paused"
+
+
+def test_a_master_created_during_the_turn_is_left_alone(tmp_path: Path) -> None:
+    plans = tmp_path / "plans"
+    _world(plans, master_status="active")
+    snap = tmp_path / "snap.json"
+    _take(plans, snap)
+    created = _foreign(plans)  # gh-resolve handoff.render
+    before = created.read_bytes()
+    r = _snap("restore", "--plans-dir", str(plans), "--snapshot", str(snap))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert created.read_bytes() == before
+
+
+def test_take_refuses_a_missing_master(tmp_path: Path) -> None:
+    """An empty snapshot would verify nothing and read as clean."""
+    plans = tmp_path / "plans"
+    _world(plans)
+    r = _snap("take", "--plans-dir", str(plans), "--out", str(tmp_path / "s.json"),
+              "--master", "MASTER-nope.md")
+    assert r.returncode == 2, r.stdout + r.stderr
+
+
 # ── AC-4: through the runner ───────────────────────────────────────────────
 
 _NEEDS_GTIMEOUT = pytest.mark.skipif(
@@ -158,12 +207,14 @@ def _run_main(root: Path, worker_edit: str) -> tuple[subprocess.CompletedProcess
             os.environ["ILK_DATA_HOME"] = prev
     plans = data_home / "projects" / key / "plans"
     master = _world(plans, master_status="active", sub_status="in-progress")
+    foreign = _foreign(plans)
 
     bin_dir = root / "bin"
     bin_dir.mkdir()
     stub = bin_dir / "claude"
     stub.write_text("#!/usr/bin/env bash\n" + worker_edit.format(
-        master=shlex.quote(str(master))) + "\nexit 0\n")
+        master=shlex.quote(str(master)), foreign=shlex.quote(str(foreign)))
+        + "\nexit 0\n")
     stub.chmod(0o755)
     (root / ".claude").mkdir()
 
@@ -204,4 +255,16 @@ def test_control_a_worker_that_leaves_masters_alone(tmp_path: Path) -> None:
     tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-40:])
     assert parse_frontmatter(master.read_text())["status"] == "active", tail
     assert state.get("state") not in ("", None, "ship_integrity_violation"), (state, tail)
+    assert "the worker changed master state" not in proc.stderr, tail
+
+
+@_NEEDS_GTIMEOUT
+def test_the_runner_leaves_another_masters_change_alone(tmp_path: Path) -> None:
+    """A foreign master paused during the turn stays paused; no violation."""
+    proc, master, state = _run_main(
+        tmp_path, "sed -i '' 's/^status: queued$/status: paused/' {foreign}")
+    tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-40:])
+    foreign = master.parent / "MASTER-2026-09-29z-issue-9999.md"
+    assert parse_frontmatter(foreign.read_text())["status"] == "paused", tail
+    assert state.get("state") != "ship_integrity_violation", (state, tail)
     assert "the worker changed master state" not in proc.stderr, tail

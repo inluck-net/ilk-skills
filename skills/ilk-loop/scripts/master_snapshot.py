@@ -12,6 +12,15 @@ right after the agent returns, before any runner-owned write.  A master whose
 owned fields changed is restored to the snapshot, and the runner ends the run
 ``ship_integrity_violation``.
 
+SCOPE: only the master(s) this run dispatches for (``--master``).  On a
+resolver key one runner serves many issue masters, and while it is live on
+one of them gh-resolve's daemons legitimately write the others (a pause at
+escalation, an un-park of a foreign park, a new master from a handoff).
+Restoring every master would undo those decisions and end an unrelated run
+``ship_integrity_violation`` -- a false terminal state (gh-resolve-59,
+2026-09-29).  A master created during the turn is not in the snapshot, so
+``restore`` never touches it.
+
 One change is not a worker's: ``scheduler_scan`` reconciles every master on
 every poll, so a ``queued``/``active`` master can move to ``shipped`` while
 the agent runs, because its last sub-plan shipped.  That exact transition is
@@ -19,7 +28,7 @@ accepted when the sub-plans agree (``is_master_all_shipped``); whether the
 sub-plan ship itself was honest is ship-integrity's question, not this one's.
 
 Usage:
-  master_snapshot.py take    --plans-dir D --out F
+  master_snapshot.py take    --plans-dir D --out F --master NAME [--master NAME ...]
   master_snapshot.py restore --plans-dir D --snapshot F
 
 ``restore`` prints one JSON object: ``{"restored": [...], "accepted": [...]}``.
@@ -64,13 +73,18 @@ def _owned(path: Path) -> dict[str, str | None]:
     return out
 
 
-def take(plans_dir: Path) -> dict[str, dict[str, str | None]]:
+def take(plans_dir: Path, masters: list[str]) -> dict[str, dict[str, str | None]]:
+    """Snapshot the owned fields of the named masters only.
+
+    A named master that does not exist is an error, not an empty snapshot:
+    an empty snapshot would verify nothing and read as clean.
+    """
     snap: dict[str, dict[str, str | None]] = {}
-    for p in sorted(plans_dir.glob("MASTER-*.md")):
-        try:
-            snap[p.name] = _owned(p)
-        except OSError:
-            continue
+    for name in masters:
+        p = plans_dir / name
+        if not p.is_file():
+            raise FileNotFoundError(f"master not found: {p}")
+        snap[name] = _owned(p)
     return snap
 
 
@@ -170,13 +184,19 @@ def main(argv: list[str]) -> int:
     t = sub.add_parser("take")
     t.add_argument("--plans-dir", type=Path, required=True)
     t.add_argument("--out", type=Path, required=True)
+    t.add_argument("--master", action="append", required=True,
+                   help="a master this run dispatches for (repeatable)")
     r = sub.add_parser("restore")
     r.add_argument("--plans-dir", type=Path, required=True)
     r.add_argument("--snapshot", type=Path, required=True)
     a = ap.parse_args(argv)
 
     if a.cmd == "take":
-        snap = take(a.plans_dir)
+        try:
+            snap = take(a.plans_dir, a.master)
+        except OSError as e:
+            print(json.dumps({"error": f"{type(e).__name__}: {e}"}))
+            return 2
         a.out.write_text(json.dumps(snap, indent=2), encoding="utf-8")
         print(json.dumps({"masters": len(snap), "out": str(a.out)}))
         return 0
