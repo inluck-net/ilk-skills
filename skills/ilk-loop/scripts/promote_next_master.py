@@ -24,8 +24,14 @@ Behaviour
    both fields null and exit 0 (nothing to do).
 6. Mutations are atomic per file (write to .tmp + rename).
 
+Refusals (design §7 D3).  Nothing is promoted or demoted, the JSON carries
+``refused`` and ``reason``, and the exit code is 1, when:
+  - a human park holds the project (``plan_status.project_held_by``), or
+  - the project's selfmod worktree holds commits that are not on its clone's
+    HEAD (a new master would run on top of the unmerged batch).
+
 Output is one JSON object on stdout describing what changed.
-Exit codes: 0 on success or no-op; 2 on I/O / parse error.
+Exit codes: 0 on success or no-op; 1 on a refusal; 2 on I/O / parse error.
 
 Stdlib only.
 """
@@ -45,6 +51,11 @@ from plan_status import (  # noqa: E402
     extract_subplan_files,
     master_has_nonshipped,
     master_is_drainable,
+    project_held_by,
+)
+from selfmod_worktree import (  # noqa: E402
+    SELFMOD_WORKTREE_RELPATH,
+    unmerged_worktree_commits,
 )
 
 FRONTMATTER_RE = re.compile(r"^(---\s*\n)(.*?)(\n---\s*\n)", re.DOTALL)
@@ -196,6 +207,36 @@ def _created(fm: dict) -> str:
     return str(fm.get("created", "")) or "~"
 
 
+def _refusal(plans_dir: Path) -> dict | None:
+    """Return why promotion must not run for this project, or None."""
+    held = project_held_by(plans_dir)
+    if held is not None:
+        return {
+            "refused": "held",
+            "held_by": held["master"],
+            "reason": f"held by {held['master']} (human park): {held['reason']}",
+        }
+    # The runtime dir is the plans dir's sibling in the external layout
+    # (ilk_paths.external_runtime_dir).  A repo-local plans dir has no such
+    # sibling, and so no selfmod worktree.
+    wt = plans_dir.parent / "runtime" / SELFMOD_WORKTREE_RELPATH
+    try:
+        unmerged = unmerged_worktree_commits(wt)
+    except (OSError, RuntimeError) as e:
+        return {
+            "refused": "selfmod-unreadable",
+            "reason": f"cannot tell whether {wt} holds unmerged commits: {e}",
+        }
+    if unmerged:
+        return {
+            "refused": "selfmod-unmerged",
+            "reason": (f"{len(unmerged)} commit(s) in {wt} are not on the "
+                       "clone's HEAD; merge or discard them first"),
+            "unmerged": unmerged[:20],
+        }
+    return None
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1].strip())
     ap.add_argument("--project", type=Path, default=Path.cwd())
@@ -216,6 +257,18 @@ def main(argv: list[str]) -> int:
         if not plans_dir:
             print(json.dumps({"error": "no plans dir resolved", "project": str(args.project)}))
             return 2
+
+    refusal = _refusal(Path(plans_dir))
+    if refusal is not None:
+        print(json.dumps({
+            "plans_dir": str(plans_dir),
+            "plans_source": source,
+            "demoted": None,
+            "promoted": None,
+            "dry_run": args.dry_run,
+            **refusal,
+        }, ensure_ascii=False))
+        return 1
 
     masters = sorted(plans_dir.glob("MASTER-*.md"))
     parsed: list[tuple[Path, dict]] = []

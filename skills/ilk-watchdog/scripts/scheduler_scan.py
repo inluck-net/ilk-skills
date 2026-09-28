@@ -86,6 +86,7 @@ from plan_status import (  # noqa: E402
     master_has_runnable,
     normalize_master_status,
     parse_frontmatter,
+    project_held_by,
     reconcile_master_registry,
     reconcile_master_status,
 )
@@ -472,6 +473,16 @@ def _scan_one_project(project_dir: Path) -> dict | None:
 
     masters = sorted(plans_dir.glob("MASTER-*.md"))
     if not masters:
+        return None
+
+    # A human park holds the whole project (design §4, D3).  Checked before
+    # reconcile and verification dispatch: a held project gets no new work of
+    # any kind.  Said on stderr, never silently -- a held project and an empty
+    # queue must not read alike; scheduler.sh copies the line into
+    # scheduler.log.
+    held = project_held_by(plans_dir)
+    if held is not None:
+        print(f"skip-held: {project_dir.name} ({held['master']})", file=sys.stderr)
         return None
 
     # Reconcile pass: auto-flip any all-shipped master to status: shipped,

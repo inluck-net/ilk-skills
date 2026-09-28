@@ -12,7 +12,10 @@ scheduler_scan entirely, which is what survives the expiry.
 
 AC-1  Park moves a runnable master to `blocked` and records why.
 AC-2  A parked master is not a runnable status (scheduler_scan drops it).
-AC-3  Unpark returns it to `queued` and REMOVES the stamp.
+AC-3  Unpark returns it to `queued` and REMOVES the stamp.  A human park
+      (no --auto) also writes `hold: human`, so lifting one takes
+      --release-hold (D3; the refusal itself is pinned in
+      test_a_human_park_holds_the_project.py).
 AC-4  A no-match names its search space rather than failing silently.
 AC-5  --dry-run writes nothing.
 """
@@ -83,26 +86,28 @@ class TestPark:
 
     def test_repark_does_not_accumulate_stamps(self, plans: Path) -> None:
         _run(plans, "--reason", "first")
-        _run(plans, "--unpark")
+        _run(plans, "--unpark", "--release-hold")
         _run(plans, "--reason", "second")
         text = (plans / "MASTER-2026-09-06-demo.md").read_text(encoding="utf-8-sig")
         assert text.count("parked_at:") == 1
+        assert text.count("hold:") == 1
         assert "first" not in text
 
 
 class TestUnpark:
     def test_unpark_returns_to_queued(self, plans: Path) -> None:
         _run(plans, "--reason", "x")
-        out = _run(plans, "--unpark")
+        out = _run(plans, "--unpark", "--release-hold")
         assert out["from"] == "blocked" and out["to"] == "queued"
         assert is_master_runnable_status(_fm(plans)["status"])
 
     def test_unpark_removes_the_stamp(self, plans: Path) -> None:
         """A queued master carrying parked_at reads as still parked."""
         _run(plans, "--reason", "x")
-        _run(plans, "--unpark")
+        _run(plans, "--unpark", "--release-hold")
         fm = _fm(plans)
         assert "parked_at" not in fm and "parked_reason" not in fm
+        assert "hold" not in fm
 
 
 class TestNegativesAndDryRun:

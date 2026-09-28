@@ -11,6 +11,23 @@ running loop, and it does NOT touch the blacklist. To stop a loop that is
 running right now, park FIRST, then `/ilk-stop`; stopping without parking just
 lets the scheduler re-dispatch on its next poll.
 
+## A park holds the whole project
+
+A park made with this command also writes `hold: human`, and that stops the
+**project**, not just this master: the scheduler skips it (`skip-held:` in
+`scheduler.log`), promotion refuses, the runner exits `blocked-no-runnable`
+with `held_by` on `last-exit.json`, and `/ilk-status` prints `HELD by
+<master>`. Before 2026-09-29 a park only took one master out of the queue,
+so the scheduler promoted the project's next master and the watchdog
+relaunched it while the operator believed it was stopped.
+
+To park one master and let the project's other masters run, add `--yield`
+(writes `yield: true`).
+
+The runner's own ship-integrity park passes `--auto` and writes no hold, so a
+reaper can lift it with a plain `--unpark`. A plain `--unpark` refuses a human
+hold; see step 4.
+
 ## Park is durable; the blacklist is not
 
 The scheduler dispatches a project only when one of its masters is `queued` or
@@ -61,18 +78,21 @@ python3 "<skill-root>/ilk-watchdog/scripts/scheduler_scan.py"
 ```
 
 The project must be absent from the output. In `~/.ilk-data/logs/scheduler.log`
-the next poll should stop naming the key at all — a `skip-blacklist:` line
-still names it, and means the backoff is masking it rather than the park
-holding.
+the next poll should name the key only in a `skip-held: <key> (<master>)`
+line. A `skip-blacklist:` line instead means the backoff is masking it rather
+than the park holding; a `--yield` park prints no `skip-held` line, because
+it holds only its own master.
 
 ## 4. Un-park when the work should resume
 
 ```bash
-python3 "<skill-root>/ilk-loop/scripts/park_master.py" --project . --unpark
+python3 "<skill-root>/ilk-loop/scripts/park_master.py" --project . --unpark --release-hold
 ```
 
-Returns the master to `queued` and removes the stamp. The scheduler picks it
-up on its next poll.
+Returns the master to `queued` and removes the stamp and the hold. The
+scheduler picks it up on its next poll. Without `--release-hold` the command
+refuses a human park (exit 1, nothing written); that refusal is what stops an
+automated `--unpark` from undoing an operator's decision.
 
 ## Boundary
 

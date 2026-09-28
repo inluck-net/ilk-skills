@@ -594,6 +594,36 @@ def _resolve_head_sha(repo_path: Path) -> str:
     return _git_checked("rev-parse", "HEAD", cwd=repo_path)
 
 
+#: Where the runner puts the batch worktree, relative to the project's runtime
+#: dir (run_ilk_loop_claude.sh setup_selfmod_isolation).
+SELFMOD_WORKTREE_RELPATH = Path("worktrees") / "selfmod-batch"
+
+
+def unmerged_worktree_commits(worktree_path: Path) -> list[str]:
+    """Return the worktree commits that are not on its clone's HEAD.
+
+    Every selfmod run of a project shares ONE worktree.  A new master
+    promoted while it still holds an unmerged batch's commits runs on top of
+    them, and its merge-back lands both batches as one (design §7 D3,
+    "promotion ignores the shared selfmod worktree").
+
+    No worktree directory -> ``[]``: there is nothing to strand.  A directory
+    that git cannot read as a worktree RAISES rather than answering ``[]`` --
+    "nothing unmerged" and "could not tell" must not look the same.
+    """
+    wt = Path(worktree_path)
+    if not wt.exists():
+        return []
+    porcelain = _git_checked("worktree", "list", "--porcelain", cwd=wt)
+    first = porcelain.splitlines()[0] if porcelain else ""
+    if not first.startswith("worktree "):
+        raise RuntimeError(f"cannot find the clone of {wt}: {porcelain[:200]!r}")
+    clone = Path(first[len("worktree "):])
+    clone_head = _resolve_head_sha(clone)
+    out = _git_checked("rev-list", "HEAD", "--not", clone_head, cwd=wt)
+    return [line for line in out.splitlines() if line.strip()]
+
+
 def _is_ancestor(repo_path: Path, maybe_ancestor: str, descendant: str) -> bool:
     """Return True when *maybe_ancestor* is reachable from *descendant*.
 

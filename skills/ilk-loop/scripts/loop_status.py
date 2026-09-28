@@ -39,6 +39,7 @@ from plan_status import (  # noqa: E402
     _slug_from_filename,
     master_has_nonshipped,
     normalize_master_status,
+    project_held_by,
     subplan_is_runnable,
 )
 
@@ -618,11 +619,18 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
     if master_status == "draft":
         next_pending = None
 
+    # A human park holds the whole project, whichever master was selected
+    # (design §4, D3).  Nothing is actionable, and it is not a stall.
+    held = project_held_by(plans_dir)
+    if held is not None:
+        next_pending = None
+
     # Stall detection: non-terminal sub-plans exist but none are runnable.
     # skipped-by-operator is terminal (operator explicitly skipped it).
     _TERMINAL_STATUSES = {"shipped", "skipped-by-operator"}
     non_terminal = [sp for sp in subplans if sp["status"] not in _TERMINAL_STATUSES]
-    stalled = bool(non_terminal) and next_pending is None and master_status not in ("draft", "paused")
+    stalled = (bool(non_terminal) and next_pending is None
+               and master_status not in ("draft", "paused") and held is None)
 
     # queue_exit: 0 = all shipped / nothing actionable, 1 = pending work, 2 = error
     if next_pending is None:
@@ -640,6 +648,10 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
         "shipped": shipped,
         "queue_exit": queue_exit,
         "stalled": stalled,
+        # Additive (condition B): the master holding the project for a human,
+        # or null.  The runner's classifier reads it.
+        "held_by": held["master"] if held else None,
+        "held_reason": held["reason"] if held else None,
         "compile_only_summary": _compile_only_summary(subplans),
         "notices": queue_view.get("notices", []),
     }
@@ -964,6 +976,11 @@ def main() -> int:
 
     print(f"Plans dir: {plans_dir}")
     print(f"Master:    {master.name}")
+    if data.get("held_by"):
+        print(f"HELD by {data['held_by']} (human park): "
+              f"{data.get('held_reason') or '(no reason recorded)'}")
+        print("           Nothing in this project runs until "
+              "`park_master.py --unpark --release-hold`.")
     if queue_view["queued_count"] or queue_view["shipped_count"] or queue_view["paused_count"]:
         print(
             "Queue:     "
@@ -1051,7 +1068,12 @@ def main() -> int:
         _TERMINAL = {"shipped", "skipped-by-operator"}
         non_shipped = [sp for sp in data["subplans"] if sp["status"] not in _TERMINAL]
         mstatus = data.get("master_status", "(none)")
-        if not non_shipped:
+        if data.get("held_by"):
+            print(
+                f"HELD by {data['held_by']} (human park): "
+                f"{len(non_shipped)} non-shipped sub-plan(s), nothing runs."
+            )
+        elif not non_shipped:
             unproven_count = sum(
                 1 for sp in data["subplans"]
                 if sp["status"] == "shipped" and not sp.get("proven", True)

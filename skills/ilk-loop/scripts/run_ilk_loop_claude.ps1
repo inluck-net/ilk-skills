@@ -2568,7 +2568,8 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
       # Script-level: save/restore (not in a function, so no auto-restore).
       $savedEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
       try {
-        & python $parkScript --plans-dir $pDir --reason $parkReason 2>$null
+        # --auto: a machine park writes no `hold: human` (design §4, D3).
+        & python $parkScript --plans-dir $pDir --auto --reason $parkReason 2>$null
       } catch {} finally { $ErrorActionPreference = $savedEAP }
     }
     break

@@ -1767,7 +1767,7 @@ _write_terminal_sentinel() {
   local rd="$2"
   local ts
   ts=$(date +%Y-%m-%dT%H:%M:%S%z)
-  python3 -c "import json; print(json.dumps({
+  _HELD_BY="${HELD_BY:-}" python3 -c "import json, os; d = {
     'state': '$state',
     'pid': $$,
     'run_id': '$RUN_ID',
@@ -1776,7 +1776,10 @@ _write_terminal_sentinel() {
     'iterations': 0,
     'project_path': '$PROJECT_PATH',
     'cli': 'claude'
-  }))" > "${rd}/last-exit.json.tmp" && mv -f "${rd}/last-exit.json.tmp" "${rd}/last-exit.json"
+  }
+if os.environ.get('_HELD_BY'):
+    d['held_by'] = os.environ['_HELD_BY']
+print(json.dumps(d))" > "${rd}/last-exit.json.tmp" && mv -f "${rd}/last-exit.json.tmp" "${rd}/last-exit.json"
   echo "Sentinel: ${rd}/last-exit.json (state=$state, iters=0)"
 }
 
@@ -2482,6 +2485,7 @@ classify_loop_status() {
       UNPROVEN_SUBPLANS=""
     fi
     BLOCKED_SUBPLANS=""
+    HELD_BY=""
     return 0
   fi
 
@@ -2497,7 +2501,11 @@ blocked = [s for s in subplans if s.get('status') not in ('shipped', 'pending', 
 # so existing projects without master_status are unaffected.
 master_status = data.get('master_status', '')
 _master_not_runnable = master_status not in ('', '(none)') and master_status not in ('queued', 'active')
-if _master_not_runnable:
+# A human park holds the whole project (plan_status.project_held_by), whatever
+# master was selected and whatever its sub-plans say.
+if data.get('held_by'):
+    print('blocked-no-runnable')
+elif _master_not_runnable:
     print('blocked-no-runnable')
 # 'stalled' is loop_status's own verdict that outstanding work exists and
 # NONE of it is runnable (loop_status.py:558 -- next_pending excludes blocked
@@ -2552,6 +2560,13 @@ for s in data.get('subplans', []):
                 + '(' + s.get('proof_state', 'unproven') + ')')
 print(' '.join(rows))
 " <<<"$json_output") || unproven_slugs=""
+
+  # The master holding the project for a human, or empty.  Written to
+  # last-exit.json as an additive `held_by` (design §4, condition B).
+  HELD_BY=$(python3 -c "
+import json, sys
+print(json.loads(sys.stdin.read()).get('held_by') or '')
+" <<<"$json_output") || HELD_BY=""
 
   CLASSIFIED_STATUS="$has_runnable"
   BLOCKED_SUBPLANS="$blocked_fnames"
@@ -4224,7 +4239,9 @@ print(fm.get('result_file', ''))
   elif [[ "$CLASSIFIED_STATUS" == "blocked-no-runnable" ]]; then
     local blocked_count
     blocked_count=$(echo "$BLOCKED_SUBPLANS" | wc -w | tr -d ' ')
-    if [[ "$blocked_count" -eq 0 ]]; then
+    if [[ -n "${HELD_BY:-}" ]]; then
+      echo "[ilk] HELD by ${HELD_BY} (human park). Nothing in this project runs until it is released. Do NOT relaunch."
+    elif [[ "$blocked_count" -eq 0 ]]; then
       echo "No runnable master: held (non-runnable master_status). Nothing to do."
     else
       echo "Blocked — ${blocked_count} sub-plan(s) parked for a human, 0 runnable: ${BLOCKED_SUBPLANS}. Nothing to do."
@@ -4490,8 +4507,34 @@ print(json.dumps({
       fi
     fi
 
+    # Master snapshot (design §7 D3): a master's status and park fields are
+    # the runner's, never the worker's.  Taken right before dispatch, checked
+    # right after the agent returns -- before any runner-owned write.
+    local _master_snap_file="" _master_tampered=0
+    if [[ "$GATE_FIRST_GREEN" -eq 0 ]]; then
+      _master_snap_file="${RUN_LOG_DIR}/master-snapshot-${i}.json"
+      if ! python3 "${_SKILL_ROOT}/ilk-loop/scripts/master_snapshot.py" take \
+             --plans-dir "$(get_plans_dir)" --out "$_master_snap_file" >/dev/null; then
+        echo "  ! [master-snapshot] could not snapshot masters — worker edits to master state will NOT be detected this iteration" >&2
+        _master_snap_file=""
+      fi
+    fi
+
     if [[ "$GATE_FIRST_GREEN" -eq 0 ]]; then
       invoke_claude_iteration "$(selfmod_effective_repo "$PROJECT_PATH")" "$iter_log" "$iter_prompt" "$timeout_sec" "$MAX_BUDGET_USD" "$MODEL"
+    fi
+
+    if [[ -n "$_master_snap_file" ]]; then
+      local _ms_out _ms_rc=0
+      _ms_out=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/master_snapshot.py" restore \
+                  --plans-dir "$(get_plans_dir)" --snapshot "$_master_snap_file" 2>&1) || _ms_rc=$?
+      if [[ $_ms_rc -ne 0 ]]; then
+        # 3 = restored, 2 = could not verify or could not restore.  Both end
+        # the run: an unverifiable master is not a clean one.
+        _master_tampered=1
+        echo "  ! [ship-integrity VIOLATION] the worker changed master state; restored to the pre-dispatch snapshot (rc=${_ms_rc}):" >&2
+        echo "$_ms_out" >&2
+      fi
     fi
 
     # The iteration is over — clear the dispatched-slug guard so the
@@ -5114,6 +5157,9 @@ for p in Path(sys.argv[1]).glob('*.md'):
       if [[ -n "$_si_stderr" ]]; then
         echo "$_si_stderr" >&2
       fi
+      # --auto: a machine park writes no `hold: human`, so the gh-resolve
+      # reaper's plain --unpark can still lift it (design §4, condition A).
+      #
       # Park the master that OWNS each violating slug, not whichever
       # master happens to be the sole queued one.  Without --owner-of the
       # scheduler parks an unrelated master and re-dispatches the violator
@@ -5132,6 +5178,7 @@ for p in Path(sys.argv[1]).glob('*.md'):
             _park_out=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/park_master.py" \
               --plans-dir "$(get_plans_dir)" \
               --owner-of "$_slug" \
+              --auto \
               --reason "$_park_reason" 2>&1) || {
               echo "  ! [ship-integrity] park refused for ${_slug}: ${_park_out}" >&2
             }
@@ -5145,6 +5192,13 @@ for p in Path(sys.argv[1]).glob('*.md'):
     # revert messages). The subshell captured them; surface them now.
     if [[ -n "$_si_stderr" ]]; then
       echo "$_si_stderr" >&2
+    fi
+    # A worker edit to master state (restored right after the agent returned)
+    # is the same class of violation.  No park: the restore already put the
+    # park fields back as they were.
+    if [[ "$_master_tampered" -eq 1 ]]; then
+      stop_reason="ship_integrity_violation"
+      iter_stop_reason="ship_integrity_violation"
     fi
 
     # -- Selfmod merge-back: land or report --------------------------------
@@ -5356,8 +5410,10 @@ print(json.dumps(d))
       'project_path': '$PROJECT_PATH',
       'cli': 'claude',
       'jsonl_log': '$JSONL_LOG'
-    }; md=json.loads(sys.argv[1]); d['merge_deferred']=md if md else None; print(json.dumps(d))" \
-      "$_merge_deferred_json" > "${runtime_dir}/last-exit.json.tmp" && mv -f "${runtime_dir}/last-exit.json.tmp" "${runtime_dir}/last-exit.json"
+    }; md=json.loads(sys.argv[1]); d['merge_deferred']=md if md else None
+if sys.argv[2]: d['held_by']=sys.argv[2]
+print(json.dumps(d))" \
+      "$_merge_deferred_json" "${HELD_BY:-}" > "${runtime_dir}/last-exit.json.tmp" && mv -f "${runtime_dir}/last-exit.json.tmp" "${runtime_dir}/last-exit.json"
     echo "Sentinel: ${runtime_dir}/last-exit.json (state=$stop_reason, iters=$iter_counter)"
 
     # Remove the launcher's running.pid so the scheduler does not see a

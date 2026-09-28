@@ -167,6 +167,53 @@ def is_master_runnable_status(raw_status: str) -> bool:
     return normalize_master_status(raw_status) in _RUNNABLE_STATUSES
 
 
+# ── human hold (design §4, D3) ──────────────────────────────────────────────
+
+_TRUTHY = {"true", "yes", "1"}
+
+
+def project_held_by(plans_dir: Path) -> dict[str, str] | None:
+    """Return the master holding this project for a human, or None.
+
+    A human park (``park_master.py`` without ``--auto``) writes ``hold: human``
+    next to ``status: blocked``.  Until 2026-09-29 park and stall shared one
+    value, ``blocked``, and ``blocked`` only takes THAT master out of the
+    queue: the scheduler went on to promote and dispatch the project's other
+    masters, and the watchdog relaunched it, while the operator believed the
+    project was stopped (design §7 D3).
+
+    A hold is project-wide unless the park also wrote ``yield: true``
+    (``park_master.py --yield``): "park this one, let the rest run".
+
+    The ``hold`` field alone decides; ``status`` is not consulted.  A worker
+    that flips a held master's status must not thereby release the project,
+    and only ``park_master.py --unpark --release-hold`` removes the field.
+
+    This is the ONE definition.  scheduler_scan, promote_next_master,
+    loop_status and the runner's classifier all call it; a second copy is how
+    the draft and runnable predicates drifted.
+
+    Returns ``{"master", "reason", "parked_at"}`` for the first held master in
+    filename order.  A master that cannot be read is skipped -- the same
+    tolerance every other scan of this directory has.
+    """
+    for p in sorted(Path(plans_dir).glob("MASTER-*.md")):
+        try:
+            fm = parse_frontmatter(p.read_text(encoding="utf-8-sig"))
+        except OSError:
+            continue
+        if (fm.get("hold") or "").strip().lower() != "human":
+            continue
+        if (fm.get("yield") or "").strip().lower() in _TRUTHY:
+            continue
+        return {
+            "master": p.name,
+            "reason": fm.get("parked_reason") or "",
+            "parked_at": fm.get("parked_at") or "",
+        }
+    return None
+
+
 # ── the shared predicate ────────────────────────────────────────────────────
 
 def master_has_nonshipped(master_path: Path, plans_dir: Path) -> bool:

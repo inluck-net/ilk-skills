@@ -47,6 +47,9 @@ for arg in "\$@"; do
       if [[ -n "\${SHIM_SCAN_ERROR:-}" ]]; then
         echo "[scan-error] \$SHIM_SCAN_ERROR: TypeError: can't compare offset-naive and offset-aware datetimes @ scheduler_scan.py:394" >&2
       fi
+      if [[ -n "\${SHIM_SCAN_HELD:-}" ]]; then
+        echo "skip-held: \$SHIM_SCAN_HELD (MASTER-2026-09-29a.md)" >&2
+      fi
       echo "[]"
       exit 0
       ;;
@@ -59,11 +62,13 @@ chmod +x "$TMP/bin/python3"
 run_once() {
   # $1 = value for SHIM_SCAN_ERROR ("" = a clean scan)
   #
-  # HOME must be isolated: scheduler.sh resolves SCHEDULER_LOG_DIR (and its
-  # pidfile) from ${HOME}, NOT from ILK_DATA_HOME, so without this the test
-  # writes decision lines into the operator's real journal. ILK_SKILL_HOME must
-  # be set too, or scheduler_scan.py cannot resolve its skill root under the
-  # fake HOME. (Both learned the hard way on 2026-08-20.)
+  # HOME is still isolated (belt and braces), but since 2f1e9ea scheduler.sh
+  # resolves SCHEDULER_LOG_DIR and its pidfile from the data-home precedence
+  # (ILK_DATA_HOME first), so the journal this test reads is under
+  # $run_home/data.  Before that it was ${HOME}/.ilk-data regardless, and a
+  # test without a fake HOME wrote into the operator's real journal.
+  # ILK_SKILL_HOME must be set too, or scheduler_scan.py cannot resolve its
+  # skill root under the fake HOME. (Both learned the hard way on 2026-08-20.)
   local run_home="$TMP/home-$1-$RANDOM"
   mkdir -p "$run_home"
   SHIM_SCAN_ERROR="$1" \
@@ -73,7 +78,7 @@ run_once() {
   PATH="$TMP/bin:$PATH" \
     bash "$SCHEDULER" --dry-run --once 2>"$TMP/stderr.txt"
   echo "---LOG---"
-  cat "$run_home/.ilk-data/logs/scheduler.log" 2>/dev/null
+  cat "$run_home/data/logs/scheduler.log" 2>/dev/null
 }
 
 # --- AC-1: an unscannable project gets its own reason ------------------------
@@ -93,6 +98,13 @@ check "clean scan, 0 projects -> all-queues-empty preserved" \
   "$(grep -q 'all-queues-empty' <<<"$out" && echo 0 || echo 1)"
 check "clean scan -> no spurious skip-scan-error" \
   "$(grep -q 'skip-scan-error' <<<"$out" && echo 1 || echo 0)"
+
+# --- AC-3: a held project is journalled, not folded into an empty queue -----
+# scheduler_scan leaves a project held by a human park out of its output and
+# says `skip-held: <key> (<master>)` on stderr (design §4, condition B).
+out=$(SHIM_SCAN_HELD="k-held" run_once "")
+check "held -> scheduler.log records skip-held with key and master" \
+  "$(sed -n '/---LOG---/,$p' <<<"$out" | grep -q 'skip-held: k-held (MASTER-2026-09-29a.md)' && echo 0 || echo 1)"
 
 echo
 if [[ $fail -eq 0 ]]; then echo "ALL PASS ($passes assertions)"; exit 0; fi

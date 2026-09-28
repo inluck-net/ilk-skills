@@ -20,10 +20,24 @@ says otherwise, this is the lever; the blacklist is not.
 Parking records WHY, in `parked_at` / `parked_reason`, because a bare
 `status: blocked` is indistinguishable from a stall the loop caused itself.
 
+HUMAN PARK vs AUTO-PARK (design §4, D3).  A park without ``--auto`` is a
+human's, and also writes ``hold: human``: the whole PROJECT stops, not just
+this master (``plan_status.project_held_by``).  ``status: blocked`` alone only
+removes one master from the queue -- the scheduler went on to promote the
+project's next master and the watchdog relaunched it, while the operator
+believed it was stopped (2026-09-28, 22:58:25 and 23:03:59).  ``--yield`` adds
+``yield: true``: park this master and let the rest of the project run.
+
+The runner's ship-integrity park passes ``--auto`` and writes no hold, so the
+gh-resolve reaper can still ``--unpark`` it.  ``--unpark`` REFUSES a human
+hold unless ``--release-hold`` is passed: a reaper that cannot tell the two
+apart must not be able to undo an operator's decision.
+
 Usage:
-  park_master.py --project <project-or-data-dir> --reason "..."   [--master NAME]
-  park_master.py --project <project-or-data-dir> --unpark          [--master NAME]
+  park_master.py --project <project-or-data-dir> --reason "..."   [--master NAME] [--yield]
+  park_master.py --project <project-or-data-dir> --unpark          [--master NAME] [--release-hold]
   park_master.py --project <project-or-data-dir> --status
+  park_master.py --plans-dir <dir> --owner-of <slug> --auto --reason "..."   (the runner)
 Add --dry-run to see the decision without writing.
 """
 from __future__ import annotations
@@ -70,7 +84,19 @@ def _yaml_scalar(value: str) -> str:
     return '"' + flat.replace('"', "'") + '"'
 
 
-def _stamp(path: Path, reason: str | None, when: str) -> None:
+#: Frontmatter keys a park owns.  Stripped together on unpark.
+_STAMP_KEYS = ("parked_at:", "parked_reason:")
+_HOLD_KEYS = ("hold:", "yield:")
+
+
+def _stamp(
+    path: Path,
+    reason: str | None,
+    when: str,
+    *,
+    hold: bool = False,
+    yield_: bool = False,
+) -> None:
     """Record why and when, next to the status line, atomically.
 
     A bare `status: blocked` cannot be told apart from a stall the loop
@@ -78,8 +104,15 @@ def _stamp(path: Path, reason: str | None, when: str) -> None:
     resolver-4546 incident take an investigation instead of a glance.
 
     *reason* of None REMOVES the stamp — an unparked master must not keep
-    carrying `parked_at`, which would read as still parked.
+    carrying `parked_at`, which would read as still parked — and the hold
+    with it.
+
+    *hold* True writes ``hold: human`` (and ``yield: true`` when *yield_*),
+    replacing any previous hold.  *hold* False on a park KEEPS an existing
+    hold: an auto-park landing on a master a human already holds must not
+    release it.
     """
+    drop = _STAMP_KEYS + (_HOLD_KEYS if (reason is None or hold) else ())
     text = path.read_text(encoding="utf-8-sig")
     lines = text.splitlines(keepends=True)
     out, in_fm, done = [], False, False
@@ -91,11 +124,15 @@ def _stamp(path: Path, reason: str | None, when: str) -> None:
                 if reason is not None:
                     out.append(f"parked_at: {when}\n")
                     out.append(f"parked_reason: {_yaml_scalar(reason)}\n")
+                    if hold:
+                        out.append("hold: human\n")
+                        if yield_:
+                            out.append("yield: true\n")
                 done = True
             out.append(line)
             continue
         # Drop any previous stamp so re-parking does not accumulate them.
-        if in_fm and not done and line.startswith(("parked_at:", "parked_reason:")):
+        if in_fm and not done and line.startswith(drop):
             continue
         out.append(line)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -169,6 +206,13 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--reason", default=None, help="why this is parked (recorded)")
     ap.add_argument("--unpark", action="store_true",
                     help="return a parked master to `queued`")
+    ap.add_argument("--auto", action="store_true",
+                    help="a machine park (the runner's ship-integrity park): "
+                         "writes no hold")
+    ap.add_argument("--yield", action="store_true", dest="yield_",
+                    help="human park that lets the project's other masters run")
+    ap.add_argument("--release-hold", action="store_true",
+                    help="with --unpark: also release a human hold")
     ap.add_argument("--status", action="store_true",
                     help="report master statuses and exit")
     ap.add_argument("--dry-run", action="store_true")
@@ -195,7 +239,9 @@ def main(argv: list[str]) -> int:
             "masters": [{"master": p.name,
                          "status": normalize_master_status(fm.get("status") or ""),
                          "parked_at": fm.get("parked_at"),
-                         "parked_reason": fm.get("parked_reason")} for p, fm in rows],
+                         "parked_reason": fm.get("parked_reason"),
+                         "hold": fm.get("hold"),
+                         "yield": fm.get("yield")} for p, fm in rows],
         }, indent=2))
         return 0
 
@@ -233,7 +279,8 @@ def main(argv: list[str]) -> int:
                 if not a.dry_run:
                     try:
                         write_status(target, PARKED)
-                        _stamp(target, reason, when)
+                        _stamp(target, reason, when,
+                               hold=not a.auto, yield_=a.yield_)
                     except Exception as e:  # noqa: BLE001
                         plan["error"] = f"{type(e).__name__}: {e}"
                         exit_code = 2
@@ -273,6 +320,19 @@ def main(argv: list[str]) -> int:
         return 1
 
     target, fm = cands[0]
+    held = (fm.get("hold") or "").strip().lower() == "human"
+    if a.unpark and held and not a.release_hold:
+        # Condition A (gh-resolve-59): the reaper unparks auto-parks with a
+        # plain --unpark.  It must not be able to lift an operator's park.
+        print(json.dumps({
+            "error": "master is held by a human park - pass --release-hold to lift it",
+            "plans_dir": str(plans_dir),
+            "master": target.name,
+            "hold": fm.get("hold"),
+            "parked_at": fm.get("parked_at"),
+            "parked_reason": fm.get("parked_reason"),
+        }, indent=2))
+        return 1
     new_status = "queued" if a.unpark else PARKED
     when = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     reason = a.reason or ("unparked" if a.unpark else "parked by operator")
@@ -283,14 +343,20 @@ def main(argv: list[str]) -> int:
         "from": normalize_master_status(fm.get("status") or ""),
         "to": new_status,
         "reason": reason,
+        "hold": None if a.unpark else ("human" if not a.auto else fm.get("hold")),
         "dry_run": a.dry_run,
     }
+    if a.yield_ and not a.unpark:
+        plan["yield"] = True
+    if a.unpark and held:
+        plan["released_hold"] = True
     if not a.dry_run:
         try:
             write_status(target, new_status)
             # Unpark strips the stamp rather than rewriting it: a `queued`
             # master carrying parked_at reads as still parked.
-            _stamp(target, None if a.unpark else reason, when)
+            _stamp(target, None if a.unpark else reason, when,
+                   hold=not a.unpark and not a.auto, yield_=a.yield_)
         except Exception as e:  # noqa: BLE001
             plan["error"] = f"{type(e).__name__}: {e}"
             print(json.dumps(plan, indent=2))

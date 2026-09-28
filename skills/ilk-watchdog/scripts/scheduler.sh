@@ -699,6 +699,17 @@ scan_error_keys() {
     | sort -u | paste -sd, - | sed 's/,$//'
 }
 
+log_held_projects() {
+  # Copy each `skip-held: <key> (<master>)` line of the last scan into
+  # scheduler.log.
+  [[ -s "$_SCAN_STDERR_FILE" ]] || return 0
+  local _hk _hm
+  while IFS=' ' read -r _hk _hm; do
+    [[ -n "$_hk" ]] || continue
+    write_scheduler_log "skip-held" "$_hk" "${_hm}"
+  done < <(sed -n 's/^skip-held: \([^ ]*\) (\(.*\))$/\1 \2/p' "$_SCAN_STDERR_FILE")
+}
+
 read_blacklist_from_postmortems() {
   # Check queued projects for recent postmortem files with blacklist
   # classifications. Outputs one line per blacklisted project: "key epoch".
@@ -812,6 +823,11 @@ run_scheduler() {
     }
     # Strip any remaining \r (Windows line endings)
     scan_output="${scan_output//$'\r'/}"
+
+    # A held project (human park, plan_status.project_held_by) is left out of
+    # the scan.  Put it in the journal: a held project must not read as an
+    # empty queue (design §4, condition B).
+    log_held_projects
 
     local count
     count=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(len(d))" <<<"$scan_output" | tr -d '\r')
