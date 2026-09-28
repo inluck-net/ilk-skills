@@ -603,10 +603,14 @@ def _resolve_repo_path(project_dir: Path, key: str) -> str | None:
     return None
 
 
-def resolve_project_status(project_dir: Path) -> dict:
+def resolve_project_status(project_dir: Path, *,
+                           roles: list[dict] | None = None,
+                           providers: list[dict] | None = None) -> dict:
     """Build a status dict for one project directory.
 
-    Returns a dict matching the AC-2 schema.
+    Returns a dict matching the AC-2 schema.  ``roles``/``providers`` are
+    host-wide; ``main`` builds them once and passes them in.  Omitted, they
+    are built here (direct callers, tests).
     """
     key = project_dir.name
     plans_dir = project_dir / "plans"
@@ -862,15 +866,16 @@ def resolve_project_status(project_dir: Path) -> dict:
     orphaned = bool(repo_path) and not Path(repo_path).exists()
 
     # Roles block: per-registry-role provider state for the tray's Models
-    # section.  Populated once per project (the registry is shared across
-    # all projects, but each project's status_all call reads it fresh).
-    # Design: provider-switching-and-quota-fallback.md §10, AC1.
-    roles = _roles_block()
-
+    # section.  Design: provider-switching-and-quota-fallback.md §10, AC1.
     # Providers block: all available CCSwitch providers for the tray's
-    # Models submenu.  Shared across all projects (the ccswitch store is
-    # per-host, not per-project).  Design: §10, AC2.
-    providers = _providers_block()
+    # Models submenu.  Design: §10, AC2.
+    # Both are per-host, not per-project, so ``main`` builds them once.  Built
+    # here per project, the providers spawn (~35ms) ran 118x per refresh:
+    # 3.69s of a 4.18s run every 10s (chad-mbp, 2026-09-28).
+    if roles is None:
+        roles = _roles_block()
+    if providers is None:
+        providers = _providers_block()
 
     return {
         "project_key": key,
@@ -921,9 +926,12 @@ def main() -> int:
     # supervised_only masters).  This ensures every project — including
     # supervised/idle ones — appears in the tray status feed.
     entries = []
+    roles = _roles_block()
+    providers = _providers_block()
     for d in sorted(data_root.iterdir()):
         if d.is_dir():
-            entries.append(resolve_project_status(d))
+            entries.append(resolve_project_status(
+                d, roles=roles, providers=providers))
 
     if args.json:
         print(json.dumps(entries, indent=2, ensure_ascii=False))
