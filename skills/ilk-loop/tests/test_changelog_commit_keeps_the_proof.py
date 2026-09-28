@@ -68,7 +68,6 @@ def _write(tmp_path: Path, **fields) -> Path:
 
 # ── AC-1 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_changelog_only_commit_keeps_the_record_fresh(tmp_path: Path) -> None:
     """A commit touching only CHANGELOG.md must not invalidate the gate proof."""
     from batch_gate import validate_record
@@ -90,7 +89,7 @@ def test_changelog_only_commit_keeps_the_record_fresh(tmp_path: Path) -> None:
                invocation=INVOCATION, timestamp="2026-09-28T10:00:00+08:00",
                tree_sha=gated_tree, writer="batch_gate.py")
 
-    result = validate_record(p, new_sha, INVOCATION, expected_tree_sha=new_tree)
+    result = validate_record(p, new_sha, INVOCATION, expected_tree_sha=new_tree, repo=repo)
     assert result == "fresh", (
         "a commit touching only CHANGELOG.md must not invalidate a statement "
         f"about the code; got {result!r}"
@@ -99,9 +98,13 @@ def test_changelog_only_commit_keeps_the_record_fresh(tmp_path: Path) -> None:
 
 # ── AC-1b ────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
-def test_loop_status_json_shows_proven_and_freshness_basis(tmp_path: Path) -> None:
-    """Through the CLI, a CHANGELOG-only commit shows proven + bookkeeping-only."""
+def test_loop_status_json_shows_proven_and_freshness_basis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Through resolve_status, a CHANGELOG-only commit shows proven + bookkeeping-only."""
+    from loop_status import resolve_status  # type: ignore[import-untyped]
+    from ilk_paths import resolve_project_key  # type: ignore[import-untyped]
+
     repo = _repo(tmp_path)
     gated_sha = _git(repo, "rev-parse", "HEAD")
     gated_tree = _git(repo, "rev-parse", "HEAD^{tree}")
@@ -109,14 +112,17 @@ def test_loop_status_json_shows_proven_and_freshness_basis(tmp_path: Path) -> No
     (repo / "CHANGELOG.md").write_text("# Changelog\n\n## v0.1.0\n\n- released\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "docs(changelog): release v0.1.0")
-    new_sha = _git(repo, "rev-parse", "HEAD")
-    new_tree = _git(repo, "rev-parse", "HEAD^{tree}")
 
-    # Write a batch-gate record
-    runtime = tmp_path / "rt"
-    record_path = runtime / "batch-gate.json"
+    # Resolve the real project key from the repo path
+    data_home = tmp_path / "ilk-data"
+    monkeypatch.setenv("ILK_DATA_HOME", str(data_home))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    key = resolve_project_key(repo)
+
+    # Write a batch-gate record under the resolved project key
+    runtime = data_home / "projects" / key / "runtime"
     runtime.mkdir(parents=True, exist_ok=True)
-    record_path.write_text(json.dumps({
+    (runtime / "batch-gate.json").write_text(json.dumps({
         "verdict": "pass",
         "head_sha": gated_sha,
         "tree_sha": gated_tree,
@@ -126,10 +132,9 @@ def test_loop_status_json_shows_proven_and_freshness_basis(tmp_path: Path) -> No
     }), encoding="utf-8")
 
     # Write a minimal plans structure so loop_status finds something
-    plans = tmp_path / "plans"
-    plans.mkdir()
-    master = plans / "MASTER-test.md"
-    master.write_text(
+    plans = data_home / "projects" / key / "plans"
+    plans.mkdir(parents=True, exist_ok=True)
+    (plans / "MASTER-test.md").write_text(
         "---\nmaster_plan: test\nbatch_date: 2026-09-28\nstatus: active\n"
         "total_tickets: 1\n---\n\n# Test\n\n## Sub-plan registry\n\n"
         "| # | File | Items | Steps (est.) | Status |\n"
@@ -137,36 +142,18 @@ def test_loop_status_json_shows_proven_and_freshness_basis(tmp_path: Path) -> No
         "| 1 | 2026-09-28-test.md | test | 1 | shipped |\n",
         encoding="utf-8",
     )
-    sub = plans / "2026-09-28-test.md"
-    sub.write_text(
+    (plans / "2026-09-28-test.md").write_text(
         "---\nplan: test\nstatus: shipped\ncurrent_step: 1\ntickets: []\n"
         "priority: P1\nestimated_steps: 1\nlast_updated: 2026-09-28\n"
         "verification_tier: loop-verified\n---\n\n# Test sub-plan\n",
         encoding="utf-8",
     )
 
-    env = {
-        "HOME": str(tmp_path),
-        "ILK_DATA_HOME": str(tmp_path / "ilk-data"),
-        "ILK_DATA_DIR": str(tmp_path / "ilk-data"),
-        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
-    }
-    proj_key = tmp_path / "ilk-data" / "projects" / "test"
-    proj_key.mkdir(parents=True, exist_ok=True)
-    (proj_key / "runtime").symlink_to(runtime, target_is_directory=True)
-    (proj_key / "plans").symlink_to(plans, target_is_directory=True)
-
-    r = subprocess.run(
-        [sys.executable, str(SCRIPTS / "loop_status.py"), "--json", "--project-path", str(repo)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=30, env=env,
-    )
-    # The JSON should show proven and proof_freshness
-    data = json.loads(r.stdout)
+    data = resolve_status(repo, json_mode=True)
     # Find the test sub-plan
     sub_data = None
-    for s in data.get("sub_plans", []):
-        if s.get("plan") == "test":
+    for s in data.get("subplans", []):
+        if s.get("slug") == "test":
             sub_data = s
             break
     assert sub_data is not None, f"test sub-plan not found in {data}"

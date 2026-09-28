@@ -482,6 +482,7 @@ def _resolve_batch_record(
     # AC-3: delegate to SP2's validator.
     outcome = validate_record(
         rp, current_head, expected_invocation, expected_tree_sha=current_tree,
+        repo=project_path,
     )
 
     if outcome == "fresh":
@@ -509,6 +510,7 @@ def _resolve_batch_record(
     # and leaves them to go find the instance.
     detail = validate_record_detail(
         rp, current_head, expected_invocation, expected_tree_sha=current_tree,
+        repo=project_path,
     )
     return outcome, f"batch-gate record is {detail}"
 

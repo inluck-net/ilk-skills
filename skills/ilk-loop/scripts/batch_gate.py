@@ -75,6 +75,15 @@ WRITER_ID = "batch_gate.py"
 #: inherit the missing-block default; that belongs in ship_config, not here.
 DEFAULT_POLL_TIMEOUT = 600
 
+#: Files whose changes are release bookkeeping, not code.  A commit that
+#: touches ONLY paths in this set does not invalidate a gate proof about
+#: the code.  The allowlist is narrow by design: tests read Markdown
+#: (master-template.md, SKILL.md, docs/architecture), and CHANGELOG.md
+#: appears only as a path string (test_gate_scope.py:154).  If a test or
+#: script starts reading CHANGELOG.md as content, the guard test in
+#: test_changelog_commit_keeps_the_proof.py (AC-7) turns red.
+BOOKKEEPING_PATHS = ("CHANGELOG.md",)
+
 
 @dataclass(frozen=True)
 class BatchGateRecord:
@@ -300,6 +309,7 @@ def validate_record(
     expected_head_sha: str,
     expected_invocation: str,
     expected_tree_sha: Optional[str] = None,
+    repo: Optional[Path] = None,
 ) -> str:
     """Validate a batch-gate record against the project as it is now.
 
@@ -309,6 +319,11 @@ def validate_record(
       stale_invocation — invocation differs from what ship.suite builds
       incomplete       — a required field is missing
       absent           — no record file exists
+
+    When *repo* is supplied and the record carries ``tree_sha`` + ``writer``,
+    a tree diff whose every changed path is in ``BOOKKEEPING_PATHS`` still
+    counts as current (bookkeeping-only freshness).  Without *repo*, the
+    comparison stays strict.
     """
     if not record_path.is_file():
         return "absent"
@@ -323,7 +338,7 @@ def validate_record(
             return "incomplete"
     if _claims_a_run_without_naming_it(data):
         return "unenforced"
-    if not _head_is_current(data, expected_head_sha, expected_tree_sha):
+    if not _head_is_current(data, expected_head_sha, expected_tree_sha, repo=repo):
         return "stale_head"
     if data["invocation"] != expected_invocation:
         return "stale_invocation"
@@ -339,6 +354,7 @@ def _head_is_current(
     data: dict,
     expected_head_sha: str,
     expected_tree_sha: Optional[str] = None,
+    repo: Optional[Path] = None,
 ) -> bool:
     """Is this record's verdict still about the code at HEAD?
 
@@ -358,10 +374,128 @@ def _head_is_current(
     cannot reach the looser comparison.  Resolving ``<recorded_sha>^{tree}``
     instead would rescue records already on disk, but would extend tree
     comparison to records nothing vouches for.
+
+    When the record carries both ``tree_sha`` and ``writer`` (provenance),
+    and the trees differ, a *bookkeeping-only* diff — every changed path in
+    ``BOOKKEEPING_PATHS`` — still counts as current.  This covers release
+    commits that touch only ``CHANGELOG.md``.  Requires *repo* to run
+    ``git diff --name-only``; without it, the comparison stays strict.
     """
     if data.get("tree_sha") and expected_tree_sha:
-        return str(data["tree_sha"]) == str(expected_tree_sha)
+        if str(data["tree_sha"]) == str(expected_tree_sha):
+            return True
+        # Bookkeeping-only: the tree changed but every changed file is a
+        # release-bookkeeping path, not code the gate certified.
+        if repo and data.get("writer"):
+            return _is_bookkeeping_only_diff(repo, data["tree_sha"], expected_tree_sha)
+        return False
     return data.get("head_sha") == expected_head_sha
+
+
+def _is_bookkeeping_only_diff(
+    repo: Path,
+    recorded_tree: str,
+    current_tree: str,
+) -> bool:
+    """True when every path in the tree diff is in ``BOOKKEEPING_PATHS``.
+
+    A git failure counts as not-bookkeeping (fail closed).  At least one
+    changed path must be present — an empty diff means trees are equal,
+    which is the ``tree-equal`` basis and should have been caught before
+    calling this.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", recorded_tree, current_tree],
+            capture_output=True, text=True, timeout=15,
+            encoding="utf-8", errors="replace",
+            cwd=str(repo),
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    if result.returncode != 0:
+        return False
+    changed = [p for p in result.stdout.strip().splitlines() if p]
+    if not changed:
+        return False  # empty diff means trees are equal; shouldn't be here
+    return all(p in BOOKKEEPING_PATHS for p in changed)
+
+
+def freshness_basis(
+    data: dict,
+    expected_head_sha: str,
+    expected_tree_sha: Optional[str] = None,
+    repo: Optional[Path] = None,
+) -> dict:
+    """Return the freshness basis for a batch-gate record.
+
+    Returns a dict with:
+      ``basis``           — one of ``tree-equal``, ``bookkeeping-only``,
+                            ``head-equal``, ``stale``
+      ``recorded_tree``   — the tree from the record (or None)
+      ``current_tree``    — the tree at HEAD (or None)
+      ``bookkeeping_paths`` — paths in the diff that are in BOOKKEEPING_PATHS
+                            (empty unless basis is bookkeeping-only)
+    """
+    recorded_tree = data.get("tree_sha")
+    if recorded_tree and expected_tree_sha:
+        if str(recorded_tree) == str(expected_tree_sha):
+            return {
+                "basis": "tree-equal",
+                "recorded_tree": recorded_tree,
+                "current_tree": expected_tree_sha,
+                "bookkeeping_paths": [],
+            }
+        # Trees differ — check bookkeeping-only.
+        if repo and data.get("writer"):
+            changed = _tree_diff_paths(repo, recorded_tree, expected_tree_sha)
+            if changed is not None and all(p in BOOKKEEPING_PATHS for p in changed):
+                return {
+                    "basis": "bookkeeping-only",
+                    "recorded_tree": recorded_tree,
+                    "current_tree": expected_tree_sha,
+                    "bookkeeping_paths": [p for p in changed if p in BOOKKEEPING_PATHS],
+                }
+        return {
+            "basis": "stale",
+            "recorded_tree": recorded_tree,
+            "current_tree": expected_tree_sha,
+            "bookkeeping_paths": [],
+        }
+    # Legacy / no tree — fall back to sha comparison.
+    if data.get("head_sha") == expected_head_sha:
+        return {
+            "basis": "head-equal",
+            "recorded_tree": recorded_tree,
+            "current_tree": expected_tree_sha,
+            "bookkeeping_paths": [],
+        }
+    return {
+        "basis": "stale",
+        "recorded_tree": recorded_tree,
+        "current_tree": expected_tree_sha,
+        "bookkeeping_paths": [],
+    }
+
+
+def _tree_diff_paths(
+    repo: Path,
+    recorded_tree: str,
+    current_tree: str,
+) -> Optional[list[str]]:
+    """Return the list of changed paths between two trees, or None on failure."""
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", recorded_tree, current_tree],
+            capture_output=True, text=True, timeout=15,
+            encoding="utf-8", errors="replace",
+            cwd=str(repo),
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    return [p for p in result.stdout.strip().splitlines() if p]
 
 
 def _claims_a_run_without_naming_it(data: dict) -> bool:
@@ -403,6 +537,7 @@ def validate_record_detail(
     expected_head_sha: str,
     expected_invocation: str,
     expected_tree_sha: Optional[str] = None,
+    repo: Optional[Path] = None,
 ) -> str:
     """Validate and return a human-readable detail string.
 
@@ -427,7 +562,20 @@ def validate_record_detail(
             f"writer produces this; it is the shape a hand-authored record "
             f"takes. The enforced gate result, not this file, is the evidence."
         )
-    if not _head_is_current(data, expected_head_sha, expected_tree_sha):
+    if not _head_is_current(data, expected_head_sha, expected_tree_sha, repo=repo):
+        # When trees differ, name the changed paths (up to 5) instead of
+        # just the commit sha — more useful for debugging.
+        recorded_tree = data.get("tree_sha")
+        if recorded_tree and expected_tree_sha and repo:
+            changed = _tree_diff_paths(repo, recorded_tree, expected_tree_sha)
+            if changed:
+                shown = ", ".join(changed[:5])
+                suffix = "" if len(changed) <= 5 else f" (+{len(changed) - 5} more)"
+                return (
+                    f"stale_head: record tree {recorded_tree[:7]} "
+                    f"!= current tree {expected_tree_sha[:7]} "
+                    f"(changed: {shown}{suffix})"
+                )
         return (
             f"stale_head: record sha {data['head_sha'][:7]} "
             f"!= current HEAD {expected_head_sha[:7]}"

@@ -513,6 +513,8 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
             if sp["status"] != "shipped":
                 sp["proven"] = True
                 sp["proof_state"] = "not-applicable"
+                sp["proof_freshness"] = "not-applicable"
+                sp["proof_bookkeeping_paths"] = []
                 continue
             # Read the sub-plan file to get body + declared_checks + slug.
             sp_path = plans_dir / sp["fname"]
@@ -532,6 +534,37 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
                 sp["proof_state"] = "proven" if result["proven"] else "unproven"
                 sp["unproven_reasons"] = result["reasons"]
                 sp["missing_steps"] = _parse_missing_steps(sp)
+                # Freshness basis: tree-equal, bookkeeping-only, head-equal,
+                # or stale.  Adds proof_freshness and proof_bookkeeping_paths.
+                try:
+                    from batch_gate import (  # type: ignore[import-untyped]
+                        freshness_basis as _freshness_basis,
+                        record_path as _record_path,
+                    )
+                    import subprocess as _sp
+                    _rp = _record_path(_resolved_runtime_dir)
+                    _rec = json.loads(_rp.read_text(encoding="utf-8"))
+                    _head_r = _sp.run(
+                        ["git", "rev-parse", "HEAD"],
+                        capture_output=True, text=True, timeout=10,
+                        cwd=str(cwd),
+                    )
+                    _tree_r = _sp.run(
+                        ["git", "rev-parse", "HEAD^{tree}"],
+                        capture_output=True, text=True, timeout=10,
+                        cwd=str(cwd),
+                    )
+                    _basis = _freshness_basis(
+                        _rec,
+                        _head_r.stdout.strip() if _head_r.returncode == 0 else "",
+                        _tree_r.stdout.strip() if _tree_r.returncode == 0 else None,
+                        repo=cwd,
+                    )
+                    sp["proof_freshness"] = _basis["basis"]
+                    sp["proof_bookkeeping_paths"] = _basis["bookkeeping_paths"]
+                except Exception:
+                    sp["proof_freshness"] = "unknown"
+                    sp["proof_bookkeeping_paths"] = []
             except Exception as exc:
                 sp["proven"] = False
                 sp["proof_state"] = "audit-error"
@@ -539,6 +572,8 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
                     f"ship audit could not run: {type(exc).__name__}: {exc}"
                 ]
                 sp["missing_steps"] = []
+                sp["proof_freshness"] = "unknown"
+                sp["proof_bookkeeping_paths"] = []
     else:
         for sp in subplans:
             if sp["status"] != "shipped":
@@ -552,6 +587,8 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
                     "ship audit could not run: ship_audit module unavailable"
                 ]
                 sp["missing_steps"] = []
+                sp["proof_freshness"] = "unknown"
+                sp["proof_bookkeeping_paths"] = []
 
     # Withdraw the tier rather than leaving it standing.  A stale
     # ``loop-verified`` on a sub-plan the ship-proof ledger holds no row for is

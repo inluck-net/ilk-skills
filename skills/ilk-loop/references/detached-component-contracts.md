@@ -1330,6 +1330,44 @@ did cover.
   the excused count.
 - **`batch_gate.py` `main()`** — prints the `[batch-gate]` excused /
   undeclared lines from the record it just wrote, not from module state.
+- **`loop_status.py`** — for each shipped sub-plan, computes
+  `proof_freshness` (the freshness basis) and `proof_bookkeeping_paths`
+  via `batch_gate.freshness_basis`, and surfaces them in `--json` output.
+
+### Freshness rule
+
+A record's verdict is **fresh** when the code at HEAD is the same code
+the gate certified. Two comparisons exist:
+
+1. **Tree-equal** (default). The record carries `tree_sha` and the
+   current tree matches it exactly. This is the strongest basis: the
+   code is byte-identical.
+2. **Bookkeeping-only** (added 2026-09-28). The record carries both
+   `tree_sha` and `writer` (provenance), the trees differ, but every
+   changed path is in `BOOKKEEPING_PATHS`. Currently that set contains
+   only `CHANGELOG.md`. This covers release commits that touch only
+   the changelog — they change the tree but not the code the gate
+   certified.
+
+Without `tree_sha` (legacy or hand-authored records), the comparison
+falls back to strict `head_sha` equality. Without `writer`, the
+bookkeeping-only path is unavailable — a record nothing vouches for
+keeps the strict comparison.
+
+**`BOOKKEEPING_PATHS` is narrow by design.** Tests read Markdown
+(`master-template.md`, `SKILL.md`, `docs/architecture`), and
+`CHANGELOG.md` appears only as a path string (`test_gate_scope.py:154`).
+A guard test (`test_changelog_commit_keeps_the_proof.py::AC-7`) fails if
+any test or script starts reading a `BOOKKEEPING_PATHS` entry as content.
+
+**The writer stays strict.** `verify_attribution.check_verified_tree`
+compares exact trees — a proof is still only written on the tree the
+suite ran on. The bookkeeping-only relaxation applies at READ time only.
+
+**`freshness_basis(...)`** returns `{"basis": "tree-equal" |
+"bookkeeping-only" | "head-equal" | "stale", "recorded_tree",
+"current_tree", "bookkeeping_paths": [...]}`. `validate_record` still
+returns exactly `"fresh"` for both fresh bases.
 
 ### Invariants
 

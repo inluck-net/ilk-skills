@@ -76,6 +76,7 @@ def verify_phase1(
     expected_invocation: str,
     baseline_report: Optional[BaselineReport] = None,
     expected_tree_sha: Optional[str] = None,
+    repo: Optional[Path] = None,
 ) -> Phase1Verdict:
     """Verify Phase 1 preconditions and refuse if either engine is unavailable.
 
@@ -130,7 +131,7 @@ def verify_phase1(
     verdict_path = record_path(runtime_dir)
     detail = validate_record_detail(
         verdict_path, expected_head_sha, expected_invocation,
-        expected_tree_sha,
+        expected_tree_sha, repo=repo,
     )
 
     if detail != "fresh":
