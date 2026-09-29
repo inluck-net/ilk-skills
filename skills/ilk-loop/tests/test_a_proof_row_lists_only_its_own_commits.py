@@ -129,6 +129,7 @@ def _run_writer(
     after: str,
     run_id: str,
     iteration: int,
+    gate_outcome: str = "",
 ) -> subprocess.CompletedProcess:
     """Dot-source the runner and call the ledger writer for one iteration."""
     heads_dir = project.parent / "heads"
@@ -136,6 +137,7 @@ def _run_writer(
     (heads_dir / "before").write_text(f"{project}={before}\n", encoding="utf-8")
     (heads_dir / "after").write_text(f"{project}={after}\n", encoding="utf-8")
 
+    gate_arg = f"'{gate_outcome}'" if gate_outcome else ""
     script = f"""
 export ILK_DOTSOURCE_ONLY=1
 source '{RUNNER}'
@@ -146,7 +148,7 @@ LOOP_STATUS_SCRIPT='{RUNNER.parent / "loop_status.py"}'
 PRE_ITER_TARGET=$'{pre_iter_target}'
 set +e
 declare -F {WRITER_FUNC} >/dev/null || {{ echo "WRITER_MISSING"; exit 90; }}
-{WRITER_FUNC} '{heads_dir / "before"}' '{heads_dir / "after"}' {iteration}
+{WRITER_FUNC} '{heads_dir / "before"}' '{heads_dir / "after"}' {iteration} {gate_arg}
 echo "RC=$?"
 """
     return subprocess.run(
@@ -179,6 +181,7 @@ def test_slug_row_lists_only_commits_with_its_own_trailer(tmp_path: Path) -> Non
     project = _make_project(
         tmp_path / "proj",
         {"alpha": (0, 2), "beta": (0, 2)},
+        shared_remote=False,
     )
     env = _sandbox_env(tmp_path)
 
@@ -247,6 +250,7 @@ def test_row_with_zero_matching_commits_is_not_written(tmp_path: Path) -> None:
     project = _make_project(
         tmp_path / "proj",
         {"alpha": (0, 2), "beta": (0, 2)},
+        shared_remote=False,
     )
     env = _sandbox_env(tmp_path)
 
@@ -350,6 +354,7 @@ def test_gate_pass_row_fires_after_gate_has_run(tmp_path: Path) -> None:
         pre_iter_target="gate-work 0",
         before=head, after=head,
         run_id="20260929-120000", iteration=1,
+        gate_outcome="pass",
     )
     assert "WRITER_MISSING" not in proc.stdout, proc.stdout
 
