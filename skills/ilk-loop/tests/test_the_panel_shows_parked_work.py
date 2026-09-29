@@ -141,7 +141,6 @@ def _row_for(out: str, key: str) -> str:
 
 # ── AC-1: owed parks are seen ──────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="parked master unseen when none is active")
 def test_owed_park_sets_parked_reason_when_no_active_queued():
     """AC-1: pick_active_master falls back to shipped; owed park is scanned."""
     import tempfile
@@ -167,7 +166,6 @@ def test_owed_park_sets_parked_reason_when_no_active_queued():
         f"parked_reason must name the violation, got: {result['parked_reason']}"
 
 
-@pytest.mark.xfail(strict=True, reason="parked master unseen when none is active")
 def test_owed_park_chooses_highest_priority():
     """AC-1: among owed parks, the one with highest priority is chosen."""
     import tempfile
@@ -194,7 +192,7 @@ def test_owed_park_chooses_highest_priority():
         (plans / "MASTER-shipped.md").touch()
         result = _resolve_status(plans)
     assert result["parked"] is True
-    assert "high-batch" in (result.get("active_master") or ""), \
+    assert "MASTER-high.md" in (result.get("active_master") or ""), \
         "highest-priority owed park should be chosen"
 
 
@@ -235,7 +233,6 @@ def test_superseded_park_skipped_by_owed_scan():
 
 # ── AC-3: the 2026-09-29 replay ────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="parked master unseen when none is active")
 def test_replay_violation_parked_visible():
     """AC-3: the full replay — violation park visible, row rendered."""
     import tempfile

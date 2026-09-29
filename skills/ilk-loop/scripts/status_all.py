@@ -805,6 +805,52 @@ def resolve_project_status(project_dir: Path, *,
             except (OSError, IndexError, ValueError):
                 pass
 
+        # Owed-park scan: when pick_active_master's choice is not
+        # active/queued, the parked master was never looked at.
+        # Scan every master with the pending_batches owed-park test
+        # and pick the one promotion would resume first (priority
+        # desc, created asc).  This is the resume-first rule.
+        # Superseded parks are residue — they count in
+        # pending_batches but never set parked_reason.
+        if not master_parked_reason:
+            _owed_candidates: list[tuple[Path, dict]] = []
+            for mp in masters:
+                try:
+                    mtext = mp.read_text(encoding="utf-8-sig")
+                except OSError:
+                    continue
+                mfm = parse_frontmatter(mtext)
+                mstatus = normalize_master_status(mfm.get("status") or "")
+                raw = (mfm.get("parked_reason") or "").strip().strip('"').strip("'")
+                if (
+                    mstatus == "blocked"
+                    and raw
+                    and master_has_nonshipped(mp, plans_dir)
+                    and not raw.startswith("superseded")
+                ):
+                    _owed_candidates.append((mp, mfm))
+            if _owed_candidates:
+                def _prio(fm: dict) -> int:
+                    try:
+                        return int(fm.get("priority", 0))
+                    except (TypeError, ValueError):
+                        return 0
+                def _created(fm: dict) -> str:
+                    return str(fm.get("created", "")) or "~"
+                _owed_candidates.sort(
+                    key=lambda it: (-_prio(it[1]), _created(it[1]))
+                )
+                best_mp, best_fm = _owed_candidates[0]
+                master_parked_reason = (
+                    best_fm.get("parked_reason", "").strip().strip('"').strip("'")
+                )
+                active_master = best_mp.name
+                batch = _batch_display_name(best_mp.read_text(encoding="utf-8-sig"))
+                display_fallback = _first_nonshipped_display(
+                    plans_dir,
+                    best_mp.read_text(encoding="utf-8-sig"),
+                )
+
         # Any queued master with runnable work makes the project manually
         # runnable.  Scanned unconditionally: the chosen master counts when it
         # is itself queued (the common case — that is exactly the project a

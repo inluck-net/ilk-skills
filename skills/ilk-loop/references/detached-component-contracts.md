@@ -201,6 +201,19 @@ writes it** (`run_ilk_loop_claude.ps1`, which also parks without
 `--owner-of`).  Readers must accept both; `status_all.py` keys on the first
 token only.
 
+**Owed-park scan in `status_all.py` (2026-09-29).**  When
+`pick_active_master`'s choice is not `active` or `queued` (e.g. the
+newest-by-mtime master is `shipped`), the chosen-master branch never
+sets `master_parked_reason`.  A second scan fires: it iterates every
+master, applies the `pending_batches` owed-park test (`blocked` +
+non-empty `parked_reason` + `master_has_nonshipped`), skips
+`superseded` parks (residue), and picks the one promotion would
+resume first — priority descending, `created` ascending (the
+resume-first rule, reusing `promote_next_master`'s `_prio` /
+`_created` helpers).  The scan sets `master_parked_reason`,
+`active_master`, `batch`, and `display_fallback` from the winner.
+Superseded parks still count in `pending_batches`, unchanged.
+
 **Declared work_tree (`work_tree.py`).**  Master frontmatter
 `work_tree: <absolute path>` declares the tree the driver observes, gates,
 and ledgeres.  Absent or empty ⇒ behaviour unchanged.  Present ⇒ must be an
