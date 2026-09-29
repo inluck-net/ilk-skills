@@ -2429,16 +2429,13 @@ except: pass
     # Include the gate command in the echo so every gate outcome is auditable.
     # Previously only slug/step/outcome were shown — a passing gate was
     # indistinguishable from one that never ran.
+    # The label is the first FAILING check (else the first) — the same rule
+    # the JSONL record uses, so the echo and ship_integrity's "Failing checks"
+    # cannot disagree.  results[0] named a green check on a red gate
+    # (gh-resolve root-area-typecheck-gate, 2026-09-29).
     local gate_cmd=""
     if [[ -s "$tmp_out" ]]; then
-      gate_cmd=$(python3 -c "
-import json, sys
-try:
-  d = json.load(sys.stdin)
-  rs = d.get('results', [])
-  if rs: print(rs[0].get('command', ''))
-except: pass
-" < "$tmp_out" 2>/dev/null || true)
+      gate_cmd=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/emit_jsonl_record.py" --label "$tmp_out" 2>/dev/null || true)
     fi
     if [[ -n "$gate_cmd" ]]; then
       echo "  [local_checks $tag] $slug step $step -> $outcome  cmd: $gate_cmd"

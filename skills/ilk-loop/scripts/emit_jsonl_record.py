@@ -28,6 +28,21 @@ def extract_failing_check(data: dict) -> dict | None:
     return None
 
 
+def gate_label_command(data: dict) -> str:
+    """The command a gate result is labelled with: first failing, else first.
+
+    One rule for both surfaces that name a gate — this record's ``command``
+    (which ship_integrity.py reads for "Failing checks:") and the runner's
+    ``[local_checks FAIL] ... cmd:`` echo.  Both used ``results[0]``, so a red
+    gate whose first check passed named a green check as the failure
+    (gh-resolve root-area-typecheck-gate, 2026-09-29).
+    """
+    results = data.get("results", []) if isinstance(data, dict) else []
+    failing = extract_failing_check(data) if results else None
+    chosen = failing or (results[0] if results else None)
+    return (chosen or {}).get("command", "") or ""
+
+
 def build_record(
     slug: str,
     step: int | None,
@@ -51,11 +66,12 @@ def build_record(
     }
 
     # Always include the command so every gate outcome — pass or fail — is
-    # auditable.  Source preference: data.results[0] (full run_local_checks
-    # output, all outcomes) → failing_check (back-compat, fail/error only).
+    # auditable.  Source preference: data (full run_local_checks output, all
+    # outcomes; labelled by gate_label_command) → failing_check (back-compat,
+    # fail/error only).
     results = (data or {}).get("results", [])
     if results:
-        cmd = results[0].get("command", "")
+        cmd = gate_label_command(data or {})
         if cmd:
             rec["command"] = cmd
     elif failing_check and outcome in ("fail", "error"):
@@ -83,6 +99,16 @@ def build_record(
 
 
 def main() -> int:
+    # `--label <tmp_out>`: print the gate's label command for the runner's
+    # echo; empty when the helper output is not parseable JSON.
+    if len(sys.argv) == 3 and sys.argv[1] == "--label":
+        try:
+            data = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8-sig"))
+        except (json.JSONDecodeError, OSError, ValueError):
+            data = {}
+        print(gate_label_command(data))
+        return 0
+
     if len(sys.argv) < 5 or len(sys.argv) > 7:
         print(f"Usage: {sys.argv[0]} <results_file> <tmp_out> <outcome> <check_exit> [<slug> <step>]",
               file=sys.stderr)
