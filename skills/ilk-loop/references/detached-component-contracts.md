@@ -695,6 +695,26 @@ because gates are arbitrary commands and pytest already uses exit 3.
   the ship-proof ledger (Contract 5) for a `gate_pass_at_head` row covering
   the step as an alternative proof path.
 
+### Proof channels for ship-integrity
+
+A sub-plan that reads `shipped` is **backed** when at least one of these
+channels proves its final step:
+
+1. **Trailer.** A commit whose message contains
+   `[plan:<slug>#step-<N>]` or `[plan:<slug>#ship]`. The primary channel
+   on non-shared remotes.
+2. **Ledger row.** A `ship-proof.jsonl` record whose step range covers
+   the final step (Contract 5). Includes `gate_pass_at_head` rows
+   (zero-commit green gates) — see Contract 5 format.
+3. **Gate history.** A `gate-history.jsonl` row with `outcome: "pass"`
+   for the final step whose `head_sha` is an ancestor of (or equal to)
+   the slug's last step commit, or — for zero-commit steps — an
+   ancestor of the current HEAD.
+
+**No commits and no gate row is never backed.** A sub-plan with no
+trailer, no ledger row, and no qualifying gate-history row must be
+refused regardless of its `status:` line.
+
 ### Invariants
 
 1. **Readers MUST parse JSON. Pattern-matching the serialised text is

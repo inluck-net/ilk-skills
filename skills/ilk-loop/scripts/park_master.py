@@ -386,6 +386,30 @@ def main(argv: list[str]) -> int:
             plan["error"] = f"{type(e).__name__}: {e}"
             print(json.dumps(plan, indent=2))
             return 2
+
+        # Unpark resets auto_block_fails on every registry sub-plan that
+        # carries the key.  Without this, the strike counter re-blocks on
+        # the next failure even though the operator cleared the park.
+        if a.unpark:
+            import re as _re
+
+            _FAILS_RE = _re.compile(
+                r"^(\s*)auto_block_fails\s*:\s*\d+", _re.MULTILINE
+            )
+            body = target.read_text(encoding="utf-8-sig")
+            resets = 0
+            for fname in extract_subplan_files(body):
+                sp_path = plans_dir / fname
+                if not sp_path.is_file():
+                    continue
+                sp_text = sp_path.read_text(encoding="utf-8-sig")
+                if _FAILS_RE.search(sp_text):
+                    sp_text = _FAILS_RE.sub(r"\1auto_block_fails: 0", sp_text)
+                    sp_path.write_text(sp_text, encoding="utf-8")
+                    resets += 1
+            if resets:
+                plan["auto_block_fails_resets"] = resets
+
     print(json.dumps(plan, indent=2))
     return 0
 

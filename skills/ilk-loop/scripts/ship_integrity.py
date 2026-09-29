@@ -511,9 +511,6 @@ def check_final_step_gate(
     bool
         ``True`` if a qualifying pass row exists; ``False`` otherwise.
     """
-    if last_step_sha is None:
-        return False
-
     for row in gate_rows:
         if row.get("slug") != slug:
             continue
@@ -525,15 +522,24 @@ def check_final_step_gate(
         if not head_sha:
             # Row without head_sha is "no proof" (fail closed).
             continue
-        # Check ancestry: last_step_sha must be an ancestor of head_sha,
-        # or they must be equal.
-        if _is_ancestor(last_step_sha, head_sha, cwd=cwd):
-            return True
-        # A gate proves a tree.  A gate-first step's gate runs before its
-        # own (empty) marker and #ship commits, so its head is an ancestor
-        # of last_step_sha, never a descendant; same tree = same proof.
-        if _same_tree(head_sha, last_step_sha, cwd=cwd):
-            return True
+        if last_step_sha is not None:
+            # Check ancestry: last_step_sha must be an ancestor of
+            # head_sha, or they must be equal.
+            if _is_ancestor(last_step_sha, head_sha, cwd=cwd):
+                return True
+            # A gate proves a tree.  A gate-first step's gate runs before
+            # its own (empty) marker and #ship commits, so its head is an
+            # ancestor of last_step_sha, never a descendant; same tree =
+            # same proof.
+            if _same_tree(head_sha, last_step_sha, cwd=cwd):
+                return True
+        else:
+            # Zero-commit step: no trailer or ledger evidence.  The gate's
+            # head_sha is still valid proof when it is an ancestor of (or
+            # equal to) the current HEAD — meaning no subsequent commits
+            # have displaced it.
+            if _is_ancestor(head_sha, "HEAD", cwd=cwd):
+                return True
 
     return False
 

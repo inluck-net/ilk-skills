@@ -237,7 +237,6 @@ def _read_master_status(world: dict) -> str:
 
 # ── AC-1: the #6940 replay backs the step ────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="green no-op step not backed")
 @_NEEDS_GTIMEOUT
 def test_green_noop_step_backed_by_gate_row(
     tmp_path_factory: pytest.TempPathFactory,
@@ -345,7 +344,6 @@ def test_union_counts_gate_pass_at_head_rows() -> None:
 
 # ── AC-4: un-park resets the strike counter ──────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="green no-op step not backed")
 def test_unpark_resets_auto_block_fails(tmp_path: Path) -> None:
     """AC-4: ``park_master.py --unpark`` sets ``auto_block_fails: 0`` on every
     registry sub-plan that carries the key, using ``quarantine_subplan``'s
