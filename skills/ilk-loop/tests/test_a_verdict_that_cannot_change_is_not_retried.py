@@ -30,7 +30,6 @@ import run_local_checks as rlc  # noqa: E402
 
 # ── AC-1: deterministic checks skip the confirm re-run ────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="deterministic/environment reds still retried")
 def test_runner_skips_deterministic_check_in_b2_rerun():
     """The runner's B2 block must skip re-running a check with ``retry: false``.
 
@@ -48,7 +47,6 @@ def test_runner_skips_deterministic_check_in_b2_rerun():
         "runner B2 block has no logic to skip deterministic checks"
 
 
-@pytest.mark.xfail(strict=True, reason="deterministic/environment reds still retried")
 def test_confirm_b2_skips_deterministic_even_when_rerun_present():
     """``confirm_b2_block`` must skip a deterministic check even if the rerun
     accidentally includes it (the runner re-ran it before realising)."""
@@ -64,7 +62,6 @@ def test_confirm_b2_skips_deterministic_even_when_rerun_present():
     assert result["transient_cleared"] == []
 
 
-@pytest.mark.xfail(strict=True, reason="deterministic/environment reds still retried")
 def test_verify_attribution_without_remeasure_is_deterministic():
     """``verify_attribution.py`` without ``--remeasure-if-stale`` is deterministic."""
     first = [
@@ -79,7 +76,6 @@ def test_verify_attribution_without_remeasure_is_deterministic():
     assert result["transient_cleared"] == []
 
 
-@pytest.mark.xfail(strict=True, reason="deterministic/environment reds still retried")
 def test_log_line_names_verdict_cannot_change():
     """The runner logs ``no re-run — verdict cannot change`` for deterministic checks."""
     runner = (_SCRIPTS / "run_ilk_loop_claude.sh").read_text(encoding="utf-8")
@@ -111,7 +107,6 @@ _REAL_FAILURE_STDERR = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason="deterministic/environment reds still retried")
 def test_environment_red_pytest_format():
     """A pytest summary with >=1 passed and 0 failed is an environment red."""
     outcome, reason = rlc._classify_check(1, "", _ENVIRONMENT_STDERR_PYTEST)
@@ -121,7 +116,6 @@ def test_environment_red_pytest_format():
     assert "D-70" in reason
 
 
-@pytest.mark.xfail(strict=True, reason="deterministic/environment reds still retried")
 def test_environment_red_vitest_format():
     """Vitest equivalent: >=1 passed, 0 failed on stderr."""
     outcome, reason = rlc._classify_check(1, "", _ENVIRONMENT_STDERR_VITEST)
@@ -138,7 +132,6 @@ def test_real_failure_is_still_fail():
     assert reason is None
 
 
-@pytest.mark.xfail(strict=True, reason="deterministic/environment reds still retried")
 def test_environment_red_skips_confirm_rerun():
     """An environment red is blocked immediately, even if the rerun passes."""
     first = [
@@ -158,7 +151,6 @@ def test_environment_red_skips_confirm_rerun():
 
 # ── AC-3: environment reds are not quarantine strikes ─────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="deterministic/environment reds still retried")
 def test_quarantine_skips_environment_errors():
     """``quarantine_subplan.py`` must not count ``environment:`` errors as strikes.
 

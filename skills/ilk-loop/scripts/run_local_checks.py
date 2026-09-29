@@ -677,6 +677,72 @@ def _read_path_prelude(project: Path) -> str:
 
 _ILK_CHECK_RE = re.compile(r"^ILK-CHECK:\s*unmeasured\s+(.+)$", re.MULTILINE)
 
+# Environment red detection: pytest summary with >=1 passed and 0 failed.
+_PYTEST_ENV_RE = re.compile(
+    r"(\d+)\s+passed.*0\s+failed", re.IGNORECASE
+)
+# Vitest: "✓ 1 passed" + "✗ 0 failed" (may be on separate lines).
+_VITEST_ENV_RE = re.compile(
+    r"✓\s*\d+\s+passed.*✗\s*0\s+failed", re.IGNORECASE | re.DOTALL
+)
+# First stderr line matching VIOLATION|guard|Error (≤200 chars).
+_ENV_LINE_RE = re.compile(
+    r"^.*(?:VIOLATION|guard|Error).*$", re.MULTILINE | re.IGNORECASE
+)
+
+
+def _detect_environment_red(stderr_full: str) -> str | None:
+    """Detect an environment red from pytest/vitest output.
+
+    Returns the reason string (≤200 chars) if detected, else None.
+    An environment red is a check that exited non-zero but whose test
+    summary shows >=1 passed and 0 failed — the failure is in the
+    environment (conftest guard, stderr pollution), not the tests.
+    """
+    if not stderr_full:
+        return None
+
+    is_env = False
+    # pytest format: "N passed ... 0 failed" on one line
+    if _PYTEST_ENV_RE.search(stderr_full):
+        is_env = True
+    # vitest format: "✓ N passed" + "✗ 0 failed"
+    elif _VITEST_ENV_RE.search(stderr_full):
+        is_env = True
+
+    if not is_env:
+        return None
+
+    # Extract a useful reason from stderr.
+    m = _ENV_LINE_RE.search(stderr_full)
+    if m:
+        return m.group(0).strip()[:200]
+    # Fallback: first non-empty line.
+    for line in stderr_full.splitlines():
+        line = line.strip()
+        if line:
+            return line[:200]
+    return "unknown environment issue"
+
+
+def _is_deterministic_check(check: dict) -> tuple[bool, str | None]:
+    """A check whose outcome cannot change on re-run.
+
+    Returns (True, reason) if the check is deterministic, (False, None) otherwise.
+    Deterministic if:
+      - ``retry: false`` is set on the check dict, or
+      - the command invokes ``verify_attribution.py`` without
+        ``--remeasure-if-stale``.
+    """
+    if check.get("retry") is False:
+        return True, "retry: false"
+
+    cmd = check.get("command", "")
+    if "verify_attribution" in cmd and "--remeasure-if-stale" not in cmd:
+        return True, "verify_attribution without --remeasure-if-stale"
+
+    return False, None
+
 
 def _classify_check(
     exit_code: int | None,
@@ -713,6 +779,14 @@ def _classify_check(
     m = _ILK_CHECK_RE.search(stderr_full)
     if m:
         return "error", m.group(1).strip()
+
+    # Environment red: pytest/vitest shows passed tests but zero failures.
+    # The check failed because of a conftest guard, stderr pollution, or
+    # similar environment issue — not because the tests themselves are broken.
+    # Detect: >=1 passed AND 0 failed in the summary line.
+    env_red = _detect_environment_red(stderr_full)
+    if env_red:
+        return "error", f"environment: {env_red}"
 
     # Any other nonzero: measured failure
     return "fail", None
@@ -1445,6 +1519,21 @@ def confirm_b2_block(
     for r in blocking:
         cmd = r["command"]
         first_out = r["outcome"]
+
+        # Deterministic checks and environment reds skip the re-run:
+        # their verdict cannot change, so a transient pass is impossible.
+        is_det, det_reason = _is_deterministic_check(r)
+        is_env = first_out == "error" and (r.get("reason") or "").startswith("environment:")
+
+        if is_det or is_env:
+            # Blocked on first red — verdict cannot change.
+            confirmed.append({
+                "command": cmd,
+                "first_outcome": first_out,
+                "rerun_outcome": None,
+            })
+            continue
+
         rerun_out = rerun_map.get(cmd)
 
         if rerun_out is None:

@@ -145,6 +145,32 @@ def _step_of(rec: dict[str, Any]) -> int:
     return step if isinstance(step, int) else 0
 
 
+def _needs_rerun(rec: dict[str, Any]) -> tuple[bool, str | None]:
+    """A blocking check that should be re-run in B2.
+
+    Deterministic checks and environment reds skip the re-run: their
+    verdict cannot change, so a transient pass is impossible.
+
+    Returns (True, None) if the check needs re-run, (False, reason) if skipped.
+    """
+    # Deterministic: retry: false
+    if rec.get("retry") is False:
+        return False, "retry: false"
+
+    # Deterministic: verify_attribution.py without --remeasure-if-stale
+    cmd = rec.get("command", "")
+    if "verify_attribution" in cmd and "--remeasure-if-stale" not in cmd:
+        return False, "verify_attribution without --remeasure-if-stale"
+
+    # Environment red: error with reason starting with "environment:"
+    if rec.get("outcome") == "error":
+        reason = rec.get("reason") or ""
+        if reason.startswith("environment:"):
+            return False, reason
+
+    return True, None
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("results_file", type=Path,
@@ -168,6 +194,9 @@ def main(argv: list[str] | None = None) -> int:
                            "attempts and flaky:true, print {blocked, transient_cleared}")
     mode.add_argument("--outcome-for-slug", metavar="SLUG",
                       help="print the outcome for a specific slug (fail or error)")
+    mode.add_argument("--rerun-targets", action="store_true",
+                      help="like --targets but excludes deterministic and environment-red "
+                           "checks (those whose verdict cannot change)")
     args = ap.parse_args(argv)
 
     if args.any:
@@ -180,6 +209,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.targets:
         for rec in attributable_records(args.results_file):
             print(f"{rec['slug']} {_step_of(rec)}")
+        return 0
+
+    if args.rerun_targets:
+        for rec in attributable_records(args.results_file):
+            needs, _reason = _needs_rerun(rec)
+            if needs:
+                print(f"{rec['slug']} {_step_of(rec)}")
         return 0
 
     if args.slugs:

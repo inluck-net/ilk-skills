@@ -5188,11 +5188,29 @@ print(json.dumps({
       local blocking_checks_script="${_SKILL_ROOT}/ilk-loop/scripts/blocking_checks.py"
       if [[ -s "$local_checks_results" ]]; then
         if python3 "$blocking_checks_script" "$local_checks_results" --any; then
-          # Extract blocking slug/step pairs and re-run them
+          # Extract blocking slug/step pairs and re-run them.
+          # --rerun-targets excludes deterministic checks (retry: false,
+          # verify_attribution without --remeasure-if-stale) and environment
+          # reds (pytest passed but exit non-zero) — their verdict cannot
+          # change, so a re-run is pointless.
           local blocking_targets
           blocking_targets=$(mktemp)
-          python3 "$blocking_checks_script" "$local_checks_results" --targets \
+          python3 "$blocking_checks_script" "$local_checks_results" --rerun-targets \
             > "$blocking_targets" 2>/dev/null
+
+          # Log skipped deterministic/environment checks
+          local _skipped_targets
+          _skipped_targets=$(mktemp)
+          python3 "$blocking_checks_script" "$local_checks_results" --targets \
+            > "$_skipped_targets" 2>/dev/null
+          if [[ -s "$_skipped_targets" && -s "$blocking_targets" ]]; then
+            local _skipped_count
+            _skipped_count=$(comm -23 <(sort "$_skipped_targets") <(sort "$blocking_targets") | wc -l | tr -d ' ')
+            if [[ "$_skipped_count" -gt 0 ]]; then
+              echo "  [b2] $_skipped_count check(s) skipped — verdict cannot change" >&2
+            fi
+          fi
+          rm -f "$_skipped_targets"
 
           local rerun_results=""
           if [[ -s "$blocking_targets" ]]; then

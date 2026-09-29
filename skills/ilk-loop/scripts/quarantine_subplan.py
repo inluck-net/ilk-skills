@@ -141,13 +141,17 @@ def quarantine_subplan(
 
     # Only a measured "fail" bumps the counter.  A green gate resets it.
     # Error/timeout/skipped outcomes are not counted toward quarantine.
+    # This includes environment reds (outcome=error, reason starting with
+    # "environment:") — the red is not the sub-plan's fault, so it must
+    # not count as a quarantine strike.
     if outcome == "pass":
         # Reset counter on progress (green gate).
         new_fails = 0
     elif outcome == "fail":
         new_fails = current_fails + 1
     else:
-        # error, skipped, or other non-fail outcomes — not counted.
+        # error (including environment reds), skipped, or other non-fail
+        # outcomes — not counted toward quarantine.
         print(f"[quarantine] {slug}: {outcome} ({failing_check}) — not counted",
               file=sys.stderr)
         return {"blocked": False, "fails": current_fails, "threshold": threshold,

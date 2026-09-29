@@ -591,10 +591,32 @@ but is treated as "no proof" by the final-step gate invariant (fail closed).
 - stderr contains a line matching `^ILK-CHECK: unmeasured (.*)$` ⇒
   `error`, reason = the captured text. The FULL stderr is scanned, not
   only the 2000-char tail, so the marker is not lost.
+- **environment red** (nonzero exit, but pytest/vitest summary shows
+  ≥1 passed and 0 failed) ⇒ `error`, reason `"environment: <first
+  stderr line matching VIOLATION|guard|Error, ≤200 chars>"`.  The
+  failure is in the environment (conftest guard, stderr pollution),
+  not the tests themselves.  Environment reds are NOT re-run in B2
+  (their verdict cannot change) and are NOT quarantine strikes.
 - any other nonzero ⇒ `fail`
 
 The helper JSON also carries `path_prelude_applied: bool` (true when
 `_read_path_prelude` returned a non-empty prelude that was prepended).
+
+### Check-level `retry` field (added 2026-09-29)
+
+A check's YAML entry may set `retry: false` to indicate that its outcome
+is deterministic — re-running it cannot change the verdict.  This applies
+to checks that read a fixed record (e.g., `verify_attribution.py` without
+`--remeasure-if-stale`) or that test a property that doesn't change between
+runs.
+
+When a check with `retry: false` blocks on its first red, B2 skips the
+confirm re-run.  The log line reads:
+`[b2] <slug> step <N>: no re-run — verdict cannot change (retry: false)`.
+
+Similarly, `verify_attribution.py` without `--remeasure-if-stale` is
+implicitly deterministic: the verification record doesn't change between
+runs, so re-deriving it is pointless.
 
 ### Synthesized mention gate (`scope: mention`)
 
