@@ -72,7 +72,6 @@ class TestRevertRowRecordsRedStep:
     in the iteration's range, marked
     ``"attribution": "unfiltered-no-trailers"``."""
 
-    @pytest.mark.xfail(strict=True, reason="a-red-steps-commit-is-named-to-the-next-worker")
     def test_row_carrying_red_step_has_both_fields(self, tmp_path):
         """A revert row from a red-step gate must carry red_step and
         red_step_commits."""
@@ -129,7 +128,6 @@ class TestRevertRowRecordsRedStep:
         assert "red_step" not in row
         assert "red_step_commits" not in row
 
-    @pytest.mark.xfail(strict=True, reason="a-red-steps-commit-is-named-to-the-next-worker")
     def test_red_step_commits_with_attribution_on_shared_remote(self, tmp_path):
         """On a shared remote (no trailers), the row carries every commit
         in the iteration's range, marked
@@ -173,7 +171,6 @@ class TestNoticeNamesRedStepCommit:
         relying on it.
     """
 
-    @pytest.mark.xfail(strict=True, reason="a-red-steps-commit-is-named-to-the-next-worker")
     def test_notice_includes_red_step_line(self):
         """A revert row with red_step and red_step_commits produces a
         notice line naming the commit and the red step."""
@@ -194,7 +191,6 @@ class TestNoticeNamesRedStepCommit:
         assert "step 1" in notice, "notice should name the red step number"
         assert "gate was red" in notice, "notice should say the gate was red"
 
-    @pytest.mark.xfail(strict=True, reason="a-red-steps-commit-is-named-to-the-next-worker")
     def test_notice_includes_multiple_red_step_commits(self):
         """When multiple commits claim the red step, all sha7s appear."""
         import revert_notice as rn
@@ -260,7 +256,6 @@ class TestNoticeShownOnlyWhileNotShipped:
         notice = rn.assemble_revert_notice(revert_rows, shipped_slugs)
         assert "my-slug" not in notice or notice == ""
 
-    @pytest.mark.xfail(strict=True, reason="a-red-steps-commit-is-named-to-the-next-worker")
     def test_red_step_notice_included_when_not_shipped(self):
         """A revert row with red_step whose slug is still not shipped
         appears in the notice."""

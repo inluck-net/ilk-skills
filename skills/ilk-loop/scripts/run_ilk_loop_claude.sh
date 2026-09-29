@@ -2922,9 +2922,13 @@ test_ship_integrity() {
   # declared local_checks gate is red.
   # Args: $1 = plans_dir (optional, defaults to get_plans_dir)
   #       $2 = local_checks_results_file (JSONL, one line per check)
+  #       $3 = heads_before_file (optional, for red-step commit attribution)
+  #       $4 = heads_after_file  (optional, for red-step commit attribution)
   # Returns 0 if all clean, 1 if violations found (and prints them to stderr).
   local plans_dir="${1:-}"
   local lc_file="${2:-}"
+  local _heads_before_file="${3:-}"
+  local _heads_after_file="${4:-}"
   if [[ -z "$plans_dir" || ! -d "$plans_dir" ]]; then
     plans_dir=$(get_plans_dir) || return 0
   fi
@@ -3522,10 +3526,51 @@ if m: print(m.group(1))
         if [[ "$si_out" == *"final-step gate"* ]]; then
           _revert_site="final-gate"
         fi
+        # Extract the red step and its claiming commits for the revert notice.
+        local _red_step=""
+        local _red_step_commits=""
+        local _red_step_attr=""
+        _red_step=$(python3 -c "
+import json, sys
+from pathlib import Path
+lc_file, slug = sys.argv[1], sys.argv[2]
+if lc_file and slug:
+    try:
+        for raw in Path(lc_file).read_text().splitlines():
+            if not raw.strip(): continue
+            try: rec = json.loads(raw)
+            except json.JSONDecodeError: continue
+            if rec.get('slug') != slug: continue
+            if rec.get('outcome') not in ('fail', 'error'): continue
+            step = rec.get('step')
+            if isinstance(step, bool) or not isinstance(step, int): continue
+            print(step); break
+    except OSError: pass
+" "$lc_file" "$slug" 2>/dev/null) || true
+        if [[ -n "$_red_step" && -n "$_heads_before_file" && -n "$_heads_after_file" ]]; then
+          local _h_before _h_after
+          _h_before=$(head_before_sha "$PROJECT_PATH" "$_heads_before_file")
+          _h_after=$(head_after_sha "$PROJECT_PATH" "$_heads_after_file")
+          if [[ -n "$_h_before" && -n "$_h_after" ]]; then
+            # Find commits in the iteration range claiming this step.
+            _red_step_commits=$(git -C "$PROJECT_PATH" log --format="%H" "${_h_before}..${_h_after}" --grep="\[plan:${slug}#step-${_red_step}\]" 2>/dev/null | tr '\n' ',') || true
+            _red_step_commits="${_red_step_commits%,}"  # strip trailing comma
+            if [[ -z "$_red_step_commits" ]]; then
+              # No trailer matches — on a shared remote, include all
+              # commits in range with attribution marker.
+              _red_step_commits=$(git -C "$PROJECT_PATH" log --format="%H" "${_h_before}..${_h_after}" 2>/dev/null | tr '\n' ',') || true
+              _red_step_commits="${_red_step_commits%,}"
+              _red_step_attr="unfiltered-no-trailers"
+            fi
+          fi
+        fi
         python3 -c "
 import sys
 sys.path.insert(0, sys.argv[1])
 from revert_notice import append_revert_row
+red_step = int(sys.argv[11]) if sys.argv[11] else None
+red_step_commits = [s for s in sys.argv[12].split(',') if s] if sys.argv[12] else None
+attribution = sys.argv[13] if sys.argv[13] else None
 append_revert_row(
     sys.argv[2],
     slug=sys.argv[3],
@@ -3539,8 +3584,11 @@ append_revert_row(
     iteration=int(sys.argv[7]),
     timestamp=sys.argv[8],
     site=sys.argv[10],
+    red_step=red_step,
+    red_step_commits=red_step_commits,
+    attribution=attribution,
 )
-" "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file" "$slug" "$_ship_sha" "$_from_step" "${RUN_ID:-}" "${i:-0}" "$_revert_ts" "ship_integrity" "$_revert_site" 2>/dev/null || true
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file" "$slug" "$_ship_sha" "$_from_step" "${RUN_ID:-}" "${i:-0}" "$_revert_ts" "ship_integrity" "$_revert_site" "$_red_step" "$_red_step_commits" "$_red_step_attr" 2>/dev/null || true
       fi
       # A rejected gate invalidates the ship intent for the slug it rejects.
       #
@@ -5731,7 +5779,7 @@ append_revert_row(
     converge_ship_transition "$(get_plans_dir)"
 
     local _si_stderr=""
-    _si_stderr=$(test_ship_integrity "$(get_plans_dir)" "$local_checks_results" 2>&1 1>/dev/null) || {
+    _si_stderr=$(test_ship_integrity "$(get_plans_dir)" "$local_checks_results" "$heads_before_file" "$heads_after_file" 2>&1 1>/dev/null) || {
       stop_reason="ship_integrity_violation"
       iter_stop_reason="ship_integrity_violation"
       # Print the violation details to the runner's stderr so they are

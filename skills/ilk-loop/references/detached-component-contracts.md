@@ -1245,6 +1245,13 @@ One JSON object per line, written **compact** — `separators=(",", ":")`:
 {"slug":"alpha","ship_commit":"abc1234","reason":"ship_integrity","from_status":"shipped","to_status":"in-progress","from_step":2,"to_step":1,"run_id":"r01","iteration":1,"timestamp":"2026-09-29T10:00:00+0800","site":"integrity"}
 ```
 
+A row from a red-step gate also carries `red_step`, `red_step_commits`, and
+optionally `attribution`:
+
+```json
+{"slug":"alpha","ship_commit":"abc1234","reason":"ship_integrity","from_status":"shipped","to_status":"in-progress","from_step":2,"to_step":1,"run_id":"r01","iteration":1,"timestamp":"2026-09-29T10:00:00+0800","site":"integrity","red_step":1,"red_step_commits":["deadbee","cafe123"]}
+```
+
 Fields:
 
 | Field | Type | Meaning |
@@ -1260,6 +1267,9 @@ Fields:
 | `iteration` | int | The iteration number |
 | `timestamp` | string | ISO-8601 timestamp at revert time |
 | `site` | string | One of `integrity`, `inconclusive`, `one-ship`, `final-gate` |
+| `red_step` | int or null | **Optional.** The step whose gate was red (only for `integrity` site reverts caused by a red gate). Absent for non-gate reverts. |
+| `red_step_commits` | list[string] or null | **Optional.** SHAs whose `[plan:<slug>#step-<red_step>]` trailer claims the red step. On a shared remote (no trailers), every commit in the iteration's range. |
+| `attribution` | string or null | **Optional.** Present only on shared remotes (or when no trailers exist in range). Always `"unfiltered-no-trailers"` — signals that `red_step_commits` was not filtered by slug. |
 
 ### Who writes
 
@@ -1287,6 +1297,16 @@ Fields:
 5. **`site` is one of four values.** `integrity` (ship-integrity violation),
    `inconclusive` (driver-cap killed gate), `one-ship` (one-ship enforcement),
    `final-gate` (final-step gate violation). Any other value is an error.
+6. **Red-step fields are optional and additive.** A row without `red_step`
+   renders as today — the original notice template is unchanged.  When
+   `red_step` and `red_step_commits` are present, `assemble_revert_notice`
+   appends one line per commit: `commit <sha7> claims <slug> step <N>, but
+   that step's gate was red — its message is not a verdict; re-run the gate
+   before relying on it.`
+7. **`red_step` is derived from the gate results, not from the pointer.**
+   The runner reads the per-iteration `local_checks` results file to find
+   the lowest step of this slug whose gate came back `fail` or `error`.
+   A revert without gate data (the `skip` path) carries no `red_step`.
 
 ### Bug reference (retro-2026-09-29 F1)
 
