@@ -596,20 +596,22 @@ def reconcile_master_status(master_path: Path, plans_dir: Path) -> bool:
     if current == "draft":
         return False
 
-    if is_master_all_shipped(master_path, plans_dir):
-        target = "shipped"
-    elif current == "shipped":
-        # The reverse direction: retract a ship claim.
-        target = "active"
-    elif current == "blocked":
-        # Unpark a master that was shipped before being parked — the ship
-        # claim was false, so the master should be active.  A master that
-        # was active before parking stays blocked (intentional park).
+    # A blocked master is a human gate — never auto-ship it, even if all
+    # sub-plans are shipped.  The only exception is a master that was parked
+    # while already shipped (pre_park_status == "shipped"), which gets
+    # reverted to active so the batch can resume.
+    if current == "blocked":
         pre_park = fm.get("pre_park_status") or ""
         if pre_park == "shipped":
             target = "active"
         else:
             return False
+
+    elif is_master_all_shipped(master_path, plans_dir):
+        target = "shipped"
+    elif current == "shipped":
+        # The reverse direction: retract a ship claim.
+        target = "active"
     else:
         return False
 

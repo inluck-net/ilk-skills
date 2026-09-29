@@ -2947,9 +2947,32 @@ try:
                    m.read_text(encoding='utf-8-sig')).get('status') or '') == 'active']
     # Also include shipped masters: the agent may have shipped the master
     # during this iteration, but its sub-plans still need integrity checks.
-    shipped_actives = [m for m in masters
-               if normalize_master_status(parse_frontmatter(
-                   m.read_text(encoding='utf-8-sig')).get('status') or '') == 'shipped']
+    # Only include masters whose sub-plans were NOT all shipped at the start
+    # (i.e., at least one sub-plan appears in PRE_ITER_ALL_STEPS).  This
+    # excludes masters that were already blocked/shipped before the iteration.
+    _pre_iter_slugs = set()
+    _pre_iter_raw = sys.argv[3] if len(sys.argv) > 3 else ''
+    for _line in _pre_iter_raw.splitlines():
+        _parts = _line.strip().split()
+        if _parts:
+            _pre_iter_slugs.add(_parts[0])
+    shipped_actives = []
+    for m in masters:
+        if normalize_master_status(parse_frontmatter(
+                m.read_text(encoding='utf-8-sig')).get('status') or '') != 'shipped':
+            continue
+        m_subplans = extract_subplan_files(m.read_text(encoding='utf-8'))
+        # Extract slug from filename: YYYY-MM-DD-<slug>.md -> <slug>
+        m_slugs = set()
+        for s in m_subplans:
+            stem = Path(s).stem  # YYYY-MM-DD-<slug>
+            parts = stem.split('-', 3)
+            if len(parts) >= 4:
+                m_slugs.add(parts[3])
+        # Include this shipped master only if at least one of its sub-plans
+        # was unshipped at the start (present in PRE_ITER_ALL_STEPS).
+        if m_slugs & _pre_iter_slugs:
+            shipped_actives.append(m)
     if actives:
         chosen, _ = pick_active_master(actives, json_mode=True)
         for n in extract_subplan_files(chosen.read_text(encoding='utf-8')):
@@ -2964,7 +2987,7 @@ try:
         print('__MASTERS_EXIST__')
 except Exception:
     pass
-" "$plans_dir" "${_SKILL_ROOT}/ilk-loop/scripts" 2>/dev/null)
+" "$plans_dir" "${_SKILL_ROOT}/ilk-loop/scripts" "${PRE_ITER_ALL_STEPS:-}" 2>/dev/null)
 
   for f in "$plans_dir"/*.md; do
     [[ "$(basename "$f")" == MASTER* ]] && continue
@@ -3225,16 +3248,41 @@ if m:
       echo "  [ship-integrity WARN] $(basename "$f"): $si_out" >&2
     fi
     # Final-step gate invariant: a shipped sub-plan must have a passing
-    # gate row for its final step.  Runs whenever ship_integrity.py passed
-    # (si_exit == 0) and we have a slug, regardless of whether a gate
-    # ran this iteration.
+    # gate row for its final step.  Two paths:
     #
-    # When gate_passed=skip (no gate ran this iteration), the check falls
-    # back to gate-history.jsonl.  A sub-plan that was already shipped
-    # before this iteration is never re-litigated (the prior-run guard
-    # above), so this path only fires for newly-shipped sub-plans whose
-    # gate was skipped.  No qualifying pass row in history ⇒ revert.
+    # 1. gate_passed is "true" or "false" — the gate ran for this sub-plan
+    #    this iteration.  Always check.
+    # 2. gate_passed is "skip" — no gate ran this iteration.  Check only
+    #    if the sub-plan was shipped DURING this iteration (not a prior-run
+    #    ship) AND there's a gate history row to check against.  Falls back
+    #    to gate-history.jsonl.  No qualifying pass row in history ⇒ revert.
+    #
+    # Prior-run guard for path 2: PRE_ITER_ALL_STEPS captures every
+    # non-shipped sub-plan before the agent runs.  If the slug is absent,
+    # it was already shipped — skip.  If present, it was unshipped at the
+    # start and is now shipped (the agent did it) — check.
+    #
+    # History guard for path 2: if there's no gate history row for this
+    # slug at all, the gate never targeted it (the trailer pointed to a
+    # different slug).  Skip — there's nothing to check against.
+    local _should_check_fsg=false
     if [[ $si_exit -eq 0 && -n "$_enrich_slug" ]]; then
+      if [[ "$gate_passed" != "skip" ]]; then
+        _should_check_fsg=true
+      elif [[ -n "${PRE_ITER_ALL_STEPS:-}" ]]; then
+        local _was_unshipped=false
+        printf '%s\n' "$PRE_ITER_ALL_STEPS" | grep -qF "$_enrich_slug" && _was_unshipped=true
+        if [[ "$_was_unshipped" == "true" ]]; then
+          # Check if there's a gate history row for this slug.
+          local _gh_path
+          _gh_path=$(get_ilk_runtime_dir 2>/dev/null || true)/gate-history.jsonl
+          if [[ -n "$_gh_path" && -f "$_gh_path" ]]; then
+            grep -qF "$_enrich_slug" "$_gh_path" && _should_check_fsg=true
+          fi
+        fi
+      fi
+    fi
+    if [[ "$_should_check_fsg" == "true" ]]; then
       local _fsg_exit=0
       local _fsg_out=""
       _fsg_out=$(python3 -c "
