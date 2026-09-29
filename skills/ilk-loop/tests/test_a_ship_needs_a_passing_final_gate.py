@@ -81,9 +81,6 @@ class TestGateRowsCarryHeadSha:
     ``run_local_checks`` output.  A row without it is treated as ``"no proof"``
     (fail closed)."""
 
-    @pytest.mark.xfail(
-        strict=True, reason="final-gate invariant not implemented",
-    )
     def test_build_record_includes_head_sha(self):
         """build_record includes head_sha when data provides it."""
         data = {
@@ -175,9 +172,6 @@ class TestPersistentGateHistory:
     ``<runtime>/launcher/gate-history.jsonl`` with ``run_id``,
     ``iteration`` and ``timestamp``."""
 
-    @pytest.mark.xfail(
-        strict=True, reason="final-gate invariant not implemented",
-    )
     def test_gate_row_persisted_to_history(self, tmp_path):
         """After a gate runs, the row appears in gate-history.jsonl."""
         history = tmp_path / "launcher" / "gate-history.jsonl"
@@ -356,7 +350,6 @@ def _persist_gate_row(
 ) -> None:
     """Append a gate row to the persistent gate history.
 
-    Stub: raises NotImplementedError.
-    Will be replaced by the real persistence in step 1.
+    Delegates to ``emit.append_gate_history`` (implemented in step 1).
     """
-    raise NotImplementedError("final-gate invariant not implemented")
+    emit.append_gate_history(history_path, row, run_id, iteration, timestamp)

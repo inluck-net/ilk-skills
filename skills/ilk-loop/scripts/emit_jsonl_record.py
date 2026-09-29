@@ -95,7 +95,39 @@ def build_record(
         if reason:
             rec["reason"] = reason
 
+    # head_sha: the commit the gate ran against.  Copied from run_local_checks
+    # output (data["head_sha"]) when present.  A row without it is still
+    # readable but is treated as "no proof" by the final-step gate invariant
+    # (fail closed).  See sub-plan a-ship-needs-a-passing-final-gate AC-1.
+    head_sha = (data or {}).get("head_sha")
+    if head_sha:
+        rec["head_sha"] = head_sha
+
     return rec
+
+
+def append_gate_history(
+    history_path: Path,
+    row: dict,
+    run_id: str,
+    iteration: int,
+    timestamp: str,
+) -> None:
+    """Append a gate row to the persistent gate history (``gate-history.jsonl``).
+
+    The row is enriched with ``run_id``, ``iteration`` and ``timestamp``
+    before writing.  The parent directory is created if it does not exist.
+    The file is append-only.
+
+    See sub-plan ``a-ship-needs-a-passing-final-gate`` AC-3.
+    """
+    enriched = dict(row)
+    enriched["run_id"] = run_id
+    enriched["iteration"] = iteration
+    enriched["timestamp"] = timestamp
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(history_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(enriched, ensure_ascii=False, separators=(",", ":")) + "\n")
 
 
 def main() -> int:
