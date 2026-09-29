@@ -2952,13 +2952,15 @@ try:
                    m.read_text(encoding='utf-8-sig')).get('status') or '') == 'shipped']
     if actives:
         chosen, _ = pick_active_master(actives, json_mode=True)
+        for n in extract_subplan_files(chosen.read_text(encoding='utf-8')):
+            print(n)
     elif shipped_actives:
         chosen, _ = pick_active_master(shipped_actives, json_mode=True)
         for n in extract_subplan_files(Path(chosen).read_text(encoding='utf-8')):
             print(n)
     elif masters:
-        # Masters exist but none are active or shipped — signal this so
-        # the caller knows masters exist (distinguishes from "no masters").
+        # Masters exist but none are active or shipped - signal this so
+        # the caller knows masters exist (distinguishes from no masters).
         print('__MASTERS_EXIST__')
 except Exception:
     pass
