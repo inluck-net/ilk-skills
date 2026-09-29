@@ -468,6 +468,138 @@ def _missing_record_reason(subplan: Path) -> str | None:
         return None
 
 
+# ── Final-step gate invariant ────────────────────────────────────────────────
+
+
+def check_final_step_gate(
+    gate_rows: list[dict[str, Any]],
+    slug: str,
+    final_step: int,
+    last_step_sha: str | None,
+    *,
+    dispatched: bool = False,
+) -> bool:
+    """Check whether a shipped sub-plan has a passing final-step gate.
+
+    A sub-plan reads ``shipped`` only when there is a ``pass`` gate row for
+    its **final step** whose ``head_sha`` has the slug's last
+    ``[plan:<slug>#step-N]`` commit as an ancestor (or is equal to it).
+    The row may come from this iteration's results file or from the
+    persistent ``gate-history.jsonl``.
+
+    Parameters
+    ----------
+    gate_rows : list[dict]
+        Gate rows to search (merged from this iteration + history).
+        Each row has at least ``slug``, ``step``, ``outcome``, and
+        optionally ``head_sha``.
+    slug : str
+        The sub-plan slug.
+    final_step : int
+        The final step number (``estimated_steps - 1``).
+    last_step_sha : str | None
+        The SHA of the slug's last ``[plan:<slug>#step-N]`` commit.
+        ``None`` means no trailer or ledger evidence (fail closed).
+    dispatched : bool
+        Whether this is the dispatched slug (included in enforcement).
+
+    Returns
+    -------
+    bool
+        ``True`` if a qualifying pass row exists; ``False`` otherwise.
+    """
+    if last_step_sha is None:
+        return False
+
+    for row in gate_rows:
+        if row.get("slug") != slug:
+            continue
+        if row.get("step") != final_step:
+            continue
+        if row.get("outcome") != "pass":
+            continue
+        head_sha = row.get("head_sha")
+        if not head_sha:
+            # Row without head_sha is "no proof" (fail closed).
+            continue
+        # Check ancestry: last_step_sha must be an ancestor of head_sha,
+        # or they must be equal.
+        if _is_ancestor(last_step_sha, head_sha):
+            return True
+
+    return False
+
+
+def final_step_gate_violation_reason(
+    gate_rows: list[dict[str, Any]],
+    slug: str,
+    final_step: int,
+    last_step_sha: str | None,
+    *,
+    has_trailer: bool = True,
+    ledger_commit: str | None = None,
+) -> str:
+    """Return the violation reason when the final-step gate is missing.
+
+    Parameters
+    ----------
+    gate_rows : list[dict]
+        Gate rows to search.
+    slug : str
+        The sub-plan slug.
+    final_step : int
+        The final step number.
+    last_step_sha : str | None
+        The SHA of the last step commit (from trailer or ledger).
+    has_trailer : bool
+        Whether the slug has trailers (False on shared remotes).
+    ledger_commit : str | None
+        The ledger's last proven step commit (shared remote fallback).
+
+    Returns
+    -------
+    str
+        A human-readable reason string.
+    """
+    short_sha = (last_step_sha or "")[:7]
+    if last_step_sha is None:
+        if has_trailer:
+            return (
+                "shipped without a passing final-step gate — "
+                "no trailer or ledger evidence for the last step commit"
+            )
+        if ledger_commit is None:
+            return (
+                "shipped without a passing final-step gate — "
+                "no trailer (shared remote) and no ledger evidence"
+            )
+        return (
+            "shipped without a passing final-step gate — "
+            "no proof source available"
+        )
+    return (
+        f"shipped without a passing final-step gate at or after {short_sha}"
+    )
+
+
+def _is_ancestor(ancestor: str, descendant: str) -> bool:
+    """Check if *ancestor* is an ancestor of *descendant* (or equal).
+
+    Uses ``git merge-base --is-ancestor``.  Returns ``False`` on any
+    error (not a git repo, SHA not found, etc.) — fail closed.
+    """
+    if ancestor == descendant:
+        return True
+    try:
+        cp = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        return cp.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 def _cli(argv: list[str]) -> int:

@@ -530,12 +530,15 @@ the gate runner to ship-integrity enforcement.
 One JSON object per line, written **compact** — `separators=(",", ":")`:
 
 ```json
-{"slug":"issue-sync-schema-widen","step":2,"outcome":"fail","exit_code":1,"command":"bunx vitest run"}
+{"slug":"issue-sync-schema-widen","step":2,"outcome":"fail","exit_code":1,"command":"bunx vitest run","head_sha":"abc1234"}
 ```
 
 `outcome` is one of `pass` / `fail` / `error` / `inconclusive`. `fail` and
 `error` are **blocking**. `command` is present for every outcome, so a passing
-gate is distinguishable from a gate that never ran.
+gate is distinguishable from a gate that never ran. `head_sha` is the HEAD
+commit SHA at gate time, copied from `run_local_checks.py` output by
+`emit_jsonl_record.py` (added 2026-09-29). A row without it is still readable
+but is treated as "no proof" by the final-step gate invariant (fail closed).
 
 ### Who writes
 
@@ -773,6 +776,27 @@ probe fails.
 
 **Readers:** `collect.py`, `ilk-feedback` — post-hoc analysis of the
 gap. Absence is normal and means no gap was detected.
+
+### Gate-history persistent file (added 2026-09-29)
+
+Every gate row is also appended to `<runtime>/launcher/gate-history.jsonl`
+with `run_id`, `iteration` and `timestamp`. It is append-only. It is never
+written from a worker session, and the path comes from `ilk_paths` (external
+runtime dir). The file enables the final-step gate invariant to check
+historical gate outcomes across iterations.
+
+Format — same compact separators as the per-iteration results file, enriched
+with three fields:
+
+```json
+{"slug":"alpha","step":1,"outcome":"pass","exit_code":0,"head_sha":"abc1234","run_id":"r01","iteration":3,"timestamp":"2026-09-29T10:00:00+0800"}
+```
+
+**Writer:** `emit_jsonl_record.append_gate_history` — called by the runner
+after each gate check.
+
+**Readers:** `ship_integrity.check_final_step_gate` — merges this file's
+rows with the current iteration's results to find qualifying pass rows.
 
 ---
 

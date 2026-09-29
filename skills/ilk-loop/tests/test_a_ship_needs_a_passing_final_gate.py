@@ -2,8 +2,9 @@
 
 Part of sub-plan ``a-ship-needs-a-passing-final-gate`` (MASTER-2026-09-29c).
 
-Six acceptance criteria, each pinned as an xfail (the invariant is not yet
-implemented).  The green control in AC-6 passes today.
+Six acceptance criteria, all verified against the real
+``ship_integrity.check_final_step_gate`` and
+``ship_integrity.final_step_gate_violation_reason`` functions.
 
 The tests use synthetic gate rows and tmp_path git repos — no loop runs.
 """
@@ -126,9 +127,6 @@ class TestFinalStepGateInvariant:
     final step whose ``head_sha`` has the slug's last ``[plan:<slug>#step-N]``
     commit as an ancestor."""
 
-    @pytest.mark.xfail(
-        strict=True, reason="final-gate invariant not implemented",
-    )
     def test_shipped_without_passing_final_gate_is_violation(self, tmp_path):
         """A shipped sub-plan with no passing gate row for its final step
         is a violation."""
@@ -146,9 +144,6 @@ class TestFinalStepGateInvariant:
         # (This test will fail until the invariant is implemented.)
         assert not _ship_passes_final_gate(rows, "alpha", final_step=1, last_step_sha=last_step_sha)
 
-    @pytest.mark.xfail(
-        strict=True, reason="final-gate invariant not implemented",
-    )
     def test_shipped_with_passing_final_gate_is_ok(self, tmp_path):
         """A shipped sub-plan with a passing gate row for its final step
         whose head_sha descends from the last step commit is OK."""
@@ -200,9 +195,6 @@ class TestViolationRevert:
     with the same revert as today (status plus pointer), the same intent
     invalidation, and the same unattended-profile record-only behaviour."""
 
-    @pytest.mark.xfail(
-        strict=True, reason="final-gate invariant not implemented",
-    )
     def test_violation_reason_names_last_step_commit(self, tmp_path):
         """The violation reason names the short SHA of the last step commit."""
         repo = _make_repo(tmp_path)
@@ -230,9 +222,6 @@ class TestSharedRemoteFallback:
     proven step commit instead of the trailer.  If neither exists, it's a
     violation (fail closed)."""
 
-    @pytest.mark.xfail(
-        strict=True, reason="final-gate invariant not implemented",
-    )
     def test_no_trailer_no_ledger_is_violation(self):
         """When neither trailer nor ledger provides the last step commit,
         it's a violation."""
@@ -254,9 +243,6 @@ class TestRetroReplayPin:
     iteration, only a fail row in history ⇒ reverted.  Green control: a pass
     row at a descendant head ⇒ kept."""
 
-    @pytest.mark.xfail(
-        strict=True, reason="final-gate invariant not implemented",
-    )
     def test_dispatched_slug_no_gate_row_reverted(self, tmp_path):
         """Dispatched slug hand-edited to shipped with no pass gate row
         in this iteration or history ⇒ violation."""
@@ -303,9 +289,11 @@ class TestRetroReplayPin:
         assert merge_base == ""  # empty output on success
 
 
-# ── Stubs for not-yet-implemented functions ──────────────────────────────────
-# These are the functions the implementation (step 1-2) will create.
-# For now they always return values that make the xfail tests fail.
+# ── Delegation wrappers ─────────────────────────────────────────────────────
+# These delegate to the real ``ship_integrity`` functions.
+
+
+import ship_integrity as si  # noqa: E402
 
 
 def _ship_passes_final_gate(
@@ -318,10 +306,11 @@ def _ship_passes_final_gate(
 ) -> bool:
     """Check whether a shipped sub-plan has a passing final-step gate.
 
-    Stub: raises NotImplementedError (the invariant is not implemented).
-    Will be replaced by the real check in step 1-2.
+    Delegates to ``ship_integrity.check_final_step_gate``.
     """
-    raise NotImplementedError("final-gate invariant not implemented")
+    return si.check_final_step_gate(
+        gate_rows, slug, final_step, last_step_sha, dispatched=dispatched,
+    )
 
 
 def _final_gate_violation_reason(
@@ -335,10 +324,12 @@ def _final_gate_violation_reason(
 ) -> str:
     """Return the violation reason for a missing final-step gate.
 
-    Stub: raises NotImplementedError.
-    Will be replaced by the real reason in step 1-2.
+    Delegates to ``ship_integrity.final_step_gate_violation_reason``.
     """
-    raise NotImplementedError("final-gate invariant not implemented")
+    return si.final_step_gate_violation_reason(
+        gate_rows, slug, final_step, last_step_sha,
+        has_trailer=has_trailer, ledger_commit=ledger_commit,
+    )
 
 
 def _persist_gate_row(
