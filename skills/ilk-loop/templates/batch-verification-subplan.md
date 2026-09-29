@@ -208,7 +208,7 @@ section headed "exit 1 with zero failures is not a regression", the run recorded
 ```yaml
 gate_first: true
 local_checks:
-  - command: "python3 <skill-root>/ilk-loop/scripts/verification_record.py --project . --batch <batch-slug> --base-sha <base_sha> --run-suite --scope <auto|full>"
+  - command: "python3 <skill-root>/ilk-loop/scripts/verification_record.py --project . --batch <batch-slug> --base-sha auto --master <MASTER .md path> --run-suite --scope <auto|full>"
     timeout: 3660
 ```
 
@@ -216,6 +216,12 @@ local_checks:
 an agent; green → the step commits and advances with no model turn. The agent
 is reached only when the gate is red, and its job then is to read the record
 and triage, not to re-run the suite.
+
+**If you are here, read the record.** The record already holds the answers:
+- Read the `alone` column — a failure that passes alone is order-dependent, not a regression.
+- Read the `order-dependent:` lines — they name the ordering constraint.
+- Read the `born-red-at:` verdicts — a test that was red at its adding commit belongs to the plan that added it.
+- **Never re-run the suite, loop a test, or run a directory-wide pytest by hand.** The record already holds those answers.
 
 **`--scope full` when the plan demands it.** The `--scope` flag overrides
 `compute_suite_scope`'s auto-detection. Set `--scope full` when the MASTER or

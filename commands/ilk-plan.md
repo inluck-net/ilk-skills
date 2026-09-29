@@ -478,7 +478,8 @@ Once approved, write all files in one batch under the
      fixed for the batch and identical on every host, so measuring it again
      pays a full suite to learn something already on disk. Key it on the SHA,
      never on the batch slug or tag — two batches off the same base must hit
-     the same entry.
+     the same entry. Use `--base-sha auto --master <MASTER .md path>` to let
+     the script derive the base from the batch's own trailers.
   2. **Step 1 is a no-op when step 0 attributed nothing.** Step 0 already ran
      the suite on this same tree. The step-1 gate must still READ step 0's
      record — skipping without checking is an unverified pass, not a no-op,

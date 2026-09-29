@@ -3859,6 +3859,94 @@ def lint_verification_subplan_hardcodes_suite(text: str, slug: str) -> list[str]
     return findings
 
 
+def lint_verification_subplan_runs_the_script(text: str, slug: str) -> list[str]:
+    """HARD when a batch-verification sub-plan does not run the scripts.
+
+    A ``batch_verification: true`` sub-plan passes only if:
+      - step 0's yaml gate invokes ``verification_record.py`` with ``--run-suite``;
+      - step 1's yaml gate invokes ``verify_attribution.py``;
+      - both steps are ``gate_first: true``.
+
+    A hand-run step 0 (worker runs the suite, writes the record) is the shape
+    that produced 08b's 25-minute double-suite.  The scripts are the one true
+    path; see ``templates/batch-verification-subplan.md``.
+    """
+    findings: list[str] = []
+    if not _has_batch_verification_marker(text):
+        return findings
+
+    body = _strip_frontmatter(text)
+
+    # Step 0: must have gate_first: true and invoke verification_record.py --run-suite.
+    step0_fence = _step_first_yaml_fence(body, 0)
+    if step0_fence is None:
+        findings.append(
+            f"HARD {slug}: batch-verification sub-plan has no yaml fence "
+            f"under step 0.  Step 0 must declare a gate_first gate that "
+            f"invokes ``verification_record.py --run-suite``."
+        )
+    else:
+        step0_cmds = [
+            e.get("command", "") if isinstance(e, dict) else str(e)
+            for e in parse_local_checks_block(step0_fence)
+        ]
+        has_run_suite = any(
+            "verification_record.py" in cmd and "--run-suite" in cmd
+            for cmd in step0_cmds
+        )
+        # Match gate_first line-by-line (same pattern as lint_gate_first_requires_a_gate).
+        has_gate_first = any(
+            _GATE_FIRST_MARKER_RE.match(line.strip())
+            for line in step0_fence.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        )
+        if not has_run_suite:
+            findings.append(
+                f"HARD {slug}: step 0 gate does not invoke "
+                f"``verification_record.py --run-suite``.  A hand-typed "
+                f"suite invocation is a copy that can drift; resolve it "
+                f"through the script instead."
+            )
+        if not has_gate_first:
+            findings.append(
+                f"HARD {slug}: step 0 does not declare ``gate_first: true``.  "
+                f"The driver must run the gate before dispatching an agent."
+            )
+
+    # Step 1: must have gate_first: true and invoke verify_attribution.py.
+    step1_fence = _step_first_yaml_fence(body, 1)
+    if step1_fence is None:
+        findings.append(
+            f"HARD {slug}: batch-verification sub-plan has no yaml fence "
+            f"under step 1.  Step 1 must declare a gate_first gate that "
+            f"invokes ``verify_attribution.py``."
+        )
+    else:
+        step1_cmds = [
+            e.get("command", "") if isinstance(e, dict) else str(e)
+            for e in parse_local_checks_block(step1_fence)
+        ]
+        has_attribution = any("verify_attribution.py" in cmd for cmd in step1_cmds)
+        has_gate_first = any(
+            _GATE_FIRST_MARKER_RE.match(line.strip())
+            for line in step1_fence.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        )
+        if not has_attribution:
+            findings.append(
+                f"HARD {slug}: step 1 gate does not invoke "
+                f"``verify_attribution.py``.  The attribution check must "
+                f"run through the script, not inline shell."
+            )
+        if not has_gate_first:
+            findings.append(
+                f"HARD {slug}: step 1 does not declare ``gate_first: true``.  "
+                f"The driver must run the gate before dispatching an agent."
+            )
+
+    return findings
+
+
 def lint_tier_forbids_its_evidence(text: str, slug: str) -> list[str]:
     """Flag a sub-plan whose tier claims loop-verified while forbidding test evidence.
 
@@ -4454,6 +4542,7 @@ ALL_CHECKS = (
     lint_broken_process_wait,
     lint_wholesuite_gate_outside_verification_subplan,
     lint_verification_subplan_hardcodes_suite,
+    lint_verification_subplan_runs_the_script,
     lint_tier_forbids_its_evidence,
     lint_duplicate_frontmatter_key,
     lint_slug_identity_mismatch,
