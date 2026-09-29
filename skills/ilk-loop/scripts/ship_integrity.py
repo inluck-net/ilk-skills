@@ -478,6 +478,7 @@ def check_final_step_gate(
     last_step_sha: str | None,
     *,
     dispatched: bool = False,
+    cwd: Path | None = None,
 ) -> bool:
     """Check whether a shipped sub-plan has a passing final-step gate.
 
@@ -502,6 +503,8 @@ def check_final_step_gate(
         ``None`` means no trailer or ledger evidence (fail closed).
     dispatched : bool
         Whether this is the dispatched slug (included in enforcement).
+    cwd : Path | None
+        Working directory for git commands (the project repo).
 
     Returns
     -------
@@ -524,7 +527,7 @@ def check_final_step_gate(
             continue
         # Check ancestry: last_step_sha must be an ancestor of head_sha,
         # or they must be equal.
-        if _is_ancestor(last_step_sha, head_sha):
+        if _is_ancestor(last_step_sha, head_sha, cwd=cwd):
             return True
 
     return False
@@ -582,11 +585,17 @@ def final_step_gate_violation_reason(
     )
 
 
-def _is_ancestor(ancestor: str, descendant: str) -> bool:
+def _is_ancestor(ancestor: str, descendant: str, *, cwd: Path | None = None) -> bool:
     """Check if *ancestor* is an ancestor of *descendant* (or equal).
 
     Uses ``git merge-base --is-ancestor``.  Returns ``False`` on any
     error (not a git repo, SHA not found, etc.) — fail closed.
+
+    Parameters
+    ----------
+    cwd : Path | None
+        Working directory for the git command.  Must be the project repo
+        when called from the runner, whose own cwd is undefined.
     """
     if ancestor == descendant:
         return True
@@ -594,10 +603,136 @@ def _is_ancestor(ancestor: str, descendant: str) -> bool:
         cp = subprocess.run(
             ["git", "merge-base", "--is-ancestor", ancestor, descendant],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=cwd,
         )
         return cp.returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
+
+
+# ── Gate history helpers ─────────────────────────────────────────────────────
+
+def load_gate_history(history_path: Path) -> list[dict[str, Any]]:
+    """Load gate rows from the persistent ``gate-history.jsonl``.
+
+    Returns an empty list when the file does not exist or is unreadable.
+    Each row is a dict with at least ``slug``, ``step``, ``outcome``,
+    and optionally ``head_sha``, ``run_id``, ``iteration``, ``timestamp``.
+    """
+    rows: list[dict[str, Any]] = []
+    try:
+        for raw in history_path.read_text(encoding="utf-8-sig").splitlines():
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                rows.append(json.loads(raw))
+            except json.JSONDecodeError:
+                continue
+    except (OSError, ValueError):
+        pass
+    return rows
+
+
+def find_last_step_commit(
+    slug: str,
+    final_step: int,
+    project: Path,
+    *,
+    ledger_records: list[dict[str, Any]] | None = None,
+) -> str | None:
+    """Resolve the SHA of the slug's last ``[plan:<slug>#step-N]`` commit.
+
+    Searches the full commit message (``%s%n%b``) so body-placed trailers
+    count.  Also checks for ``[plan:<slug>#ship]`` which satisfies the
+    final step per template convention.
+
+    On shared remotes (no trailers found), falls back to the ship-proof
+    ledger's last proven step commit.
+
+    Returns ``None`` when no evidence is found (fail closed).
+
+    Parameters
+    ----------
+    slug : str
+        The sub-plan slug.
+    final_step : int
+        The final step number (``estimated_steps - 1``).
+    project : Path
+        The project repo root (for ``git log``).
+    ledger_records : list[dict] | None
+        Ship-proof ledger records for the shared-remote fallback.
+    """
+    # Search for [plan:<slug>#step-<final_step>] or [plan:<slug>#ship].
+    # The final step may be committed as #ship per template convention.
+    try:
+        result = subprocess.run(
+            ["git", "log", "--format=%H", "--all"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=project,
+        )
+        if result.returncode != 0:
+            return None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    # Get full messages for trailer matching.
+    try:
+        msg_result = subprocess.run(
+            ["git", "log", "--format=%s%n%b", "--all"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=project,
+        )
+    except (OSError, subprocess.SubprocessError):
+        msg_result = None
+
+    shas = result.stdout.splitlines()
+    messages = (msg_result.stdout.splitlines() if msg_result and msg_result.returncode == 0 else [])
+
+    # Match [plan:<slug>#step-N] for the final step, or [plan:<slug>#ship].
+    step_trailer_re = re.compile(
+        rf"\[plan:{re.escape(slug)}#step-{final_step}\]"
+    )
+    ship_trailer_re = re.compile(
+        rf"\[plan:{re.escape(slug)}#ship\]"
+    )
+
+    # Walk commits (newest first) looking for the final step trailer.
+    for i, msg in enumerate(messages):
+        if i >= len(shas):
+            break
+        if step_trailer_re.search(msg) or ship_trailer_re.search(msg):
+            return shas[i].strip()
+
+    # Shared-remote fallback: use the ledger's last proven step commit.
+    if ledger_records:
+        best_sha: str | None = None
+        best_step = -1
+        for rec in ledger_records:
+            if not isinstance(rec, dict):
+                continue
+            if rec.get("slug") != slug:
+                continue
+            try:
+                r_from = int(rec["step_from"])
+                r_to = int(rec["step_to"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            # The record covers [step_from, step_to).  The final step
+            # must be in range.
+            if r_from <= final_step < r_to:
+                # Use the last commit in the record's commits list.
+                commits = rec.get("commits", [])
+                if commits and isinstance(commits, list):
+                    sha = commits[-1]
+                    if isinstance(sha, str) and len(sha) >= 7:
+                        if r_to > best_step:
+                            best_sha = sha
+                            best_step = r_to
+        if best_sha:
+            return best_sha
+
+    return None
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────

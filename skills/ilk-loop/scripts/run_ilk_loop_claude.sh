@@ -2496,6 +2496,36 @@ except: pass
     python3 "${_SKILL_ROOT}/ilk-loop/scripts/emit_jsonl_record.py" \
       "$results_file" "$tmp_out" "$outcome" "$check_exit" "$slug" "$step"
 
+    # Persist to gate-history.jsonl so the final-step gate invariant can
+    # check historical outcomes across iterations (AC-3).
+    # Extract head_sha from the last JSONL row just written.
+    # Guard with ${VAR:-} because test_ship_integrity may be called
+    # directly from shell tests where RUN_ID and i are unset.
+    local _gh_head_sha=""
+    if [[ -s "$results_file" ]]; then
+      _gh_head_sha=$(tail -1 "$results_file" | python3 -c "
+import json, sys
+try:
+    rec = json.loads(sys.stdin.read())
+    print(rec.get('head_sha', ''))
+except: pass
+" 2>/dev/null) || true
+    fi
+    local _gh_history_path
+    _gh_history_path=$(get_ilk_runtime_dir 2>/dev/null || true)/gate-history.jsonl
+    if [[ -n "$_gh_history_path" && -n "${RUN_ID:-}" ]]; then
+      python3 -c "
+import json, sys
+sys.path.insert(0, sys.argv[1])
+from emit_jsonl_record import append_gate_history
+from pathlib import Path
+row = {'slug': sys.argv[2], 'step': int(sys.argv[3]), 'outcome': sys.argv[4], 'exit_code': int(sys.argv[5])}
+if sys.argv[6]:
+    row['head_sha'] = sys.argv[6]
+append_gate_history(Path(sys.argv[7]), row, sys.argv[8], int(sys.argv[9]), sys.argv[10])
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$slug" "$step" "$outcome" "$check_exit" "$_gh_head_sha" "$_gh_history_path" "${RUN_ID:-}" "${i:-0}" "$(date +%Y-%m-%dT%H:%M:%S%z)" 2>/dev/null || true
+    fi
+
     rm -f "$tmp_out"
   done < "$targets_file"
   write_phase between
@@ -3116,6 +3146,109 @@ if m:
     si_out=$(python3 "$ship_integrity_script" "${_si_args[@]}" 2>&1) || si_exit=$?
     if [[ $si_exit -eq 0 && "$si_out" == *"WARN RECORD ABSENT"* ]]; then
       echo "  [ship-integrity WARN] $(basename "$f"): $si_out" >&2
+    fi
+    # Final-step gate invariant (AC-2): a shipped sub-plan must have a
+    # passing gate row for its final step.  Only runs when the existing
+    # ship_integrity.py check passed (si_exit == 0) AND a gate actually
+    # ran for this sub-plan this iteration (gate_passed is "true" or
+    # "false", never "skip").
+    #
+    # When gate_passed=skip, no gate ran for this sub-plan — the gate
+    # half is not enforced by evaluate_ship either, and the final-step
+    # gate follows the same scoping.  The dispatched-slug case (retro F1)
+    # is caught when the gate DID run but the final step's row is missing
+    # or red.
+    if [[ $si_exit -eq 0 && -n "$_enrich_slug" && "$gate_passed" != "skip" ]]; then
+      local _fsg_exit=0
+      local _fsg_out=""
+      _fsg_out=$(python3 -c "
+import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import ship_integrity as si
+
+slug = sys.argv[2]
+f = Path(sys.argv[3])
+lc_file = sys.argv[4] if len(sys.argv) > 4 else ''
+project = Path(sys.argv[5]) if len(sys.argv) > 5 else None
+
+# Read sub-plan front-matter for estimated_steps.
+body = f.read_text(encoding='utf-8-sig')
+import re
+m = re.search(r'^---\s*\n(.*?)\n---', body, re.DOTALL)
+fm = {}
+if m:
+    for line in m.group(1).splitlines():
+        if ':' in line:
+            k, v = line.split(':', 1)
+            fm[k.strip()] = v.strip()
+
+estimated_steps = int(fm.get('estimated_steps', '0') or '0')
+if estimated_steps <= 0:
+    print('skip:no-estimated-steps')
+    raise SystemExit(0)
+
+final_step = estimated_steps - 1
+
+# Load gate rows: this iteration + persistent history.
+gate_rows = []
+if lc_file:
+    try:
+        for raw in Path(lc_file).read_text(encoding='utf-8-sig').splitlines():
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                gate_rows.append(json.loads(raw))
+            except json.JSONDecodeError:
+                continue
+    except OSError:
+        pass
+
+# Merge persistent gate history.
+try:
+    from ilk_paths import external_launcher_dir, resolve_project_key
+    key = resolve_project_key(project) if project else None
+    if key:
+        hist_path = Path(external_launcher_dir(key)) / 'gate-history.jsonl'
+        gate_rows.extend(si.load_gate_history(hist_path))
+except Exception:
+    pass
+
+# Resolve last step commit (trailer or ledger).
+has_trailer = True
+ledger_records = None
+try:
+    from ship_audit import load_ledger_records, _slug_has_any_trailer
+    result = __import__('subprocess').run(
+        ['git', 'log', '--format=%s%n%b', '--all'],
+        capture_output=True, text=True, cwd=project,
+    )
+    git_output = result.stdout if result.returncode == 0 else ''
+    has_trailer = _slug_has_any_trailer(slug, git_output)
+    ledger_records = load_ledger_records(project) if not has_trailer else None
+except Exception:
+    pass
+
+last_step_sha = si.find_last_step_commit(
+    slug, final_step, project, ledger_records=ledger_records,
+)
+
+if not si.check_final_step_gate(gate_rows, slug, final_step, last_step_sha, cwd=project):
+    reason = si.final_step_gate_violation_reason(
+        gate_rows, slug, final_step, last_step_sha,
+        has_trailer=has_trailer,
+        ledger_commit=last_step_sha if not has_trailer else None,
+    )
+    print(reason)
+    raise SystemExit(1)
+
+print('ok')
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$_enrich_slug" "$f" "$lc_file" "$PROJECT_PATH" 2>&1) || _fsg_exit=$?
+      if [[ $_fsg_exit -ne 0 && "$_fsg_out" != skip:* ]]; then
+        si_exit=1
+        si_out="$_fsg_out"
+      fi
     fi
     if [[ $si_exit -ne 0 ]]; then
       local slug
