@@ -295,10 +295,13 @@ def test_absent_work_tree_uses_clone(
     )
 
     proof = _read_ship_proof(world)
-    # No ledger row expected when new_commits_total is 0.
-    slugs_in_proof = [r.get("slug") for r in proof]
-    assert SLUG not in slugs_in_proof, (
-        f"unexpected ship-proof row for {SLUG!r} when work_tree is absent.\n{tail}"
+    # No *commit-attributing* ledger row expected when new_commits_total is 0.
+    # A gate_pass_at_head row (proof=gate_pass_at_head, commits=[]) is allowed:
+    # it records that the gate passed at head, not that commits were attributed.
+    commit_rows = [r for r in proof if r.get("proof") != "gate_pass_at_head"]
+    slugs_in_commit_rows = [r.get("slug") for r in commit_rows]
+    assert SLUG not in slugs_in_commit_rows, (
+        f"unexpected commit-attributing ship-proof row for {SLUG!r} when work_tree is absent.\n{tail}"
     )
 
 

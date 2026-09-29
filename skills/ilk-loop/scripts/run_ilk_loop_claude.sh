@@ -2481,11 +2481,15 @@ invoke_local_checks() {
       fi
     fi
 
-    local tmp_out
+    local tmp_out tmp_err
     tmp_out=$(mktemp)
+    tmp_err=$(mktemp)
 
     local check_exit=0
-    gtimeout "${remain_sec}s" python3 "$helper_script" --project "$plans_root" --repo-root "$project" --slug "$slug" --step "$step" > "$tmp_out" 2>&1 || check_exit=$?
+    # Capture stdout and stderr separately: run_local_checks.py may print
+    # diagnostic messages to stderr (mention-gate skip, isolation warnings)
+    # that break json.load when merged via 2>&1.
+    gtimeout "${remain_sec}s" python3 "$helper_script" --project "$plans_root" --repo-root "$project" --slug "$slug" --step "$step" > "$tmp_out" 2>"$tmp_err" || check_exit=$?
 
     local outcome=""
     # gtimeout exits 124 when it kills the process (outer timeout fired).
@@ -2568,7 +2572,7 @@ append_gate_history(Path(sys.argv[7]), row, sys.argv[8], int(sys.argv[9]), sys.a
 " "${_SKILL_ROOT}/ilk-loop/scripts" "$slug" "$step" "$outcome" "$check_exit" "$_gh_head_sha" "$_gh_history_path" "${RUN_ID:-}" "${i:-0}" "$(date +%Y-%m-%dT%H:%M:%S%z)" 2>/dev/null || true
     fi
 
-    rm -f "$tmp_out"
+    rm -f "$tmp_out" "$tmp_err"
   done < "$targets_file"
   write_phase between
 }
@@ -4808,6 +4812,9 @@ ${PROMPT}"
     local _revert_notice=""
     local _reverts_file_path
     _reverts_file_path=$(get_ilk_runtime_dir 2>/dev/null || true)/ship-reverts.jsonl
+    local _rn_plans_dir
+    _rn_plans_dir=$(get_plans_dir 2>/dev/null) || _rn_plans_dir=""
+    if [[ -n "$_rn_plans_dir" && -d "$_rn_plans_dir" ]]; then
     _revert_notice=$(python3 -c "
 import sys, json
 sys.path.insert(0, sys.argv[1])
@@ -4830,7 +4837,8 @@ for p in Path(plans_dir).glob('*.md'):
 notice = assemble_revert_notice(rows, shipped)
 if notice:
     print(notice)
-" "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file_path" "$plans_dir" 2>/dev/null) || true
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file_path" "$_rn_plans_dir" 2>/dev/null) || true
+    fi  # _rn_plans_dir guard
     if [[ -n "$_revert_notice" ]]; then
       iter_prompt="${_revert_notice}
 

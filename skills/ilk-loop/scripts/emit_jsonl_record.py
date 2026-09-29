@@ -95,6 +95,16 @@ def build_record(
         if reason:
             rec["reason"] = reason
 
+    # When outcome is error/inconclusive (e.g. ILK-CHECK: unmeasured marker)
+    # and reason is not yet set, extract it from the data results.  The
+    # runner determines the outcome from the rollup, so failing_check may
+    # be absent — the reason lives in the first matching result.
+    if "reason" not in rec and outcome in ("error", "inconclusive"):
+        for r in results:
+            if r.get("outcome") == outcome and r.get("reason"):
+                rec["reason"] = r["reason"]
+                break
+
     # head_sha: the commit the gate ran against.  Copied from run_local_checks
     # output (data["head_sha"]) when present.  A row without it is still
     # readable but is treated as "no proof" by the final-step gate invariant
