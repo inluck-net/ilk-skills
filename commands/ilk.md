@@ -213,6 +213,18 @@ Stop and hand back to the human when ANY of these is true:
   human-only decision).
 - An unexpected new bug surfaces and you've filed a ticket for it.
 
+## 7b. Runner reverts
+
+A `#ship` commit whose sub-plan reads not-shipped is a **runner revert**,
+not a desync. The runner reverted it because the gate was red or the
+one-ship invariant fired. Check `<runtime>/launcher/ship-reverts.jsonl`
+for the revert record.
+
+**Never resync by editing frontmatter.** The revert is intentional — the
+sub-plan's final gate must pass before it can ship. If the prompt carries
+a `REVERTED BY THE RUNNER` line, honor it: make the gate pass, do not
+set the sub-plan shipped by hand.
+
 ## 8. Final report
 
 Before ending your turn, run `loop_status.py` again and paste its output

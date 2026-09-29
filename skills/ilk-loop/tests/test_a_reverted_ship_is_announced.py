@@ -89,7 +89,6 @@ class TestRevertHelperValidation:
         assert not missing, f"helper missing fields: {missing}"
 
 
-@pytest.mark.xfail(strict=True, reason="revert notice not implemented")
 class TestRevertAppendsRow:
     """AC-1: every runner revert appends a row to
     ``<runtime>/launcher/ship-reverts.jsonl`` with the specified fields."""
@@ -161,7 +160,6 @@ class TestRevertAppendsRow:
 # ── AC-2: prompt carries revert notice ──────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="revert notice not implemented")
 class TestPromptCarriesRevertNotice:
     """AC-2: at the next iteration, for sub-plans of the active master,
     the prompt carries one line per revert row whose sub-plan is still
@@ -193,7 +191,6 @@ class TestPromptCarriesRevertNotice:
 # ── AC-3: commands/ilk.md rule ──────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="revert notice not implemented")
 class TestIlkMdRule:
     """AC-3: ``commands/ilk.md`` gets a short rule: a ``#ship`` commit
     whose sub-plan reads not-shipped is a runner revert — check
@@ -219,7 +216,6 @@ class TestIlkMdRule:
 # ── AC-4: contract doc entry ────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="revert notice not implemented")
 class TestContractDocEntry:
     """AC-4: the contract doc gains a ``ship-reverts.jsonl`` entry:
     writers, readers, fields."""
@@ -236,18 +232,18 @@ class TestContractDocEntry:
         """The contract doc must name the writer and reader of ship-reverts.jsonl."""
         contracts = _find_contracts_doc()
         text = contracts.read_text(encoding="utf-8")
-        # Find the section about ship-reverts
+        # Find the Contract 5b section (up to the next ## contract header).
         section_match = re.search(
-            r"##.*ship-reverts.*?\n(.*?)(?=\n##|\Z)",
+            r"## Contract 5b:.*?\n(.*?)(?=\n## Contract|\Z)",
             text,
             re.DOTALL | re.IGNORECASE,
         )
-        assert section_match, "no ship-reverts section in contract doc"
+        assert section_match, "no Contract 5b section in contract doc"
         section = section_match.group(1)
-        assert re.search(r"writer|Who writes", section, re.I), (
+        assert re.search(r"Who writes", section, re.I), (
             "contract doc does not name the writer"
         )
-        assert re.search(r"reader|Who reads", section, re.I), (
+        assert re.search(r"Who reads", section, re.I), (
             "contract doc does not name the reader"
         )
 

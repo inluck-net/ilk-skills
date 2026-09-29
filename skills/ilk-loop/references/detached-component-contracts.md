@@ -1113,6 +1113,78 @@ Both fixed in sub-plan `a-shared-remote-ship-can-be-proven` (2026-08-29).
 
 ---
 
+## Contract 5b: Revert notice (`runtime/launcher/ship-reverts.jsonl`)
+
+### Purpose
+
+When the runner reverts a shipped sub-plan (ship-integrity violation,
+inconclusive gate, one-ship enforcement, or final-gate violation), it
+appends a row to `ship-reverts.jsonl`. At the next iteration, the prompt
+carries a notice line for each revert whose slug is still not shipped,
+so the next worker knows the revert is intentional and must not resync
+by editing frontmatter.
+
+### Format
+
+One JSON object per line, written **compact** — `separators=(",", ":")`:
+
+```json
+{"slug":"alpha","ship_commit":"abc1234","reason":"ship_integrity","from_status":"shipped","to_status":"in-progress","from_step":2,"to_step":1,"run_id":"r01","iteration":1,"timestamp":"2026-09-29T10:00:00+0800","site":"integrity"}
+```
+
+Fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `slug` | string | The sub-plan slug |
+| `ship_commit` | string or null | The last `[plan:<slug>#ship]` commit SHA, or null if none exists |
+| `reason` | string | Why the revert happened: `ship_integrity`, `inconclusive_gate`, `one_ship_enforcement` |
+| `from_status` | string | Always `shipped` |
+| `to_status` | string | Always `in-progress` |
+| `from_step` | int or null | The `current_step` before the revert (null if unknown) |
+| `to_step` | int or null | The `current_step` after the revert (null if pointer untouched) |
+| `run_id` | string | The runner's run identifier |
+| `iteration` | int | The iteration number |
+| `timestamp` | string | ISO-8601 timestamp at revert time |
+| `site` | string | One of `integrity`, `inconclusive`, `one-ship`, `final-gate` |
+
+### Who writes
+
+- **`run_ilk_loop_claude.sh`** — via `revert_notice.append_revert_row()`,
+  called at each revert site: ship-integrity violation, inconclusive gate,
+  one-ship enforcement, and final-gate violation.
+
+### Who reads
+
+- **`run_ilk_loop_claude.sh`** — `revert_notice.read_revert_rows()` +
+  `assemble_revert_notice()` to build the prompt injection. Only rows whose
+  slug is still not shipped are included.
+
+### Invariants
+
+1. **Append-only.** The file is never truncated or rewritten. Each revert
+   produces exactly one row.
+2. **Absent file = no reverts.** A missing or empty file is not an error —
+   it means no reverts have occurred.
+3. **Unparseable lines are skipped.** A truncated or malformed line is
+   silently dropped (fail-closed on unreadable records, same as
+   Contract 2b invariant 5).
+4. **The prompt is byte-identical with no reverts.** When the file is
+   empty or all revert slugs are now shipped, no notice is injected.
+5. **`site` is one of four values.** `integrity` (ship-integrity violation),
+   `inconclusive` (driver-cap killed gate), `one-ship` (one-ship enforcement),
+   `final-gate` (final-step gate violation). Any other value is an error.
+
+### Bug reference (retro-2026-09-29 F1)
+
+Ship-integrity reverted `root-area-typecheck-gate` to `pending` and left
+ship commit `9b59229`. The next worker found `pending` next to a `#ship`
+commit, called it a "bookkeeping desync", and set it to `shipped` by hand.
+The prompt and `commands/ilk.md` never mentioned reverts, so the worker
+had no way to know the revert was intentional.
+
+---
+
 ## Contract 6b: The project key is a cross-repo contract
 
 ### The rule

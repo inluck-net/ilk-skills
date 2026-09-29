@@ -3061,6 +3061,32 @@ body = re.sub(r'^(status:\s*)shipped', r'\1in-progress', body, count=1, flags=re
 p.write_text(body)
 " "$f" 2>/dev/null
         echo "  [ship-integrity] $_si_slug: gate inconclusive (driver cap) — self-ship reverted, not counted toward quarantine" >&2
+        # Record the revert for the next worker's prompt.
+        local _revert_ts
+        _revert_ts=$(date +%Y-%m-%dT%H:%M:%S%z)
+        local _reverts_file
+        _reverts_file=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py" --runtime-dir "$PROJECT_PATH" 2>/dev/null)/launcher/ship-reverts.jsonl
+        local _ship_sha=""
+        _ship_sha=$(git -C "$PROJECT_PATH" log --all --format="%H" --grep="\[plan:${_si_slug}#ship\]" -1 2>/dev/null) || true
+        python3 -c "
+import sys
+sys.path.insert(0, sys.argv[1])
+from revert_notice import append_revert_row
+append_revert_row(
+    sys.argv[2],
+    slug=sys.argv[3],
+    ship_commit=sys.argv[4] or None,
+    reason='inconclusive_gate',
+    from_status='shipped',
+    to_status='in-progress',
+    from_step=None,
+    to_step=None,
+    run_id=sys.argv[5],
+    iteration=int(sys.argv[6]),
+    timestamp=sys.argv[7],
+    site='inconclusive',
+)
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file" "$_si_slug" "$_ship_sha" "$RUN_ID" "$i" "$_revert_ts" 2>/dev/null || true
       fi
       # Skip ship_integrity.py for inconclusive gates — the revert above
       # is the enforcement.  Do NOT fall through to the violation path.
@@ -3188,6 +3214,49 @@ p.write_text(body)
 print(note)
 " "$f" "$lc_file" "$slug" 2>/dev/null)
       echo "  [ship-integrity] reverted $slug to in-progress; ${revert_out:-pointer unchanged}" >&2
+      # Record the revert for the next worker's prompt.
+      if [[ -n "$slug" ]]; then
+        local _revert_ts
+        _revert_ts=$(date +%Y-%m-%dT%H:%M:%S%z)
+        local _reverts_file
+        _reverts_file=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py" --runtime-dir "$PROJECT_PATH" 2>/dev/null)/launcher/ship-reverts.jsonl
+        # Find the last [plan:<slug>#ship] commit SHA (if any).
+        local _ship_sha=""
+        _ship_sha=$(git -C "$PROJECT_PATH" log --all --format="%H" --grep="\[plan:${slug}#ship\]" -1 2>/dev/null) || true
+        # Read the current_step from the sub-plan (before the revert changed it).
+        local _from_step=""
+        _from_step=$(python3 -c "
+import re, sys
+from pathlib import Path
+body = Path(sys.argv[1]).read_text()
+m = re.search(r'^current_step:\s*(\d+)', body, re.MULTILINE)
+if m: print(m.group(1))
+" "$f" 2>/dev/null) || true
+        # Detect if this is a final-gate violation vs a step-commit violation.
+        local _revert_site="integrity"
+        if [[ "$si_out" == *"final-step gate"* ]]; then
+          _revert_site="final-gate"
+        fi
+        python3 -c "
+import sys
+sys.path.insert(0, sys.argv[1])
+from revert_notice import append_revert_row
+append_revert_row(
+    sys.argv[2],
+    slug=sys.argv[3],
+    ship_commit=sys.argv[4] or None,
+    reason=sys.argv[9],
+    from_status='shipped',
+    to_status='in-progress',
+    from_step=int(sys.argv[5]) if sys.argv[5] else None,
+    to_step=None,
+    run_id=sys.argv[6],
+    iteration=int(sys.argv[7]),
+    timestamp=sys.argv[8],
+    site=sys.argv[10],
+)
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file" "$slug" "$_ship_sha" "$_from_step" "$RUN_ID" "$i" "$_revert_ts" "ship_integrity" "$_revert_site" 2>/dev/null || true
+      fi
       # A rejected gate invalidates the ship intent for the slug it rejects.
       #
       # Contract note (§7h): this adds a new *writer* of the ship-intent file,
@@ -4556,6 +4625,43 @@ ${PROMPT}"
       echo "[steer] interjection injected (${#STEER_INTERJECTION_TEXT} chars)"
     fi
 
+    # -- Revert notice injection (AC-2) ---------------------------------
+    # If the runner reverted any shipped sub-plans in previous iterations,
+    # inject a notice into the prompt so the next worker knows not to
+    # resync by editing frontmatter.
+    local _revert_notice=""
+    local _reverts_file_path
+    _reverts_file_path=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py" --runtime-dir "$PROJECT_PATH" 2>/dev/null)/launcher/ship-reverts.jsonl
+    _revert_notice=$(python3 -c "
+import sys, json
+sys.path.insert(0, sys.argv[1])
+from revert_notice import read_revert_rows, assemble_revert_notice
+rows = read_revert_rows(sys.argv[2])
+# Determine which slugs are currently shipped.
+import re
+from pathlib import Path
+plans_dir = sys.argv[3]
+shipped = set()
+for p in Path(plans_dir).glob('*.md'):
+    if p.name.startswith('MASTER'):
+        continue
+    text = p.read_text()
+    fm = {}
+    for m in re.finditer(r'^(\w[\w_-]*):\s*(.*)', text, re.MULTILINE):
+        fm[m.group(1)] = m.group(2).strip()
+    if fm.get('status') == 'shipped':
+        shipped.add(fm.get('plan', ''))
+notice = assemble_revert_notice(rows, shipped)
+if notice:
+    print(notice)
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file_path" "$plans_dir" 2>/dev/null) || true
+    if [[ -n "$_revert_notice" ]]; then
+      iter_prompt="${_revert_notice}
+
+${iter_prompt}"
+      echo "[revert-notice] injected revert notice into prompt"
+    fi
+
     # ── Pre-iteration record ──────────────────────────────────────────
     # Written BEFORE the agent runs, so a killed runner still leaves a
     # classifiable trace.
@@ -5239,6 +5345,32 @@ for p in Path(plans_dir).glob('*.md'):
         break
 " "$_one_ship_plans_dir" "$_pre_slug" "$_pre_step" 2>/dev/null || true
             echo "[one-ship] reverted $_pre_slug: status shipped→in-progress, current_step ${_pre_step:-?} (dispatched for ${_dispatched_slug:-<empty>})"
+            # Record the revert for the next worker's prompt.
+            local _revert_ts
+            _revert_ts=$(date +%Y-%m-%dT%H:%M:%S%z)
+            local _reverts_file
+            _reverts_file=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py" --runtime-dir "$PROJECT_PATH" 2>/dev/null)/launcher/ship-reverts.jsonl
+            local _ship_sha=""
+            _ship_sha=$(git -C "$PROJECT_PATH" log --all --format="%H" --grep="\[plan:${_pre_slug}#ship\]" -1 2>/dev/null) || true
+            python3 -c "
+import sys
+sys.path.insert(0, sys.argv[1])
+from revert_notice import append_revert_row
+append_revert_row(
+    sys.argv[2],
+    slug=sys.argv[3],
+    ship_commit=sys.argv[4] or None,
+    reason='one_ship_enforcement',
+    from_status='shipped',
+    to_status='in-progress',
+    from_step=int(sys.argv[5]) if sys.argv[5] else None,
+    to_step=int(sys.argv[5]) if sys.argv[5] else None,
+    run_id=sys.argv[6],
+    iteration=int(sys.argv[7]),
+    timestamp=sys.argv[8],
+    site='one-ship',
+)
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file" "$_pre_slug" "$_ship_sha" "$_pre_step" "$RUN_ID" "$i" "$_revert_ts" 2>/dev/null || true
           fi
         done <<< "$PRE_ITER_ALL_STEPS"
       fi
