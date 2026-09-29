@@ -718,6 +718,312 @@ def _classify_check(
     return "fail", None
 
 
+# ── Mention gate (AC-1 through AC-7) ──────────────────────────────────────
+
+_MENTION_GATE_CAP = 20  # AC-4: more than 20 test files ⇒ skip, log WARN
+
+# Test file globs — used to distinguish test files from docs/other files.
+_TEST_FILE_PATTERNS = [
+    re.compile(r"test[_-].*\.py$"),
+    re.compile(r".*[_-]test\.py$"),
+    re.compile(r"test[_-].*\.[jt]sx?$"),
+    re.compile(r".*[_-]test\.[jt]sx?$"),
+    re.compile(r".*\.test\.[jt]sx?$"),
+    re.compile(r".*\.spec\.[jt]sx?$"),
+]
+
+
+def _is_test_file(path: str) -> bool:
+    """Check if a file path looks like a test file."""
+    basename = os.path.basename(path)
+    return any(p.search(basename) for p in _TEST_FILE_PATTERNS)
+
+
+def _get_changed_files_for_step(
+    project: Path, slug: str, step: int, pre_iter_head: str | None
+) -> list[str] | None:
+    """Find files changed by commits carrying [plan:<slug>#step-<step>].
+
+    AC-1: the changed set. Falls back to git diff --name-only <pre-iter>..HEAD
+    on shared remotes with no trailers.
+
+    Returns list of repo-relative paths, or None if unable to determine
+    (caller should skip the mention gate with a logged warning).
+    """
+    # Try trailer-based approach first
+    try:
+        # Find commits with the step trailer
+        # Escape special regex characters in the trailer for git grep
+        trailer = f"[plan:{slug}#step-{step}]"
+        # Use -F for fixed-string matching to avoid regex interpretation
+        result = subprocess.run(
+            ["git", "log", "--format=%H", "--all", f"--grep={trailer}", "-F"],
+            cwd=str(project),
+            capture_output=True,
+            text=True,
+            encoding="utf-8", errors="replace",
+            timeout=30,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            commit_shas = result.stdout.strip().splitlines()
+            # Get changed files from those commits
+            changed = set()
+            for sha in commit_shas:
+                diff_result = subprocess.run(
+                    ["git", "diff", "--name-only", f"{sha}^..{sha}"],
+                    cwd=str(project),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8", errors="replace",
+                    timeout=30,
+                )
+                if diff_result.returncode == 0:
+                    changed.update(
+                        ln.strip() for ln in diff_result.stdout.splitlines()
+                        if ln.strip()
+                    )
+            if changed:
+                return sorted(changed)
+    except Exception:
+        pass
+
+    # Fallback: use pre-iteration head if available (shared remote case)
+    if pre_iter_head:
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--name-only", f"{pre_iter_head}..HEAD"],
+                cwd=str(project),
+                capture_output=True,
+                text=True,
+                encoding="utf-8", errors="replace",
+                timeout=30,
+            )
+            if result.returncode == 0:
+                return [
+                    ln.strip() for ln in result.stdout.splitlines()
+                    if ln.strip()
+                ]
+        except Exception:
+            pass
+
+    # No trailers and no pre-iteration head — skip with logged warning
+    return None
+
+
+def _find_mentions(project: Path, changed_files: list[str]) -> dict[str, list[str]]:
+    """Find files that mention changed files with line numbers or by path.
+
+    For each changed file X, finds tracked files containing:
+      - <basename(X)>:<digits> (line-number pin)
+      - <repo-relative X>:<digits> (line-number pin)
+      - <basename(X)> | <digits> (markdown table format)
+      - <repo-relative X> (general file reference)
+
+    Returns {changed_file: [mentioning_files]}.
+    """
+    mentions: dict[str, list[str]] = {}
+
+    for changed in changed_files:
+        basename = os.path.basename(changed)
+        # Escape special regex characters in basename
+        escaped_basename = re.escape(basename)
+        escaped_path = re.escape(changed)
+
+        try:
+            all_files: set[str] = set()
+            # Search for line-number pins: file.py:10
+            colon_pattern = f"{escaped_basename}:[0-9]+"
+            result = subprocess.run(
+                ["git", "grep", "-lE", "-e", colon_pattern],
+                cwd=str(project),
+                capture_output=True,
+                text=True,
+                encoding="utf-8", errors="replace",
+                timeout=30,
+            )
+            if result.returncode == 0:
+                for ln in result.stdout.splitlines():
+                    ln = ln.strip()
+                    if ln and ln != changed:
+                        all_files.add(ln)
+            # Search for pipe format: file.py | 10
+            search_str = f"{basename} |"
+            result = subprocess.run(
+                ["git", "grep", "-l", "-e", search_str],
+                cwd=str(project),
+                capture_output=True,
+                text=True,
+                encoding="utf-8", errors="replace",
+                timeout=30,
+            )
+            if result.returncode == 0:
+                for ln in result.stdout.splitlines():
+                    ln = ln.strip()
+                    if ln and ln != changed:
+                        all_files.add(ln)
+            # Search for general file reference: docs/api.md
+            # Only for non-source files (docs, configs, etc.)
+            if not changed.endswith(('.py', '.js', '.ts', '.jsx', '.tsx')):
+                result = subprocess.run(
+                    ["git", "grep", "-l", "-e", changed],
+                    cwd=str(project),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8", errors="replace",
+                    timeout=30,
+                )
+                if result.returncode == 0:
+                    for ln in result.stdout.splitlines():
+                        ln = ln.strip()
+                        if ln and ln != changed:
+                            all_files.add(ln)
+            if all_files:
+                mentions[changed] = sorted(all_files)
+        except Exception:
+            pass
+
+    return mentions
+
+
+def _resolve_suite_invocation(project: Path) -> str:
+    """Build the suite invocation from ship.suite.command.
+
+    Strips -n/--dist (xdist) the way verification_record.run_at_base does.
+    Returns empty string if not configured.
+    """
+    try:
+        from ship_config import load_ship_config, ShipConfig  # noqa: E402
+        result = load_ship_config(project)
+        if isinstance(result, ShipConfig):
+            invocation = result.ship.get("suite", {}).get("command", "")
+            flags = result.ship.get("suite", {}).get("flags", [])
+            cmd = invocation if not flags else f"{invocation} {' '.join(flags)}"
+            # Strip xdist flags
+            parts = shlex.split(cmd)
+            filtered = []
+            skip_next = False
+            for part in parts:
+                if skip_next:
+                    skip_next = False
+                    continue
+                if part in ("-n", "--dist"):
+                    skip_next = True
+                    continue
+                if part.startswith("-n") or part.startswith("--dist"):
+                    continue
+                filtered.append(part)
+            return " ".join(filtered)
+    except Exception:
+        pass
+    return ""
+
+
+def _is_vitest_project(project: Path) -> bool:
+    """Check if this is a vitest project."""
+    pkg_json = project / "package.json"
+    if pkg_json.exists():
+        try:
+            import json as json_mod
+            data = json_mod.loads(pkg_json.read_text(encoding="utf-8"))
+            deps = data.get("devDependencies", {})
+            deps.update(data.get("dependencies", {}))
+            return "vitest" in deps
+        except Exception:
+            pass
+    return False
+
+
+def _synthesize_mention_check(
+    project: Path,
+    changed_files: list[str],
+    existing_commands: set[str],
+) -> dict | None:
+    """Synthesize a mention gate check (AC-3).
+
+    Returns a check dict to append, or None if nothing to gate.
+    """
+    # Find mentions
+    mentions = _find_mentions(project, changed_files)
+
+    # Collect all mentioning files
+    all_mentioned: set[str] = set()
+    for files in mentions.values():
+        all_mentioned.update(files)
+
+    # Split into test files and non-test files
+    test_files = [f for f in all_mentioned if _is_test_file(f)]
+    non_test_files = [f for f in all_mentioned if not _is_test_file(f)]
+
+    # AC-2: include changed test files directly
+    for changed in changed_files:
+        if _is_test_file(changed) and changed not in test_files:
+            test_files.append(changed)
+
+    # For non-test files, find test files that mention them
+    for non_test in non_test_files:
+        try:
+            result = subprocess.run(
+                ["git", "grep", "-lE", re.escape(non_test)],
+                cwd=str(project),
+                capture_output=True,
+                text=True,
+                encoding="utf-8", errors="replace",
+                timeout=30,
+            )
+            if result.returncode == 0:
+                for ln in result.stdout.splitlines():
+                    ln = ln.strip()
+                    if ln and _is_test_file(ln) and ln not in test_files:
+                        test_files.append(ln)
+        except Exception:
+            pass
+
+    # De-duplicate
+    test_files = sorted(set(test_files))
+
+    # AC-4: cap at 20 files
+    if len(test_files) > _MENTION_GATE_CAP:
+        # Log warning but don't gate
+        print(
+            f"WARN mention-gate: {len(test_files)} files cite "
+            f"{changed_files[0]}:<line> — over cap, not gated",
+            file=sys.stderr,
+        )
+        return None
+
+    if not test_files:
+        return None
+
+    # Filter out files already in the declared gate
+    new_test_files = []
+    for tf in test_files:
+        # Check if any existing command already runs this file
+        if not any(tf in cmd for cmd in existing_commands):
+            new_test_files.append(tf)
+
+    if not new_test_files:
+        return None
+
+    # Build the check command
+    suite = _resolve_suite_invocation(project)
+    if not suite:
+        # No suite configured — use pytest as default
+        suite = "python3 -m pytest"
+
+    # AC-6: vitest projects get vitest form
+    if _is_vitest_project(project):
+        suite = "vitest run"
+
+    files_str = " ".join(new_test_files)
+    cmd = f"{suite} {files_str}"
+
+    return {
+        "command": cmd,
+        "timeout": 300,
+        "scope": "mention",
+    }
+
+
 def run_one(check: dict, scope: str, project: Path,
             default_timeout: int = DEFAULT_CHECK_TIMEOUT_S) -> CheckResult:
     cmd = check.get("command", "")
@@ -1320,6 +1626,27 @@ def main(argv: list[str]) -> int:
         }))
         return 2
 
+    # AC-1 through AC-7: synthesize mention gate if applicable
+    mention_check = None
+    if step is not None:
+        # Get pre-iteration head from environment (set by runner)
+        pre_iter_head = os.environ.get("ILK_PRE_ITER_HEAD")
+        changed_files = _get_changed_files_for_step(project, slug, step, pre_iter_head)
+        if changed_files is None:
+            # No trailers and no pre-iteration head — skip with logged warning
+            print(
+                f"mention-gate: skipped (no trailer, no range)",
+                file=sys.stderr,
+            )
+        elif changed_files:
+            # Collect existing commands to avoid duplicates
+            existing_commands = {
+                c.get("command", "") for c in subplan_checks + step_checks
+            }
+            mention_check = _synthesize_mention_check(
+                project, changed_files, existing_commands
+            )
+
     results: list[CheckResult] = []
     iso_tree = args.repo_root if args.repo_root is not None else project
     iso_ctx = contextlib.nullcontext(IsolationState()) if args.no_isolate else isolate_to_head(iso_tree)
@@ -1328,6 +1655,8 @@ def main(argv: list[str]) -> int:
             results.append(run_one(c, "subplan", run_cwd))
         for c in step_checks:
             results.append(run_one(c, "step", run_cwd))
+        if mention_check is not None:
+            results.append(run_one(mention_check, "mention", run_cwd))
 
     passed = all(r.passed for r in results)
 
@@ -1358,6 +1687,7 @@ def main(argv: list[str]) -> int:
         "run_cwd": str(run_cwd),
         "subplan_check_count": len(subplan_checks),
         "step_check_count": len(step_checks),
+        "mention_check_count": 1 if mention_check is not None else 0,
         "all_passed": passed,
         "outcome": rollup,
         "results": [asdict(r) for r in results],

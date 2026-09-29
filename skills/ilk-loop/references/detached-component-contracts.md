@@ -596,6 +596,45 @@ but is treated as "no proof" by the final-step gate invariant (fail closed).
 The helper JSON also carries `path_prelude_applied: bool` (true when
 `_read_path_prelude` returned a non-empty prelude that was prepended).
 
+### Synthesized mention gate (`scope: mention`)
+
+When a step changes files that are pinned by line number in other files
+(e.g., `src.py:10` in a doc table), `run_local_checks.py` synthesizes
+an additional check to gate the test files that cite those pins. This
+catches the 93-minute-delayed failure from retro F7.
+
+**How it works:**
+
+1. **Changed set resolution** (AC-1): finds files touched by commits
+   carrying `[plan:<slug>#step-N]`. On shared remotes with no trailers,
+   falls back to `git diff --name-only <pre-iteration head>..HEAD` if
+   the runner exports `ILK_PRE_ITER_HEAD`. Otherwise skips with a
+   logged `mention-gate: skipped (no trailer, no range)`.
+
+2. **Mention search** (AC-2): for each changed file `X`, runs
+   `git grep -lE '<basename(X>):<digits>|<repo-relative X>:<digits>'`
+   to find files that pin it by line number.
+
+3. **Test file resolution** (AC-3): splits mentions into test files
+   (matched against project test globs) and non-test files. For
+   non-test files, finds test files that mention them.
+
+4. **Cap** (AC-4): if more than 20 test files cite the changed file,
+   skips the gate and logs `WARN mention-gate: <n> files cite
+   <X>:<line> — over cap, not gated`.
+
+5. **Synthesis** (AC-3): appends one check to the step's gate:
+   `<resolved suite invocation> <test files…>`, with `scope: mention`,
+   timeout 300. If the declared gate already runs a file, drops it. If
+   nothing is left, appends nothing.
+
+6. **Vitest** (AC-6): a vitest project gets a `vitest run <files>` form.
+
+**Output format:** the synthesized check appears in the results array
+with `scope: "mention"` (instead of `"subplan"` or `"step"`). The
+top-level `mention_check_count` field indicates whether a mention check
+was appended (0 or 1).
+
 ### Rollup rule
 
 The helper JSON includes a top-level `outcome` field — the rollup over

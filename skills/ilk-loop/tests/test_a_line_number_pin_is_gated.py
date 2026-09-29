@@ -214,10 +214,11 @@ def _make_vitest_repo(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
 
-    # vitest test
+    # vitest test with line-number pin
     (repo / "src.test.ts").write_text(
         'import { describe, it, expect } from "vitest";\n'
         'import { readFileSync } from "fs";\n\n'
+        '// src.ts:1\n'
         'describe("src", () => {\n'
         '  it("target at line 1", () => {\n'
         '    const lines = readFileSync("src.ts", "utf-8").split("\\n");\n'
@@ -251,25 +252,37 @@ def _make_vitest_repo(tmp_path: Path) -> Path:
 # ── AC-1: mention check appended and goes red ──────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="mention gate not implemented")
 def test_ac1_mention_check_appended_and_red(tmp_path: Path) -> None:
     """A commit that shifts lines under a pinned file ⇒ mention gate appended."""
     repo = _make_repo_with_mention(tmp_path)
-    proj = _make_project(
-        tmp_path,
+
+    # Create plans in the repo's docs/plans directory
+    plans = repo / "docs" / "plans"
+    plans.mkdir(parents=True, exist_ok=True)
+    (plans / "2026-09-29-alpha.md").write_text(
         _SUBPLAN_FIXTURE.format(slug="alpha", step=1),
-        "alpha",
+        encoding="utf-8",
+    )
+    (plans / "MASTER-2026-09-29-execution-plan.md").write_text(
+        "---\nstatus: active\n---\n# m\n- [x](./2026-09-29-alpha.md)\n",
+        encoding="utf-8",
     )
 
     # run the gate for step 1
-    result = rlc.run_local_checks(
-        project=proj,
-        slug="alpha",
-        step=1,
-    )
+    import json
+    import sys
+    from io import StringIO
+    old_stdout = sys.stdout
+    sys.stdout = StringIO()
+    try:
+        exit_code = rlc.main(["--project", str(repo), "--slug", "alpha", "--step", "1"])
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+    result = json.loads(output)
 
     # the mention check should be in the results
-    checks = [c for c in result["checks"] if c.get("scope") == "mention"]
+    checks = [c for c in result["results"] if c.get("scope") == "mention"]
     assert len(checks) == 1, f"expected 1 mention check, got {len(checks)}"
 
     # the mention check should have failed (src.py:10 no longer matches)
@@ -279,7 +292,6 @@ def test_ac1_mention_check_appended_and_red(tmp_path: Path) -> None:
 # ── AC-2: test file changed ⇒ gated directly ──────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="mention gate not implemented")
 def test_ac2_test_file_changed_gated_directly(tmp_path: Path) -> None:
     """A changed test file is gated directly, not via mention search."""
     repo = tmp_path / "repo"
@@ -298,21 +310,33 @@ def test_ac2_test_file_changed_gated_directly(tmp_path: Path) -> None:
     _git(repo, "add", ".")
     _git(repo, "commit", "-m", "feat(x): break test [plan:alpha#step-1]")
 
-    proj = _make_project(
-        tmp_path,
+    # Create plans in the repo's docs/plans directory
+    plans = repo / "docs" / "plans"
+    plans.mkdir(parents=True, exist_ok=True)
+    (plans / "2026-09-29-alpha.md").write_text(
         _SUBPLAN_FIXTURE.format(slug="alpha", step=1),
-        "alpha",
+        encoding="utf-8",
+    )
+    (plans / "MASTER-2026-09-29-execution-plan.md").write_text(
+        "---\nstatus: active\n---\n# m\n- [x](./2026-09-29-alpha.md)\n",
+        encoding="utf-8",
     )
 
-    result = rlc.run_local_checks(
-        project=proj,
-        slug="alpha",
-        step=1,
-    )
+    import json
+    import sys
+    from io import StringIO
+    old_stdout = sys.stdout
+    sys.stdout = StringIO()
+    try:
+        exit_code = rlc.main(["--project", str(repo), "--slug", "alpha", "--step", "1"])
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+    result = json.loads(output)
 
     # the test file should be in the gate
     test_checks = [
-        c for c in result["checks"]
+        c for c in result["results"]
         if "test_foo.py" in c.get("command", "")
     ]
     assert len(test_checks) >= 1, "test_foo.py should be in the gate"
@@ -321,7 +345,6 @@ def test_ac2_test_file_changed_gated_directly(tmp_path: Path) -> None:
 # ── AC-3: doc mention ⇒ test that cites doc is gated ──────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="mention gate not implemented")
 def test_ac3_doc_mention_gates_citing_test(tmp_path: Path) -> None:
     """A changed doc file ⇒ test that cites the doc is gated."""
     repo = tmp_path / "repo"
@@ -346,21 +369,33 @@ def test_ac3_doc_mention_gates_citing_test(tmp_path: Path) -> None:
     _git(repo, "add", ".")
     _git(repo, "commit", "-m", "feat(x): change api [plan:alpha#step-1]")
 
-    proj = _make_project(
-        tmp_path,
+    # Create plans in the repo's docs/plans directory
+    plans = repo / "docs" / "plans"
+    plans.mkdir(parents=True, exist_ok=True)
+    (plans / "2026-09-29-alpha.md").write_text(
         _SUBPLAN_FIXTURE.format(slug="alpha", step=1),
-        "alpha",
+        encoding="utf-8",
+    )
+    (plans / "MASTER-2026-09-29-execution-plan.md").write_text(
+        "---\nstatus: active\n---\n# m\n- [x](./2026-09-29-alpha.md)\n",
+        encoding="utf-8",
     )
 
-    result = rlc.run_local_checks(
-        project=proj,
-        slug="alpha",
-        step=1,
-    )
+    import json
+    import sys
+    from io import StringIO
+    old_stdout = sys.stdout
+    sys.stdout = StringIO()
+    try:
+        exit_code = rlc.main(["--project", str(repo), "--slug", "alpha", "--step", "1"])
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+    result = json.loads(output)
 
     # test_api.py should be in the gate via mention
     test_checks = [
-        c for c in result["checks"]
+        c for c in result["results"]
         if "test_api.py" in c.get("command", "")
     ]
     assert len(test_checks) >= 1, "test_api.py should be in the gate via mention"
@@ -369,25 +404,37 @@ def test_ac3_doc_mention_gates_citing_test(tmp_path: Path) -> None:
 # ── AC-4: cap at 20 files ─────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="mention gate not implemented")
 def test_ac4_cap_at_20_files(tmp_path: Path) -> None:
     """More than 20 test files cite the changed file ⇒ cap triggers."""
     repo = _make_repo_many_mentions(tmp_path, n=25)
-    proj = _make_project(
-        tmp_path,
+
+    # Create plans in the repo's docs/plans directory
+    plans = repo / "docs" / "plans"
+    plans.mkdir(parents=True, exist_ok=True)
+    (plans / "2026-09-29-alpha.md").write_text(
         _SUBPLAN_FIXTURE.format(slug="alpha", step=1),
-        "alpha",
+        encoding="utf-8",
+    )
+    (plans / "MASTER-2026-09-29-execution-plan.md").write_text(
+        "---\nstatus: active\n---\n# m\n- [x](./2026-09-29-alpha.md)\n",
+        encoding="utf-8",
     )
 
-    result = rlc.run_local_checks(
-        project=proj,
-        slug="alpha",
-        step=1,
-    )
+    import json
+    import sys
+    from io import StringIO
+    old_stdout = sys.stdout
+    sys.stdout = StringIO()
+    try:
+        exit_code = rlc.main(["--project", str(repo), "--slug", "alpha", "--step", "1"])
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+    result = json.loads(output)
 
     # no mention check should be appended (cap triggered)
     mention_checks = [
-        c for c in result["checks"] if c.get("scope") == "mention"
+        c for c in result["results"] if c.get("scope") == "mention"
     ]
     assert len(mention_checks) == 0, f"cap should have triggered, got {len(mention_checks)} mention checks"
 
@@ -398,21 +445,34 @@ def test_ac4_cap_at_20_files(tmp_path: Path) -> None:
 def test_ac5_no_mention_gate_unchanged(tmp_path: Path) -> None:
     """No line-number mentions ⇒ gate unchanged, byte-identical."""
     repo = _make_repo_no_mention(tmp_path)
-    proj = _make_project(
-        tmp_path,
+
+    # Create plans in the repo's docs/plans directory
+    plans = repo / "docs" / "plans"
+    plans.mkdir(parents=True, exist_ok=True)
+    (plans / "2026-09-29-alpha.md").write_text(
         _SUBPLAN_FIXTURE.format(slug="alpha", step=1),
-        "alpha",
+        encoding="utf-8",
+    )
+    (plans / "MASTER-2026-09-29-execution-plan.md").write_text(
+        "---\nstatus: active\n---\n# m\n- [x](./2026-09-29-alpha.md)\n",
+        encoding="utf-8",
     )
 
-    result = rlc.run_local_checks(
-        project=proj,
-        slug="alpha",
-        step=1,
-    )
+    import json
+    import sys
+    from io import StringIO
+    old_stdout = sys.stdout
+    sys.stdout = StringIO()
+    try:
+        exit_code = rlc.main(["--project", str(repo), "--slug", "alpha", "--step", "1"])
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+    result = json.loads(output)
 
     # no mention check should be appended
     mention_checks = [
-        c for c in result["checks"] if c.get("scope") == "mention"
+        c for c in result["results"] if c.get("scope") == "mention"
     ]
     assert len(mention_checks) == 0, "no mention checks expected"
 
@@ -420,25 +480,37 @@ def test_ac5_no_mention_gate_unchanged(tmp_path: Path) -> None:
 # ── AC-6: vitest project gets vitest form ──────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="mention gate not implemented")
 def test_ac6_vitest_form(tmp_path: Path) -> None:
     """A vitest project gets a ``vitest run <files>`` form."""
     repo = _make_vitest_repo(tmp_path)
-    proj = _make_project(
-        tmp_path,
+
+    # Create plans in the repo's docs/plans directory
+    plans = repo / "docs" / "plans"
+    plans.mkdir(parents=True, exist_ok=True)
+    (plans / "2026-09-29-alpha.md").write_text(
         _SUBPLAN_FIXTURE.format(slug="alpha", step=1),
-        "alpha",
+        encoding="utf-8",
+    )
+    (plans / "MASTER-2026-09-29-execution-plan.md").write_text(
+        "---\nstatus: active\n---\n# m\n- [x](./2026-09-29-alpha.md)\n",
+        encoding="utf-8",
     )
 
-    result = rlc.run_local_checks(
-        project=proj,
-        slug="alpha",
-        step=1,
-    )
+    import json
+    import sys
+    from io import StringIO
+    old_stdout = sys.stdout
+    sys.stdout = StringIO()
+    try:
+        exit_code = rlc.main(["--project", str(repo), "--slug", "alpha", "--step", "1"])
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+    result = json.loads(output)
 
     # the mention check should use vitest
     mention_checks = [
-        c for c in result["checks"] if c.get("scope") == "mention"
+        c for c in result["results"] if c.get("scope") == "mention"
     ]
     assert len(mention_checks) == 1, f"expected 1 mention check, got {len(mention_checks)}"
     assert "vitest" in mention_checks[0]["command"], "should use vitest"
@@ -447,7 +519,6 @@ def test_ac6_vitest_form(tmp_path: Path) -> None:
 # ── AC-7: contract doc describes scope: mention ────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="mention gate not implemented")
 def test_ac7_contract_describes_mention_scope(tmp_path: Path) -> None:
     """The contract doc describes the synthesized check (``scope: mention``)."""
     contract_path = Path(__file__).resolve().parent.parent / "references" / "detached-component-contracts.md"
