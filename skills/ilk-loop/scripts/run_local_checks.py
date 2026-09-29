@@ -1751,7 +1751,15 @@ def main(argv: list[str]) -> int:
 
     # Rollup outcome: fail > error > pass.  Used by the runner's
     # local_check_outcome when present; absent ⇒ fall back to all_passed.
-    rollup = "pass"
+    # When no checks ran at all (no declared checks, no mention check),
+    # report "no-checks" instead of a vacuous "pass".  A sub-plan with
+    # no declared gate is not "green" — it is ungated, and the runner
+    # must set gate_passed=skip so the final-step gate invariant falls
+    # back to gate-history.jsonl.
+    if not results:
+        rollup = "no-checks"
+    else:
+        rollup = "pass"
     for r in results:
         if r.outcome == "fail":
             rollup = "fail"

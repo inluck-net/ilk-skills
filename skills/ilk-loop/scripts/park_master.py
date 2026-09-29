@@ -278,9 +278,34 @@ def main(argv: list[str]) -> int:
                 }
                 if not a.dry_run:
                     try:
+                        # Save the original status before parking so
+                        # reconcile_master_status can distinguish a
+                        # shipped→blocked (should unblock) from an
+                        # active→blocked (should stay blocked).
+                        _pre_park = normalize_master_status(fm.get("status") or "")
                         write_status(target, PARKED)
                         _stamp(target, reason, when,
                                hold=not a.auto, yield_=a.yield_)
+                        # Write pre_park_status after stamp so it's not dropped.
+                        _text = target.read_text(encoding="utf-8-sig")
+                        _lines = _text.splitlines(keepends=True)
+                        _out, _in_fm, _done = [], False, False
+                        for _line in _lines:
+                            if _line.rstrip("\n") == "---":
+                                if not _in_fm:
+                                    _in_fm = True
+                                elif not _done:
+                                    _out.append(f"pre_park_status: {_pre_park}\n")
+                                    _done = True
+                                _out.append(_line)
+                                continue
+                            if _in_fm and not _done and _line.startswith("pre_park_status:"):
+                                continue
+                            _out.append(_line)
+                        _tmp = target.with_suffix(target.suffix + ".tmp")
+                        _tmp.write_text("".join(_out), encoding="utf-8")
+                        import os as _os
+                        _os.replace(_tmp, target)
                     except Exception as e:  # noqa: BLE001
                         plan["error"] = f"{type(e).__name__}: {e}"
                         exit_code = 2

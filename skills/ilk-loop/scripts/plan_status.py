@@ -563,13 +563,12 @@ def reconcile_master_status(master_path: Path, plans_dir: Path) -> bool:
     Idempotent: safe to call repeatedly — no rewrite churn in either
     direction.
 
-    Judgment call (2026-09-17): an un-shipped master becomes ``queued``,
-    not ``active``.  After a ship-integrity revert there is no active
-    iteration — the worker is gone.  ``queued`` re-arms the scheduler for
-    unattended re-dispatch; ``active`` would claim a run is in progress
-    when none is.  Wrong if a deliberate ``blocked`` (parked) master had a
-    sub-plan reverted — this would silently un-park it; that is a
-    pre-existing state, not the live defect this was built to fix.
+    Judgment call (2026-09-29): an un-shipped master becomes ``active``,
+    not ``queued``.  A master that was just set to ``shipped`` (by the
+    worker or by hand) while its sub-plans are not all shipped must be
+    reverted to the state that reflects ongoing work — ``active``.
+    ``queued`` is for masters that were never dispatched; a master whose
+    sub-plans were being worked on is ``active`` by definition.
     """
     text = master_path.read_text(encoding="utf-8-sig")
     fm = parse_frontmatter(text)
@@ -577,10 +576,14 @@ def reconcile_master_status(master_path: Path, plans_dir: Path) -> bool:
 
     # A held master is a HUMAN gate, and reconciliation does not lift it.
     #
-    # `draft` means "authored, not released"; `blocked` means "parked, do not
-    # dispatch". Neither is a claim about whether the sub-plans finished, so
-    # neither is this function's to overrule -- in either direction. Completing
-    # every sub-plan of a draft master does not constitute a human releasing it.
+    # `draft` means "authored, not released" — completing every sub-plan of
+    # a draft master does not constitute a human releasing it.
+    #
+    # `blocked` is normally "parked, do not dispatch". However, when a
+    # ship-integrity violation reverts a sub-plan and parks the master,
+    # the master must be set back to `active` so the batch can resume.
+    # The distinguishing signal: the master is `blocked` AND not all its
+    # sub-plans are shipped (a parked-with-violations state).
     #
     # Measured 2026-09-18: without this guard the first symmetric version
     # (274bb19) rewrote EVERY not-all-shipped master to `queued`, because it
@@ -590,16 +593,23 @@ def reconcile_master_status(master_path: Path, plans_dir: Path) -> bool:
     # anyone noticed. Three call sites reconcile every master file
     # (run_ilk_loop_claude.sh:3299, loop_status.py:357, scheduler_scan.py:397),
     # so merely READING status un-parked it.
-    if current in _HELD_STATUSES:
+    if current == "draft":
         return False
 
     if is_master_all_shipped(master_path, plans_dir):
         target = "shipped"
     elif current == "shipped":
-        # The reverse direction, and only from `shipped`. This function exists
-        # to retract a ship claim that stopped being true -- not to promote a
-        # master that never made one.
-        target = "queued"
+        # The reverse direction: retract a ship claim.
+        target = "active"
+    elif current == "blocked":
+        # Unpark a master that was shipped before being parked — the ship
+        # claim was false, so the master should be active.  A master that
+        # was active before parking stays blocked (intentional park).
+        pre_park = fm.get("pre_park_status") or ""
+        if pre_park == "shipped":
+            target = "active"
+        else:
+            return False
     else:
         return False
 

@@ -2518,6 +2518,7 @@ except: pass
       pass) tag="OK" ;;
       fail) tag="FAIL" ;;
       inconclusive) tag="INCONCLUSIVE" ;;
+      no-checks) tag="NO-CHECKS" ;;
       *) tag="ERR" ;;
     esac
     # Include the gate command in the echo so every gate outcome is auditable.
@@ -2559,7 +2560,10 @@ except: pass
     fi
     local _gh_history_path
     _gh_history_path=$(get_ilk_runtime_dir 2>/dev/null || true)/gate-history.jsonl
-    if [[ -n "$_gh_history_path" && -n "${RUN_ID:-}" ]]; then
+    # Only persist genuine verdicts (pass/fail/error) to gate-history.
+    # "no-checks" means no declared gate ran — writing it would pollute
+    # the history with non-verdicts that confuse the final-step gate check.
+    if [[ -n "$_gh_history_path" && -n "${RUN_ID:-}" && "$outcome" != "no-checks" ]]; then
       python3 -c "
 import json, sys
 sys.path.insert(0, sys.argv[1])
@@ -2941,10 +2945,21 @@ try:
     actives = [m for m in masters
                if normalize_master_status(parse_frontmatter(
                    m.read_text(encoding='utf-8-sig')).get('status') or '') == 'active']
+    # Also include shipped masters: the agent may have shipped the master
+    # during this iteration, but its sub-plans still need integrity checks.
+    shipped_actives = [m for m in masters
+               if normalize_master_status(parse_frontmatter(
+                   m.read_text(encoding='utf-8-sig')).get('status') or '') == 'shipped']
     if actives:
         chosen, _ = pick_active_master(actives, json_mode=True)
+    elif shipped_actives:
+        chosen, _ = pick_active_master(shipped_actives, json_mode=True)
         for n in extract_subplan_files(Path(chosen).read_text(encoding='utf-8')):
             print(n)
+    elif masters:
+        # Masters exist but none are active or shipped — signal this so
+        # the caller knows masters exist (distinguishes from "no masters").
+        print('__MASTERS_EXIST__')
 except Exception:
     pass
 " "$plans_dir" "${_SKILL_ROOT}/ilk-loop/scripts" 2>/dev/null)
@@ -3062,8 +3077,13 @@ for raw in Path(sys.argv[1]).read_text().splitlines():
     # trigger revert or park.  Without this, a real fail verdict for a
     # foreign sub-plan goes straight to ship_integrity.py and reverts it
     # (rezmac 20260924-072803).
-    if [[ -n "$_active_subplans" ]] \
-       && ! printf '%s\n' "$_active_subplans" | grep -qxF "$(basename "$f")"; then
+    # Filter out the sentinel so it's not treated as a sub-plan filename.
+    local _filtered_subplans=""
+    if [[ -n "$_active_subplans" ]]; then
+      _filtered_subplans=$(printf '%s\n' "$_active_subplans" | grep -vxF '__MASTERS_EXIST__' || true)
+    fi
+    if [[ -n "$_filtered_subplans" ]] \
+       && ! printf '%s\n' "$_filtered_subplans" | grep -qxF "$(basename "$f")"; then
       echo "  [ship-integrity] ${_si_slug:-$(basename "$f")}: not in the active master — verdict $gate_passed recorded, not enforced" >&2
       continue
     fi
@@ -3094,8 +3114,17 @@ for raw in Path(sys.argv[1]).read_text().splitlines():
       # Outside it, a non-verdict still means skip-entirely: an archived ship
       # has no current gate result and re-litigating it is the 2026-08-20
       # mass revert.
-      if [[ -n "$_active_subplans" ]] \
-         && printf '%s\n' "$_active_subplans" | grep -qxF "$(basename "$f")"; then
+      #
+      # When _active_subplans is empty AND masters exist (master was shipped
+      # this iteration), process the sub-plan anyway — the prior-run guard
+      # above already filtered out ships from earlier runs.  When no masters
+      # exist at all, skip (original behavior for tests without a master).
+      local _has_masters=false
+      printf '%s\n' "$_active_subplans" | grep -qxF '__MASTERS_EXIST__' && _has_masters=true
+      if [[ -z "$_active_subplans" && "$_has_masters" == "false" ]]; then
+        continue
+      elif [[ -z "$_active_subplans" ]] \
+         || printf '%s\n' "$_active_subplans" | grep -qxF "$(basename "$f")"; then
         gate_passed="skip"
       else
         continue
@@ -3193,18 +3222,17 @@ if m:
     if [[ $si_exit -eq 0 && "$si_out" == *"WARN RECORD ABSENT"* ]]; then
       echo "  [ship-integrity WARN] $(basename "$f"): $si_out" >&2
     fi
-    # Final-step gate invariant (AC-2): a shipped sub-plan must have a
-    # passing gate row for its final step.  Only runs when the existing
-    # ship_integrity.py check passed (si_exit == 0) AND a gate actually
-    # ran for this sub-plan this iteration (gate_passed is "true" or
-    # "false", never "skip").
+    # Final-step gate invariant: a shipped sub-plan must have a passing
+    # gate row for its final step.  Runs whenever ship_integrity.py passed
+    # (si_exit == 0) and we have a slug, regardless of whether a gate
+    # ran this iteration.
     #
-    # When gate_passed=skip, no gate ran for this sub-plan — the gate
-    # half is not enforced by evaluate_ship either, and the final-step
-    # gate follows the same scoping.  The dispatched-slug case (retro F1)
-    # is caught when the gate DID run but the final step's row is missing
-    # or red.
-    if [[ $si_exit -eq 0 && -n "$_enrich_slug" && "$gate_passed" != "skip" ]]; then
+    # When gate_passed=skip (no gate ran this iteration), the check falls
+    # back to gate-history.jsonl.  A sub-plan that was already shipped
+    # before this iteration is never re-litigated (the prior-run guard
+    # above), so this path only fires for newly-shipped sub-plans whose
+    # gate was skipped.  No qualifying pass row in history ⇒ revert.
+    if [[ $si_exit -eq 0 && -n "$_enrich_slug" ]]; then
       local _fsg_exit=0
       local _fsg_out=""
       _fsg_out=$(python3 -c "
@@ -3257,8 +3285,9 @@ try:
     key = resolve_project_key(project) if project else None
     if key:
         hist_path = Path(external_launcher_dir(key)) / 'gate-history.jsonl'
-        gate_rows.extend(si.load_gate_history(hist_path))
-except Exception:
+        hist_rows = si.load_gate_history(hist_path)
+        gate_rows.extend(hist_rows)
+except Exception as _e:
     pass
 
 # Resolve last step commit (trailer or ledger).
@@ -3280,7 +3309,9 @@ last_step_sha = si.find_last_step_commit(
     slug, final_step, project, ledger_records=ledger_records,
 )
 
-if not si.check_final_step_gate(gate_rows, slug, final_step, last_step_sha, cwd=project):
+check_result = si.check_final_step_gate(gate_rows, slug, final_step, last_step_sha, cwd=project)
+
+if not check_result:
     reason = si.final_step_gate_violation_reason(
         gate_rows, slug, final_step, last_step_sha,
         has_trailer=has_trailer,

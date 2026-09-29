@@ -17,11 +17,11 @@ Acceptance criteria:
   AC-6  Unchanged: a gate that ran this iteration is enforced as before.
         (PASSES TODAY — unmarked.)
 
-The ``xfail`` tests target the **final-step gate** path specifically.
+The tests target the **final-step gate** path specifically.
 They construct a sub-plan with NO ``local_checks`` fence so the runner sets
 ``gate_passed="nogate"`` → scope check → ``"skip"`` → the final-step gate
-check is the only enforcement.  Today that check is skipped (guard at
-``:3161``), so the ship stands unchecked.
+check falls back to ``gate-history.jsonl``.  A no-gate-ran ship with no
+qualifying pass row in history is reverted.
 """
 from __future__ import annotations
 
@@ -193,6 +193,25 @@ def _build_world(
             "git -c user.email=t@example.com -c user.name=t "
             f'-C {project} commit -q -m "feat: step 1 [plan:{SLUG}#step-1]"',
         ]
+        # For the green control, write the pass row AFTER the step commit
+        # so head_sha is the step commit (ancestry check passes).
+        if not gate_history_fail:
+            stub_lines += [
+                f"HIST={str(history_path)!r}",
+                f"SLUG={SLUG!r}",
+                "SHA=$(git -C " + str(project) + " rev-parse HEAD)",
+                "python3 - \"$HIST\" \"$SLUG\" \"$SHA\" <<'EOP'",
+                "import json, sys",
+                "from pathlib import Path",
+                "h = Path(sys.argv[1])",
+                "h.write_text(json.dumps({",
+                '    "slug": sys.argv[2], "step": 1, "outcome": "pass",',
+                '    "exit_code": 0, "head_sha": sys.argv[3],',
+                '    "run_id": "prior-run", "iteration": 1,',
+                '    "timestamp": "2026-09-29T10:00:00+0800",',
+                "}, separators=(',', ':')) + '\\n', encoding='utf-8')",
+                "EOP",
+            ]
 
     # Mark as shipped (no gate run).
     stub_lines += [
@@ -231,26 +250,6 @@ def _build_world(
     stub_lines.append("echo 'stub agent done'\n")
     stub.write_text("\n".join(stub_lines), encoding="utf-8")
     stub.chmod(0o755)
-
-    # For the green control, write the pass history row AFTER the stub
-    # has been defined (it will run during the iteration).  We use the
-    # current HEAD as the pass row's head_sha — the step commit will be
-    # a descendant, so the ancestry check passes.
-    if not gate_history_fail:
-        head_sha = _git(project, "rev-parse", "HEAD")
-        history_path.write_text(
-            json.dumps({
-                "slug": SLUG,
-                "step": 1,
-                "outcome": "pass",
-                "exit_code": 0,
-                "head_sha": head_sha,
-                "run_id": "prior-run",
-                "iteration": 1,
-                "timestamp": "2026-09-29T10:00:00+0800",
-            }, separators=(",", ":")) + "\n",
-            encoding="utf-8",
-        )
 
     return {
         "project": project, "plans": plans, "data_home": data_home,
@@ -379,10 +378,6 @@ def _read_master_status(world: dict) -> str:
 # ── AC-1: no-gate-ran ship is checked ────────────────────────────────────────
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(
-    strict=True,
-    reason="no-gate-ran ship not checked — guard gate_passed != skip at :3161",
-)
 def test_no_gate_ran_ship_reverted(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
@@ -429,10 +424,6 @@ def test_prior_run_ship_untouched(
 # ── AC-3: batch_verification sub-plans are included ──────────────────────────
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(
-    strict=True,
-    reason="batch_verification sub-plan not checked when shipped with no gate",
-)
 def test_batch_verification_ship_reverted(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
@@ -457,10 +448,6 @@ def test_batch_verification_ship_reverted(
 # ── AC-4: master's status line ───────────────────────────────────────────────
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(
-    strict=True,
-    reason="master shipped while sub-plans not shipped — not reverted to active",
-)
 def test_master_shipped_while_subplans_not_reverted(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
@@ -485,10 +472,6 @@ def test_master_shipped_while_subplans_not_reverted(
 # ── AC-5a: 28c shape — dispatched slug, no step commit, fail row ⇒ reverted ──
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(
-    strict=True,
-    reason="dispatched slug with no step commit and fail row not reverted",
-)
 def test_28c_shape_dispatched_slug_reverted(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
@@ -510,10 +493,6 @@ def test_28c_shape_dispatched_slug_reverted(
 # ── AC-5b: D-427 shape — batch_verification + master, no gate ⇒ both reverted ─
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(
-    strict=True,
-    reason="batch_verification + master ship with no gate not reverted",
-)
 def test_d427_shape_batch_verify_and_master_reverted(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:

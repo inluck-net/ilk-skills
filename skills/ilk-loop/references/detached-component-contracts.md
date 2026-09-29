@@ -892,6 +892,14 @@ after each gate check.
 **Readers:** `ship_integrity.check_final_step_gate` — merges this file's
 rows with the current iteration's results to find qualifying pass rows.
 
+**No-gate-ran scoping (added 2026-09-29):** The final-step gate check runs
+for ALL newly-shipped sub-plans, including those whose gate was skipped
+this iteration (``gate_passed == "skip"``).  For such sub-plans the
+per-iteration results file has no row, so the check falls back entirely to
+this persistent history file.  A sub-plan already shipped before the
+current iteration is never re-litigated (the prior-run guard in the
+runner).
+
 ---
 
 ## Contract 3: Liveness (PID + sentinel cross-check)
