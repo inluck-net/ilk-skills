@@ -810,6 +810,32 @@ def run_head_reruns(project: Path, node_ids: list[str], invocation: str,
     return red_counts
 
 
+def run_head_alone(project: Path, node_ids: list[str], invocation: str,
+                   timeout: int = 600) -> dict[str, str]:
+    """Run each failing node id alone at HEAD and return {node_id: result}.
+
+    Each id is run in its own pytest process with xdist flags stripped (as in
+    ``run_at_base``).  The result is ``"passed"``, ``"failed"``, or
+    ``"skipped-cap"`` when more than ``AT_BASE_CAP`` ids are given.
+
+    For vitest the id is a file path, so run that file alone.
+    """
+    if not node_ids:
+        return {}
+    if len(node_ids) > AT_BASE_CAP:
+        return {nid: "skipped-cap" for nid in node_ids}
+    runner = re.sub(r"\s-n\s+\S+|\s--dist\s+\S+", "", invocation)
+    results: dict[str, str] = {}
+    for nid in node_ids:
+        r = subprocess.run(f"{runner} {nid}", shell=True,
+                           cwd=project, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=timeout)
+        blob = (r.stdout or "") + (r.stderr or "")
+        failed = bool(_NODE_RE.findall(blob))
+        results[nid] = "failed" if failed else "passed"
+    return results
+
+
 def batch_touched_files(project: Path, base_sha: str,
                         node_ids: list[str]) -> dict[str, bool]:
     """For each node id, check whether the batch touched its test file.
@@ -902,6 +928,7 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   at_base_error: str | None = None,
                   head_reruns: dict[str, int] | None = None,
                   batch_touched: dict[str, bool] | None = None,
+                  alone: dict[str, str] | None = None,
                   flaky_owed: list[str] | None = None,
                   suite_duration_sec: int | None = None,
                   suite_budget: tuple[int, str] | None = None,
@@ -969,12 +996,17 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
         lines += ["_(no failures)_", ""]
     else:
         has_reruns = head_reruns is not None and batch_touched is not None
-        if has_reruns:
+        has_alone = alone is not None
+        if has_reruns and has_alone:
+            lines += ["| node id | at base | in baseline_red | head reruns | batch touched file | alone |",
+                      "|---|---|---|---|---|---|"]
+        elif has_reruns:
             lines += ["| node id | at base | in baseline_red | head reruns | batch touched file |",
                       "|---|---|---|---|---|"]
         else:
             lines += ["| node id | at base | in baseline_red |",
                       "|---|---|---|"]
+        order_dependent: list[str] = []
         for nid, verdict in at_base.items():
             in_base = _in_baseline_red(nid, base_red)
             in_head = _in_baseline_red(nid, head_red)
@@ -995,10 +1027,23 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                     touched_str = "—"
                 else:
                     touched_str = "yes" if touched_val else "no"
-                lines.append(f"| {nid} | {verdict} | {red} | {rerun_str} | {touched_str} |")
+                if has_alone and alone is not None:
+                    alone_val = alone.get(nid, "—")
+                    lines.append(f"| {nid} | {verdict} | {red} | {rerun_str} | {touched_str} | {alone_val} |")
+                    # Track order-dependent: passes alone but red in batch.
+                    if alone_val == "passed" and isinstance(rerun_val, int) and rerun_val >= 1:
+                        order_dependent.append(nid)
+                else:
+                    lines.append(f"| {nid} | {verdict} | {red} | {rerun_str} | {touched_str} |")
             else:
                 lines.append(f"| {nid} | {verdict} | {red} |")
         lines.append("")
+        if order_dependent:
+            lines += ["## Order-dependent", ""]
+            for nid in order_dependent:
+                red_count = head_reruns.get(nid, 0) if head_reruns else 0
+                lines.append(f"order-dependent: {nid} — passes alone, red {red_count}/{FLAKY_RERUN_COUNT} with the failing set")
+            lines.append("")
     if flaky_owed:
         lines += ["## Flaky (owed)", ""]
         for nid in flaky_owed:

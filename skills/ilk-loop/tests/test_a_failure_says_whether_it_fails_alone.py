@@ -80,23 +80,20 @@ def _render_record_with_alone(
 
 # ── AC-1: alone column appears with correct values ──────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="alone column not implemented")
 def test_alone_column_passed(tmp_path: Path) -> None:
     """A failing id that passes alone gets ``alone: passed``."""
     text = _render_record_with_alone(
         alone={"tests/test_foo.py::test_bar": "passed",
                "tests/test_baz.py::test_qux": "failed"},
     )
-    assert "alone" in text.split("## At-base rerun")[1].split("##")[0]
     # Check the table header includes "alone".
-    table_section = text.split("## At-base rerun")[1].split("\n\n")[0]
+    table_section = text.split("## At-base rerun")[1].split("##")[0]
     assert "| alone |" in table_section
 
 
-@pytest.mark.xfail(strict=True, reason="alone column not implemented")
 def test_alone_column_skipped_cap(tmp_path: Path) -> None:
     """When ids exceed AT_BASE_CAP, alone is ``skipped-cap``."""
-    # Build52 failing ids to exceed the cap.
+    # Build 52 failing ids to exceed the cap.
     nodes = [f"tests/test_{i}.py::test_{i}" for i in range(52)]
     alone = {nid: "skipped-cap" for nid in nodes}
     text = _render_record_with_alone(
@@ -106,13 +103,12 @@ def test_alone_column_skipped_cap(tmp_path: Path) -> None:
         batch_touched={nid: True for nid in nodes},
         alone=alone,
     )
-    table_section = text.split("## At-base rerun")[1].split("\n\n")[0]
+    table_section = text.split("## At-base rerun")[1].split("##")[0]
     assert "skipped-cap" in table_section
 
 
 # ── AC-2: order-dependent line ───────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="alone column not implemented")
 def test_order_dependent_line_emitted(tmp_path: Path) -> None:
     """An id with ``alone: passed`` and batched red ≥ 1 gets an order-dependent line."""
     text = _render_record_with_alone(
@@ -192,12 +188,11 @@ _(the worker writes narrative here; no parser reads this section)_
 
 # ── AC-5: unknown runner records alone: unsupported ──────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="alone column not implemented")
 def test_unknown_runner_alone_unsupported(tmp_path: Path) -> None:
     """An unknown runner (neither pytest nor vitest) records ``alone: unsupported``."""
     text = _render_record_with_alone(
         alone={"tests/test_foo.py::test_bar": "unsupported",
                "tests/test_baz.py::test_qux": "unsupported"},
     )
-    table_section = text.split("## At-base rerun")[1].split("\n\n")[0]
+    table_section = text.split("## At-base rerun")[1].split("##")[0]
     assert "unsupported" in table_section
