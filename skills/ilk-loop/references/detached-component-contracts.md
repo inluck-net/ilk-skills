@@ -212,7 +212,13 @@ resume first — priority descending, `created` ascending (the
 resume-first rule, reusing `promote_next_master`'s `_prio` /
 `_created` helpers).  The scan sets `master_parked_reason`,
 `active_master`, `batch`, and `display_fallback` from the winner.
-Superseded parks still count in `pending_batches`, unchanged.
+**`pending_batches` excludes superseded parks (2026-09-29).**  The
+`pending_batches` loop applies the same `_is_superseded_park` predicate:
+a master whose unquoted `parked_reason` starts with `superseded`
+(case-insensitive) does not count.  A superseded master will never run
+— its work was re-planned into a later batch — so counting it inflates
+the badge and never shrinks.  Violation parks and operator parks still
+count, unchanged.
 
 **Declared work_tree (`work_tree.py`).**  Master frontmatter
 `work_tree: <absolute path>` declares the tree the driver observes, gates,

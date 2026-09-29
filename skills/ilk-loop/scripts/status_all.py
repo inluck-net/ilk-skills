@@ -453,6 +453,16 @@ def _read_phase(key: str, sentinel: dict) -> dict:
         return dict(_NULL_PHASE)
 
 
+def _is_superseded_park(parked_reason: str) -> bool:
+    """True iff *parked_reason* names a superseded park (case-insensitive).
+
+    A superseded master will never run — its work was re-planned into a
+    later batch.  It must not count in ``pending_batches`` and must not
+    be chosen by the owed-park scan.
+    """
+    return parked_reason.strip().strip('"').strip("'").lower().startswith("superseded")
+
+
 def _blocked_info(
     project_data_dir: Path,
     sentinel: dict,
@@ -826,7 +836,7 @@ def resolve_project_status(project_dir: Path, *,
                     mstatus == "blocked"
                     and raw
                     and master_has_nonshipped(mp, plans_dir)
-                    and not raw.startswith("superseded")
+                    and not _is_superseded_park(raw)
                 ):
                     _owed_candidates.append((mp, mfm))
             if _owed_candidates:
@@ -876,6 +886,7 @@ def resolve_project_status(project_dir: Path, *,
                 mstatus == "blocked"
                 and (mfm.get("parked_reason") or "").strip().strip('"').strip("'")
                 and master_has_nonshipped(mp, plans_dir)
+                and not _is_superseded_park(mfm.get("parked_reason") or "")
             ):
                 pending_batches += 1
             if mstatus == "queued":

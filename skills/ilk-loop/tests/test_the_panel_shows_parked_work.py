@@ -199,7 +199,7 @@ def test_owed_park_chooses_highest_priority():
 # ── AC-2: superseded parks are residue ─────────────────────────────
 
 def test_superseded_park_skipped_by_owed_scan():
-    """AC-2: superseded parks are skipped by AC-1 but count in pending_batches."""
+    """AC-2: superseded parks are skipped by AC-1 and do not count in pending_batches."""
     import tempfile
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
@@ -223,10 +223,10 @@ def test_superseded_park_skipped_by_owed_scan():
         })
         (plans / "MASTER-shipped.md").touch()
         result = _resolve_status(plans)
-    # Superseded parks count in pending_batches
-    assert result["pending_batches"] >= 2, \
-        f"superseded parks must count, got pending_batches={result['pending_batches']}"
-    # But they don't set parked (no owed non-superseded park exists)
+    # Superseded parks do NOT count in pending_batches (sub-plan 2 fix)
+    assert result["pending_batches"] == 0, \
+        f"superseded parks must not count, got pending_batches={result['pending_batches']}"
+    # And they don't set parked (no owed non-superseded park exists)
     assert result["parked"] is False, \
         "superseded-only parks must not set parked"
 

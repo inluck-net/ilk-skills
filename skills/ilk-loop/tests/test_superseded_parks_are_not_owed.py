@@ -110,7 +110,6 @@ def _resolve_status(plans: Path) -> dict:
 
 # ── AC-1: superseded parks don't count ──────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="superseded parks counted as owed")
 def test_superseded_park_excluded_from_pending_batches():
     """AC-1: a superseded-parked master does not count in pending_batches."""
     import tempfile
@@ -133,7 +132,6 @@ def test_superseded_park_excluded_from_pending_batches():
         f"superseded park must not count, got pending_batches={result['pending_batches']}"
 
 
-@pytest.mark.xfail(strict=True, reason="superseded parks counted as owed")
 def test_superseded_case_insensitive():
     """AC-1: parked_reason 'Superseded …' (capital S) is also excluded."""
     import tempfile
@@ -158,7 +156,6 @@ def test_superseded_case_insensitive():
 
 # ── AC-2: the 16:48 replay ─────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="superseded parks counted as owed")
 def test_replay_pending_batches_excludes_superseded():
     """AC-2: active + violation-parked +2 superseded ⇒ pending_batches == 2."""
     import tempfile
@@ -246,7 +243,6 @@ def test_violation_park_still_counts():
         f"violation park must count, got pending_batches={result['pending_batches']}"
 
 
-@pytest.mark.xfail(strict=True, reason="superseded parks counted as owed")
 def test_only_superseded_and_shipped_reads_zero():
     """AC-3: only superseded parks + shipped masters ⇒ pending_batches == 0."""
     import tempfile
