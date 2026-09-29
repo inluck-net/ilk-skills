@@ -4419,6 +4419,59 @@ print(fm.get('result_file', ''))
       unset ILK_ITERATION_SUBPLAN
     fi
 
+    # -- Declared-gates file for the hook --------------------------------
+    # Write the target step's declared local_checks commands (frontmatter +
+    # per-step) to a file and export ILK_DECLARED_GATES_FILE so the
+    # no-full-suite hook can deny the worker from running gates the driver
+    # owns.  No target, or no declared gates ⇒ no file, variable unset.
+    local _declared_gates_file=""
+    if [[ -n "${PRE_ITER_TARGET:-}" ]]; then
+      local _dg_slug="${PRE_ITER_TARGET%% *}"
+      local _dg_step="${PRE_ITER_TARGET#* }"
+      local _dg_plans_dir
+      _dg_plans_dir=$(get_plans_dir 2>/dev/null) || _dg_plans_dir=""
+      if [[ -n "$_dg_plans_dir" ]]; then
+        _declared_gates_file="${RUN_LOG_DIR}/declared-gates-${i}.txt"
+        # shellcheck disable=SC2016
+        if ! _SKILL_ROOT="$_SKILL_ROOT" python3 -c '
+import sys, os
+sys.path.insert(0, os.path.join(os.environ["_SKILL_ROOT"], "ilk-loop", "scripts"))
+from run_local_checks import collect_declared_local_checks, split_frontmatter
+import glob, os
+slug = sys.argv[1]
+step = int(sys.argv[2])
+plans_dir = sys.argv[3]
+out_path = sys.argv[4]
+matches = glob.glob(os.path.join(plans_dir, f"*-{slug}.md"))
+if not matches:
+    raise SystemExit(1)
+body = open(matches[0], encoding="utf-8").read()
+fm_text, body_text = split_frontmatter(body)
+checks = collect_declared_local_checks(fm_text, body_text)
+cmds = []
+seen = set()
+for c in checks:
+    cmd = c.get("command", "").strip()
+    if cmd and cmd not in seen:
+        seen.add(cmd)
+        cmds.append(cmd)
+if cmds:
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(cmds) + "\n")
+' "$_dg_slug" "$_dg_step" "$_dg_plans_dir" "$_declared_gates_file" 2>/dev/null; then
+          _declared_gates_file=""
+        elif [[ ! -s "$_declared_gates_file" ]]; then
+          rm -f "$_declared_gates_file"
+          _declared_gates_file=""
+        fi
+      fi
+    fi
+    if [[ -n "$_declared_gates_file" ]]; then
+      export ILK_DECLARED_GATES_FILE="$_declared_gates_file"
+    else
+      unset ILK_DECLARED_GATES_FILE
+    fi
+
     local iter_log
     iter_log="${RUN_LOG_DIR}/iter-$(printf '%02d' $i).log"
 
@@ -4563,6 +4616,7 @@ print(json.dumps({
     # The iteration is over — clear the dispatched-slug guard so the
     # driver's own converge/repair/integrity calls are unconstrained.
     unset ILK_ITERATION_SUBPLAN
+    unset ILK_DECLARED_GATES_FILE
 
     local iter_end iter_dur_sec
     iter_end=$(date +%s)

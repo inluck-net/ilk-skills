@@ -91,13 +91,54 @@ PY
 )"
 [[ -n "${bare}" ]] || bare="${norm}"
 
+# --- declared-gates denial ---------------------------------------------------
+# When the runner has written a declared-gates file for this iteration, deny
+# any command whose normalized form matches a declared gate.  The driver runs
+# these gates after the worker commits; the worker must not run them itself.
+# This check runs BEFORE runner-list detection so it catches all commands,
+# including non-runners like `echo frontmatter-gate`.
+if [[ -n "${ILK_DECLARED_GATES_FILE:-}" && -r "${ILK_DECLARED_GATES_FILE}" ]]; then
+  _dg_match=0
+  while IFS= read -r _dg_gate || [[ -n "$_dg_gate" ]]; do
+    [[ -n "$_dg_gate" ]] || continue
+    # Normalize both sides: collapse whitespace, strip leading `cd <x> &&`
+    _dg_norm_bare="$(NORMCMD="${bare}" python3 - <<'PY' 2>/dev/null || printf '%s' "${bare}"
+import os, re
+s = os.environ["NORMCMD"].strip()
+s = re.sub(r'^\s*cd\s+\S+\s*&&\s*', '', s)
+s = re.sub(r'\s+', ' ', s).strip()
+print(s)
+PY
+)"
+    _dg_norm_gate="$(GATECMD="${_dg_gate}" python3 - <<'PY' 2>/dev/null || printf '%s' "${_dg_gate}"
+import os, re
+s = os.environ["GATECMD"].strip()
+s = re.sub(r'^\s*cd\s+\S+\s*&&\s*', '', s)
+s = re.sub(r'\s+', ' ', s).strip()
+print(s)
+PY
+)"
+    if [[ "$_dg_norm_bare" == "$_dg_norm_gate" ]]; then
+      _dg_match=1
+      break
+    fi
+  done < "${ILK_DECLARED_GATES_FILE}"
+  if [[ "$_dg_match" == "1" ]]; then
+    deny "the driver runs this gate after your commit — commit and end your turn"
+  fi
+fi
+
 # --- is this a test-suite runner at all? -------------------------------------
 runner=""
 case "${bare}" in
   *pytest*)                       runner="pytest" ;;
   *"npm test"*|*"npm run test"*)  runner="npm test" ;;
   *"yarn test"*)                  runner="yarn test" ;;
-  *"bun test"*)                   runner="bun test" ;;
+  *"bun test"*|*"bun run test"*)  runner="bun test" ;;
+  *"pnpm run test"*)              runner="pnpm test" ;;
+  *"npx vitest"*|*"vitest run"*)  runner="vitest" ;;
+  *"make test"*)                  runner="make test" ;;
+  *"verification_record.py --run-suite"*) runner="verification_record" ;;
   *"cargo test"*)                 runner="cargo test" ;;
   *"go test ./..."*)              runner="go test ./..." ;;
 esac

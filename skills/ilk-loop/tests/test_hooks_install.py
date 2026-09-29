@@ -121,8 +121,9 @@ class TestHookFileIntegrity:
         """Pin the sha256 so a future diff is visible."""
         import hashlib
         digest = hashlib.sha256(HOOK_PATH.read_bytes()).hexdigest()
-        # This is the sha256 of the imported file as of 2026-08-14
-        assert digest == "f3866a4ca2fd5862d738ee5153a4cdc03b3b4cf795e875809566bde60b54f447"
+        # This is the sha256 of the imported file as of 2026-09-29
+        # (runner list expanded + declared-gates denial added)
+        assert digest == "6edc32f2d45f2302789c76fc593ea2e44e669724a1360a4f9062e8bdf0c3d4d8"
 
 
 # ── settings.json reconcile (AC-3, AC-4, AC-5) ──────────────────────────────
@@ -487,4 +488,5 @@ class TestNoFullSuiteUnchanged:
         """The hook file has the same content it had before this sub-plan."""
         hook = REPO_ROOT / "hooks" / "no-full-suite.sh"
         digest = hashlib.sha256(hook.read_bytes()).hexdigest()
-        assert digest == "f3866a4ca2fd5862d738ee5153a4cdc03b3b4cf795e875809566bde60b54f447"
+        # 2026-09-29: runner list expanded + declared-gates denial added
+        assert digest == "6edc32f2d45f2302789c76fc593ea2e44e669724a1360a4f9062e8bdf0c3d4d8"

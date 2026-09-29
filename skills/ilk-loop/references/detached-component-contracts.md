@@ -2413,3 +2413,59 @@ detached worktree (never the live tree) and is bounded:
 gh-resolve MASTER-2026-09-25b sub-plan 3's widest gate went red on a
 test first broken by sub-plan 1's commit `2708654`. Sub-plan 3 took the
 strike (`auto_block_fails` 1 of 2) and could not fix it in scope.
+
+---
+
+## Contract 17: The declared-gates file (`ILK_DECLARED_GATES_FILE`)
+
+### Purpose
+
+The runner writes the current iteration's declared `local_checks` commands to
+a file and exports its path as `ILK_DECLARED_GATES_FILE`. The `no-full-suite`
+hook reads this file and denies any Bash command whose normalized form matches
+a declared gate — the driver runs these gates after the worker commits, so the
+worker must not run them itself.
+
+### Format
+
+One command per line, exactly as declared in the sub-plan's `local_checks`
+(frontmatter block + per-step `local_checks` fences). De-duplicated on the
+raw command string:
+
+```
+bun run test:non-ui:convex
+python3 -m pytest skills/ilk-loop/tests/test_hooks_install.py -q
+```
+
+### Who writes
+
+- **`run_ilk_loop_claude.sh`** — right after exporting `ILK_ITERATION_SUBPLAN`,
+  before `invoke_claude_iteration`. Uses `run_local_checks.collect_declared_local_checks`
+  to extract commands from the target sub-plan's frontmatter and per-step fences.
+  No target, or no declared gates ⇒ no file, variable unset.
+
+### Who reads
+
+- **`hooks/no-full-suite.sh`** — when `ILK_DECLARED_GATES_FILE` names a readable
+  file, a Bash command whose normalized form equals one of its lines is denied
+  with reason `the driver runs this gate after your commit — commit and end your turn`.
+  Normalized means whitespace-collapsed, with a leading `cd <x> &&` stripped.
+
+### Lifecycle
+
+The variable is exported alongside `ILK_ITERATION_SUBPLAN` before the agent
+runs, and unset alongside it after the iteration completes. The file lives in
+`${RUN_LOG_DIR}/declared-gates-<i>.txt` and persists for post-mortem inspection.
+
+### Invariants
+
+1. **Exact match after normalization.** Both the gate command and the Bash
+   command are normalized (whitespace-collapsed, `cd <x> &&` stripped) before
+   comparison. No fuzzy matching.
+2. **Empty file ⇒ no denial.** A file with zero lines is equivalent to no file.
+3. **Absent variable ⇒ no denial.** When `ILK_DECLARED_GATES_FILE` is unset or
+   empty, the hook's existing runner-list and scoping logic applies unchanged.
+4. **The hook's existing denials still apply.** The declared-gates check runs
+   AFTER the runner-list detection, so a command already denied by the runner
+   list (e.g. bare `pytest`) is denied by the runner list, not by the
+   declared-gates mechanism.

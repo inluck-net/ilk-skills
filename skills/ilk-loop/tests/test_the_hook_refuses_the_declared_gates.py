@@ -80,7 +80,6 @@ def _make_gates_file(tmp_path: Path, commands: list[str]) -> Path:
 class TestAC1DeclaredGateDenies:
     """With ILK_DECLARED_GATES_FILE, a command matching a declared gate is denied."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_exact_match_denied(self, tmp_path: Path) -> None:
         """AC-1: `bun run test:non-ui:convex` in gates file ⇒ deny."""
         gates = _make_gates_file(tmp_path, ["bun run test:non-ui:convex"])
@@ -91,7 +90,6 @@ class TestAC1DeclaredGateDenies:
         assert result["allowed"] is False
         assert "driver runs" in result["payload"]["hookSpecificOutput"]["permissionDecisionReason"]
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_cd_prefix_match_denied(self, tmp_path: Path) -> None:
         """AC-1: `cd x && bun run test:non-ui:convex` ⇒ deny."""
         gates = _make_gates_file(tmp_path, ["bun run test:non-ui:convex"])
@@ -101,7 +99,6 @@ class TestAC1DeclaredGateDenies:
         )
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_whitespace_normalized_match(self, tmp_path: Path) -> None:
         """AC-1: extra whitespace in command still matches gate."""
         gates = _make_gates_file(tmp_path, ["bun run test:non-ui:convex"])
@@ -140,7 +137,6 @@ _STILL_ALLOWED = [
 class TestAC2FormerlyAllowedNowDenied:
     """Each formerly-allowed command ⇒ deny when in declared gates."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     @pytest.mark.parametrize("cmd", _FORMERLY_ALLOWED)
     def test_formerly_allowed_denied(self, tmp_path: Path, cmd: str) -> None:
         """AC-2: `%(cmd)s` in gates file ⇒ deny."""
@@ -335,7 +331,6 @@ echo "MAIN_RC=$?"
     )
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac4_runner_exports_declared_gates(tmp_path: Path) -> None:
     """AC-4: the runner exports ILK_DECLARED_GATES_FILE during the agent call,
     and the file holds exactly the two declared gate commands.
