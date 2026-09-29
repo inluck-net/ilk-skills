@@ -3065,7 +3065,7 @@ p.write_text(body)
         local _revert_ts
         _revert_ts=$(date +%Y-%m-%dT%H:%M:%S%z)
         local _reverts_file
-        _reverts_file=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py" --runtime-dir "$PROJECT_PATH" 2>/dev/null)/launcher/ship-reverts.jsonl
+        _reverts_file=$(get_ilk_runtime_dir 2>/dev/null || true)/ship-reverts.jsonl
         local _ship_sha=""
         _ship_sha=$(git -C "$PROJECT_PATH" log --all --format="%H" --grep="\[plan:${_si_slug}#ship\]" -1 2>/dev/null) || true
         python3 -c "
@@ -3219,7 +3219,7 @@ print(note)
         local _revert_ts
         _revert_ts=$(date +%Y-%m-%dT%H:%M:%S%z)
         local _reverts_file
-        _reverts_file=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py" --runtime-dir "$PROJECT_PATH" 2>/dev/null)/launcher/ship-reverts.jsonl
+        _reverts_file=$(get_ilk_runtime_dir 2>/dev/null || true)/ship-reverts.jsonl
         # Find the last [plan:<slug>#ship] commit SHA (if any).
         local _ship_sha=""
         _ship_sha=$(git -C "$PROJECT_PATH" log --all --format="%H" --grep="\[plan:${slug}#ship\]" -1 2>/dev/null) || true
@@ -4631,7 +4631,7 @@ ${PROMPT}"
     # resync by editing frontmatter.
     local _revert_notice=""
     local _reverts_file_path
-    _reverts_file_path=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py" --runtime-dir "$PROJECT_PATH" 2>/dev/null)/launcher/ship-reverts.jsonl
+    _reverts_file_path=$(get_ilk_runtime_dir 2>/dev/null || true)/ship-reverts.jsonl
     _revert_notice=$(python3 -c "
 import sys, json
 sys.path.insert(0, sys.argv[1])
@@ -5349,7 +5349,7 @@ for p in Path(plans_dir).glob('*.md'):
             local _revert_ts
             _revert_ts=$(date +%Y-%m-%dT%H:%M:%S%z)
             local _reverts_file
-            _reverts_file=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py" --runtime-dir "$PROJECT_PATH" 2>/dev/null)/launcher/ship-reverts.jsonl
+            _reverts_file=$(get_ilk_runtime_dir 2>/dev/null || true)/ship-reverts.jsonl
             local _ship_sha=""
             _ship_sha=$(git -C "$PROJECT_PATH" log --all --format="%H" --grep="\[plan:${_pre_slug}#ship\]" -1 2>/dev/null) || true
             python3 -c "
