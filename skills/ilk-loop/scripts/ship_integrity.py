@@ -529,6 +529,11 @@ def check_final_step_gate(
         # or they must be equal.
         if _is_ancestor(last_step_sha, head_sha, cwd=cwd):
             return True
+        # A gate proves a tree.  A gate-first step's gate runs before its
+        # own (empty) marker and #ship commits, so its head is an ancestor
+        # of last_step_sha, never a descendant; same tree = same proof.
+        if _same_tree(head_sha, last_step_sha, cwd=cwd):
+            return True
 
     return False
 
@@ -583,6 +588,21 @@ def final_step_gate_violation_reason(
     return (
         f"shipped without a passing final-step gate at or after {short_sha}"
     )
+
+
+def _same_tree(a: str, b: str, *, cwd: Path | None = None) -> bool:
+    """True when commits *a* and *b* have the same tree.  ``False`` on any
+    error — fail closed."""
+    try:
+        cp = subprocess.run(
+            ["git", "rev-parse", f"{a}^{{tree}}", f"{b}^{{tree}}"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=cwd,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    trees = cp.stdout.split()
+    return cp.returncode == 0 and len(trees) == 2 and trees[0] == trees[1]
 
 
 def _is_ancestor(ancestor: str, descendant: str, *, cwd: Path | None = None) -> bool:
