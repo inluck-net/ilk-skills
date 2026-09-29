@@ -125,6 +125,11 @@ class BatchGateRecord:
     #: the batch did not touch its file.  Ship and Phase 1 surface this list
     #: so the owed fix is not forgotten.
     flaky_owed: Optional[list] = None
+    #: Provenance: how the suite output was obtained.  ``"tool"`` means the
+    #: verification_record.py --run-suite path ran it.  ``"operator:<path>"``
+    #: means the output was ingested from a pre-existing file.  Absent on
+    #: legacy records — readers treat that as ``"tool"``.
+    suite_source: Optional[str] = None
 
     def to_dict(self) -> dict:
         d = {
@@ -144,6 +149,8 @@ class BatchGateRecord:
             d["writer"] = self.writer
         if self.flaky_owed is not None:
             d["flaky_owed"] = list(self.flaky_owed)
+        if self.suite_source is not None:
+            d["suite_source"] = self.suite_source
         return d
 
 
@@ -299,6 +306,9 @@ def format_verdict_reason(data: dict) -> str:
             "without per-test failures (see the gate's suite output)")
     if excused:
         lines.append(f"  ({excused} excused by baseline_red)")
+    suite_source = data.get("suite_source") if isinstance(data, dict) else None
+    if suite_source:
+        lines.append(f"  source: {suite_source}")
     return "\n".join(lines)
 
 

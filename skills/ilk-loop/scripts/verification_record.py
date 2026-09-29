@@ -389,6 +389,68 @@ _SUMMARY_RE = re.compile(
 _COUNT_RE = re.compile(r"(\d+)\s+(passed|failed|error|errors|skipped|xfailed|xpassed)")
 _NODE_RE = re.compile(r"^(?:FAILED|ERROR)\s+(\S+)", re.MULTILINE)
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_COLLECTED_RE = re.compile(r"collected\s+(\d+)\s+items?")
+
+# Output-only flags that do not change collection or selection in pytest 8.x.
+# These are stripped during invocation normalisation so that an operator who
+# adds ``-q`` or ``--color=no`` does not trigger a mismatch.
+_OUTPUT_ONLY_FLAGS = re.compile(
+    r"(?:^|\s)"
+    r"(?:-q\b|-qq\b|-v\b|-vv\b|-r[A-Z]*\b|--color=\S+|-p\s+no:\S+)"
+)
+
+# Selection-changing tokens that MUST refuse even if also configured.
+# Note: -m is excluded because Python's `-m pytest` and pytest's `-m "marker"`
+# are indistinguishable in a single command string.  The configured invocation
+# always uses `-m pytest`, so matching `-m` would false-positive on every run.
+_SELECTION_FLAGS = re.compile(
+    r"(?:^|\s)"
+    r"(?:-k\s|--lf\b|--deselect\b|-x\b|--maxfail\b)"
+)
+
+# Leading env prefix: one or more VAR=value pairs before the command.
+_ENV_PREFIX_RE = re.compile(r"^(?:[A-Z_][A-Z0-9_]*=\S+\s+)+")
+
+# Git committer time of HEAD (seconds since epoch).
+
+
+def _head_committer_time(project: Path) -> int | None:
+    """Return HEAD's committer timestamp as seconds since epoch, or None."""
+    raw = _git(project, "log", "-1", "--format=%ct", "HEAD")
+    if raw is None:
+        return None
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return None
+
+
+def _strip_env_prefix(invocation: str) -> str:
+    """Strip a leading ``VAR=value`` env prefix from *invocation*."""
+    return _ENV_PREFIX_RE.sub("", invocation, count=1)
+
+
+def _strip_output_only_flags(invocation: str) -> str:
+    """Strip output-only flags (``-q``, ``--color=auto``, etc.) from *invocation*."""
+    result = invocation
+    # Repeatedly strip until no more matches — flags may be adjacent.
+    prev = None
+    while prev != result:
+        prev = result
+        result = _OUTPUT_ONLY_FLAGS.sub(" ", result)
+    return " ".join(result.split())
+
+
+def _normalise_invocation(invocation: str) -> str:
+    """Normalise an invocation for comparison: strip env prefix + output-only flags."""
+    return _strip_output_only_flags(_strip_env_prefix(invocation))
+
+
+def _check_selection_flags(invocation: str) -> str | None:
+    """Return the first selection-changing flag found, or None."""
+    m = _SELECTION_FLAGS.search(invocation)
+    return m.group(0).strip() if m else None
+
 
 def _extract_short_reason(out: str, node_id: str) -> str | None:
     """Return the short reason after `` - `` on the FAILED line, or None."""
@@ -1138,7 +1200,9 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   suite_duration_sec: int | None = None,
                   suite_budget: tuple[int, str] | None = None,
                   suite_output_path: str | None = None,
-                  suite_output_text: str | None = None) -> str:
+                  suite_output_text: str | None = None,
+                  suite_source: str | None = None,
+                  suite_source_sha256: str | None = None) -> str:
     """Render the complete record.  Measurements only — no verdict column.
 
     The ``attributed`` column is deliberately absent.  It was the cell that
@@ -1184,6 +1248,10 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
         lines.append(f"suite_budget: {budget_val} ({budget_src})")
     if suite_output_path is not None:
         lines.append(f"suite_output: {suite_output_path}")
+    if suite_source is not None:
+        lines.append(f"suite_source: {suite_source}")
+    if suite_source_sha256 is not None:
+        lines.append(f"suite_source_sha256: {suite_source_sha256}")
     lines += [
         "",
         "## At-base rerun",
@@ -1594,6 +1662,7 @@ def _write_measured_record(project: Path, record: Path, args,
                 invocation=invocation, scope=scope, results=results,
                 at_base={}, base_red=base_red, head_red=head_red,
                 at_base_error=str(exc),
+                suite_source="tool",
             ))
             print(f"ERROR: at-base cap exceeded — named stop written to {record}",
                   file=sys.stderr)
@@ -1694,6 +1763,7 @@ def _write_measured_record(project: Path, record: Path, args,
         suite_budget=(suite_budget, suite_budget_source),
         suite_output_path=str(suite_output_file),
         suite_output_text=suite_output_text,
+        suite_source="tool",
     )
     # Inject attempt header after the batch line.
     record_text = record_text.replace(
@@ -1714,6 +1784,272 @@ def _write_measured_record(project: Path, record: Path, args,
           f"{c['errors']} errors of {c['total']} · scope={scope['mode']} · "
           f"at-base rows={len(at_base)} → {record}")
     # Step 0 records; step 1 judges.  A red suite is not this command's failure.
+    return 0
+
+
+def _write_record_from_output(project: Path, record: Path, args,
+                               registry_slugs: set[str] | None = None) -> int:
+    """Write a record from a pre-existing suite output file (operator ingest).
+
+    AC-1: reads the file through the same parser as --run-suite and writes
+    the whole record, including at-base reruns.
+    AC-2: all bindings refuse with a named reason.
+    AC-3: invocation must match after normalisation.
+    AC-4: provenance: suite_source: operator:<path> + sha256 digest.
+    """
+    suite_output_path = Path(args.from_suite_output).resolve()
+    if not suite_output_path.is_file():
+        print(f"ERROR: suite output file not found: {suite_output_path}",
+              file=sys.stderr)
+        return 1
+
+    # ── AC-2a: --suite-head must equal HEAD ────────────────────────────────
+    head = read_head_from_git(project)
+    if head is None:
+        print(f"ERROR: cannot read HEAD from git in {project}",
+              file=sys.stderr)
+        return 1
+    if args.suite_head != head:
+        print(f"ERROR: --suite-head {args.suite_head[:12]} does not match "
+              f"HEAD {head[:12]}; the output must name the tree it measured",
+              file=sys.stderr)
+        return 1
+
+    # ── AC-2b: worktree must be clean (tracked files) ─────────────────────
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=project, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+        dirty_lines = [l for l in (status.stdout or "").splitlines()
+                       if l.strip()]
+        if dirty_lines:
+            print(f"ERROR: worktree is dirty ({len(dirty_lines)} tracked "
+                  f"files modified); the record must name a clean tree",
+                  file=sys.stderr)
+            return 1
+    except (OSError, subprocess.SubprocessError):
+        pass  # best-effort
+
+    # ── AC-2c: file mtime >= HEAD's committer time ────────────────────────
+    head_time = _head_committer_time(project)
+    if head_time is not None:
+        file_mtime = int(suite_output_path.stat().st_mtime)
+        if file_mtime < head_time:
+            print(f"ERROR: suite output file mtime ({file_mtime}) is before "
+                  f"HEAD's committer time ({head_time}); the output must be "
+                  f"from after the commit",
+                  file=sys.stderr)
+            return 1
+
+    # ── AC-2d + AC-2e: parse the file ─────────────────────────────────────
+    raw_output = suite_output_path.read_text(encoding="utf-8",
+                                              errors="replace")
+    # Strip ANSI escapes before checking for banners.
+    clean_output = _ANSI_RE.sub("", raw_output)
+
+    # AC-2e: "PARTIAL RUN" banner refuses.
+    if "PARTIAL RUN" in clean_output:
+        print("ERROR: suite output contains 'PARTIAL RUN' banner; "
+              "refusing incomplete run",
+              file=sys.stderr)
+        return 1
+
+    # AC-3: invocation must match after normalisation.
+    configured_invocation = (args.suite_invocation or "").strip()
+    if not configured_invocation:
+        print("ERROR: --suite-invocation is required with --from-suite-output",
+              file=sys.stderr)
+        return 1
+
+    # Check for selection-changing flags in the configured invocation.
+    bad_flag = _check_selection_flags(configured_invocation)
+    if bad_flag:
+        print(f"ERROR: configured invocation contains selection-changing "
+              f"flag {bad_flag!r}; refusing",
+              file=sys.stderr)
+        return 1
+
+    # AC-2f: collected count below --collect-only count refuses.
+    # Run --collect-only on the configured invocation to get the expected count.
+    try:
+        collect_cmd = f"{configured_invocation} --collect-only -q"
+        collect_result = subprocess.run(
+            collect_cmd, shell=True, cwd=project,
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=120,
+        )
+        collect_output = _ANSI_RE.sub("", collect_result.stdout or "")
+        m_collect = _COLLECTED_RE.search(collect_output)
+        expected_count = int(m_collect.group(1)) if m_collect else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        expected_count = None
+
+    # Parse the file through the same parser as --run-suite.
+    parser = _parse_for(configured_invocation)
+    try:
+        parsed = parser(clean_output)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    actual_count = parsed["counts"]["total"]
+    if expected_count is not None and actual_count < expected_count:
+        print(f"ERROR: collected count {actual_count} is below the configured "
+              f"suite's --collect-only count {expected_count}; refusing "
+              f"incomplete run",
+              file=sys.stderr)
+        return 1
+
+    # Build the results dict matching run_suite's shape.
+    results = {
+        **parsed,
+        "exit_code": 0,  # not meaningful for file ingest
+        "suite_duration_sec": None,
+        "suite_output_text": raw_output,
+    }
+
+    tree = _git(project, "rev-parse", "HEAD^{tree}")
+    if not tree:
+        print(f"ERROR: cannot read tree from git in {project}", file=sys.stderr)
+        return 1
+
+    if head.startswith(args.base_sha) or args.base_sha.startswith(head):
+        print(f"ERROR: base_sha equals HEAD ({head[:12]}); the comparison would "
+              f"be HEAD against itself",
+              file=sys.stderr)
+        return 1
+
+    scope = compute_suite_scope(project, args.base_sha)
+    if getattr(args, "scope", "auto") == "full":
+        scope["mode"] = "full"
+        scope["reason"] = "override: --scope full"
+    record.parent.mkdir(parents=True, exist_ok=True)
+
+    # At-base reruns.
+    nodes = results["failing_nodes"]
+    try:
+        base_red = read_baseline_red_at(project, args.base_sha)
+        head_red = read_baseline_red(project)
+        at_base = run_at_base(project, args.base_sha, nodes,
+                              configured_invocation,
+                              baseline_red=base_red)
+    except (ValueError, RuntimeError) as exc:
+        if "exceeds the" in str(exc) and "cap" in str(exc):
+            _atomic_write(record, render_record(
+                batch=args.batch or record.stem,
+                head=head, tree=tree, base_sha=args.base_sha,
+                invocation=configured_invocation, scope=scope,
+                results=results,
+                at_base={}, base_red=[], head_red=[],
+                at_base_error=str(exc),
+                suite_source=f"operator:{suite_output_path}",
+                suite_source_sha256=hashlib.sha256(
+                    suite_output_path.read_bytes()
+                ).hexdigest(),
+            ))
+            print(f"ERROR: at-base cap exceeded — named stop written to {record}",
+                  file=sys.stderr)
+            return 1
+        print(f"ERROR: at-base rerun could not run: {exc}", file=sys.stderr)
+        return 1
+
+    # Adding-commit rerun.
+    adding_slugs_map: dict[str, str | None] = {}
+    if registry_slugs:
+        absent_ids = [nid for nid, v in at_base.items()
+                      if v == "absent-at-base"]
+        if absent_ids:
+            try:
+                adding_verdicts, adding_slugs_map = run_at_adding_commit(
+                    project, args.base_sha, absent_ids,
+                    configured_invocation, registry_slugs)
+                at_base.update(adding_verdicts)
+            except (TimeoutError, subprocess.SubprocessError) as exc:
+                print(f"WARNING: adding-commit rerun failed: {exc}",
+                      file=sys.stderr)
+
+    # HEAD reruns for non-declared failing nodes.
+    non_declared = [nid for nid, v in at_base.items()
+                    if v not in ("declared-at-base", "failed")]
+    declared = [nid for nid, v in at_base.items()
+                if v == "declared-at-base"]
+    failed_at_base_ids = [nid for nid, v in at_base.items()
+                          if v == "failed"]
+    head_reruns: dict[str, int] = {}
+    batch_touched: dict[str, bool] = {}
+    flaky_owed: list[str] = []
+    declared_reruns: dict[str, str] = {nid: "—" for nid in declared}
+    declared_touched: dict[str, str] = {nid: "—" for nid in declared}
+    failed_reruns: dict[str, str] = {nid: "—" for nid in failed_at_base_ids}
+    failed_touched: dict[str, str] = {nid: "—" for nid in failed_at_base_ids}
+    if non_declared:
+        try:
+            head_reruns = run_head_reruns(project, non_declared,
+                                          configured_invocation)
+            batch_touched = batch_touched_files(project, args.base_sha,
+                                                non_declared)
+            for nid in non_declared:
+                cls = classify_flaky(
+                    nid, at_base.get(nid, "failed"),
+                    head_reruns.get(nid, 0), FLAKY_RERUN_COUNT,
+                    batch_touched.get(nid, False))
+                if cls == "flaky-owed":
+                    flaky_owed.append(nid)
+        except (TimeoutError, subprocess.SubprocessError) as exc:
+            print(f"WARNING: HEAD reruns could not run: {exc}", file=sys.stderr)
+
+    # History.
+    history = _read_history(record)
+    attempt = len(history) + 1
+
+    # Save raw suite output beside the record.
+    suite_output_file = record.with_suffix(".suite-output.txt")
+    _atomic_write(suite_output_file, raw_output)
+
+    all_reruns: dict = {**head_reruns, **declared_reruns, **failed_reruns}
+    all_touched: dict = {**batch_touched, **declared_touched, **failed_touched}
+
+    failed_at_base_suggestions = [
+        nid for nid in failed_at_base_ids
+        if not _in_baseline_red(nid, base_red or [])
+    ]
+
+    # AC-4: provenance.
+    suite_source = f"operator:{suite_output_path}"
+    suite_source_sha256 = hashlib.sha256(
+        suite_output_path.read_bytes()
+    ).hexdigest()
+
+    record_text = render_record(
+        batch=args.batch or record.stem,
+        head=head, tree=tree, base_sha=args.base_sha,
+        invocation=configured_invocation, scope=scope, results=results,
+        at_base=at_base, base_red=base_red, head_red=head_red,
+        head_reruns=all_reruns or None,
+        batch_touched=all_touched or None,
+        flaky_owed=flaky_owed or None,
+        adding_slugs=adding_slugs_map or None,
+        failed_at_base=failed_at_base_suggestions or None,
+        suite_output_path=str(suite_output_file),
+        suite_output_text=raw_output,
+        suite_source=suite_source,
+        suite_source_sha256=suite_source_sha256,
+    )
+    record_text = record_text.replace(
+        "record_writer:", f"attempt: {attempt}\nrecord_writer:", 1)
+    _atomic_write(record, record_text)
+
+    digest = _compute_record_digest(record_text)
+    _append_history_entry(record, attempt, digest, nodes,
+                          head=head, tree=tree)
+
+    c = results["counts"]
+    print(f"recorded: {c['passed']} passed, {c['failed']} failed, "
+          f"{c['errors']} errors of {c['total']} · scope={scope['mode']} · "
+          f"at-base rows={len(at_base)} · source=operator:{suite_output_path} "
+          f"→ {record}")
     return 0
 
 
@@ -1858,7 +2194,27 @@ def main(argv: list[str] | None = None) -> int:
         "--master", default=None, metavar="PATH",
         help="path to the MASTER plan (.md); required when --base-sha is 'auto'",
     )
+    ap.add_argument(
+        "--from-suite-output", default=None, metavar="FILE",
+        help="write the record from a pre-existing suite output file "
+             "(mutually exclusive with --run-suite)",
+    )
+    ap.add_argument(
+        "--suite-invocation", default=None, metavar="CMD",
+        help="the configured suite invocation (required with --from-suite-output)",
+    )
+    ap.add_argument(
+        "--suite-head", default=None, metavar="SHA",
+        help="the HEAD sha the suite ran on (must match current HEAD; "
+             "required with --from-suite-output)",
+    )
     args = ap.parse_args(argv)
+
+    # Mutual exclusivity: --run-suite and --from-suite-output cannot coexist.
+    if args.run_suite and args.from_suite_output:
+        print("ERROR: --run-suite and --from-suite-output are mutually exclusive",
+              file=sys.stderr)
+        return 2
 
     # Resolve --base-sha auto before any code path reads args.base_sha.
     if args.base_sha == "auto":
@@ -1900,7 +2256,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.batch:
-        if args.run_suite:
+        if args.run_suite or args.from_suite_output:
             # --run-suite creates the record; it doesn't need to exist yet.
             # Construct the path directly to avoid the FileNotFoundError in
             # resolve_batch_record.
@@ -1930,6 +2286,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.run_suite:
         return _write_measured_record(project, record, args,
                                       registry_slugs=registry_slugs)
+
+    if args.from_suite_output:
+        return _write_record_from_output(project, record, args,
+                                         registry_slugs=registry_slugs)
 
     if not record.is_file():
         print(f"ERROR: record not found: {record}", file=sys.stderr)

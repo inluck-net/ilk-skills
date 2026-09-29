@@ -710,7 +710,8 @@ def check_verified_tree(project: Path, record_path: Path) -> tuple[bool, str]:
 
 
 def write_gate_record(project: Path, excused: int,
-                      flaky_owed: list[str] | None = None) -> tuple[bool, str]:
+                      flaky_owed: list[str] | None = None,
+                      suite_source: str | None = None) -> tuple[bool, str]:
     """Record the verified verdict where the PROOF CHECK actually reads it.
 
     Verification and proof were two different files. This script validates
@@ -775,6 +776,7 @@ def write_gate_record(project: Path, excused: int,
         tree_sha=batch_gate._git_head_tree(project),
         writer="verify_attribution",
         flaky_owed=list(flaky_owed) if flaky_owed else None,
+        suite_source=suite_source,
     )
     try:
         written = batch_gate.write_record(record, runtime_dir)
@@ -1021,7 +1023,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"PROOF NOT RECORDED: {why}", file=sys.stderr)
         return 0
 
-    ok, detail = write_gate_record(project, excused, flaky_owed=flaky_owed)
+    # Read suite_source from the verification record for provenance.
+    _ss_text = record_path.read_text(encoding="utf-8-sig", errors="replace")
+    _ss_m = re.search(r"^suite_source:\s*(.+)$", _ss_text, re.MULTILINE)
+    suite_source = _ss_m.group(1).strip() if _ss_m else None
+
+    ok, detail = write_gate_record(project, excused, flaky_owed=flaky_owed,
+                                   suite_source=suite_source)
     if ok:
         print(f"{message}; batch-gate record written to {detail}")
     else:

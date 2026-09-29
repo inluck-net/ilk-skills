@@ -122,7 +122,6 @@ def _make_passing_mock() -> MagicMock:
 
 # ── AC-1: --from-suite-output writes a full record ──────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="no operator ingest")
 def test_from_suite_output_writes_record(tmp_path: Path) -> None:
     """--from-suite-output reads the file through the same parser and writes
     a complete record, including at-base reruns."""
@@ -138,12 +137,13 @@ def test_from_suite_output_writes_record(tmp_path: Path) -> None:
         mp.setattr(vr, "_resolve_project_verification_dir", lambda p: vdir)
         mp.setattr(vr, "read_head_from_git", lambda p: HEAD_SHA)
         mp.setattr(vr, "_git", lambda p, *a: TREE_SHA)
+        mp.setattr(vr, "read_baseline_red_at", lambda p, s: [])
+        mp.setattr(vr, "read_baseline_red", lambda p: [])
 
         record = vdir / "test-batch.md"
         rc = vr.main([
             "--project", str(repo),
             "--record", str(record),
-            "--batch", "test-batch",
             "--base-sha", BASE_SHA,
             "--from-suite-output", str(out_file),
             "--suite-invocation", CONFIGURED_INVOCATION,
@@ -159,7 +159,6 @@ def test_from_suite_output_writes_record(tmp_path: Path) -> None:
 
 # ── AC-2a: --suite-head must equal HEAD ─────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="no operator ingest")
 def test_suite_head_must_equal_head(tmp_path: Path) -> None:
     """--suite-head that does not match HEAD refuses with a named reason."""
     repo = _init_repo(tmp_path)
@@ -179,7 +178,6 @@ def test_suite_head_must_equal_head(tmp_path: Path) -> None:
         rc = vr.main([
             "--project", str(repo),
             "--record", str(record),
-            "--batch", "test-batch",
             "--base-sha", BASE_SHA,
             "--from-suite-output", str(out_file),
             "--suite-invocation", CONFIGURED_INVOCATION,
@@ -191,7 +189,6 @@ def test_suite_head_must_equal_head(tmp_path: Path) -> None:
 
 # ── AC-2b: worktree must be clean ───────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="no operator ingest")
 def test_dirty_worktree_refuses(tmp_path: Path) -> None:
     """A dirty tracked tree refuses with a named reason."""
     repo = _init_repo(tmp_path)
@@ -213,7 +210,6 @@ def test_dirty_worktree_refuses(tmp_path: Path) -> None:
         rc = vr.main([
             "--project", str(repo),
             "--record", str(record),
-            "--batch", "test-batch",
             "--base-sha", BASE_SHA,
             "--from-suite-output", str(out_file),
             "--suite-invocation", CONFIGURED_INVOCATION,
@@ -225,7 +221,6 @@ def test_dirty_worktree_refuses(tmp_path: Path) -> None:
 
 # ── AC-2c: file mtime >= HEAD's committer time ──────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="no operator ingest")
 def test_old_file_mtime_refuses(tmp_path: Path) -> None:
     """A file whose mtime is before HEAD's committer time refuses."""
     repo = _init_repo(tmp_path)
@@ -248,7 +243,6 @@ def test_old_file_mtime_refuses(tmp_path: Path) -> None:
         rc = vr.main([
             "--project", str(repo),
             "--record", str(record),
-            "--batch", "test-batch",
             "--base-sha", BASE_SHA,
             "--from-suite-output", str(out_file),
             "--suite-invocation", CONFIGURED_INVOCATION,
@@ -260,7 +254,6 @@ def test_old_file_mtime_refuses(tmp_path: Path) -> None:
 
 # ── AC-2d: no summary line refuses ──────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="no operator ingest")
 def test_no_summary_line_refuses(tmp_path: Path) -> None:
     """A file with no pytest/vitest summary line refuses (parser raises)."""
     repo = _init_repo(tmp_path)
@@ -280,7 +273,6 @@ def test_no_summary_line_refuses(tmp_path: Path) -> None:
         rc = vr.main([
             "--project", str(repo),
             "--record", str(record),
-            "--batch", "test-batch",
             "--base-sha", BASE_SHA,
             "--from-suite-output", str(out_file),
             "--suite-invocation", CONFIGURED_INVOCATION,
@@ -292,7 +284,6 @@ def test_no_summary_line_refuses(tmp_path: Path) -> None:
 
 # ── AC-2e: "PARTIAL RUN" banner refuses ─────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="no operator ingest")
 def test_partial_run_banner_refuses(tmp_path: Path) -> None:
     """A file carrying the 'PARTIAL RUN' banner refuses."""
     repo = _init_repo(tmp_path)
@@ -312,7 +303,6 @@ def test_partial_run_banner_refuses(tmp_path: Path) -> None:
         rc = vr.main([
             "--project", str(repo),
             "--record", str(record),
-            "--batch", "test-batch",
             "--base-sha", BASE_SHA,
             "--from-suite-output", str(out_file),
             "--suite-invocation", CONFIGURED_INVOCATION,
@@ -324,7 +314,6 @@ def test_partial_run_banner_refuses(tmp_path: Path) -> None:
 
 # ── AC-2f: collected count below --collect-only count refuses ────────────────
 
-@pytest.mark.xfail(strict=True, reason="no operator ingest")
 def test_low_collected_count_refuses(tmp_path: Path) -> None:
     """A file whose collected count is below the configured suite's
     --collect-only count refuses."""
@@ -361,7 +350,6 @@ def test_low_collected_count_refuses(tmp_path: Path) -> None:
         rc = vr.main([
             "--project", str(repo),
             "--record", str(record),
-            "--batch", "test-batch",
             "--base-sha", BASE_SHA,
             "--from-suite-output", str(out_file),
             "--suite-invocation", CONFIGURED_INVOCATION,
@@ -373,7 +361,6 @@ def test_low_collected_count_refuses(tmp_path: Path) -> None:
 
 # ── AC-3: invocation normalisation ──────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="no operator ingest")
 def test_invocation_strips_env_prefix(tmp_path: Path) -> None:
     """A leading VAR=value env prefix is stripped before comparison."""
     repo = _init_repo(tmp_path)
@@ -388,13 +375,14 @@ def test_invocation_strips_env_prefix(tmp_path: Path) -> None:
         mp.setattr(vr, "_resolve_project_verification_dir", lambda p: vdir)
         mp.setattr(vr, "read_head_from_git", lambda p: HEAD_SHA)
         mp.setattr(vr, "_git", lambda p, *a: TREE_SHA)
+        mp.setattr(vr, "read_baseline_red_at", lambda p, s: [])
+        mp.setattr(vr, "read_baseline_red", lambda p: [])
 
         record = vdir / "test-batch.md"
         # The file's invocation has an env prefix; the configured one does not.
         rc = vr.main([
             "--project", str(repo),
             "--record", str(record),
-            "--batch", "test-batch",
             "--base-sha", BASE_SHA,
             "--from-suite-output", str(out_file),
             "--suite-invocation", CONFIGURED_INVOCATION,
@@ -404,7 +392,6 @@ def test_invocation_strips_env_prefix(tmp_path: Path) -> None:
     assert rc == 0
 
 
-@pytest.mark.xfail(strict=True, reason="no operator ingest")
 def test_invocation_strips_output_only_flags(tmp_path: Path) -> None:
     """Output-only flags (-q, -v, --color=auto, etc.) are stripped."""
     repo = _init_repo(tmp_path)
@@ -419,6 +406,8 @@ def test_invocation_strips_output_only_flags(tmp_path: Path) -> None:
         mp.setattr(vr, "_resolve_project_verification_dir", lambda p: vdir)
         mp.setattr(vr, "read_head_from_git", lambda p: HEAD_SHA)
         mp.setattr(vr, "_git", lambda p, *a: TREE_SHA)
+        mp.setattr(vr, "read_baseline_red_at", lambda p, s: [])
+        mp.setattr(vr, "read_baseline_red", lambda p: [])
 
         record = vdir / "test-batch.md"
         # The operator added -q and --color=no; both are output-only.
@@ -426,7 +415,6 @@ def test_invocation_strips_output_only_flags(tmp_path: Path) -> None:
         rc = vr.main([
             "--project", str(repo),
             "--record", str(record),
-            "--batch", "test-batch",
             "--base-sha", BASE_SHA,
             "--from-suite-output", str(out_file),
             "--suite-invocation", CONFIGURED_INVOCATION,
@@ -438,7 +426,6 @@ def test_invocation_strips_output_only_flags(tmp_path: Path) -> None:
 
 # ── AC-3a: -k in the file refuses ───────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="no operator ingest")
 def test_selection_flag_k_refuses(tmp_path: Path) -> None:
     """A -k flag in the file refuses, even if it's also configured."""
     repo = _init_repo(tmp_path)
@@ -460,7 +447,6 @@ def test_selection_flag_k_refuses(tmp_path: Path) -> None:
         rc = vr.main([
             "--project", str(repo),
             "--record", str(record),
-            "--batch", "test-batch",
             "--base-sha", BASE_SHA,
             "--from-suite-output", str(out_file),
             "--suite-invocation", bad_invocation,
@@ -472,7 +458,6 @@ def test_selection_flag_k_refuses(tmp_path: Path) -> None:
 
 # ── AC-4: provenance ────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="no operator ingest")
 def test_operator_provenance_in_record(tmp_path: Path) -> None:
     """The record carries suite_source: operator:<path> and sha256 digest."""
     repo = _init_repo(tmp_path)
@@ -487,12 +472,13 @@ def test_operator_provenance_in_record(tmp_path: Path) -> None:
         mp.setattr(vr, "_resolve_project_verification_dir", lambda p: vdir)
         mp.setattr(vr, "read_head_from_git", lambda p: HEAD_SHA)
         mp.setattr(vr, "_git", lambda p, *a: TREE_SHA)
+        mp.setattr(vr, "read_baseline_red_at", lambda p, s: [])
+        mp.setattr(vr, "read_baseline_red", lambda p: [])
 
         record = vdir / "test-batch.md"
         rc = vr.main([
             "--project", str(repo),
             "--record", str(record),
-            "--batch", "test-batch",
             "--base-sha", BASE_SHA,
             "--from-suite-output", str(out_file),
             "--suite-invocation", CONFIGURED_INVOCATION,
@@ -508,7 +494,6 @@ def test_operator_provenance_in_record(tmp_path: Path) -> None:
     assert f"suite_source_sha256: {expected_digest}" in text
 
 
-@pytest.mark.xfail(strict=True, reason="no operator ingest")
 def test_tool_run_has_tool_provenance(tmp_path: Path) -> None:
     """A --run-suite record carries suite_source: tool (not operator)."""
     repo = _init_repo(tmp_path)

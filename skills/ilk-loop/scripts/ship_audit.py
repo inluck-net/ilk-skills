@@ -493,7 +493,9 @@ def _resolve_batch_record(
         except (OSError, json.JSONDecodeError):
             data, verdict = {}, "fail"
         if verdict == "pass":
-            return "pass", None
+            suite_source = data.get("suite_source") if isinstance(data, dict) else None
+            reason = f"source: {suite_source}" if suite_source else None
+            return "pass", reason
         # Name the blockers, not just the verdict: format_verdict_reason
         # renders the undeclared failures and the excused count the gate
         # computed, or says attribution was not recorded when the writing
