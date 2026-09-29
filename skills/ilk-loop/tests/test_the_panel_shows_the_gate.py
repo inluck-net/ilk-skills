@@ -86,7 +86,6 @@ def _row_for(out: str, key: str) -> str:
 
 # ── AC-1: status_all payload fields ────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="panel has no phase")
 def test_status_all_emits_phase_fields_when_alive():
     """AC-1: status_all returns phase/phase_slug/phase_step/phase_elapsed_s."""
     from status_all import resolve_project_status
@@ -97,17 +96,20 @@ def test_status_all_emits_phase_fields_when_alive():
     with tempfile.TemporaryDirectory() as tmp:
         proj = Path(tmp) / "projects" / "proj"
         (proj / "plans").mkdir(parents=True)
-        (proj / "runtime" / "launcher").mkdir(parents=True)
+        launcher = proj / "runtime" / "launcher"
+        launcher.mkdir(parents=True)
         # sentinel: alive
-        (proj / "runtime" / "launcher" / "last-exit.json").write_text(
+        (launcher / "last-exit.json").write_text(
             '{"state":"running","pid":4242,"run_id":"20260929-083918"}'
         )
         # phase.json: gate
-        (proj / "runtime" / "launcher" / "phase.json").write_text(
+        (launcher / "phase.json").write_text(
             '{"phase":"gate","slug":"contract-gates-batch-verify","step":0,'
             '"started_at":1727570000,"pid":4242,"run_id":"20260929-083918"}'
         )
-        with patch("status_all.pid_alive", return_value=True):
+        with patch("status_all.ilk_pid_alive", return_value=True), \
+             patch("status_all.pid_alive", return_value=True), \
+             patch("status_all.external_launcher_dir", return_value=launcher):
             result = resolve_project_status(proj)
     # Fields must be PRESENT and populated (sentinel alive + phase.json valid)
     assert "phase" in result, "phase key missing from payload"
@@ -120,7 +122,6 @@ def test_status_all_emits_phase_fields_when_alive():
     assert result["phase_elapsed_s"] is not None
 
 
-@pytest.mark.xfail(strict=True, reason="panel has no phase")
 def test_status_all_phase_null_when_sentinel_dead():
     """AC-1: stale phase.json (dead pid) ⇒ phase fields present but null."""
     from status_all import resolve_project_status
@@ -153,7 +154,6 @@ def test_status_all_phase_null_when_sentinel_dead():
 
 # ── AC-2: gate row replaces heartbeat ──────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="panel has no phase")
 def test_gate_phase_replaces_heartbeat_fragment():
     """AC-2: phase gate ⇒ row shows ``gate <slug> <step> · <elapsed>``, no ``♥``."""
     out = render_xbar([_entry(
@@ -175,7 +175,6 @@ def test_gate_phase_replaces_heartbeat_fragment():
     assert "♥" not in row, f"heartbeat must be replaced: {row}"
 
 
-@pytest.mark.xfail(strict=True, reason="panel has no phase")
 def test_batch_gate_phase_renders_batch_gate():
     """AC-2: phase batch-gate ⇒ row shows ``batch gate · <elapsed>``."""
     out = render_xbar([_entry(
@@ -199,7 +198,6 @@ def test_batch_gate_phase_renders_batch_gate():
 
 # ── AC-3: sub-plan fallback ────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="panel has no phase")
 def test_phase_slug_shown_when_active_master_empty():
     """AC-3: active_master "" but phase_slug set ⇒ row still names the slug."""
     out = render_xbar([_entry(
@@ -306,7 +304,6 @@ def test_render_tray_with_phase_fields():
 
 # ── AC-6: replay pin ───────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="panel has no phase")
 def test_replay_pin_083918():
     """AC-6: the 09:09 payload + phase gate renders ``gate <slug> 0 · …``, no ``♥``."""
     out = render_xbar([_entry(

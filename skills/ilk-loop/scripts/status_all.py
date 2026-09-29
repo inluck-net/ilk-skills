@@ -389,6 +389,70 @@ def _steer_pause(key: str) -> tuple[bool, str]:
     return True, (lines[0].strip() if lines else "")
 
 
+_NULL_PHASE = {
+    "phase": None,
+    "phase_slug": None,
+    "phase_step": None,
+    "phase_elapsed_s": None,
+}
+
+
+def _read_phase(key: str, sentinel: dict) -> dict:
+    """Read ``runtime/launcher/phase.json`` and validate against the sentinel.
+
+    Returns ``phase``, ``phase_slug``, ``phase_step`` and ``phase_elapsed_s``
+    (``now − started_at``).  All four are null unless every staleness check
+    passes: sentinel is alive, ``phase.json`` parses, its ``pid`` matches the
+    sentinel's and is alive (``pid_alive``), and its ``run_id`` matches the
+    sentinel file's ``run_id``.
+
+    Follows the ``_steer_pause`` pattern: never raises, never opens JSONL.
+    The sentinel dict from ``resolve_project_status`` does not carry
+    ``run_id``, so we read it from the sentinel file directly.
+    """
+    if not sentinel.get("alive"):
+        return dict(_NULL_PHASE)
+    launcher_dir = external_launcher_dir(key)
+    phase_file = launcher_dir / "phase.json"
+    sentinel_file = launcher_dir / "last-exit.json"
+    try:
+        if not phase_file.is_file():
+            return dict(_NULL_PHASE)
+    except OSError:
+        return dict(_NULL_PHASE)
+    try:
+        text = phase_file.read_text(encoding="utf-8", errors="replace")
+        data = json.loads(text)
+    except (OSError, ValueError):
+        return dict(_NULL_PHASE)
+    try:
+        # Staleness: pid must match sentinel and be alive.
+        phase_pid = int(data.get("pid", 0))
+        sentinel_pid = int(sentinel.get("pid", 0))
+        if phase_pid != sentinel_pid or not pid_alive(phase_pid):
+            return dict(_NULL_PHASE)
+        # Staleness: run_id must match the sentinel file's run_id.
+        # The sentinel dict doesn't carry run_id, so read the file.
+        try:
+            s_text = sentinel_file.read_text(encoding="utf-8-sig")
+            s_data = json.loads(s_text)
+            sentinel_run_id = s_data.get("run_id")
+        except (OSError, ValueError):
+            return dict(_NULL_PHASE)
+        if data.get("run_id") != sentinel_run_id:
+            return dict(_NULL_PHASE)
+        started_at = data.get("started_at")
+        elapsed = max(0, int(time.time() - started_at)) if isinstance(started_at, (int, float)) else 0
+        return {
+            "phase": data.get("phase"),
+            "phase_slug": data.get("slug"),
+            "phase_step": data.get("step"),
+            "phase_elapsed_s": elapsed,
+        }
+    except (TypeError, ValueError):
+        return dict(_NULL_PHASE)
+
+
 def _blocked_info(
     project_data_dir: Path,
     sentinel: dict,
@@ -895,6 +959,7 @@ def resolve_project_status(project_dir: Path, *,
     # here per project, the providers spawn (~35ms) ran 118x per refresh:
     # 3.69s of a 4.18s run every 10s (chad-mbp, 2026-09-28).
     steer_paused, steer_paused_reason = _steer_pause(key)
+    phase_data = _read_phase(key, sentinel)
 
     if roles is None:
         roles = _roles_block()
@@ -925,6 +990,7 @@ def resolve_project_status(project_dir: Path, *,
         "manually_runnable": manually_runnable,
         "steer_paused": steer_paused,
         "steer_paused_reason": steer_paused_reason,
+        **phase_data,
         **liveness,
         **blocked,
     }

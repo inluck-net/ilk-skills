@@ -74,6 +74,33 @@ def _heartbeat_fragment(entry: dict) -> str:
     )
 
 
+def _gate_fragment(entry: dict) -> str:
+    """Return ``  gate <slug> <step> \u00b7 <elapsed>`` for gate/batch-gate phases.
+
+    Returns ``""`` when the phase is absent, null, or not a gate phase.
+    Absent means a pre-phase payload (old status_all); null means the phase
+    was stale and status_all cleared it.  ``agent`` and ``between`` are not
+    gate phases \u2014 the heartbeat fragment handles those.
+
+    ``batch-gate`` renders as ``batch gate`` (space, not hyphen) because
+    the hyphen is a slug separator in the row's visual grammar.
+    """
+    phase = entry.get("phase")
+    if phase not in ("gate", "batch-gate"):
+        return ""
+    slug = entry.get("phase_slug")
+    step = entry.get("phase_step")
+    elapsed = entry.get("phase_elapsed_s")
+    if not isinstance(slug, str) or not slug:
+        return ""
+    if not isinstance(step, int) or isinstance(step, bool):
+        return ""
+    if not isinstance(elapsed, int) or isinstance(elapsed, bool) or elapsed < 0:
+        return ""
+    label = "batch gate" if phase == "batch-gate" else f"gate {slug} {step}"
+    return f"  {label} \u00b7 {_fmt_elapsed(elapsed)}"
+
+
 def render_xbar(
     entries: list[dict],
     *,
@@ -310,8 +337,13 @@ def render_xbar(
         # as a step count applied to nothing.
         if batch and sp_cnt:
             row += f"  {batch} {sp_idx}/{sp_cnt}"
+        # AC-3: sub-plan fallback — when next_subplan is empty but
+        # phase_slug is set (MASTER already shipped during its verify
+        # gate), name the phase slug so the row is not blank.
         if next_sp:
             row += f"  {next_sp}"
+        elif e.get("phase_slug"):
+            row += f"  {e['phase_slug']}"
         if step:
             row += f"  {step}"
 
@@ -331,7 +363,9 @@ def render_xbar(
 
         # Sub-step liveness, last: it is the fastest-changing part of the row
         # and the eye tracks a trailing field better than an interior one.
-        row += _heartbeat_fragment(e)
+        # Gate phases replace the heartbeat with a gate timer (AC-2).
+        gate = _gate_fragment(e)
+        row += gate if gate else _heartbeat_fragment(e)
 
         # Every row carries a trivial action so SwiftBar/AppKit keeps it
         # ENABLED. Actionless items with no attached submenu are disabled by
