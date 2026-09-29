@@ -596,7 +596,8 @@ FLAKY_RERUN_COUNT = 3
 
 def run_at_base(project: Path, base_sha: str, node_ids: list[str],
                 invocation: str, timeout: int = 600,
-                baseline_red: list[dict] | None = None) -> dict:
+                baseline_red: list[dict] | None = None,
+                registry_slugs: set[str] | None = None) -> dict:
     """Re-run each failing node id at the batch's base commit.
 
     This is the step the template describes as a procedure a worker performs.
@@ -604,11 +605,13 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
     the base sha from the master, the runner from config — and "did this node
     id pass at base" is a measurement, not a judgment.  So it is code.
 
-    Returns ``{node_id: "passed" | "failed" | "absent-at-base" | "declared-at-base"}``.
+    Returns ``{node_id: "passed" | "failed" | "absent-at-base" | "declared-at-base" | "born-red-at:<sha>"}``.
     ``absent-at-base`` means the test did not exist at the base commit, which
     makes a present failure this batch's own damage rather than an exoneration.
     ``declared-at-base`` means the test was in the base commit's ``baseline_red``
     and is already exonerated — no subprocess is spawned.
+    ``born-red-at:<sha>`` means the test was already failing at the commit that
+    added it (another plan's commit) — not attributed to this batch.
     """
     import shutil
     import subprocess
@@ -699,7 +702,159 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
                        encoding="utf-8", errors="replace")
         shutil.rmtree(tmp, ignore_errors=True)
     verdicts.update(verdicts_declared)
+
+    # Adding-commit rerun: for absent-at-base ids, re-run at the commit that
+    # added their test file.  born-red-at:* = not attributed (the test was
+    # already red when it was born).
+    if registry_slugs:
+        absent_ids = [nid for nid, v in verdicts.items()
+                      if v == "absent-at-base"]
+        if absent_ids:
+            adding_verdicts, _adding_slugs = run_at_adding_commit(
+                project, base_sha, absent_ids, invocation, registry_slugs,
+                timeout=timeout)
+            verdicts.update(adding_verdicts)
+
     return verdicts
+
+
+def _find_adding_commits(project: Path, base_sha: str,
+                         node_ids: list[str]) -> dict[str, str | None]:
+    """Find the commit that added each node id's test file.
+
+    Returns ``{node_id: commit_sha_or_None}``.  ``None`` means the file
+    existed at base (shouldn't happen for absent-at-base ids, but defensive).
+    Uses ``git log --diff-filter=A`` (oldest match) so renamed files resolve
+    to the commit that first created them.
+    """
+    import subprocess
+    # Map file paths to node ids (multiple ids can share a file).
+    file_to_nids: dict[str, list[str]] = {}
+    for nid in node_ids:
+        fp = nid.split("::")[0]
+        file_to_nids.setdefault(fp, []).append(nid)
+    result: dict[str, str | None] = {}
+    for fp in file_to_nids:
+        r = subprocess.run(
+            ["git", "log", "--diff-filter=A", "--format=%H",
+             f"{base_sha}..HEAD", "--", fp],
+            cwd=project, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30)
+        shas = (r.stdout or "").strip().splitlines()
+        if shas and shas[0]:
+            # oldest = last in log output
+            adding = shas[-1].strip()
+        else:
+            adding = None
+        for nid in file_to_nids[fp]:
+            result[nid] = adding
+    return result
+
+
+def _extract_plan_slug(commit_msg: str) -> str | None:
+    """Extract the plan slug from a ``[plan:<slug>#…]`` trailer, or None."""
+    m = re.search(r"\[plan:([^#\]]+)#", commit_msg)
+    return m.group(1) if m else None
+
+
+def run_at_adding_commit(
+    project: Path, base_sha: str,
+    absent_ids: list[str], invocation: str,
+    registry_slugs: set[str],
+    timeout: int = 600,
+) -> tuple[dict[str, str], dict[str, str | None]]:
+    """Re-run ``absent-at-base`` ids at the commit that added their test file.
+
+    Returns ``(verdicts, adding_slugs)`` where:
+
+    - ``verdicts`` is ``{node_id: verdict}`` with verdict one of:
+      ``absent-at-base`` (this batch's slug, or passed/absent at adding commit),
+      ``born-red-at:<sha>`` (failed at the adding commit, not attributed).
+    - ``adding_slugs`` is ``{node_id: slug_or_None}`` — the plan slug from the
+      adding commit's message, for rendering in the record.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    if not absent_ids:
+        return {}, {}
+
+    adding = _find_adding_commits(project, base_sha, absent_ids)
+
+    # Group by adding commit (batch: one worktree per commit, not per id).
+    by_commit: dict[str, list[str]] = {}
+    for nid in absent_ids:
+        sha = adding.get(nid)
+        if sha is None:
+            by_commit.setdefault("__none__", []).append(nid)
+        else:
+            by_commit.setdefault(sha, []).append(nid)
+
+    verdicts: dict[str, str] = {}
+    adding_slugs: dict[str, str | None] = {}
+
+    # Ids with no adding commit (file existed at base — defensive).
+    for nid in by_commit.get("__none__", []):
+        verdicts[nid] = "absent-at-base"
+        adding_slugs[nid] = None
+
+    runner = re.sub(r"\s-n\s+\S+|\s--dist\s+\S+", "", invocation)
+
+    for commit_sha, nids in by_commit.items():
+        if commit_sha == "__none__":
+            continue
+
+        # Read the commit message to extract the plan slug.
+        msg = _git(project, "log", "-1", "--format=%B", commit_sha) or ""
+        slug = _extract_plan_slug(msg)
+        for nid in nids:
+            adding_slugs[nid] = slug
+
+        # AC-1: this batch's slug ⇒ no rerun, stays absent-at-base.
+        if slug in registry_slugs:
+            for nid in nids:
+                verdicts[nid] = "absent-at-base"
+            continue
+
+        # Re-run at the adding commit in a detached worktree.
+        tmp = Path(tempfile.mkdtemp(prefix="ilk-adding-"))
+        wt = tmp / "adding-wt"
+        try:
+            add = subprocess.run(
+                ["git", "worktree", "add", "--detach", str(wt), commit_sha],
+                cwd=project, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=180)
+            if add.returncode != 0:
+                # Can't check out — treat as absent (defensive).
+                for nid in nids:
+                    verdicts[nid] = "absent-at-base"
+                continue
+            for nid in nids:
+                r = subprocess.run(
+                    f"{runner} {nid}", shell=True, cwd=wt,
+                    capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=timeout)
+                blob = (r.stdout or "") + (r.stderr or "")
+                if _is_vitest(runner):
+                    if r.returncode == 0:
+                        verdicts[nid] = "absent-at-base"
+                    elif not (wt / nid).exists():
+                        verdicts[nid] = "absent-at-base"
+                    else:
+                        verdicts[nid] = f"born-red-at:{commit_sha[:12]}"
+                elif r.returncode == 4 or "error: not found:" in blob.lower():
+                    verdicts[nid] = "absent-at-base"
+                elif r.returncode == 0:
+                    verdicts[nid] = "absent-at-base"
+                else:
+                    verdicts[nid] = f"born-red-at:{commit_sha[:12]}"
+        finally:
+            subprocess.run(["git", "worktree", "remove", "--force", str(wt)],
+                           cwd=project, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    return verdicts, adding_slugs
 
 
 def read_baseline_red(project: Path) -> list[dict]:
@@ -930,6 +1085,7 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   batch_touched: dict[str, bool] | None = None,
                   alone: dict[str, str] | None = None,
                   flaky_owed: list[str] | None = None,
+                  adding_slugs: dict[str, str | None] | None = None,
                   suite_duration_sec: int | None = None,
                   suite_budget: tuple[int, str] | None = None,
                   suite_output_path: str | None = None,
@@ -1043,6 +1199,17 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
             for nid in order_dependent:
                 red_count = head_reruns.get(nid, 0) if head_reruns else 0
                 lines.append(f"order-dependent: {nid} — passes alone, red {red_count}/{FLAKY_RERUN_COUNT} with the failing set")
+            lines.append("")
+    if adding_slugs:
+        born_red = {nid: v for nid, v in at_base.items()
+                    if v.startswith("born-red-at:")}
+        if born_red:
+            lines += ["## Adding-commit metadata", ""]
+            for nid, verdict in born_red.items():
+                slug = adding_slugs.get(nid)
+                slug_str = slug if slug else "(untrailered)"
+                sha = verdict.split(":", 1)[1] if ":" in verdict else "?"
+                lines.append(f"born-red-at: {nid} — adding commit {sha} ({slug_str})")
             lines.append("")
     if flaky_owed:
         lines += ["## Flaky (owed)", ""]
@@ -1229,7 +1396,8 @@ def _atomic_write(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
-def _write_measured_record(project: Path, record: Path, args) -> int:
+def _write_measured_record(project: Path, record: Path, args,
+                          registry_slugs: set[str] | None = None) -> int:
     """Own the whole machine-read surface: measure it, then write it.
 
     Ordering is deliberate.  The record is written TWICE — a signed stub with
@@ -1380,6 +1548,26 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
         print(f"stub record left at {record}", file=sys.stderr)
         return 1
 
+    # Adding-commit rerun: for absent-at-base ids, re-run at the commit that
+    # added their test file.  born-red-at:* = not attributed (the test was
+    # already red when it was born).  This must run before HEAD reruns so that
+    # born-red-at ids are excluded from the flaky classification path.
+    adding_slugs: dict[str, str | None] = {}
+    if registry_slugs:
+        absent_ids = [nid for nid, v in at_base.items()
+                      if v == "absent-at-base"]
+        if absent_ids:
+            try:
+                adding_verdicts, adding_slugs = run_at_adding_commit(
+                    project, args.base_sha, absent_ids, invocation,
+                    registry_slugs)
+                at_base.update(adding_verdicts)
+            except (TimeoutError, subprocess.SubprocessError) as exc:
+                print(f"WARNING: adding-commit rerun failed: {exc}",
+                      file=sys.stderr)
+                # Continue without adding-commit classification — the record
+                # is still valid with plain absent-at-base verdicts.
+
     # Run HEAD reruns for non-declared failing nodes to classify flaky tests.
     # Declared-at-base rows (already in baseline_red) get — in head reruns
     # and batch touched file — no subprocess is spawned for them.
@@ -1430,6 +1618,7 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
         head_reruns=all_reruns or None,
         batch_touched=all_touched or None,
         flaky_owed=flaky_owed or None,
+        adding_slugs=adding_slugs or None,
         suite_duration_sec=results.get("suite_duration_sec"),
         suite_budget=(suite_budget, suite_budget_source),
         suite_output_path=str(suite_output_file),
@@ -1457,6 +1646,29 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
     return 0
 
 
+def _extract_registry_slugs(master_path: Path) -> list[str]:
+    """Extract plan slugs from the MASTER's sub-plan registry table.
+
+    Returns a list of slugs (e.g. ``["alpha", "beta"]``) extracted from
+    sub-plan filenames like ``2026-09-29-alpha.md``.
+    """
+    master_text = master_path.read_text(encoding="utf-8-sig", errors="replace")
+    scripts = Path(__file__).resolve().parent
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    from plan_preflight import _extract_table_filenames
+    filenames = _extract_table_filenames(master_text)
+    slug_re = re.compile(r"^\d{4}-\d{2}-\d{2}[a-z]?-(.+?)\.md$")
+    slugs: list[str] = []
+    for fn in filenames:
+        m = slug_re.match(fn)
+        if m:
+            slugs.append(m.group(1))
+        else:
+            slugs.append(fn.removesuffix(".md"))
+    return slugs
+
+
 def resolve_batch_base_sha(
     project: Path,
     master_path: Path,
@@ -1479,31 +1691,11 @@ def resolve_batch_base_sha(
     if explicit_sha is not None and explicit_sha != "auto":
         return explicit_sha, f"base_sha: {explicit_sha} (explicit)"
 
-    master_text = master_path.read_text(encoding="utf-8-sig", errors="replace")
-
-    # Extract plan filenames from the registry table (backticked-safe).
-    scripts = Path(__file__).resolve().parent
-    if str(scripts) not in sys.path:
-        sys.path.insert(0, str(scripts))
-    from plan_preflight import _extract_table_filenames
-
-    filenames = _extract_table_filenames(master_text)
-    if not filenames:
+    slugs = _extract_registry_slugs(master_path)
+    if not slugs:
         print(f"ERROR: no sub-plan filenames found in {master_path.name}",
               file=sys.stderr)
         raise SystemExit(1)
-
-    # Strip date prefix + .md to get the slug used in commit messages.
-    # Filenames: 2026-09-29-alpha.md → slug: alpha
-    slug_re = re.compile(r"^\d{4}-\d{2}-\d{2}[a-z]?-(.+?)\.md$")
-    slugs: list[str] = []
-    for fn in filenames:
-        m = slug_re.match(fn)
-        if m:
-            slugs.append(m.group(1))
-        else:
-            # Bare slug without date prefix (legacy or manual).
-            slugs.append(fn.removesuffix(".md"))
 
     # Build a regex alternation for git log --grep.
     escaped = [re.escape(s) for s in slugs]
@@ -1618,6 +1810,15 @@ def main(argv: list[str] | None = None) -> int:
         args.base_sha = resolved_sha
         print(provenance)
 
+    # Extract registry slugs from --master for the adding-commit rerun.
+    # Available when --master is provided (required for --base-sha auto,
+    # optional otherwise).
+    registry_slugs: set[str] = set()
+    if args.master:
+        master_for_slugs = Path(args.master).resolve()
+        if master_for_slugs.is_file():
+            registry_slugs = set(_extract_registry_slugs(master_for_slugs))
+
     project = Path(args.project).resolve()
 
     if bool(args.record) == bool(args.batch):
@@ -1656,7 +1857,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.run_suite:
-        return _write_measured_record(project, record, args)
+        return _write_measured_record(project, record, args,
+                                      registry_slugs=registry_slugs)
 
     if not record.is_file():
         print(f"ERROR: record not found: {record}", file=sys.stderr)

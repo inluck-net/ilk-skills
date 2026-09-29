@@ -1,7 +1,7 @@
-"""Red-first pins for "a new test is judged at its own commit".
+"""Tests for "a new test is judged at its own commit".
 
-AC-1 through AC-5 are ``xfail(strict=True)`` — the adding-commit rerun
-behaviour they assert does not exist yet.  AC-6 is a control (passes today).
+AC-1 through AC-5 verify the adding-commit rerun behaviour.
+AC-6 is a control (passes today).
 
 Fixture: a tmp_path git repo with four commits:
   1. base
@@ -28,10 +28,11 @@ import verify_attribution as va    # noqa: E402
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+def _git(cwd: Path, *args: str) -> str:
+    r = subprocess.run(
         ["git", *args], cwd=cwd, capture_output=True,
         text=True, encoding="utf-8", errors="replace", timeout=30)
+    return (r.stdout or "").strip()
 
 
 def _init_repo(tmp_path: Path, name: str = "repo") -> Path:
@@ -99,7 +100,6 @@ def _make_fixture_repo(tmp_path: Path) -> tuple[Path, str, str]:
 
 # ── AC-1: this-batch slug ⇒ absent-at-base, attributed, no rerun ─────────────
 
-@pytest.mark.xfail(strict=True, reason="adding-commit rerun not implemented")
 def test_this_batch_slug_no_rerun(tmp_path: Path) -> None:
     """An id whose test file was added by a commit with THIS batch's slug
     is ``absent-at-base`` and attributed — no adding-commit rerun."""
@@ -119,7 +119,6 @@ def test_this_batch_slug_no_rerun(tmp_path: Path) -> None:
 
 # ── AC-2: other-plan slug, failed at adding commit ⇒ born-red-at ─────────────
 
-@pytest.mark.xfail(strict=True, reason="adding-commit rerun not implemented")
 def test_other_plan_failed_at_adding_commit(tmp_path: Path) -> None:
     """An id whose test file was added by another plan's commit, and that
     test already failed at the adding commit, gets ``born-red-at:<sha>``."""
@@ -145,7 +144,6 @@ def test_other_plan_failed_at_adding_commit(tmp_path: Path) -> None:
 
 # ── AC-3: other-plan slug, passed at adding commit ⇒ absent-at-base ──────────
 
-@pytest.mark.xfail(strict=True, reason="adding-commit rerun not implemented")
 def test_other_plan_passed_at_adding_commit(tmp_path: Path) -> None:
     """An id whose test file was added by another plan's commit, and that
     test passed at the adding commit, stays ``absent-at-base`` (attributed)."""
@@ -165,7 +163,6 @@ def test_other_plan_passed_at_adding_commit(tmp_path: Path) -> None:
 
 # ── AC-4: batching — one worktree per adding commit, not per id ──────────────
 
-@pytest.mark.xfail(strict=True, reason="adding-commit rerun not implemented")
 def test_batching_one_worktree_per_adding_commit(tmp_path: Path) -> None:
     """Multiple ids from the same adding commit share one worktree.
 
@@ -194,7 +191,6 @@ def test_batching_one_worktree_per_adding_commit(tmp_path: Path) -> None:
 
 # ── AC-5: derive_attributed treats born-red-at:* as not attributed ────────────
 
-@pytest.mark.xfail(strict=True, reason="adding-commit rerun not implemented")
 def test_derive_attributed_born_red_not_attributed() -> None:
     """``verify_attribution.derive_attributed`` treats ``born-red-at:*`` as
     not attributed (the test was already red when it was born)."""

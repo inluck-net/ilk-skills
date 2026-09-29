@@ -174,7 +174,7 @@ def parse_rows(section: str) -> list[list[str]]:
 _SIGNED_RE = re.compile(r"^record_writer:[ \t]*(\S+)", re.MULTILINE)
 
 _AT_BASE_OK = {"passed", "failed", "absent-at-base", "failed-differently",
-               "declared-at-base"}
+               "declared-at-base", "born-red-at"}
 
 
 def is_signed(text: str) -> bool:
@@ -222,7 +222,7 @@ def derive_attributed(rows: list[list[str]]) -> tuple[list[list[str]], list[str]
                 f"(node id | at base | in baseline_red): {r}"
             )
         node, at_base, in_red = r[0], r[1].strip().lower(), r[2].strip().lower()
-        if at_base not in _AT_BASE_OK:
+        if at_base not in _AT_BASE_OK and not at_base.startswith("born-red-at:"):
             raise VerificationError(
                 f"unrecognised `at base` value {r[1]!r} for {node}. Legal "
                 f"values are {sorted(_AT_BASE_OK)}. A cell the checker cannot "
@@ -265,9 +265,10 @@ def derive_attributed(rows: list[list[str]]) -> tuple[list[list[str]], list[str]
                     f"expected yes or no."
                 )
             batch_touched = touched_str == "yes"
-            # Pre-existing: failed or declared-at-base at base.
-            if at_base in ("failed",):
+            # Pre-existing: failed, declared-at-base, or born-red-at at base.
+            if at_base in ("failed",) or at_base.startswith("born-red-at:"):
                 # failed at base ⇒ not attributed (pre-existing).
+                # born-red-at ⇒ already red when the test was added by another plan.
                 continue
             # at_base is passed, absent-at-base, or failed-differently.
             if red_count == K:
@@ -311,7 +312,7 @@ def attributed_rows(rows: list[list[str]]) -> list[list[str]]:
         # Validate the at-base cell (column 2, index 1) when present.
         if len(r) >= 2:
             at_base = r[1].strip().lower()
-            if at_base not in _AT_BASE_OK:
+            if at_base not in _AT_BASE_OK and not at_base.startswith("born-red-at:"):
                 raise VerificationError(
                     f"unrecognised `at base` value {r[1]!r} for {node}. "
                     f"Legal values are {sorted(_AT_BASE_OK)} (case- and "
