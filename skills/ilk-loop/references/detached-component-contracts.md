@@ -55,11 +55,25 @@ about the same file — this doc makes the implicit contracts explicit.
   "state": "running",
   "pid": 48268,
   "run_id": "20260616-175453",
-  "iteration": 3,
-  "exit_code": null,
-  "generated_at": "2026-06-16T17:55:00+08:00"
+  "started_at": "2026-06-16T17:54:53+0800",
+  "ended_at": null,
+  "iterations": 3,
+  "project_path": "/path/to/project",
+  "cli": "claude",
+  "jsonl_log": "/path/to/log.jsonl",
+  "merge_deferred": null,
+  "held_by": null,
+  "failed_check": null
 }
 ```
+
+**`failed_check`** (added 2026-09-29): present only when `state` is
+`local_checks_failed` or `ship_integrity_violation`.  Carries the last
+failing gate row's `{slug, step, command}` so the panel alert names the
+check that failed, not the next runnable sub-plan.  Absent or `null`
+for older sentinels and non-failure states.  `status_all.py` passes it
+through; `render_xbar.py` uses it for the ilk-ref and the `--failed:`
+submenu line.
 
 ### Who writes
 

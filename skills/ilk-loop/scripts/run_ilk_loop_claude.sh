@@ -4574,6 +4574,7 @@ print(fm.get('result_file', ''))
   local no_progress_streak=0
   local stop_reason=""
   local merge_was_deferred=0
+  local _FAILED_CHECK_JSON=""
 
   for ((i = 1; i <= MAX_ITERATIONS; i++)); do
     iter_counter=$i
@@ -5734,6 +5735,38 @@ for mp in masters:
     reconcile_master_status(mp, plans_dir)
 " "${_SKILL_ROOT}/ilk-loop/scripts" "$(get_plans_dir)" 2>/dev/null || true
     fi
+
+    # Extract the last failing gate row for the sentinel's failed_check
+    # field (AC-1: the alert names the failing check).  Must happen before
+    # the results file is deleted.  Only populated when the stop reason is
+    # a gate or integrity failure.
+    if [[ -z "$_FAILED_CHECK_JSON" && -n "$local_checks_results" && -s "$local_checks_results" ]]; then
+      local _fc_candidate
+      _fc_candidate=$(python3 -c "
+import json, sys
+last = None
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        row = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if row.get('outcome') in ('fail', 'error'):
+        last = row
+if last:
+    print(json.dumps({
+        'slug': last.get('slug', ''),
+        'step': last.get('step'),
+        'command': last.get('command', ''),
+    }))
+" < "$local_checks_results" 2>/dev/null) || true
+      if [[ -n "$_fc_candidate" ]]; then
+        _FAILED_CHECK_JSON="$_fc_candidate"
+      fi
+    fi
+
     # Every reader in this iteration is done with it.
     rm -f "$local_checks_results"
 
@@ -5861,8 +5894,10 @@ print(json.dumps(d))
       'jsonl_log': '$JSONL_LOG'
     }; md=json.loads(sys.argv[1]); d['merge_deferred']=md if md else None
 if sys.argv[2]: d['held_by']=sys.argv[2]
+fc=json.loads(sys.argv[3]) if sys.argv[3] else None
+if fc: d['failed_check']=fc
 print(json.dumps(d))" \
-      "$_merge_deferred_json" "${HELD_BY:-}" > "${runtime_dir}/last-exit.json.tmp" && mv -f "${runtime_dir}/last-exit.json.tmp" "${runtime_dir}/last-exit.json"
+      "$_merge_deferred_json" "${HELD_BY:-}" "$_FAILED_CHECK_JSON" > "${runtime_dir}/last-exit.json.tmp" && mv -f "${runtime_dir}/last-exit.json.tmp" "${runtime_dir}/last-exit.json"
     echo "Sentinel: ${runtime_dir}/last-exit.json (state=$stop_reason, iters=$iter_counter)"
 
     # Remove the launcher's running.pid so the scheduler does not see a

@@ -19,8 +19,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "skills" / "ilk-loop" / "scripts"))
 sys.path.insert(0, str(REPO_ROOT / "tools" / "xbar"))
@@ -123,7 +121,6 @@ def _resolve_status(monkeypatch, tmp_path: Path, *,
 # AC-2: status_all passes through failed_check
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="failed_check not carried")
 def test_status_all_passthrough_with_failed_check(monkeypatch, tmp_path):
     """AC-2: resolve_project_status includes failed_check when present."""
     fc = {"slug": "my-slug", "step": 2,
@@ -160,7 +157,6 @@ def test_status_all_older_sentinel_unchanged(monkeypatch, tmp_path):
 # AC-3: render_xbar uses failed_check for ilk-ref
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="failed_check not carried")
 def test_xbar_uses_failed_check_slug_for_ref(monkeypatch, tmp_path):
     """AC-3: ilk-ref uses failed_check.slug when present."""
     fc = {"slug": "the-alert-names-the-failing-check", "step": 1,
@@ -176,7 +172,6 @@ def test_xbar_uses_failed_check_slug_for_ref(monkeypatch, tmp_path):
     assert "the-alert-names-the-failing-check" in output
 
 
-@pytest.mark.xfail(strict=True, reason="failed_check not carried")
 def test_xbar_submenu_shows_failed_line(monkeypatch, tmp_path):
     """AC-3: submenu shows --failed: <slug> step <N> — <command>."""
     fc = {"slug": "my-slug", "step": 2,

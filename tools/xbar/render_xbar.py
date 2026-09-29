@@ -394,6 +394,24 @@ def render_xbar(
         if e.get("steer_paused_reason"):
             lines.append(f"--paused: {e['steer_paused_reason']}")
 
+        # Failed-check alert (AC-3): when the sentinel carries
+        # failed_check, show which check failed and override the
+        # ilk-ref to point at the failing sub-plan.
+        sentinel = e.get("sentinel", {})
+        fc = sentinel.get("failed_check")
+        fc_subplan_file = ""
+        if fc:
+            fc_slug = fc.get("slug", "")
+            fc_step = fc.get("step", "?")
+            fc_cmd = fc.get("command", "")
+            # Truncate command for display.
+            if len(fc_cmd) > 60:
+                fc_cmd = fc_cmd[:57] + "..."
+            lines.append(
+                f"--failed: {fc_slug} step {fc_step} — {fc_cmd}"
+            )
+            fc_subplan_file = fc.get("subplan_file", "")
+
         # ── Copy reference: a pastable ilk-ref for this row ─────────────
         # Grammar: ilk-ref:<project-key>/<master-file>/<subplan-file> —
         # space-free by necessity (bare or quoted params alike end at
@@ -401,7 +419,7 @@ def render_xbar(
         # Start-now action's quoting, the one invocation shape proven to
         # fire in this panel.
         master_file = e.get("active_master") or ""
-        sub_file = e.get("next_subplan_file") or ""
+        sub_file = fc_subplan_file or e.get("next_subplan_file") or ""
         if (
             master_file
             and sub_file

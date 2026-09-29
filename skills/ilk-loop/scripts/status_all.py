@@ -631,6 +631,26 @@ def _first_nonshipped_display(
     return None
 
 
+def _resolve_subplan_file_for_slug(
+    plans_dir: Path, slug: str
+) -> str | None:
+    """Resolve a sub-plan slug to its filename in the plans directory.
+
+    Scans ``plans_dir`` for a file whose ``plan:`` front-matter matches
+    *slug*.  Returns the filename (not the full path) or ``None``.
+    """
+    for p in plans_dir.glob("????-??-??-*.md"):
+        if p.name.startswith("MASTER-"):
+            continue
+        try:
+            fm = parse_frontmatter(p.read_text(encoding="utf-8-sig"))
+        except OSError:
+            continue
+        if fm.get("plan") == slug:
+            return p.name
+    return None
+
+
 def _batch_display_name(master_text: str) -> str:
     """Short batch label for the panel: the ``master_plan`` slug minus its
     leading date (``2026-09-19-pv5-rereview`` → ``pv5-rereview``).
@@ -918,6 +938,18 @@ def resolve_project_status(project_dir: Path, *,
             "state": state,
             "alive": alive,
         }
+        # Pass through failed_check when present (AC-2: the alert names
+        # the failing check).  Absent or null for older sentinels.
+        fc = sentinel_raw.get("failed_check")
+        if fc:
+            # Resolve the slug to a sub-plan file so the renderer can
+            # build an ilk-ref pointing at the failing check's sub-plan.
+            fc_slug = fc.get("slug", "")
+            if fc_slug and plans_dir.is_dir():
+                fc_file = _resolve_subplan_file_for_slug(plans_dir, fc_slug)
+                if fc_file:
+                    fc = {**fc, "subplan_file": fc_file}
+            sentinel["failed_check"] = fc
     else:
         sentinel = {"pid": 0, "state": "none", "alive": False}
 
