@@ -367,6 +367,28 @@ def _run_dir_liveness(logs_dir: Path) -> dict:
         return dict(NULL_LIVENESS)
 
 
+def _steer_pause(key: str) -> tuple[bool, str]:
+    """Return (paused, reason) from ``runtime/steer/pause.flag``.
+
+    The runner idles on this flag with its pid alive (run_ilk_loop_claude.sh,
+    the ``[steer] pause.flag detected`` loop), so the sentinel alone renders a
+    paused run as running.  Presence is the whole signal, as it is for the
+    runner; the reason is the flag's first line, empty when unreadable.
+    """
+    flag = external_runtime_dir(key) / "steer" / "pause.flag"
+    try:
+        if not flag.is_file():
+            return False, ""
+    except OSError:
+        return False, ""
+    try:
+        text = flag.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return True, ""
+    lines = text.strip().splitlines()
+    return True, (lines[0].strip() if lines else "")
+
+
 def _blocked_info(
     project_data_dir: Path,
     sentinel: dict,
@@ -872,6 +894,8 @@ def resolve_project_status(project_dir: Path, *,
     # Both are per-host, not per-project, so ``main`` builds them once.  Built
     # here per project, the providers spawn (~35ms) ran 118x per refresh:
     # 3.69s of a 4.18s run every 10s (chad-mbp, 2026-09-28).
+    steer_paused, steer_paused_reason = _steer_pause(key)
+
     if roles is None:
         roles = _roles_block()
     if providers is None:
@@ -899,6 +923,8 @@ def resolve_project_status(project_dir: Path, *,
         "parked": parked,
         "parked_reason": master_parked_reason,
         "manually_runnable": manually_runnable,
+        "steer_paused": steer_paused,
+        "steer_paused_reason": steer_paused_reason,
         **liveness,
         **blocked,
     }

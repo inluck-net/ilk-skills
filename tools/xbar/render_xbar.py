@@ -322,6 +322,12 @@ def render_xbar(
         # "running".
         if state not in ("running", "none"):
             row += f"  ({state})"
+        # A runner idling on runtime/steer/pause.flag keeps its pid alive, so
+        # without this it reads as running: no heartbeat if paused before its
+        # first iteration, a climbing one if paused between iterations
+        # (2026-09-29, 30 minutes on a stale flag).  .get: older payloads.
+        if e.get("steer_paused"):
+            row += "  (paused)"
 
         # Sub-step liveness, last: it is the fastest-changing part of the row
         # and the eye tracks a trailing field better than an interior one.
@@ -351,6 +357,8 @@ def render_xbar(
         # via .get — payloads from an older status_all predate the field.
         if e.get("parked_reason"):
             lines.append(f"--parked: {e['parked_reason']}")
+        if e.get("steer_paused_reason"):
+            lines.append(f"--paused: {e['steer_paused_reason']}")
 
         # ── Copy reference: a pastable ilk-ref for this row ─────────────
         # Grammar: ilk-ref:<project-key>/<master-file>/<subplan-file> —
