@@ -424,9 +424,12 @@ def _commands_match(selected_cmd: str, recorded_cmd: str) -> bool:
 def read_jsonl_commands(jsonl_path: Path) -> list[str]:
     """Read all recorded gate commands from a JSONL log.
 
-    Returns a deduplicated list of commands that were recorded for any
-    outcome (pass, fail, error, inconclusive).  Historical records without
-    a ``command`` field are skipped (AC-2: readers tolerate absence).
+    Returns a deduplicated list of commands with a **passing** record.  A
+    fail/error/inconclusive record proves the command was attempted, not
+    that it holds, and subtracting it would skip at release the very command
+    that was red — the record labels a red gate by its failing check
+    (emit_jsonl_record.gate_label_command).  Historical records without a
+    ``command`` field are skipped (AC-2: readers tolerate absence).
     """
     import json as _json
     commands: list[str] = []
@@ -446,7 +449,7 @@ def read_jsonl_commands(jsonl_path: Path) -> list[str]:
                 if isinstance(checks, dict):
                     checks = [checks]
                 for check in checks:
-                    if isinstance(check, dict):
+                    if isinstance(check, dict) and check.get("outcome") == "pass":
                         cmd = check.get("command", "")
                         if cmd and cmd not in seen:
                             seen.add(cmd)
