@@ -150,7 +150,6 @@ def _make_untrailered_commits(project: Path, count: int) -> None:
 
 # ── AC-1 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="the-ledger-writer-counts-what-it-skipped")
 def test_no_rows_line_states_commit_and_trailer_counts(tmp_path: Path) -> None:
     """AC-1 — the summary line states the counts it measured.
 

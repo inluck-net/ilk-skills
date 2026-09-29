@@ -1576,6 +1576,10 @@ for sp in (d.get('subplans') or []):
   # Track whether any rows were written, so we can announce when the writer
   # produces nothing and write a gate_pass_at_head row for 0-commit green gates.
   local rows_written=0
+  # Count commits for the no-rows summary message (AC-1 of
+  # the-ledger-writer-counts-what-it-skipped).
+  local total_new_commits=0
+  local total_trailered_commits=0
 
   # Resolve the ledger path once.
   local ledger_dir
@@ -1613,6 +1617,11 @@ for sp in (d.get('subplans') or []):
     local new_shas
     new_shas=$(git -C "$r" rev-list "${before}..${after}" 2>/dev/null) || continue
     [[ -n "$new_shas" ]] || continue
+
+    # Count commits for the no-rows summary message.
+    local _repo_commit_count
+    _repo_commit_count=$(printf '%s\n' "$new_shas" | wc -l | tr -d ' ')
+    total_new_commits=$((total_new_commits + _repo_commit_count))
 
     local si
     for (( si=0; si<${#slug_list[@]}; si++ )); do
@@ -1713,6 +1722,15 @@ print(json.dumps(d, separators=(',', ':')))" "$RUN_ID" "$iteration" "$slug" "$r"
       printf '%s\n' "$record" >> "$ledger"
       rows_written=$((rows_written + 1))
     done
+
+    # Count trailered commits for the no-rows summary message.
+    local _sha _msg
+    for _sha in $new_shas; do
+      _msg=$(git -C "$r" log -1 --format='%s' "$_sha" 2>/dev/null) || continue
+      if [[ "$_msg" == *"[plan:"* ]]; then
+        total_trailered_commits=$((total_trailered_commits + 1))
+      fi
+    done
   done
 
   # When the gate passed but produced 0 new commits, the repo loop above
@@ -1757,7 +1775,14 @@ print(json.dumps({
   # distinguishable from "the writer skipped".  AC-4 of
   # ship-proof-without-new-commits.
   if [[ "$rows_written" -eq 0 ]]; then
-    echo "  ! [ship-proof] no rows written for iteration ${iteration}: no commits and no green gate" >&2
+    local _untrailered=$((total_new_commits - total_trailered_commits))
+    local _gate_msg="no green gate"
+    [[ "$gate_outcome" == "pass" ]] && _gate_msg="green gate passed"
+    if [[ "$total_new_commits" -eq 0 ]]; then
+      echo "  ! [ship-proof] no rows written for iteration ${iteration}: no commits, ${_gate_msg}" >&2
+    else
+      echo "  ! [ship-proof] no rows written for iteration ${iteration}: ${total_new_commits} new commits, ${total_trailered_commits} trailer-attributed (${_untrailered} untrailered), ${_gate_msg}" >&2
+    fi
   fi
 }
 
