@@ -5219,23 +5219,26 @@ for p in Path(sys.argv[1]).glob('*.md'):
 " "$_one_ship_plans_dir" "$_pre_slug" 2>/dev/null) || _pre_status=""
           if [[ "$_pre_status" == "shipped" ]]; then
             # This sub-plan went non-shipped → shipped and is not dispatched.
-            # Revert to its pre-iteration status.
+            # Revert to its pre-iteration status AND current_step.
             python3 -c "
 import re, sys
 from pathlib import Path
-for p in Path(sys.argv[1]).glob('*.md'):
+plans_dir, slug, pre_step = sys.argv[1], sys.argv[2], sys.argv[3]
+for p in Path(plans_dir).glob('*.md'):
     if p.name.startswith('MASTER'):
         continue
     text = p.read_text()
     fm = {}
     for m in re.finditer(r'^(\w[\w_-]*):\s*(.*)', text, re.MULTILINE):
         fm[m.group(1)] = m.group(2).strip()
-    if fm.get('plan') == sys.argv[2]:
+    if fm.get('plan') == slug:
         text = re.sub(r'^(status:\s*)shipped', r'\1in-progress', text, count=1, flags=re.MULTILINE)
+        cur_step = fm.get('current_step', '0')
+        text = re.sub(r'^(current_step:\s*)' + re.escape(cur_step), r'\g<1>' + pre_step, text, count=1, flags=re.MULTILINE)
         p.write_text(text)
         break
-" "$_one_ship_plans_dir" "$_pre_slug" 2>/dev/null || true
-            echo "[one-ship] reverted $_pre_slug: shipped by an iteration dispatched for ${_dispatched_slug:-<empty>}"
+" "$_one_ship_plans_dir" "$_pre_slug" "$_pre_step" 2>/dev/null || true
+            echo "[one-ship] reverted $_pre_slug: status shipped→in-progress, current_step ${_pre_step:-?} (dispatched for ${_dispatched_slug:-<empty>})"
           fi
         done <<< "$PRE_ITER_ALL_STEPS"
       fi

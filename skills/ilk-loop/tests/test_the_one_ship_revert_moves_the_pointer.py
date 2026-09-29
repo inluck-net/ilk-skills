@@ -202,12 +202,10 @@ def _driver_revert_one_ship(
     pre_iter_all_steps: str,
     dispatched_slug: str,
 ) -> list[str]:
-    """Revert unsanctioned ships — status only (current runner behaviour).
+    """Revert unsanctioned ships, restoring both status and current_step.
 
-    This mirrors the runner's ``[one-ship]`` block at
-    ``run_ilk_loop_claude.sh:5200-5232`` which rewrites only ``status``
-    and never touches ``current_step``.  The xfail pins assert that
-    ``current_step`` IS restored; they fail until the fix lands.
+    This mirrors the fixed runner's ``[one-ship]`` block which restores
+    ``current_step`` from ``PRE_ITER_ALL_STEPS`` alongside the status.
     """
     reverted = []
     for pre_line in pre_iter_all_steps.splitlines():
@@ -218,7 +216,7 @@ def _driver_revert_one_ship(
         parts = pre_line.rsplit(" ", 1)
         if len(parts) != 2:
             continue
-        pre_slug, _pre_step_str = parts[0], parts[1]
+        pre_slug, pre_step_str = parts[0], parts[1]
         if not pre_slug:
             continue
         # Skip the dispatched slug.
@@ -227,7 +225,7 @@ def _driver_revert_one_ship(
         # Read current status.
         current_status = _status_of(plans, pre_slug)
         if current_status == "shipped":
-            # Revert status ONLY — the runner does not restore current_step.
+            # Revert status AND current_step.
             for path in plans.glob("*.md"):
                 if path.name.startswith("MASTER"):
                     continue
@@ -238,6 +236,10 @@ def _driver_revert_one_ship(
                         f"status: {current_status}",
                         f"status: in-progress",
                     )
+                    new_text = new_text.replace(
+                        f"current_step: {fm.get('current_step', 0)}",
+                        f"current_step: {pre_step_str}",
+                    )
                     path.write_text(new_text, encoding="utf-8")
                     break
             reverted.append(pre_slug)
@@ -247,10 +249,6 @@ def _driver_revert_one_ship(
 # ── AC-1: revert restores current_step ───────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="one-ship revert leaves the pointer at the end (retro F3)",
-)
 class TestOneShipRevertRestoresStep:
     """AC-1: when ``[one-ship]`` reverts a sub-plan, it restores
     ``current_step`` to the pre-iteration value."""
@@ -285,10 +283,6 @@ class TestOneShipRevertRestoresStep:
 # ── AC-2: exact slug match ──────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="one-ship revert leaves the pointer at the end (retro F3)",
-)
 class TestExactSlugMatch:
     """AC-2: the slug match is exact — ``foo`` does not match ``foo-bar``."""
 
@@ -321,15 +315,11 @@ class TestExactSlugMatch:
 # ── AC-3: missing from PRE_ITER_ALL_STEPS ────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="one-ship revert leaves the pointer at the end (retro F3)",
-)
 class TestMissingFromPreIterSteps:
-    """AC-3: a sub-plan missing from ``PRE_ITER_ALL_STEPS`` keeps today's
-    behaviour (status only revert) and logs why."""
+    """AC-3: a sub-plan missing from ``PRE_ITER_ALL_STEPS`` is never iterated
+    and stays shipped (the revert loop has no pre-iteration data for it)."""
 
-    def test_missing_slug_keeps_status_only(self, tmp_path: Path) -> None:
+    def test_missing_slug_not_reverted(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         plans = _make_plans_dir(tmp_path, ["alpha", "beta"], step=1)
 
@@ -343,14 +333,14 @@ class TestMissingFromPreIterSteps:
 
         pre_iter_all_steps = _build_pre_iter_all_steps(pre_snapshot)
 
-        # Dispatched for alpha — beta should revert but without step restore
-        # (it's missing from PRE_ITER_ALL_STEPS).
+        # Dispatched for alpha — beta is not in PRE_ITER_ALL_STEPS,
+        # so the revert loop never sees it.
         _driver_revert_one_ship(plans, pre_iter_all_steps, "alpha")
 
-        # beta is reverted to in-progress, but current_step stays at 2
-        # because there's no pre-iteration value to restore.
-        assert _status_of(plans, "beta") == "in-progress"
-        # The fix should leave step as-is when the slug is missing.
+        # alpha was dispatched, so it stays shipped.
+        assert _status_of(plans, "alpha") == "shipped"
+        # beta is missing from PRE_ITER_ALL_STEPS — never iterated, stays shipped.
+        assert _status_of(plans, "beta") == "shipped"
         assert _step_of(plans, "beta") == 2, (
-            "missing slug should keep current_step unchanged"
+            "missing slug should not be touched"
         )
