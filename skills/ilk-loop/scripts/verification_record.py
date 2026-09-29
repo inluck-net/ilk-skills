@@ -1101,19 +1101,66 @@ def run_head_alone(project: Path, node_ids: list[str], invocation: str,
     return results
 
 
+def _batch_commit_files(project: Path, base_sha: str,
+                        batch_slugs: set[str]) -> set[str] | None:
+    """Files changed in ``base_sha..HEAD`` by commits that may be the batch's.
+
+    A commit is excluded only when it carries a ``[plan:<slug>#…]`` trailer
+    and none of them is one of the batch's slugs, i.e. it provably belongs
+    to another batch.  A trailer-less commit (a hand fix, an operator edit)
+    still counts: dropping it would under-attribute, which lets a ship
+    through.  ``None`` when no commit in range carries a batch trailer
+    (e.g. a shared remote stripped the trailers)."""
+    log = _git(project, "log", "--format=%x1e%H%n%B", f"{base_sha}..HEAD") or ""
+    ours: list[str] = []
+    saw_batch_trailer = False
+    for entry in log.split("\x1e"):
+        sha, _, body = entry.strip().partition("\n")
+        if not sha:
+            continue
+        slugs_here = set(re.findall(r"\[plan:([^#\]\s]+)#", body))
+        if slugs_here & batch_slugs:
+            saw_batch_trailer = True
+            ours.append(sha)
+        elif not slugs_here:
+            ours.append(sha)
+    if not saw_batch_trailer:
+        return None
+    files: set[str] = set()
+    for sha in ours:
+        out = _git(project, "diff-tree", "--no-commit-id", "--name-only",
+                   "-r", "--root", sha) or ""
+        files.update(out.splitlines())
+    return files
+
+
 def batch_touched_files(project: Path, base_sha: str,
-                        node_ids: list[str]) -> dict[str, bool]:
+                        node_ids: list[str],
+                        batch_slugs: set[str] | None = None) -> dict[str, bool]:
     """For each node id, check whether the batch touched its test file.
 
-    Uses ``git diff --name-only <base_sha> HEAD`` to get the changed file set,
-    then checks whether each node id's file path appears in that set.
+    With ``batch_slugs``, the changed set is the files of the batch's OWN
+    commits (those carrying a ``[plan:<slug>#…]`` trailer for one of its
+    slugs).  On a shared main ``base_sha..HEAD`` also holds other batches'
+    commits, and a file only they changed must not read as touched.
+
+    Without slugs, or when no commit in range carries one, falls back to
+    ``git diff --name-only <base_sha> HEAD``: over-attribution blocks a ship,
+    it never lets one through.
 
     Returns ``{node_id: True/False}``.
     """
     if not node_ids:
         return {}
-    changed = _git(project, "diff", "--name-only", base_sha, "HEAD") or ""
-    changed_set = set(changed.splitlines())
+    changed_set = (_batch_commit_files(project, base_sha, batch_slugs)
+                   if batch_slugs else None)
+    if changed_set is None:
+        if batch_slugs:
+            print("verification_record: no commit in range carries a batch "
+                  "trailer; 'batch touched file' uses the whole "
+                  f"{base_sha[:8]}..HEAD diff", file=sys.stderr)
+        changed = _git(project, "diff", "--name-only", base_sha, "HEAD") or ""
+        changed_set = set(changed.splitlines())
     result: dict[str, bool] = {}
     for nid in node_ids:
         file_path = nid.split("::")[0]
@@ -1717,7 +1764,8 @@ def _write_measured_record(project: Path, record: Path, args,
         try:
             head_reruns = run_head_reruns(project, non_declared, invocation)
             batch_touched = batch_touched_files(project, args.base_sha,
-                                                non_declared)
+                                                non_declared,
+                                                batch_slugs=registry_slugs)
             for nid in non_declared:
                 cls = classify_flaky(
                     nid, at_base.get(nid, "failed"),
@@ -1989,7 +2037,8 @@ def _write_record_from_output(project: Path, record: Path, args,
             head_reruns = run_head_reruns(project, non_declared,
                                           configured_invocation)
             batch_touched = batch_touched_files(project, args.base_sha,
-                                                non_declared)
+                                                non_declared,
+                                                batch_slugs=registry_slugs)
             for nid in non_declared:
                 cls = classify_flaky(
                     nid, at_base.get(nid, "failed"),
