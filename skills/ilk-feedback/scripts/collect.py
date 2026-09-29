@@ -609,6 +609,7 @@ CLASSIFICATION_LABELS: tuple[str, ...] = (
     "throttled",
     "merge-conflict",
     "merge-deferred",
+    "local-checks-unchanged",
 )
 
 LOCAL_CHECK_RE = re.compile(
@@ -1497,6 +1498,13 @@ def classify(
         # scheduler retries on the next cycle.  Label: "interrupted" →
         # watchdog relaunches (same as a manual interrupt).
         "lock_held": "interrupted",
+        # A B2-confirmed red gate with 0 new commits (heads-before ==
+        # heads-after) means the red is on code this iteration didn't
+        # touch — a red base or an environment.  Distinct from
+        # local_checks_failed (which has ≥1 new commit and means the
+        # worker broke something).  Same watchdog action (block), but
+        # a different label so the postmortem is honest about the cause.
+        "local_checks_failed_no_commits": "local-checks-unchanged",
     }
     if sentinel is not None:
         sentinel_state = (sentinel.get("state") or "").strip()
@@ -1577,6 +1585,8 @@ def classify(
                     facts["route"] = sentinel_state
                 if sentinel_state == "local_checks_failed":
                     facts["has_broken_gate"] = has_broken_gate
+                if sentinel_state == "local_checks_failed_no_commits":
+                    facts["reason_detail"] = "gate red on an unchanged tree (0 commits this iteration)"
                 # Merge self-hosting facts and return early — the sentinel is
                 # authoritative, no further classification needed.
                 facts.update(sh_facts)

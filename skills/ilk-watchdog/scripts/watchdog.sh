@@ -342,6 +342,12 @@ normalize_classification() {
       # stand-in because it claims less (the agent failed, not the gate).
       echo "local-checks-stuck"
       ;;
+    local_checks_failed_no_commits)
+      # A red gate with 0 new commits — the gate is red on code this
+      # iteration didn't touch (a red base or an environment).
+      # Same block action as local_checks_failed, distinct label.
+      echo "local-checks-unchanged"
+      ;;
     budget_exhausted)
       # collect.py's key is underscored; the runner emits the hyphenated form
       # (_decide_iter_stop_reason, :2207).  Accept both spellings here.
@@ -450,7 +456,7 @@ classify_action() {
       # scheduler relaunches when the other loop exits.
       echo "relaunch"
       ;;
-    stuck-no-progress|api-blocked|budget-exhausted|quota-exhausted|local-checks-stuck|local-checks-broken|dependency-unreachable|merge-conflict|selfmod_live_clone_touched)
+    stuck-no-progress|api-blocked|budget-exhausted|quota-exhausted|local-checks-stuck|local-checks-broken|local-checks-unchanged|dependency-unreachable|merge-conflict|selfmod_live_clone_touched)
       # Blacklist: structural failures where a restart won't help.
       echo "block"
       ;;

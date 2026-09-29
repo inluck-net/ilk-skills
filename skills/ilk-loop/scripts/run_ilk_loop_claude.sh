@@ -5474,8 +5474,13 @@ print('true' if d.get('blocked') else 'false')
             if [[ "$quarantined" == "true" ]]; then
               echo "B2 quarantine: continuing to next runnable sub-plan" >&2
             else
-              iter_stop_reason="local_checks_failed"
-              echo "Loop stopped: local_checks not passing (B2 confirmed)" >&2
+              if [[ "$total_new" -eq 0 ]]; then
+                iter_stop_reason="local_checks_failed_no_commits"
+                echo "Loop stopped: local_checks not passing (B2 confirmed, 0 new commits — gate red on an unchanged tree)" >&2
+              else
+                iter_stop_reason="local_checks_failed"
+                echo "Loop stopped: local_checks not passing (B2 confirmed)" >&2
+              fi
             fi
           fi
         else
@@ -5841,7 +5846,7 @@ append_revert_row(
     if [[ "${SELFMOD_ISOLATED:-0}" -eq 1 ]]; then
       # Gate check: was any local_checks outcome fail or error?
       local _merge_blocked_reason=""
-      if [[ "$iter_stop_reason" == "local_checks_failed" ]]; then
+      if [[ "$iter_stop_reason" == "local_checks_failed" || "$iter_stop_reason" == "local_checks_failed_no_commits" ]]; then
         _merge_blocked_reason="red gate"
       fi
       # Double-check the JSONL in case iter_stop_reason was overwritten.

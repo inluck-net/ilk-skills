@@ -102,6 +102,7 @@ submenu line.
 | `"running"` | Loop is actively iterating | **Live** — check PID |
 | `"shipped"` | All sub-plans shipped, clean exit | Terminal |
 | `"local_checks_failed"` | A step's local_checks failed | Terminal |
+| `"local_checks_failed_no_commits"` | A step's local_checks failed with 0 new commits this iteration (gate red on an unchanged tree — a red base or environment) | Terminal |
 | `"interrupted"` | The run ended without a terminal state. An operator stop (INT/TERM to the runner) adds `stopped_by: "signal:<SIG>"`; its absence means a crash or an unexplained exit. The watchdog never relaunches a sentinel carrying `stopped_by` (`relaunch_guard.py`) | Terminal |
 | `"error"` | Unexpected runner error | Terminal |
 | `"max-iterations"` | Hit iteration budget | Terminal |
@@ -151,6 +152,7 @@ is how a failed run gets classified `clean-success`.
 | `"max-iterations"` | `max-iter-bound` | `relaunch` |
 | `"interrupted"` | `interrupted` | `relaunch` |
 | `"local_checks_failed"` | `local-checks-broken` (broken-gate result in checks) / `local-checks-stuck` | `block` |
+| `"local_checks_failed_no_commits"` | `local-checks-unchanged` | `block` |
 | `"ship_integrity_violation"` | `shipped-unverified` | `needs-human` |
 | `"shipped-unproven"` | `shipped-unverified` | `needs-human` |
 | `"selfmod_merge_failed"` | `merge-conflict` | `block` |

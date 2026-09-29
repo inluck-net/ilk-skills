@@ -118,11 +118,13 @@ def _build_world(root: Path, *, commit_in_iteration: bool) -> dict:
         stub.write_text(
             "#!/usr/bin/env bash\n"
             f"SP={str(plans / f'{STEM}.md')!r}\n"
+            # Leave the sub-plan in-progress — the gate is red so the agent
+            # would not mark it shipped.  Bump current_step so the runner
+            # has gate targets for step 0.
             "python3 - \"$SP\" <<'EOP'\n"
             "import re, sys\n"
             "from pathlib import Path\n"
             "p = Path(sys.argv[1]); b = p.read_text()\n"
-            "b = re.sub(r'^status: in-progress', 'status: shipped', b, count=1, flags=re.M)\n"
             "b = re.sub(r'^current_step: 0', 'current_step: 1', b, count=1, flags=re.M)\n"
             "p.write_text(b)\n"
             "EOP\n"
@@ -133,6 +135,8 @@ def _build_world(root: Path, *, commit_in_iteration: bool) -> dict:
         )
     else:
         # Stub that makes NO commits — the tree is unchanged.
+        # Leave the sub-plan in-progress — the gate is red so the agent
+        # would not mark it shipped.
         stub.write_text(
             "#!/usr/bin/env bash\n"
             f"SP={str(plans / f'{STEM}.md')!r}\n"
@@ -140,7 +144,6 @@ def _build_world(root: Path, *, commit_in_iteration: bool) -> dict:
             "import re, sys\n"
             "from pathlib import Path\n"
             "p = Path(sys.argv[1]); b = p.read_text()\n"
-            "b = re.sub(r'^status: in-progress', 'status: shipped', b, count=1, flags=re.M)\n"
             "b = re.sub(r'^current_step: 0', 'current_step: 1', b, count=1, flags=re.M)\n"
             "p.write_text(b)\n"
             "EOP\n"
@@ -224,7 +227,6 @@ class TestStopReasonForRedGate:
     ``local_checks_failed_no_commits``.  With ≥1 new commit it is
     ``local_checks_failed`` (today's value)."""
 
-    @pytest.mark.xfail(strict=True, reason="a-red-gate-on-an-unchanged-tree-says-so")
     @_NEEDS_GTIMEOUT
     def test_unchanged_tree_stops_as_local_checks_failed_no_commits(
         self, unchanged_tree_run: dict,
@@ -273,7 +275,6 @@ class TestDeclaredInVocabulary:
     """AC-2: the new stop reason is declared in the exit-state table,
     collect.py, and watchdog.sh."""
 
-    @pytest.mark.xfail(strict=True, reason="a-red-gate-on-an-unchanged-tree-says-so")
     def test_contract_doc_lists_local_checks_failed_no_commits(self):
         """detached-component-contracts.md must list the new state."""
         contracts = _TESTS.parent / "references" / "detached-component-contracts.md"
@@ -284,7 +285,6 @@ class TestDeclaredInVocabulary:
             "contract doc does not list local_checks_failed_no_commits"
         )
 
-    @pytest.mark.xfail(strict=True, reason="a-red-gate-on-an-unchanged-tree-says-so")
     def test_collect_py_classifies_local_checks_failed_no_commits(self):
         """collect.py must classify the new state."""
         import collect
@@ -295,7 +295,6 @@ class TestDeclaredInVocabulary:
             "collect.py does not handle local_checks_failed_no_commits"
         )
 
-    @pytest.mark.xfail(strict=True, reason="a-red-gate-on-an-unchanged-tree-says-so")
     def test_watchdog_handles_local_checks_failed_no_commits(self):
         """watchdog.sh must classify the new state."""
         watchdog = _REPO / "skills" / "ilk-watchdog" / "scripts" / "watchdog.sh"
@@ -314,7 +313,6 @@ class TestWatchdogTreatsSameAsLocalChecksFailed:
     """AC-3: the watchdog treats it exactly as ``local_checks_failed``
     today (same class, same relaunch or block decision)."""
 
-    @pytest.mark.xfail(strict=True, reason="a-red-gate-on-an-unchanged-tree-says-so")
     def test_same_classification_as_local_checks_failed(self):
         """The new state and local_checks_failed must map to the same
         watchdog action."""
@@ -338,7 +336,6 @@ class TestPostmortemLabel:
     """AC-4: the postmortem (collect.py) says
     ``gate red on an unchanged tree (0 commits this iteration)``."""
 
-    @pytest.mark.xfail(strict=True, reason="a-red-gate-on-an-unchanged-tree-says-so")
     def test_postmortem_label_mentions_unchanged_tree(self):
         """collect.py must produce a label mentioning 'unchanged tree'
         for the new stop_reason, per AC-4: 'gate red on an unchanged
