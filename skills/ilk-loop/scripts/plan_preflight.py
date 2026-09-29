@@ -54,34 +54,46 @@ class PreflightResult:
 
 # ── Registry parity ─────────────────────────────────────────────────────────
 
-# Regex to extract filenames from a markdown table row.
-# Matches: ``| N | 2026-09-22-slug.md | status |`` or backticked variants.
-_TABLE_FILENAME_RE = re.compile(
-    r"\|\s*\d+\s*\|"     # row number
-    r"\s*`?([^|]+?)`?\s*\|"  # filename (possibly backticked)
-    r"[^|]*\|",          # rest of row (no DOTALL — one line at a time)
-)
-
 # A filename that looks like a sub-plan reference.
 _SUBPLAN_FILENAME_RE = re.compile(
     r"(20\d{2}-\d{2}-\d{2}[a-z]?-[a-z0-9][a-z0-9-]*\.md)"
 )
 
+# Section heading pattern for isolating the registry section.
+_SECTION_HEADING_RE = re.compile(r"^## ", re.MULTILINE)
+
 
 def _extract_table_filenames(master_text: str) -> list[str]:
     """Extract sub-plan filenames from the registry table, including backticked.
 
-    This is the reader that must agree with ``extract_subplan_files``.
+    Reads only the ``## Sub-plan registry`` section (up to the next ``## ``
+    heading).  From each table row whose first cell is a number, takes the
+    first ``_SUBPLAN_FILENAME_RE`` match anywhere in the row.  This is the
+    reader that must agree with ``extract_subplan_files``.
     """
+    # Isolate the ## Sub-plan registry section.
+    registry_start = master_text.find("## Sub-plan registry")
+    if registry_start == -1:
+        return []
+    rest = master_text[registry_start + len("## Sub-plan registry"):]
+    # Cut at the next ## heading.
+    next_heading = _SECTION_HEADING_RE.search(rest)
+    if next_heading:
+        rest = rest[:next_heading.start()]
+
     seen: set[str] = set()
     ordered: list[str] = []
-    for row_match in _TABLE_FILENAME_RE.finditer(master_text):
-        cell = row_match.group(1).strip()
-        # The cell might be a backticked filename, a link, or bare.
-        # Strip backticks and link syntax.
-        cell = cell.strip('`').strip()
-        # Extract the actual filename from the cell.
-        fn_match = _SUBPLAN_FILENAME_RE.search(cell)
+    for line in rest.splitlines():
+        line = line.strip()
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.split("|")]
+        # cells[0] and cells[-1] are empty strings from the leading/trailing `|`.
+        # A data row has a number in cells[1].
+        if len(cells) < 3 or not cells[1].strip().isdigit():
+            continue
+        row_text = " ".join(cells[2:])
+        fn_match = _SUBPLAN_FILENAME_RE.search(row_text)
         if fn_match:
             fn = fn_match.group(1)
             if fn not in seen and not fn.startswith("MASTER"):

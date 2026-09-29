@@ -119,9 +119,9 @@ _(empty)_
 """
 
 # A master using the template's `| # | Order | Slug | Items | Steps (est.) | Status |` shape.
-# The _TABLE_FILENAME_RE today keys on the second cell after the row number,
-# which is the Order column — so it captures "1" instead of the filename.
-# extract_subplan_files finds all 3 via SUBPLAN_REF_RE (it scans the whole body).
+# The table reader scans each row for the first filename pattern match,
+# so the Order column is skipped.  extract_subplan_files also finds all 3
+# via SUBPLAN_REF_RE (it scans the whole body).
 TEMPLATE_SHAPE_MASTER = """\
 ---
 master_plan: 2026-09-29-execution
@@ -250,12 +250,11 @@ class TestPreflightRegistryParity:
             f"Expected no parity failure for bare-filename master, got: {parity_failures}"
         )
 
-    @pytest.mark.xfail(strict=True, reason="red-first: template shape has Order column, _TABLE_FILENAME_RE misses it")
     def test_template_shape_master_passes_parity(self):
         """AC-1: template's `| # | Order | Slug | ...` shape ⇒ 3 parsed, 3 in table, no parity failure.
 
-        Today _TABLE_FILENAME_RE captures the Order cell (second ``| <num> |``)
-        instead of the filename, so it finds 0 filenames → parity failure.
+        The table reader scans each row for the first filename pattern match
+        instead of assuming a fixed column position.
         """
         result = preflight_batch(
             master_text=TEMPLATE_SHAPE_MASTER,
@@ -268,7 +267,6 @@ class TestPreflightRegistryParity:
             f"Expected no parity failure for template-shaped master, got: {parity_failures}"
         )
 
-    @pytest.mark.xfail(strict=True, reason="red-first: 5-row template shape, same _TABLE_FILENAME_RE defect")
     def test_template_shape_5row_master_passes_parity(self):
         """AC-2: 5-row template shape ⇒ 5 parsed, 5 in table, no parity failure."""
         result = preflight_batch(
