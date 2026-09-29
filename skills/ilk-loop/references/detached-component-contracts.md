@@ -987,7 +987,8 @@ Fields:
 | `repo` | string | Absolute path to the repository |
 | `step_from` | int | The step the iteration **started** on — the slug's *real* pre-iteration `current_step`, never a floor (see "Who writes") |
 | `step_to` | int | The step the iteration **reached**.  For a sub-plan shipped in this iteration (probe reports `status: shipped` or the new commits carry `[plan:<slug>#ship]`), this is `estimated_steps` — the ship transition does not bump `current_step`, so without the override the final step's per-step gate would never be targeted.  Otherwise, the sub-plan's `current_step` after the agent ran. |
-| `commits` | list[str] | SHAs in the iteration's `before..after` range |
+| `commits` | list[str] | SHAs in the iteration's `before..after` range, **filtered per slug** on personal remotes (only commits whose message carries `[plan:<slug>#`).  On shared remotes, the full unfiltered range. |
+| `attribution` | string? | **Optional.** Present only on shared remotes (or when no `[plan:` trailers exist in range).  Always `"unfiltered-no-trailers"` — signals that `commits` was not filtered by slug because trailers were absent.  Readers tolerate its absence (old format). |
 
 A **`gate_pass_at_head`** row carries three additional fields and has
 `commits: []`:
@@ -1008,11 +1009,21 @@ The step range is **half-open**: `[step_from, step_to)`.  A record with
 ### Who writes
 
 - **`run_ilk_loop_claude.sh`** — `write_ship_proof_records`, called after
-  the post-iteration head capture and new-commit count.  Writes a normal
-  row when `total_new > 0`.  When the gate passed with `total_new == 0`,
-  writes a `gate_pass_at_head` row so `ship_integrity` can still prove
-  the step (ilk-skills #48).  When the gate is absent or failing and
-  `total_new == 0`, writes nothing and announces on stderr.
+  the gate has run (`local_checks` block completes).  The gate outcome is
+  evaluated from the real results file, so `gate_pass_at_head` can fire
+  for zero-commit green gates.  Writes a normal row when `total_new > 0`.
+  When the gate passed with `total_new == 0`, writes a `gate_pass_at_head`
+  row so `ship_integrity` can still prove the step (ilk-skills #48).  When
+  the gate is absent or failing and `total_new == 0`, writes nothing and
+  announces on stderr.
+
+  **Per-slug trailer filter (AC-1):** on personal remotes, each slug row
+  lists only commits whose message carries `[plan:<slug>#`.  A row with 0
+  matching commits is refused with a stderr message (AC-2).  On shared
+  remotes, trailers are stripped by policy, so the full commit list is kept
+  and the row gains `"attribution": "unfiltered-no-trailers"` (AC-3).
+  This prevents a slug whose gate never ran from crediting itself with
+  another sub-plan's work (retro-2026-09-29 F2).
 
 **The slug universe comes from TWO pre-iteration captures, not one**
 (v0.9.94, 2026-09-09):
@@ -1055,12 +1066,12 @@ step proven. Already measured at `ship_audit.py:234-240`: `step_from 0 /
 step_to 4` attributed step 2 for a sub-plan with no step-2 commit, and
 `missing_steps` came back `[]` for work never done (batch 2026-09-08c).
 
-**Not provided, by design:** per-commit attribution between slugs. When an
-iteration advances two sub-plans, both rows carry the full `before..after`
-range. Without trailers there is nothing to partition on, and no reader
-consumes `commits` for attribution. A sub-plan created *during* an iteration
-has no baseline and gets no row; batch-verification sub-plans exist at plan
-time, so the case that matters is covered.
+**Per-slug commit filtering:** on personal remotes, each slug row now lists
+only commits whose message carries `[plan:<slug>#`.  This prevents a slug
+whose gate never ran from crediting itself with another sub-plan's work
+(retro-2026-09-29 F2).  On shared remotes, trailers are absent by policy,
+so the full range is kept and marked with `"attribution": "unfiltered-no-trailers"`.
+A slug with 0 matching commits on a personal remote gets no row at all.
 
 ### Who reads
 

@@ -169,7 +169,6 @@ def _read_ledger(project: Path, env: dict[str, str]) -> list[dict]:
 
 # ── AC-1 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="proof rows unfiltered")
 def test_slug_row_lists_only_commits_with_its_own_trailer(tmp_path: Path) -> None:
     """AC-1 — a per-slug trailer filter.
 
@@ -239,7 +238,6 @@ def test_slug_row_lists_only_commits_with_its_own_trailer(tmp_path: Path) -> Non
 
 # ── AC-2 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="proof rows unfiltered")
 def test_row_with_zero_matching_commits_is_not_written(tmp_path: Path) -> None:
     """AC-2 — a row with 0 matching commits is refused.
 
@@ -279,7 +277,6 @@ def test_row_with_zero_matching_commits_is_not_written(tmp_path: Path) -> None:
 
 # ── AC-3 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="proof rows unfiltered")
 def test_shared_remote_row_keeps_unfiltered_list_with_attribution_field(
     tmp_path: Path,
 ) -> None:
@@ -330,7 +327,6 @@ def test_shared_remote_row_keeps_unfiltered_list_with_attribution_field(
 
 # ── AC-4 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="gate_pass_at_head row never fires")
 def test_gate_pass_row_fires_after_gate_has_run(tmp_path: Path) -> None:
     """AC-4 — the ``gate_pass_at_head`` row fires after the gate has run.
 

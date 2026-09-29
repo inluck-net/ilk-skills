@@ -1594,6 +1594,15 @@ for sp in (d.get('subplans') or []):
   local ledger="${ledger_dir}/ship-proof.jsonl"
   mkdir -p "$ledger_dir" 2>/dev/null || return 0
 
+  # Detect remote type: on a shared remote, trailers are stripped by policy,
+  # so per-slug filtering is impossible.  Rows keep the full commit list and
+  # gain "attribution": "unfiltered-no-trailers" so readers can tell.
+  # AC-3 of a-proof-row-lists-only-its-own-commits.
+  local _remote_type="personal"
+  if [[ -f "${PROJECT_PATH}/.ilk-remote-type" ]]; then
+    _remote_type=$(cat "${PROJECT_PATH}/.ilk-remote-type" 2>/dev/null || echo "personal")
+  fi
+
   local r
   for r in "${REPOS[@]}"; do
     local before after
@@ -1636,13 +1645,42 @@ for sp in (d.get('subplans') or []):
           step_to="$est_steps"
         fi
       fi
+
+      # Per-slug trailer filter (AC-1): on personal remotes, keep only
+      # commits whose message carries [plan:<slug>#.  On shared remotes
+      # trailers are stripped by policy, so keep the full list and mark
+      # the row with "attribution": "unfiltered-no-trailers" (AC-3).
+      local filtered_shas="$new_shas"
+      local _attribution_arg=""
+      if [[ "$_remote_type" != "shared" ]]; then
+        local _slug_shas=""
+        local _sha
+        for _sha in $new_shas; do
+          local _msg
+          _msg=$(git -C "$r" log -1 --format='%s' "$_sha" 2>/dev/null) || continue
+          if [[ "$_msg" == *"[plan:${slug}#"* ]]; then
+            _slug_shas+="${_sha}"$'\n'
+          fi
+        done
+        filtered_shas="${_slug_shas%$'\n'}"
+        # AC-2: a row with 0 matching commits is not written.
+        if [[ -z "$filtered_shas" ]]; then
+          local _total
+          _total=$(printf '%s\n' "$new_shas" | wc -l | tr -d ' ')
+          echo "  ! [ship-proof] refused row for '${slug}': 0 of ${_total} commits carry its trailer" >&2
+          continue
+        fi
+      else
+        _attribution_arg="unfiltered-no-trailers"
+      fi
+
       local shas_json
-      shas_json=$(printf '%s\n' "$new_shas" | jq -R . | jq -sc .)
+      shas_json=$(printf '%s\n' "$filtered_shas" | jq -R . | jq -sc .)
 
       local record
       record=$(python3 -c "
 import json, sys
-print(json.dumps({
+d = {
     'run_id': sys.argv[1],
     'iteration': int(sys.argv[2]),
     'slug': sys.argv[3],
@@ -1655,7 +1693,11 @@ print(json.dumps({
     # empty ledger is ambiguous between 'nobody ran the loop' and 'the
     # writer is broken'.  Readers ignore unknown fields.
     'provenance': 'loop-executed',
-}, separators=(',', ':')))" "$RUN_ID" "$iteration" "$slug" "$r" "$step_from" "$step_to" "$shas_json" 2>/dev/null) || continue
+}
+attr = sys.argv[8] if len(sys.argv) > 8 else ''
+if attr:
+    d['attribution'] = attr
+print(json.dumps(d, separators=(',', ':')))" "$RUN_ID" "$iteration" "$slug" "$r" "$step_from" "$step_to" "$shas_json" "$_attribution_arg" 2>/dev/null) || continue
 
       # Terminate a neighbour's unterminated line before appending.
       #
@@ -4999,18 +5041,6 @@ print(json.dumps({
     # gate_pass_at_head row so ship_integrity can still prove the step
     # (AC-1 of ship-proof-without-new-commits).
     local local_checks_results=""
-    local _gate_outcome=""
-    if [[ -s "$local_checks_results" ]]; then
-      local _bc="${_SKILL_ROOT}/ilk-loop/scripts/blocking_checks.py"
-      if python3 "$_bc" "$local_checks_results" --any 2>/dev/null; then
-        _gate_outcome="fail"
-      else
-        _gate_outcome="pass"
-      fi
-    fi
-    if [[ "$total_new" -gt 0 || "$_gate_outcome" == "pass" ]]; then
-      write_ship_proof_records "$heads_before_file" "$heads_after_file" "$i" "$_gate_outcome"
-    fi
 
     # Stall detection — extracted to _decide_iter_stop_reason for testability.
     local iter_stop_reason=""
@@ -5280,6 +5310,25 @@ print('true' if d.get('blocked') else 'false')
           fi
         fi
       fi
+    fi
+
+    # Evaluate gate_outcome NOW, after local_checks has run.
+    # Previously this was evaluated before the gate (local_checks_results was
+    # always empty), so _gate_outcome was always "" and the gate_pass_at_head
+    # row could never fire.  AC-4 of a-proof-row-lists-only-its-own-commits.
+    local _gate_outcome=""
+    if [[ -n "$local_checks_results" && -s "$local_checks_results" ]]; then
+      local _bc="${_SKILL_ROOT}/ilk-loop/scripts/blocking_checks.py"
+      if python3 "$_bc" "$local_checks_results" --any 2>/dev/null; then
+        _gate_outcome="fail"
+      else
+        _gate_outcome="pass"
+      fi
+    fi
+    # Ship-proof ledger: write rows after the gate has run so
+    # gate_pass_at_head can fire for zero-commit green gates.
+    if [[ "$total_new" -gt 0 || "$_gate_outcome" == "pass" ]]; then
+      write_ship_proof_records "$heads_before_file" "$heads_after_file" "$i" "$_gate_outcome"
     fi
 
     # Build new_commits JSON
