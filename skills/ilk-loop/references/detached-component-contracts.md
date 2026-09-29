@@ -2469,3 +2469,97 @@ runs, and unset alongside it after the iteration completes. The file lives in
    AFTER the runner-list detection, so a command already denied by the runner
    list (e.g. bare `pytest`) is denied by the runner list, not by the
    declared-gates mechanism.
+
+---
+
+## Contract 18: The phase marker (`phase.json`)
+
+### Purpose
+
+While the runner is in a gate (not the agent), the panel (xbar) needs to
+display the batch, sub-plan, and step — and show a gate timer instead of a
+stale iteration age and climbing heartbeat. The runner writes its current
+phase to `phase.json` so `status_all.py` can surface it.
+
+### Format
+
+```json
+{
+  "phase": "agent|gate|batch-gate|between",
+  "slug": "sub-plan-slug|null",
+  "step": 2|null,
+  "run_id": "20260929-083918",
+  "iteration": 1,
+  "started_at": 1727587200,
+  "pid": 48268
+}
+```
+
+`slug` and `step` are `null` for non-gate phases (`agent`, `between`,
+`batch-gate`). `iteration` is the current iteration counter (0 before the
+first iteration). `started_at` is epoch seconds when the phase was written.
+
+### Who writes
+
+- **`run_ilk_loop_claude.sh`** — the `write_phase` function. Called at each
+  choke point:
+  - `agent` — right before the `gtimeout ... claude` pipeline launch.
+  - `between` — after the pipeline `wait` returns.
+  - `gate` — at `invoke_local_checks` entry, with slug and step from the
+    first line of the targets file.
+  - `between` — at `invoke_local_checks` return.
+  - `batch-gate` — at `invoke_batch_gate` entry.
+  - `between` — at `invoke_batch_gate` return.
+  - At run exit, `phase.json` is **removed** (in `finalize_sentinel`,
+    `_write_terminal_sentinel`, and the main-loop final sentinel write).
+
+### Who reads
+
+- **`status_all.py`** — reads `phase.json` from the launcher dir to populate
+  the `phase`, `phase_slug`, `phase_step`, and `phase_elapsed_s` fields in
+  its JSON output. The panel renderer (`render_xbar.py`) consumes these.
+
+### Atomicity
+
+The write uses a tmp file in the same directory, then `mv`. A write failure
+never aborts the run — the function returns 0 on error.
+
+### Staleness rule
+
+A `phase.json` is **stale** (must be read as absent) when ANY of:
+
+1. The `pid` field names a process that is not alive.
+2. The `run_id` field does not match the sentinel's `run_id`.
+3. The file is unparseable.
+
+A stale file provides no phase information — the panel falls back to its
+current behaviour (iteration age + heartbeat).
+
+### Invariants
+
+1. **One writer.** Only `run_ilk_loop_claude.sh` writes `phase.json`. No
+   other component may author it.
+2. **Removed at exit.** `phase.json` is deleted on every exit path (normal,
+   signal, error, pre-loop terminal). A `phase.json` left behind is a crash
+   artifact, same as a `state: "running"` sentinel.
+3. **Additive.** A runner without `write_phase` produces no `phase.json`.
+   Readers must tolerate its absence — the panel's current behaviour is the
+   fallback.
+4. **`between` nulls slug and step.** The `between` phase always passes
+   empty slug and step, which become `null` in the JSON. A `between` phase
+   with non-null slug/step is a bug.
+
+### Bug reference (gh-resolve run 20260929-083918)
+
+Chad's screenshot at ~09:08 showed the panel as `* gh-resolve iter 1 · 28m ·
+♥784s` with no batch, sub-plan, or step. The runner was in fact healthily
+running the batch-verify gate (pid 50479). Three defects:
+
+1. `iter 1 · 28m` was the run's age (from `iter-NN.log` creation time).
+2. `♥784s` climbed during a healthy gate (heartbeat = `iter-NN.log` mtime;
+   nothing writes that file during a gate).
+3. No batch, sub-plan, or step (the worker set the MASTER `shipped` before
+   the gate ran; `status_all` found no active master).
+
+`phase.json` closes all three: the panel reads the phase instead of inferring
+it from iteration metadata.

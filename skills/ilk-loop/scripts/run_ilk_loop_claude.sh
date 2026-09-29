@@ -1757,6 +1757,38 @@ record_err_context() {
   _LAST_ERR_CONTEXT="line $1: $2"
 }
 
+# write_phase — record the runner's current phase in phase.json.
+#
+# Writes beside the sentinel (last-exit.json) in the launcher dir.
+# Atomic: tmp + mv.  A write failure never aborts the run.
+#
+# Usage: write_phase <phase> [<slug> <step>]
+#   phase: agent | gate | batch-gate | between
+#   slug, step: omitted or "" for non-gate phases
+write_phase() {
+  local phase="${1:-}"
+  local slug="${2:-}"
+  local step="${3:-}"
+  local rd
+  rd="$(dirname "${_ILK_SENTINEL_PATH:-/dev/null}")"
+  [[ -d "$rd" ]] || return 0
+  local target="${rd}/phase.json"
+  local tmp="${target}.tmp"
+  local now_epoch
+  now_epoch=$(date +%s)
+  # slug and step are null in JSON when empty.
+  local slug_json="null"
+  local step_json="null"
+  [[ -n "$slug" ]] && slug_json="\"$slug\""
+  [[ -n "$step" ]] && step_json="$step"
+  printf '{"phase":"%s","slug":%s,"step":%s,"run_id":"%s","iteration":%s,"started_at":%s,"pid":%d}' \
+    "$phase" "$slug_json" "$step_json" "${RUN_ID:-}" "${_ILK_ITER_COUNTER:-0}" "$now_epoch" $$ \
+    > "$tmp" 2>/dev/null && mv -f "$tmp" "$target" 2>/dev/null || {
+    rm -f "$tmp" 2>/dev/null
+    return 0
+  }
+}
+
 _write_terminal_sentinel() {
   # Write a terminal sentinel for pre-loop exits (all-shipped, shipped-unproven,
   # blocked-no-runnable).  These exits happen before the main loop starts, so
@@ -1781,6 +1813,8 @@ if os.environ.get('_HELD_BY'):
     d['held_by'] = os.environ['_HELD_BY']
 print(json.dumps(d))" > "${rd}/last-exit.json.tmp" && mv -f "${rd}/last-exit.json.tmp" "${rd}/last-exit.json"
   echo "Sentinel: ${rd}/last-exit.json (state=$state, iters=0)"
+  # Remove phase.json — the run is over.
+  rm -f "${rd}/phase.json"
 }
 
 # ── Unattended profile helpers ──────────────────────────────────────────────
@@ -1953,6 +1987,11 @@ print(json.dumps(d))
 
   # Clean up unattended temp files (finalize_sentinel runs on EXIT).
   rm -f "${_INTEGRITY_VIOLATIONS_FILE:-}" "${_RUN_CHECKS_JSONL:-}"
+
+  # Remove phase.json — the run is over.
+  local _phase_dir
+  _phase_dir="$(dirname "${_ILK_SENTINEL_PATH:-/dev/null}")"
+  [[ -d "$_phase_dir" ]] && rm -f "${_phase_dir}/phase.json"
 }
 
 # Read declared per-check timeout(s) from a sub-plan step's local_checks,
@@ -2331,12 +2370,21 @@ invoke_local_checks() {
   local results_file="$5"
   local plans_root="${6:-}"
 
+  # Phase marker: read the first target line for slug and step.
+  local _phase_slug="" _phase_step=""
+  if [[ -f "$targets_file" && -s "$targets_file" ]]; then
+    read -r _phase_slug _phase_step < "$targets_file" 2>/dev/null || true
+  fi
+  write_phase gate "$_phase_slug" "$_phase_step"
+
   : > "$results_file"
 
   if [[ ! -f "$targets_file" || ! -s "$targets_file" ]]; then
+    write_phase between
     return
   fi
   if [[ ! -f "$helper_script" ]]; then
+    write_phase between
     return
   fi
 
@@ -2450,6 +2498,7 @@ except: pass
 
     rm -f "$tmp_out"
   done < "$targets_file"
+  write_phase between
 }
 
 test_all_shipped() {
@@ -3218,10 +3267,13 @@ invoke_batch_gate() {
   local project_path="$1"
   local runtime_dir="$2"
 
+  write_phase batch-gate
+
   # Resolve batch_gate.py from the same skill root
   local batch_gate_script="${_SKILL_ROOT}/ilk-loop/scripts/batch_gate.py"
   if [[ ! -f "$batch_gate_script" ]]; then
     echo "[batch-gate] WARNING: batch_gate.py not found at $batch_gate_script — skipping gate"
+    write_phase between
     return 0
   fi
 
@@ -3250,6 +3302,7 @@ invoke_batch_gate() {
   fi
 
   # Always return 0 — the gate must never prevent the runner from terminating
+  write_phase between
   return 0
 }
 
@@ -3355,6 +3408,7 @@ for k, v in sorted(d.get("env", {}).items()):
   # interrupt the `wait` instead of deferring until the foreground job
   # finishes.  set -m gives the backgrounded pipeline its own process
   # group so the trap can TERM the whole group.
+  write_phase agent
   set -m
   (cd "$cwd" && { [[ -z "$PATH_PRELUDE" ]] || eval "$PATH_PRELUDE"; } \
       && eval "$settings_env_exports" \
@@ -3369,6 +3423,7 @@ for k, v in sorted(d.get("env", {}).items()):
 
   local exit_code=0
   wait "$_pipeline_pid" || exit_code=$?
+  write_phase between
   # Clean up the process group (no-op if the agent already exited).
   kill -0 "-$_ILK_AGENT_PGID" 2>/dev/null && kill -TERM "-$_ILK_AGENT_PGID" 2>/dev/null || true
 
@@ -5496,6 +5551,8 @@ print(json.dumps(d))" \
     # Remove the launcher's running.pid so the scheduler does not see a
     # stale sentinel and log skip-busy forever.  Best-effort + idempotent.
     rm -f "${runtime_dir}/running.pid"
+    # Remove phase.json — the run is over.
+    rm -f "${runtime_dir}/phase.json"
   fi
 }
 
