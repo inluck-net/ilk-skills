@@ -250,6 +250,10 @@ def derive_attributed(rows: list[list[str]]) -> tuple[list[list[str]], list[str]
         if len(r) >= 5:
             rerun_str = r[3].strip()
             touched_str = r[4].strip().lower()
+            # "—" means the row was not rerun (red-at-base or declared-at-base).
+            # These are pre-existing; skip from attribution.
+            if rerun_str == "—":
+                continue
             # Parse "N/K" format.
             try:
                 red_count, K = rerun_str.split("/")
@@ -257,14 +261,18 @@ def derive_attributed(rows: list[list[str]]) -> tuple[list[list[str]], list[str]
             except (ValueError, AttributeError):
                 raise VerificationError(
                     f"unrecognised `head reruns` value {r[3]!r} for {node}; "
-                    f"expected N/K format (e.g. 3/3)."
+                    f"expected N/K format (e.g. 3/3) or —."
                 )
-            if touched_str not in {"yes", "no"}:
+            if touched_str == "—":
+                # Not rerun, so batch-touched is unknown; treat as no.
+                batch_touched = False
+            elif touched_str not in {"yes", "no"}:
                 raise VerificationError(
                     f"unrecognised `batch touched file` value {r[4]!r} for {node}; "
-                    f"expected yes or no."
+                    f"expected yes, no, or —."
                 )
-            batch_touched = touched_str == "yes"
+            else:
+                batch_touched = touched_str == "yes"
             # Pre-existing: failed, declared-at-base, or born-red-at at base.
             if at_base in ("failed",) or at_base.startswith("born-red-at:"):
                 # failed at base ⇒ not attributed (pre-existing).

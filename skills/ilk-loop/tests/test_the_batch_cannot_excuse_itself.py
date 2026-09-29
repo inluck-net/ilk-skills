@@ -303,10 +303,11 @@ def test_ac3_flaky_untouched_does_not_stop(repo: Path, vdir: Path,
     cells = _parse_row_cells(rec, "tests/test_untouched.py::test_f")
     # The at-base worktree also decrements the counter, so the test fails
     # at base too → "failed" (pre-existing), not "passed" (flaky-owed).
+    # Red-at-base ids skip head reruns (verdict already pre-existing).
     assert cells["at base"] == "failed"
     assert cells["in baseline_red"] == "no"
-    assert cells["head reruns"] == "1/3"
-    assert cells["batch touched file"] == "no"
+    assert cells["head reruns"] == "—"
+    assert cells["batch touched file"] == "—"
 
 
 # ── AC-4: flaky in a touched file DOES stop ──────────────────────────────────

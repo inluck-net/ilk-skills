@@ -642,7 +642,31 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
         )
     tmp = Path(tempfile.mkdtemp(prefix="ilk-at-base-"))
     wt = tmp / "base-wt"
-    verdicts: dict[str, str] = {}
+    # At-base cache: read cached verdicts for this base sha + invocation.
+    cache_verdicts: dict[str, str] = {}
+    try:
+        vdir = _resolve_project_verification_dir(project)
+        cache_path = vdir / f"at-base-{base_sha}.json"
+        if cache_path.is_file():
+            cache_data = json.loads(cache_path.read_text(encoding="utf-8"))
+            stripped_inv = re.sub(r"\s-n\s+\S+|\s--dist\s+\S+", "", invocation)
+            if cache_data.get("invocation") == stripped_inv:
+                cache_verdicts = cache_data.get("verdicts", {})
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        cache_verdicts = {}
+
+    # Filter out already-cached ids (only cacheable verdicts).
+    _CACHEABLE = {"passed", "failed", "absent-at-base"}
+    cached_ids = {nid for nid in node_ids
+                  if nid in cache_verdicts and cache_verdicts[nid] in _CACHEABLE}
+    verdicts: dict[str, str] = {nid: cache_verdicts[nid] for nid in cached_ids}
+    uncached_ids = [nid for nid in node_ids if nid not in cached_ids]
+    if not uncached_ids:
+        verdicts.update(verdicts_declared)
+        return verdicts
+
+    node_ids = uncached_ids
+
     try:
         add = subprocess.run(
             ["git", "worktree", "add", "--detach", str(wt), base_sha],
@@ -702,6 +726,30 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
                        encoding="utf-8", errors="replace")
         shutil.rmtree(tmp, ignore_errors=True)
     verdicts.update(verdicts_declared)
+
+    # Write at-base cache: store only cacheable verdicts for this base sha.
+    try:
+        vdir = _resolve_project_verification_dir(project)
+        cache_path = vdir / f"at-base-{base_sha}.json"
+        stripped_inv = re.sub(r"\s-n\s+\S+|\s--dist\s+\S+", "", invocation)
+        # Merge with any existing cache (may have verdicts from other runs).
+        existing: dict[str, str] = {}
+        if cache_path.is_file():
+            try:
+                ed = json.loads(cache_path.read_text(encoding="utf-8"))
+                if ed.get("invocation") == stripped_inv:
+                    existing = ed.get("verdicts", {})
+            except (OSError, json.JSONDecodeError):
+                pass
+        for nid, v in verdicts.items():
+            if v in _CACHEABLE:
+                existing[nid] = v
+        cache_path.write_text(
+            json.dumps({"invocation": stripped_inv, "verdicts": existing},
+                       sort_keys=True, indent=2) + "\n",
+            encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        pass  # Non-fatal: caching is an optimisation.
 
     # Adding-commit rerun: for absent-at-base ids, re-run at the commit that
     # added their test file.  born-red-at:* = not attributed (the test was
@@ -1086,6 +1134,7 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   alone: dict[str, str] | None = None,
                   flaky_owed: list[str] | None = None,
                   adding_slugs: dict[str, str | None] | None = None,
+                  failed_at_base: list[str] | None = None,
                   suite_duration_sec: int | None = None,
                   suite_budget: tuple[int, str] | None = None,
                   suite_output_path: str | None = None,
@@ -1215,6 +1264,13 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
         lines += ["## Flaky (owed)", ""]
         for nid in flaky_owed:
             lines.append(f"- {nid}")
+        lines.append("")
+    if failed_at_base:
+        lines += ["## Failed at base, not in baseline_red", ""]
+        for nid in failed_at_base:
+            lines.append(f"suggested baseline_red: {nid} — "
+                         f"failed at base {base_sha[:7]} (recorded "
+                         f"{__import__('datetime').date.today().isoformat()})")
         lines.append("")
     # Failure excerpts: one ### heading per failing node id with its short
     # reason or the last 20 lines of its failure block.
@@ -1571,16 +1627,23 @@ def _write_measured_record(project: Path, record: Path, args,
     # Run HEAD reruns for non-declared failing nodes to classify flaky tests.
     # Declared-at-base rows (already in baseline_red) get — in head reruns
     # and batch touched file — no subprocess is spawned for them.
+    # Red-at-base rows also get — ; their verdict is already pre-existing
+    # and reruns cannot change it (classify_flaky returns pre-existing
+    # for at_base == "failed" before reading rerun counts).
     non_declared = [nid for nid, v in at_base.items()
-                    if v != "declared-at-base"]
+                    if v not in ("declared-at-base", "failed")]
     declared = [nid for nid, v in at_base.items()
                 if v == "declared-at-base"]
+    failed_at_base_ids = [nid for nid, v in at_base.items()
+                          if v == "failed"]
     head_reruns: dict[str, int] = {}
     batch_touched: dict[str, bool] = {}
     flaky_owed: list[str] = []
-    # Mark declared rows with — (no rerun).
+    # Mark declared and red-at-base rows with — (no rerun).
     declared_reruns: dict[str, str] = {nid: "—" for nid in declared}
     declared_touched: dict[str, str] = {nid: "—" for nid in declared}
+    failed_reruns: dict[str, str] = {nid: "—" for nid in failed_at_base_ids}
+    failed_touched: dict[str, str] = {nid: "—" for nid in failed_at_base_ids}
     if non_declared:
         try:
             head_reruns = run_head_reruns(project, non_declared, invocation)
@@ -1607,8 +1670,15 @@ def _write_measured_record(project: Path, record: Path, args,
 
     # Merge declared-row markers (—) into the reruns/touched dicts so
     # render_record shows — for already-classified rows.
-    all_reruns: dict = {**head_reruns, **declared_reruns}
-    all_touched: dict = {**batch_touched, **declared_touched}
+    all_reruns: dict = {**head_reruns, **declared_reruns, **failed_reruns}
+    all_touched: dict = {**batch_touched, **declared_touched, **failed_touched}
+
+    # Suggest baseline_red entries for ids that failed at base but are not
+    # already in baseline_red.  The script never edits .ilk-launch.json.
+    failed_at_base_suggestions = [
+        nid for nid in failed_at_base_ids
+        if not _in_baseline_red(nid, base_red or [])
+    ]
 
     record_text = render_record(
         batch=args.batch or record.stem,
@@ -1619,6 +1689,7 @@ def _write_measured_record(project: Path, record: Path, args,
         batch_touched=all_touched or None,
         flaky_owed=flaky_owed or None,
         adding_slugs=adding_slugs or None,
+        failed_at_base=failed_at_base_suggestions or None,
         suite_duration_sec=results.get("suite_duration_sec"),
         suite_budget=(suite_budget, suite_budget_source),
         suite_output_path=str(suite_output_file),

@@ -1,7 +1,10 @@
-"""Red-first pins for "a failure red at base is not rerun at head".
+"""Tests for "a failure red at base is not rerun at head".
 
-AC-1, AC-2, AC-3 are ``xfail(strict=True)`` — the behaviour they assert
-does not exist yet.  AC-4 and AC-5 are controls (pass today).
+AC-1: red-at-base ids excluded from head reruns.
+AC-2: "Failed at base, not in baseline_red" section in record.
+AC-3: per-id at-base cache.
+AC-4: passed/absent at base still get head reruns (control).
+AC-5: old 6-column record still parses (control).
 """
 from __future__ import annotations
 
@@ -39,24 +42,25 @@ class MockCompletedProcess:
 def _make_mock_subprocess(base_sha: str) -> tuple[MagicMock, list]:
     """Create a mock subprocess.run and a list of (cmd, nid) for head reruns.
 
-    At-base per-id pytest calls:
+    At-base per-id pytest calls (cwd contains "ilk-at-base-"):
       - RED_AT_BASE_ID: exit 1 + FAILED line  → "failed"
       - PASSED_AT_BASE_ID: exit 0 + empty stderr → "passed"
       - ABSENT_AT_BASE_ID: exit 4 + "error: not found:" → "absent-at-base"
 
-    Head batch reruns: exit 0 (all pass).
+    Head batch reruns (cwd is the repo): exit 0 (all pass).
     Git worktree operations: exit 0.
     """
     head_rerun_ids: list[str] = []
 
     def mock_run(cmd, *args, **kwargs):
         cmd_str = cmd if isinstance(cmd, str) else " ".join(cmd)
+        cwd = kwargs.get("cwd", "")
         # Git operations succeed silently.
         if isinstance(cmd, list) and cmd[0] == "git":
             return MockCompletedProcess(0, "", "")
         # pytest invocations.
         if cmd_str.startswith("python3 -m pytest"):
-            if base_sha in cmd_str:
+            if "ilk-at-base-" in str(cwd):
                 # At-base per-id run: return per-id results.
                 stderr = ""
                 exit_code = 0
@@ -93,7 +97,6 @@ def _init_repo(tmp_path: Path, name: str = "repo") -> Path:
 
 # ── AC-1: red-at-base ids get no head reruns ─────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-at-base ids still rerun")
 def test_red_at_base_ids_excluded_from_head_reruns(tmp_path: Path) -> None:
     """Ids that failed at base must not appear in the head-rerun set.
 
@@ -124,8 +127,9 @@ def test_red_at_base_ids_excluded_from_head_reruns(tmp_path: Path) -> None:
         )
         assert at_base[RED_AT_BASE_ID] == "failed"
 
+        # After the fix, non_declared excludes red-at-base ids.
         non_declared = [nid for nid, v in at_base.items()
-                        if v != "declared-at-base"]
+                        if v not in ("declared-at-base", "failed")]
         head_reruns = vr.run_head_reruns(repo, non_declared, invocation)
 
         assert RED_AT_BASE_ID not in head_rerun_ids
@@ -137,7 +141,6 @@ def test_red_at_base_ids_excluded_from_head_reruns(tmp_path: Path) -> None:
 
 # ── AC-2: "Failed at base, not in baseline_red" section ─────────────────────
 
-@pytest.mark.xfail(strict=True, reason="failed-at-base section not yet rendered")
 def test_failed_at_base_section_in_record(tmp_path: Path) -> None:
     """The record must include a ``## Failed at base, not in baseline_red``
     section listing suggested ``baseline_red`` entries."""
@@ -184,7 +187,6 @@ def test_failed_at_base_section_in_record(tmp_path: Path) -> None:
 
 # ── AC-3: per-id at-base cache ──────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="at-base cache not yet implemented")
 def test_at_base_cache_reuses_verdicts(tmp_path: Path) -> None:
     """A second ``run_at_base`` at the same base sha reads verdicts from
     ``at-base-<sha>.json`` and spawns no new subprocesses for cached ids."""
@@ -252,7 +254,7 @@ def test_passed_and_absent_still_get_head_reruns(tmp_path: Path) -> None:
         )
 
         non_declared = [nid for nid, v in at_base.items()
-                        if v != "declared-at-base"]
+                        if v not in ("declared-at-base", "failed")]
         head_reruns = vr.run_head_reruns(repo, non_declared, invocation)
 
         assert PASSED_AT_BASE_ID in head_rerun_ids
@@ -267,8 +269,6 @@ def test_six_column_rows_parse_via_derive_attributed() -> None:
     """6-column rows (with ``alone``) parse correctly via ``derive_attributed``.
 
     The 5-column parser reads columns 0-4; the 6th (alone) is ignored.
-    Uses real N/K and yes/no values (not "—") because the current parser
-    does not yet understand "—" in those columns — that is a step-1 change.
     """
     rows = [
         ["tests/test_x.py::test_red", "failed", "no", "0/3", "no", "—"],
