@@ -1412,6 +1412,103 @@ def _write_measured_record(project: Path, record: Path, args) -> int:
     return 0
 
 
+def resolve_batch_base_sha(
+    project: Path,
+    master_path: Path,
+    *,
+    explicit_sha: str | None = None,
+) -> tuple[str, str]:
+    """Derive the batch base from the MASTER's registry slugs.
+
+    Returns ``(base_sha, provenance)`` where *provenance* is a human-readable
+    string like ``base_sha: abc1234 (derived from def5678 [plan:alpha#…])``.
+
+    When *explicit_sha* is not ``None`` and not ``"auto"``, it is returned
+    unchanged (pass-through for explicit ``--base-sha <sha>``).
+
+    Raises ``SystemExit`` with a non-zero code when:
+    * ``explicit_sha == "auto"`` but no ``--master`` was supplied.
+    * No commit matches any registry slug (the operator must pass an
+      explicit sha).
+    """
+    if explicit_sha is not None and explicit_sha != "auto":
+        return explicit_sha, f"base_sha: {explicit_sha} (explicit)"
+
+    master_text = master_path.read_text(encoding="utf-8-sig", errors="replace")
+
+    # Extract plan filenames from the registry table (backticked-safe).
+    scripts = Path(__file__).resolve().parent
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    from plan_preflight import _extract_table_filenames
+
+    filenames = _extract_table_filenames(master_text)
+    if not filenames:
+        print(f"ERROR: no sub-plan filenames found in {master_path.name}",
+              file=sys.stderr)
+        raise SystemExit(1)
+
+    # Strip date prefix + .md to get the slug used in commit messages.
+    # Filenames: 2026-09-29-alpha.md → slug: alpha
+    slug_re = re.compile(r"^\d{4}-\d{2}-\d{2}[a-z]?-(.+?)\.md$")
+    slugs: list[str] = []
+    for fn in filenames:
+        m = slug_re.match(fn)
+        if m:
+            slugs.append(m.group(1))
+        else:
+            # Bare slug without date prefix (legacy or manual).
+            slugs.append(fn.removesuffix(".md"))
+
+    # Build a regex alternation for git log --grep.
+    escaped = [re.escape(s) for s in slugs]
+    grep_pattern = r"\[plan:(" + "|".join(escaped) + r")#"
+
+    # Find the earliest commit whose message matches any slug.
+    try:
+        log_out = subprocess.run(
+            ["git", "log", "--reverse", "--format=%H", "-E",
+             f"--grep={grep_pattern}", "HEAD"],
+            cwd=project,
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"ERROR: git log failed: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+
+    first_line = (log_out.stdout or "").strip().splitlines()
+    if not first_line:
+        searched = ", ".join(slugs)
+        print(f"ERROR: no commit matches any registry slug [{searched}]. "
+              f"Pass an explicit --base-sha.", file=sys.stderr)
+        raise SystemExit(1)
+
+    first_sha = first_line[0]
+
+    # The base is the parent of that commit.
+    try:
+        parent = subprocess.run(
+            ["git", "rev-parse", f"{first_sha}^"],
+            cwd=project,
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=10,
+        )
+        base_sha = parent.stdout.strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"ERROR: git rev-parse failed: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+
+    if not base_sha:
+        print(f"ERROR: could not resolve parent of {first_sha[:12]}",
+              file=sys.stderr)
+        raise SystemExit(1)
+
+    provenance = (f"base_sha: {base_sha} "
+                  f"(derived from {first_sha[:8]} [plan:{slugs[0]}#…])")
+    return base_sha, provenance
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Write verified_head (and soon suite_scope) to a verification record."
@@ -1449,7 +1546,32 @@ def main(argv: list[str] | None = None) -> int:
              "compute_suite_scope returns scoped; 'auto' (default) uses the "
              "computed scope.",
     )
+    ap.add_argument(
+        "--master", default=None, metavar="PATH",
+        help="path to the MASTER plan (.md); required when --base-sha is 'auto'",
+    )
     args = ap.parse_args(argv)
+
+    # Resolve --base-sha auto before any code path reads args.base_sha.
+    if args.base_sha == "auto":
+        if not args.master:
+            print("ERROR: --base-sha auto requires --master",
+                  file=sys.stderr)
+            return 2
+        master_path = Path(args.master).resolve()
+        if not master_path.is_file():
+            print(f"ERROR: master plan not found: {master_path}",
+                  file=sys.stderr)
+            return 1
+        project_for_resolve = Path(args.project).resolve()
+        try:
+            resolved_sha, provenance = resolve_batch_base_sha(
+                project_for_resolve, master_path,
+            )
+        except SystemExit as exc:
+            return exc.code
+        args.base_sha = resolved_sha
+        print(provenance)
 
     project = Path(args.project).resolve()
 

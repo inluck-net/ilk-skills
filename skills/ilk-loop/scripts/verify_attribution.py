@@ -803,7 +803,35 @@ def main(argv: list[str] | None = None) -> int:
                          "(missing, tree ≠ HEAD, or suite_failed not "
                          "an integer), exit 1 when fresh. Never runs "
                          "the suite.")
+    ap.add_argument("--master", default=None, metavar="PATH",
+                    help="path to the MASTER plan (.md); required when "
+                         "--base-sha is 'auto'")
     args = ap.parse_args(argv)
+
+    # Resolve --base-sha auto before any code path reads args.base_sha.
+    if args.base_sha == "auto":
+        if not args.master:
+            print("ERROR: --base-sha auto requires --master",
+                  file=sys.stderr)
+            return 2
+        master_path = Path(args.master).resolve()
+        if not master_path.is_file():
+            print(f"ERROR: master plan not found: {master_path}",
+                  file=sys.stderr)
+            return 1
+        project_for_resolve = Path(args.project).resolve()
+        vr_scripts = Path(__file__).resolve().parent
+        if str(vr_scripts) not in sys.path:
+            sys.path.insert(0, str(vr_scripts))
+        from verification_record import resolve_batch_base_sha
+        try:
+            resolved_sha, provenance = resolve_batch_base_sha(
+                project_for_resolve, master_path,
+            )
+        except SystemExit as exc:
+            return exc.code
+        args.base_sha = resolved_sha
+        print(provenance)
 
     project = Path(args.project).resolve()
 
