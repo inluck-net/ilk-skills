@@ -1,31 +1,17 @@
-"""Pin a distinct stop reason for a red gate on an unchanged tree.
+"""Red-first: a red gate on an unchanged tree gets its own stop reason.
 
-Part of sub-plan ``a-red-gate-on-an-unchanged-tree-says-so``
-(MASTER-2026-09-29g).
+A B2-confirmed red gate sets ``iter_stop_reason="local_checks_failed"``
+whether or not the iteration committed anything (run_ilk_loop_claude.sh:5478).
+When heads-before == heads-after (0 new commits across all repos), the red is
+on code this iteration didn't touch: a red base or an environment.  It should
+not read as "the worker broke something".
 
-A B2-confirmed red gate with 0 new commits (heads-before == heads-after)
-means the red is on code this iteration didn't touch — a red base or
-an environment.  The runner should name it differently from a red gate
-on code the worker broke.
-
-AC-1: a B2-confirmed red with 0 new commits ends with
-      ``local_checks_failed_no_commits``; with ≥1 new commit it is
-      ``local_checks_failed`` (today's value).
-AC-2: declared in the exit-state table, collect.py, and watchdog.sh.
-AC-3: watchdog treats it exactly as ``local_checks_failed`` today.
-AC-4: the postmortem says ``gate red on an unchanged tree (0 commits
-      this iteration)``.
-
-The AC-1 pins drive the runner end to end as a subprocess (a stub
-agent that makes 0 commits, and a red step gate), the way
-``test_red_gate_stops_the_run.py`` does, and read the stop reason
-from ``last-exit.json``.
+AC-1, AC-2, AC-3, AC-4 of sub-plan ``a-red-gate-on-an-unchanged-tree-says-so``.
 """
 from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -39,9 +25,9 @@ _REPO = _TESTS.parent.parent.parent          # <clone root>
 RUNNER = _TESTS.parent / "scripts" / "run_ilk_loop_claude.sh"
 
 sys.path.insert(0, str(_REPO / "skills" / "ilk-feedback" / "scripts"))
-sys.path.insert(0, str(_REPO / "skills" / "ilk-loop" / "scripts"))
+import collect  # noqa: E402
 
-SLUG = "unchanged-tree-red-gate"
+SLUG = "a-red-gate-on-unchanged-tree"
 STEM = f"2026-09-29-{SLUG}"
 
 _NEEDS_GTIMEOUT = pytest.mark.skipif(
@@ -50,8 +36,7 @@ _NEEDS_GTIMEOUT = pytest.mark.skipif(
 )
 
 
-# ── Harness ─────────────────────────────────────────────────────────────────
-
+# ── the end-to-end harness ───────────────────────────────────────────────────
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
@@ -61,12 +46,13 @@ def _git(repo: Path, *args: str) -> None:
     )
 
 
-def _build_world(root: Path, *, commit_in_iteration: bool) -> dict:
-    """A project + isolated data home + a stub ``claude``, ready for one iteration.
+def _build_world(root: Path) -> dict:
+    """A project + isolated data home + a stub ``claude`` that does nothing.
 
-    When *commit_in_iteration* is False the stub agent does nothing —
-    heads-before == heads-after and the red gate is on an unchanged tree.
-    When True the stub lands one trailered commit.
+    The stub agent makes zero commits — the iteration's tree is unchanged.
+    The sub-plan stays ``in-progress`` (never shipped), so gate enforcement
+    reports ``local_checks_failed`` or ``local_checks_failed_no_commits``,
+    not ``ship_integrity_violation``.
     """
     project = root / "project"
     (project / "docs").mkdir(parents=True)
@@ -76,6 +62,7 @@ def _build_world(root: Path, *, commit_in_iteration: bool) -> dict:
     _git(project, "commit", "-q", "-m", "init")
 
     data_home = root / ".ilk-data"
+    sys.path.insert(0, str(RUNNER.parent))
     import ilk_paths
     with patch.dict(os.environ, {"ILK_DATA_HOME": str(data_home)}, clear=False):
         key = ilk_paths.project_key(project)
@@ -114,42 +101,11 @@ def _build_world(root: Path, *, commit_in_iteration: bool) -> dict:
     bin_dir = root / "bin"
     bin_dir.mkdir()
     stub = bin_dir / "claude"
-    if commit_in_iteration:
-        stub.write_text(
-            "#!/usr/bin/env bash\n"
-            f"SP={str(plans / f'{STEM}.md')!r}\n"
-            # Leave the sub-plan in-progress — the gate is red so the agent
-            # would not mark it shipped.  Bump current_step so the runner
-            # has gate targets for step 0.
-            "python3 - \"$SP\" <<'EOP'\n"
-            "import re, sys\n"
-            "from pathlib import Path\n"
-            "p = Path(sys.argv[1]); b = p.read_text()\n"
-            "b = re.sub(r'^current_step: 0', 'current_step: 1', b, count=1, flags=re.M)\n"
-            "p.write_text(b)\n"
-            "EOP\n"
-            "git -c user.email=t@example.com -c user.name=t commit -q "
-            f"--allow-empty -m 'feat: the work [plan:{SLUG}#step-0]'\n"
-            "echo 'stub agent done'\n",
-            encoding="utf-8",
-        )
-    else:
-        # Stub that makes NO commits — the tree is unchanged.
-        # Leave the sub-plan in-progress — the gate is red so the agent
-        # would not mark it shipped.
-        stub.write_text(
-            "#!/usr/bin/env bash\n"
-            f"SP={str(plans / f'{STEM}.md')!r}\n"
-            "python3 - \"$SP\" <<'EOP'\n"
-            "import re, sys\n"
-            "from pathlib import Path\n"
-            "p = Path(sys.argv[1]); b = p.read_text()\n"
-            "b = re.sub(r'^current_step: 0', 'current_step: 1', b, count=1, flags=re.M)\n"
-            "p.write_text(b)\n"
-            "EOP\n"
-            "echo 'stub agent done (no commits)'\n",
-            encoding="utf-8",
-        )
+    # The stub agent does nothing — zero commits, unchanged tree.
+    # The gate will be resolved via PRE_ITER_TARGET (the fallback when
+    # no commit trailers are found) and will fail, giving us the
+    # local_checks_failed_no_commits stop reason.
+    stub.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     stub.chmod(0o755)
 
     return {"project": project, "plans": plans, "data_home": data_home,
@@ -178,177 +134,117 @@ def _run_one_iteration(world: dict, root: Path) -> subprocess.CompletedProcess:
     )
 
 
-def _read_sentinel(world: dict) -> dict | None:
+@pytest.fixture(scope="module")
+def unchanged_tree_run(tmp_path_factory: pytest.TempPathFactory) -> dict:
+    """One real runner iteration where the agent makes zero commits."""
+    root = tmp_path_factory.mktemp("unchanged-tree-run")
+    world = _build_world(root)
+    proc = _run_one_iteration(world, root)
     runtime = world["data_home"] / "projects" / world["key"] / "runtime"
     candidates = [runtime / "launcher" / "last-exit.json",
                   runtime / "last-exit.json"]
-    sentinel_path = next((c for c in candidates if c.is_file()), None)
-    if sentinel_path is None:
-        return None
-    return json.loads(sentinel_path.read_text(encoding="utf-8"))
-
-
-# ── Fixtures ────────────────────────────────────────────────────────────────
-
-
-@pytest.fixture(scope="module")
-def unchanged_tree_run(tmp_path_factory: pytest.TempPathFactory) -> dict:
-    """One runner iteration with a red gate and 0 new commits."""
-    root = tmp_path_factory.mktemp("unchanged-tree-run")
-    world = _build_world(root, commit_in_iteration=False)
-    proc = _run_one_iteration(world, root)
-    sentinel = _read_sentinel(world)
+    sentinel = next((c for c in candidates if c.is_file()), None)
     return {
         "proc": proc,
-        "sentinel": sentinel,
-        "subplan": world["plans"] / f"{STEM}.md",
+        "sentinel": json.loads(sentinel.read_text(encoding="utf-8"))
+        if sentinel is not None else None,
+        "sentinel_path": sentinel or " or ".join(str(c) for c in candidates),
     }
 
 
-@pytest.fixture(scope="module")
-def changed_tree_run(tmp_path_factory: pytest.TempPathFactory) -> dict:
-    """One runner iteration with a red gate and ≥1 new commit."""
-    root = tmp_path_factory.mktemp("changed-tree-run")
-    world = _build_world(root, commit_in_iteration=True)
-    proc = _run_one_iteration(world, root)
-    sentinel = _read_sentinel(world)
-    return {
-        "proc": proc,
-        "sentinel": sentinel,
-        "subplan": world["plans"] / f"{STEM}.md",
+# ── AC-1: 0 new commits → local_checks_failed_no_commits ────────────────────
+
+@_NEEDS_GTIMEOUT
+def test_red_gate_with_no_new_commits_stops_as_local_checks_failed_no_commits(
+    unchanged_tree_run: dict,
+) -> None:
+    """AC-1 — a red gate on an unchanged tree (0 new commits) gets a distinct
+    stop reason so it is not misread as "the worker broke something"."""
+    proc = unchanged_tree_run["proc"]
+    sentinel = unchanged_tree_run["sentinel"]
+    tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-30:])
+
+    assert sentinel is not None, (
+        f"the runner wrote no sentinel at {unchanged_tree_run['sentinel_path']}.\n{tail}"
+    )
+    assert sentinel.get("state") == "local_checks_failed_no_commits", (
+        "a B2-confirmed red gate with 0 new commits (unchanged tree) should "
+        "end the run with state=local_checks_failed_no_commits, not "
+        f"{sentinel.get('state')!r}. The gate was red on code this iteration "
+        "didn't touch.\n"
+        f"last 30 lines:\n{tail}"
+    )
+
+
+# ── AC-2: the failed_check field is present ──────────────────────────────────
+
+@_NEEDS_GTIMEOUT
+def test_sentinel_carries_failed_check_for_unchanged_tree(
+    unchanged_tree_run: dict,
+) -> None:
+    """AC-2 — the sentinel's ``failed_check`` field must name the failing gate
+    so the panel alert can identify it without re-reading the JSONL."""
+    sentinel = unchanged_tree_run["sentinel"]
+    tail = "\n".join(
+        (unchanged_tree_run["proc"].stdout + unchanged_tree_run["proc"].stderr).splitlines()[-30:]
+    )
+    assert sentinel is not None, (
+        f"no sentinel at {unchanged_tree_run['sentinel_path']}.\n{tail}"
+    )
+    failed = sentinel.get("failed_check")
+    assert failed is not None, (
+        "the sentinel for local_checks_failed_no_commits has no failed_check "
+        "field. The panel alert cannot identify which gate failed.\n"
+        f"sentinel keys: {list(sentinel.keys())}\n"
+        f"last 30 lines:\n{tail}"
+    )
+
+
+# ── AC-3: the watchdog treats it the same as local_checks_failed ─────────────
+
+def test_watchdog_classifies_local_checks_failed_no_commits_as_block() -> None:
+    """AC-3 — the watchdog must not auto-relaunch on a red-base condition.
+
+    Same block action as local_checks_failed, distinct label.
+    """
+    watchdog = _REPO / "skills" / "ilk-watchdog" / "scripts" / "watchdog.sh"
+    action = subprocess.run(
+        ["bash", "-c",
+         f"source '{watchdog}' >/dev/null 2>&1; classify_action local-checks-unchanged"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+    ).stdout.strip()
+    assert action == "block", (
+        f"watchdog.sh routes local-checks-unchanged to {action!r}; it must be "
+        "'block' (same as local_checks_failed) so the run is not auto-relaunched "
+        "on a red base"
+    )
+
+
+# ── AC-4: the postmortem label is honest ─────────────────────────────────────
+
+def test_postmortem_says_gate_red_on_unchanged_tree() -> None:
+    """AC-4 — collect.py must classify local_checks_failed_no_commits as
+    ``local-checks-unchanged`` with a reason_detail naming the cause."""
+    sentinel = {
+        "state": "local_checks_failed_no_commits",
+        "run_id": "20260929-120000",
+        "iteration": 1,
     }
+    iters = [{
+        "run_id": "20260929-120000", "iteration": 1, "exit_code": 0,
+        "new_commits_total": 0, "duration_sec": 120,
+        "local_checks": {"outcome": "fail", "command": "python3 -c 'raise SystemExit(1)'"},
+    }]
 
+    with patch.object(collect, "read_sentinel", return_value=sentinel):
+        with patch.object(collect, "collect_self_hosting_facts", return_value={}):
+            label, facts = collect.classify(iters, None, Path("/tmp/fake-project"))
 
-# ── AC-1: distinct stop reason ──────────────────────────────────────────────
-
-
-class TestStopReasonForRedGate:
-    """AC-1: a B2-confirmed red with 0 new commits ends the run with
-    ``local_checks_failed_no_commits``.  With ≥1 new commit it is
-    ``local_checks_failed`` (today's value)."""
-
-    @_NEEDS_GTIMEOUT
-    def test_unchanged_tree_stops_as_local_checks_failed_no_commits(
-        self, unchanged_tree_run: dict,
-    ) -> None:
-        proc = unchanged_tree_run["proc"]
-        sentinel = unchanged_tree_run["sentinel"]
-        tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-30:])
-
-        assert sentinel is not None, (
-            f"the runner wrote no sentinel.\n{tail}"
-        )
-        state = sentinel.get("state")
-        assert state == "local_checks_failed_no_commits", (
-            "a red gate with 0 new commits should stop as "
-            f"`local_checks_failed_no_commits`, got state={state!r}.\n"
-            f"last 30 lines:\n{tail}"
-        )
-
-    @_NEEDS_GTIMEOUT
-    def test_changed_tree_stops_as_local_checks_failed(
-        self, changed_tree_run: dict,
-    ) -> None:
-        """Green control — with ≥1 new commit the stop reason is unchanged."""
-        proc = changed_tree_run["proc"]
-        sentinel = changed_tree_run["sentinel"]
-        tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-30:])
-
-        assert sentinel is not None, (
-            f"the runner wrote no sentinel.\n{tail}"
-        )
-        state = sentinel.get("state")
-        # The existing stop reason for a red gate with commits.
-        # Could be local_checks_failed or ship_integrity_violation
-        # depending on whether the sub-plan was marked shipped.
-        assert state in ("local_checks_failed", "ship_integrity_violation"), (
-            f"a red gate with ≥1 new commit should stop as `local_checks_failed` "
-            f"or `ship_integrity_violation`, got state={state!r}.\n"
-            f"last 30 lines:\n{tail}"
-        )
-
-
-# ── AC-2: declared in vocabulary locations ───────────────────────────────────
-
-
-class TestDeclaredInVocabulary:
-    """AC-2: the new stop reason is declared in the exit-state table,
-    collect.py, and watchdog.sh."""
-
-    def test_contract_doc_lists_local_checks_failed_no_commits(self):
-        """detached-component-contracts.md must list the new state."""
-        contracts = _TESTS.parent / "references" / "detached-component-contracts.md"
-        if not contracts.exists():
-            pytest.skip("contract doc not found")
-        text = contracts.read_text(encoding="utf-8")
-        assert "local_checks_failed_no_commits" in text, (
-            "contract doc does not list local_checks_failed_no_commits"
-        )
-
-    def test_collect_py_classifies_local_checks_failed_no_commits(self):
-        """collect.py must classify the new state."""
-        import collect
-        # The new state must be in the sentinel failure map or handled
-        # by a named branch.
-        source = Path(collect.__file__).read_text(encoding="utf-8")
-        assert "local_checks_failed_no_commits" in source, (
-            "collect.py does not handle local_checks_failed_no_commits"
-        )
-
-    def test_watchdog_handles_local_checks_failed_no_commits(self):
-        """watchdog.sh must classify the new state."""
-        watchdog = _REPO / "skills" / "ilk-watchdog" / "scripts" / "watchdog.sh"
-        if not watchdog.exists():
-            pytest.skip("watchdog.sh not found")
-        text = watchdog.read_text(encoding="utf-8")
-        assert "local_checks_failed_no_commits" in text, (
-            "watchdog.sh does not handle local_checks_failed_no_commits"
-        )
-
-
-# ── AC-3: watchdog treats it as local_checks_failed ─────────────────────────
-
-
-class TestWatchdogTreatsSameAsLocalChecksFailed:
-    """AC-3: the watchdog treats it exactly as ``local_checks_failed``
-    today (same class, same relaunch or block decision)."""
-
-    def test_same_classification_as_local_checks_failed(self):
-        """The new state and local_checks_failed must map to the same
-        watchdog action."""
-        watchdog = _REPO / "skills" / "ilk-watchdog" / "scripts" / "watchdog.sh"
-        if not watchdog.exists():
-            pytest.skip("watchdog.sh not found")
-        text = watchdog.read_text(encoding="utf-8")
-        # Find the classify_action function and verify both states
-        # map to the same arm.
-        # The new state should be listed alongside local_checks_failed
-        # in the same case arm.
-        assert "local_checks_failed_no_commits" in text, (
-            "watchdog.sh does not mention local_checks_failed_no_commits"
-        )
-
-
-# ── AC-4: postmortem label ──────────────────────────────────────────────────
-
-
-class TestPostmortemLabel:
-    """AC-4: the postmortem (collect.py) says
-    ``gate red on an unchanged tree (0 commits this iteration)``."""
-
-    def test_postmortem_label_mentions_unchanged_tree(self):
-        """collect.py must produce a label mentioning 'unchanged tree'
-        for the new stop_reason, per AC-4: 'gate red on an unchanged
-        tree (0 commits this iteration)'."""
-        import collect
-        # The new state must map to a specific label, not fall through
-        # to generic heuristics.  Check both the map and the label text.
-        source = Path(collect.__file__).read_text(encoding="utf-8")
-        assert "local_checks_failed_no_commits" in source, (
-            "collect.py does not handle local_checks_failed_no_commits"
-        )
-        # The label for this state must mention "unchanged" per AC-4.
-        # This is a separate check from just having the state in the map.
-        assert "unchanged" in source, (
-            "collect.py does not mention 'unchanged' for the new state label"
-        )
+    assert label == "local-checks-unchanged", (
+        f"sentinel state=local_checks_failed_no_commits classified as {label!r}; "
+        "expected 'local-checks-unchanged'. The postmortem must not launder "
+        "the distinct stop reason into the generic local_checks_failed label."
+    )
+    assert "unchanged tree" in facts.get("reason_detail", ""), (
+        f"reason_detail should mention 'unchanged tree'; got {facts.get('reason_detail')!r}"
+    )
