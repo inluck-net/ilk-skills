@@ -118,6 +118,76 @@ estimated_steps: 2
 _(empty)_
 """
 
+# A master using the template's `| # | Order | Slug | Items | Steps (est.) | Status |` shape.
+# The _TABLE_FILENAME_RE today keys on the second cell after the row number,
+# which is the Order column — so it captures "1" instead of the filename.
+# extract_subplan_files finds all 3 via SUBPLAN_REF_RE (it scans the whole body).
+TEMPLATE_SHAPE_MASTER = """\
+---
+master_plan: 2026-09-29-execution
+batch_date: 2026-09-29
+status: draft
+current_subplan: 2026-09-29-alpha
+---
+
+# MASTER plan: test batch
+
+## Sub-plan registry
+
+| # | Order | Slug | Items | Steps (est.) | Status |
+|---|---|---|---|---|---|
+| 1 | 1 | [2026-09-29-alpha.md](./2026-09-29-alpha.md) | item A | 2 | pending |
+| 2 | 2 | [2026-09-29-beta.md](./2026-09-29-beta.md) | item B | 3 | pending |
+| 3 | 3 | [2026-09-29-gamma.md](./2026-09-29-gamma.md) | item C | 2 | pending |
+"""
+
+# Same shape with 5 rows — scales the fix.
+TEMPLATE_SHAPE_5ROW_MASTER = """\
+---
+master_plan: 2026-09-29-execution
+batch_date: 2026-09-29
+status: draft
+current_subplan: 2026-09-29-alpha
+---
+
+# MASTER plan: test batch
+
+## Sub-plan registry
+
+| # | Order | Slug | Items | Steps (est.) | Status |
+|---|---|---|---|---|---|
+| 1 | 1 | [2026-09-29-alpha.md](./2026-09-29-alpha.md) | item A | 2 | pending |
+| 2 | 2 | [2026-09-29-beta.md](./2026-09-29-beta.md) | item B | 3 | pending |
+| 3 | 3 | [2026-09-29-gamma.md](./2026-09-29-gamma.md) | item C | 2 | pending |
+| 4 | 4 | [2026-09-29-delta.md](./2026-09-29-delta.md) | item D | 2 | pending |
+| 5 | 5 | [2026-09-29-epsilon.md](./2026-09-29-epsilon.md) | item E | 2 | pending |
+"""
+
+# A master where a filename appears in a later section's table, NOT the registry.
+# Must not inflate the registry count.
+NON_REGISTRY_TABLE_MASTER = """\
+---
+master_plan: 2026-09-29-execution
+batch_date: 2026-09-29
+status: draft
+current_subplan: 2026-09-29-alpha
+---
+
+# MASTER plan: test batch
+
+## Sub-plan registry
+
+| # | Sub-plan | Status |
+|---|---|---|
+| 1 | 2026-09-29-alpha.md | pending |
+
+## Progress log
+
+| Date | Action | By |
+|---|---|---|
+| 2026-09-29 | created sub-plan 2026-09-29-beta.md | /ilk-plan |
+"""
+
 # A sub-plan that is clean — has repo artifacts and valid test paths.
 CLEAN_SUBPLAN = """\
 ---
@@ -178,6 +248,75 @@ class TestPreflightRegistryParity:
                            if "parity" in f.lower() or "registry" in f.lower()]
         assert parity_failures == [], (
             f"Expected no parity failure for bare-filename master, got: {parity_failures}"
+        )
+
+    @pytest.mark.xfail(strict=True, reason="red-first: template shape has Order column, _TABLE_FILENAME_RE misses it")
+    def test_template_shape_master_passes_parity(self):
+        """AC-1: template's `| # | Order | Slug | ...` shape ⇒ 3 parsed, 3 in table, no parity failure.
+
+        Today _TABLE_FILENAME_RE captures the Order cell (second ``| <num> |``)
+        instead of the filename, so it finds 0 filenames → parity failure.
+        """
+        result = preflight_batch(
+            master_text=TEMPLATE_SHAPE_MASTER,
+            plans_dir=Path("/nonexistent"),
+            project_root=Path("/nonexistent"),
+        )
+        parity_failures = [f for f in result.failures
+                           if "parity" in f.lower() or "registry" in f.lower()]
+        assert parity_failures == [], (
+            f"Expected no parity failure for template-shaped master, got: {parity_failures}"
+        )
+
+    @pytest.mark.xfail(strict=True, reason="red-first: 5-row template shape, same _TABLE_FILENAME_RE defect")
+    def test_template_shape_5row_master_passes_parity(self):
+        """AC-2: 5-row template shape ⇒ 5 parsed, 5 in table, no parity failure."""
+        result = preflight_batch(
+            master_text=TEMPLATE_SHAPE_5ROW_MASTER,
+            plans_dir=Path("/nonexistent"),
+            project_root=Path("/nonexistent"),
+        )
+        parity_failures = [f for f in result.failures
+                           if "parity" in f.lower() or "registry" in f.lower()]
+        assert parity_failures == [], (
+            f"Expected no parity failure for 5-row template-shaped master, got: {parity_failures}"
+        )
+
+    def test_backticked_filename_still_flagged(self):
+        """AC-3: backticked filenames in the table are still detected as parity failures."""
+        result = preflight_batch(
+            master_text=BACKTICKED_MASTER,
+            plans_dir=Path("/nonexistent"),
+            project_root=Path("/nonexistent"),
+        )
+        assert result.has_failures, "Expected parity failure for backticked master"
+        assert any("parity" in f.lower() or "registry" in f.lower()
+                    for f in result.failures), (
+            f"Expected a parity/registry finding, got: {result.failures}"
+        )
+
+    def test_non_registry_table_filename_not_counted(self):
+        """AC-4: a filename in a later section's table is not counted as a registry row.
+
+        The Progress log table mentions 2026-09-29-beta.md but that must not
+        inflate the registry count beyond the 1 row in ## Sub-plan registry.
+        """
+        # extract_subplan_files scans the whole body so it finds both alpha and beta.
+        # The table reader must only look at the ## Sub-plan registry section.
+        # With a correct reader: parsed=2 (alpha+beta), table=1 (alpha only) → parity fail.
+        # But the parity check should report this as a genuine mismatch, not silently agree.
+        result = preflight_batch(
+            master_text=NON_REGISTRY_TABLE_MASTER,
+            plans_dir=Path("/nonexistent"),
+            project_root=Path("/nonexistent"),
+        )
+        # extract_subplan_files finds alpha + beta (scans whole body).
+        # Table reader should find only alpha (in registry section).
+        # So there SHOULD be a parity failure (2 parsed vs 1 in table).
+        parity_failures = [f for f in result.failures
+                           if "parity" in f.lower() or "registry" in f.lower()]
+        assert parity_failures != [], (
+            f"Expected parity failure (2 parsed vs 1 in table), got: {result.failures}"
         )
 
 
