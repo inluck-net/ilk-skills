@@ -25,10 +25,33 @@ import subprocess
 import sys
 from pathlib import Path
 
+import hashlib
+
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 HOOK_PATH = REPO_ROOT / "hooks" / "no-live-clone-edit.py"
+
+
+# ── File integrity ───────────────────────────────────────────────────────────
+
+
+class TestHookFileIntegrity:
+    """The hook file exists, is executable, and its sha256 is pinned."""
+
+    def test_hook_exists(self) -> None:
+        assert HOOK_PATH.exists(), f"hook not found at {HOOK_PATH}"
+
+    def test_hook_is_executable(self) -> None:
+        import stat
+        mode = HOOK_PATH.stat().st_mode
+        assert mode & stat.S_IXUSR, "hook is not user-executable"
+
+    def test_hook_sha256(self) -> None:
+        """Pin the sha256 so a future diff is visible."""
+        digest = hashlib.sha256(HOOK_PATH.read_bytes()).hexdigest()
+        # This is the sha256 of the imported file as of 2026-09-29
+        assert digest == "efd4d2143b4277f7554f4ad922b2f5ff52560a337b833dddc6b0a0930bd3a245"
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +136,6 @@ class TestDenyEditClone:
     """Edit/Write/MultiEdit/NotebookEdit whose target resolves inside the
     clone root must be denied."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_edit_clone_file(self, _fake_home: dict) -> None:
         """AC-1: Edit <clone>/x ⇒ deny."""
         clone = _fake_home["clone"]
@@ -124,7 +146,6 @@ class TestDenyEditClone:
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_write_clone_file(self, _fake_home: dict) -> None:
         """AC-1: Write <clone>/x ⇒ deny."""
         clone = _fake_home["clone"]
@@ -134,7 +155,6 @@ class TestDenyEditClone:
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_edit_via_symlink(self, _fake_home: dict) -> None:
         """AC-1: Edit <home>/skills/ilk-loop/x (via symlink) ⇒ deny."""
         home = _fake_home["home"]
@@ -148,7 +168,6 @@ class TestDenyEditClone:
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_write_not_yet_existing_clone_path(self, _fake_home: dict) -> None:
         """AC-1: Write to a not-yet-existing <clone>/newdir/x ⇒ deny."""
         clone = _fake_home["clone"]
@@ -158,7 +177,6 @@ class TestDenyEditClone:
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_edit_home_skills_subpath(self, _fake_home: dict) -> None:
         """AC-1: Edit <home>/skills/ilk-loop/scripts/foo.py ⇒ deny."""
         home = _fake_home["home"]
@@ -228,7 +246,6 @@ class TestAllowOutsideClone:
 class TestDenyBashCloneWrite:
     """Bash commands that WRITE into the clone must be denied."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_redirect_overwrite(self, _fake_home: dict) -> None:
         """AC-3: echo x > <clone>/f ⇒ deny."""
         clone = _fake_home["clone"]
@@ -237,7 +254,6 @@ class TestDenyBashCloneWrite:
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_redirect_append(self, _fake_home: dict) -> None:
         """AC-3: echo x >> <clone>/f ⇒ deny."""
         clone = _fake_home["clone"]
@@ -246,7 +262,6 @@ class TestDenyBashCloneWrite:
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_sed_inplace(self, _fake_home: dict) -> None:
         """AC-3: sed -i '' s/a/b/ <home>/skills/ilk-loop/f ⇒ deny."""
         home = _fake_home["home"]
@@ -259,7 +274,6 @@ class TestDenyBashCloneWrite:
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_cp_into_clone(self, _fake_home: dict, tmp_path: Path) -> None:
         """AC-3: cp <tmp>/a <clone>/b ⇒ deny."""
         (tmp_path / "a").write_text("content\n")
@@ -269,7 +283,6 @@ class TestDenyBashCloneWrite:
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_mv_into_clone(self, _fake_home: dict, tmp_path: Path) -> None:
         """mv <tmp>/a <clone>/b ⇒ deny."""
         (tmp_path / "a").write_text("content\n")
@@ -279,7 +292,6 @@ class TestDenyBashCloneWrite:
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_rm_clone_file(self, _fake_home: dict) -> None:
         """rm <clone>/f ⇒ deny."""
         clone = _fake_home["clone"]
@@ -289,7 +301,6 @@ class TestDenyBashCloneWrite:
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_mkdir_clone(self, _fake_home: dict) -> None:
         """mkdir <clone>/newdir ⇒ deny."""
         clone = _fake_home["clone"]
@@ -298,7 +309,6 @@ class TestDenyBashCloneWrite:
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_touch_clone_file(self, _fake_home: dict) -> None:
         """touch <clone>/new ⇒ deny."""
         clone = _fake_home["clone"]
@@ -307,7 +317,6 @@ class TestDenyBashCloneWrite:
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_ln_clone(self, _fake_home: dict, tmp_path: Path) -> None:
         """ln -s <tmp>/a <clone>/link ⇒ deny."""
         (tmp_path / "a").write_text("content\n")
@@ -318,7 +327,6 @@ class TestDenyBashCloneWrite:
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_git_commit_clone(self, _fake_home: dict) -> None:
         """AC-3: git -C <clone> commit -m x ⇒ deny."""
         clone = _fake_home["clone"]
@@ -328,7 +336,6 @@ class TestDenyBashCloneWrite:
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_git_checkout_clone(self, _fake_home: dict) -> None:
         """git -C <clone> checkout main ⇒ deny."""
         clone = _fake_home["clone"]
@@ -338,7 +345,6 @@ class TestDenyBashCloneWrite:
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_git_reset_clone(self, _fake_home: dict) -> None:
         """git -C <clone> reset --hard ⇒ deny."""
         clone = _fake_home["clone"]
@@ -348,7 +354,6 @@ class TestDenyBashCloneWrite:
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_git_stash_clone(self, _fake_home: dict) -> None:
         """git -C <clone> stash ⇒ deny."""
         clone = _fake_home["clone"]
@@ -358,7 +363,6 @@ class TestDenyBashCloneWrite:
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_git_merge_clone(self, _fake_home: dict) -> None:
         """git -C <clone> merge other ⇒ deny."""
         clone = _fake_home["clone"]
@@ -368,7 +372,6 @@ class TestDenyBashCloneWrite:
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_git_rebase_clone(self, _fake_home: dict) -> None:
         """git -C <clone> rebase main ⇒ deny."""
         clone = _fake_home["clone"]

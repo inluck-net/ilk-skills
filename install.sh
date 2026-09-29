@@ -806,6 +806,8 @@ reconcile_hooks_settings() {
   local HOOK_TABLE=(
     "no-full-suite.sh:Bash:all"
     "no-duplicate-read.sh:Read:worker"
+    "no-live-clone-edit.py:Edit|Write|MultiEdit|NotebookEdit:worker"
+    "no-live-clone-edit.py:Bash:worker"
   )
 
   # Serialise the table for the Python block.
@@ -825,7 +827,7 @@ reconcile_hooks_settings() {
     local settings="${hooks_dir%/hooks}/settings.json"
     # Detect host type from settings path.
     local host_type="interactive"
-    if [[ "$settings" == *".claude-worker/"* ]]; then
+    if [[ "$settings" == *".claude-worker/"* ]] || [[ "$settings" == *".claude-manager/"* ]]; then
       host_type="worker"
     fi
 
@@ -851,7 +853,10 @@ if not pre_tool:
     pre_tool = []
     hooks["PreToolUse"] = pre_tool
 
-entries_by_matcher = {e.get("matcher"): e for e in pre_tool}
+from collections import defaultdict
+entries_by_matcher = defaultdict(list)
+for e in pre_tool:
+    entries_by_matcher[e.get("matcher")].append(e)
 any_change = False
 
 for hook_cmd, matcher, hook_hosts in zip(hook_cmds, matchers, hosts):
@@ -860,16 +865,25 @@ for hook_cmd, matcher, hook_hosts in zip(hook_cmds, matchers, hosts):
         continue
 
     hook_path = os.path.join(os.path.dirname(settings_path), "hooks", hook_cmd)
-    entry = entries_by_matcher.get(matcher)
-    if entry is None:
+    entries = entries_by_matcher.get(matcher, [])
+    if not entries:
         entry = {"matcher": matcher, "hooks": []}
         pre_tool.append(entry)
-        entries_by_matcher[matcher] = entry
+        entries_by_matcher[matcher].append(entry)
+        entries = entries_by_matcher[matcher]
 
-    existing = entry.get("hooks", [])
-    if any(h.get("command") == hook_path for h in existing):
+    # Check if the hook is already registered in any entry for this matcher.
+    already = any(
+        h.get("command") == hook_path
+        for e in entries
+        for h in e.get("hooks", [])
+    )
+    if already:
         continue
 
+    # Append to the first entry for this matcher (consolidate hooks).
+    entry = entries[0]
+    existing = entry.get("hooks", [])
     kept = [h for h in existing if h.get("command") != hook_path]
     kept.append({"type": "command", "command": hook_path})
     entry["hooks"] = kept
