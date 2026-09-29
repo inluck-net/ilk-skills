@@ -3116,7 +3116,7 @@ append_revert_row(
     timestamp=sys.argv[7],
     site='inconclusive',
 )
-" "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file" "$_si_slug" "$_ship_sha" "$RUN_ID" "$i" "$_revert_ts" 2>/dev/null || true
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file" "$_si_slug" "$_ship_sha" "${RUN_ID:-}" "${i:-0}" "$_revert_ts" 2>/dev/null || true
       fi
       # Skip ship_integrity.py for inconclusive gates — the revert above
       # is the enforcement.  Do NOT fall through to the violation path.
@@ -3388,7 +3388,7 @@ append_revert_row(
     timestamp=sys.argv[8],
     site=sys.argv[10],
 )
-" "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file" "$slug" "$_ship_sha" "$_from_step" "$RUN_ID" "$i" "$_revert_ts" "ship_integrity" "$_revert_site" 2>/dev/null || true
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file" "$slug" "$_ship_sha" "$_from_step" "${RUN_ID:-}" "${i:-0}" "$_revert_ts" "ship_integrity" "$_revert_site" 2>/dev/null || true
       fi
       # A rejected gate invalidates the ship intent for the slug it rejects.
       #
@@ -5503,7 +5503,7 @@ append_revert_row(
     timestamp=sys.argv[8],
     site='one-ship',
 )
-" "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file" "$_pre_slug" "$_ship_sha" "$_pre_step" "$RUN_ID" "$i" "$_revert_ts" 2>/dev/null || true
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file" "$_pre_slug" "$_ship_sha" "$_pre_step" "${RUN_ID:-}" "${i:-0}" "$_revert_ts" 2>/dev/null || true
           fi
         done <<< "$PRE_ITER_ALL_STEPS"
       fi
