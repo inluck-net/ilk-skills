@@ -405,7 +405,7 @@ def _same_code(old_head: str | None, new_head: str | None,
 
 def _check_history(record_path: Path, text: str, current_failed: int,
                    current_nodes: set[str],
-                   project: Path | None = None) -> None:
+                   project: Path | None = None) -> list[str]:
     """Verify attempt history (R3/R4).
 
     Raises VerificationError if:
@@ -455,11 +455,68 @@ def _check_history(record_path: Path, text: str, current_failed: int,
                 all_historical.update(entry.get("failing_nodes", []))
         missing = all_historical - current_nodes
         if missing:
-            raise VerificationError(
-                f"{len(missing)} failure(s) from previous attempt(s) "
-                f"still attributed: {', '.join(sorted(missing))}. "
-                f"A retry cannot erase an attribution."
-            )
+            return _rederive_carried(sorted(missing), text, project)
+    return []
+
+
+def _rederive_carried(missing: list[str], text: str,
+                      project: Path | None) -> list[str]:
+    """Classify failures carried from earlier same-code attempts by measuring
+    them now (at base, K head reruns, batch touched) with the rule a current
+    row gets.  Never from an earlier record: its cells can be forged and the
+    file deleted.  An attributed node refuses as before; a flaky-owed node is
+    returned (debt, listed); a pre-existing one is excused.  Anything that
+    cannot be measured refuses — fail closed.
+
+    gh-resolve 29b (run 20260930-034122): R3 refused on 2 failed-at-base and
+    2 flaky 29c-owned nodes, which no code change could clear, and the worker
+    deleted the history to get past it."""
+    import os as _os
+    refusal = (f"{len(missing)} failure(s) from previous attempt(s) "
+               f"still attributed: {', '.join(missing)}. "
+               f"A retry cannot erase an attribution.")
+    if _os.environ.get("ILK_WORKER_SESSION") == "1":
+        raise VerificationError(
+            refusal + " Re-deriving them is a measurement and is refused in a "
+            "worker session; the driver's gate re-derives them — commit and "
+            "end your turn, do not edit or delete the record.")
+    base_m = re.search(r"^base_sha:\s*(\S+)", text, re.MULTILINE)
+    inv_m = re.search(r"^suite_invocation:\s*(.+)$", text, re.MULTILINE)
+    if project is None or not base_m or not inv_m:
+        raise VerificationError(refusal + " (cannot re-derive: record has no "
+                                "base_sha or suite_invocation)")
+    scripts_dir = Path(__file__).resolve().parent
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    import verification_record as vr
+    base, invocation = base_m.group(1), inv_m.group(1).strip()
+    try:
+        at_base = vr.run_at_base(project, base, missing, invocation)
+        reruns = vr.run_head_reruns(project, missing, invocation)
+        touched = vr.batch_touched_files(project, base, missing)
+    except Exception as exc:  # noqa: BLE001 — any failure to measure refuses
+        raise VerificationError(refusal + f" (re-derivation failed: {exc})")
+    attributed: list[str] = []
+    owed: list[str] = []
+    for node in missing:
+        ab = at_base.get(node)
+        if ab is None or node not in reruns:
+            raise VerificationError(refusal + f" (re-derivation measured "
+                                    f"nothing for {node})")
+        if ab.startswith("born-red-at:"):
+            continue
+        cls = vr.classify_flaky(node, ab, reruns[node], vr.FLAKY_RERUN_COUNT,
+                                touched.get(node, True))
+        if cls == "attributed":
+            attributed.append(node)
+        elif cls == "flaky-owed":
+            owed.append(node)
+    if attributed:
+        raise VerificationError(
+            f"{len(attributed)} failure(s) from previous attempt(s) "
+            f"still attributed: {', '.join(attributed)}. "
+            f"A retry cannot erase an attribution (re-derived now).")
+    return owed
 
 
 def verify(record_path: Path, project: Path | None = None) -> tuple[str, int]:
@@ -494,7 +551,8 @@ def verify(record_path: Path, project: Path | None = None) -> tuple[str, int]:
 
     # R3/R4: check attempt history before attribution.
     current_nodes = {r[0] for r in rows if r}
-    _check_history(record_path, text, failed, current_nodes, project=project)
+    carried_owed = _check_history(record_path, text, failed, current_nodes,
+                                  project=project) or []
 
     if failed == 0:
         # excused_count is the number of failures the record accounted for and
@@ -510,7 +568,11 @@ def verify(record_path: Path, project: Path | None = None) -> tuple[str, int]:
             # Prose in the section with no rows and no marker is tolerated only
             # when the section is genuinely empty; say so rather than guess.
             pass
-        return ("attribution verified: 0 failures, none attributed", 0, [])
+        msg = "attribution verified: 0 failures, none attributed"
+        if carried_owed:
+            msg += (f"; {len(carried_owed)} carried flaky (owed): "
+                    f"{', '.join(carried_owed)}")
+        return (msg, 0, list(carried_owed))
 
     if len(rows) != failed:
         raise VerificationError(
@@ -533,6 +595,9 @@ def verify(record_path: Path, project: Path | None = None) -> tuple[str, int]:
             f"batch broke it."
         )
 
+    for node in carried_owed:
+        if node not in flaky_owed:
+            flaky_owed.append(node)
     msg = f"attribution verified: {failed} failure(s), none attributed"
     if flaky_owed:
         msg += f"; {len(flaky_owed)} flaky (owed): {', '.join(flaky_owed)}"
