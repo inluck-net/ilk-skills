@@ -152,7 +152,6 @@ def _write_gate_results(
 
 # ── AC-1: the gh-resolve shape ───────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac1_inherited_verdict(tmp_path: Path) -> None:
     """Commit A (one) breaks test_pin; commit B (two) has a gate that selects
     test_pin.  attribute_red should return inherited with owner A / one."""
@@ -225,7 +224,6 @@ def test_ac2_ship_integrity_exits_1_without_attribution(
 
 # ── AC-3: pre-existing ───────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac3_pre_existing_verdict(tmp_path: Path) -> None:
     """Red at both iteration base and batch base ⇒ pre-existing, no owner."""
     repo = tmp_path / "repo"
@@ -260,7 +258,6 @@ def test_ac3_pre_existing_verdict(tmp_path: Path) -> None:
 
 # ── AC-4: owned ──────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac4_owned_verdict(tmp_path: Path) -> None:
     """Green at iteration base, red at head ⇒ owned."""
     repo = _make_repo(tmp_path)
@@ -289,7 +286,6 @@ def test_ac4_owned_verdict(tmp_path: Path) -> None:
     assert result["verdict"] == "owned", result
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac4_owned_ship_integrity_exits_1(tmp_path: Path) -> None:
     """With an owned attribution, ship-integrity should still exit 1."""
     repo = _make_repo(tmp_path)
@@ -336,7 +332,6 @@ def test_ac5_fail_closed_budget_zero(tmp_path: Path) -> None:
     assert result["verdict"] == "unmeasured", result
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac5_fail_closed_unknown_base(tmp_path: Path) -> None:
     """Unknown base sha ⇒ unmeasured."""
     repo = _make_repo(tmp_path)
@@ -352,7 +347,6 @@ def test_ac5_fail_closed_unknown_base(tmp_path: Path) -> None:
     assert result["verdict"] == "unmeasured", result
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac5_unmeasured_ship_integrity_exits_1(tmp_path: Path) -> None:
     """unmeasured attribution ⇒ ship-integrity treats like owned (exit 1)."""
     repo = _make_repo(tmp_path)
@@ -382,7 +376,6 @@ def test_ac5_unmeasured_ship_integrity_exits_1(tmp_path: Path) -> None:
 
 # ── AC-6: no live-tree run ───────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac6_no_live_tree_side_effects(tmp_path: Path) -> None:
     """After attribute_red, the fixture repo's working tree is unchanged."""
     repo = _make_repo(tmp_path)
@@ -412,7 +405,6 @@ def test_ac6_no_live_tree_side_effects(tmp_path: Path) -> None:
 
 # ── AC-7: whole-command fallback ─────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac7_whole_command_fallback(tmp_path: Path) -> None:
     """When stdout_tail has no parseable node id, the whole command is
     measured at base and node_ids == []."""
