@@ -50,8 +50,8 @@ class TestHookFileIntegrity:
     def test_hook_sha256(self) -> None:
         """Pin the sha256 so a future diff is visible."""
         digest = hashlib.sha256(HOOK_PATH.read_bytes()).hexdigest()
-        # This is the sha256 of the imported file as of 2026-09-29
-        assert digest == "efd4d2143b4277f7554f4ad922b2f5ff52560a337b833dddc6b0a0930bd3a245"
+        # This is the sha256 of the imported file as of 2026-10-01
+        assert digest == "1f9bdfdc68b3c9aee540624754002729d236bf41ef2c03de695853867ee7414e"
 
 
 # ---------------------------------------------------------------------------

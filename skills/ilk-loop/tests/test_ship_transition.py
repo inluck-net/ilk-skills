@@ -33,6 +33,13 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 
 
+@pytest.fixture(autouse=True)
+def _clear_iteration_subplan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unset ILK_ITERATION_SUBPLAN so tests are not blocked by the ambient
+    dispatch constraint set by the runner."""
+    monkeypatch.delenv("ILK_ITERATION_SUBPLAN", raising=False)
+
+
 def _mod():
     """Import the module under test lazily — see RED-FIRST above."""
     if str(SCRIPTS) not in sys.path:
