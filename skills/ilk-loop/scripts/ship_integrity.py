@@ -85,6 +85,20 @@ def evaluate_ship(
                     reason=f"red not caused by this iteration: {verdict} at base "
                            f"{attribution.get('iteration_base', '?')[:7]}{owner_info}",
                 )
+            # When the verdict is "owned" but the owner is a different
+            # sub-plan, the gate's slug is not responsible for the red.
+            if verdict == "owned":
+                owner_slug = attribution.get("owner_slug", "")
+                if owner_slug and owner_slug != slug:
+                    owner_sha = attribution.get("owner_sha", "")
+                    owner_info = ""
+                    if owner_sha:
+                        owner_info = f" ({owner_sha[:7]})"
+                    return ShipVerdict(
+                        ok=True,
+                        reason=f"red owned by {owner_slug}{owner_info}; "
+                               f"not {slug}'s regression",
+                    )
     # Only enforce on shipped sub-plans.
     if subplan_status != "shipped":
         return ShipVerdict(ok=True, reason="not shipped — no gate to enforce")
@@ -581,6 +595,31 @@ def check_final_step_gate(
                 return True
 
     return False
+
+
+def get_owner_slug_for_redirect(
+    last_gate_result: dict | None,
+    gate_slug: str,
+) -> str | None:
+    """Return the owner slug to redirect a revert to, or None.
+
+    When the gate result carries an attribution showing the red was
+    ``owned`` by a different sub-plan, returns that sub-plan's slug
+    so the runner can redirect the revert.  Returns ``None`` when no
+    redirect is needed (the gate's slug is responsible, or there is
+    no attribution, or the verdict is not ``owned``).
+    """
+    if last_gate_result is None:
+        return None
+    attribution = last_gate_result.get("attribution")
+    if not attribution or not isinstance(attribution, dict):
+        return None
+    if attribution.get("verdict") != "owned":
+        return None
+    owner_slug = attribution.get("owner_slug", "")
+    if owner_slug and owner_slug != gate_slug:
+        return owner_slug
+    return None
 
 
 def final_step_gate_violation_reason(

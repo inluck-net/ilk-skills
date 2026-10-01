@@ -3578,6 +3578,43 @@ if m:
       #   - Never move the pointer forward. A derived step at or past the
       #     current value is not a revert, and writing it would be this bug in
       #     the other direction.
+      # Check if the attribution redirects the revert to a different slug.
+      local _revert_target_slug="$slug"
+      local _gh_path_for_redirect
+      _gh_path_for_redirect=$(get_ilk_runtime_dir 2>/dev/null || true)/gate-history.jsonl
+      if [[ -n "$_gh_path_for_redirect" && -f "$_gh_path_for_redirect" ]]; then
+        local _redirect_slug
+        _redirect_slug=$(python3 -c "
+import json, sys
+from pathlib import Path
+gh_path, gate_slug = sys.argv[1], sys.argv[2]
+for raw in Path(gh_path).read_text().splitlines():
+    if not raw.strip(): continue
+    try: rec = json.loads(raw)
+    except json.JSONDecodeError: continue
+    if rec.get('slug') != gate_slug: continue
+    attr = rec.get('attribution', {})
+    if isinstance(attr, dict) and attr.get('verdict') == 'owned':
+        owner = attr.get('owner_slug', '')
+        if owner and owner != gate_slug:
+            print(owner)
+            break
+" "$_gh_path_for_redirect" "$slug" 2>/dev/null) || true
+        if [[ -n "$_redirect_slug" ]]; then
+          _revert_target_slug="$_redirect_slug"
+          echo "  [ship-integrity] redirecting revert from $slug to owner $_revert_target_slug" >&2
+        fi
+      fi
+      # When the revert is redirected to owner_slug, revert the owner's
+      # sub-plan file instead of the gate's slug's file.
+      local _revert_file="$f"
+      if [[ "$_revert_target_slug" != "$slug" ]]; then
+        local _owner_plan_file
+        _owner_plan_file=$(find "$plans_dir" -maxdepth 1 -name "*-${_revert_target_slug}.md" ! -name "MASTER-*" 2>/dev/null | head -1) || true
+        if [[ -n "$_owner_plan_file" && -f "$_owner_plan_file" ]]; then
+          _revert_file="$_owner_plan_file"
+        fi
+      fi
       local revert_out=""
       revert_out=$(python3 -c "
 import json, re, sys
@@ -3627,18 +3664,29 @@ else:
 
 p.write_text(body)
 print(note)
-" "$f" "$lc_file" "$slug" 2>/dev/null)
-      echo "  [ship-integrity] reverted $slug to in-progress; ${revert_out:-pointer unchanged}" >&2
+" "$_revert_file" "$lc_file" "$_revert_target_slug" 2>/dev/null)
+      echo "  [ship-integrity] reverted $_revert_target_slug to in-progress; ${revert_out:-pointer unchanged}" >&2
       # Record the revert for the next worker's prompt.
-      if [[ -n "$slug" ]]; then
+      if [[ -n "$_revert_target_slug" ]]; then
         local _revert_ts
         _revert_ts=$(date +%Y-%m-%dT%H:%M:%S%z)
         local _reverts_file
         _reverts_file=$(get_ilk_runtime_dir 2>/dev/null || true)/ship-reverts.jsonl
         # Find the last [plan:<slug>#ship] commit SHA (if any).
         local _ship_sha=""
-        _ship_sha=$(git -C "$PROJECT_PATH" log --all --format="%H" --grep="\[plan:${slug}#ship\]" -1 2>/dev/null) || true
+        _ship_sha=$(git -C "$PROJECT_PATH" log --all --format="%H" --grep="\[plan:${_revert_target_slug}#ship\]" -1 2>/dev/null) || true
         # Read the current_step from the sub-plan (before the revert changed it).
+        # When the revert is redirected to owner_slug, read from the owner's
+        # sub-plan file instead of the gate's slug's file.
+        local _from_step_file="$f"
+        if [[ "$_revert_target_slug" != "$slug" ]]; then
+          # Find the owner's sub-plan file.
+          local _owner_plan_file
+          _owner_plan_file=$(find "$plans_dir" -maxdepth 1 -name "*-${_revert_target_slug}.md" ! -name "MASTER-*" 2>/dev/null | head -1) || true
+          if [[ -n "$_owner_plan_file" && -f "$_owner_plan_file" ]]; then
+            _from_step_file="$_owner_plan_file"
+          fi
+        fi
         local _from_step=""
         _from_step=$(python3 -c "
 import re, sys
@@ -3646,7 +3694,7 @@ from pathlib import Path
 body = Path(sys.argv[1]).read_text()
 m = re.search(r'^current_step:\s*(\d+)', body, re.MULTILINE)
 if m: print(m.group(1))
-" "$f" 2>/dev/null) || true
+" "$_from_step_file" 2>/dev/null) || true
         # Detect if this is a final-gate violation vs a step-commit violation.
         local _revert_site="integrity"
         if [[ "$si_out" == *"final-step gate"* ]]; then
@@ -3672,7 +3720,7 @@ if lc_file and slug:
             if isinstance(step, bool) or not isinstance(step, int): continue
             print(step); break
     except OSError: pass
-" "$lc_file" "$slug" 2>/dev/null) || true
+" "$lc_file" "$_revert_target_slug" 2>/dev/null) || true
         if [[ -n "$_red_step" && -n "$_heads_before_file" && -n "$_heads_after_file" ]]; then
           local _h_before _h_after
           local _h_key="${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
@@ -3680,7 +3728,7 @@ if lc_file and slug:
           _h_after=$(head_after_sha "$_h_key" "$_heads_after_file")
           if [[ -n "$_h_before" && -n "$_h_after" ]]; then
             # Find commits in the iteration range claiming this step.
-            _red_step_commits=$(git -C "$PROJECT_PATH" log --format="%H" "${_h_before}..${_h_after}" --grep="\[plan:${slug}#step-${_red_step}\]" 2>/dev/null | tr '\n' ',') || true
+            _red_step_commits=$(git -C "$PROJECT_PATH" log --format="%H" "${_h_before}..${_h_after}" --grep="\[plan:${_revert_target_slug}#step-${_red_step}\]" 2>/dev/null | tr '\n' ',') || true
             _red_step_commits="${_red_step_commits%,}"  # strip trailing comma
             if [[ -z "$_red_step_commits" ]]; then
               # No trailer matches — on a shared remote, include all
@@ -3715,7 +3763,7 @@ append_revert_row(
     red_step_commits=red_step_commits,
     attribution=attribution,
 )
-" "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file" "$slug" "$_ship_sha" "$_from_step" "${RUN_ID:-}" "${i:-0}" "$_revert_ts" "ship_integrity" "$_revert_site" "$_red_step" "$_red_step_commits" "$_red_step_attr" 2>/dev/null || true
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file" "$_revert_target_slug" "$_ship_sha" "$_from_step" "${RUN_ID:-}" "${i:-0}" "$_revert_ts" "ship_integrity" "$_revert_site" "$_red_step" "$_red_step_commits" "$_red_step_attr" 2>/dev/null || true
       fi
       # A rejected gate invalidates the ship intent for the slug it rejects.
       #
@@ -3728,14 +3776,14 @@ append_revert_row(
       # this enforcement (see the ordering comment at its call site), so an
       # intent naming another slug may describe a transition still in flight;
       # clearing it unconditionally re-creates the bug this closes.
-      if [[ -n "$slug" ]]; then
+      if [[ -n "$_revert_target_slug" ]]; then
         python3 -c "
 import sys
 sys.path.insert(0, sys.argv[3])
 from ship_transition import invalidate_intent
 if invalidate_intent(sys.argv[1], sys.argv[2]):
     print('  [ship-integrity] invalidated ship intent for ' + sys.argv[2])
-" "$plans_dir" "$slug" "${_SKILL_ROOT}/ilk-loop/scripts" >&2 || true
+" "$plans_dir" "$_revert_target_slug" "${_SKILL_ROOT}/ilk-loop/scripts" >&2 || true
       fi
       violations=1
     fi
@@ -5650,6 +5698,7 @@ if m:
             fi
             if [[ -n "$_red_owner_script" && -f "$_red_owner_script" && -n "$_iteration_base" ]]; then
               local _all_inherited_or_preexisting=true
+              local _redirect_quarantine_to=""
               # Attribute each blocking record.
               while IFS= read -r _blocking_line; do
                 [[ -z "$_blocking_line" ]] && continue
@@ -5732,6 +5781,12 @@ if os.path.exists(gh_path):
             pass
 " "$_attr_out" "$_gh_path" "$_b_slug" "$_b_step" 2>/dev/null || true
                   fi
+                  # If owner_slug differs from the gate's slug, redirect
+                  # the strike to the owner.
+                  if [[ -n "$_owner_slug" && "$_owner_slug" != "$_b_slug" ]]; then
+                    _redirect_quarantine_to="$_owner_slug"
+                    echo "  [red-owner] redirecting strike from $_b_slug to owner $_owner_slug" >&2
+                  fi
                   if [[ "$_verdict" != "inherited" && "$_verdict" != "pre-existing" ]]; then
                     _all_inherited_or_preexisting=false
                   fi
@@ -5772,10 +5827,15 @@ if os.path.exists(gh_path):
                 failing_desc=$(python3 "$blocking_checks_script" "$local_checks_results" --describe 2>/dev/null)
                 while IFS= read -r q_slug; do
                   [[ -z "$q_slug" ]] && continue
+                  # If owner differs from gate's slug, quarantine the owner.
+                  local _quarantine_target="$q_slug"
+                  if [[ -n "$_redirect_quarantine_to" ]]; then
+                    _quarantine_target="$_redirect_quarantine_to"
+                  fi
                   local q_outcome
                   q_outcome=$(python3 "$blocking_checks_script" "$local_checks_results" --outcome-for-slug "$q_slug" 2>/dev/null || echo "fail")
                   local q_out
-                  q_out=$(python3 "$quarantine_script" --plans-dir "$q_plans_dir" --slug "$q_slug" --failing-check "$failing_desc" --outcome "$q_outcome" 2>/dev/null)
+                  q_out=$(python3 "$quarantine_script" --plans-dir "$q_plans_dir" --slug "$_quarantine_target" --failing-check "$failing_desc" --outcome "$q_outcome" 2>/dev/null)
                   if [[ -n "$q_out" ]]; then
                     local q_blocked
                     q_blocked=$(python3 -c "
@@ -5788,8 +5848,12 @@ print('true' if d.get('blocked') else 'false')
                       local q_fails q_thresh
                       q_fails=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('fails','?'))" "$q_out" 2>/dev/null || echo "?")
                       q_thresh=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('threshold','?'))" "$q_out" 2>/dev/null || echo "?")
-                      echo "  [quarantine] sub-plan $q_slug auto-quarantined after $q_fails failures (threshold: $q_thresh)" >&2
+                      echo "  [quarantine] sub-plan $_quarantine_target auto-quarantined after $q_fails failures (threshold: $q_thresh)" >&2
                     fi
+                  fi
+                  # Only quarantine the first slug (redirect once).
+                  if [[ -n "$_redirect_quarantine_to" ]]; then
+                    break
                   fi
                 done <<< "$q_slugs"
               fi
