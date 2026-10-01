@@ -36,6 +36,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,7 @@ from ilk_paths import (  # noqa: E402
     read_meta_manifest,
     MetaManifestError,
 )
+from bounded_run import run as _bounded_run  # noqa: E402
 
 # ship_config lives under ilk-ship/scripts/ — add to path so we can read
 # path_prelude from the project's .ilk-launch.json.
@@ -1132,41 +1134,36 @@ def run_one(check: dict, scope: str, project: Path,
     path_prelude = _read_path_prelude(project)
     applied = bool(path_prelude)
     effective_cmd = f"{path_prelude}; {cmd}" if path_prelude else cmd
-    import time
     t0 = time.monotonic()
     try:
         # Run via bash (git-bash on Windows), NOT shell=True — shell=True uses
         # cmd.exe on Windows, where posix gates (grep, etc.) don't exist, so
         # every gate errored and the loop shipped unverified. See the memory
         # autonomous-gates-not-enforced-windows.
-        cp = subprocess.run(
-            [bash, "-c", effective_cmd], cwd=str(project),
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=timeout,
+        # Use bounded_run to kill the whole process group on timeout.
+        rc, stdout, stderr, timed_out = _bounded_run(
+            [bash, "-c", effective_cmd], cwd=str(project), timeout=timeout,
         )
         dur = time.monotonic() - t0
-        stderr_full = cp.stderr or ""
-        r = CheckResult(
-            command=cmd, scope=scope, timeout=timeout,
-            exit_code=cp.returncode, duration_sec=round(dur, 2),
-            passed=cp.returncode == 0,
-            stdout_tail=_tail(cp.stdout, 2000),
-            stderr_tail=_tail(stderr_full, 2000),
-            path_prelude_applied=applied,
-        )
-        r.outcome, r.reason = _classify_check(r.exit_code, r.error, stderr_full)
-        return r
-    except subprocess.TimeoutExpired as e:
-        dur = time.monotonic() - t0
-        stderr_full = (e.stderr or b"").decode("utf-8", "replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
-        r = CheckResult(
-            command=cmd, scope=scope, timeout=timeout,
-            exit_code=None, duration_sec=round(dur, 2), passed=False,
-            stdout_tail=_tail((e.stdout or b"").decode("utf-8", "replace") if isinstance(e.stdout, bytes) else (e.stdout or ""), 2000),
-            stderr_tail=_tail(stderr_full, 2000),
-            error=f"timeout after {timeout}s",
-            path_prelude_applied=applied,
-        )
+        stderr_full = stderr or ""
+        if timed_out:
+            r = CheckResult(
+                command=cmd, scope=scope, timeout=timeout,
+                exit_code=None, duration_sec=round(dur, 2), passed=False,
+                stdout_tail=_tail(stdout, 2000),
+                stderr_tail=_tail(stderr_full, 2000),
+                error=f"timeout after {timeout}s",
+                path_prelude_applied=applied,
+            )
+        else:
+            r = CheckResult(
+                command=cmd, scope=scope, timeout=timeout,
+                exit_code=rc, duration_sec=round(dur, 2),
+                passed=rc == 0,
+                stdout_tail=_tail(stdout, 2000),
+                stderr_tail=_tail(stderr_full, 2000),
+                path_prelude_applied=applied,
+            )
         r.outcome, r.reason = _classify_check(r.exit_code, r.error, stderr_full)
         return r
     except Exception as e:

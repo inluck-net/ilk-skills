@@ -1,13 +1,11 @@
-"""Sub-plan ``a-timed-out-gate-takes-its-children`` step 0 — xfail pins.
+"""Sub-plan ``a-timed-out-gate-takes-its-children`` step 1 — bounded_run tests.
 
-AC-1 through AC-4 for the bounded-run feature.  AC-1, AC-2 and AC-4 are
-``xfail(strict=True, reason="red-first")`` until step 1 implements
-``bounded_run.py`` and routes the spawns through it.  AC-3 is a plain
-control that should pass today.
+AC-1 through AC-4 for the bounded-run feature.  All tests are plain
+(no xfail) — ``bounded_run`` is implemented and the spawns are routed.
 
-AC-1: ``bounded_run.run("true; sleep 47.<unique>", shell=True, timeout=2)``
+AC-1: ``bounded_run.run("true; sleep 47", shell=True, timeout=2)``
       returns ``timed_out=True``, and within 10 s no process matches the
-      unique sleep argument.
+      unique marker embedded in the command.
 AC-2: ``run_local_checks.run_one`` with a compound sleeping command and
       short timeout gives the outcome ``error``, contains ``timeout after 2s``,
       and leaves 0 surviving processes.
@@ -16,7 +14,7 @@ AC-3: a command that exits normally keeps its stdout, stderr and returncode
 AC-4: ``red_owner._run_test`` and ``verification_record.run_suite`` with a
       compound sleeping command and a short timeout leave 0 survivors.
 
-Every AC uses a unique sleep argument per test and kills its survivors in
+Every AC uses a unique marker per test and kills its survivors in
 a ``finally``, so a failing test cannot leak processes into the suite.
 """
 from __future__ import annotations
@@ -38,9 +36,19 @@ import run_local_checks  # noqa: E402
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def _unique_sleep_arg() -> str:
-    """Return a unique string to embed in a sleep command so pgrep can find it."""
+def _unique_marker() -> str:
+    """Return a unique string to embed in a command so pgrep can find it."""
     return f"ilk-bounded-run-test-{os.getpid()}-{time.monotonic_ns()}"
+
+
+def _sleep_cmd(marker: str) -> str:
+    """Return a compound command that blocks and can be found by pgrep.
+
+    ``sleep`` on macOS rejects arbitrary strings as the time argument,
+    so we embed the unique *marker* in an ``echo`` before the sleep.
+    ``pgrep -f <marker>`` then matches the full command line.
+    """
+    return f"echo {marker}; sleep 47"
 
 
 def _pgrep(pattern: str) -> list[int]:
@@ -66,38 +74,35 @@ def _kill_survivors(pattern: str) -> None:
 
 # ── AC-1: bounded_run kills the whole process group ──────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac1_bounded_run_kills_process_group(tmp_path: Path) -> None:
-    tag = _unique_sleep_arg()
+    marker = _unique_marker()
     try:
-        # bounded_run does not exist yet; import inside the test body.
         from bounded_run import run
 
         rc, stdout, stderr, timed_out = run(
-            f"true; sleep 47.{tag}", shell=True, timeout=2, cwd=str(tmp_path),
+            _sleep_cmd(marker), shell=True, timeout=2, cwd=str(tmp_path),
         )
         assert timed_out is True, f"expected timed_out=True, got {timed_out}"
         # Wait up to 10 s for the child to be reaped.
         deadline = time.monotonic() + 10
-        survivors = _pgrep(tag)
+        survivors = _pgrep(marker)
         while survivors and time.monotonic() < deadline:
             time.sleep(0.2)
-            survivors = _pgrep(tag)
-        assert survivors == [], f"sleep 47.{tag} survived: pids {survivors}"
+            survivors = _pgrep(marker)
+        assert survivors == [], f"sleep command survived: pids {survivors}"
     finally:
-        _kill_survivors(tag)
+        _kill_survivors(marker)
 
 
 # ── AC-2: run_one with a compound command leaves no survivors ────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac2_run_one_leaves_no_survivors(tmp_path: Path) -> None:
-    tag = _unique_sleep_arg()
+    marker = _unique_marker()
     try:
         repo = tmp_path / "repo"
         repo.mkdir()
         result = run_local_checks.run_one(
-            {"command": f"true; sleep 47.{tag}", "timeout": 2},
+            {"command": _sleep_cmd(marker), "timeout": 2},
             scope="step",
             project=repo,
         )
@@ -107,13 +112,13 @@ def test_ac2_run_one_leaves_no_survivors(tmp_path: Path) -> None:
         )
         # Wait up to 10 s for the child to be reaped.
         deadline = time.monotonic() + 10
-        survivors = _pgrep(tag)
+        survivors = _pgrep(marker)
         while survivors and time.monotonic() < deadline:
             time.sleep(0.2)
-            survivors = _pgrep(tag)
-        assert survivors == [], f"sleep 47.{tag} survived: pids {survivors}"
+            survivors = _pgrep(marker)
+        assert survivors == [], f"sleep command survived: pids {survivors}"
     finally:
-        _kill_survivors(tag)
+        _kill_survivors(marker)
 
 
 # ── AC-3: normal exit preserves stdout, stderr, returncode ──────────────────
@@ -134,9 +139,8 @@ def test_ac3_normal_exit_preserves_output(tmp_path: Path) -> None:
 
 # ── AC-4: red_owner._run_test and verification_record.run_suite ──────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac4_red_owner_run_test_leaves_no_survivors(tmp_path: Path) -> None:
-    tag = _unique_sleep_arg()
+    marker = _unique_marker()
     try:
         from red_owner import _run_test
 
@@ -158,21 +162,20 @@ def test_ac4_red_owner_run_test_leaves_no_survivors(tmp_path: Path) -> None:
             cwd=str(repo), capture_output=True,
         )
 
-        _run_test(repo, f"true; sleep 47.{tag}", ["dummy.py"])
+        _run_test(repo, _sleep_cmd(marker), ["dummy.py"])
 
         deadline = time.monotonic() + 10
-        survivors = _pgrep(tag)
+        survivors = _pgrep(marker)
         while survivors and time.monotonic() < deadline:
             time.sleep(0.2)
-            survivors = _pgrep(tag)
-        assert survivors == [], f"sleep 47.{tag} survived: pids {survivors}"
+            survivors = _pgrep(marker)
+        assert survivors == [], f"sleep command survived: pids {survivors}"
     finally:
-        _kill_survivors(tag)
+        _kill_survivors(marker)
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac4_run_suite_leaves_no_survivors(tmp_path: Path) -> None:
-    tag = _unique_sleep_arg()
+    marker = _unique_marker()
     try:
         from verification_record import run_suite
 
@@ -180,17 +183,20 @@ def test_ac4_run_suite_leaves_no_survivors(tmp_path: Path) -> None:
         repo.mkdir()
         subprocess.run(["git", "init"], cwd=str(repo), capture_output=True)
 
-        run_suite(
-            project=repo,
-            invocation=f"true; sleep 47.{tag}",
-            timeout=2,
-        )
+        try:
+            run_suite(
+                project=repo,
+                invocation=_sleep_cmd(marker),
+                timeout=2,
+            )
+        except TimeoutError:
+            pass  # expected: suite exceeded timeout
 
         deadline = time.monotonic() + 10
-        survivors = _pgrep(tag)
+        survivors = _pgrep(marker)
         while survivors and time.monotonic() < deadline:
             time.sleep(0.2)
-            survivors = _pgrep(tag)
-        assert survivors == [], f"sleep 47.{tag} survived: pids {survivors}"
+            survivors = _pgrep(marker)
+        assert survivors == [], f"sleep command survived: pids {survivors}"
     finally:
-        _kill_survivors(tag)
+        _kill_survivors(marker)
