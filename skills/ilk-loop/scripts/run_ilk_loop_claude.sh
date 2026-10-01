@@ -491,12 +491,15 @@ setup_selfmod_isolation() {
   }
   SELFMOD_WORKTREE_PATH="${runtime_dir}/worktrees/selfmod-batch"
   SELFMOD_MERGE_LOCK_PATH="${runtime_dir}/selfmod-merge.lock"
+  # Save the clone HEAD before create_selfmod_worktree changes PROJECT_PATH
+  # to the worktree.  _retry_deferred_merge needs it to detect unmerged work.
+  local _clone_project_path="$PROJECT_PATH"
   create_selfmod_worktree
 
   # Retry a deferred merge from a previous run before dispatching any agent.
   # The marker is written by the merge block when exit 2 (live loop) defers.
   local _retry_rc=0
-  _retry_deferred_merge || _retry_rc=$?
+  _retry_deferred_merge "$_clone_project_path" || _retry_rc=$?
   if [[ $_retry_rc -eq 0 ]]; then
     # Merged (or nothing to retry).  If the merge landed,
     # merge_selfmod_worktree restored PROJECT_PATH to the clone and removed
@@ -530,8 +533,11 @@ _retry_deferred_merge() {
     return 0
   fi
   # Check for unmerged work: if worktree HEAD == clone HEAD, nothing to do.
+  # $1 (optional) is the clone path; needed when create_selfmod_worktree
+  # already changed PROJECT_PATH to the worktree.
+  local _clone_path="${1:-$PROJECT_PATH}"
   local _clone_head _wt_head
-  _clone_head=$(git -C "$PROJECT_PATH" rev-parse HEAD 2>/dev/null) || return 0
+  _clone_head=$(git -C "$_clone_path" rev-parse HEAD 2>/dev/null) || return 0
   _wt_head=$(git -C "$_wt_path" rev-parse HEAD 2>/dev/null) || return 0
   if [[ "$_clone_head" == "$_wt_head" ]]; then
     return 0
