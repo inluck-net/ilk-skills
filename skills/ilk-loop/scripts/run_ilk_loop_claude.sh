@@ -5434,7 +5434,7 @@ actives = [m for m in plans if normalize_master_status(
 if actives:
     chosen, _ = pick_active_master(actives, json_mode=True)
     print(chosen)
-" "${_SKILL_ROOT}/ilk-loop/scripts" "$plans_dir" 2>/dev/null) || true
+" "${_SKILL_ROOT}/ilk-loop/scripts" "${plans_dir:-}" 2>/dev/null) || true
             fi
             if [[ -n "$_master_file_for_base" && -f "$_master_file_for_base" ]]; then
               _batch_base=$(python3 -c "

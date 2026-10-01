@@ -76,6 +76,7 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("ILK_DATA_HOME", str(home / ".ilk-data"))
+    monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
     return p
 
 

@@ -49,7 +49,8 @@ def _run_lint(tmp_path: Path, filename: str, content: str) -> subprocess.Complet
     p = tmp_path / _slug_aligned_name(filename, content)
     p.write_text(textwrap.dedent(content), encoding="utf-8")
     return subprocess.run(
-        [sys.executable, str(_PLAN_LINT), str(p)],
+        [sys.executable, str(_PLAN_LINT), str(p),
+         "--project-root", str(tmp_path)],
         capture_output=True,
         text=True,
         timeout=30,

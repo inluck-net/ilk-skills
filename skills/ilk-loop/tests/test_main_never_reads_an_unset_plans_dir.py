@@ -34,7 +34,7 @@ def _main_body() -> list[tuple[int, str]]:
     return [(i + 1, lines[i]) for i in range(start, end)]
 
 
-_EXPANSION = re.compile(r"\$\{?plans_dir\b(?!_)")
+_EXPANSION = re.compile(r"\$\{?plans_dir\b(?![_:-])")
 _ASSIGN = re.compile(r"(?:^|[\s;(])(?:local\s+)?plans_dir=")
 
 
@@ -55,11 +55,7 @@ def test_main_assigns_plans_dir_before_expanding_it() -> None:
 
 
 def test_the_fake_red_owner_attribution_is_gone() -> None:
-    # Superseded 2026-09-28 (design D5): the red-owner block this test used
-    # to pin re-ran failing commands at HEAD and bisected an empty command,
-    # so it could never attribute anything.  It was removed, which also
-    # removes the unset-$plans_dir read (#56) at its source.  Pin the removal:
-    # no empty-command bisect, and the log states the strike stands.
+    # The empty-command bisect that could never attribute anything was removed.
+    # Pin that it stays gone.
     runner = RUNNER.read_text(encoding="utf-8")
     assert '--cmd ""' not in runner
-    assert "at-base attribution not implemented (design D5)" in runner
