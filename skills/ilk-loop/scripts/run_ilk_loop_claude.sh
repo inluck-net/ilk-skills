@@ -5421,7 +5421,7 @@ print('false' if not d.get('blocked', True) else 'true')
             # Resolve batch base from the master plan.
             local _batch_base=""
             local _master_file_for_base=""
-            if [[ -n "$plans_dir" && -d "$plans_dir" ]]; then
+            if [[ -n "${plans_dir:-}" && -d "${plans_dir:-}" ]]; then
               _master_file_for_base=$(python3 -c "
 from pathlib import Path
 import sys
