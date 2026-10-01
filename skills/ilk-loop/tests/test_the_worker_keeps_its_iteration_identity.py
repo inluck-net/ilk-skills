@@ -1,8 +1,7 @@
 """Pin that the worker hook refuses changing the iteration identity.
 
 AC-1 (deny): commands that unset / override ILK_ITERATION_SUBPLAN or
-             ILK_WORKER_SESSION are refused.  Marked xfail(red-first) — the
-             deny rule does not exist yet.
+             ILK_WORKER_SESSION are refused.
 
 AC-2 (allow): commands that only READ the variables, unset unrelated vars,
               or run the real ship_transition.py are allowed.
@@ -86,7 +85,6 @@ def _deny_reason(result: dict) -> str | None:
 class TestDenyIdentityChange:
     """Commands that unset or override the iteration identity must be refused."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_unset_subplan_and_run(self, _home: dict) -> None:
         """AC-1: unset ILK_ITERATION_SUBPLAN && python3 x.py ⇒ deny."""
         event = _event("Bash", {
@@ -98,7 +96,6 @@ class TestDenyIdentityChange:
         reason = _deny_reason(result)
         assert "ILK_ITERATION_SUBPLAN" in reason
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_env_u_worker_session(self, _home: dict) -> None:
         """AC-1: env -u ILK_WORKER_SESSION python3 x.py ⇒ deny."""
         event = _event("Bash", {
@@ -110,7 +107,6 @@ class TestDenyIdentityChange:
         reason = _deny_reason(result)
         assert "ILK_WORKER_SESSION" in reason
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_prefix_assignment_subplan(self, _home: dict) -> None:
         """AC-1: ILK_ITERATION_SUBPLAN=other python3 x.py ⇒ deny."""
         event = _event("Bash", {
@@ -122,7 +118,6 @@ class TestDenyIdentityChange:
         reason = _deny_reason(result)
         assert "ILK_ITERATION_SUBPLAN" in reason
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_export_worker_session_empty(self, _home: dict) -> None:
         """AC-1: export ILK_WORKER_SESSION= ⇒ deny."""
         event = _event("Bash", {
@@ -134,7 +129,6 @@ class TestDenyIdentityChange:
         reason = _deny_reason(result)
         assert "ILK_WORKER_SESSION" in reason
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_env_i_clears_all(self, _home: dict) -> None:
         """AC-1: env -i bash -c 'python3 x.py' ⇒ deny."""
         event = _event("Bash", {

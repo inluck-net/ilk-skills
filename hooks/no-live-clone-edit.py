@@ -170,6 +170,87 @@ def _bash_writes_into_clone(cmd: str, root: Path) -> bool:
     return False
 
 
+# ── Iteration identity protection ────────────────────────────────────────────
+
+_IDENTITY_VARS = frozenset({"ILK_ITERATION_SUBPLAN", "ILK_WORKER_SESSION"})
+
+
+def _split_compound(cmd: str) -> list[str]:
+    """Split a shell command on ``;``, ``&&``, ``||``, ``|``.
+
+    Returns a list of segments (each a sub-command string).  If the
+    command cannot be parsed, returns ``[cmd]`` (best-effort).
+    """
+    try:
+        tokens = shlex.split(cmd)
+    except ValueError:
+        return [cmd]
+
+    segments: list[list[str]] = [[]]
+    for tok in tokens:
+        if tok in (";", "&&", "||", "|"):
+            segments.append([])
+        else:
+            segments[-1].append(tok)
+    return [" ".join(seg) for seg in segments if seg]
+
+
+def _sheds_identity(cmd: str) -> str | None:
+    """Return the protected variable name if *cmd* sheds iteration identity.
+
+    Checks per ``;``/``&&``/``||``/``|`` segment.  Returns ``None`` if the
+    command is safe (or cannot be parsed — the hook must never wedge a
+    worker).
+    """
+    for segment in _split_compound(cmd):
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            continue
+        if not tokens:
+            continue
+
+        for i, tok in enumerate(tokens):
+            # ── env -i (clears everything) ──────────────────────────────
+            if tok == "env" and "-i" in tokens[i + 1:]:
+                return "ILK_ITERATION_SUBPLAN (env -i clears all)"
+
+            # ── env -u <VAR> / env --unset=<VAR> ───────────────────────
+            if tok == "env":
+                args = tokens[i + 1:]
+                for j, a in enumerate(args):
+                    if a == "-u" and j + 1 < len(args) and args[j + 1] in _IDENTITY_VARS:
+                        return args[j + 1]
+                    if a.startswith("--unset=") and a.split("=", 1)[1] in _IDENTITY_VARS:
+                        return a.split("=", 1)[1]
+
+            # ── unset <VAR> ────────────────────────────────────────────
+            if tok == "unset":
+                for rest in tokens[i + 1:]:
+                    if rest in _IDENTITY_VARS:
+                        return rest
+                    # `unset` may list multiple names; stop at first
+                    # non-identity var (shlex doesn't split on whitespace
+                    # inside the same token, but `unset A B` gives two
+                    # tokens).
+
+            # ── export <VAR>=… ─────────────────────────────────────────
+            if tok == "export" and i + 1 < len(tokens):
+                next_tok = tokens[i + 1]
+                if "=" in next_tok:
+                    name = next_tok.split("=", 1)[0]
+                    if name in _IDENTITY_VARS:
+                        return name
+
+            # ── <VAR>=… (prefix assignment or standalone) ──────────────
+            if "=" in tok and not tok.startswith("-"):
+                name = tok.split("=", 1)[0]
+                if name in _IDENTITY_VARS:
+                    return name
+
+    return None
+
+
 def _denies_ship_marker(cmd: str) -> bool:
     """Deny a Bash ``git commit`` whose message contains ``#ship]``.
 
@@ -225,12 +306,11 @@ def main() -> int:
     tool_name = event.get("tool_name", "")
     root = clone_root()
 
-    # can't derive clone root ⇒ allow (must never block a home with no ilk)
-    if root is None:
-        return 0
-
     # ── Edit / Write / MultiEdit / NotebookEdit ──────────────────────────
     if tool_name in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
+        # can't derive clone root ⇒ allow (must never block a home with no ilk)
+        if root is None:
+            return 0
         raw = target_of(event)
         if raw is None:
             return 0
@@ -252,13 +332,23 @@ def main() -> int:
         cmd = tool_input.get("command", "")
         if not cmd:
             return 0
+        # iteration identity — always checked, independent of clone root
+        var = _sheds_identity(cmd)
+        if var is not None:
+            _deny(
+                f"the iteration identity ({var}) is set by the driver; a "
+                f"worker may not change it — if a guard refused you, write "
+                f"it in Findings and end your turn"
+            )
+            return 0
         if _denies_ship_marker(cmd):
             _deny(
                 "a #ship marker is written only by ship_transition.py "
                 "(D-447); run it instead of committing the marker by hand"
             )
             return 0
-        if _bash_writes_into_clone(cmd, root):
+        # clone-write check needs the root
+        if root is not None and _bash_writes_into_clone(cmd, root):
             _deny(
                 f"Refused: Bash command writes into the LIVE ilk toolkit "
                 f"clone ({root}).  Use the selfmod worktree instead "
