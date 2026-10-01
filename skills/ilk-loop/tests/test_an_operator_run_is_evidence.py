@@ -108,8 +108,13 @@ def _write_suite_output(tmp_path: Path, content: str, filename: str = "suite-out
     return out
 
 
-def _make_passing_mock() -> MagicMock:
-    """Mock subprocess.run that succeeds for git + at-base + head-rerun."""
+def _make_passing_mock() -> tuple[MagicMock, MagicMock]:
+    """Mock subprocess.run and _bounded_run that succeed for git + at-base + head-rerun.
+
+    Returns ``(mock_subprocess_run, mock_bounded_run)``.  The bounded-run
+    mock delegates to the same logic but returns the 4-tuple that
+    ``bounded_run.run`` produces.
+    """
     def mock_run(cmd, *args, **kwargs):
         cmd_str = cmd if isinstance(cmd, str) else " ".join(cmd)
         if isinstance(cmd, list) and cmd[0] == "git":
@@ -117,7 +122,13 @@ def _make_passing_mock() -> MagicMock:
         if cmd_str.startswith("python3 -m pytest"):
             return MockCompletedProcess(0, "", PASSING_OUTPUT)
         return MockCompletedProcess(0, "", "")
-    return MagicMock(side_effect=mock_run)
+
+    def mock_bounded_run(cmd, *args, **kwargs):
+        result = mock_run(cmd, *args, **kwargs)
+        return result.returncode, result.stdout, result.stderr, False
+
+    return (MagicMock(side_effect=mock_run),
+            MagicMock(side_effect=mock_bounded_run))
 
 
 # ── AC-1: --from-suite-output writes a full record ──────────────────────────
@@ -130,10 +141,11 @@ def test_from_suite_output_writes_record(tmp_path: Path) -> None:
     vdir.mkdir()
     out_file = _write_suite_output(tmp_path, FAILING_OUTPUT)
 
-    mock = _make_passing_mock()
+    mock, mock_bounded = _make_passing_mock()
 
     with pytest.MonkeyPatch().context() as mp:
         mp.setattr(vr.subprocess, "run", mock)
+        mp.setattr(vr, "_bounded_run", mock_bounded)
         mp.setattr(vr, "_resolve_project_verification_dir", lambda p: vdir)
         mp.setattr(vr, "read_head_from_git", lambda p: HEAD_SHA)
         mp.setattr(vr, "_git", lambda p, *a: TREE_SHA)
@@ -166,10 +178,11 @@ def test_suite_head_must_equal_head(tmp_path: Path) -> None:
     vdir.mkdir()
     out_file = _write_suite_output(tmp_path, PASSING_OUTPUT)
 
-    mock = _make_passing_mock()
+    mock, mock_bounded = _make_passing_mock()
 
     with pytest.MonkeyPatch().context() as mp:
         mp.setattr(vr.subprocess, "run", mock)
+        mp.setattr(vr, "_bounded_run", mock_bounded)
         mp.setattr(vr, "_resolve_project_verification_dir", lambda p: vdir)
         mp.setattr(vr, "read_head_from_git", lambda p: HEAD_SHA)
         mp.setattr(vr, "_git", lambda p, *a: TREE_SHA)
@@ -198,10 +211,11 @@ def test_dirty_worktree_refuses(tmp_path: Path) -> None:
     vdir.mkdir()
     out_file = _write_suite_output(tmp_path, PASSING_OUTPUT)
 
-    mock = _make_passing_mock()
+    mock, mock_bounded = _make_passing_mock()
 
     with pytest.MonkeyPatch().context() as mp:
         mp.setattr(vr.subprocess, "run", mock)
+        mp.setattr(vr, "_bounded_run", mock_bounded)
         mp.setattr(vr, "_resolve_project_verification_dir", lambda p: vdir)
         mp.setattr(vr, "read_head_from_git", lambda p: HEAD_SHA)
         mp.setattr(vr, "_git", lambda p, *a: TREE_SHA)
@@ -231,10 +245,11 @@ def test_old_file_mtime_refuses(tmp_path: Path) -> None:
     import os
     os.utime(out_file, (0, 0))
 
-    mock = _make_passing_mock()
+    mock, mock_bounded = _make_passing_mock()
 
     with pytest.MonkeyPatch().context() as mp:
         mp.setattr(vr.subprocess, "run", mock)
+        mp.setattr(vr, "_bounded_run", mock_bounded)
         mp.setattr(vr, "_resolve_project_verification_dir", lambda p: vdir)
         mp.setattr(vr, "read_head_from_git", lambda p: HEAD_SHA)
         mp.setattr(vr, "_git", lambda p, *a: TREE_SHA)
@@ -261,10 +276,11 @@ def test_no_summary_line_refuses(tmp_path: Path) -> None:
     vdir.mkdir()
     out_file = _write_suite_output(tmp_path, "just some random text\nno summary here\n")
 
-    mock = _make_passing_mock()
+    mock, mock_bounded = _make_passing_mock()
 
     with pytest.MonkeyPatch().context() as mp:
         mp.setattr(vr.subprocess, "run", mock)
+        mp.setattr(vr, "_bounded_run", mock_bounded)
         mp.setattr(vr, "_resolve_project_verification_dir", lambda p: vdir)
         mp.setattr(vr, "read_head_from_git", lambda p: HEAD_SHA)
         mp.setattr(vr, "_git", lambda p, *a: TREE_SHA)
@@ -291,10 +307,11 @@ def test_partial_run_banner_refuses(tmp_path: Path) -> None:
     vdir.mkdir()
     out_file = _write_suite_output(tmp_path, PARTIAL_OUTPUT)
 
-    mock = _make_passing_mock()
+    mock, mock_bounded = _make_passing_mock()
 
     with pytest.MonkeyPatch().context() as mp:
         mp.setattr(vr.subprocess, "run", mock)
+        mp.setattr(vr, "_bounded_run", mock_bounded)
         mp.setattr(vr, "_resolve_project_verification_dir", lambda p: vdir)
         mp.setattr(vr, "read_head_from_git", lambda p: HEAD_SHA)
         mp.setattr(vr, "_git", lambda p, *a: TREE_SHA)
@@ -368,10 +385,11 @@ def test_invocation_strips_env_prefix(tmp_path: Path) -> None:
     vdir.mkdir()
     out_file = _write_suite_output(tmp_path, PASSING_OUTPUT)
 
-    mock = _make_passing_mock()
+    mock, mock_bounded = _make_passing_mock()
 
     with pytest.MonkeyPatch().context() as mp:
         mp.setattr(vr.subprocess, "run", mock)
+        mp.setattr(vr, "_bounded_run", mock_bounded)
         mp.setattr(vr, "_resolve_project_verification_dir", lambda p: vdir)
         mp.setattr(vr, "read_head_from_git", lambda p: HEAD_SHA)
         mp.setattr(vr, "_git", lambda p, *a: TREE_SHA)
@@ -399,10 +417,11 @@ def test_invocation_strips_output_only_flags(tmp_path: Path) -> None:
     vdir.mkdir()
     out_file = _write_suite_output(tmp_path, PASSING_OUTPUT)
 
-    mock = _make_passing_mock()
+    mock, mock_bounded = _make_passing_mock()
 
     with pytest.MonkeyPatch().context() as mp:
         mp.setattr(vr.subprocess, "run", mock)
+        mp.setattr(vr, "_bounded_run", mock_bounded)
         mp.setattr(vr, "_resolve_project_verification_dir", lambda p: vdir)
         mp.setattr(vr, "read_head_from_git", lambda p: HEAD_SHA)
         mp.setattr(vr, "_git", lambda p, *a: TREE_SHA)
@@ -433,10 +452,11 @@ def test_selection_flag_k_refuses(tmp_path: Path) -> None:
     vdir.mkdir()
     out_file = _write_suite_output(tmp_path, PASSING_OUTPUT)
 
-    mock = _make_passing_mock()
+    mock, mock_bounded = _make_passing_mock()
 
     with pytest.MonkeyPatch().context() as mp:
         mp.setattr(vr.subprocess, "run", mock)
+        mp.setattr(vr, "_bounded_run", mock_bounded)
         mp.setattr(vr, "_resolve_project_verification_dir", lambda p: vdir)
         mp.setattr(vr, "read_head_from_git", lambda p: HEAD_SHA)
         mp.setattr(vr, "_git", lambda p, *a: TREE_SHA)
@@ -465,10 +485,11 @@ def test_operator_provenance_in_record(tmp_path: Path) -> None:
     vdir.mkdir()
     out_file = _write_suite_output(tmp_path, FAILING_OUTPUT)
 
-    mock = _make_passing_mock()
+    mock, mock_bounded = _make_passing_mock()
 
     with pytest.MonkeyPatch().context() as mp:
         mp.setattr(vr.subprocess, "run", mock)
+        mp.setattr(vr, "_bounded_run", mock_bounded)
         mp.setattr(vr, "_resolve_project_verification_dir", lambda p: vdir)
         mp.setattr(vr, "read_head_from_git", lambda p: HEAD_SHA)
         mp.setattr(vr, "_git", lambda p, *a: TREE_SHA)
@@ -500,10 +521,11 @@ def test_tool_run_has_tool_provenance(tmp_path: Path) -> None:
     vdir = tmp_path / "verification"
     vdir.mkdir()
 
-    mock = _make_passing_mock()
+    mock, mock_bounded = _make_passing_mock()
 
     with pytest.MonkeyPatch().context() as mp:
         mp.setattr(vr.subprocess, "run", mock)
+        mp.setattr(vr, "_bounded_run", mock_bounded)
         mp.setattr(vr, "_resolve_project_verification_dir", lambda p: vdir)
         mp.setattr(vr, "read_head_from_git", lambda p: HEAD_SHA)
         mp.setattr(vr, "_git", lambda p, *a: TREE_SHA)
@@ -535,10 +557,11 @@ def test_run_suite_writes_record_today(tmp_path: Path) -> None:
     vdir = tmp_path / "verification"
     vdir.mkdir()
 
-    mock = _make_passing_mock()
+    mock, mock_bounded = _make_passing_mock()
 
     with pytest.MonkeyPatch().context() as mp:
         mp.setattr(vr.subprocess, "run", mock)
+        mp.setattr(vr, "_bounded_run", mock_bounded)
         mp.setattr(vr, "_resolve_project_verification_dir", lambda p: vdir)
         mp.setattr(vr, "read_head_from_git", lambda p: HEAD_SHA)
         mp.setattr(vr, "_git", lambda p, *a: TREE_SHA)
