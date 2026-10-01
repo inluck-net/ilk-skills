@@ -5408,17 +5408,153 @@ print('false' if not d.get('blocked', True) else 'true')
           if [[ "$confirmed_blocked" == "false" ]]; then
             echo "B2 transient cleared on re-run" >&2
           else
-            # Red-owner attribution is NOT implemented (design D5,
-            # docs/architecture/loop-state-and-ownership-design.md section 6).
-            # The block that stood here re-ran the failing commands at HEAD
-            # (labelled "at base") and bisected an EMPTY command, which passes
-            # at every commit, so it could never name an owner.  It only ran
-            # long gates a third time, and it read an unset $plans_dir (#56).
-            # Until the verdict policy attributes by measurement at
-            # base_commit, the strike stands on the running sub-plan, and the
-            # log says so rather than implying a check ran.
+            # Red-owner attribution: measure each blocking record at the
+            # iteration base (and optionally the batch base) to determine
+            # whether this iteration caused the red.  An inherited or
+            # pre-existing red does not strike.
             local _red_owner_skip_quarantine="false"
-            echo "  [red-owner] at-base attribution not implemented (design D5); the strike stands on the running sub-plan" >&2
+            local _red_owner_script="${_SKILL_ROOT}/ilk-loop/scripts/red_owner.py"
+            local _iteration_base=""
+            if [[ -n "$heads_before_file" && -f "$heads_before_file" ]]; then
+              _iteration_base=$(head_before_sha "$PROJECT_PATH" "$heads_before_file")
+            fi
+            # Resolve batch base from the master plan.
+            local _batch_base=""
+            local _master_file_for_base=""
+            if [[ -n "$plans_dir" && -d "$plans_dir" ]]; then
+              _master_file_for_base=$(python3 -c "
+from pathlib import Path
+import sys
+sys.path.insert(0, sys.argv[1])
+from loop_status import pick_active_master, parse_frontmatter
+from plan_status import normalize_master_status
+plans = sorted(Path(sys.argv[2]).glob('MASTER-*.md'))
+actives = [m for m in plans if normalize_master_status(
+    parse_frontmatter(m.read_text(encoding='utf-8-sig')).get('status') or '') == 'active']
+if actives:
+    chosen, _ = pick_active_master(actives, json_mode=True)
+    print(chosen)
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$plans_dir" 2>/dev/null) || true
+            fi
+            if [[ -n "$_master_file_for_base" && -f "$_master_file_for_base" ]]; then
+              _batch_base=$(python3 -c "
+import sys
+sys.path.insert(0, sys.argv[1])
+from verification_record import resolve_batch_base_sha
+from pathlib import Path
+try:
+    sha, _ = resolve_batch_base_sha(Path(sys.argv[2]), Path(sys.argv[3]))
+    print(sha)
+except SystemExit:
+    pass
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$PROJECT_PATH" "$_master_file_for_base" 2>/dev/null) || true
+            fi
+            # Fallback: read base_sha from the master's frontmatter.
+            if [[ -z "$_batch_base" && -n "$_master_file_for_base" && -f "$_master_file_for_base" ]]; then
+              _batch_base=$(python3 -c "
+import re
+body = open(sys.argv[1]).read()
+m = re.search(r'^---\s*\n(.*?)\n---', body, re.DOTALL)
+if m:
+    for line in m.group(1).splitlines():
+        if line.strip().startswith('base_sha:'):
+            print(line.split(':', 1)[1].strip())
+            break
+" "$_master_file_for_base" 2>/dev/null) || true
+            fi
+            if [[ -n "$_red_owner_script" && -f "$_red_owner_script" && -n "$_iteration_base" ]]; then
+              local _all_inherited_or_preexisting=true
+              # Attribute each blocking record.
+              while IFS= read -r _blocking_line; do
+                [[ -z "$_blocking_line" ]] && continue
+                local _b_slug _b_step _b_cmd _b_stdout_tail
+                _b_slug=$(echo "$_blocking_line" | python3 -c "import json,sys; r=json.loads(sys.stdin.read()); print(r.get('slug',''))" 2>/dev/null) || true
+                _b_step=$(echo "$_blocking_line" | python3 -c "import json,sys; r=json.loads(sys.stdin.read()); print(r.get('step',''))" 2>/dev/null) || true
+                _b_cmd=$(echo "$_blocking_line" | python3 -c "import json,sys; r=json.loads(sys.stdin.read()); print(r.get('command',''))" 2>/dev/null) || true
+                _b_stdout_tail=$(echo "$_blocking_line" | python3 -c "import json,sys; r=json.loads(sys.stdin.read()); print(r.get('stdout_tail',''))" 2>/dev/null) || true
+                [[ -z "$_b_slug" || -z "$_b_cmd" ]] && continue
+                # Write stdout_tail to a temp file for the CLI.
+                local _stdout_file=""
+                if [[ -n "$_b_stdout_tail" ]]; then
+                  _stdout_file=$(mktemp)
+                  printf '%s' "$_b_stdout_tail" > "$_stdout_file"
+                fi
+                local _attr_args=("--attribute" "--repo" "$PROJECT_PATH" "--iteration-base" "$_iteration_base" "--head" "$(git -C "$PROJECT_PATH" rev-parse HEAD)" "--cmd" "$_b_cmd" "--budget-s" "300")
+                [[ -n "$_batch_base" ]] && _attr_args+=("--batch-base" "$_batch_base")
+                [[ -n "$_stdout_file" ]] && _attr_args+=("--stdout-file" "$_stdout_file")
+                local _attr_out=""
+                _attr_out=$(python3 "$_red_owner_script" "${_attr_args[@]}" 2>/dev/null) || true
+                [[ -n "$_stdout_file" ]] && rm -f "$_stdout_file"
+                if [[ -n "$_attr_out" ]]; then
+                  local _verdict
+                  _verdict=$(echo "$_attr_out" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('verdict',''))" 2>/dev/null) || true
+                  local _owner_sha _owner_slug
+                  _owner_sha=$(echo "$_attr_out" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('owner_sha','') or '')" 2>/dev/null) || true
+                  _owner_slug=$(echo "$_attr_out" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('owner_slug','') or '')" 2>/dev/null) || true
+                  echo "  [red-owner] $_b_slug step $_b_step: $_verdict (base ${_iteration_base:0:7}$([ -n "$_owner_sha" ] && echo ", owner ${_owner_sha:0:7} $_owner_slug" || echo "")) — $(echo "$_attr_out" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('reason',''))" 2>/dev/null)" >&2
+                  # Write attribution back into the gate results file.
+                  python3 -c "
+import json, sys
+attr = json.loads(sys.argv[1])
+lc_file = sys.argv[2]
+slug = sys.argv[3]
+step = int(sys.argv[4]) if sys.argv[4] else None
+lines = []
+updated = False
+try:
+    for line in open(lc_file).readlines():
+        line = line.strip()
+        if not line:
+            continue
+        rec = json.loads(line)
+        if rec.get('slug') == slug and rec.get('step') == step:
+            rec['attribution'] = attr
+            updated = True
+        lines.append(json.dumps(rec))
+except OSError:
+    pass
+if updated:
+    with open(lc_file, 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+" "$_attr_out" "$local_checks_results" "$_b_slug" "$_b_step" 2>/dev/null || true
+                  # Also write to gate-history.jsonl.
+                  local _gh_path
+                  _gh_path=$(get_ilk_runtime_dir 2>/dev/null || true)/gate-history.jsonl
+                  if [[ -n "$_gh_path" ]]; then
+                    python3 -c "
+import json, sys
+attr = json.loads(sys.argv[1])
+gh_path = sys.argv[2]
+slug = sys.argv[3]
+step = int(sys.argv[4]) if sys.argv[4] else None
+import os
+if os.path.exists(gh_path):
+    for line in open(gh_path).readlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+            if rec.get('slug') == slug and rec.get('step') == step:
+                rec.setdefault('attribution', attr)
+                with open(gh_path, 'a') as f:
+                    f.write(json.dumps(rec) + '\n')
+                break
+        except (json.JSONDecodeError, OSError):
+            pass
+" "$_attr_out" "$_gh_path" "$_b_slug" "$_b_step" 2>/dev/null || true
+                  fi
+                  if [[ "$_verdict" != "inherited" && "$_verdict" != "pre-existing" ]]; then
+                    _all_inherited_or_preexisting=false
+                  fi
+                fi
+              done < <(python3 "$blocking_checks_script" "$local_checks_results" --json-lines 2>/dev/null)
+              if [[ "$_all_inherited_or_preexisting" == "true" ]]; then
+                _red_owner_skip_quarantine="true"
+              fi
+            else
+              echo "  [red-owner] attribution script or iteration base unavailable; the strike stands on the running sub-plan" >&2
+            fi
 
             # Confirmed blocking — try auto-quarantine before stopping.
             # Skip quarantine if red-owner determined the regression is from

@@ -83,6 +83,7 @@ def _run_attribute_red(
         "--batch-base", batch_base,
         "--head", head,
         "--cmd", cmd,
+        "--budget-s", str(budget),
     ]
     if stdout_tail:
         args += ["--stdout-file", "-"]
@@ -107,10 +108,15 @@ def _run_ship_integrity(
     gate_results_file: Path | None = None,
     slug: str | None = None,
 ) -> subprocess.CompletedProcess:
-    """Call ship_integrity.py CLI."""
+    """Call ship_integrity.py CLI.
+
+    Uses ``--status shipped`` + ``--checks-json`` so the step-commit half
+    is skipped (no sub-plan file means no git repo to search).
+    """
     args = [
         "python3", str(_SHIP_INTEGRITY),
-        "--subplan", str(subplan),
+        "--status", "shipped",
+        "--checks-json", '[{"command":"echo ok"}]',
         "--gate-passed", gate_passed,
     ]
     if gate_results_file and slug:
@@ -122,7 +128,11 @@ def _run_ship_integrity(
 
 
 def _write_subplan(tmp_path: Path, slug: str, status: str = "shipped") -> Path:
-    """Write a minimal sub-plan file for ship-integrity."""
+    """Write a minimal sub-plan file for ship-integrity.
+
+    Uses ``local_checks: []`` (no gate declared) so the gate-half passes;
+    the tests that need a red gate pass it via ``--gate-results-file``.
+    """
     p = tmp_path / f"{slug}.md"
     p.write_text(
         f"---\nplan: {slug}\nstatus: {status}\n"
@@ -174,7 +184,6 @@ def test_ac1_inherited_verdict(tmp_path: Path) -> None:
 
 # ── AC-2: ship-integrity consumes attribution ────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac2_ship_integrity_exits_0_with_attribution(tmp_path: Path) -> None:
     """A gate result with an inherited attribution ⇒ ship-integrity exits 0."""
     repo = _make_repo(tmp_path)
@@ -314,7 +323,6 @@ def test_ac4_owned_ship_integrity_exits_1(tmp_path: Path) -> None:
 
 # ── AC-5: fail closed ────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac5_fail_closed_budget_zero(tmp_path: Path) -> None:
     """Budget of 0 ⇒ unmeasured, which behaves like owned."""
     repo = _make_repo(tmp_path)

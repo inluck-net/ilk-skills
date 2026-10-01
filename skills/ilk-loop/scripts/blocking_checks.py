@@ -197,6 +197,9 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--rerun-targets", action="store_true",
                       help="like --targets but excludes deterministic and environment-red "
                            "checks (those whose verdict cannot change)")
+    mode.add_argument("--json-lines", action="store_true",
+                      help="print each attributable blocking record as a JSON object, "
+                           "one per line (for red-owner attribution)")
     args = ap.parse_args(argv)
 
     if args.any:
@@ -216,6 +219,11 @@ def main(argv: list[str] | None = None) -> int:
             needs, _reason = _needs_rerun(rec)
             if needs:
                 print(f"{rec['slug']} {_step_of(rec)}")
+        return 0
+
+    if args.json_lines:
+        for rec in attributable_records(args.results_file):
+            print(json.dumps(rec, ensure_ascii=False))
         return 0
 
     if args.slugs:

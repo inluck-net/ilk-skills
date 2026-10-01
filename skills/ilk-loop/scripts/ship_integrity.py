@@ -63,6 +63,28 @@ def evaluate_ship(
         ``ok=True`` if the ship is honest; ``ok=False`` with a reason string
         naming the violation otherwise.
     """
+    # Check for at-base attribution before evaluating the gate.
+    # When the gate result carries an attribution showing the red was
+    # inherited or pre-existing, the ship is honest — the red was not
+    # caused by this iteration.
+    if last_gate_result is not None:
+        attribution = last_gate_result.get("attribution")
+        if attribution and isinstance(attribution, dict):
+            verdict = attribution.get("verdict", "")
+            if verdict in ("inherited", "pre-existing"):
+                owner_info = ""
+                if verdict == "inherited":
+                    owner_sha = attribution.get("owner_sha", "")
+                    owner_slug = attribution.get("owner_slug", "")
+                    if owner_sha:
+                        owner_info = f"; owner {owner_sha[:7]}"
+                    if owner_slug:
+                        owner_info += f" {owner_slug}"
+                return ShipVerdict(
+                    ok=True,
+                    reason=f"red not caused by this iteration: {verdict} at base "
+                           f"{attribution.get('iteration_base', '?')[:7]}{owner_info}",
+                )
     # Only enforce on shipped sub-plans.
     if subplan_status != "shipped":
         return ShipVerdict(ok=True, reason="not shipped — no gate to enforce")
@@ -879,10 +901,13 @@ def _cli(argv: list[str]) -> int:
     # name the failing command and error instead of reporting "unreadable".
     # The scalar --gate-passed path is preserved for the PowerShell runner
     # (out of scope) — enrichment is additive, not a replacement.
+    #
+    # Also read the attribution from the gate-results file when present.
+    # The attribution is an additive field written by the runner when
+    # red_owner.attribute_red measured the red at the iteration base.
     if (gate_result is not None
             and args.gate_results_file is not None
-            and args.slug
-            and "results" not in gate_result):
+            and args.slug):
         try:
             results_list: list[dict[str, Any]] = []
             for raw in args.gate_results_file.read_text(
@@ -892,16 +917,21 @@ def _cli(argv: list[str]) -> int:
                     continue
                 rec = json.loads(raw)
                 if rec.get("slug") == args.slug:
-                    entry: dict[str, Any] = {
-                        "command": rec.get("command", "?"),
-                        "passed": rec.get("outcome") == "pass",
-                    }
-                    if rec.get("error"):
-                        entry["error"] = rec["error"]
-                    if rec.get("exit_code") is not None:
-                        entry["exit_code"] = rec["exit_code"]
-                    results_list.append(entry)
-            if results_list:
+                    # Read attribution if present.
+                    if rec.get("attribution"):
+                        gate_result["attribution"] = rec["attribution"]
+                    # Build results list for enrichment.
+                    if "results" not in gate_result:
+                        entry: dict[str, Any] = {
+                            "command": rec.get("command", "?"),
+                            "passed": rec.get("outcome") == "pass",
+                        }
+                        if rec.get("error"):
+                            entry["error"] = rec["error"]
+                        if rec.get("exit_code") is not None:
+                            entry["exit_code"] = rec["exit_code"]
+                        results_list.append(entry)
+            if results_list and "results" not in gate_result:
                 gate_result["results"] = results_list
         except (OSError, json.JSONDecodeError):
             pass  # enrichment is best-effort; fall back to scalar
