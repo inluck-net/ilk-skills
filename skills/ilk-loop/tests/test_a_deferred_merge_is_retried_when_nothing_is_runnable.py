@@ -580,3 +580,64 @@ def test_end_of_run_without_deferral_is_not_merge_pending(
     )
     entry = _scan_one(project_dir, tmp_path, monkeypatch)
     assert entry is None or entry.get("reason") != "merge-pending", entry
+
+
+# ── A fresh launch resolves the worktree itself ─────────────────────────────
+#
+# The nothing-runnable exits run before setup_selfmod_isolation, so on a
+# fresh launch no SELFMOD_* variable is set.  The tests above set all four by
+# hand and so could not see that the retry returned "nothing to retry" here
+# (run 20261002-034524: 3 unmerged commits, no live loop, clone unchanged).
+
+
+def test_fresh_launch_retry_resolves_the_worktree(tmp_path: Path) -> None:
+    clone = _make_clone(tmp_path)
+    runtime_dir = tmp_path / "runtime" / "launcher"
+    wt = runtime_dir / "worktrees" / "selfmod-batch"
+    wt.parent.mkdir(parents=True)
+    _git(clone, "worktree", "add", "-q", str(wt), "-b", "selfmod")
+    (wt / "work.txt").write_text("work\n", encoding="utf-8")
+    _git(wt, "add", "work.txt")
+    _git(wt, "commit", "-q", "-m", "work commit")
+    wt_head = _head_sha(wt)
+
+    result = _run_runner_func(
+        f"""
+PROJECT_PATH='{clone}'
+unset SELFMOD_WORKTREE_PATH SELFMOD_ORIGINAL_PROJECT_PATH SELFMOD_MERGE_LOCK_PATH SELFMOD_ISOLATED
+selfmod_isolation_required() {{ return 0; }}
+get_ilk_runtime_dir() {{ echo '{runtime_dir}'; }}
+_retry_rc=0
+_retry_deferred_merge || _retry_rc=$?
+echo "RETRY_RC=$_retry_rc"
+""",
+        _sandbox_env(tmp_path),
+        cwd=clone,
+    )
+
+    assert "RETRY_RC=4" in result.stdout.splitlines(), (
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert _head_sha(clone) == wt_head
+
+
+def test_fresh_launch_retry_refuses_an_unresolvable_runtime_dir(
+    tmp_path: Path,
+) -> None:
+    clone = _make_clone(tmp_path)
+    result = _run_runner_func(
+        f"""
+PROJECT_PATH='{clone}'
+unset SELFMOD_WORKTREE_PATH SELFMOD_ORIGINAL_PROJECT_PATH SELFMOD_MERGE_LOCK_PATH SELFMOD_ISOLATED
+selfmod_isolation_required() {{ return 0; }}
+get_ilk_runtime_dir() {{ return 1; }}
+_retry_rc=0
+_retry_deferred_merge || _retry_rc=$?
+echo "RETRY_RC=$_retry_rc"
+""",
+        _sandbox_env(tmp_path),
+        cwd=clone,
+    )
+    assert "RETRY_RC=3" in result.stdout.splitlines(), (
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )

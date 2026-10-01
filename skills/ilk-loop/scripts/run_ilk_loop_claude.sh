@@ -526,6 +526,21 @@ _retry_deferred_merge() {
   if ! selfmod_isolation_required; then
     return 0
   fi
+  # The nothing-runnable exits call this before setup_selfmod_isolation has
+  # run, so on a fresh launch the SELFMOD_* paths are unset.  Resolve them the
+  # way setup_selfmod_isolation does, without creating a worktree.  Leaving
+  # them unset returned "nothing to retry" here: run 20261002-034524 exited
+  # blocked-no-runnable with 3 unmerged worktree commits and no live loop.
+  if [[ -z "${SELFMOD_WORKTREE_PATH:-}" ]]; then
+    local _rd
+    _rd="$(get_ilk_runtime_dir)" && [[ -n "$_rd" ]] || {
+      echo "[selfmod] ERROR: cannot resolve runtime dir for the deferred-merge retry." >&2
+      return 3
+    }
+    SELFMOD_WORKTREE_PATH="${_rd}/worktrees/selfmod-batch"
+    SELFMOD_MERGE_LOCK_PATH="${SELFMOD_MERGE_LOCK_PATH:-${_rd}/selfmod-merge.lock}"
+  fi
+  SELFMOD_ORIGINAL_PROJECT_PATH="${SELFMOD_ORIGINAL_PROJECT_PATH:-${1:-$PROJECT_PATH}}"
   local _wt_path="${SELFMOD_WORKTREE_PATH:-}"
   if [[ -z "$_wt_path" || ! -d "$_wt_path" ]]; then
     return 0
