@@ -3675,8 +3675,9 @@ if lc_file and slug:
 " "$lc_file" "$slug" 2>/dev/null) || true
         if [[ -n "$_red_step" && -n "$_heads_before_file" && -n "$_heads_after_file" ]]; then
           local _h_before _h_after
-          _h_before=$(head_before_sha "$PROJECT_PATH" "$_heads_before_file")
-          _h_after=$(head_after_sha "$PROJECT_PATH" "$_heads_after_file")
+          local _h_key="${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
+          _h_before=$(head_before_sha "$_h_key" "$_heads_before_file")
+          _h_after=$(head_after_sha "$_h_key" "$_heads_after_file")
           if [[ -n "$_h_before" && -n "$_h_after" ]]; then
             # Find commits in the iteration range claiming this step.
             _red_step_commits=$(git -C "$PROJECT_PATH" log --format="%H" "${_h_before}..${_h_after}" --grep="\[plan:${slug}#step-${_red_step}\]" 2>/dev/null | tr '\n' ',') || true
@@ -5600,7 +5601,8 @@ print('false' if not d.get('blocked', True) else 'true')
             local _red_owner_script="${_SKILL_ROOT}/ilk-loop/scripts/red_owner.py"
             local _iteration_base=""
             if [[ -n "$heads_before_file" && -f "$heads_before_file" ]]; then
-              _iteration_base=$(head_before_sha "$PROJECT_PATH" "$heads_before_file")
+              local _ib_key="${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
+              _iteration_base=$(head_before_sha "$_ib_key" "$heads_before_file")
             fi
             # Resolve batch base from the master plan.
             local _batch_base=""
@@ -5663,7 +5665,9 @@ if m:
                   _stdout_file=$(mktemp)
                   printf '%s' "$_b_stdout_tail" > "$_stdout_file"
                 fi
-                local _attr_args=("--attribute" "--repo" "$PROJECT_PATH" "--iteration-base" "$_iteration_base" "--head" "$(git -C "$PROJECT_PATH" rev-parse HEAD)" "--cmd" "$_b_cmd" "--budget-s" "300")
+                local _effective_repo
+                _effective_repo="$(selfmod_effective_repo "$PROJECT_PATH")"
+                local _attr_args=("--attribute" "--repo" "$_effective_repo" "--iteration-base" "$_iteration_base" "--head" "$(git -C "$_effective_repo" rev-parse HEAD)" "--cmd" "$_b_cmd" "--budget-s" "300")
                 [[ -n "$_batch_base" ]] && _attr_args+=("--batch-base" "$_batch_base")
                 [[ -n "$_stdout_file" ]] && _attr_args+=("--stdout-file" "$_stdout_file")
                 local _attr_out=""

@@ -169,13 +169,28 @@ def _parse_pytest_nodes(stdout: str) -> list[str]:
     return list(dict.fromkeys(node_re.findall(clean)))
 
 
+def _strip_runner_flags(cmd: str) -> str:
+    """Strip ``-n`` and ``--dist`` xdist flags from a test command.
+
+    Matches :func:`verification_record.run_at_base` so the at-base
+    invocation is identical regardless of caller.
+    """
+    return re.sub(r"\s-n\s+\S+|\s--dist\s+\S+", "", cmd)
+
+
+_USAGE_COLLECTION_EXITS = {2, 3, 4, 5}
+
+
 def _run_at_base_worktree(
     repo: Path, base_sha: str, cmd: str, nodes: list[str], budget_s: int,
 ) -> dict:
     """Run the command (or specific nodes) at base_sha in a detached worktree.
 
-    Returns {node_id: "passed"|"failed"} or {"_command": "passed"|"failed"}
-    when nodes is empty.
+    Returns ``{node_id: "passed"|"failed"|"unmeasured"}`` or
+    ``{"_command": "passed"|"failed"|"unmeasured"}`` when nodes is empty.
+
+    A usage or collection error (exit 2-5 or ``no tests ran``) is recorded
+    as ``"unmeasured"``, never ``"failed"``.
     """
     import shutil
     tmp = Path(tempfile.mkdtemp(prefix="red-owner-attrib-"))
@@ -192,45 +207,43 @@ def _run_at_base_worktree(
                 f"{(add.stderr or '').strip()[:200]}"
             )
 
-        if nodes:
-            # Run each node individually.
-            # Extract pytest options from the command (skip test files).
-            # e.g., "python3 -m pytest test_a.py test_b.py -q" -> "python3 -m pytest -q"
-            import shlex
-            cmd_parts = shlex.split(cmd)
-            # Find where pytest options start (after "pytest" and test files).
-            pytest_idx = None
-            for i, part in enumerate(cmd_parts):
-                if part == "pytest":
-                    pytest_idx = i
-                    break
-            if pytest_idx is not None:
-                # Collect options (start with -) after pytest.
-                options = []
-                for part in cmd_parts[pytest_idx + 1:]:
-                    if part.startswith("-"):
-                        options.append(part)
-                base_cmd = " ".join(cmd_parts[:pytest_idx + 1] + options)
-            else:
-                base_cmd = cmd
+        # Strip -n/--dist xdist flags: one node id per process is slower
+        # under xdist, not faster, and the selection is tiny by construction.
+        # Drop positional test paths that appear after ``pytest``.
+        runner = _strip_runner_flags(cmd)
+        # "python3 -m pytest tests/a.py tests/b.py -q" →
+        # "python3 -m pytest -q"
+        runner = re.sub(
+            r"(pytest)\s+(?!\-)(?:\S+\s+)*?(?=\-\w|\s*$)",
+            r"\1 ",
+            runner,
+        )
 
-            results = {}
+        def _classify(rc: int, stdout: str, stderr: str) -> str:
+            if rc == 0:
+                return "passed"
+            blob = (stdout or "") + (stderr or "")
+            if rc in _USAGE_COLLECTION_EXITS or "no tests ran" in blob:
+                return "unmeasured"
+            return "failed"
+
+        if nodes:
+            results: dict[str, str] = {}
             for nid in nodes:
                 r = subprocess.run(
-                    f"{base_cmd} {nid}", shell=True, cwd=wt,
+                    f"{runner} {nid}", shell=True, cwd=wt,
                     capture_output=True, text=True,
                     encoding="utf-8", errors="replace", timeout=budget_s,
                 )
-                results[nid] = "passed" if r.returncode == 0 else "failed"
+                results[nid] = _classify(r.returncode, r.stdout, r.stderr)
             return results
         else:
-            # Run the whole command.
             r = subprocess.run(
-                cmd, shell=True, cwd=wt,
+                runner, shell=True, cwd=wt,
                 capture_output=True, text=True,
                 encoding="utf-8", errors="replace", timeout=budget_s,
             )
-            return {"_command": "passed" if r.returncode == 0 else "failed"}
+            return {"_command": _classify(r.returncode, r.stdout, r.stderr)}
     finally:
         subprocess.run(
             ["git", "worktree", "remove", "--force", str(wt)],
@@ -334,11 +347,13 @@ def attribute_red(
                 repo, iteration_base, cmd, node_ids, budget_s
             )
             iter_green = all(v == "passed" for v in iter_results.values())
+            iter_unmeasured = any(v == "unmeasured" for v in iter_results.values())
         else:
             iter_results = _run_at_base_worktree(
                 repo, iteration_base, cmd, [], budget_s
             )
             iter_green = iter_results.get("_command") == "passed"
+            iter_unmeasured = iter_results.get("_command") == "unmeasured"
     except (RuntimeError, subprocess.TimeoutExpired):
         return {
             "verdict": "unmeasured",
@@ -353,23 +368,73 @@ def attribute_red(
             "nodes": [],
         }
 
-    # If green at iteration base, this iteration broke it (owned).
-    if iter_green:
-        nodes = []
-        if node_ids:
-            nodes = [
-                {"node_id": nid, "verdict": "owned",
-                 "owner_sha": None, "owner_slug": None}
-                for nid in node_ids
-            ]
+    # A usage or collection error at base is not a measurement — fail closed.
+    if iter_unmeasured and not iter_green:
         return {
-            "verdict": "owned",
+            "verdict": "unmeasured",
             "iteration_base": iteration_base,
             "batch_base": batch_base,
             "node_ids": node_ids,
             "owner_sha": None,
             "owner_subject": None,
             "owner_slug": None,
+            "reason": "usage or collection error at iteration base — cannot measure",
+            "elapsed_s": round(time.monotonic() - start, 2),
+            "nodes": [],
+        }
+
+    # If green at iteration base, this iteration broke it (owned).
+    if iter_green:
+        # Bisect to find which commit in iteration_base..head broke it.
+        elapsed_now = time.monotonic() - start
+        bisect_budget = max(1, budget_s - int(elapsed_now))
+
+        owner_sha = None
+        owner_subject = None
+        owner_slug = None
+
+        nodes = []
+        if node_ids:
+            for nid in node_ids:
+                bisect_result = bisect_red_owner(
+                    repo, iteration_base, head, cmd, [nid],
+                    budget_s=bisect_budget,
+                )
+                nid_owner_sha = None
+                nid_owner_subject = None
+                nid_owner_slug = None
+                if bisect_result.get("first_red"):
+                    nid_owner_sha = bisect_result["first_red"]
+                    nid_owner_subject = bisect_result.get("first_red_subject")
+                    nid_owner_slug = _extract_plan_slug(nid_owner_subject or "")
+                if nid_owner_sha and not owner_sha:
+                    owner_sha = nid_owner_sha
+                    owner_subject = nid_owner_subject
+                    owner_slug = nid_owner_slug
+                nodes.append({
+                    "node_id": nid,
+                    "verdict": "owned",
+                    "owner_sha": nid_owner_sha,
+                    "owner_slug": nid_owner_slug,
+                })
+        else:
+            bisect_result = bisect_red_owner(
+                repo, iteration_base, head, cmd, [],
+                budget_s=bisect_budget,
+            )
+            if bisect_result.get("first_red"):
+                owner_sha = bisect_result["first_red"]
+                owner_subject = bisect_result.get("first_red_subject")
+                owner_slug = _extract_plan_slug(owner_subject or "")
+
+        return {
+            "verdict": "owned",
+            "iteration_base": iteration_base,
+            "batch_base": batch_base,
+            "node_ids": node_ids,
+            "owner_sha": owner_sha,
+            "owner_subject": owner_subject,
+            "owner_slug": owner_slug,
             "reason": "green at iteration base — this iteration broke it",
             "elapsed_s": round(time.monotonic() - start, 2),
             "nodes": nodes,

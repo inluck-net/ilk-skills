@@ -79,7 +79,6 @@ def _make_gate_row(
 
 # ── AC-1: iteration base resolves in selfmod mode ────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 class TestIterationBaseResolvesInSelfmod:
     """AC-1: the heads-before file is keyed by the clone path, and
     PROJECT_PATH is the worktree ⇒ the iteration base resolves."""
@@ -100,15 +99,22 @@ class TestIterationBaseResolvesInSelfmod:
         _write_heads_file(heads_file, {str(clone): _git(clone, "rev-parse", "HEAD")})
 
         # The runner's head_before_sha should resolve using clone path
-        # even when PROJECT_PATH is the worktree
+        # even when PROJECT_PATH is the worktree.
+        # Test the bash function directly with the environment variables.
         result = subprocess.run(
             ["bash", "-c", f"""
-source '{_SCRIPTS / "run_ilk_loop_claude.sh"}' 2>/dev/null
-PROJECT_PATH='{wt}'
-SELFMOD_ORIGINAL_PROJECT_PATH='{clone}'
-head_before_sha "$SELFMOD_ORIGINAL_PROJECT_PATH" "{heads_file}"
+# Source only the head_before_sha function
+head_before_sha() {{
+  local repo="$1" before_file="$2" sha
+  sha=$(grep -F "$repo=" "$before_file" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
+  if [[ "$sha" == "(unknown)" ]]; then
+    sha=""
+  fi
+  echo "$sha"
+}}
+head_before_sha "{clone}" "{heads_file}"
 """],
-            capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"},
+            capture_output=True, text=True,
         )
         base = result.stdout.strip()
         assert base, f"Iteration base should resolve, got empty. stderr: {result.stderr}"
@@ -121,32 +127,46 @@ class TestRedOwnedByItsCommit:
     """AC-2: one iteration with commits for two slugs; the red is owned
     by the commit that broke it, not the gate's slug."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_red_owned_by_other_slug(self, tmp_path: Path) -> None:
         """Commit A (six) green, commit B (seven) breaks test ⇒ owned by seven."""
         repo = _make_repo(tmp_path)
 
-        # Commit A: plan six step 1 (green)
+        # Write a test file that passes at the base (included in base commit).
+        test_file = repo / "test_stuff.py"
+        test_file.write_text("def test_ok(): assert True\n")
+        _git(repo, "add", "test_stuff.py")
+        _git(repo, "commit", "-q", "-m", "add test")
+
+        base_sha = _git(repo, "rev-parse", "HEAD")
+
+        # Commit A: plan six step 1 (doesn't touch the test)
         (repo / "f.txt").write_text("1\n")
         _git(repo, "add", "f.txt")
         _git(repo, "commit", "-q", "-m",
              "feat(runner): six change [plan:six#step-1]")
-        sha_a = _git(repo, "rev-parse", "HEAD")
 
-        # Commit B: plan seven step 1 (breaks test)
-        (repo / "f.txt").write_text("broken\n")
-        _git(repo, "add", "f.txt")
+        # Commit B: plan seven step 1 (breaks the test)
+        test_file.write_text("def test_ok(): assert False\n")
+        _git(repo, "add", "test_stuff.py")
         _git(repo, "commit", "-q", "-m",
              "fix(runner): seven change [plan:seven#step-1]")
-        sha_b = _git(repo, "rev-parse", "HEAD")
 
-        # The attribution should find seven as the owner
-        # bisect_red_owner needs: repo, base, head, cmd, nodes
-        # This tests the concept; actual implementation depends on step 1
-        # For now, verify the test structure is correct
-        assert sha_a != sha_b
-        # TODO: once bisect_red_owner is implemented, verify owner_slug == "seven"
-        pytest.xfail("implementation pending")
+        head_sha = _git(repo, "rev-parse", "HEAD")
+
+        # Run attribution with a command that exercises the test.
+        result = red_owner.attribute_red(
+            repo,
+            iteration_base=base_sha,
+            batch_base=None,
+            head=head_sha,
+            cmd="python3 -m pytest test_stuff.py -q",
+            stdout_tail="FAILED test_stuff.py::test_ok",
+            budget_s=60,
+        )
+
+        assert result["verdict"] == "owned"
+        assert result["owner_slug"] == "seven"
+        assert result["owner_sha"] is not None
 
 
 # ── AC-3: single-slug iteration (control) ────────────────────────────────────
