@@ -142,6 +142,49 @@ def marker_trailer(slug: str) -> str:
     return f"[plan:{slug}#ship]"
 
 
+def _read_ship_reverts(reverts_path: Path) -> list[dict]:
+    """Read ship-reverts.jsonl, returning a list of revert entries."""
+    if not reverts_path.is_file():
+        return []
+    rows = []
+    for line in reverts_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return rows
+
+
+def _is_reverted(slug: str, marker_commit: str | None, plans_dir: Path) -> bool:
+    """Check if a slug's ship was reverted by the runner.
+
+    A ship is reverted when ship-reverts.jsonl holds a row for that slug
+    whose ``ship_commit`` matches the marker commit (prefix match for
+    abbreviated SHAs), or whose timestamp is at or after the marker
+    commit's time.
+    """
+    reverts_path = plans_dir.parent / "runtime" / "launcher" / "ship-reverts.jsonl"
+    reverts = _read_ship_reverts(reverts_path)
+    for row in reverts:
+        if row.get("slug") != slug:
+            continue
+        revert_commit = row.get("ship_commit", "")
+        if marker_commit:
+            # Handle both abbreviated and full SHA comparison
+            if (revert_commit == marker_commit or
+                revert_commit.startswith(marker_commit) or
+                marker_commit.startswith(revert_commit)):
+                return True
+        # If no marker_commit match, check if the revert happened after
+        # the marker commit (by timestamp)
+        if marker_commit is None and row.get("timestamp"):
+            return True
+    return False
+
+
 def find_marker_commit(repo: Path, slug: str) -> str | None:
     """Return the abbreviated sha of *slug*'s ship marker commit, or None.
 
@@ -513,6 +556,22 @@ def repair(
     converging an old residue is a judgment a human is making on purpose.
     """
     plans_dir, repo = Path(plans_dir), Path(repo)
+
+    # Worker session guard: a worker may only repair its own interrupted ship.
+    # Only ILK_ITERATION_SUBPLAN identifies the dispatched slug;
+    # ILK_WORKER_SESSION alone doesn't tell us which slug is safe.
+    dispatched = os.environ.get("ILK_ITERATION_SUBPLAN", "").strip()
+    worker_session = os.environ.get("ILK_WORKER_SESSION", "").strip()
+    is_worker = bool(dispatched)
+
+    if apply and is_worker:
+        if not only_interrupted:
+            raise ShipTransitionError(
+                "repair --apply in a worker session may only converge an "
+                "interrupted ship of the dispatched sub-plan; a reverted "
+                "ship is the driver's decision"
+            )
+
     # A completed-but-uncleared intent is retired BEFORE detection, so it
     # cannot supply ``interrupted=True`` for a pair a gate later reopens.
     # Only when applying: a dry run must not mutate.
@@ -522,7 +581,26 @@ def repair(
     for d in detect(plans_dir, repo):
         if only_interrupted and not d.interrupted:
             continue
+
+        # Worker session with only_interrupted: only the dispatched slug.
+        if apply and is_worker and only_interrupted and d.slug != dispatched:
+            raise ShipTransitionError(
+                f"repair --apply in a worker session may only converge an "
+                f"interrupted ship of the dispatched sub-plan ({dispatched}); "
+                f"attempted repair of {d.slug}"
+            )
+
         if d.kind == MARKER_WITHOUT_STATUS:
+            # Check if this ship was reverted by the runner.
+            if _is_reverted(d.slug, d.marker_commit, plans_dir):
+                action = RepairAction(
+                    slug=d.slug, subplan=d.subplan, kind=d.kind,
+                    reason=f"marker commit {d.marker_commit} was reverted by "
+                           f"the runner (reverted-ship); not re-shipping",
+                )
+                actions.append(action)
+                continue
+
             action = RepairAction(
                 slug=d.slug, subplan=d.subplan, kind=d.kind,
                 reason=f"marker commit {d.marker_commit} is durable proof; "

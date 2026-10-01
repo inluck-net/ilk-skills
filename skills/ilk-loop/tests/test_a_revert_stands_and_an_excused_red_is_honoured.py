@@ -102,7 +102,6 @@ class TestRepairWorkerSession:
     """AC-1: repair(apply=True) in a worker session raises unless
     only_interrupted=True and it's the dispatched slug."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_apply_raises_in_worker_session(self, tmp_path: Path) -> None:
         """With ILK_ITERATION_SUBPLAN=a, repair(apply=True) raises."""
         repo = _make_repo(tmp_path)
@@ -111,20 +110,23 @@ class TestRepairWorkerSession:
         _git(repo, "commit", "--allow-empty", "-m",
              "chore(plans): my-slug shipped [plan:my-slug#ship]")
 
-        env = {**os.environ, "ILK_ITERATION_SUBPLAN": "a"}
         with pytest.MonkeyPatch.context() as mp:
             mp.setenv("ILK_ITERATION_SUBPLAN", "a")
             with pytest.raises(ship_transition.ShipTransitionError):
                 ship_transition.repair(plans, repo, apply=True)
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_apply_raises_for_different_slug(self, tmp_path: Path) -> None:
         """With ILK_ITERATION_SUBPLAN=a, repair(apply=True, only_interrupted=True)
         on slug b raises."""
         repo = _make_repo(tmp_path)
-        plans = _make_plans_dir(tmp_path, "slug-b")
+        slug = "slug-b"
+        plans = _make_plans_dir(tmp_path, slug)
         _git(repo, "commit", "--allow-empty", "-m",
-             "chore(plans): slug-b shipped [plan:slug-b#ship]")
+             f"chore(plans): {slug} shipped [plan:{slug}#ship]")
+
+        # Write an intent marker to make this an interrupted ship
+        intent = plans / ship_transition.INTENT_FILENAME
+        intent.write_text(json.dumps({"slug": slug}), encoding="utf-8")
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setenv("ILK_ITERATION_SUBPLAN", "a")
@@ -149,7 +151,6 @@ class TestRepairWorkerSession:
 
 # ── AC-2: reverted ship stays reverted ───────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 class TestRevertedShipStaysReverted:
     """AC-2: a marker-without-status whose slug has a ship-reverts.jsonl
     row stays in-progress (reverted-ship kind)."""
@@ -173,7 +174,12 @@ class TestRevertedShipStaysReverted:
             "reason": "gate failed",
         }])
 
-        actions = ship_transition.repair(plans, repo, apply=True)
+        # Clear worker session env vars to test non-worker path
+        with pytest.MonkeyPatch.context() as mp:
+            mp.delenv("ILK_ITERATION_SUBPLAN", raising=False)
+            mp.delenv("ILK_WORKER_SESSION", raising=False)
+            actions = ship_transition.repair(plans, repo, apply=True)
+
         assert len(actions) == 1
         assert actions[0].slug == slug
         assert actions[0].kind == ship_transition.MARKER_WITHOUT_STATUS
@@ -205,7 +211,12 @@ class TestInterruptedShipConverges:
         intent = plans / ship_transition.INTENT_FILENAME
         intent.write_text(json.dumps({"slug": slug}), encoding="utf-8")
 
-        actions = ship_transition.repair(plans, repo, apply=True)
+        # Clear worker session env vars to test non-worker path
+        with pytest.MonkeyPatch.context() as mp:
+            mp.delenv("ILK_ITERATION_SUBPLAN", raising=False)
+            mp.delenv("ILK_WORKER_SESSION", raising=False)
+            actions = ship_transition.repair(plans, repo, apply=True)
+
         assert len(actions) == 1
         assert actions[0].slug == slug
         assert actions[0].applied
