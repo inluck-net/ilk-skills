@@ -191,6 +191,14 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   (the importer oracle). Since v0.9.100 the batch-verification
   sub-plan applies that same widening at batch scope instead of
   running the whole suite unconditionally; see §12.
+- **data file pinned by test not in any gate** → a `scope_paths` entry
+  that is a non-Python, non-docs concrete file, where a test file
+  references that file but no gate selects that test.  The lint
+  (`lint_gate_misses_a_test_that_pins_its_file`) flags this: the next
+  sub-plan whose gate selects that test will be blamed for this one's
+  red.  Measured 2026-10-01 in gh-resolve
+  `resolver-comments-name-their-fleet` (provisioning/config.template.json
+  pinned by 3 tests, none in its gates).
 - **exact-equality on a growing set** (FM-0002) → a `local_checks`
   command asserts `== ["area", "perimeter"]` or
   `deepStrictEqual(result, ['a', 'b'])` against a registry /

@@ -2283,6 +2283,138 @@ def _resolve_base_ref(base: str, cwd: Path) -> tuple[str | None, bool]:
     return None, False
 
 
+def lint_gate_misses_a_test_that_pins_its_file(text: str, slug: str) -> list[str]:
+    """Warn when a scoped data file is pinned by a test no gate selects.
+
+    A sub-plan that modifies a data file (non-Python, non-docs, concrete path)
+    and whose gates do not run the tests that reference that file hides
+    integration bugs.  The shared-module lint covers Python modules; this lint
+    covers non-Python data files.
+
+    The finding names the data file, up to 5 pinning test paths, and
+    suggests adding them to the last step's gate.
+    """
+    findings: list[str] = []
+    scope_paths = _extract_scope_paths(text)
+    if not scope_paths:
+        return findings
+
+    project_root = _resolve_project_root()
+    if not project_root or not project_root.is_dir():
+        return findings  # No project root — nothing to check.
+
+    # Collect non-Python, non-docs, non-test, non-glob concrete files.
+    data_files: list[str] = []
+    for sp in scope_paths:
+        norm = sp.replace("\\", "/")
+        # Skip globs.
+        if "*" in norm or "?" in norm:
+            continue
+        # Skip Python files (covered by shared-module lint).
+        if norm.endswith(".py"):
+            continue
+        # Skip docs.
+        if norm.startswith("docs/") or norm == "docs":
+            continue
+        # Skip test files.
+        if _is_test_path(norm):
+            continue
+        # Must be a concrete file (not a directory).
+        if norm.endswith("/"):
+            continue
+        data_files.append(sp)
+
+    if not data_files:
+        return findings  # No data files to check.
+
+    # Extract ALL local_checks commands.
+    commands = _extract_all_local_checks_commands(text)
+    if not commands:
+        return findings  # No gates — nothing to check.
+
+    # Check whether ANY gate runs a whole suite — compliant.
+    for cmd in commands:
+        if _is_whole_suite_command(cmd):
+            return findings
+
+    # Check if ANY later step in the sub-plan runs a broader gate.
+    body = _strip_frontmatter(text)
+    for block_match in _STEP_LOCAL_CHECKS_BLOCK_RE.finditer(body):
+        block_cmds = re.findall(r"command:\s*(.+)", block_match.group(1))
+        for cmd in block_cmds:
+            if _is_whole_suite_command(cmd):
+                return findings  # Later step widens — compliant.
+
+    # For each data file, find test files that pin it.
+    for data_file in data_files:
+        basename = data_file.rsplit("/", 1)[-1] if "/" in data_file else data_file
+
+        # Find test files that contain the basename.
+        pinning_tests: list[str] = []
+        test_count = 0
+        for test_path in project_root.rglob("test_*.py"):
+            test_count += 1
+            if test_count > 2000:
+                break  # Cap the scan.
+            try:
+                content = test_path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            if basename in content:
+                rel = str(test_path.relative_to(project_root))
+                pinning_tests.append(rel)
+
+        # Also check for .test.ts, .spec.ts, *_test.py patterns.
+        for pattern in ["*_test.py", "*.test.ts", "*.spec.ts"]:
+            for test_path in project_root.rglob(pattern):
+                test_count += 1
+                if test_count > 2000:
+                    break
+                try:
+                    content = test_path.read_text(encoding="utf-8", errors="ignore")
+                except OSError:
+                    continue
+                if basename in content:
+                    rel = str(test_path.relative_to(project_root))
+                    if rel not in pinning_tests:
+                        pinning_tests.append(rel)
+
+        if not pinning_tests:
+            continue  # No tests pin this file — no finding.
+
+        # Check if any gate selects any of these tests.
+        # A gate selects a test when its command names the test's path or a
+        # parent directory of it, or when it is a whole-suite command.
+        selected_tests: set[str] = set()
+        for cmd in commands:
+            for test_path in pinning_tests:
+                # Direct match.
+                if test_path in cmd:
+                    selected_tests.add(test_path)
+                    continue
+                # Parent directory match.
+                test_dir = str(Path(test_path).parent)
+                if test_dir in cmd:
+                    selected_tests.add(test_path)
+
+        unselected = [t for t in pinning_tests if t not in selected_tests]
+        if unselected:
+            # Cap at 5 test paths in the finding.
+            shown = unselected[:5]
+            remaining = len(unselected) - len(shown)
+            test_list = ", ".join(shown)
+            if remaining > 0:
+                test_list += f" (and {remaining} more)"
+            findings.append(
+                f"{slug}: scope_paths contains data file {data_file} "
+                f"pinned by tests not selected by any gate: {test_list}. "
+                f"Add them to the last step's gate, or the next sub-plan "
+                f"whose gate selects one will be blamed for this one's red"
+            )
+
+    return findings
+
+
 def lint_scope_path_off_base_branch(
     text: str, slug: str, base_ref: str = "main",
     *,
@@ -4548,6 +4680,7 @@ ALL_CHECKS = (
     lint_slug_identity_mismatch,
     lint_batch_verification_scope_mismatch,
     lint_old_form_verify_step1,
+    lint_gate_misses_a_test_that_pins_its_file,
 )
 
 
