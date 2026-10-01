@@ -427,6 +427,11 @@ def _carries_outcome(rec: dict) -> bool:
     return any(k in rec for k in ("duration_sec", "exit_code", "stop_reason"))
 
 
+class _RecordList(list):
+    """list subclass that accepts arbitrary attributes (for skipped_non_object)."""
+    pass
+
+
 def read_jsonl_iters(project_path: Path, last_launch: dict | None = None) -> list[dict]:
     """Return ALL iteration records for this project across all runs.
 
@@ -434,11 +439,24 @@ def read_jsonl_iters(project_path: Path, last_launch: dict | None = None) -> lis
     legacy) and de-duplicates by (run_id, iteration).
     """
     project_path_norm = _normalize_path_for_compare(project_path)
+    # Also accept records whose project is the selfmod worktree path for
+    # this key.  A selfmod run writes its records with project = the
+    # worktree path, but collect.py is invoked with the clone path.
+    selfmod_norm: str | None = None
+    if external_launcher_dir is not None and project_key is not None:
+        try:
+            key = project_key(project_path)
+            selfmod_norm = _normalize_path_for_compare(
+                external_launcher_dir(key) / "worktrees" / "selfmod-batch"
+            )
+        except Exception:
+            pass
     # key -> index into `records`, so a later completion line can SUPERSEDE an
     # earlier `status: started` placeholder in place (preserving position)
     # rather than being discarded as a duplicate.
     seen: dict[tuple[str, int], int] = {}
     records: list[dict] = []
+    skipped_non_object = 0
 
     for candidate in _jsonl_log_candidates(project_path, last_launch):
         if not candidate.exists():
@@ -453,8 +471,11 @@ def read_jsonl_iters(project_path: Path, last_launch: dict | None = None) -> lis
                         rec = json.loads(line)
                     except json.JSONDecodeError:
                         continue
+                    if not isinstance(rec, dict):
+                        skipped_non_object += 1
+                        continue
                     rec_proj = _normalize_path_for_compare(rec.get("project", ""))
-                    if rec_proj != project_path_norm:
+                    if rec_proj != project_path_norm and rec_proj != selfmod_norm:
                         continue
                     rid = rec.get("run_id", "")
                     it = rec.get("iteration", 0)
@@ -474,7 +495,9 @@ def read_jsonl_iters(project_path: Path, last_launch: dict | None = None) -> lis
         except OSError:
             continue
 
-    return records
+    result = _RecordList(records)
+    result.skipped_non_object = skipped_non_object
+    return result
 
 
 def read_per_iter_jsonl(
@@ -507,6 +530,8 @@ def read_per_iter_jsonl(
                         try:
                             rec = json.loads(line)
                         except json.JSONDecodeError:
+                            continue
+                        if not isinstance(rec, dict):
                             continue
                         it = rec.get("iteration", 0)
                         if it in seen:
@@ -564,6 +589,8 @@ def count_rate_limit_events(
                     try:
                         rec = json.loads(line)
                     except json.JSONDecodeError:
+                        continue
+                    if not isinstance(rec, dict):
                         continue
                     if rec.get("type") != "rate_limit_event":
                         continue
@@ -2358,9 +2385,12 @@ def render_report(
     avg_dur = sum(durations_min) / len(durations_min) if durations_min else 0
     max_dur = max(durations_min) if durations_min else 0
 
-    started_at = (last_launch or {}).get("started_at") if last_launch is not None else None
-    if not started_at and iters:
-        started_at = iters[0].get("timestamp")
+    # Prefer the run's own earliest record timestamp.  Only fall back to
+    # last-launch.json when it names the SAME run — a last-launch that
+    # belongs to a later run would give a wrong start time.
+    started_at = iters[0].get("timestamp") if iters else None
+    if not started_at and last_launch is not None and last_launch.get("run_id") == run_id:
+        started_at = last_launch.get("started_at")
     if not started_at:
         started_at = "unknown"
     model = next((r.get("model") for r in iters if r.get("model")), "?")
@@ -2385,6 +2415,8 @@ def render_report(
         "started_at": started_at,
         "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
     }
+    if facts.get("skipped_non_object"):
+        fm["skipped_non_object"] = facts["skipped_non_object"]
 
     fm_yaml = "---\n" + "".join(f"{k}: {json.dumps(v, ensure_ascii=False) if isinstance(v, str) else v}\n" for k, v in fm.items()) + "---\n"
 
@@ -3084,6 +3116,7 @@ def main() -> int:
     last_launch = read_last_launch(project_path)
 
     all_records = read_jsonl_iters(project_path, last_launch)
+    skipped_non_object = getattr(all_records, 'skipped_non_object', 0)
     if not all_records:
         # Per-iter JSONL fallback: claude-worker runs write per-iter logs
         # but may have no summary records.  Check per-iter BEFORE sentinel
@@ -3298,6 +3331,8 @@ def main() -> int:
     rl_count = count_rate_limit_events(target_run, project_path, last_launch)
     if rl_count > 0:
         facts["rate_limit_event_count"] = rl_count
+    if skipped_non_object > 0:
+        facts["skipped_non_object"] = skipped_non_object
 
     # Emit upstream candidate when the classification is a toolkit signal
     # (conservative — only clear toolkit gaps, never project-local findings).

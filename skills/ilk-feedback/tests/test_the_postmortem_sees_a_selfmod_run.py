@@ -95,7 +95,6 @@ def _write_last_launch(data_home: Path, key: str, launch: dict) -> None:
 # ── AC-0: a non-object JSONL line never crashes collect ──────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_non_object_jsonl_line_does_not_crash(scratch_env):
     """A candidate JSONL containing the line "just a string" plus 1 valid record
     ⇒ no exception; 1 iteration; skipped_non_object: 1."""
@@ -157,7 +156,6 @@ def test_non_object_jsonl_line_does_not_crash(scratch_env):
 # ── AC-1: selfmod rows count ─────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_selfmod_records_are_included(scratch_env):
     """A JSONL with 2 records whose project is the key's selfmod worktree path
     ⇒ collect.py --run-id <id> produces a postmortem with those 2 iterations,
@@ -221,7 +219,6 @@ def test_selfmod_records_are_included(scratch_env):
 # ── AC-2: without --run-id, newest selfmod run is chosen ─────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_newest_selfmod_run_chosen_without_run_id(scratch_env):
     """Without --run-id, when the newest run is that selfmod run, it is the one chosen."""
     project_path, env, key = scratch_env
@@ -322,7 +319,6 @@ def test_unrelated_project_path_excluded(scratch_env):
 # ── AC-4: started_at comes from the run's own records, not last-launch.json ──
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_started_at_comes_from_own_run_records(scratch_env):
     """A last-launch.json naming a later run ⇒ the postmortem's started_at
     equals the run's own first record timestamp."""
