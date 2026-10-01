@@ -191,10 +191,30 @@ def _run_at_base_worktree(
 
         if nodes:
             # Run each node individually.
+            # Extract pytest options from the command (skip test files).
+            # e.g., "python3 -m pytest test_a.py test_b.py -q" -> "python3 -m pytest -q"
+            import shlex
+            cmd_parts = shlex.split(cmd)
+            # Find where pytest options start (after "pytest" and test files).
+            pytest_idx = None
+            for i, part in enumerate(cmd_parts):
+                if part == "pytest":
+                    pytest_idx = i
+                    break
+            if pytest_idx is not None:
+                # Collect options (start with -) after pytest.
+                options = []
+                for part in cmd_parts[pytest_idx + 1:]:
+                    if part.startswith("-"):
+                        options.append(part)
+                base_cmd = " ".join(cmd_parts[:pytest_idx + 1] + options)
+            else:
+                base_cmd = cmd
+
             results = {}
             for nid in nodes:
                 r = subprocess.run(
-                    f"{cmd} {nid}", shell=True, cwd=wt,
+                    f"{base_cmd} {nid}", shell=True, cwd=wt,
                     capture_output=True, text=True,
                     encoding="utf-8", errors="replace", timeout=budget_s,
                 )
@@ -264,6 +284,21 @@ def attribute_red(
 
     # Parse node ids from stdout_tail.
     node_ids = _parse_pytest_nodes(stdout_tail) if stdout_tail else []
+
+    # Fail closed: budget of 0 means we can't measure anything.
+    if budget_s <= 0:
+        return {
+            "verdict": "unmeasured",
+            "iteration_base": iteration_base,
+            "batch_base": batch_base,
+            "node_ids": node_ids,
+            "owner_sha": None,
+            "owner_subject": None,
+            "owner_slug": None,
+            "reason": "budget of 0 — cannot measure",
+            "elapsed_s": round(time.monotonic() - start, 2),
+            "nodes": [],
+        }
 
     # Validate bases.
     def _sha_exists(sha: str) -> bool:
@@ -432,15 +467,15 @@ def attribute_red(
                         msg = _commit_subject(repo, nid_owner_sha)
                         owner_subject = msg
                         nid_owner_slug = _extract_plan_slug(msg)
-                    nodes.append({
-                        "node_id": nid,
-                        "verdict": nid_verdict,
-                        "owner_sha": nid_owner_sha,
-                        "owner_slug": nid_owner_slug,
-                    })
                     if nid_verdict == "inherited" and nid_owner_sha:
                         owner_sha = nid_owner_sha
                         owner_slug = nid_owner_slug
+                nodes.append({
+                    "node_id": nid,
+                    "verdict": nid_verdict,
+                    "owner_sha": nid_owner_sha,
+                    "owner_slug": nid_owner_slug,
+                })
 
             # Record verdict is the strongest: owned > inherited > pre-existing.
             has_owned = any(n["verdict"] == "owned" for n in nodes)

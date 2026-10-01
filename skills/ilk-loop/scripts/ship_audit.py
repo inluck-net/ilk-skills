@@ -796,9 +796,39 @@ def audit_ship(
     # alone -- steps have commits and nothing verifies the tree.  That gap is
     # surfaced at PLAN time instead (plan_lint flags zero coverage, and
     # batch_gate still prints the verdict), which is where the design puts it.
+
+    # Check for pre_existing_red in ledger records.
+    # A step that advanced past an excused red is UNPROVEN with a named reason.
+    _has_pre_existing_red = False
+    if ledger_records:
+        for rec in ledger_records:
+            if not isinstance(rec, dict):
+                continue
+            if rec.get("slug") != slug:
+                continue
+            pre_existing = rec.get("pre_existing_red")
+            if pre_existing and isinstance(pre_existing, list):
+                for red in pre_existing:
+                    if not isinstance(red, dict):
+                        continue
+                    red_verdict = red.get("verdict", "")
+                    red_cmd = red.get("command", "")
+                    red_base = red.get("base_sha", "")
+                    if red_verdict == "inherited":
+                        owner = red.get("owner_slug") or red.get("owner_sha", "")[:7]
+                        reasons.append(
+                            f"inherited red from {owner}: {red_cmd}"
+                        )
+                    elif red_verdict == "pre-existing":
+                        reasons.append(
+                            f"pre-existing red at base {red_base[:7]}: {red_cmd}"
+                        )
+                    _has_pre_existing_red = True
+
     proven = (
         not missing
         and not _final_step_gate_failed
+        and not _has_pre_existing_red
         and gate_verdict in (None, "pass", "not_configured")
     )
     final_gate: str | None
