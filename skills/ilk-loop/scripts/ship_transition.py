@@ -400,6 +400,27 @@ def _check_iteration_subplan(slug: str) -> None:
         )
 
 
+def _check_batch_verification(plans_dir: Path, slug: str) -> None:
+    """Refuse to ship a ``batch_verification: true`` sub-plan in a worker session.
+
+    When ``ILK_ITERATION_SUBPLAN`` is set, this is a worker session — the
+    driver is the only shipper for batch-verification sub-plans.
+    """
+    dispatched = os.environ.get("ILK_ITERATION_SUBPLAN", "").strip()
+    if not dispatched:
+        return  # not a worker session
+    try:
+        subplan = find_subplan(plans_dir, slug)
+    except ShipTransitionError:
+        raise
+    _, fm = _read_subplan(subplan)
+    if fm.get("batch_verification", "").strip().lower() == "true":
+        raise ShipTransitionError(
+            f"{slug!r} is a batch_verification sub-plan; only the driver "
+            f"may ship it.  End your turn after shipping the work sub-plan."
+        )
+
+
 def ship(
     plans_dir: Path,
     repo: Path,
@@ -427,6 +448,7 @@ def ship(
     """
     plans_dir, repo = Path(plans_dir), Path(repo)
     _check_iteration_subplan(slug)  # refuses before anything is written
+    _check_batch_verification(plans_dir, slug)  # refuses before anything is written
     subplan = find_subplan(plans_dir, slug)  # refuses before anything is written
     writer = _write_status or _write_status_shipped
 

@@ -201,11 +201,10 @@ helper is idempotent — running it twice does not duplicate files.
      - bump `current_step` in sub-plan front-matter
      - commit:  chore(plans): bump <slug> current_step to <N+1>
 6. When current_step reaches estimated_steps:
-     - set sub-plan status to `shipped`
-     - update last_updated date
      - transition every listed ticket in the tracker to the next state
        (use the ilk-lark-tickets skill if it's a Lark Bitable)
-     - commit
+     - ship only through `python3 <skill-root>/ilk-loop/scripts/ship_transition.py --ship <slug> --plans-dir <plans dir> --repo <repo>`
+       (never edit `status:` or author a `#ship` commit by hand)
 7. Print loop_status.py output again so the human sees updated state.
 8. Exit (let the human start a fresh chat for the next iteration).
 ```
@@ -444,7 +443,7 @@ sub-plan ship:
 |---|---|
 | Executing step N of sub-plan `<slug>` | `<type>(<scope>): <summary> [plan:<slug>#step-N]` |
 | Bumping current_step | `chore(plans): bump <slug> current_step to <N+1>` |
-| Shipping a sub-plan | `chore(plans): <slug> shipped [plan:<slug>#ship]` |
+| Shipping a sub-plan | `chore(plans): <slug> shipped [plan:<slug>#ship]` (written by `ship_transition.py`, never by hand) |
 | Setting up ilk-loop | `chore(plans): scaffold ilk-loop` |
 | Adding a sub-plan | `chore(plans): add <slug> sub-plan` |
 

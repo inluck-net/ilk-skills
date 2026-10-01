@@ -170,6 +170,48 @@ def _bash_writes_into_clone(cmd: str, root: Path) -> bool:
     return False
 
 
+def _denies_ship_marker(cmd: str) -> bool:
+    """Deny a Bash ``git commit`` whose message contains ``#ship]``.
+
+    Covers ``-m``, ``-am``, ``--message=``, and ``-F <file>`` (reads the
+    file's first line).  Independent of the clone root — applies in any repo.
+    """
+    try:
+        tokens = shlex.split(cmd)
+    except ValueError:
+        return False
+    if not tokens or "git" not in tokens:
+        return False
+    idx = tokens.index("git")
+    args = tokens[idx + 1 :]
+    if "commit" not in args:
+        return False
+
+    for i, tok in enumerate(args):
+        # -m "message" or -am "message"
+        if tok in ("-m", "-am") and i + 1 < len(args):
+            if "#ship]" in args[i + 1]:
+                return True
+        # --message="message" or --message "message"
+        if tok.startswith("--message="):
+            if "#ship]" in tok:
+                return True
+        if tok == "--message" and i + 1 < len(args):
+            if "#ship]" in args[i + 1]:
+                return True
+        # -F <file>
+        if tok == "-F" and i + 1 < len(args):
+            try:
+                first_line = Path(args[i + 1]).read_text(
+                    encoding="utf-8", errors="replace"
+                ).split("\n", 1)[0]
+                if "#ship]" in first_line:
+                    return True
+            except OSError:
+                pass
+    return False
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 
 
@@ -209,6 +251,12 @@ def main() -> int:
         tool_input = event.get("tool_input") or {}
         cmd = tool_input.get("command", "")
         if not cmd:
+            return 0
+        if _denies_ship_marker(cmd):
+            _deny(
+                "a #ship marker is written only by ship_transition.py "
+                "(D-447); run it instead of committing the marker by hand"
+            )
             return 0
         if _bash_writes_into_clone(cmd, root):
             _deny(

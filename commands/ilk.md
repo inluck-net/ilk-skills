@@ -185,16 +185,22 @@ unblocks it ("need design decision on X" not "couldn't do step 3").
 Stop and hand back to the human when ANY of these is true:
 
 - The sub-plan's `current_step` reaches `estimated_steps`. Then:
-  1. Set `status: shipped` and update `last_updated` in front-matter.
+  1. For every Lark ticket in the sub-plan's `tickets:` list, transition
+     to `待验证` and write the relevant commit short-hashes into the
+     `关联 commit` field — use the ilk-lark-tickets skill.
+  2. Any other edit made at ship time, such as a known-defects status line,
+     is committed **before** the ship, under the last step's trailer.
+  3. Ship only through
+     `python3 <skill-root>/ilk-loop/scripts/ship_transition.py --ship <slug> --plans-dir <plans dir> --repo <repo>`.
+     Never edit `status:` and never author a `#ship` commit by hand.
      never set `shipped` while the declared gate is red — if gate
      failures are genuinely pre-existing and unrelated, re-scope the gate
      (fix its `local_checks` to exclude the unrelated failures) — do NOT
      override or rationalize a red gate as acceptable. A sub-plan with a
      red declared gate must stay `in-progress` until the gate is green.
-  2. For every Lark ticket in the sub-plan's `tickets:` list, transition
-     to `待验证` and write the relevant commit short-hashes into the
-     `关联 commit` field — use the ilk-lark-tickets skill.
-  3. Commit: `chore(plans): <slug> shipped [plan:<slug>#ship]`.
+     A `batch_verification: true` sub-plan is shipped only by the driver.
+     The worker never ships it, never edits its `status:` or
+     `current_step`, and ends its turn after shipping the work sub-plan.
   4. **NEEDS HUMAN VERIFICATION check**: run `loop_status.py --json` and
      inspect each shipped sub-plan's `verification_tier`. If any shipped
      sub-plan has tier `compile-only` or `device-manual`, print a block:

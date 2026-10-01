@@ -11,9 +11,6 @@ AC-4 (end to end): ship_transition.ship twice in a row produces exactly 1
       commit whose message contains [plan:x#ship].
 AC-5: ship_transition.ship for a batch_verification: true slug, with
       ILK_ITERATION_SUBPLAN set, raises ShipTransitionError.
-
-RED-FIRST: AC-1, AC-2, AC-5 are xfail(strict=True) because the code
-changes land in step 1.  AC-3 and AC-4 are plain (they pass today).
 """
 from __future__ import annotations
 
@@ -137,7 +134,6 @@ class TestAC1OneWriterInDocs:
     """commands/ilk.md and SKILL.md must not tell the worker to hand-commit
     a #ship marker or set status: shipped by hand."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_ilk_md_no_hand_ship_commit(self) -> None:
         """AC-1: no line in §7 matches a hand #ship commit instruction."""
         text = COMMANDS_ILK.read_text(encoding="utf-8")
@@ -152,7 +148,6 @@ class TestAC1OneWriterInDocs:
             if "Commit:" in stripped and "#ship" in stripped:
                 pytest.fail(f"ilk.md §7 still has hand ship commit: {stripped!r}")
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_ilk_md_no_set_status_shipped(self) -> None:
         """AC-1: no line in §7 says to set status: shipped by hand."""
         text = COMMANDS_ILK.read_text(encoding="utf-8")
@@ -165,7 +160,6 @@ class TestAC1OneWriterInDocs:
             if "Set" in stripped and "status" in stripped and "shipped" in stripped:
                 pytest.fail(f"ilk.md §7 still says set status shipped by hand: {stripped!r}")
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_ilk_md_names_ship_transition(self) -> None:
         """AC-1: §7 names ship_transition.py."""
         text = COMMANDS_ILK.read_text(encoding="utf-8")
@@ -177,7 +171,6 @@ class TestAC1OneWriterInDocs:
             "ilk.md §7 does not mention ship_transition.py"
         )
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_skill_md_step6_names_ship_transition(self) -> None:
         """AC-1: SKILL.md "The loop" step 6 names ship_transition.py."""
         text = SKILL_MD.read_text(encoding="utf-8")
@@ -201,7 +194,6 @@ class TestAC1OneWriterInDocs:
 class TestAC2HookDeniesShipCommit:
     """The hook must deny a Bash git commit whose message contains #ship]."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_deny_m_flag(self, _fake_home: dict) -> None:
         """AC-2: git commit -m '...#ship]' ⇒ deny."""
         env = {**os.environ, "CLAUDE_CONFIG_DIR": str(_fake_home["home"])}
@@ -211,7 +203,6 @@ class TestAC2HookDeniesShipCommit:
         result = _run_hook(event, env)
         assert result["allowed"] is False, "hook did not deny -m #ship commit"
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_deny_am_flag(self, _fake_home: dict) -> None:
         """AC-2: git commit -am '...#ship]' ⇒ deny."""
         env = {**os.environ, "CLAUDE_CONFIG_DIR": str(_fake_home["home"])}
@@ -221,7 +212,6 @@ class TestAC2HookDeniesShipCommit:
         result = _run_hook(event, env)
         assert result["allowed"] is False, "hook did not deny -am #ship commit"
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_deny_message_equals(self, _fake_home: dict) -> None:
         """AC-2: git commit --message='...#ship]' ⇒ deny."""
         env = {**os.environ, "CLAUDE_CONFIG_DIR": str(_fake_home["home"])}
@@ -231,7 +221,6 @@ class TestAC2HookDeniesShipCommit:
         result = _run_hook(event, env)
         assert result["allowed"] is False, "hook did not deny --message= #ship commit"
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_deny_file_flag(self, _fake_home: dict, tmp_path: Path) -> None:
         """AC-2: git commit -F <file> where file contains #ship] ⇒ deny."""
         msg_file = tmp_path / "msg.txt"
@@ -293,11 +282,17 @@ class TestAC4IdempotentShip:
         repo = _make_repo(tmp_path)
         plans = _make_plans_dir(tmp_path, slug="x", status="in-progress")
 
-        st.ship(plans, repo, "x")
-        st.ship(plans, repo, "x")
+        old_env = os.environ.pop("ILK_ITERATION_SUBPLAN", None)
+        try:
+            st.ship(plans, repo, "x")
+            st.ship(plans, repo, "x")
+        finally:
+            if old_env is not None:
+                os.environ["ILK_ITERATION_SUBPLAN"] = old_env
 
-        # Count commits with [plan:x#ship]
-        log = _git(repo, "log", "--oneline", "--grep", "[plan:x#ship]")
+        # Count commits with [plan:x#ship] (use --fixed-strings to avoid
+        # glob interpretation of the square brackets)
+        log = _git(repo, "log", "--oneline", "--fixed-strings", "--grep", "[plan:x#ship]")
         lines = [l for l in log.splitlines() if l.strip()]
         assert len(lines) == 1, (
             f"expected 1 marker commit, found {len(lines)}:\n{log}"
@@ -311,7 +306,6 @@ class TestAC5BatchVerificationRefused:
     """ship() for a batch_verification: true slug with ILK_ITERATION_SUBPLAN
     set must raise ShipTransitionError."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_batch_verification_refused_in_worker(self, tmp_path: Path) -> None:
         """AC-5: ship() raises ShipTransitionError for batch_verification slug
         when ILK_ITERATION_SUBPLAN is set."""
