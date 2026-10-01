@@ -367,6 +367,21 @@ if [[ $any_only -eq 0 || $only_claude -eq 1 ]]; then
     TARGET_HOOKS+=("$HOME/.claude/hooks")
   fi
 fi
+# Discover existing worker homes and add their hooks to TARGET_HOOKS.
+# Skills and commands in worker homes are untouched — only hooks are deployed.
+# --only-cursor / --only-codex exclude them (worker homes are Claude Code only).
+if [[ $any_only -eq 0 || $only_claude -eq 1 ]]; then
+  for _worker_home in "$HOME/.claude-worker" "$HOME/.claude-manager"; do
+    if [[ -d "$_worker_home" ]]; then
+      # Skip if already included via --claude-home.
+      if [[ -n "$claude_home" && "$(cd "$claude_home" && pwd)" == "$(cd "$_worker_home" && pwd)" ]]; then
+        continue
+      fi
+      TARGET_HOOKS+=("$_worker_home/hooks")
+    fi
+  done
+  unset _worker_home
+fi
 if [[ $any_only -eq 0 || $only_codex -eq 1 ]]; then
   TARGET_NAMES+=("Codex")
   TARGET_SKILLS+=("$HOME/.codex/skills")
@@ -394,15 +409,18 @@ HOOK_FILES=()
 if [[ -d "$HOOKS_SRC" ]]; then
   while IFS= read -r line; do
     HOOK_FILES+=("$line")
-  done < <(find "$HOOKS_SRC" -maxdepth 1 -mindepth 1 -type f -name '*.sh' -exec basename {} \; | sort)
+  done < <(find "$HOOKS_SRC" -maxdepth 1 -mindepth 1 -type f \( -name '*.sh' -o -name '*.py' \) -exec basename {} \; | sort)
 fi
 
 # --- planning ---------------------------------------------------------------
 
 # Returns one of: skip-correct, replace-stale-link, replace-real,
-# blocked-real, create
+# backup-real, blocked-real, create
+# $3 (allow_backup): if "1", a non-symlink real file is backed up rather than
+#   blocked.  Used for hook files where a hand-installed stopgap may exist.
 plan_link() {
   local link="$1" source="$2"
+  local allow_backup="${3:-0}"
   if [[ ! -e "$link" && ! -L "$link" ]]; then
     echo create
     return
@@ -424,7 +442,9 @@ plan_link() {
     fi
     return
   fi
-  if [[ $force -eq 1 ]]; then
+  if [[ $allow_backup -eq 1 ]]; then
+    echo "replace-file (backup)"
+  elif [[ $force -eq 1 ]]; then
     echo replace-real
   else
     echo blocked-real
@@ -447,6 +467,14 @@ apply_action() {
       mv -- "$link" "$backup"
       ln -sfn "$source" "$link"
       echo "backed-up:$backup"
+      ;;
+    "replace-file (backup)")
+      local stamp backup
+      stamp="$(date +%Y%m%d-%H%M%S)"
+      backup="${link}.bak-${stamp}"
+      mv -- "$link" "$backup"
+      ln -sfn "$source" "$link"
+      echo "replace-file (backup)"
       ;;
     blocked-real) echo blocked; return ;;
     create)
@@ -720,7 +748,7 @@ for hook_name in "${HOOK_FILES[@]}"; do
   for i in "${!TARGET_HOOKS[@]}"; do
     link="${TARGET_HOOKS[$i]}/$hook_name"
     source="$HOOKS_SRC/$hook_name"
-    action="$(plan_link "$link" "$source")"
+    action="$(plan_link "$link" "$source" 1)"
     PLAN_TARGET+=("hooks")
     PLAN_LINK+=("$link")
     PLAN_SOURCE+=("$source")
@@ -738,7 +766,7 @@ echo "repo:           $REPO_ROOT"
 [[ -n "$claude_home" ]] && echo "claude home:    $claude_home (custom)"
 echo "skills found:   ${#SKILL_NAMES[@]} (ilk-*)"
 echo "commands found: ${#COMMAND_FILES[@]} (ilk*)"
-echo "hooks found:    ${#HOOK_FILES[@]} (*.sh)"
+echo "hooks found:    ${#HOOK_FILES[@]} (*.sh/*.py)"
 printf 'targets:        '
 printf '%s ' "${TARGET_NAMES[@]}"
 echo

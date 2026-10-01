@@ -79,7 +79,6 @@ def _make_stopgap_settings(tmp_home: Path) -> Path:
 class TestApplyDeploysWorkerHooks:
     """AC-1: install.sh --apply deploys hooks to .claude-worker."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_hook_becomes_symlink(self, tmp_path: Path) -> None:
         """no-live-clone-edit.py becomes a symlink into the repo."""
         _make_stopgap_settings(tmp_path)
@@ -90,7 +89,6 @@ class TestApplyDeploysWorkerHooks:
         target = hook.resolve()
         assert target == (REPO_ROOT / "hooks" / "no-live-clone-edit.py").resolve()
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_backup_file_created(self, tmp_path: Path) -> None:
         """A .bak-* file holds the old stopgap bytes."""
         stopgap = _make_stopgap_settings(tmp_path)
@@ -102,7 +100,6 @@ class TestApplyDeploysWorkerHooks:
         assert len(bak_files) == 1, f"expected 1 .bak file, got {len(bak_files)}"
         assert bak_files[0].read_text() == original_content
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_bash_matcher_added(self, tmp_path: Path) -> None:
         """settings.json gains a Bash matcher running the hook."""
         _make_stopgap_settings(tmp_path)
@@ -125,7 +122,6 @@ class TestApplyDeploysWorkerHooks:
 class TestDryRunNoOp:
     """AC-2: dry-run makes no changes and prints replace-file (backup)."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_dry_run_prints_replace_file(self, tmp_path: Path) -> None:
         """Dry-run output names replace-file (backup) for the stopgap."""
         _make_stopgap_settings(tmp_path)
@@ -184,7 +180,6 @@ class TestIdempotentApply:
     assertion, which is the red-first behaviour.
     """
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_second_apply_no_new_backup(self, tmp_path: Path) -> None:
         """No additional .bak file on second run."""
         _make_stopgap_settings(tmp_path)
@@ -202,7 +197,6 @@ class TestIdempotentApply:
             f"second run created new .bak: {bak_count_1} -> {bak_count_2}"
         )
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_second_apply_settings_identical(self, tmp_path: Path) -> None:
         """settings.json is byte-identical after second run."""
         _make_stopgap_settings(tmp_path)
