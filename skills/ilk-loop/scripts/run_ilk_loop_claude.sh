@@ -2271,6 +2271,26 @@ commit_gate_first_marker() {
   return 1
 }
 
+# Read an arbitrary integer field from a sub-plan's frontmatter.  Prints the
+# value to stdout.  Returns 1 if the sub-plan or field is not found.
+_read_subplan_field() {
+  local slug="$1" field="$2"
+  local plans_dir sub_file
+  plans_dir=$(_gate_first_plans_dir) || return 1
+  sub_file=$(find_subplan_file_by_slug "$plans_dir" "$slug") || return 1
+  python3 -c '
+import re, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+field = sys.argv[2]
+body = p.read_text(encoding="utf-8")
+m = re.search(r"^" + re.escape(field) + r":[ \t]*(\d+)[ \t]*$", body, re.MULTILINE)
+if not m:
+    raise SystemExit(1)
+print(m.group(1))
+' "$sub_file" "$field"
+}
+
 # Read the current_step value from a sub-plan's frontmatter.  Prints the
 # value to stdout.  Returns 1 if the sub-plan or field is not found.
 _read_subplan_current_step() {
@@ -2367,6 +2387,32 @@ attempt_gate_first_fast_path() {
   step="${target_line#* }"
   [[ -n "$slug" && "$step" =~ ^[0-9]+$ ]] || return 1
 
+  # ── Finished batch-verify redirect ───────────────────────────────────
+  # When every step is discharged (current_step >= estimated_steps) but the
+  # sub-plan is still pending, get_active_subplan_targets returns a step
+  # index that has no heading.  For batch_verification sub-plans, target
+  # the last step (estimated_steps - 1) instead — its gate re-runs as a
+  # fresh measurement, and with every step discharged the driver ships.
+  # Non-batch sub-plans and sub-plans still mid-flight fall through.
+  local _finished_batch_verify=0
+  if sub_plan_has_batch_verification "$slug"; then
+    local _cur_est _cur_cs
+    _cur_est=$(_read_subplan_field "$slug" "estimated_steps") || _cur_est=0
+    _cur_cs=$(_read_subplan_current_step "$slug") || _cur_cs=0
+    if [[ "$_cur_est" -gt 0 && "$_cur_cs" -ge "$_cur_est" ]]; then
+      local last_step=$((_cur_est - 1))
+      if step_declares_gate_first "$slug" "$last_step"; then
+        echo "[gate-first] $slug: all steps discharged but unshipped — re-running step $last_step's gate to ship"
+        step="$last_step"
+        _finished_batch_verify=1
+      else
+        echo "[gate-first] $slug: all steps discharged but unshipped, and step $last_step is not gate_first — the driver cannot ship it" >&2
+        GATE_FIRST_NO_DISPATCH=1
+        return 1
+      fi
+    fi
+  fi
+
   step_declares_gate_first "$slug" "$step" || return 1
 
   echo "[gate-first] $slug step $step declares gate_first: true -- running its gate before the agent"
@@ -2414,7 +2460,12 @@ attempt_gate_first_fast_path() {
   invoke_local_checks "$(selfmod_effective_repo "$PROJECT_PATH")" "$tf" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$results_file" "${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
   rm -f "$tf"
 
-  gate_first_results_are_green "$results_file" || return 1
+  if ! gate_first_results_are_green "$results_file"; then
+    # For a finished batch-verify, a red gate means the driver cannot ship
+    # and dispatching a worker is wasteful (ship_transition would refuse it).
+    [[ "$_finished_batch_verify" -eq 1 ]] && GATE_FIRST_NO_DISPATCH=1
+    return 1
+  fi
 
   # Commit the marker and advance the pointer.  If the pointer is already
   # past this step (e.g. a previous iteration advanced it but the ship
@@ -5080,6 +5131,7 @@ print(json.dumps({
     # turns; red falls through to the agent exactly as today.  A step without
     # the marker never reaches this branch.
     local GATE_FIRST_GREEN=0
+    local GATE_FIRST_NO_DISPATCH=0
     local gate_first_results=""
     if [[ "$RUN_LOCAL_CHECKS" == true ]]; then
       gate_first_results=$(mktemp)
@@ -5108,7 +5160,7 @@ print(json.dumps({
     # on a resolver key gh-resolve's daemons legitimately pause, un-park and
     # create them while this runner is live (gh-resolve-59, 2026-09-29).
     local _master_snap_file="" _master_tampered=0 _snap_master=""
-    if [[ "$GATE_FIRST_GREEN" -eq 0 ]]; then
+    if [[ "$GATE_FIRST_GREEN" -eq 0 && "$GATE_FIRST_NO_DISPATCH" -eq 0 ]]; then
       # Capture, then parse: loop_status exits 1 when work is pending (its
       # normal answer), which under pipefail would wipe a piped result.
       local _snap_json=""
@@ -5124,8 +5176,17 @@ print(json.dumps({
       fi
     fi
 
-    if [[ "$GATE_FIRST_GREEN" -eq 0 ]]; then
+    if [[ "$GATE_FIRST_GREEN" -eq 0 && "$GATE_FIRST_NO_DISPATCH" -eq 0 ]]; then
       invoke_claude_iteration "$(selfmod_effective_repo "$PROJECT_PATH")" "$iter_log" "$iter_prompt" "$timeout_sec" "$MAX_BUDGET_USD" "$MODEL"
+    elif [[ "$GATE_FIRST_NO_DISPATCH" -eq 1 ]]; then
+      # A finished batch-verify with a red gate or no gate_first — the
+      # iteration ends without dispatch.  Set the same defaults the green
+      # path sets so the stop-reason classifier does not crash on unbound
+      # variables.
+      ITER_COMPLETED=0
+      ITER_EXIT_CODE=0
+      ITER_BUDGET_EXHAUSTED=0
+      ITER_QUOTA_EXHAUSTED=0
     fi
 
     if [[ -n "$_master_snap_file" ]]; then

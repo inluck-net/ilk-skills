@@ -199,7 +199,6 @@ echo "MAIN_RC=$?"
 
 # ── AC-1: all steps discharged + last step gate_first + green gate → shipped ─
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 @_NEEDS_GTIMEOUT
 def test_a_finished_verify_with_green_gate_is_shipped_by_the_driver(tmp_path: Path) -> None:
     """The 20:20 shape.  Every step discharged, sub-plan pending, last step
@@ -258,7 +257,6 @@ def test_a_finished_verify_with_green_gate_is_shipped_by_the_driver(tmp_path: Pa
 
 # ── AC-2: all steps discharged + last step gate_first + red gate → unshipped ─
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 @_NEEDS_GTIMEOUT
 def test_a_finished_verify_with_red_gate_stays_unshipped(tmp_path: Path) -> None:
     """Red gate on the last step.  The sub-plan stays pending and no agent
@@ -296,7 +294,6 @@ def test_a_finished_verify_with_red_gate_stays_unshipped(tmp_path: Path) -> None
 
 # ── AC-3: last step without gate_first → cannot ship, 0 agent calls ─────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 @_NEEDS_GTIMEOUT
 def test_a_finished_verify_without_gate_first_cannot_ship_from_driver(tmp_path: Path) -> None:
     """Last step does not declare gate_first.  The driver logs the refusal
@@ -305,7 +302,8 @@ def test_a_finished_verify_without_gate_first_cannot_ship_from_driver(tmp_path: 
     world = _build_world(tmp_path, last_step_gate_first=False)
     proc = _run_one_iteration(world)
 
-    tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-40:])
+    combined = proc.stdout + proc.stderr
+    tail = "\n".join(combined.splitlines()[-40:])
     counter = world["counter"]
 
     # No agent invocation.
@@ -317,8 +315,8 @@ def test_a_finished_verify_without_gate_first_cannot_ship_from_driver(tmp_path: 
         f"last 40 lines:\n{tail}"
     )
 
-    # The refusal log line.
-    assert "cannot ship it" in proc.stdout, (
+    # The refusal log line (goes to stderr).
+    assert "cannot ship it" in combined, (
         "the driver did not log the 'cannot ship it' refusal for a finished "
         "batch-verify whose last step is not gate_first.\n"
         f"last 40 lines:\n{tail}"

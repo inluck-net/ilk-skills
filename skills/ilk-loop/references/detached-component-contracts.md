@@ -2472,6 +2472,27 @@ declares `gate_first`:
 Step 0's gate re-measures the record. The current step's gate then sees
 a fresh record and passes.
 
+### Finished batch-verify redirect
+
+When a `batch_verification: true` sub-plan has every step discharged
+(`current_step >= estimated_steps`) but is still `pending` (not shipped),
+`get_active_subplan_targets` returns a step index past the last heading.
+The gate-first fast path detects this and targets the last step
+(`estimated_steps - 1`) instead:
+
+1. If the last step declares `gate_first`, its gate re-runs as a fresh
+   measurement. With every step discharged, the driver ships the sub-plan
+   — no agent needed. Log: `[gate-first] <slug>: all steps discharged but
+   unshipped — re-running step <n>'s gate to ship`.
+2. If the last step does **not** declare `gate_first`, the driver cannot
+   ship it. Log: `[gate-first] <slug>: all steps discharged but unshipped,
+   and step <n> is not gate_first — the driver cannot ship it`. The
+   iteration ends without dispatching a worker.
+
+Regression: 2026-10-01 20:20, a-red-is-blamed-on-its-owner-verify stalled
+at current_step 2/2 — every iteration dispatched a worker that could do
+nothing.
+
 ### Scope rule
 
 When `--remeasure-if-stale` re-measures and no explicit `--scope` was
