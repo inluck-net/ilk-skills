@@ -84,7 +84,6 @@ def _run_lint(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac1_data_file_pinned_by_test_not_in_gate(tmp_path: Path) -> None:
     """scope_paths has a data file; a test pins it; no gate selects that test."""
     # Create project structure.

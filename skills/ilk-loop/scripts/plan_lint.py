@@ -2392,9 +2392,11 @@ def lint_gate_misses_a_test_that_pins_its_file(text: str, slug: str) -> list[str
                 if test_path in cmd:
                     selected_tests.add(test_path)
                     continue
-                # Parent directory match.
+                # Parent directory match — the directory must appear as an
+                # explicit directory target (``tests/``), not merely as a
+                # substring of a longer file path (``tests/test_other.py``).
                 test_dir = str(Path(test_path).parent)
-                if test_dir in cmd:
+                if re.search(r"(?<!\S)" + re.escape(test_dir) + r"/(?:\s|$)", cmd):
                     selected_tests.add(test_path)
 
         unselected = [t for t in pinning_tests if t not in selected_tests]
