@@ -506,3 +506,77 @@ def test_scheduler_not_dispatchable_without_unmerged(tmp_path: Path) -> None:
     assert len(dispatched) == 0, (
         f"Expected 0 dispatched projects (no unmerged work), got {len(dispatched)}"
     )
+
+# ── The end-of-run sentinel shape is also merge-pending ─────────────────────
+#
+# The tests above hand-write state=merge-deferred, which only the pre-loop
+# exits produce.  The end-of-run teardown keeps its stop reason as the state
+# and records the deferral in a merge_deferred field; this is the sentinel
+# run 20261002-002715 actually wrote, which the scheduler never dispatched.
+
+
+def _end_of_run_sentinel(merge_deferred: object) -> dict:
+    return {
+        "state": "blocked-no-runnable",
+        "pid": 15512,
+        "run_id": "20261002-002715",
+        "started_at": "2026-10-02T00:27:16+0800",
+        "ended_at": "2026-10-02T02:39:27+0800",
+        "iterations": 8,
+        "project_path": "/fake/worktrees/selfmod-batch",
+        "cli": "claude",
+        "jsonl_log": "/fake/.ilk-loop.log",
+        "merge_deferred": merge_deferred,
+    }
+
+
+def _project_with_unmerged_worktree(tmp_path: Path, sentinel: dict) -> Path:
+    project_dir = tmp_path / "projects" / "test-project"
+    _make_blocked_plans(tmp_path, project_dir / "plans")
+    runtime_dir = project_dir / "runtime" / "launcher"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    (runtime_dir / "last-exit.json").write_text(
+        json.dumps(sentinel), encoding="utf-8"
+    )
+    _git(project_dir, "init", "-q")
+    (project_dir / "README.md").write_text("seed\n", encoding="utf-8")
+    _git(project_dir, "add", "README.md")
+    _git(project_dir, "commit", "-q", "-m", "seed")
+    wt = runtime_dir / "worktrees" / "selfmod-batch"
+    wt.parent.mkdir(parents=True, exist_ok=True)
+    _git(project_dir, "worktree", "add", "-q", str(wt), "-b", "selfmod")
+    (wt / "work.txt").write_text("work\n", encoding="utf-8")
+    _git(wt, "add", "work.txt")
+    _git(wt, "commit", "-q", "-m", "work commit")
+    return project_dir
+
+
+def _scan_one(project_dir: Path, tmp_path: Path, monkeypatch) -> dict | None:
+    for p in (str(_SCRIPTS), str(_SCRIPTS_WATCHDOG)):
+        if p not in sys.path:
+            sys.path.insert(0, p)
+    import scheduler_scan
+
+    monkeypatch.setattr(scheduler_scan, "ilk_data_root", lambda: tmp_path)
+    return scheduler_scan._scan_one_project(project_dir)
+
+
+def test_end_of_run_deferral_is_merge_pending(tmp_path: Path, monkeypatch) -> None:
+    project_dir = _project_with_unmerged_worktree(
+        tmp_path,
+        _end_of_run_sentinel(
+            {"live_pids": "unknown", "since": "2026-10-02T02:39:25+0800"}
+        ),
+    )
+    entry = _scan_one(project_dir, tmp_path, monkeypatch)
+    assert entry is not None and entry.get("reason") == "merge-pending", entry
+
+
+def test_end_of_run_without_deferral_is_not_merge_pending(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project_dir = _project_with_unmerged_worktree(
+        tmp_path, _end_of_run_sentinel(None)
+    )
+    entry = _scan_one(project_dir, tmp_path, monkeypatch)
+    assert entry is None or entry.get("reason") != "merge-pending", entry

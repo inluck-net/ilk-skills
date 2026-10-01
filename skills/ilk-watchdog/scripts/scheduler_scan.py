@@ -491,12 +491,21 @@ def _scan_one_project(project_dir: Path) -> dict | None:
     # still holds unmerged work needs a run to retry the merge.  The normal
     # dispatch path (active/queued masters) won't pick it up because the
     # master may be all-shipped or blocked.
+    #
+    # The runner says "deferred" two ways: the pre-loop exits write
+    # state=merge-deferred, but the end-of-run teardown keeps its stop reason
+    # as the state (e.g. blocked-no-runnable) and records the deferral in a
+    # merge_deferred field.  Reading only the state stranded run
+    # 20261002-002715: 5 idle scans, no merge-pending dispatch.
     try:
         _exit_sentinel = json.loads(
             (project_dir / "runtime" / "launcher" / "last-exit.json")
             .read_text(encoding="utf-8-sig")
         )
-        if _exit_sentinel.get("state") == "merge-deferred":
+        if (
+            _exit_sentinel.get("state") == "merge-deferred"
+            or _exit_sentinel.get("merge_deferred")
+        ):
             _wt_path = (
                 project_dir / "runtime" / "launcher" / "worktrees" / "selfmod-batch"
             )
