@@ -2271,6 +2271,25 @@ commit_gate_first_marker() {
   return 1
 }
 
+# Read the current_step value from a sub-plan's frontmatter.  Prints the
+# value to stdout.  Returns 1 if the sub-plan or field is not found.
+_read_subplan_current_step() {
+  local slug="$1"
+  local plans_dir sub_file
+  plans_dir=$(_gate_first_plans_dir) || return 1
+  sub_file=$(find_subplan_file_by_slug "$plans_dir" "$slug") || return 1
+  python3 -c '
+import re, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+body = p.read_text(encoding="utf-8")
+m = re.search(r"^current_step:[ \t]*(\d+)[ \t]*$", body, re.MULTILINE)
+if not m:
+    raise SystemExit(1)
+print(m.group(1))
+' "$sub_file"
+}
+
 # Bump current_step from $step to step+1, but only when the pointer still
 # reads $step.  A pointer that moved underneath us is not ours to guess at
 # (same refusal as test_ship_integrity's revert: never invent a step).
@@ -2397,8 +2416,16 @@ attempt_gate_first_fast_path() {
 
   gate_first_results_are_green "$results_file" || return 1
 
-  commit_gate_first_marker "$slug" "$step" || return 1
-  advance_subplan_current_step "$slug" "$step" || return 1
+  # Commit the marker and advance the pointer.  If the pointer is already
+  # past this step (e.g. a previous iteration advanced it but the ship
+  # failed), skip the marker/advance and go straight to the ship block —
+  # the gate is green and the sub-plan is complete.
+  local _cur_step
+  _cur_step=$(_read_subplan_current_step "$slug") || _cur_step=-1
+  if [[ "$_cur_step" -le "$step" ]]; then
+    commit_gate_first_marker "$slug" "$step" || return 1
+    advance_subplan_current_step "$slug" "$step" || return 1
+  fi
 
   # If this is a batch_verification sub-plan and every step is now
   # discharged, ship it from the driver — no worker needed.
