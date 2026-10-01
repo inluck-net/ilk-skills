@@ -495,26 +495,66 @@ setup_selfmod_isolation() {
 
   # Retry a deferred merge from a previous run before dispatching any agent.
   # The marker is written by the merge block when exit 2 (live loop) defers.
-  local _deferred_marker="${SELFMOD_WORKTREE_PATH}/.ilk-merge-deferred"
-  if [[ -f "$_deferred_marker" ]]; then
-    echo "[selfmod] retrying deferred merge from previous run..." >&2
-    local _retry_rc=0
-    merge_selfmod_worktree || _retry_rc=$?
-    if [[ $_retry_rc -eq 0 ]]; then
-      echo "[selfmod] deferred merge landed on retry." >&2
-      rm -f "$_deferred_marker"
-      # merge_selfmod_worktree restored PROJECT_PATH to the clone and removed
-      # the worktree.  Re-enter isolation, or this iteration's worker would
-      # be dispatched into the LIVE clone.
+  local _retry_rc=0
+  _retry_deferred_merge || _retry_rc=$?
+  if [[ $_retry_rc -eq 0 ]]; then
+    # Merged (or nothing to retry).  If the merge landed,
+    # merge_selfmod_worktree restored PROJECT_PATH to the clone and removed
+    # the worktree.  Re-enter isolation, or this iteration's worker would
+    # be dispatched into the LIVE clone.
+    local _deferred_marker="${SELFMOD_WORKTREE_PATH}/.ilk-merge-deferred"
+    if [[ ! -f "$_deferred_marker" ]]; then
+      # Marker was removed — merge landed.  Re-enter isolation.
       create_selfmod_worktree
-    elif [[ $_retry_rc -eq 2 ]]; then
-      echo "[selfmod] merge still deferred (live loop); continuing to work." >&2
-    else
-      echo "[selfmod] deferred merge failed (exit $_retry_rc) — ending run." >&2
-      return 3
     fi
+  elif [[ $_retry_rc -eq 2 ]]; then
+    echo "[selfmod] merge still deferred (live loop); continuing to work." >&2
+  else
+    echo "[selfmod] deferred merge failed (exit $_retry_rc) — ending run." >&2
+    return 3
   fi
   return 0
+}
+
+# Retry a deferred merge from a previous run.
+# Returns 0 if merged (or nothing to retry), 2 if still deferred (live loop),
+# 3 if the merge failed.
+# Called from setup_selfmod_isolation (before dispatching an agent) and from
+# the nothing-runnable exits (before the run ends).
+_retry_deferred_merge() {
+  if ! selfmod_isolation_required; then
+    return 0
+  fi
+  local _wt_path="${SELFMOD_WORKTREE_PATH:-}"
+  if [[ -z "$_wt_path" || ! -d "$_wt_path" ]]; then
+    return 0
+  fi
+  # Check for unmerged work: if worktree HEAD == clone HEAD, nothing to do.
+  local _clone_head _wt_head
+  _clone_head=$(git -C "$PROJECT_PATH" rev-parse HEAD 2>/dev/null) || return 0
+  _wt_head=$(git -C "$_wt_path" rev-parse HEAD 2>/dev/null) || return 0
+  if [[ "$_clone_head" == "$_wt_head" ]]; then
+    return 0
+  fi
+  local _deferred_marker="${_wt_path}/.ilk-merge-deferred"
+  if [[ ! -f "$_deferred_marker" ]]; then
+    # No marker but unmerged work — write one so the merge is attempted.
+    echo '{}' > "$_deferred_marker"
+  fi
+  echo "[selfmod] retrying deferred merge from previous run..." >&2
+  local _retry_rc=0
+  merge_selfmod_worktree || _retry_rc=$?
+  if [[ $_retry_rc -eq 0 ]]; then
+    echo "[selfmod] deferred merge landed (nothing else to run)" >&2
+    rm -f "$_deferred_marker"
+    return 0
+  elif [[ $_retry_rc -eq 2 ]]; then
+    echo "[selfmod] merge still deferred (live loop)" >&2
+    return 2
+  else
+    echo "[selfmod] deferred merge failed (exit $_retry_rc)" >&2
+    return 3
+  fi
 }
 
 selfmod_isolation_required() {
@@ -4758,6 +4798,40 @@ print(fm.get('result_file', ''))
   fi
 
   if [[ "$CLASSIFIED_STATUS" == "all-shipped" ]]; then
+    # Before declaring nothing to do, retry any deferred merge.
+    local _pre_exit_retry_rc=0
+    _retry_deferred_merge || _pre_exit_retry_rc=$?
+    if [[ $_pre_exit_retry_rc -eq 2 ]]; then
+      # Merge still deferred (live loop).  Exit with merge-deferred, not
+      # already-shipped.
+      echo "[selfmod] merge still deferred (live loop); cannot land." >&2
+      [[ -n "$runtime_dir" ]] && _write_terminal_sentinel "merge-deferred" "$runtime_dir"
+      _write_unattended_result "merge-deferred" "$loop_started_at" 0
+      return 0
+    elif [[ $_pre_exit_retry_rc -eq 3 ]]; then
+      echo "[selfmod] deferred merge failed; ending run." >&2
+      [[ -n "$runtime_dir" ]] && _write_terminal_sentinel "selfmod_merge_failed" "$runtime_dir"
+      _write_unattended_result "selfmod_merge_failed" "$loop_started_at" 0
+      return 0
+    fi
+    # Merge landed (or nothing to retry).  Re-check: if the merge landed,
+    # there may be new runnable work.  Re-classify.
+    if [[ $_pre_exit_retry_rc -eq 0 ]]; then
+      # Re-read status after merge.
+      local _reclassified
+      _reclassified=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/loop_status.py" --json 2>/dev/null) || true
+      local _new_status
+      _new_status=$(echo "$_reclassified" | jq -r '.master_status // empty' 2>/dev/null) || true
+      local _new_queue_exit
+      _new_queue_exit=$(echo "$_reclassified" | jq -r '.queue_exit // 1' 2>/dev/null) || true
+      if [[ "$_new_queue_exit" -ne 0 ]]; then
+        # New runnable work after merge.  Do NOT exit — fall through to the
+        # main loop.
+        echo "[selfmod] deferred merge landed; new runnable work found. Continuing." >&2
+        CLASSIFIED_STATUS="ready"
+        return 0
+      fi
+    fi
     echo "All sub-plans already shipped. Nothing to do."
     # Batch-end gate: run the suite once before the master is done (SP1)
     if [[ -n "$runtime_dir" ]]; then
@@ -4785,6 +4859,20 @@ print(fm.get('result_file', ''))
     _write_unattended_result "shipped-unproven" "$loop_started_at" 0
     return 0
   elif [[ "$CLASSIFIED_STATUS" == "blocked-no-runnable" ]]; then
+    # Before declaring nothing runnable, retry any deferred merge.
+    local _pre_exit_retry_rc=0
+    _retry_deferred_merge || _pre_exit_retry_rc=$?
+    if [[ $_pre_exit_retry_rc -eq 2 ]]; then
+      echo "[selfmod] merge still deferred (live loop); cannot land." >&2
+      [[ -n "$runtime_dir" ]] && _write_terminal_sentinel "merge-deferred" "$runtime_dir"
+      _write_unattended_result "merge-deferred" "$loop_started_at" 0
+      return 0
+    elif [[ $_pre_exit_retry_rc -eq 3 ]]; then
+      echo "[selfmod] deferred merge failed; ending run." >&2
+      [[ -n "$runtime_dir" ]] && _write_terminal_sentinel "selfmod_merge_failed" "$runtime_dir"
+      _write_unattended_result "selfmod_merge_failed" "$loop_started_at" 0
+      return 0
+    fi
     local blocked_count
     blocked_count=$(echo "$BLOCKED_SUBPLANS" | wc -w | tr -d ' ')
     if [[ -n "${HELD_BY:-}" ]]; then

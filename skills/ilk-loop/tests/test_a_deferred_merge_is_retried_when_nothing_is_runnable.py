@@ -246,7 +246,6 @@ def _write_exit_sentinel(runtime_dir: Path, state: str) -> None:
 # ── AC-1: all-shipped + worktree ahead + no live loop ⇒ merge lands ─────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_deferred_merge_lands_when_nothing_runnable(tmp_path: Path) -> None:
     """AC-1: all-shipped master, worktree 2 ahead, no live loop ⇒
     the runner fast-forwards the clone and logs the success message."""
@@ -257,55 +256,38 @@ def test_deferred_merge_lands_when_nothing_runnable(tmp_path: Path) -> None:
 
     env = _sandbox_env(tmp_path)
 
-    # Install a merge shim that returns 0 (success).
-    _install_merge_shim(_EXIT_OK)
-    try:
-        result = _run_runner_func(
-            f"""
+    # Use the real selfmod_worktree.py — no shim.  The merge should land.
+    result = _run_runner_func(
+        f"""
 PROJECT_PATH='{clone}'
 SELFMOD_WORKTREE_PATH='{wt}'
 SELFMOD_ORIGINAL_PROJECT_PATH='{clone}'
 SELFMOD_ISOLATED=1
+SELFMOD_MERGE_LOCK_PATH='{tmp_path}/merge.lock'
 
-# Simulate the nothing-runnable exit path with retry.
-# The real runner calls this before the blocked-no-runnable exit.
-_selfmod_retry_before_exit() {{
-  if ! selfmod_isolation_required; then
-    echo "NOT_TOOLKIT" >&2
-    return 0
-  fi
-  if [[ ! -d "$SELFMOD_WORKTREE_PATH" ]]; then
-    echo "NO_WORKTREE" >&2
-    return 0
-  fi
-  local _deferred_marker="${{SELFMOD_WORKTREE_PATH}}/.ilk-merge-deferred"
-  # Write a deferral marker to simulate a previous deferral.
-  echo '{{}}' > "$_deferred_marker"
-  if [[ -f "$_deferred_marker" ]]; then
-    local _retry_rc=0
-    merge_selfmod_worktree || _retry_rc=$?
-    if [[ $_retry_rc -eq 0 ]]; then
-      echo "[selfmod] deferred merge landed (nothing else to run)" >&2
-      rm -f "$_deferred_marker"
-    elif [[ $_retry_rc -eq 2 ]]; then
-      echo "[selfmod] merge still deferred (live loop); continuing to work." >&2
-    else
-      echo "[selfmod] deferred merge failed (exit $_retry_rc) — ending run." >&2
-    fi
-  fi
-}}
+# Write a deferral marker to simulate a previous deferral.
+echo '{{}}' > "${{SELFMOD_WORKTREE_PATH}}/.ilk-merge-deferred"
 
-_selfmod_retry_before_exit
-echo "CLONE_HEAD_AFTER=$(git rev-parse HEAD)"
-echo "WT_HEAD=$wt_head"
+# Bypass selfmod_isolation_required — the test clone is not the toolkit.
+selfmod_isolation_required() {{ return 0; }}
+
+# Call the real _retry_deferred_merge function from the runner.
+_retry_rc=0
+_retry_deferred_merge || _retry_rc=$?
+echo "RETRY_RC=$_retry_rc"
+echo "CLONE_HEAD_AFTER=$(git -C '{clone}' rev-parse HEAD)"
 """,
-            env,
-            cwd=clone,
-        )
-    finally:
-        _remove_merge_shim()
+        env,
+        cwd=clone,
+    )
 
-    # The merge should have landed.
+    # The merge should have landed (exit 0).
+    retry_lines = [l for l in result.stdout.splitlines() if l.startswith("RETRY_RC=")]
+    assert len(retry_lines) == 1
+    assert retry_lines[0] == "RETRY_RC=0", (
+        f"Expected retry to succeed.\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    # The merge success message should be in stderr.
     assert "deferred merge landed (nothing else to run)" in result.stderr, (
         f"Expected merge success message in stderr.\nstdout: {result.stdout}\nstderr: {result.stderr}"
     )
@@ -320,7 +302,6 @@ echo "WT_HEAD=$wt_head"
 # ── AC-2: live-loop probe busy ⇒ exit merge-deferred, clone unchanged ───────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_deferred_merge_stays_deferred_with_live_loop(tmp_path: Path) -> None:
     """AC-2: all-shipped master, worktree ahead, live-loop probe busy ⇒
     exit state is merge-deferred and clone HEAD is unchanged."""
@@ -340,35 +321,17 @@ SELFMOD_WORKTREE_PATH='{wt}'
 SELFMOD_ORIGINAL_PROJECT_PATH='{clone}'
 SELFMOD_ISOLATED=1
 
-# Simulate the nothing-runnable exit path with retry that gets blocked.
-_selfmod_retry_before_exit() {{
-  if ! selfmod_isolation_required; then
-    return 0
-  fi
-  if [[ ! -d "$SELFMOD_WORKTREE_PATH" ]]; then
-    return 0
-  fi
-  local _deferred_marker="${{SELFMOD_WORKTREE_PATH}}/.ilk-merge-deferred"
-  echo '{{}}' > "$_deferred_marker"
-  if [[ -f "$_deferred_marker" ]]; then
-    local _retry_rc=0
-    merge_selfmod_worktree || _retry_rc=$?
-    if [[ $_retry_rc -eq 0 ]]; then
-      echo "[selfmod] deferred merge landed (nothing else to run)" >&2
-      rm -f "$_deferred_marker"
-      echo "RESULT=landed"
-    elif [[ $_retry_rc -eq 2 ]]; then
-      echo "[selfmod] merge still deferred (live loop)" >&2
-      echo "RESULT=merge-deferred"
-    else
-      echo "[selfmod] deferred merge failed (exit $_retry_rc)" >&2
-      echo "RESULT=failed"
-    fi
-  fi
-}}
+# Write a deferral marker to simulate a previous deferral.
+echo '{{}}' > "${{SELFMOD_WORKTREE_PATH}}/.ilk-merge-deferred"
 
-_selfmod_retry_before_exit
-echo "CLONE_HEAD_AFTER=$(git rev-parse HEAD)"
+# Bypass selfmod_isolation_required — the test clone is not the toolkit.
+selfmod_isolation_required() {{ return 0; }}
+
+# Call the real _retry_deferred_merge function from the runner.
+_retry_rc=0
+_retry_deferred_merge || _retry_rc=$?
+echo "RETRY_RC=$_retry_rc"
+echo "CLONE_HEAD_AFTER=$(git -C '{clone}' rev-parse HEAD)"
 """,
             env,
             cwd=clone,
@@ -376,11 +339,11 @@ echo "CLONE_HEAD_AFTER=$(git rev-parse HEAD)"
     finally:
         _remove_merge_shim()
 
-    # The merge should still be deferred.
-    result_lines = [l for l in result.stdout.splitlines() if l.startswith("RESULT=")]
-    assert len(result_lines) == 1
-    assert result_lines[0] == "RESULT=merge-deferred", (
-        f"Expected merge-deferred, got: {result_lines[0]}\nstderr: {result.stderr}"
+    # The merge should still be deferred (exit 2).
+    retry_lines = [l for l in result.stdout.splitlines() if l.startswith("RETRY_RC=")]
+    assert len(retry_lines) == 1
+    assert retry_lines[0] == "RETRY_RC=2", (
+        f"Expected retry to be deferred.\nstdout: {result.stdout}\nstderr: {result.stderr}"
     )
     # The clone HEAD should be unchanged.
     clone_head_after = _head_sha(clone)
