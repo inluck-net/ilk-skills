@@ -2414,7 +2414,9 @@ attempt_gate_first_fast_path() {
       ship_script="${_SKILL_ROOT}/ilk-loop/scripts/ship_transition.py"
       if [[ -f "$ship_script" ]]; then
         local ship_out=""
-        ship_out=$(python3 "$ship_script" --ship "$slug" \
+        # Unset ILK_ITERATION_SUBPLAN so ship_transition.py knows this is
+        # the driver shipping a batch_verification sub-plan, not a worker.
+        ship_out=$(unset ILK_ITERATION_SUBPLAN; python3 "$ship_script" --ship "$slug" \
           --plans-dir "$plans_dir" --repo "$repo" 2>&1)
         if [[ $? -eq 0 ]]; then
           echo "[gate-first] $slug: final step discharged — shipped by the driver"
