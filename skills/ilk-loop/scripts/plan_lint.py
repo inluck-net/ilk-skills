@@ -2174,41 +2174,37 @@ def lint_shared_module_gate(text: str, slug: str) -> list[str]:
         if not module_test and not callers_test:
             continue
 
-        # Check if ANY gate covers both.
-        any_covers = any(
-            _gate_covers_module_and_callers(
-                cmd, module_test, callers_test, project_root,
-            )
-            for cmd in commands
-        )
-        if any_covers:
-            continue  # At least one gate covers module + callers — compliant.
-
-        # AC-6: finding text names the importing files and warns about baseline.
-        importer_names = ", ".join(sorted(set(importers)))
-        # Name the specific test files the gate misses (import-graph walk).
+        # New rule: check the UNION of all gates, not each gate individually.
+        # Compliant when every resolved caller test is in the union, and,
+        # if test_<module>.py exists, it is in the union too.
         all_gate_paths: set[str] = set()
         for cmd in commands:
             all_gate_paths |= _resolve_test_paths(
                 _extract_test_file_tokens(cmd), project_root,
             )
-        missed_tests = sorted(callers_test - all_gate_paths)
-        missed_str = ""
-        if missed_tests:
-            # Show relative paths for readability.
-            root_str = str(project_root)
-            rel_missed = [
-                t[len(root_str):].lstrip("/") if t.startswith(root_str) else t
-                for t in missed_tests
-            ]
-            missed_str = f"  The gate misses: {', '.join(rel_missed)}."
+
+        # Collect what's actually missing from the union.
+        missing_callers = sorted(callers_test - all_gate_paths) if callers_test else []
+        missing_module = sorted(module_test - all_gate_paths) if module_test else []
+        all_missing = missing_callers + missing_module
+
+        if not all_missing:
+            continue  # Union covers everything — compliant.
+
+        # Emit only when something is actually missing, and name it.
+        importer_names = ", ".join(sorted(set(importers)))
+        root_str = str(project_root)
+        rel_missing = [
+            t[len(root_str):].lstrip("/") if t.startswith(root_str) else t
+            for t in all_missing
+        ]
+        missing_str = f"  The gate misses: {', '.join(rel_missing)}."
         findings.append(
             f"{slug}: scope_path '{sp}' changes module '{module}' which is "
-            f"imported by: {importer_names}.  Every gate in this sub-plan "
-            f"runs only the module's own tests — the callers' integration "
-            f"is never exercised.{missed_str}  Add a gate that runs the "
-            f"callers' tests (or the full suite).  Note: widening the gate "
-            f"to a directory or whole suite will also require a "
+            f"imported by: {importer_names}.  The union of all gates does "
+            f"not cover every required test.{missing_str}  Add a gate that "
+            f"runs the missing tests (or the full suite).  Note: widening "
+            f"the gate to a directory or whole suite will also require a "
             f"'baseline-green on <platform>' note "
             f"(see lint_wholesuite_gate_baseline)."
         )
@@ -2303,18 +2299,20 @@ def lint_gate_misses_a_test_that_pins_its_file(text: str, slug: str) -> list[str
     if not project_root or not project_root.is_dir():
         return findings  # No project root — nothing to check.
 
-    # Collect non-Python, non-docs, non-test, non-glob concrete files.
+    # Collect data-file candidates from scope_paths.
+    # Only data-file extensions are checked — code (.py), shell (.sh),
+    # and markdown (.md) are referenced by tests far too widely to gate on.
+    # Judgment call: wrong if a real red escapes through a pinned .sh; the
+    # batch verification's full scope is the backstop there.
+    _DATA_FILE_EXTENSIONS = frozenset({
+        ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg",
+        ".csv", ".tmpl", ".template", ".txt", ".env.example",
+    })
     data_files: list[str] = []
     for sp in scope_paths:
         norm = sp.replace("\\", "/")
         # Skip globs.
         if "*" in norm or "?" in norm:
-            continue
-        # Skip Python files (covered by shared-module lint).
-        if norm.endswith(".py"):
-            continue
-        # Skip docs.
-        if norm.startswith("docs/") or norm == "docs":
             continue
         # Skip test files.
         if _is_test_path(norm):
@@ -2322,10 +2320,21 @@ def lint_gate_misses_a_test_that_pins_its_file(text: str, slug: str) -> list[str
         # Must be a concrete file (not a directory).
         if norm.endswith("/"):
             continue
+        basename = norm.rsplit("/", 1)[-1] if "/" in norm else norm
+        # Allow: explicit data-file extension, or basename containing .template.
+        ext = ""
+        if "." in basename:
+            ext = "." + basename.rsplit(".", 1)[-1]
+        if ext not in _DATA_FILE_EXTENSIONS and ".template." not in basename:
+            continue
         data_files.append(sp)
 
     if not data_files:
         return findings  # No data files to check.
+
+    # A batch_verification: true sub-plan runs the full suite — compliant.
+    if _has_batch_verification_marker(text):
+        return findings
 
     # Extract ALL local_checks commands.
     commands = _extract_all_local_checks_commands(text)

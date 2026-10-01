@@ -106,7 +106,6 @@ def _run_shared_module_lint(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac1_shell_file_pinned_by_test_not_in_gate(tmp_path: Path) -> None:
     """A .sh scope_paths entry pinned by a test outside the gates ⇒ no finding."""
     proj = tmp_path / "proj"
@@ -161,7 +160,6 @@ def test_ac2_markdown_entry_no_finding(tmp_path: Path) -> None:
     assert findings == [], f"Expected no finding for .md file, got {findings}"
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac3_batch_verification_whole_suite_gate(tmp_path: Path) -> None:
     """A batch_verification: true sub-plan with install.json pinned outside gates ⇒ no finding."""
     proj = tmp_path / "proj"
@@ -235,7 +233,6 @@ def test_ac4_data_file_pinned_by_test_not_in_gate(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac6_shared_module_caller_tests_covered_across_gates(tmp_path: Path) -> None:
     """No shared-module finding when caller tests are in the union of all gates.
 
@@ -329,7 +326,6 @@ def test_ac7_shared_module_caller_test_missing_from_all_gates(tmp_path: Path) ->
     assert "test_reap.py" in findings[0]
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac8_shared_module_own_test_exists_not_in_gate(tmp_path: Path) -> None:
     """One shared-module finding when module test exists but no gate runs it.
 
