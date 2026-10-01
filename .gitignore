@@ -32,10 +32,10 @@ skills/ilk-launcher/projects.json
 .ilk-watchdog/
 skills/ilk-loop/logs/
 
-# Per-checkout runtime artifact written by the loop runner
-# (run_ilk_loop_claude.{sh,ps1}) — records this clone's remote-type
-# (personal|shared) for commit-trailer policy. Must never be committed.
+# Per-checkout runtime artifacts written by the loop runner
+# (run_ilk_loop_claude.{sh,ps1}). Must never be committed.
 .ilk-remote-type
+.ilk-merge-deferred
 
 # Per-checkout ilk-lark-tickets marker — names which Lark tracker this
 # clone talks to. Not a credential, but it should not travel with a

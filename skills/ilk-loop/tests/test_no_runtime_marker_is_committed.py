@@ -41,18 +41,19 @@ def _scan_runner_for_ilk_writes() -> list[str]:
     """Derive root-level .ilk-* filenames the runner writes.
 
     Scans run_ilk_loop_claude.sh for paths formed as
-    ``}/.ilk-<name>`` used with ``>``, ``>>``, ``tee``, ``mv``,
-    or ``printf … >``.  Returns sorted, deduped basenames.
+    ``${PROJECT_PATH}/.ilk-<name>`` or
+    ``${SELFMOD_WORKTREE_PATH}/.ilk-<name>`` used with ``>``, ``>>``,
+    ``tee``, ``mv``, or ``printf … >``.  Returns sorted, deduped basenames.
     """
     text = _RUNNER.read_text(encoding="utf-8")
-    # Match .ilk-<name> at a path boundary (after }/ or /).
-    # The name must be lowercase-alpha or hyphen, ending at a word boundary.
-    pattern = re.compile(r"\}/\.ilk-([a-z][a-z0-9-]*)")
+    # Only match writes to the project root or selfmod worktree root,
+    # not to ~/.ilk-data or other internal directories.
+    pattern = re.compile(
+        r"\$\{(PROJECT_PATH|SELFMOD_WORKTREE_PATH)(:-?)?\}/\.ilk-([a-z][a-z0-9-]*)"
+    )
     found: set[str] = set()
     for m in pattern.finditer(text):
-        name = f".ilk-{m.group(1)}"
-        # Only root-level markers (no slash after the name).
-        # The pattern already captures up to the next non-lowercase char.
+        name = f".ilk-{m.group(3)}"
         found.add(name)
     return sorted(found)
 
@@ -60,7 +61,6 @@ def _scan_runner_for_ilk_writes() -> list[str]:
 # ── AC-1: .ilk-merge-deferred is untracked and ignored ──────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_merge_deferred_not_tracked() -> None:
     """AC-1: git ls-files .ilk-merge-deferred is empty."""
     result = subprocess.run(
@@ -75,7 +75,6 @@ def test_merge_deferred_not_tracked() -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_merge_deferred_ignored() -> None:
     """AC-1: git check-ignore matches .ilk-merge-deferred."""
     result = subprocess.run(
@@ -91,7 +90,6 @@ def test_merge_deferred_ignored() -> None:
 # ── AC-2: meta-test — every runner-written .ilk-* is ignored and untracked ──
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_runner_writes_are_not_tracked() -> None:
     """AC-2: every .ilk-* file the runner writes is untracked."""
     scanned = _scan_runner_for_ilk_writes()
@@ -118,7 +116,6 @@ def test_runner_writes_are_not_tracked() -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_runner_writes_are_ignored() -> None:
     """AC-2: every .ilk-* file the runner writes is gitignored."""
     scanned = _scan_runner_for_ilk_writes()
