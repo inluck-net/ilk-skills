@@ -500,16 +500,14 @@ setup_selfmod_isolation() {
   # The marker is written by the merge block when exit 2 (live loop) defers.
   local _retry_rc=0
   _retry_deferred_merge "$_clone_project_path" || _retry_rc=$?
-  if [[ $_retry_rc -eq 0 ]]; then
-    # Merged (or nothing to retry).  If the merge landed,
-    # merge_selfmod_worktree restored PROJECT_PATH to the clone and removed
-    # the worktree.  Re-enter isolation, or this iteration's worker would
-    # be dispatched into the LIVE clone.
-    local _deferred_marker="${SELFMOD_WORKTREE_PATH}/.ilk-merge-deferred"
-    if [[ ! -f "$_deferred_marker" ]]; then
-      # Marker was removed — merge landed.  Re-enter isolation.
-      create_selfmod_worktree
-    fi
+  if [[ $_retry_rc -eq 4 ]]; then
+    # Merge landed.  merge_selfmod_worktree restored PROJECT_PATH to the
+    # clone and removed the worktree.  Re-enter isolation, or this
+    # iteration's worker would be dispatched into the LIVE clone.
+    create_selfmod_worktree
+  elif [[ $_retry_rc -eq 0 ]]; then
+    # Nothing to retry.  No action needed.
+    :
   elif [[ $_retry_rc -eq 2 ]]; then
     echo "[selfmod] merge still deferred (live loop); continuing to work." >&2
   else
@@ -553,7 +551,7 @@ _retry_deferred_merge() {
   if [[ $_retry_rc -eq 0 ]]; then
     echo "[selfmod] deferred merge landed (nothing else to run)" >&2
     rm -f "$_deferred_marker"
-    return 0
+    return 4  # distinct from 0 (nothing to retry): a merge actually landed
   elif [[ $_retry_rc -eq 2 ]]; then
     echo "[selfmod] merge still deferred (live loop)" >&2
     return 2
@@ -4871,7 +4869,7 @@ print(fm.get('result_file', ''))
     fi
     # Merge landed (or nothing to retry).  Re-check: if the merge landed,
     # there may be new runnable work.  Re-classify.
-    if [[ $_pre_exit_retry_rc -eq 0 ]]; then
+    if [[ $_pre_exit_retry_rc -eq 4 ]]; then
       # Re-read status after merge.
       local _reclassified
       _reclassified=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/loop_status.py" --json 2>/dev/null) || true
@@ -4927,6 +4925,13 @@ print(fm.get('result_file', ''))
       [[ -n "$runtime_dir" ]] && _write_terminal_sentinel "selfmod_merge_failed" "$runtime_dir"
       _write_unattended_result "selfmod_merge_failed" "$loop_started_at" 0
       return 0
+    elif [[ $_pre_exit_retry_rc -eq 4 ]]; then
+      # Merge landed — re-classify to check for new runnable work.
+      classify_loop_status
+      if [[ "$CLASSIFIED_STATUS" != "blocked-no-runnable" ]]; then
+        echo "[selfmod] deferred merge landed; new runnable work found. Continuing." >&2
+        return 0
+      fi
     fi
     local blocked_count
     blocked_count=$(echo "$BLOCKED_SUBPLANS" | wc -w | tr -d ' ')

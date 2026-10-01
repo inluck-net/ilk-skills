@@ -281,10 +281,11 @@ echo "CLONE_HEAD_AFTER=$(git -C '{clone}' rev-parse HEAD)"
         cwd=clone,
     )
 
-    # The merge should have landed (exit 0).
+    # The merge should have landed (exit 4 — distinct from 0 which means
+    # "nothing to retry").
     retry_lines = [l for l in result.stdout.splitlines() if l.startswith("RETRY_RC=")]
     assert len(retry_lines) == 1
-    assert retry_lines[0] == "RETRY_RC=0", (
+    assert retry_lines[0] == "RETRY_RC=4", (
         f"Expected retry to succeed.\nstdout: {result.stdout}\nstderr: {result.stderr}"
     )
     # The merge success message should be in stderr.
