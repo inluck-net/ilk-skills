@@ -233,7 +233,6 @@ class TestFinalStepGateHonoursAttribution:
     """AC-4: check_final_step_gate accepts a row whose attribution.verdict
     is inherited or pre-existing, as evaluate_ship does."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_pre_existing_accepted(self, tmp_path: Path) -> None:
         """outcome=fail, attribution pre-existing ⇒ True."""
         repo = _make_repo(tmp_path)
@@ -256,7 +255,6 @@ class TestFinalStepGateHonoursAttribution:
             [row], slug, final_step=1, last_step_sha=head_sha, cwd=repo)
         assert result is True
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_inherited_accepted(self, tmp_path: Path) -> None:
         """outcome=fail, attribution inherited ⇒ True."""
         repo = _make_repo(tmp_path)

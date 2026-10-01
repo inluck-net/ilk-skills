@@ -538,6 +538,23 @@ def check_final_step_gate(
             continue
         if row.get("step") != final_step:
             continue
+
+        # Check for at-base attribution before evaluating the gate outcome.
+        # When the gate result carries an attribution showing the red was
+        # inherited or pre-existing, the ship is honest — the red was not
+        # caused by this iteration.
+        attribution = row.get("attribution")
+        if attribution and isinstance(attribution, dict):
+            verdict = attribution.get("verdict", "")
+            if verdict in ("inherited", "pre-existing"):
+                # Verify all nodes share the same excused verdict
+                nodes = attribution.get("nodes", [])
+                if nodes and all(
+                    n.get("verdict") in ("inherited", "pre-existing")
+                    for n in nodes
+                ):
+                    return True
+
         if row.get("outcome") != "pass":
             continue
         head_sha = row.get("head_sha")
