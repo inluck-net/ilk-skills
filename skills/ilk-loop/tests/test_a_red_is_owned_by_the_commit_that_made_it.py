@@ -197,14 +197,49 @@ class TestOwnerSlugNotInMaster:
     """AC-4: owner_slug is not in the active master ⇒ today's behaviour,
     and the log line names the reason."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_outside_master_behaviour(self, tmp_path: Path) -> None:
-        """When owner_slug is outside the active master, fail closed."""
-        # This is a placeholder test structure; actual implementation
-        # depends on step 2's integration with ship_integrity
+        """When owner_slug is outside the active master, fail closed.
+
+        ``attribute_red`` returns ``owned`` with ``owner_slug`` set to the
+        slug from the commit trailer.  The runner's active-master check
+        (line 3265-3269 of run_ilk_loop_claude.sh) then logs
+        "not in the active master — verdict … recorded, not enforced"
+        and skips enforcement.  This test verifies the attribution half:
+        ``owner_slug`` is correctly extracted so the runner can act on it.
+        """
         repo = _make_repo(tmp_path)
-        (repo / "f.txt").write_text("1\n")
-        _git(repo, "add", "f.txt")
-        _git(repo, "commit", "-q", "-m", "base")
-        # TODO: once implementation is done, verify fail-closed behaviour
-        pytest.xfail("implementation pending")
+
+        # Create a test file that passes at base.
+        (repo / "test_stuff.py").write_text("def test_ok(): pass\n")
+        _git(repo, "add", "test_stuff.py")
+        _git(repo, "commit", "-q", "-m", "add test")
+
+        base_sha = _git(repo, "rev-parse", "HEAD")
+
+        # Break the test with a commit owned by "outside-slug".
+        (repo / "test_stuff.py").write_text("def test_ok(): assert False\n")
+        _git(repo, "add", "test_stuff.py")
+        _git(repo, "commit", "-q", "-m",
+             "feat(runner): outside change [plan:outside-slug#step-1]")
+
+        head_sha = _git(repo, "rev-parse", "HEAD")
+
+        # Run attribution.
+        result = red_owner.attribute_red(
+            repo,
+            iteration_base=base_sha,
+            batch_base=None,
+            head=head_sha,
+            cmd="python3 -m pytest test_stuff.py -q",
+            stdout_tail="FAILED test_stuff.py::test_ok",
+            budget_s=60,
+        )
+
+        # The verdict is owned — the iteration broke it.
+        assert result["verdict"] == "owned"
+        # owner_slug is extracted from the trailer.
+        assert result["owner_slug"] == "outside-slug"
+        assert result["owner_sha"] is not None
+        # The owner_slug differs from any gate slug in the active master,
+        # so the runner's active-master check would log
+        # "not in the active master" and skip enforcement (fail closed).
