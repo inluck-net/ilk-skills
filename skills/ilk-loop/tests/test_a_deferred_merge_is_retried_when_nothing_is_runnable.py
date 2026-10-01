@@ -422,7 +422,6 @@ fi
 # ── AC-4: scheduler dispatches a pending merge ──────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_scheduler_scan_handles_merge_deferred() -> None:
     """AC-4: scheduler_scan.py must reference merge-deferred / merge-pending
     so a project whose last exit is merge-deferred with unmerged work is
@@ -435,7 +434,6 @@ def test_scheduler_scan_handles_merge_deferred() -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_scheduler_dispatches_when_merge_pending(tmp_path: Path) -> None:
     """AC-4: last exit merge-deferred + unmerged work ⇒
     scheduler_scan marks the project dispatchable."""
@@ -448,11 +446,14 @@ def test_scheduler_dispatches_when_merge_pending(tmp_path: Path) -> None:
     _write_exit_sentinel(runtime_dir, "merge-deferred")
 
     # Create a git repo with a worktree that has unmerged work.
+    # The worktree must be at the path the scheduler checks:
+    # project_dir / "runtime" / "launcher" / "worktrees" / "selfmod-batch"
     _git(project_dir, "init", "-q")
     (project_dir / "README.md").write_text("seed\n", encoding="utf-8")
     _git(project_dir, "add", "README.md")
     _git(project_dir, "commit", "-q", "-m", "seed")
-    wt = tmp_path / "selfmod-worktree"
+    wt = project_dir / "runtime" / "launcher" / "worktrees" / "selfmod-batch"
+    wt.parent.mkdir(parents=True, exist_ok=True)
     _git(project_dir, "worktree", "add", "-q", str(wt), "-b", "selfmod")
     (wt / "work.txt").write_text("work\n", encoding="utf-8")
     _git(wt, "add", "work.txt")
@@ -470,7 +471,7 @@ def test_scheduler_dispatches_when_merge_pending(tmp_path: Path) -> None:
     projects = scheduler_scan.scan_projects()
 
     # The project should be dispatchable (merge-pending reason).
-    dispatched = [p for p in projects if p.get("project") == str(project_dir)]
+    dispatched = [p for p in projects if p.get("key") == project_dir.name]
     assert len(dispatched) == 1, (
         f"Expected 1 dispatched project, got {len(dispatched)}: {projects}"
     )

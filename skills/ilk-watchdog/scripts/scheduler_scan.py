@@ -79,6 +79,7 @@ if _ILK_LOOP_SCRIPTS.is_dir():
     sys.path.insert(0, str(_ILK_LOOP_SCRIPTS))
 
 from ilk_paths import ilk_data_root, project_key  # noqa: E402
+from selfmod_worktree import unmerged_worktree_commits  # noqa: E402
 from plan_status import (  # noqa: E402
     extract_subplan_files,
     is_master_all_shipped,
@@ -484,6 +485,40 @@ def _scan_one_project(project_dir: Path) -> dict | None:
     if held is not None:
         print(f"skip-held: {project_dir.name} ({held['master']})", file=sys.stderr)
         return None
+
+    # --- merge-deferred: dispatch to retry a stranded merge ---
+    # A project whose last exit was merge-deferred and whose selfmod worktree
+    # still holds unmerged work needs a run to retry the merge.  The normal
+    # dispatch path (active/queued masters) won't pick it up because the
+    # master may be all-shipped or blocked.
+    try:
+        _exit_sentinel = json.loads(
+            (project_dir / "runtime" / "launcher" / "last-exit.json")
+            .read_text(encoding="utf-8-sig")
+        )
+        if _exit_sentinel.get("state") == "merge-deferred":
+            _wt_path = (
+                project_dir / "runtime" / "launcher" / "worktrees" / "selfmod-batch"
+            )
+            if _wt_path.is_dir():
+                try:
+                    _unmerged = unmerged_worktree_commits(_wt_path)
+                except Exception:
+                    _unmerged = []
+                if _unmerged:
+                    return {
+                        "key": project_dir.name,
+                        "path": str(project_dir),
+                        "repo_path": resolve_repo_path(
+                            project_dir, project_dir.name
+                        ),
+                        "oldest_queued_ts": datetime.min.isoformat(),
+                        "has_active_master": False,
+                        "active_master_name": None,
+                        "reason": "merge-pending",
+                    }
+    except (OSError, ValueError):
+        pass  # no/unreadable sentinel: not merge-pending
 
     # Reconcile pass: auto-flip any all-shipped master to status: shipped,
     # and keep registry rows honest (a stale row is what an external
