@@ -34,18 +34,21 @@ import tempfile
 import time
 from pathlib import Path
 
+# Sibling module — bounded subprocess execution with process-group cleanup.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bounded_run import run as _bounded_run  # noqa: E402
+
 
 def _run_test(repo: Path, cmd: str, nodes: list[str]) -> bool:
     """Run the test command in ``repo``.  Returns True if green."""
     full_cmd = cmd
     if nodes:
         full_cmd = cmd + " " + " ".join(nodes)
-    r = subprocess.run(
+    rc, _stdout, _stderr, _timed_out = _bounded_run(
         ["bash", "-c", full_cmd],
-        cwd=repo, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=300,
+        cwd=str(repo), timeout=300,
     )
-    return r.returncode == 0
+    return rc == 0
 
 
 def _commit_subject(repo: Path, sha: str) -> str:

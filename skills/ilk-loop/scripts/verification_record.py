@@ -33,6 +33,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Sibling module — bounded subprocess execution with process-group cleanup.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bounded_run import run as _bounded_run  # noqa: E402
+
 
 def _git(project: Path, *args: str) -> str | None:
     """Run a read-only git command, returning stripped stdout or None."""
@@ -625,25 +629,23 @@ def run_suite(project: Path, invocation: str, timeout: int,
     applied is a label, not a saving, and it made the record's own
     `selection_size` a claim about something that never happened.
     """
-    import subprocess
     import time
     cmd = invocation
     if selection:
         cmd = f"{invocation} {' '.join(selection)}"
     t0 = time.monotonic()
-    try:
-        r = subprocess.run(cmd, shell=True, cwd=project, timeout=timeout,
-                           capture_output=True, text=True, encoding="utf-8",
-                           errors="replace")
-    except subprocess.TimeoutExpired:
+    rc, stdout, stderr, timed_out = _bounded_run(
+        cmd, shell=True, cwd=str(project), timeout=timeout,
+    )
+    if timed_out:
         raise TimeoutError(
             f"suite exceeded {timeout}s; the record keeps `suite_failed: "
             f"unmeasured` rather than a count nothing measured"
         )
     elapsed = round(time.monotonic() - t0)
-    raw_output = (r.stdout or "") + (r.stderr or "")
+    raw_output = (stdout or "") + (stderr or "")
     return {**_parse_for(invocation)(raw_output),
-            "exit_code": r.returncode,
+            "exit_code": rc,
             "suite_duration_sec": elapsed,
             "suite_output_text": raw_output}
 
@@ -743,10 +745,14 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
         # under xdist, not faster, and the selection is tiny by construction.
         runner = re.sub(r"\s-n\s+\S+|\s--dist\s+\S+", "", invocation)
         for nid in node_ids:
-            r = subprocess.run(f"{runner} {nid}", shell=True, cwd=wt,
-                               capture_output=True, text=True,
-                               encoding="utf-8", errors="replace", timeout=timeout)
-            blob = (r.stdout or "") + (r.stderr or "")
+            rc, stdout, stderr, timed_out = _bounded_run(
+                f"{runner} {nid}", shell=True, cwd=str(wt), timeout=timeout,
+            )
+            if timed_out:
+                # A timed-out at-base run is treated as a failure (not absent).
+                verdicts[nid] = "failed"
+                continue
+            blob = (stdout or "") + (stderr or "")
             # Distinguish "this test did not exist at base" from "this test
             # exists and its module fails to import". Both produce "no tests
             # ran"; only the first is absent.
@@ -770,15 +776,15 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
                 # worktree AT base is the ground truth: a file that is not
                 # there did not exist at base. Node ids are file paths for
                 # vitest (see parse_vitest_output), so this is exact.
-                if r.returncode == 0:
+                if rc == 0:
                     verdicts[nid] = "passed"
                 elif not (wt / nid).exists():
                     verdicts[nid] = "absent-at-base"
                 else:
                     verdicts[nid] = "failed"
-            elif r.returncode == 4 or "error: not found:" in blob.lower():
+            elif rc == 4 or "error: not found:" in blob.lower():
                 verdicts[nid] = "absent-at-base"
-            elif r.returncode == 0:
+            elif rc == 0:
                 verdicts[nid] = "passed"
             else:
                 verdicts[nid] = "failed"

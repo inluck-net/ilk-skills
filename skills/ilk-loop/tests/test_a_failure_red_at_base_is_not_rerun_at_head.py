@@ -39,8 +39,9 @@ class MockCompletedProcess:
         self.stderr = stderr
 
 
-def _make_mock_subprocess(base_sha: str) -> tuple[MagicMock, list]:
-    """Create a mock subprocess.run and a list of (cmd, nid) for head reruns.
+def _make_mock_subprocess(base_sha: str) -> tuple[MagicMock, MagicMock, list]:
+    """Create a mock subprocess.run, a mock _bounded_run, and a list of
+    (cmd, nid) for head reruns.
 
     At-base per-id pytest calls (cwd contains "ilk-at-base-"):
       - RED_AT_BASE_ID: exit 1 + FAILED line  → "failed"
@@ -82,8 +83,14 @@ def _make_mock_subprocess(base_sha: str) -> tuple[MagicMock, list]:
                 return MockCompletedProcess(0, "", "")
         return MockCompletedProcess(0, "", "")
 
-    mock = MagicMock(side_effect=mock_run)
-    return mock, head_rerun_ids
+    def mock_bounded_run(cmd, *args, **kwargs):
+        """Mock _bounded_run: delegate to mock_run, return tuple."""
+        result = mock_run(cmd, *args, **kwargs)
+        return result.returncode, result.stdout, result.stderr, False
+
+    mock_subprocess = MagicMock(side_effect=mock_run)
+    mock_bounded = MagicMock(side_effect=mock_bounded_run)
+    return mock_subprocess, mock_bounded, head_rerun_ids
 
 
 def _init_repo(tmp_path: Path, name: str = "repo") -> Path:
@@ -107,10 +114,11 @@ def test_red_at_base_ids_excluded_from_head_reruns(tmp_path: Path) -> None:
     vdir = tmp_path / "verification"
     vdir.mkdir()
 
-    mock, head_rerun_ids = _make_mock_subprocess(BASE_SHA)
+    mock_subprocess, mock_bounded, head_rerun_ids = _make_mock_subprocess(BASE_SHA)
 
     with pytest.MonkeyPatch().context() as mp:
-        mp.setattr(vr.subprocess, "run", mock)
+        mp.setattr(vr.subprocess, "run", mock_subprocess)
+        mp.setattr(vr, "_bounded_run", mock_bounded)
         mp.setattr(vr, "_resolve_project_verification_dir",
                    lambda p: vdir)
 
@@ -194,10 +202,11 @@ def test_at_base_cache_reuses_verdicts(tmp_path: Path) -> None:
     vdir = tmp_path / "verification"
     vdir.mkdir()
 
-    mock, _ = _make_mock_subprocess(BASE_SHA)
+    mock_subprocess, mock_bounded, _ = _make_mock_subprocess(BASE_SHA)
 
     with pytest.MonkeyPatch().context() as mp:
-        mp.setattr(vr.subprocess, "run", mock)
+        mp.setattr(vr.subprocess, "run", mock_subprocess)
+        mp.setattr(vr, "_bounded_run", mock_bounded)
         mp.setattr(vr, "_resolve_project_verification_dir",
                    lambda p: vdir)
 
@@ -207,15 +216,15 @@ def test_at_base_cache_reuses_verdicts(tmp_path: Path) -> None:
             repo, BASE_SHA, list(NIDS), invocation,
             timeout=600, baseline_red=[], registry_slugs=None,
         )
-        first_count = mock.call_count
+        first_count = mock_bounded.call_count
 
         # Second call: should read from cache.
-        mock.reset_mock()
+        mock_bounded.reset_mock()
         vr.run_at_base(
             repo, BASE_SHA, list(NIDS), invocation,
             timeout=600, baseline_red=[], registry_slugs=None,
         )
-        second_count = mock.call_count
+        second_count = mock_bounded.call_count
 
         assert second_count < first_count, (
             f"second call should read from cache; "
@@ -234,10 +243,11 @@ def test_passed_and_absent_still_get_head_reruns(tmp_path: Path) -> None:
     vdir = tmp_path / "verification"
     vdir.mkdir()
 
-    mock, head_rerun_ids = _make_mock_subprocess(BASE_SHA)
+    mock_subprocess, mock_bounded, head_rerun_ids = _make_mock_subprocess(BASE_SHA)
 
     with pytest.MonkeyPatch().context() as mp:
-        mp.setattr(vr.subprocess, "run", mock)
+        mp.setattr(vr.subprocess, "run", mock_subprocess)
+        mp.setattr(vr, "_bounded_run", mock_bounded)
         mp.setattr(vr, "_resolve_project_verification_dir",
                    lambda p: vdir)
 
