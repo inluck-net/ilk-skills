@@ -807,6 +807,29 @@ lease below exists, the RSI host is chad-mbp (D5).
   runs in an isolated sandbox (worktree + isolated environment) that
   doesn't affect the stable instance. See "Target architecture".
 
+- **D7 (ilk-skills-e5, under Chad's full authorization 2026-10-02; agreed
+  with gh-resolve-b4).** The open questions below, decided:
+  1. **L2 placement:** a fresh, stateless session per block, with all
+     state in files. Two-strike history and "contained twice" are read
+     from the audit trail.
+  2. **Cross-project:** events only. A request (bounce, merge window,
+     dispatch hold) needs an ack from the other project's driver, and a
+     lease where it holds the other project's dispatch.
+  3. **Backlog 19 / `ack-and-relaunch`:** yes, with two strikes. "The
+     failing set changed" counts as progress.
+  4. **Multi-project:** one engine plus adapters, with gh-resolve as
+     adapter 2 before L2. L2 runs on every host that runs loops. It is
+     propose-only (v0) for gh-resolve's resolver runs, and acting comes
+     later.
+- **D8 (same basis).** The target architecture (R1) is the first batch
+  after v0.9.138 (MASTER-2026-10-02d), released as v0.9.139.
+  - Both hosts migrate to release dirs after v0.9.139 is tagged: chad-mbp
+    first, rezmac after one clean dispatch cycle.
+  - v0.9.138 deploys the old way: a checkout plus a bounce.
+  - Judgment call: wrong if v0.9.138's deploy hits a merge-hold or yield
+    stall that R1 would have avoided. Then move R1 ahead of the next
+    release, not v0.9.138.
+
 ## Open questions for Chad
 
 1. **Where L2 runs:** a detached planner-home session per block
