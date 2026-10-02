@@ -17,6 +17,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STOP_SCRIPT="${SCRIPT_DIR}/../scripts/stop.sh"
 SKILL_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+SPAWN_DETACHED="${SCRIPT_DIR}/_spawn_detached.py"
 
 # Sandbox: pin HOME + ILK_DATA_HOME to a temp root (AC-1..AC-3).
 source "${SKILL_ROOT}/ilk-loop/scripts/_ilk_test_sandbox.sh"
@@ -24,6 +25,10 @@ source "${SKILL_ROOT}/ilk-loop/scripts/_ilk_test_sandbox.sh"
 PASS=0
 FAIL=0
 TESTS=()
+
+# Red-first gate: set to 1 to run the AC-1 bystander tests (expected to fail
+# until step 1 fixes stop.sh's orphan scan).  Default 0 keeps the suite green.
+EXPECT_RED="${EXPECT_RED:-0}"
 
 # Gate: removed in step 2 — stop.sh now verifies the tree is gone.
 
@@ -423,6 +428,170 @@ fi
 # Clean up
 kill "$SCHEDULER_PID" 2>/dev/null || true
 wait "$SCHEDULER_PID" 2>/dev/null || true
+
+# =============================================================================
+# Test 7: bystander with full path in argv (EXPECT_RED=1) — AC-1
+# =============================================================================
+#
+# A scheduler whose argv carries the FULL project path (not just the run_id)
+# must survive.  Today (pre-fix) the grep at stop.sh:201 matches
+# `$run_id|$project_path`, so this bystander is killed.
+
+echo ""
+echo "Test 7: bystander with full path in argv survives (EXPECT_RED=$EXPECT_RED)"
+
+if [[ "$EXPECT_RED" -eq 1 ]]; then
+  # Fresh run.lock
+  RUN_LOCK_T7="${LAUNCHER_DIR}/run.lock"
+  rm -f "$RUN_LOCK_T7"
+  touch "$RUN_LOCK_T7"
+
+  # Runner for this project
+  RUNNER_T7_PID=""
+  bash -c '
+    exec 3<"'${RUN_LOCK_T7}'"
+    exec -a "run_ilk_loop_claude 20260812-150000 ${PROJECT_DIR}" sleep 600
+  ' &
+  RUNNER_T7_PID=$!
+  sleep 0.3
+  echo "$RUNNER_T7_PID" > "${LAUNCHER_DIR}/running.pid"
+
+  # Bystander: scheduler whose argv carries the FULL project path.
+  # Must run in its own process group so stop.sh's PGID exclusion does not
+  # protect it — the defect is in the grep, not the PGID check.
+  BYSTANDER_T7_PID=""
+  BYSTANDER_T7_PID=$(python3 "$SPAWN_DETACHED" \
+    "bash ${PROJECT_DIR}/skills/ilk-watchdog/scripts/scheduler.sh --poll-min 5" \
+    sleep 600)
+  sleep 0.3
+
+  # Stop
+  bash "${MOCK_SKILL_ROOT}/ilk-launcher/scripts/stop.sh" \
+    --project-path "$PROJECT_DIR" 2>&1 || true
+
+  if kill -0 "$BYSTANDER_T7_PID" 2>/dev/null; then
+    pass "bystander (scheduler with full path in argv) survived stop.sh"
+  else
+    fail "bystander killed — orphan scan matches project_path (AC-1 violation)"
+  fi
+
+  kill "$BYSTANDER_T7_PID" 2>/dev/null || true
+  kill "$RUNNER_T7_PID" 2>/dev/null || true
+  wait "$BYSTANDER_T7_PID" 2>/dev/null || true
+  wait "$RUNNER_T7_PID" 2>/dev/null || true
+else
+  echo "  SKIPPED (EXPECT_RED=0)"
+fi
+
+# =============================================================================
+# Test 8: foreign runner with different project path (EXPECT_RED=1) — AC-1
+# =============================================================================
+#
+# A runner for project OTHER whose argv carries a different --project-path
+# must survive.  Today the grep matches `$run_id` which is the same bare
+# timestamp for both projects.
+
+echo ""
+echo "Test 8: foreign runner with different project path survives (EXPECT_RED=$EXPECT_RED)"
+
+if [[ "$EXPECT_RED" -eq 1 ]]; then
+  OTHER_DIR="${WORK_TMPDIR}/foreign-project"
+  mkdir -p "$OTHER_DIR"
+  (cd "$OTHER_DIR" && git init -q && git commit -q --allow-empty -m "init")
+
+  # Fresh run.lock
+  RUN_LOCK_T8="${LAUNCHER_DIR}/run.lock"
+  rm -f "$RUN_LOCK_T8"
+  touch "$RUN_LOCK_T8"
+
+  # Runner for THIS project
+  RUNNER_T8_PID=""
+  bash -c '
+    exec 3<"'${RUN_LOCK_T8}'"
+    exec -a "run_ilk_loop_claude 20260812-150000 ${PROJECT_DIR}" sleep 600
+  ' &
+  RUNNER_T8_PID=$!
+  sleep 0.3
+  echo "$RUNNER_T8_PID" > "${LAUNCHER_DIR}/running.pid"
+
+  # Foreign runner for OTHER project — same run_id, different path.
+  # Own process group so PGID exclusion doesn't protect it.
+  FOREIGN_T8_PID=""
+  FOREIGN_T8_PID=$(python3 "$SPAWN_DETACHED" \
+    "run_ilk_loop_claude 20260812-150000 ${OTHER_DIR}" \
+    sleep 600)
+  sleep 0.3
+
+  # Stop THIS project
+  bash "${MOCK_SKILL_ROOT}/ilk-launcher/scripts/stop.sh" \
+    --project-path "$PROJECT_DIR" 2>&1 || true
+
+  if kill -0 "$FOREIGN_T8_PID" 2>/dev/null; then
+    pass "foreign runner (same run_id, different path) survived stop.sh"
+  else
+    fail "foreign runner killed — orphan scan matches bare run_id (AC-1 violation)"
+  fi
+
+  kill "$FOREIGN_T8_PID" 2>/dev/null || true
+  kill "$RUNNER_T8_PID" 2>/dev/null || true
+  wait "$FOREIGN_T8_PID" 2>/dev/null || true
+  wait "$RUNNER_T8_PID" 2>/dev/null || true
+else
+  echo "  SKIPPED (EXPECT_RED=0)"
+fi
+
+# =============================================================================
+# Test 9: bystander carrying bare run_id for another key (EXPECT_RED=1) — AC-1
+# =============================================================================
+#
+# A process whose argv carries the same bare run_id but for a different
+# project key must survive.  Today the grep matches the bare timestamp,
+# so this bystander is killed.
+
+echo ""
+echo "Test 9: bystander with bare run_id for another key survives (EXPECT_RED=$EXPECT_RED)"
+
+if [[ "$EXPECT_RED" -eq 1 ]]; then
+  # Fresh run.lock
+  RUN_LOCK_T9="${LAUNCHER_DIR}/run.lock"
+  rm -f "$RUN_LOCK_T9"
+  touch "$RUN_LOCK_T9"
+
+  # Runner for THIS project
+  RUNNER_T9_PID=""
+  bash -c '
+    exec 3<"'${RUN_LOCK_T9}'"
+    exec -a "run_ilk_loop_claude 20260812-150000 ${PROJECT_DIR}" sleep 600
+  ' &
+  RUNNER_T9_PID=$!
+  sleep 0.3
+  echo "$RUNNER_T9_PID" > "${LAUNCHER_DIR}/running.pid"
+
+  # Bystander: a process carrying the same bare run_id for another key.
+  # Own process group so PGID exclusion doesn't protect it.
+  BYSTANDER_T9_PID=""
+  BYSTANDER_T9_PID=$(python3 "$SPAWN_DETACHED" \
+    "other-key-20260812-150000 some-helper" \
+    sleep 600)
+  sleep 0.3
+
+  # Stop THIS project
+  bash "${MOCK_SKILL_ROOT}/ilk-launcher/scripts/stop.sh" \
+    --project-path "$PROJECT_DIR" 2>&1 || true
+
+  if kill -0 "$BYSTANDER_T9_PID" 2>/dev/null; then
+    pass "bystander (bare run_id for another key) survived stop.sh"
+  else
+    fail "bystander killed — orphan scan matches bare run_id across keys (AC-1 violation)"
+  fi
+
+  kill "$BYSTANDER_T9_PID" 2>/dev/null || true
+  kill "$RUNNER_T9_PID" 2>/dev/null || true
+  wait "$BYSTANDER_T9_PID" 2>/dev/null || true
+  wait "$RUNNER_T9_PID" 2>/dev/null || true
+else
+  echo "  SKIPPED (EXPECT_RED=0)"
+fi
 
 # =============================================================================
 # Summary
