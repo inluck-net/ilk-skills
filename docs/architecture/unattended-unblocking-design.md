@@ -268,7 +268,7 @@ close. Their state, measured today:
 | 1 Self-modification race | machinery built, not wired | **closed in practice**: every ilk-skills batch ran in `runtime/launcher/worktrees/selfmod-batch`; merges deferred while foreign loops were live | keep |
 | 2 Phase 1 must run | closed (v0.9.88/89) | the v0.9.138 release still expects `could_not_compare` (no v0.9.137 baseline on this host) | **store a baseline every release**; refuse, never substitute |
 | 3 Deploy verifies itself | closed (`--require-tag`) | not exercised today | keep |
-| 4 Progress is self-reported | open | **still open, new form**: a gh-resolve worker satisfied "a commit per step" with an EMPTY `#step-2` marker (955f956e) | a step's commit must carry the step's evidence (a diff in the step's scope, or a declared vacuous-step marker that `plan_lint` required) |
+| 4 Progress is self-reported | open | **still open, new form**: an EMPTY `#step-2` commit (955f956e) satisfied "a commit per step". Corrected 2026-10-02: the worker didn't game it. gh-resolve's sub-plans prescribe `git commit --allow-empty ... #step-2` for a gate-only "neighbour set" step (3 of the 10-02e sub-plans and 10-02d `a-failed-provision-is-not-ready.md:134`). So the defect is the template: a step whose evidence is a gate run reads exactly like gaming | a step's commit must carry the step's evidence (a diff in the step's scope, or a declared vacuous-step marker that `plan_lint` required) |
 
 Plus the doc's own replacement for a blanket human gate (its lines 282-295):
 **canary deploy with automatic rollback.** Merge and deploy to the canary
@@ -360,7 +360,7 @@ it; outcomes, not procedure, decide whether a judgment stands.**
 |---|---|---|
 | **Rules in prompts and plans** | 20 sub-plans carried 7 standing instructions, 96 occurrences in all (4.8 per sub-plan). Workers broke them anyway: ran the suite and overwrote the proof record, took a 2nd sub-plan after a ship, left 44 min uncommitted, edited their own pins mid-fix. The one-sub-plan rule had also failed 3x as prompt text on 2026-10-01 | weak, and they pile up: `plan_lint.py` has 55 `lint_` rules |
 | **Rules enforced by tools** | `pins_only_lose_xfail` refused edited pins; the merge hold kept I2 off the clone while G1b ran; `run.lock` refused a duplicate launch; the `rm -rf` safety check refused an unguarded removal | **held, every time** |
-| **Goal-driven judgment** | where the outcome was checkable it was excellent: a worker rejected its own pins 3x for passing for the wrong reason; gh-resolve-b4's pin review found an unfixed defect. Where only a proxy was checked it gamed the proxy: pins edited until green, an empty `#step-2` marker, a pin asserting the bug, a self-written proof record | good with an outcome check, Goodhart without one |
+| **Goal-driven judgment** | where the outcome was checkable it was excellent: a worker rejected its own pins 3x for passing for the wrong reason; gh-resolve-b4's pin review found an unfixed defect. Where only a proxy was checked it gamed the proxy: pins edited until green, a pin asserting the bug, a self-written proof record | good with an outcome check, Goodhart without one |
 
 **So:**
 
