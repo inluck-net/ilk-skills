@@ -21,6 +21,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +95,66 @@ def _find_near_miss_slugs(
             near_misses.append((found_slug, shas))
 
     return near_misses
+
+
+def _get_cutover_timestamp(slug: str, cwd: Path | None = None) -> float:
+    """Resolve the committer timestamp of this sub-plan's ``#step-1`` commit.
+
+    The cutover rule: strict per-step records apply only to sub-plans whose
+    MASTER ``created`` timestamp is later than this value.  Returns
+    ``float('inf')`` when no step-1 commit is found, which makes the sub-plan
+    non-legacy (strict) — the safe direction for a missing signal.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "log", "--format=%ct %s%n%b", "--all"],
+            capture_output=True, text=True, cwd=cwd,
+            encoding="utf-8", errors="replace",
+        )
+        if result.returncode != 0:
+            return float("inf")
+    except (FileNotFoundError, OSError):
+        return float("inf")
+
+    step1_re = re.compile(
+        rf"\[plan:{re.escape(slug)}#step-1(?:,step-\d+)*\]"
+    )
+    for line in result.stdout.splitlines():
+        # Lines starting with a unix timestamp + space are commit headers
+        # from --format=%ct %s%n%b.
+        parts = line.split(" ", 1)
+        if len(parts) == 2 and parts[0].isdigit():
+            ts = int(parts[0])
+            subject = parts[1]
+            if step1_re.search(subject):
+                return float(ts)
+    return float("inf")
+
+
+def step0_baseline_sha(
+    slug: str,
+    gate_records: list[dict[str, Any]],
+    cwd: Path | None = None,
+) -> str | None:
+    """Return the ``head_sha`` from the step-0 gate record.
+
+    The baseline must come from the step-0 gate's own record, never from a
+    trailer grep.  A later commit carrying a ``#step-0`` trailer (mislabelled)
+    must not change the baseline.
+
+    Returns ``None`` when no step-0 record exists for *slug*.
+    """
+    for rec in gate_records:
+        if not isinstance(rec, dict):
+            continue
+        if rec.get("slug") != slug:
+            continue
+        if rec.get("step") != 0:
+            continue
+        if rec.get("outcome") != "pass":
+            continue
+        return rec.get("head_sha")
+    return None
 
 
 def _slug_has_any_trailer(slug: str, git_output: str) -> bool:
@@ -584,6 +645,7 @@ def audit_ship(
     runtime_dir: Path | None = None,
     ledger_records: list[dict[str, Any]] | None = None,
     loop_log_path: Path | None = None,
+    master_created: str | None = None,
 ) -> dict[str, Any]:
     """Audit a shipped sub-plan: step commits + gate outcome.
 
@@ -611,8 +673,13 @@ def audit_ship(
         ``check_step_commits``.
     loop_log_path : Path | None
         Path to the JSONL loop log.  When provided, used to check
-        per-step ``local_checks`` gate records for the final step
-        (not yet implemented — accepted but ignored today).
+        per-step ``local_checks`` gate records for every gated step
+        (non-legacy sub-plans only).
+    master_created : str | None
+        ISO 8601 timestamp of the MASTER plan's ``created`` field.
+        Used by the cutover rule: strict per-step records apply only
+        when this is later than the committer time of this sub-plan's
+        ``#step-1`` commit.  ``None`` ⇒ legacy (backward compat).
 
     Returns
     -------
@@ -632,6 +699,19 @@ def audit_ship(
     present, missing = check_step_commits(
         slug, authored, cwd=cwd, ledger_records=ledger_records,
     )
+
+    # Cutover: resolve whether this sub-plan is legacy.  Legacy sub-plans
+    # are exempt from per-step record requirements.
+    cutover_ts = _get_cutover_timestamp(slug, cwd=cwd)
+    is_legacy = False
+    if master_created is not None and cutover_ts != float("inf"):
+        try:
+            master_dt = datetime.fromisoformat(master_created)
+            master_epoch = master_dt.timestamp()
+            if master_epoch <= cutover_ts:
+                is_legacy = True
+        except (ValueError, OSError, OverflowError):
+            pass
 
     # Gate half (AC-8: exempt no-gate sub-plans from gate check only).
     gate_verdict, gate_reason = _evaluate_gate(
@@ -666,6 +746,81 @@ def audit_ship(
                         )
             except (FileNotFoundError, OSError):
                 pass  # git not available — degrade silently
+
+    # Per-step record check: every gated step must have a pass record in the
+    # loop log (or a gate-first ledger record).  Applies only to non-legacy
+    # sub-plans whose MASTER ``created`` is later than the cutover timestamp
+    # (the committer time of this sub-plan's ``#step-1`` commit).
+    _per_step_gate_failed = False
+    if not missing and authored and status == "shipped" and loop_log_path is not None:
+        from run_local_checks import extract_step_local_checks  # type: ignore[import-untyped]
+
+        if is_legacy:
+            reasons.append("proven (legacy: per-step records not required)")
+        else:
+            # Load loop log records for this slug.
+            log_records: list[dict[str, Any]] = []
+            try:
+                with open(loop_log_path, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            rec = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if (
+                            isinstance(rec, dict)
+                            and rec.get("slug") == slug
+                            and rec.get("outcome") == "pass"
+                        ):
+                            log_records.append(rec)
+            except (OSError, UnicodeDecodeError):
+                pass
+
+            # Build set of steps with a pass record (log + ledger).
+            steps_with_record: set[int] = set()
+            for rec in log_records:
+                s = rec.get("step")
+                if isinstance(s, int):
+                    steps_with_record.add(s)
+
+            if ledger_records:
+                for rec in ledger_records:
+                    if not isinstance(rec, dict):
+                        continue
+                    if rec.get("slug") != slug:
+                        continue
+                    if rec.get("proof") != "gate_pass_at_head":
+                        continue
+                    if rec.get("gate_outcome") != "pass":
+                        continue
+                    try:
+                        r_from = int(rec["step_from"])
+                        r_to = int(rec["step_to"])
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                    for s in range(r_from, r_to):
+                        steps_with_record.add(s)
+
+            # Check each step that declares local_checks.
+            unproven_steps: list[int] = []
+            for step_n in authored:
+                step_checks = extract_step_local_checks(body, step_n)
+                if not step_checks:
+                    continue  # no gate declared — nothing to require
+                if step_n not in steps_with_record:
+                    unproven_steps.append(step_n)
+
+            if unproven_steps:
+                _per_step_gate_failed = True
+                step_word = "step" if len(unproven_steps) == 1 else "steps"
+                reasons.append(
+                    f"unproven: {step_word} "
+                    f"{', '.join(str(s) for s in unproven_steps)} gate never ran"
+                )
+
     if gate_verdict == "fail":
         reasons.append(gate_reason or "gate is red")
     elif gate_verdict in (
@@ -828,9 +983,13 @@ def audit_ship(
     proven = (
         not missing
         and not _final_step_gate_failed
+        and not _per_step_gate_failed
         and not _has_pre_existing_red
         and gate_verdict in (None, "pass", "not_configured")
     )
+    # Legacy label: per-step records were not required, but the gate still ran.
+    if is_legacy and "proven (legacy" not in "".join(reasons):
+        reasons.append("proven (legacy: per-step records not required)")
     final_gate: str | None
     if declared_checks:
         final_gate = gate_verdict  # "pass" or "fail"

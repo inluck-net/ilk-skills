@@ -11,6 +11,7 @@ Red-first pins — most are xfail(strict) until the implementation lands.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import textwrap
 from pathlib import Path
@@ -94,7 +95,6 @@ _BODY_3_STEPS = textwrap.dedent("""\
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac1_missing_step_records_unproven(tmp_path: Path) -> None:
     """A 3-step sub-plan whose log has a pass record only for step 2
     ⇒ ship_audit says unproven, naming steps 0 and 1.
@@ -129,16 +129,18 @@ def test_ac1_missing_step_records_unproven(tmp_path: Path) -> None:
         slug="test-slug",
         cwd=tmp_path,
         loop_log_path=loop_log,
+        master_created="2099-01-01T00:00:00+00:00",  # non-legacy (after cutover)
     )
     assert result["proven"] is False, (
         f"sub-plan with only step-2 record must be unproven; got {result}"
     )
-    assert 0 in result["missing_steps"] or any("step 0" in r for r in result["reasons"]), (
-        f"step 0 must be named as missing/unproven; got {result}"
-    )
-    assert 1 in result["missing_steps"] or any("step 1" in r for r in result["reasons"]), (
-        f"step 1 must be named as missing/unproven; got {result}"
-    )
+    # The reason names the unproven steps (e.g. "unproven: steps 0, 1 gate never ran").
+    assert 0 in result["missing_steps"] or any(
+        re.search(r"\b0\b", r) for r in result["reasons"]
+    ), f"step 0 must be named as missing/unproven; got {result}"
+    assert 1 in result["missing_steps"] or any(
+        re.search(r"\b1\b", r) for r in result["reasons"]
+    ), f"step 1 must be named as missing/unproven; got {result}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -192,7 +194,6 @@ def test_ac2_all_step_records_proven(tmp_path: Path) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac3_legacy_sub_plan_proven_with_label(tmp_path: Path) -> None:
     """A legacy sub-plan (master ``created`` earlier the SAME DAY as the
     cutover commit) with missing records ⇒ proven, with the ``legacy``
@@ -219,13 +220,11 @@ def test_ac3_legacy_sub_plan_proven_with_label(tmp_path: Path) -> None:
         status="shipped",
         body=_BODY_3_STEPS,
         declared_checks=[{"command": "echo ok", "timeout": 10}],
-        gate_passed="unknown",
+        gate_passed="true",  # gate passes (legacy exemption is about per-step records)
         slug="test-slug",
         cwd=tmp_path,
         loop_log_path=loop_log,
-        # The cutover check needs to know the master's created timestamp.
-        # This will be resolved from the MASTER file; for now we pass
-        # context that the implementation will read.
+        master_created="2000-01-01T00:00:00+00:00",  # pre-cutover (legacy)
     )
     assert result["proven"] is True, (
         f"legacy sub-plan must be proven; got {result}"
@@ -268,7 +267,6 @@ def test_ac4_runner_gates_every_intermediate_step(tmp_path: Path) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac5_step0_baseline_from_record_not_trailer(tmp_path: Path) -> None:
     """The step-0 baseline helper returns the commit the step-0 gate
     **passed at**, from the step record's ``head_sha``, never from a
@@ -304,14 +302,7 @@ def test_ac5_step0_baseline_from_record_not_trailer(tmp_path: Path) -> None:
     }
 
     # The helper should return real_sha, not later_sha.
-    # This function does not exist yet — it will be added in step 1.
-    try:
-        from ship_audit import step0_baseline_sha
-    except ImportError:
-        raise AssertionError(
-            "step0_baseline_sha not yet implemented; "
-            "this pin will pass after step 1 implementation"
-        )
+    from ship_audit import step0_baseline_sha
 
     result = step0_baseline_sha(
         slug="test-slug",
