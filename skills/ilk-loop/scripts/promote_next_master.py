@@ -171,15 +171,40 @@ def parse_frontmatter(text: str) -> dict[str, str]:
     return fm
 
 
-def write_status(path: Path, new_status: str) -> bool:
+class HeldMasterRefused(ValueError):
+    """write_status refused to modify a held master."""
+
+
+def write_status(path: Path, new_status: str,
+                 allow_from_held: bool = False) -> bool:
     """Replace `status:` in frontmatter atomically. Returns True on
-    success (file changed), False on no-op (already matches)."""
+    success (file changed), False on no-op (already matches).
+
+    *allow_from_held*: when False (the default), the function re-reads
+    the file just before writing and refuses if the on-disk status is
+    ``blocked`` with a ``parked_at`` field present (i.e. a parked master).
+    Only ``park_master --unpark`` passes True.  This prevents a running
+    loop from rolling over to a held master and flipping it to active
+    (memory ``held-master-not-enforced-at-execution``).
+    """
     text = path.read_text(encoding="utf-8-sig")
     m = FRONTMATTER_RE.match(text)
     if not m:
         raise ValueError(f"{path.name}: no frontmatter block")
 
     fm_block = m.group(2)
+
+    # Re-read guard: refuse to write a held master unless explicitly allowed.
+    if not allow_from_held:
+        _fm = parse_frontmatter(text)
+        _cur_status = (_fm.get("status") or "").strip().lower()
+        if _cur_status == "blocked" and "parked_at" in _fm:
+            raise HeldMasterRefused(
+                f"{path.name}: master is held (status=blocked, "
+                f"parked_at={_fm['parked_at']!r}); refusing to write "
+                f"status={new_status!r}. Pass allow_from_held=True to override."
+            )
+
     if STATUS_LINE_RE.search(fm_block):
         new_fm = STATUS_LINE_RE.sub(rf"\1status: {new_status}", fm_block, count=1)
     else:

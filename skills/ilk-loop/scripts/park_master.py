@@ -377,7 +377,10 @@ def main(argv: list[str]) -> int:
         plan["released_hold"] = True
     if not a.dry_run:
         try:
-            write_status(target, new_status)
+            # Unpark must pass allow_from_held=True: the master is held
+            # (status=blocked, parked_at present) and we are lifting it.
+            write_status(target, new_status,
+                         allow_from_held=a.unpark)
             # Unpark strips the stamp rather than rewriting it: a `queued`
             # master carrying parked_at reads as still parked.
             _stamp(target, None if a.unpark else reason, when,

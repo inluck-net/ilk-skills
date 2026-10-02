@@ -5058,6 +5058,22 @@ print(fm.get('result_file', ''))
       STEER_PAUSED=0
     fi
 
+    # -- Master re-check (AC-4: a held master stops the run at the boundary) ──
+    # Between iterations, the master may have been parked by another process
+    # (scheduler, human, reaper).  Re-classify now — before dispatch — so
+    # a parked master does not start a new iteration.  Uses the same
+    # classify_loop_status already called before the loop and at end-of-
+    # iteration; this is the missing mid-loop call.
+    classify_loop_status
+    if [[ "$CLASSIFIED_STATUS" == "blocked-no-runnable" ]]; then
+      echo "[ilk] master became non-runnable between iterations. Ending run."
+      if [[ -n "${HELD_BY:-}" ]]; then
+        echo "[ilk] HELD by ${HELD_BY} (human park)."
+      fi
+      stop_reason="blocked-no-runnable"
+      break
+    fi
+
     local iter_start
     iter_start=$(date +%s)
 
