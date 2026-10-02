@@ -187,6 +187,47 @@ class TestPromptCarriesRevertNotice:
         prompt = _assemble_revert_notice(revert_rows, shipped_slugs)
         assert "REVERTED BY THE RUNNER" not in prompt or "alpha" not in prompt
 
+    def test_duplicate_slugs_are_deduplicated_in_notice(self):
+        """Multiple revert rows for the same slug produce one notice line.
+
+        The JSONL is append-only and accumulates across iterations, but
+        the notice must not balloon — only the most recent row per slug
+        is used.
+        """
+        revert_rows = [
+            _make_revert_row("alpha", ship_commit="aaa1111",
+                             iteration=1, reason="ship_integrity"),
+            _make_revert_row("alpha", ship_commit="bbb2222",
+                             iteration=2, reason="final-gate"),
+            _make_revert_row("alpha", ship_commit="ccc3333",
+                             iteration=3, reason="ship_integrity"),
+        ]
+        shipped_slugs: set[str] = set()
+
+        prompt = _assemble_revert_notice(revert_rows, shipped_slugs)
+        # Must contain the most recent row's reason.
+        assert "ship_integrity" in prompt
+        # Must NOT contain the older reason.
+        assert "final-gate" not in prompt
+        # Exactly one REVERTED line (no duplicates).
+        reverted_count = prompt.count("REVERTED BY THE RUNNER")
+        assert reverted_count == 1, (
+            f"expected 1 revert line, got {reverted_count}"
+        )
+
+    def test_multiple_slugs_each_get_one_line(self):
+        """Different slugs each get their own notice line, deduplicated."""
+        revert_rows = [
+            _make_revert_row("alpha", iteration=1),
+            _make_revert_row("beta", iteration=1),
+            _make_revert_row("alpha", iteration=2),
+            _make_revert_row("beta", iteration=2),
+        ]
+        shipped_slugs: set[str] = set()
+
+        prompt = _assemble_revert_notice(revert_rows, shipped_slugs)
+        assert prompt.count("REVERTED BY THE RUNNER") == 2
+
 
 # ── AC-3: commands/ilk.md rule ──────────────────────────────────────────────
 

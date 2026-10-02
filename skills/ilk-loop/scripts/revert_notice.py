@@ -138,17 +138,25 @@ def assemble_revert_notice(
 ) -> str:
     """Assemble the revert notice for the worker prompt.
 
-    Returns one line per revert row whose slug is still not shipped.
-    Returns empty string when there are no applicable reverts.
+    Returns one line per slug whose sub-plan is still not shipped.
+    When multiple revert rows exist for the same slug (the JSONL is
+    append-only and accumulates across iterations), only the **most
+    recent** row is used.  Returns empty string when there are no
+    applicable reverts.
 
     When a row carries ``red_step`` and ``red_step_commits``, an
     additional line names each commit that claimed the red step.
     """
-    lines: list[str] = []
+    # Deduplicate by slug, keeping the most recent row (last in file).
+    latest_by_slug: dict[str, dict] = {}
     for row in revert_rows:
         slug = row.get("slug", "")
-        if slug in shipped_slugs:
-            continue
+        if slug and slug not in shipped_slugs:
+            latest_by_slug[slug] = row
+
+    lines: list[str] = []
+    for row in latest_by_slug.values():
+        slug = row.get("slug", "")
         ship_commit = row.get("ship_commit") or "unknown"
         reason = row.get("reason") or "unknown"
         lines.append(
