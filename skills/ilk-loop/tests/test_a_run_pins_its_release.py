@@ -1,10 +1,9 @@
-"""Red-first tests: a run started through ``current`` keeps its release after a flip.
+"""Tests: a run started through ``current`` keeps its release after a flip.
 
 Each AC sources one script via ``<tmp>/current/skills/…``, flips the symlink
 from v1 to v2, and checks that the resolved paths still point at v1.
 
-AC-1..AC-5 fail today (logical ``pwd``, empty ``ILK_SKILL_HOME``, no scheduler
-guard).  AC-6 and AC-7 are controls that pass today and after.
+AC-1..AC-5 verify realpath pinning.  AC-6 and AC-7 are controls.
 """
 from __future__ import annotations
 
@@ -33,7 +32,7 @@ def _copy_skills(src: Path, dst: Path) -> None:
     )
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def _release_fixture(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
     """Build two releases and a ``current`` pointer.
 
@@ -44,11 +43,15 @@ def _release_fixture(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path
     releases.mkdir()
 
     # v1 and v2 are independent copies of the skills tree.
+    # Each is placed at <release>/skills so the path convention is
+    # <release>/skills/ilk-loop/scripts/...
     skills_src = _REPO / "skills"
     v1 = releases / "v1"
     v2 = releases / "v2"
-    _copy_skills(skills_src, v1)
-    _copy_skills(skills_src, v2)
+    v1.mkdir()
+    v2.mkdir()
+    _copy_skills(skills_src, v1 / "skills")
+    _copy_skills(skills_src, v2 / "skills")
 
     # current -> v1
     current = root / "current"
@@ -75,12 +78,12 @@ def _env_no_skill_home(home: Path) -> dict[str, str]:
 
 
 def _flip_current(current: Path, releases: Path, target: str) -> None:
-    """Atomic flip: current -> releases/<target>."""
-    new_link = current.parent / "current.new"
-    new_link.symlink_to(releases / target)
-    # mv -f is atomic on the same filesystem.
+    """Atomic flip: current -> releases/<target>.
+
+    Uses ``ln -sfn`` to atomically update the symlink (on the same filesystem).
+    """
     subprocess.run(
-        ["mv", "-f", str(new_link), str(current)],
+        ["ln", "-sfn", str(releases / target), str(current)],
         check=True, timeout=10,
     )
 
@@ -127,12 +130,12 @@ echo "ILK_SKILL_HOME=$ILK_SKILL_HOME"
     skill_home = kv["ILK_SKILL_HOME"]
 
     # Must be the v1 realpath, not through current.
-    v1_skills = str(v1)
+    v1_skills = str(v1 / "skills")
     assert v1_skills in skill_root, (
-        f"_SKILL_ROOT={skill_root!r} does not contain v1 path {v1_skills!r}"
+        f"_SKILL_ROOT={skill_root!r} does not contain v1 skills path {v1_skills!r}"
     )
     assert v1_skills in skill_home, (
-        f"ILK_SKILL_HOME={skill_home!r} does not contain v1 path {v1_skills!r}"
+        f"ILK_SKILL_HOME={skill_home!r} does not contain v1 skills path {v1_skills!r}"
     )
     # Must not contain /current/ (the logical path).
     assert "/current/" not in skill_root, (
@@ -173,12 +176,12 @@ echo "ILK_SKILL_HOME=$ILK_SKILL_HOME"
     skill_root = kv["_SKILL_ROOT"]
     skill_home = kv["ILK_SKILL_HOME"]
 
-    v1_skills = str(v1)
+    v1_skills = str(v1 / "skills")
     assert v1_skills in skill_root, (
-        f"_SKILL_ROOT={skill_root!r} does not contain v1 path {v1_skills!r}"
+        f"_SKILL_ROOT={skill_root!r} does not contain v1 skills path {v1_skills!r}"
     )
     assert v1_skills in skill_home, (
-        f"ILK_SKILL_HOME={skill_home!r} does not contain v1 path {v1_skills!r}"
+        f"ILK_SKILL_HOME={skill_home!r} does not contain v1 skills path {v1_skills!r}"
     )
     assert "/current/" not in skill_root
     assert "/current/" not in skill_home
@@ -186,7 +189,6 @@ echo "ILK_SKILL_HOME=$ILK_SKILL_HOME"
 
 # ── AC-3 (scheduler) ─────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: scheduler does not pin by realpath, no dot-source guard")
 def test_scheduler_pins_release_after_flip(
     _release_fixture: dict[str, Path], tmp_path: Path,
 ) -> None:
@@ -200,9 +202,8 @@ def test_scheduler_pins_release_after_flip(
     current = fix["current"]
     v1 = fix["v1"]
 
-    # The scheduler acquires a pidfile and runs the daemon on source.
-    # We use ILK_DOTSOURCE_ONLY=1 (after the guard is added) or
-    # gtimeout + --dry-run --max-dispatches 0 to avoid hanging.
+    # With the dot-source guard, sourcing with ILK_DOTSOURCE_ONLY=1
+    # should not run the daemon.
     script = f"""
 ILK_DOTSOURCE_ONLY=1
 source '{current}/skills/ilk-watchdog/scripts/scheduler.sh'
@@ -214,17 +215,8 @@ echo "LAUNCH_SCRIPT=$LAUNCH_SCRIPT"
 echo "PROMOTE_SCRIPT=$PROMOTE_SCRIPT"
 """
     env = _env_no_skill_home(tmp_path)
-    # Use gtimeout if available, else timeout, else just run.
-    timeout_cmd = "gtimeout"
-    if shutil.which("gtimeout") is None:
-        timeout_cmd = "timeout" if shutil.which("timeout") else ""
-
-    full_script = script
-    if timeout_cmd:
-        full_script = f"{timeout_cmd} 20 bash -c {repr(script)}"
-
     result = subprocess.run(
-        ["bash", "-c", full_script],
+        ["bash", "-c", script],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=30, env=env,
     )
@@ -235,12 +227,12 @@ echo "PROMOTE_SCRIPT=$PROMOTE_SCRIPT"
 
     _flip_current(fix["current"], fix["releases"], "v2")
 
-    v1_skills = str(v1)
+    v1_skills = str(v1 / "skills")
     for key in ("_SKILL_ROOT", "ILK_SKILL_HOME", "SCAN_SCRIPT",
                 "WATCHDOG_SCRIPT", "LAUNCH_SCRIPT", "PROMOTE_SCRIPT"):
         val = kv.get(key, "")
         assert v1_skills in val, (
-            f"{key}={val!r} does not contain v1 path {v1_skills!r}"
+            f"{key}={val!r} does not contain v1 skills path {v1_skills!r}"
         )
         assert "/current/" not in val, (
             f"{key}={val!r} still goes through current"
@@ -249,7 +241,6 @@ echo "PROMOTE_SCRIPT=$PROMOTE_SCRIPT"
 
 # ── AC-4 (children inherit) ──────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: ILK_SKILL_HOME not exported by runner")
 def test_children_inherit_pinned_root(
     _release_fixture: dict[str, Path], tmp_path: Path,
 ) -> None:
@@ -278,9 +269,9 @@ echo "CHILD_ROOT=$child_out"
     kv = _parse_kv(result.stdout)
 
     child_root = kv.get("CHILD_ROOT", "")
-    v1_skills = str(v1)
+    v1_skills = str(v1 / "skills")
     assert v1_skills in child_root, (
-        f"CHILD_ROOT={child_root!r} does not contain v1 path {v1_skills!r}"
+        f"CHILD_ROOT={child_root!r} does not contain v1 skills path {v1_skills!r}"
     )
     assert "/current/" not in child_root, (
         f"child still goes through current: {child_root!r}"
@@ -289,7 +280,6 @@ echo "CHILD_ROOT=$child_out"
 
 # ── AC-5 (the next run takes the new release) ────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: fresh process resolves through current (logical)")
 def test_fresh_process_gets_new_release(
     _release_fixture: dict[str, Path], tmp_path: Path,
 ) -> None:
@@ -317,9 +307,9 @@ echo "_SKILL_ROOT=$_SKILL_ROOT"
     kv = _parse_kv(result.stdout)
 
     skill_root = kv["_SKILL_ROOT"]
-    v2_skills = str(v2)
+    v2_skills = str(v2 / "skills")
     assert v2_skills in skill_root, (
-        f"_SKILL_ROOT={skill_root!r} does not contain v2 path {v2_skills!r}"
+        f"_SKILL_ROOT={skill_root!r} does not contain v2 skills path {v2_skills!r}"
     )
     assert "/current/" not in skill_root, (
         f"_SKILL_ROOT still goes through current: {skill_root!r}"
@@ -401,7 +391,7 @@ echo "ILK_SKILL_HOME=$ILK_SKILL_HOME"
     kv = _parse_kv(result.stdout)
 
     expected = str(selfmod)
-    actual = kv["ILK_SKILL_HOME"]
+    actual = kv.get("ILK_SKILL_HOME", "")
     assert expected in actual, (
         f"ILK_SKILL_HOME={actual!r} does not contain selfmod path {expected!r}"
     )
