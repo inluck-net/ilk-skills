@@ -869,6 +869,18 @@ hosts = json.loads(sys.argv[4])
 host_type = sys.argv[5]
 dry_run = sys.argv[6] != "1"
 
+_INTERPRETERS = ("python3 ", "python ", "bash ", "sh ")
+
+def _normalise(cmd):
+    """Strip a leading interpreter and resolve ~ so hand-wired hooks match."""
+    c = cmd
+    for prefix in _INTERPRETERS:
+        if c.startswith(prefix):
+            c = c[len(prefix):]
+            break
+    c = os.path.expanduser(c)
+    return os.path.realpath(c)
+
 if os.path.isfile(settings_path):
     with open(settings_path) as f:
         settings = json.load(f)
@@ -893,6 +905,7 @@ for hook_cmd, matcher, hook_hosts in zip(hook_cmds, matchers, hosts):
         continue
 
     hook_path = os.path.join(os.path.dirname(settings_path), "hooks", hook_cmd)
+    hook_norm = _normalise(hook_path)
     entries = entries_by_matcher.get(matcher, [])
     if not entries:
         entry = {"matcher": matcher, "hooks": []}
@@ -901,18 +914,37 @@ for hook_cmd, matcher, hook_hosts in zip(hook_cmds, matchers, hosts):
         entries = entries_by_matcher[matcher]
 
     # Check if the hook is already registered in any entry for this matcher.
+    # Normalise commands so a hand-wired ``python3 <path>`` is recognised as
+    # the same hook as the canonical ``<path>``.
     already = any(
-        h.get("command") == hook_path
+        _normalise(h.get("command", "")) == hook_norm
         for e in entries
         for h in e.get("hooks", [])
     )
     if already:
+        # Deduplicate: keep only the canonical form, drop hand-wired variants.
+        for e in entries:
+            old = e.get("hooks", [])
+            deduped = []
+            seen_norm = set()
+            for h in old:
+                n = _normalise(h.get("command", ""))
+                if n in seen_norm:
+                    any_change = True
+                    continue
+                seen_norm.add(n)
+                # Replace hand-wired form with canonical.
+                if n == hook_norm and h.get("command") != hook_path:
+                    h = {"type": h.get("type", "command"), "command": hook_path}
+                    any_change = True
+                deduped.append(h)
+            e["hooks"] = deduped
         continue
 
     # Append to the first entry for this matcher (consolidate hooks).
     entry = entries[0]
     existing = entry.get("hooks", [])
-    kept = [h for h in existing if h.get("command") != hook_path]
+    kept = [h for h in existing if _normalise(h.get("command", "")) != hook_norm]
     kept.append({"type": "command", "command": hook_path})
     entry["hooks"] = kept
     any_change = True

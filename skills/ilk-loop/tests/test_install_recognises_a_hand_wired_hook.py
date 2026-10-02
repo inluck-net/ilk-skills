@@ -92,7 +92,6 @@ def _load_settings(settings_path: str) -> dict:
 
 # ── AC-1: python3 <path> ⇒ no second entry ──────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 class TestHandWiredHookNotDuplicated:
     """AC-1: a ``python3 <path>`` entry is recognised; no duplicate added."""
 
@@ -152,7 +151,6 @@ class TestHandWiredHookNotDuplicated:
 
 # ── AC-2: both forms ⇒ one remains, dry-run says would dedupe ───────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 class TestBothFormsDedupe:
     """AC-2: canonical + hand-wired ⇒ dedupe to canonical."""
 
