@@ -11,6 +11,7 @@ Red-first pins — most are xfail(strict) until the implementation lands.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import textwrap
@@ -239,7 +240,6 @@ def test_ac3_legacy_sub_plan_proven_with_label(tmp_path: Path) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac4_runner_gates_every_intermediate_step(tmp_path: Path) -> None:
     """A fixture iteration that moves ``current_step`` 0→2 runs the step-0
     and step-1 gates, and both appear in the iteration's ``local_checks``
@@ -248,17 +248,103 @@ def test_ac4_runner_gates_every_intermediate_step(tmp_path: Path) -> None:
     This tests the RUNNER behavior: after an iteration, for each sub-plan
     whose ``current_step`` moved from ``a`` to ``b``, run the declared gates
     of **every** step in ``a..b-1`` as well as the step it ended on.
+
+    The test exercises ``get_ledger_check_targets`` — the function that
+    resolves gate targets from the ship-proof ledger.  Before the fix it
+    emitted only ``step_to - 1`` (the max step) for non-verify slugs; now it
+    emits every step in ``[step_from, step_to)``.
     """
-    # This test verifies runner behavior, not ship_audit directly.
-    # It will be implemented when the runner change lands in step 2.
-    # For now it pins the expected behavior.
-    #
-    # The fixture: a sub-plan at step 0, an iteration that advances it to
-    # step 2.  The runner should have run step-0 and step-1 gates (and
-    # recorded them in local_checks).
-    raise AssertionError(
-        "runner does not yet gate intermediate steps; "
-        "this pin will pass after step 2 implementation"
+    runner = Path(__file__).resolve().parent.parent / "scripts" / "run_ilk_loop_claude.sh"
+    scripts = runner.parent
+
+    # Create a git repo with plans so ilk_paths.py can resolve the launcher dir.
+    project = tmp_path / "proj"
+    plans = project / "docs" / "plans"
+    plans.mkdir(parents=True)
+    (plans / "MASTER-2026-10-02-ac4.md").write_text(
+        "---\n"
+        "master_plan: 2026-10-02-ac4\n"
+        "batch_date: 2026-10-02\n"
+        "status: active\n"
+        "---\n\n"
+        "# MASTER plan: ac4\n\n"
+        "## Sub-plan registry\n\n"
+        "| # | Sub-plan | Status |\n|---|---|---|\n"
+        "| 1 | [2026-10-02-test-slug.md](./2026-10-02-test-slug.md) | pending |\n",
+        encoding="utf-8",
+    )
+    (plans / "2026-10-02-test-slug.md").write_text(
+        "---\n"
+        "plan: test-slug\n"
+        "status: pending\n"
+        "current_step: 0\n"
+        "estimated_steps: 2\n"
+        "---\n\n"
+        "# Sub-plan: test-slug\n\n"
+        "### Step 0\n\n"
+        "```yaml\nlocal_checks:\n  - command: echo step0\n    timeout: 10\n```\n\n"
+        "### Step 1\n\n"
+        "```yaml\nlocal_checks:\n  - command: echo step1\n    timeout: 10\n```\n",
+        encoding="utf-8",
+    )
+    _init_repo(project)
+
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(tmp_path),
+        "ILK_DATA_HOME": str(tmp_path / ".ilk-data"),
+        "ILK_DOTSOURCE_ONLY": "1",
+    }
+
+    # Resolve the launcher dir via ilk_paths.py.
+    proc_paths = subprocess.run(
+        ["python3", str(scripts / "ilk_paths.py"), "--start", str(project)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=60, env=env,
+    )
+    assert proc_paths.returncode == 0, f"ilk_paths.py failed: {proc_paths.stderr}"
+    launcher_dir = Path(json.loads(proc_paths.stdout)["external_launcher_dir"])
+    launcher_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write a ledger with one record: step_from=0, step_to=2 (non-verify slug).
+    ledger = launcher_dir / "ship-proof.jsonl"
+    ledger.write_text(
+        json.dumps({"run_id": "20261002-120000", "iteration": 3,
+                     "slug": "test-slug", "repo": str(project),
+                     "step_from": 0, "step_to": 2,
+                     "commits": ["aaaa111", "bbbb222"]},
+                    separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+    # Dot-source the runner and call get_ledger_check_targets.
+    prelude = textwrap.dedent(f"""\
+        export ILK_DOTSOURCE_ONLY=1
+        source '{runner}'
+        PROJECT_PATH='{project}'
+        REPOS=('{project}')
+        LOOP_STATUS_SCRIPT='{scripts / "loop_status.py"}'
+        set +e
+    """)
+    proc = subprocess.run(
+        ["bash", "-c", prelude
+         + "declare -F get_ledger_check_targets >/dev/null || { echo FUNC_MISSING; exit 90; }\n"
+         + "get_ledger_check_targets '20261002-120000' 3\n"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=120, env=env, cwd=str(project),
+    )
+    assert "FUNC_MISSING" not in proc.stdout, (
+        f"get_ledger_check_targets not defined.\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+    )
+
+    targets = {ln.strip() for ln in proc.stdout.splitlines() if ln.strip()}
+    assert "test-slug 0" in targets, (
+        f"step 0 must be a gate target (intermediate step); got {targets!r}. "
+        f"stderr: {proc.stderr}"
+    )
+    assert "test-slug 1" in targets, (
+        f"step 1 must be a gate target (final step in [step_from, step_to)); "
+        f"got {targets!r}. stderr: {proc.stderr}"
     )
 
 

@@ -1434,10 +1434,10 @@ get_ledger_check_targets() {
   python3 -c "
 import json, sys
 run_id, iteration = sys.argv[1], int(sys.argv[2])
-verify = set(sys.argv[4].splitlines()) if sys.argv[4] else set()
-# Per-slug: max step for normal; all steps for verify.
-normal_max = {}
-verify_steps = {}  # slug -> set of steps
+# Emit every step in [step_from, step_to) for all sub-plans — not just the
+# max step.  An iteration that advances several steps must gate each one
+# (AC-4 of a-step-is-proven-only-by-its-own-gate).
+all_steps = {}  # slug -> set of steps
 for line in open(sys.argv[3], encoding='utf-8-sig'):
     line = line.strip()
     if not line:
@@ -1458,17 +1458,12 @@ for line in open(sys.argv[3], encoding='utf-8-sig'):
         continue
     if not slug or slug == 'null':
         continue
-    if slug in verify:
-        if slug not in verify_steps:
-            verify_steps[slug] = set()
-        for s in range(step_from, step_to):
-            verify_steps[slug].add(s)
-    else:
-        normal_max[slug] = max(normal_max.get(slug, 0), step_to - 1)
-for slug, step in sorted(normal_max.items()):
-    print(f'{slug} {step}')
-for slug in sorted(verify_steps):
-    for step in sorted(verify_steps[slug]):
+    if slug not in all_steps:
+        all_steps[slug] = set()
+    for s in range(step_from, step_to):
+        all_steps[slug].add(s)
+for slug in sorted(all_steps):
+    for step in sorted(all_steps[slug]):
         print(f'{slug} {step}')
 " "$run_id" "$iteration" "$ledger" "$verify_slugs" 2>/dev/null || true
 }
@@ -5570,16 +5565,10 @@ print(json.dumps({
       local merged_targets_file
       merged_targets_file=$(mktemp)
       if [[ -s "$all_targets_file" ]]; then
-        local _verify_slugs_merge_oneline
-        _verify_slugs_merge_oneline=$(_list_verify_slugs | tr '\n' ' ')
-        sort -t' ' -k1,1 -k2,2n "$all_targets_file" | awk -v vs="$_verify_slugs_merge_oneline" '
-          BEGIN { n = split(vs, arr, " "); for (i = 1; i <= n; i++) vslugs[arr[i]] = 1 }
-          {
-            if ($1 in vslugs) { print $1, $2 }
-            else { s = $2 + 0; if (!($1 in max) || s > max[$1]) max[$1] = s }
-          }
-          END { for (s in max) print s, max[s] }
-        ' > "$merged_targets_file"
+        # Keep every slug+step pair (deduplicated).  The old merge collapsed
+        # non-verify slugs to their max step; since get_ledger_check_targets
+        # now emits all intermediate steps, the merge must keep them all.
+        sort -t' ' -k1,1 -k2,2n -u "$all_targets_file" > "$merged_targets_file"
         local_checks_results=$(mktemp)
         invoke_local_checks "$(selfmod_effective_repo "$PROJECT_PATH")" "$merged_targets_file" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$local_checks_results" "${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
       fi

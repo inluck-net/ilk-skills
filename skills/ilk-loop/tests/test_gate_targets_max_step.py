@@ -166,11 +166,14 @@ set +e
 def test_shared_remote_gate_targets_the_step_the_iteration_reached(
     tmp_path: Path,
 ) -> None:
-    """AC-7 — a 3-step sub-plan advanced 0→3 in one iteration gates step 2.
+    """AC-7 — a 3-step sub-plan advanced 0→3 in one iteration gates all steps.
 
     ``PRE_ITER_TARGET`` would say ``gate-work 0`` here, which is the whole
     defect: the broadest command in the sub-plan is declared on step 2 and
     would never be a target.
+
+    After the intermediate-gates fix, ``get_ledger_check_targets`` emits
+    every step in ``[step_from, step_to)`` — not just the max.
     """
     env = _sandbox_env(tmp_path)
     project = _make_project(tmp_path, "shared")
@@ -189,13 +192,14 @@ declare -F {LEDGER_FUNC} >/dev/null || {{ echo "LEDGER_FUNC_MISSING"; exit 90; }
         f"targeting (step 3) has not landed.\n{proc.stdout}\n{proc.stderr}"
     )
 
-    targets = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
-    assert "gate-work 2" in targets, (
-        "the step the iteration REACHED (step_to - 1 = 2) must be a gate "
-        f"target; got {targets!r}. With PRE_ITER_TARGET as the source this is "
-        "'gate-work 0' and the step-2 gate never runs.\nstderr: {}"
-        .format(proc.stderr)
-    )
+    targets = {ln.strip() for ln in proc.stdout.splitlines() if ln.strip()}
+    # Every step in [0, 3) must be a target, not just step 2.
+    for step in (0, 1, 2):
+        assert f"gate-work {step}" in targets, (
+            f"step {step} must be a gate target (intermediate step in "
+            f"[step_from, step_to)); got {targets!r}. "
+            f"stderr: {proc.stderr}"
+        )
     assert all(t.startswith("gate-work ") for t in targets), (
         f"only the worked slug may be emitted; got {targets!r}"
     )
