@@ -26,6 +26,7 @@ resolved, behaviour is unchanged (warn + no violation).
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -426,6 +427,273 @@ class TestExternalPlansLayout:
         assert "missing commit for step 1" in combined, (
             "the step-commit check must RUN and catch the missing step. "
             f"output={combined!r}"
+        )
+
+
+# ── AC-1: --repo flag resolves root for external plans layout ─────────────────
+#
+# The real invocation: plans at ~/.ilk-data/projects/<key>/plans, repo a
+# separate worktree, ILK_SKILL_HOME pointing to a skills dir with no
+# projects.json. The runner should pass --repo "$PROJECT_PATH" so
+# _missing_step_reason uses it instead of walking up from the plans dir
+# (which has no .git ancestor by design).
+
+class TestAC1RepoFlagResolvesExternalLayout:
+    """AC-1: with --repo, the step-commit check runs and passes for external plans."""
+
+    @pytest.mark.xfail(strict=True, reason="red-first")
+    def test_repo_flag_enables_step_commit_check(self, tmp_path: Path) -> None:
+        """Plans outside repo, cwd not a git dir, --repo points to the repo.
+
+        A sub-plan with two authored steps where both have commits.
+        With --repo the check must resolve the root and pass.
+        """
+        repo = _make_repo(
+            tmp_path,
+            commits=[
+                "feat: step 0 [plan:repo-flag-plan#step-0]",
+                "feat: step 1 [plan:repo-flag-plan#step-1]",
+            ],
+        )
+        sys.path.insert(0, str(SCRIPTS))
+        from ilk_paths import project_key
+        key = project_key(repo)
+        data = tmp_path / "ilk-data"
+        plans = data / "projects" / key / "plans"
+        plans.mkdir(parents=True)
+        sp = _write_subplan(plans, "repo-flag-plan", n_steps=2)
+
+        cwd_dir = tmp_path / "elsewhere"
+        cwd_dir.mkdir()
+
+        env = os.environ.copy()
+        env.update({
+            "ILK_DATA_HOME": str(data),
+            "ILK_SKILL_HOME": str(SCRIPTS.parent.parent),
+            "HOME": str(tmp_path / "fake-home"),
+        })
+        # Pass --repo pointing to the actual repo.
+        r = subprocess.run(
+            [sys.executable, str(CLI), "--subplan", str(sp),
+             "--gate-passed", "true", "--repo", str(repo)],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=60, cwd=cwd_dir, env=env,
+        )
+        combined = r.stdout + r.stderr
+        assert r.returncode == 0, (
+            "with --repo, all steps committed must pass. "
+            f"output={combined!r}"
+        )
+        assert "could not resolve" not in combined.lower(), (
+            "resolution must succeed via --repo for external plans. "
+            f"output={combined!r}"
+        )
+
+
+class TestAC1RepoFlagDetectsMissingStep:
+    """AC-1 (negative): with --repo, a missing step is still detected."""
+
+    @pytest.mark.xfail(strict=True, reason="red-first")
+    def test_repo_flag_detects_missing_step(self, tmp_path: Path) -> None:
+        """Plans outside repo, --repo points to repo, one step missing."""
+        repo = _make_repo(
+            tmp_path,
+            commits=["feat: step 0 [plan:repo-miss-plan#step-0]"],
+        )
+        sys.path.insert(0, str(SCRIPTS))
+        from ilk_paths import project_key
+        key = project_key(repo)
+        data = tmp_path / "ilk-data"
+        plans = data / "projects" / key / "plans"
+        plans.mkdir(parents=True)
+        sp = _write_subplan(plans, "repo-miss-plan", n_steps=2)
+
+        cwd_dir = tmp_path / "elsewhere"
+        cwd_dir.mkdir()
+
+        env = os.environ.copy()
+        env.update({
+            "ILK_DATA_HOME": str(data),
+            "ILK_SKILL_HOME": str(SCRIPTS.parent.parent),
+            "HOME": str(tmp_path / "fake-home"),
+        })
+        r = subprocess.run(
+            [sys.executable, str(CLI), "--subplan", str(sp),
+             "--gate-passed", "true", "--repo", str(repo)],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=60, cwd=cwd_dir, env=env,
+        )
+        combined = r.stdout + r.stderr
+        assert r.returncode != 0, (
+            "with --repo, a missing step must still be detected. "
+            f"output={combined!r}"
+        )
+        assert "missing commit for step 1" in combined, (
+            "must name the missing step. "
+            f"output={combined!r}"
+        )
+
+
+# ── AC-2: unresolvable root is exit 3, not a silent downgrade ────────────────
+#
+# When --repo is not given AND the root cannot be resolved from the plans
+# dir, ship_integrity must print STEP_COMMITS: unknown and exit 3. Today it
+# warns and returns None (fails open, exit 0 from the gate half).
+
+class TestAC2UnresolvableRootIsExit3:
+    """AC-2: no --repo + no resolvable root ⇒ exit 3, STEP_COMMITS unknown."""
+
+    @pytest.mark.xfail(strict=True, reason="red-first")
+    def test_no_repo_no_root_is_exit_3(self, tmp_path: Path) -> None:
+        """Plans dir outside any repo, no --repo, no registry.
+
+        ship_integrity must exit 3 with STEP_COMMITS: unknown.
+        """
+        import tempfile
+        iso = Path(tempfile.mkdtemp(prefix="ilk-ac2-exit3-"))
+        try:
+            plans = iso / "plans"
+            plans.mkdir()
+            sp = _write_subplan(plans, "unresolvable-plan", n_steps=2)
+
+            cwd_dir = iso / "cwd"
+            cwd_dir.mkdir()
+
+            env = os.environ.copy()
+            env.update({
+                "ILK_DATA_HOME": str(iso / "ilk-data"),
+                "ILK_SKILL_HOME": str(SCRIPTS.parent.parent),
+                "HOME": str(iso / "fake-home"),
+                "GIT_CEILING_DIRECTORIES": str(iso.resolve()),
+            })
+            r = subprocess.run(
+                [sys.executable, str(CLI), "--subplan", str(sp),
+                 "--gate-passed", "true"],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=60, cwd=cwd_dir, env=env,
+            )
+            assert r.returncode == 3, (
+                "an unresolvable root without --repo must be exit 3. "
+                f"rc={r.returncode} stdout={r.stdout!r} stderr={r.stderr!r}"
+            )
+            combined = r.stdout + r.stderr
+            assert "STEP_COMMITS" in combined and "unknown" in combined.lower(), (
+                "must print STEP_COMMITS: unknown. "
+                f"output={combined!r}"
+            )
+        finally:
+            import shutil
+            shutil.rmtree(iso, ignore_errors=True)
+
+    @pytest.mark.xfail(strict=True, reason="red-first")
+    def test_exit_3_record_only_records_unknown(self, tmp_path: Path) -> None:
+        """Under --record-only, exit 3 still records step_commits: unknown."""
+        import tempfile
+        iso = Path(tempfile.mkdtemp(prefix="ilk-ac2-rec-"))
+        try:
+            plans = iso / "plans"
+            plans.mkdir()
+            sp = _write_subplan(plans, "record-only-plan", n_steps=2)
+
+            cwd_dir = iso / "cwd"
+            cwd_dir.mkdir()
+
+            env = os.environ.copy()
+            env.update({
+                "ILK_DATA_HOME": str(iso / "ilk-data"),
+                "ILK_SKILL_HOME": str(SCRIPTS.parent.parent),
+                "HOME": str(iso / "fake-home"),
+                "GIT_CEILING_DIRECTORIES": str(iso.resolve()),
+            })
+            r = subprocess.run(
+                [sys.executable, str(CLI), "--subplan", str(sp),
+                 "--gate-passed", "true", "--record-only"],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=60, cwd=cwd_dir, env=env,
+            )
+            assert r.returncode == 3, (
+                "--record-only + unresolvable root must still be exit 3. "
+                f"rc={r.returncode} stdout={r.stdout!r} stderr={r.stderr!r}"
+            )
+        finally:
+            import shutil
+            shutil.rmtree(iso, ignore_errors=True)
+
+
+# ── AC-4 (control): in-tree plans dir resolves as today ──────────────────────
+
+class TestAC4InTreePlansStillWork:
+    """AC-4: when plans are in-tree (<repo>/docs/plans), resolution works without --repo."""
+
+    def test_in_tree_plans_resolves_from_subplan_parent(self, tmp_path: Path) -> None:
+        """In-tree layout: repo/docs/plans/ contains the sub-plan.
+
+        The resolver walks up from the plans dir and finds .git.
+        This must work without --repo (existing behavior, control).
+        """
+        repo = _make_repo(
+            tmp_path,
+            commits=["feat: step 0 [plan:in-tree-plan#step-0]"],
+        )
+        plans = repo / "docs" / "plans"
+        plans.mkdir(parents=True)
+        sp = _write_subplan(plans, "in-tree-plan", n_steps=2)
+
+        r = _run_cli(sp, cwd=repo)
+        combined = r.stdout + r.stderr
+        assert r.returncode != 0, (
+            "in-tree plans must still detect missing steps. "
+            f"output={combined!r}"
+        )
+        assert "missing commit for step 1" in combined, (
+            "must name the missing step. "
+            f"output={combined!r}"
+        )
+
+
+# ── AC-5: exit 3 ends the run with ship_integrity_violation ──────────────────
+#
+# Pin that the runner's test_ship_integrity treats exit 3 as a violation
+# and records it in the violations file. This is the contract doc pin.
+
+class TestAC5Exit3IsViolation:
+    """AC-5: ship_integrity exit 3 maps to ship_integrity_violation in the runner."""
+
+    @pytest.mark.xfail(strict=True, reason="red-first")
+    def test_runner_treats_exit_3_as_violation(self, tmp_path: Path) -> None:
+        """The bash runner's test_ship_integrity must treat exit 3 as a violation.
+
+        This test invokes the runner function via subprocess to avoid
+        needing the full runner context.
+        """
+        # This test is a placeholder pin — the actual runner integration
+        # is in test_ship_integrity_runner.sh. Mark xfail until the runner
+        # handles exit 3.
+        pytest.xfail("runner does not yet handle exit 3")
+
+
+# ── AC-3: runner passes --repo to ship_integrity.py ──────────────────────────
+#
+# The runner builds _si_args for ship_integrity.py at run_ilk_loop_claude.sh
+# ~:3409. It currently omits --repo. This test greps the runner source for
+# the call site and asserts --repo is in the argv construction.
+
+class TestAC3RunnerPassesRepoFlag:
+    """AC-3: the runner's argv to ship_integrity.py carries --repo."""
+
+    @pytest.mark.xfail(strict=True, reason="red-first")
+    def test_runner_builds_repo_in_si_args(self, tmp_path: Path) -> None:
+        """The runner source must include --repo in _si_args."""
+        runner = SCRIPTS.parent.parent.parent / "scripts" / "run_ilk_loop_claude.sh"
+        if not runner.exists():
+            pytest.skip("runner script not found")
+        source = runner.read_text(encoding="utf-8")
+        # Find the _si_args construction. The current pattern:
+        #   local _si_args=("--subplan" "$f" "--gate-passed" "$gate_passed")
+        # After the fix it should include "--repo" and "$PROJECT_PATH".
+        assert "--repo" in source and "_si_args" in source, (
+            "runner must build --repo in _si_args for ship_integrity.py. "
+            "grep for '_si_args' and '--repo' in the runner source."
         )
 
 
