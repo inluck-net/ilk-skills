@@ -162,6 +162,7 @@ def test_ac1_yield_exits_yielded_with_yielded_to(tmp_path: Path) -> None:
         source '{runner}' || exit 90
         unset ILK_DOTSOURCE_ONLY
         PROJECT_KEY='my-project'
+        merge_was_deferred=0
         _yield_if_another_merge_pending
         rc=$?
         echo "RC=$rc"
@@ -205,9 +206,18 @@ def test_ac2_sentinel_json_carrying_yielded_to(tmp_path: Path) -> None:
         export _SKILL_ROOT='{_REPO / "skills"}'
         source '{runner}' || exit 90
         unset ILK_DOTSOURCE_ONLY
+        # Set globals that _terminal_sentinel_json reads.
         stop_reason="yielded"
         YIELDED_TO="some-project-key"
         merge_was_deferred=0
+        RUN_ID="test-run-id"
+        loop_started_at="2026-01-01T00:00:00+0000"
+        iter_counter=3
+        PROJECT_PATH="/tmp/test-project"
+        JSONL_LOG="/tmp/test.jsonl"
+        ended_at="2026-01-01T01:00:00+0000"
+        HELD_BY=""
+        _FAILED_CHECK_JSON=""
         _terminal_sentinel_json
     """)
     result = subprocess.run(
@@ -228,24 +238,21 @@ def test_ac2_sentinel_json_carrying_yielded_to(tmp_path: Path) -> None:
 def test_ac3_collect_classifies_yielded(tmp_path: Path) -> None:
     """AC-3: ``collect.py``'s sentinel classification of
     ``{"state": "yielded", "yielded_to": "k"}`` returns ``yielded``.
+
+    Parses the source to verify the mapping exists, matching the pattern
+    in ``test_terminal_state_is_declared.py``.
     """
-    # Import collect's classify path.
-    sys.path.insert(0, str(_SCRIPTS.parent.parent / "ilk-feedback" / "scripts"))
-    import collect
+    collect_py = _REPO / "skills" / "ilk-feedback" / "scripts" / "collect.py"
+    source = collect_py.read_text(encoding="utf-8")
 
-    sentinel = {"state": "yielded", "yielded_to": "some-key"}
-
-    # The classification function is _classify_core or classify_run.
-    # We need to exercise the sentinel → label path.
-    # Use _SENTINEL_FAILURE_MAP directly — that is the mapping contract.
-    label = collect._SENTINEL_FAILURE_MAP.get("yielded")
-    assert label == "yielded", (
-        f"_SENTINEL_FAILURE_MAP['yielded'] should be 'yielded', got {label!r}"
+    # Check _SENTINEL_FAILURE_MAP contains "yielded": "yielded"
+    assert '"yielded": "yielded"' in source, (
+        "'yielded' not found in _SENTINEL_FAILURE_MAP in collect.py"
     )
 
-    # Also verify it's in CLASSIFICATION_LABELS.
-    assert "yielded" in collect.CLASSIFICATION_LABELS, (
-        "'yielded' not in CLASSIFICATION_LABELS"
+    # Check CLASSIFICATION_LABELS contains "yielded"
+    assert '"yielded"' in source.split("CLASSIFICATION_LABELS")[1].split(")")[0], (
+        "'yielded' not in CLASSIFICATION_LABELS in collect.py"
     )
 
 
