@@ -178,14 +178,11 @@ class TestAC3UnresolvableRootFailsOpen:
     will break this test — that is the point of pinning it now.
     """
 
-    def test_no_git_repo_anywhere_does_not_block(self, tmp_path: Path) -> None:
+    def test_no_git_repo_anywhere_is_exit_3(self, tmp_path: Path) -> None:
         """Plans dir + cwd are both outside any git repo.
 
-        pytest's tmp_path has a .git at its root, and our pure-Python
-        git_root() walks up ignoring GIT_CEILING_DIRECTORIES.  We place
-        plans/cwd outside the pytest tree entirely (under /tmp) and set
-        GIT_CEILING_DIRECTORIES to the cwd's parent so the subprocess
-        probe also cannot walk into the pytest repo.
+        Previously this expected fail-open (exit 0). Now an unresolvable
+        root is a distinct outcome: exit 3 with STEP_COMMITS: unknown.
         """
         import tempfile
         iso = Path(tempfile.mkdtemp(prefix="ilk-ac3-"))
@@ -197,19 +194,15 @@ class TestAC3UnresolvableRootFailsOpen:
             cwd_dir = iso / "cwd"
             cwd_dir.mkdir()
 
-            # GIT_CEILING_DIRECTORIES stops traversal ABOVE the ceiling,
-            # but the cwd itself is still checked.  Setting the ceiling
-            # to cwd's parent means git stops before cwd (and below) —
-            # so it never finds any .git above the isolated tree.
             ceilings = str(cwd_dir.parent.resolve())
             r = _run_cli(sp, cwd=cwd_dir, env_overrides={
                 "HOME": str(iso / "fake-home"),
                 "GIT_CEILING_DIRECTORIES": ceilings,
             })
-            assert r.returncode == 0, (
+            assert r.returncode == 3, (
                 "when no project root can be resolved, ship-integrity must "
-                "fail open (return 0). Got stdout={!r} stderr={!r}".format(
-                    r.stdout, r.stderr,
+                "exit 3 (STEP_COMMITS: unknown). Got rc={} stdout={!r} stderr={!r}".format(
+                    r.returncode, r.stdout, r.stderr,
                 )
             )
         finally:
@@ -441,7 +434,6 @@ class TestExternalPlansLayout:
 class TestAC1RepoFlagResolvesExternalLayout:
     """AC-1: with --repo, the step-commit check runs and passes for external plans."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_repo_flag_enables_step_commit_check(self, tmp_path: Path) -> None:
         """Plans outside repo, cwd not a git dir, --repo points to the repo.
 
@@ -493,7 +485,6 @@ class TestAC1RepoFlagResolvesExternalLayout:
 class TestAC1RepoFlagDetectsMissingStep:
     """AC-1 (negative): with --repo, a missing step is still detected."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_repo_flag_detects_missing_step(self, tmp_path: Path) -> None:
         """Plans outside repo, --repo points to repo, one step missing."""
         repo = _make_repo(
@@ -543,7 +534,6 @@ class TestAC1RepoFlagDetectsMissingStep:
 class TestAC2UnresolvableRootIsExit3:
     """AC-2: no --repo + no resolvable root ⇒ exit 3, STEP_COMMITS unknown."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_no_repo_no_root_is_exit_3(self, tmp_path: Path) -> None:
         """Plans dir outside any repo, no --repo, no registry.
 
@@ -585,7 +575,6 @@ class TestAC2UnresolvableRootIsExit3:
             import shutil
             shutil.rmtree(iso, ignore_errors=True)
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_exit_3_record_only_records_unknown(self, tmp_path: Path) -> None:
         """Under --record-only, exit 3 still records step_commits: unknown."""
         import tempfile
@@ -659,17 +648,27 @@ class TestAC4InTreePlansStillWork:
 class TestAC5Exit3IsViolation:
     """AC-5: ship_integrity exit 3 maps to ship_integrity_violation in the runner."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_runner_treats_exit_3_as_violation(self, tmp_path: Path) -> None:
         """The bash runner's test_ship_integrity must treat exit 3 as a violation.
 
-        This test invokes the runner function via subprocess to avoid
-        needing the full runner context.
+        The runner checks `si_exit -ne 0` (run_ilk_loop_claude.sh:3553),
+        which catches exit 3 without a special case. This test verifies
+        the contract: exit 3 → revert + park.
         """
-        # This test is a placeholder pin — the actual runner integration
-        # is in test_ship_integrity_runner.sh. Mark xfail until the runner
-        # handles exit 3.
-        pytest.xfail("runner does not yet handle exit 3")
+        # The runner's check is `si_exit -ne 0`, so exit 3 is already
+        # handled as a violation. The bash integration is covered by
+        # test_ship_integrity_runner.sh. This class exists to document
+        # the contract in the AC table.
+        runner = SCRIPTS.parent.parent.parent / "scripts" / "run_ilk_loop_claude.sh"
+        if not runner.exists():
+            pytest.skip("runner script not found")
+        source = runner.read_text(encoding="utf-8")
+        # Verify the runner does NOT special-case exit 1 (it must treat
+        # any non-zero as a violation).
+        assert "si_exit -ne 0" in source, (
+            "runner must check si_exit -ne 0 (not -eq 1) to catch exit 3. "
+            "grep for 'si_exit' in the runner source."
+        )
 
 
 # ── AC-3: runner passes --repo to ship_integrity.py ──────────────────────────
@@ -681,7 +680,6 @@ class TestAC5Exit3IsViolation:
 class TestAC3RunnerPassesRepoFlag:
     """AC-3: the runner's argv to ship_integrity.py carries --repo."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_runner_builds_repo_in_si_args(self, tmp_path: Path) -> None:
         """The runner source must include --repo in _si_args."""
         runner = SCRIPTS.parent.parent.parent / "scripts" / "run_ilk_loop_claude.sh"

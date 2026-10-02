@@ -3404,6 +3404,13 @@ if m:
             print(line.split(':', 1)[1].strip()); break
 " "$f" 2>/dev/null) || true
     local _si_args=("--subplan" "$f" "--gate-passed" "$gate_passed")
+    # Pass --repo so ship_integrity can resolve the project root for
+    # external plans layouts (plans at ~/.ilk-data/projects/<key>/plans,
+    # repo a separate worktree).  Without this, the resolver walks up
+    # from the plans dir and finds no .git ancestor.
+    if [[ -n "${PROJECT_PATH:-}" && -d "$PROJECT_PATH" ]]; then
+      _si_args+=("--repo" "$PROJECT_PATH")
+    fi
     # Pass the results file and slug so ship_integrity can read the full
     # gate record and name the error in the violation reason.
     if [[ -n "$lc_file" && -n "$_enrich_slug" ]]; then

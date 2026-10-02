@@ -208,11 +208,18 @@ def read_subplan_status_and_checks(path: Path) -> tuple[str, list[dict[str, Any]
     return status, checks
 
 
-def _missing_step_reason(subplan: Path) -> str | None:
+_UNRESOLVABLE = "__unresolvable__"
+"""Sentinel returned by ``_missing_step_reason`` when the project root cannot
+be resolved.  Distinct from ``None`` (no violation) and a string (violation).
+The CLI treats this as exit 3 — a distinct outcome, not a silent downgrade."""
+
+
+def _missing_step_reason(subplan: Path, repo: Path | None = None) -> str | None:
     """Reason string when a *shipped* sub-plan lacks a commit for some step.
 
     Returns None when the sub-plan is not shipped, when every authored step
-    has a commit, or when the check cannot run.
+    has a commit, or when the check cannot run.  Returns ``_UNRESOLVABLE``
+    when the project root cannot be resolved and ``repo`` was not given.
 
     Delegates counting to ``ship_audit`` — ``count_authored_steps`` and
     ``check_step_commits`` — which already handle the ``#ship`` allowance
@@ -265,16 +272,38 @@ def _missing_step_reason(subplan: Path) -> str | None:
         # repo), so Path.cwd() would cause the probe to fail and the check
         # to silently skip — measured 18 skips vs 18 fires on 2026-09-16.
         # Record which input won so a silent fallback is diagnosable.
-        resolved_root, _root_src = _resolve_project_root(subplan)
+        # --repo takes precedence: the driver knows the repo path.
+        if repo is not None:
+            probe = subprocess.run(
+                ["git", "rev-parse", "--is-inside-work-tree"],
+                capture_output=True, text=True, cwd=repo, encoding="utf-8",
+            )
+            if probe.returncode == 0 and probe.stdout.strip() == "true":
+                resolved_root = repo
+                root_src = "repo-flag"
+            else:
+                print(
+                    f"warning: --repo path ({repo}) is not a git work tree; "
+                    "step-commit check skipped and ship-integrity fell "
+                    "back to the gate check alone",
+                    file=sys.stderr,
+                )
+                return None
+        else:
+            resolved_root, _root_src = _resolve_project_root(subplan)
 
         if resolved_root is None:
+            # Distinct outcome: the root could not be resolved.
+            # Previously this silently returned None (fail-open), which
+            # meant an unresolvable root looked identical to "every step
+            # is committed".  Now it signals the caller to exit 3.
             print(
                 "warning: could not resolve a project root from the sub-plan "
                 "path; step-commit check skipped and ship-integrity fell "
                 "back to the gate check alone",
                 file=sys.stderr,
             )
-            return None
+            return _UNRESOLVABLE
 
         probe = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
@@ -447,7 +476,7 @@ ship."""
 _BATCH_ARG_RE = re.compile(r"--batch[ =](\S+)")
 
 
-def _missing_record_reason(subplan: Path) -> str | None:
+def _missing_record_reason(subplan: Path, repo: Path | None = None) -> str | None:
     """Reason string when a *shipped* ``batch_verification`` sub-plan has no
     record on disk.
 
@@ -495,7 +524,18 @@ def _missing_record_reason(subplan: Path) -> str | None:
                 "record cannot be located"
             )
 
-        resolved_root, _ = _resolve_project_root(subplan)
+        # --repo takes precedence: the driver knows the repo path.
+        if repo is not None:
+            probe = subprocess.run(
+                ["git", "rev-parse", "--is-inside-work-tree"],
+                capture_output=True, text=True, cwd=repo, encoding="utf-8",
+            )
+            if probe.returncode == 0 and probe.stdout.strip() == "true":
+                resolved_root = repo
+            else:
+                return None
+        else:
+            resolved_root, _ = _resolve_project_root(subplan)
         if resolved_root is None:
             # Fail open — same as _missing_step_reason.
             return None
@@ -908,6 +948,14 @@ def _cli(argv: list[str]) -> int:
         help="Print VIOLATION lines and exit 1 as usual, but the caller "
              "should NOT park or revert. Used by the unattended profile.",
     )
+    ap.add_argument(
+        "--repo",
+        type=Path,
+        default=None,
+        help="Path to the project repo (worktree). When given, "
+             "ship_integrity uses it instead of resolving the root from "
+             "the sub-plan's location. Required when plans are external.",
+    )
     args = ap.parse_args(argv)
 
     # Resolve status + checks from file or explicit args.
@@ -1015,12 +1063,17 @@ def _cli(argv: list[str]) -> int:
     # Step counting already exists in ship_audit; reuse it rather than
     # reimplement, so the loop and the release audit cannot disagree about
     # which steps are done.
-    step_reason = _missing_step_reason(args.subplan) if args.subplan else None
+    step_reason = _missing_step_reason(args.subplan, repo=args.repo) if args.subplan else None
 
     # Record-absence half.  A batch_verification sub-plan must leave its record.
     # While warn-only (ENFORCE_RECORD_REQUIRED is False), report loudly but do
     # not block the ship.
-    rec_reason = _missing_record_reason(args.subplan) if args.subplan else None
+    rec_reason = _missing_record_reason(args.subplan, repo=args.repo) if args.subplan else None
+
+    # Unresolvable root: distinct outcome (exit 3), not a silent downgrade.
+    if step_reason is _UNRESOLVABLE:
+        print("STEP_COMMITS: unknown (could not resolve project root)", file=sys.stderr)
+        return 3
 
     reasons = [r for r in (step_reason, None if verdict.ok else verdict.reason) if r]
     if rec_reason:
