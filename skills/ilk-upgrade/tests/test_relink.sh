@@ -26,6 +26,7 @@ EXIT_CODE=0
 REAL_UPGRADE_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/scripts/upgrade.sh"
 REAL_UPGRADE_PS1="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/scripts/upgrade.ps1"
 REAL_ILK_DATA_DIR_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop" && pwd -P)/scripts/_ilk_data_dir.sh"
+REAL_ILK_PID_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop" && pwd -P)/scripts/_ilk_pid.sh"
 
 # --- temp workspace -----------------------------------------------------------
 
@@ -83,6 +84,9 @@ cp "$REAL_UPGRADE_SH" skills/ilk-upgrade/scripts/upgrade.sh
 
 # Copy the real _ilk_data_dir.sh
 cp "$REAL_ILK_DATA_DIR_SH" skills/ilk-loop/scripts/_ilk_data_dir.sh
+# upgrade.sh sources _ilk_pid.sh (since 3558391, 2026-08-10); without it
+# every case exited 1 before reaching the code under test.
+cp "$REAL_ILK_PID_SH" skills/ilk-loop/scripts/_ilk_pid.sh
 
 # Commit + push so the clone is at behind==0
 git add -A
