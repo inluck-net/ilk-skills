@@ -5268,6 +5268,27 @@ if cmds:
       unset ILK_DECLARED_GATES_FILE
     fi
 
+    # Gate snapshot: a sub-plan's local_checks belong to the runner, not to
+    # a worker.  Taken right after PRE_ITER_TARGET is resolved (before the
+    # gate-first loop), checked right after the agent returns.  A worker
+    # that deletes, weakens or edits a gate triggers a
+    # ship_integrity_violation and the file is restored.
+    local _gate_snap_file="" _gates_tampered=0
+    if [[ -n "${PRE_ITER_TARGET:-}" ]]; then
+      local _gs_slug="${PRE_ITER_TARGET%% *}"
+      local _gs_plans_dir
+      _gs_plans_dir=$(get_plans_dir 2>/dev/null) || _gs_plans_dir=""
+      if [[ -n "$_gs_plans_dir" ]]; then
+        _gate_snap_file="${RUN_LOG_DIR}/gates-snapshot-${i}.json"
+        if ! python3 "${_SKILL_ROOT}/ilk-loop/scripts/gate_snapshot.py" take \
+               --plans-dir "$_gs_plans_dir" --out "$_gate_snap_file" \
+               --slug "$_gs_slug" >/dev/null 2>&1; then
+          echo "  ! [gate-snapshot] could not snapshot gates for ${_gs_slug} — a worker edit to gates will NOT be detected this iteration" >&2
+          _gate_snap_file=""
+        fi
+      fi
+    fi
+
     local iter_log
     iter_log="${RUN_LOG_DIR}/iter-$(printf '%02d' $i).log"
 
@@ -5457,6 +5478,25 @@ print(json.dumps({
         _master_tampered=1
         echo "  ! [ship-integrity VIOLATION] the worker changed master state; restored to the pre-dispatch snapshot (rc=${_ms_rc}):" >&2
         echo "$_ms_out" >&2
+      fi
+    fi
+
+    # Gate restore: compare the sub-plan's gates with the pre-dispatch
+    # snapshot.  If a worker changed them, restore and flag the violation.
+    if [[ -n "$_gate_snap_file" && -f "$_gate_snap_file" ]]; then
+      local _gs_slug="${PRE_ITER_TARGET%% *}"
+      local _gs_plans_dir
+      _gs_plans_dir=$(get_plans_dir 2>/dev/null) || _gs_plans_dir=""
+      if [[ -n "$_gs_plans_dir" ]]; then
+        local _gs_out _gs_rc=0
+        _gs_out=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/gate_snapshot.py" restore \
+                    --plans-dir "$_gs_plans_dir" --snapshot "$_gate_snap_file" \
+                    --slug "$_gs_slug" 2>&1) || _gs_rc=$?
+        if [[ $_gs_rc -ne 0 ]]; then
+          _gates_tampered=1
+          echo "  ! [ship-integrity VIOLATION] the worker changed gates for ${_gs_slug}; restored to the pre-dispatch snapshot (rc=${_gs_rc}):" >&2
+          echo "$_gs_out" >&2
+        fi
       fi
     fi
 
@@ -6325,10 +6365,10 @@ append_revert_row(
     if [[ -n "$_si_stderr" ]]; then
       echo "$_si_stderr" >&2
     fi
-    # A worker edit to master state (restored right after the agent returned)
-    # is the same class of violation.  No park: the restore already put the
-    # park fields back as they were.
-    if [[ "$_master_tampered" -eq 1 ]]; then
+    # A worker edit to master state or to gate declarations (restored right
+    # after the agent returned) is the same class of violation.  No park:
+    # the restore already put the fields back as they were.
+    if [[ "$_master_tampered" -eq 1 || "$_gates_tampered" -eq 1 ]]; then
       stop_reason="ship_integrity_violation"
       iter_stop_reason="ship_integrity_violation"
     fi

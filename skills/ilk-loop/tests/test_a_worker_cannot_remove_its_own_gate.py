@@ -434,7 +434,6 @@ def _gate_snapshot_exists(world: dict) -> bool:
 # ── AC-1 (xfail): worker deletes gate ⇒ restored, ship_integrity_violation ──
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_worker_deleting_gate_is_restored_and_parked(tmp_path: Path) -> None:
     """A stub worker deletes step 1's gate from its sub-plan ⇒ the driver
     still runs that gate, the file is restored, and the run exits
@@ -444,8 +443,8 @@ def test_worker_deleting_gate_is_restored_and_parked(tmp_path: Path) -> None:
     the run exits ship_integrity_violation, and the agent was invoked
     (gate-first fell through because the gate was red after restore).
     """
-    world = _build_world(tmp_path)
-    proc = _run_iteration(world)
+    world = _build_world(tmp_path, step1_gate_command="false")
+    proc = _run_iteration(world, max_iterations=2)
 
     tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-40:])
     combined = proc.stdout + proc.stderr
@@ -467,7 +466,6 @@ def test_worker_deleting_gate_is_restored_and_parked(tmp_path: Path) -> None:
 # ── AC-2 (xfail): worker edits gate timeout ⇒ restored, ship_integrity ─────
 
 @_NEEDS_GTIMEOUT
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_worker_editing_gate_timeout_is_restored_and_parked(tmp_path: Path) -> None:
     """A stub worker lowers step 1's gate timeout ⇒ the driver restores it
     and exits ``ship_integrity_violation``.
@@ -475,8 +473,8 @@ def test_worker_editing_gate_timeout_is_restored_and_parked(tmp_path: Path) -> N
     Asserts: the sub-plan file's step 1 timeout is back to the original
     value after the run, and the run exits ship_integrity_violation.
     """
-    world = _build_world_edit_timeout(tmp_path, step1_gate_timeout=30)
-    proc = _run_iteration(world)
+    world = _build_world_edit_timeout(tmp_path, step1_gate_command="false", step1_gate_timeout=30)
+    proc = _run_iteration(world, max_iterations=2)
 
     tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-40:])
     combined = proc.stdout + proc.stderr
