@@ -10,7 +10,7 @@ blocked-no-runnable and the other _SENTINEL_FAILURE_MAP states fall through
 to clean-success or interrupted.  interrupt is a watchdog relaunch-class, so
 a red gate classified from records gets relaunched instead of blocked.
 
-AC-1..AC-3 are xfail (red-first); AC-4 is the control (sentinel matches).
+AC-1..AC-3 test the fix; AC-4 is the control (sentinel matches).
 
 HOME and ILK_DATA_HOME are both pinned to tmp_path (§23 half-pinned trap).
 """
@@ -96,7 +96,6 @@ def _make_iters_with_run_exit(
 # ── AC-1: run_exit local_checks_failed (rc 1 assertion) → local-checks-stuck ──
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_run_exit_local_checks_failed_is_stuck(tmp_path):
     """A run whose run_exit says local_checks_failed (rc 1 assertion),
     with the sentinel naming a different run, must classify as
@@ -127,7 +126,6 @@ def test_run_exit_local_checks_failed_is_stuck(tmp_path):
 # ── AC-2: run_exit local_checks_failed (rc 127) → local-checks-broken ────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_run_exit_local_checks_failed_rc127_is_broken(tmp_path):
     """A run whose run_exit says local_checks_failed (rc 127 command not found),
     with the sentinel naming a different run, must classify as
@@ -157,7 +155,6 @@ def test_run_exit_local_checks_failed_rc127_is_broken(tmp_path):
 # ── AC-3: run_exit merge-deferred → same label as sentinel path ──────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_run_exit_merge_deferred_classifies_correctly(tmp_path):
     """A run whose run_exit says merge-deferred, with the sentinel naming a
     different run, must classify as merge-deferred — not clean-success."""

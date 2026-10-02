@@ -637,6 +637,7 @@ CLASSIFICATION_LABELS: tuple[str, ...] = (
     "merge-conflict",
     "merge-deferred",
     "local-checks-unchanged",
+    "blocked-no-runnable",
 )
 
 LOCAL_CHECK_RE = re.compile(
@@ -1377,6 +1378,44 @@ def _classify_core(
         return "stuck-no-progress", {
             "iter_at_stop": last.get("iteration"),
             "error_rate": err_rate,
+        }
+
+    # Sentinel-classified stop reasons that also appear in run_exit records.
+    # When classifying from records (sentinel names a different run), these
+    # must map to the same label the sentinel branch gives — otherwise a red
+    # gate classified from records gets laundered into clean-success or
+    # interrupted (a watchdog relaunch-class).
+    if last_stop == "local_checks_failed":
+        broken = any(
+            _is_broken_gate_result(c)
+            for r in iters
+            for c in _items(r)
+            if c.get("outcome") in ("fail", "error")
+        )
+        label = "local-checks-broken" if broken else "local-checks-stuck"
+        return label, {
+            "iter_at_stop": last.get("iteration"),
+            "stop_reason": last_stop,
+            "broken_gate_result": broken,
+            "reason": "run_exit terminal state",
+        }
+    if last_stop == "local_checks_failed_no_commits":
+        return "local-checks-unchanged", {
+            "iter_at_stop": last.get("iteration"),
+            "stop_reason": last_stop,
+            "reason": "run_exit terminal state",
+        }
+    if last_stop == "merge-deferred":
+        return "merge-deferred", {
+            "iter_at_stop": last.get("iteration"),
+            "stop_reason": last_stop,
+            "reason": "run_exit terminal state",
+        }
+    if last_stop == "blocked-no-runnable":
+        return "blocked-no-runnable", {
+            "iter_at_stop": last.get("iteration"),
+            "stop_reason": last_stop,
+            "reason": "run_exit terminal state",
         }
 
     # last_stop is null → loop didn't break inside the iter loop on a
