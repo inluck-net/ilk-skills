@@ -4648,6 +4648,71 @@ reap_iteration_orphans() {
   )
 }
 
+# ----- Merge-pending yield check -------------------------------------------
+
+_check_other_project_merge_pending() {
+  # At an iteration boundary, check whether another project on this host
+  # has a pending selfmod merge.  If so, yield (exit cleanly) so the
+  # merge can land.  Returns 0 if a yield is needed, 1 otherwise.
+  #
+  # The predicate mirrors scheduler_scan.py's merge-pending detection:
+  #   sentinel state == merge-deferred OR merge_deferred field present,
+  #   AND unmerged worktree commits exist.
+  local _data_home="${ILK_DATA_HOME:-${ILK_DATA_DIR:-$HOME/.ilk-data}}"
+  local _projects_dir="$_data_home/projects"
+  [[ -d "$_projects_dir" ]] || return 1
+
+  local _selfmod_script="${_SKILL_ROOT}/ilk-loop/scripts/selfmod_worktree.py"
+
+  for _proj_dir in "$_projects_dir"/*/; do
+    [[ -d "$_proj_dir" ]] || continue
+    local _proj_key
+    _proj_key=$(basename "$_proj_dir")
+
+    # Skip the current project.
+    [[ "$_proj_key" == "$PROJECT_KEY" ]] && continue
+
+    local _sentinel="$_proj_dir/runtime/launcher/last-exit.json"
+    [[ -f "$_sentinel" ]] || continue
+
+    # Read sentinel and check merge-pending predicate.
+    local _is_merge_pending
+    _is_merge_pending=$(python3 -c "
+import json, sys
+try:
+    d = json.loads(open(sys.argv[1], encoding='utf-8-sig').read())
+except (OSError, ValueError):
+    sys.exit(1)
+if d.get('state') == 'merge-deferred' or d.get('merge_deferred'):
+    sys.exit(0)
+sys.exit(1)
+" "$_sentinel" 2>/dev/null) || continue
+
+    # Check for unmerged worktree commits.
+    local _wt_path="$_proj_dir/runtime/launcher/worktrees/selfmod-batch"
+    [[ -d "$_wt_path" ]] || continue
+
+    local _unmerged_count
+    _unmerged_count=$(python3 -c "
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[1])))
+from selfmod_worktree import unmerged_worktree_commits
+from pathlib import Path
+try:
+    commits = unmerged_worktree_commits(Path(sys.argv[2]))
+    print(len(commits))
+except Exception:
+    print(0)
+" "$_selfmod_script" "$_wt_path" 2>/dev/null) || _unmerged_count=0
+
+    if [[ "$_unmerged_count" -gt 0 ]]; then
+      echo "$_proj_key"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # ----- Main ------------------------------------------------------------------
 
 main() {
@@ -6374,6 +6439,28 @@ if last:
       stop_reason="blocked-no-runnable"
       break
     fi
+
+    # -- Merge-pending yield: let another project's merge land -----------
+    # If another project on this host has a pending selfmod merge, exit
+    # cleanly so the scheduler can dispatch that merge.  The watchdog
+    # relaunches us (merge-deferred is a relaunch action).
+    local _yield_to_project
+    _yield_to_project=$(_check_other_project_merge_pending) && {
+      echo "[runner] yielding to project $_yield_to_project's pending selfmod merge" >&2
+      stop_reason="merge-deferred"
+      merge_was_deferred=1
+      # Write a merge_deferred marker so the sentinel carries the detail.
+      local _deferred_marker="${SELFMOD_WORKTREE_PATH:-}/.ilk-merge-deferred"
+      if [[ -n "${SELFMOD_WORKTREE_PATH:-}" && -d "${SELFMOD_WORKTREE_PATH:-}" ]]; then
+        python3 -c "
+import json, sys
+from datetime import datetime
+d = {'live_pids': 'unknown', 'since': datetime.now().isoformat(), 'yielded_to': sys.argv[1]}
+print(json.dumps(d))
+" "$_yield_to_project" > "$_deferred_marker" 2>/dev/null || true
+      fi
+      break
+    }
   done
 
   if [[ -z "$stop_reason" ]]; then

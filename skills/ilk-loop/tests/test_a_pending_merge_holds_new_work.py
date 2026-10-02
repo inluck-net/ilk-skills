@@ -196,28 +196,63 @@ def test_ac1_merge_pending_holds_other_projects(tmp_path: Path) -> None:
     assert scan[0].get("reason") == "merge-pending"
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac3_runner_yields_at_iteration_boundary(tmp_path: Path) -> None:
     """AC-3: a runner between iterations with another project's merge pending
     ⇒ exits with the declared state, and its next relaunch proceeds once
     the merge has landed.
 
-    The runner should exit cleanly when it detects another project's
-    merge is pending, allowing the merge to land before relaunching.
+    The runner's ``_check_other_project_merge_pending`` function scans all
+    projects for a merge-deferred sentinel with unmerged worktree commits,
+    excluding the current project.  When found, it returns the yielding
+    project's key (exit 0); the caller breaks with ``merge-deferred``.
     """
-    # Create a project with a runner
+    # Create the "current" project (the one running the loop).
     project = _make_project(tmp_path, "my-project")
     _write_sentinel(project, state="running")
 
-    # Create another project with merge pending
+    # Create another project with merge pending.
     other_project = _make_project(tmp_path, "other-project")
     _write_sentinel(other_project, state="merge-deferred")
     wt_other = other_project / "runtime" / "launcher" / "worktrees" / "selfmod-batch"
     _add_unmerged_commit(wt_other)
 
-    # TODO: Invoke runner's iteration boundary check
-    # Should detect other project's merge pending and exit cleanly
-    assert False, "AC-3 not implemented: runner should yield at iteration boundary"
+    # Source the runner and call the yield check.
+    runner = _REPO / "skills" / "ilk-loop" / "scripts" / "run_ilk_loop_claude.sh"
+    env = _sandbox_env(tmp_path)
+    env["PROJECT_KEY"] = "my-project"
+    env["ILK_SKILL_HOME"] = str(_REPO / "skills")
+    env["_SKILL_ROOT"] = str(_REPO / "skills")
+    script = textwrap.dedent(f"""\
+        export ILK_DOTSOURCE_ONLY=1
+        export ILK_DATA_HOME='{tmp_path / ".ilk-data"}'
+        export ILK_SKILL_HOME='{_REPO / "skills"}'
+        export _SKILL_ROOT='{_REPO / "skills"}'
+        source '{runner}' || exit 90
+        unset ILK_DOTSOURCE_ONLY
+        PROJECT_KEY='my-project'
+        _yield=$(_check_other_project_merge_pending) && rc=0 || rc=$?
+        echo "YIELD=$_yield"
+        echo "RC=$rc"
+    """)
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True, text=True, timeout=30,
+        encoding="utf-8", errors="replace", env=env,
+    )
+    lines = result.stdout.splitlines()
+    yield_line = [l for l in lines if l.startswith("YIELD=")]
+    rc_line = [l for l in lines if l.startswith("RC=")]
+    assert yield_line, f"no YIELD output: {result.stdout}\n{result.stderr}"
+    assert rc_line, f"no RC output: {result.stdout}\n{result.stderr}"
+    yield_val = yield_line[-1].split("=", 1)[1]
+    rc_val = rc_line[-1].split("=", 1)[1]
+    assert rc_val == "0", (
+        f"_check_other_project_merge_pending should exit 0 when another "
+        f"project has a pending merge, got exit {rc_val}"
+    )
+    assert yield_val == "other-project", (
+        f"should yield to 'other-project', got '{yield_val}'"
+    )
 
 
 def test_ac2_no_merge_pending_dispatches_normally(tmp_path: Path) -> None:
