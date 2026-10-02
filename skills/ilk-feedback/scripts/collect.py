@@ -661,6 +661,24 @@ BROKEN_GATE_STDERR_RE = re.compile(
 )
 
 
+def _check_items(rec: dict) -> list[dict]:
+    """The check dicts of one iteration record, whatever its shape.
+
+    The runner writes ``local_checks`` as a LIST of check dicts; older records
+    and hand-written fixtures carry a single dict.  Passing the raw value to a
+    per-check reader crashed on every list-shaped record (``'list' object has
+    no attribute 'get'``), so the sentinel classification failed and the
+    watchdog blocked every ``local_checks_failed`` run as local-checks-stuck
+    (ilk-skills run 20261002-105103).
+    """
+    lc = rec.get("local_checks")
+    if isinstance(lc, dict):
+        return [lc]
+    if isinstance(lc, list):
+        return [c for c in lc if isinstance(c, dict)]
+    return []
+
+
 def _is_broken_gate_result(check: dict) -> bool:
     """Return True if a failing local_checks result indicates the gate
     COMMAND could not execute (exit_code in {4,5,127} or stderr matches
@@ -1586,9 +1604,10 @@ def classify(
                     # rather than iterating on count and runner exit code.
                     # See sub-plan a-label-matches-its-own-trigger.
                     has_broken_gate = any(
-                        _is_broken_gate_result(it.get("local_checks", {}))
+                        _is_broken_gate_result(c)
                         for it in iters
-                        if it.get("local_checks")
+                        for c in _check_items(it)
+                        if c.get("outcome") in ("fail", "error")
                     )
                     label = "local-checks-broken" if has_broken_gate else "local-checks-stuck"
                 else:
@@ -1968,9 +1987,10 @@ def recommend_params(
 
     if label == "local-checks-broken":
         has_broken_gate = any(
-            _is_broken_gate_result(it.get("local_checks", {}))
+            _is_broken_gate_result(c)
             for it in iters
-            if it.get("local_checks")
+            for c in _check_items(it)
+            if c.get("outcome") in ("fail", "error")
         )
         if has_broken_gate:
             return cur_max, cur_to, (
