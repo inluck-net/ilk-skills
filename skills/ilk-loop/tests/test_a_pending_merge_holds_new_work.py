@@ -74,13 +74,17 @@ def _make_project(tmp_path: Path, name: str) -> Path:
     launcher = project / "runtime" / "launcher"
     launcher.mkdir(parents=True)
 
-    # Create worktree
+    # Create a real git worktree (not a plain repo) so that
+    # unmerged_worktree_commits() can detect unmerged commits.
+    clone = project / "clone"
+    clone.mkdir(parents=True)
+    _git(clone, "init", "-q")
+    (clone / "README.md").write_text("seed\n", encoding="utf-8")
+    _git(clone, "add", "README.md")
+    _git(clone, "commit", "-q", "-m", "seed")
+
     wt = launcher / "worktrees" / "selfmod-batch"
-    wt.mkdir(parents=True)
-    _git(wt, "init", "-q")
-    (wt / "README.md").write_text("seed\n", encoding="utf-8")
-    _git(wt, "add", "README.md")
-    _git(wt, "commit", "-q", "-m", "seed")
+    _git(clone, "worktree", "add", "--detach", str(wt))
 
     # Create plans directory
     plans = project / "plans"
@@ -140,7 +144,6 @@ def _add_unmerged_commit(wt: Path) -> None:
 # ── Tests ────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac1_merge_pending_holds_other_projects(tmp_path: Path) -> None:
     """AC-1: project A merge-pending, project B queued ⇒ scan dispatches A
     (merge-pending) and not B.
@@ -156,16 +159,41 @@ def test_ac1_merge_pending_holds_other_projects(tmp_path: Path) -> None:
     _write_sentinel(project_a, state="merge-deferred")
     wt_a = project_a / "runtime" / "launcher" / "worktrees" / "selfmod-batch"
     _add_unmerged_commit(wt_a)
+    plans_a = project_a / "plans"
+    _write_master(plans_a, "2026-01-01-a", status="queued")
 
     # Project B is queued and ready to dispatch
     _write_sentinel(project_b, state="shipped")  # previous run shipped
     plans_b = project_b / "plans"
     _write_master(plans_b, "2026-01-01-b", status="queued")
 
-    # Run scheduler scan
-    # TODO: Mock or invoke scheduler_scan to verify dispatch behavior
-    # For now, this is a placeholder that should fail
-    assert False, "AC-1 not implemented: scheduler should dispatch A, hold B"
+    # Write last-launch.json so resolve_repo_path works
+    for proj, repo_name in [(project_a, "repo-a"), (project_b, "repo-b")]:
+        repo_dir = tmp_path / repo_name
+        repo_dir.mkdir(exist_ok=True)
+        launcher = proj / "runtime" / "launcher"
+        (launcher / "last-launch.json").write_text(
+            json.dumps({"project_path": str(repo_dir)}), encoding="utf-8"
+        )
+
+    # Invoke scheduler_scan with patched data root.
+    # Import once, then patch ilk_data_root on the module.
+    if "scheduler_scan" not in sys.modules:
+        sys.path.insert(0, str(_SCHEDULER.parent))
+        sys.path.insert(0, str(_SCRIPTS))
+        import scheduler_scan as _ss
+    else:
+        _ss = sys.modules["scheduler_scan"]
+    with patch.dict(os.environ,
+                    {"ILK_DATA_HOME": str(tmp_path / ".ilk-data")}):
+        with patch.object(_ss, "ilk_data_root",
+                          return_value=tmp_path / ".ilk-data"):
+            scan = _ss.scan_projects()
+
+    # AC-1: only merge-pending project dispatched; other held
+    assert len(scan) == 1
+    assert scan[0]["key"] == "project-a"
+    assert scan[0].get("reason") == "merge-pending"
 
 
 @pytest.mark.xfail(strict=True, reason="red-first")

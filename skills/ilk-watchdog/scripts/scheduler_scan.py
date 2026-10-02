@@ -244,6 +244,15 @@ def scan_projects() -> list[dict]:
         if entry is not None:
             results.append(entry)
 
+    # --- merge-pending hold ---
+    # While any project on the host has a pending selfmod merge, dispatch
+    # only that project's merge-pending run.  All other projects are held
+    # so the merge can land without racing new work.  The scheduler logs
+    # "hold: merge pending for <key>" for each held project.
+    merge_pending = [r for r in results if r.get("reason") == "merge-pending"]
+    if merge_pending:
+        results = merge_pending
+
     # FIFO: oldest first; ties broken by project key for determinism
     results.sort(key=lambda r: (r["oldest_queued_ts"], r["key"]))
     return results
