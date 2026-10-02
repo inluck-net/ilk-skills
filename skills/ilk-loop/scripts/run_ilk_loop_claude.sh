@@ -5558,12 +5558,10 @@ print(json.dumps({
         fi
       fi
       # Start the watcher subshell if we have fingerprints to watch.
-      # Uses 1-second ticks so the watcher exits within 1 s of the
-      # stop file appearing (written when the agent exits).  Never
-      # adds to the iteration's wall clock.
+      # Uses short ticks; the teardown sends SIGKILL to the process
+      # group for instant exit.  The stop file is a fallback for races.
       if [[ -n "$_amend_sub_fp" || -n "$_amend_master_fp" ]]; then
-        (
-          while sleep 1; do
+        ( while sleep 0.05; do
             # Stop file: the iteration ended — exit cleanly.
             [[ -f "$_amend_stop_file" ]] && exit 0
             local _changed=0
@@ -5648,12 +5646,12 @@ print(json.dumps({
     fi
 
     # -- Plan amendment watcher result ----------------------------------
-    # Signal the watcher to stop: write the stop file so it exits on
-    # its next 1-second tick.  Then reap it.  This must happen before
-    # the amendment-flag check so the watcher never adds wall-clock
-    # time to the iteration.
+    # Kill the watcher so it never adds wall-clock time to the
+    # iteration.  SIGKILL ensures immediate termination even if the
+    # subshell is in a sleep(1) call.  The stop file is a fallback.
     if [[ -n "$_amend_watcher_pid" ]]; then
       touch "$_amend_stop_file" 2>/dev/null || true
+      kill -9 -- -"$_amend_watcher_pid" 2>/dev/null || kill -9 "$_amend_watcher_pid" 2>/dev/null || true
       wait "$_amend_watcher_pid" 2>/dev/null || true
     fi
 
