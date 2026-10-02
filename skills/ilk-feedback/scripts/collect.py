@@ -1550,6 +1550,13 @@ def classify(
         # worker broke something).  Same watchdog action (block), but
         # a different label so the postmortem is honest about the cause.
         "local_checks_failed_no_commits": "local-checks-unchanged",
+        # A selfmod merge was deferred because a live loop is running.
+        # Transient — the scheduler relaunches when the other loop exits.
+        # Without this entry the state fell through to generic heuristics,
+        # which see productive iterations and classify it clean-success.
+        # The label merge-deferred is already in CLASSIFICATION_LABELS and
+        # watchdog.sh's classify_action arms (→ relaunch).
+        "merge-deferred": "merge-deferred",
     }
     if sentinel is not None:
         sentinel_state = (sentinel.get("state") or "").strip()

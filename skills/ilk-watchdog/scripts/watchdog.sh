@@ -357,6 +357,11 @@ normalize_classification() {
       # Provider quota cap detected by the SP6 classifier.
       echo "quota-exhausted"
       ;;
+    merge-deferred)
+      # A selfmod merge was deferred because a live loop is running.
+      # Transient — the scheduler relaunches when the other loop exits.
+      echo "merge-deferred"
+      ;;
     *)
       echo "$label"
       ;;

@@ -264,12 +264,15 @@ def test_normal_sub_plan_gated_beside_many_verify_sub_plans(tmp_path: Path) -> N
 
 
 def test_no_awk_receives_a_multiline_verify_list() -> None:
-    """Both awk sites (targets and the merge) must get the verify list
-    without newlines.  The merge site is inline in the main loop and has no
-    seam to drive directly, so this pins the source shape for both."""
+    """The targets awk site must get the verify list without newlines.
+
+    The merge site was replaced with ``sort -u`` (sub-plan
+    a-gate-proves-what-it-claims, 2026-10-02) since get_ledger_check_targets
+    now emits all intermediate steps and the merge must keep them all.
+    Only the targets awk remains; this pins its source shape."""
     src = RUNNER.read_text(encoding="utf-8")
     sites = re.findall(r'awk -v vs="\$\{?(\w+)', src)
-    assert len(sites) >= 2, f"expected both awk sites, found {sites!r}"
+    assert len(sites) >= 1, f"expected at least one awk site, found {sites!r}"
     for var in sites:
         assert var.endswith("_oneline"), (
             f"awk -v vs=\"${var}\" passes a variable not flattened to one "
