@@ -776,7 +776,8 @@ def check_verified_tree(project: Path, record_path: Path) -> tuple[bool, str]:
 
 def write_gate_record(project: Path, excused: int,
                       flaky_owed: list[str] | None = None,
-                      suite_source: str | None = None) -> tuple[bool, str]:
+                      suite_source: str | None = None,
+                      batch: str | None = None) -> tuple[bool, str]:
     """Record the verified verdict where the PROOF CHECK actually reads it.
 
     Verification and proof were two different files. This script validates
@@ -844,7 +845,7 @@ def write_gate_record(project: Path, excused: int,
         suite_source=suite_source,
     )
     try:
-        written = batch_gate.write_record(record, runtime_dir)
+        written = batch_gate.write_record(record, runtime_dir, batch=batch)
     except OSError as exc:
         return False, f"could not write {runtime_dir}: {exc}"
     return True, str(written)
@@ -1094,7 +1095,8 @@ def main(argv: list[str] | None = None) -> int:
     suite_source = _ss_m.group(1).strip() if _ss_m else None
 
     ok, detail = write_gate_record(project, excused, flaky_owed=flaky_owed,
-                                   suite_source=suite_source)
+                                   suite_source=suite_source,
+                                   batch=args.batch)
     if ok:
         print(f"{message}; batch-gate record written to {detail}")
     else:

@@ -159,6 +159,17 @@ def record_path(runtime_dir: Path) -> Path:
     return runtime_dir / "batch-gate.json"
 
 
+def batch_record_path(runtime_dir: Path, batch: str) -> Path:
+    """Return the per-batch path ``runtime/batch-gates/<batch>.json``.
+
+    Each batch keeps its own verify record so that a later batch's gate
+    cannot overwrite it.  The legacy ``batch-gate.json`` is kept as
+    "latest" for back-compat; readers fall back to it when no per-batch
+    record exists.
+    """
+    return runtime_dir / "batch-gates" / f"{batch}.json"
+
+
 def resolve_runtime_dir(project_path: Path) -> Optional[Path]:
     """Resolve where this project's batch-gate record lives.
 
@@ -199,12 +210,36 @@ def _is_measured(record: BatchGateRecord) -> bool:
     return record.verdict in ("pass", "fail")
 
 
-def write_record(record: BatchGateRecord, runtime_dir: Path) -> Path:
+def write_record(
+    record: BatchGateRecord,
+    runtime_dir: Path,
+    *,
+    batch: Optional[str] = None,
+) -> Path:
     """Write a batch-gate record to disk.  Returns the path written.
 
     Atomic: writes to ``<path>.tmp`` then ``os.replace``, so a killed
     process never leaves a half-written record.
+
+    When *batch* is supplied, writes to the per-batch path
+    ``runtime/batch-gates/<batch>.json`` AND keeps the legacy
+    ``batch-gate.json`` as "latest" for back-compat.
     """
+    if batch is not None:
+        p = batch_record_path(runtime_dir, batch)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(record.to_dict(), indent=2) + "\n",
+                       encoding="utf-8")
+        os.replace(tmp, p)
+        # Also update the legacy "latest" record for back-compat.
+        legacy = record_path(runtime_dir)
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        tmp_legacy = legacy.with_suffix(".tmp")
+        tmp_legacy.write_text(json.dumps(record.to_dict(), indent=2) + "\n",
+                              encoding="utf-8")
+        os.replace(tmp_legacy, legacy)
+        return p
     p = record_path(runtime_dir)
     runtime_dir.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".tmp")
@@ -214,7 +249,11 @@ def write_record(record: BatchGateRecord, runtime_dir: Path) -> Path:
     return p
 
 
-def read_record(runtime_dir: Path) -> Optional[BatchGateRecord]:
+def read_record(
+    runtime_dir: Path,
+    *,
+    batch: Optional[str] = None,
+) -> Optional[BatchGateRecord]:
     """Read and validate a batch-gate record.
 
     Returns None when the file is missing, has missing fields, or is
@@ -224,7 +263,36 @@ def read_record(runtime_dir: Path) -> Optional[BatchGateRecord]:
     The attribution fields are optional: a four-field record from a
     pre-v0.9.81 gate still loads, and reads ``undeclared=None`` /
     ``excused_count=None`` — "not recorded", not "none recorded".
+
+    When *batch* is supplied, reads from the per-batch path
+    ``runtime/batch-gates/<batch>.json``.  Falls back to the legacy
+    ``batch-gate.json`` when no per-batch record exists, so old batches
+    that predate per-batch storage still read correctly.
     """
+    if batch is not None:
+        p = batch_record_path(runtime_dir, batch)
+        if p.is_file():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return None
+            if not isinstance(data, dict):
+                return None
+            for field in REQUIRED_FIELDS:
+                if field not in data:
+                    return None
+            return BatchGateRecord(
+                verdict=data["verdict"],
+                head_sha=data["head_sha"],
+                invocation=data["invocation"],
+                timestamp=data["timestamp"],
+                undeclared=_optional_str_list(data.get("undeclared")),
+                excused_count=_optional_int(data.get("excused_count")),
+                tree_sha=data.get("tree_sha") or None,
+                writer=data.get("writer") or None,
+                flaky_owed=_optional_str_list(data.get("flaky_owed")),
+            )
+        # Fall through to legacy path.
     p = record_path(runtime_dir)
     if not p.is_file():
         return None
