@@ -4,7 +4,7 @@ Fixture: a tmp_path git repo with a small tree and tags v1, v2 on
 different commits.  Every subprocess gets HOME=<tmp>/home,
 ILK_RELEASES_ROOT=<tmp>/home/.ilk/releases.
 
-AC-1..AC-6 are xfail(strict=True) because the script does not exist yet.
+All tests pass once the script exists.
 AC-7 is a control — the fixture itself passes today.
 """
 
@@ -112,7 +112,6 @@ def _parent(env: dict) -> Path:
 # AC-1: extract + manifest + read-only + current symlink
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="red-first: script does not exist yet")
 def test_ac1_extract_manifest_readonly_current(git_repo, env):
     """AC-1: extract v1, verify manifest, read-only bits, and current symlink."""
     sha = _tag_sha(git_repo, "v1")
@@ -152,7 +151,6 @@ def test_ac1_extract_manifest_readonly_current(git_repo, env):
 # AC-2: missing tag → exit non-zero, nothing created, current unchanged
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="red-first: script does not exist yet")
 def test_ac2_missing_tag(git_repo, env):
     """AC-2: missing tag exits non-zero, stderr names it, no release dir."""
     # First install v1 so current exists
@@ -171,7 +169,6 @@ def test_ac2_missing_tag(git_repo, env):
 # AC-3: install v1 then v2 → current=v2, previous=v1; rollback swaps
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="red-first: script does not exist yet")
 def test_ac3_current_previous_and_rollback(git_repo, env):
     """AC-3: install v1, v2; verify pointers; rollback; rollback with no previous."""
     root = _releases_root(env)
@@ -208,7 +205,6 @@ def test_ac3_current_previous_and_rollback(git_repo, env):
 # AC-4: atomic flip — concurrent readers never see FileNotFoundError
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="red-first: script does not exist yet")
 def test_ac4_atomic_flip(git_repo, env):
     """AC-4: 20 alternating flips, 2000 reads, no FileNotFoundError."""
     _run(env, "v1", "--repo", str(git_repo))
@@ -244,7 +240,6 @@ def test_ac4_atomic_flip(git_repo, env):
 # AC-5: prune keeps last 5 release dirs
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="red-first: script does not exist yet")
 def test_ac5_prune_keeps_five(git_repo, env):
     """AC-5: installing 7 tags leaves exactly 5 release dirs."""
     # Create tags t1..t7 by making commits
@@ -270,7 +265,6 @@ def test_ac5_prune_keeps_five(git_repo, env):
 # AC-6: re-install is idempotent; re-tagged tag is refused
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="red-first: script does not exist yet")
 def test_ac6_idempotent_and_retag_refused(git_repo, env):
     """AC-6: re-install doesn't rewrite manifest; re-tagged tag is refused."""
     _run(env, "v1", "--repo", str(git_repo))
