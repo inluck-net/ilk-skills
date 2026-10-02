@@ -2838,3 +2838,62 @@ running the batch-verify gate (pid 50479). Three defects:
 
 `phase.json` closes all three: the panel reads the phase instead of inferring
 it from iteration metadata.
+
+---
+
+## Contract 19: Verify-step integrity (`verify_step_integrity.py`)
+
+### Purpose
+
+A verify step exists to resolve attributed regressions — it runs the suite,
+finds failures, and fixes them.  Nothing in ilk stops a verify worker editing
+tests on its way to green.  I2 sub-plan 0 protects only DECLARED gates.
+
+This contract adds three checks at the verify step's gate
+(``verify_attribution.py``, before it can pass):
+
+1. **Refuse** if the verify diff modifies any file named as a pin file by
+   ANY sub-plan's ``pins_only``-style gate, or any ``test_*`` file another
+   batch's sub-plan created.
+2. **Refuse** if the verify diff adds a ``skip``, ``skipif``, ``xfail``, or
+   ``importorskip`` to an existing test, or deletes an existing test function.
+3. **Declare and surface** any other edit to an existing test file: the commit
+   body must carry ``[test-change: <node> — <why>]``.  A missing declaration
+   ⇒ refuse.  Declared changes pass.
+
+### Who writes
+
+- **`verify_step_integrity.py`** — `check_verify_commit(project, verify_slug, batch_base, pin_files)` returns a list of `Violation` objects.  Called from `verify_attribution.py` or a gate check.
+
+### Who reads
+
+- **`verify_attribution.py`** — at the verify step's gate, before passing.
+- **The runner** — may call it as part of the local_checks block for a batch-verification sub-plan.
+
+### Format
+
+```python
+@dataclass
+class Violation:
+    file: str
+    reason: str
+    line: int | None = None
+```
+
+### Invariants
+
+1. **Pin files are immutable to the verify step.** A file named as a pin file by any sub-plan's gate must not be modified by the verify step, regardless of which batch owns it.
+2. **Skip/xfail additions are refused.** A verify step must not weaken tests to reach green.  This includes `@pytest.mark.skip`, `@pytest.mark.skipif`, `@pytest.mark.xfail`, `pytest.importorskip`, and their unittest equivalents.
+3. **Test function deletions are refused.** A verify step must not remove tests to reach green.
+4. **Undeclared test changes are refused.** Any other edit to an existing test file must be declared in the commit body via `[test-change: <node> — <why>]`.  A missing declaration is a refusal; a declared change passes and is listed in the verification record.
+5. **Code-only changes are clean.** A verify commit touching only non-test code produces no violations.
+
+### Bug reference (gh-resolve G1, 2026-10-02)
+
+gh-resolve G1's batch-verification step 1, commit `47e2cf21` ("fix(verify): resolve attributed regressions"), changed 3 test files to get green:
+
+1. **Reshaped (not loosened):** `tests/test_reconcile_truthful_verdict.py::TestEscalatedWithErrors::test_escalated_errors_surfaced`.  The fixture row at :140-143 gained `"pr": 9999`, which steers it around the batch's new skip.  No assertion changed and no skip or xfail was added, yet the original case is now untested.
+2. **Another batch's pin file:** `tests/test_31d_a_run_records_its_clone.py:96` (pinned by gh-resolve 10-01d).  Its pin guard now fails.
+3. **A contract sync:** `== 5` → `== 6` after the batch added a terminal state.  That one is legitimate.
+
+Nothing in ilk stopped the verify worker from editing tests on its way to green.

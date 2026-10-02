@@ -522,6 +522,13 @@ things, all of them measurements:
   correct fix, read it — it may be the test that is wrong, in which case update
   it to the new contract with a comment saying why. That judgment goes in
   Findings.
+- **Verify-step integrity is enforced.** `verify_step_integrity.check_verify_commit`
+  (Contract 19) is called as part of the gate.  It refuses the verify step if it:
+  (a) modifies a pin file or another batch's test file;
+  (b) adds skip/xfail markers or deletes test functions;
+  (c) changes an existing test file without a `[test-change: <node> — <why>]`
+      declaration in the commit body.  See `verify_step_integrity.py` for the
+      implementation.
 - Red gate ⇒ retried next iteration (current_step stays at 1).
 - Two confirmed reds ⇒ `status: blocked`, naming the failures.
 - Commit: `fix(verify): resolve attributed regressions [plan:<slug>#step-1]`
