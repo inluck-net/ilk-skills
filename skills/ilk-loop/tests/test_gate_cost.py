@@ -134,3 +134,27 @@ def test_missing_root_is_named_not_reported_as_empty(tmp_path: Path) -> None:
     with pytest.raises(SystemExit) as e:
         _runs(tmp_path / "does-not-exist")
     assert "no project data" in str(e.value)
+
+
+def test_a_record_whose_message_is_a_string_is_skipped(tmp_path):
+    """A `system`/`permission_denied` row carries `message` as a str.
+
+    One such row (ilk-skills run 20261002-153231, iter-05 line 7597) made
+    `gate_cost.py --by-test-file --json` exit 1 with AttributeError, which
+    plan_lint turned into a red gate on another project (2026-10-03).
+    """
+    log = tmp_path / "iter-01.log.jsonl"
+    rows = [
+        {"type": "system", "subtype": "permission_denied", "tool_name": "Bash",
+         "message": "Dangerous rm operation", "timestamp": "2026-10-02T15:40:00Z"},
+        ["not", "a", "record"],
+        {"type": "assistant", "timestamp": "2026-10-02T15:40:01Z",
+         "message": {"content": [{"type": "tool_use", "name": "Bash", "id": "t1",
+                                  "input": {"command": "python3 -m pytest a.py"}}]}},
+        {"type": "user", "timestamp": "2026-10-02T15:40:03Z",
+         "message": {"content": [{"type": "tool_result", "tool_use_id": "t1",
+                                  "content": "1 passed in 0.10s"}]}},
+    ]
+    log.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    calls = list(gate_cost._calls_detailed(log))
+    assert len(calls) == 1 and calls[0][1] == "python3 -m pytest a.py"

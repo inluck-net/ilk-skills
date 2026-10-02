@@ -135,8 +135,17 @@ def _calls_detailed(path: Path):
             r = json.loads(line)
         except Exception:
             continue
+        # Not every record is a message: a `system` / `permission_denied`
+        # record carries `message` as a STRING (ilk-skills run 20261002-153231
+        # iter-05 line 7597), and one such row crashed every gate_cost reader
+        # on the host -- and through plan_lint, gh-resolve's G3 gate.
+        if not isinstance(r, dict):
+            continue
+        msg = r.get("message")
+        if not isinstance(msg, dict):
+            continue
         ts = r.get("timestamp")
-        c = (r.get("message") or {}).get("content")
+        c = msg.get("content")
         if not isinstance(c, list) or not ts:
             continue
         for b in c:
