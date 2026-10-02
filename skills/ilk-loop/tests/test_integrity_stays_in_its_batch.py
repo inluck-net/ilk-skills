@@ -173,7 +173,12 @@ def _build_world(
         "b = re.sub(r'^current_step: 1', 'current_step: 0', b, count=1, flags=re.M)\n"
         "p.write_text(b)\n"
         "EOP\n"
-        # Make a commit with the trailer.
+        # a1's step-0 commit (empty, with trailer) — required so
+        # ship_integrity's step-commit check doesn't flag a1 as
+        # "missing commit for step 0".
+        "git -c user.email=t@example.com -c user.name=t "
+        f'-C {project} commit --allow-empty -q -m "feat: a1 step 0 [plan:{SLUG_A}#step-0]"\n'
+        # Make a commit with the chosen trailer.
         f"echo 'agent work' > {project}/agent-work.txt\n"
         f"git -C {project} add agent-work.txt\n"
         "git -c user.email=t@example.com -c user.name=t "
