@@ -296,6 +296,19 @@ def _denies_ship_marker(cmd: str) -> bool:
 # ── main ─────────────────────────────────────────────────────────────────────
 
 
+def _iteration_marker_exists() -> bool:
+    """Check if the iteration-shipped marker file exists.
+
+    The runner sets ``ILK_SHIPPED_MARKER`` to the absolute path of the marker
+    file.  If the variable is unset or the file does not exist, the marker is
+    not present.
+    """
+    marker = os.environ.get("ILK_SHIPPED_MARKER")
+    if not marker:
+        return False
+    return Path(marker).is_file()
+
+
 def main() -> int:
     # garbage stdin ⇒ allow, exit 0, no stdout
     try:
@@ -304,6 +317,36 @@ def main() -> int:
         return 0
 
     tool_name = event.get("tool_name", "")
+
+    # ── iteration-shipped marker ─────────────────────────────────────────
+    # After a successful ship in this iteration, the worker may not start
+    # another sub-plan.  Deny Edit/Write and git commit; allow Read.
+    if _iteration_marker_exists():
+        if tool_name in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
+            _deny(
+                "shipped this iteration; END YOUR TURN.  "
+                "The driver will clear the marker at the next iteration start."
+            )
+            return 0
+        if tool_name == "Bash":
+            tool_input = event.get("tool_input") or {}
+            cmd = tool_input.get("command", "")
+            if cmd:
+                try:
+                    tokens = shlex.split(cmd)
+                except ValueError:
+                    tokens = []
+                if tokens and "git" in tokens:
+                    idx = tokens.index("git")
+                    args = tokens[idx + 1 :]
+                    if "commit" in args:
+                        _deny(
+                            "shipped this iteration; END YOUR TURN.  "
+                            "The driver will clear the marker at the next "
+                            "iteration start."
+                        )
+                        return 0
+
     root = clone_root()
 
     # ── Edit / Write / MultiEdit / NotebookEdit ──────────────────────────

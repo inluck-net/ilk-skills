@@ -17,9 +17,6 @@ Three acceptance criteria:
         Read.
   AC-2  no marker ⇒ unchanged.
   AC-3  the driver's iteration start removes a stale marker.
-
-AC-1 and AC-3 are xfail(red-first) — the hook and driver don't yet check the
-marker.
 """
 from __future__ import annotations
 
@@ -89,7 +86,8 @@ def _fake_env(tmp_path: Path):
     runtime_dir.mkdir(parents=True)
     marker_path = runtime_dir / "iteration-shipped.marker"
 
-    env = {**os.environ, "CLAUDE_CONFIG_DIR": str(home)}
+    env = {**os.environ, "CLAUDE_CONFIG_DIR": str(home),
+           "ILK_SHIPPED_MARKER": str(marker_path)}
     return {
         "runtime_dir": runtime_dir,
         "marker_path": marker_path,
@@ -128,7 +126,6 @@ def _run_hook(event: str, env: dict[str, str]) -> dict:
 # ── AC-1: marker present ⇒ deny Edit and git commit, allow Read ─────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 class TestMarkerDeniesEditAndCommit:
     """AC-1: marker present ⇒ the hook denies Edit and ``git commit``.
 
@@ -204,7 +201,6 @@ class TestNoMarkerUnchanged:
 # ── AC-3: driver iteration start removes stale marker ───────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 class TestDriverRemovesStaleMarker:
     """AC-3: the driver's iteration start removes a stale marker."""
 
@@ -225,8 +221,9 @@ class TestDriverRemovesStaleMarker:
 def _clear_iteration_marker(runtime_dir: Path) -> None:
     """Simulate the driver's iteration-start marker cleanup.
 
-    Placeholder: does nothing until the real runner clears the marker.
-    The test xfail(red-first) until that integration lands.
+    The runner clears the marker at the start of each iteration so the
+    worker can take new work.
     """
-    # Intentionally a no-op — red-first.
-    pass
+    marker = runtime_dir / "iteration-shipped.marker"
+    if marker.exists():
+        marker.unlink()

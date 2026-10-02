@@ -301,6 +301,24 @@ def clear_intent(plans_dir: Path) -> None:
         pass
 
 
+def _write_iteration_marker() -> None:
+    """Write the iteration-shipped marker file.
+
+    The runner sets ``ILK_SHIPPED_MARKER`` to the absolute path where the
+    marker should be written.  The hook checks this file to block further
+    work after a ship.  The runner clears it at the next iteration start.
+
+    If ``ILK_SHIPPED_MARKER`` is not set, this is a no-op (the hook's
+    marker check degrades to allow when the variable is absent).
+    """
+    marker = os.environ.get("ILK_SHIPPED_MARKER")
+    if not marker:
+        return
+    path = Path(marker)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("shipped\n", encoding="utf-8")
+
+
 def invalidate_intent(plans_dir: Path, slug: str) -> bool:
     """Clear the intent IF it names *slug*. Returns True when it did.
 
@@ -510,6 +528,10 @@ def ship(
     status_written = writer(subplan)
 
     clear_intent(plans_dir)
+
+    # Write the iteration-shipped marker so the hook can block further work.
+    _write_iteration_marker()
+
     return ShipResult(
         slug=slug,
         subplan=subplan.name,
