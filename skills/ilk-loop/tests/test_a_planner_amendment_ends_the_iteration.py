@@ -445,6 +445,13 @@ class TestAC4DirtyTreePreserved:
     Red-first: the amended-plan termination path does not yet exist.
     """
 
+    # These run ~61 s: the iteration ends at --iteration-timeout-min 1, not
+    # at the watcher's kill (AC1 ends in ~6 s).  Under the suite's 17 s cap
+    # pytest-timeout killed them and orphaned the fixture runner (pids
+    # 28477 / 76756, 2026-10-03).  Seed: retro-2026-10-03-a-designed-
+    # escalation-loops.md defect 9 — the WIP assertion may pass via the
+    # timeout path, which would make this pin vacuous.
+    @pytest.mark.timeout(90)
     def test_amendment_preserves_dirty_tree(self, tmp_path: Path) -> None:
         """When a worker is terminated by amendment, dirty files are WIP-committed."""
         world = _setup_project(tmp_path)
@@ -613,6 +620,13 @@ class TestAC6SignalExitWipPreserved:
         parts = result.stdout.strip().split()
         assert parts[0] == "0", f"expected completed=0 for exit 137, got {parts[0]}"
 
+    # These run ~61 s: the iteration ends at --iteration-timeout-min 1, not
+    # at the watcher's kill (AC1 ends in ~6 s).  Under the suite's 17 s cap
+    # pytest-timeout killed them and orphaned the fixture runner (pids
+    # 28477 / 76756, 2026-10-03).  Seed: retro-2026-10-03-a-designed-
+    # escalation-loops.md defect 9 — the WIP assertion may pass via the
+    # timeout path, which would make this pin vacuous.
+    @pytest.mark.timeout(90)
     def test_signal_killed_worker_preserves_dirty_tree(self, tmp_path: Path) -> None:
         """A worker killed by SIGTERM with a dirty tree produces a WIP commit.
 

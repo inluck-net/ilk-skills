@@ -39,6 +39,22 @@ from ilk_paths import external_launcher_dir, project_key  # noqa: E402
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _restore_pinned_env(monkeypatch):
+    """Undo _setup_project's HOME / ILK_DATA_HOME pin at teardown.
+
+    Without this the pin outlived the test: every later test's subprocess
+    ran with a tmp HOME, lost the user-site pytest, and 45 tests went red
+    in the full suite (I2 verify, 2026-10-03).  Recording the current
+    values here makes monkeypatch restore them, however they are set later.
+    """
+    monkeypatch.setenv("HOME", os.environ.get("HOME", ""))
+    if "ILK_DATA_HOME" in os.environ:
+        monkeypatch.setenv("ILK_DATA_HOME", os.environ["ILK_DATA_HOME"])
+    else:
+        monkeypatch.delenv("ILK_DATA_HOME", raising=False)
+
+
 def _setup_project(tmp_path) -> Path:
     """Create a fake project with pinned HOME and ILK_DATA_HOME."""
     (tmp_path / "home").mkdir()
