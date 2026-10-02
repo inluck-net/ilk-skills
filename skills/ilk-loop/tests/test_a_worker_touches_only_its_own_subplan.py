@@ -6,7 +6,8 @@ AC-2: with ILK_ITERATION_SUBPLAN=a, Bash git commit -m "x [plan:b#step-0]"
 AC-3 (control): Edit of a.md, commit with [plan:a#step-1], and any edit
       with ILK_ITERATION_SUBPLAN unset ⇒ allow.
 
-The hook file does not exist yet; AC-1 and AC-2 are xfail(red-first).
+The hook is ``hooks/no-foreign-plan-edit.py``; tests use ``ILK_PLANS_DIR``
+to isolate from the real plans directory.
 """
 from __future__ import annotations
 
@@ -83,7 +84,6 @@ def _run_hook(event: str, env: dict[str, str]) -> dict:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 class TestDenyForeignPlanEdit:
     """With ILK_ITERATION_SUBPLAN=a, editing b.md in the plans dir must be denied."""
 
@@ -99,6 +99,7 @@ class TestDenyForeignPlanEdit:
             **os.environ,
             "CLAUDE_CONFIG_DIR": str(_fake_env["home"]),
             "ILK_ITERATION_SUBPLAN": "a",
+            "ILK_PLANS_DIR": str(plans),
         }
         result = _run_hook(event, env)
         assert result["allowed"] is False
@@ -114,6 +115,7 @@ class TestDenyForeignPlanEdit:
             **os.environ,
             "CLAUDE_CONFIG_DIR": str(_fake_env["home"]),
             "ILK_ITERATION_SUBPLAN": "a",
+            "ILK_PLANS_DIR": str(plans),
         }
         result = _run_hook(event, env)
         assert result["allowed"] is False
@@ -124,13 +126,13 @@ class TestDenyForeignPlanEdit:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 class TestDenyForeignPlanCommit:
     """With ILK_ITERATION_SUBPLAN=a, commits carrying [plan:b#…] and
     history-rewriting commands must be denied."""
 
     def test_commit_with_foreign_slug(self, _fake_env: dict) -> None:
         """AC-2: git commit -m "x [plan:b#step-0]" ⇒ deny."""
+        plans = _fake_env["plans"]
         event = _event("Bash", {
             "command": 'git commit -m "x [plan:b#step-0]"',
         })
@@ -138,12 +140,14 @@ class TestDenyForeignPlanCommit:
             **os.environ,
             "CLAUDE_CONFIG_DIR": str(_fake_env["home"]),
             "ILK_ITERATION_SUBPLAN": "a",
+            "ILK_PLANS_DIR": str(plans),
         }
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
     def test_git_reset_soft(self, _fake_env: dict) -> None:
         """AC-2: git reset --soft HEAD~1 ⇒ deny."""
+        plans = _fake_env["plans"]
         event = _event("Bash", {
             "command": "git reset --soft HEAD~1",
         })
@@ -151,12 +155,14 @@ class TestDenyForeignPlanCommit:
             **os.environ,
             "CLAUDE_CONFIG_DIR": str(_fake_env["home"]),
             "ILK_ITERATION_SUBPLAN": "a",
+            "ILK_PLANS_DIR": str(plans),
         }
         result = _run_hook(event, env)
         assert result["allowed"] is False
 
     def test_git_rebase(self, _fake_env: dict) -> None:
         """AC-2: git rebase main ⇒ deny."""
+        plans = _fake_env["plans"]
         event = _event("Bash", {
             "command": "git rebase main",
         })
@@ -164,6 +170,7 @@ class TestDenyForeignPlanCommit:
             **os.environ,
             "CLAUDE_CONFIG_DIR": str(_fake_env["home"]),
             "ILK_ITERATION_SUBPLAN": "a",
+            "ILK_PLANS_DIR": str(plans),
         }
         result = _run_hook(event, env)
         assert result["allowed"] is False
@@ -190,12 +197,14 @@ class TestAllowOwnPlanAndUnset:
             **os.environ,
             "CLAUDE_CONFIG_DIR": str(_fake_env["home"]),
             "ILK_ITERATION_SUBPLAN": "a",
+            "ILK_PLANS_DIR": str(plans),
         }
         result = _run_hook(event, env)
         assert result["allowed"] is True
 
     def test_commit_with_own_slug(self, _fake_env: dict) -> None:
         """AC-3: git commit -m "x [plan:a#step-1]" ⇒ allow."""
+        plans = _fake_env["plans"]
         event = _event("Bash", {
             "command": 'git commit -m "x [plan:a#step-1]"',
         })
@@ -203,6 +212,7 @@ class TestAllowOwnPlanAndUnset:
             **os.environ,
             "CLAUDE_CONFIG_DIR": str(_fake_env["home"]),
             "ILK_ITERATION_SUBPLAN": "a",
+            "ILK_PLANS_DIR": str(plans),
         }
         result = _run_hook(event, env)
         assert result["allowed"] is True
@@ -215,7 +225,11 @@ class TestAllowOwnPlanAndUnset:
             "old_string": "status: in-progress",
             "new_string": "status: pending",
         })
-        env = {**os.environ, "CLAUDE_CONFIG_DIR": str(_fake_env["home"])}
+        env = {
+            **os.environ,
+            "CLAUDE_CONFIG_DIR": str(_fake_env["home"]),
+            "ILK_PLANS_DIR": str(plans),
+        }
         # Ensure the var is not inherited
         env.pop("ILK_ITERATION_SUBPLAN", None)
         result = _run_hook(event, env)
@@ -223,16 +237,22 @@ class TestAllowOwnPlanAndUnset:
 
     def test_commit_with_subplan_unset(self, _fake_env: dict) -> None:
         """AC-3: git commit -m "x [plan:b#step-0]" with SUBPLAN unset ⇒ allow."""
+        plans = _fake_env["plans"]
         event = _event("Bash", {
             "command": 'git commit -m "x [plan:b#step-0]"',
         })
-        env = {**os.environ, "CLAUDE_CONFIG_DIR": str(_fake_env["home"])}
+        env = {
+            **os.environ,
+            "CLAUDE_CONFIG_DIR": str(_fake_env["home"]),
+            "ILK_PLANS_DIR": str(plans),
+        }
         env.pop("ILK_ITERATION_SUBPLAN", None)
         result = _run_hook(event, env)
         assert result["allowed"] is True
 
     def test_edit_non_plan_file(self, _fake_env: dict) -> None:
         """AC-3: Edit a non-plan file with SUBPLAN=a ⇒ allow."""
+        plans = _fake_env["plans"]
         target = _fake_env["tmp"] / "code.py"
         target.write_text("x = 1\n")
         event = _event("Edit", {
@@ -244,6 +264,7 @@ class TestAllowOwnPlanAndUnset:
             **os.environ,
             "CLAUDE_CONFIG_DIR": str(_fake_env["home"]),
             "ILK_ITERATION_SUBPLAN": "a",
+            "ILK_PLANS_DIR": str(plans),
         }
         result = _run_hook(event, env)
         assert result["allowed"] is True
