@@ -73,7 +73,6 @@ def _take_and_restore(plans: Path, master_name: str) -> dict:
 
 # ── AC-1 ────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_a_hold_made_mid_iteration_survives_the_restore(tmp_path: Path) -> None:
     """A park + hold:human added after the snapshot must not be undone."""
     plans = tmp_path / "plans"
