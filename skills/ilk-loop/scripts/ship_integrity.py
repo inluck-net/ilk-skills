@@ -1070,9 +1070,20 @@ def _cli(argv: list[str]) -> int:
     # not block the ship.
     rec_reason = _missing_record_reason(args.subplan, repo=args.repo) if args.subplan else None
 
-    # Unresolvable root: distinct outcome (exit 3), not a silent downgrade.
+    # Unresolvable root: the step-commit half is unmeasured, but a red
+    # gate is still a violation.  Evaluate the gate verdict before
+    # returning — exit 1 if the gate is red, exit 3 otherwise.
     if step_reason is _UNRESOLVABLE:
         print("STEP_COMMITS: unknown (could not resolve project root)", file=sys.stderr)
+        if not verdict.ok:
+            reasons = [verdict.reason]
+            if rec_reason:
+                if ENFORCE_RECORD_REQUIRED:
+                    reasons.append(rec_reason)
+                else:
+                    print(f"WARN RECORD ABSENT: {rec_reason}", file=sys.stderr)
+            print(f"VIOLATION: {'; '.join(reasons)}", file=sys.stderr)
+            return 1
         return 3
 
     reasons = [r for r in (step_reason, None if verdict.ok else verdict.reason) if r]

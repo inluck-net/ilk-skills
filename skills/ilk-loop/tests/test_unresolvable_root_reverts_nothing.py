@@ -86,7 +86,6 @@ def _source_driver(env: dict[str, str]) -> str:
 
 # ── AC-1: unresolvable root + empty gate ⇒ stays shipped ────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_unresolvable_root_keeps_shipped_status(tmp_path: Path):
     """AC-1: PROJECT_PATH missing, shipped demo, empty gate ⇒ stays shipped."""
     home = tmp_path / "home"
