@@ -294,13 +294,9 @@ def count_authored_steps(body: str) -> list[int]:
     Legacy fallback: when no ``## Steps`` heading exists at all, the whole body
     is scanned, for the same reason.
     """
-    sections = [m.group(1) for m in _STEPS_SECTION_RE.finditer(body)]
-    found: list[int] = []
-    for sec in sections:
-        found.extend(int(x) for x in _STEP_HEADING_RE.findall(sec))
-    if not found and not sections:
-        found = [int(x) for x in _STEP_HEADING_RE.findall(body)]
-    return sorted(found)
+    from run_local_checks import steps_section_body  # type: ignore[import-untyped]
+    scoped = steps_section_body(body)
+    return sorted(int(x) for x in _STEP_HEADING_RE.findall(scoped))
 
 
 def check_step_commits(

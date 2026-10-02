@@ -433,6 +433,27 @@ def resolve_run_cwd(project: Path, subplan: Path, fm_text: str) -> tuple[Path, s
     )
 
 
+_STEPS_SECTION_RE = re.compile(r"^## Steps\s*\n(.*?)(?=\n## |\Z)", re.MULTILINE | re.DOTALL)
+
+
+def steps_section_body(body: str) -> str:
+    """Return only the content inside ``## Steps`` sections.
+
+    Scans **every** ``## Steps`` section (a plan may carry more than one) and
+    concatenates their bodies.  Legacy fallback: when no ``## Steps`` heading
+    exists at all, the whole *body* is returned unchanged.
+
+    Ship audit's ``count_authored_steps`` already scopes to ``## Steps`` via
+    its own copy of this regex.  This helper is the single shared
+    implementation; callers should import it rather than re-declaring the
+    pattern.
+    """
+    sections = [m.group(1) for m in _STEPS_SECTION_RE.finditer(body)]
+    if not sections:
+        return body
+    return "\n".join(sections)
+
+
 @dataclass
 class StepGate:
     """Result of :func:`step_gate_fence`: what the locator found for one step."""
@@ -458,15 +479,20 @@ def step_gate_fence(body: str, step_n: int) -> StepGate:
     * ``declares_local_checks`` = any line in the region matching
       ``^\s*local_checks:`` with list content, inside or outside a fence.
     """
+    # Scope to ## Steps sections only — headings under ## Findings or other
+    # H2 sections must not be treated as step headings for gate extraction.
+    # ship_audit.count_authored_steps already applies this bound; this is the
+    # matching bound for gate extraction.
+    scoped = steps_section_body(body)
     heading_re = re.compile(rf"^###\s+Step\s+{step_n}(?!\d)", re.MULTILINE)
-    matches = list(heading_re.finditer(body))
+    matches = list(heading_re.finditer(scoped))
     heading_count = len(matches)
     if heading_count == 0:
         return StepGate(heading_count=0)
 
     region_start = matches[-1].end()
-    next_heading = re.search(r"^###\s+", body[region_start:], re.MULTILINE)
-    region = body[region_start:region_start + next_heading.start()] if next_heading else body[region_start:]
+    next_heading = re.search(r"^###\s+", scoped[region_start:], re.MULTILINE)
+    region = scoped[region_start:region_start + next_heading.start()] if next_heading else scoped[region_start:]
 
     # Check if the region declares local_checks at all (inside or outside a fence).
     # Detect any local_checks declaration: YAML list (indented items) or
@@ -622,8 +648,9 @@ def collect_declared_local_checks(fm_text: str, body: str) -> list[dict]:
     """
     checks: list[dict] = list(parse_local_checks_block(fm_text))
     seen = {(c.get("command"), c.get("timeout")) for c in checks}
-    for step_n in sorted({int(n) for n in _STEP_HEADING_ANY_RE.findall(body)}):
-        for chk in extract_step_local_checks(body, step_n):
+    scoped = steps_section_body(body)
+    for step_n in sorted({int(n) for n in _STEP_HEADING_ANY_RE.findall(scoped)}):
+        for chk in extract_step_local_checks(scoped, step_n):
             key = (chk.get("command"), chk.get("timeout"))
             if key not in seen:
                 seen.add(key)

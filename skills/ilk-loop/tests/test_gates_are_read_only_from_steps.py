@@ -114,7 +114,6 @@ _BODY_NO_STEPS_SECTION = textwrap.dedent("""\
 
 # ── AC-1: Findings heading does not hide the real gate ────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: extractor not yet scoped to ## Steps")
 def test_ac1_findings_heading_does_not_hide_real_gate() -> None:
     """A ``### Step 1:`` note under Findings must not interfere with
     extracting step 1's real gate from the Steps section."""
@@ -127,26 +126,17 @@ def test_ac1_findings_heading_does_not_hide_real_gate() -> None:
     assert "pytest" in checks[0].get("command", "")
 
 
-def test_ac1_findings_heading_shadows_real_gate_before_fix() -> None:
-    """Before the fix, the Findings heading shadows the real gate.
-
-    ``step_gate_fence`` uses "last match wins" — the ``### Step 1:`` in
-    Findings is after the one in Steps, so it becomes the region start.
-    The real gate in Steps is invisible.  After the fix, only ## Steps
-    is searched and the real gate is found.
-    """
+def test_ac1_real_gate_in_steps_section_is_found() -> None:
+    """After the fix, the real gate under ## Steps > ### Step 1 is found."""
     checks = extract_step_local_checks(_BODY_FINDINGS_STEP_HEADING, 1)
-    # Current (broken) behaviour: 0 checks because the Findings heading wins
-    # After the fix: 1 check (the real pytest gate)
-    # This test documents the current state; the xfail test pins the desired state.
-    assert len(checks) == 0, (
-        f"Expected 0 (Findings shadows gate), got {len(checks)}"
+    assert len(checks) == 1, (
+        f"Expected 1 gate for step 1, got {len(checks)}"
     )
+    assert "pytest" in checks[0].get("command", "")
 
 
 # ── AC-2: Findings yaml block does not add a phantom gate ─────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: extractor not yet scoped to ## Steps")
 def test_ac2_findings_yaml_block_no_phantom_gate() -> None:
     """A yaml ``local_checks`` block under Findings must NOT be parsed as
     an additional gate for step 1."""
@@ -158,24 +148,19 @@ def test_ac2_findings_yaml_block_no_phantom_gate() -> None:
     )
 
 
-def test_ac2_findings_phantom_gate_found_before_fix() -> None:
-    """Before the fix, the phantom gate from Findings is found instead.
-
-    ``step_gate_fence`` takes the last ``### Step 1`` match (Findings),
-    then finds the yaml fence there — returning the phantom ``echo phantom``
-    gate instead of the real pytest gate.
-    """
+def test_ac2_only_real_gate_counted() -> None:
+    """After the fix, only the gate from ## Steps is found."""
     checks = extract_step_local_checks(_BODY_FINDINGS_YAML_BLOCK, 1)
     commands = [c.get("command", "") for c in checks]
-    # Current (broken) behaviour: the phantom gate is found
-    assert any("phantom" in c for c in commands), (
-        f"Expected phantom gate, got {commands}"
+    phantom = [c for c in commands if "phantom" in c]
+    assert len(phantom) == 0, (
+        f"Found phantom gate(s) from Findings: {phantom}"
     )
+    assert any("pytest" in c for c in commands)
 
 
 # ── AC-2b: collect_declared_local_checks also scoped ──────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: collector not yet scoped to ## Steps")
 def test_ac2b_collect_declared_not_polluted_by_findings() -> None:
     """``collect_declared_local_checks`` should not pick up gates from
     headings outside ## Steps."""
