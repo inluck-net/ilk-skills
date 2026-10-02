@@ -4818,6 +4818,56 @@ except Exception:
   return 1
 }
 
+_yield_if_another_merge_pending() {
+  # At an iteration boundary, check whether another project on this host
+  # has a pending selfmod merge.  If so, set stop_reason="yielded" and
+  # YIELDED_TO="<key>" and return 0.  Does NOT set merge_was_deferred
+  # (that is for this run's own merge, handled by record_selfmod_merge_outcome).
+  local _yield_to
+  _yield_to=$(_check_other_project_merge_pending) || return 1
+
+  echo "[runner] yielded-to $_yield_to: its selfmod merge is pending" >&2
+  stop_reason="yielded"
+  YIELDED_TO="$_yield_to"
+  return 0
+}
+
+_terminal_sentinel_json() {
+  # Print the sentinel JSON for a terminal exit.  Reads globals set by
+  # the runner: stop_reason, RUN_ID, loop_started_at, iter_counter,
+  # PROJECT_PATH, JSONL_LOG, merge_was_deferred, YIELDED_TO, HELD_BY,
+  # _FAILED_CHECK_JSON, SELFMOD_WORKTREE_PATH.
+  #
+  # Called by the sentinel teardown; the caller writes the file.
+  local _merge_deferred_json="null"
+  if [[ "${merge_was_deferred:-0}" -eq 1 ]]; then
+    local _deferred_marker="${SELFMOD_WORKTREE_PATH:-}/.ilk-merge-deferred"
+    if [[ -f "$_deferred_marker" ]]; then
+      _merge_deferred_json=$(cat "$_deferred_marker")
+    else
+      _merge_deferred_json='{"live_pids": "unknown", "since": "unknown"}'
+    fi
+  fi
+  python3 -c "import json,sys; d={
+    'state': '$stop_reason',
+    'pid': $$,
+    'run_id': '$RUN_ID',
+    'started_at': '$loop_started_at',
+    'ended_at': sys.argv[4],
+    'iterations': $iter_counter,
+    'project_path': '$PROJECT_PATH',
+    'cli': 'claude',
+    'jsonl_log': '$JSONL_LOG'
+  }; md=json.loads(sys.argv[1]); d['merge_deferred']=md if md else None
+if sys.argv[2]: d['held_by']=sys.argv[2]
+fc=json.loads(sys.argv[3]) if sys.argv[3] else None
+if fc: d['failed_check']=fc
+if sys.argv[5]: d['yielded_to']=sys.argv[5]
+print(json.dumps(d))" \
+    "$_merge_deferred_json" "${HELD_BY:-}" "${_FAILED_CHECK_JSON:-}" \
+    "${ended_at:-}" "${YIELDED_TO:-}"
+}
+
 # ----- Main ------------------------------------------------------------------
 
 main() {
@@ -6730,23 +6780,11 @@ if last:
 
     # -- Merge-pending yield: let another project's merge land -----------
     # If another project on this host has a pending selfmod merge, exit
-    # cleanly so the scheduler can dispatch that merge.  The watchdog
-    # relaunches us (merge-deferred is a relaunch action).
-    local _yield_to_project
-    _yield_to_project=$(_check_other_project_merge_pending) && {
-      echo "[runner] yielding to project $_yield_to_project's pending selfmod merge" >&2
-      stop_reason="merge-deferred"
-      merge_was_deferred=1
-      # Write a merge_deferred marker so the sentinel carries the detail.
-      local _deferred_marker="${SELFMOD_WORKTREE_PATH:-}/.ilk-merge-deferred"
-      if [[ -n "${SELFMOD_WORKTREE_PATH:-}" && -d "${SELFMOD_WORKTREE_PATH:-}" ]]; then
-        python3 -c "
-import json, sys
-from datetime import datetime
-d = {'live_pids': 'unknown', 'since': datetime.now().isoformat(), 'yielded_to': sys.argv[1]}
-print(json.dumps(d))
-" "$_yield_to_project" > "$_deferred_marker" 2>/dev/null || true
-      fi
+    # with state "yielded" so the scheduler can dispatch that merge.
+    # This is distinct from merge-deferred (rc 2 from
+    # record_selfmod_merge_outcome): a yield is about ANOTHER project's
+    # merge, not this run's own.
+    _yield_if_another_merge_pending && {
       break
     }
   done
@@ -6827,34 +6865,8 @@ print(json.dumps(d))
   if [[ -n "$runtime_dir" ]]; then
     local ended_at
     ended_at=$(date +%Y-%m-%dT%H:%M:%S%z)
-    # Build sentinel JSON.  When the merge was deferred, add the
-    # merge_deferred field so classify() can distinguish it from a
-    # hard merge failure.
-    local _merge_deferred_json="null"
-    if [[ "$merge_was_deferred" -eq 1 ]]; then
-      local _deferred_marker="${SELFMOD_WORKTREE_PATH:-}/.ilk-merge-deferred"
-      if [[ -f "$_deferred_marker" ]]; then
-        _merge_deferred_json=$(cat "$_deferred_marker")
-      else
-        _merge_deferred_json='{"live_pids": "unknown", "since": "unknown"}'
-      fi
-    fi
-    python3 -c "import json,sys; d={
-      'state': '$stop_reason',
-      'pid': $$,
-      'run_id': '$RUN_ID',
-      'started_at': '$loop_started_at',
-      'ended_at': '$ended_at',
-      'iterations': $iter_counter,
-      'project_path': '$PROJECT_PATH',
-      'cli': 'claude',
-      'jsonl_log': '$JSONL_LOG'
-    }; md=json.loads(sys.argv[1]); d['merge_deferred']=md if md else None
-if sys.argv[2]: d['held_by']=sys.argv[2]
-fc=json.loads(sys.argv[3]) if sys.argv[3] else None
-if fc: d['failed_check']=fc
-print(json.dumps(d))" \
-      "$_merge_deferred_json" "${HELD_BY:-}" "$_FAILED_CHECK_JSON" > "${runtime_dir}/last-exit.json.tmp" && mv -f "${runtime_dir}/last-exit.json.tmp" "${runtime_dir}/last-exit.json"
+    # Build sentinel JSON via _terminal_sentinel_json.
+    _terminal_sentinel_json > "${runtime_dir}/last-exit.json.tmp" && mv -f "${runtime_dir}/last-exit.json.tmp" "${runtime_dir}/last-exit.json"
     echo "Sentinel: ${runtime_dir}/last-exit.json (state=$stop_reason, iters=$iter_counter)"
 
     # Remove the launcher's running.pid so the scheduler does not see a

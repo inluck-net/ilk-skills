@@ -636,6 +636,7 @@ CLASSIFICATION_LABELS: tuple[str, ...] = (
     "throttled",
     "merge-conflict",
     "merge-deferred",
+    "yielded",
     "local-checks-unchanged",
     "blocked-no-runnable",
 )
@@ -1603,6 +1604,11 @@ def classify(
         # The label merge-deferred is already in CLASSIFICATION_LABELS and
         # watchdog.sh's classify_action arms (→ relaunch).
         "merge-deferred": "merge-deferred",
+        # Another project's merge is pending; this run yielded so the
+        # scheduler can dispatch that merge first.  Transient — relaunch
+        # when the other project's merge lands.  Distinct from
+        # merge-deferred (which is about THIS run's own merge).
+        "yielded": "yielded",
     }
     if sentinel is not None:
         sentinel_state = (sentinel.get("state") or "").strip()

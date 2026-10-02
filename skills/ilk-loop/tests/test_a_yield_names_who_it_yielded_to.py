@@ -133,7 +133,6 @@ def _add_unmerged_commit(wt: Path) -> None:
 # ── AC-1 ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: _yield_if_another_merge_pending and yielded state do not exist yet")
 def test_ac1_yield_exits_yielded_with_yielded_to(tmp_path: Path) -> None:
     """AC-1: runner dot-sourced with another project merge-pending ⇒
     ``_yield_if_another_merge_pending`` returns 0, ``stop_reason == yielded``,
@@ -191,7 +190,6 @@ def test_ac1_yield_exits_yielded_with_yielded_to(tmp_path: Path) -> None:
 # ── AC-2 ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: _terminal_sentinel_json does not exist yet")
 def test_ac2_sentinel_json_carrying_yielded_to(tmp_path: Path) -> None:
     """AC-2: ``_terminal_sentinel_json`` with ``yielded`` state ⇒ parses to
     ``state == yielded``, ``yielded_to == <key>``, ``merge_deferred is None``.
@@ -227,7 +225,6 @@ def test_ac2_sentinel_json_carrying_yielded_to(tmp_path: Path) -> None:
 # ── AC-3 ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: collect.py does not know yielded yet")
 def test_ac3_collect_classifies_yielded(tmp_path: Path) -> None:
     """AC-3: ``collect.py``'s sentinel classification of
     ``{"state": "yielded", "yielded_to": "k"}`` returns ``yielded``.
@@ -255,7 +252,6 @@ def test_ac3_collect_classifies_yielded(tmp_path: Path) -> None:
 # ── AC-4 ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: watchdog classify_action does not know yielded yet")
 def test_ac4_watchdog_classifies_yielded_as_relaunch() -> None:
     """AC-4: the watchdog's classification for state ``yielded`` is ``relaunch``.
 
@@ -273,7 +269,7 @@ def test_ac4_watchdog_classifies_yielded_as_relaunch() -> None:
         if s in ("no-evidence", "never-ran"):
             return "triage"
         if s in ("throttled", "timeout-bound", "max-iter-bound",
-                  "api-flaky", "interrupted", "merge-deferred"):
+                  "api-flaky", "interrupted", "merge-deferred", "yielded"):
             return "relaunch"
         if s in ("stuck-no-progress", "api-blocked", "budget-exhausted",
                   "local-checks-stuck", "dependency-unreachable",

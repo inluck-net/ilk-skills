@@ -458,7 +458,7 @@ classify_action() {
       # HAS records for a timed-out run; that one relaunches.
       echo "triage"
       ;;
-    timeout-bound|max-iter-bound|api-flaky|interrupted|throttled|lock_held|merge-deferred|plan-amended)
+    timeout-bound|max-iter-bound|api-flaky|interrupted|throttled|lock_held|merge-deferred|yielded|plan-amended)
       # Whitelist: transient failures safe to retry.
       # plan-amended: a planner edit ended the iteration; the WIP is
       # preserved and the next iteration reads the amended plan
