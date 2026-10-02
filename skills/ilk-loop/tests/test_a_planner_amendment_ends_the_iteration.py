@@ -1,6 +1,6 @@
 """Pin that a plan amended mid-iteration ends that iteration.
 
-Part of sub-plan ``a-planner-amendment-ends-the-iteration`` (step 0).
+Part of sub-plan ``a-planner-amendment-ends-the-iteration`` (step 1).
 
 Six acceptance criteria.  AC-1, AC-3, AC-4, AC-6 are red-first pins
 (``xfail(strict=True)``): they test behaviour that does not exist yet.
@@ -28,8 +28,70 @@ import pytest
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_RUNNER = _REPO_ROOT / "skills" / "ilk-loop" / "scripts" / "run_ilk_loop_claude.sh"
+_TESTS = Path(__file__).resolve().parent
+_SCRIPTS = _TESTS.parent / "scripts"
+_REPO_ROOT = _TESTS.parent.parent
+_RUNNER = _SCRIPTS / "run_ilk_loop_claude.sh"
+
+import sys as _sys
+if str(_SCRIPTS) not in _sys.path:
+    _sys.path.insert(0, str(_SCRIPTS))
+import ilk_paths
+
+
+def _setup_project(tmp_path: Path) -> dict[str, Path]:
+    """Set up a git project with external plans dir, matching the runner's expectations.
+
+    Returns a dict with 'project', 'plans', 'data_home', 'key', 'bin' paths.
+    """
+    project = tmp_path / "project"
+    project.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=str(project), capture_output=True)
+    (project / "README.md").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=str(project), capture_output=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=str(project),
+                   capture_output=True, env={**os.environ,
+                                             "GIT_AUTHOR_NAME": "test",
+                                             "GIT_AUTHOR_EMAIL": "t@t",
+                                             "GIT_COMMITTER_NAME": "test",
+                                             "GIT_COMMITTER_EMAIL": "t@t"})
+
+    data_home = tmp_path / "ilk-data"
+    # Temporarily set ILK_DATA_HOME so ilk_paths computes the right key.
+    old = os.environ.get("ILK_DATA_HOME")
+    os.environ["ILK_DATA_HOME"] = str(data_home)
+    try:
+        key = ilk_paths.project_key(project)
+    finally:
+        if old is None:
+            os.environ.pop("ILK_DATA_HOME", None)
+        else:
+            os.environ["ILK_DATA_HOME"] = old
+
+    plans = data_home / "projects" / key / "plans"
+    plans.mkdir(parents=True)
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+
+    return {"project": project, "plans": plans, "data_home": data_home,
+            "key": key, "bin": bin_dir}
+
+
+def _make_stub_claude(bin_dir: Path, *, sleep_sec: int = 60) -> Path:
+    """Create a stub ``claude`` binary that sleeps for *sleep_sec* seconds.
+
+    The stub simulates a long-running agent so the amendment watcher has
+    time to detect a plan change and kill it.
+    """
+    stub = bin_dir / "claude"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        f"sleep {sleep_sec}\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    return stub
 
 # Frontmatter keys that the amendment watcher must EXCLUDE from the digest.
 _EXCLUDED_KEYS = {"current_step", "status", "last_updated"}
@@ -124,10 +186,12 @@ def _source_runner_fn(fn_name: str, *args: str,
     runner_path = str(_RUNNER)
     call_args = " ".join(f'"{a}"' for a in args)
     script = (
+        f"export ILK_DOTSOURCE_ONLY=1; "
         f"source '{runner_path}'\n"
         f"{fn_name} {call_args}\n"
     )
     merged_env = dict(os.environ)
+    merged_env["ILK_DOTSOURCE_ONLY"] = "1"
     if env:
         merged_env.update(env)
     return subprocess.run(
@@ -162,31 +226,51 @@ class TestAC1AmendmentTriggersTermination:
 
         assert d1 != d2, "digest must change when content above ## Findings is edited"
 
-    @pytest.mark.xfail(strict=True, reason="red-first: amendment detection not implemented")
     def test_runner_detects_plan_amendment(self, tmp_path: Path) -> None:
         """The runner's amendment watcher detects a mid-iteration plan edit.
 
         Uses a stub worker that sleeps.  We edit the plan after a short delay
         and verify the worker is terminated within 60 s.
         """
-        plans_dir = tmp_path / "plans"
-        plans_dir.mkdir()
+        world = _setup_project(tmp_path)
+        plans_dir = world["plans"]
         _write_sub_plan(plans_dir / "2026-10-02-test-slug.md")
         _write_master(plans_dir / "MASTER-2026-10-02-execution-plan.md",
                       sub_plan_filename="2026-10-02-test-slug.md")
 
-        # Run the loop with a stub worker that sleeps.
-        # The runner should detect the plan edit and kill the worker.
+        _make_stub_claude(world["bin"], sleep_sec=120)
+
+        env = {
+            **os.environ,
+            "PATH": f"{world['bin']}{os.pathsep}{os.environ.get('PATH', '')}",
+            "HOME": str(tmp_path),
+            "ILK_DATA_HOME": str(world["data_home"]),
+        }
+        env.pop("ILK_DOTSOURCE_ONLY", None)
+
+        # Edit the plan in a background thread after a short delay.
+        import threading
+
+        def amend_plan() -> None:
+            time.sleep(5)
+            _write_sub_plan(plans_dir / "2026-10-02-test-slug.md",
+                            body_above_findings="## Steps\n\n### Step 0\n\nAMENDED.\n")
+
+        editor = threading.Thread(target=amend_plan, daemon=True)
+        editor.start()
+
+        # Run the loop with the stub worker.
         result = subprocess.run(
             ["bash", str(_RUNNER),
-             "--project-path", str(tmp_path),
+             "--project-path", str(world["project"]),
              "--max-iterations", "1",
              "--iteration-timeout-min", "1",
-             "--model", "stub-sleep-60"],
+             "--model", "test-model"],
             capture_output=True, text=True,
             encoding="utf-8", errors="replace",
             timeout=120,
-            cwd=str(tmp_path),
+            cwd=str(world["project"]),
+            env=env,
         )
 
         # The iteration should end with plan-amended reason.
@@ -276,28 +360,49 @@ class TestAC3MasterEditTriggers:
 
         assert d1 != d2, "MASTER digest must change when content above tables is edited"
 
-    @pytest.mark.xfail(strict=True, reason="red-first: MASTER fingerprinting not implemented")
     def test_runner_detects_master_amendment(self, tmp_path: Path) -> None:
         """The runner's amendment watcher detects a mid-iteration MASTER edit.
 
         Uses a stub worker that sleeps.  We edit the MASTER after a short delay
         and verify the worker is terminated.
         """
-        plans_dir = tmp_path / "plans"
-        plans_dir.mkdir()
+        world = _setup_project(tmp_path)
+        plans_dir = world["plans"]
         _write_sub_plan(plans_dir / "2026-10-02-test-slug.md")
         _write_master(plans_dir / "MASTER-2026-10-02-execution-plan.md")
 
+        _make_stub_claude(world["bin"], sleep_sec=120)
+
+        env = {
+            **os.environ,
+            "PATH": f"{world['bin']}{os.pathsep}{os.environ.get('PATH', '')}",
+            "HOME": str(tmp_path),
+            "ILK_DATA_HOME": str(world["data_home"]),
+        }
+        env.pop("ILK_DOTSOURCE_ONLY", None)
+
+        # Edit the MASTER in a background thread after a short delay.
+        import threading
+
+        def amend_master() -> None:
+            time.sleep(5)
+            _write_master(plans_dir / "MASTER-2026-10-02-execution-plan.md",
+                          body_above_tables="## Strategy\n\nAMENDED.\n")
+
+        editor = threading.Thread(target=amend_master, daemon=True)
+        editor.start()
+
         result = subprocess.run(
             ["bash", str(_RUNNER),
-             "--project-path", str(tmp_path),
+             "--project-path", str(world["project"]),
              "--max-iterations", "1",
              "--iteration-timeout-min", "1",
-             "--model", "stub-sleep-60"],
+             "--model", "test-model"],
             capture_output=True, text=True,
             encoding="utf-8", errors="replace",
             timeout=120,
-            cwd=str(tmp_path),
+            cwd=str(world["project"]),
+            env=env,
         )
 
         combined = result.stdout + result.stderr
@@ -315,28 +420,61 @@ class TestAC4DirtyTreePreserved:
     Red-first: the amended-plan termination path does not yet exist.
     """
 
-    @pytest.mark.xfail(strict=True, reason="red-first: amendment termination path not implemented")
     def test_amendment_preserves_dirty_tree(self, tmp_path: Path) -> None:
         """When a worker is terminated by amendment, dirty files are WIP-committed."""
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        subprocess.run(["git", "init"], cwd=str(repo), capture_output=True)
-        (repo / "README.md").write_text("init\n", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo),
-                       capture_output=True, env={**os.environ, "GIT_AUTHOR_NAME": "test",
-                                                 "GIT_AUTHOR_EMAIL": "t@t",
-                                                 "GIT_COMMITTER_NAME": "test",
-                                                 "GIT_COMMITTER_EMAIL": "t@t"})
+        world = _setup_project(tmp_path)
+        plans_dir = world["plans"]
+        project = world["project"]
+        _write_sub_plan(plans_dir / "2026-10-02-test-slug.md")
+        _write_master(plans_dir / "MASTER-2026-10-02-execution-plan.md",
+                      sub_plan_filename="2026-10-02-test-slug.md")
 
-        # Create a dirty file that the worker would have created.
-        (repo / "new-file.txt").write_text("worker output\n", encoding="utf-8")
+        # Create a stub claude that writes a file in the project and sleeps.
+        stub = world["bin"] / "claude"
+        stub.write_text(
+            "#!/usr/bin/env bash\n"
+            f"echo 'worker output' > '{project}/worker-file.txt'\n"
+            "sleep 120\n",
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
 
-        # After amendment termination, this file should be in a WIP commit.
-        # (This test is xfail because the amendment path doesn't exist yet.)
+        env = {
+            **os.environ,
+            "PATH": f"{world['bin']}{os.pathsep}{os.environ.get('PATH', '')}",
+            "HOME": str(tmp_path),
+            "ILK_DATA_HOME": str(world["data_home"]),
+        }
+        env.pop("ILK_DOTSOURCE_ONLY", None)
+
+        # Edit the plan in a background thread after a short delay.
+        import threading
+
+        def amend_plan() -> None:
+            time.sleep(5)
+            _write_sub_plan(plans_dir / "2026-10-02-test-slug.md",
+                            body_above_findings="## Steps\n\n### Step 0\n\nAMENDED.\n")
+
+        editor = threading.Thread(target=amend_plan, daemon=True)
+        editor.start()
+
+        result = subprocess.run(
+            ["bash", str(_RUNNER),
+             "--project-path", str(project),
+             "--max-iterations", "1",
+             "--iteration-timeout-min", "1",
+             "--model", "test-model"],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=120,
+            cwd=str(project),
+            env=env,
+        )
+
+        # After amendment termination, the dirty file should be in a WIP commit.
         log = subprocess.run(
             ["git", "log", "--oneline", "-5"],
-            cwd=str(repo), capture_output=True, text=True,
+            cwd=str(project), capture_output=True, text=True,
         )
         assert "WIP" in log.stdout, (
             f"expected WIP commit after amendment termination, got: {log.stdout}"
@@ -436,7 +574,6 @@ class TestAC6SignalExitWipPreserved:
     in practice (despite _classify_agent_exit handling it).
     """
 
-    @pytest.mark.xfail(strict=True, reason="red-first: signal-exit WIP preservation not verified")
     def test_classify_agent_exit_handles_signal_143(self) -> None:
         """_classify_agent_exit treats exit 143 (SIGTERM) as completed=0."""
         result = _source_runner_fn("_classify_agent_exit", "143")
@@ -444,7 +581,6 @@ class TestAC6SignalExitWipPreserved:
         parts = result.stdout.strip().split()
         assert parts[0] == "0", f"expected completed=0 for exit 143, got {parts[0]}"
 
-    @pytest.mark.xfail(strict=True, reason="red-first: signal-exit WIP preservation not verified")
     def test_classify_agent_exit_handles_signal_137(self) -> None:
         """_classify_agent_exit treats exit 137 (SIGKILL) as completed=0."""
         result = _source_runner_fn("_classify_agent_exit", "137")
@@ -452,32 +588,73 @@ class TestAC6SignalExitWipPreserved:
         parts = result.stdout.strip().split()
         assert parts[0] == "0", f"expected completed=0 for exit 137, got {parts[0]}"
 
-    @pytest.mark.xfail(strict=True, reason="red-first: signal-exit WIP preservation not verified")
     def test_signal_killed_worker_preserves_dirty_tree(self, tmp_path: Path) -> None:
         """A worker killed by SIGTERM with a dirty tree produces a WIP commit.
 
-        This is the integration test: start a worker that sleeps, send it
-        SIGTERM, verify the dirty tree is preserved.
+        Integration test: run the runner with a stub that writes a file, let
+        the amendment watcher kill it (SIGTERM), and verify the dirty tree
+        is WIP-preserved.
         """
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        subprocess.run(["git", "init"], cwd=str(repo), capture_output=True)
-        (repo / "README.md").write_text("init\n", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo),
-                       capture_output=True, env={**os.environ, "GIT_AUTHOR_NAME": "test",
-                                                 "GIT_AUTHOR_EMAIL": "t@t",
-                                                 "GIT_COMMITTER_NAME": "test",
-                                                 "GIT_COMMITTER_EMAIL": "t@t"})
+        world = _setup_project(tmp_path)
+        plans_dir = world["plans"]
+        project = world["project"]
+        _write_sub_plan(plans_dir / "2026-10-02-test-slug.md")
+        _write_master(plans_dir / "MASTER-2026-10-02-execution-plan.md",
+                      sub_plan_filename="2026-10-02-test-slug.md")
 
-        # Create a dirty file.
-        (repo / "worker-output.txt").write_text("unfinished work\n", encoding="utf-8")
+        # Create a stub claude that writes a file and sleeps.
+        stub = world["bin"] / "claude"
+        stub.write_text(
+            "#!/usr/bin/env bash\n"
+            f"echo 'unfinished work' > '{project}/worker-output.txt'\n"
+            "sleep 120\n",
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
 
-        # After SIGTERM, the runner should WIP-preserve this file.
+        env = {
+            **os.environ,
+            "PATH": f"{world['bin']}{os.pathsep}{os.environ.get('PATH', '')}",
+            "HOME": str(tmp_path),
+            "ILK_DATA_HOME": str(world["data_home"]),
+        }
+        env.pop("ILK_DOTSOURCE_ONLY", None)
+
+        # Edit the plan after a short delay to trigger the amendment watcher.
+        import threading
+
+        def amend_plan() -> None:
+            time.sleep(5)
+            _write_sub_plan(plans_dir / "2026-10-02-test-slug.md",
+                            body_above_findings="## Steps\n\n### Step 0\n\nAMENDED.\n")
+
+        editor = threading.Thread(target=amend_plan, daemon=True)
+        editor.start()
+
+        result = subprocess.run(
+            ["bash", str(_RUNNER),
+             "--project-path", str(project),
+             "--max-iterations", "1",
+             "--iteration-timeout-min", "1",
+             "--model", "test-model"],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=120,
+            cwd=str(project),
+            env=env,
+        )
+
+        # The worker should have been killed by the amendment watcher.
+        combined = result.stdout + result.stderr
+        assert "plan-amended" in combined or "plan_amended" in combined, (
+            f"expected plan-amended in output, got: {combined[-500:]}"
+        )
+
+        # The dirty file should be in a WIP commit.
         log = subprocess.run(
             ["git", "log", "--oneline", "-5"],
-            cwd=str(repo), capture_output=True, text=True,
+            cwd=str(project), capture_output=True, text=True,
         )
         assert "WIP" in log.stdout, (
-            f"expected WIP commit after SIGTERM, got: {log.stdout}"
+            f"expected WIP commit after signal kill, got: {log.stdout}"
         )

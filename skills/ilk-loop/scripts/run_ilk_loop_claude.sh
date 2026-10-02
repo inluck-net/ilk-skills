@@ -2207,6 +2207,33 @@ _gate_first_plans_dir() {
   printf '%s\n' "$plans_dir"
 }
 
+# _plan_fingerprint <file> — SHA-256 of the plan surface.
+# The surface is everything above ``## Findings``, with the frontmatter keys
+# ``current_step``, ``status``, ``last_updated`` excluded.  Two plan files
+# that differ only below ``## Findings`` or in the excluded keys produce the
+# same fingerprint.  Prints the hex digest; returns 1 if the file is missing.
+_plan_fingerprint() {
+  local file="$1"
+  [[ -f "$file" ]] || return 1
+  python3 -c "
+import hashlib, sys
+text = open(sys.argv[1], encoding='utf-8').read()
+# Strip excluded frontmatter keys.
+lines = text.splitlines(keepends=True)
+cleaned = []
+for line in lines:
+    stripped = line.lstrip()
+    if any(stripped.startswith(k + ':') for k in ('current_step', 'status', 'last_updated')):
+        continue
+    cleaned.append(line)
+text = ''.join(cleaned)
+# Take everything above ## Findings.
+if '## Findings' in text:
+    text = text.split('## Findings')[0]
+print(hashlib.sha256(text.encode('utf-8')).hexdigest())
+" "$file"
+}
+
 # Locate a sub-plan file by its frontmatter `plan:` slug.  Echoes the path.
 find_subplan_file_by_slug() {
   local plans_dir="$1" slug="$2"
@@ -4034,6 +4061,10 @@ for k, v in sorted(d.get("env", {}).items()):
   # Record the PGID (= the pipeline's PID) so the signal trap can
   # TERM the whole group.
   _ILK_AGENT_PGID="$_pipeline_pid"
+  # Write PGID to file so the amendment watcher can read it.
+  if [[ -n "${_amend_pgid_file:-}" ]]; then
+    echo "$_pipeline_pid" > "$_amend_pgid_file" 2>/dev/null || true
+  fi
 
   local exit_code=0
   wait "$_pipeline_pid" || exit_code=$?
@@ -5481,6 +5512,74 @@ print(json.dumps({
       fi
     fi
 
+    # -- Plan amendment watcher ----------------------------------------
+    # Fingerprint the targeted sub-plan and MASTER before dispatch.  A
+    # background subshell polls every 30 s; if either fingerprint changes
+    # (planner edit above ## Findings), the watcher kills the agent and
+    # sets a flag so the post-iteration path records plan_amended.
+    local _amend_sub_fp="" _amend_master_fp="" _amend_master_file=""
+    local _amend_watcher_pid="" _amend_flag="${RUN_LOG_DIR}/plan-amended-${i}.flag"
+    local _amend_pgid_file="${RUN_LOG_DIR}/agent-pgid-${i}.txt"
+    rm -f "$_amend_flag" "$_amend_pgid_file"
+    if [[ "$GATE_FIRST_GREEN" -eq 0 && "$GATE_FIRST_NO_DISPATCH" -eq 0 ]]; then
+      local _amend_plans_dir
+      _amend_plans_dir=$(get_plans_dir 2>/dev/null) || _amend_plans_dir=""
+      if [[ -n "$_amend_plans_dir" && -n "${PRE_ITER_TARGET:-}" ]]; then
+        local _amend_slug="${PRE_ITER_TARGET%% *}"
+        local _amend_sub_file
+        _amend_sub_file=$(find_subplan_file_by_slug "$_amend_plans_dir" "$_amend_slug") || true
+        if [[ -n "$_amend_sub_file" ]]; then
+          _amend_sub_fp=$(_plan_fingerprint "$_amend_sub_file") || true
+        fi
+        # Resolve MASTER file.
+        local _amend_master_name
+        _amend_master_name=$(python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null | \
+          python3 -c "import json,sys; print(json.load(sys.stdin).get('master') or '')" 2>/dev/null) || true
+        if [[ -n "$_amend_master_name" ]]; then
+          _amend_master_file="${_amend_plans_dir}/${_amend_master_name}"
+          _amend_master_fp=$(_plan_fingerprint "$_amend_master_file") || true
+        fi
+      fi
+      # Start the watcher subshell if we have fingerprints to watch.
+      if [[ -n "$_amend_sub_fp" || -n "$_amend_master_fp" ]]; then
+        (
+          while sleep 30; do
+            local _changed=0
+            if [[ -n "$_amend_sub_fp" ]]; then
+              local _cur
+              _cur=$(_plan_fingerprint "$_amend_sub_file") || _cur=""
+              if [[ -n "$_cur" && "$_cur" != "$_amend_sub_fp" ]]; then
+                _changed=1
+              fi
+            fi
+            if [[ -n "$_amend_master_fp" && -f "$_amend_master_file" ]]; then
+              local _cur_m
+              _cur_m=$(_plan_fingerprint "$_amend_master_file") || _cur_m=""
+              if [[ -n "$_cur_m" && "$_cur_m" != "$_amend_master_fp" ]]; then
+                _changed=1
+              fi
+            fi
+            if [[ "$_changed" -eq 1 ]]; then
+              echo "[amended] plan file changed during the iteration (planner edit above ## Findings); ending the iteration so the next one reads it" >&2
+              touch "$_amend_flag"
+              # Kill the agent's process group (read PGID from file since
+              # _ILK_AGENT_PGID is set after this subshell starts).
+              local _pgid_file="${_amend_pgid_file}"
+              if [[ -f "$_pgid_file" ]]; then
+                local _pgid
+                _pgid=$(cat "$_pgid_file" 2>/dev/null) || true
+                if [[ -n "$_pgid" ]]; then
+                  kill -TERM "-$_pgid" 2>/dev/null || true
+                fi
+              fi
+              exit 0
+            fi
+          done
+        ) &
+        _amend_watcher_pid=$!
+      fi
+    fi
+
     if [[ "$GATE_FIRST_GREEN" -eq 0 && "$GATE_FIRST_NO_DISPATCH" -eq 0 ]]; then
       invoke_claude_iteration "$(selfmod_effective_repo "$PROJECT_PATH")" "$iter_log" "$iter_prompt" "$timeout_sec" "$MAX_BUDGET_USD" "$MODEL"
     elif [[ "$GATE_FIRST_NO_DISPATCH" -eq 1 ]]; then
@@ -5524,6 +5623,24 @@ print(json.dumps({
           echo "$_gs_out" >&2
         fi
       fi
+    fi
+
+    # -- Plan amendment watcher result ----------------------------------
+    # If the watcher detected a plan amendment and killed the agent, the
+    # flag file exists.  Record plan_amended in the JSONL and set
+    # ITER_COMPLETED=0 so the dirty tree is WIP-preserved.
+    if [[ -f "$_amend_flag" ]]; then
+      echo "[runner] plan-amended: plan file changed during the iteration — iteration terminated" >&2
+      ITER_COMPLETED=0
+      iter_stop_reason="plan-amended"
+      # The agent was killed by SIGTERM (exit 143).  _classify_agent_exit
+      # already handles >=128 as completed=0, but the watcher may have
+      # killed it after gtimeout already exited, so force it here.
+    fi
+    # Reap the watcher subshell.
+    if [[ -n "$_amend_watcher_pid" ]]; then
+      kill "$_amend_watcher_pid" 2>/dev/null || true
+      wait "$_amend_watcher_pid" 2>/dev/null || true
     fi
 
     # The iteration is over — clear the dispatched-slug guard so the
@@ -6167,6 +6284,7 @@ print(json.dumps({'slug': slug, 'violation': f'gate_isolation_restore_failed: {e
     _WIP_PRESERVED="$wip_preserved" \
     _TOOL_CALLS="$iter_tool_calls" \
     _TEST_INVOCATIONS="$iter_test_invocations" \
+    _PLAN_AMENDED="$([ -f "$_amend_flag" ] && echo true || echo false)" \
     python3 -c "
 import json, os
 d = {
@@ -6217,6 +6335,9 @@ if sg:
       d['ship_gap'] = sg_d
   except (json.JSONDecodeError, ValueError):
     pass
+pa = os.environ.get('_PLAN_AMENDED', 'false')
+if pa == 'true':
+  d['plan_amended'] = True
 print(json.dumps(d))
 " >> "$JSONL_LOG"
 

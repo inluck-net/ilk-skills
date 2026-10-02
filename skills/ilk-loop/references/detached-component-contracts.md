@@ -122,6 +122,7 @@ submenu line.
 | `"work_tree_invalid"` | Master declared `work_tree:` but the path is missing, not a work tree, or shares no git objects with `--project-path` | Terminal |
 | `"lock_held"` | Another runner holds this project's run lock; the unattended result file (if `ILK_MASTER` set) records `exit_state: lock_held` | Terminal |
 | `"profile_unsupported"` | Windows runner: the master carries `ilk_profile: unattended` which the PS1 runner does not implement; result file written, no other action | Terminal |
+| `"plan-amended"` | The targeted sub-plan or MASTER was edited above `## Findings` during the iteration (planner amendment). The watcher killed the agent, WIP-preserved the dirty tree, and the loop continues to the next iteration. JSONL record carries `plan_amended: true`. | No — iteration-internal; loop continues |
 
 **Naming conventions are intentional.** The hyphenated states (`no-progress`,
 `all-shipped`, `timeout`, `budget-exhausted`, `quota-exhausted`,
