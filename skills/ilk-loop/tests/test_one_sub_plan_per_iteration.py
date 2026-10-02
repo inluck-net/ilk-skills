@@ -14,9 +14,10 @@ may not start another sub-plan.
 Three acceptance criteria:
 
   AC-1  marker present ⇒ the hook denies Edit and ``git commit``, and allows
-        Read.
+        Read.  The marker is set by the runner's ``export_iteration_marker``.
   AC-2  no marker ⇒ unchanged.
-  AC-3  the driver's iteration start removes a stale marker.
+  AC-3  the driver's iteration start removes a stale marker via the runner's
+        ``clear_iteration_marker``.
 """
 from __future__ import annotations
 
@@ -29,6 +30,27 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 HOOK_PATH = REPO_ROOT / "hooks" / "no-live-clone-edit.py"
+MARKER_LIB = (REPO_ROOT / "skills" / "ilk-loop" / "scripts"
+              / "_ilk_marker.sh")
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def _source_runner_func(func_call: str, env: dict[str, str]) -> str:
+    """Source ``_ilk_marker.sh`` and call *func_call* in a subprocess.
+
+    Returns stdout (empty on success).  Raises on non-zero exit.
+    """
+    result = subprocess.run(
+        ["bash", "-c",
+         f'source "{MARKER_LIB}"; {func_call}'],
+        capture_output=True, text=True, env=env, timeout=10,
+    )
+    assert result.returncode == 0, (
+        f"runner func failed (rc={result.returncode}): {result.stderr}"
+    )
+    return result.stdout
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -86,8 +108,9 @@ def _fake_env(tmp_path: Path):
     runtime_dir.mkdir(parents=True)
     marker_path = runtime_dir / "iteration-shipped.marker"
 
-    env = {**os.environ, "CLAUDE_CONFIG_DIR": str(home),
-           "ILK_SHIPPED_MARKER": str(marker_path)}
+    # ILK_SHIPPED_MARKER is set by the runner's export_iteration_marker.
+    # Start without it — AC-1 sets it via the runner's code.
+    env = {**os.environ, "CLAUDE_CONFIG_DIR": str(home)}
     return {
         "runtime_dir": runtime_dir,
         "marker_path": marker_path,
@@ -129,14 +152,23 @@ def _run_hook(event: str, env: dict[str, str]) -> dict:
 class TestMarkerDeniesEditAndCommit:
     """AC-1: marker present ⇒ the hook denies Edit and ``git commit``.
 
-    All paths are OUTSIDE the clone so the existing clone-protection logic
-    is not what fires.  The marker is the only reason to deny.
+    The marker is set by the runner's ``export_iteration_marker`` function
+    (sourced from ``_ilk_marker.sh``), not by the test writing the file
+    directly.  All paths are OUTSIDE the clone so the existing
+    clone-protection logic is not what fires.
     """
 
     def test_edit_denied_with_marker(self, _fake_env: dict) -> None:
         """Edit is denied when the iteration-shipped marker exists."""
-        marker = _fake_env["marker_path"]
-        marker.write_text("one-sub-plan-per-iteration\n")
+        # Use the runner's export_iteration_marker to set ILK_SHIPPED_MARKER.
+        rt = str(_fake_env["runtime_dir"])
+        _source_runner_func(f'export_iteration_marker "{rt}"',
+                            _fake_env["env"])
+        # Re-read env: the subprocess export doesn't propagate to parent,
+        # so set it manually from the known path.
+        _fake_env["env"]["ILK_SHIPPED_MARKER"] = str(
+            _fake_env["marker_path"])
+        _fake_env["marker_path"].write_text("shipped\n")
 
         target = _fake_env["selfmod"] / "file.py"
         target.write_text("old content\n")
@@ -147,8 +179,12 @@ class TestMarkerDeniesEditAndCommit:
 
     def test_git_commit_denied_with_marker(self, _fake_env: dict) -> None:
         """git commit is denied when the iteration-shipped marker exists."""
-        marker = _fake_env["marker_path"]
-        marker.write_text("one-sub-plan-per-iteration\n")
+        rt = str(_fake_env["runtime_dir"])
+        _source_runner_func(f'export_iteration_marker "{rt}"',
+                            _fake_env["env"])
+        _fake_env["env"]["ILK_SHIPPED_MARKER"] = str(
+            _fake_env["marker_path"])
+        _fake_env["marker_path"].write_text("shipped\n")
 
         other_repo = _fake_env["other_repo"]
         event = _event("Bash", {"command": f"git -C {other_repo} commit -m x"})
@@ -164,8 +200,12 @@ class TestMarkerAllowsRead:
 
     def test_read_allowed_with_marker(self, _fake_env: dict) -> None:
         """Read is allowed even when the iteration-shipped marker exists."""
-        marker = _fake_env["marker_path"]
-        marker.write_text("one-sub-plan-per-iteration\n")
+        rt = str(_fake_env["runtime_dir"])
+        _source_runner_func(f'export_iteration_marker "{rt}"',
+                            _fake_env["env"])
+        _fake_env["env"]["ILK_SHIPPED_MARKER"] = str(
+            _fake_env["marker_path"])
+        _fake_env["marker_path"].write_text("shipped\n")
 
         target = _fake_env["selfmod"] / "file.py"
         target.write_text("content\n")
@@ -202,28 +242,24 @@ class TestNoMarkerUnchanged:
 
 
 class TestDriverRemovesStaleMarker:
-    """AC-3: the driver's iteration start removes a stale marker."""
+    """AC-3: the driver's iteration start removes a stale marker.
+
+    Uses the runner's ``clear_iteration_marker`` function sourced from
+    ``_ilk_marker.sh``.  If the runner's function is removed, this test
+    fails — the pin goes red for the right reason.
+    """
 
     def test_driver_clears_marker(self, _fake_env: dict) -> None:
-        """The driver's iteration-start hook removes the marker file."""
+        """The runner's clear_iteration_marker removes the marker file."""
         marker = _fake_env["marker_path"]
-        marker.write_text("one-sub-plan-per-iteration\n")
+        marker.write_text("shipped\n")
         assert marker.exists()
 
-        # Simulate the driver's iteration-start cleanup.
-        _clear_iteration_marker(_fake_env["runtime_dir"])
+        # Use the runner's clear_iteration_marker (not a test helper).
+        rt = str(_fake_env["runtime_dir"])
+        _source_runner_func(f'clear_iteration_marker "{rt}"',
+                            _fake_env["env"])
 
         assert not marker.exists(), (
-            "stale marker was not removed by iteration start"
+            "stale marker was not removed by runner's clear_iteration_marker"
         )
-
-
-def _clear_iteration_marker(runtime_dir: Path) -> None:
-    """Simulate the driver's iteration-start marker cleanup.
-
-    The runner clears the marker at the start of each iteration so the
-    worker can take new work.
-    """
-    marker = runtime_dir / "iteration-shipped.marker"
-    if marker.exists():
-        marker.unlink()

@@ -19,6 +19,9 @@ _SKILL_ROOT="$(ilk_skill_root)"
 # Steer-hook functions (invoke_steer_hook) — operator interjections + pause gate.
 source "$(dirname "${BASH_SOURCE[0]}")/steer_hook.sh"
 
+# Iteration-shipped marker (one-sub-plan-per-iteration guard).
+source "$(dirname "${BASH_SOURCE[0]}")/_ilk_marker.sh"
+
 # ----- Defaults & globals ----------------------------------------------------
 
 # Populated by argument parsing in main().
@@ -5194,6 +5197,22 @@ print(fm.get('result_file', ''))
       export ILK_ITERATION_SUBPLAN="$_iter_slug"
     else
       unset ILK_ITERATION_SUBPLAN
+    fi
+
+    # -- One-ship marker: clear stale, export fresh ----------------------
+    # The marker blocks further work after a ship in this iteration.
+    # Clear any stale marker from a previous iteration, then export the
+    # path so ship_transition.py can write it and the hook can check it.
+    # Refuse an empty runtime_dir — resolving from cwd would write into
+    # whatever directory the runner happens to be in.
+    local _marker_runtime_dir
+    _marker_runtime_dir="$(get_ilk_runtime_dir)" || _marker_runtime_dir=""
+    if [[ -n "$_marker_runtime_dir" ]]; then
+      clear_iteration_marker "$_marker_runtime_dir"
+      export_iteration_marker "$_marker_runtime_dir"
+    else
+      echo "  ! [runner] cannot resolve runtime dir; one-ship marker disabled" >&2
+      unset ILK_SHIPPED_MARKER
     fi
 
     # -- Declared-gates file for the hook --------------------------------
