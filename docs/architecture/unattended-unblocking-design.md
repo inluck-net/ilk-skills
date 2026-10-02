@@ -524,45 +524,51 @@ them.
   for the 123 existing rows). The engine routes a candidate to the target's
   tracker. Toolkit candidates stay global.
 
-### Opt-in, per host and per project (Chad, 2026-10-02)
+### Opt-in: at most one RSI host per target repo (Chad, 2026-10-02)
 
 ilk-skills is deployed on more than one host: chad-mbp and rezmac today,
-possibly more later. RSI is **opt-in**. A fresh install is a plain ilk
-runner.
+possibly more later. Chad: **at most one machine does the RSI job for
+ilk-skills.** Zero is allowed, and zero is the default. A fresh install is
+a plain ilk runner.
 
-- **What is not opt-in:** L1. Those are driver correctness fixes. They
-  ship in the toolkit like any bug fix and run everywhere.
-- **What is opt-in:** L2 triage, improvement builds, and the release
-  train's push and deploy. Each acts on its own, so each must be switched
-  on deliberately on each host.
-- **Two switches:**
-  - **Per host:** does this host run the engine, and in which role?
-  - **Per project:** does this project have an adapter? No adapter means
-    no target-repo RSI for it. Unblocking its loops still uses L1, plus L2
-    if the host has L2 on.
-- **Roles per target repo, across the fleet:**
-  - **builder:** exactly one host per target repo builds improvements and
-    runs that repo's release train. Two builders would produce divergent
-    builds of one repo and race each other's pushes.
-  - **canary:** receives a tag first.
-  - **follower:** receives a tag only after the canary's observation
-    window is clean, and never builds.
-  - For ilk-skills today: chad-mbp would be builder + canary and rezmac
-    the follower. For gh-resolve, rezmac is the only producer, so which
-    host builds for gh-resolve is an open choice for Chad.
-- **Where the switch lives:** in each host's data home, not in a committed
-  file. `conventions/config.yml` (`auto_use_ilk_plan`) is git-propagated,
-  so any commit to it reaches every host on its next pull, which is wrong
-  for a per-host role. A per-host file (working name
-  `~/.ilk-data/rsi-host.yml`) is never written by a build, so a build
-  can't promote its own host. Changing it is Chad's (L3).
-- **Enforce one builder:** the engine refuses to build for a target repo
-  unless this host is its builder and no other host claims the role. The
-  claim is checked against something both hosts can read; the mechanism is
-  open. Config alone doesn't stop two hosts both saying yes.
-- **Default off:** with no `rsi-host.yml`, the host is a follower of
-  nothing. It runs loops and L1 only, and installs tags the way it does
-  today.
+- **What "the RSI job" is:** improvement builds and the release train
+  (select a candidate, build, land, tag, push, deploy). That is what must
+  run on at most one host. Two builders would produce divergent builds of
+  one repo and race each other's pushes and tags.
+- **What is not the RSI job:**
+  - **L1:** driver correctness fixes. They ship in the toolkit like any
+    bug fix and run everywhere.
+  - **Receiving releases:** every other host installs tags the way it
+    does today. Under D4 that stays Chad's until canary + rollback exist.
+- **Open: L2 triage.** Loops are local to a host, so a blocked loop on
+  rezmac is only visible from rezmac. Either L2 runs on every host and only
+  emits candidates (it never builds), or L2 also lives only on the RSI host
+  and a non-RSI host's blocks escalate. That choice is Chad's.
+- **The switch names the host, so it is unique by construction.** The
+  switch is one field, `rsi_host: <host-id>` (or `null` = off), per target
+  repo:
+  - Each host compares it to its own id, from a per-host file in its data
+    home. `hostname` is not stable enough: chad-mbp reports
+    `Chads-MacBook-Pro`.
+  - For ilk-skills, the field lives in a committed file. It is the same
+    value everywhere it propagates, so at most one host can match. A
+    per-host "enabled" flag can't guarantee this, because two hosts can
+    both say yes.
+  - For another target repo, the field lives in that repo's adapter.
+- **Guarding the switch:**
+  - The field is tier-0: no build may edit it, and changing it is Chad's
+    (L3).
+  - Before each build, the RSI host re-reads the field from origin (a
+    read-only fetch) and refuses if it no longer names itself. That covers
+    the moment of a handover, when the old host hasn't pulled yet.
+  - A host that isn't named refuses to build, tag or push for that repo,
+    even when asked.
+- **Per project:** a project without an adapter gets no target-repo RSI.
+  Its loops still get L1 everywhere.
+- **Proposed first value:** ilk-skills `rsi_host: chad-mbp`, because it is
+  the dev host and already holds the selfmod worktree. For gh-resolve,
+  rezmac is the only producer, so which host gets gh-resolve's RSI is
+  Chad's call.
 
 ### When to extract to its own repo
 
@@ -652,5 +658,6 @@ If the engine/adapter split is kept, extraction is mostly a file move.
 4. **Multi-project RSI:** accept one engine in ilk-skills plus per-project
    adapters, with gh-resolve as adapter 2 ahead of L2 (section above)?
    Chad asked for the section on 2026-10-02; the shape itself is not yet a
-   decision. Opt-in per host is Chad's direction (same day); the role file
-   name, and which host builds for gh-resolve, are open.
+   decision. At most one RSI host per target repo is Chad's direction (same
+   day). Open: which host gets gh-resolve's RSI, and whether L2 triage
+   runs on every host or only on the RSI host.
