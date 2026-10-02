@@ -1273,7 +1273,11 @@ get_active_subplan_targets() {
   esac
   # --json exits non-zero when work is pending; the payload is still valid.
   line=$(echo "$status_json" | jq -r '
-    [ (.subplans // [])[] | select(((.status // "") | ascii_downcase) != "shipped") ][0]
+    [ (.subplans // [])[] | select(((.status // "") | ascii_downcase) != "shipped")
+      | . + {__p: (if ((.status // "") | ascii_downcase) == "in-progress" then 0
+                   elif ((.status // "") | ascii_downcase) == "pending" then 1
+                   else 2 end)}
+    ] | sort_by(.__p) | .[0]
     | if . == null then empty else "\(.slug)\t\(.current_step)" end
   ' 2>/dev/null) || return 0
   [[ -n "$line" ]] || return 0
