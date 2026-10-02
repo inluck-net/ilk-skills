@@ -821,9 +821,18 @@ def find_last_step_commit(
     """
     # Search for [plan:<slug>#step-<final_step>] or [plan:<slug>#ship].
     # The final step may be committed as #ship per template convention.
+    #
+    # Use `--format=%H %s` (one line per commit, subject only) so SHA and
+    # message arrays stay aligned.  The previous code ran two separate
+    # `git log` commands (`%H` and `%s%n%b`) and zipped by index — but
+    # `%s%n%b` produces N+1 lines for an N-line body, so the SHA and message
+    # arrays drifted and `find_last_step_commit` returned the wrong SHA
+    # (measured 2026-10-03: returned `e407234` for a different slug instead of
+    # `8492855`).  Trailers are always in the subject line, so subject-only
+    # matching is sufficient.
     try:
         result = subprocess.run(
-            ["git", "log", "--format=%H", "--all"],
+            ["git", "log", "--format=%H %s", "--all"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             cwd=project,
         )
@@ -831,19 +840,6 @@ def find_last_step_commit(
             return None
     except (OSError, subprocess.SubprocessError):
         return None
-
-    # Get full messages for trailer matching.
-    try:
-        msg_result = subprocess.run(
-            ["git", "log", "--format=%s%n%b", "--all"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            cwd=project,
-        )
-    except (OSError, subprocess.SubprocessError):
-        msg_result = None
-
-    shas = result.stdout.splitlines()
-    messages = (msg_result.stdout.splitlines() if msg_result and msg_result.returncode == 0 else [])
 
     # Match [plan:<slug>#step-N] for the final step, or [plan:<slug>#ship].
     step_trailer_re = re.compile(
@@ -854,11 +850,19 @@ def find_last_step_commit(
     )
 
     # Walk commits (newest first) looking for the final step trailer.
-    for i, msg in enumerate(messages):
-        if i >= len(shas):
-            break
+    # Each line is "SHA subject".
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(" ", 1)
+        if len(parts) < 2:
+            continue
+        sha, msg = parts[0].strip(), parts[1]
+        if not sha:
+            continue
         if step_trailer_re.search(msg) or ship_trailer_re.search(msg):
-            return shas[i].strip()
+            return sha
 
     # Shared-remote fallback: use the ledger's last proven step commit.
     if ledger_records:
