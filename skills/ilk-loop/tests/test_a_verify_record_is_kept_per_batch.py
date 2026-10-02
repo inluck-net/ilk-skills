@@ -48,24 +48,22 @@ def _make_record(batch: str, **overrides) -> dict:
 class TestAC1PerBatchRecordSurvivesOverwrite:
     """Batch X's record must survive batch Y writing its own."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_two_batches_keep_separate_records(self, tmp_path: Path) -> None:
         """AC-1: batch X writes, batch Y writes, X's record is still there."""
         from batch_gate import BatchGateRecord, read_record, write_record
 
         runtime = tmp_path / "runtime"
 
-        # Batch X writes its record.
+        # Batch X writes its per-batch record.
         rec_x = BatchGateRecord(**_make_record("batch-x"))
-        write_record(rec_x, runtime)
+        write_record(rec_x, runtime, batch="batch-x")
 
-        # Batch Y writes its record — same path today, overwrites X.
+        # Batch Y writes its per-batch record — separate path, does not
+        # overwrite X.
         rec_y = BatchGateRecord(**_make_record("batch-y", head_sha="f" * 40))
-        write_record(rec_y, runtime)
+        write_record(rec_y, runtime, batch="batch-y")
 
         # AC-1: X's record must still be readable.
-        # Today this fails: read_record returns Y's record for any reader
-        # that resolves the path without knowing which batch it belongs to.
         loaded_x = read_record(runtime, batch="batch-x")
         assert loaded_x is not None, (
             "batch X's record was overwritten by batch Y"
@@ -95,26 +93,21 @@ class TestAC1PerBatchRecordSurvivesOverwrite:
 class TestAC3Phase1ReadsBatchRecord:
     """phase1_verify for batch X must read X's record, not Y's."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_phase1_reads_own_batch_record(self, tmp_path: Path) -> None:
         """AC-3: phase1_verify resolves the record for the sub-plan's batch."""
-        from batch_gate import BatchGateRecord, write_record
+        from batch_gate import BatchGateRecord, batch_record_path, write_record
 
         runtime = tmp_path / "runtime"
 
-        # Batch X writes its record.
+        # Batch X writes its per-batch record.
         rec_x = BatchGateRecord(**_make_record("batch-x"))
-        write_record(rec_x, runtime)
+        write_record(rec_x, runtime, batch="batch-x")
 
-        # Batch Y writes its record, overwriting X.
+        # Batch Y writes its per-batch record — separate path.
         rec_y = BatchGateRecord(**_make_record("batch-y", head_sha="f" * 40))
-        write_record(rec_y, runtime)
+        write_record(rec_y, runtime, batch="batch-y")
 
-        # phase1_verify for batch X should resolve X's record.
-        # Today this is impossible: there's no per-batch path resolution.
-        # The fix will add a batch_record_path(runtime_dir, batch) helper.
-        from batch_gate import batch_record_path
-
+        # phase1_verify for batch X resolves X's per-batch record.
         x_path = batch_record_path(runtime, "batch-x")
         assert x_path.is_file(), (
             "batch X's record file does not exist at the per-batch path"

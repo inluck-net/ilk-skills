@@ -25,6 +25,7 @@ from typing import Optional
 
 from batch_gate import (
     BatchGateRecord,
+    batch_record_path,
     record_path,
     validate_record_detail,
 )
@@ -77,6 +78,7 @@ def verify_phase1(
     baseline_report: Optional[BaselineReport] = None,
     expected_tree_sha: Optional[str] = None,
     repo: Optional[Path] = None,
+    batch: Optional[str] = None,
 ) -> Phase1Verdict:
     """Verify Phase 1 preconditions and refuse if either engine is unavailable.
 
@@ -101,6 +103,10 @@ def verify_phase1(
             gate certified.  Absent means "not resolved"; the record
             falls back to strict head equality (the provenance rule in
             ``_head_is_current``).
+        batch: the batch slug (e.g. ``batch-2026-10-02b-...``).  When
+            supplied, reads from the per-batch path
+            ``runtime/batch-gates/<batch>.json``.  Falls back to the
+            legacy ``batch-gate.json`` when no per-batch record exists.
     """
     # ── Engine 1: batch verdict ──────────────────────────────────────────
     #
@@ -128,7 +134,14 @@ def verify_phase1(
         if probe.returncode == 0 and probe.stdout.strip():
             expected_tree_sha = probe.stdout.strip()
 
-    verdict_path = record_path(runtime_dir)
+    # Per-batch path takes precedence when a batch slug is provided.
+    if batch is not None:
+        verdict_path = batch_record_path(runtime_dir, batch)
+        if not verdict_path.is_file():
+            # No per-batch record — fall back to legacy, labelled.
+            verdict_path = record_path(runtime_dir)
+    else:
+        verdict_path = record_path(runtime_dir)
     detail = validate_record_detail(
         verdict_path, expected_head_sha, expected_invocation,
         expected_tree_sha, repo=repo,

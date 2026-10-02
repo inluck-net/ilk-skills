@@ -509,6 +509,15 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
     if _ship_audit_available:
         _ledger_records = _ship_audit_mod.load_ledger_records(cwd)
 
+    # Resolve the batch slug from the active MASTER plan so ship_audit
+    # reads the per-batch verify record instead of the legacy shared one.
+    _batch_slug = None
+    if _ship_audit_available and plans_dir is not None:
+        try:
+            _batch_slug = _ship_audit_mod.resolve_batch_slug_from_master(plans_dir)
+        except Exception:
+            _batch_slug = None
+
     if _ship_audit_available:
         for sp in subplans:
             if sp["status"] != "shipped":
@@ -530,6 +539,7 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
                     cwd=cwd,
                     runtime_dir=_resolved_runtime_dir,
                     ledger_records=_ledger_records,
+                    batch=_batch_slug,
                 )
                 sp["proven"] = result["proven"]
                 sp["proof_state"] = "proven" if result["proven"] else "unproven"
@@ -539,11 +549,19 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
                 # or stale.  Adds proof_freshness and proof_bookkeeping_paths.
                 try:
                     from batch_gate import (  # type: ignore[import-untyped]
+                        batch_record_path as _batch_record_path,
                         freshness_basis as _freshness_basis,
                         record_path as _record_path,
                     )
                     import subprocess as _sp
-                    _rp = _record_path(_resolved_runtime_dir)
+                    # Per-batch path takes precedence when a batch slug is
+                    # resolved from the active MASTER plan.
+                    if _batch_slug is not None:
+                        _rp = _batch_record_path(_resolved_runtime_dir, _batch_slug)
+                        if not _rp.is_file():
+                            _rp = _record_path(_resolved_runtime_dir)
+                    else:
+                        _rp = _record_path(_resolved_runtime_dir)
                     _rec = json.loads(_rp.read_text(encoding="utf-8"))
                     _head_r = _sp.run(
                         ["git", "rev-parse", "HEAD"],

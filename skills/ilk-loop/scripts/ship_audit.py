@@ -178,6 +178,56 @@ def _slug_has_any_trailer(slug: str, git_output: str) -> bool:
     ) is not None
 
 
+def resolve_batch_slug_from_master(plans_dir: Path) -> str | None:
+    """Derive the batch slug from the active MASTER plan's filename.
+
+    The batch slug is ``batch-<master-slug>`` where ``<master-slug>`` is the
+    MASTER's ``slug:`` frontmatter field.  Returns None when no active MASTER
+    is found or the slug is missing.
+    """
+    masters = sorted(plans_dir.glob("MASTER-*.md"))
+    if not masters:
+        return None
+
+    # Reuse loop_status's pick_active_master logic — find the active or
+    # queued master.  We only need the slug, so read frontmatter directly.
+    candidates: list[tuple[Path, str, float]] = []
+    for p in masters:
+        try:
+            text = p.read_text(encoding="utf-8-sig")
+        except OSError:
+            continue
+        # Quick frontmatter parse — we only need status and slug.
+        fm: dict[str, str] = {}
+        if text.startswith("---"):
+            end = text.find("\n---", 3)
+            if end > 0:
+                for raw in text[3:end].splitlines():
+                    line = raw.strip()
+                    if ":" in line:
+                        k, _, v = line.partition(":")
+                        fm[k.strip()] = v.strip()
+        status = fm.get("status", "").strip()
+        slug = fm.get("slug", "").strip()
+        # Filter to non-terminal masters with a slug.
+        if status in ("shipped",):
+            continue
+        if slug:
+            priority = 0
+            try:
+                priority = int(fm.get("priority", "0"))
+            except (ValueError, TypeError):
+                pass
+            candidates.append((p, slug, -priority))
+
+    if not candidates:
+        return None
+
+    # Prefer active > queued > others; within same status, highest priority.
+    candidates.sort(key=lambda t: t[2])
+    return f"batch-{candidates[0][1]}"
+
+
 def load_ledger_records(project: Path) -> list[dict[str, Any]] | None:
     """Resolve and read this project's ship-proof ledger.
 
@@ -450,6 +500,7 @@ def _resolve_expected_invocation(project_path: Path) -> str:
 def _resolve_batch_record(
     runtime_dir: Path | None,
     cwd: Path | None = None,
+    batch: str | None = None,
 ) -> tuple[str | None, str | None]:
     """Read the persisted batch-gate verdict using SP2's validator.
 
@@ -460,6 +511,11 @@ def _resolve_batch_record(
     AC-1: reads the verdict from the record.
     AC-2: stale / invalid / absent each its own outcome (validator vocabulary).
     AC-3: reuses batch_gate.validate_record — no second staleness implementation.
+
+    When *batch* is supplied, reads from the per-batch path
+    ``runtime/batch-gates/<batch>.json``.  Falls back to the legacy
+    ``batch-gate.json`` when no per-batch record exists, so old batches
+    that predate per-batch storage still read correctly.
     """
     if runtime_dir is None:
         return None, None  # no record available — fall back to legacy path
@@ -469,12 +525,20 @@ def _resolve_batch_record(
         if _scripts_dir not in sys.path:
             sys.path.insert(0, _scripts_dir)
         from batch_gate import (  # type: ignore[import-untyped]
-            record_path, validate_record, validate_record_detail,
+            batch_record_path, record_path, validate_record,
+            validate_record_detail,
         )
     except ImportError:
         return None, None
 
-    rp = record_path(runtime_dir)
+    # Per-batch path takes precedence when a batch slug is provided.
+    if batch is not None:
+        rp = batch_record_path(runtime_dir, batch)
+        if not rp.is_file():
+            # No per-batch record — fall back to legacy, labelled.
+            rp = record_path(runtime_dir)
+    else:
+        rp = record_path(runtime_dir)
 
     # Resolve expected head and invocation for the validator.
     try:
@@ -584,6 +648,7 @@ def _evaluate_gate(
     gate_passed: str,
     runtime_dir: Path | None = None,
     cwd: Path | None = None,
+    batch: str | None = None,
 ) -> tuple[str | None, str | None]:
     """Run the gate half via ``ship_integrity.evaluate_ship``.
 
@@ -596,6 +661,9 @@ def _evaluate_gate(
     via SP2's ``batch_gate.validate_record`` (AC-1 through AC-3).  Falls
     back to the legacy *gate_passed* argument only when no record exists
     or no runtime_dir is supplied (AC-5).
+
+    When *batch* is supplied, reads from the per-batch path
+    ``runtime/batch-gates/<batch>.json`` (falls back to legacy).
     """
     from ship_integrity import evaluate_ship
 
@@ -613,7 +681,9 @@ def _evaluate_gate(
         return "fail", override_reason
 
     # AC-1..3: no explicit override — use the validated record.
-    record_verdict, record_reason = _resolve_batch_record(runtime_dir, cwd=cwd)
+    record_verdict, record_reason = _resolve_batch_record(
+        runtime_dir, cwd=cwd, batch=batch,
+    )
 
     if record_verdict is not None:
         # We have a record (or a named absence).
@@ -646,6 +716,7 @@ def audit_ship(
     ledger_records: list[dict[str, Any]] | None = None,
     loop_log_path: Path | None = None,
     master_created: str | None = None,
+    batch: str | None = None,
 ) -> dict[str, Any]:
     """Audit a shipped sub-plan: step commits + gate outcome.
 
@@ -716,7 +787,7 @@ def audit_ship(
     # Gate half (AC-8: exempt no-gate sub-plans from gate check only).
     gate_verdict, gate_reason = _evaluate_gate(
         status, declared_checks, gate_passed,
-        runtime_dir=runtime_dir, cwd=cwd,
+        runtime_dir=runtime_dir, cwd=cwd, batch=batch,
     )
 
     reasons: list[str] = []
