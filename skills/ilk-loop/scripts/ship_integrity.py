@@ -42,6 +42,8 @@ def evaluate_ship(
     subplan_status: str,
     declared_checks: list[dict[str, Any]],
     last_gate_result: dict[str, Any] | None,
+    *,
+    gate_slug: str = "",
 ) -> ShipVerdict:
     """Decide whether a shipped status is honest given the gate outcome.
 
@@ -89,7 +91,7 @@ def evaluate_ship(
             # sub-plan, the gate's slug is not responsible for the red.
             if verdict == "owned":
                 owner_slug = attribution.get("owner_slug", "")
-                if owner_slug and owner_slug != slug:
+                if owner_slug and gate_slug and owner_slug != gate_slug:
                     owner_sha = attribution.get("owner_sha", "")
                     owner_info = ""
                     if owner_sha:
@@ -994,7 +996,8 @@ def _cli(argv: list[str]) -> int:
 
     verdict = (ShipVerdict(ok=True, reason="no gate ran this iteration — gate half not enforced")
                if skip_gate_half
-               else evaluate_ship(status, checks, gate_result))
+               else evaluate_ship(status, checks, gate_result,
+                                   gate_slug=args.slug or ""))
 
     # Step-commit half.  evaluate_ship only asks "was the gate green?", so a
     # sub-plan that ran two of four steps and went green on the second was

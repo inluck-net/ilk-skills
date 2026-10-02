@@ -129,7 +129,6 @@ class TestBisectFindsOwnerDespiteSiblingRed:
     iteration-base check.
     """
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_sibling_red_at_base_node_red_at_c(self, tmp_path: Path) -> None:
         """Sibling red at base + node N red at C ⇒ first_red == C."""
         repo = _make_repo(tmp_path)
@@ -229,7 +228,6 @@ class TestOwnerSlugFromBody:
     Must read ``%B`` (the way ``ship_audit`` does).
     """
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_slug_from_body_not_subject(self, tmp_path: Path) -> None:
         """Trailer in body only ⇒ owner_slug == 'x'."""
         repo = _make_repo(tmp_path)
@@ -292,7 +290,6 @@ class TestNoFlagGateNodeOnlyRerun:
     ``_run_at_base_worktree`` doesn't strip a trailing path.
     """
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_no_flag_gate_path_not_stripped(self) -> None:
         r"""A no-flag gate ``python3 -m pytest tests/a.py`` keeps the
         path after ``_strip_runner_flags`` + the path-stripping regex.
@@ -308,12 +305,14 @@ class TestNoFlagGateNodeOnlyRerun:
         cmd = "python3 -m pytest tests/a.py"
         # Apply the same transforms as _run_at_base_worktree.
         runner = red_owner._strip_runner_flags(cmd)
+        # Match one or more non-flag args (paths) after pytest,
+        # stopping at the next flag or end-of-string.
         runner = re.sub(
-            r"(pytest)\s+(?!\-)(?:\S+\s+)*?(?=\-\w|\s*$)",
-            r"\1 ",
+            r"(pytest)(?:\s+(?!\-)\S+)+",
+            r"\1",
             runner,
         )
-        # The path should be stripped.  It is not.
+        # The path should be stripped.
         assert "tests/a.py" not in runner, (
             f"Path should be stripped from command, got: {runner!r}"
         )

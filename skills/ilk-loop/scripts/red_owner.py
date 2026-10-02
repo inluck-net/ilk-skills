@@ -40,10 +40,21 @@ from bounded_run import run as _bounded_run  # noqa: E402
 
 
 def _run_test(repo: Path, cmd: str, nodes: list[str]) -> bool:
-    """Run the test command in ``repo``.  Returns True if green."""
-    full_cmd = cmd
+    """Run the test command in ``repo``.  Returns True if green.
+
+    When *nodes* is non-empty, only the node ids are passed to the test
+    runner — the full gate command's file paths are **not** included.
+    This matches the iteration-base check's node-only invocation and
+    prevents a red sibling from masking a green node at base.
+    """
     if nodes:
-        full_cmd = cmd + " " + " ".join(nodes)
+        # Node-only: strip file paths (keep up to and including "pytest")
+        # so a red sibling in the gate's files does not poison the base check.
+        m = re.search(r"(.*pytest)", cmd)
+        cmd_base = m.group(1) if m else cmd.split()[0]
+        full_cmd = cmd_base + " " + " ".join(nodes)
+    else:
+        full_cmd = cmd
     rc, _stdout, _stderr, _timed_out = _bounded_run(
         ["bash", "-c", full_cmd],
         cwd=str(repo), timeout=300,
@@ -52,8 +63,13 @@ def _run_test(repo: Path, cmd: str, nodes: list[str]) -> bool:
 
 
 def _commit_subject(repo: Path, sha: str) -> str:
+    """Return the full commit message for *sha* (subject + body).
+
+    Uses ``%B`` so that plan trailers in the body (e.g.
+    ``[plan:alpha#step-1]``) are found.  ``%s`` would miss them.
+    """
     r = subprocess.run(
-        ["git", "log", "--format=%s", "-1", sha],
+        ["git", "log", "--format=%B", "-1", sha],
         cwd=repo, capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=30,
     )
@@ -213,9 +229,13 @@ def _run_at_base_worktree(
         runner = _strip_runner_flags(cmd)
         # "python3 -m pytest tests/a.py tests/b.py -q" →
         # "python3 -m pytest -q"
+        # Match one or more non-flag args (paths) after pytest, stopping
+        # at the next flag or end-of-string.  Greedy `+` is required;
+        # the lazy `*?` in the old regex failed to match a trailing path
+        # because it preferred matching nothing.
         runner = re.sub(
-            r"(pytest)\s+(?!\-)(?:\S+\s+)*?(?=\-\w|\s*$)",
-            r"\1 ",
+            r"(pytest)(?:\s+(?!\-)\S+)+",
+            r"\1",
             runner,
         )
 
@@ -257,15 +277,6 @@ def _extract_plan_slug(commit_msg: str) -> str | None:
     """Extract the plan slug from a [plan:<slug>#…] trailer."""
     m = re.search(r"\[plan:([^#\]]+)#", commit_msg)
     return m.group(1) if m else None
-
-
-def _commit_subject(repo: Path, sha: str) -> str:
-    r = subprocess.run(
-        ["git", "log", "--format=%s", "-1", sha],
-        cwd=repo, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=30,
-    )
-    return r.stdout.strip()
 
 
 def attribute_red(
