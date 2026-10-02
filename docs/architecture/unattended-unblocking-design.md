@@ -631,6 +631,122 @@ If the engine/adapter split is kept, extraction is mostly a file move.
   2. The engine never detects liveness by argv; it uses run.lock pids
      (memory `merge-guard-matches-any-command-line`).
 
+## Target architecture: stable releases + an isolated RSI sandbox (Chad, 2026-10-02)
+
+**Goal (Chad):** both hosts run a stable version that takes in and
+processes ilk batches. At the same time, either host can do RSI for
+ilk-skills in a worktree with a sandboxed environment. Isolation is
+enough: the sandbox must not affect the stable running instance. Until the
+lease below exists, the RSI host is chad-mbp (D5).
+
+### Why today's layout can't do this (read 2026-10-02 on chad-mbp)
+
+- **Skills point into the dev clone.** The skill symlinks in all three
+  homes (`~/.claude/skills`, `~/.claude-worker/skills`,
+  `~/.claude-manager/skills`) point into the dev clone,
+  `~/Projects/github/inluck-net/ilk-skills/skills/...`.
+- **So does the scheduler.** The scheduler's launchd plist
+  (`~/Library/LaunchAgents/net.inluck.ilk.scheduler.plist`) runs
+  `scheduler.sh` straight from the clone.
+- **So every clone commit is a deploy** to every live loop on the host
+  (memories `deploy-is-checkout-plus-bounce`,
+  `moving-the-clone-moves-every-loop`).
+- **Most selfmod machinery exists only to work around that coupling:**
+  merge holds, the cross-project yield, the merge-back latch, and the argv
+  merge guard. On 2026-10-02 these produced the `selfmod_merge_failed`
+  latch, the I2 / gh-resolve yield ping-pong, and the watcher counted as a
+  live loop.
+- **Selfmod detection compares the project to the toolkit clone path:**
+  `selfmod_isolation_required` and `_resolve_toolkit_clone`
+  (`run_ilk_loop_claude.sh:582`, `:404`).
+- **rezmac's layout:** not yet probed.
+
+### 1. Stable runtime: immutable release directories
+
+- **Extract, don't check out.** Each release is extracted from `git archive
+  <tag>` into `~/.ilk/releases/vX.Y.Z/`, never as a working checkout, so
+  nothing can commit into it.
+- **One pointer.** `~/.ilk/current` is a symlink to one release. The three
+  homes' skill links, the scheduler plist and the watchdog all point at
+  `current`, never at a dev clone.
+- **Upgrade** is an atomic flip of `current` plus a daemon bounce.
+  **Rollback** is flipping back, because the previous release directory is
+  kept (the last N are kept). This is D4's automatic rollback in its
+  cheapest form.
+- **A run pins its version.** At start, the runner resolves `current` to the
+  concrete release directory and uses that path for every script it
+  sources or execs during the run. A run in progress finishes on the
+  version it started with, and the next run picks up the new one. This
+  replaces "runner re-exec on script change" (L1). It also removes "land
+  only at idle" and the cross-project yield for product loops.
+
+### 2. RSI sandbox: a worktree plus an isolated environment
+
+- **Code:** the dev clone, or a worktree of it, never under
+  `~/.ilk/releases`.
+- **Environment:** pinned together, because pinning one defeats the other
+  (memory `pinning-ilk-data-home-defeats-home-isolation`):
+  - its own `ILK_DATA_HOME` and `HOME` (e.g. `~/.ilk-sandbox/`);
+  - its own worker config directory;
+  - `ILK_SKILL_HOME` set to the worktree's `skills/`.
+- **No daemons:** no launchd agents and no scheduler. Sandbox runs are
+  foreground processes that the stable side's liveness checks never count.
+  Liveness comes from `run.lock` pids, never argv.
+- **Who judges:** the stable release drives the improvement batch and runs
+  its gates. The candidate code is only ever the thing under test, so the
+  evaluator is never the code being evaluated (guard 1).
+- **What runs inside:** the golden batch (guard 3) and the mutation teeth
+  test (guard 4) run end to end on the candidate toolkit, inside the
+  sandbox's data home.
+- **Fail closed:** a sandbox write that resolves into the stable data home
+  is a bug, and the ledger writers refuse it (I2 sub-plan 2's fail-closed
+  rule, extended).
+
+### 3. Release train
+
+1. Merge the build into the dev clone's `main`. This is now just git, not
+   a deploy.
+2. Run the full suite in the sandbox, then tag.
+3. **Canary:** the RSI host extracts the tag and flips its own `current`.
+4. After a clean observation window (guard 5's outcome checks), the other
+   host fetches the tag, extracts it and flips.
+5. On a regression, flip back on both hosts and pin last-known-good.
+6. Pushing to origin stays Chad's under D4. rezmac fetching from chad-mbp
+   over ssh instead of origin is a possible alternative, not decided.
+
+### 4. Which host does RSI
+
+- **For now:** a static `rsi_host: chad-mbp` (D5; see the opt-in subsection
+  above).
+- **Ideal:** either host can take it. The static field becomes a lease
+  with a host id and an expiry, taken by compare-and-swap somewhere both
+  hosts can read (for example a ref on origin). At most one holder at a
+  time, still. The lease is an outward write, so it waits on D4 too.
+
+### What this removes, and what it costs
+
+- **Removes:**
+  - most of the selfmod isolation path: the dev clone becomes an ordinary
+    project with no merge-back into a live deploy;
+  - the merge hold, the yield and its ping-pong, and the merge-back latch;
+  - a daemon bounce on every merged improvement. Bounces happen only on a
+    release flip.
+- **The same pattern applies to gh-resolve.** On chad-mbp it runs straight
+  from its main checkout (gh-resolve-b4). Its own design is gh-resolve's to
+  write.
+- **Costs:** a migration:
+  - install and upgrade write release directories;
+  - the three homes and the plist are rewired to `current`;
+  - the runner pins its version at start;
+  - a sandbox launcher;
+  - selfmod detection and merge-back are retired or simplified.
+
+  It touches every live loop, so it lands at an idle window on both hosts,
+  through Chad's D4 gate.
+- **Proposed placement:** the first build after v0.9.138, ahead of the
+  rule-retirement audit, because it deletes several L1 items instead of
+  fixing them.
+
 ## Decisions (Chad, 2026-10-02)
 
 - **D1.** Improvement is continuous small builds, separate from
@@ -645,6 +761,12 @@ If the engine/adapter split is kept, extraction is mostly a file move.
 - **D4.** The release train may push to origin and deploy to rezmac on its
   own **after** canary + automatic rollback exist. Until then, push and
   rezmac deploy stay Chad's; improvement builds may land on chad-mbp.
+
+- **D5.** At most one host does RSI for ilk-skills at a time. Ideally
+  either host; for now chad-mbp.
+- **D6.** Target architecture: both hosts run a stable release, and RSI
+  runs in an isolated sandbox (worktree + isolated environment) that
+  doesn't affect the stable instance. See "Target architecture".
 
 ## Open questions for Chad
 
