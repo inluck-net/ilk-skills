@@ -4075,7 +4075,18 @@ for k, v in sorted(d.get("env", {}).items()):
   wait "$_pipeline_pid" || exit_code=$?
   write_phase between
   # Clean up the process group (no-op if the agent already exited).
-  kill -0 "-$_ILK_AGENT_PGID" 2>/dev/null && kill -TERM "-$_ILK_AGENT_PGID" 2>/dev/null || true
+  # TERM first, then KILL after a brief pause: gtimeout traps TERM and
+  # forwards it to its child, but a sleeping stub may not exit promptly,
+  # keeping the parent's pipe FDs open and blocking communicate() in tests.
+  echo "[DBG] before TERM: PGID=$_ILK_AGENT_PGID" >&2
+  ps -eo pid,pgid,stat,command 2>/dev/null | grep -E "gtimeout|sleep 1[02]0" | grep -v grep >&2 || echo "[DBG] no gtimeout/sleep found" >&2
+  kill -0 "-$_ILK_AGENT_PGID" 2>/dev/null && echo "[DBG] kill -0 OK" >&2 || echo "[DBG] kill -0 failed (PGID dead)" >&2
+  kill -TERM "-$_ILK_AGENT_PGID" 2>/dev/null || true
+  sleep 0.2
+  ps -eo pid,pgid,stat,command 2>/dev/null | grep -E "gtimeout|sleep 1[02]0" | grep -v grep >&2 || echo "[DBG] no gtimeout/sleep after TERM" >&2
+  kill -KILL "-$_ILK_AGENT_PGID" 2>/dev/null && echo "[DBG] KILL sent OK" >&2 || echo "[DBG] KILL failed" >&2
+  sleep 0.1
+  ps -eo pid,pgid,stat,command 2>/dev/null | grep -E "gtimeout|sleep 1[02]0" | grep -v grep >&2 || echo "[DBG] no gtimeout/sleep after KILL" >&2
 
   # Detect budget-exhausted via the terminal result's terminal_reason field only.
   # Phrase-based patterns ("budget exhausted") match agent thinking/output that
