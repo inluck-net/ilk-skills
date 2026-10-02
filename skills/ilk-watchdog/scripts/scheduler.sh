@@ -1209,7 +1209,7 @@ print(int((ea-sa).total_seconds()))
           promo_json=$($PYTHON "$PROMOTE_SCRIPT" --project "$dpath" --plans-dir "$plans_dir" --dry-run 2>/dev/null) || true
           if [[ -n "$promo_json" ]]; then
             local promoted_name
-            promoted_name=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('promoted',''))" <<<"$promo_json" | tr -d '\r')
+            promoted_name=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('promoted') or '')" <<<"$promo_json" | tr -d '\r')
             if [[ -n "$promoted_name" ]]; then
               local demoted_name
               demoted_name=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('demoted','') or '')" <<<"$promo_json" | tr -d '\r')
@@ -1224,7 +1224,7 @@ print(int((ea-sa).total_seconds()))
           promo_json=$($PYTHON "$PROMOTE_SCRIPT" --project "$dpath" --plans-dir "$plans_dir" 2>/dev/null) || true
           if [[ -n "$promo_json" ]]; then
             local promoted_name
-            promoted_name=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('promoted',''))" <<<"$promo_json" | tr -d '\r')
+            promoted_name=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(d.get('promoted') or '')" <<<"$promo_json" | tr -d '\r')
             if [[ -n "$promoted_name" ]]; then
               echo "[$(date '+%Y-%m-%d %H:%M:%S')] promoted $promoted_name"
               write_scheduler_log "promote" "$dkey -> $promoted_name"
