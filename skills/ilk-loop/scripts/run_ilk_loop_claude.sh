@@ -4062,12 +4062,13 @@ for k, v in sorted(d.get("env", {}).items()):
   local _pipeline_pid=$!
   set +m
   # The backgrounded pipeline is in its own process group (set -m).
-  # Record the PGID (= the pipeline's PID) so the signal trap can
-  # TERM the whole group.
-  _ILK_AGENT_PGID="$_pipeline_pid"
+  # Record the PGID so the signal trap and amendment watcher can TERM
+  # the whole group.  For a multi-process pipeline (A | B | C &),
+  # $! is the PID of C but the PGID is the PID of A — resolve it.
+  _ILK_AGENT_PGID=$(ps -o pgid= -p "$_pipeline_pid" 2>/dev/null | tr -d ' ') || _ILK_AGENT_PGID="$_pipeline_pid"
   # Write PGID to file so the amendment watcher can read it.
   if [[ -n "${_amend_pgid_file:-}" ]]; then
-    echo "$_pipeline_pid" > "$_amend_pgid_file" 2>/dev/null || true
+    echo "$_ILK_AGENT_PGID" > "$_amend_pgid_file" 2>/dev/null || true
   fi
 
   local exit_code=0
@@ -5524,7 +5525,8 @@ print(json.dumps({
     local _amend_sub_fp="" _amend_master_fp="" _amend_master_file=""
     local _amend_watcher_pid="" _amend_flag="${RUN_LOG_DIR}/plan-amended-${i}.flag"
     local _amend_pgid_file="${RUN_LOG_DIR}/agent-pgid-${i}.txt"
-    rm -f "$_amend_flag" "$_amend_pgid_file"
+    local _amend_stop_file="${RUN_LOG_DIR}/watcher-stop-${i}.flag"
+    rm -f "$_amend_flag" "$_amend_pgid_file" "$_amend_stop_file"
     if [[ "$GATE_FIRST_GREEN" -eq 0 && "$GATE_FIRST_NO_DISPATCH" -eq 0 ]]; then
       local _amend_plans_dir
       _amend_plans_dir=$(get_plans_dir 2>/dev/null) || _amend_plans_dir=""
@@ -5545,9 +5547,14 @@ print(json.dumps({
         fi
       fi
       # Start the watcher subshell if we have fingerprints to watch.
+      # Uses 1-second ticks so the watcher exits within 1 s of the
+      # stop file appearing (written when the agent exits).  Never
+      # adds to the iteration's wall clock.
       if [[ -n "$_amend_sub_fp" || -n "$_amend_master_fp" ]]; then
         (
-          while sleep 30; do
+          while sleep 1; do
+            # Stop file: the iteration ended — exit cleanly.
+            [[ -f "$_amend_stop_file" ]] && exit 0
             local _changed=0
             if [[ -n "$_amend_sub_fp" ]]; then
               local _cur
@@ -5630,6 +5637,15 @@ print(json.dumps({
     fi
 
     # -- Plan amendment watcher result ----------------------------------
+    # Signal the watcher to stop: write the stop file so it exits on
+    # its next 1-second tick.  Then reap it.  This must happen before
+    # the amendment-flag check so the watcher never adds wall-clock
+    # time to the iteration.
+    if [[ -n "$_amend_watcher_pid" ]]; then
+      touch "$_amend_stop_file" 2>/dev/null || true
+      wait "$_amend_watcher_pid" 2>/dev/null || true
+    fi
+
     # If the watcher detected a plan amendment and killed the agent, the
     # flag file exists.  Record plan_amended in the JSONL and set
     # ITER_COMPLETED=0 so the dirty tree is WIP-preserved.
@@ -5640,11 +5656,6 @@ print(json.dumps({
       # The agent was killed by SIGTERM (exit 143).  _classify_agent_exit
       # already handles >=128 as completed=0, but the watcher may have
       # killed it after gtimeout already exited, so force it here.
-    fi
-    # Reap the watcher subshell.
-    if [[ -n "$_amend_watcher_pid" ]]; then
-      kill "$_amend_watcher_pid" 2>/dev/null || true
-      wait "$_amend_watcher_pid" 2>/dev/null || true
     fi
 
     # The iteration is over — clear the dispatched-slug guard so the

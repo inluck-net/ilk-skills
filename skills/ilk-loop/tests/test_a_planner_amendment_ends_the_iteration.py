@@ -19,6 +19,7 @@ import hashlib
 import os
 import signal
 import subprocess
+import tempfile
 import textwrap
 import time
 from pathlib import Path
@@ -92,6 +93,38 @@ def _make_stub_claude(bin_dir: Path, *, sleep_sec: int = 60) -> Path:
     )
     stub.chmod(0o755)
     return stub
+
+
+def _run_runner(args: list[str], *, cwd: str, env: dict, timeout: int = 120) -> subprocess.CompletedProcess:
+    """Run the runner script, capturing output via temp files instead of pipes.
+
+    This avoids the orphaned-process pipe-FD hang: when the watcher kills
+    the agent pipeline, orphaned gtimeout+sleep processes keep pipe FDs
+    open, causing ``communicate()`` to block until the iteration timeout.
+    Writing to temp files means the runner's exit is not gated on pipe EOF.
+    """
+    with tempfile.NamedTemporaryFile(mode="w+", suffix=".stdout", delete=False) as out_f, \
+         tempfile.NamedTemporaryFile(mode="w+", suffix=".stderr", delete=False) as err_f:
+        out_path, err_path = out_f.name, err_f.name
+    try:
+        with open(out_path, "w") as out_f, open(err_path, "w") as err_f:
+            proc = subprocess.Popen(
+                ["bash", *args],
+                stdout=out_f, stderr=err_f,
+                cwd=cwd, env=env,
+            )
+            proc.wait(timeout=timeout)
+        with open(out_path, "r", encoding="utf-8", errors="replace") as f:
+            stdout = f.read()
+        with open(err_path, "r", encoding="utf-8", errors="replace") as f:
+            stderr = f.read()
+        return subprocess.CompletedProcess(
+            args=args, returncode=proc.returncode,
+            stdout=stdout, stderr=stderr,
+        )
+    finally:
+        os.unlink(out_path)
+        os.unlink(err_path)
 
 # Frontmatter keys that the amendment watcher must EXCLUDE from the digest.
 _EXCLUDED_KEYS = {"current_step", "status", "last_updated"}
@@ -260,17 +293,13 @@ class TestAC1AmendmentTriggersTermination:
         editor.start()
 
         # Run the loop with the stub worker.
-        result = subprocess.run(
-            ["bash", str(_RUNNER),
+        result = _run_runner(
+            [str(_RUNNER),
              "--project-path", str(world["project"]),
              "--max-iterations", "1",
              "--iteration-timeout-min", "1",
              "--model", "test-model"],
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
-            timeout=120,
-            cwd=str(world["project"]),
-            env=env,
+            cwd=str(world["project"]), env=env, timeout=120,
         )
 
         # The iteration should end with plan-amended reason.
@@ -392,17 +421,13 @@ class TestAC3MasterEditTriggers:
         editor = threading.Thread(target=amend_master, daemon=True)
         editor.start()
 
-        result = subprocess.run(
-            ["bash", str(_RUNNER),
+        result = _run_runner(
+            [str(_RUNNER),
              "--project-path", str(world["project"]),
              "--max-iterations", "1",
              "--iteration-timeout-min", "1",
              "--model", "test-model"],
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
-            timeout=120,
-            cwd=str(world["project"]),
-            env=env,
+            cwd=str(world["project"]), env=env, timeout=120,
         )
 
         combined = result.stdout + result.stderr
