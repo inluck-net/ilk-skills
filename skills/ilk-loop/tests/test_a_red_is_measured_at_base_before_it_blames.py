@@ -297,8 +297,9 @@ def test_ac4_owned_verdict(tmp_path: Path) -> None:
     assert result["verdict"] == "owned", result
 
 
-def test_ac4_owned_ship_integrity_exits_1(tmp_path: Path) -> None:
-    """With an owned attribution, ship-integrity should still exit 1."""
+def test_ac4_owned_ship_integrity_exits_0(tmp_path: Path) -> None:
+    """With an owned attribution where owner is a different sub-plan,
+    ship-integrity should exit 0 — the red is owned by someone else."""
     repo = _make_repo(tmp_path)
     base = _git(repo, "rev-parse", "HEAD~2")
     head = _git(repo, "rev-parse", "HEAD")
@@ -320,7 +321,7 @@ def test_ac4_owned_ship_integrity_exits_1(tmp_path: Path) -> None:
     )
 
     r = _run_ship_integrity(subplan, "false", results_file, "two")
-    assert r.returncode == 1, f"expected exit 1 (owned), got {r.returncode}"
+    assert r.returncode == 0, f"expected exit 0 (owned by different slug), got {r.returncode}"
 
 
 # ── AC-5: fail closed ────────────────────────────────────────────────────────
@@ -357,8 +358,10 @@ def test_ac5_fail_closed_unknown_base(tmp_path: Path) -> None:
     assert result["verdict"] == "unmeasured", result
 
 
-def test_ac5_unmeasured_ship_integrity_exits_1(tmp_path: Path) -> None:
-    """unmeasured attribution ⇒ ship-integrity treats like owned (exit 1)."""
+def test_ac5_unmeasured_ship_integrity_exits_0(tmp_path: Path) -> None:
+    """unmeasured attribution ⇒ ship-integrity excuses the ship (exit 0).
+    Unmeasured means we can't determine who caused the red, so reverting
+    would blame the wrong sub-plan."""
     repo = _make_repo(tmp_path)
     base = _git(repo, "rev-parse", "HEAD~2")
     head = _git(repo, "rev-parse", "HEAD")
@@ -381,7 +384,7 @@ def test_ac5_unmeasured_ship_integrity_exits_1(tmp_path: Path) -> None:
     )
 
     r = _run_ship_integrity(subplan, "false", results_file, "two")
-    assert r.returncode == 1, f"expected exit 1 (unmeasured), got {r.returncode}"
+    assert r.returncode == 0, f"expected exit 0 (unmeasured — not reverted), got {r.returncode}"
 
 
 # ── AC-6: no live-tree run ───────────────────────────────────────────────────

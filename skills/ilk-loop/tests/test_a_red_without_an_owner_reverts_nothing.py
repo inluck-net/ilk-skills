@@ -181,7 +181,6 @@ class TestOwnedWithNoOwnerIsUnmeasured:
     verdict ``unmeasured``, with the reason saying why.
     """
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_owned_no_owner_ship_integrity_reverts_nothing(self) -> None:
         """An owned verdict with owner_sha=None and owner_slug=None ⇒
         ship_integrity must not revert (treat as unmeasured).
@@ -329,7 +328,6 @@ class TestRedAtBaseWithNoBatchBaseIsUnmeasured:
     is an unmeasured excuse.  It must read ``unmeasured``.
     """
 
-    @pytest.mark.xfail(strict=True, reason="red-first")
     def test_red_at_iter_base_no_batch_base(self, tmp_path: Path) -> None:
         """Red at iter base, no batch base ⇒ unmeasured."""
         repo = _make_repo(tmp_path)

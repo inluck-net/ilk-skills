@@ -73,7 +73,7 @@ def evaluate_ship(
         attribution = last_gate_result.get("attribution")
         if attribution and isinstance(attribution, dict):
             verdict = attribution.get("verdict", "")
-            if verdict in ("inherited", "pre-existing"):
+            if verdict in ("inherited", "pre-existing", "unmeasured"):
                 owner_info = ""
                 if verdict == "inherited":
                     owner_sha = attribution.get("owner_sha", "")
@@ -91,7 +91,17 @@ def evaluate_ship(
             # sub-plan, the gate's slug is not responsible for the red.
             if verdict == "owned":
                 owner_slug = attribution.get("owner_slug", "")
-                if owner_slug and gate_slug and owner_slug != gate_slug:
+                if not owner_slug:
+                    # Owned but no owner identified — unmeasured.  The bisect
+                    # could not attribute the red to any commit's trailer, so
+                    # blaming the gating sub-plan would be wrong.  Treat as
+                    # honest (the red is real but ownership is unresolved).
+                    return ShipVerdict(
+                        ok=True,
+                        reason="red owned but owner unidentified — unmeasured; "
+                               "not reverted",
+                    )
+                if gate_slug and owner_slug != gate_slug:
                     owner_sha = attribution.get("owner_sha", "")
                     owner_info = ""
                     if owner_sha:
@@ -99,7 +109,7 @@ def evaluate_ship(
                     return ShipVerdict(
                         ok=True,
                         reason=f"red owned by {owner_slug}{owner_info}; "
-                               f"not {slug}'s regression",
+                               f"not {gate_slug}'s regression",
                     )
     # Only enforce on shipped sub-plans.
     if subplan_status != "shipped":
@@ -562,11 +572,11 @@ def check_final_step_gate(
         attribution = row.get("attribution")
         if attribution and isinstance(attribution, dict):
             verdict = attribution.get("verdict", "")
-            if verdict in ("inherited", "pre-existing"):
+            if verdict in ("inherited", "pre-existing", "unmeasured"):
                 # Verify all nodes share the same excused verdict
                 nodes = attribution.get("nodes", [])
                 if nodes and all(
-                    n.get("verdict") in ("inherited", "pre-existing")
+                    n.get("verdict") in ("inherited", "pre-existing", "unmeasured")
                     for n in nodes
                 ):
                     return True

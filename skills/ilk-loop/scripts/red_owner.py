@@ -453,16 +453,21 @@ def attribute_red(
 
     # Red at iteration base. Check batch base.
     if not batch_base_valid:
-        # Can't measure at batch base — pre-existing (fail closed on base).
+        # Can't measure at batch base — unmeasured (no evidence to decide).
+        # A "pre-existing" verdict would excuse the red, but without a batch
+        # base we have no evidence either way.  Unmeasured is fail-closed:
+        # it behaves like owned, but consumers that check for unmeasured
+        # (e.g. ship_integrity) can refuse to revert instead of blaming
+        # the wrong sub-plan.
         nodes = []
         if node_ids:
             nodes = [
-                {"node_id": nid, "verdict": "pre-existing",
+                {"node_id": nid, "verdict": "unmeasured",
                  "owner_sha": None, "owner_slug": None}
                 for nid in node_ids
             ]
         return {
-            "verdict": "pre-existing",
+            "verdict": "unmeasured",
             "iteration_base": iteration_base,
             "batch_base": batch_base,
             "node_ids": node_ids,
