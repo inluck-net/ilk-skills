@@ -827,3 +827,17 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
     """Enforce the host-mutation guard at session end (AC-4)."""
     _enforce_no_host_mutations(session)
     _enforce_no_data_root_leak(session)
+
+
+# The runner exports these for the worker's hooks.  A suite run as a driver
+# gate inherits them, and every test that hands ``{**os.environ}`` to a hook
+# then sees the REAL "shipped this iteration" marker and gets denied: 8 reds
+# in I2's verify and 6 in R1's step-1 gate (2026-10-03), passing in any plain
+# shell.  Tests that exercise the marker set it explicitly in their own env.
+_RUNNER_HOOK_ENV = ("ILK_SHIPPED_MARKER", "ILK_ITERATION_SUBPLAN")
+
+
+@pytest.fixture(autouse=True)
+def _no_inherited_runner_hook_env(monkeypatch):
+    for name in _RUNNER_HOOK_ENV:
+        monkeypatch.delenv(name, raising=False)
