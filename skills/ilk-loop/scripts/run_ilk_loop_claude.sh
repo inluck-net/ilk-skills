@@ -2604,6 +2604,9 @@ attempt_gate_first_fast_path() {
           --plans-dir "$plans_dir" --repo "$repo" 2>&1)
         if [[ $? -eq 0 ]]; then
           echo "[gate-first] $slug: final step discharged — shipped by the driver"
+          # Track this slug so one-ship enforcement does not revert it.
+          _GATE_FIRST_SHIPPED_SLUGS="${_GATE_FIRST_SHIPPED_SLUGS:+$_GATE_FIRST_SHIPPED_SLUGS
+}$slug"
         else
           echo "  [gate-first] $slug: ship_transition failed — $ship_out" >&2
           # Leave the sub-plan as-is; the next iteration's worker ships it.
@@ -5296,6 +5299,12 @@ print(fm.get('result_file', ''))
       unset ILK_ITERATION_SUBPLAN
     fi
 
+    # -- Gate-first shipped slugs: track driver ships --------------------
+    # The gate-first flow may ship a sub-plan that is NOT the dispatched
+    # slug.  One-ship enforcement (below) reverts any non-dispatched ship,
+    # so we track gate-first ships here and exempt them.
+    local _GATE_FIRST_SHIPPED_SLUGS=""
+
     # -- One-ship marker: clear stale, export fresh ----------------------
     # The marker blocks further work after a ship in this iteration.
     # Clear any stale marker from a previous iteration, then export the
@@ -6408,6 +6417,11 @@ print(json.dumps(d))
           [[ -z "$_pre_slug" ]] && continue
           # Skip the dispatched slug — it is allowed to ship.
           [[ "$_pre_slug" == "$_dispatched_slug" ]] && continue
+          # Skip slugs shipped by the driver's gate-first flow — they are
+          # legitimate driver ships, not worker bypasses.
+          if [[ -n "$_GATE_FIRST_SHIPPED_SLUGS" ]]; then
+            printf '%s\n' "$_GATE_FIRST_SHIPPED_SLUGS" | grep -qxF "$_pre_slug" && continue
+          fi
           # Read the current status from frontmatter.
           _pre_status=$(python3 -c "
 import re, sys
