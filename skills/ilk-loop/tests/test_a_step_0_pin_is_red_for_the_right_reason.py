@@ -13,8 +13,7 @@ Exceptions raised inside the code under test (any frame under ``skills/``
 other than ``tests/``) are allowed, including ImportError of a not-yet-written
 symbol.
 
-Red-first pins — AC-1 and AC-4 are xfail(strict) until the implementation
-lands in step 1.
+Red-first pins — AC-1 and AC-4 are now implemented (step 1).
 """
 from __future__ import annotations
 
@@ -50,7 +49,6 @@ def _run_pytest_on_pin(pin_path: Path, tmp_path: Path) -> subprocess.CompletedPr
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac1_fixture_git_worktree_add_rejected(tmp_path: Path) -> None:
     """A pin whose fixture runs ``git worktree add`` on a checked-out branch
     raises CalledProcessError — this should be rejected as red for the wrong
@@ -149,7 +147,6 @@ def test_ac3_assertion_error_in_test_body_accepted(tmp_path: Path) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac4_fixture_helper_type_error_rejected(tmp_path: Path) -> None:
     """A fixture-helper TypeError should be rejected as red for the wrong
     reason — the error is in the test's own fixture, not in the code under test."""
