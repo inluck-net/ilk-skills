@@ -432,6 +432,159 @@ gate (D2), the rails carry all of the weight:
    scheduler for improvement builds, the audit trail, per-batch
    intervention metric.
 
+## Multi-project RSI
+
+Chad, 2026-10-02: gh-resolve, a separate repo, should get an RSI mechanism
+like this one, or the same one. Options were a new third repo serving
+every target repo, or a separate mechanism inside each of ilk-skills and
+gh-resolve.
+
+**Recommendation: one engine, built inside ilk-skills, with a per-project
+adapter. gh-resolve is its second consumer. No new repo yet, and no second
+copy in gh-resolve.**
+
+### Why not one mechanism per repo
+
+Two copies means two sets of rules, guards and bugs. That is the rule
+accumulation D3 sets out to remove. The defects are already shared:
+2026-10-02 found the same pin defect class on both repos. gh-resolve-b4
+counted 7 defective pins in 3 files of 10-02e, ilk-skills found 2 (I1 sp7,
+I2 sp2 AC-3), and a single fix (for example b4's step-1 revert check)
+should cover both.
+
+### Why not a new repo yet
+
+- **The engine doesn't exist.** Guards 1-4, owner bisect, and canary with
+  rollback are all unbuilt. Contracts changed several times today (I2 has
+  10 work sub-plans). Extracting before the contracts settle freezes the
+  wrong boundary.
+- **A third repo is a third deploy on two hosts.** That means more daemon
+  bounces, more merge holds, and more version skew. That coordination was
+  most of 2026-10-02's human effort (see the gh-resolve-b4 review).
+- **The parts already live here.** The backlog
+  (`skills/ilk-feedback/scripts/improvement_backlog.py`), the emit
+  contract, `/ilk-plan`, the selfmod worktree, `/ilk-ship`, the watchdog
+  and the scheduler are all here. gh-resolve's batches are already ilk
+  loops.
+
+### Two kinds of RSI, and who owns each
+
+1. **Unblocking a loop** (L1 + L2 in this doc) is always the toolkit's
+   job, whatever repo the loop runs on. A blocked gh-resolve batch is a
+   blocked ilk loop.
+2. **Improving the target repo** (for gh-resolve, making the resolver
+   better) uses the same engine. But the target repo owns its own goal:
+   its invariant suite lives in that repo, no build of that repo may edit
+   it, and changing it is routed to Chad (same rule as guard 1).
+
+### The split
+
+| Engine (one copy, ilk-skills) | Adapter (one per project) |
+|---|---|
+| block detection, L2 triage, the action vocabulary, two-strike | evidence sources (gh-resolve: reap + run records, resolver outcomes; open, see below) |
+| backlog + dedup, selection by blocking cost | tier-0 paths: that project's own gate and proof code |
+| small builds, scoped gates, landing at idle | invariant suite: that project's goal as end-to-end checks |
+| release train, owner bisect, auto-revert, mutation teeth test | golden batch / canary project |
+| audit trail, `events.jsonl` with leases | deploy + rollback steps |
+
+**Where adapter config lives:** in the data home, keyed per project, not
+in the consumer repo (memory `toolkit-data-never-enters-consumer-repo`).
+The adapter points to tests that the project owns, and the engine runs
+them.
+
+### What exists today (read 2026-10-02)
+
+- **The backlog is one global, toolkit-keyed file.**
+  `improvement_backlog.py:33,69` hard-codes
+  `<data_root>/ilk-skills-improvements/`. Of its 123 candidates, 123 have
+  no target-project field. Evidence on 8 points at gh-resolve, but every
+  candidate means "improve ilk-skills". There is nothing to route a
+  candidate to gh-resolve.
+- **A per-project tracker already exists.**
+  `skills/ilk-feedback/scripts/project_tracker.py` (136 lines) routes the
+  same IO layer to `<data_root>/projects/<key>/`. Its docstring says the
+  global backlog "stays as-is". This is the seam for the target-repo half.
+- **gh-resolve already reads one engine record.** gh-resolve's reap reads
+  `run_result.py`'s record (`tests/test_reap_reads_the_run_result.py` in
+  gh-resolve, per gh-resolve-b4; not read here).
+
+### Build order changes
+
+- **Step 3 (safety case):** build guards 1-4 against an adapter interface
+  from the start: tier-0 paths, invariant suite, golden batch, deploy and
+  rollback. ilk-skills is adapter 1.
+- **New step after 3: gh-resolve as adapter 2, before L2.** A second
+  consumer forces the engine/adapter boundary to be honest. It also lands
+  the fixes both repos need once:
+  - a `rebaseline-pins` / `reopen <slug> 0` action with tool-checked
+    output (gh-resolve-b4 review, f1);
+  - the postmortem no longer changing the blacklist (f3);
+  - a lease event so two projects can't yield to each other forever (d).
+- **Backlog:** add a `target` field to candidates (default `ilk-skills`,
+  for the 123 existing rows). The engine routes a candidate to the target's
+  tracker. Toolkit candidates stay global.
+
+### When to extract to its own repo
+
+Extract on any one of these:
+
+- a third project wants RSI;
+- the adapter interface survives about 3 release trains unchanged
+  (a judgment call, not measured);
+- independence binds: ilk-skills improving the engine that judges
+  ilk-skills. The protected kernel (guard 1) covers this until then, and a
+  separate repo would cover it structurally.
+
+If the engine/adapter split is kept, extraction is mostly a file move.
+
+### gh-resolve adapter, as gh-resolve-b4 described it (2026-10-02, unverified here)
+
+- **Deploy and rollback:**
+  - On chad-mbp (resolver fleet b), gh-resolve runs from its main checkout
+    through a PYTHONPATH wrapper, so a commit to main is live at once. That
+    is the same shape as the ilk-skills clone, so it needs the same
+    land-at-idle rule.
+  - rezmac (fleet a, the only producer) runs a release tag:
+    `git fetch --tags`, then `gh-resolve upgrade --to vX`. The agents reload
+    only if `doctor --strict` passes. Then probe launchctl, because rezmac
+    has been left with 0 of 5 agents before.
+  - Rollback is `upgrade --to <previous tag>`. A downgrade has never been
+    exercised.
+  - D4 applies here unchanged: the rezmac deploy stays Chad's until canary
+    and rollback exist.
+- **Canary:** `~/gh-resolve-canary-clone` (consumer test repo
+  inluck-net/gh-resolve-canary) is a smoke target, not a deploy target. It
+  is driven by `scripts/canary_smoke.sh` and `canary_preflight.sh`. Smoke
+  step 2 needs a keychain session, so it isn't unattended yet. This is the
+  natural golden-batch home (guard 3).
+- **Evidence (per host):**
+  - `ledger.jsonl` (rezmac ~19.7k rows): terminal states,
+    escalation_reason, push_failure_kind, admission reject_rule;
+  - reap, triage, drain and gc logs. These have no timestamps, which is a
+    gap;
+  - GitHub PR state, needs-human labels and escalation comments;
+  - the ship-proof ledger;
+  - consumer pre-push hook outcomes;
+  - `docs/design/known-defects.md`;
+  - the project's own ilk logs.
+- **Goal metric:** labelled issue to PR with no human. Measure the time
+  from label to PR and the share of runs ending escalated or needs-human.
+  This is gh-resolve's equivalent of "interventions per batch".
+- **Tier-0 paths:**
+  - gates: `tools/gh_resolve/admission.py`, `gate_manifest.py`,
+    `scripts/pins_only_lose_xfail.py`;
+  - proof: `verify.py`, `proof_channels.py`, reap's ship path;
+  - state of record: `ledger.py`, `run_liveness.py`, `liveness.py`;
+  - outward writes: `writeback.py`, push and land;
+  - deploy: `upgrade.py`;
+  - meta-guards: `tests/conftest.py`, `tests/test_no_*.py` (3),
+    `tests/test_raw_ledger_readers.py`.
+- **gh-resolve's conditions (accepted):**
+  1. The adapter names the consumer repo (kira-cloudflare) as an outward
+     boundary. Any write there stays Chad's, whatever the engine decides.
+  2. The engine never detects liveness by argv; it uses run.lock pids
+     (memory `merge-guard-matches-any-command-line`).
+
 ## Decisions (Chad, 2026-10-02)
 
 - **D1.** Improvement is continuous small builds, separate from
@@ -456,3 +609,7 @@ gate (D2), the rails carry all of the weight:
 3. **Backlog 19** (auto-relaunch after a batch's first red that it caused
    itself) is the same policy as L2's `ack-and-relaunch`. Under D2 the
    proposal is yes, with two-strike escalation.
+4. **Multi-project RSI:** accept one engine in ilk-skills plus per-project
+   adapters, with gh-resolve as adapter 2 ahead of L2 (section above)?
+   Chad asked for the section on 2026-10-02; the shape itself is not yet a
+   decision.
