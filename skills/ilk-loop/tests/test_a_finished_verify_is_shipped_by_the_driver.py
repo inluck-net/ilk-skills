@@ -74,6 +74,11 @@ def _build_world(
     (project / "README.md").write_text("x\n", encoding="utf-8")
     _git(project, "add", "-A")
     _git(project, "commit", "-q", "-m", "init")
+    # Step 0 is already discharged in this world, so its commit must exist:
+    # ship-integrity is told the repo (--repo) and checks every authored step.
+    (project / "step0.txt").write_text("step 0 work\n", encoding="utf-8")
+    _git(project, "add", "-A")
+    _git(project, "commit", "-q", "-m", f"feat: step 0 [plan:{SLUG}#step-0]")
 
     data_home = root / ".ilk-data"
     with _scoped_data_home(data_home):

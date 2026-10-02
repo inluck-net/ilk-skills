@@ -266,7 +266,10 @@ class TestAC7GitUnavailableFailsOpen:
             [sys.executable, str(CLI), "--subplan", str(sp), "--gate-passed", "true"],
             capture_output=True, text=True, timeout=60, cwd=outside, encoding="utf-8",
         )
-        assert r.returncode == 0, (
+        # Exit 3 = UNMEASURED (ship-integrity-knows-its-repo, 176b6e3); the
+        # driver logs it and does not revert (an-unmeasured-root-reverts-
+        # nothing, 2424370).  Only exit 1 blocks a ship.
+        assert r.returncode in (0, 3), (
             "outside a git work tree every step reads as missing, which would "
             f"block every ship.  stdout={r.stdout!r} stderr={r.stderr!r}"
         )

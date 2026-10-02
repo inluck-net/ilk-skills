@@ -5570,7 +5570,7 @@ print(json.dumps({
         fi
         # Resolve MASTER file.
         local _amend_master_name
-        _amend_master_name=$(python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null | \
+        _amend_master_name=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null | \
           python3 -c "import json,sys; print(json.load(sys.stdin).get('master') or '')" 2>/dev/null) || true
         if [[ -n "$_amend_master_name" ]]; then
           _amend_master_file="${_amend_plans_dir}/${_amend_master_name}"

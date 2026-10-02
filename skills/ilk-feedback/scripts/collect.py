@@ -1578,6 +1578,13 @@ def classify(
         # a-master-declares-its-work-tree).  Same label as shipped-unverified:
         # a config error that needs human intervention, not a restart.
         "work_tree_invalid": "shipped-unverified",
+        # A planner amended the plan mid-iteration and the watcher ended the
+        # iteration (sub-plan a-planner-amendment-ends-the-iteration).  The
+        # work is WIP-preserved and the amended plan is what the next
+        # iteration should read, so a restart is the right action — reuse
+        # `interrupted` (watchdog.sh whitelist → relaunch) rather than add a
+        # label each watchdog would need a new arm for.
+        "plan-amended": "interrupted",
         # Another run holds the run.lock for this key.  Transient — the
         # scheduler retries on the next cycle.  Label: "interrupted" →
         # watchdog relaunches (same as a manual interrupt).
