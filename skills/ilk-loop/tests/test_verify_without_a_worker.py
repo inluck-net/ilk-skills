@@ -290,9 +290,17 @@ def test_batch_verification_green_ships_without_worker(tmp_path: Path) -> None:
 # ── AC-2: no batch_verification ⇒ pointer advances, not shipped ────────────
 
 @_NEEDS_GTIMEOUT
-def test_no_batch_verification_pointer_advances_not_shipped(tmp_path: Path) -> None:
-    """Without ``batch_verification: true``, gate-first still advances the
-    pointer but does NOT ship. The sub-plan stays ``in-progress``.
+def test_no_batch_verification_final_gate_first_step_is_shipped_by_the_driver(tmp_path: Path) -> None:
+    """Without ``batch_verification: true``, a green gate-first FINAL step is
+    still shipped by the driver.
+
+    This test used to pin the opposite (status stays ``in-progress`` for the
+    worker to ship).  That path cannot succeed: the worker's ship commit
+    always lands AFTER the gate-first pass, so ship-integrity reverts it for
+    lacking a final-step pass at or after the ship, the pointer sits at N,
+    the driver gates the non-existent step N (NO-CHECKS), and the sub-plan
+    livelocks (R1 a-release-is-an-immutable-dir, three runs, 2026-10-03).
+    Contract changed by the operator session, declared in the commit.
     """
     world = _build_world(tmp_path, batch_verification=False)
     proc = _run_iterations(world, max_iterations=2)
@@ -304,8 +312,8 @@ def test_no_batch_verification_pointer_advances_not_shipped(tmp_path: Path) -> N
         f"expected current_step 2 (both gate-first steps advanced), got {step}."
         f"\nlast 40 lines:\n{tail}"
     )
-    assert status == "in-progress", (
-        f"without batch_verification, status must stay 'in-progress', "
+    assert status == "shipped", (
+        f"a green gate-first final step must be shipped by the driver, "
         f"got '{status}'.\nlast 40 lines:\n{tail}"
     )
 

@@ -2580,9 +2580,13 @@ attempt_gate_first_fast_path() {
     advance_subplan_current_step "$slug" "$step" || return 1
   fi
 
-  # If this is a batch_verification sub-plan and every step is now
-  # discharged, ship it from the driver — no worker needed.
-  if sub_plan_has_batch_verification "$slug"; then
+  # If every step is now discharged, ship it from the driver — no worker
+  # needed.  This used to apply only to batch_verification sub-plans; any
+  # other sub-plan whose final step is gate_first then livelocked: the
+  # worker had nothing to commit, the driver gated the non-existent step N
+  # (NO-CHECKS), and ship-integrity reverted the ship for lacking a
+  # final-step pass (R1 a-release-is-an-immutable-dir, 3 runs, 2026-10-03).
+  if true; then
     local new_step=$((step + 1))
     local total_steps
     total_steps=$(count_step_headings "$slug") || total_steps=0
