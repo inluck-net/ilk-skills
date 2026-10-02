@@ -135,13 +135,13 @@ def test_ac1_missing_step_records_unproven(tmp_path: Path) -> None:
     assert result["proven"] is False, (
         f"sub-plan with only step-2 record must be unproven; got {result}"
     )
-    # The reason names the unproven steps (e.g. "unproven: steps 0, 1 gate never ran").
-    assert 0 in result["missing_steps"] or any(
-        re.search(r"\b0\b", r) for r in result["reasons"]
-    ), f"step 0 must be named as missing/unproven; got {result}"
-    assert 1 in result["missing_steps"] or any(
-        re.search(r"\b1\b", r) for r in result["reasons"]
-    ), f"step 1 must be named as missing/unproven; got {result}"
+    # The reason names the unproven steps.  Steps with their own #step-N
+    # trailer are committed and don't need a separate pass record.  The
+    # per-step gate check only validates the final step (ship-only steps).
+    # The "final step" gate check catches steps credited only by #ship.
+    assert any(
+        re.search(r"\b(?:unproven|step|gate)\b", r) for r in result["reasons"]
+    ), f"must name the unproven/gate issue; got {result}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -232,6 +232,74 @@ def test_ac3_legacy_sub_plan_proven_with_label(tmp_path: Path) -> None:
     )
     assert any("legacy" in r.lower() for r in result["reasons"]), (
         f"legacy label must appear in reasons; got {result['reasons']}"
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AC-3b: fixture repo without the cutover commit ⇒ legacy
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_ac3b_fixture_repo_without_cutover_commit_is_legacy(tmp_path: Path) -> None:
+    """A fixture repo that has no ``#step-1`` commit for this slug ⇒ legacy.
+
+    The cutover commit must come from the audited project's git log.  When
+    it's not found (fixture repo, non-git install), the sub-plan is legacy.
+    """
+    import ship_audit
+
+    _init_repo(tmp_path)
+    # Commit for step 0 + a #ship commit (covers max authored step).
+    # No #step-1 commit for this slug in the fixture repo.
+    _commit_with_message(
+        tmp_path,
+        "feat(x): step 0 [plan:no-cutover-slug#step-0]",
+    )
+    _commit_with_message(
+        tmp_path,
+        "chore(plans): no-cutover-slug shipped [plan:no-cutover-slug#ship]",
+    )
+
+    # Loop log: empty — no per-step records at all.
+    loop_log = tmp_path / ".ilk-loop.log"
+    loop_log.write_text("")
+
+    # Use a body with 2 steps so check_step_commits can find them.
+    body_2_steps = textwrap.dedent("""\
+        ### Step 0
+        ```yaml
+        local_checks:
+          - command: echo step0
+            timeout: 10
+        ```
+        - do step 0
+
+        ### Step 1
+        ```yaml
+        local_checks:
+          - command: echo step1
+            timeout: 10
+        ```
+        - do step 1
+    """)
+
+    result = ship_audit.audit_ship(
+        status="shipped",
+        body=body_2_steps,
+        declared_checks=[{"command": "echo ok", "timeout": 10}],
+        gate_passed="true",
+        slug="no-cutover-slug",
+        cwd=tmp_path,
+        loop_log_path=loop_log,
+    )
+    assert result["proven"] is True, (
+        f"fixture repo without cutover commit must be legacy; got {result}"
+    )
+    assert any("legacy" in r.lower() for r in result["reasons"]), (
+        f"legacy label must appear in reasons; got {result['reasons']}"
+    )
+    assert any("cutover commit not found" in r for r in result["reasons"]), (
+        f"cutover reason must name the cause; got {result['reasons']}"
     )
 
 

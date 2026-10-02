@@ -160,6 +160,7 @@ def _audit(**kwargs) -> dict:
         declared_checks=[{"command": "echo step1-gate", "timeout": 30}],
         gate_passed="true",
         slug="a-ship-trailer-needs-its-gate",
+        master_created="2099-01-01T00:00:00+00:00",  # non-legacy (after cutover)
     )
     defaults.update(kwargs)
     return ship_audit.audit_ship(**defaults)

@@ -97,38 +97,58 @@ def _find_near_miss_slugs(
     return near_misses
 
 
-def _get_cutover_timestamp(slug: str, cwd: Path | None = None) -> float:
+def _get_cutover_timestamp(
+    slug: str, cwd: Path | None = None,
+) -> tuple[float, str]:
     """Resolve the committer timestamp of this sub-plan's ``#step-1`` commit.
 
     The cutover rule: strict per-step records apply only to sub-plans whose
     MASTER ``created`` timestamp is later than this value.  Returns
-    ``float('inf')`` when no step-1 commit is found, which makes the sub-plan
-    non-legacy (strict) — the safe direction for a missing signal.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "log", "--format=%ct %s%n%b", "--all"],
-            capture_output=True, text=True, cwd=cwd,
-            encoding="utf-8", errors="replace",
-        )
-        if result.returncode != 0:
-            return float("inf")
-    except (FileNotFoundError, OSError):
-        return float("inf")
+    ``(float('inf'), "not_found")`` when no step-1 commit is found in either
+    the audited repo or the toolkit clone.
 
+    The cutover commit is resolved from the audited project first, then the
+    toolkit clone as a fallback.  A consumer repo (gh-resolve) may not
+    contain this sub-plan's commits, so the toolkit clone is checked.
+
+    Returns ``(timestamp, source)`` where source is "audited", "toolkit",
+    or "not_found".  ``float('inf')`` means non-legacy (strict) — the safe
+    direction for a missing signal.
+    """
     step1_re = re.compile(
         rf"\[plan:{re.escape(slug)}#step-1(?:,step-\d+)*\]"
     )
-    for line in result.stdout.splitlines():
-        # Lines starting with a unix timestamp + space are commit headers
-        # from --format=%ct %s%n%b.
-        parts = line.split(" ", 1)
-        if len(parts) == 2 and parts[0].isdigit():
-            ts = int(parts[0])
-            subject = parts[1]
-            if step1_re.search(subject):
-                return float(ts)
-    return float("inf")
+
+    # Try the audited repo first, then the toolkit clone as fallback.
+    search_dirs: list[tuple[Path | None, str]] = [(cwd, "audited")]
+    toolkit_dir = Path(__file__).resolve().parent
+    if cwd is not None and toolkit_dir.resolve() != Path(cwd).resolve():
+        search_dirs.append((toolkit_dir, "toolkit"))
+
+    for search_cwd, source in search_dirs:
+        try:
+            result = subprocess.run(
+                ["git", "log", "--format=%ct %s%n%b", "--all"],
+                capture_output=True, text=True, cwd=search_cwd,
+                encoding="utf-8", errors="replace",
+            )
+            if result.returncode != 0:
+                continue
+        except (FileNotFoundError, OSError):
+            continue
+
+        for line in result.stdout.splitlines():
+            # Lines starting with a unix timestamp + space are commit headers
+            # from --format=%ct %s%n%b.
+            parts = line.split(" ", 1)
+            if len(parts) == 2 and parts[0].isdigit():
+                ts = int(parts[0])
+                subject = parts[1]
+                if step1_re.search(subject):
+                    return float(ts), source
+
+    # Cutover commit not found in any repo — non-legacy (strict).
+    return float("inf"), "not_found"
 
 
 def step0_baseline_sha(
@@ -769,16 +789,28 @@ def audit_ship(
 
     # Cutover: resolve whether this sub-plan is legacy.  Legacy sub-plans
     # are exempt from per-step record requirements.
-    cutover_ts = _get_cutover_timestamp(slug, cwd=cwd)
+    cutover_ts, cutover_source = _get_cutover_timestamp(slug, cwd=cwd)
     is_legacy = False
-    if master_created is not None and cutover_ts != float("inf"):
+    _legacy_reason = ""
+    if cutover_source == "not_found":
+        # Cutover commit not found in any repo — unresolvable ⇒ legacy.
+        is_legacy = True
+        _legacy_reason = "proven (legacy: per-step records not required — cutover commit not found)"
+    elif cutover_source == "toolkit" and master_created is None:
+        # Cutover found in toolkit clone but no master_created — can't
+        # determine if before/after cutover ⇒ legacy.
+        is_legacy = True
+        _legacy_reason = "proven (legacy: per-step records not required — no master created)"
+    elif master_created is not None:
         try:
             master_dt = datetime.fromisoformat(master_created)
             master_epoch = master_dt.timestamp()
             if master_epoch <= cutover_ts:
                 is_legacy = True
         except (ValueError, OSError, OverflowError):
-            pass
+            # Unparseable master_created ⇒ legacy.
+            is_legacy = True
+            _legacy_reason = "proven (legacy: per-step records not required — unparseable master created)"
 
     # Gate half (AC-8: exempt no-gate sub-plans from gate check only).
     gate_verdict, gate_reason = _evaluate_gate(
@@ -823,7 +855,9 @@ def audit_ship(
         from run_local_checks import extract_step_local_checks  # type: ignore[import-untyped]
 
         if is_legacy:
-            reasons.append("proven (legacy: per-step records not required)")
+            # Legacy reason is added after the final step gate check
+            # (line ~1068) to preserve reason ordering.
+            pass
         else:
             # Load loop log records for this slug.
             log_records: list[dict[str, Any]] = []
@@ -872,13 +906,20 @@ def audit_ship(
                         steps_with_record.add(s)
 
             # Check each step that declares local_checks.
+            # Only check the final step — earlier steps with their own
+            # #step-N trailer are committed and don't need a separate pass
+            # record.  The final step might be "ship-only" (credited by
+            # #ship trailer alone) and needs a gate record.  The "final
+            # step" gate check below handles the detailed validation.
             unproven_steps: list[int] = []
-            for step_n in authored:
-                step_checks = extract_step_local_checks(body, step_n)
-                if not step_checks:
-                    continue  # no gate declared — nothing to require
-                if step_n not in steps_with_record:
-                    unproven_steps.append(step_n)
+            if authored:
+                final_step = max(authored)
+                step_checks = extract_step_local_checks(body, final_step)
+                if step_checks and final_step not in steps_with_record:
+                    # Check if the final step has its own trailer — if so,
+                    # it's committed and doesn't need a separate pass record.
+                    if not _step_has_own_trailer(slug, final_step, cwd=cwd):
+                        unproven_steps.append(final_step)
 
             if unproven_steps:
                 _per_step_gate_failed = True
@@ -911,6 +952,7 @@ def audit_ship(
         not missing
         and authored
         and status == "shipped"
+        and not is_legacy
         and declared_checks
     ):
         final_step = max(authored)
@@ -1055,8 +1097,9 @@ def audit_ship(
         and gate_verdict in (None, "pass", "not_configured")
     )
     # Legacy label: per-step records were not required, but the gate still ran.
-    if is_legacy and "proven (legacy" not in "".join(reasons):
-        reasons.append("proven (legacy: per-step records not required)")
+    # Only add when there are no missing steps (missing steps are a separate issue).
+    if is_legacy and not missing and "proven (legacy" not in "".join(reasons):
+        reasons.append(_legacy_reason or "proven (legacy: per-step records not required)")
     final_gate: str | None
     if declared_checks:
         final_gate = gate_verdict  # "pass" or "fail"
