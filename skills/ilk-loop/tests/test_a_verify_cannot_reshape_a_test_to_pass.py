@@ -162,19 +162,11 @@ import sys as _sys
 if str(_SCRIPTS) not in _sys.path:
     _sys.path.insert(0, str(_SCRIPTS))
 
-try:
-    from verify_step_integrity import check_verify_commit, Violation  # type: ignore[import-untyped]
-    _HAS_IMPL = True
-except ImportError:
-    _HAS_IMPL = False
+from verify_step_integrity import check_verify_commit, Violation  # type: ignore[import-untyped]
 
 
 # ── AC-1: edit another batch's pin file ⇒ refused ───────────────────────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="red-first: verify_step_integrity.check_verify_commit not implemented",
-)
 class TestAC1PinFileEdit:
     """A verify commit that modifies another sub-plan's pin file is refused."""
 
@@ -182,6 +174,8 @@ class TestAC1PinFileEdit:
         """AC-1: editing another batch's pin file ⇒ refused."""
         paths = _scaffold_project(tmp_path)
         project = paths["project"]
+
+        base_sha = _head_sha(project)  # before the verify commit
 
         # The verify commit edits the pin file.
         pin = paths["tests"] / "test_pin_target.py"
@@ -196,8 +190,6 @@ class TestAC1PinFileEdit:
             "fix(v): resolve attributed regressions "
             "[plan:verify-slug#step-1]",
         )
-
-        base_sha = _head_sha(project)  # before the verify commit
         violations = check_verify_commit(
             project,
             verify_slug="verify-slug",
@@ -217,10 +209,6 @@ class TestAC1PinFileEdit:
 
 # ── AC-2: add skip to existing test ⇒ refused ───────────────────────────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="red-first: verify_step_integrity.check_verify_commit not implemented",
-)
 class TestAC2SkipAddition:
     """A verify commit that adds a skip marker to an existing test is refused."""
 
@@ -228,6 +216,8 @@ class TestAC2SkipAddition:
         """AC-2: adding @pytest.mark.skip to an existing test ⇒ refused."""
         paths = _scaffold_project(tmp_path)
         project = paths["project"]
+
+        base_sha = _head_sha(project)
 
         # The verify commit adds a skip marker to the existing test.
         existing = paths["tests"] / "test_existing.py"
@@ -248,8 +238,6 @@ class TestAC2SkipAddition:
             "fix(v): resolve attributed regressions "
             "[plan:verify-slug#step-1]",
         )
-
-        base_sha = _head_sha(project)
         violations = check_verify_commit(
             project,
             verify_slug="verify-slug",
@@ -268,10 +256,6 @@ class TestAC2SkipAddition:
 
 # ── AC-3: reshape fixture without declaration ⇒ refused ─────────────────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="red-first: verify_step_integrity.check_verify_commit not implemented",
-)
 class TestAC3FixtureReshape:
     """A verify commit that changes a fixture value without a [test-change:]
     declaration is refused.  With the declaration, it passes and the record
@@ -281,6 +265,8 @@ class TestAC3FixtureReshape:
         """AC-3a: changing a fixture with no [test-change:] ⇒ refused."""
         paths = _scaffold_project(tmp_path)
         project = paths["project"]
+
+        base_sha = _head_sha(project)
 
         # The verify commit changes a fixture value.
         existing = paths["tests"] / "test_existing.py"
@@ -301,8 +287,6 @@ class TestAC3FixtureReshape:
             "fix(v): resolve attributed regressions "
             "[plan:verify-slug#step-1]",
         )
-
-        base_sha = _head_sha(project)
         violations = check_verify_commit(
             project,
             verify_slug="verify-slug",
@@ -323,6 +307,8 @@ class TestAC3FixtureReshape:
         """AC-3b: changing a fixture WITH [test-change:] ⇒ passes."""
         paths = _scaffold_project(tmp_path)
         project = paths["project"]
+
+        base_sha = _head_sha(project)
 
         # The verify commit changes a fixture AND declares it.
         existing = paths["tests"] / "test_existing.py"
@@ -347,8 +333,6 @@ class TestAC3FixtureReshape:
                 "added fixture row to cover new skip]"
             ),
         )
-
-        base_sha = _head_sha(project)
         violations = check_verify_commit(
             project,
             verify_slug="verify-slug",
@@ -374,11 +358,10 @@ class TestAC4Control:
 
     def test_code_only_change_clean(self, tmp_path: Path) -> None:
         """AC-4: a verify commit touching only code ⇒ no violations."""
-        if not _HAS_IMPL:
-            pytest.skip("verify_step_integrity not yet implemented")
-
         paths = _scaffold_project(tmp_path)
         project = paths["project"]
+
+        base_sha = _head_sha(project)
 
         # The verify commit changes only a non-test file.
         (project / "src.py").write_text("x = 1\n", encoding="utf-8")
@@ -387,8 +370,6 @@ class TestAC4Control:
             "fix(v): resolve attributed regressions "
             "[plan:verify-slug#step-1]",
         )
-
-        base_sha = _head_sha(project)
         violations = check_verify_commit(
             project,
             verify_slug="verify-slug",
