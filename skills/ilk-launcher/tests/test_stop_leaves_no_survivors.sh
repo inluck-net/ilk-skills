@@ -26,10 +26,6 @@ PASS=0
 FAIL=0
 TESTS=()
 
-# Red-first gate: set to 1 to run the AC-1 bystander tests (expected to fail
-# until step 1 fixes stop.sh's orphan scan).  Default 0 keeps the suite green.
-EXPECT_RED="${EXPECT_RED:-0}"
-
 # Gate: removed in step 2 — stop.sh now verifies the tree is gone.
 
 pass() { PASS=$((PASS + 1)); TESTS+=("PASS: $1"); echo "  PASS: $1"; }
@@ -438,9 +434,7 @@ wait "$SCHEDULER_PID" 2>/dev/null || true
 # `$run_id|$project_path`, so this bystander is killed.
 
 echo ""
-echo "Test 7: bystander with full path in argv survives (EXPECT_RED=$EXPECT_RED)"
-
-if [[ "$EXPECT_RED" -eq 1 ]]; then
+echo "Test 7: bystander with full path in argv survives"
   # Fresh run.lock
   RUN_LOCK_T7="${LAUNCHER_DIR}/run.lock"
   rm -f "$RUN_LOCK_T7"
@@ -479,22 +473,17 @@ if [[ "$EXPECT_RED" -eq 1 ]]; then
   kill "$RUNNER_T7_PID" 2>/dev/null || true
   wait "$BYSTANDER_T7_PID" 2>/dev/null || true
   wait "$RUNNER_T7_PID" 2>/dev/null || true
-else
-  echo "  SKIPPED (EXPECT_RED=0)"
-fi
 
 # =============================================================================
-# Test 8: foreign runner with different project path (EXPECT_RED=1) — AC-1
+# Test 8: foreign runner with different project path — AC-1
 # =============================================================================
 #
 # A runner for project OTHER whose argv carries a different --project-path
-# must survive.  Today the grep matches `$run_id` which is the same bare
-# timestamp for both projects.
+# must survive.  The per-run token grep must not match a different project's
+# runner even when the bare run_id is the same.
 
 echo ""
-echo "Test 8: foreign runner with different project path survives (EXPECT_RED=$EXPECT_RED)"
-
-if [[ "$EXPECT_RED" -eq 1 ]]; then
+echo "Test 8: foreign runner with different project path survives"
   OTHER_DIR="${WORK_TMPDIR}/foreign-project"
   mkdir -p "$OTHER_DIR"
   (cd "$OTHER_DIR" && git init -q && git commit -q --allow-empty -m "init")
@@ -536,22 +525,17 @@ if [[ "$EXPECT_RED" -eq 1 ]]; then
   kill "$RUNNER_T8_PID" 2>/dev/null || true
   wait "$FOREIGN_T8_PID" 2>/dev/null || true
   wait "$RUNNER_T8_PID" 2>/dev/null || true
-else
-  echo "  SKIPPED (EXPECT_RED=0)"
-fi
 
 # =============================================================================
-# Test 9: bystander carrying bare run_id for another key (EXPECT_RED=1) — AC-1
+# Test 9: bystander carrying bare run_id for another key — AC-1
 # =============================================================================
 #
 # A process whose argv carries the same bare run_id but for a different
-# project key must survive.  Today the grep matches the bare timestamp,
-# so this bystander is killed.
+# project key must survive.  The per-run token includes the project key,
+# so a bare timestamp match must not catch it.
 
 echo ""
-echo "Test 9: bystander with bare run_id for another key survives (EXPECT_RED=$EXPECT_RED)"
-
-if [[ "$EXPECT_RED" -eq 1 ]]; then
+echo "Test 9: bystander with bare run_id for another key survives"
   # Fresh run.lock
   RUN_LOCK_T9="${LAUNCHER_DIR}/run.lock"
   rm -f "$RUN_LOCK_T9"
@@ -589,9 +573,6 @@ if [[ "$EXPECT_RED" -eq 1 ]]; then
   kill "$RUNNER_T9_PID" 2>/dev/null || true
   wait "$BYSTANDER_T9_PID" 2>/dev/null || true
   wait "$RUNNER_T9_PID" 2>/dev/null || true
-else
-  echo "  SKIPPED (EXPECT_RED=0)"
-fi
 
 # =============================================================================
 # Summary

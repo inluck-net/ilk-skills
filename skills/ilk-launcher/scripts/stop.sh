@@ -143,62 +143,127 @@ kill_orphans() {
   local launcher_dir="$3"
   local name="$4"
 
-  # Read last-launch.json to get the log file path (contains run ID)
+  # Read last-launch.json to get the log file path (contains the per-run token)
   local last_launch="${launcher_dir}/last-launch.json"
-  local run_id=""
+  local run_token=""
   if [[ -f "$last_launch" ]]; then
-    run_id=$(python3 -c "
-import json, re, sys
+    # Extract the per-run token <key>-<run_id> from the log file basename.
+    # The log path is <dir>/<key>-<run_id>.log — strip the directory and
+    # extension to get the token.  This is the ONLY string we grep for;
+    # a bare run_id or project_path is too broad (AC-1).
+    run_token=$(python3 -c "
+import json, os, re, sys
 with open('$last_launch') as f:
     d = json.load(f)
 logf = d.get('log_file', '')
-m = re.search(r'(\d{8}-\d{6})', logf)
-if m: print(m.group(1))
-" 2>/dev/null) || run_id=""
+base = os.path.basename(logf)
+# Strip extension
+base = re.sub(r'\.[^.]+$', '', base)
+# Must contain a timestamp to be a valid token
+if re.search(r'\d{8}-\d{6}', base):
+    print(base)
+" 2>/dev/null) || run_token=""
   fi
 
-  if [[ -z "$run_id" ]]; then
-    echo "[$name] orphan scan: no run ID in last-launch.json — skipping." >&2
+  if [[ -z "$run_token" ]]; then
+    echo "[$name] orphan scan: no per-run token in last-launch.json — skipping." >&2
     return 0
   fi
 
-  # Find candidate processes whose command line matches the run ID or
-  # project path.  Exclude this shell, its parent, its process group,
+  # Collect the kill set BEFORE killing anything:
+  #   1. Descendants of the stopped PID (process tree walk)
+  #   2. ilk_project_runners for this project (role-specific match)
+  #   3. Orphans whose argv carries the per-run token
+  # Identity exclusions: this shell, its parent, its process group,
   # and the stopped PID itself — the scan must never kill stop.sh or
-  # its wrapper (AC-1).  Exclusion by identity, not by narrowing the
-  # match pattern, so genuine orphans are still found (AC-2).
+  # its wrapper (AC-1).
   local my_pid=$$
   local my_pgid=""
   my_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]') || true
-  local found=0
+
+  # Use a temp file for the kill set (bash 3.x has no associative arrays)
+  local kill_set_file
+  kill_set_file=$(mktemp) || kill_set_file="/tmp/stop-kill-set-$$"
+  : > "$kill_set_file"
+
+  # --- 1. Walk descendants of stopped_pid via ppid chain ---
+  if [[ -n "$stopped_pid" ]]; then
+    # Multi-pass: add direct children, then children of those, etc.
+    # (bash 3.x can't do recursive functions with associative arrays)
+    local prev_round="$stopped_pid"
+    for _round in 1 2 3 4 5; do
+      local next_round=""
+      while IFS= read -r line; do
+        local cpid cppid
+        cpid=$(echo "$line" | awk '{print $1}')
+        cppid=$(echo "$line" | awk '{print $2}')
+        [[ -z "$cpid" || -z "$cppid" ]] && continue
+        # Is the parent in the previous round?
+        if echo "$prev_round" | grep -qw "$cppid"; then
+          [[ "$cpid" == "$my_pid" || "$cpid" == "$PPID" ]] && continue
+          if ! grep -qw "$cpid" "$kill_set_file" 2>/dev/null; then
+            echo "$cpid" >> "$kill_set_file"
+            next_round="${next_round:+$next_round }$cpid"
+          fi
+        fi
+      done < <(ps -ax -o pid=,ppid= 2>/dev/null || true)
+      [[ -z "$next_round" ]] && break
+      prev_round="$next_round"
+    done
+  fi
+
+  # --- 2. ilk_project_runners (role-specific: --project-path <path>) ---
+  local runner_pids
+  runner_pids=$(ilk_project_runners "$project_path" 2>/dev/null) || true
+  if [[ -n "$runner_pids" ]]; then
+    while IFS= read -r cpid; do
+      [[ -z "$cpid" ]] && continue
+      [[ "$cpid" == "$stopped_pid" || "$cpid" == "$my_pid" || "$cpid" == "$PPID" ]] && continue
+      if ! grep -qw "$cpid" "$kill_set_file" 2>/dev/null; then
+        echo "$cpid" >> "$kill_set_file"
+      fi
+    done <<< "$runner_pids"
+  fi
+
+  # --- 3. Orphans whose argv carries the per-run token ---
   while IFS= read -r line; do
     local cpid
     cpid=$(echo "$line" | awk '{print $1}')
     [[ -z "$cpid" ]] && continue
-    [[ "$cpid" == "$stopped_pid" ]] && continue
-    [[ "$cpid" == "$my_pid" ]] && continue
-    [[ "$cpid" == "$PPID" ]] && continue
+    [[ "$cpid" == "$stopped_pid" || "$cpid" == "$my_pid" || "$cpid" == "$PPID" ]] && continue
 
-    # Skip processes in stop.sh's own process group (this shell and
-    # any wrapper that spawned it).
+    # Skip processes in stop.sh's own process group
     if [[ -n "$my_pgid" ]]; then
       local cpgid=""
       cpgid=$(ps -o pgid= -p "$cpid" 2>/dev/null | tr -d '[:space:]') || true
       [[ -n "$cpgid" && "$cpgid" == "$my_pgid" ]] && continue
     fi
 
-    # Skip if this process is stop.sh itself (command contains stop.sh
-    # or the kill_orphans function name).
+    # Skip stop.sh itself
     local cmd
     cmd=$(echo "$line" | sed 's/^[[:space:]]*[0-9]*[[:space:]]*//')
     case "$cmd" in
       *stop.sh*|*kill_orphans*) continue ;;
     esac
 
+    if ! grep -qw "$cpid" "$kill_set_file" 2>/dev/null; then
+      echo "$cpid" >> "$kill_set_file"
+    fi
+  done < <(ps -ax -o pid=,command= 2>/dev/null | grep -F "$run_token" | grep -v " grep " || true)
+
+  # --- Kill the collected set ---
+  local found=0
+  while IFS= read -r cpid; do
+    [[ -z "$cpid" ]] && continue
+    # Skip already-dead processes
+    kill -0 "$cpid" 2>/dev/null || continue
+    local cmd
+    cmd=$(ps -p "$cpid" -o command= 2>/dev/null) || cmd=""
     echo "[$name] orphan scan: killing PID $cpid — ${cmd:0:120}" >&2
     kill "$cpid" 2>/dev/null || true
     found=$((found + 1))
-  done < <(ps -ax -o pid=,command= 2>/dev/null | grep -E "$run_id|$project_path" | grep -v " grep " || true)
+  done < "$kill_set_file"
+  rm -f "$kill_set_file"
 
   if [[ "$found" -eq 0 ]]; then
     echo "[$name] orphan scan: no orphaned workers found." >&2
@@ -328,20 +393,20 @@ stop_project() {
 
   if kill -0 "$target_pid" 2>/dev/null; then
     echo "[$name] PID $target_pid still alive after SIGKILL. Investigate manually." >&2
-  else
-    echo "[$name] stopped." >&2
-    mark_sentinel_interrupted "$path" "$target_pid"
-    rm -f "$pid_file"
+    return 1
   fi
 
-  # Scan for orphaned worker processes (claude, gtimeout, tee, renderer)
+  echo "[$name] stopped." >&2
+
+  # Scan for orphaned worker processes BEFORE writing the sentinel.
+  # The sentinel must not be written while descendants survive (#4 defect 2).
   local launcher_dir
   launcher_dir=$(get_external_launcher_dir "$path")
   if [[ -n "$launcher_dir" ]]; then
     kill_orphans "$path" "$target_pid" "$launcher_dir" "$name"
   fi
 
-  # Verify the tree is actually gone before reporting success (AC-2 / AC-3).
+  # Verify the tree is actually gone before writing the sentinel (AC-2 / AC-3).
   # Two independent checks: ilk_project_runners (process table) and lsof on
   # run.lock (file-descriptor holders).  Both must be empty.
   local survivors=""
@@ -370,6 +435,12 @@ stop_project() {
     done
     return 1
   fi
+
+  # All processes verified gone — now safe to write the sentinel and
+  # clean up the PID file.  Writing before verification would record
+  # "interrupted" while descendants still live (#4 defect 2).
+  mark_sentinel_interrupted "$path" "$target_pid"
+  rm -f "$pid_file"
 
   # Report dirty tree state (read-only, does not mutate)
   echo "[$name] repo state:" >&2
