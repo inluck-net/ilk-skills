@@ -591,6 +591,7 @@ class CheckResult:
     outcome: str = ""       # "pass" | "fail" | "error" — per-check classification
     reason: str | None = None  # human-readable why this outcome (null for pass/fail)
     path_prelude_applied: bool = False  # true when _read_path_prelude returned non-empty
+    cmd_exit_code: int | None = None  # the first failing check's own exit code (G7)
 
 
 _STEP_HEADING_ANY_RE = re.compile(r"^###\s+Step\s+(\d+)", re.MULTILINE)
@@ -792,6 +793,24 @@ def _classify_check(
 
     # Any other nonzero: measured failure
     return "fail", None
+
+
+def _is_broken_gate_result(result: CheckResult) -> bool:
+    """True when a gate result is structurally broken (not just a test failure).
+
+    A broken gate is one where the command itself could not run properly:
+    exit code 127 (command not found), 126 (not executable), or a timeout.
+    Prefers ``cmd_exit_code`` when present (G7); falls back to ``exit_code``.
+
+    AC-6: ``nonexistent-cmd-xyz`` ⇒ exit 127 ⇒ broken.
+    """
+    code = result.cmd_exit_code if result.cmd_exit_code is not None else result.exit_code
+    if code is None:
+        # timeout or spawn exception
+        return True
+    if code in (126, 127):
+        return True
+    return False
 
 
 # ── Mention gate (AC-1 through AC-7) ──────────────────────────────────────
@@ -1163,6 +1182,7 @@ def run_one(check: dict, scope: str, project: Path,
                 stdout_tail=_tail(stdout, 2000),
                 stderr_tail=_tail(stderr_full, 2000),
                 path_prelude_applied=applied,
+                cmd_exit_code=rc,
             )
         r.outcome, r.reason = _classify_check(r.exit_code, r.error, stderr_full)
         return r

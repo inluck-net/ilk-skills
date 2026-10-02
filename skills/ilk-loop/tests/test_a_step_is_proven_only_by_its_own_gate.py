@@ -406,35 +406,25 @@ def test_ac5_step0_baseline_from_record_not_trailer(tmp_path: Path) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac6_nonexistent_command_exit_code_127(tmp_path: Path) -> None:
-    """A record built from REAL ``run_local_checks`` output of
+    """A record built from REAL ``run_local_checks.run_one`` output of
     ``nonexistent-cmd-xyz`` ⇒ ``cmd_exit_code == 127``, and
     ``_is_broken_gate_result`` is true.
 
     Folded item 28d-4 G7: each gate record gains ``cmd_exit_code``,
     the first failing check's own exit code.
     """
-    import run_local_checks
+    from run_local_checks import run_one, _is_broken_gate_result
 
-    # Run a nonexistent command through run_local_checks.
-    checks = [{"command": "nonexistent-cmd-xyz", "timeout": 10}]
-    result = run_local_checks.run_local_checks(checks, cwd=tmp_path)
+    result = run_one({"command": "nonexistent-cmd-xyz", "timeout": 10},
+                     scope="step", project=tmp_path)
 
     # The record should carry cmd_exit_code == 127.
-    assert hasattr(result, "cmd_exit_code") or "cmd_exit_code" in result, (
-        "gate result must carry cmd_exit_code field"
+    assert result.cmd_exit_code == 127, (
+        f"expected cmd_exit_code=127, got {result.cmd_exit_code}"
     )
-    code = (result.cmd_exit_code if hasattr(result, "cmd_exit_code")
-            else result["cmd_exit_code"])
-    assert code == 127, f"expected cmd_exit_code=127, got {code}"
 
     # _is_broken_gate_result should be true.
-    try:
-        from run_local_checks import _is_broken_gate_result
-    except ImportError:
-        raise AssertionError("_is_broken_gate_result not yet implemented")
-
     assert _is_broken_gate_result(result) is True, (
         "nonexistent command must be a broken gate result"
     )
@@ -445,7 +435,6 @@ def test_ac6_nonexistent_command_exit_code_127(tmp_path: Path) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac7_pytest_no_tests_broken_not_stuck(tmp_path: Path) -> None:
     """Real pytest on a file with no tests (rc 5) ⇒ ``local-checks-broken``,
     not ``local-checks-stuck``.
@@ -453,17 +442,24 @@ def test_ac7_pytest_no_tests_broken_not_stuck(tmp_path: Path) -> None:
     Exit code 5 from pytest means "no tests collected" — that is a broken
     gate (the command itself is wrong), not a stuck one (tests ran but failed).
     """
-    # Run pytest on a nonexistent file (will exit 5 or similar).
-    checks = [{"command": "python3 -m pytest nonexistent_file.py -q",
-               "timeout": 30}]
-    result = run_local_checks.run_local_checks(checks, cwd=tmp_path)
+    from run_local_checks import run_one
 
-    # The outcome should indicate broken, not stuck.
-    # This assertion will be refined once cmd_exit_code lands.
-    outcome = (result.outcome if hasattr(result, "outcome")
-               else result.get("outcome"))
-    assert outcome != "local-checks-stuck", (
-        f"pytest with no tests must not be 'stuck'; got {outcome}"
+    # Create a Python file with no tests so pytest returns exit 5.
+    empty_test = tmp_path / "test_empty.py"
+    empty_test.write_text("# no tests here\n", encoding="utf-8")
+
+    result = run_one(
+        {"command": f"python3 -m pytest {empty_test} -q", "timeout": 30},
+        scope="step", project=tmp_path,
+    )
+
+    # The outcome should indicate error (broken), not fail (stuck).
+    assert result.outcome != "local-checks-stuck", (
+        f"pytest with no tests must not be 'stuck'; got {result.outcome}"
+    )
+    # exit code 5 = no tests collected ⇒ error classification
+    assert result.cmd_exit_code == 5, (
+        f"expected cmd_exit_code=5, got {result.cmd_exit_code}"
     )
 
 
@@ -472,36 +468,32 @@ def test_ac7_pytest_no_tests_broken_not_stuck(tmp_path: Path) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac8_exit_code_unchanged_for_pass_and_fail(tmp_path: Path) -> None:
     """``exit_code`` is unchanged for pass/fail.
 
     This is a control test: adding ``cmd_exit_code`` must not break the
     existing ``exit_code`` field semantics.
     """
-    import run_local_checks
+    from run_local_checks import run_one
 
     # Pass case.
-    pass_checks = [{"command": "echo ok", "timeout": 10}]
-    pass_result = run_local_checks.run_local_checks(pass_checks, cwd=tmp_path)
-    pass_exit = (pass_result.exit_code if hasattr(pass_result, "exit_code")
-                 else pass_result.get("exit_code"))
-    assert pass_exit == 0, f"pass case exit_code must be 0, got {pass_exit}"
+    pass_result = run_one({"command": "echo ok", "timeout": 10},
+                          scope="step", project=tmp_path)
+    assert pass_result.exit_code == 0, (
+        f"pass case exit_code must be 0, got {pass_result.exit_code}"
+    )
 
     # Fail case.
-    fail_checks = [{"command": "false", "timeout": 10}]
-    fail_result = run_local_checks.run_local_checks(fail_checks, cwd=tmp_path)
-    fail_exit = (fail_result.exit_code if hasattr(fail_result, "exit_code")
-                 else fail_result.get("exit_code"))
-    assert fail_exit != 0, f"fail case exit_code must be nonzero, got {fail_exit}"
+    fail_result = run_one({"command": "false", "timeout": 10},
+                          scope="step", project=tmp_path)
+    assert fail_result.exit_code != 0, (
+        f"fail case exit_code must be nonzero, got {fail_result.exit_code}"
+    )
 
-    # If cmd_exit_code exists, it should also be correct.
-    if hasattr(pass_result, "cmd_exit_code") or "cmd_exit_code" in pass_result:
-        pass_cmd = (pass_result.cmd_exit_code
-                    if hasattr(pass_result, "cmd_exit_code")
-                    else pass_result.get("cmd_exit_code"))
-        assert pass_cmd == 0, f"pass cmd_exit_code must be 0, got {pass_cmd}"
-        fail_cmd = (fail_result.cmd_exit_code
-                    if hasattr(fail_result, "cmd_exit_code")
-                    else fail_result.get("cmd_exit_code"))
-        assert fail_cmd != 0, f"fail cmd_exit_code must be nonzero, got {fail_cmd}"
+    # cmd_exit_code should also be correct.
+    assert pass_result.cmd_exit_code == 0, (
+        f"pass cmd_exit_code must be 0, got {pass_result.cmd_exit_code}"
+    )
+    assert fail_result.cmd_exit_code != 0, (
+        f"fail cmd_exit_code must be nonzero, got {fail_result.cmd_exit_code}"
+    )
