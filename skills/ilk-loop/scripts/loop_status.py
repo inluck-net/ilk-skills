@@ -412,18 +412,26 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
     next_blocked = None
     next_other = None
 
+    # Two-pass: prefer in-progress (already dispatched, needs ship) over
+    # pending, matching get_active_subplan_targets' __p sort in the runner.
     for fname, status, cur_step, est, repo in rows:
         if status == "shipped":
             continue
         row = (fname, status, cur_step, est, repo)
-        if status in ("pending", "ready", "in-progress"):
-            # depends_on-aware: only pick if actually runnable.
+        if status == "in-progress":
+            if next_actionable is None and subplan_is_runnable(frontmatters.get(fname, {}), sibling_statuses):
+                next_actionable = row
+    for fname, status, cur_step, est, repo in rows:
+        if status == "shipped":
+            continue
+        row = (fname, status, cur_step, est, repo)
+        if status in ("pending", "ready"):
             if next_actionable is None and subplan_is_runnable(frontmatters.get(fname, {}), sibling_statuses):
                 next_actionable = row
         elif status == "blocked":
             if next_blocked is None:
                 next_blocked = row
-        else:
+        elif status not in ("in-progress", "pending", "ready"):
             if next_other is None:
                 next_other = row
 
