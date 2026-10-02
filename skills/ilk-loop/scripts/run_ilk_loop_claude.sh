@@ -1844,6 +1844,10 @@ print(json.dumps({
 }
 
 get_ilk_runtime_dir() {
+  if [[ -z "${PROJECT_PATH:-}" ]]; then
+    echo "get_ilk_runtime_dir: PROJECT_PATH is empty; refusing to resolve from cwd" >&2
+    return 1
+  fi
   local resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ ! -f "$resolver" ]]; then
     echo "get_ilk_runtime_dir: resolver not found at $resolver" >&2
@@ -1855,6 +1859,16 @@ get_ilk_runtime_dir() {
     return 1
   }
   echo "$json" | jq -r '.external_launcher_dir // empty'
+}
+
+# _runtime_file <name> — echo <runtime dir>/<name>, return 1 if the dir
+# doesn't resolve.  Fail-closed: callers never build a path from an empty dir.
+# Stderr is suppressed so callers get a clean empty-string on failure.
+_runtime_file() {
+  local name="$1"
+  local rd
+  rd="$(get_ilk_runtime_dir 2>/dev/null)" || return 1
+  echo "${rd}/${name}"
 }
 
 write_ilk_sentinel() {
@@ -2721,7 +2735,8 @@ except: pass
 " 2>/dev/null) || true
     fi
     local _gh_history_path
-    _gh_history_path=$(get_ilk_runtime_dir 2>/dev/null || true)/gate-history.jsonl
+    local _gh_history_path
+    _gh_history_path=$(_runtime_file gate-history.jsonl) || true
     # Only persist genuine verdicts (pass/fail/error) to gate-history.
     # "no-checks" means no declared gate ran — writing it would pollute
     # the history with non-verdicts that confuse the final-step gate check.
@@ -3361,10 +3376,11 @@ p.write_text(body)
         local _revert_ts
         _revert_ts=$(date +%Y-%m-%dT%H:%M:%S%z)
         local _reverts_file
-        _reverts_file=$(get_ilk_runtime_dir 2>/dev/null || true)/ship-reverts.jsonl
-        local _ship_sha=""
-        _ship_sha=$(git -C "$PROJECT_PATH" log --all --format="%H" --grep="\[plan:${_si_slug}#ship\]" -1 2>/dev/null) || true
-        python3 -c "
+        _reverts_file=$(_runtime_file ship-reverts.jsonl) || true
+        if [[ -n "$_reverts_file" ]]; then
+          local _ship_sha=""
+          _ship_sha=$(git -C "$PROJECT_PATH" log --all --format="%H" --grep="\[plan:${_si_slug}#ship\]" -1 2>/dev/null) || true
+          python3 -c "
 import sys
 sys.path.insert(0, sys.argv[1])
 from revert_notice import append_revert_row
@@ -3383,6 +3399,7 @@ append_revert_row(
     site='inconclusive',
 )
 " "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file" "$_si_slug" "$_ship_sha" "${RUN_ID:-}" "${i:-0}" "$_revert_ts" 2>/dev/null || true
+        fi
       fi
       # Skip ship_integrity.py for inconclusive gates — the revert above
       # is the enforcement.  Do NOT fall through to the violation path.
@@ -3448,7 +3465,7 @@ if m:
         if [[ "$_was_unshipped" == "true" ]]; then
           # Check if there's a gate history row for this slug.
           local _gh_path
-          _gh_path=$(get_ilk_runtime_dir 2>/dev/null || true)/gate-history.jsonl
+          _gh_path=$(_runtime_file gate-history.jsonl) || true
           if [[ -n "$_gh_path" && -f "$_gh_path" ]]; then
             grep -qF "$_enrich_slug" "$_gh_path" && _should_check_fsg=true
           fi
@@ -3599,7 +3616,7 @@ if m:
       # Check if the attribution redirects the revert to a different slug.
       local _revert_target_slug="$slug"
       local _gh_path_for_redirect
-      _gh_path_for_redirect=$(get_ilk_runtime_dir 2>/dev/null || true)/gate-history.jsonl
+      _gh_path_for_redirect=$(_runtime_file gate-history.jsonl) || true
       if [[ -n "$_gh_path_for_redirect" && -f "$_gh_path_for_redirect" ]]; then
         local _redirect_slug
         _redirect_slug=$(python3 -c "
@@ -3689,7 +3706,8 @@ print(note)
         local _revert_ts
         _revert_ts=$(date +%Y-%m-%dT%H:%M:%S%z)
         local _reverts_file
-        _reverts_file=$(get_ilk_runtime_dir 2>/dev/null || true)/ship-reverts.jsonl
+        _reverts_file=$(_runtime_file ship-reverts.jsonl) || true
+        if [[ -n "$_reverts_file" ]]; then
         # Find the last [plan:<slug>#ship] commit SHA (if any).
         local _ship_sha=""
         _ship_sha=$(git -C "$PROJECT_PATH" log --all --format="%H" --grep="\[plan:${_revert_target_slug}#ship\]" -1 2>/dev/null) || true
@@ -3782,6 +3800,7 @@ append_revert_row(
     attribution=attribution,
 )
 " "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file" "$_revert_target_slug" "$_ship_sha" "$_from_step" "${RUN_ID:-}" "${i:-0}" "$_revert_ts" "ship_integrity" "$_revert_site" "$_red_step" "$_red_step_commits" "$_red_step_attr" 2>/dev/null || true
+        fi  # _reverts_file guard
       fi
       # A rejected gate invalidates the ship intent for the slug it rejects.
       #
@@ -5331,7 +5350,7 @@ ${PROMPT}"
     # resync by editing frontmatter.
     local _revert_notice=""
     local _reverts_file_path
-    _reverts_file_path=$(get_ilk_runtime_dir 2>/dev/null || true)/ship-reverts.jsonl
+    _reverts_file_path=$(_runtime_file ship-reverts.jsonl) || true
     local _rn_plans_dir
     _rn_plans_dir=$(get_plans_dir 2>/dev/null) || _rn_plans_dir=""
     if [[ -n "$_rn_plans_dir" && -d "$_rn_plans_dir" ]]; then
@@ -5912,7 +5931,7 @@ if updated:
 " "$_attr_out" "$local_checks_results" "$_b_slug" "$_b_step" 2>/dev/null || true
                   # Also write to gate-history.jsonl.
                   local _gh_path
-                  _gh_path=$(get_ilk_runtime_dir 2>/dev/null || true)/gate-history.jsonl
+                  _gh_path=$(_runtime_file gate-history.jsonl) || true
                   if [[ -n "$_gh_path" ]]; then
                     python3 -c "
 import json, sys
@@ -6261,10 +6280,11 @@ for p in Path(plans_dir).glob('*.md'):
             local _revert_ts
             _revert_ts=$(date +%Y-%m-%dT%H:%M:%S%z)
             local _reverts_file
-            _reverts_file=$(get_ilk_runtime_dir 2>/dev/null || true)/ship-reverts.jsonl
-            local _ship_sha=""
-            _ship_sha=$(git -C "$PROJECT_PATH" log --all --format="%H" --grep="\[plan:${_pre_slug}#ship\]" -1 2>/dev/null) || true
-            python3 -c "
+            _reverts_file=$(_runtime_file ship-reverts.jsonl) || true
+            if [[ -n "$_reverts_file" ]]; then
+              local _ship_sha=""
+              _ship_sha=$(git -C "$PROJECT_PATH" log --all --format="%H" --grep="\[plan:${_pre_slug}#ship\]" -1 2>/dev/null) || true
+              python3 -c "
 import sys
 sys.path.insert(0, sys.argv[1])
 from revert_notice import append_revert_row
@@ -6283,6 +6303,7 @@ append_revert_row(
     site='one-ship',
 )
 " "${_SKILL_ROOT}/ilk-loop/scripts" "$_reverts_file" "$_pre_slug" "$_ship_sha" "$_pre_step" "${RUN_ID:-}" "${i:-0}" "$_revert_ts" 2>/dev/null || true
+            fi
           fi
         done <<< "$PRE_ITER_ALL_STEPS"
       fi

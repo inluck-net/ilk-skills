@@ -9,15 +9,16 @@ from cwd, and the ``|| true`` write sites build a path from an empty dir.
 AC-1  get_ilk_runtime_dir refuses an empty PROJECT_PATH.
 AC-2  Dot-sourced, with PROJECT_PATH empty, driving a revert-append site writes
       nothing (no ship-reverts.jsonl anywhere under tmp_path, cwd, or /).
-AC-3  The known writer: with the real HOME and empty PROJECT_PATH, calling
-      ``append_revert_row`` with the path the runner constructs writes to the
-      real data home.  After the fix, the write path is skipped.
+AC-3  The known writer: run test_ship_audit.py as a subprocess with HOME and
+      ILK_DATA_HOME under tmp_path.  Afterwards, no ship-reverts.jsonl under
+      the REAL data home has an mtime later than the subprocess start.
 AC-4  Control: with PROJECT_PATH set, get_ilk_runtime_dir returns the project's
       launcher dir (unchanged behaviour).
 """
 from __future__ import annotations
 
 import os
+import pwd
 import shutil
 import subprocess
 import sys
@@ -29,21 +30,32 @@ import pytest
 RUNNER = Path(__file__).resolve().parent.parent / "scripts" / "run_ilk_loop_claude.sh"
 ILK_PATHS = Path(__file__).resolve().parent.parent / "scripts" / "ilk_paths.py"
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
+TEST_SHIP_AUDIT = Path(__file__).resolve().parent / "test_ship_audit.py"
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _source_runner_and_call(
-    func_call: str, env_extra: dict[str, str] | None = None
+    func_call: str, env_extra: dict[str, str] | None = None,
+    *, project_path: str | None = None,
 ) -> subprocess.CompletedProcess:
-    """Dot-source the driver and execute *func_call* in the same shell."""
-    env: dict[str, str] = {"ILK_DOTSOURCE_ONLY": "1"}
-    env["PATH"] = os.environ.get("PATH", "")
+    """Dot-source the driver and execute *func_call* in the same shell.
+
+    *project_path* is set AFTER sourcing (the runner clobbers ``PROJECT_PATH``
+    at its line 28).  ``HOME``, ``ILK_DATA_HOME``, and ``PATH`` are always
+    included so the sourced functions resolve paths correctly.
+    """
+    env: dict[str, str] = {
+        "ILK_DOTSOURCE_ONLY": "1",
+        "PATH": os.environ.get("PATH", ""),
+    }
     if env_extra:
         env.update(env_extra)
+    pp_line = f"PROJECT_PATH='{project_path}'; " if project_path else ""
     script = (
         f"export ILK_DOTSOURCE_ONLY=1; "
         f"source '{RUNNER}' 2>/dev/null; "
+        f"{pp_line}"
         f"set +e; "
         f"{func_call}"
     )
@@ -102,7 +114,7 @@ def _call_append_revert_row(reverts_path: str, slug: str = "test-slug") -> None:
 
 def _cleanup_project_key(key: str) -> None:
     """Remove a tmp project dir from the real data home."""
-    real_home = Path.home()
+    real_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
     real_data = Path(os.environ.get("ILK_DATA_HOME", real_home / ".ilk-data"))
     project_dir = real_data / "projects" / key
     if project_dir.exists():
@@ -111,12 +123,9 @@ def _cleanup_project_key(key: str) -> None:
 
 # ── AC-1: get_ilk_runtime_dir refuses an empty PROJECT_PATH ──────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac1_empty_project_path_refused(tmp_path: Path) -> None:
     """get_ilk_runtime_dir must exit non-zero with nothing on stdout when
     PROJECT_PATH is empty.
-
-    Today the resolver falls back to cwd and may return a live dir.
     """
     result = _source_runner_and_call(
         "get_ilk_runtime_dir",
@@ -133,20 +142,20 @@ def test_ac1_empty_project_path_refused(tmp_path: Path) -> None:
     assert result.stdout == "", (
         f"Expected empty stdout, got: {result.stdout!r}"
     )
+    assert "PROJECT_PATH is empty" in result.stderr, (
+        f"Expected refusal message on stderr, got: {result.stderr!r}"
+    )
 
 
 # ── AC-2: no writes from a revert-append site ───────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac2_no_writes_when_empty_project_path(tmp_path: Path) -> None:
-    """With PROJECT_PATH empty, calling ``append_revert_row`` with the path
-    constructed the same way the runner does must not write
-    ``ship-reverts.jsonl`` anywhere.
+    """With PROJECT_PATH empty, the runner's ``_runtime_file`` helper fails
+    closed, so no ``ship-reverts.jsonl`` path is ever constructed.
 
-    The runner builds: ``$(get_ilk_runtime_dir 2>/dev/null || true)/ship-reverts.jsonl``
-    When ``get_ilk_runtime_dir`` returns a launcher dir (because the resolver
-    falls back to cwd), the write goes to the data home.  After the fix,
-    ``get_ilk_runtime_dir`` returns empty and the write path is skipped.
+    The runner builds: ``$(_runtime_file ship-reverts.jsonl) || true``
+    When ``get_ilk_runtime_dir`` refuses empty PROJECT_PATH, ``_runtime_file``
+    returns non-zero and the variable stays empty — the write is skipped.
     """
     tmp_home = tmp_path / "home"
     tmp_home.mkdir()
@@ -158,74 +167,78 @@ def test_ac2_no_writes_when_empty_project_path(tmp_path: Path) -> None:
         "PROJECT_PATH": "",
     }
 
-    # Construct the path the same way the runner does at :3364.
+    # Verify get_ilk_runtime_dir returns nothing.
     runtime_dir = _get_runtime_dir(env)
-    reverts_path = f"{runtime_dir}/ship-reverts.jsonl" if runtime_dir else "/ship-reverts.jsonl"
-
-    # Drive the write site.
-    _call_append_revert_row(reverts_path)
-
-    # No ship-reverts.jsonl anywhere under tmp_path.
-    sr_matches = list(tmp_path.rglob("ship-reverts.jsonl"))
-    assert sr_matches == [], (
-        f"Unexpected ship-reverts.jsonl under tmp_path: {sr_matches}"
+    assert runtime_dir == "", (
+        f"Expected empty runtime dir, got: {runtime_dir!r}"
     )
 
-    # No file at the filesystem root.
-    root_sr = Path("/ship-reverts.jsonl")
-    assert not root_sr.exists(), f"Found {root_sr} — write leaked to /"
+    # Verify _runtime_file fails closed (returns non-zero, empty stdout).
+    result = _source_runner_and_call(
+        "_runtime_file ship-reverts.jsonl",
+        env_extra=env,
+    )
+    assert result.returncode != 0, (
+        f"_runtime_file should fail with empty PROJECT_PATH, got exit {result.returncode}"
+    )
+    assert result.stdout.strip() == "", (
+        f"Expected empty stdout from _runtime_file, got: {result.stdout!r}"
+    )
 
 
-# ── AC-3: the known writer writes to the real data home ──────────────────────
+# ── AC-3: the known writer (test_ship_audit.py) writes nothing live ──────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
-def test_ac3_known_writer_writes_live_rows(tmp_path: Path) -> None:
-    """With the real HOME and empty PROJECT_PATH, calling ``append_revert_row``
-    with the path the runner constructs writes ``ship-reverts.jsonl`` to the
-    real data home.
+def test_ac3_known_writer_writes_no_live_rows(tmp_path: Path) -> None:
+    """Run test_ship_audit.py as a subprocess with HOME and ILK_DATA_HOME
+    under tmp_path.  Afterwards, no ship-reverts.jsonl under the REAL data
+    home has an mtime later than the subprocess start.
 
-    This is the same mechanism that caused the 104 fixture rows: the runner's
-    ``get_ilk_runtime_dir`` resolves from cwd (because PROJECT_PATH is empty),
-    finds the live project, and writes to its launcher dir.  After the fix,
-    ``get_ilk_runtime_dir`` refuses empty PROJECT_PATH and the write is
-    skipped.
-
-    ``test_ship_audit.py``'s ``_source_runner_and_call`` replaces the env
-    (no HOME, no PATH), so it cannot trigger this path directly.  This test
-    exercises the write mechanism that the known writer uses.
+    Today test_ship_audit.py's _source_runner_and_call replaces the env
+    (no HOME, no ILK_DATA_HOME), so the runner resolves from cwd and writes
+    to the real data home.  After the fix, HOME/ILK_DATA_HOME are set under
+    tmp_path and the runner refuses empty PROJECT_PATH, so no writes happen.
     """
-    # Construct the path the same way the runner does, using the real HOME.
-    env = {"PROJECT_PATH": ""}
-    runtime_dir = _get_runtime_dir(env)
-    assert runtime_dir, (
-        "get_ilk_runtime_dir returned empty with PROJECT_PATH=''.  "
-        "Today this should find the live project via cwd."
-    )
-    reverts_path = f"{runtime_dir}/ship-reverts.jsonl"
+    tmp_home = tmp_path / "home"
+    tmp_home.mkdir()
+    tmp_data = tmp_path / "data"
+    tmp_data.mkdir()
+
+    # Resolve the Python that has pytest installed (same as current process).
+    python = sys.executable
+    # Changing HOME breaks user site-packages resolution; pass it explicitly.
+    import site as _site
+    user_site = _site.getusersitepackages()
 
     before = time.time()
-    _call_append_revert_row(reverts_path)
-
-    # The write should have created a file in the real data home.
-    real_home = Path.home()
-    real_data = Path(os.environ.get("ILK_DATA_HOME", real_home / ".ilk-data"))
-    found = False
-    for sr in real_data.rglob("ship-reverts.jsonl"):
-        if sr.stat().st_mtime >= before:
-            found = True
-            break
-
-    assert found, (
-        f"Expected ship-reverts.jsonl written to real data home after {before}, "
-        f"but none found.  runtime_dir was: {runtime_dir!r}"
+    result = subprocess.run(
+        [python, "-m", "pytest", str(TEST_SHIP_AUDIT),
+         "-q", "--tb=no", "-p", "no:cacheprovider"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env={
+            "HOME": str(tmp_home),
+            "ILK_DATA_HOME": str(tmp_data),
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONPATH": user_site,
+        },
+        cwd=str(tmp_path),
     )
 
-    # Clean up: remove the test-slug row we just appended.
-    # (The file may be the live one; only remove our row.)
-    if found:
-        # Just clean up the whole tmp project key if it was a tmp key.
-        key = _project_key_for(Path.cwd())
-        _cleanup_project_key(key)
+    # The subprocess should succeed (all tests pass).
+    assert result.returncode == 0, (
+        f"test_ship_audit.py failed (exit {result.returncode}).\n"
+        f"stdout:\n{result.stdout[-2000:]}\nstderr:\n{result.stderr[-2000:]}"
+    )
+
+    # No ship-reverts.jsonl under the REAL data home with mtime >= before.
+    real_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    real_data = Path(os.environ.get("ILK_DATA_HOME", real_home / ".ilk-data"))
+    for sr in real_data.rglob("ship-reverts.jsonl"):
+        assert sr.stat().st_mtime < before, (
+            f"Found live ship-reverts.jsonl written after subprocess start: {sr}\n"
+            f"mtime={sr.stat().st_mtime}, before={before}"
+        )
 
 
 # ── AC-4 (control): with PROJECT_PATH set, returns the project's launcher dir ─
@@ -235,6 +248,9 @@ def test_ac4_project_path_returns_launcher_dir(tmp_path: Path) -> None:
     project's launcher dir, as today.  This is a control — it should pass now
     and after the fix.
     """
+    # Create a git repo so ilk_paths.py can resolve a project root.
+    subprocess.run(["git", "init"], cwd=str(tmp_path), capture_output=True, check=True)
+
     tmp_home = tmp_path / "home"
     tmp_home.mkdir()
     tmp_data = tmp_path / "data"
@@ -245,8 +261,8 @@ def test_ac4_project_path_returns_launcher_dir(tmp_path: Path) -> None:
         env_extra={
             "HOME": str(tmp_home),
             "ILK_DATA_HOME": str(tmp_data),
-            "PROJECT_PATH": str(tmp_path),
         },
+        project_path=str(tmp_path),
     )
     assert result.returncode == 0, (
         f"Expected success (exit 0), got {result.returncode}.\n"

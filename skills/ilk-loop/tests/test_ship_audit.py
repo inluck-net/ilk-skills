@@ -13,6 +13,7 @@ step-commit presence AND gate outcome (AC-5 through AC-8).
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import textwrap
 from pathlib import Path
@@ -24,14 +25,30 @@ RUNNER = Path(__file__).resolve().parent.parent / "scripts" / "run_ilk_loop_clau
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def _source_runner_and_call(func_call: str, env_extra: dict | None = None) -> subprocess.CompletedProcess:
-    """Dot-source the driver and execute *func_call* in the same shell."""
-    env = {"ILK_DOTSOURCE_ONLY": "1"}
+def _source_runner_and_call(
+    func_call: str,
+    env_extra: dict | None = None,
+    *,
+    project_path: str | None = None,
+) -> subprocess.CompletedProcess:
+    """Dot-source the driver and execute *func_call* in the same shell.
+
+    *project_path* is set AFTER sourcing (the runner clobbers ``PROJECT_PATH``
+    at its line 28).  ``HOME``, ``ILK_DATA_HOME``, and ``PATH`` are always
+    included so the sourced functions resolve paths correctly and never touch
+    the real data home.
+    """
+    env: dict[str, str] = {
+        "ILK_DOTSOURCE_ONLY": "1",
+        "PATH": os.environ.get("PATH", ""),
+    }
     if env_extra:
         env.update(env_extra)
+    pp_line = f"PROJECT_PATH='{project_path}'; " if project_path else ""
     script = (
         f"export ILK_DOTSOURCE_ONLY=1; "
         f"source '{RUNNER}' 2>/dev/null; "
+        f"{pp_line}"
         f"set +e; "  # driver sets -e; the function handles errors internally
         f"{func_call}"
     )
@@ -86,7 +103,7 @@ def test_defect1_ship_integrity_detects_violation(tmp_path: Path) -> None:
 
     result = _source_runner_and_call(
         f"test_ship_integrity '{plans}' '{lc_file}'",
-        env_extra={"PROJECT_PATH": str(tmp_path)},
+        project_path=str(tmp_path),
     )
     assert result.returncode != 0, (
         f"Expected violation detection (exit 1), got {result.returncode}.\n"
@@ -110,7 +127,7 @@ def test_defect2_slug_extraction_portable(tmp_path: Path) -> None:
 
     result = _source_runner_and_call(
         f"test_ship_integrity '{plans}' '{lc_file}'",
-        env_extra={"PROJECT_PATH": str(tmp_path)},
+        project_path=str(tmp_path),
     )
     assert result.returncode != 0, (
         f"Expected violation detection (exit 1), got {result.returncode}.\n"
@@ -133,7 +150,7 @@ def test_defect3_status_revert_works(tmp_path: Path) -> None:
 
     _source_runner_and_call(
         f"test_ship_integrity '{plans}' '{lc_file}'",
-        env_extra={"PROJECT_PATH": str(tmp_path)},
+        project_path=str(tmp_path),
     )
     content = subplan.read_text()
     assert "status: in-progress" in content, (
@@ -616,7 +633,7 @@ def test_ship_integrity_does_not_skip_per_step_gated_subplan(tmp_path: Path) -> 
 
     result = _source_runner_and_call(
         f"test_ship_integrity '{plans}' '{lc_file}'",
-        env_extra={"PROJECT_PATH": str(tmp_path)},
+        project_path=str(tmp_path),
     )
     assert result.returncode != 0, (
         "red gate on a per-step-gated shipped sub-plan must be a violation; "
