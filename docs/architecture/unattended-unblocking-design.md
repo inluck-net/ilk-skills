@@ -477,6 +477,35 @@ should cover both.
    its invariant suite lives in that repo, no build of that repo may edit
    it, and changing it is routed to Chad (same rule as guard 1).
 
+### A third job: unblocking the product's own runs
+
+gh-resolve's draft (`~/Documents/handoffs/gh-resolve-rsi-design-draft-2026-10-02.md`,
+not yet confirmed by Chad) names a job this doc didn't:
+
+- **A.** Unblock a project's dev batches.
+- **B.** Unblock the product's own runs. For gh-resolve, that means
+  resolver runs on consumer issues, on rezmac.
+- **C.** Improve the product.
+
+B is closest to gh-resolve's goal. Every unblock of a resolver run is a
+human touching machine work.
+
+- **Where B runs:** proposed on every host that runs product loops.
+  - L1 runs there in full.
+  - L2 diagnoses and proposes there.
+  - Acting L2 may change only plan files and ledger rows in that host's
+    data home, never the consumer worktree's code.
+  - This is gh-resolve's answer to the open question in the opt-in
+    subsection below (L2 on every host, or only on the RSI host).
+- **Outward boundary, sharpened:**
+  - the pipeline's own gated push and PR is the product, not an RSI
+    action;
+  - no RSI, triage or improvement-build action writes to a consumer repo
+    (no push, no PR, no comment, no label);
+  - writes to gh-resolve's own issues stay Chad's.
+- **Every adapter declares its boundary:** the repos its sandbox may write,
+  and the repos no RSI action may write.
+
 ### The split
 
 | Engine (one copy, ilk-skills) | Adapter (one per project) |
@@ -674,8 +703,12 @@ lease below exists, the RSI host is chad-mbp (D5).
   kept (the last N are kept). This is D4's automatic rollback in its
   cheapest form.
 - **A run pins its version.** At start, the runner resolves `current` to the
-  concrete release directory and uses that path for every script it
-  sources or execs during the run. A run in progress finishes on the
+  concrete release directory **by realpath** and uses that path for every
+  script it sources or execs during the run, and for every `PYTHONPATH` it
+  exports. Python imports lazily inside functions (gh-resolve does this,
+  for example in `run_liveness.liveness`). So a process whose path still
+  goes through the `current` symlink would load modules from the new
+  release partway through a pass. A run in progress finishes on the
   version it started with, and the next run picks up the new one. This
   replaces "runner re-exec on script change" (L1). It also removes "land
   only at idle" and the cross-project yield for product loops.
@@ -701,6 +734,12 @@ lease below exists, the RSI host is chad-mbp (D5).
 - **Fail closed:** a sandbox write that resolves into the stable data home
   is a bug, and the ledger writers refuse it (I2 sub-plan 2's fail-closed
   rule, extended).
+- **GitHub is isolated too, not just files.** A sandbox run may write only
+  to repos on a canary-only allowlist. Every other `--repo` is refused at
+  the outward-write code (tier-0). The stronger, structural form is a
+  fine-grained token scoped to the canary repo, held only by the sandbox.
+  Today stable and sandbox share one gh account. Every other leak breaks a
+  local file; this one writes to a customer repo (gh-resolve draft, R3).
 
 ### 3. Release train
 
