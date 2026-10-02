@@ -11,9 +11,9 @@
 #   3. First existing of ~/.codex/skills, ~/.cursor/skills, ~/.claude/skills
 
 ilk_skill_root() {
-  # 1. Explicit override
+  # 1. Explicit override — resolve to physical path.
   if [[ -n "${ILK_SKILL_HOME:-}" && -d "$ILK_SKILL_HOME" ]]; then
-    echo "$ILK_SKILL_HOME"
+    cd -P "$ILK_SKILL_HOME" && pwd -P
     return
   fi
 
@@ -22,12 +22,12 @@ ilk_skill_root() {
   #    Walk up to find the directory that contains ilk-* children.
   local caller="${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}"
   local cur
-  cur="$(cd "$(dirname "$caller")" && pwd)"
+  cur="$(cd -P "$(dirname "$caller")" && pwd -P)"
   local i
   for i in 1 2 3 4 5 6; do
     if [[ "$(basename "$cur")" == "scripts" && "$(basename "$(dirname "$cur")")" == ilk-* ]]; then
       local skills_dir
-      skills_dir="$(dirname "$(dirname "$cur")")"
+      skills_dir="$(cd -P "$(dirname "$(dirname "$cur")")" && pwd -P)"
       if [[ -d "$skills_dir" ]]; then
         echo "$skills_dir"
         return
@@ -39,11 +39,11 @@ ilk_skill_root() {
     cur="$parent"
   done
 
-  # 3. Fallback candidates
+  # 3. Fallback candidates — resolve to physical path.
   local candidate
   for candidate in "$HOME/.codex/skills" "$HOME/.cursor/skills" "$HOME/.claude/skills"; do
     if [[ -d "$candidate" ]]; then
-      echo "$candidate"
+      cd -P "$candidate" && pwd -P
       return
     fi
   done

@@ -13,14 +13,17 @@ set -Eeuo pipefail
 
 # ----- Skill root resolution -------------------------------------------------
 
-source "$(dirname "${BASH_SOURCE[0]}")/_ilk_skill_root.sh"
+_ILK_SCRIPT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+source "${_ILK_SCRIPT_DIR}/_ilk_skill_root.sh"
 _SKILL_ROOT="$(ilk_skill_root)"
+export ILK_SKILL_HOME="$_SKILL_ROOT"
 
 # Steer-hook functions (invoke_steer_hook) — operator interjections + pause gate.
-source "$(dirname "${BASH_SOURCE[0]}")/steer_hook.sh"
+source "${_ILK_SCRIPT_DIR}/steer_hook.sh"
 
 # Iteration-shipped marker (one-sub-plan-per-iteration guard).
-source "$(dirname "${BASH_SOURCE[0]}")/_ilk_marker.sh"
+source "${_ILK_SCRIPT_DIR}/_ilk_marker.sh"
 
 # ----- Defaults & globals ----------------------------------------------------
 
@@ -61,10 +64,9 @@ ITER_BUDGET_EXHAUSTED=0
 
 # ----- Selfmod skill home (ILK_SKILL_HOME) -----------------------------------
 # In selfmod mode, the worker session's skill root must point at the worktree's
-# skills dir, not the live clone.  Always export (empty default) so ``set -u``
-# does not trip on $引用.  The real resolution is at the end of the file, after
-# SELFMOD_WORKTREE_PATH may have been set by a sourcing test harness.
-export ILK_SKILL_HOME="${ILK_SKILL_HOME:-}"
+# skills dir, not the live clone.  ILK_SKILL_HOME is exported above (pinned by
+# realpath).  The selfmod override at the end of the file may replace it after
+# SELFMOD_WORKTREE_PATH is set by a sourcing test harness.
 
 # ----- Selfmod guard: check_edit_path ----------------------------------------
 # PreToolUse guard for selfmod workers.  Resolves symlinks via ``realpath`` and
@@ -309,7 +311,7 @@ try:
     sys.stdout.write(_read_path_prelude(Path(sys.argv[2])) or "")
 except Exception:
     pass
-' "$(dirname "${BASH_SOURCE[0]}")" "$PROJECT_PATH" 2>/dev/null || true)"
+' "${_ILK_SCRIPT_DIR}" "$PROJECT_PATH" 2>/dev/null || true)"
   if [[ -n "$PATH_PRELUDE" ]]; then
     echo "[ilk] path_prelude applied to the agent environment: $PATH_PRELUDE"
   fi
@@ -795,7 +797,7 @@ parse_master_branch_block() {
   # truth shared with the ps1 runner; avoids inline-heredoc quote/encoding
   # fragility). See skills/ilk-loop/scripts/parse_branch_block.py.
   local parsed branch_script
-  branch_script="$(dirname "${BASH_SOURCE[0]}")/parse_branch_block.py"
+  branch_script="${_ILK_SCRIPT_DIR}/parse_branch_block.py"
   parsed=$(python3 "$branch_script" "$master_file") || parsed="{}"
 
   if [[ "$parsed" == "{}" || -z "$parsed" ]]; then

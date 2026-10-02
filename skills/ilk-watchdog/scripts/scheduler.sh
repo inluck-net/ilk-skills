@@ -12,18 +12,22 @@ set -euo pipefail
 # -Once runs a single scan cycle (for tests) instead of the daemon loop.
 # =============================================================================
 
+# --- script dir pin -----------------------------------------------------------
+
+_ILK_SCRIPT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
 # --- single-instance guard (pidfile) -----------------------------------------
 
 # Sourced here, not next to the skill-root resolution below: the lock is
 # acquired at source time (before that block runs) and needs ilk_pid_alive.
-source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_pid.sh"
+source "${_ILK_SCRIPT_DIR}/../../ilk-loop/scripts/_ilk_pid.sh"
 # The scheduler's own files follow the one data-home precedence
 # (ILK_DATA_HOME -> ILK_DATA_DIR -> ~/.ilk-data) like every other component.
 # Hardcoding ${HOME}/.ilk-data made the test suite, which pins ILK_DATA_HOME,
 # collide with a live daemon's pid file ("already running (PID 23490)") and
 # write dry-run lines into the real scheduler.log.  With neither variable set
 # the paths are unchanged, so a running daemon keeps its pid file.
-source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_data_dir.sh"
+source "${_ILK_SCRIPT_DIR}/../../ilk-loop/scripts/_ilk_data_dir.sh"
 
 SCHEDULER_PIDFILE="$(ilk_data_dir)/scheduler.pid"
 SCHEDULER_STATE_FILE="$(ilk_data_dir)/scheduler.state.json"
@@ -39,8 +43,7 @@ write_scheduler_state() {
   # Resolve toolkit_head from the script's own location, not $PWD (AC-2).
   # launchd starts the job in an arbitrary directory.
   local toolkit_head=""
-  local script_dir
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || true
+  local script_dir="$_ILK_SCRIPT_DIR"
   if [[ -n "$script_dir" ]]; then
     # Walk up to find the repo root (the dir containing .git).
     local repo_dir="$script_dir"
@@ -137,12 +140,13 @@ acquire_scheduler_lock
 
 # --- skill root resolution ---------------------------------------------------
 
-source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_skill_root.sh"
+source "${_ILK_SCRIPT_DIR}/../../ilk-loop/scripts/_ilk_skill_root.sh"
 _SKILL_ROOT="$(ilk_skill_root)"
+export ILK_SKILL_HOME="$_SKILL_ROOT"
 
 # --- defaults ----------------------------------------------------------------
 
-SCAN_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/scheduler_scan.py"
+SCAN_SCRIPT="${_ILK_SCRIPT_DIR}/scheduler_scan.py"
 # Holds the most recent scan's stderr so the idle branch can tell
 # "no work" from "could not look". See invoke_scheduler_scan.
 _SCAN_STDERR_FILE="$(mktemp "${TMPDIR:-/tmp}/ilk-scan-stderr-XXXXXX")"
@@ -153,7 +157,7 @@ PROMOTE_SCRIPT="${_SKILL_ROOT}/ilk-loop/scripts/promote_next_master.py"
 LAUNCH_SCRIPT="${_SKILL_ROOT}/ilk-launcher/scripts/launch.sh"
 BOOTSTRAP_SCRIPT="${_SKILL_ROOT}/../tools/claude-worker/bootstrap.sh"
 NOTIFY_PY="${_SKILL_ROOT}/ilk-watchdog/scripts/ilk_notify.py"
-WATCHDOG_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/watchdog.sh"
+WATCHDOG_SCRIPT="${_ILK_SCRIPT_DIR}/watchdog.sh"
 
 SCHEDULER_LOG_DIR="$(ilk_data_dir)/logs"
 SCHEDULER_LOG_FILE="${SCHEDULER_LOG_DIR}/scheduler.log"
@@ -1353,10 +1357,12 @@ detach_scheduler() {
 
 # --- entry point -------------------------------------------------------------
 
-parse_args "$@"
+if [[ "${ILK_DOTSOURCE_ONLY:-}" != "1" ]]; then
+  parse_args "$@"
 
-if [[ "$DETACH" == true ]]; then
-  detach_scheduler
+  if [[ "$DETACH" == true ]]; then
+    detach_scheduler
+  fi
+
+  run_scheduler
 fi
-
-run_scheduler

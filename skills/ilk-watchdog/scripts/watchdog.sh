@@ -12,8 +12,11 @@ set -euo pipefail
 
 # ----- Skill root resolution -------------------------------------------------
 
-source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_skill_root.sh"
+_ILK_SCRIPT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+source "${_ILK_SCRIPT_DIR}/../../ilk-loop/scripts/_ilk_skill_root.sh"
 _SKILL_ROOT="$(ilk_skill_root)"
+export ILK_SKILL_HOME="$_SKILL_ROOT"
 
 # ----- Defaults & globals ----------------------------------------------------
 
@@ -1356,7 +1359,7 @@ detach_watchdog() {
   fi
 
   # Build the foreground command (re-invoke without --detach)
-  local self="${BASH_SOURCE[0]}"
+  local self="${_ILK_SCRIPT_DIR}/watchdog.sh"
   local cmd="bash '$self' --project-path '$project'"
   if [[ -n "$CLI_POLL_INTERVAL_SEC" ]]; then
     cmd="$cmd --poll-interval-sec '$CLI_POLL_INTERVAL_SEC'"

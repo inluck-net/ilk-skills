@@ -97,7 +97,6 @@ def _parse_kv(output: str) -> dict[str, str]:
 
 # ── AC-1 (runner) ────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: ilk_skill_root returns logical path, ILK_SKILL_HOME not exported")
 def test_runner_pins_release_after_flip(
     _release_fixture: dict[str, Path], tmp_path: Path,
 ) -> None:
@@ -146,7 +145,6 @@ echo "ILK_SKILL_HOME=$ILK_SKILL_HOME"
 
 # ── AC-2 (watchdog) ──────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: watchdog does not pin by realpath")
 def test_watchdog_pins_release_after_flip(
     _release_fixture: dict[str, Path], tmp_path: Path,
 ) -> None:
