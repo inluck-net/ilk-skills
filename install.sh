@@ -52,6 +52,12 @@
 #   --only-auto-plan     reconcile ONLY the auto-plan managed block into host
 #                        agent files (no skill/command linking); used by
 #                        /ilk-upgrade after git pull
+#   --layout release|clone  rewire the three Claude homes' skill/command links
+#                           and the scheduler plist to point at the release
+#                           layout (~/.ilk/current) or the dev clone.  Only
+#                           Claude homes and existing LaunchAgent plists are
+#                           touched.  Idempotent.  Writes the layout mode to
+#                           <releases-root-parent>/layout.
 #
 # Idempotent: re-running --apply just re-points stale symlinks (e.g.
 # if you moved the repo) and is otherwise a no-op.
@@ -73,6 +79,7 @@ only_path=0
 path_bin_dir=""
 auto_use_ilk_plan=0
 only_auto_plan=0
+layout_mode=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -86,6 +93,25 @@ while [[ $# -gt 0 ]]; do
     --only-path)    only_path=1 ;;
     --auto-use-ilk-plan) auto_use_ilk_plan=1 ;;
     --only-auto-plan)    only_auto_plan=1 ;;
+    --layout)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "error: --layout requires 'release' or 'clone'" >&2
+        exit 2
+      fi
+      layout_mode="$1"
+      if [[ "$layout_mode" != "release" && "$layout_mode" != "clone" ]]; then
+        echo "error: --layout must be 'release' or 'clone', got: $layout_mode" >&2
+        exit 2
+      fi
+      ;;
+    --layout=*)
+      layout_mode="${1#--layout=}"
+      if [[ "$layout_mode" != "release" && "$layout_mode" != "clone" ]]; then
+        echo "error: --layout must be 'release' or 'clone', got: $layout_mode" >&2
+        exit 2
+      fi
+      ;;
     --claude-home)
       shift
       if [[ $# -eq 0 ]]; then
@@ -713,6 +739,192 @@ fi
 if [[ $only_auto_plan -eq 1 ]]; then
   reconcile_auto_plan
   exit $?
+fi
+
+# --- layout mode (--layout release|clone) ------------------------------------
+# Rewires the three Claude homes' skill/command links and the scheduler plist
+# to point at either the release layout (~/.ilk/current) or the dev clone.
+# Only Claude homes and existing LaunchAgent plists are touched.
+
+if [[ -n "$layout_mode" ]]; then
+  mode="DRY-RUN"
+  [[ $apply -eq 1 ]] && mode="APPLY"
+  echo "=== layout $layout_mode ($mode) ==="
+
+  # Resolve releases root parent: $ILK_RELEASES_ROOT default ~/.ilk/releases,
+  # parent is ~/.ilk.
+  releases_root="${ILK_RELEASES_ROOT:-$HOME/.ilk/releases}"
+  releases_parent="$(dirname "$releases_root")"
+
+  if [[ "$layout_mode" == "release" ]]; then
+    current_link="$releases_parent/current"
+    if [[ ! -L "$current_link" ]]; then
+      echo "error: $current_link does not exist or is not a symlink" >&2
+      exit 2
+    fi
+    current_target="$(readlink "$current_link")"
+    # Resolve relative symlink.
+    if [[ "$current_target" != /* ]]; then
+      current_target="$(cd "$(dirname "$current_link")" && cd "$(dirname "$current_target")" && pwd)/$(basename "$current_target")"
+    fi
+    if [[ ! -d "$current_target" ]]; then
+      echo "error: $current_link -> $current_target is not a directory" >&2
+      exit 2
+    fi
+    # Use the current symlink literally (not the resolved realpath) so a
+    # later flip takes effect with no relink.
+    base="$current_link"
+    link_prefix="$current_link"
+  else
+    base="$REPO_ROOT"
+    link_prefix="$REPO_ROOT"
+  fi
+
+  echo "base: $base"
+
+  # --- Claude homes -------------------------------------------------------
+  # Discover Claude homes: the default ~/.claude plus --claude-home and the
+  # two worker homes.  Only skill and command links are touched.
+  claude_homes=("$HOME/.claude")
+  if [[ -n "$claude_home" ]]; then
+    claude_homes=("$claude_home")
+  fi
+  for _wh in "$HOME/.claude-worker" "$HOME/.claude-manager"; do
+    if [[ -d "$_wh" ]]; then
+      # Skip if already the primary home.
+      if [[ -n "$claude_home" && "$(cd "$claude_home" && pwd)" == "$(cd "$_wh" && pwd)" ]]; then
+        continue
+      fi
+      claude_homes+=("$_wh")
+    fi
+  done
+
+  for chome in "${claude_homes[@]}"; do
+    if [[ ! -d "$chome" ]]; then
+      echo "  skip: $chome does not exist"
+      continue
+    fi
+    # Skill links.
+    for name in "${SKILL_NAMES[@]}"; do
+      link="$chome/skills/$name"
+      source="$base/skills/$name"
+      action="$(plan_link "$link" "$source")"
+      if [[ $apply -eq 1 ]]; then
+        outcome="$(apply_action "$action" "$link" "$source")"
+        printf '  [%s] %s -> %s\n' "$outcome" "$link" "$source"
+      else
+        printf '  [%s] %s -> %s\n' "$action" "$link" "$source"
+      fi
+    done
+    # Command links.
+    for f in "${COMMAND_FILES[@]}"; do
+      link="$chome/commands/$f"
+      source="$base/commands/$f"
+      action="$(plan_link "$link" "$source")"
+      if [[ $apply -eq 1 ]]; then
+        outcome="$(apply_action "$action" "$link" "$source")"
+        printf '  [%s] %s -> %s\n' "$outcome" "$link" "$source"
+      else
+        printf '  [%s] %s -> %s\n' "$action" "$link" "$source"
+      fi
+    done
+  done
+
+  # --- Plist --------------------------------------------------------------
+  agents_dir="$HOME/Library/LaunchAgents"
+  for plist_name in "net.inluck.ilk.scheduler" "net.inluck.ilk.scheduler-health"; do
+    plist_path="$agents_dir/${plist_name}.plist"
+    if [[ ! -f "$plist_path" ]]; then
+      echo "  skip plist: $plist_path does not exist"
+      continue
+    fi
+    if [[ "$plist_name" == "net.inluck.ilk.scheduler" ]]; then
+      new_script="$base/skills/ilk-watchdog/scripts/scheduler.sh"
+    else
+      new_script="$base/skills/ilk-watchdog/scripts/scheduler_health.sh"
+    fi
+    if [[ $apply -eq 1 ]]; then
+      python3 -c "
+import plistlib, sys
+with open(sys.argv[1], 'rb') as f:
+    p = plistlib.load(f)
+args = p.get('ProgramArguments', [])
+if len(args) >= 2:
+    old = args[1]
+    args[1] = sys.argv[2]
+    p['ProgramArguments'] = args
+    with open(sys.argv[1], 'wb') as f:
+        plistlib.dump(p, f)
+    if old == sys.argv[2]:
+        print(f'  skip-correct plist: {sys.argv[1]}')
+    else:
+        print(f'  rewired plist: {sys.argv[1]}')
+else:
+    print(f'  skip: {sys.argv[1]} ProgramArguments too short', file=sys.stderr)
+    sys.exit(1)
+" "$plist_path" "$new_script"
+    else
+      current_script="$(python3 -c "
+import plistlib, sys
+with open(sys.argv[1], 'rb') as f:
+    p = plistlib.load(f)
+args = p.get('ProgramArguments', [])
+print(args[1] if len(args) >= 2 else '(none)')
+" "$plist_path")"
+      if [[ "$current_script" == "$new_script" ]]; then
+        echo "  skip-correct plist: $plist_path"
+      else
+        echo "  would rewire plist: $plist_path ($current_script -> $new_script)"
+      fi
+    fi
+  done
+
+  # --- Layout file --------------------------------------------------------
+  layout_file="$releases_parent/layout"
+  if [[ $apply -eq 1 ]]; then
+    echo "$layout_mode" > "$layout_file"
+    echo "layout: $layout_file = $layout_mode"
+  else
+    echo "(dry-run: would write $layout_file = $layout_mode)"
+  fi
+
+  echo
+  echo "Done."
+  exit 0
+fi
+
+# --- Plain install.sh respects a release layout --------------------------
+# When the layout file says 'release', plain install.sh --apply skips the
+# Claude home skill/command links (they should stay on current) and still
+# does everything else.
+releases_root="${ILK_RELEASES_ROOT:-$HOME/.ilk/releases}"
+releases_parent="$(dirname "$releases_root")"
+layout_file="$releases_parent/layout"
+if [[ -f "$layout_file" ]] && [[ "$(cat "$layout_file")" == "release" ]]; then
+  if [[ $any_only -eq 0 || $only_claude -eq 1 ]]; then
+    echo "layout is release ($layout_file); skipping Claude home skill/command links; use --layout clone to switch"
+    # Remove Claude Code skill/command targets from the plan arrays so they
+    # are not processed.  Worker homes' hooks are still installed.
+    _filtered_names=()
+    _filtered_skills=()
+    _filtered_commands=()
+    _filtered_hooks=()
+    for i in "${!TARGET_NAMES[@]}"; do
+      case "${TARGET_NAMES[$i]}" in
+        "Claude Code"*)
+          # Keep hooks target if present, skip skill/command targets.
+          ;;
+        *)
+          _filtered_names+=("${TARGET_NAMES[$i]}")
+          _filtered_skills+=("${TARGET_SKILLS[$i]}")
+          _filtered_commands+=("${TARGET_COMMANDS[$i]}")
+          ;;
+      esac
+    done
+    TARGET_NAMES=("${_filtered_names[@]+"${_filtered_names[@]}"}")
+    TARGET_SKILLS=("${_filtered_skills[@]+"${_filtered_skills[@]}"}")
+    TARGET_COMMANDS=("${_filtered_commands[@]+"${_filtered_commands[@]}"}")
+  fi
 fi
 
 # --- build plan -------------------------------------------------------------

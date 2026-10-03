@@ -161,7 +161,6 @@ def _run_install(home: Path, *args: str, check: bool = True) -> subprocess.Compl
 
 # --- AC-1: --layout release --apply rewires links and plist ---------------
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac1_layout_release_rewires_links_and_plist(tmp_path: Path) -> None:
     """AC-1: --layout release --apply rewires every skill/command link to go
     through current, rewrites the scheduler plist's script element, and
@@ -218,7 +217,6 @@ def test_ac1_layout_release_rewires_links_and_plist(tmp_path: Path) -> None:
 
 # --- AC-2: idempotent — no change on second run --------------------------
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac2_idempotent(tmp_path: Path) -> None:
     """AC-2: running --layout release --apply twice changes no link
     lstat().st_mtime_ns and no plist byte."""
@@ -257,7 +255,6 @@ def test_ac2_idempotent(tmp_path: Path) -> None:
 
 # --- AC-3: --layout clone --apply restores links and plist ----------------
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac3_layout_clone_restores(tmp_path: Path) -> None:
     """AC-3: --layout clone --apply after --layout release restores every
     link and the plist to the clone's paths; layout reads 'clone'."""
@@ -298,7 +295,6 @@ def test_ac3_layout_clone_restores(tmp_path: Path) -> None:
 
 # --- AC-4: no current ⇒ exit non-zero, change nothing --------------------
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac4_no_current_exits_nonzero(tmp_path: Path) -> None:
     """AC-4: with no 'current' symlink, --layout release --apply exits
     non-zero and changes nothing."""
@@ -328,7 +324,6 @@ def test_ac4_no_current_exits_nonzero(tmp_path: Path) -> None:
 
 # --- AC-5: --layout release without --apply changes nothing ---------------
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac5_dry_run_changes_nothing(tmp_path: Path) -> None:
     """AC-5: --layout release (no --apply) changes nothing."""
     fx = _setup_fixture(tmp_path)
@@ -358,7 +353,6 @@ def test_ac5_dry_run_changes_nothing(tmp_path: Path) -> None:
 
 # --- AC-6: plain install.sh --apply respects a release layout -------------
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac6_plain_install_respects_release_layout(tmp_path: Path) -> None:
     """AC-6: after --layout release, plain install.sh --apply leaves
     skills on 'current' (doesn't silently re-point at the clone)."""
@@ -380,7 +374,6 @@ def test_ac6_plain_install_respects_release_layout(tmp_path: Path) -> None:
 
 # --- AC-7: missing .claude-manager and plist ⇒ exit 0, create neither ----
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac7_missing_manager_and_plist(tmp_path: Path) -> None:
     """AC-7: with ~/.claude-manager and the plist absent, --layout release
     --apply exits 0 and creates neither."""
