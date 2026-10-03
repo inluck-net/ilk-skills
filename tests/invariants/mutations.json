@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "mutations": [
+    {
+      "id": "sourced-runner-refusal-removed",
+      "incident": "2026-10-02 decay (c): a pin asserted the bug (AC-3, XPASS)",
+      "rail": "get_ilk_runtime_dir refuses an empty PROJECT_PATH (548b7562)",
+      "file": "skills/ilk-loop/scripts/run_ilk_loop_claude.sh",
+      "kind": "replace",
+      "pattern": "if \\[\\[ -z \"\\$\\{PROJECT_PATH:-\\}\" \\]\\]; then",
+      "replacement": "if [[ -n \"${PROJECT_PATH:-}\" ]]; then",
+      "min_matches": 1,
+      "catcher": {
+        "argv": [
+          "python3", "-m", "pytest",
+          "skills/ilk-loop/tests/test_a_sourced_runner_writes_nothing_live.py::test_ac1_empty_project_path_refused",
+          "-q", "-p", "no:cacheprovider", "--timeout=120"
+        ],
+        "expect_in_output": ["FAILED", "test_ac1_empty_project_path_refused"]
+      }
+    }
+  ]
+}
