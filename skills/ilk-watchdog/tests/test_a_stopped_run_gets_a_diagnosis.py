@@ -133,6 +133,38 @@ def test_decide_passes_the_prompt_before_any_variadic_flag(tmp_path: Path, monke
     assert prompt_idx < argv.index("--allowedTools")
 
 
+def test_triage_home_resolution_order(tmp_path: Path, monkeypatch):
+    """Explicit --home wins, then ILK_TRIAGE_HOME, then ~/.claude-triage.
+    Never the manager home: it runs glm-5.3 by design (model-worker-framework.md:54)
+    and triage refuses worker-pattern models (2026-10-03)."""
+    from ilk_triage import resolve_triage_home
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("ILK_TRIAGE_HOME", raising=False)
+    assert resolve_triage_home(None) == tmp_path / ".claude-triage"
+    monkeypatch.setenv("ILK_TRIAGE_HOME", str(tmp_path / "env-home"))
+    assert resolve_triage_home(None) == tmp_path / "env-home"
+    assert resolve_triage_home(tmp_path / "explicit") == tmp_path / "explicit"
+
+
+def test_run_triage_escalates_when_the_triage_home_is_missing(tmp_path: Path, monkeypatch):
+    """A missing triage home is an escalation, never a fallback to another home."""
+    import ilk_triage
+
+    monkeypatch.setenv("ILK_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("ILK_TRIAGE_HOME", str(tmp_path / "no-such-home"))
+    (tmp_path / "data" / "projects" / "k" / "plans").mkdir(parents=True)
+    import triage_apply
+    monkeypatch.setattr(triage_apply, "ilk_notify", lambda **k: None)
+    calls = []
+    monkeypatch.setattr(ilk_triage, "decide", lambda *a, **k: calls.append(k) or {})
+    result = ilk_triage.run_triage(project_key="k", run_id="r")
+    assert calls == []
+    assert result.get("action") == "park-and-escalate"
+    assert result.get("reason") == "no_triage_home"
+
+
 # ── AC-3: decide returns park-and-escalate for various failures ──────────────
 
 

@@ -177,7 +177,7 @@ def decide(
     timeout_s: int = 600,
     skip_audit: bool = False,
 ) -> dict[str, Any]:
-    """Run claude -p on the manager home and parse the decision.
+    """Run claude -p on the triage home and parse the decision.
 
     Returns a dict with keys: action, slug, step, finding, basis, falsifier,
     model, reason (for park-and-escalate).
@@ -422,6 +422,38 @@ Return ONLY a JSON object, nothing else."""
 # ── run (diagnose → validate → apply) ────────────────────────────────────────
 
 
+def resolve_triage_home(home: Path | None) -> Path:
+    """The Claude home triage decides on: --home, else $ILK_TRIAGE_HOME, else
+    ~/.claude-triage.
+
+    Never the manager home: ~/.claude-manager runs glm-5.3 by design
+    (docs/architecture/model-worker-framework.md:54) and ``decide`` refuses
+    worker-pattern models, so a manager-home triage can only escalate
+    (measured 2026-10-03). The triage home is a dedicated official-provider
+    login, one per host.
+    """
+    if home:
+        return Path(home)
+    env_home = os.environ.get("ILK_TRIAGE_HOME", "").strip()
+    if env_home:
+        return Path(env_home)
+    return Path.home() / ".claude-triage"
+
+
+def _missing_home_decision(home: Path) -> dict[str, Any]:
+    """Escalate rather than fall back to some other home."""
+    return {
+        "action": "park-and-escalate",
+        "slug": None,
+        "step": None,
+        "finding": f"triage home {home} does not exist",
+        "basis": "no official-provider Claude home to decide on",
+        "falsifier": f"{home} exists with an official-provider login",
+        "model": None,
+        "reason": "no_triage_home",
+    }
+
+
 def run_triage(
     *,
     project_key: str,
@@ -439,13 +471,16 @@ def run_triage(
     data_root = ilk_data_root()
     data_dir = data_root / "projects" / project_key
 
-    # Resolve home.
-    resolved_home = home or Path.home() / ".claude-manager"
+    # Resolve home; a missing one escalates instead of falling back.
+    resolved_home = resolve_triage_home(home)
 
     # Build evidence and decide (skip the triage-decided audit row).
-    evidence = build_evidence(data_dir, run_id)
-    decision = decide(evidence, home=resolved_home, timeout_s=timeout_s,
-                      skip_audit=True)
+    if not resolved_home.is_dir():
+        decision = _missing_home_decision(resolved_home)
+    else:
+        evidence = build_evidence(data_dir, run_id)
+        decision = decide(evidence, home=resolved_home, timeout_s=timeout_s,
+                          skip_audit=True)
 
     # Validate.
     plans_dir = data_dir / "plans"
@@ -477,14 +512,14 @@ def main(argv: list[str] | None = None) -> None:
     diagnose_parser = subparsers.add_parser("diagnose", help="Diagnose a stopped run")
     diagnose_parser.add_argument("--project-key", required=True, help="Project key")
     diagnose_parser.add_argument("--run-id", required=True, help="Run ID")
-    diagnose_parser.add_argument("--home", type=Path, help="Manager home path")
+    diagnose_parser.add_argument("--home", type=Path, help="Triage home (default: $ILK_TRIAGE_HOME, else ~/.claude-triage)")
     diagnose_parser.add_argument("--dry-run", action="store_true", help="Don't write audit row")
     diagnose_parser.add_argument("--json", action="store_true", help="Output JSON only")
 
     run_parser = subparsers.add_parser("run", help="Full triage: diagnose → validate → apply")
     run_parser.add_argument("--project-key", required=True, help="Project key")
     run_parser.add_argument("--run-id", required=True, help="Run ID")
-    run_parser.add_argument("--home", type=Path, help="Manager home path")
+    run_parser.add_argument("--home", type=Path, help="Triage home (default: $ILK_TRIAGE_HOME, else ~/.claude-triage)")
     run_parser.add_argument("--timeout-s", type=int, default=600, help="Timeout for claude -p")
     run_parser.add_argument("--json", action="store_true", help="Output JSON only")
 
@@ -502,13 +537,16 @@ def main(argv: list[str] | None = None) -> None:
                 print("Triage disabled (kill switch present)", file=sys.stderr)
             sys.exit(3)
 
-        # Resolve home
-        home = args.home or Path.home() / ".claude-manager"
+        # Resolve home; a missing one escalates instead of falling back.
+        home = resolve_triage_home(args.home)
 
         # Build evidence and decide
         start_time = time.time()
-        evidence = build_evidence(data_dir, args.run_id)
-        decision = decide(evidence, home=home)
+        if not home.is_dir():
+            decision = _missing_home_decision(home)
+        else:
+            evidence = build_evidence(data_dir, args.run_id)
+            decision = decide(evidence, home=home)
         elapsed = time.time() - start_time
 
         # Add model to decision for audit
