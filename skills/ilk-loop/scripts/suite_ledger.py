@@ -413,6 +413,232 @@ def lookup(project: Path, tree: str,
     return entry
 
 
+# ── Owner resolution ──────────────────────────────────────────────────────────
+
+
+def _read_points(project: Path) -> list[dict]:
+    """Return all rows from ``points.jsonl``."""
+    ld = ledger_dir(project)
+    points_path = ld / "points.jsonl"
+    if not points_path.is_file():
+        return []
+    rows: list[dict] = []
+    for line in points_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return rows
+
+
+def _is_ancestor(project: Path, ancestor: str, descendant: str) -> bool:
+    """Return True if *ancestor* is an ancestor of *descendant*."""
+    r = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        cwd=project, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=30,
+    )
+    return r.returncode == 0
+
+
+def _rev_list_count(project: Path, base: str, tip: str) -> int:
+    """Return the number of commits in ``<base>..<tip>``."""
+    out = _git(project, "rev-list", "--count", f"{base}..{tip}")
+    if out is None:
+        return 0
+    try:
+        return int(out)
+    except ValueError:
+        return 0
+
+
+def owner_of(project: Path, node_id: str, *,
+             base_sha: str, head_sha: str) -> dict:
+    """Determine which sub-plan owns a failing *node_id*.
+
+    Returns ``{"slug": str|None, "sha": str|None, "how": "point"|"bisect"|"unknown"}``.
+
+    The algorithm:
+    1. Collect ``points.jsonl`` rows whose ``after`` is an ancestor of
+       *head_sha* and not an ancestor of *base_sha*, ordered by ancestry.
+    2. Walk the rows that have a ledger entry; find ``last_green`` (latest
+       whose entry lacks *node_id*) and ``first_red`` (first after it whose
+       entry has it).
+    3. If every commit in the interval lies in one slug's ``before..after``
+       range, the owner is that slug (``how: point``).
+    4. Otherwise bisect the interval's first-parent commits (``how: bisect``).
+    5. A commit in no row's range, or a bisect that cannot run, gives
+       ``slug: None, how: unknown``.
+    """
+    all_points = _read_points(project)
+    invocation = None
+    try:
+        invocation = _resolve_invocation(project)
+    except LedgerNotConfigured:
+        pass
+
+    # Step 1: filter points in the (base_sha, head_sha] range.
+    in_range: list[dict] = []
+    for p in all_points:
+        after = p.get("after", "")
+        if not after:
+            continue
+        if after == base_sha:
+            continue
+        if not _is_ancestor(project, after, head_sha):
+            continue
+        if _is_ancestor(project, base_sha, after) and after != base_sha:
+            in_range.append(p)
+
+    # Order by ancestry (number of commits from base).
+    in_range.sort(key=lambda p: _rev_list_count(project, base_sha, p["after"]))
+
+    if not in_range:
+        return {"slug": None, "sha": None, "how": "unknown"}
+
+    # Step 2: determine the starting state (base tree).
+    base_tree = _git(project, "rev-parse", f"{base_sha}^{{tree}}")
+    base_entry = lookup(project, base_tree, invocation) if base_tree else None
+    if base_entry is None:
+        # No base entry — we don't know if the id was green at the base.
+        # Treat as unknown start; walk from the first point.
+        last_green_idx = -1
+    else:
+        # Green at base if the id is NOT in the base's failing set.
+        base_failing = set(base_entry.get("failing_nodes", []))
+        if node_id in base_failing:
+            # Already red at base — no owner within the range.
+            return {"slug": None, "sha": None, "how": "unknown"}
+        last_green_idx = -1  # base is green
+
+    # Walk points to find last_green and first_red.
+    first_red: dict | None = None
+    last_green: dict | None = None
+    for i, p in enumerate(in_range):
+        tree = _git(project, "rev-parse", f"{p['after']}^{{tree}}")
+        if not tree:
+            continue
+        entry = lookup(project, tree, invocation)
+        if entry is None:
+            # No ledger entry for this point — skip it.
+            continue
+        failing = set(entry.get("failing_nodes", []))
+        if node_id in failing:
+            first_red = p
+            first_red_idx = i
+            break
+        else:
+            last_green = p
+            last_green_idx = i
+
+    if first_red is None:
+        # The id is green at every ledgered point — no owner.
+        return {"slug": None, "sha": None, "how": "unknown"}
+
+    # Step 3: check if every commit in the interval belongs to one slug.
+    interval_start = last_green["after"] if last_green else base_sha
+    interval_end = first_red["after"]
+
+    # Collect all points whose before..after range overlaps the interval.
+    covering_slugs: set[str] = set()
+    all_covered = True
+    first_parent_commits = _git(
+        project, "rev-list", "--first-parent",
+        f"{interval_start}..{interval_end}")
+    if first_parent_commits is None:
+        all_covered = False
+        commit_list = []
+    else:
+        commit_list = [
+            c for c in first_parent_commits.splitlines() if c.strip()
+        ]
+
+    if commit_list:
+        for commit in commit_list:
+            # Find a point whose before..after range contains this commit.
+            found = False
+            for p in in_range:
+                before = p.get("before", "")
+                after = p.get("after", "")
+                if not before or not after:
+                    continue
+                # commit is in (before, after] if before is ancestor of commit
+                # and commit is ancestor of after.
+                if (_is_ancestor(project, before, commit) and
+                        _is_ancestor(project, commit, after)):
+                    covering_slugs.add(p.get("slug", ""))
+                    found = True
+                    break
+            if not found:
+                all_covered = False
+                break
+
+    if all_covered and len(covering_slugs) == 1:
+        slug = covering_slugs.pop()
+        return {"slug": slug, "sha": first_red["after"], "how": "point"}
+
+    # Step 4: bisect the interval's first-parent commits.
+    if not commit_list:
+        return {"slug": None, "sha": None, "how": "unknown"}
+
+    # Try to run ids-only tests in a shared-clone snapshot.
+    try:
+        snap_dir = tempfile.mkdtemp(prefix="ilk-owner-bisect-")
+        root = ledger_root(project)
+        subprocess.run(
+            ["git", "clone", "--shared", "--no-checkout", str(root), snap_dir],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            check=True, timeout=60,
+        )
+        snap_path = Path(snap_dir)
+
+        # Resolve invocation for ids-only run.
+        if invocation is None:
+            return {"slug": None, "sha": None, "how": "unknown"}
+
+        # Bisect: find the first commit where the test fails.
+        first_red_commit = None
+        for commit in commit_list:
+            subprocess.run(
+                ["git", "-C", snap_dir, "checkout", "--detach", commit],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", check=True, timeout=60,
+            )
+            # Run ids-only (just the failing node).
+            ids_invocation = f"{invocation} {node_id}"
+            rc, stdout, stderr, timed_out = _bounded_run(
+                ids_invocation, shell=True, cwd=snap_dir, timeout=120,
+            )
+            if rc != 0 and not timed_out:
+                first_red_commit = commit
+                break
+
+        if first_red_commit is None:
+            return {"slug": None, "sha": None, "how": "unknown"}
+
+        # Find which point's range contains the first red commit.
+        for p in in_range:
+            before = p.get("before", "")
+            after = p.get("after", "")
+            if not before or not after:
+                continue
+            if (_is_ancestor(project, before, first_red_commit) and
+                    _is_ancestor(project, first_red_commit, after)):
+                return {"slug": p.get("slug"), "sha": first_red_commit,
+                        "how": "bisect"}
+
+        return {"slug": None, "sha": first_red_commit, "how": "unknown"}
+
+    except (OSError, subprocess.SubprocessError, TimeoutError):
+        return {"slug": None, "sha": None, "how": "unknown"}
+    finally:
+        import shutil
+        shutil.rmtree(snap_dir, ignore_errors=True)
+
+
 # ── Spawn / wait ──────────────────────────────────────────────────────────────
 
 

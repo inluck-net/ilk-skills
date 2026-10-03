@@ -158,7 +158,6 @@ def _tree_of(repo: Path, sha: str) -> str:
 # ── AC-1: cross-batch — foreign owner is detected by point ───────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: owner_of not yet implemented")
 class TestAC1CrossBatchForeignOwner:
     """AC-1: base green; point A (foreign-x, not in registry) makes T fail;
     point B (ours-y, in registry) changes unrelated file; HEAD = B.
@@ -206,7 +205,6 @@ class TestAC1CrossBatchForeignOwner:
 # ── AC-2: in-batch — own plan makes T fail ──────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: owner_of not yet implemented")
 class TestAC2InBatchOwnOwner:
     """AC-2: same as AC-1 but B makes T fail.  T stays attributed and
     ``## Owners`` names ``ours-y``."""
@@ -256,7 +254,6 @@ class TestAC2InBatchOwnOwner:
 # ── AC-3: gap — bisect finds the owner ──────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: owner_of not yet implemented")
 class TestAC3GapBisect:
     """AC-3: two rows between green and red (slugs p then q), only q
     ledgered; q's commit made T fail ⇒ owner q, how: bisect."""
@@ -299,7 +296,6 @@ class TestAC3GapBisect:
 # ── AC-4: hand commit — no owner ────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="red-first: owner_of not yet implemented")
 class TestAC4HandCommit:
     """AC-4: T is made red by a commit in no row's range ⇒ how: unknown,
     T attributed."""
@@ -338,7 +334,6 @@ class TestAC5DeriveAttributedOwnedBy:
     attributed in 3-column and 5-column rows, and raises on
     ``owned-by:@abc1234`` and ``owned-by:x``."""
 
-    @pytest.mark.xfail(strict=True, reason="red-first: owned-by: not yet a legal at-base value")
     def test_owned_by_not_attributed_3col(self) -> None:
         """3-column: owned-by:<slug>@<hex> is not attributed."""
         rows = [["t1", "owned-by:foreign-x@abc1234", "no"]]
@@ -346,7 +341,6 @@ class TestAC5DeriveAttributedOwnedBy:
         assert bad == []
         assert flaky == []
 
-    @pytest.mark.xfail(strict=True, reason="red-first: owned-by: not yet a legal at-base value")
     def test_owned_by_not_attributed_5col(self) -> None:
         """5-column: owned-by:<slug>@<hex> is not attributed."""
         rows = [["t1", "owned-by:foreign-x@abc1234", "no", "3/3", "yes"]]

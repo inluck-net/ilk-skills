@@ -261,6 +261,32 @@ _AT_BASE_OK = {"passed", "failed", "absent-at-base", "failed-differently",
                "declared-at-base", "born-red-at"}
 
 
+def _validate_owned_by(at_base: str, node: str) -> None:
+    """Validate ``owned-by:<slug>@<hex>`` format.
+
+    Raises ``VerificationError`` when the slug is empty or ``@<hex>`` is
+    missing.  A cell the checker cannot parse is not an exoneration.
+    """
+    # owned-by:<slug>@<hex>
+    payload = at_base[len("owned-by:"):]
+    if "@" not in payload:
+        raise VerificationError(
+            f"malformed `owned-by:` cell for {node}: missing @<hex> in "
+            f"{at_base!r}.  An owned-by cell must carry the owning commit."
+        )
+    slug, _, sha = payload.partition("@")
+    if not slug:
+        raise VerificationError(
+            f"malformed `owned-by:` cell for {node}: empty slug in "
+            f"{at_base!r}.  An owned-by cell must name the owning sub-plan."
+        )
+    if not sha:
+        raise VerificationError(
+            f"malformed `owned-by:` cell for {node}: empty commit sha in "
+            f"{at_base!r}.  An owned-by cell must carry the owning commit."
+        )
+
+
 def is_signed(text: str) -> bool:
     """Was this record written by the tool, or typed by a worker?
 
@@ -306,12 +332,16 @@ def derive_attributed(rows: list[list[str]]) -> tuple[list[list[str]], list[str]
                 f"(node id | at base | in baseline_red): {r}"
             )
         node, at_base, in_red = r[0], r[1].strip().lower(), r[2].strip().lower()
-        if at_base not in _AT_BASE_OK and not at_base.startswith("born-red-at:"):
+        if at_base not in _AT_BASE_OK and not at_base.startswith("born-red-at:") \
+                and not at_base.startswith("owned-by:"):
             raise VerificationError(
                 f"unrecognised `at base` value {r[1]!r} for {node}. Legal "
                 f"values are {sorted(_AT_BASE_OK)}. A cell the checker cannot "
                 f"read is not an exoneration — re-run the at-base rerun."
             )
+        # Validate owned-by: format — must have non-empty slug and @<hex>.
+        if at_base.startswith("owned-by:"):
+            _validate_owned_by(at_base, node)
         if in_red not in {"yes", "added", "no"}:
             raise VerificationError(
                 f"unrecognised `in baseline_red` value {r[2]!r} for {node}; "
@@ -357,10 +387,13 @@ def derive_attributed(rows: list[list[str]]) -> tuple[list[list[str]], list[str]
                 )
             else:
                 batch_touched = touched_str == "yes"
-            # Pre-existing: failed, declared-at-base, or born-red-at at base.
-            if at_base in ("failed",) or at_base.startswith("born-red-at:"):
+            # Pre-existing: failed, declared-at-base, born-red-at, or owned-by
+            # (foreign owner) at base.
+            if at_base in ("failed",) or at_base.startswith("born-red-at:") \
+                    or at_base.startswith("owned-by:"):
                 # failed at base ⇒ not attributed (pre-existing).
                 # born-red-at ⇒ already red when the test was added by another plan.
+                # owned-by ⇒ a foreign sub-plan owns this red; not this batch's fault.
                 continue
             # at_base is passed, absent-at-base, or failed-differently.
             if red_count == K:

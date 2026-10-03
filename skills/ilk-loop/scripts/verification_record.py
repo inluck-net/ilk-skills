@@ -1348,7 +1348,8 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   head_source: str | None = None,
                   base_source: str | None = None,
                   ledger_wait_sec: int | None = None,
-                  record_elapsed_sec: int | None = None) -> str:
+                  record_elapsed_sec: int | None = None,
+                  owners: dict[str, dict] | None = None) -> str:
     """Render the complete record.  Measurements only — no verdict column.
 
     The ``attributed`` column is deliberately absent.  It was the cell that
@@ -1489,6 +1490,17 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
         lines += ["## Flaky (owed)", ""]
         for nid in flaky_owed:
             lines.append(f"- {nid}")
+        lines.append("")
+    if owners:
+        lines += ["## Owners", ""]
+        lines += ["| node id | owner | commit | how |",
+                  "|---|---|---|---|"]
+        for nid, info in owners.items():
+            slug = info.get("slug", "—") or "—"
+            sha = info.get("sha", "—") or "—"
+            how = info.get("how", "unknown") or "unknown"
+            sha_short = sha[:12] if sha and sha != "—" else "—"
+            lines.append(f"| {nid} | {slug} | {sha_short} | {how} |")
         lines.append("")
     if failed_at_base:
         lines += ["## Failed at base, not in baseline_red", ""]
@@ -1960,6 +1972,35 @@ def _write_measured_record(project: Path, record: Path, args,
                 # Continue without adding-commit classification — the record
                 # is still valid with plain absent-at-base verdicts.
 
+    # Owner resolution: for ids whose at-base verdict is passed or
+    # absent-at-base, determine which sub-plan owns the red.  A foreign
+    # owner (not in registry_slugs) gets an owned-by: cell and is excluded
+    # from head reruns.
+    owners: dict[str, dict] = {}
+    owned_by_ids: list[str] = []
+    if registry_slugs:
+        import suite_ledger
+        owner_candidates = [nid for nid, v in at_base.items()
+                            if v in ("passed", "absent-at-base")]
+        for nid in owner_candidates:
+            try:
+                result = suite_ledger.owner_of(
+                    project, nid,
+                    base_sha=args.base_sha, head_sha=head,
+                )
+            except Exception as exc:
+                print(f"WARNING: owner_of failed for {nid}: {exc}",
+                      file=sys.stderr)
+                result = {"slug": None, "sha": None, "how": "unknown"}
+            owners[nid] = result
+            slug = result.get("slug")
+            sha = result.get("sha")
+            how = result.get("how", "unknown")
+            if slug and slug not in registry_slugs and sha:
+                # Foreign owner — mark as owned-by and exclude from reruns.
+                at_base[nid] = f"owned-by:{slug}@{sha[:12]}"
+                owned_by_ids.append(nid)
+
     # Run HEAD reruns for non-declared failing nodes to classify flaky tests.
     # Declared-at-base rows (already in baseline_red) get — in head reruns
     # and batch touched file — no subprocess is spawned for them.
@@ -1967,7 +2008,8 @@ def _write_measured_record(project: Path, record: Path, args,
     # and reruns cannot change it (classify_flaky returns pre-existing
     # for at_base == "failed" before reading rerun counts).
     non_declared = [nid for nid, v in at_base.items()
-                    if v not in ("declared-at-base", "failed")]
+                    if v not in ("declared-at-base", "failed")
+                    and nid not in owned_by_ids]
     declared = [nid for nid, v in at_base.items()
                 if v == "declared-at-base"]
     failed_at_base_ids = [nid for nid, v in at_base.items()
@@ -1975,11 +2017,13 @@ def _write_measured_record(project: Path, record: Path, args,
     head_reruns: dict[str, int] = {}
     batch_touched: dict[str, bool] = {}
     flaky_owed: list[str] = []
-    # Mark declared and red-at-base rows with — (no rerun).
+    # Mark declared, red-at-base, and owned-by rows with — (no rerun).
     declared_reruns: dict[str, str] = {nid: "—" for nid in declared}
     declared_touched: dict[str, str] = {nid: "—" for nid in declared}
     failed_reruns: dict[str, str] = {nid: "—" for nid in failed_at_base_ids}
     failed_touched: dict[str, str] = {nid: "—" for nid in failed_at_base_ids}
+    owned_reruns: dict[str, str] = {nid: "—" for nid in owned_by_ids}
+    owned_touched: dict[str, str] = {nid: "—" for nid in owned_by_ids}
     if non_declared:
         try:
             head_reruns = run_head_reruns(project, non_declared, invocation)
@@ -2007,8 +2051,10 @@ def _write_measured_record(project: Path, record: Path, args,
 
     # Merge declared-row markers (—) into the reruns/touched dicts so
     # render_record shows — for already-classified rows.
-    all_reruns: dict = {**head_reruns, **declared_reruns, **failed_reruns}
-    all_touched: dict = {**batch_touched, **declared_touched, **failed_touched}
+    all_reruns: dict = {**head_reruns, **declared_reruns, **failed_reruns,
+                        **owned_reruns}
+    all_touched: dict = {**batch_touched, **declared_touched, **failed_touched,
+                         **owned_touched}
 
     # Suggest baseline_red entries for ids that failed at base but are not
     # already in baseline_red.  The script never edits .ilk-launch.json.
@@ -2050,6 +2096,7 @@ def _write_measured_record(project: Path, record: Path, args,
         base_source=base_source,
         ledger_wait_sec=ledger_wait_sec if ledger_wait_sec else None,
         record_elapsed_sec=record_elapsed_sec,
+        owners=owners or None,
     )
     # Inject attempt header after the batch line.
     record_text = record_text.replace(
