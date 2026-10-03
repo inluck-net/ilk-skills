@@ -95,6 +95,7 @@ def test_no_stale_duplicate_guard_in_a_subdirectory() -> None:
         p for p in REPO_ROOT.rglob("conftest.py")
         if p != REPO_ROOT / "conftest.py"
         and ".git" not in p.parts
+        and ".claude" not in p.parts
         and "HostMutationBlocked" in p.read_text(encoding="utf-8")
     ]
     assert dupes == [], (

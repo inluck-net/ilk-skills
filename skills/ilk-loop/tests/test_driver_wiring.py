@@ -442,17 +442,29 @@ class TestShipGapWiring:
 
 class TestGateDiscoveryNotConditionalOnCommits:
     def _guard_line(self) -> str:
+        """Return the RUN_LOCAL_CHECKS guard condition as ``if [[ ... ]]; then``.
+
+        The guard may be an ``elif`` in the driver (preceded by a skip guard
+        for interrupted iterations).  We normalise it to ``if [[`` so the
+        caller can evaluate it directly.
+        """
         lines = _DRIVER.read_text(encoding="utf-8", errors="replace").splitlines()
         for i, line in enumerate(lines):
             if "Optional local_checks" in line:
-                # the guard is the next `if [[` at or below this marker
-                # Window is generous: the guard carries a rationale comment
-                # above it, and a too-narrow scan silently finds the WRONG
-                # `if` further down, which fails for the wrong reason.
+                # Find the RUN_LOCAL_CHECKS guard, not the _should_gate_iteration
+                # skip guard that precedes it.  The skip guard is about interrupted
+                # iterations; the RUN_LOCAL_CHECKS guard is the operator switch.
+                # It may be an `elif` if the skip guard is an `if`.
                 for cand in lines[i : i + 25]:
-                    if cand.strip().startswith("if [["):
-                        return cand.strip()
-        raise AssertionError("could not locate the local_checks guard in the driver")
+                    stripped = cand.strip()
+                    if "RUN_LOCAL_CHECKS" in cand and (
+                        stripped.startswith("if [[") or stripped.startswith("elif [[")
+                    ):
+                        # Normalise to `if [[` so callers can evaluate it.
+                        if stripped.startswith("elif [["):
+                            return "if " + stripped[len("elif ") :]
+                        return stripped
+        raise AssertionError("could not locate the RUN_LOCAL_CHECKS guard in the driver")
 
     def test_guard_does_not_depend_on_total_new(self) -> None:
         guard = self._guard_line()

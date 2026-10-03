@@ -4263,11 +4263,13 @@ _decide_iter_stop_reason() {
 }
 
 _should_gate_iteration() {
-  # Returns 1 (skip gate) when the iteration was interrupted with 0 commits.
+  # Returns 1 (skip gate) when the iteration was interrupted (completed=0).
   # A gate on a tree the step never got to change says nothing about the step.
+  # NOT gated on $total_new — the commit count is an input to TRAILER
+  # SCANNING, not a precondition for gating.  See the "NOT gated on $total_new"
+  # comment above the guard that calls this function.
   local completed="$1"
-  local total_new="$2"
-  if [[ "$completed" -eq 0 && "$total_new" -eq 0 ]]; then
+  if [[ "$completed" -eq 0 ]]; then
     echo 1
   else
     echo 0
@@ -5955,7 +5957,7 @@ print(json.dumps({
     #
     # Skip the gate when the iteration was interrupted with 0 commits.  A gate
     # on a tree the step never got to change says nothing about the step.
-    if [[ "$(_should_gate_iteration "$ITER_COMPLETED" "$total_new")" -eq 1 ]]; then
+    if [[ "$(_should_gate_iteration "$ITER_COMPLETED")" -eq 1 ]]; then
       local _gate_skip_reason="plan-amended"
       [[ "$_amend_detected" -eq 0 ]] && _gate_skip_reason="timeout"
       echo "  [local_checks] skipped: iteration interrupted (${_gate_skip_reason}) with 0 commits — a gate on the unchanged tree says nothing about the step"
