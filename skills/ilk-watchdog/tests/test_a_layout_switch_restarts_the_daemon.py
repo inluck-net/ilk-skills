@@ -238,7 +238,6 @@ class TestPidPathDiffersIsStale:
     /home/.ilk/current/…/scheduler.sh → --check prints stale and names
     both paths."""
 
-    @pytest.mark.xfail(strict=True, reason="pid path check not yet implemented")
     def test_check_reports_stale_with_both_paths(self, tmp_path: Path) -> None:
         pid = 12345
         result = _run_bounce(
@@ -264,7 +263,6 @@ class TestInstallLayoutBounces:
     """AC-2: install.sh --layout release --apply with a fake plist and
     a fake launchctl invokes bootout + bootstrap exactly once."""
 
-    @pytest.mark.xfail(strict=True, reason="install.sh --layout --apply does not yet bounce")
     def test_apply_bounces_once(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
         home.mkdir(exist_ok=True)

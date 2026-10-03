@@ -325,6 +325,38 @@ for name in $NAMES; do
     continue
   fi
 
+  # Path-aware freshness: even if toolkit_head matches, check that the
+  # daemon's command line matches the plist's script path.  A layout switch
+  # changes the plist without changing the sha, so a stale daemon would
+  # otherwise appear fresh.
+  if [[ "$stale" -eq 0 ]]; then
+    plist_script=$(python3 -c "
+import plistlib, sys
+with open(sys.argv[1], 'rb') as f:
+    p = plistlib.load(f)
+args = p.get('ProgramArguments', [])
+print(args[1] if len(args) >= 2 else '')
+" "$plist" 2>/dev/null || echo "")
+
+    # Read the recorded pid from the state file.
+    recorded_pid=""
+    if grep -q '"pid"' "$STATE_FILE" 2>/dev/null; then
+      recorded_pid=$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' "$STATE_FILE")
+    fi
+
+    pid_alive=0
+    pid_cmd=""
+    if [[ -n "$recorded_pid" ]] && ps -p "$recorded_pid" >/dev/null 2>&1; then
+      pid_alive=1
+      pid_cmd=$(ps -o command= -p "$recorded_pid" 2>/dev/null || echo "")
+    fi
+
+    if [[ -n "$plist_script" && "$pid_alive" -eq 1 && "$pid_cmd" != *"$plist_script"* ]]; then
+      stale=1
+      reason="stale (daemon runs '$pid_cmd', plist names '$plist_script')"
+    fi
+  fi
+
   if [[ "$stale" -eq 0 ]]; then
     echo "fresh: $name — $reason"
     i=$((i + 1))

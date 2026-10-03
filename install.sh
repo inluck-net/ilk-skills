@@ -863,6 +863,16 @@ else:
     print(f'  skip: {sys.argv[1]} ProgramArguments too short', file=sys.stderr)
     sys.exit(1)
 " "$plist_path" "$new_script"
+      # Bounce the daemon after rewiring so it runs from the new path.
+      # The bouncer is called from the repo root (not the release path)
+      # so it works in tests and when the release dir doesn't have the script.
+      if [[ "$plist_name" == "net.inluck.ilk.scheduler" ]]; then
+        bounce_daemon_script="$REPO_ROOT/skills/ilk-watchdog/scripts/bounce_daemons.sh"
+        if [[ -x "$bounce_daemon_script" ]]; then
+          echo "  bouncing daemon: $bounce_daemon_script"
+          "$bounce_daemon_script" || true
+        fi
+      fi
     else
       current_script="$(python3 -c "
 import plistlib, sys
