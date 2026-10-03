@@ -786,6 +786,82 @@ lease below exists, the RSI host is chad-mbp (D5).
   rule-retirement audit, because it deletes several L1 items instead of
   fixing them.
 
+## Verification cadence: scoped per batch, full per release (proposal, 2026-10-03)
+
+Chad asked (2026-10-03) whether every unattended batch should carry a full
+verification sub-plan, given what it costs, or whether verification should
+run after a few batches or after a fixed number of fixes.
+
+### What the per-batch full verify bought on one day (2026-10-03)
+
+| batch | verify result | what actually caught the batch's own red |
+|---|---|---|
+| ilk-skills I2 (10-02c) | caught 9 attributed reds and a HOME leak (45 reds) | the verify |
+| ilk-skills R1 (10-02d) | **excused** its regression as "failed at base" (R3 21) | release Phase 1: node-id diff against the v0.9.138 baseline |
+| gh-resolve G4 (10-02f) | **excused** its red-first pin as born-red (R3 22, fixed db3d3d6) | gh-resolve-87's own full run |
+
+- That is 1 catch in 3. The per-release check caught both misses.
+- Cost: the suite alone is ~1160 s on chad-mbp (I2 verify, `suite_duration_sec`).
+  A verify iteration was 1243-1301 s, and I2's stuck rounds were ~35 min.
+- gh-resolve runs 7453 tests in 383 s with `-n 8 --dist loadfile`.
+  ilk-skills runs serially.
+- The misses were not about cadence. They were verifier defects (R3 21,
+  R3 22). A verify that can excuse its own batch is no safer when it runs
+  more often.
+
+### Proposal
+
+1. **Per batch: a cheap, change-scoped verify.** Run the batch diff plus the
+   tests of every importer of a changed module (the v0.9.100 scope; batches
+   have been forcing `--scope full`). It keeps the at-base attribution and
+   the rule that a batch cannot excuse itself.
+   - Also: each sub-plan's LAST gate covers its changed module's importers'
+     tests. R1 row 0's gate skipped `test_a_worker_cannot_change_master_state.py`,
+     which is the regression that got through. plan_lint's shared-module
+     lint already names the missing files; treat it as must-fix for the
+     last step.
+2. **Per release: one full suite with attribution.** Run it before any tag,
+   push or second-host deploy, covering every batch merged since the last
+   tag. Compare against the last tag's stored baseline by node id (Phase 1).
+   - Trigger on risk, not on a defect count: N merged batches, OR any
+     contract-governed file touched, OR a push or deploy pending.
+   - A defect count is a poor trigger: one "fix" can be a one-line test
+     fixture or a driver contract change (1002eb5).
+3. **Precondition: the release-dir migration (D6/D8) comes first.** On the
+   clone layout a merge IS a deploy: every live loop on the host runs the
+   merged code at its next start. Deferring the full check would run
+   unverified code fleet-wide. Today's hook-env leak and HOME leak reddened
+   gh-resolve's gates too. Under release dirs a merge is not a deploy, so
+   the full check belongs to the release train (section 3 above, step 2).
+4. **The cheaper lever, independent of cadence: parallelise the suite.**
+   Measure whether ilk-skills is xdist-safe. If it is, ~19 min becomes about
+   5, and most of the cadence question goes away. Measure this first.
+
+### Does this apply to other projects? (Chad, 2026-10-03)
+
+**Not as-is.** The cadence argument depends on what a merge MEANS in each
+project:
+
+| kind | examples | is a merge a deploy? | where the full check belongs |
+|---|---|---|---|
+| self-hosting toolkit | ilk-skills, gh-resolve (it runs from its own checkout) | yes, until release dirs | per batch now; per release after the migration |
+| consumer product with CI | kira-cloudflare | no: CI and the project's own release pipeline gate the deploy | per-batch SCOPED verify; the full suite is the project's CI or release gate |
+| consumer with no CI or release gate | small repos | no deploy, but nothing else runs the full suite | keep the per-batch full verify: it is the only full check |
+
+Two cautions for consumer projects:
+
+- **CI is not attribution.** CI says red or green. It doesn't rerun at
+  base, so a pre-existing red and a batch-caused red look identical. If CI
+  is the full check, the batch verify (scoped) still owns attribution for
+  what it covers, and a CI red on files outside that scope needs the
+  at-base rerun before anyone calls it pre-existing.
+- **Make it per-project configuration, not a toolkit default.** Proposed:
+  `.ilk-launch.json` `ship.verify_cadence: batch | release` and
+  `ship.full_suite_gate: batch | release | ci`. The default stays `batch`.
+  The planner writes a scoped verify sub-plan when the project declares
+  another full gate. A project that declares `ci` must name the CI check,
+  and the verify reads its result rather than trusting the claim.
+
 ## Decisions (Chad, 2026-10-02)
 
 - **D1.** Improvement is continuous small builds, separate from
@@ -829,6 +905,15 @@ lease below exists, the RSI host is chad-mbp (D5).
   - Judgment call: wrong if v0.9.138's deploy hits a merge-hold or yield
     stall that R1 would have avoided. Then move R1 ahead of the next
     release, not v0.9.138.
+
+- **D9 (PROPOSED by the ilk-skills owner session 2026-10-03; Chad asked for it
+  to be written into the design, and has not decided it).** Verification
+  cadence, as in "Verification cadence" above:
+  - a scoped verify per batch;
+  - a full suite plus attribution per release;
+  - only after the release-dir migration, and measure a parallel suite
+    first;
+  - per-project configuration, not a toolkit default.
 
 ## Open questions for Chad
 
