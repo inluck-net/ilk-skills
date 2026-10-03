@@ -657,6 +657,26 @@ AT_BASE_CAP = 50
 # reads 3/3; then raise K, which is a single module constant.
 FLAKY_RERUN_COUNT = 3
 
+# ── Env pinning for at-base / adding-commit reruns ──────────────────────────
+
+_ENV_MARKER = "base-pinned-v1"
+
+
+def _base_env(worktree: Path) -> dict:
+    """Build a subprocess environment pinned to *worktree*'s skills.
+
+    The at-base and adding-commit reruns must execute the BASE tree's code,
+    not the live clone's.  ``ILK_SKILL_HOME`` is set to ``<worktree>/skills``
+    so that any script resolved through it lands in the base copy.  The
+    runner's hook env vars are removed so the base test does not inherit
+    dispatch markers from the live driver.
+    """
+    env = os.environ.copy()
+    env["ILK_SKILL_HOME"] = str(worktree / "skills")
+    env.pop("ILK_SHIPPED_MARKER", None)
+    env.pop("ILK_ITERATION_SUBPLAN", None)
+    return env
+
 
 def run_at_base(project: Path, base_sha: str, node_ids: list[str],
                 invocation: str, timeout: int = 600,
@@ -714,7 +734,8 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
         if cache_path.is_file():
             cache_data = json.loads(cache_path.read_text(encoding="utf-8"))
             stripped_inv = re.sub(r"\s-n\s+\S+|\s--dist\s+\S+", "", invocation)
-            if cache_data.get("invocation") == stripped_inv:
+            if (cache_data.get("invocation") == stripped_inv
+                    and cache_data.get("env") == _ENV_MARKER):
                 cache_verdicts = cache_data.get("verdicts", {})
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         cache_verdicts = {}
@@ -744,9 +765,11 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
         # Strip any -n/--dist xdist flags: one node id per process is slower
         # under xdist, not faster, and the selection is tiny by construction.
         runner = re.sub(r"\s-n\s+\S+|\s--dist\s+\S+", "", invocation)
+        env = _base_env(wt)
         for nid in node_ids:
             rc, stdout, stderr, timed_out = _bounded_run(
                 f"{runner} {nid}", shell=True, cwd=str(wt), timeout=timeout,
+                env=env,
             )
             if timed_out:
                 # A timed-out at-base run is treated as a failure (not absent).
@@ -805,7 +828,8 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
         if cache_path.is_file():
             try:
                 ed = json.loads(cache_path.read_text(encoding="utf-8"))
-                if ed.get("invocation") == stripped_inv:
+                if (ed.get("invocation") == stripped_inv
+                        and ed.get("env") == _ENV_MARKER):
                     existing = ed.get("verdicts", {})
             except (OSError, json.JSONDecodeError):
                 pass
@@ -813,7 +837,8 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
             if v in _CACHEABLE:
                 existing[nid] = v
         cache_path.write_text(
-            json.dumps({"invocation": stripped_inv, "verdicts": existing},
+            json.dumps({"invocation": stripped_inv, "env": _ENV_MARKER,
+                        "verdicts": existing},
                        sort_keys=True, indent=2) + "\n",
             encoding="utf-8")
     except (FileNotFoundError, OSError):
@@ -952,11 +977,13 @@ def run_at_adding_commit(
                 for nid in nids:
                     verdicts[nid] = "absent-at-base"
                 continue
+            env = _base_env(wt)
             for nid in nids:
                 r = subprocess.run(
                     f"{runner} {nid}", shell=True, cwd=wt,
                     capture_output=True, text=True,
-                    encoding="utf-8", errors="replace", timeout=timeout)
+                    encoding="utf-8", errors="replace", timeout=timeout,
+                    env=env)
                 blob = (r.stdout or "") + (r.stderr or "")
                 if _is_vitest(runner):
                     if r.returncode == 0:

@@ -101,7 +101,6 @@ def _make_two_commit_repo(tmp: Path, base_label: str, head_label: str) -> Path:
 
 # ── AC-1: run_at_base uses base skills, not the parent's ILK_SKILL_HOME ────
 
-@pytest.mark.xfail(strict=True, reason="red-first: run_at_base inherits ILK_SKILL_HOME before fix")
 def test_run_at_base_uses_base_skills_not_parent_env(tmp_path: Path) -> None:
     repo = _make_two_commit_repo(tmp_path, base_label="base", head_label="head")
     base_sha = _git(repo, "rev-parse", "HEAD~1")
@@ -136,7 +135,6 @@ def test_run_at_base_uses_base_skills_not_parent_env(tmp_path: Path) -> None:
 
 # ── AC-2: run_at_adding_commit uses the adding-commit's skills ─────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: run_at_adding_commit inherits ILK_SKILL_HOME before fix")
 def test_run_at_adding_commit_uses_adding_commit_skills(tmp_path: Path) -> None:
     """Same as AC-1 but for the adding-commit rerun.
 
@@ -217,7 +215,6 @@ def test_run_at_adding_commit_uses_adding_commit_skills(tmp_path: Path) -> None:
 
 # ── AC-3: cache without env marker is not reused ────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first: cache without env marker is reused before fix")
 def test_cache_without_env_marker_is_not_reused(tmp_path: Path) -> None:
     repo = _make_two_commit_repo(tmp_path, base_label="base", head_label="head")
     base_sha = _git(repo, "rev-parse", "HEAD~1")
