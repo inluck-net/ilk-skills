@@ -1,7 +1,6 @@
-"""Red-first pins: a worker cannot write the batch-gate record.
+"""A worker cannot write the batch-gate record.
 
-Part of `a-worker-cannot-write-the-batch-gate-record` step 0.
-Tests marked ``xfail(strict=True)`` are red-first pins that step 1 removes.
+Part of `a-worker-cannot-write-the-batch-gate-record`.
 
 Drives ``batch_gate.py`` and ``verify_attribution.py`` in a temp git repo.
 HOME and ILK_DATA_HOME are pinned together so nothing reads the real
@@ -27,7 +26,6 @@ import json
 import os
 import subprocess
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -82,7 +80,6 @@ def _make_record() -> batch_gate.BatchGateRecord:
 # ── AC-1: batch_gate.py --run refuses in a worker session ───────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="batch_gate.py has no ILK_WORKER_SESSION guard yet")
 def test_batch_gate_run_refuses_in_worker_session(tmp_path: Path, monkeypatch) -> None:
     """With ILK_WORKER_SESSION=1, batch_gate.py --run exits 1 and writes nothing."""
     repo = _make_repo(tmp_path)
@@ -113,7 +110,6 @@ def test_batch_gate_run_refuses_in_worker_session(tmp_path: Path, monkeypatch) -
 # ── AC-2: write_record raises WorkerSessionRefused ──────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="batch_gate.write_record has no ILK_WORKER_SESSION guard yet")
 def test_write_record_refuses_in_worker_session(tmp_path: Path, monkeypatch) -> None:
     """write_record raises WorkerSessionRefused inside a worker session."""
     rt = _runtime_dir(tmp_path)
@@ -134,7 +130,6 @@ def test_write_record_refuses_in_worker_session(tmp_path: Path, monkeypatch) -> 
 # ── AC-3: verify_attribution.write_gate_record refuses ──────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="batch_gate has no WorkerSessionRefused yet")
 def test_verify_attribution_refuses_in_worker_session(tmp_path: Path, monkeypatch) -> None:
     """write_gate_record returns (False, detail) in a worker session."""
     repo = _make_repo(tmp_path)
@@ -172,7 +167,6 @@ def test_write_record_works_without_worker_session(tmp_path: Path, monkeypatch) 
 # ── AC-5: conftest strips ILK_WORKER_SESSION ────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="conftest does not strip ILK_WORKER_SESSION yet")
 def test_conftest_strips_worker_session(monkeypatch) -> None:
     """Inside a test, ILK_WORKER_SESSION must be None even when set externally.
 

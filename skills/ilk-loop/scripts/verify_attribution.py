@@ -47,6 +47,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -875,6 +876,9 @@ def write_gate_record(project: Path, excused: int,
         from ship_audit import _resolve_expected_invocation  # type: ignore[import-untyped]
     except ImportError as exc:
         return False, f"batch_gate/ship_audit unavailable: {exc}"
+
+    if os.environ.get("ILK_WORKER_SESSION") == "1":
+        return False, "refused in a worker session — commit and end your turn"
 
     runtime_dir = batch_gate.resolve_runtime_dir(project)
     if runtime_dir is None:

@@ -54,6 +54,19 @@ from pathlib import Path
 from typing import Optional
 
 
+class WorkerSessionRefused(PermissionError):
+    """Raised when a worker session attempts to run the batch gate or write
+    its record.  The suite and the record belong to the driver."""
+
+
+def _refuse_in_worker_session(what: str) -> None:
+    """Raise ``WorkerSessionRefused`` if ``ILK_WORKER_SESSION=1``."""
+    if os.environ.get("ILK_WORKER_SESSION") == "1":
+        raise WorkerSessionRefused(
+            f"{what} refused in a worker session — commit and end your turn"
+        )
+
+
 REQUIRED_FIELDS = ("verdict", "head_sha", "invocation", "timestamp")
 
 #: Returned by `run_batch_gate` when an existing verify_attribution pass at
@@ -233,6 +246,7 @@ def write_record(
     ``runtime/batch-gates/<batch>.json`` AND keeps the legacy
     ``batch-gate.json`` as "latest" for back-compat.
     """
+    _refuse_in_worker_session("write_record")
     if batch is not None:
         p = batch_record_path(runtime_dir, batch)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -995,6 +1009,7 @@ def run_batch_gate(
           which is keyed on the HEAD the suite ran against.
     AC-5: missing/unrunnable/failing suite → fail, never pass.
     """
+    _refuse_in_worker_session("run_batch_gate")
     head_sha = _git_head_sha(project_path)
 
     # ── re-entry guard (AC-1) ────────────────────────────────────────────
@@ -1261,7 +1276,15 @@ def main() -> None:
             raise SystemExit(1)
         runtime = resolved
 
-    rec = run_batch_gate(project, runtime, _poll_timeout=args.poll_timeout)
+    try:
+        rec = run_batch_gate(project, runtime, _poll_timeout=args.poll_timeout)
+    except WorkerSessionRefused:
+        print("ILK-CHECK: unmeasured refused in a worker session",
+              file=__import__("sys").stderr)
+        print("[batch-gate] the suite and its record belong to the driver"
+              " — commit and end your turn",
+              file=__import__("sys").stderr)
+        raise SystemExit(1)
     if rec is VERIFY_DEFERRED:
         tree = _git_head_tree(project)
         print(f"[batch-gate] already verified at tree "

@@ -2434,6 +2434,11 @@ do not see the variable.
   re-measure and `ILK_WORKER_SESSION=1`, refuses with the same marker.
   The worker must commit its fix and end its turn; the driver re-measures
   on the next iteration.
+- **`batch_gate.py`** — both `run_batch_gate` and `write_record` refuse
+  inside a worker session.  `WorkerSessionRefused` (a `PermissionError`
+  and an `OSError`) is raised before any read of git or any write.  The
+  CLI catches it and exits 1 with the same `ILK-CHECK: unmeasured refused`
+  marker.
 
 ### Contract: `--remeasure-if-stale`
 

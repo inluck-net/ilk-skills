@@ -860,7 +860,7 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
 # then sees the REAL "shipped this iteration" marker and gets denied: 8 reds
 # in I2's verify and 6 in R1's step-1 gate (2026-10-03), passing in any plain
 # shell.  Tests that exercise the marker set it explicitly in their own env.
-_RUNNER_HOOK_ENV = ("ILK_SHIPPED_MARKER", "ILK_ITERATION_SUBPLAN")
+_RUNNER_HOOK_ENV = ("ILK_SHIPPED_MARKER", "ILK_ITERATION_SUBPLAN", "ILK_WORKER_SESSION")
 
 
 @pytest.fixture(autouse=True)
