@@ -280,6 +280,7 @@ class TestAC1AmendmentTriggersTermination:
             "ILK_DATA_HOME": str(world["data_home"]),
         }
         env.pop("ILK_DOTSOURCE_ONLY", None)
+        env.pop("ILK_SKILL_HOME", None)  # let auto-detect find the worktree's scripts
 
         # Edit the plan in a background thread after a short delay.
         import threading
@@ -409,6 +410,7 @@ class TestAC3MasterEditTriggers:
             "ILK_DATA_HOME": str(world["data_home"]),
         }
         env.pop("ILK_DOTSOURCE_ONLY", None)
+        env.pop("ILK_SKILL_HOME", None)  # let auto-detect find the worktree's scripts
 
         # Edit the MASTER in a background thread after a short delay.
         import threading
@@ -478,6 +480,7 @@ class TestAC4DirtyTreePreserved:
             "ILK_DATA_HOME": str(world["data_home"]),
         }
         env.pop("ILK_DOTSOURCE_ONLY", None)
+        env.pop("ILK_SKILL_HOME", None)  # let auto-detect find the worktree's scripts
 
         # Edit the plan in a background thread after a short delay.
         import threading
@@ -658,6 +661,7 @@ class TestAC6SignalExitWipPreserved:
             "ILK_DATA_HOME": str(world["data_home"]),
         }
         env.pop("ILK_DOTSOURCE_ONLY", None)
+        env.pop("ILK_SKILL_HOME", None)  # let auto-detect find the worktree's scripts
 
         # Edit the plan after a short delay to trigger the amendment watcher.
         import threading
@@ -738,6 +742,7 @@ class TestAmendmentKillReachesTheAgent:
             "ILK_DATA_HOME": str(world["data_home"]),
         }
         env.pop("ILK_DOTSOURCE_ONLY", None)
+        env.pop("ILK_SKILL_HOME", None)  # let auto-detect find the worktree's scripts
 
         import threading
 
