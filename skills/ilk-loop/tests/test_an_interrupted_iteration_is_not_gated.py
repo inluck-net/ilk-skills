@@ -196,28 +196,42 @@ def _make_stub_claude(bin_dir: Path, *, script: str) -> Path:
 # ── AC-1: _should_gate_iteration returns correct values ──────────────────────
 
 class TestAC1ShouldGateIteration:
-    """AC-1: ``_should_gate_iteration <completed>`` returns 1 (do not gate)
-    when completed=0 (interrupted), and 0 otherwise.
+    """AC-1: ``_should_gate_iteration <completed> <total_new>`` returns 1
+    (do not gate) when completed=0 and total_new=0, and 0 otherwise.
 
-    NOT gated on $total_new — the commit count is an input to TRAILER
-    SCANNING, not a precondition for gating.  See the "NOT gated on $total_new"
-    comment in the driver's local_checks guard.
+    Red-first: the function does not exist yet.
     """
 
-    def test_zero_returns_skip(self) -> None:
-        """_should_gate_iteration 0 returns 1 (skip the gate)."""
-        result = _source_runner_fn("_should_gate_iteration", "0")
+    def test_zero_zero_returns_skip(self) -> None:
+        """_should_gate_iteration 0 0 returns 1 (skip the gate)."""
+        result = _source_runner_fn("_should_gate_iteration", "0", "0")
         assert result.returncode == 0, f"sourcing failed: {result.stderr}"
         assert result.stdout.strip() == "1", (
-            f"expected 1 (skip) for 0, got: {result.stdout.strip()}"
+            f"expected 1 (skip) for 0/0, got: {result.stdout.strip()}"
         )
 
-    def test_one_returns_gate(self) -> None:
-        """_should_gate_iteration 1 returns 0 (gate normally)."""
-        result = _source_runner_fn("_should_gate_iteration", "1")
+    def test_zero_one_returns_gate(self) -> None:
+        """_should_gate_iteration 0 1 returns 0 (gate normally)."""
+        result = _source_runner_fn("_should_gate_iteration", "0", "1")
         assert result.returncode == 0, f"sourcing failed: {result.stderr}"
         assert result.stdout.strip() == "0", (
-            f"expected 0 (gate) for 1, got: {result.stdout.strip()}"
+            f"expected 0 (gate) for 0/1, got: {result.stdout.strip()}"
+        )
+
+    def test_one_zero_returns_gate(self) -> None:
+        """_should_gate_iteration 1 0 returns 0 (gate normally)."""
+        result = _source_runner_fn("_should_gate_iteration", "1", "0")
+        assert result.returncode == 0, f"sourcing failed: {result.stderr}"
+        assert result.stdout.strip() == "0", (
+            f"expected 0 (gate) for 1/0, got: {result.stdout.strip()}"
+        )
+
+    def test_one_one_returns_gate(self) -> None:
+        """_should_gate_iteration 1 1 returns 0 (gate normally)."""
+        result = _source_runner_fn("_should_gate_iteration", "1", "1")
+        assert result.returncode == 0, f"sourcing failed: {result.stderr}"
+        assert result.stdout.strip() == "0", (
+            f"expected 0 (gate) for 1/1, got: {result.stdout.strip()}"
         )
 
 
