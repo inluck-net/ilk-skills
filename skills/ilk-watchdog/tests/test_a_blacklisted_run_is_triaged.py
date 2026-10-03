@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import time
@@ -27,11 +28,35 @@ SKILLS_DIR = REPO_ROOT / "skills"
 # ── helpers ─────────────────────────────────────────────────────────
 
 
+def _private_skill_home(sandbox) -> Path:
+    """Copy ``skills/`` into the sandbox and point ``ILK_SKILL_HOME`` at the copy.
+
+    The ``scheduler_sandbox`` fixture's ``ILK_SKILL_HOME`` is the LIVE repo's
+    ``skills/`` dir, so a stub written there overwrites the real
+    ``ilk_triage.py`` (it did, 2026-10-03 run 20261003-173750, and the runner's
+    timeout WIP commit 702cb10 preserved the damage).  ``scheduler.sh:148``
+    re-exports ``ILK_SKILL_HOME`` from its own location, so the scheduler must
+    also run from the copy — see ``_run_scheduler``.
+    """
+    home = sandbox.root / "skill-home"
+    if not home.exists():
+        shutil.copytree(
+            SKILLS_DIR,
+            home,
+            ignore=shutil.ignore_patterns("tests", "__pycache__", "*.pyc"),
+        )
+    sandbox.env["ILK_SKILL_HOME"] = str(home)
+    return home
+
+
 def _setup_triage_stub(skill_home: Path) -> Path:
     """Write a stub ``ilk_triage.py`` that records invocations to a JSON file.
 
-    Returns the path to the invocations file.
+    Returns the path to the invocations file.  Refuses a skill home inside
+    the repo: the stub must never replace the real script.
     """
+    if skill_home.resolve().is_relative_to(REPO_ROOT.resolve()):
+        raise AssertionError(f"refusing to write a stub into the repo: {skill_home}")
     scripts_dir = skill_home / "ilk-watchdog" / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -148,8 +173,9 @@ def _run_scheduler(
 ) -> subprocess.CompletedProcess:
     """Run scheduler.sh --once (NOT --dry-run) so triage can fire."""
     env = {**sandbox.env, **(extra_env or {})}
+    scheduler = Path(env["ILK_SKILL_HOME"]) / "ilk-watchdog" / "scripts" / "scheduler.sh"
     return subprocess.run(
-        ["bash", str(SCHEDULER), "--once"],
+        ["bash", str(scheduler), "--once"],
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -188,9 +214,7 @@ def test_blacklisted_starts_triage_once(scheduler_sandbox):
     A second cycle must NOT start triage again (idempotent marker).
     """
     sandbox = scheduler_sandbox
-    invocations_file = _setup_triage_stub(
-        Path(sandbox.env["ILK_SKILL_HOME"])
-    )
+    invocations_file = _setup_triage_stub(_private_skill_home(sandbox))
     _setup_project(
         sandbox.root / ".ilk-data",
         "test-blacklist",
@@ -233,9 +257,7 @@ def test_live_pid_no_triage(scheduler_sandbox):
     """AC-2: a blacklisted project whose sentinel pid is alive must NOT
     start triage."""
     sandbox = scheduler_sandbox
-    invocations_file = _setup_triage_stub(
-        Path(sandbox.env["ILK_SKILL_HOME"])
-    )
+    invocations_file = _setup_triage_stub(_private_skill_home(sandbox))
 
     # Start a background process to own the pid
     sleeper = subprocess.Popen(["sleep", "30"])
@@ -274,9 +296,7 @@ def test_live_pid_no_triage(scheduler_sandbox):
 def test_backoff_no_triage(scheduler_sandbox):
     """AC-3: a project skipped for skip-backoff only must NOT start triage."""
     sandbox = scheduler_sandbox
-    invocations_file = _setup_triage_stub(
-        Path(sandbox.env["ILK_SKILL_HOME"])
-    )
+    invocations_file = _setup_triage_stub(_private_skill_home(sandbox))
     _setup_project(
         sandbox.root / ".ilk-data",
         "test-backoff",
@@ -308,9 +328,7 @@ def test_backoff_no_triage(scheduler_sandbox):
 def test_triage_disabled_env(scheduler_sandbox):
     """AC-4: ILK_TRIAGE=0 disables the triage hook entirely."""
     sandbox = scheduler_sandbox
-    invocations_file = _setup_triage_stub(
-        Path(sandbox.env["ILK_SKILL_HOME"])
-    )
+    invocations_file = _setup_triage_stub(_private_skill_home(sandbox))
     _setup_project(
         sandbox.root / ".ilk-data",
         "test-disabled",
