@@ -4347,8 +4347,8 @@ local_check_outcome() {
 _stamp_reentry_note() {
   # Append a re-entry note to the active sub-plan's Findings section.
   # Called by preserve_dirty_tree_on_timeout when slug+step are resolved.
-  # Args: $1=slug $2=step
-  local slug="$1" step="$2"
+  # Args: $1=slug $2=step $3=reason (optional, default "killed at its bound")
+  local slug="$1" step="$2" reason="${3:-}"
 
   # Resolve plans dir.
   local resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
@@ -4381,7 +4381,7 @@ _stamp_reentry_note() {
 import re, sys
 text = open(sys.argv[1], encoding='utf-8').read()
 body = re.sub(r'^---\n.*?\n---\n', '', text, flags=re.S)
-step_re = re.compile(r'^### Step \Q$step\E\b.*$', re.M)
+step_re = re.compile(r'^### Step ' + re.escape(sys.argv[2]) + r'\b.*$', re.M)
 m = step_re.search(body)
 if m:
     # Find the first bullet after the heading
@@ -4391,38 +4391,67 @@ if m:
         if stripped.startswith('- '):
             print(stripped)
             break
-" "$sub_file" 2>/dev/null) || remaining_line=""
+" "$sub_file" "$step" 2>/dev/null) || remaining_line=""
 
   # Build the re-entry note.
   local timestamp
   timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-  local note="### Re-entry $timestamp — step $step killed at its bound"
+  local reason_text="killed at its bound"
+  if [[ "$reason" == "plan-amended" ]]; then
+    reason_text="ended by a plan amendment"
+  fi
+  local note="#### Re-entry $timestamp — step $step $reason_text"
   if [[ -n "$step_heading" ]]; then
+    # Strip leading # characters and whitespace from the heading text.
+    local clean_heading
+    clean_heading=$(echo "$step_heading" | sed 's/^[[:space:]#]*//')
     note="$note
-- Step in flight: $step_heading"
+- Step in flight: $clean_heading"
   fi
   if [[ -n "$remaining_line" ]]; then
     note="$note
 - $remaining_line"
   fi
 
-  # Append to Findings section. If ## Findings exists and is the last section,
-  # append after it; otherwise append at end of file.
+  # Append to Findings section: find the LAST ## Findings heading, then
+  # insert the note at the end of that section (before the next ## heading
+  # or at EOF).  Write is atomic (.tmp + os.replace).
   if grep -q "^## Findings" "$sub_file" 2>/dev/null; then
-    # Insert the note after the ## Findings line.
     python3 -c "
-import sys
+import re, sys, os, tempfile
 path = sys.argv[1]
 note = sys.argv[2]
 text = open(path, encoding='utf-8').read()
-# Find ## Findings and append after it.
-idx = text.find('## Findings')
-if idx >= 0:
-    # Find end of the line
-    eol = text.find('\n', idx)
-    if eol >= 0:
-        text = text[:eol+1] + '\n' + note + '\n' + text[eol+1:]
-open(path, 'w', encoding='utf-8').write(text)
+
+# Find the LAST ## Findings heading (not a substring mention).
+matches = list(re.finditer(r'^## Findings\s*$', text, re.M))
+if not matches:
+    sys.exit(0)
+
+last_match = matches[-1]
+start = last_match.end()
+
+# Find the next ## heading after it (or EOF).
+next_section = re.search(r'^## ', text[start:], re.M)
+if next_section:
+    insert_pos = start + next_section.start()
+else:
+    insert_pos = len(text)
+
+# Insert the note at the end of the Findings section.
+new_text = text[:insert_pos].rstrip('\n') + '\n\n' + note + '\n\n' + text[insert_pos:].lstrip('\n')
+
+# Atomic write.
+fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
+try:
+    os.write(fd, new_text.encode('utf-8'))
+    os.close(fd)
+    os.replace(tmp_path, path)
+except:
+    os.close(fd)
+    if os.path.exists(tmp_path):
+        os.unlink(tmp_path)
+    raise
 " "$sub_file" "$note" 2>/dev/null
   else
     # No Findings section — append at end of file.
@@ -4439,8 +4468,10 @@ open(path, 'w', encoding='utf-8').write(text)
 #
 # Globals read: REPOS, PROJECT_PATH
 # Globals modified: none
+# Args: $1=amend_detected (0 or 1, optional, default 0)
 # Returns: 0 always (never fatal)
 preserve_dirty_tree_on_timeout() {
+  local amend_detected="${1:-0}"
   local wip_count=0
   local repo
 
@@ -4569,8 +4600,12 @@ $_wip_trailer" >/dev/null 2>&1
 
   # Stamp re-entry state into the active sub-plan's Findings section
   # (retro-2026-09-20-a-step-that-outgrew-its-window P3).
+  local _reentry_reason=""
+  if [[ "$amend_detected" -eq 1 ]]; then
+    _reentry_reason="plan-amended"
+  fi
   if [[ -n "$_reentry_slug" && -n "$_reentry_step" ]]; then
-    _stamp_reentry_note "$_reentry_slug" "$_reentry_step" || true
+    _stamp_reentry_note "$_reentry_slug" "$_reentry_step" "$_reentry_reason" || true
   fi
 
   echo "$wip_count"
@@ -5749,7 +5784,9 @@ print(json.dumps({
     # If the watcher detected a plan amendment and killed the agent, the
     # flag file exists.  Record plan_amended in the JSONL and set
     # ITER_COMPLETED=0 so the dirty tree is WIP-preserved.
+    local _amend_detected=0
     if [[ -f "$_amend_flag" ]]; then
+      _amend_detected=1
       echo "[runner] plan-amended: plan file changed during the iteration — iteration terminated" >&2
       ITER_COMPLETED=0
       iter_stop_reason="plan-amended"
@@ -5862,7 +5899,7 @@ print(json.dumps({
     if [[ "$ITER_COMPLETED" -eq 0 ]]; then
       # stderr is NOT discarded: the function's "clone ... is dirty, not
       # preserved" warning goes there, and 2>/dev/null made it unreachable.
-      wip_preserved=$(preserve_dirty_tree_on_timeout) || wip_preserved=0
+      wip_preserved=$(preserve_dirty_tree_on_timeout "$_amend_detected") || wip_preserved=0
     fi
 
     # Update no-progress streak

@@ -1155,8 +1155,8 @@ class TestAC14ReentryStamp:
 
         sub = project / "docs" / "plans" / "2026-09-20-sub-a.md"
         body = sub.read_text(encoding="utf-8")
-        assert "### Re-entry" in body, (
-            "Expected '### Re-entry' heading in Findings section after WIP preserve."
+        assert "#### Re-entry" in body, (
+            "Expected '#### Re-entry' heading in Findings section after WIP preserve."
         )
         assert "step 1 killed at its bound" in body.lower(), (
             "Expected 'step 1 killed at its bound' in re-entry note."

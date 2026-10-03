@@ -240,7 +240,6 @@ def env() -> dict:
 
 # ── AC-1: inline mention → note lands after the real Findings ────────────────
 
-@pytest.mark.xfail(strict=True, reason="stamper uses text.find('## Findings') which matches inline mentions")
 class TestAC1InlineMention:
     """The note lands after the real ## Findings heading, not after an inline mention."""
 
@@ -276,7 +275,6 @@ class TestAC1InlineMention:
 
 # ── AC-2: note heading is #### not ### ──────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="stamper writes ### Re-entry instead of #### Re-entry")
 class TestAC2HeadingLevel:
     """The note heading starts with ####, not ###."""
 
@@ -314,7 +312,6 @@ class TestAC2HeadingLevel:
 
 # ── AC-3: note goes before the next ## section ──────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="stamper inserts after heading instead of appending at end of section")
 class TestAC3BeforeNextSection:
     """With ## Findings followed by ## Out of scope, the note goes before that section."""
 
@@ -351,7 +348,6 @@ class TestAC4ReasonText:
             "default reason must be 'killed at its bound'"
         )
 
-    @pytest.mark.xfail(strict=True, reason="stamper passes reason arg but the function ignores it")
     def test_plan_amended_reason(self, tmp_path: Path, env: dict) -> None:
         """With reason 'plan-amended', the heading says 'ended by a plan amendment'."""
         project = tmp_path / "project"
