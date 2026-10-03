@@ -389,7 +389,7 @@ def resolve_batch_record(project: Path, batch_slug: str) -> Path:
 RECORD_WRITER = "verification_record.py"
 
 _SUMMARY_RE = re.compile(
-    r"^=+\s(.*?)\sin\s[\d.]+s.*?=+$", re.MULTILINE)
+    r"^=*\s*(\d.*?)\sin\s[\d.]+s.*?=*$", re.MULTILINE)
 _COUNT_RE = re.compile(r"(\d+)\s+(passed|failed|error|errors|skipped|xfailed|xpassed)")
 _NODE_RE = re.compile(r"^(?:FAILED|ERROR)\s+(\S+)", re.MULTILINE)
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")

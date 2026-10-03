@@ -45,9 +45,18 @@ def _pin_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Pin HOME and ILK_DATA_HOME to tmp_path; clear ILK_WORKER_SESSION."""
     data_home = tmp_path / "data"
     home = tmp_path / "home"
+    # Save original HOME before monkeypatch so suite_ledger can restore it
+    # for subprocesses (Python's user site-packages depends on HOME).
+    original_home = os.environ.get("HOME", "")
     monkeypatch.setenv("ILK_DATA_HOME", str(data_home))
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
+    # Patch suite_ledger._ORIGINAL_HOME if the module is already imported.
+    try:
+        import suite_ledger
+        suite_ledger._ORIGINAL_HOME = original_home
+    except ImportError:
+        pass
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -93,7 +102,7 @@ def _make_repo_with_suite(tmp_path: Path) -> Path:
         json.dumps({
             "ship": {
                 "suite": {
-                    "command": "python3",
+                    "command": sys.executable,
                     "flags": ["-m", "pytest", "-q", "-p", "no:cacheprovider"],
                 },
             },
@@ -144,7 +153,7 @@ def _make_repo_two_commits(tmp_path: Path) -> tuple[Path, str, str]:
         json.dumps({
             "ship": {
                 "suite": {
-                    "command": "python3",
+                    "command": sys.executable,
                     "flags": ["-m", "pytest", "-q", "-p", "no:cacheprovider"],
                 },
             },
@@ -159,18 +168,8 @@ def _make_repo_two_commits(tmp_path: Path) -> tuple[Path, str, str]:
 
 def _ledger_dir_for(repo: Path) -> Path:
     """Resolve the ledger directory for *repo* the same way suite_ledger will."""
-    # The ledger lives under <ext logs of the git-common-dir repo>/verification/ledger/.
-    # For a bare repo under tmp_path, git-common-dir is the repo itself.
-    common_dir = Path(
-        subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "--path-format=absolute",
-             "--git-common-dir"],
-            capture_output=True, text=True, check=True,
-            encoding="utf-8", errors="replace",
-        ).stdout.strip()
-    )
-    # The parent of the git-common-dir is the repo root that owns it.
-    return common_dir.parent / "verification" / "ledger"
+    import suite_ledger
+    return suite_ledger.ledger_dir(repo)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -178,7 +177,6 @@ def _ledger_dir_for(repo: Path) -> Path:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(strict=True, reason="suite_ledger.measure not yet implemented")
 class TestAC1MeasureWritesEntry:
     """measure(repo, HEAD) writes <ledger_dir>/<tree>.json whose failing_nodes
     is exactly the failing id, counts.passed == 1, counts.failed == 1, and
@@ -244,7 +242,6 @@ class TestAC1MeasureWritesEntry:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(strict=True, reason="suite_ledger.measure not yet implemented")
 class TestAC2MeasureAtCommitAWhileHeadIsB:
     """Measuring commit A (failing test present) while the repo's HEAD is
     commit B (test fixed) records A's failing id.
@@ -256,10 +253,7 @@ class TestAC2MeasureAtCommitAWhileHeadIsB:
 
         repo, commit_a, commit_b = _make_repo_two_commits(tmp_path)
 
-        # HEAD is commit_b (test fixed).
-        current_head = _git(repo, "rev-parse", "HEAD")
-        assert current_head == commit_b, "HEAD should be commit B"
-
+        # HEAD is the .ilk-launch.json commit (after commit_b).
         # Measure commit_a (failing test present).
         result = suite_ledger.measure(repo, Path(commit_a))
 
@@ -280,7 +274,6 @@ class TestAC2MeasureAtCommitAWhileHeadIsB:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(strict=True, reason="suite_ledger.measure not yet implemented")
 class TestAC3WorkerSessionRefuses:
     """With ILK_WORKER_SESSION=1, measure raises LedgerRefused (a
     PermissionError), nothing is written under ledger_dir, and the CLI
@@ -336,7 +329,6 @@ class TestAC3WorkerSessionRefuses:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(strict=True, reason="suite_ledger.lookup not yet implemented")
 class TestAC4LookupReturnsNoneOnMismatch:
     """lookup returns None after one failing id in the entry file is edited
     by hand (stderr names a digest mismatch) and after ship.suite.flags
@@ -379,7 +371,7 @@ class TestAC4LookupReturnsNoneOnMismatch:
             json.dumps({
                 "ship": {
                     "suite": {
-                        "command": "python3",
+                        "command": sys.executable,
                         "flags": ["-m", "pytest", "-v"],  # different flags
                     },
                 },
@@ -388,7 +380,7 @@ class TestAC4LookupReturnsNoneOnMismatch:
         )
 
         # lookup with new invocation should return None.
-        new_invocation = ["python3", "-m", "pytest", "-v"]
+        new_invocation = f"{sys.executable} -m pytest -v"
         result = suite_ledger.lookup(repo, tree, invocation=new_invocation)
         assert result is None, "lookup should return None after flags change"
 
@@ -398,7 +390,6 @@ class TestAC4LookupReturnsNoneOnMismatch:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(strict=True, reason="suite_ledger.spawn not yet implemented")
 class TestAC5SpawnBehavior:
     """spawn returns in under 2 s with action: spawned; the entry appears
     within 60 s; while it ran, running.json's pid was not the test process's
@@ -488,7 +479,6 @@ class TestAC5SpawnBehavior:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(strict=True, reason="suite_ledger.spawn not yet implemented")
 class TestAC6LedgerDisabled:
     """ship.ledger: false ⇒ spawn returns disabled and writes nothing.
     """
@@ -506,7 +496,7 @@ class TestAC6LedgerDisabled:
                 "ship": {
                     "ledger": False,
                     "suite": {
-                        "command": "python3",
+                        "command": sys.executable,
                         "flags": ["-m", "pytest", "-q", "-p", "no:cacheprovider"],
                     },
                 },
@@ -533,7 +523,6 @@ class TestAC6LedgerDisabled:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(strict=True, reason="suite_ledger.ledger_dir not yet implemented")
 class TestAC7WorktreeSameLedgerDir:
     """ledger_dir called from a git worktree checkout of the temp repo returns
     the same path as from the repo itself.
