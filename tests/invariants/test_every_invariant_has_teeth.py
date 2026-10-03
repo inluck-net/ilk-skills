@@ -43,10 +43,6 @@ def _git_ls_files() -> set[str]:
     return set(r.stdout.splitlines())
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="catalog has only sub-plan 1's seed row; step 1 adds the rest",
-)
 def test_every_invariant_is_a_catcher() -> None:
     """Every test_*.py in this dir (except self) must be a catcher in the catalog."""
     catalog = _load_catalog()

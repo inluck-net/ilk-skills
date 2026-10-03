@@ -18,6 +18,124 @@
         ],
         "expect_in_output": ["FAILED", "test_ac1_empty_project_path_refused"]
       }
+    },
+    {
+      "id": "ship-integrity-disabled",
+      "rail": "test_ship_integrity in run_ilk_loop_claude.sh",
+      "file": "skills/ilk-loop/scripts/run_ilk_loop_claude.sh",
+      "kind": "replace",
+      "pattern": "test_ship_integrity\\(\\) \\{",
+      "replacement": "test_ship_integrity() {\n  return 0",
+      "min_matches": 1,
+      "catcher": {
+        "argv": [
+          "python3", "-m", "pytest",
+          "tests/invariants/test_a_red_gate_blocks_a_ship.py",
+          "-q", "-p", "no:cacheprovider", "--timeout=120"
+        ],
+        "expect_in_output": ["FAILED", "test_a_red_gate_blocks_a_ship"]
+      }
+    },
+    {
+      "id": "nonzero-exit-reads-pass",
+      "rail": "rollup mapping of non-zero exit to fail in run_local_checks.py",
+      "file": "skills/ilk-loop/scripts/run_local_checks.py",
+      "kind": "replace",
+      "pattern": "if r\\.outcome == \"fail\":",
+      "replacement": "if r.outcome == \"pass\":",
+      "min_matches": 1,
+      "catcher": {
+        "argv": [
+          "python3", "-m", "pytest",
+          "tests/invariants/test_a_vacuous_pin_is_a_red_gate.py",
+          "-q", "-p", "no:cacheprovider", "--timeout=120"
+        ],
+        "expect_in_output": ["FAILED", "test_a_vacuous_pin_is_a_red_gate"]
+      }
+    },
+    {
+      "id": "batch-gate-worker-refusal-removed",
+      "rail": "batch_gate._refuse_in_worker_session",
+      "file": "skills/ilk-loop/scripts/batch_gate.py",
+      "kind": "replace",
+      "pattern": "if os\\.environ\\.get\\(\"ILK_WORKER_SESSION\"\\) == \"1\":",
+      "replacement": "if os.environ.get(\"ILK_WORKER_SESSION\") == \"never\":",
+      "min_matches": 1,
+      "catcher": {
+        "argv": [
+          "python3", "-m", "pytest",
+          "tests/invariants/test_a_worker_cannot_write_proof_or_run_the_suite.py",
+          "-q", "-p", "no:cacheprovider", "--timeout=120"
+        ],
+        "expect_in_output": ["FAILED", "test_a_worker_cannot_write_proof_or_run_the_suite"]
+      }
+    },
+    {
+      "id": "owner-is-the-finder",
+      "rail": "bisect_red_owner in red_owner.py",
+      "file": "skills/ilk-loop/scripts/red_owner.py",
+      "kind": "replace",
+      "pattern": "\"first_red\": sha,",
+      "replacement": "\"first_red\": commits[-1],",
+      "min_matches": 1,
+      "catcher": {
+        "argv": [
+          "python3", "-m", "pytest",
+          "tests/invariants/test_a_red_goes_to_its_owner.py",
+          "-q", "-p", "no:cacheprovider", "--timeout=120"
+        ],
+        "expect_in_output": ["FAILED", "test_a_red_goes_to_its_owner"]
+      }
+    },
+    {
+      "id": "hook-marker-check-removed",
+      "rail": "marker check in hooks/no-live-clone-edit.py",
+      "file": "hooks/no-live-clone-edit.py",
+      "kind": "delete-lines",
+      "pattern": "return Path\\(marker\\)\\.is_file\\(\\)",
+      "min_matches": 1,
+      "catcher": {
+        "argv": [
+          "python3", "-m", "pytest",
+          "tests/invariants/test_a_worker_ends_its_turn_after_a_ship.py",
+          "-q", "-p", "no:cacheprovider", "--timeout=120"
+        ],
+        "expect_in_output": ["FAILED", "test_a_worker_ends_its_turn_after_a_ship"]
+      }
+    },
+    {
+      "id": "attribution-excuses",
+      "rail": "attribution rule in verify_attribution.py",
+      "file": "skills/ilk-loop/scripts/verify_attribution.py",
+      "kind": "replace",
+      "pattern": "bad\\.append\\(r\\)",
+      "replacement": "flaky_owed.append(r)",
+      "min_matches": 1,
+      "catcher": {
+        "argv": [
+          "python3", "-m", "pytest",
+          "tests/invariants/test_a_batch_cannot_excuse_its_own_red.py",
+          "-q", "-p", "no:cacheprovider", "--timeout=120"
+        ],
+        "expect_in_output": ["FAILED", "test_a_batch_cannot_excuse_its_own_red"]
+      }
+    },
+    {
+      "id": "kernel-range-check-blind",
+      "rail": "check_range in safety_kernel.py",
+      "file": "skills/ilk-loop/scripts/safety_kernel.py",
+      "kind": "replace",
+      "pattern": "return violations",
+      "replacement": "return []",
+      "min_matches": 1,
+      "catcher": {
+        "argv": [
+          "python3", "-m", "pytest",
+          "tests/invariants/test_an_unattended_build_cannot_land_a_kernel_edit.py",
+          "-q", "-p", "no:cacheprovider", "--timeout=120"
+        ],
+        "expect_in_output": ["FAILED", "test_an_unattended_build_cannot_land_a_kernel_edit"]
+      }
     }
   ]
 }
