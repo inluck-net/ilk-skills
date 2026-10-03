@@ -541,6 +541,7 @@ def test_tool_run_has_tool_provenance(tmp_path: Path) -> None:
             "--record", str(record),
             "--base-sha", BASE_SHA,
             "--run-suite",
+            "--ledger", "off",
         ])
 
     assert rc == 0
@@ -577,6 +578,7 @@ def test_run_suite_writes_record_today(tmp_path: Path) -> None:
             "--record", str(record),
             "--base-sha", BASE_SHA,
             "--run-suite",
+            "--ledger", "off",
         ])
 
     assert rc == 0
