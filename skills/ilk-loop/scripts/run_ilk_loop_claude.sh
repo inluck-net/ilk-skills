@@ -4262,6 +4262,18 @@ _decide_iter_stop_reason() {
   # completed=1 and total_new > 0: empty string (continue)
 }
 
+_should_gate_iteration() {
+  # Returns 1 (skip gate) when the iteration was interrupted with 0 commits.
+  # A gate on a tree the step never got to change says nothing about the step.
+  local completed="$1"
+  local total_new="$2"
+  if [[ "$completed" -eq 0 && "$total_new" -eq 0 ]]; then
+    echo 1
+  else
+    echo 0
+  fi
+}
+
 # ----- Startup banner --------------------------------------------------------
 
 print_banner() {
@@ -5893,6 +5905,24 @@ print(json.dumps({
     iter_stop_reason=$(_decide_iter_stop_reason \
       "$ITER_COMPLETED" "$total_new" "$ITER_BUDGET_EXHAUSTED" "$no_progress_streak" "$ITER_QUOTA_EXHAUSTED")
 
+    # Amendment override: an interrupted iteration with 0 commits that was
+    # killed by the amendment watcher should continue the run, not stop as
+    # a barren timeout.  The no-progress streak (3) bounds an amendment loop.
+    # Do NOT override "no-progress" — that is the streak bound firing.
+    if [[ "$_amend_detected" -eq 1 && "$iter_stop_reason" == "timeout" ]]; then
+      iter_stop_reason=""
+    fi
+
+    # Post-override streak bound: if the amendment override cleared "timeout"
+    # but the no-progress streak has reached its bound (3), set "no-progress"
+    # so the run stops.  _decide_iter_stop_reason checked the streak before
+    # it was incremented, so the bound must be re-checked here.
+    if [[ "$iter_stop_reason" == "" && "$total_new" -eq 0 ]]; then
+      if [[ "$no_progress_streak" -ge 3 ]]; then
+        iter_stop_reason="no-progress"
+      fi
+    fi
+
     # Preserve any dirty tree as a WIP commit on boundary kills so the
     # next iteration can resume from a recoverable state (AC-1, AC-2, AC-4).
     local wip_preserved=0
@@ -5922,7 +5952,14 @@ print(json.dumps({
     # that most needs it -- measured 2026-09-08 on a consumer host, an
     # iteration with 0 commits was never gated and the run reported
     # all-shipped over two unproven sub-plans.
-    if [[ "$RUN_LOCAL_CHECKS" == true ]]; then
+    #
+    # Skip the gate when the iteration was interrupted with 0 commits.  A gate
+    # on a tree the step never got to change says nothing about the step.
+    if [[ "$(_should_gate_iteration "$ITER_COMPLETED" "$total_new")" -eq 1 ]]; then
+      local _gate_skip_reason="plan-amended"
+      [[ "$_amend_detected" -eq 0 ]] && _gate_skip_reason="timeout"
+      echo "  [local_checks] skipped: iteration interrupted (${_gate_skip_reason}) with 0 commits — a gate on the unchanged tree says nothing about the step"
+    elif [[ "$RUN_LOCAL_CHECKS" == true ]]; then
       if [[ "$GATE_FIRST_GREEN" -eq 1 && -n "$gate_first_results" ]]; then
         # The gate already ran on the fast path and passed.  Re-running it
         # here would double the exact cost the fast path just saved (the

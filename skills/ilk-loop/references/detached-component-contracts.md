@@ -102,7 +102,7 @@ submenu line.
 | `"running"` | Loop is actively iterating | **Live** — check PID |
 | `"shipped"` | All sub-plans shipped, clean exit | Terminal |
 | `"local_checks_failed"` | A step's local_checks failed | Terminal |
-| `"local_checks_failed_no_commits"` | A step's local_checks failed with 0 new commits this iteration (gate red on an unchanged tree — a red base or environment) | Terminal |
+| `"local_checks_failed_no_commits"` | A step's local_checks failed with 0 new commits this iteration (gate red on an unchanged tree — a red base or environment). Never set after an interrupted iteration with 0 commits (the gate is skipped; `_should_gate_iteration` returns 1) | Terminal |
 | `"interrupted"` | The run ended without a terminal state. An operator stop (INT/TERM to the runner) adds `stopped_by: "signal:<SIG>"`; its absence means a crash or an unexplained exit. The watchdog never relaunches a sentinel carrying `stopped_by` (`relaunch_guard.py`) | Terminal |
 | `"error"` | Unexpected runner error | Terminal |
 | `"max-iterations"` | Hit iteration budget | Terminal |
@@ -123,7 +123,7 @@ submenu line.
 | `"work_tree_invalid"` | Master declared `work_tree:` but the path is missing, not a work tree, or shares no git objects with `--project-path` | Terminal |
 | `"lock_held"` | Another runner holds this project's run lock; the unattended result file (if `ILK_MASTER` set) records `exit_state: lock_held` | Terminal |
 | `"profile_unsupported"` | Windows runner: the master carries `ilk_profile: unattended` which the PS1 runner does not implement; result file written, no other action | Terminal |
-| `"plan-amended"` | The targeted sub-plan or MASTER was edited above `## Findings` during the iteration (planner amendment). The watcher killed the agent, WIP-preserved the dirty tree, and the loop continues to the next iteration. JSONL record carries `plan_amended: true`. The fingerprint (computed by `plan_fingerprint.py`) excludes the frontmatter keys `current_step`, `status`, `last_updated`; for MASTER files it also excludes the registry Status column and the `## Progress log` section. | No — iteration-internal; loop continues |
+| `"plan-amended"` | The targeted sub-plan or MASTER was edited above `## Findings` during the iteration (planner amendment). The watcher killed the agent, WIP-preserved the dirty tree, and the loop continues to the next iteration. The post-iteration gate is skipped (`_should_gate_iteration` returns 1 for interrupted iterations with 0 commits). The no-progress streak (3) bounds an amendment loop — if every iteration is amended with 0 new commits, the run stops with `no-progress`. JSONL record carries `plan_amended: true`. The fingerprint (computed by `plan_fingerprint.py`) excludes the frontmatter keys `current_step`, `status`, `last_updated`; for MASTER files it also excludes the registry Status column and the `## Progress log` section. | No — iteration-internal; loop continues |
 
 **Naming conventions are intentional.** The hyphenated states (`no-progress`,
 `all-shipped`, `timeout`, `budget-exhausted`, `quota-exhausted`,
