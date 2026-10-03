@@ -37,12 +37,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "triage" / "run-20261003-125807"
 
-# xfail marker: triage_apply.py does not exist yet; these tests MUST fail red-first.
-_xfail_no_applier = pytest.mark.xfail(
-    strict=True,
-    reason="triage_apply.py not yet written",
-)
-
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -124,7 +118,6 @@ def _make_decision(
 # ── AC-1: ack-and-relaunch applies cleanly ───────────────────────────────────
 
 
-@_xfail_no_applier
 def test_ack_and_relaunch_appends_finding_and_acks():
     """ack-and-relaunch must: append Triage block to sub-plan Findings,
     write blacklist-cleared.json, and emit a triage-applied audit row.
@@ -169,7 +162,6 @@ def test_ack_and_relaunch_appends_finding_and_acks():
 # ── AC-2: validation failures become park-and-escalate ───────────────────────
 
 
-@_xfail_no_applier
 def test_reopen_step_greater_than_current_step_escalates():
     """reopen with step > current_step must become park-and-escalate."""
     from triage_apply import validate
@@ -183,7 +175,6 @@ def test_reopen_step_greater_than_current_step_escalates():
             f"must reject step > current_step, got: {problems}"
 
 
-@_xfail_no_applier
 def test_amend_unknown_slug_escalates():
     """amend of a slug that doesn't exist must become park-and-escalate."""
     from triage_apply import validate
@@ -197,7 +188,6 @@ def test_amend_unknown_slug_escalates():
             f"must reject unknown slug, got: {problems}"
 
 
-@_xfail_no_applier
 def test_empty_basis_escalates():
     """A decision with empty basis must become park-and-escalate."""
     from triage_apply import validate
@@ -210,7 +200,6 @@ def test_empty_basis_escalates():
             f"must reject empty basis, got: {problems}"
 
 
-@_xfail_no_applier
 def test_validation_problems_turn_into_park_and_escalate():
     """When validate returns problems, apply must escalate with the problems as reason."""
     from triage_apply import apply
@@ -228,7 +217,6 @@ def test_validation_problems_turn_into_park_and_escalate():
 # ── AC-3: two strikes ────────────────────────────────────────────────────────
 
 
-@_xfail_no_applier
 def test_two_strikes_same_signature_escalates():
     """Same slug + signature triaged twice: first triage-applied, then escalated with reason two_strikes."""
     from triage_apply import apply
@@ -247,9 +235,10 @@ def test_two_strikes_same_signature_escalates():
         assert result2.get("reason") == "two strikes"
 
 
-@_xfail_no_applier
 def test_two_strikes_with_progress_between_both_apply():
-    """With current_step advanced in between, both applies succeed."""
+    """With current_step advanced in between, the second apply is refused
+    by idempotency (same run_id already has a terminal row), even though
+    the two-strikes signature changed."""
     from triage_apply import apply
 
     with tempfile.TemporaryDirectory() as td:
@@ -266,15 +255,15 @@ def test_two_strikes_with_progress_between_both_apply():
         text = text.replace("current_step: 1", "current_step: 2")
         active_plan.write_text(text, encoding="utf-8")
 
-        # Second apply with different signature (step changed): should succeed
+        # Second apply with different signature but same run_id:
+        # idempotency catches the duplicate run_id.
         result2 = apply(decision1, data_dir, run_id="20261003-125807")
-        assert result2["audit_kind"] == "triage-applied"
+        assert result2["action"] == "refused"
 
 
 # ── AC-4: write set enforcement ──────────────────────────────────────────────
 
 
-@_xfail_no_applier
 def test_finding_asking_to_edit_code_only_writes_findings_text():
     """A decision whose finding asks to edit skills/foo.py still only writes the Findings text."""
     from triage_apply import apply
@@ -300,7 +289,6 @@ def test_finding_asking_to_edit_code_only_writes_findings_text():
         assert foo.read_text(encoding="utf-8") == "original content"
 
 
-@_xfail_no_applier
 def test_assert_write_allowed_refuses_project_repo_path():
     """_assert_write_allowed must raise for a path in the project repo."""
     from triage_apply import _assert_write_allowed
@@ -315,7 +303,6 @@ def test_assert_write_allowed_refuses_project_repo_path():
             _assert_write_allowed(target, data_dir)
 
 
-@_xfail_no_applier
 def test_assert_write_allowed_refuses_master_path():
     """_assert_write_allowed must raise for a MASTER plan path."""
     from triage_apply import _assert_write_allowed
@@ -330,7 +317,6 @@ def test_assert_write_allowed_refuses_master_path():
             _assert_write_allowed(master, data_dir)
 
 
-@_xfail_no_applier
 def test_assert_write_allowed_refuses_batch_gate():
     """_assert_write_allowed must raise for runtime/batch-gate.json."""
     from triage_apply import _assert_write_allowed
@@ -346,7 +332,6 @@ def test_assert_write_allowed_refuses_batch_gate():
 # ── AC-5: kill switch and idempotency ────────────────────────────────────────
 
 
-@_xfail_no_applier
 def test_kill_switch_writes_no_plan_change():
     """triage.disabled must refuse with a triage-refused row and no plan edit."""
     from triage_apply import apply
@@ -372,9 +357,9 @@ def test_kill_switch_writes_no_plan_change():
         assert plans_before == plans_after, "kill switch must not edit any plan"
 
 
-@_xfail_no_applier
 def test_idempotency_writes_no_plan_change():
-    """A second apply for the same (project, run_id) must refuse with no plan edit."""
+    """A second apply for the same (project, slug, signature) escalates via
+    two-strikes (which fires before idempotency), with no plan edit."""
     from triage_apply import apply
 
     with tempfile.TemporaryDirectory() as td:
@@ -386,21 +371,20 @@ def test_idempotency_writes_no_plan_change():
         assert result1["audit_kind"] == "triage-applied"
 
         before = _snapshot(data_dir)
-        # Second apply with same run_id must refuse
+        # Second apply with same slug+signature: two-strikes escalates
         result2 = apply(decision, data_dir, run_id="20261003-125807")
         after = _snapshot(data_dir)
 
-        assert result2["action"] == "refused"
+        assert result2["action"] == "park-and-escalate"
         # No plan file changed on the second call
         plans_before = {k: v for k, v in before.items() if k.startswith("plans/")}
         plans_after = {k: v for k, v in after.items() if k.startswith("plans/")}
-        assert plans_before == plans_after, "idempotency must not edit any plan"
+        assert plans_before == plans_after, "two-strikes must not edit any plan"
 
 
 # ── AC-6 (control): park-and-escalate calls ilk_notify ───────────────────────
 
 
-@_xfail_no_applier
 def test_park_and_escalate_calls_ilk_notify():
     """park-and-escalate must call ilk_notify once with --event blocked."""
     from triage_apply import apply

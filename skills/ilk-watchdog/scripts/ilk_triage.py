@@ -170,11 +170,20 @@ def build_evidence(data_dir: Path, run_id: str) -> dict[str, Any]:
 # ── decision maker ───────────────────────────────────────────────────────────
 
 
-def decide(evidence: dict[str, Any], *, home: Path, timeout_s: int = 600) -> dict[str, Any]:
+def decide(
+    evidence: dict[str, Any],
+    *,
+    home: Path,
+    timeout_s: int = 600,
+    skip_audit: bool = False,
+) -> dict[str, Any]:
     """Run claude -p on the manager home and parse the decision.
 
     Returns a dict with keys: action, slug, step, finding, basis, falsifier,
     model, reason (for park-and-escalate).
+
+    When *skip_audit* is True the ``triage-decided`` audit row is suppressed
+    (the caller is responsible for writing the terminal row).
     """
     # Check for worker home
     if WORKER_HOME_PATTERN.search(str(home)):
@@ -409,6 +418,53 @@ Return ONLY a JSON object, nothing else."""
     }
 
 
+# ── run (diagnose → validate → apply) ────────────────────────────────────────
+
+
+def run_triage(
+    *,
+    project_key: str,
+    run_id: str,
+    home: Path | None = None,
+    timeout_s: int = 600,
+) -> dict[str, Any]:
+    """Full triage pipeline: diagnose, validate, apply.
+
+    Every path writes exactly one terminal audit row:
+    ``triage-applied``, ``escalated``, or ``triage-refused``.
+    """
+    from triage_apply import apply, validate
+
+    data_root = ilk_data_root()
+    data_dir = data_root / "projects" / project_key
+
+    # Resolve home.
+    resolved_home = home or Path.home() / ".claude-manager"
+
+    # Build evidence and decide (skip the triage-decided audit row).
+    evidence = build_evidence(data_dir, run_id)
+    decision = decide(evidence, home=resolved_home, timeout_s=timeout_s,
+                      skip_audit=True)
+
+    # Validate.
+    plans_dir = data_dir / "plans"
+    problems = validate(decision, plans_dir)
+    if problems:
+        reason = "; ".join(problems)
+        decision = {
+            "action": "park-and-escalate",
+            "slug": decision.get("slug"),
+            "step": decision.get("step"),
+            "finding": f"validation failed: {reason}",
+            "basis": reason,
+            "falsifier": "decision passes validation",
+        }
+
+    # Apply (writes the terminal audit row).
+    result = apply(decision, data_dir, run_id=run_id)
+    return result
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
@@ -423,6 +479,13 @@ def main(argv: list[str] | None = None) -> None:
     diagnose_parser.add_argument("--home", type=Path, help="Manager home path")
     diagnose_parser.add_argument("--dry-run", action="store_true", help="Don't write audit row")
     diagnose_parser.add_argument("--json", action="store_true", help="Output JSON only")
+
+    run_parser = subparsers.add_parser("run", help="Full triage: diagnose → validate → apply")
+    run_parser.add_argument("--project-key", required=True, help="Project key")
+    run_parser.add_argument("--run-id", required=True, help="Run ID")
+    run_parser.add_argument("--home", type=Path, help="Manager home path")
+    run_parser.add_argument("--timeout-s", type=int, default=600, help="Timeout for claude -p")
+    run_parser.add_argument("--json", action="store_true", help="Output JSON only")
 
     args = parser.parse_args(argv)
 
@@ -478,6 +541,22 @@ def main(argv: list[str] | None = None) -> None:
                 print(f"Model: {decision['model']}")
             if decision.get("reason"):
                 print(f"Reason: {decision['reason']}")
+
+    elif args.command == "run":
+        result = run_triage(
+            project_key=args.project_key,
+            run_id=args.run_id,
+            home=args.home,
+            timeout_s=args.timeout_s,
+        )
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"Action: {result.get('action')}")
+            if result.get("reason"):
+                print(f"Reason: {result['reason']}")
+            if result.get("audit_kind"):
+                print(f"Audit: {result['audit_kind']}")
 
 
 if __name__ == "__main__":
