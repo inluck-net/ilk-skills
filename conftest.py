@@ -645,8 +645,34 @@ def exempts_recorded_during(request: pytest.FixtureRequest):
     del _host_blocked_calls[before:]
 
 
+# Under pytest-xdist the ledger above is per PROCESS, and a worker's
+# ``session.exitstatus`` is dropped: xdist reads it BEFORE this conftest's
+# sessionfinish runs (xdist/remote.py pytest_sessionfinish, a hookwrapper),
+# and the controller acts only on exit 2.  Enforcing in a worker is therefore
+# a false green.  Measured 2026-10-03: a test that swallows a launchctl call
+# gave exit 1 serially and exit 0 under ``-n 2``, the violation printed by the
+# worker and ignored.  So a worker hands its ledger to the controller through
+# ``workeroutput`` (sent with xdist's workerfinished event) and the controller
+# enforces the merged ledger.  The data-root guard needs none of this: it
+# compares the filesystem, and the controller's snapshot spans every worker.
+_HOST_LEDGER_KEY = "ilk_host_blocked_calls"
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node, error) -> None:  # noqa: ARG001
+    """Controller side: merge a finished worker's host-mutation ledger."""
+    output = getattr(node, "workeroutput", None) or {}
+    for nodeid, described in output.get(_HOST_LEDGER_KEY, ()):
+        _host_blocked_calls.append((nodeid, described))
+
+
 def _enforce_no_host_mutations(session) -> None:
     """Fail the session if any host-mutation call was not accounted for (AC-4)."""
+    workeroutput = getattr(session.config, "workeroutput", None)
+    if workeroutput is not None:
+        # An xdist worker: hand the ledger over; the controller enforces.
+        workeroutput[_HOST_LEDGER_KEY] = [list(c) for c in _host_blocked_calls]
+        return
     if not _host_blocked_calls:
         return
     is_report = os.environ.get(

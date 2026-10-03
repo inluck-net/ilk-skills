@@ -43,14 +43,14 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def _run_probe(source: str) -> subprocess.CompletedProcess:
+def _run_probe(source: str, *extra: str) -> subprocess.CompletedProcess:
     """Write a throwaway test inside the repo, run it, always clean up."""
     probe = REPO_ROOT / "tests" / f"_probe_{uuid.uuid4().hex[:8]}.py"
     probe.write_text(textwrap.dedent(source), encoding="utf-8")
     try:
         return subprocess.run(
             [sys.executable, "-m", "pytest", str(probe), "-q",
-             "-p", "no:cacheprovider"],
+             "-p", "no:cacheprovider", *extra],
             capture_output=True, text=True, timeout=120,
             cwd=str(REPO_ROOT), encoding="utf-8",
         )
@@ -141,6 +141,58 @@ class TestExemptionIsNarrow:
             "neighbour — the exemption is leaking again"
         )
         assert "test_unmarked_swallower" in (r.stdout + r.stderr)
+
+
+# ── the same ledger under pytest-xdist ──────────────────────────────────────
+
+class TestLedgerHoldsUnderXdist:
+    """A worker's ``session.exitstatus`` never reaches the controller.
+
+    Measured 2026-10-03 before the fix: the swallow probe below gave exit 1
+    serially and exit 0 under ``-n 2``, with the worker's violation printed
+    and ignored.  The ledger now travels in ``workeroutput`` and the
+    controller enforces it (conftest ``pytest_testnodedown``).
+    """
+
+    def test_swallowed_call_in_a_worker_fails_the_session(self) -> None:
+        pytest.importorskip("xdist")
+        r = _run_probe('''
+            import subprocess
+
+            def test_swallows_in_a_worker():
+                try:
+                    subprocess.Popen(["launchctl", "list"])
+                except BaseException:
+                    pass
+
+            def test_filler():
+                assert True
+        ''', "-n", "2")
+        assert r.returncode != 0, (
+            "under xdist a swallowed launchctl call passed the run: the "
+            "worker's ledger did not reach the controller.\n"
+            f"stdout={r.stdout[-400:]!r}\nstderr={r.stderr[-400:]!r}"
+        )
+        assert "test_swallows_in_a_worker" in (r.stdout + r.stderr)
+
+    def test_marked_self_check_in_a_worker_still_passes(self) -> None:
+        pytest.importorskip("xdist")
+        r = _run_probe('''
+            import subprocess
+            import pytest
+
+            @pytest.mark.expects_blocked_host
+            def test_self_check():
+                with pytest.raises(BaseException):
+                    subprocess.Popen(["launchctl", "list"])
+
+            def test_filler():
+                assert True
+        ''', "-n", "2")
+        assert r.returncode == 0, (
+            "under xdist a marked self-check failed the session.\n"
+            f"stdout={r.stdout[-400:]!r}\nstderr={r.stderr[-400:]!r}"
+        )
 
 
 # ── a clean run stays clean ─────────────────────────────────────────────────
