@@ -2969,7 +2969,8 @@ _UNSCOPED_KEY = "__all-projects__"
 #: then parsed the real corpus -- 1807 files / 6.45 GB on 2026-10-03, with a
 #: cache whose fingerprint moves whenever any live loop appends.  Under
 #: ``-n 8`` eight workers missed that cache at once and every lint call blew
-#: its 30s cap: 54 of the 61 parallel-only reds at v0.9.141.
+#: its 30s cap: 51 of the 61 parallel-only reds at v0.9.141 (the 7
+#: test_plan_lint_* files), the rest mostly subprocess waits starved by it.
 _TIMING_ROOT_ENV = "ILK_PLAN_LINT_TIMING_DATA_HOME"
 
 
