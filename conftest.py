@@ -869,6 +869,36 @@ def _no_inherited_runner_hook_env(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
+# ───────────────────────────────────────────────────────────────────────────
+# Rmtree guard — prevents tests from deleting live data directories.
+#
+# Wraps ``shutil.rmtree`` so that it raises ``LiveDataRmtreeRefused`` when
+# the target is under a live data root (``~/.ilk-data`` or ``~/.ilk``) and
+# not under an allowed root (pytest rootpath or system temp dir).
+# ───────────────────────────────────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def _rmtree_guard_active(monkeypatch, request):
+    """Wrap shutil.rmtree to refuse deletion of live data directories."""
+    import shutil
+    import rmtree_guard
+
+    original_rmtree = shutil.rmtree
+
+    def _guarded_rmtree(path, *args, **kwargs):
+        # Look up live_roots and allowed_roots at call time so monkeypatch
+        # takes effect when tests override them.
+        real_roots = rmtree_guard.live_roots()
+        allowed = rmtree_guard.allowed_roots(request.config.rootpath)
+        if rmtree_guard.refuses(path, live_roots=real_roots, allowed_roots=allowed):
+            raise rmtree_guard.LiveDataRmtreeRefused(
+                f"refusing to rmtree {path}: it is under a live data root"
+            )
+        return original_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "rmtree", _guarded_rmtree)
+
+
 # plan_lint's gate-budget lint reads a timing corpus.  Unpinned, every
 # plan_lint subprocess a test spawns (cwd=tmp_path, so the project key
 # resolves away from the repo) scanned the REAL data root unscoped, so the

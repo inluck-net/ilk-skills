@@ -112,15 +112,6 @@ def _call_append_revert_row(reverts_path: str, slug: str = "test-slug") -> None:
         sys.path.remove(str(SCRIPTS_DIR))
 
 
-def _cleanup_project_key(key: str) -> None:
-    """Remove a tmp project dir from the real data home."""
-    real_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
-    real_data = Path(os.environ.get("ILK_DATA_HOME", real_home / ".ilk-data"))
-    project_dir = real_data / "projects" / key
-    if project_dir.exists():
-        shutil.rmtree(project_dir)
-
-
 # ── AC-1: get_ilk_runtime_dir refuses an empty PROJECT_PATH ──────────────────
 
 def test_ac1_empty_project_path_refused(tmp_path: Path) -> None:

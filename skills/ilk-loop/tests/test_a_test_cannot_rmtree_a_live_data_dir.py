@@ -43,14 +43,14 @@ if str(SCRIPTS_DIR) not in sys.path:
 # ── AC-1: refuses predicate ──────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="rmtree_guard module does not yet exist")
 def test_refuses_live_root(tmp_path: Path) -> None:
     """refuses is true for <fake_live>/projects/k and for <fake_live> itself."""
     import rmtree_guard
 
     fake_live = tmp_path / "live"
     fake_live.mkdir()
-    allowed = rmtree_guard.allowed_roots(tmp_path)
+    # Pass empty allowed_roots so the live root is not overridden.
+    allowed: list[Path] = []
 
     assert rmtree_guard.refuses(
         fake_live / "projects" / "k",
@@ -64,7 +64,6 @@ def test_refuses_live_root(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="rmtree_guard module does not yet exist")
 def test_refuses_false_for_tmp(tmp_path: Path) -> None:
     """refuses is false for <tmp>/x."""
     import rmtree_guard
@@ -80,7 +79,6 @@ def test_refuses_false_for_tmp(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="rmtree_guard module does not yet exist")
 def test_refuses_false_for_worktree_scratch(tmp_path: Path) -> None:
     """refuses is false for <fake_live>/projects/k/runtime/launcher/worktrees/selfmod-batch/scratch/x
     when that worktree is in allowed_roots."""
@@ -112,7 +110,6 @@ def test_refuses_false_for_worktree_scratch(tmp_path: Path) -> None:
 # ── AC-2: scan_source predicate ──────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="rmtree_guard module does not yet exist")
 def test_scan_source_finds_cleanup_project_key() -> None:
     """scan_source on a snippet shaped like _cleanup_project_key returns one finding."""
     import rmtree_guard
@@ -131,7 +128,6 @@ def test_scan_source_finds_cleanup_project_key() -> None:
     assert len(findings) == 1, f"expected 1 finding, got {len(findings)}: {findings}"
 
 
-@pytest.mark.xfail(strict=True, reason="rmtree_guard module does not yet exist")
 def test_scan_source_no_finding_for_tmp_path() -> None:
     """scan_source on shutil.rmtree(tmp_path / "x") returns none."""
     import rmtree_guard
@@ -146,7 +142,6 @@ def test_scan_source_no_finding_for_tmp_path() -> None:
     assert len(findings) == 0, f"expected 0 findings, got {len(findings)}: {findings}"
 
 
-@pytest.mark.xfail(strict=True, reason="rmtree_guard module does not yet exist")
 def test_scan_source_no_finding_for_scratch() -> None:
     """scan_source on SCRATCH = REPO_ROOT / "scratch" followed by shutil.rmtree(SCRATCH) returns none."""
     import rmtree_guard
@@ -165,7 +160,6 @@ def test_scan_source_no_finding_for_scratch() -> None:
     assert len(findings) == 0, f"expected 0 findings, got {len(findings)}: {findings}"
 
 
-@pytest.mark.xfail(strict=True, reason="rmtree_guard module does not yet exist")
 def test_scan_source_no_finding_for_waived_line() -> None:
     """scan_source on a waived line returns none."""
     import rmtree_guard
@@ -184,7 +178,6 @@ def test_scan_source_no_finding_for_waived_line() -> None:
     assert len(findings) == 0, f"expected 0 findings, got {len(findings)}: {findings}"
 
 
-@pytest.mark.xfail(strict=True, reason="rmtree_guard module does not yet exist")
 def test_scan_source_finding_for_waiver_no_reason() -> None:
     """scan_source on a waiver with no reason returns one finding."""
     import rmtree_guard
@@ -206,7 +199,6 @@ def test_scan_source_finding_for_waiver_no_reason() -> None:
 # ── AC-3: repo scan ─────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="rmtree_guard module does not yet exist")
 def test_repo_scan_returns_zero_findings() -> None:
     """The repo scan (every test_*.py under skills/*/tests and tests, plus conftest.py)
     returns 0 findings.
@@ -233,7 +225,6 @@ def test_repo_scan_returns_zero_findings() -> None:
 # ── AC-4 (runtime): fixture refuses rmtree of live data dir ──────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="rmtree_guard module does not yet exist")
 def test_fixture_refuses_rmtree_of_live_data_dir(tmp_path: Path, monkeypatch) -> None:
     """Inside a test, with rmtree_guard.live_roots monkeypatched to [tmp_path / "live"]
     and rmtree_guard.allowed_roots to return [], a call to
