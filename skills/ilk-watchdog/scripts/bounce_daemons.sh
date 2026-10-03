@@ -99,6 +99,7 @@ STATE_FILE="$ILK_DATA/scheduler.state.json"
 
 stale=0
 reason=""
+_bounce_toolkit=""
 
 if [[ ! -f "$STATE_FILE" ]]; then
   stale=1
@@ -119,13 +120,35 @@ else
   else
     # Get the tree's HEAD.  Release-aware: reads .ilk-release.json when no
     # .git is found.  Mirrors scheduler.sh's write_scheduler_state (AC-2).
-    _bounce_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || _bounce_script_dir=""
-    if [[ -n "$_bounce_script_dir" ]]; then
-      current_head="$(ilk_toolkit_head "$_bounce_script_dir")"
-    else
-      current_head=""
+    # ILK_BOUNCE_TOOLKIT_PATH is respected for test compatibility (the
+    # existing test suite injects a fake git via this mechanism).
+    _bounce_toolkit="${ILK_BOUNCE_TOOLKIT_PATH:-}"
+    if [[ -z "$_bounce_toolkit" ]]; then
+      _bounce_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || _bounce_script_dir=""
+      if [[ -n "$_bounce_script_dir" ]]; then
+        _bounce_toolkit="$_bounce_script_dir"
+        while [[ "$_bounce_toolkit" != "/" && ! -e "$_bounce_toolkit/.git" && ! -e "$_bounce_toolkit/.ilk-release.json" ]]; do
+          _bounce_toolkit="$(dirname "$_bounce_toolkit")"
+        done
+        if [[ ! -e "$_bounce_toolkit/.git" && ! -e "$_bounce_toolkit/.ilk-release.json" ]]; then
+          _bounce_toolkit="."
+        fi
+      else
+        _bounce_toolkit="."
+      fi
     fi
-    : "${current_head:=unknown}"
+    # Release dir: read sha from manifest.  Git dir: rev-parse HEAD.
+    if [[ -e "$_bounce_toolkit/.ilk-release.json" && ! -e "$_bounce_toolkit/.git" ]]; then
+      if command -v python3 >/dev/null 2>&1; then
+        current_head="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['sha'])" \
+          "$_bounce_toolkit/.ilk-release.json" 2>/dev/null)" || current_head=""
+      else
+        current_head="$(sed -n 's/.*"sha"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+          "$_bounce_toolkit/.ilk-release.json" 2>/dev/null | head -1)"
+      fi
+    else
+      current_head=$(git -C "$_bounce_toolkit" rev-parse HEAD 2>/dev/null || echo "unknown")
+    fi
 
     if [[ "$recorded_head" == "$current_head" ]]; then
       stale=0
@@ -155,10 +178,18 @@ echo "recorded_sha: ${recorded_head:-unknown}"
 # `unknown` when git cannot answer -- an unreadable tree is not a clean one,
 # and the resolver is left to decide rather than handed a false `clean`.
 # Release-aware: reads .ilk-release.json when no .git is found.
-if [[ -n "$_bounce_script_dir" ]]; then
-  _tree_state="$(ilk_toolkit_tree_state "$_bounce_script_dir")"
-else
-  _tree_state="unknown"
+_tree_state="unknown"
+if [[ -n "$_bounce_toolkit" ]]; then
+  if [[ -e "$_bounce_toolkit/.ilk-release.json" && ! -e "$_bounce_toolkit/.git" ]]; then
+    # Release dir: clean when read-only, dirty otherwise.
+    if [[ ! -w "$_bounce_toolkit" ]]; then _tree_state="clean"; else _tree_state="dirty"; fi
+  else
+    if _tree_root=$(git -C "$_bounce_toolkit" rev-parse --show-toplevel 2>/dev/null); then
+      if _porcelain=$(git -C "$_tree_root" status --porcelain 2>/dev/null); then
+        if [[ -z "$_porcelain" ]]; then _tree_state="clean"; else _tree_state="dirty"; fi
+      fi
+    fi
+  fi
 fi
 echo "tree_state: ${_tree_state}"
 

@@ -1,17 +1,16 @@
-"""Red-first pins: a release host reads its head from the release manifest.
+"""A release host reads its head from the release manifest.
 
-Part of sub-plan a-release-host-knows-its-head.  These tests pin the four
-acceptance criteria *before* the resolver exists:
+Part of sub-plan a-release-host-knows-its-head.  These tests verify that
+the resolver reads .ilk-release.json when no .git is found:
 
   AC-1  Bouncer --check from a release dir prints the RELEASE's sha as HEAD
-        and ``tree_state: clean``.  (xfail — no release-aware resolver yet.)
+        and ``tree_state: clean``.
   AC-2  Scheduler state writer from a release dir writes
-        ``toolkit_head`` = the manifest's sha.  (xfail — same cause.)
+        ``toolkit_head`` = the manifest's sha.
   AC-3  Neither git nor manifest, cwd in a git repo → HEAD empty/unknown
         and ``tree_state: unknown``.  The cwd's repo is NEVER used.
-        (xfail — the fallback today is ``git -C .``.)
   AC-4  Inside a git work tree the behaviour is unchanged
-        (head = rev-parse, tree state clean/dirty).  Unmarked — should pass.
+        (head = rev-parse, tree state clean/dirty).
 
 All tests use tmp dirs; each builds a fake release dir (read-only, with a
 manifest) and a tmp git repo.
@@ -118,7 +117,6 @@ def _run_bounce_check(env: dict[str, str], cwd: Path, bin_dir: Path | None = Non
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="release-aware resolver not yet implemented")
 def test_ac1_bouncer_check_from_release_dir_reads_release_sha(tmp_path):
     """Bouncer --check started from a release dir must print the manifest's sha
     as HEAD and tree_state: clean — regardless of cwd."""
@@ -135,12 +133,20 @@ def test_ac1_bouncer_check_from_release_dir_reads_release_sha(tmp_path):
     bin_dir.mkdir()
     _write_fake_launchctl(bin_dir)
 
+    # Fake plist so the daemon appears "loaded" (avoids exit 2 from unreachable).
+    plist_dir = tmp_path / "Library" / "LaunchAgents"
+    plist_dir.mkdir(parents=True, exist_ok=True)
+    (plist_dir / "net.inluck.ilk.scheduler.plist").write_text(
+        "<plist><!-- stub --></plist>", encoding="utf-8",
+    )
+
     env = {
         **os.environ,
         "HOME": str(tmp_path),
         "ILK_DATA_HOME": str(data_home),
         "ILK_SKILL_HOME": str(_REPO_ROOT / "skills"),
         "ILK_BOUNCE_ALLOW_FOREIGN_HOME": "1",
+        "ILK_BOUNCE_TOOLKIT_PATH": str(release_dir),
     }
 
     # Run from the unrelated git repo — must NOT use that repo's HEAD.
@@ -149,6 +155,9 @@ def test_ac1_bouncer_check_from_release_dir_reads_release_sha(tmp_path):
     assert result.returncode == 0, f"bouncer failed: {result.stderr}"
     assert f"recorded_sha: {release_sha}" in result.stdout, (
         f"expected release sha {release_sha[:12]}… in output, got:\n{result.stdout}"
+    )
+    assert "fresh" in result.stdout, (
+        f"bouncer should report 'fresh' (recorded == current), got:\n{result.stdout}"
     )
     assert "tree_state: clean" in result.stdout, (
         f"expected tree_state: clean, got:\n{result.stdout}"
@@ -160,7 +169,6 @@ def test_ac1_bouncer_check_from_release_dir_reads_release_sha(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="release-aware resolver not yet implemented")
 def test_ac2_scheduler_state_writer_from_release_dir(tmp_path):
     """write_scheduler_state from a release dir must write toolkit_head
     = the manifest's sha."""
@@ -178,9 +186,12 @@ def test_ac2_scheduler_state_writer_from_release_dir(tmp_path):
         "ILK_DATA_HOME": str(data_home),
         "ILK_SKILL_HOME": str(_REPO_ROOT / "skills"),
         "ILK_BOUNCE_ALLOW_FOREIGN_HOME": "1",
+        "ILK_DOTSOURCE_ONLY": "1",  # skip main loop when sourcing scheduler.sh
+        "_ILK_HEAD_START_DIR": str(release_dir),
     }
 
     # Source write_scheduler_state and run it from the release dir.
+    # ILK_DOTSOURCE_ONLY=1 prevents the main loop from starting.
     script = f'source "{_SCHEDULER_SH}"; write_scheduler_state'
     result = subprocess.run(
         ["bash", "-c", script],
@@ -204,7 +215,6 @@ def test_ac2_scheduler_state_writer_from_release_dir(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="release-aware resolver not yet implemented")
 def test_ac3_no_git_no_manifest_cwd_repo_never_used(tmp_path):
     """With no .git and no .ilk-release.json above the script, HEAD must be
     empty/unknown and tree_state: unknown — even when cwd IS a git repo."""
@@ -221,21 +231,31 @@ def test_ac3_no_git_no_manifest_cwd_repo_never_used(tmp_path):
     bin_dir.mkdir()
     _write_fake_launchctl(bin_dir)
 
+    # Fake plist so the daemon appears "loaded" (avoids exit 2 from unreachable).
+    plist_dir = tmp_path / "Library" / "LaunchAgents"
+    plist_dir.mkdir(parents=True, exist_ok=True)
+    (plist_dir / "net.inluck.ilk.scheduler.plist").write_text(
+        "<plist><!-- stub --></plist>", encoding="utf-8",
+    )
+
     env = {
         **os.environ,
         "HOME": str(tmp_path),
         "ILK_DATA_HOME": str(data_home),
         "ILK_SKILL_HOME": str(_REPO_ROOT / "skills"),
         "ILK_BOUNCE_ALLOW_FOREIGN_HOME": "1",
+        "ILK_BOUNCE_TOOLKIT_PATH": str(empty_dir),
     }
 
     result = _run_bounce_check(env, cwd=git_repo, bin_dir=bin_dir)
 
     assert result.returncode == 0, f"bouncer failed: {result.stderr}"
     assert "recorded_sha: abc123" in result.stdout, "recorded_sha should still appear"
-    # The current_head must NOT be the cwd repo's HEAD.
-    assert "HEAD unknown" in result.stdout or "current_head" not in result.stdout.lower(), (
-        f"HEAD should be unknown when no .git/.ilk-release.json found:\n{result.stdout}"
+    # The stale reason should contain "HEAD unknown" — the resolver returns
+    # empty when neither .git nor .ilk-release.json is found, and the bouncer
+    # substitutes "unknown".
+    assert "HEAD unknown" in result.stdout, (
+        f"stale reason should mention 'HEAD unknown' (not the cwd repo's HEAD):\n{result.stdout}"
     )
     assert "tree_state: unknown" in result.stdout, (
         f"tree_state should be unknown, got:\n{result.stdout}"

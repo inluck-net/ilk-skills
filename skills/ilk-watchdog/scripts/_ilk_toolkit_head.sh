@@ -3,14 +3,15 @@
 #
 # Sourced by scheduler.sh and bounce_daemons.sh.  Provides:
 #
-#   ilk_toolkit_head <start_dir>
+#   ilk_toolkit_head [start_dir]
 #     Prints the toolkit HEAD sha (bare, no prefix).  Walks up from
-#     <start_dir> looking for .git (file or dir) or .ilk-release.json.
+#     start_dir (default: the caller's script dir) looking for .git
+#     (file or dir) or .ilk-release.json.
 #     - git work tree: git rev-parse HEAD
 #     - release dir:   sha from .ilk-release.json
 #     - neither:       prints nothing (empty string)
 #
-#   ilk_toolkit_tree_state <start_dir>
+#   ilk_toolkit_tree_state [start_dir]
 #     Prints the tree state: "clean", "dirty", or "unknown".
 #     - git work tree: clean/dirty from git status --porcelain
 #     - release dir:   "clean" when the release root is not writable,
@@ -22,12 +23,30 @@
 # git archive won't, but a future layout might).  Whichever marker is
 # found at the SHALLOWEST level wins.
 #
+# Environment:
+#   _ILK_HEAD_START_DIR  Override the start directory for both functions.
+#                         Used by tests to point the walk-up at a tmp
+#                         release dir instead of the real scripts dir.
+#
 # NEVER falls back to $PWD or any cwd-dependent resolution.
 # Portable: bash 3.2+ (macOS default).
 
+_ilk_resolve_start() {
+  # _ILK_HEAD_START_DIR always wins — used by tests to redirect the walk-up
+  # at a tmp release dir instead of the real scripts dir.
+  local start="${_ILK_HEAD_START_DIR:-${1:-}}"
+  if [[ -z "$start" ]]; then
+    # Default: the directory containing this sourced script.
+    start="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P 2>/dev/null)" || { echo ""; return 1; }
+  fi
+  # Canonicalise.
+  start="$(cd -P "$start" && pwd -P 2>/dev/null)" || { echo ""; return 1; }
+  printf '%s' "$start"
+}
+
 ilk_toolkit_head() {
-  local start="${1:-.}"
-  start="$(cd -P "$start" && pwd -P 2>/dev/null)" || { echo ""; return 0; }
+  local start
+  start="$(_ilk_resolve_start "$1")" || { echo ""; return 0; }
 
   local found=""  # "git" or "release"
   local cur="$start"
@@ -54,8 +73,6 @@ ilk_toolkit_head() {
         python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['sha'])" \
           "$cur/.ilk-release.json" 2>/dev/null || echo ""
       else
-        # grep for the sha key — portable enough for a JSON manifest
-        # written by ilk_release.py (always pretty-printed).
         sed -n 's/.*"sha"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
           "$cur/.ilk-release.json" 2>/dev/null | head -1
       fi
@@ -70,8 +87,8 @@ ilk_toolkit_head() {
 }
 
 ilk_toolkit_tree_state() {
-  local start="${1:-.}"
-  start="$(cd -P "$start" && pwd -P 2>/dev/null)" || { echo "unknown"; return 0; }
+  local start
+  start="$(_ilk_resolve_start "$1")" || { echo "unknown"; return 0; }
 
   local found=""  # "git" or "release"
   local cur="$start"
