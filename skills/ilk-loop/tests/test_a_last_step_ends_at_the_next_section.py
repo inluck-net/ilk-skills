@@ -135,10 +135,6 @@ Details inside step 0.
 # ── AC-1 (xfail): last step section does not contain ## Findings ────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="AC-1: last step section still swallows ## Findings until reader fix",
-)
 def test_ac1_last_step_section_excludes_findings():
     """The last step's section must not include `## Findings` or its tail."""
     sections = _extract_step_sections(TWO_STEP_THEN_FINDINGS)
@@ -157,10 +153,6 @@ def test_ac1_last_step_section_excludes_findings():
 # ── AC-2 (xfail): lint_no_diff_step returns no false finding ────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="AC-2: lint_no_diff_step false-positives on last step until reader fix",
-)
 def test_ac2_lint_no_diff_step_clean_on_last_step():
     """A last step with no file path and no --allow-empty, followed by
     ## Findings, should NOT trigger lint_no_diff_step (the Findings section
@@ -172,10 +164,6 @@ def test_ac2_lint_no_diff_step_clean_on_last_step():
 # ── AC-3 (xfail): same through plan_preflight ────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="AC-3: plan_preflight false-positives on last step until reader fix",
-)
 def test_ac3_preflight_clean_on_last_step():
     """Same as AC-2 but through _check_step_commit_feasibility."""
     findings = _check_step_commit_feasibility({"example-slug": TWO_STEP_THEN_FINDINGS})

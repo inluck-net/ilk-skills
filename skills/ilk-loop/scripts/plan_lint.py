@@ -4455,15 +4455,53 @@ _REPO_FILE_PATH_RE = re.compile(
 
 
 def _extract_step_sections(body: str) -> list[tuple[int, str, str]]:
-    """Return (step_no, heading, section_text) for each ``### Step N`` section."""
+    """Return (step_no, heading, section_text) for each ``### Step N`` section.
+
+    A step's section ends at the earliest of:
+    - the next ``### Step N`` heading;
+    - the next ``## `` (level-2) heading that is NOT inside a fenced code block;
+    - the end of the body.
+
+    Sub-headings (``### `` other than Step, ``#### ``, etc.) stay inside
+    the step.  A ``## `` line inside a ``` fence does NOT end the section.
+
+    See sub-plan a-last-step-ends-at-the-next-section.
+    """
     steps: list[tuple[int, str, str]] = []
     for m in re.finditer(r"^###\s+Step\s+(\d+)\b[^\n]*", body, re.MULTILINE):
         step_no = int(m.group(1))
         heading = m.group(0).strip()
         start = m.start()
-        # Find the next step heading or end of body.
-        next_step = re.search(r"^###\s+Step\s+\d+\b", body[m.end():], re.MULTILINE)
-        end = m.end() + next_step.start() if next_step else len(body)
+        # Scan forward from after the heading line to find the boundary.
+        end = len(body)
+        in_fence = False
+        pos = m.end()
+        while pos < len(body):
+            # Find the next line starting at pos.
+            nl = body.find("\n", pos)
+            if nl == -1:
+                line_start = pos
+                line = body[pos:]
+                pos = len(body)
+            else:
+                line_start = pos
+                line = body[pos:nl]
+                pos = nl + 1
+            stripped = line.lstrip()
+            # Toggle fence state on lines starting with ``` (after lstrip).
+            if stripped.startswith("```"):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+            # A ### Step N heading ends the section.
+            if re.match(r"^###\s+Step\s+\d+\b", stripped):
+                end = line_start
+                break
+            # A ## heading (level-2) outside a fence ends the section.
+            if re.match(r"^##\s", stripped):
+                end = line_start
+                break
         section = body[start:end]
         steps.append((step_no, heading, section))
     return steps
