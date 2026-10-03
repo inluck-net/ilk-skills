@@ -25,6 +25,22 @@ if str(_SCRIPTS) not in sys.path:
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+@pytest.fixture(autouse=True)
+def _no_host_wide_loops():
+    """Stub merge_back's HOST-WIDE live-loop probe; tests here stub the rest.
+
+    These tests patch the per-project probe, but merge_back also runs
+    ``_find_live_ilk_pids_hostwide``, which matches any process carrying the
+    worker prompt.  Under ``-n 8`` the runner-stub tests on other workers
+    carry exactly that, so a merge here was refused as "blocked by a live
+    loop" (2026-10-03: test_daemon_alive_bounces_and_proceeds and
+    test_multi_commit_merge_preserves_all).  Serially the same thing happens
+    whenever a real ilk worker is running on the host.
+    """
+    with patch("selfmod_worktree._find_live_ilk_pids_hostwide", return_value=[]):
+        yield
+
+
 def _create_throwaway_repo(tmp_path: Path) -> Path:
     """Create a minimal throwaway git repo for testing worktree operations."""
     repo = tmp_path / "test-repo"

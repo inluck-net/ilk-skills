@@ -25,10 +25,13 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import textwrap
 from pathlib import Path
 
 import pytest
+
+from _selfmod_merge_shim import make_shim_skill_root
 
 _HERE = Path(__file__).resolve()
 _SCRIPTS = _HERE.parent.parent / "scripts"
@@ -100,33 +103,32 @@ def _head_sha(repo: Path) -> str:
     return _git(repo, "rev-parse", "HEAD")
 
 
+# The shim lives in a mirror of the skill root, never over the real script:
+# see _selfmod_merge_shim.py for why overwriting it was unsafe.
+_SHIM_ROOT: "Path | None" = None
+
+
 def _install_merge_shim(merge_rc: int) -> None:
-    """Replace selfmod_worktree.py with a wrapper that exits *merge_rc* on
-    the ``merge`` subcommand and delegates everything else to the real script."""
-    real = str(_REAL_SELFMOD)
-    backup = real + ".bak"
-    shutil.copy2(real, backup)
-    _REAL_SELFMOD.write_text(
-        textwrap.dedent(f"""\
-            #!/usr/bin/env python3
-            \"\"\"Shim: override merge exit code, delegate create/remove.\"\"\"
-            import subprocess, sys, os
-            REAL = {backup!r}
-            if len(sys.argv) > 1 and sys.argv[1] == "merge":
-                print("[shim] merge returning exit {merge_rc}")
-                sys.exit({merge_rc})
-            else:
-                sys.exit(subprocess.call([sys.executable, REAL] + sys.argv[1:]))
-        """),
-        encoding="utf-8",
+    """Point the next _run_runner_func at a skill root whose
+    selfmod_worktree.py exits *merge_rc* on ``merge``.  Call
+    _remove_merge_shim() afterwards."""
+    global _SHIM_ROOT
+    _SHIM_ROOT = make_shim_skill_root(
+        Path(tempfile.mkdtemp(prefix="selfmod-shim-")), _SCRIPTS.parent.parent,
+        merge_rc,
     )
 
 
 def _remove_merge_shim() -> None:
-    """Restore the real selfmod_worktree.py after _install_merge_shim."""
-    backup = str(_REAL_SELFMOD) + ".bak"
-    if os.path.exists(backup):
-        shutil.move(backup, str(_REAL_SELFMOD))
+    """Drop the shim skill root installed by _install_merge_shim."""
+    global _SHIM_ROOT
+    if _SHIM_ROOT is not None:
+        shutil.rmtree(_SHIM_ROOT.parent, ignore_errors=True)
+    _SHIM_ROOT = None
+
+
+def _shim_override() -> str:
+    return f"_SKILL_ROOT='{_SHIM_ROOT}'\n" if _SHIM_ROOT is not None else ""
 
 
 def _run_runner_func(
@@ -141,7 +143,7 @@ def _run_runner_func(
 set -euo pipefail
 export ILK_DOTSOURCE_ONLY=1
 source '{_RUNNER}'
-{func_body}
+{_shim_override()}{func_body}
 """
     return subprocess.run(
         ["bash", "-c", script],

@@ -867,3 +867,23 @@ _RUNNER_HOOK_ENV = ("ILK_SHIPPED_MARKER", "ILK_ITERATION_SUBPLAN")
 def _no_inherited_runner_hook_env(monkeypatch):
     for name in _RUNNER_HOOK_ENV:
         monkeypatch.delenv(name, raising=False)
+
+
+# plan_lint's gate-budget lint reads a timing corpus.  Unpinned, every
+# plan_lint subprocess a test spawns (cwd=tmp_path, so the project key
+# resolves away from the repo) scanned the REAL data root unscoped, so the
+# suite depended on whatever the live loops had written and paid a multi-GB
+# parse whenever any loop had appended since the last cache write.  Pin it to
+# an empty root: an empty corpus is "nothing measured yet", which the auto
+# path reports as no findings.  Tests of the budget lint pass timing_data
+# explicitly or set their own root.
+@pytest.fixture(scope="session")
+def _empty_timing_root(tmp_path_factory):
+    root = tmp_path_factory.mktemp("plan-lint-timing-root")
+    (root / "projects").mkdir()
+    return root
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_plan_lint_timing(monkeypatch, _empty_timing_root):
+    monkeypatch.setenv("ILK_PLAN_LINT_TIMING_DATA_HOME", str(_empty_timing_root))

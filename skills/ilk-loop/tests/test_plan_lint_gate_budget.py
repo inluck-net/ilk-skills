@@ -510,6 +510,10 @@ class TestTimingDiskCache:
         suite (it did not, so a real cache HIT masked the failure).
         """
         import ilk_paths
+        # The root conftest pins plan_lint's timing root to an empty dir so
+        # no test reads the live corpus.  These tests exercise the AMBIENT
+        # resolution path, so drop the pin and redirect the resolvers instead.
+        monkeypatch.delenv("ILK_PLAN_LINT_TIMING_DATA_HOME", raising=False)
         monkeypatch.setattr(
             ilk_paths, "ilk_data_root", lambda: tmp_path, raising=False)
         monkeypatch.setattr(

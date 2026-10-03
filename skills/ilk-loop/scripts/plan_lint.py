@@ -2962,6 +2962,25 @@ _TIMING_CACHE_SCHEMA = 1
 _UNSCOPED_KEY = "__all-projects__"
 
 
+#: Where the gate-budget lint reads its timing corpus.  Unset in production:
+#: the ambient data root, as before.  The test suite pins it (root conftest)
+#: to an empty root, because every plan_lint test spawns the CLI with
+#: cwd=tmp_path, the key resolves away from the repo, and the UNSCOPED scan
+#: then parsed the real corpus -- 1807 files / 6.45 GB on 2026-10-03, with a
+#: cache whose fingerprint moves whenever any live loop appends.  Under
+#: ``-n 8`` eight workers missed that cache at once and every lint call blew
+#: its 30s cap: 54 of the 61 parallel-only reds at v0.9.141.
+_TIMING_ROOT_ENV = "ILK_PLAN_LINT_TIMING_DATA_HOME"
+
+
+def _timing_data_root() -> Path:
+    override = os.environ.get(_TIMING_ROOT_ENV, "").strip()
+    if override:
+        return Path(override)
+    from ilk_paths import ilk_data_root as _root
+    return _root()
+
+
 def _timing_corpus_fingerprint(key: str) -> str | None:
     """A stat-only signature of the corpus ``gate_cost`` would parse.
 
@@ -2979,12 +2998,10 @@ def _timing_corpus_fingerprint(key: str) -> str | None:
     """
     try:
         if key == _UNSCOPED_KEY:
-            from ilk_paths import ilk_data_root as _root
-            runs = _root() / "projects"
+            runs = _timing_data_root() / "projects"
             pattern = "*/logs/runs/*/iter-*.log.jsonl"
         else:
-            from ilk_paths import external_logs_dir as _logs_dir
-            runs = _logs_dir(key) / "runs"
+            runs = _timing_data_root() / "projects" / key / "logs" / "runs"
             pattern = "*/iter-*.log.jsonl"
         n = 0
         newest = 0
@@ -3003,10 +3020,9 @@ def _timing_corpus_fingerprint(key: str) -> str | None:
 def _timing_cache_path(key: str) -> "Path | None":
     try:
         if key == _UNSCOPED_KEY:
-            from ilk_paths import ilk_data_root as _root
-            return _root() / "runtime" / "gate-cost-timing.all-projects.json"
-        from ilk_paths import external_runtime_dir as _runtime_dir
-        return _runtime_dir(key) / "gate-cost-timing.cache.json"
+            return _timing_data_root() / "runtime" / "gate-cost-timing.all-projects.json"
+        return (_timing_data_root() / "projects" / key / "runtime"
+                / "gate-cost-timing.cache.json")
     except Exception:
         return None
 
@@ -3091,8 +3107,8 @@ def _load_timing_data() -> dict:
         fingerprint = None
         try:
             sys.path.insert(0, str(Path(__file__).resolve().parent))
-            from ilk_paths import ilk_data_root as _data_root
             from ilk_paths import project_key as _project_key
+            _data_root = _timing_data_root
             key = _project_key(_resolve_project_root())
             # Only scope to a key that actually has data.  gate_cost exits
             # non-zero on an unknown --project (deliberately: an unknown key
@@ -3123,8 +3139,12 @@ def _load_timing_data() -> dict:
                 if cached is not None:
                     _TIMING_CACHE = {**cached, "_auto_loaded": True}
                     return _TIMING_CACHE
+        gate_env = None
+        if os.environ.get(_TIMING_ROOT_ENV, "").strip():
+            gate_env = {**os.environ, "ILK_DATA_HOME": str(_timing_data_root())}
         out = _sp.run(
             cmd, capture_output=True, text=True, timeout=120, encoding="utf-8",
+            env=gate_env,
         )
         if out.returncode != 0:
             err = (out.stderr or out.stdout or "").strip().splitlines()

@@ -13,6 +13,7 @@ skills/ilk-loop/tests/fixtures/iteration_timing/ — never from ~/.ilk-data
 (AC-8: hermetic).
 """
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -179,11 +180,22 @@ class TestBackgroundedAttribution:
 class TestBaselineMode:
     """AC-4: --baseline walks the corpus and reports shares."""
 
-    def test_baseline_reports_denominator(self):
-        """--baseline reports how many iterations were unusable with denominator."""
+    def test_baseline_reports_denominator(self, tmp_path):
+        """--baseline reports how many iterations were unusable with denominator.
+
+        Pinned to an empty data root: unpinned, --baseline parsed the live
+        corpus (6.45 GB on 2026-10-03), so the test's cost and result tracked
+        whatever the loops had written, and it blew the 17 s gate timeout
+        whenever the machine was busy (8 xdist workers).  The contract under
+        test is the shape of the report, which an empty corpus exercises.
+        """
+        (tmp_path / "projects").mkdir()
+        env = {k: v for k, v in os.environ.items() if k != "ILK_DATA_DIR"}
+        env["ILK_DATA_HOME"] = str(tmp_path)
         proc = subprocess.run(
             [sys.executable, str(SCRIPT), "--baseline", "--json"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+            env=env,
         )
         assert proc.returncode == 0, f"stderr: {proc.stderr[:500]}"
         data = json.loads(proc.stdout)
