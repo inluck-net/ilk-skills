@@ -37,7 +37,6 @@ FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "triage" / "run-202
 # ── AC-1: build_evidence on the replay fixture ──────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="ilk_triage.py not yet written")
 def test_build_evidence_contains_failed_check_command():
     """build_evidence must surface the failed check's command."""
     from ilk_triage import build_evidence
@@ -49,7 +48,6 @@ def test_build_evidence_contains_failed_check_command():
     assert "test_a_layout_switch_restarts_the_daemon" in last_exit["failed_check"]["command"]
 
 
-@pytest.mark.xfail(strict=True, reason="ilk_triage.py not yet written")
 def test_build_evidence_contains_dbg_lines():
     """build_evidence must surface [DBG] before TERM lines from the driver log."""
     from ilk_triage import build_evidence
@@ -60,7 +58,6 @@ def test_build_evidence_contains_dbg_lines():
         "driver_log must contain [DBG] before TERM lines"
 
 
-@pytest.mark.xfail(strict=True, reason="ilk_triage.py not yet written")
 def test_build_evidence_contains_local_checks_failed():
     """build_evidence must surface local_checks_failed_no_commits."""
     from ilk_triage import build_evidence
@@ -72,7 +69,6 @@ def test_build_evidence_contains_local_checks_failed():
 # ── AC-2: decide with valid ack-and-relaunch ────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="ilk_triage.py not yet written")
 def test_decide_returns_valid_decision_and_records_model(tmp_path: Path, monkeypatch):
     """decide must return the manager's decision and record the init model."""
     from ilk_triage import decide, build_evidence
@@ -108,7 +104,6 @@ def test_decide_returns_valid_decision_and_records_model(tmp_path: Path, monkeyp
 # ── AC-3: decide returns park-and-escalate for various failures ──────────────
 
 
-@pytest.mark.xfail(strict=True, reason="ilk_triage.py not yet written")
 @pytest.mark.parametrize("scenario,expected_reason", [
     ("no_json", "no_json"),           # result "I think we should relaunch"
     ("two_json", "two_json"),         # two JSON objects
@@ -203,7 +198,6 @@ def test_decide_returns_park_and_escalate_for_failures(
 # ── AC-4: triage.disabled kill switch ────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="ilk_triage.py not yet written")
 def test_triage_disabled_exits_with_refused_row(tmp_path: Path, monkeypatch):
     """triage.disabled must exit 3, write a triage-refused row, and not run claude."""
     from ilk_triage import main
@@ -234,7 +228,6 @@ def test_triage_disabled_exits_with_refused_row(tmp_path: Path, monkeypatch):
     assert not marker.exists(), "stub claude must not have run"
 
 
-@pytest.mark.xfail(strict=True, reason="ilk_triage.py not yet written")
 def test_triage_disabled_writes_refused_audit_row(tmp_path: Path, monkeypatch):
     """triage.disabled must write a triage-refused audit row."""
     from ilk_triage import main
@@ -264,7 +257,6 @@ def test_triage_disabled_writes_refused_audit_row(tmp_path: Path, monkeypatch):
 # ── AC-5 (control): missing postmortem is listed and decide still runs ───────
 
 
-@pytest.mark.xfail(strict=True, reason="ilk_triage.py not yet written")
 def test_missing_postmortem_is_listed_in_missing_sources(tmp_path: Path):
     """A missing postmortem must appear in evidence['missing_sources']."""
     from ilk_triage import build_evidence
@@ -288,7 +280,6 @@ def test_missing_postmortem_is_listed_in_missing_sources(tmp_path: Path):
         "missing postmortem must be listed in missing_sources"
 
 
-@pytest.mark.xfail(strict=True, reason="ilk_triage.py not yet written")
 def test_missing_postmortem_does_not_block_decide(tmp_path: Path, monkeypatch):
     """decide must still run when the postmortem is missing."""
     from ilk_triage import decide, build_evidence
@@ -323,5 +314,5 @@ def test_missing_postmortem_does_not_block_decide(tmp_path: Path, monkeypatch):
     evidence = build_evidence(minimal_dir, "20261003-125807")
     decision = decide(evidence, home=tmp_path / "home", timeout_s=10)
 
-    assert decision["action"] == "park-and-relaunch", \
+    assert decision["action"] == "park-and-escalate", \
         "decide must return a valid action even with missing postmortem"
