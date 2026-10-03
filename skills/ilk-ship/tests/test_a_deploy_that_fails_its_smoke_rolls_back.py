@@ -1,6 +1,6 @@
 """Tests for release_train deploy — flip, bounce, smoke, and automatic rollback.
 
-Sub-plan: a-deploy-that-fails-its-smoke-rolls-back, step 0 (pins).
+Sub-plan: a-deploy-that-fails-its-smoke-rolls-back, step 0 (pins) + step 1 (impl).
 
 Each test builds a throwaway releases root under ``tmp_path`` with v0.0.1
 as current and a v0.0.2 release dir already extracted.  All external
@@ -23,7 +23,6 @@ import json
 import os
 import subprocess
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -36,11 +35,7 @@ LOOP_SCRIPTS = Path(__file__).resolve().parents[2] / "ilk-loop" / "scripts"
 sys.path.insert(0, str(SHIP_SCRIPTS))
 sys.path.insert(0, str(LOOP_SCRIPTS))
 
-
-def _import_deploy():
-    """Import deploy — deferred because it doesn't exist at step-0 commit time."""
-    from release_train import deploy
-    return deploy
+from release_train import deploy  # noqa: E402
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -79,7 +74,6 @@ def _make_releases_root(tmp_path: Path) -> tuple[Path, Path]:
 
     # Symlink current → v0.0.1
     current = parent / "current"
-    previous = parent / "previous"
     os.symlink(str(v001_dir), str(current))
 
     # Set env so ilk_release uses our tmp root
@@ -138,61 +132,131 @@ def _make_fake_project(tmp_path: Path) -> Path:
     return project
 
 
-def _write_stub_bouncer(tmp_path: Path, output: str = "fresh: scheduler — fresh (toolkit_head matches HEAD)\nrecorded_sha: aaaa\nrecorded_sha: aaaa\ntree_state: clean\n") -> Path:
-    """Write a fake bounce_daemons.sh that records its argv and prints output."""
+def _make_release_cmd(
+    allow_tags: set[str] | None = None,
+    releases_root: Path | None = None,
+):
+    """Create a stub release_cmd callable.
+
+    *allow_tags* is the set of tags that extraction succeeds for.
+    None means all tags succeed.  Tags not in the set raise SystemExit(4).
+
+    When *releases_root* is set, ``--status`` returns the real status JSON
+    and ``--rollback`` swaps current/previous (matching ilk_release.py's
+    CLI contract so the deploy function can discover the previous tag).
+    """
+    def _release_cmd(arg: str, repo: Path) -> tuple[int, str]:
+        # --status: return release status JSON
+        if arg == "--status" and releases_root is not None:
+            parent = releases_root.parent
+            current = parent / "current"
+            previous = parent / "previous"
+            current_val = os.readlink(current) if current.is_symlink() else None
+            previous_val = os.readlink(previous) if previous.is_symlink() else None
+            return (0, json.dumps({
+                "current": current_val,
+                "previous": previous_val,
+            }))
+
+        # --rollback: swap current and previous
+        if arg == "--rollback" and releases_root is not None:
+            parent = releases_root.parent
+            current = parent / "current"
+            previous = parent / "previous"
+            if current.is_symlink() and previous.is_symlink():
+                curr_target = os.readlink(current)
+                prev_target = os.readlink(previous)
+                os.remove(current)
+                os.symlink(prev_target, str(current))
+                os.remove(previous)
+                os.symlink(curr_target, str(previous))
+            return (0, "rolled back")
+
+        # Extraction: check allow_tags and flip current
+        if allow_tags is not None and arg not in allow_tags:
+            print(f"refused: no such tag: {arg}", file=sys.stderr)
+            raise SystemExit(4)
+        # Simulate ilk_release's flip: current → tag dir
+        if releases_root is not None:
+            parent = releases_root.parent
+            current = parent / "current"
+            tag_dir = releases_root / arg
+            if tag_dir.is_dir():
+                old_target = os.readlink(current) if current.is_symlink() else None
+                if old_target:
+                    previous = parent / "previous"
+                    os.symlink(old_target, str(previous))
+                os.remove(current)
+                os.symlink(str(tag_dir), str(current))
+        return (0, f"extracted {arg}")
+    return _release_cmd
+
+
+def _make_bounce_cmd(bouncer_path: Path) -> callable:
+    """Create a stub bounce_cmd that runs the fake bouncer script."""
+    def _bounce_cmd() -> int:
+        r = subprocess.run(
+            [str(bouncer_path)],
+            capture_output=True, text=True,
+            timeout=10,
+        )
+        return r.returncode
+    return _bounce_cmd
+
+
+def _make_status_cmd(mapping: dict[str, str]) -> callable:
+    """Create a stub status_cmd that returns values from a tag→status mapping."""
+    def _status_cmd(tag: str) -> str:
+        return mapping.get(tag, "unreachable")
+    return _status_cmd
+
+
+def _write_stub_bouncer(tmp_path: Path) -> Path:
+    """Write a fake bounce_daemons.sh that records its argv and prints fresh output."""
     bouncer = tmp_path / "bounce_daemons.sh"
-    bouncer.write_text(textwrap.dedent(f"""\
-        #!/bin/bash
-        echo "$@" >> "$(dirname "$0")/bouncer_argv"
-        cat <<'BOUNCER_OUTPUT'
-{output.strip()}
-BOUNCER_OUTPUT
-    """))
+    bouncer.write_text("#!/bin/bash\necho \"$@\" >> \"$(dirname \"$0\")/bouncer_argv\"\n")
     bouncer.chmod(0o755)
     return bouncer
 
 
-def _write_stub_status(tmp_path: Path, status: str = "ok") -> Path:
-    """Write a fake host_deploy_status.py that prints the given status."""
-    status_script = tmp_path / "host_deploy_status.py"
-    status_script.write_text(textwrap.dedent(f"""\
-        #!/usr/bin/env python3
-        import sys
-        print("{status}")
-        sys.exit(0 if "{status}" == "ok" else 1)
-    """))
-    status_script.chmod(0o755)
-    return status_script
-
-
-def _write_pid_file(tmp_path: Path, alive: bool = True, command: str = "") -> Path:
-    """Write a fake scheduler.pid file pointing to a live or dead process."""
+def _make_pid_file(tmp_path: Path, alive: bool = True) -> Path:
+    """Create a fake scheduler.pid file.  Returns pid_file."""
     pid_dir = tmp_path / "data" / "runtime"
     pid_dir.mkdir(parents=True, exist_ok=True)
     pid_file = pid_dir / "scheduler.pid"
 
     if alive:
-        # Start a sleep process and record its pid
         proc = subprocess.Popen(["sleep", "60"])
+        _LAUNCHED_PROCS.append(proc)
         pid_file.write_text(str(proc.pid))
-        # Store proc for cleanup
-        _write_pid_file._procs = getattr(_write_pid_file, "_procs", [])
-        _write_pid_file._procs.append(proc)
     else:
-        # Use a pid that's very likely dead
         pid_file.write_text("99999999")
 
     return pid_file
 
 
-def _cleanup_pid_procs():
-    """Kill any sleep processes started by _write_pid_file."""
-    for proc in getattr(_write_pid_file, "_procs", []):
-        try:
-            proc.terminate()
-            proc.wait(timeout=5)
-        except Exception:
-            pass
+def _make_pid_file_for_tag(tmp_path: Path, tag: str) -> Path:
+    """Create a fake scheduler.pid whose process command line mentions releases/<tag>/.
+
+    The script is placed in a directory named ``releases/<tag>/`` so that
+    ``ps -o command=`` shows the path pattern the deploy smoke checks for.
+    """
+    pid_dir = tmp_path / "data" / "runtime"
+    pid_dir.mkdir(parents=True, exist_ok=True)
+    pid_file = pid_dir / "scheduler.pid"
+
+    # Create the script under releases/<tag>/ so ps shows the path
+    release_dir = tmp_path / "releases" / tag
+    release_dir.mkdir(parents=True, exist_ok=True)
+    script = release_dir / "scheduler.sh"
+    script.write_text("#!/bin/bash\nsleep 60\n")
+    script.chmod(0o755)
+
+    proc = subprocess.Popen(["bash", str(script)])
+    _LAUNCHED_PROCS.append(proc)
+    pid_file.write_text(str(proc.pid))
+
+    return pid_file
 
 
 # ── AC-1: deploy succeeds when smoke passes ─────────────────────────────────
@@ -200,7 +264,6 @@ def _cleanup_pid_procs():
 class TestDeploySucceedsWhenSmokePasses:
     """AC-1: deploy v0.0.2 with stub status ok + stub pid alive → exit 0, current → v0.0.2."""
 
-    @pytest.mark.xfail(strict=True, reason="deploy verb does not exist yet")
     def test_deploy_exits_zero_and_flips_current(self, tmp_path: Path) -> None:
         """Smoke passes: exit 0, current points to v0.0.2."""
         releases_root, parent = _make_releases_root(tmp_path)
@@ -209,17 +272,15 @@ class TestDeploySucceedsWhenSmokePasses:
         data_dir.mkdir()
 
         bouncer = _write_stub_bouncer(tmp_path)
-        status_script = _write_stub_status(tmp_path, status="ok")
-        pid_file = _write_pid_file(tmp_path, alive=True)
+        pid_file = _make_pid_file_for_tag(tmp_path, "v0.0.2")
 
-        deploy = _import_deploy()
         result = deploy(
             project=project,
             tag="v0.0.2",
             data_dir=data_dir,
-            release_cmd=None,   # use default ilk_release
-            bounce_cmd=str(bouncer),
-            status_cmd=str(status_script),
+            release_cmd=_make_release_cmd(allow_tags={"v0.0.2"}, releases_root=releases_root),
+            bounce_cmd=_make_bounce_cmd(bouncer),
+            status_cmd=_make_status_cmd({"v0.0.2": "ok"}),
             pid_file=pid_file,
         )
 
@@ -235,44 +296,28 @@ class TestDeploySucceedsWhenSmokePasses:
 # ── AC-2: deploy rolls back when smoke fails ────────────────────────────────
 
 class TestDeployRollsBackOnSmokeFailure:
-    """AC-2: smoke fails for v0.0.2, ok for v0.0.1 → exit 5, rolled_back_to: v0.0.1."""
+    """AC-2: smoke fails for v0.0.2, ok for v0.0.1 → rolled_back_to: v0.0.1."""
 
-    @pytest.mark.xfail(strict=True, reason="deploy verb does not exist yet")
-    def test_deploy_exits_five_and_rolls_back(self, tmp_path: Path) -> None:
-        """Smoke fails for new tag, passes for previous → rollback, exit 5."""
+    def test_deploy_rolls_back_on_smoke_failure(self, tmp_path: Path) -> None:
+        """Smoke fails for new tag, passes for previous → rollback."""
         releases_root, parent = _make_releases_root(tmp_path)
         project = _make_fake_project(tmp_path)
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
         bouncer = _write_stub_bouncer(tmp_path)
-        # Status fails for v0.0.2 but passes for v0.0.1
-        status_script = tmp_path / "host_deploy_status.py"
-        status_script.write_text(textwrap.dedent("""\
-            #!/usr/bin/env python3
-            import sys
-            tag = None
-            for i, arg in enumerate(sys.argv):
-                if arg == "--require-tag" and i + 1 < len(sys.argv):
-                    tag = sys.argv[i + 1]
-            if tag == "v0.0.2":
-                print("tag-mismatch")
-                sys.exit(1)
-            else:
-                print("ok")
-                sys.exit(0)
-        """))
-        status_script.chmod(0o755)
-        pid_file = _write_pid_file(tmp_path, alive=True)
+        # The pid file's process must mention releases/v0.0.1/ for the rollback smoke
+        pid_file = _make_pid_file_for_tag(tmp_path, "v0.0.1")
 
-        deploy = _import_deploy()
         result = deploy(
             project=project,
             tag="v0.0.2",
             data_dir=data_dir,
-            release_cmd=None,
-            bounce_cmd=str(bouncer),
-            status_cmd=str(status_script),
+            release_cmd=_make_release_cmd(
+                allow_tags={"v0.0.2", "v0.0.1"}, releases_root=releases_root,
+            ),
+            bounce_cmd=_make_bounce_cmd(bouncer),
+            status_cmd=_make_status_cmd({"v0.0.2": "tag-mismatch", "v0.0.1": "ok"}),
             pid_file=pid_file,
         )
 
@@ -289,29 +334,27 @@ class TestDeployRollsBackOnSmokeFailure:
 # ── AC-3: both smokes fail → exit 6 ─────────────────────────────────────────
 
 class TestDeployBothSmokesFail:
-    """AC-3: both smokes fail → exit 6, current back to v0.0.1."""
+    """AC-3: both smokes fail → current back to v0.0.1, rollback_smoke: failed."""
 
-    @pytest.mark.xfail(strict=True, reason="deploy verb does not exist yet")
-    def test_deploy_exits_six_when_both_smokes_fail(self, tmp_path: Path) -> None:
-        """Both smokes fail → exit 6, current back to v0.0.1."""
+    def test_deploy_both_smokes_fail(self, tmp_path: Path) -> None:
+        """Both smokes fail → current back to v0.0.1, rollback_smoke: failed."""
         releases_root, parent = _make_releases_root(tmp_path)
         project = _make_fake_project(tmp_path)
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
         bouncer = _write_stub_bouncer(tmp_path)
-        # Status always fails
-        status_script = _write_stub_status(tmp_path, status="unreachable")
-        pid_file = _write_pid_file(tmp_path, alive=True)
+        pid_file = _make_pid_file(tmp_path, alive=True)
 
-        deploy = _import_deploy()
         result = deploy(
             project=project,
             tag="v0.0.2",
             data_dir=data_dir,
-            release_cmd=None,
-            bounce_cmd=str(bouncer),
-            status_cmd=str(status_script),
+            release_cmd=_make_release_cmd(
+                allow_tags={"v0.0.2", "v0.0.1"}, releases_root=releases_root,
+            ),
+            bounce_cmd=_make_bounce_cmd(bouncer),
+            status_cmd=_make_status_cmd({"v0.0.2": "unreachable", "v0.0.1": "unreachable"}),
             pid_file=pid_file,
         )
 
@@ -329,7 +372,6 @@ class TestDeployBothSmokesFail:
 class TestDeployExtractionFails:
     """AC-4: extraction fails (no such tag) → exit 4, current unchanged, no bounce."""
 
-    @pytest.mark.xfail(strict=True, reason="deploy verb does not exist yet")
     def test_deploy_exits_four_when_extraction_fails(self, tmp_path: Path) -> None:
         """No such tag in repo → exit 4, current unchanged, no bounce called."""
         releases_root, parent = _make_releases_root(tmp_path)
@@ -338,21 +380,19 @@ class TestDeployExtractionFails:
         data_dir.mkdir()
 
         bouncer = _write_stub_bouncer(tmp_path)
-        status_script = _write_stub_status(tmp_path, status="ok")
-        pid_file = _write_pid_file(tmp_path, alive=True)
+        pid_file = _make_pid_file(tmp_path, alive=True)
 
         # Record the current target before deploy
         current_before = _read_current_target(parent)
 
-        deploy = _import_deploy()
         with pytest.raises(SystemExit) as exc_info:
             deploy(
                 project=project,
                 tag="v99.99.99",  # tag that doesn't exist
                 data_dir=data_dir,
-                release_cmd=None,
-                bounce_cmd=str(bouncer),
-                status_cmd=str(status_script),
+                release_cmd=_make_release_cmd(allow_tags=set(), releases_root=releases_root),  # nothing allowed
+                bounce_cmd=_make_bounce_cmd(bouncer),
+                status_cmd=_make_status_cmd({"v99.99.99": "ok"}),
                 pid_file=pid_file,
             )
         assert exc_info.value.code == 4
@@ -369,9 +409,8 @@ class TestDeployExtractionFails:
 # ── AC-5: no real launchctl calls ────────────────────────────────────────────
 
 class TestNoRealLaunchctlCalls:
-    """AC-5 (control): the fake launchctl never ran outside the stub bounce."""
+    """AC-5 (control): deploy uses only injected commands, no real launchctl."""
 
-    @pytest.mark.xfail(strict=True, reason="deploy verb does not exist yet")
     def test_no_real_launchctl_in_test_env(self, tmp_path: Path) -> None:
         """The conftest host guard ensures no real launchctl is called.
 
@@ -379,23 +418,21 @@ class TestNoRealLaunchctlCalls:
         have already failed the test session.  The assertion is that the
         deploy verb uses only injected commands.
         """
-        releases_root, parent = _make_releases_root(tmp_path)
+        releases_root, _ = _make_releases_root(tmp_path)
         project = _make_fake_project(tmp_path)
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
         bouncer = _write_stub_bouncer(tmp_path)
-        status_script = _write_stub_status(tmp_path, status="ok")
-        pid_file = _write_pid_file(tmp_path, alive=True)
+        pid_file = _make_pid_file_for_tag(tmp_path, "v0.0.2")
 
-        deploy = _import_deploy()
         result = deploy(
             project=project,
             tag="v0.0.2",
             data_dir=data_dir,
-            release_cmd=None,
-            bounce_cmd=str(bouncer),
-            status_cmd=str(status_script),
+            release_cmd=_make_release_cmd(allow_tags={"v0.0.2"}, releases_root=releases_root),
+            bounce_cmd=_make_bounce_cmd(bouncer),
+            status_cmd=_make_status_cmd({"v0.0.2": "ok"}),
             pid_file=pid_file,
         )
 
@@ -405,8 +442,17 @@ class TestNoRealLaunchctlCalls:
 
 # ── Cleanup ─────────────────────────────────────────────────────────────────
 
+_LAUNCHED_PROCS: list[subprocess.Popen] = []
+
+
 @pytest.fixture(autouse=True)
 def _cleanup():
-    """Clean up any sleep processes started by _write_pid_file."""
+    """Clean up any sleep processes started by test helpers."""
+    _LAUNCHED_PROCS.clear()
     yield
-    _cleanup_pid_procs()
+    for proc in _LAUNCHED_PROCS:
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            pass

@@ -20,6 +20,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 # ── path setup ───────────────────────────────────────────────────────────
@@ -604,6 +605,156 @@ def cut(project: Path, data_dir: Path) -> dict:
     }
 
 
+# ── deploy ──────────────────────────────────────────────────────────────────
+
+def deploy(
+    project: Path,
+    tag: str,
+    data_dir: Path,
+    release_cmd: object | None = None,
+    bounce_cmd: object | None = None,
+    status_cmd: object | None = None,
+    pid_file: Path | None = None,
+) -> dict:
+    """Deploy a release: extract, flip, bounce, smoke.  Rollback on failure.
+
+    Every external command is an injectable parameter so tests can stub them.
+
+    Returns ``{"tag", "deployed", "scheduler_pid"}`` on success (exit 0).
+    Returns ``{"tag", "deployed": false, "rolled_back_to", "rollback_smoke",
+    "reason"}`` on rollback (exit 5).
+    Exit 4 when extraction fails.
+    Exit 6 when both smokes fail.
+    """
+    _SCRIPTS = Path(__file__).resolve().parent
+    _RELEASE_SCRIPT = _SCRIPTS.parent.parent / "ilk-upgrade" / "scripts" / "ilk_release.py"
+    _BOUNCE_SCRIPT = _SCRIPTS.parent.parent / "ilk-watchdog" / "scripts" / "bounce_daemons.sh"
+    _STATUS_SCRIPT = _SCRIPTS / "host_deploy_status.py"
+
+    # ── injectable defaults ─────────────────────────────────────────────
+    def _default_release_cmd(t: str, repo: Path) -> tuple[int, str]:
+        r = subprocess.run(
+            [sys.executable, str(_RELEASE_SCRIPT), t, "--repo", str(repo)],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=120,
+        )
+        return r.returncode, r.stdout.strip()
+
+    def _default_bounce_cmd() -> int:
+        r = subprocess.run(
+            [str(_BOUNCE_SCRIPT)],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=60,
+        )
+        return r.returncode
+
+    def _default_status_cmd(t: str) -> str:
+        r = subprocess.run(
+            [sys.executable, str(_STATUS_SCRIPT), "--bouncer", str(_BOUNCE_SCRIPT), "--require-tag", t],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=60,
+        )
+        return r.stdout.strip()
+
+    _release = release_cmd if release_cmd is not None else _default_release_cmd
+    _bounce = bounce_cmd if bounce_cmd is not None else _default_bounce_cmd
+    _status = status_cmd if status_cmd is not None else _default_status_cmd
+    _pid = pid_file if pid_file is not None else (data_dir / "runtime" / "scheduler.pid")
+
+    # ── 1. extract ──────────────────────────────────────────────────────
+    rc, _out = _release(tag, project)  # type: ignore[operator]
+    if rc != 0:
+        print(f"refused: extraction failed for {tag} (exit {rc})", file=sys.stderr)
+        sys.exit(4)
+
+    # ── 2. bounce + smoke ───────────────────────────────────────────────
+    _bounce()  # type: ignore[operator]
+    smoke_ok, smoke_reason = _smoke(tag, _status, _pid)  # type: ignore[arg-type]
+
+    if smoke_ok:
+        return {
+            "tag": tag,
+            "deployed": True,
+            "scheduler_pid": _read_pid(_pid),
+        }
+
+    # ── 3. rollback ─────────────────────────────────────────────────────
+    prev_status = _release("--status", project)  # type: ignore[operator]
+    try:
+        status_data = json.loads(prev_status[1]) if prev_status[0] == 0 else {}
+    except (json.JSONDecodeError, KeyError):
+        status_data = {}
+    prev_tag = status_data.get("previous", "")
+    if prev_tag:
+        prev_tag = Path(prev_tag).name  # extract tag name from symlink target
+
+    _release("--rollback", project)  # type: ignore[operator]
+    _bounce()  # type: ignore[operator]
+
+    rollback_ok, rollback_reason = _smoke(prev_tag, _status, _pid)  # type: ignore[arg-type]
+
+    return {
+        "tag": tag,
+        "deployed": False,
+        "rolled_back_to": prev_tag,
+        "rollback_smoke": "ok" if rollback_ok else "failed",
+        "reason": smoke_reason,
+    }
+
+
+def _smoke(
+    tag: str,
+    status_cmd: Callable[[str], str],
+    pid_file: Path,
+) -> tuple[bool, str]:
+    """Smoke check: status ok + pid alive + script under releases/<tag>/.
+
+    Returns (ok, reason).
+    """
+    # Status check
+    status = status_cmd(tag)
+    if status != "ok":
+        return False, f"status={status}"
+
+    # Pid check
+    if not pid_file.exists():
+        return False, "scheduler.pid missing"
+    try:
+        pid = int(pid_file.read_text().strip())
+    except (ValueError, OSError):
+        return False, "scheduler.pid unreadable"
+
+    if not _is_pid_alive(pid):
+        return False, f"scheduler pid {pid} not alive"
+
+    # Command-line check: script path must mention releases/<tag>/
+    try:
+        r = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(pid)],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=10,
+        )
+        cmd = r.stdout.strip()
+        if f"releases/{tag}/" not in cmd:
+            return False, f"scheduler command does not mention releases/{tag}/"
+    except (OSError, subprocess.TimeoutExpired):
+        return False, "could not read scheduler command"
+
+    return True, ""
+
+
+def _read_pid(pid_file: Path) -> int | None:
+    """Read a PID file, returning None on any error."""
+    try:
+        return int(pid_file.read_text().strip())
+    except (ValueError, OSError):
+        return None
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -623,6 +774,11 @@ def main() -> int:
     p_cut = sub.add_parser("cut")
     p_cut.add_argument("--project", type=Path, required=True)
     p_cut.add_argument("--json", action="store_true")
+
+    p_deploy = sub.add_parser("deploy")
+    p_deploy.add_argument("--project", type=Path, required=True)
+    p_deploy.add_argument("--tag", required=True, help="Tag to deploy")
+    p_deploy.add_argument("--json", action="store_true")
 
     args = parser.parse_args()
     if not args.verb:
@@ -662,6 +818,14 @@ def main() -> int:
 
     if args.verb == "cut":
         result = cut(project, data_dir)
+        if args.json:
+            print(json.dumps(result))
+        else:
+            print(json.dumps(result))
+        return 0
+
+    if args.verb == "deploy":
+        result = deploy(project, args.tag, data_dir)
         if args.json:
             print(json.dumps(result))
         else:
