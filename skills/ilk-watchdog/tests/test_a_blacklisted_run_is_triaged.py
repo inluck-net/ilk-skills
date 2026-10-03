@@ -155,9 +155,14 @@ def _setup_project(
         pm_dir = launcher_dir / "postmortems"
         pm_dir.mkdir(parents=True, exist_ok=True)
         classification = "stuck-no-progress" if blacklist else "rapid-terminal"
+        # Use a recent local timestamp so the 60-min blacklist window hasn't
+        # expired.  blacklist_status.py compares with dt.datetime.now() (local).
+        from datetime import datetime
+
+        recent_ts = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         pm = (
             f"---\nproject: x\nclassification: \"{classification}\"\n"
-            f"generated_at: \"2026-10-03T09:00:00\"\n---\n\n"
+            f"generated_at: \"{recent_ts}\"\n---\n\n"
             f"# Postmortem {run_id}\n"
         )
         (pm_dir / f"{run_id}.md").write_text(pm, encoding="utf-8")
@@ -203,10 +208,6 @@ def _wait_for_triage(invocations_file: Path, timeout: float = 10.0) -> list:
 # ── AC-1: blacklisted + dead pid → triage starts once ──────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="scheduler does not yet call maybe_start_triage on skip-blacklist",
-)
 def test_blacklisted_starts_triage_once(scheduler_sandbox):
     """AC-1: a blacklisted project with a dead pid starts triage exactly once
     with ``run --project-key <key> --run-id R``.
@@ -249,10 +250,6 @@ def test_blacklisted_starts_triage_once(scheduler_sandbox):
 # ── AC-2: live pid → no start ──────────────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="scheduler does not yet call maybe_start_triage (live-pid guard)",
-)
 def test_live_pid_no_triage(scheduler_sandbox):
     """AC-2: a blacklisted project whose sentinel pid is alive must NOT
     start triage."""
@@ -289,10 +286,6 @@ def test_live_pid_no_triage(scheduler_sandbox):
 # ── AC-3: skip-backoff → no start ──────────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="scheduler does not yet call maybe_start_triage (backoff exclusion)",
-)
 def test_backoff_no_triage(scheduler_sandbox):
     """AC-3: a project skipped for skip-backoff only must NOT start triage."""
     sandbox = scheduler_sandbox
@@ -321,10 +314,6 @@ def test_backoff_no_triage(scheduler_sandbox):
 # ── AC-4: ILK_TRIAGE=0 → no start ─────────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="scheduler does not yet call maybe_start_triage (ILK_TRIAGE=0 guard)",
-)
 def test_triage_disabled_env(scheduler_sandbox):
     """AC-4: ILK_TRIAGE=0 disables the triage hook entirely."""
     sandbox = scheduler_sandbox

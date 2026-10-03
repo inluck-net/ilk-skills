@@ -738,6 +738,79 @@ scan_error_keys() {
     | sort -u | paste -sd, - | sed 's/,$//'
 }
 
+maybe_start_triage() {
+  # Start a detached triage for a blacklisted or held project, once per
+  # terminal run_id.  Called on skip-blacklist and for held projects with
+  # blocked sub-plans.  NOT called on skip-backoff, skip-busy, skip-cooldown,
+  # draft-master holds, or dry-run.
+  #
+  # Args: $1 = project key, $2 = project data dir
+  local _triage_key="$1" _triage_data_dir="$2"
+
+  # Kill switch: ILK_TRIAGE=0 disables the hook entirely.
+  if [[ "${ILK_TRIAGE:-1}" == "0" ]]; then
+    return 0
+  fi
+
+  # Read run_id from the last-exit sentinel.
+  local _triage_sentinel="${_triage_data_dir}/runtime/launcher/last-exit.json"
+  [[ -f "$_triage_sentinel" ]] || return 0
+  local _triage_run_id
+  _triage_run_id="$("$PYTHON" -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1], encoding='utf-8-sig'))
+    print(d.get('run_id', '') or '')
+except Exception:
+    pass
+" "$_triage_sentinel" 2>/dev/null)" || true
+  _triage_run_id="${_triage_run_id//$'\r'/}"
+  _triage_run_id="${_triage_run_id//$'\n'/}"
+  if [[ -z "$_triage_run_id" ]]; then
+    write_scheduler_log "triage-skip" "$_triage_key" "no-run-id"
+    return 0
+  fi
+
+  # Refuse while the runner is alive: the sentinel pid is alive (kill -0).
+  local _triage_pid
+  _triage_pid="$("$PYTHON" -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1], encoding='utf-8-sig'))
+    print(d.get('pid', 0) or 0)
+except Exception:
+    print(0)
+" "$_triage_sentinel" 2>/dev/null)" || true
+  _triage_pid="${_triage_pid//[!0-9]/}"
+  _triage_pid="${_triage_pid:-0}"
+  if [[ "$_triage_pid" -gt 0 ]] && kill -0 "$_triage_pid" 2>/dev/null; then
+    return 0
+  fi
+
+  # Idempotent: a marker means no second start for that run.
+  local _triage_marker_dir="${_triage_data_dir}/runtime/triage"
+  local _triage_marker="${_triage_marker_dir}/${_triage_run_id}.started"
+  if [[ -e "$_triage_marker" ]]; then
+    return 0
+  fi
+
+  # Create the marker atomically (mkdir is atomic on POSIX).
+  mkdir -p "$_triage_marker_dir"
+  if ! mkdir "$_triage_marker" 2>/dev/null; then
+    # Another scheduler cycle won the race.
+    return 0
+  fi
+
+  # Start triage detached (nohup … & with output to a log file).
+  local _triage_log="${_triage_marker_dir}/${_triage_run_id}.log"
+  local _triage_script="${_ILK_SCRIPT_DIR}/ilk_triage.py"
+  nohup "$PYTHON" "$_triage_script" run \
+    --project-key "$_triage_key" \
+    --run-id "$_triage_run_id" \
+    >"$_triage_log" 2>&1 &
+  write_scheduler_log "triage-start" "$_triage_key" "$_triage_run_id"
+}
+
 log_held_projects() {
   # Copy each `skip-held: <key> (<master>)` line of the last scan into
   # scheduler.log.
@@ -746,6 +819,7 @@ log_held_projects() {
   while IFS=' ' read -r _hk _hm; do
     [[ -n "$_hk" ]] || continue
     write_scheduler_log "skip-held" "$_hk" "${_hm}"
+    maybe_start_triage "$_hk" "$(ilk_data_dir)/projects/$_hk"
   done < <(sed -n 's/^skip-held: \([^ ]*\) (\(.*\))$/\1 \2/p' "$_SCAN_STDERR_FILE")
 }
 
@@ -892,6 +966,7 @@ run_scheduler() {
       fi
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] ${idle_msg}. Polling in ${POLL_MIN} min."
       write_scheduler_log "idle" "" "$idle_reason"
+      if [[ "$ONCE" == true ]]; then return; fi
       sleep $((POLL_MIN * 60)) & wait $!
       continue
     fi
@@ -906,6 +981,7 @@ run_scheduler() {
       fi
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] idle: budget ceiling (dispatched ${dispatch_count}/${MAX_DISPATCHES}). Polling in ${POLL_MIN} min."
       write_scheduler_log "idle" "" "budget-ceiling"
+      if [[ "$ONCE" == true ]]; then return; fi
       sleep $((POLL_MIN * 60)) & wait $!
       continue
     fi
@@ -922,6 +998,7 @@ run_scheduler() {
       fi
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] idle: capacity full ($live_count/$MAX_CONCURRENT live). Polling in ${POLL_MIN} min."
       write_scheduler_log "idle" "" "capacity-full ($live_count/$MAX_CONCURRENT)"
+      if [[ "$ONCE" == true ]]; then return; fi
       sleep $((POLL_MIN * 60)) & wait $!
       continue
     fi
@@ -977,6 +1054,10 @@ run_scheduler() {
         else
           echo "[$(date '+%Y-%m-%d %H:%M:%S')] ${skip_decision}: $key"
           write_scheduler_log "$skip_decision" "$key"
+          # Start triage for blacklisted projects (not backoff).
+          if [[ "$skip_decision" == "skip-blacklist" ]]; then
+            maybe_start_triage "$key" "$path"
+          fi
         fi
         continue
       fi
@@ -1192,6 +1273,7 @@ print(int((ea-sa).total_seconds()))
       fi
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] idle: no dispatchable project (all busy/blacklisted/unresolved). Polling in ${POLL_MIN} min."
       write_scheduler_log "idle" "" "no-dispatchable-project"
+      if [[ "$ONCE" == true ]]; then return; fi
       sleep $((POLL_MIN * 60)) & wait $!
       continue
     fi
@@ -1320,6 +1402,11 @@ print(int((ea-sa).total_seconds()))
     done
 
     if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+      return
+    fi
+
+    # --once: exit after one cycle (used by tests and one-shot invocations).
+    if [[ "$ONCE" == true ]]; then
       return
     fi
 
