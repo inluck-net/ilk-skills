@@ -408,6 +408,7 @@ class TestAC5RuntimeReconcileNoKill:
             "ILK_DATA_HOME": str(world["data_home"]),
         }
         env.pop("ILK_DOTSOURCE_ONLY", None)
+        env.pop("ILK_SKILL_HOME", None)  # let auto-detect find the worktree's scripts
 
         # Reconcile the registry in a background thread after a short delay.
         def reconcile() -> None:

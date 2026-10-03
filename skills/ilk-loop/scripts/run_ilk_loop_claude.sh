@@ -2229,29 +2229,13 @@ _gate_first_plans_dir() {
 
 # _plan_fingerprint <file> — SHA-256 of the plan surface.
 # The surface is everything above ``## Findings``, with the frontmatter keys
-# ``current_step``, ``status``, ``last_updated`` excluded.  Two plan files
-# that differ only below ``## Findings`` or in the excluded keys produce the
-# same fingerprint.  Prints the hex digest; returns 1 if the file is missing.
+# ``current_step``, ``status``, ``last_updated`` excluded.  For MASTER files,
+# the registry Status column and Progress log are also excluded.  Prints the
+# hex digest; returns 1 if the file is missing.
 _plan_fingerprint() {
   local file="$1"
   [[ -f "$file" ]] || return 1
-  python3 -c "
-import hashlib, sys
-text = open(sys.argv[1], encoding='utf-8').read()
-# Strip excluded frontmatter keys.
-lines = text.splitlines(keepends=True)
-cleaned = []
-for line in lines:
-    stripped = line.lstrip()
-    if any(stripped.startswith(k + ':') for k in ('current_step', 'status', 'last_updated')):
-        continue
-    cleaned.append(line)
-text = ''.join(cleaned)
-# Take everything above ## Findings.
-if '## Findings' in text:
-    text = text.split('## Findings')[0]
-print(hashlib.sha256(text.encode('utf-8')).hexdigest())
-" "$file"
+  python3 "${_SKILL_ROOT}/ilk-loop/scripts/plan_fingerprint.py" "$file"
 }
 
 # Locate a sub-plan file by its frontmatter `plan:` slug.  Echoes the path.
