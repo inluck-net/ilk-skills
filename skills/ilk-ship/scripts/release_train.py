@@ -755,6 +755,186 @@ def _read_pid(pid_file: Path) -> int | None:
         return None
 
 
+# ── run ──────────────────────────────────────────────────────────────────
+
+def _acquire_lock(data_dir: Path) -> Path:
+    """Acquire the release train lock, replacing a stale lock (dead pid).
+
+    Returns the lock file path.  Caller is responsible for removing it.
+    """
+    lock_dir = data_dir / "runtime" / "release"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_file = lock_dir / "train.lock"
+
+    if lock_file.exists():
+        try:
+            old_pid = int(lock_file.read_text(encoding="utf-8").strip())
+            if _is_pid_alive(old_pid):
+                raise RuntimeError(
+                    f"release train lock held by live pid {old_pid}"
+                )
+        except (ValueError, OSError):
+            pass  # corrupt lock — replace it
+
+    lock_file.write_text(str(os.getpid()), encoding="utf-8")
+    return lock_file
+
+
+def _release_lock(lock_file: Path) -> None:
+    """Remove the release train lock (idempotent)."""
+    try:
+        lock_file.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def run(
+    project: Path,
+    data_dir: Path,
+    *,
+    check_fn: Callable | None = None,
+    prove_fn: Callable | None = None,
+    cut_fn: Callable | None = None,
+    deploy_fn: Callable | None = None,
+    notify_script: str | None = None,
+    deploy_exit_code: int | None = None,
+) -> dict:
+    """Run the full release train: check → prove → cut → deploy.
+
+    Takes the lock ``<data_dir>/runtime/release/train.lock`` (pid inside;
+    a stale lock whose pid is dead is replaced).  The lock is removed on
+    every path (try/finally).
+
+    Audit rows:
+      - not eligible → ``released`` with ``outcome: skipped``
+      - prove/cut refusal → ``escalated`` + notify
+      - successful deploy → ``released`` + ``released`` event
+      - rollback → ``rolled-back`` + ``escalated`` + notify
+      - both smokes fail (exit 6) → same as rollback with ``severity: critical``
+
+    Returns ``{"exit_code", "tag", "deployed", ...}``.
+    """
+    _check = check_fn if check_fn is not None else check
+    _prove = prove_fn if prove_fn is not None else prove
+    _cut = cut_fn if cut_fn is not None else cut
+    _deploy = deploy_fn if deploy_fn is not None else deploy
+
+    if str(_LOOP_SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(_LOOP_SCRIPTS))
+    from ilk_audit import write_audit, write_event  # noqa: E402
+
+    project_name = project.name
+    lock_file = data_dir / "runtime" / "release" / "train.lock"
+
+    try:
+        lock_file = _acquire_lock(data_dir)
+    except RuntimeError as exc:
+        return {"exit_code": 1, "reason": str(exc)}
+
+    try:
+        # ── 1. check ───────────────────────────────────────────────────
+        check_result = _check(project, data_dir)
+        if not check_result.get("eligible"):
+            reason = check_result.get("reason", "not eligible")
+            write_audit(
+                "released", project_name,
+                outcome="skipped", reason=reason,
+            )
+            return {"exit_code": 3, "reason": reason}
+
+        # ── 2. prove ───────────────────────────────────────────────────
+        prove_result = _prove(project, data_dir)
+        if not prove_result.get("proven"):
+            reason = prove_result.get("reason", "proof failed")
+            write_audit(
+                "escalated", project_name,
+                reason=f"prove refused: {reason}",
+            )
+            _notify("blocked", project_name, f"prove refused: {reason}", notify_script)
+            return {"exit_code": 4, "reason": f"prove refused: {reason}"}
+
+        # ── 3. cut ─────────────────────────────────────────────────────
+        cut_result = _cut(project, data_dir)
+        tag = cut_result.get("tag", "")
+        if not tag:
+            reason = cut_result.get("reason", "cut failed")
+            write_audit(
+                "escalated", project_name,
+                reason=f"cut refused: {reason}",
+            )
+            _notify("blocked", project_name, f"cut refused: {reason}", notify_script)
+            return {"exit_code": 4, "reason": f"cut refused: {reason}"}
+
+        # ── 4. deploy ──────────────────────────────────────────────────
+        try:
+            deploy_result = _deploy(project, tag, data_dir)
+        except SystemExit as exc:
+            # deploy raises SystemExit(5) on rollback, SystemExit(6) on
+            # both-smokes-fail, SystemExit(4) on extraction failure.
+            exit_code = exc.code if isinstance(exc.code, int) else 1
+            if exit_code == 5:
+                # Rollback succeeded
+                write_audit(
+                    "rolled-back", project_name,
+                    tag=tag, reason="smoke failed, rolled back",
+                )
+                write_event("rolled-back", project_name, tag=tag)
+                _notify("blocked", project_name, f"deploy rolled back {tag}", notify_script)
+                return {"exit_code": 5, "tag": tag, "deployed": False, "rolled_back": True}
+            elif exit_code == 6:
+                # Both smokes failed
+                write_audit(
+                    "rolled-back", project_name,
+                    tag=tag, reason="both smokes failed",
+                    severity="critical",
+                )
+                write_event("rolled-back", project_name, tag=tag, severity="critical")
+                _notify("blocked", project_name, f"deploy CRITICAL: both smokes failed {tag}", notify_script)
+                return {"exit_code": 6, "tag": tag, "deployed": False, "rolled_back": True}
+            else:
+                # Extraction failed
+                write_audit(
+                    "escalated", project_name,
+                    reason=f"deploy extraction failed (exit {exit_code})",
+                )
+                _notify("blocked", project_name, f"deploy extraction failed {tag}", notify_script)
+                return {"exit_code": exit_code, "tag": tag, "deployed": False}
+
+        # Deploy succeeded
+        write_audit("released", project_name, tag=tag, outcome="deployed")
+        write_event("released", project_name, tag=tag)
+        return {
+            "exit_code": 0,
+            "tag": tag,
+            "deployed": True,
+            "rolled_back": False,
+        }
+
+    finally:
+        _release_lock(lock_file)
+
+
+def _notify(
+    event: str,
+    project: str,
+    detail: str,
+    notify_script: str | None = None,
+) -> None:
+    """Call ilk_notify.py to send a desktop notification."""
+    _NOTIFY = Path(notify_script) if notify_script else (
+        _SCRIPTS_DIR.parent.parent / "ilk-watchdog" / "scripts" / "ilk_notify.py"
+    )
+    try:
+        subprocess.run(
+            [sys.executable, str(_NOTIFY), "--event", event, "--project", project, "--detail", detail],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass  # notify is best-effort
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -779,6 +959,10 @@ def main() -> int:
     p_deploy.add_argument("--project", type=Path, required=True)
     p_deploy.add_argument("--tag", required=True, help="Tag to deploy")
     p_deploy.add_argument("--json", action="store_true")
+
+    p_run = sub.add_parser("run")
+    p_run.add_argument("--project", type=Path, required=True)
+    p_run.add_argument("--json", action="store_true")
 
     args = parser.parse_args()
     if not args.verb:
@@ -831,6 +1015,14 @@ def main() -> int:
         else:
             print(json.dumps(result))
         return 0
+
+    if args.verb == "run":
+        result = run(project, data_dir)
+        if args.json:
+            print(json.dumps(result))
+        else:
+            print(json.dumps(result))
+        return result.get("exit_code", 2)
 
     return 2
 

@@ -470,6 +470,68 @@ get_rapid_terminal_backoff() {
   echo "0 0"
 }
 
+# --- release train dispatch (2026-10-03) -------------------------------------
+
+# Resolve the release_train.py script relative to the scheduler's own script dir.
+_RELEASE_TRAIN_SCRIPT="${_ILK_SCRIPT_DIR}/../../ilk-ship/scripts/release_train.py"
+_RELEASE_TRAIN_DISPATCH="${_ILK_SCRIPT_DIR}/release_train_dispatch.py"
+
+is_release_lock_held() {
+  # Returns 0 (true) if train.lock names a live pid; 1 (false) otherwise.
+  local data_dir="$1"
+  "$PYTHON" -c "
+import sys; sys.path.insert(0, '$(dirname "$_RELEASE_TRAIN_DISPATCH")')
+from release_train_dispatch import is_release_lock_held
+from pathlib import Path
+sys.exit(0 if is_release_lock_held(Path('$data_dir')) else 1)
+" 2>/dev/null
+}
+
+maybe_start_release_train() {
+  # Start the release train for a project if conditions are met.
+  # Args: key path data_dir repo run_id
+  # Returns 0 if started, 1 if skipped.
+  local key="$1" path="$2" data_dir="$3" repo="$4" run_id="$5"
+
+  # ILK_RELEASE_TRAIN=0 disables
+  if [[ "${ILK_RELEASE_TRAIN:-1}" == "0" ]]; then
+    return 1
+  fi
+
+  # Check sentinel is a success state
+  local sentinel_file
+  sentinel_file="$(sentinel_path_for_data_dir "$path")"
+  local is_success
+  is_success="$("$PYTHON" -c "
+import sys; sys.path.insert(0, '$(dirname "$_RELEASE_TRAIN_DISPATCH")')
+from release_train_dispatch import sentinel_all_shipped
+from pathlib import Path
+print('true' if sentinel_all_shipped(Path('$sentinel_file')) else 'false')
+" 2>/dev/null)" || is_success="false"
+
+  if [[ "$is_success" != "true" ]]; then
+    return 1
+  fi
+
+  # Marker: at most once per sentinel run_id
+  local marker_dir="${data_dir}/runtime/release"
+  local marker_file="${marker_dir}/${run_id}.started"
+  if [[ -f "$marker_file" ]]; then
+    return 1
+  fi
+
+  # Start release_train.py run --project <path> detached
+  mkdir -p "$marker_dir"
+  touch "$marker_file"
+
+  local log_file="${marker_dir}/train-$(date +%s).log"
+  nohup "$PYTHON" "$_RELEASE_TRAIN_SCRIPT" run --project "$repo" \
+    >> "$log_file" 2>&1 &
+
+  write_scheduler_log "release-train-started" "$key" "run_id=$run_id pid=$!"
+  return 0
+}
+
 # --- no-progress dispatch bound (2026-08-29) ---------------------------------
 #
 # read_blacklist_from_postmortems below builds the blacklist from postmortem
@@ -1175,6 +1237,21 @@ print(int((ea-sa).total_seconds()))
         continue
       fi
 
+      # --- skip-releasing: release train lock held -------------------------
+      # A project whose train.lock names a live pid is skipped: no dispatch
+      # while a release may commit to the clone (memory
+      # moving-the-clone-moves-every-loop).
+      if is_release_lock_held "$path"; then
+        if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+          write_scheduler_log "skip-releasing" "$key"
+          echo "{\"decision\":\"skip-releasing\",\"key\":\"$key\"}"
+        else
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip-releasing: $key"
+          write_scheduler_log "skip-releasing" "$key"
+        fi
+        continue
+      fi
+
       # Cannot dispatch a project whose source repo path is unknown
       # (never launched + not in projects.json). Skip, don't guess.
       if [[ -z "$repo" ]]; then
@@ -1249,6 +1326,24 @@ print(int((ea-sa).total_seconds()))
           fi
           continue
         fi
+      fi
+
+      # --- release train: start after a successful run --------------------
+      # Called after all skip gates pass.  The function itself checks that
+      # the sentinel is a success state and no marker file exists.
+      local _rt_sentinel _rt_run_id
+      _rt_sentinel="$(sentinel_path_for_data_dir "$path")"
+      _rt_run_id="$("$PYTHON" -c "
+import json,sys
+try:
+    d=json.loads(open(sys.argv[1],encoding='utf-8-sig').read())
+    print(d.get('run_id','') or '')
+except: pass
+" "$_rt_sentinel" 2>/dev/null)" || true
+      _rt_run_id="${_rt_run_id//$'\r'/}"
+      _rt_run_id="${_rt_run_id//$'\n'/}"
+      if [[ -n "$_rt_run_id" ]]; then
+        maybe_start_release_train "$key" "$path" "$path" "$repo" "$_rt_run_id" || true
       fi
 
       # Fill free slots: collect while capacity remains.
