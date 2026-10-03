@@ -61,7 +61,14 @@ class TestParallelismRejected:
 
     def test_n_flag_requires_timing_evidence(self, ship_cfg):
         flags = ship_cfg.ship["suite"].get("flags", [])
-        n_flags = [f for f in flags if f == "-n" or (f.startswith("-n") and len(f) > 2)]
+        # `-n 8` arrives as two list items, `-n8` / `-nauto` as one; read the
+        # value either way so the artifact must name the N actually in use.
+        n_flags = []
+        for i, f in enumerate(flags):
+            if f == "-n":
+                n_flags.append(f"-n {flags[i + 1]}" if i + 1 < len(flags) else "-n")
+            elif f.startswith("-n") and len(f) > 2:
+                n_flags.append(f)
         if not n_flags:
             return  # no `-n` present — guard passes trivially
 
@@ -76,7 +83,7 @@ class TestParallelismRejected:
         for flag in n_flags:
             # Normalize: `-n 4` → `4`, `-n4` → `4`, `-nauto` → `auto`
             n_value = flag.removeprefix("-n").strip() or "auto"
-            pattern = f"-n {n_value}" if len(flag) > 2 else flag
+            pattern = f"-n {n_value}"
             # The artifact must have a row for this N marked as beating serial
             assert f"| {pattern}" in text or f"|  `-n {n_value}`" in text, (
                 f"ship.suite.flags contains '{flag}' but gate-timing artifact "

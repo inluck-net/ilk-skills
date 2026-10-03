@@ -181,6 +181,23 @@ the curve monotone and its best point (10 workers, 404.12s) still 1.53× serial,
 another interior point cannot change the conclusion — and `N > 10` oversubscribes
 a 10-core host. `rezmac` remains unmeasured, which is a host gap, not an `N` gap.
 
+## Superseded 2026-10-03 — `-n 8 --dist loadfile` beats serial
+
+The "monotone, never crosses serial" result above was a property of the suite's
+shared state, not of xdist: 64d03a8 removed three tests' writes to state they
+did not own, and 6f82fa4 put `-n 8 --dist loadfile` in `ship.suite.flags`.
+Measured in a fresh `git clone` at `3e935f4` + 64d03a8 on `chad-mbp`
+(numbers from those two commit messages):
+
+| variant | wall-clock | vs serial | failed | passed |
+|---|---|---|---|---|
+| serial (`--timeout=17 --timeout-method=signal --durations=25`) | 17:56 | — | 8 | 4537 |
+| -n 8 --dist loadfile (run 1) | 2:44 | **6.6× faster** | 5 | 4540 |
+| -n 8 --dist loadfile (run 2) | 2:45 | **6.5× faster** | 5 | 4540 |
+
+0 parallel-only ids: all 5 `-n 8` reds are in the serial red set. `rezmac`
+is still unmeasured under `-n 8`.
+
 ## Committed alongside
 
 `gate-nodeids-2026-08-27-sp3-{serial,n2,n4,nauto}.txt` — one
