@@ -9,8 +9,11 @@
     "status": "shipped"
   },
   "golden-verify": {
-    "status": "pending",
-    "attributed_nodes": ["test_clamp_boundary"]
+    "not_status": "shipped",
+    "attributed_nodes": [
+      "tests/test_other.py::test_clamp_boundary"
+    ]
   },
-  "max_iterations": 8
+  "max_iterations": 8,
+  "batch_slug": "golden"
 }

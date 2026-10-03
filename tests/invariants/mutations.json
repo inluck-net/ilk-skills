@@ -183,6 +183,24 @@
         ],
         "expect_in_output": ["golden-inert"]
       }
+    },
+    {
+      "id": "golden-harness-runs-on-live-skills",
+      "incident": "2026-09-26/2026-09-29: tests that ran the toolkit against the live clone wrote into it (core.bare, live reverts)",
+      "rail": "golden_batch refuses when ILK_SKILL_HOME resolves inside this repo",
+      "file": "tests/invariants/golden_batch.py",
+      "kind": "replace",
+      "pattern": "if resolved == repo_resolved or str\\(resolved\\)\\.startswith\\(str\\(repo_resolved\\) \\+ os\\.sep\\):",
+      "replacement": "if False:",
+      "min_matches": 1,
+      "catcher": {
+        "argv": [
+          "python3", "-m", "pytest",
+          "tests/invariants/test_the_golden_batch_harness.py::test_golden_batch_refuses_when_skill_home_in_repo",
+          "-q", "-p", "no:cacheprovider", "--timeout=120"
+        ],
+        "expect_in_output": ["FAILED", "test_golden_batch_refuses_when_skill_home_in_repo"]
+      }
     }
   ]
 }

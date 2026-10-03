@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -194,6 +195,36 @@ def _run_golden_batch(root: Path) -> subprocess.CompletedProcess:
     )
 
 
+_ATTRIBUTED_RE = re.compile(r"(\d+) attributed regression\(s\): (.+?)\. A row")
+
+
+def _attributed_by_verify(root: Path, project: Path, data_home: Path, batch_slug: str):
+    """Node ids the COPY's ``verify_attribution.py`` attributes, sorted.
+
+    Runs the shipped verifier (not a re-implementation of it) on the
+    fixture's batch record with ``--no-write-gate-record``.  It refuses an
+    attributed record by naming the nodes; exit 0 means none attributed.
+    Any other refusal is returned as a string, which never equals the
+    expected list, so a missing or unreadable record is a mismatch.
+    """
+    script = root / "skills" / "ilk-loop" / "scripts" / "verify_attribution.py"
+    env = dict(os.environ, ILK_DATA_HOME=str(data_home))
+    r = subprocess.run(
+        [sys.executable, str(script), "--batch", batch_slug,
+         "--project", str(project), "--no-write-gate-record"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        env=env, cwd=str(project), timeout=120,
+    )
+    out = (r.stdout or "") + (r.stderr or "")
+    if r.returncode == 0:
+        return []
+    m = _ATTRIBUTED_RE.search(out)
+    if m:
+        return sorted(n.strip() for n in m.group(2).split(","))
+    tail = out.strip().splitlines()[-1] if out.strip() else f"exit {r.returncode}"
+    return f"verify refused: {tail[:300]}"
+
+
 def _check_results(root: Path, proc: subprocess.CompletedProcess) -> dict:
     """Check the results against expected.json."""
     project = root / "project"
@@ -224,15 +255,25 @@ def _check_results(root: Path, proc: subprocess.CompletedProcess) -> dict:
         m = re.search(r'^status:\s*(\S+)', text, re.MULTILINE)
         actual_status = m.group(1) if m else "unknown"
 
-        if actual_status != expected[slug]["status"]:
-            mismatches.append({
-                "slug": slug,
-                "expected": expected[slug]["status"],
-                "got": actual_status,
-            })
+        want = expected[slug]
+        if "status" in want and actual_status != want["status"]:
+            mismatches.append({"slug": slug, "expected": want["status"], "got": actual_status})
+        if "not_status" in want and actual_status == want["not_status"]:
+            mismatches.append({"slug": slug, "expected": f"not {want['not_status']}", "got": actual_status})
 
-    # Check the verify record for golden-verify if it's supposed to be in-progress.
-    # (The verify sub-plan's gate should have caught the clamp breakage.)
+    # AC-4: the planted red is caught BY the shipped verify machinery and
+    # attributed to exactly the expected node ids.  A status alone cannot
+    # say that: a verify that never ran, or ran a plain pytest, leaves the
+    # same "not shipped" status as one that attributed the red.
+    want_nodes = expected.get("golden-verify", {}).get("attributed_nodes")
+    if want_nodes is not None:
+        got_nodes = _attributed_by_verify(root, project, data_home, expected["batch_slug"])
+        if got_nodes != sorted(want_nodes):
+            mismatches.append({
+                "slug": "golden-verify",
+                "expected": {"attributed": sorted(want_nodes)},
+                "got": got_nodes,
+            })
 
     return {
         "verdict": "pass" if not mismatches else "fail",
