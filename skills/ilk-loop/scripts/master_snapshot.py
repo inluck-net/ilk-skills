@@ -91,10 +91,23 @@ def take(plans_dir: Path, masters: list[str]) -> dict[str, dict[str, str | None]
 _TOWARD_STOP_FIELDS = ("parked_at", "parked_reason", "hold", "yield")
 
 
-def _moved_toward_stopping(field: str, before: str | None, after: str | None) -> bool:
-    """True when *after* is a move toward stopping that should not be undone."""
+def _moved_toward_stopping(field: str, before: str | None, after: str | None,
+                           now: dict | None = None) -> bool:
+    """True when *after* is a move toward stopping that should not be undone.
+
+    ``status: blocked`` counts only when it arrives WITH a park marker
+    (``parked_reason`` / ``parked_at`` / ``hold``) -- which is what
+    ``park_master.py`` and an operator write.  A bare status flip is a
+    worker editing master state, and the restore must still undo it:
+    accepting every ``blocked`` (22eb4f0) broke
+    test_the_runner_reverts_a_worker_master_edit, and the batch verify
+    mis-excused it as red at base (2026-10-03).
+    """
     if field == "status":
-        return _norm(after) == "blocked"
+        if _norm(after) != "blocked":
+            return False
+        now = now or {}
+        return any(_norm(now.get(k)) != "" for k in ("parked_reason", "parked_at", "hold"))
     if field in _TOWARD_STOP_FIELDS:
         return _norm(before) == "" and _norm(after) != ""
     return False
@@ -182,7 +195,7 @@ def restore(plans_dir: Path, snap: dict[str, dict[str, str | None]]) -> dict:
         # restoring those decisions would be harmful.  (P0: gh-resolve 10-02g
         # held master ran 69 min after restore erased the hold.)
         toward_stop = [f for f in changed
-                       if _moved_toward_stopping(f, before[f], now[f])]
+                       if _moved_toward_stopping(f, before[f], now[f], now)]
         if toward_stop:
             for f in toward_stop:
                 accepted.append({"master": name, "field": f,
