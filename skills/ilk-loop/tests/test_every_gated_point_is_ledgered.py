@@ -96,7 +96,6 @@ def _make_repo_two_commits(tmp_path: Path) -> tuple[Path, str, str]:
 # ── AC-1: ledger_spawn_for_head calls spawn exactly once ─────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="AC-1: ledger_spawn_for_head not yet implemented")
 def test_ledger_spawn_for_head_calls_spawn_once(tmp_path: Path) -> None:
     """AC-1: ``ledger_spawn_for_head <repo>`` calls ``suite_ledger.py spawn``
     with ``--project``, ``--sha <HEAD>``, ``--run-id <RUN_ID>`` exactly once.
@@ -105,8 +104,9 @@ def test_ledger_spawn_for_head_calls_spawn_once(tmp_path: Path) -> None:
     repo, head = _make_repo(tmp_path)
 
     # Stub suite_ledger.py that records argv calls and exits 1.
-    stub_dir = tmp_path / "stub-scripts"
-    stub_dir.mkdir()
+    # Place it where the runner expects: ${_SKILL_ROOT}/ilk-loop/scripts/
+    stub_dir = tmp_path / "ilk-loop" / "scripts"
+    stub_dir.mkdir(parents=True)
     log_file = tmp_path / "spawn-calls.jsonl"
     (stub_dir / "suite_ledger.py").write_text(
         "#!/usr/bin/env python3\n"
@@ -123,7 +123,7 @@ def test_ledger_spawn_for_head_calls_spawn_once(tmp_path: Path) -> None:
     env = {
         **os.environ,
         "ILK_DOTSOURCE_ONLY": "1",
-        "_SKILL_ROOT": str(stub_dir.parent.parent),  # Not used for stub
+        "_SKILL_ROOT": str(tmp_path),
         "RUN_ID": run_id,
         "HOME": str(tmp_path / "home"),
         "ILK_DATA_HOME": str(tmp_path / ".ilk-data"),
@@ -133,6 +133,7 @@ def test_ledger_spawn_for_head_calls_spawn_once(tmp_path: Path) -> None:
     # overriding the suite_ledger path.
     script = (
         f"source '{_RUNNER}' 2>/dev/null; "
+        f"_SKILL_ROOT='{tmp_path}'; RUN_ID='{run_id}'; "
         f"ledger_spawn_for_head '{repo}' 2>/dev/null; echo rc=$?"
     )
     result = subprocess.run(
@@ -155,7 +156,6 @@ def test_ledger_spawn_for_head_calls_spawn_once(tmp_path: Path) -> None:
 # ── AC-2: ledger_record_point passes all fields ─────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="AC-2: ledger_record_point not yet implemented")
 def test_ledger_record_point_passes_all_fields(tmp_path: Path) -> None:
     """AC-2: ``ledger_record_point`` passes ``--slug``, ``--before``,
     ``--after`` (HEAD), ``--shipped a,b`` and ``--iteration``.
@@ -164,8 +164,9 @@ def test_ledger_record_point_passes_all_fields(tmp_path: Path) -> None:
     repo, sha_a, sha_b = _make_repo_two_commits(tmp_path)
 
     # Stub suite_ledger.py that records argv calls and exits 1.
-    stub_dir = tmp_path / "stub-scripts"
-    stub_dir.mkdir()
+    # Place it where the runner expects: ${_SKILL_ROOT}/ilk-loop/scripts/
+    stub_dir = tmp_path / "ilk-loop" / "scripts"
+    stub_dir.mkdir(parents=True)
     log_file = tmp_path / "point-calls.jsonl"
     (stub_dir / "suite_ledger.py").write_text(
         "#!/usr/bin/env python3\n"
@@ -185,13 +186,15 @@ def test_ledger_record_point_passes_all_fields(tmp_path: Path) -> None:
     env = {
         **os.environ,
         "ILK_DOTSOURCE_ONLY": "1",
-        "_SKILL_ROOT": str(stub_dir.parent.parent),
+        "_SKILL_ROOT": str(tmp_path),
         "RUN_ID": run_id,
         "HOME": str(tmp_path / "home"),
         "ILK_DATA_HOME": str(tmp_path / ".ilk-data"),
     }
     script = (
         f"source '{_RUNNER}' 2>/dev/null; "
+        f"_SKILL_ROOT='{tmp_path}'; RUN_ID='{run_id}'; "
+        f"_iter_slug='{slug}'; i={iteration}; "
         f"ledger_record_point '{repo}' '{sha_a}' '{shipped}' 2>/dev/null; echo rc=$?"
     )
     result = subprocess.run(
@@ -217,7 +220,6 @@ def test_ledger_record_point_passes_all_fields(tmp_path: Path) -> None:
 # ── AC-3: suite_ledger.record_point writes one line ──────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="AC-3: record_point not yet implemented")
 def test_record_point_appends_one_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """AC-3: ``suite_ledger.record_point(...)`` appends one JSON line with
     ``writer: "driver"`` and the tree of ``after``.
@@ -256,7 +258,6 @@ def test_record_point_appends_one_line(tmp_path: Path, monkeypatch: pytest.Monke
     assert entry["slug"] == "every-gated-point-is-ledgered"
 
 
-@pytest.mark.xfail(strict=True, reason="AC-3: record_point worker refusal not yet implemented")
 def test_record_point_refuses_in_worker_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -288,7 +289,6 @@ def test_record_point_refuses_in_worker_session(
     assert not points_path.exists(), "points.jsonl created in worker session"
 
 
-@pytest.mark.xfail(strict=True, reason="AC-3: record_point no-op not yet implemented")
 def test_record_point_noop_when_no_change(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -322,7 +322,6 @@ def test_record_point_noop_when_no_change(
 # ── AC-4: call order in the runner is correct (static analysis) ──────────────
 
 
-@pytest.mark.xfail(strict=True, reason="AC-4: ledger call sites not yet added to runner")
 def test_call_order_spawn_after_heads_before_gate() -> None:
     """AC-4: the first ``ledger_spawn_for_head`` call inside ``main()`` sits
     after ``get_repo_heads "$heads_after_file"`` and before
@@ -350,7 +349,6 @@ def test_call_order_spawn_after_heads_before_gate() -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="AC-4: ledger_record_point call site not yet added")
 def test_call_order_record_point_after_selfmod_mergeback() -> None:
     """AC-4: a ``ledger_record_point`` call sits after the
     ``# -- Selfmod merge-back`` comment.
@@ -372,7 +370,6 @@ def test_call_order_record_point_after_selfmod_mergeback() -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="AC-4: ledger_record_point in gate-first not yet added")
 def test_call_order_record_point_in_gate_first_after_shipped_echo() -> None:
     """AC-4: a ``ledger_record_point`` call sits inside
     ``attempt_gate_first_fast_path`` after the ``shipped by the driver`` echo.
@@ -397,7 +394,6 @@ def test_call_order_record_point_in_gate_first_after_shipped_echo() -> None:
 # ── AC-5: contracts doc has suite_ledger.py section with forbidden pattern ───
 
 
-@pytest.mark.xfail(strict=True, reason="AC-5: contracts doc section not yet added")
 def test_contracts_doc_has_suite_ledger_section() -> None:
     """AC-5: the contracts doc has a heading containing ``suite_ledger.py``
     and the string ``run_ilk_loop`` appears in that section as the forbidden

@@ -316,6 +316,49 @@ def measure(project: Path, sha, *, run_id: str | None = None,
         shutil.rmtree(snap_dir, ignore_errors=True)
 
 
+def record_point(project: Path, *, run_id: str, iteration: int,
+                 slug: str, master: str, before: str, after: str,
+                 shipped: list[str]) -> None:
+    """Append one driver-written point row to ``points.jsonl``.
+
+    A point marks a gated boundary: the tree changed from *before* to
+    *after*, and the listed *shipped* sub-plans were shipped in that
+    boundary.  The entry carries ``writer: "driver"`` and the tree sha
+    of *after*.
+
+    Raises ``LedgerRefused`` in a worker session.  Writes nothing when
+    *before == after* and *shipped* is empty (no real boundary).
+    """
+    if os.environ.get("ILK_WORKER_SESSION") == "1":
+        raise LedgerRefused("refused in a worker session")
+
+    if before == after and not shipped:
+        return
+
+    tree = _git(project, "rev-parse", f"{after}^{{tree}}")
+    if not tree:
+        return
+
+    entry = {
+        "run_id": run_id,
+        "iteration": iteration,
+        "slug": slug,
+        "master": master,
+        "before": before,
+        "after": after,
+        "tree": tree,
+        "shipped": shipped,
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "writer": "driver",
+    }
+
+    ld = ledger_dir(project)
+    ld.mkdir(parents=True, exist_ok=True)
+    points_path = ld / "points.jsonl"
+    with open(points_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, sort_keys=True) + "\n")
+
+
 def lookup(project: Path, tree: str,
            invocation: str | None = None) -> dict | None:
     """Look up a ledger entry for *tree*.
@@ -656,6 +699,18 @@ def _cli() -> int:
     p_wait.add_argument("--tree", required=True)
     p_wait.add_argument("--timeout", type=int, default=120)
 
+    # point
+    p_point = sub.add_parser("point",
+                              help="Record a driver-written point row")
+    p_point.add_argument("--project", type=Path, required=True)
+    p_point.add_argument("--run-id", required=True)
+    p_point.add_argument("--iteration", type=int, required=True)
+    p_point.add_argument("--slug", default="")
+    p_point.add_argument("--master", default="")
+    p_point.add_argument("--before", required=True)
+    p_point.add_argument("--after", required=True)
+    p_point.add_argument("--shipped", default="")
+
     # contention
     p_contention = sub.add_parser("contention",
                                    help="Run contention probe")
@@ -704,6 +759,24 @@ def _cli() -> int:
         print(f"ILK-CHECK: unmeasured timeout after {args.timeout}s",
               file=sys.stderr)
         return 1
+
+    elif args.command == "point":
+        shipped_list = [s for s in args.shipped.split(",") if s] if args.shipped else []
+        try:
+            record_point(
+                args.project,
+                run_id=args.run_id,
+                iteration=args.iteration,
+                slug=args.slug,
+                master=args.master,
+                before=args.before,
+                after=args.after,
+                shipped=shipped_list,
+            )
+            return 0
+        except LedgerRefused as exc:
+            print(f"ILK-CHECK: unmeasured {exc}", file=sys.stderr)
+            return 1
 
     elif args.command == "contention":
         result = contention(args.project, args.probe)

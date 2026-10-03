@@ -2907,3 +2907,45 @@ gh-resolve G1's batch-verification step 1, commit `47e2cf21` ("fix(verify): reso
 3. **A contract sync:** `== 5` → `== 6` after the batch added a terminal state.  That one is legitimate.
 
 Nothing in ilk stopped the verify worker from editing tests on its way to green.
+
+---
+
+## Contract: the suite ledger (`suite_ledger.py`)
+
+The suite ledger measures full-suite results keyed by tree sha so the verify
+can look up HEAD and base verdicts instead of re-measuring.  The driver is the
+sole writer; worker sessions are refused.  No ledger process command line
+contains `run_ilk_loop` — the spawned measurement uses `suite_ledger.py
+measure`, not the runner.
+
+### Writers
+
+- **The driver only.** `suite_ledger.py` refuses to write in a worker session
+  (`ILK_WORKER_SESSION=1` raises `LedgerRefused`).
+- `run_ilk_loop_claude.sh` calls `suite_ledger.py spawn` at agent return and
+  `suite_ledger.py point` after ship-integrity and in the gate-first path.
+- `verification_record.py` calls `suite_ledger.py measure` (sub-plan 2).
+
+### Files
+
+| File | Writer | Reader | Key |
+|---|---|---|---|
+| `ledger/<tree>.json` | `suite_ledger.py measure` | `suite_ledger.py lookup`, `verification_record.py` | tree sha |
+| `running.json` | `suite_ledger.py spawn` | `suite_ledger.py wait_for` | pid |
+| `queued.json` | `suite_ledger.py spawn` | `suite_ledger.py wait_for` | tree sha |
+| `points.jsonl` | `suite_ledger.py point` (driver) | `red_owner.py` (sub-plan 3) | run_id + iteration |
+
+### Key
+
+The ledger lives under the external logs dir for the git-common-dir repo's
+project key.  A selfmod worktree and its clone share one ledger.
+
+### Worker-session refusal
+
+Every write command (`measure`, `spawn`, `point`) checks
+`ILK_WORKER_SESSION=1` and raises `LedgerRefused` before touching disk.
+
+### Forbidden pattern
+
+No ledger process command line contains `run_ilk_loop`.  The spawned
+measurement uses `suite_ledger.py measure`, not the runner.

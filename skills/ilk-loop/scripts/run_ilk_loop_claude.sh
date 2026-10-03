@@ -27,7 +27,7 @@ source "${_ILK_SCRIPT_DIR}/_ilk_marker.sh"
 
 # ----- Defaults & globals ----------------------------------------------------
 
-# Populated by argument parsing in main().
+# Populated by argument parsing in the main function.
 PROJECT_PATH=""
 MAX_ITERATIONS=30
 ITERATION_TIMEOUT_MIN=30
@@ -440,7 +440,7 @@ _resolve_toolkit_clone() {
 # Record the outcome of a post-iteration selfmod merge attempt.
 #
 # Sets merge_was_deferred / iter_stop_reason / stop_reason in the caller's
-# scope (they are main()'s locals; bash dynamic scoping).  rc 0 CLEARS
+# scope (they are the main function's locals; bash dynamic scoping).  rc 0 CLEARS
 # merge_was_deferred: before 2026-09-28 it was sticky, so a run whose merge
 # was deferred once and then landed still tripped the "deferred + no new
 # commits" spin guard and ended as blocked-no-runnable.
@@ -2099,7 +2099,7 @@ finalize_sentinel() {
   # On EXIT (signal, error, or normal), if the sentinel is still state=running,
   # rewrite it to a terminal state so stale-running sentinels never survive.
   # Safe to call multiple times — idempotent (no-op when state != running).
-  # `runtime_dir` is local to main(); main stores the sentinel path in
+  # `runtime_dir` is local to the main function; it stores the sentinel path in
   # _ILK_SENTINEL_PATH so this function survives after main returns.
   [[ -z "${_ILK_SENTINEL_PATH:-}" ]] && return 0
   local target="${_ILK_SENTINEL_PATH}"
@@ -2607,6 +2607,13 @@ attempt_gate_first_fast_path() {
           # Track this slug so one-ship enforcement does not revert it.
           _GATE_FIRST_SHIPPED_SLUGS="${_GATE_FIRST_SHIPPED_SLUGS:+$_GATE_FIRST_SHIPPED_SLUGS
 }$slug"
+          # Record a driver-written point row.  The marker commit is
+          # --allow-empty so the tree is unchanged; no spawn needed.
+          local _gf_before
+          _gf_before=$(head_before_sha "$repo" "$heads_before_file") || _gf_before=""
+          if [[ -n "$_gf_before" ]]; then
+            ledger_record_point "$repo" "$_gf_before" "$slug"
+          fi
         else
           echo "  [gate-first] $slug: ship_transition failed — $ship_out" >&2
           # Leave the sub-plan as-is; the next iteration's worker ships it.
@@ -4921,6 +4928,73 @@ print(json.dumps(d))" \
     "${ended_at:-}" "${YIELDED_TO:-}"
 }
 
+# ----- Ledger helpers --------------------------------------------------------
+
+ledger_spawn_for_head() {
+  # Spawn a background ledger measurement for HEAD of $1.
+  # Never fails the iteration: prints a diagnostic on error and returns 0.
+  local repo="$1"
+  local head_sha
+  head_sha=$(git -C "$repo" rev-parse HEAD 2>/dev/null) || {
+    echo "[ledger] spawn failed: cannot resolve HEAD of $repo" >&2
+    return 0
+  }
+  local tree12="${head_sha:0:12}"
+  local result=""
+  result=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/suite_ledger.py" \
+    spawn --project "$repo" --sha "$head_sha" --run-id "$RUN_ID" 2>&1) || {
+    echo "[ledger] spawn failed: ${result%%$'\n'*}" >&2
+    return 0
+  }
+  local action
+  action=$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin).get('action','unknown'))" 2>/dev/null) || action="unknown"
+  echo "[ledger] $action tree=$tree12"
+}
+
+ledger_record_point() {
+  # Record a driver-written point row for a gated boundary.
+  # $1 = repo, $2 = before_sha, $3 = shipped_slugs (comma-separated).
+  # Reads RUN_ID, _iter_slug, active master from the caller's scope.
+  # Never fails the iteration.
+  local repo="$1"
+  local before_sha="$2"
+  local shipped_slugs="$3"
+  local after_sha
+  after_sha=$(git -C "$repo" rev-parse HEAD 2>/dev/null) || {
+    echo "[ledger] record_point failed: cannot resolve HEAD of $repo" >&2
+    return 0
+  }
+  # Resolve active master basename.
+  local master_basename="${_ACTIVE_MASTER_BASENAME:-}"
+  if [[ -z "$master_basename" ]]; then
+    master_basename=$(python3 -c "
+import sys, json
+sys.path.insert(0, sys.argv[1])
+from loop_status import pick_active_master, parse_frontmatter
+from pathlib import Path
+plans = sorted(Path(sys.argv[2]).glob('MASTER-*.md'))
+actives = []
+for p in plans:
+    fm = parse_frontmatter(p.read_text(encoding='utf-8'))
+    if fm.get('status') in ('active', 'queued'):
+        actives.append((p, fm))
+if actives:
+    chosen, _ = pick_active_master(actives, json_mode=True)
+    print(chosen.get('file', ''))
+" "${_SKILL_ROOT}/ilk-loop/scripts" "${_PLANS_DIR:-/dev/null}" 2>/dev/null) || master_basename=""
+  fi
+  local result=""
+  result=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/suite_ledger.py" \
+    point --project "$repo" --run-id "$RUN_ID" --iteration "${i:-0}" \
+    --slug "${_iter_slug:-}" --master "$master_basename" \
+    --before "$before_sha" --after "$after_sha" \
+    --shipped "$shipped_slugs" 2>&1) || {
+    echo "[ledger] record_point failed: ${result%%$'\n'*}" >&2
+    return 0
+  }
+  echo "[ledger] point tree=${after_sha:0:12} shipped=$shipped_slugs"
+}
+
 # ----- Main ------------------------------------------------------------------
 
 main() {
@@ -5857,6 +5931,9 @@ print(json.dumps({
       fi
     done
 
+    # Spawn a background ledger measurement for any repo with new commits.
+    [[ "$total_new" -gt 0 ]] && ledger_spawn_for_head "$(selfmod_effective_repo "$PROJECT_PATH")"
+
     # Ship-gap: committed-vs-changed path accounting
     local _SHIP_GAP_JSON=""
     local _SHIP_GAP_UNEXPLAINED=0
@@ -6778,6 +6855,41 @@ append_revert_row(
       echo "[selfmod] merge deferred + no new commits — ending run to avoid spin." >&2
       stop_reason="blocked-no-runnable"
       break
+    fi
+
+    # Record a driver-written point row for this iteration's gated boundary.
+    # The shipped list comes from PRE_ITER_ALL_STEPS whose status is now
+    # "shipped".  The before sha is the first sha recorded in heads_before_file
+    # for the effective repo.
+    if [[ "$total_new" -gt 0 ]]; then
+      local _point_repo
+      _point_repo=$(selfmod_effective_repo "$PROJECT_PATH")
+      local _point_before
+      _point_before=$(head_before_sha "$_point_repo" "$heads_before_file")
+      if [[ -n "$_point_before" ]]; then
+        # Build shipped list from sub-plans that are now shipped.
+        local _point_shipped=""
+        if [[ -n "${PRE_ITER_ALL_STEPS:-}" ]]; then
+          local _pre_line _pre_slug _pre_status _pre_fm
+          while read -r _pre_line; do
+            _pre_slug="${_pre_line%% *}"
+            [[ -z "$_pre_slug" ]] && continue
+            _pre_fm=$(python3 -c "
+import sys
+sys.path.insert(0, sys.argv[1])
+from loop_status import parse_frontmatter
+from pathlib import Path
+p = Path(sys.argv[2])
+fm = parse_frontmatter(p.read_text(encoding='utf-8'))
+print(fm.get('status', ''))
+" "${_SKILL_ROOT}/ilk-loop/scripts" "${_PLANS_DIR}/${_pre_slug}.md" 2>/dev/null) || _pre_fm=""
+            if [[ "$_pre_fm" == "shipped" ]]; then
+              _point_shipped="${_point_shipped:+$_point_shipped,}$_pre_slug"
+            fi
+          done <<< "$PRE_ITER_ALL_STEPS"
+        fi
+        ledger_record_point "$_point_repo" "$_point_before" "$_point_shipped"
+      fi
     fi
 
     # After a ship-integrity revert, reconcile the master so it no longer
