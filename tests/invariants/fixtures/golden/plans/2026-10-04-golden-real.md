@@ -14,9 +14,9 @@ env_prereqs: []
 recommended_iteration_timeout_min: 5
 local_checks: []
 scope_paths:
-  - "tests/test_calc.py"
+  - "tests/test_scale.py"
 unit_test_targets:
-  - "tests/test_calc.py"
+  - "tests/test_scale.py"
 e2e_test_targets: []
 must_add_tests: false
 ci_required: false
@@ -27,12 +27,13 @@ expected_entities:
   migrations: []
   api_endpoints: []
   db_tables: []
-auto_block_fails: 0
+auto_block_fails: 1
 ---
 
 # Sub-plan: golden-real
 
-Pin and fix `scale` in `calc.py`.
+Pin and fix `scale` in `test_scale.py`. Gate scoped to `test_scale.py` only —
+not affected by golden-inert's changes to `test_calc.py`.
 
 ## Steps
 
@@ -40,7 +41,7 @@ Pin and fix `scale` in `calc.py`.
 
 ```yaml
 local_checks:
-  - command: "export PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH && python3 -m pytest tests/test_calc.py::test_scale -q -p no:cacheprovider"
+  - command: "/usr/bin/python3 -m pytest tests/test_scale.py::test_scale -q -p no:cacheprovider --timeout=30 --timeout-method=signal"
     timeout: 60
 ```
 
@@ -50,7 +51,7 @@ Pin `scale` with `xfail(strict=True)` — it must fail with `AssertionError`.
 
 ```yaml
 local_checks:
-  - command: "export PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH && python3 -m pytest tests/test_calc.py -q -p no:cacheprovider"
+  - command: "/usr/bin/python3 -m pytest tests/test_scale.py::test_scale -q -p no:cacheprovider --timeout=30 --timeout-method=signal"
     timeout: 60
 ```
 

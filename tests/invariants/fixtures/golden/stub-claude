@@ -39,73 +39,88 @@ m = re.search(r'^estimated_steps:\s*(\d+)', text, re.MULTILINE)
 print(m.group(1) if m else '1')
 " "$plan_file")
 
-# Apply the step transformation using Python (more reliable than patches).
-python3 -c "
+# Write the transformation script to a temp file to avoid bash quoting issues.
+transform_script=$(mktemp /tmp/stub_transform_XXXXXX.py)
+cat > "$transform_script" << 'PYEOF'
 import sys
+import re
+from pathlib import Path
+
 slug = sys.argv[1]
 step = int(sys.argv[2])
 
 if slug == 'golden-real':
     if step == 0:
-        # Add xfail mark to test_scale
-        from pathlib import Path
-        p = Path('tests/test_calc.py')
+        # Add xfail mark to test_scale in test_scale.py
+        p = Path('tests/test_scale.py')
         text = p.read_text()
-        text = text.replace('from calc import add, scale, clamp', 'import pytest\nfrom calc import add, scale, clamp')
-        text = text.replace('def test_scale():', '@pytest.mark.xfail(strict=True, reason=\"scale is broken: multiplies instead of dividing\")\ndef test_scale():')
+        text = text.replace('from calc import scale', 'import pytest\nfrom calc import scale')
+        text = text.replace('def test_scale():', '@pytest.mark.xfail(strict=True, reason="scale is broken: multiplies instead of dividing")\ndef test_scale():')
         p.write_text(text)
     elif step == 1:
         # Fix scale and remove xfail
-        from pathlib import Path
         p = Path('calc.py')
         text = p.read_text()
         text = text.replace('return value * factor', 'return value / factor')
         p.write_text(text)
-        p = Path('tests/test_calc.py')
+        p = Path('tests/test_scale.py')
         text = p.read_text()
-        text = text.replace('import pytest\n', '')
-        text = text.replace('@pytest.mark.xfail(strict=True, reason=\"scale is broken: multiplies instead of dividing\")\n', '')
+        # Remove import pytest line
+        text = re.sub(r'import pytest\n', '', text)
+        # Remove xfail decorator line
+        text = re.sub(r'@pytest\.mark\.xfail\(.*?\)\n', '', text)
+        # Update docstring to remove BUG note
+        text = text.replace('Pin: scale(10, 2) should be 5.0 (10 / 2).  BUG: returns 20.0.', 'scale(10, 2) should be 5.0 (10 / 2).')
         p.write_text(text)
 
 elif slug == 'golden-inert':
     if step == 0:
-        # Replace test_scale with vacuous pin
-        from pathlib import Path
-        p = Path('tests/test_calc.py')
+        # Add vacuous pin as a NEW test in test_other.py (not test_scale)
+        p = Path('tests/test_other.py')
         text = p.read_text()
-        text = text.replace('from calc import add, scale, clamp', 'import pytest\nfrom calc import add, scale, clamp')
-        text = text.replace('''def test_scale():
-    \"\"\"Pin: scale(10, 2) should be 5.0 (10 / 2).  BUG: returns 20.0.\"\"\"
-    assert scale(10, 2) == 5.0''', '''@pytest.mark.xfail(strict=True, reason=\"vacuous pin: hand-writes the expected value\")
-def test_scale():
-    \"\"\"Vacuous pin: asserts True — the decay (a) shape.\"\"\"
-    assert True''')
+        # Add import pytest if not already present
+        if 'import pytest' not in text:
+            text = 'import pytest\n' + text
+        # Append vacuous test function
+        text += '\n\n@pytest.mark.xfail(strict=True, reason="vacuous pin: hand-writes the expected value")\n'
+        text += 'def test_vacuous():\n'
+        text += '    """Vacuous pin: asserts True — the decay (a) shape."""\n'
+        text += '    assert True\n'
         p.write_text(text)
 
 elif slug == 'golden-red':
     if step == 0:
-        # Add xfail mark to test_add
-        from pathlib import Path
-        p = Path('tests/test_calc.py')
-        text = p.read_text()
-        text = text.replace('from calc import add, scale, clamp', 'import pytest\nfrom calc import add, scale, clamp')
-        text = text.replace('def test_add():', '@pytest.mark.xfail(strict=True, reason=\"add is broken\")\ndef test_add():')
-        p.write_text(text)
-    elif step == 1:
-        # Fix add, break clamp, remove xfail
-        from pathlib import Path
+        # Break add AND pin it with xfail
         p = Path('calc.py')
         text = p.read_text()
         text = text.replace('return a + b', 'return a - b')
+        p.write_text(text)
+        p = Path('tests/test_calc.py')
+        text = p.read_text()
+        # Add import pytest if not already present
+        if 'import pytest' not in text:
+            text = text.replace('from calc import add, scale, clamp', 'import pytest\nfrom calc import add, scale, clamp')
+        text = text.replace('def test_add():', '@pytest.mark.xfail(strict=True, reason="add is broken")\ndef test_add():')
+        p.write_text(text)
+    elif step == 1:
+        # Fix add, break clamp, remove xfail
+        p = Path('calc.py')
+        text = p.read_text()
+        text = text.replace('return a - b', 'return a + b')
         text = text.replace('return max(lo, min(hi, value))', 'return min(lo, max(hi, value))')
         p.write_text(text)
         p = Path('tests/test_calc.py')
         text = p.read_text()
-        text = text.replace('import pytest\n', '')
-        text = text.replace('@pytest.mark.xfail(strict=True, reason=\"add is broken\")\n', '')
-        text = text.replace('assert add(2, 3) == 5', 'assert add(2, 3) == -1')
+        # Remove import pytest line
+        text = re.sub(r'import pytest\n', '', text)
+        # Remove xfail decorator line
+        text = re.sub(r'@pytest\.mark\.xfail\(.*?\)\n', '', text)
         p.write_text(text)
-" "$slug" "$current_step"
+PYEOF
+
+# Run the transformation.
+python3 "$transform_script" "$slug" "$current_step"
+rm -f "$transform_script"
 
 # Stage and commit.
 git add -A

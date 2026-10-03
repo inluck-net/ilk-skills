@@ -111,13 +111,23 @@ def _build_tmp_root(keep: bool = False) -> Path:
     shutil.copy2(_FIXTURES / "stub-claude", stub)
     stub.chmod(0o755)
 
-    # Create symlink to correct Python (the system one has pytest).
-    python_link = bin_dir / "python3"
-    if not python_link.exists():
-        python_link.symlink_to("/usr/bin/python3")
+    # Create python3 wrapper script (not a symlink) that forces the correct
+    # Python. macOS /usr/bin/python3 is a shim that may redirect to Xcode's
+    # Python depending on shell initialization; a wrapper avoids that.
+    python_wrapper = bin_dir / "python3"
+    python_wrapper.write_text('#!/bin/bash\nexec /usr/bin/python3 "$@"\n')
+    python_wrapper.chmod(0o755)
 
     # Create .claude dir.
     (root / ".claude").mkdir(exist_ok=True)
+
+    # Create .bash_env that prepends the correct PATH before bash -c runs.
+    # macOS path_helper in /etc/profile reorders PATH, putting
+    # /Library/Developer/CommandLineTools/usr/bin first (which has no pytest).
+    # BASH_ENV is loaded by bash before /etc/profile, so this overrides it.
+    # Use $PATH (literal, not Python f-string) to preserve the existing PATH.
+    bash_env = root / ".bash_env"
+    bash_env.write_text(f'export PATH="{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin' + ':$PATH"\n')
 
     return root
 
@@ -135,6 +145,21 @@ def _run_golden_batch(root: Path) -> subprocess.CompletedProcess:
     path_parts = [str(bin_dir), "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
     if original_path:
         path_parts.append(original_path)
+    # PYTHONPATH must include the real user's site-packages because the
+    # runner sets HOME to the tmp root for isolation, which moves Python's
+    # user site-packages to a non-existent path under the tmp root.
+    real_home = os.environ.get("HOME", "")
+    user_site = ""
+    if real_home:
+        import subprocess as _sp
+        try:
+            user_site = _sp.check_output(
+                ["/usr/bin/python3", "-m", "site", "--user-site"],
+                text=True, timeout=5,
+            ).strip()
+        except Exception:
+            user_site = str(Path(real_home) / "Library" / "Python" / "3.9" / "lib" / "python" / "site-packages")
+
     env = {
         **os.environ,
         "HOME": str(root),
@@ -144,7 +169,14 @@ def _run_golden_batch(root: Path) -> subprocess.CompletedProcess:
         "CLAUDE_CONFIG_DIR": str(root / ".claude"),
         # Ensure the runner uses the correct Python.
         "ILK_PATH_PRELUDE": "export PATH=/usr/bin:$PATH",
+        # BASH_ENV is loaded by bash before /etc/profile, preventing
+        # macOS path_helper from reordering PATH to put Xcode python first.
+        "BASH_ENV": str(root / ".bash_env"),
     }
+    # PYTHONPATH: include real user site-packages so pytest is findable
+    # even when HOME is redirected to the tmp root.
+    if user_site and Path(user_site).is_dir():
+        env["PYTHONPATH"] = user_site
     env.pop("ILK_DATA_DIR", None)
 
     # Read expected.json for max_iterations.

@@ -8,7 +8,7 @@ estimated_steps: 2
 last_updated: "2026-10-04"
 verification_tier: loop-verified
 regression_for: ""
-depends_on: ["golden-real", "golden-red"]
+depends_on: ["golden-red"]
 data_prereqs: []
 env_prereqs: []
 batch_verification: true
@@ -41,8 +41,8 @@ Batch verification — runs the full suite and attributes any reds.
 
 ```yaml
 local_checks:
-  - command: "export PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH && python3 -m pytest tests/ -q -p no:cacheprovider"
-    timeout: 120
+  - command: "/usr/bin/python3 -m pytest tests/ -q -p no:cacheprovider --timeout=30 --timeout-method=signal"
+    timeout: 60
 ```
 
 Run the full suite. The breakage in `clamp` (from golden-red) should surface
@@ -52,8 +52,8 @@ here as `tests/test_other.py::test_clamp_boundary` failing.
 
 ```yaml
 local_checks:
-  - command: "export PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH && python3 -m pytest tests/ -q -p no:cacheprovider"
-    timeout: 120
+  - command: "/usr/bin/python3 -m pytest tests/ -q -p no:cacheprovider --timeout=30 --timeout-method=signal"
+    timeout: 60
 ```
 
 Run the full suite again and attribute the red to golden-red.

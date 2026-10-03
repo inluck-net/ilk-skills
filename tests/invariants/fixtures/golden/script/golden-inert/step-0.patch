@@ -1,22 +1,17 @@
---- a/tests/test_calc.py
-+++ b/tests/test_calc.py
-@@ -1,4 +1,5 @@
- """Tests for calc.py — add, scale, clamp."""
+--- a/tests/test_other.py
++++ b/tests/test_other.py
+@@ -1,3 +1,4 @@
 +import pytest
- from calc import add, scale, clamp
+ """A second test file that pins clamp.
 
-
-@@ -7,7 +8,8 @@
-     assert add(2, 3) == 5
-
-
--def test_scale():
--    """Pin: scale(10, 2) should be 5.0 (10 / 2).  BUG: returns 20.0."""
--    assert scale(10, 2) == 5.0
+ This file is outside golden-red's gate (which runs only test_calc.py),
+@@ -10,3 +11,8 @@
+     """Pin: clamp at exact boundaries."""
+     assert clamp(0, 0, 10) == 0
+     assert clamp(10, 0, 10) == 10
++
++
 +@pytest.mark.xfail(strict=True, reason="vacuous pin: hand-writes the expected value")
-+def test_scale():
++def test_vacuous():
 +    """Vacuous pin: asserts True — the decay (a) shape."""
 +    assert True
-
-
- def test_clamp():

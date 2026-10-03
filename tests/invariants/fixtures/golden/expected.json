@@ -9,7 +9,7 @@
     "status": "shipped"
   },
   "golden-verify": {
-    "status": "in-progress",
+    "status": "pending",
     "attributed_nodes": ["test_clamp_boundary"]
   },
   "max_iterations": 8

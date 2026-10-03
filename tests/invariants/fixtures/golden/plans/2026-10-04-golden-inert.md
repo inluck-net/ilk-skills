@@ -14,9 +14,9 @@ env_prereqs: []
 recommended_iteration_timeout_min: 5
 local_checks: []
 scope_paths:
-  - "tests/test_calc.py"
+  - "tests/test_other.py"
 unit_test_targets:
-  - "tests/test_calc.py"
+  - "tests/test_other.py"
 e2e_test_targets: []
 must_add_tests: false
 ci_required: false
@@ -27,36 +27,43 @@ expected_entities:
   migrations: []
   api_endpoints: []
   db_tables: []
-auto_block_fails: 0
+auto_block_fails: 1
 ---
 
 # Sub-plan: golden-inert
 
-A vacuous pin that hand-writes the value it claims to observe.
+Add a vacuous pin that XPASSes. The decay (a) shape: a hand-written test that
+asserts `True` and is marked `xfail(strict=True)`, so it XPASSes and the gate
+catches it. Operates on `test_other.py` (not `test_scale`) so it does not
+corrupt golden-real's gate.
+
+Two steps but only one real transformation: step 1 is a no-op that exists so
+the stub does not ship until after the gate has had two chances to red.
+The quarantine threshold is 2; after two consecutive XPASS gate failures the
+runner quarantines this sub-plan to `blocked`.
 
 ## Steps
 
-### Step 0 — vacuous pin
+### Step 0 — add vacuous pin
 
 ```yaml
 local_checks:
-  - command: "export PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH && python3 -m pytest tests/test_calc.py::test_scale -q -p no:cacheprovider"
+  - command: "/usr/bin/python3 -m pytest tests/ -q -p no:cacheprovider --timeout=30 --timeout-method=signal"
     timeout: 60
 ```
 
-Replace `test_scale` with a vacuous pin that asserts `True` (the decay (a) shape).
-Use `xfail(strict=True)` — the vacuous pin passes, so it XPASSes, and the strict
-xfail turns that into a red gate.
+Add `test_vacuous` to `tests/test_other.py`: `xfail(strict=True)`, body is
+`assert True`. The gate runs the full suite; `test_vacuous` XPASSes → red.
 
-### Step 1 — (never reached)
+### Step 1 — (no-op: step 0 already triggers quarantine)
 
 ```yaml
 local_checks:
-  - command: "export PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH && python3 -m pytest tests/test_calc.py -q -p no:cacheprovider"
+  - command: "/usr/bin/python3 -m pytest tests/ -q -p no:cacheprovider --timeout=30 --timeout-method=signal"
     timeout: 60
 ```
 
-This step is never reached because step 0's gate is red and the sub-plan
-gets quarantined after two failures.
+If step 0's gate reds twice, this sub-plan is quarantined to `blocked` before
+step 1 runs. No second transformation needed.
 
 ## Findings

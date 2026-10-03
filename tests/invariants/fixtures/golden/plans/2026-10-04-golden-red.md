@@ -42,7 +42,7 @@ breakage in `test_other.py` is invisible to this sub-plan's own gate
 
 ```yaml
 local_checks:
-  - command: "export PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH && python3 -m pytest tests/test_calc.py::test_add -q -p no:cacheprovider"
+  - command: "/usr/bin/python3 -m pytest tests/test_calc.py::test_add -q -p no:cacheprovider --timeout=30 --timeout-method=signal"
     timeout: 60
 ```
 
@@ -52,7 +52,7 @@ Pin `add` with `xfail(strict=True)` — it must fail with `AssertionError`.
 
 ```yaml
 local_checks:
-  - command: "export PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH && python3 -m pytest tests/test_calc.py -q -p no:cacheprovider"
+  - command: "/usr/bin/python3 -m pytest tests/test_calc.py::test_add -q -p no:cacheprovider --timeout=30 --timeout-method=signal"
     timeout: 60
 ```
 

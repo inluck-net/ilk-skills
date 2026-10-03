@@ -3,7 +3,7 @@
     "suite": {
       "command": "python3 -m pytest",
       "flags": ["-q", "-p", "no:cacheprovider"],
-      "path_prelude": "export PATH=/usr/bin:$PATH"
+      "path_prelude": "export PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
     },
     "baseline_red": [],
     "ledger": false
