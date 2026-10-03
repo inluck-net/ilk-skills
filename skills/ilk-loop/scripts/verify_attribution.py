@@ -560,7 +560,7 @@ def _classify_counts(
     }
 
 
-def verify(record_path: Path, project: Path | None = None) -> tuple[str, int, list[str], dict[str, int]]:
+def verify_detailed(record_path: Path, project: Path | None = None) -> tuple[str, int, list[str], dict[str, int]]:
     """Raise VerificationError unless the record establishes a clean batch.
 
     Returns ``(message, excused_count, flaky_owed, counts)`` where counts
@@ -649,6 +649,16 @@ def verify(record_path: Path, project: Path | None = None) -> tuple[str, int, li
         msg += f"; {len(flaky_owed)} flaky (owed): {', '.join(flaky_owed)}"
     return (msg, failed, flaky_owed, counts)
 
+
+def verify(record_path: Path, project: Path | None = None) -> tuple[str, int, list[str]]:
+    """Raise VerificationError unless the record establishes a clean batch.
+
+    Returns ``(message, excused_count, flaky_owed)``.  The three-tuple is the
+    public contract; callers that need the per-bucket ``counts`` dict use
+    :func:`verify_detailed` instead.
+    """
+    msg, excused, flaky, _counts = verify_detailed(record_path, project=project)
+    return (msg, excused, flaky)
 
 
 def resolve_batch_record(project: Path, batch_slug: str) -> Path:
@@ -1119,7 +1129,7 @@ def main(argv: list[str] | None = None) -> int:
                     record_path = resolve_batch_record(project, args.batch)
                 # else: record_path already set
 
-        message, excused, flaky_owed, counts = verify(record_path, project=project)
+        message, excused, flaky_owed, counts = verify_detailed(record_path, project=project)
     except VerificationError as exc:
         print(f"ATTRIBUTION FAILED: {exc}", file=sys.stderr)
         return 1
