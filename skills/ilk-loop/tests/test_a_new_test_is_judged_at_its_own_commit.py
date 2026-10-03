@@ -219,3 +219,30 @@ def test_other_unknown_at_base_values_attributed() -> None:
     assert len(bad) == 2, (
         f"absent-at-base and passed must be attributed; got {len(bad)} bad"
     )
+
+# ── An UNTRAILERED adding commit inside the batch is the batch's own ─────────
+
+def test_untrailered_adding_commit_in_the_batch_stays_attributed(tmp_path: Path) -> None:
+    """A test file first created by an untrailered commit inside base..HEAD
+    (the runner's `WIP: preserve timed-out iteration changes`) is this
+    batch's work: ``absent-at-base`` (attributed), never ``born-red-at``.
+
+    gh-resolve G4 (2026-10-03): a red-first pin written in an iteration that
+    timed out was WIP-committed untrailered (b15797e7); slug None never
+    matched the registry, the rerun found it red at that commit, and the
+    verify EXCUSED the batch's own red as born-red.
+    """
+    repo = _init_repo(tmp_path)
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "base")
+    base_sha = _git(repo, "rev-parse", "HEAD").strip()
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_w.py").write_text(_TEST_Y_FAILING)
+    _git(repo, "add", "tests/test_w.py")
+    _git(repo, "commit", "-q", "-m", "WIP: preserve timed-out iteration changes")
+    result = vr.run_at_base(
+        repo, base_sha,
+        node_ids=["tests/test_w.py::test_y_fails"],
+        invocation="python3 -m pytest",
+        registry_slugs={"alpha"},
+    )
+    assert result["tests/test_w.py::test_y_fails"] == "absent-at-base"

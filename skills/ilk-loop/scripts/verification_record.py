@@ -927,7 +927,14 @@ def run_at_adding_commit(
             adding_slugs[nid] = slug
 
         # AC-1: this batch's slug ⇒ no rerun, stays absent-at-base.
-        if slug in registry_slugs:
+        # An UNTRAILERED adding commit is treated the same way.  It lies in
+        # base..HEAD by construction (see _find_adding_commits), and the
+        # usual one is the runner's own `WIP: preserve timed-out iteration
+        # changes` commit.  Reading "no slug" as "another plan" let gh-resolve
+        # G4's verify excuse its own red-first pin as born-red (b15797e7,
+        # 2026-10-03).  Only a trailer that NAMES another plan earns a rerun;
+        # an unknown owner stays attributed.
+        if slug is None or slug in registry_slugs:
             for nid in nids:
                 verdicts[nid] = "absent-at-base"
             continue
