@@ -13,6 +13,9 @@ Thumbs.db
 
 # Local logs / scratch
 *.log
+# Test fixtures replay real run logs; they must be committed or the test
+# passes only in the clone that recorded them (c's diagnosis replay, 2026-10-03).
+!skills/**/tests/fixtures/**/*.log
 *.tmp
 scratch/
 
