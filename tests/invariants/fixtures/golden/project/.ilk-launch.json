@@ -1,0 +1,11 @@
+{
+  "ship": {
+    "suite": {
+      "command": "python3 -m pytest",
+      "flags": ["-q", "-p", "no:cacheprovider"],
+      "path_prelude": "export PATH=/usr/bin:$PATH"
+    },
+    "baseline_red": [],
+    "ledger": false
+  }
+}

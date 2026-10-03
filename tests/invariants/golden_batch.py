@@ -1,0 +1,286 @@
+"""Golden batch harness — runs a hermetic golden batch end to end.
+
+Drives the real runner (``run_ilk_loop_claude.sh``) from a private copy of
+``skills/``, over a fixture project and a three-sub-plan batch with a stub
+``claude``, and compares the outcome and the wall clock with
+``tests/invariants/fixtures/golden/expected.json``.
+
+Usage::
+
+    python3 tests/invariants/golden_batch.py [--json] [--keep] [--measure N]
+
+Exit codes: 0 pass, 1 fail, 2 refusal (no gtimeout, ILK_SKILL_HOME in repo).
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+_REPO = Path(__file__).resolve().parents[2]
+_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "golden"
+_SCRIPTS = _REPO / "skills" / "ilk-loop" / "scripts"
+_RUNNER = _REPO / "skills" / "ilk-loop" / "scripts" / "run_ilk_loop_claude.sh"
+
+
+def _check_refusals() -> None:
+    """Refuse if gtimeout is missing or ILK_SKILL_HOME would be in repo."""
+    if shutil.which("gtimeout") is None:
+        print("refusal: gtimeout not found on PATH", file=sys.stderr)
+        raise SystemExit(2)
+
+    skill_home = os.environ.get("ILK_SKILL_HOME", "")
+    if skill_home:
+        # Check if it resolves inside this repo.
+        try:
+            resolved = Path(skill_home).resolve()
+            repo_resolved = _REPO.resolve()
+            if resolved == repo_resolved or str(resolved).startswith(str(repo_resolved) + os.sep):
+                print("refusal: ILK_SKILL_HOME resolves inside this repo", file=sys.stderr)
+                raise SystemExit(2)
+        except (OSError, ValueError):
+            pass
+
+
+def _build_tmp_root(keep: bool = False) -> Path:
+    """Build a hermetic tmp root with the fixture project and a skills copy."""
+    if keep:
+        root = Path("/tmp/golden-batch-keep")
+        if root.exists():
+            shutil.rmtree(root)
+    else:
+        root = Path(os.environ.get("TMPDIR", "/tmp")) / f"golden-batch-{os.getpid()}"
+    root.mkdir(parents=True, exist_ok=True)
+
+    # Copy the fixture project.
+    project = root / "project"
+    if project.exists():
+        shutil.rmtree(project)
+    shutil.copytree(_FIXTURES / "project", project)
+
+    # Copy the script directory (patches) to the project.
+    script_dir = project / "script"
+    if script_dir.exists():
+        shutil.rmtree(script_dir)
+    shutil.copytree(_FIXTURES / "script", script_dir)
+
+    # Git init the project.
+    subprocess.run(
+        ["git", "-c", "user.email=t@example.com", "-c", "user.name=t",
+         "init", "-q", str(project)],
+        check=True, capture_output=True, text=True,
+    )
+    subprocess.run(
+        ["git", "-c", "user.email=t@example.com", "-c", "user.name=t",
+         "add", "-A"],
+        cwd=str(project), check=True, capture_output=True, text=True,
+    )
+    subprocess.run(
+        ["git", "-c", "user.email=t@example.com", "-c", "user.name=t",
+         "commit", "-q", "-m", "init"],
+        cwd=str(project), check=True, capture_output=True, text=True,
+    )
+
+    # Copy skills/ to ILK_SKILL_HOME.
+    skill_home = root / "skills"
+    if skill_home.exists():
+        shutil.rmtree(skill_home)
+    shutil.copytree(_REPO / "skills", skill_home)
+
+    # Set up ILK_DATA_HOME.
+    data_home = root / ".ilk-data"
+
+    # Copy plans to the data home.
+    sys.path.insert(0, str(_SCRIPTS))
+    import ilk_paths
+    from unittest.mock import patch as _patch
+    with _patch.dict(os.environ, {"ILK_DATA_HOME": str(data_home)}, clear=False):
+        key = ilk_paths.project_key(project)
+    plans = data_home / "projects" / key / "plans"
+    plans.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(_FIXTURES / "plans", plans, dirs_exist_ok=True)
+
+    # Copy stub-claude to bin/.
+    bin_dir = root / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    stub = bin_dir / "claude"
+    shutil.copy2(_FIXTURES / "stub-claude", stub)
+    stub.chmod(0o755)
+
+    # Create symlink to correct Python (the system one has pytest).
+    python_link = bin_dir / "python3"
+    if not python_link.exists():
+        python_link.symlink_to("/usr/bin/python3")
+
+    # Create .claude dir.
+    (root / ".claude").mkdir(exist_ok=True)
+
+    return root
+
+
+def _run_golden_batch(root: Path) -> subprocess.CompletedProcess:
+    """Run the runner on the fixture project."""
+    project = root / "project"
+    skill_home = root / "skills"
+    data_home = root / ".ilk-data"
+    bin_dir = root / "bin"
+
+    # Build PATH with /usr/bin first to ensure correct Python with pytest.
+    # Include the original PATH for bash, gtimeout, and other utilities.
+    original_path = os.environ.get("PATH", "")
+    path_parts = [str(bin_dir), "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+    if original_path:
+        path_parts.append(original_path)
+    env = {
+        **os.environ,
+        "HOME": str(root),
+        "ILK_DATA_HOME": str(data_home),
+        "ILK_SKILL_HOME": str(skill_home),
+        "PATH": os.pathsep.join(path_parts),
+        "CLAUDE_CONFIG_DIR": str(root / ".claude"),
+        # Ensure the runner uses the correct Python.
+        "ILK_PATH_PRELUDE": "export PATH=/usr/bin:$PATH",
+    }
+    env.pop("ILK_DATA_DIR", None)
+
+    # Read expected.json for max_iterations.
+    expected = json.loads((_FIXTURES / "expected.json").read_text(encoding="utf-8"))
+    max_iter = expected.get("max_iterations", 8)
+
+    return subprocess.run(
+        ["bash", "--noprofile", str(_RUNNER),
+         "--project-path", str(project),
+         "--max-iterations", str(max_iter),
+         "--iteration-timeout-min", "2",
+         "--run-local-checks"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=600, env=env, cwd=str(root),
+    )
+
+
+def _check_results(root: Path, proc: subprocess.CompletedProcess) -> dict:
+    """Check the results against expected.json."""
+    project = root / "project"
+    skill_home = root / "skills"
+    data_home = root / ".ilk-data"
+
+    # Read expected.json.
+    expected = json.loads((_FIXTURES / "expected.json").read_text(encoding="utf-8"))
+
+    # Resolve the plans directory.
+    sys.path.insert(0, str(_SCRIPTS))
+    import ilk_paths
+    from unittest.mock import patch as _patch
+    with _patch.dict(os.environ, {"ILK_DATA_HOME": str(data_home)}, clear=False):
+        key = ilk_paths.project_key(project)
+    plans = data_home / "projects" / key / "plans"
+
+    # Check each sub-plan's status.
+    mismatches = []
+    for slug in ["golden-real", "golden-inert", "golden-red", "golden-verify"]:
+        plan_file = plans / f"2026-10-04-{slug}.md"
+        if not plan_file.exists():
+            mismatches.append({"slug": slug, "expected": expected[slug]["status"], "got": "missing"})
+            continue
+
+        text = plan_file.read_text(encoding="utf-8")
+        import re
+        m = re.search(r'^status:\s*(\S+)', text, re.MULTILINE)
+        actual_status = m.group(1) if m else "unknown"
+
+        if actual_status != expected[slug]["status"]:
+            mismatches.append({
+                "slug": slug,
+                "expected": expected[slug]["status"],
+                "got": actual_status,
+            })
+
+    # Check the verify record for golden-verify if it's supposed to be in-progress.
+    # (The verify sub-plan's gate should have caught the clamp breakage.)
+
+    return {
+        "verdict": "pass" if not mismatches else "fail",
+        "mismatches": mismatches,
+        "exit_code": proc.returncode,
+    }
+
+
+def run(*, out: Path | None = None, keep: bool = False) -> dict:
+    """Run the golden batch and return the result dict.
+
+    Raises SystemExit(2) for refusals.
+    """
+    _check_refusals()
+
+    root = _build_tmp_root(keep=keep)
+    start = time.monotonic()
+
+    try:
+        proc = _run_golden_batch(root)
+        elapsed = time.monotonic() - start
+
+        result = _check_results(root, proc)
+        result["seconds"] = round(elapsed, 1)
+
+        # Read budget.json if it exists.
+        budget_file = _FIXTURES / "budget.json"
+        if budget_file.exists():
+            budget = json.loads(budget_file.read_text(encoding="utf-8"))
+            result["budget_seconds"] = budget.get("max_seconds", 0)
+            result["over_budget"] = elapsed > budget.get("max_seconds", float("inf"))
+        else:
+            result["budget_seconds"] = 0
+            result["over_budget"] = False
+
+        if out:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(result, indent=2), encoding="utf-8")
+
+        return result
+    finally:
+        if not keep and root.exists():
+            shutil.rmtree(root, ignore_errors=True)
+
+
+def main() -> int:
+    """CLI entry point."""
+    import argparse
+    parser = argparse.ArgumentParser(description="Run the golden batch")
+    parser.add_argument("--json", action="store_true", help="Print result as JSON")
+    parser.add_argument("--keep", action="store_true", help="Keep tmp dir for debugging")
+    parser.add_argument("--measure", type=int, default=0, help="Run N times and print seconds")
+    parser.add_argument("--out", type=Path, help="Write result to file")
+    args = parser.parse_args()
+
+    if args.measure > 0:
+        times = []
+        for i in range(args.measure):
+            result = run(keep=args.keep)
+            times.append(result["seconds"])
+            print(f"run {i+1}: {result['seconds']}s", file=sys.stderr)
+        print(json.dumps({"runs": times}))
+        return 0
+
+    result = run(out=args.out, keep=args.keep)
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"verdict: {result['verdict']}")
+        print(f"seconds: {result['seconds']}")
+        if result.get("budget_seconds"):
+            print(f"budget: {result['budget_seconds']}s")
+        if result["mismatches"]:
+            print("mismatches:")
+            for m in result["mismatches"]:
+                print(f"  {m['slug']}: expected {m['expected']}, got {m['got']}")
+
+    return 0 if result["verdict"] == "pass" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

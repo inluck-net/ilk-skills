@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# stub-claude — a minimal agent that simulates a worker for the golden batch.
+#
+# Reads ILK_ITERATION_SUBPLAN, finds the sub-plan, applies the step patch,
+# commits with the plan trailer, advances current_step, and ships after the
+# last step.  Prints stream-json lines the runner's renderer accepts.
+
+set -euo pipefail
+
+slug="${ILK_ITERATION_SUBPLAN:?ILK_ITERATION_SUBPLAN not set}"
+skill_home="${ILK_SKILL_HOME:?ILK_SKILL_HOME not set}"
+data_home="${ILK_DATA_HOME:?ILK_DATA_HOME not set}"
+
+# Resolve the plans directory.
+project_key=$(python3 -c "
+import sys; sys.path.insert(0, '${skill_home}/ilk-loop/scripts')
+from ilk_paths import project_key
+from pathlib import Path
+print(project_key(Path('.').resolve()))
+")
+plans_dir="${data_home}/projects/${project_key}/plans"
+plan_file="${plans_dir}/2026-10-04-${slug}.md"
+
+# Read current_step from front-matter.
+current_step=$(python3 -c "
+import re, sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text()
+m = re.search(r'^current_step:\s*(\d+)', text, re.MULTILINE)
+print(m.group(1) if m else '0')
+" "$plan_file")
+
+# Read estimated_steps from front-matter.
+estimated_steps=$(python3 -c "
+import re, sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text()
+m = re.search(r'^estimated_steps:\s*(\d+)', text, re.MULTILINE)
+print(m.group(1) if m else '1')
+" "$plan_file")
+
+# Apply the step transformation using Python (more reliable than patches).
+python3 -c "
+import sys
+slug = sys.argv[1]
+step = int(sys.argv[2])
+
+if slug == 'golden-real':
+    if step == 0:
+        # Add xfail mark to test_scale
+        from pathlib import Path
+        p = Path('tests/test_calc.py')
+        text = p.read_text()
+        text = text.replace('from calc import add, scale, clamp', 'import pytest\nfrom calc import add, scale, clamp')
+        text = text.replace('def test_scale():', '@pytest.mark.xfail(strict=True, reason=\"scale is broken: multiplies instead of dividing\")\ndef test_scale():')
+        p.write_text(text)
+    elif step == 1:
+        # Fix scale and remove xfail
+        from pathlib import Path
+        p = Path('calc.py')
+        text = p.read_text()
+        text = text.replace('return value * factor', 'return value / factor')
+        p.write_text(text)
+        p = Path('tests/test_calc.py')
+        text = p.read_text()
+        text = text.replace('import pytest\n', '')
+        text = text.replace('@pytest.mark.xfail(strict=True, reason=\"scale is broken: multiplies instead of dividing\")\n', '')
+        p.write_text(text)
+
+elif slug == 'golden-inert':
+    if step == 0:
+        # Replace test_scale with vacuous pin
+        from pathlib import Path
+        p = Path('tests/test_calc.py')
+        text = p.read_text()
+        text = text.replace('from calc import add, scale, clamp', 'import pytest\nfrom calc import add, scale, clamp')
+        text = text.replace('''def test_scale():
+    \"\"\"Pin: scale(10, 2) should be 5.0 (10 / 2).  BUG: returns 20.0.\"\"\"
+    assert scale(10, 2) == 5.0''', '''@pytest.mark.xfail(strict=True, reason=\"vacuous pin: hand-writes the expected value\")
+def test_scale():
+    \"\"\"Vacuous pin: asserts True — the decay (a) shape.\"\"\"
+    assert True''')
+        p.write_text(text)
+
+elif slug == 'golden-red':
+    if step == 0:
+        # Add xfail mark to test_add
+        from pathlib import Path
+        p = Path('tests/test_calc.py')
+        text = p.read_text()
+        text = text.replace('from calc import add, scale, clamp', 'import pytest\nfrom calc import add, scale, clamp')
+        text = text.replace('def test_add():', '@pytest.mark.xfail(strict=True, reason=\"add is broken\")\ndef test_add():')
+        p.write_text(text)
+    elif step == 1:
+        # Fix add, break clamp, remove xfail
+        from pathlib import Path
+        p = Path('calc.py')
+        text = p.read_text()
+        text = text.replace('return a + b', 'return a - b')
+        text = text.replace('return max(lo, min(hi, value))', 'return min(lo, max(hi, value))')
+        p.write_text(text)
+        p = Path('tests/test_calc.py')
+        text = p.read_text()
+        text = text.replace('import pytest\n', '')
+        text = text.replace('@pytest.mark.xfail(strict=True, reason=\"add is broken\")\n', '')
+        text = text.replace('assert add(2, 3) == 5', 'assert add(2, 3) == -1')
+        p.write_text(text)
+" "$slug" "$current_step"
+
+# Stage and commit.
+git add -A
+git -c user.email=t@example.com -c user.name=t \
+    commit -q -m "feat: step ${current_step} [plan:${slug}#step-${current_step}]" \
+    --allow-empty
+
+# Advance current_step.
+python3 -c "
+import re, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+text = p.read_text()
+old = int(sys.argv[2])
+text = re.sub(
+    r'^current_step:\s*\d+',
+    f'current_step: {old + 1}',
+    text, count=1, flags=re.MULTILINE
+)
+p.write_text(text)
+" "$plan_file" "$current_step"
+
+# Ship after the last step.
+next_step=$((current_step + 1))
+if [[ "$next_step" -ge "$estimated_steps" ]]; then
+    python3 "${skill_home}/ilk-loop/scripts/ship_transition.py" \
+        --ship "$slug" --plans-dir "$plans_dir" --repo "$(pwd)" 2>&1 || true
+fi
+
+# Print stream-json lines the renderer accepts.
+session_id="stub-$$"
+cat <<EOF
+{"type":"system","subtype":"init","model":"stub","session_id":"${session_id}","cwd":"$(pwd)"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"step ${current_step} done"}]}}
+{"type":"result","subtype":"success","duration_ms":100,"total_cost_usd":0.0,"usage":{"input_tokens":0,"output_tokens":0}}
+EOF

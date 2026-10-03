@@ -1,0 +1,16 @@
+{
+  "golden-real": {
+    "status": "shipped"
+  },
+  "golden-inert": {
+    "status": "blocked"
+  },
+  "golden-red": {
+    "status": "shipped"
+  },
+  "golden-verify": {
+    "status": "in-progress",
+    "attributed_nodes": ["test_clamp_boundary"]
+  },
+  "max_iterations": 8
+}

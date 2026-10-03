@@ -1,0 +1,16 @@
+--- a/tests/test_calc.py
++++ b/tests/test_calc.py
+@@ -1,4 +1,5 @@
+ """Tests for calc.py — add, scale, clamp."""
++import pytest
+ from calc import add, scale, clamp
+
+
+@@ -8,6 +9,7 @@
+     assert add(2, 3) == 5
+
+
++@pytest.mark.xfail(strict=True, reason="scale is broken: multiplies instead of dividing")
+ def test_scale():
+     """Pin: scale(10, 2) should be 5.0 (10 / 2).  BUG: returns 20.0."""
+     assert scale(10, 2) == 5.0

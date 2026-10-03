@@ -136,6 +136,53 @@
         ],
         "expect_in_output": ["FAILED", "test_an_unattended_build_cannot_land_a_kernel_edit"]
       }
+    },
+    {
+      "id": "golden-vacuous-pin",
+      "incident": "decay (a): inert fix shipped green — the pin asserts True",
+      "rail": "golden-real step-0 pin asserts scale(10,2)==5.0",
+      "file": "tests/invariants/fixtures/golden/script/golden-real/step-0.patch",
+      "kind": "replace",
+      "pattern": "assert scale\\(10, 2\\) == 5\\.0",
+      "replacement": "assert True",
+      "min_matches": 1,
+      "catcher": {
+        "argv": [
+          "python3", "tests/invariants/golden_batch.py", "--json"
+        ],
+        "expect_in_output": ["golden-real"]
+      }
+    },
+    {
+      "id": "golden-gate-line-deleted",
+      "incident": "decay (d): a red shipped past a gate that didn't cover its file",
+      "rail": "golden-red step-1 local_checks command line",
+      "file": "tests/invariants/fixtures/golden/plans/2026-10-04-golden-red.md",
+      "kind": "delete-lines",
+      "pattern": "- command:.*pytest tests/test_calc\\.py",
+      "min_matches": 1,
+      "catcher": {
+        "argv": [
+          "python3", "tests/invariants/golden_batch.py", "--json"
+        ],
+        "expect_in_output": ["golden-red"]
+      }
+    },
+    {
+      "id": "golden-inert-pin-strictness-dropped",
+      "incident": "decay (c): a pin asserted the bug (XPASS) but strictness removed",
+      "rail": "golden-inert step-0 xfail strict=True",
+      "file": "tests/invariants/fixtures/golden/script/golden-inert/step-0.patch",
+      "kind": "replace",
+      "pattern": "xfail\\(strict=True",
+      "replacement": "xfail(strict=False",
+      "min_matches": 1,
+      "catcher": {
+        "argv": [
+          "python3", "tests/invariants/golden_batch.py", "--json"
+        ],
+        "expect_in_output": ["golden-inert"]
+      }
     }
   ]
 }

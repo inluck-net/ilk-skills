@@ -1,0 +1,27 @@
+--- a/calc.py
++++ b/calc.py
+@@ -12,7 +12,7 @@
+
+ def scale(value: float, factor: float) -> float:
+     """Return value / factor."""
+-    return value * factor
++    return value / factor
+
+
+ def clamp(value: float, lo: float, hi: float) -> float:
+--- a/tests/test_calc.py
++++ b/tests/test_calc.py
+@@ -1,5 +1,4 @@
+ """Tests for calc.py — add, scale, clamp."""
+-import pytest
+ from calc import add, scale, clamp
+
+
+@@ -8,7 +7,6 @@
+     assert add(2, 3) == 5
+
+
+-@pytest.mark.xfail(strict=True, reason="scale is broken: multiplies instead of dividing")
+ def test_scale():
+     """Pin: scale(10, 2) should be 5.0 (10 / 2)."""
+     assert scale(10, 2) == 5.0

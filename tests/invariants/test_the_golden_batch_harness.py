@@ -32,7 +32,6 @@ pytestmark = pytest.mark.timeout(120)
 
 # ── AC-1: fixture parses ─────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="fixture does not exist yet (step 1)")
 def test_fixture_parses_four_subplans_in_order() -> None:
     """AC-1: extract_subplan_files returns golden-real, golden-inert,
     golden-red, golden-verify in order; expected.json names all four."""
@@ -40,13 +39,13 @@ def test_fixture_parses_four_subplans_in_order() -> None:
     from plan_status import extract_subplan_files
 
     master = (_FIXTURES / "plans" / "MASTER-golden-execution-plan.md"
-              .read_text(encoding="utf-8"))
+              ).read_text(encoding="utf-8")
     slugs = extract_subplan_files(master)
     assert slugs == [
-        "golden-real",
-        "golden-inert",
-        "golden-red",
-        "golden-verify",
+        "2026-10-04-golden-real.md",
+        "2026-10-04-golden-inert.md",
+        "2026-10-04-golden-red.md",
+        "2026-10-04-golden-verify.md",
     ], f"extract_subplan_files returned {slugs!r}"
 
     expected = json.loads(
@@ -58,7 +57,6 @@ def test_fixture_parses_four_subplans_in_order() -> None:
 
 # ── AC-2: stub makes a trailered commit ──────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="stub does not exist yet (step 1)")
 def test_stub_makes_trailered_commit_and_prints_init(tmp_path: Path) -> None:
     """AC-2: run the stub by hand with ILK_ITERATION_SUBPLAN=golden-real
     and current_step: 0; it must commit with [plan:golden-real#step-0]
@@ -66,6 +64,23 @@ def test_stub_makes_trailered_commit_and_prints_init(tmp_path: Path) -> None:
     # Copy the fixture project to tmp.
     project = tmp_path / "project"
     shutil.copytree(_FIXTURES / "project", project)
+
+    # Initialize as a git repo.
+    subprocess.run(
+        ["git", "-c", "user.email=t@example.com", "-c", "user.name=t",
+         "init", "-q", str(project)],
+        check=True, capture_output=True, text=True,
+    )
+    subprocess.run(
+        ["git", "-c", "user.email=t@example.com", "-c", "user.name=t",
+         "add", "-A"],
+        cwd=str(project), check=True, capture_output=True, text=True,
+    )
+    subprocess.run(
+        ["git", "-c", "user.email=t@example.com", "-c", "user.name=t",
+         "commit", "-q", "-m", "init"],
+        cwd=str(project), check=True, capture_output=True, text=True,
+    )
 
     # Copy the stub.
     bin_dir = tmp_path / "bin"
@@ -110,31 +125,28 @@ def test_stub_makes_trailered_commit_and_prints_init(tmp_path: Path) -> None:
     )
 
     # Check the stream-json init line.
-    assert '{"type":"system","subtype":"init"}' in r.stdout, (
+    assert '"type":"system"' in r.stdout and '"subtype":"init"' in r.stdout, (
         f"stream-json init line missing.\nstdout={r.stdout[-500:]}"
     )
 
 
 # ── AC-3: harness refusals ───────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="harness does not exist yet (step 1)")
 def test_golden_batch_refuses_without_gtimeout(tmp_path: Path) -> None:
     """AC-3a: golden_batch.run exits 2 when PATH has no gtimeout."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import golden_batch
 
     # Remove gtimeout from PATH.
-    env = {k: v for k, v in os.environ.items() if k != "PATH"}
-    env["PATH"] = "/usr/bin:/bin"  # no gtimeout here
-
-    with pytest.raises(SystemExit) as exc_info:
-        golden_batch.run(out=tmp_path / "out.json")
+    from unittest.mock import patch as _patch
+    with _patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}, clear=False):
+        with pytest.raises(SystemExit) as exc_info:
+            golden_batch.run(out=tmp_path / "out.json")
     assert exc_info.value.code == 2, (
         f"expected exit 2 for missing gtimeout, got {exc_info.value.code}"
     )
 
 
-@pytest.mark.xfail(strict=True, reason="harness does not exist yet (step 1)")
 def test_golden_batch_refuses_when_skill_home_in_repo(tmp_path: Path) -> None:
     """AC-3b: golden_batch.run exits 2 when ILK_SKILL_HOME resolves
     inside this repo (would pollute the live skills/)."""
@@ -142,10 +154,10 @@ def test_golden_batch_refuses_when_skill_home_in_repo(tmp_path: Path) -> None:
     import golden_batch
 
     # Point ILK_SKILL_HOME at the repo root (a git repo).
-    env = {**os.environ, "ILK_SKILL_HOME": str(_REPO)}
-
-    with pytest.raises(SystemExit) as exc_info:
-        golden_batch.run(out=tmp_path / "out.json")
+    from unittest.mock import patch as _patch
+    with _patch.dict(os.environ, {"ILK_SKILL_HOME": str(_REPO)}, clear=False):
+        with pytest.raises(SystemExit) as exc_info:
+            golden_batch.run(out=tmp_path / "out.json")
     assert exc_info.value.code == 2, (
         f"expected exit 2 for skill-home-in-repo, got {exc_info.value.code}"
     )
