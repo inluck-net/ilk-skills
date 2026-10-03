@@ -1,0 +1,11 @@
+{
+  "state": "local_checks_failed_no_commits",
+  "run_id": "20261003-125807",
+  "failed_check": {
+    "slug": "a-layout-switch-restarts-the-daemon",
+    "step": 0,
+    "command": "python3 -m pytest skills/ilk-watchdog/tests/test_a_layout_switch_restarts_the_daemon.py -q -p no:cacheprovider --timeout=120 --timeout-method=signal"
+  },
+  "iterations": 3,
+  "project_path": "/Users/chad/Projects/github/inluck-net/ilk-skills"
+}
