@@ -12,8 +12,12 @@ AC-1  Two masters — A ``shipped`` with sub-plan slug ``s``, B ``queued``
 AC-2  ``--owner-of nobody`` ⇒ exit 1, JSON has ``error``, ``slug``, and
       ``masters_searched``; no file changes.
 AC-3  End-to-end: one runner iteration where the red gate belongs to A's
-      sub-plan while B is the only ``queued`` master ⇒ A is ``blocked``
-      naming A's slug, B unchanged.
+      sub-plan while B is the only ``queued`` master.  Ship-integrity reverts
+      A's sub-plan to ``in-progress``, so A is NOT parked: it still has
+      runnable work, and parking it made the scheduler promote B over it
+      (ilk-skills 2026-10-03 23:21: batch d promoted over batch i, whose
+      reverted sub-plan was runnable).  Repeated reds stay bounded by
+      ``auto_block_fails`` and quarantine.  B is unchanged either way.
 """
 from __future__ import annotations
 
@@ -246,12 +250,12 @@ def _build_world_two_masters(root: Path) -> dict:
 
 @_NEEDS_GTIMEOUT
 
-def test_e2e_violation_parks_the_owning_master(
+def test_e2e_reverted_violation_keeps_the_owner_runnable(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
     """AC-3: end-to-end driver run.  Red gate belongs to A's sub-plan, B is
-    the only ``queued`` master.  After the run A is ``blocked`` naming A's
-    slug, and B is unchanged.
+    the only ``queued`` master.  Ship-integrity reverts A's sub-plan; after
+    the run A is not parked, its sub-plan is runnable, and B is unchanged.
 
     The harness is a simplified ``test_red_gate_stops_the_run._build_world``
     with two masters instead of one.
@@ -281,15 +285,18 @@ def test_e2e_violation_parks_the_owning_master(
     )
     tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-30:])
 
-    # A is parked and its reason names SLUG_A.
+    # The violation happened and was reverted...
+    assert "ship-integrity VIOLATION" in proc.stdout + proc.stderr, tail
+    fm_sub = parse_frontmatter(
+        (world["plans"] / f"{STEM_A}.md").read_text(encoding="utf-8-sig"))
+    assert fm_sub["status"] == "in-progress", (
+        f"A's sub-plan was not reverted to a runnable status: {fm_sub.get('status')!r}\n{tail}"
+    )
+    # ...so A is not parked: it keeps its runnable work.
     fm_a = parse_frontmatter(
         (world["plans"] / "MASTER-issue-6392.md").read_text(encoding="utf-8-sig"))
-    assert fm_a["status"] == "blocked", (
-        f"A is not blocked after the run: {fm_a.get('status')!r}\n{tail}"
-    )
-    reason = fm_a.get("parked_reason", "")
-    assert SLUG_A in reason, (
-        f"parked_reason does not name the violating slug {SLUG_A!r}: {reason!r}\n{tail}"
+    assert fm_a.get("status") != "blocked" and "parked_at" not in fm_a, (
+        f"A was parked although its sub-plan was reverted to runnable: {fm_a}\n{tail}"
     )
 
     # B is untouched.

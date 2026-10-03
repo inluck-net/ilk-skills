@@ -113,7 +113,7 @@ submenu line.
 | `"quota-exhausted"` | Provider quota cap detected (`quota_detect.py`); imposed from outside the run and clears on the provider's schedule | Terminal |
 | `"startup-hang"` | Pre-iteration-1 hang detected | Terminal |
 | `"timeout"` | `gtimeout` killed the iteration before it completed | Terminal |
-| `"ship_integrity_violation"` | A sub-plan was `shipped` with its declared gate red; the driver reverted it to `in-progress` **and parked the master** (`park_master.py --owner-of <slug> --auto`; see "Park fields" below). Also: the worker changed the run's own master's `status` / park fields, which the driver restored from its pre-dispatch snapshot (`master_snapshot.py`; no park) | Terminal |
+| `"ship_integrity_violation"` | A sub-plan was `shipped` with its declared gate red; the driver reverted it to `in-progress`. It parks the owning master (`park_master.py --owner-of <slug> --auto`; see "Park fields" below) **only when that revert did not happen**: a reverted sub-plan is runnable, and parking its master let the scheduler promote the next master over it (2026-10-03). Also: the worker changed the run's own master's `status` / park fields, which the driver restored from its pre-dispatch snapshot (`master_snapshot.py`; no park) | Terminal |
 | `"no-progress"` | 3 consecutive iterations with zero new commits | Terminal |
 | `"all-shipped"` | Every registered sub-plan is shipped **and every one is proven**; loop ended naturally | Terminal |
 | `"shipped-unproven"` | Every registered sub-plan is shipped, but the ship-proof ledger holds no row for at least one — the ship claim is unverified | Terminal |
@@ -178,8 +178,10 @@ sub-plan `a-new-terminal-state-cannot-ship-unknown`.
 2026-08-29 — see the bug reference under Contract 2b.
 
 **Park writer: `park_master.py --owner-of <slug>`.**  On a
-`ship_integrity_violation` the driver parks the master that **owns** the
-violating slug (its registry lists a sub-plan whose `plan:` or filename-derived
+`ship_integrity_violation` whose violating sub-plan the driver could NOT revert
+to `in-progress` (changed 2026-10-03: a reverted, runnable sub-plan leaves its
+master unparked, bounded by `auto_block_fails`/quarantine), the driver parks the
+master that **owns** the violating slug (its registry lists a sub-plan whose `plan:` or filename-derived
 slug matches).  Without `--owner-of` the driver parked whichever master was the
 sole `queued` one — an unrelated master got parked while the violator was
 reconciled back to `queued` and re-dispatched (rezmac 20260923-150625).

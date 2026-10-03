@@ -604,22 +604,29 @@ def test_per_slug_park_reason(
     )
     tail = "\n".join((proc.stdout + proc.stderr).splitlines()[-30:])
 
-    # The master is parked.
+    # Since 2026-10-03 a violation that ship-integrity reverted to
+    # in-progress does not park its master (the reverted sub-plan is
+    # runnable; parking it let the scheduler promote the next master over
+    # it).  Both slugs here are reverted, so M stays unparked.
     fm_m = parse_frontmatter(
         (plans / "MASTER-M.md").read_text(encoding="utf-8-sig"))
-    assert fm_m["status"] == "blocked", (
-        f"M is not blocked: {fm_m.get('status')!r}\n{tail}"
+    assert fm_m.get("status") != "blocked" and "parked_at" not in fm_m, (
+        f"M was parked although its violating sub-plans were reverted: {fm_m}\n{tail}"
     )
-    reason = fm_m.get("parked_reason", "")
+    out = proc.stdout + proc.stderr
+    # Only slugs that actually violated get a revert (the stub ships slug1
+    # only); each of those must report it was reverted and left unparked.
+    violated = [s for s in (slug1, slug2)
+                if f"[ship-integrity VIOLATION] {s}:" in out]
+    assert violated, f"no violation fired\n{tail}"
+    for s in violated:
+        assert f"{s} reverted to in-progress; its master is not parked" in out, (
+            f"no not-parked line for {s}\n{tail}"
+        )
+    # The per-slug park reason (when a park does happen, i.e. the revert did
+    # not) still names exactly one slug, never "slugs=[s1 s2]".
+    runner_text = RUNNER.read_text(encoding="utf-8")
+    assert 'ship_integrity_violation: run ${RUN_ID} slug=${_slug}"' in runner_text
+    assert "ship_integrity_violation: run ${RUN_ID} slugs=" not in runner_text
 
-    # The per-slug change: each park call names only the slug it parked.
-    # With two violating slugs, park_master.py is called twice.  The
-    # parked_reason on the master is the LAST one written (both own the
-    # same master).  The key assertion: the reason contains exactly one
-    # slug, not "slugs=[s1 s2]".
-    assert "slugs=" not in reason, (
-        f"reason still uses the old all-slugs format: {reason!r}\n{tail}"
-    )
-    assert "slug=" in reason, (
-        f"reason missing per-slug marker: {reason!r}\n{tail}"
-    )
+

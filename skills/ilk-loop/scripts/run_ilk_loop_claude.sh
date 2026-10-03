@@ -6793,6 +6793,17 @@ append_revert_row(
         _violating_slugs=$(echo "$_si_stderr" | sed -n 's/.*\[ship-integrity VIOLATION\] \([^ :]*\):.*/\1/p' | tr '\n' ' ')
         if [[ -n "$_violating_slugs" ]]; then
           for _slug in $_violating_slugs; do
+            # A violation that ship-integrity already reverted leaves the
+            # sub-plan runnable (in-progress) and the state consistent, so
+            # parking its master only hides runnable work: the scheduler then
+            # sees no active master and promotes the next one over it
+            # (2026-10-03 23:21, batch d promoted over batch i).  Repeated reds
+            # stay bounded by auto_block_fails and quarantine.  Park only when
+            # the revert did not happen.
+            if grep -qF "[ship-integrity] reverted ${_slug} to in-progress" <<<"$_si_stderr"; then
+              echo "  [ship-integrity] ${_slug} reverted to in-progress; its master is not parked (the next run re-attempts; repeated reds quarantine via auto_block_fails)" >&2
+              continue
+            fi
             local _park_reason="ship_integrity_violation: run ${RUN_ID} slug=${_slug}"
             local _park_out
             _park_out=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/park_master.py" \
