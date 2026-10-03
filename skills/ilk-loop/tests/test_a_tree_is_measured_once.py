@@ -548,3 +548,28 @@ class TestAC7WorktreeSameLedgerDir:
             f"ledger_dir should be the same from repo and worktree, "
             f"got repo={dir_from_repo}, wt={dir_from_wt}"
         )
+
+# ── background priority (owner, 2026-10-04) ─────────────────────────────────
+
+
+def test_background_measure_command_runs_at_lowest_priority():
+    """A background ledger run must yield the CPU to foreground work.
+
+    Measured 2026-10-04 with probes overlapping a running suite: at normal
+    priority the probe slowed 1.33x (limit 1.20); under `taskpolicy -b nice -n
+    19` 1.07x.  The invocation key stays `-n 8`, so verify's lookup still finds
+    the entry (verification_record.py: suite_ledger.lookup(project, tree,
+    invocation)).
+    """
+    import sys as _sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import suite_ledger
+
+    cmd = suite_ledger._background_measure_command(Path("/p"), "abc123", "run-1")
+    assert "nice" in cmd and cmd[cmd.index("nice") + 1:cmd.index("nice") + 3] == ["-n", "19"]
+    if _sys.platform == "darwin":
+        assert cmd[:2] == ["taskpolicy", "-b"]
+    tail = cmd[cmd.index("nice") + 3:]
+    assert tail[0] == _sys.executable and tail[1].endswith("suite_ledger.py")
+    assert tail[2:] == ["measure", "--project", "/p", "--sha", "abc123", "--run-id", "run-1"]
+    assert not any("run_ilk_loop" in part for part in cmd)

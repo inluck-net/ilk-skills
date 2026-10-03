@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import os
 import subprocess
 import sys
@@ -709,6 +710,34 @@ def _pid_is_alive(pid: int) -> bool:
         return False
 
 
+def _background_measure_command(project: Path, sha_str: str,
+                                run_id: str | None = None, *,
+                                write: bool = True) -> list[str]:
+    """The command a BACKGROUND ledger measurement runs, at the lowest priority.
+
+    Judgment call (owner, 2026-10-04): lower the background run's priority
+    rather than its worker count.  With probes overlapping a running suite,
+    the probe slowed 1.33x at normal priority (limit 1.20), 1.07x under
+    ``taskpolicy -b nice -n 19``, 1.05x at ``-n 4``.  Priority keeps the
+    invocation (and so the ledger lookup key and the stored baselines) at the
+    configured ``-n 8``.  Wrong if step 2's contention gate still exceeds
+    1.20 with this command.  A foreground ``measure()`` (a verify waiting on
+    the result) is not wrapped.
+    """
+    prefix: list[str] = []
+    if sys.platform == "darwin" and shutil.which("taskpolicy"):
+        prefix = ["taskpolicy", "-b"]
+    prefix += ["nice", "-n", "19"]
+    script = str(_SCRIPTS_DIR / "suite_ledger.py")
+    cmd = [sys.executable, script, "measure",
+           "--project", str(project), "--sha", sha_str]
+    if run_id:
+        cmd.extend(["--run-id", run_id])
+    if not write:
+        cmd.append("--no-write")
+    return prefix + cmd
+
+
 def _spawn_detached(project: Path, sha_str: str,
                     run_id: str | None) -> int:
     """Double-fork a detached ledger measurement.  Returns the intermediate pid."""
@@ -757,11 +786,7 @@ def _spawn_detached(project: Path, sha_str: str,
     os.close(write_fd)
 
     # Build the command line.  Must never contain "run_ilk_loop".
-    script = str(_SCRIPTS_DIR / "suite_ledger.py")
-    cmd = [sys.executable, script, "measure",
-           "--project", str(project), "--sha", sha_str]
-    if run_id:
-        cmd.extend(["--run-id", run_id])
+    cmd = _background_measure_command(project, sha_str, run_id)
 
     # Restore original HOME before exec so Python's user site-packages works.
     if _ORIGINAL_HOME:
@@ -1106,6 +1131,10 @@ def return_reds(project: Path, *, batch: str, plans_dir: Path) -> int:
 # ── Contention probe ──────────────────────────────────────────────────────────
 
 
+# Seconds to let the background suite reach pytest before probing.
+_CONTENTION_WARMUP_S = 25
+
+
 def contention(project: Path, probe_paths: list[str],
                repeats: int = 3) -> dict:
     """Measure contention between the ledger run and a probe suite.
@@ -1126,28 +1155,34 @@ def contention(project: Path, probe_paths: list[str],
     # Solo runs.
     solo_times = [_run_probe() for _ in range(repeats)]
 
-    # Concurrent runs: start a full suite in a thread, run probe alongside.
-    import threading
-
+    # Concurrent runs: start the full suite exactly as a background ledger
+    # run starts it (same command, same priority), wait until pytest is
+    # running, then run the probe alongside.  The old in-process thread ran at
+    # normal priority and its probes could finish before the snapshot clone
+    # had even started pytest (2026-10-04: 0.98 vs 1.33 on the same host).
+    import subprocess as _sp
     concurrent_times = []
     concurrent_failing = []
-
-    def _full_suite_thread() -> None:
-        nonlocal concurrent_failing
-        try:
-            result = measure(project, _git(project, "rev-parse", "HEAD"),
-                             write=False)
-            concurrent_failing = result.get("failing_nodes", [])
-        except (LedgerUnmeasured, LedgerNotConfigured):
-            pass
-
-    suite_thread = threading.Thread(target=_full_suite_thread, daemon=True)
-    suite_thread.start()
-
+    bg = _sp.Popen(
+        _background_measure_command(
+            project, _git(project, "rev-parse", "HEAD"), write=False),
+        stdout=_sp.PIPE, stderr=_sp.DEVNULL, text=True, encoding="utf-8",
+        errors="replace", cwd=str(project),
+    )
+    time.sleep(_CONTENTION_WARMUP_S)
     for _ in range(repeats):
+        if bg.poll() is not None:
+            break  # the suite finished before the probe: not a measurement
         concurrent_times.append(_run_probe())
-
-    suite_thread.join(timeout=10)
+    if not concurrent_times:
+        bg.wait()
+        raise LedgerUnmeasured(
+            "contention: the background suite ended before any probe overlapped it")
+    try:
+        out, _ = bg.communicate(timeout=900)
+        concurrent_failing = json.loads(out or "{}").get("failing_nodes", [])
+    except (ValueError, _sp.TimeoutExpired):
+        bg.kill()
 
     # Determine which failing ids pass when run alone (without -n/--dist).
     solo_pass_ids = []
@@ -1194,6 +1229,8 @@ def _cli() -> int:
     p_measure.add_argument("--project", type=Path, required=True)
     p_measure.add_argument("--sha", required=True)
     p_measure.add_argument("--run-id")
+    p_measure.add_argument("--no-write", action="store_true",
+                           help="measure only; do not write a ledger entry")
 
     # spawn
     p_spawn = sub.add_parser("spawn",
@@ -1245,7 +1282,8 @@ def _cli() -> int:
 
     if args.command == "measure":
         try:
-            entry = measure(args.project, args.sha, run_id=args.run_id)
+            entry = measure(args.project, args.sha, run_id=args.run_id,
+                            write=not args.no_write)
             print(json.dumps(entry, indent=2, sort_keys=True))
             return 0
         except (LedgerRefused, LedgerNotConfigured, LedgerUnmeasured) as exc:
