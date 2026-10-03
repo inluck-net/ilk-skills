@@ -220,7 +220,6 @@ def _changelog_rows(project: Path) -> list[str]:
 class TestCutCreatesTagAndChangelog:
     """AC-1: proven proof → cut creates v0.0.2 (annotated), CHANGELOG row, bare repo has both."""
 
-    @pytest.mark.xfail(strict=True, reason="cut verb does not exist yet")
     def test_cut_creates_v002_and_changelog(self, tmp_path: Path) -> None:
         """Proven proof for HEAD: cut → v0.0.2 tag, CHANGELOG row, push succeeded."""
         project, bare = _make_fake_project(tmp_path)
@@ -260,7 +259,6 @@ class TestCutCreatesTagAndChangelog:
 class TestCutRefusedProof:
     """AC-2: proof for a different head or verdict refused → exit 4, no tag, no commit."""
 
-    @pytest.mark.xfail(strict=True, reason="cut verb does not exist yet")
     def test_refused_when_proof_for_different_head(self, tmp_path: Path) -> None:
         """Proof file for a different HEAD → cut refuses, nothing changes."""
         project, bare = _make_fake_project(tmp_path)
@@ -282,7 +280,6 @@ class TestCutRefusedProof:
         rows = _changelog_rows(project)
         assert not any("v0.0.2" in r for r in rows)
 
-    @pytest.mark.xfail(strict=True, reason="cut verb does not exist yet")
     def test_refused_when_verdict_refused(self, tmp_path: Path) -> None:
         """Proof file with verdict=refused → cut refuses, nothing changes."""
         project, bare = _make_fake_project(tmp_path)
@@ -306,7 +303,6 @@ class TestCutRefusedProof:
 class TestCutPushRejected:
     """AC-3: bare repo rejects push (pre-receive hook) → exit 4, local tag exists, no force-push."""
 
-    @pytest.mark.xfail(strict=True, reason="cut verb does not exist yet")
     def test_refused_when_push_rejected(self, tmp_path: Path) -> None:
         """Bare repo with a rejecting pre-receive hook → exit 4, local tag kept."""
         project, bare = _make_fake_project(tmp_path)
@@ -345,7 +341,6 @@ class TestCutPushRejected:
 class TestCutStoresBaseline:
     """AC-4: after cut, the v0.0.2 baseline file exists, keyed on proof's invocation."""
 
-    @pytest.mark.xfail(strict=True, reason="cut verb does not exist yet")
     def test_baseline_stored_after_cut(self, tmp_path: Path) -> None:
         """After cut, baseline file exists for v0.0.2 under the proof's invocation."""
         project, bare = _make_fake_project(tmp_path)
@@ -374,7 +369,6 @@ class TestCutStoresBaseline:
 class TestCheckAfterCut:
     """AC-5: check right after cut → not eligible (HEAD == tag after changelog commit is tagged)."""
 
-    @pytest.mark.xfail(strict=True, reason="cut verb does not exist yet")
     def test_check_not_eligible_after_cut(self, tmp_path: Path) -> None:
         """After cut tags HEAD, check should report not eligible."""
         project, bare = _make_fake_project(tmp_path)

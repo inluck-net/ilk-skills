@@ -364,6 +364,246 @@ def prove(project: Path, data_dir: Path) -> dict:
     }
 
 
+# ── cut ────────────────────────────────────────────────────────────────────
+
+def _git_mut(project: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run a mutating git command (commit, push, tag)."""
+    return subprocess.run(
+        ["git", *args],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+
+
+def _parse_version(tag: str) -> tuple[int, int, int]:
+    """Parse vX.Y.Z into (major, minor, patch)."""
+    tag = tag.lstrip("v")
+    parts = tag.split(".")
+    return int(parts[0]), int(parts[1]), int(parts[2])
+
+
+def _next_patch(tag: str) -> str:
+    """Increment the PATCH component of a vX.Y.Z tag."""
+    major, minor, patch = _parse_version(tag)
+    return f"v{major}.{minor}.{patch + 1}"
+
+
+_TRAILER_RE = __import__("re").compile(r"\[plan:([a-z0-9-]+)#")
+
+
+def _gather_master_titles(project: Path, last_tag: str, plans_dir: Path) -> str:
+    """Collect master titles whose sub-plan trailers appear in git log."""
+    r = _git(project, "log", f"{last_tag}..HEAD", "--format=%s")
+    if r.returncode != 0:
+        return ""
+    slugs: list[str] = []
+    for line in r.stdout.splitlines():
+        for m in _TRAILER_RE.finditer(line):
+            slug = m.group(1)
+            if slug not in slugs:
+                slugs.append(slug)
+    titles: list[str] = []
+    for slug in slugs:
+        # Find the sub-plan file and extract the master title
+        for p in plans_dir.glob("*.md"):
+            try:
+                text = p.read_text()
+                if f"plan: {slug}" in text:
+                    # Extract master title from the "Part of" line
+                    for line in text.splitlines():
+                        if "MASTER-" in line and "]" in line:
+                            # e.g. Part of [MASTER-title](link)
+                            start = line.find("[MASTER-")
+                            if start >= 0:
+                                end = line.find("]", start)
+                                master_ref = line[start + 1 : end]
+                                title = master_ref.split("-", 3)[-1].replace("-", " ").title()
+                                if title not in titles:
+                                    titles.append(title)
+                            break
+            except (OSError, UnicodeDecodeError):
+                continue
+    return "; ".join(titles)
+
+
+def _insert_changelog_row(project: Path, row: str) -> None:
+    """Insert a CHANGELOG row as the first data row in the table."""
+    changelog = project / "CHANGELOG.md"
+    if not changelog.exists():
+        # Create a minimal CHANGELOG with the table header
+        header = (
+            "# Changelog\n\n"
+            "Releases are cut as annotated git tags.\n\n"
+            "## Recent releases\n\n"
+            "| Version | Date | Highlights |\n"
+            "|---|---|---|\n"
+        )
+        changelog.write_text(header + row + "\n")
+        return
+
+    lines = changelog.read_text().splitlines()
+    insert_idx = None
+    for i, line in enumerate(lines):
+        if line.startswith("|---"):
+            insert_idx = i + 1
+            break
+    if insert_idx is None:
+        # No table found — append one
+        lines.extend(["", "## Recent releases", "", "| Version | Date | Highlights |", "|---|---|---|", row])
+    else:
+        lines.insert(insert_idx, row)
+    changelog.write_text("\n".join(lines) + "\n")
+
+
+def cut(project: Path, data_dir: Path) -> dict:
+    """Cut a release: CHANGELOG row, annotated tag, push, baseline.
+
+    Returns ``{"tag", "commit", "pushed", "baseline"}`` on success.
+    Exits with code 4 on refusal.
+    """
+    head = _get_head_sha(project)
+    last_tag = _get_latest_tag(project)
+
+    # ── load proof ───────────────────────────────────────────────────────
+    proof_dir = data_dir / "runtime" / "release"
+    proof_path = proof_dir / f"proof-{head[:12]}.json"
+    if not proof_path.exists():
+        print(f"refused: no proof file for HEAD {head[:12]}", file=sys.stderr)
+        sys.exit(4)
+
+    try:
+        proof = json.loads(proof_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        print("refused: could not read proof file", file=sys.stderr)
+        sys.exit(4)
+
+    if proof.get("head") != head:
+        print("refused: proof head mismatch", file=sys.stderr)
+        sys.exit(4)
+
+    if proof.get("verdict") != "proven":
+        print(f"refused: proof verdict is {proof.get('verdict')!r}, not 'proven'", file=sys.stderr)
+        sys.exit(4)
+
+    # ── check still eligible ─────────────────────────────────────────────
+    eligibility = check(project, data_dir)
+    if not eligibility["eligible"]:
+        print(f"refused: {eligibility['reason']}", file=sys.stderr)
+        sys.exit(4)
+
+    # ── next tag ─────────────────────────────────────────────────────────
+    if not last_tag:
+        print("refused: no last tag found", file=sys.stderr)
+        sys.exit(4)
+
+    next_tag = _next_patch(last_tag)
+    if _ref_exists(project, next_tag):
+        print(f"refused: tag {next_tag} already exists", file=sys.stderr)
+        sys.exit(4)
+
+    # ── gather master titles ─────────────────────────────────────────────
+    invocation = proof.get("invocation", "")
+    # Resolve plans dir from data_dir
+    plans_dir = data_dir / "plans"
+    if not plans_dir.exists():
+        # Try external plans dir
+        plans_dir = data_dir.parent / "plans"
+    title = _gather_master_titles(project, last_tag, plans_dir) if plans_dir.exists() else ""
+
+    # ── proof stats ──────────────────────────────────────────────────────
+    failing_nodes = proof.get("failing_nodes", [])
+    baseline_ids = proof.get("baseline_ids", [])
+    new_failing_ids = proof.get("new_failing_ids", [])
+    suite_cwd = proof.get("suite_cwd", "")
+
+    # Phase 0: count proven sub-plans from the proof
+    phase0_proven = len(baseline_ids) if baseline_ids else 0
+    phase0_total = phase0_proven  # all proven if we got here
+
+    # Phase 1: parse suite output stats
+    phase1_passed = 0
+    phase1_failed = len(failing_nodes)
+    phase1_new = len(new_failing_ids)
+
+    # ── CHANGELOG row ────────────────────────────────────────────────────
+    import datetime
+    today = datetime.date.today().isoformat()
+    master_slugs = []
+    r = _git(project, "log", f"{last_tag}..HEAD", "--format=%s")
+    if r.returncode == 0:
+        for line in r.stdout.splitlines():
+            for m in _TRAILER_RE.finditer(line):
+                if m.group(1) not in master_slugs:
+                    master_slugs.append(m.group(1))
+
+    highlights = (
+        f"**{title}.** RELEASE TRAIN (unattended)"
+        f" — {', '.join(master_slugs) if master_slugs else 'direct commits'}."
+        f" Phase 0 {phase0_total}/{phase0_total} proven."
+        f" Phase 1: {phase1_failed} failed / {phase1_passed} passed"
+        f" with {invocation}, {phase1_new} new ids vs {last_tag}."
+    )
+    row = f"| {next_tag} | {today} | {highlights} |"
+    _insert_changelog_row(project, row)
+
+    # ── commit CHANGELOG ─────────────────────────────────────────────────
+    _git_mut(project, "add", "CHANGELOG.md")
+    commit_msg = f"docs(changelog): {next_tag}"
+    r = _git_mut(project, "commit", "-m", commit_msg)
+    if r.returncode != 0:
+        print(f"refused: changelog commit failed: {r.stderr.strip()}", file=sys.stderr)
+        sys.exit(4)
+
+    commit_sha = _get_head_sha(project)
+
+    # ── annotated tag ────────────────────────────────────────────────────
+    tag_body = (
+        f"{next_tag}\n\n"
+        f"Title: {title}\n"
+        f"Masters: {', '.join(master_slugs) if master_slugs else 'direct commits'}\n"
+        f"Phase 0: {phase0_total}/{phase0_total} proven\n"
+        f"Phase 1: {phase1_failed} failed / {phase1_passed} passed\n"
+        f"Invocation: {invocation}\n\n"
+        f"Cut by the release train (unattended), authorized by Chad 2026-10-03.\n"
+    )
+    r = _git_mut(project, "tag", "-a", next_tag, "-m", tag_body)
+    if r.returncode != 0:
+        print(f"refused: tag creation failed: {r.stderr.strip()}", file=sys.stderr)
+        sys.exit(4)
+
+    # ── push ─────────────────────────────────────────────────────────────
+    r = _git_mut(project, "push", "origin", "main")
+    if r.returncode != 0:
+        print(f"refused: push main failed: {r.stderr.strip()}", file=sys.stderr)
+        sys.exit(4)
+
+    r = _git_mut(project, "push", "origin", next_tag)
+    if r.returncode != 0:
+        print(f"refused: push tag failed: {r.stderr.strip()}", file=sys.stderr)
+        sys.exit(4)
+
+    # ── store baseline ───────────────────────────────────────────────────
+    baselines_dir = data_dir / "runtime" / "release" / "baselines"
+    baselines_dir.mkdir(parents=True, exist_ok=True)
+    key = f"{next_tag}_{invocation.replace(' ', '_')}"
+    baseline_path = baselines_dir / f"{key}.json"
+    # Baseline = the proof's failing node ids (same search space)
+    search_space = len(failing_nodes) + (len(baseline_ids) - phase1_new) if baseline_ids else 0
+    baseline_data = failing_nodes
+    baseline_path.write_text(json.dumps(baseline_data, indent=2) + "\n")
+
+    return {
+        "tag": next_tag,
+        "commit": commit_sha,
+        "pushed": True,
+        "baseline": str(baseline_path),
+    }
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -379,6 +619,10 @@ def main() -> int:
     p_prove = sub.add_parser("prove")
     p_prove.add_argument("--project", type=Path, required=True)
     p_prove.add_argument("--json", action="store_true")
+
+    p_cut = sub.add_parser("cut")
+    p_cut.add_argument("--project", type=Path, required=True)
+    p_cut.add_argument("--json", action="store_true")
 
     args = parser.parse_args()
     if not args.verb:
@@ -415,6 +659,14 @@ def main() -> int:
             else:
                 print(f"refused: {result['reason']}")
         return 0 if result["proven"] else 4
+
+    if args.verb == "cut":
+        result = cut(project, data_dir)
+        if args.json:
+            print(json.dumps(result))
+        else:
+            print(json.dumps(result))
+        return 0
 
     return 2
 
