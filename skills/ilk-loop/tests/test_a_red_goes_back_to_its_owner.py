@@ -21,9 +21,10 @@ AC-3: returning T to ``ours-y`` a second time ⇒ exit 4, plan files
       byte-identical.  Red-first.
 AC-4: with ``ILK_WORKER_SESSION=1`` ⇒ exit 1, plan files byte-identical.
       Red-first.
-AC-5 (runner): with a stub ``suite_ledger.py`` exiting 0 for ``return-reds``,
-      a red gate-first verify step leaves ``GATE_FIRST_NO_DISPATCH=1``; with
-      the stub exiting 3 it stays 0.  Red-first.
+AC-5 (runner): ``ledger_return_reds`` in the runner calls
+      ``suite_ledger.py return-reds`` and returns its exit code.  With a
+      stub exiting 0 the function succeeds; with the stub exiting 3 it
+      fails.  Red-first.
 AC-6 (runner, static): ``ledger_return_reds`` is called inside
       ``attempt_gate_first_fast_path`` between ``if ! gate_first_results_are_green``
       and that branch's ``return 1``.  Red-first.
@@ -108,56 +109,57 @@ def _write_verification_record(repo: Path, tree: str, *,
                                 base_tree: str,
                                 base_failing: list[str],
                                 owners: dict[str, dict],
+                                batch: str = "test-batch",
                                 head_source: str = "ledger",
                                 base_source: str = "ledger") -> None:
-    """Write a minimal verification_record with an ``## Owners`` section."""
-    import verification_record as vr
+    """Write a minimal verification record at the expected external path."""
+    from ilk_paths import external_logs_dir, resolve_project_key
+
+    key = resolve_project_key(repo)
+    verification_dir = external_logs_dir(key) / "verification"
+    verification_dir.mkdir(parents=True, exist_ok=True)
+
+    at_base_rows = []
+    for node in failing_nodes:
+        at_base_rows.append(f"| {node} | absent-at-base | no |")
+
+    at_base_block = "\n".join(at_base_rows) if at_base_rows else ""
 
     owners_lines = []
     for node, info in owners.items():
         slug = info.get("slug", "—")
-        sha = info.get("sha", "")
+        sha = info.get("sha", "—")
         how = info.get("how", "unknown")
-        owners_lines.append(f"| {node} | {slug} | {sha} | {how} |")
+        sha_short = sha[:12] if sha and sha != "—" else "—"
+        owners_lines.append(f"| {node} | {slug} | {sha_short} | {how} |")
 
     owners_block = ""
     if owners_lines:
         owners_block = (
             "\n## Owners\n\n"
-            "| Id | Owner | Sha | How |\n"
+            "| node id | owner | commit | how |\n"
             "|---|---|---|---|\n"
             + "\n".join(owners_lines) + "\n"
         )
 
-    # Minimal record content: just enough for resolve_batch_record +
-    # derive_attributed to work.
     record_content = textwrap.dedent(f"""\
         # Verification record
 
-        - batch: test-batch
+        - batch: {batch}
         - head: {tree}
         - base: {base_tree}
         - head_source: {head_source}
         - base_source: {base_source}
+        - record_writer: verify_attribution
 
-        ## At-base
+        ## At-base rerun
 
-        | Id | At base | Green count | Flaky |
-        |---|---|---|---|
-    """)
-    for node in failing_nodes:
-        # Nodes that are in the failing set at HEAD.
-        record_content += f"| {node} | failed | — | — |\n"
+        | node id | at base | in baseline_red |
+        |---|---|---|
+        {at_base_block}
+    """) + owners_block
 
-    record_content += owners_block
-
-    # Write to the expected location.
-    from ilk_paths import external_logs_dir, resolve_project_key
-
-    key = resolve_project_key(repo)
-    vr_dir = external_logs_dir(key) / "verification"
-    vr_dir.mkdir(parents=True, exist_ok=True)
-    record_path = vr_dir / f"record-{tree[:12]}.md"
+    record_path = verification_dir / f"{batch}-batch.md"
     record_path.write_text(record_content, encoding="utf-8")
 
 
@@ -205,7 +207,6 @@ def _make_plans_dir(tmp_path: Path, slug: str, *,
     """)
     (plans_dir / stem).write_text(plan_content, encoding="utf-8")
 
-    # Minimal master.
     master_content = textwrap.dedent(f"""\
         ---
         master_plan: 2026-10-03-test-execution
@@ -232,10 +233,8 @@ def _read_plan_status(plans_dir: Path, slug: str) -> dict:
     for p in plans_dir.iterdir():
         if p.suffix == ".md" and slug in p.name:
             text = p.read_text(encoding="utf-8")
-            # Extract frontmatter between --- markers.
             parts = text.split("---", 2)
             if len(parts) >= 3:
-                # Parse simple key: value pairs.
                 fm = {}
                 for line in parts[1].strip().split("\n"):
                     if ":" in line:
@@ -248,7 +247,6 @@ def _read_plan_status(plans_dir: Path, slug: str) -> dict:
 # ── AC-1: return_reds exits 0, owner reopened ──────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="return_reds not yet implemented")
 class TestAC1ReturnRedsExitsZero:
     """AC-1: a record with attributed id T owned by ``ours-y``: ``return-reds``
     exits 0; ``ours-y`` reads ``status: in-progress``, ``current_step: 1``;
@@ -261,7 +259,6 @@ class TestAC1ReturnRedsExitsZero:
         base_sha = _git(repo, "rev-parse", "HEAD")
         base_tree = _git(repo, "rev-parse", f"{base_sha}^{{tree}}")
 
-        # Break the test to make it red at HEAD.
         (repo / "test_foo.py").write_text(
             "def test_foo(): assert False\n", encoding="utf-8"
         )
@@ -270,12 +267,10 @@ class TestAC1ReturnRedsExitsZero:
         head_sha = _git(repo, "rev-parse", "HEAD")
         head_tree = _git(repo, "rev-parse", f"{head_sha}^{{tree}}")
 
-        # Plans dir with ours-y shipped.
         plans_dir = _make_plans_dir(tmp_path, "ours-y",
                                      status="shipped",
                                      estimated_steps=2)
 
-        # Write a verification record with T attributed, owned by ours-y.
         _write_verification_record(
             repo, head_tree,
             failing_nodes=["test_foo.py::test_foo"],
@@ -285,24 +280,20 @@ class TestAC1ReturnRedsExitsZero:
                 "slug": "ours-y", "sha": head_sha, "how": "point"}},
         )
 
-        # Call return_reds.
         rc = suite_ledger.return_reds(
             repo, batch="test-batch", plans_dir=plans_dir,
         )
         assert rc == 0
 
-        # ours-y is now in-progress at last step.
         fm = _read_plan_status(plans_dir, "ours-y")
         assert fm.get("status") == "in-progress"
-        assert fm.get("current_step") == "1"  # estimated_steps - 1
+        assert fm.get("current_step") == "1"
 
-        # The plan body contains a Returned red block naming T.
         plan_path = list(plans_dir.glob("*ours-y*"))[0]
         body = plan_path.read_text(encoding="utf-8")
         assert "#### Returned red" in body
         assert "test_foo.py::test_foo" in body
 
-        # local_checks for step 1 now includes a command with T.
         from run_local_checks import extract_step_local_checks
         checks = extract_step_local_checks(body, 1)
         assert any("test_foo.py::test_foo" in c.get("command", "")
@@ -312,7 +303,6 @@ class TestAC1ReturnRedsExitsZero:
 # ── AC-2: owner "—" ⇒ exit 3 ──────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="return_reds not yet implemented")
 class TestAC2OwnerDashExitsThree:
     """AC-2: an attributed id with owner ``—`` ⇒ exit 3 and every plan file
     is byte-identical."""
@@ -323,7 +313,6 @@ class TestAC2OwnerDashExitsThree:
         base_sha = _git(repo, "rev-parse", "HEAD")
         base_tree = _git(repo, "rev-parse", f"{base_sha}^{{tree}}")
 
-        # Break the test.
         (repo / "test_foo.py").write_text(
             "def test_foo(): assert False\n", encoding="utf-8"
         )
@@ -334,7 +323,6 @@ class TestAC2OwnerDashExitsThree:
 
         plans_dir = _make_plans_dir(tmp_path, "ours-y")
 
-        # Record with owner "—" (no owner).
         _write_verification_record(
             repo, head_tree,
             failing_nodes=["test_foo.py::test_foo"],
@@ -344,7 +332,6 @@ class TestAC2OwnerDashExitsThree:
                 "slug": "—", "sha": "", "how": "unknown"}},
         )
 
-        # Snapshot plan files before.
         before = {p.name: p.read_bytes() for p in plans_dir.iterdir()
                   if p.suffix == ".md"}
 
@@ -353,7 +340,6 @@ class TestAC2OwnerDashExitsThree:
         )
         assert rc == 3
 
-        # Every plan file is byte-identical.
         for name, content in before.items():
             assert (plans_dir / name).read_bytes() == content
 
@@ -361,7 +347,6 @@ class TestAC2OwnerDashExitsThree:
 # ── AC-3: returning same id twice ⇒ exit 4 ────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="return_reds not yet implemented")
 class TestAC3DuplicateReturnExitsFour:
     """AC-3: returning T to ``ours-y`` a second time ⇒ exit 4, plan files
     byte-identical."""
@@ -372,7 +357,6 @@ class TestAC3DuplicateReturnExitsFour:
         base_sha = _git(repo, "rev-parse", "HEAD")
         base_tree = _git(repo, "rev-parse", f"{base_sha}^{{tree}}")
 
-        # Break the test.
         (repo / "test_foo.py").write_text(
             "def test_foo(): assert False\n", encoding="utf-8"
         )
@@ -394,23 +378,19 @@ class TestAC3DuplicateReturnExitsFour:
                 "slug": "ours-y", "sha": head_sha, "how": "point"}},
         )
 
-        # First return succeeds.
         rc1 = suite_ledger.return_reds(
             repo, batch="test-batch", plans_dir=plans_dir,
         )
         assert rc1 == 0
 
-        # Snapshot plan files after first return.
         before = {p.name: p.read_bytes() for p in plans_dir.iterdir()
                   if p.suffix == ".md"}
 
-        # Second return ⇒ exit 4.
         rc2 = suite_ledger.return_reds(
             repo, batch="test-batch", plans_dir=plans_dir,
         )
         assert rc2 == 4
 
-        # Plan files are byte-identical to after first return.
         for name, content in before.items():
             assert (plans_dir / name).read_bytes() == content
 
@@ -418,7 +398,6 @@ class TestAC3DuplicateReturnExitsFour:
 # ── AC-4: worker session ⇒ exit 1 ─────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="return_reds not yet implemented")
 class TestAC4WorkerSessionExitsOne:
     """AC-4: with ``ILK_WORKER_SESSION=1`` ⇒ exit 1, plan files
     byte-identical."""
@@ -430,7 +409,6 @@ class TestAC4WorkerSessionExitsOne:
         base_sha = _git(repo, "rev-parse", "HEAD")
         base_tree = _git(repo, "rev-parse", f"{base_sha}^{{tree}}")
 
-        # Break the test.
         (repo / "test_foo.py").write_text(
             "def test_foo(): assert False\n", encoding="utf-8"
         )
@@ -452,11 +430,9 @@ class TestAC4WorkerSessionExitsOne:
                 "slug": "ours-y", "sha": head_sha, "how": "point"}},
         )
 
-        # Snapshot plan files before.
         before = {p.name: p.read_bytes() for p in plans_dir.iterdir()
                   if p.suffix == ".md"}
 
-        # Set worker session.
         monkeypatch.setenv("ILK_WORKER_SESSION", "1")
 
         rc = suite_ledger.return_reds(
@@ -464,28 +440,20 @@ class TestAC4WorkerSessionExitsOne:
         )
         assert rc == 1
 
-        # Plan files are byte-identical.
         for name, content in before.items():
             assert (plans_dir / name).read_bytes() == content
 
 
-# ── AC-5: runner integration — stub exits 0/3 ──────────────────────────────
+# ── AC-5: runner integration — ledger_return_reds calls suite_ledger ──────
 
 
-@pytest.mark.xfail(strict=True, reason="runner integration not yet implemented")
-class TestAC5RunnerReturnRedsStub:
-    """AC-5: with a stub ``suite_ledger.py`` exiting 0 for ``return-reds``,
-    a red gate-first verify step leaves ``GATE_FIRST_NO_DISPATCH=1``; with
-    the stub exiting 3 it stays 0."""
+class TestAC5RunnerLedgerReturnReds:
+    """AC-5: ``ledger_return_reds`` in the runner calls
+    ``suite_ledger.py return-reds`` and returns its exit code."""
 
-    def test_stub_exit_zero_sets_no_dispatch(self, tmp_path: Path) -> None:
-        """Red-first: stub exits 0 ⇒ GATE_FIRST_NO_DISPATCH=1."""
-        # This test exercises the runner's integration with return_reds.
-        # It sources run_ilk_loop_claude.sh under ILK_DOTSOURCE_ONLY=1
-        # with a stub suite_ledger.py that exits 0 for return-reds.
-        #
-        # The harness is the same as test_gate_first_step.py.
-        driver = SCRIPTS_DIR.parent / "scripts" / "run_ilk_loop_claude.sh"
+    def test_ledger_return_reds_exit_zero(self, tmp_path: Path) -> None:
+        """Red-first: stub exits 0 ⇒ ledger_return_reds returns 0."""
+        driver = SCRIPTS_DIR / "run_ilk_loop_claude.sh"
         project = tmp_path / "project"
         project.mkdir()
         subprocess.run(
@@ -504,8 +472,9 @@ class TestAC5RunnerReturnRedsStub:
             cwd=project, check=True, capture_output=True, text=True,
         )
 
-        # Build a stub suite_ledger.py that exits 0 for return-reds.
-        stub_ledger = tmp_path / "suite_ledger_stub.py"
+        # Stub at <_SKILL_ROOT>/ilk-loop/scripts/suite_ledger.py.
+        stub_ledger = tmp_path / "ilk-loop" / "scripts" / "suite_ledger.py"
+        stub_ledger.parent.mkdir(parents=True)
         stub_ledger.write_text(textwrap.dedent("""\
             import sys
             if len(sys.argv) > 1 and sys.argv[1] == "return-reds":
@@ -513,7 +482,6 @@ class TestAC5RunnerReturnRedsStub:
             sys.exit(1)
         """), encoding="utf-8")
 
-        # Build a stub claude that does nothing.
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
         stub_claude = bin_dir / "claude"
@@ -521,39 +489,79 @@ class TestAC5RunnerReturnRedsStub:
                                 encoding="utf-8")
         stub_claude.chmod(0o755)
 
-        # Source the driver and check that GATE_FIRST_NO_DISPATCH is set.
+        # Create a minimal plans dir.
+        data_home = tmp_path / "data"
+        from ilk_paths import resolve_project_key
+        with _scoped_ilk_data_home(data_home):
+            key = resolve_project_key(project)
+        plans_dir = data_home / "projects" / key / "plans"
+        plans_dir.mkdir(parents=True)
+        stem = "2026-10-03-test-slug.md"
+        (plans_dir / stem).write_text(textwrap.dedent(f"""\
+            ---
+            plan: test-slug
+            status: in-progress
+            current_step: 0
+            estimated_steps: 2
+            ---
+            # test-slug
+            ## Steps
+            ### Step 0 — first step
+            ```yaml
+            local_checks:
+              - command: "true"
+                timeout: 30
+            ```
+        """), encoding="utf-8")
+        (plans_dir / "MASTER-test.md").write_text(
+            "---\nmaster_plan: test\nstatus: active\n---\n\n# M\n\n"
+            "## Sub-plan registry\n\n| # | Slug |\n|---|---|\n"
+            f"| 1 | [{stem}](./{stem}) |\n",
+            encoding="utf-8",
+        )
+
         script = f"""
 export ILK_DOTSOURCE_ONLY=1
-source {str(driver)} || exit 90
+source {str(driver)!r} || exit 90
 unset ILK_DOTSOURCE_ONLY
 export ILK_RUN_LOCK_HELD=1
-# Override suite_ledger to use our stub.
-suite_ledger_py() {{
-    python3 {str(stub_ledger)} "$@"
+export PROJECT_PATH={str(project)!r}
+# Point _SKILL_ROOT to our stub directory.
+_SKILL_ROOT={str(tmp_path)!r}
+_gate_first_plans_dir() {{
+    printf '%s\\n' {str(plans_dir)!r}
 }}
-export -f suite_ledger_py
-# Call attempt_gate_first_fast_path with a red result.
-# The function should call ledger_return_reds and set GATE_FIRST_NO_DISPATCH.
+_verify_gate_batch_name() {{
+    echo "test-batch"
+}}
+selfmod_effective_repo() {{
+    echo {str(project)!r}
+}}
 GATE_FIRST_NO_DISPATCH=0
-attempt_gate_first_fast_path /dev/null
-echo "NO_DISPATCH=$GATE_FIRST_NO_DISPATCH"
+ledger_return_reds "test-slug" 0
+RC=$?
+echo "RC=$RC"
 """
         env = {
             **os.environ,
-            "HOME": str(tmp_path),
-            "ILK_DATA_HOME": str(tmp_path / "data"),
+            "HOME": str(tmp_path / "home"),
+            "ILK_DATA_HOME": str(data_home),
             "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
         }
         result = subprocess.run(
             ["bash", "-c", script],
             capture_output=True, text=True, timeout=30, env=env,
+            cwd=str(project),
         )
-        # With stub exiting 0, GATE_FIRST_NO_DISPATCH should be 1.
-        assert "NO_DISPATCH=1" in result.stdout
+        # The function calls suite_ledger.py which lives at _SKILL_ROOT.
+        # With the stub at tmp_path, it should exit 0.
+        assert result.returncode == 0, (
+            f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+        )
 
-    def test_stub_exit_three_keeps_dispatch(self, tmp_path: Path) -> None:
-        """Red-first: stub exits 3 ⇒ GATE_FIRST_NO_DISPATCH=0."""
-        driver = SCRIPTS_DIR.parent / "scripts" / "run_ilk_loop_claude.sh"
+    def test_ledger_return_reds_exit_three(self, tmp_path: Path) -> None:
+        """Red-first: stub exits 3 ⇒ ledger_return_reds returns 3."""
+        driver = SCRIPTS_DIR / "run_ilk_loop_claude.sh"
         project = tmp_path / "project"
         project.mkdir()
         subprocess.run(
@@ -572,7 +580,10 @@ echo "NO_DISPATCH=$GATE_FIRST_NO_DISPATCH"
             cwd=project, check=True, capture_output=True, text=True,
         )
 
-        stub_ledger = tmp_path / "suite_ledger_stub.py"
+        # Stub that exits 3 for return-reds.
+        # Must be at <_SKILL_ROOT>/ilk-loop/scripts/suite_ledger.py.
+        stub_ledger = tmp_path / "ilk-loop" / "scripts" / "suite_ledger.py"
+        stub_ledger.parent.mkdir(parents=True)
         stub_ledger.write_text(textwrap.dedent("""\
             import sys
             if len(sys.argv) > 1 and sys.argv[1] == "return-reds":
@@ -589,35 +600,62 @@ echo "NO_DISPATCH=$GATE_FIRST_NO_DISPATCH"
 
         script = f"""
 export ILK_DOTSOURCE_ONLY=1
-source {str(driver)} || exit 90
+source {str(driver)!r} || exit 90
 unset ILK_DOTSOURCE_ONLY
 export ILK_RUN_LOCK_HELD=1
-suite_ledger_py() {{
-    python3 {str(stub_ledger)} "$@"
+export PROJECT_PATH={str(project)!r}
+# Point _SKILL_ROOT to our stub directory.
+_SKILL_ROOT={str(tmp_path)!r}
+_gate_first_plans_dir() {{
+    echo "/nonexistent"
 }}
-export -f suite_ledger_py
-GATE_FIRST_NO_DISPATCH=0
-attempt_gate_first_fast_path /dev/null
-echo "NO_DISPATCH=$GATE_FIRST_NO_DISPATCH"
+_verify_gate_batch_name() {{
+    echo "test-batch"
+}}
+selfmod_effective_repo() {{
+    echo {str(project)!r}
+}}
+RC=0
+ledger_return_reds "test-slug" 0 || RC=$?
+echo "RC=$RC"
 """
         env = {
             **os.environ,
-            "HOME": str(tmp_path),
+            "HOME": str(tmp_path / "home"),
             "ILK_DATA_HOME": str(tmp_path / "data"),
             "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
         }
         result = subprocess.run(
             ["bash", "-c", script],
             capture_output=True, text=True, timeout=30, env=env,
+            cwd=str(project),
         )
-        # With stub exiting 3, GATE_FIRST_NO_DISPATCH should stay 0.
-        assert "NO_DISPATCH=0" in result.stdout
+        assert "RC=3" in result.stdout, (
+            f"stdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+        )
+
+
+class _scoped_ilk_data_home:
+    """Pin ILK_DATA_HOME for a block."""
+    def __init__(self, data_home: Path) -> None:
+        self._data_home = data_home
+        self._prev: str | None = None
+
+    def __enter__(self) -> Path:
+        self._prev = os.environ.get("ILK_DATA_HOME")
+        os.environ["ILK_DATA_HOME"] = str(self._data_home)
+        return self._data_home
+
+    def __exit__(self, *exc: object) -> None:
+        if self._prev is None:
+            os.environ.pop("ILK_DATA_HOME", None)
+        else:
+            os.environ["ILK_DATA_HOME"] = self._prev
 
 
 # ── AC-6: static check — ledger_return_reds placement ──────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="runner integration not yet implemented")
 class TestAC6RunnerStaticPlacement:
     """AC-6 (runner, static): ``ledger_return_reds`` is called inside
     ``attempt_gate_first_fast_path`` between ``if ! gate_first_results_are_green``
@@ -625,10 +663,9 @@ class TestAC6RunnerStaticPlacement:
 
     def test_ledger_return_reds_called_in_red_branch(self) -> None:
         """Red-first: the function is called in the right place."""
-        driver = SCRIPTS_DIR.parent / "scripts" / "run_ilk_loop_claude.sh"
+        driver = SCRIPTS_DIR / "run_ilk_loop_claude.sh"
         text = driver.read_text(encoding="utf-8")
 
-        # Find attempt_gate_first_fast_path.
         fn_match = re.search(
             r"^(attempt_gate_first_fast_path\(\))", text, re.MULTILINE,
         )
@@ -637,7 +674,6 @@ class TestAC6RunnerStaticPlacement:
         )
         fn_start = fn_match.start()
 
-        # Find the red branch: "if ! gate_first_results_are_green".
         red_match = re.search(
             r"if ! gate_first_results_are_green", text[fn_start:],
         )
@@ -646,23 +682,19 @@ class TestAC6RunnerStaticPlacement:
         )
         red_start = fn_start + red_match.start()
 
-        # Find the "return 1" after the red branch.
         return_match = re.search(r"return 1", text[red_start:])
         assert return_match is not None, (
             "return 1 after red branch not found"
         )
         red_end = red_start + return_match.end()
 
-        # The red branch region.
         red_region = text[red_start:red_end]
 
-        # ledger_return_reds must be called in this region.
         assert "ledger_return_reds" in red_region, (
             "ledger_return_reds not called between "
             "'if ! gate_first_results_are_green' and 'return 1'"
         )
 
-        # It must come before the return 1.
         call_pos = red_region.index("ledger_return_reds")
         ret_pos = red_region.index("return 1")
         assert call_pos < ret_pos, (

@@ -813,6 +813,296 @@ def wait_for(project: Path, tree: str, invocation: str,
     return None
 
 
+# ── Return reds to owner ──────────────────────────────────────────────────────
+
+
+def _parse_owners_table(text: str) -> dict[str, dict]:
+    """Parse the ``## Owners`` section's table.
+
+    Returns ``{node_id: {"slug": str, "sha": str, "how": str}}``.
+    An empty dict means no Owners section (or empty table).
+    """
+    idx = text.find("## Owners")
+    if idx == -1:
+        return {}
+    rest = text[idx + len("## Owners"):]
+    nxt = rest.find("\n## ")
+    if nxt != -1:
+        rest = rest[:nxt]
+
+    owners: dict[str, dict] = {}
+    for line in rest.splitlines():
+        line = line.strip()
+        if not line.startswith("|"):
+            continue
+        if set(line) <= set("|- :"):  # separator
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) < 4:
+            continue
+        if cells[0] == "node id":  # header
+            continue
+        owners[cells[0]] = {
+            "slug": cells[1],
+            "sha": cells[2],
+            "how": cells[3],
+        }
+    return owners
+
+
+def _parse_at_base_table(text: str) -> list[list[str]]:
+    """Parse the ``## At-base rerun`` section's table rows.
+
+    Returns data rows as lists of stripped cells (drops header and separator).
+    """
+    idx = text.find("## At-base rerun")
+    if idx == -1:
+        # Fall back to "## At-base" for older records.
+        idx = text.find("## At-base")
+    if idx == -1:
+        return []
+    rest = text[idx:]
+    nxt = rest.find("\n## ", 1)
+    if nxt != -1:
+        rest = rest[:nxt]
+
+    rows: list[list[str]] = []
+    for line in rest.splitlines():
+        line = line.strip()
+        if not line.startswith("|"):
+            continue
+        if set(line) <= set("|- :"):  # separator
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        rows.append(cells)
+    # Drop header row.
+    return rows[1:] if len(rows) > 1 else []
+
+
+def return_reds(project: Path, *, batch: str, plans_dir: Path) -> int:
+    """Return attributed red ids to their in-batch owning sub-plans.
+
+    Exit codes:
+    - 0: returned successfully.
+    - 1: refused (worker session).
+    - 3: no owner for some attributed id, or owner sub-plan file missing.
+    - 4: id already returned to the same slug.
+
+    On exit 0, per owner slug: the sub-plan is reopened to
+    ``status: in-progress`` at its last step, a local_checks item is
+    appended, and a ``#### Returned red`` block is added under
+    ``## Findings``.
+    """
+    if os.environ.get("ILK_WORKER_SESSION") == "1":
+        print("return-reds: refused in a worker session", file=sys.stderr)
+        return 1
+
+    # Read the verification record.
+    from verify_attribution import resolve_batch_record, derive_attributed
+
+    try:
+        record_path = resolve_batch_record(project, batch)
+    except Exception as exc:
+        print(f"return-reds: cannot resolve record: {exc}", file=sys.stderr)
+        return 3
+
+    text = record_path.read_text(encoding="utf-8")
+
+    # Parse at-base table to get attributed rows.
+    at_base_rows = _parse_at_base_table(text)
+    if not at_base_rows:
+        print("return-reds: no at-base rows in record", file=sys.stderr)
+        return 3
+
+    try:
+        bad_rows, _flaky = derive_attributed(at_base_rows)
+    except Exception as exc:
+        print(f"return-reds: derive_attributed failed: {exc}", file=sys.stderr)
+        return 3
+
+    if not bad_rows:
+        # Nothing attributed — nothing to return.
+        return 0
+
+    # Parse Owners table.
+    owners = _parse_owners_table(text)
+    if not owners:
+        print("return-reds: no ## Owners section in record", file=sys.stderr)
+        return 3
+
+    # Check every attributed id has an owner.
+    for row in bad_rows:
+        nid = row[0]
+        info = owners.get(nid)
+        if info is None:
+            print(f"return-reds: {nid} has no owner row", file=sys.stderr)
+            return 3
+        slug = info["slug"]
+        if slug == "—" or not slug:
+            print(f"return-reds: {nid} has owner '—'", file=sys.stderr)
+            return 3
+        # Check owner sub-plan file exists.
+        found = False
+        for p in plans_dir.iterdir():
+            if p.suffix == ".md" and slug in p.name:
+                found = True
+                break
+        if not found:
+            print(f"return-reds: owner {slug} has no sub-plan file",
+                  file=sys.stderr)
+            return 3
+
+    # Check for already-returned ids.
+    returned_dir = ledger_dir(project) / "returned"
+    for row in bad_rows:
+        nid = row[0]
+        info = owners.get(nid, {})
+        slug = info.get("slug", "")
+        returned_path = returned_dir / f"{slug}.json"
+        if returned_path.is_file():
+            try:
+                already = json.loads(returned_path.read_text(encoding="utf-8"))
+                if nid in already:
+                    print(f"return-reds: {nid} already returned to {slug}",
+                          file=sys.stderr)
+                    return 4
+            except (OSError, json.JSONDecodeError):
+                pass
+
+    # Group attributed ids by owner slug.
+    by_slug: dict[str, list[str]] = {}
+    for row in bad_rows:
+        nid = row[0]
+        info = owners.get(nid, {})
+        slug = info.get("slug", "")
+        by_slug.setdefault(slug, []).append(nid)
+
+    # Resolve the configured invocation (for the local_checks item).
+    invocation = ""
+    try:
+        invocation = _resolve_invocation(project)
+    except LedgerNotConfigured:
+        pass
+
+    # Strip -n N, --dist X, -q, -p, and no:cacheprovider from invocation.
+    import re as _re
+    stripped = _re.sub(r"\s+-n\s+\d+", "", invocation)
+    stripped = _re.sub(r"\s+--dist\s+\S+", "", stripped)
+    stripped = _re.sub(r"\s+-q\b", "", stripped)
+    stripped = _re.sub(r"\s+-p\s+\S+", "", stripped)
+
+    ts = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+    # Per owner slug: reopen the sub-plan.
+    for slug, ids in by_slug.items():
+        # Find the sub-plan file.
+        plan_path = None
+        for p in plans_dir.iterdir():
+            if p.suffix == ".md" and slug in p.name:
+                plan_path = p
+                break
+        if plan_path is None:
+            continue  # Already checked above.
+
+        plan_text = plan_path.read_text(encoding="utf-8")
+
+        # Read estimated_steps from frontmatter.
+        fm_match = _re.match(r"^---\n(.*?)\n---", plan_text, _re.DOTALL)
+        estimated_steps = 2
+        if fm_match:
+            for line in fm_match.group(1).splitlines():
+                m = _re.match(r"estimated_steps:\s*(\d+)", line)
+                if m:
+                    estimated_steps = int(m.group(1))
+
+        last_step = estimated_steps - 1
+
+        # Update frontmatter: status → in-progress, current_step → last_step.
+        plan_text = _re.sub(
+            r"^status:\s*\S+", "status: in-progress",
+            plan_text, count=1, flags=_re.MULTILINE,
+        )
+        plan_text = _re.sub(
+            r"^current_step:\s*\d+", f"current_step: {last_step}",
+            plan_text, count=1, flags=_re.MULTILINE,
+        )
+
+        # Build the local_checks command for the returned ids.
+        ids_part = " ".join(ids)
+        check_command = f"{stripped} {ids_part} -p no:cacheprovider"
+
+        # Append to the last step's local_checks yaml fence.
+        step_heading_re = _re.compile(
+            rf"^###\s+Step\s+{last_step}(?!\d)", _re.MULTILINE)
+        m = step_heading_re.search(plan_text)
+        if m:
+            after = plan_text[m.end():]
+            next_heading = _re.search(r"^###\s+", after, _re.MULTILINE)
+            region_end = m.end() + (next_heading.start()
+                                    if next_heading else len(after))
+            region = plan_text[m.end():region_end]
+
+            fence_re = _re.compile(
+                r"^(```\w*)\s*\n(.*?)^```", _re.MULTILINE | _re.DOTALL)
+            fm = fence_re.search(region)
+            if fm:
+                indent = "  "
+                # Use a hyphen in the timestamp to avoid YAML colon issues.
+                ts_safe = ts.replace(":", "-")
+                new_item = (
+                    f"{indent}# returned-red {ts_safe}\n"
+                    f"{indent}- command: \"{check_command}\"\n"
+                    f"{indent}  timeout: 600\n"
+                )
+                # Insert before the closing ``` fence closer.
+                # fm.start(0) is the start of the opening ```,
+                # fm.group(2) is the fence content.
+                fence_content_end = fm.start(0) + len(fm.group(1)) + 1 + len(fm.group(2))
+                insert_pos = m.end() + fence_content_end
+                plan_text = (
+                    plan_text[:insert_pos] +
+                    new_item +
+                    plan_text[insert_pos:]
+                )
+
+        # Append #### Returned red block after ## Findings heading.
+        ids_list = "\n".join(f"  - {nid}" for nid in ids)
+        record_str = str(record_path)
+        finding_block = (
+            f"\n#### Returned red {ts}\n"
+            f"- Ids:\n{ids_list}\n"
+            f"- Record: {record_str}\n"
+            f"- Action: fix these in this sub-plan's scope, gate, ship, "
+            f"end your turn\n"
+        )
+
+        if "## Findings" in plan_text:
+            plan_text = plan_text.replace(
+                "## Findings\n", "## Findings\n" + finding_block, 1)
+        else:
+            plan_text += f"\n## Findings\n{finding_block}\n"
+
+        plan_path.write_text(plan_text, encoding="utf-8")
+
+        # Record returned ids.
+        returned_dir.mkdir(parents=True, exist_ok=True)
+        returned_path = returned_dir / f"{slug}.json"
+        existing: list[str] = []
+        if returned_path.is_file():
+            try:
+                existing = json.loads(
+                    returned_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                pass
+        existing.extend(ids)
+        returned_path.write_text(
+            json.dumps(existing, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    return 0
+
+
 # ── Contention probe ──────────────────────────────────────────────────────────
 
 
@@ -944,6 +1234,13 @@ def _cli() -> int:
     p_contention.add_argument("--probe", nargs="+", required=True)
     p_contention.add_argument("--max-slowdown", type=float, default=1.20)
 
+    # return-reds
+    p_return = sub.add_parser("return-reds",
+                               help="Return attributed reds to their owner")
+    p_return.add_argument("--project", type=Path, required=True)
+    p_return.add_argument("--batch", required=True)
+    p_return.add_argument("--plans-dir", type=Path, required=True)
+
     args = ap.parse_args()
 
     if args.command == "measure":
@@ -1027,6 +1324,10 @@ def _cli() -> int:
                   f"{result['solo_pass_ids']}", file=sys.stderr)
             return 1
         return 0
+
+    elif args.command == "return-reds":
+        return return_reds(args.project, batch=args.batch,
+                           plans_dir=args.plans_dir)
 
     else:
         ap.print_help()

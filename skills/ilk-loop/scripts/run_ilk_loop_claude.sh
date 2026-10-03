@@ -2474,6 +2474,25 @@ print(len(matches))
 ' "$sub_file"
 }
 
+# ledger_return_reds <slug> <step>
+# Resolve the batch name, run suite_ledger.py return-reds, and return its
+# exit code.  Prints [return-red] <stdout> for the iteration log.
+ledger_return_reds() {
+  local slug="$1" step="$2"
+  local batch_slug plans_dir rc out
+  batch_slug="$(_verify_gate_batch_name "$slug" "$step")" || return 1
+  plans_dir=$(_gate_first_plans_dir) || return 1
+  local repo
+  repo=$(selfmod_effective_repo "${REPOS[0]:-$PROJECT_PATH}")
+  [[ -n "$repo" ]] || repo="$PROJECT_PATH"
+  out=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/suite_ledger.py" \
+    return-reds --project "$repo" --batch "$batch_slug" \
+    --plans-dir "$plans_dir" 2>&1) || rc=$?
+  rc=${rc:-0}
+  [[ -n "$out" ]] && echo "[return-red] $out"
+  return "$rc"
+}
+
 # The whole fast path.  Returns 0 only when the gate passed AND the step was
 # advanced with no agent invocation.  Any other outcome returns 1 and leaves
 # durable state untouched (the results file is the caller's to discard), so
@@ -2566,6 +2585,15 @@ attempt_gate_first_fast_path() {
     # For a finished batch-verify, a red gate means the driver cannot ship
     # and dispatching a worker is wasteful (ship_transition would refuse it).
     [[ "$_finished_batch_verify" -eq 1 ]] && GATE_FIRST_NO_DISPATCH=1
+    # When the sub-plan has batch verification, try to return the red ids
+    # to their in-batch owner.  If every attributed red has an owner and the
+    # return succeeds, skip the verify worker dispatch — the owner will
+    # re-ship with a returned-red gate check.
+    if [[ "$_finished_batch_verify" -ne 1 ]] && sub_plan_has_batch_verification "$slug"; then
+      if ledger_return_reds "$slug" "$step"; then
+        GATE_FIRST_NO_DISPATCH=1
+      fi
+    fi
     return 1
   fi
 

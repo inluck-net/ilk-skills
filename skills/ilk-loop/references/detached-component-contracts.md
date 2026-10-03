@@ -2934,6 +2934,7 @@ measure`, not the runner.
 | `running.json` | `suite_ledger.py spawn` | `suite_ledger.py wait_for` | pid |
 | `queued.json` | `suite_ledger.py spawn` | `suite_ledger.py wait_for` | tree sha |
 | `points.jsonl` | `suite_ledger.py point` (driver) | `red_owner.py` (sub-plan 3) | run_id + iteration |
+| `returned/<slug>.json` | `suite_ledger.py return-reds` (driver) | `suite_ledger.py return-reds` (dedup check) | slug |
 
 ### Key
 
@@ -2949,3 +2950,33 @@ Every write command (`measure`, `spawn`, `point`) checks
 
 No ledger process command line contains `run_ilk_loop`.  The spawned
 measurement uses `suite_ledger.py measure`, not the runner.
+
+### `return-reds` — reopen the in-batch owner
+
+`suite_ledger.py return-reds --project P --batch B --plans-dir D` reopens the
+sub-plan that owns each attributed red id so the loop re-dispatches the owner
+instead of a cold verify worker.
+
+**Exit codes:**
+
+| Code | Meaning | State change |
+|---|---|---|
+| 0 | Returned successfully. Per owner slug: sub-plan reopened to `status: in-progress` at last step, local_checks appended, `#### Returned red` block added under `## Findings`. | Yes |
+| 1 | Refused — worker session (`ILK_WORKER_SESSION=1`). | None |
+| 3 | No owner for some attributed id (owner `—`, or owner sub-plan file missing in `plans_dir`). | None |
+| 4 | Id already returned to the same slug (`returned/<slug>.json` lists it). | None |
+
+**Writer:** `suite_ledger.py return_reds` (the driver, via
+`run_ilk_loop_claude.sh`'s `ledger_return_reds` function).
+
+**Reader:** the reopened sub-plan's next worker, which sees the
+`#### Returned red` block and the added local_checks gate item.
+
+**Integration:** `attempt_gate_first_fast_path`'s red branch calls
+`ledger_return_reds` when `sub_plan_has_batch_verification` is true.  On
+exit 0, `GATE_FIRST_NO_DISPATCH=1` suppresses the verify worker dispatch.
+Any other exit leaves today's behaviour (verify worker dispatched).
+
+**`returned/<slug>.json`:** a JSON array of node ids already returned to
+*slug*.  Prevents the same id from being returned twice (exit 4).  Lives
+under the ledger directory.
