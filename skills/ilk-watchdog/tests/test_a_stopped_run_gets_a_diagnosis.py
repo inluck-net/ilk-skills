@@ -101,6 +101,38 @@ def test_decide_returns_valid_decision_and_records_model(tmp_path: Path, monkeyp
     assert decision["model"] == "claude-opus-test"
 
 
+def test_decide_passes_the_prompt_before_any_variadic_flag(tmp_path: Path, monkeypatch):
+    """The prompt must not follow ``--allowedTools``: the real CLI treats that
+    option as variadic and swallows the prompt as a tool name, then exits 1
+    with "Input must be provided" (measured live on v0.9.142, 2026-10-03:
+    every manager-home diagnose ended park-and-escalate in 0.7 s)."""
+    from ilk_triage import decide, build_evidence
+
+    stub_dir = tmp_path / "bin"
+    stub_dir.mkdir()
+    argv_file = tmp_path / "argv.json"
+    stub = stub_dir / "claude"
+    stub.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        f"open({str(argv_file)!r}, 'w').write(json.dumps(sys.argv[1:]))\n"
+        "print(json.dumps({'type': 'system', 'subtype': 'init', 'model': 'claude-opus-test'}))\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", str(stub_dir) + ":" + os.environ.get("PATH", ""))
+
+    evidence = build_evidence(FIXTURE_DIR, "20261003-125807")
+    decide(evidence, home=tmp_path / "home", timeout_s=10)
+
+    argv = json.loads(argv_file.read_text(encoding="utf-8"))
+    assert argv[0] == "-p"
+    prompt_idx = 1
+    assert not argv[prompt_idx].startswith("-"), argv[:3]
+    assert "--allowedTools" in argv
+    assert prompt_idx < argv.index("--allowedTools")
+
+
 # ── AC-3: decide returns park-and-escalate for various failures ──────────────
 
 

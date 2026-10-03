@@ -226,11 +226,12 @@ Return ONLY a JSON object, nothing else."""
     try:
         result = subprocess.run(
             [
-                "claude", "-p",
+                # The prompt goes right after -p: --allowedTools is variadic
+                # and would swallow a trailing prompt as a tool name.
+                "claude", "-p", prompt,
                 "--output-format", "stream-json",
                 "--verbose",
                 "--allowedTools", "Read", "Grep", "Glob",
-                prompt,
             ],
             capture_output=True,
             text=True,
