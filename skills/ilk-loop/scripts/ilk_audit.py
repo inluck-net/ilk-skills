@@ -135,7 +135,7 @@ def write_audit(
         "project": project,
     }
     row.update(fields)
-    day_file = audit_dir(root) / f"{date.today().isoformat()}.jsonl"
+    day_file = audit_dir(root) / f"{audit_day()}.jsonl"
     _append_jsonl(day_file, row)
     return row
 
@@ -169,6 +169,17 @@ def write_event(
 # ── reader ───────────────────────────────────────────────────────────────
 
 
+def audit_day() -> str:
+    """The day file a row written now goes to: the host's LOCAL date.
+
+    Every reader that computes day names must use this, not its own clock:
+    triage_apply's idempotency check used the UTC date while rows were filed
+    under the local date, so between local midnight and 08:00 (UTC+8) it
+    looked in the wrong files and let a run be applied twice (2026-10-04).
+    """
+    return date.today().isoformat()
+
+
 def read_audit(
     day: str | None = None,
     *,
@@ -181,7 +192,7 @@ def read_audit(
     the file and line number.
     """
     if day is None:
-        day = date.today().isoformat()
+        day = audit_day()
     day_file = audit_dir(root) / f"{day}.jsonl"
     if not day_file.exists():
         return []

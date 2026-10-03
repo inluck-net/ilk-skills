@@ -25,7 +25,7 @@ sys.path.insert(0, str(_HERE.parent.parent / "ilk-loop" / "scripts"))
 sys.path.insert(0, str(_HERE))
 
 from blacklist_status import write_resume_ack
-from ilk_audit import read_audit, write_audit
+from ilk_audit import audit_day, read_audit, write_audit
 from ilk_notify import main as _notify_main
 from plan_status import parse_frontmatter
 
@@ -345,7 +345,9 @@ _TERMINAL_KINDS = frozenset({"triage-applied", "escalated", "triage-refused"})
 def _already_applied(data_dir: Path, *, run_id: str) -> bool:
     """Check whether any terminal audit row exists for this run in the
     last ``_IDEMPOTENCY_DAYS`` days of audit files."""
-    today = datetime.now(timezone.utc).date()
+    # Same clock as the writer (ilk_audit.audit_day), never UTC: rows are
+    # filed under the host's local date.
+    today = datetime.strptime(audit_day(), "%Y-%m-%d").date()
     root = data_dir  # audit is at data_dir/audit/
     for offset in range(_IDEMPOTENCY_DAYS):
         day = (today - timedelta(days=offset)).isoformat()

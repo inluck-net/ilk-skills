@@ -261,6 +261,28 @@ def test_two_strikes_with_progress_between_both_apply():
         assert result2["action"] == "refused"
 
 
+def test_idempotency_reads_the_day_the_writer_wrote(monkeypatch):
+    """The idempotency reader must use the writer's clock. With the reader
+    on UTC and the writer on local time, a run applied between local midnight
+    and 08:00 (UTC+8) was applied twice (2026-10-04 00:20). Pin it with a
+    UTC clock far from the local date: only the writer's day may count."""
+    import triage_apply
+    from datetime import datetime as _dt, timezone as _tz
+
+    class _FarUTC(_dt):
+        @classmethod
+        def now(cls, tz=None):
+            return _dt(2000, 1, 1, tzinfo=_tz.utc)
+
+    monkeypatch.setattr(triage_apply, "datetime", _FarUTC)
+    with tempfile.TemporaryDirectory() as td:
+        data_dir = _build_fake_data_dir(Path(td))
+        result1 = triage_apply.apply(_make_decision("ack-and-relaunch"), data_dir,
+                                     run_id="20261003-125807")
+        assert result1["audit_kind"] == "triage-applied"
+        assert triage_apply._already_applied(data_dir, run_id="20261003-125807")
+
+
 # ── AC-4: write set enforcement ──────────────────────────────────────────────
 
 
