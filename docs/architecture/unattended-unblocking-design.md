@@ -415,6 +415,23 @@ gate (D2), the rails carry all of the weight:
 
 ## Build order
 
+**Status 2026-10-03:**
+- step 1 shipped (I2 = v0.9.138, both hosts);
+- R1, the target-architecture mechanism, shipped as v0.9.139 (chad-mbp; rezmac
+  waits for one clean dispatch);
+- in flight: R3 item 21, the at-base rerun runs base code
+  (MASTER-2026-10-03), which ships as v0.9.140 with db3d3d6.
+
+Next, in order:
+1. the release-dir live migration (chad-mbp, then rezmac);
+2. D9, in order:
+   - R3 22's counts (in flight);
+   - measure the parallel suite, guards included;
+   - per-project verify cadence and the full-scope triggers;
+   - the HARD last-step lint;
+3. the rule-retirement audit (D3);
+4. the rest of the list below.
+
 1. **L1 items already in flight:** I2 sub-plans 2 (live-write fix) and 6
    (classification by the run's own stop reason).
 2. **L1 items to build next**, each as its own continuous build (D1),
@@ -786,7 +803,7 @@ lease below exists, the RSI host is chad-mbp (D5).
   rule-retirement audit, because it deletes several L1 items instead of
   fixing them.
 
-## Verification cadence: scoped per batch, full per release (proposal, 2026-10-03)
+## Verification cadence: scoped per batch, full per release (D9, approved 2026-10-03)
 
 Chad asked (2026-10-03) whether every unattended batch should carry a full
 verification sub-plan, given what it costs, or whether verification should
@@ -803,13 +820,14 @@ run after a few batches or after a fixed number of fixes.
 - That is 1 catch in 3. The per-release check caught both misses.
 - Cost: the suite alone is ~1160 s on chad-mbp (I2 verify, `suite_duration_sec`).
   A verify iteration was 1243-1301 s, and I2's stuck rounds were ~35 min.
-- gh-resolve runs 7453 tests in 383 s with `-n 8 --dist loadfile`.
+- gh-resolve runs ~7450 tests in ~290 s with `-n 8 --dist loadfile`
+  (289.85 s at 3e9be87e; G4's verify recorded 383 s including overhead).
   ilk-skills runs serially.
 - The misses were not about cadence. They were verifier defects (R3 21,
   R3 22). A verify that can excuse its own batch is no safer when it runs
   more often.
 
-### Proposal
+### The decision (Chad approved the proposal, 2026-10-03)
 
 1. **Per batch: a cheap, change-scoped verify.** Run the batch diff plus the
    tests of every importer of a changed module (the v0.9.100 scope; batches
@@ -837,6 +855,64 @@ run after a few batches or after a fixed number of fixes.
    Measure whether ilk-skills is xdist-safe. If it is, ~19 min becomes about
    5, and most of the cadence question goes away. Measure this first.
 
+### gh-resolve review (gh-resolve-87, 2026-10-03; adopted)
+
+Chad asked for gh-resolve's view before implementation. gh-resolve-87 read
+lines 789-865 and answered:
+
+- **Settled 2026-10-03 (Chad, relayed by gh-resolve-87):** gh-resolve stops
+  running "always full suite" and follows this model.
+  - A fix or build gets a scoped verify: its pins plus import-graph and
+    runtime-path tests (example: 30b22433, 81 passed, no suite, no tag).
+  - The full suite runs once per train. resolver-ship IS gh-resolve's train
+    until adapter 2 exists, and its §1a becomes "full suite at the train
+    only", run in both environments.
+  - The train fires on the first of:
+    - N=3 builds;
+    - any tier-0 path;
+    - any test-infrastructure change;
+    - any tag, push or rezmac deploy.
+  - Untagged builds may accumulate on main because chad-mbp's fleet b is a
+    canary, not a producer. If it ever produces, every build there needs the
+    full check again until `release_root` is set.
+- **(a) Per-release full fits gh-resolve, but its procedure must change.**
+  resolver-ship §1a says "do not run the suite here" and trusts the batch
+  gate. Followed to the letter, G4's excused red would have shipped:
+  batch-gate pass, ship_audit 5/5 PROVEN, and no counts in the JSON to
+  catch it. 87's own full runs were a deviation, not the procedure. 87 will
+  flip §1a if Chad agrees.
+- **(b) xdist is not free.** gh-resolve adopted it in 3a470d60
+  (2026-08-26), together with its hermetic-suite principles (2a9848df).
+  Its conftest session guards had to become controller-aware: they skip in
+  workers, workers write marker files, and the controller enforces
+  (gh-resolve `conftest.py:313, 402, 410, 1117, 1140`). A session-scoped
+  leak or ledger guard that isn't xdist-aware passes silently in the
+  workers: a false green, not a crash. **Measure the guards, not only the
+  wall clock.**
+- **(c) gh-resolve is both kinds,** split by which code you mean. Its own
+  code is self-hosting: on chad-mbp a merge is a deploy; rezmac runs a
+  release tag. The code it writes is consumer-with-CI (kira-cloudflare: CI
+  plus a human merge gate). Precondition 3 is not met for gh-resolve
+  either: v0.99.0 shipped release dirs, but `release_root` is unset on both
+  hosts and the migration drills haven't run.
+- **(d) Four additions, adopted as part of D9:**
+  1. **Counts before cadence.** R3 22 (per-bucket counts and excusals in
+     batch-gate.json) is a precondition. A scoped verify that can excuse
+     silently is worse than a full one that can.
+  2. **Test-infrastructure changes force full scope:** `conftest.py`,
+     pytest config, and `tests/_*.py` helpers. gh-resolve G3's 29f-2 broke
+     `pytest_configure` and turned EVERY test into an INTERNALERROR; an
+     importer-scoped selection would have picked almost nothing.
+  3. **The per-release full suite also runs in the host's real
+     environment,** not only the runner's pinned one. That same crash fired
+     only when `load_config` resolved a real ledger: green in the runner's
+     step-0 gate, exit 3 in a real shell. (ilk-skills hit the mirror image
+     today: the hook-env leak was red ONLY under the runner.) So run both
+     environments, and attribute each.
+  4. **The importer-coverage lint becomes HARD for a sub-plan's last step**
+     under a scoped cadence. G4's lint flagged it (3 WARN; `ledger.py` has
+     19 importers) and was queued past on the strength of the full verify.
+
 ### Does this apply to other projects? (Chad, 2026-10-03)
 
 **Not as-is.** The cadence argument depends on what a merge MEANS in each
@@ -844,7 +920,8 @@ project:
 
 | kind | examples | is a merge a deploy? | where the full check belongs |
 |---|---|---|---|
-| self-hosting toolkit | ilk-skills, gh-resolve (it runs from its own checkout) | yes, until release dirs | per batch now; per release after the migration |
+| self-hosting toolkit | ilk-skills; gh-resolve's OWN code on chad-mbp (main checkout) | yes, until release dirs | per batch now; per release after the migration |
+| self-hosting, release-tag host | gh-resolve on rezmac (detached release tag) | no | per release (already the practice) |
 | consumer product with CI | kira-cloudflare | no: CI and the project's own release pipeline gate the deploy | per-batch SCOPED verify; the full suite is the project's CI or release gate |
 | consumer with no CI or release gate | small repos | no deploy, but nothing else runs the full suite | keep the per-batch full verify: it is the only full check |
 
@@ -906,27 +983,39 @@ Two cautions for consumer projects:
     stall that R1 would have avoided. Then move R1 ahead of the next
     release, not v0.9.138.
 
-- **D9 (PROPOSED by the ilk-skills owner session 2026-10-03; Chad asked for it
-  to be written into the design, and has not decided it).** Verification
-  cadence, as in "Verification cadence" above:
-  - a scoped verify per batch;
-  - a full suite plus attribution per release;
-  - only after the release-dir migration, and measure a parallel suite
-    first;
-  - per-project configuration, not a toolkit default.
+- **D9 (Chad, 2026-10-03: "let's go with the proposal - approved").**
+  Verification cadence, as in "Verification cadence" above:
+  - a change-scoped verify per batch, which keeps at-base attribution;
+  - each sub-plan's last gate covers its changed module's importers;
+  - one full suite plus node-id attribution per release, triggered by risk
+    rather than a defect count;
+  - deferring the full check starts only after the release-dir migration;
+  - measure a parallel suite first;
+  - per-project configuration (`ship.verify_cadence`,
+    `ship.full_suite_gate`), not a toolkit default.
+
+  gh-resolve-87's review is adopted as part of D9: counts are a
+  precondition; test-infrastructure changes force full scope; the release
+  suite runs in both the pinned and the real environment; and the
+  importer-coverage lint is HARD for a last step. gh-resolve flips its
+  resolver-ship §1a if Chad agrees.
 
 ## Open questions for Chad
 
-1. **Where L2 runs:** a detached planner-home session per block
-   (stateless), or a long-lived one per host (keeps context across a night)?
-2. **Cross-project authority:** may one project's triage message the
-   other's, or only write events?
-3. **Backlog 19** (auto-relaunch after a batch's first red that it caused
-   itself) is the same policy as L2's `ack-and-relaunch`. Under D2 the
-   proposal is yes, with two-strike escalation.
-4. **Multi-project RSI:** accept one engine in ilk-skills plus per-project
-   adapters, with gh-resolve as adapter 2 ahead of L2 (section above)?
-   Chad asked for the section on 2026-10-02; the shape itself is not yet a
-   decision. At most one RSI host per target repo is Chad's direction (same
-   day). Open: which host gets gh-resolve's RSI, and whether L2 triage
-   runs on every host or only on the RSI host.
+D7 (2026-10-02 evening) decided the four questions this section used to
+hold: L2 placement, cross-project authority, backlog 19, and the
+multi-project shape. Still open:
+
+1. **gh-resolve's RSI host.** rezmac is gh-resolve's only producer. Which
+   host does gh-resolve's improvement builds (D5, applied per target repo)?
+2. **D9's trigger values.** How many merged batches before a release-level
+   full check is forced (the proposal says "N")? The proposed default is 3,
+   or any contract-governed file, or any push or deploy. Chad's call, or
+   the owner session's as a labelled choice.
+3. **D4 vs the standing authorization.** Chad's 2026-10-02 authorization
+   let the owner session push and deploy v0.9.138 and v0.9.139 by hand.
+   Does D4's "until canary + rollback exist" still bind the release train's
+   *automatic* push, with hand releases by the owner session allowed? This
+   doc assumes yes.
+4. **gh-resolve's chad-mbp fleet b:** confirm it is a canary, not a producer.
+   Deferring gh-resolve's full check on chad-mbp (above) depends on it.
