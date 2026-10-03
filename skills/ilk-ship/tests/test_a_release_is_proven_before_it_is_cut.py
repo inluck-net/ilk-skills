@@ -1,7 +1,6 @@
 """Tests for release_train check + prove.
 
-Sub-plan: a-release-is-proven-before-it-is-cut, step 0.
-Red-first: these tests pin the expected behaviour before it exists.
+Sub-plan: a-release-is-proven-before-it-is-cut, step 0 (pins) + step 1 (impl).
 
 Each test builds a throwaway git repo (with tags) under ``tmp_path``,
 a fake data root (``ILK_DATA_HOME``), and a tiny fake "suite" (a test
@@ -36,67 +35,25 @@ LOOP_SCRIPTS = Path(__file__).resolve().parents[2] / "ilk-loop" / "scripts"
 sys.path.insert(0, str(SHIP_SCRIPTS))
 sys.path.insert(0, str(LOOP_SCRIPTS))
 
-
-# ── Stub module ─────────────────────────────────────────────────────────────
-#
-# This import will fail until step 1 implements release_train.py.  The tests
-# are written first (red-first) so they pin the expected behaviour.
-
-try:
-    from release_train import check, prove
-except ImportError:
-    # Step 0: the module does not exist yet.  Define stubs that always
-    # return "eligible" / "proven" so the tests fail on every assertion —
-    # this is the intended red state.
-
-    def check(project: Path, data_dir: Path) -> dict:
-        """Stub: always eligible.  Step 1 will implement refusal."""
-        return {"eligible": True, "reason": "", "last_tag": None, "head": ""}
-
-    def prove(project: Path, data_dir: Path) -> dict:
-        """Stub: always proven.  Step 1 will implement refusal."""
-        return {
-            "proven": True,
-            "reason": "",
-            "new_failing_ids": [],
-            "proof_file": None,
-        }
+from release_train import check, prove  # noqa: E402
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
-def _make_fake_suite(tmp_path: Path, failing: bool = False) -> Path:
-    """Create a tiny pytest suite under tmp_path.
+def _make_fake_project(
+    tmp_path: Path,
+    release_train: bool = True,
+    failing: bool = False,
+) -> Path:
+    """Create a minimal git repo with one commit, a tag, and a fake suite.
 
-    Three trivial tests; if ``failing`` is True the second one asserts False.
-    """
-    suite_dir = tmp_path / "fake_suite"
-    suite_dir.mkdir()
-
-    test_file = suite_dir / "test_trivial.py"
-    test_file.write_text(textwrap.dedent("""\
-        def test_one():
-            assert True
-
-        def test_two():
-            assert {assertion}
-
-        def test_three():
-            assert True
-    """).format(assertion="False" if failing else "True"))
-
-    return suite_dir
-
-
-def _make_fake_project(tmp_path: Path, release_train: bool = True) -> Path:
-    """Create a minimal git repo with one commit and a tag.
-
-    Returns the project path.
+    The project includes ``test_trivial.py`` (3 tests; if *failing* is True
+    the second one asserts False) and a ``.ilk-launch.json`` with a suite
+    config so ``prove`` can discover the invocation.
     """
     project = tmp_path / "project"
     project.mkdir()
 
-    # Initialise repo
     subprocess.run(["git", "init"], cwd=project, check=True, capture_output=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
@@ -107,9 +64,15 @@ def _make_fake_project(tmp_path: Path, release_train: bool = True) -> Path:
         cwd=project, check=True, capture_output=True,
     )
 
-    # .ilk-launch.json
+    # .ilk-launch.json — includes suite config for prove
     (project / ".ilk-launch.json").write_text(json.dumps({
-        "ship": {"release_train": release_train},
+        "ship": {
+            "release_train": release_train,
+            "suite": {
+                "command": "python3 -m pytest",
+                "flags": [],
+            },
+        },
     }))
 
     # Initial commit + tag
@@ -123,11 +86,23 @@ def _make_fake_project(tmp_path: Path, release_train: bool = True) -> Path:
         cwd=project, check=True, capture_output=True,
     )
 
+    # Fake test suite (in HEAD, not in the tagged commit)
+    assertion = "False" if failing else "True"
+    (project / "test_trivial.py").write_text(textwrap.dedent(f"""\
+        def test_one():
+            assert True
+
+        def test_two():
+            assert {assertion}
+
+        def test_three():
+            assert True
+    """))
+
     # Second commit (HEAD != tag)
-    (project / "README.md").write_text("hello")
     subprocess.run(["git", "add", "."], cwd=project, check=True, capture_output=True)
     subprocess.run(
-        ["git", "commit", "-m", "second"],
+        ["git", "commit", "-m", "add tests"],
         cwd=project, check=True, capture_output=True,
     )
 
@@ -153,7 +128,6 @@ def _write_baseline(data_dir: Path, tag: str, invocation: str, ids: list) -> Non
 
 # ── AC-1: check eligibility ─────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="release_train.py does not exist yet")
 class TestCheckEligible:
     """check is eligible when all preconditions hold."""
 
@@ -170,7 +144,6 @@ class TestCheckEligible:
         assert len(result["head"]) == 40  # full sha
 
 
-@pytest.mark.xfail(strict=True, reason="release_train.py does not exist yet")
 class TestCheckRefusesWhenFlagFalse:
     """check refuses when ship.release_train is not true."""
 
@@ -185,7 +158,6 @@ class TestCheckRefusesWhenFlagFalse:
         assert "release_train" in result["reason"].lower() or "flag" in result["reason"].lower()
 
 
-@pytest.mark.xfail(strict=True, reason="release_train.py does not exist yet")
 class TestCheckRefusesWhenKillSwitchPresent:
     """check refuses when the kill switch file exists."""
 
@@ -202,7 +174,6 @@ class TestCheckRefusesWhenKillSwitchPresent:
         assert "kill" in result["reason"].lower() or "disabled" in result["reason"].lower()
 
 
-@pytest.mark.xfail(strict=True, reason="release_train.py does not exist yet")
 class TestCheckRefusesWhenHeadEqualsTag:
     """check refuses when HEAD equals the latest tag."""
 
@@ -222,7 +193,6 @@ class TestCheckRefusesWhenHeadEqualsTag:
         assert "tag" in result["reason"].lower() or "head" in result["reason"].lower()
 
 
-@pytest.mark.xfail(strict=True, reason="release_train.py does not exist yet")
 class TestCheckRefusesWhenDirtyTree:
     """check refuses when the working tree is dirty."""
 
@@ -238,7 +208,6 @@ class TestCheckRefusesWhenDirtyTree:
         assert "dirty" in result["reason"].lower() or "clean" in result["reason"].lower()
 
 
-@pytest.mark.xfail(strict=True, reason="release_train.py does not exist yet")
 class TestCheckRefusesWhenRunnerLive:
     """check refuses when a runner is live for this project."""
 
@@ -263,15 +232,13 @@ class TestCheckRefusesWhenRunnerLive:
 
 # ── AC-2: prove with all-green suite ────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="release_train.py does not exist yet")
 class TestProveAllGreen:
     """prove with all-green suite and baseline of []: proven, 0 new ids."""
 
     def test_proven_when_all_green(self, tmp_path: Path) -> None:
         """Fake suite all green, baseline []: proven, proof file has 0 new ids."""
-        project = _make_fake_project(tmp_path)
+        project = _make_fake_project(tmp_path, failing=False)
         data_dir = _make_data_dir(tmp_path)
-        suite_dir = _make_fake_suite(tmp_path, failing=False)
 
         # Write baseline of [] for v0.0.1
         invocation = "python3 -m pytest"
@@ -296,15 +263,13 @@ class TestProveAllGreen:
 
 # ── AC-3: prove with one red test ───────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="release_train.py does not exist yet")
 class TestProveOneRed:
     """prove with one fake test turned red: refused, naming the node id."""
 
     def test_refused_when_one_red(self, tmp_path: Path) -> None:
         """One test red → refused, proof file says refused, names the node id."""
-        project = _make_fake_project(tmp_path)
+        project = _make_fake_project(tmp_path, failing=True)
         data_dir = _make_data_dir(tmp_path)
-        suite_dir = _make_fake_suite(tmp_path, failing=True)
 
         invocation = "python3 -m pytest"
         _write_baseline(data_dir, "v0.0.1", invocation, [])
@@ -322,15 +287,13 @@ class TestProveOneRed:
 
 # ── AC-4: prove with missing baseline ───────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="release_train.py does not exist yet")
 class TestProveMissingBaseline:
     """prove with no baseline for v0.0.1: refused could_not_compare."""
 
     def test_refused_when_no_baseline(self, tmp_path: Path) -> None:
         """No baseline → refused with could_not_compare."""
-        project = _make_fake_project(tmp_path)
+        project = _make_fake_project(tmp_path, failing=False)
         data_dir = _make_data_dir(tmp_path)
-        suite_dir = _make_fake_suite(tmp_path, failing=False)
         # No baseline written
 
         result = prove(project, data_dir)
@@ -344,34 +307,18 @@ class TestProveMissingBaseline:
 
 # ── AC-5: Phase 1 runs in a clone ───────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="release_train.py does not exist yet")
 class TestProveRunsInClone:
     """Phase 1 runs in a clone: cwd is not the project, git-dir is .git."""
 
     def test_prove_uses_clone_not_worktree(self, tmp_path: Path) -> None:
         """The suite subprocess cwd must not be the project; git-dir must be .git."""
-        project = _make_fake_project(tmp_path)
+        project = _make_fake_project(tmp_path, failing=False)
         data_dir = _make_data_dir(tmp_path)
-        suite_dir = _make_fake_suite(tmp_path, failing=False)
 
         invocation = "python3 -m pytest"
         _write_baseline(data_dir, "v0.0.1", invocation, [])
 
-        # Monkey-patch to capture the cwd used for the suite run
-        original_prove = prove
-        captured_cwds = []
-
-        def _capturing_prove(project: Path, data_dir: Path) -> dict:
-            # We need to intercept the subprocess call.  For now, just call
-            # the real prove and check the proof file's cwd field.
-            result = original_prove(project, data_dir)
-            if result["proof_file"] and result["proof_file"].exists():
-                proof = json.loads(result["proof_file"].read_text())
-                if "suite_cwd" in proof:
-                    captured_cwds.append(Path(proof["suite_cwd"]))
-            return result
-
-        result = _capturing_prove(project, data_dir)
+        result = prove(project, data_dir)
 
         assert result["proven"] is True
         # The proof file should record the suite cwd
@@ -394,16 +341,14 @@ class TestProveRunsInClone:
 
 # ── AC-6: nothing outside data_dir/runtime/release and tmp clone ────────────
 
-@pytest.mark.xfail(strict=True, reason="release_train.py does not exist yet")
 class TestProveWritesOnlyToReleaseDir:
     """nothing outside <data_dir>/runtime/release/ and the tmp clone is written."""
 
     def test_no_writes_outside_release_dir(self, tmp_path: Path) -> None:
         """Snapshot project tree and data root before/after prove; diff must be empty
         outside data_dir/runtime/release/ and the tmp clone."""
-        project = _make_fake_project(tmp_path)
+        project = _make_fake_project(tmp_path, failing=False)
         data_dir = _make_data_dir(tmp_path)
-        suite_dir = _make_fake_suite(tmp_path, failing=False)
 
         invocation = "python3 -m pytest"
         _write_baseline(data_dir, "v0.0.1", invocation, [])
