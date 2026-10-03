@@ -119,6 +119,9 @@ def _make_passing_mock() -> tuple[MagicMock, MagicMock]:
         cmd_str = cmd if isinstance(cmd, str) else " ".join(cmd)
         if isinstance(cmd, list) and cmd[0] == "git":
             return MockCompletedProcess(0, "", "")
+        if "--collect-only" in cmd_str:
+            # The real -q form: "100 tests collected in 0.50s"
+            return MockCompletedProcess(0, "100 tests collected in 0.50s\n", "")
         if cmd_str.startswith("python3 -m pytest"):
             return MockCompletedProcess(0, "", PASSING_OUTPUT)
         return MockCompletedProcess(0, "", "")

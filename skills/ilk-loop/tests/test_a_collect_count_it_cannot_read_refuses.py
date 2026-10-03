@@ -69,7 +69,6 @@ PASSING_OUTPUT = textwrap.dedent("""\
 
 # ── AC-1: parse_collect_count reads pytest's real -q summary forms ────────────
 
-@pytest.mark.xfail(strict=True, reason="parse_collect_count does not exist yet")
 @pytest.mark.parametrize("stdout,expected", [
     ("4586 tests collected in 1.11s\n", 4586),
     ("1 test collected in 0.00s\n", 1),
@@ -91,7 +90,6 @@ def test_parse_collect_count_reads_real_forms(stdout: str, expected: int) -> Non
 
 # ── AC-2: parse_collect_count returns None for unparseable output ─────────────
 
-@pytest.mark.xfail(strict=True, reason="parse_collect_count does not exist yet")
 @pytest.mark.parametrize("stdout", [
     "",
     "test_one.py: 1\ntest_probe.py: 3\n",
@@ -105,7 +103,6 @@ def test_parse_collect_count_returns_none_for_unparseable(stdout: str) -> None:
 
 # ── AC-3: collected-count floor fires when actual < expected ──────────────────
 
-@pytest.mark.xfail(strict=True, reason="collect-count floor does not read -q form yet")
 def test_collected_count_floor_fires(tmp_path: Path) -> None:
     """AC-3: a suite output of 10 passed with --collect-only returning 100
     refuses with 'collected count 10 is below'."""
@@ -165,7 +162,6 @@ def test_collected_count_floor_fires(tmp_path: Path) -> None:
 
 # ── AC-4: unparseable collect output refuses ─────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="collect-count refusal does not exist yet")
 @pytest.mark.parametrize("collect_side_effect,description", [
     (lambda *a, **kw: MockCompletedProcess(0, "", ""), "empty stdout"),
     (lambda *a, **kw: (_ for _ in ()).throw(
@@ -223,7 +219,6 @@ def test_unparseable_collect_refuses(
 
 # ── AC-5: the collect command carries exactly one -q ──────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="collect command construction does not strip -q yet")
 def test_collect_command_has_exactly_one_q(tmp_path: Path) -> None:
     """AC-5: for a configured invocation carrying -q, the collect command
     ends with --collect-only -q (exactly one -q)."""

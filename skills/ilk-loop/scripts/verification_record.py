@@ -394,7 +394,11 @@ _SUMMARY_RE = re.compile(
 _COUNT_RE = re.compile(r"(\d+)\s+(passed|failed|error|errors|skipped|xfailed|xpassed)")
 _NODE_RE = re.compile(r"^(?:FAILED|ERROR)\s+(\S+)", re.MULTILINE)
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-_COLLECTED_RE = re.compile(r"collected\s+(\d+)\s+items?")
+
+# Patterns for parse_collect_count — reads every form pytest prints with
+# --collect-only -q (and the legacy header without -q).
+_COLLECT_SUMMARY_RE = re.compile(r"(\d+) tests? collected")
+_COLLECT_HEADER_RE = re.compile(r"collected\s+(\d+)\s+items?")
 
 # Output-only flags that do not change collection or selection in pytest 8.x.
 # These are stripped during invocation normalisation so that an operator who
@@ -515,6 +519,48 @@ def _failure_block_for_node(out: str, node_id: str) -> str | None:
     if summary:
         end = min(end, summary.start())
     return rest[:end] if rest[:end].strip() else None
+
+
+def parse_collect_count(out: str) -> int | None:
+    """Parse the test count from ``--collect-only -q`` output.
+
+    Reads every form pytest prints:
+
+    * ``4586 tests collected in 1.11s`` (the ``-q`` summary)
+    * ``1 test collected in 0.00s`` (singular)
+    * ``4 tests collected, 1 error in 0.05s`` (with error suffix)
+    * ``no tests collected in 0.00s`` → 0
+    * ``collected 4 items`` (the legacy header without ``-q``)
+    * ``1/4 tests collected (3 deselected)`` → 1 (selected count)
+
+    Returns :data:`None` for empty text, the ``-qq`` per-file form
+    (``test_one.py: 1``), error messages, and anything else unparseable.
+    """
+    text = (out or "").strip()
+    if not text:
+        return None
+
+    # Selection form: "1/4 tests collected (3 deselected)" — first number is
+    # the selected count, which is what the run will execute.
+    m_sel = re.search(r"(\d+)/\d+\s+tests?\s+collected", text)
+    if m_sel:
+        return int(m_sel.group(1))
+
+    # Summary line: "N tests collected" (covers ", N error" suffix).
+    m_sum = _COLLECT_SUMMARY_RE.search(text)
+    if m_sum:
+        return int(m_sum.group(1))
+
+    # Legacy header: "collected N items" (no -q).
+    m_hdr = _COLLECT_HEADER_RE.search(text)
+    if m_hdr:
+        return int(m_hdr.group(1))
+
+    # "no tests collected" → 0.
+    if re.search(r"no\s+tests?\s+collected", text):
+        return 0
+
+    return None
 
 
 def parse_pytest_output(out: str) -> dict:
@@ -2206,18 +2252,35 @@ def _write_record_from_output(project: Path, record: Path, args,
 
     # AC-2f: collected count below --collect-only count refuses.
     # Run --collect-only on the configured invocation to get the expected count.
+    # Strip output-only flags so the command carries exactly one -q.
+    stripped = _strip_output_only_flags(configured_invocation)
+    collect_cmd = f"{stripped} --collect-only -q"
+    collect_result = None
     try:
-        collect_cmd = f"{configured_invocation} --collect-only -q"
         collect_result = subprocess.run(
             collect_cmd, shell=True, cwd=project,
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=120,
         )
         collect_output = _ANSI_RE.sub("", collect_result.stdout or "")
-        m_collect = _COLLECTED_RE.search(collect_output)
-        expected_count = int(m_collect.group(1)) if m_collect else None
-    except (OSError, subprocess.SubprocessError, ValueError):
+        expected_count = parse_collect_count(collect_output)
+    except (OSError, subprocess.SubprocessError):
         expected_count = None
+
+    # None is a refusal: the collected-count floor cannot be checked.
+    if expected_count is None:
+        if collect_result is not None:
+            raw = (collect_result.stdout or "") + (collect_result.stderr or "")
+            snippet = _ANSI_RE.sub("", raw)[:300]
+            rc = collect_result.returncode
+        else:
+            snippet = "(subprocess raised before producing output)"
+            rc = "?"
+        print(f"ERROR: cannot read the --collect-only count from "
+              f"{collect_cmd!r} (exit {rc}): {snippet}; refusing, the "
+              f"collected-count floor cannot be checked",
+              file=sys.stderr)
+        return 1
 
     # Parse the file through the same parser as --run-suite.
     parser = _parse_for(configured_invocation)
