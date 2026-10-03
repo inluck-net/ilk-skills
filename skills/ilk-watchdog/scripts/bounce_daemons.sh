@@ -89,6 +89,9 @@ if [[ "$HOME" != "$real_home" && "${ILK_BOUNCE_ALLOW_FOREIGN_HOME:-}" != "1" ]];
   exit 2
 fi
 
+# ── Toolkit HEAD / tree-state resolver (release-aware) ────────────────────
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_ilk_toolkit_head.sh"
+
 # ── Staleness decision ─────────────────────────────────────────────────────
 
 ILK_DATA="${ILK_DATA_HOME:-${ILK_DATA_DIR:-$HOME/.ilk-data}}"
@@ -114,25 +117,15 @@ else
     stale=1
     reason="state file missing toolkit_head or non-JSON"
   else
-    # Get the tree's HEAD.  Resolve the repo from the script's own location,
-    # not $PWD — ssh lands in $HOME, and launchd starts in an arbitrary dir.
-    # Mirrors scheduler.sh's write_scheduler_state (AC-2).
-    toolkit_path="${ILK_BOUNCE_TOOLKIT_PATH:-}"
-    if [[ -z "$toolkit_path" ]]; then
-      script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || true
-      if [[ -n "$script_dir" ]]; then
-        toolkit_path="$script_dir"
-        while [[ "$toolkit_path" != "/" && ! -e "$toolkit_path/.git" ]]; do
-          toolkit_path="$(dirname "$toolkit_path")"
-        done
-        if [[ ! -e "$toolkit_path/.git" ]]; then
-          toolkit_path="."
-        fi
-      else
-        toolkit_path="."
-      fi
+    # Get the tree's HEAD.  Release-aware: reads .ilk-release.json when no
+    # .git is found.  Mirrors scheduler.sh's write_scheduler_state (AC-2).
+    _bounce_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || _bounce_script_dir=""
+    if [[ -n "$_bounce_script_dir" ]]; then
+      current_head="$(ilk_toolkit_head "$_bounce_script_dir")"
+    else
+      current_head=""
     fi
-    current_head=$(git -C "$toolkit_path" rev-parse HEAD 2>/dev/null || echo "unknown")
+    : "${current_head:=unknown}"
 
     if [[ "$recorded_head" == "$current_head" ]]; then
       stale=0
@@ -161,22 +154,11 @@ echo "recorded_sha: ${recorded_head:-unknown}"
 #
 # `unknown` when git cannot answer -- an unreadable tree is not a clean one,
 # and the resolver is left to decide rather than handed a false `clean`.
-# Resolve the repo from the SCRIPT'S OWN LOCATION, not $PWD -- ssh lands in
-# $HOME and launchd starts in an arbitrary dir, so $PWD would silently answer
-# about the wrong tree (or none). Same rule as the toolkit_path resolution
-# above; `rev-parse --show-toplevel` rather than walking for a `.git`
-# directory, so a linked worktree (where `.git` is a FILE) resolves too.
-_tree_state="unknown"
-_tree_start="${ILK_BOUNCE_TOOLKIT_PATH:-}"
-if [[ -z "$_tree_start" ]]; then
-  _tree_start="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || _tree_start=""
-fi
-if [[ -n "$_tree_start" ]]; then
-  if _tree_root=$(git -C "$_tree_start" rev-parse --show-toplevel 2>/dev/null); then
-    if _porcelain=$(git -C "$_tree_root" status --porcelain 2>/dev/null); then
-      if [[ -z "$_porcelain" ]]; then _tree_state="clean"; else _tree_state="dirty"; fi
-    fi
-  fi
+# Release-aware: reads .ilk-release.json when no .git is found.
+if [[ -n "$_bounce_script_dir" ]]; then
+  _tree_state="$(ilk_toolkit_tree_state "$_bounce_script_dir")"
+else
+  _tree_state="unknown"
 fi
 echo "tree_state: ${_tree_state}"
 

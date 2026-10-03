@@ -51,17 +51,11 @@ write_scheduler_state() {
 
   # Resolve toolkit_head from the script's own location, not $PWD (AC-2).
   # launchd starts the job in an arbitrary directory.
+  # Release-aware: reads .ilk-release.json when no .git is found.
+  source "${_ILK_SCRIPT_DIR}/_ilk_toolkit_head.sh"
   local toolkit_head=""
-  local script_dir="$_ILK_SCRIPT_DIR"
-  if [[ -n "$script_dir" ]]; then
-    # Walk up to find the repo root (the dir containing .git).
-    local repo_dir="$script_dir"
-    while [[ "$repo_dir" != "/" && ! -e "$repo_dir/.git" ]]; do
-      repo_dir="$(dirname "$repo_dir")"
-    done
-    if [[ -e "$repo_dir/.git" ]]; then
-      toolkit_head="$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null)" || toolkit_head=""
-    fi
+  if [[ -n "$_ILK_SCRIPT_DIR" ]]; then
+    toolkit_head="$(ilk_toolkit_head "$_ILK_SCRIPT_DIR")"
   fi
 
   # Write the state file. If anything is missing, log and return (AC-5).
