@@ -74,9 +74,9 @@ def _git(repo: Path, *args: str) -> str:
 def _make_repo_with_suite(tmp_path: Path) -> tuple[Path, Path, Path]:
     """Create a temp git repo with a pytest suite and .ilk-launch.json.
 
-    The suite has two tests:
-      - test_pass: always passes
-      - test_fail: writes a sentinel and fails
+    Two commits:
+      - Commit 1 (base): only test_pass (passes).
+      - Commit 2 (HEAD): adds test_fail (fails).
 
     Returns (repo, sentinel_path, test_file_path).
     """
@@ -97,9 +97,21 @@ def _make_repo_with_suite(tmp_path: Path) -> tuple[Path, Path, Path]:
         json.dumps(launch, indent=2) + "\n", encoding="utf-8"
     )
 
-    # A test file with one passing and one failing test.
     sentinel = tmp_path / "sentinel.txt"
+
+    # Commit 1 (base): only a passing test.
     test_file = repo / "test_stuff.py"
+    test_file.write_text(
+        textwrap.dedent("""\
+            def test_pass():
+                assert 1 + 1 == 2
+        """),
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "base commit — passing test only")
+
+    # Commit 2 (HEAD): add the failing test.
     test_file.write_text(
         textwrap.dedent(f"""\
             import pathlib
@@ -115,9 +127,8 @@ def _make_repo_with_suite(tmp_path: Path) -> tuple[Path, Path, Path]:
         """),
         encoding="utf-8",
     )
-
     _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "initial commit")
+    _git(repo, "commit", "-m", "add failing test")
     return repo, sentinel, test_file
 
 
@@ -170,7 +181,6 @@ def _write_output_text(repo: Path, tree: str, text: str) -> None:
 # ── AC-1: head from the ledger ──────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="AC-1: head from ledger not yet implemented")
 def test_ac1_head_from_ledger_no_sentinel(tmp_path: Path) -> None:
     """With a ledger entry for HEAD, --run-suite --ledger prefer leaves no
     sentinel, cites head_source: ledger, and suite_failed matches the entry.
@@ -191,8 +201,8 @@ def test_ac1_head_from_ledger_no_sentinel(tmp_path: Path) -> None:
     result = subprocess.run(
         [sys.executable, str(SCRIPTS_DIR / "verification_record.py"),
          "--project", str(repo),
-         "--batch", "test-batch",
-         "--base-sha", _git(repo, "rev-parse", "HEAD~0"),
+         
+         "--base-sha", _git(repo, "rev-parse", "HEAD~1"),
          "--run-suite",
          "--ledger", "prefer",
          "--record", str(record_path)],
@@ -216,7 +226,6 @@ def test_ac1_head_from_ledger_no_sentinel(tmp_path: Path) -> None:
 # ── AC-2: base from the ledger ──────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="AC-2: base from ledger not yet implemented")
 def test_ac2_base_from_ledger_no_worktree(tmp_path: Path) -> None:
     """With ledger entries for HEAD and base, at-base reads from the entry;
     no worktree was created and base_source cites the ledger.
@@ -266,7 +275,7 @@ def test_ac2_base_from_ledger_no_worktree(tmp_path: Path) -> None:
     result = subprocess.run(
         [sys.executable, str(SCRIPTS_DIR / "verification_record.py"),
          "--project", str(repo),
-         "--batch", "test-batch",
+         
          "--base-sha", _git(repo, "rev-parse", "HEAD~1"),
          "--run-suite",
          "--ledger", "prefer",
@@ -297,7 +306,6 @@ def test_ac2_base_from_ledger_no_worktree(tmp_path: Path) -> None:
 # ── AC-3 (control): no base entry ⇒ rerun ────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="AC-3: --ledger flag not yet implemented (control: will pass once flag exists)")
 def test_ac3_no_base_entry_rerun(tmp_path: Path) -> None:
     """With no base ledger entry, base_source: rerun and at-base verdicts
     come from run_at_base as today.  This is a CONTROL — once --ledger is
@@ -317,8 +325,8 @@ def test_ac3_no_base_entry_rerun(tmp_path: Path) -> None:
     result = subprocess.run(
         [sys.executable, str(SCRIPTS_DIR / "verification_record.py"),
          "--project", str(repo),
-         "--batch", "test-batch",
-         "--base-sha", _git(repo, "rev-parse", "HEAD~0"),
+         
+         "--base-sha", _git(repo, "rev-parse", "HEAD~1"),
          "--run-suite",
          "--ledger", "prefer",
          "--record", str(record_path)],
@@ -336,11 +344,17 @@ def test_ac3_no_base_entry_rerun(tmp_path: Path) -> None:
 # ── AC-4: ledger require with no entry measures in-process ──────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="AC-4: ledger require in-process not yet implemented")
 def test_ac4_ledger_require_no_entry(tmp_path: Path) -> None:
     """--ledger require with no entry measures in-process, writes the entry,
     and the record cites it.
     """
+    # This test requires pytest to be importable by the system python3.
+    check = subprocess.run(
+        [sys.executable, "-c", "import pytest"],
+        capture_output=True, timeout=10,
+    )
+    if check.returncode != 0:
+        pytest.skip("pytest not available in the system python3")
     repo, sentinel, test_file = _make_repo_with_suite(tmp_path)
 
     # No ledger entry at all.
@@ -348,8 +362,8 @@ def test_ac4_ledger_require_no_entry(tmp_path: Path) -> None:
     result = subprocess.run(
         [sys.executable, str(SCRIPTS_DIR / "verification_record.py"),
          "--project", str(repo),
-         "--batch", "test-batch",
-         "--base-sha", _git(repo, "rev-parse", "HEAD~0"),
+         
+         "--base-sha", _git(repo, "rev-parse", "HEAD~1"),
          "--run-suite",
          "--ledger", "require",
          "--record", str(record_path)],
@@ -375,7 +389,6 @@ def test_ac4_ledger_require_no_entry(tmp_path: Path) -> None:
 # ── AC-5: verify_attribution refuses tampered/deleted entry ──────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="AC-5: ledger citation check not yet implemented")
 def test_ac5_verify_refuses_tampered_entry(tmp_path: Path) -> None:
     """verify_attribution refuses after the cited head entry is tampered."""
     repo, sentinel, test_file = _make_repo_with_suite(tmp_path)
@@ -390,8 +403,8 @@ def test_ac5_verify_refuses_tampered_entry(tmp_path: Path) -> None:
     result = subprocess.run(
         [sys.executable, str(SCRIPTS_DIR / "verification_record.py"),
          "--project", str(repo),
-         "--batch", "test-batch",
-         "--base-sha", _git(repo, "rev-parse", "HEAD~0"),
+         
+         "--base-sha", _git(repo, "rev-parse", "HEAD~1"),
          "--run-suite",
          "--ledger", "prefer",
          "--record", str(record_path)],
@@ -415,8 +428,8 @@ def test_ac5_verify_refuses_tampered_entry(tmp_path: Path) -> None:
     # verify_attribution should refuse.
     result = subprocess.run(
         [sys.executable, str(SCRIPTS_DIR / "verify_attribution.py"),
-         "--batch", "test-batch",
-         "--record", str(record_path),
+         
+         str(record_path),
          "--project", str(repo)],
         capture_output=True, text=True, timeout=60,
         encoding="utf-8", errors="replace",
@@ -427,7 +440,6 @@ def test_ac5_verify_refuses_tampered_entry(tmp_path: Path) -> None:
         f"error should name the tree or digest:\n{combined}"
 
 
-@pytest.mark.xfail(strict=True, reason="AC-5: ledger citation check not yet implemented")
 def test_ac5_verify_refuses_deleted_entry(tmp_path: Path) -> None:
     """verify_attribution refuses after the cited head entry is deleted."""
     repo, sentinel, test_file = _make_repo_with_suite(tmp_path)
@@ -441,8 +453,8 @@ def test_ac5_verify_refuses_deleted_entry(tmp_path: Path) -> None:
     result = subprocess.run(
         [sys.executable, str(SCRIPTS_DIR / "verification_record.py"),
          "--project", str(repo),
-         "--batch", "test-batch",
-         "--base-sha", _git(repo, "rev-parse", "HEAD~0"),
+         
+         "--base-sha", _git(repo, "rev-parse", "HEAD~1"),
          "--run-suite",
          "--ledger", "prefer",
          "--record", str(record_path)],
@@ -460,8 +472,8 @@ def test_ac5_verify_refuses_deleted_entry(tmp_path: Path) -> None:
     # verify_attribution should refuse.
     result = subprocess.run(
         [sys.executable, str(SCRIPTS_DIR / "verify_attribution.py"),
-         "--batch", "test-batch",
-         "--record", str(record_path),
+         
+         str(record_path),
          "--project", str(repo)],
         capture_output=True, text=True, timeout=60,
         encoding="utf-8", errors="replace",
@@ -472,7 +484,6 @@ def test_ac5_verify_refuses_deleted_entry(tmp_path: Path) -> None:
 # ── AC-6: ledger require + head_source: run ⇒ refused ────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="AC-6: require-mode check not yet implemented")
 def test_ac6_require_mode_refuses_run_source(tmp_path: Path) -> None:
     """A record with ledger_mode: require and head_source: run is refused."""
     repo, sentinel, test_file = _make_repo_with_suite(tmp_path)
@@ -489,7 +500,7 @@ def test_ac6_require_mode_refuses_run_source(tmp_path: Path) -> None:
         batch: test-batch
         verified_head: {_git(repo, "rev-parse", "HEAD")}
         verified_tree: {tree}
-        base_sha: {_git(repo, "rev-parse", "HEAD~0")}
+        base_sha: {_git(repo, "rev-parse", "HEAD~1")}
         suite_invocation: python3 -m pytest -q -p no:cacheprovider
         suite_scope: full
         selection_size: 2
@@ -514,8 +525,8 @@ def test_ac6_require_mode_refuses_run_source(tmp_path: Path) -> None:
     # verify_attribution should refuse.
     result = subprocess.run(
         [sys.executable, str(SCRIPTS_DIR / "verify_attribution.py"),
-         "--batch", "test-batch",
-         "--record", str(record_path),
+         
+         str(record_path),
          "--project", str(repo)],
         capture_output=True, text=True, timeout=60,
         encoding="utf-8", errors="replace",
@@ -529,7 +540,6 @@ def test_ac6_require_mode_refuses_run_source(tmp_path: Path) -> None:
 # ── AC-7: template step-0 command contains --ledger require ──────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="AC-7: template --ledger require not yet added (step 1)")
 def test_ac7_template_has_ledger_require() -> None:
     """The step-0 command in batch-verification-subplan.md contains --ledger require."""
     template = TEMPLATES_DIR / "batch-verification-subplan.md"

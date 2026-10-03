@@ -208,7 +208,7 @@ section headed "exit 1 with zero failures is not a regression", the run recorded
 ```yaml
 gate_first: true
 local_checks:
-  - command: "python3 <skill-root>/ilk-loop/scripts/verification_record.py --project . --batch <batch-slug> --base-sha auto --master <MASTER .md path> --run-suite --scope <auto|full>"
+  - command: "python3 <skill-root>/ilk-loop/scripts/verification_record.py --project . --batch <batch-slug> --base-sha auto --master <MASTER .md path> --run-suite --ledger require --scope <auto|full>"
     timeout: 3660
 ```
 
@@ -222,6 +222,15 @@ and triage, not to re-run the suite.
 - Read the `order-dependent:` lines — they name the ordering constraint.
 - Read the `born-red-at:` verdicts — a test that was red at its adding commit belongs to the plan that added it.
 - **Never re-run the suite, loop a test, or run a directory-wide pytest by hand.** The record already holds those answers.
+
+**Head and base from the ledger.** The `--ledger require` flag tells
+`verification_record.py` to look up HEAD's result from the per-tree suite
+ledger (written by previous iterations' gated points). The base verdicts
+also come from the ledger when an entry exists for the base tree. This means
+step 0 normally takes seconds instead of minutes — no suite run, no worktree,
+no subprocess per failing id. If the ledger has no entry for HEAD (e.g. the
+first batch after a release flip), the script measures in-process and writes
+the entry for future batches.
 
 **`--scope full` when the plan demands it.** The `--scope` flag overrides
 `compute_suite_scope`'s auto-detection. Set `--scope full` when the MASTER or

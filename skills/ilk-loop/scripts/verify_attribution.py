@@ -92,6 +92,89 @@ class VerificationError(Exception):
     """The record does not establish that the batch is clean."""
 
 
+def _verify_ledger_citations(text: str, project: Path | None = None) -> None:
+    """Verify that cited ledger entries exist and match.
+
+    Parses ``head_source: ledger <tree> <digest>`` and
+    ``base_source: ledger <tree> <digest>`` from the record, then checks
+    that the ledger entry for each tree has the cited digest.
+
+    Raises ``VerificationError`` if an entry is missing, deleted, or has
+    a different digest.
+    """
+    import re as _re
+    _TREE_RE = _re.compile(
+        r"^(head_source|base_source): ledger ([0-9a-f]{40}) ([0-9a-f]{16})",
+        _re.MULTILINE,
+    )
+    _MODE_RE = _re.compile(
+        r"^ledger_mode: (\S+)", _re.MULTILINE,
+    )
+    _HEAD_SOURCE_RE = _re.compile(
+        r"^head_source: (\S+)", _re.MULTILINE,
+    )
+
+    mode_m = _MODE_RE.search(text)
+    ledger_mode = mode_m.group(1) if mode_m else "off"
+    head_source_m = _HEAD_SOURCE_RE.search(text)
+    head_source_kind = head_source_m.group(1) if head_source_m else "run"
+
+    # require mode + head_source: run ⇒ refuse.
+    if ledger_mode == "require" and head_source_kind == "run":
+        raise VerificationError(
+            "ledger_mode is 'require' but head_source is 'run' — "
+            "the tip tree has no ledger entry"
+        )
+
+    if project is None:
+        return  # No project to look up entries against.
+
+    # Import suite_ledger to look up entries.
+    scripts_dir = Path(__file__).resolve().parent
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    try:
+        import suite_ledger
+    except ImportError:
+        return  # Cannot verify without the module.
+
+    for m in _TREE_RE.finditer(text):
+        field = m.group(1)
+        tree = m.group(2)
+        cited_digest = m.group(3)
+
+        entry = suite_ledger.lookup(project, tree)
+        if entry is None:
+            raise VerificationError(
+                f"{field}: ledger entry for tree {tree[:12]} is missing or "
+                f"deleted — the record cites it but it no longer exists"
+            )
+        actual_digest = entry.get("digest", "")[:16]
+        if actual_digest != cited_digest:
+            raise VerificationError(
+                f"{field}: digest mismatch for tree {tree[:12]} — "
+                f"cited={cited_digest}, actual={actual_digest}"
+            )
+        # For head_source: the entry's failing_nodes must match the record's
+        # at-base row ids.
+        if field == "head_source":
+            record_nodes = set()
+            for line in text.split("\n"):
+                if line.startswith("|") and "::" in line:
+                    parts = line.split("|")
+                    if len(parts) >= 2:
+                        nid = parts[1].strip()
+                        if "::" in nid:
+                            record_nodes.add(nid)
+            entry_nodes = set(entry.get("failing_nodes", []))
+            if record_nodes and entry_nodes != record_nodes:
+                raise VerificationError(
+                    f"head_source: ledger entry's failing_nodes "
+                    f"({len(entry_nodes)}) do not match the record's at-base "
+                    f"rows ({len(record_nodes)}) — cited tree {tree[:12]}"
+                )
+
+
 def reject_placeholder(raw: str) -> None:
     """Refuse an argument the planner never substituted.
 
@@ -588,6 +671,11 @@ def verify_detailed(record_path: Path, project: Path | None = None) -> tuple[str
             f"Add the uncovered node ids to baseline_red (or fix the tests) and "
             f"re-run step 0."
         )
+
+    # ── Ledger citation check ────────────────────────────────────────────
+    # If the record cites a ledger entry, verify that entry still exists,
+    # has a matching digest, and has the expected tree.
+    _verify_ledger_citations(text, project)
 
     rows = parse_rows(section)
 

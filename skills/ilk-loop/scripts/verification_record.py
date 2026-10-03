@@ -28,6 +28,7 @@ import hashlib
 import json
 import re
 import os
+import time
 import re
 import subprocess
 import sys
@@ -892,6 +893,59 @@ def _find_adding_commits(project: Path, base_sha: str,
     return result
 
 
+def ledger_at_base(project: Path, base_tree: str, node_ids: list[str],
+                   base_entry: dict, baseline_red: list[dict] | None = None,
+                   ) -> dict[str, str] | None:
+    """Derive at-base verdicts from a ledger entry instead of rerunning.
+
+    Returns ``{node_id: verdict}`` if the entry covers the base tree, or
+    None if the entry is missing or invalid.  Verdicts:
+
+    - ``declared-at-base`` — the id is in the base's baseline_red.
+    - ``failed`` — the id is in the entry's failing set.
+    - ``absent-at-base`` — the id's test file does not exist at the base.
+    - ``passed`` — the id is not in the failing set and its file exists.
+
+    This replaces the worktree + subprocess-per-id path in ``run_at_base``
+    when a ledger entry is available.
+    """
+    if not node_ids:
+        return {}
+
+    # The entry must be for the base tree.
+    if base_entry.get("tree") != base_tree:
+        return None
+
+    base_failing = set(base_entry.get("failing_nodes", []))
+    declared = {n for n in node_ids
+                if _in_baseline_red(n, baseline_red or [])}
+
+    verdicts: dict[str, str] = {}
+    for nid in node_ids:
+        if nid in declared:
+            verdicts[nid] = "declared-at-base"
+        elif nid in base_failing:
+            verdicts[nid] = "failed"
+        else:
+            # Check if the test file exists at the base tree.
+            parts = nid.split("::", 1)
+            file_path = parts[0]
+            try:
+                # git ls-tree returns empty for missing paths.
+                out = subprocess.run(
+                    ["git", "ls-tree", base_tree, file_path],
+                    cwd=project, capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=10,
+                )
+                if (out.stdout or "").strip():
+                    verdicts[nid] = "passed"
+                else:
+                    verdicts[nid] = "absent-at-base"
+            except (OSError, subprocess.SubprocessError):
+                verdicts[nid] = "absent-at-base"
+    return verdicts
+
+
 def _extract_plan_slug(commit_msg: str) -> str | None:
     """Extract the plan slug from a ``[plan:<slug>#…]`` trailer, or None."""
     m = re.search(r"\[plan:([^#\]]+)#", commit_msg)
@@ -1289,7 +1343,12 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   suite_output_path: str | None = None,
                   suite_output_text: str | None = None,
                   suite_source: str | None = None,
-                  suite_source_sha256: str | None = None) -> str:
+                  suite_source_sha256: str | None = None,
+                  ledger_mode: str | None = None,
+                  head_source: str | None = None,
+                  base_source: str | None = None,
+                  ledger_wait_sec: int | None = None,
+                  record_elapsed_sec: int | None = None) -> str:
     """Render the complete record.  Measurements only — no verdict column.
 
     The ``attributed`` column is deliberately absent.  It was the cell that
@@ -1339,6 +1398,17 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
         lines.append(f"suite_source: {suite_source}")
     if suite_source_sha256 is not None:
         lines.append(f"suite_source_sha256: {suite_source_sha256}")
+    # Ledger citation fields.
+    if ledger_mode is not None:
+        lines.append(f"ledger_mode: {ledger_mode}")
+    if head_source is not None:
+        lines.append(f"head_source: {head_source}")
+    if base_source is not None:
+        lines.append(f"base_source: {base_source}")
+    if ledger_wait_sec is not None:
+        lines.append(f"ledger_wait_sec: {ledger_wait_sec}")
+    if record_elapsed_sec is not None:
+        lines.append(f"record_elapsed_sec: {record_elapsed_sec}")
     lines += [
         "",
         "## At-base rerun",
@@ -1716,30 +1786,140 @@ def _write_measured_record(project: Path, record: Path, args,
     if not _existing_record_is_measured(record, head):
         _atomic_write(record, stub)
 
-    try:
-        # Apply the scope, do not merely record it.
-        selection = scope.get("selection") if scope.get("mode") == "scoped" else None
-        # Compute the suite budget: explicit if --suite-timeout was passed,
-        # measured from history otherwise.
-        suite_budget, suite_budget_source = compute_suite_budget(
-            project, args.suite_timeout)
-        results = run_suite(project, invocation, suite_budget,
-                            selection=selection)
-        # Save raw suite output beside the record for failure diagnostics.
-        suite_output_text = results.get("suite_output_text", "")
-    except (TimeoutError, ValueError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        reason = "timeout" if isinstance(exc, TimeoutError) else "no summary line"
-        print(f"ILK-CHECK: unmeasured {reason}", file=sys.stderr)
-        print(f"stub record left at {record}", file=sys.stderr)
-        return 1
+    # ── Ledger mode ──────────────────────────────────────────────────────
+    ledger_mode = getattr(args, "ledger", "off")
+    ledger_entry: dict | None = None
+    base_ledger: dict | None = None
+    at_base_from_ledger = False
+    ledger_wait_sec = 0
+    record_start = time.monotonic()
+    suite_budget: int = 0
+    suite_budget_source: str = "default"
+
+    if ledger_mode != "off":
+        import suite_ledger
+        base_tree = _git(project, "rev-parse", f"{args.base_sha}^{{tree}}")
+        ledger_entry = suite_ledger.lookup(project, tree, invocation)
+        if not ledger_entry:
+            # Check if a background job is measuring this tree.
+            running_entry = suite_ledger.wait_for(
+                project, tree, invocation,
+                timeout_s=max(60, getattr(args, "suite_timeout", 300) or 300),
+            )
+            if running_entry:
+                ledger_wait_sec = round(time.monotonic() - record_start)
+                ledger_entry = running_entry
+        if ledger_entry:
+            # Build results from the ledger entry.
+            results = {
+                "counts": ledger_entry["counts"],
+                "failing_nodes": ledger_entry["failing_nodes"],
+            }
+            # Read suite output from the ledger's output file.
+            ld = suite_ledger.ledger_dir(project)
+            output_sha = ledger_entry.get("output_sha256")
+            output_path = ld / f"{tree}.output.txt"
+            if output_path.is_file():
+                suite_output_text = output_path.read_text(encoding="utf-8")
+                if output_sha:
+                    actual = hashlib.sha256(
+                        suite_output_text.encode()).hexdigest()
+                    if actual != output_sha:
+                        print(f"WARNING: ledger output hash mismatch for "
+                              f"{tree[:12]}", file=sys.stderr)
+            else:
+                suite_output_text = ""
+            # Scope is full when reading from the ledger.
+            scope["mode"] = "full"
+            scope["reason"] = "ledger entry is a full-suite run"
+            scope["count"] = ledger_entry["counts"]["total"]
+            results["suite_duration_sec"] = ledger_entry.get(
+                "suite_duration_sec")
+            results["suite_budget"] = (0, "ledger")
+        elif ledger_mode == "require":
+            # No entry found — measure in-process, then use the result.
+            try:
+                suite_budget, suite_budget_source = compute_suite_budget(
+                    project, args.suite_timeout)
+                results = run_suite(project, invocation, suite_budget)
+                suite_output_text = results.get("suite_output_text", "")
+            except (TimeoutError, ValueError) as exc:
+                print(f"ERROR: ledger require — no entry and suite failed: "
+                      f"{exc}", file=sys.stderr)
+                print("ILK-CHECK: unmeasured ledger require failed",
+                      file=sys.stderr)
+                return 1
+            # Write the entry to the ledger for future lookups.
+            try:
+                import suite_ledger
+                measure_entry = {
+                    "tree": tree,
+                    "invocation": invocation,
+                    "counts": results["counts"],
+                    "failing_nodes": sorted(results["failing_nodes"]),
+                    "suite_duration_sec": results.get("suite_duration_sec", 0),
+                    "digest": "",
+                }
+                measure_entry["digest"] = suite_ledger._compute_digest(
+                    measure_entry)
+                ld = suite_ledger.ledger_dir(project)
+                ld.mkdir(parents=True, exist_ok=True)
+                entry_path = ld / f"{tree}.json"
+                entry_path.write_text(
+                    json.dumps(measure_entry, sort_keys=True, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                ledger_entry = measure_entry
+                # Write output text.
+                output_path = ld / f"{tree}.output.txt"
+                output_path.write_text(suite_output_text, encoding="utf-8")
+            except (OSError, PermissionError) as exc:
+                print(f"WARNING: could not write ledger entry: {exc}",
+                      file=sys.stderr)
+        else:
+            # prefer mode, no entry — fall through to run_suite.
+            pass
+
+    if ledger_entry is None:
+        try:
+            # Apply the scope, do not merely record it.
+            selection = scope.get("selection") if scope.get("mode") == "scoped" else None
+            # Compute the suite budget: explicit if --suite-timeout was passed,
+            # measured from history otherwise.
+            suite_budget, suite_budget_source = compute_suite_budget(
+                project, args.suite_timeout)
+            results = run_suite(project, invocation, suite_budget,
+                                selection=selection)
+            # Save raw suite output beside the record for failure diagnostics.
+            suite_output_text = results.get("suite_output_text", "")
+        except (TimeoutError, ValueError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            reason = "timeout" if isinstance(exc, TimeoutError) else "no summary line"
+            print(f"ILK-CHECK: unmeasured {reason}", file=sys.stderr)
+            print(f"stub record left at {record}", file=sys.stderr)
+            return 1
 
     nodes = results["failing_nodes"]
     try:
         base_red = read_baseline_red_at(project, args.base_sha)
         head_red = read_baseline_red(project)
-        at_base = run_at_base(project, args.base_sha, nodes, invocation,
-                              baseline_red=base_red)
+        # Try ledger at-base first when we have a ledger entry for HEAD.
+        if ledger_entry is not None and ledger_mode != "off":
+            import suite_ledger
+            base_tree_sha = _git(project, "rev-parse",
+                                 f"{args.base_sha}^{{tree}}")
+            base_ledger = suite_ledger.lookup(
+                project, base_tree_sha, invocation)
+            if base_ledger:
+                ledger_verdicts = ledger_at_base(
+                    project, base_tree_sha, nodes, base_ledger,
+                    baseline_red=base_red)
+                if ledger_verdicts is not None:
+                    at_base = ledger_verdicts
+                    at_base_from_ledger = True
+        if not at_base_from_ledger:
+            at_base = run_at_base(project, args.base_sha, nodes, invocation,
+                                  baseline_red=base_red)
     except (ValueError, RuntimeError) as exc:
         if "exceeds the" in str(exc) and "cap" in str(exc):
             # Designed human-escalation: write the named stop, not the stub.
@@ -1837,6 +2017,19 @@ def _write_measured_record(project: Path, record: Path, args,
         if not _in_baseline_red(nid, base_red or [])
     ]
 
+    # Compute ledger citation fields.
+    if ledger_entry is not None:
+        head_source = (f"ledger {ledger_entry['tree']} "
+                       f"{ledger_entry['digest'][:16]}")
+    else:
+        head_source = "run"
+    if at_base_from_ledger and base_ledger is not None:
+        base_source = (f"ledger {base_ledger['tree']} "
+                       f"{base_ledger['digest'][:16]}")
+    else:
+        base_source = "rerun"
+    record_elapsed_sec = round(time.monotonic() - record_start)
+
     record_text = render_record(
         batch=args.batch or record.stem,
         head=head, tree=tree, base_sha=args.base_sha,
@@ -1852,6 +2045,11 @@ def _write_measured_record(project: Path, record: Path, args,
         suite_output_path=str(suite_output_file),
         suite_output_text=suite_output_text,
         suite_source="tool",
+        ledger_mode=ledger_mode,
+        head_source=head_source,
+        base_source=base_source,
+        ledger_wait_sec=ledger_wait_sec if ledger_wait_sec else None,
+        record_elapsed_sec=record_elapsed_sec,
     )
     # Inject attempt header after the batch line.
     record_text = record_text.replace(
@@ -2282,6 +2480,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--master", default=None, metavar="PATH",
         help="path to the MASTER plan (.md); required when --base-sha is 'auto'",
+    )
+    ap.add_argument(
+        "--ledger", default="prefer", choices=("prefer", "require", "off"),
+        metavar="MODE",
+        help="control ledger lookups for head and base: 'prefer' uses the "
+             "ledger when an entry exists, 'require' measures in-process if "
+             "no entry is found (and refuses head_source: run), 'off' runs "
+             "the suite directly (today's behaviour).",
     )
     ap.add_argument(
         "--from-suite-output", default=None, metavar="FILE",
