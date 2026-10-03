@@ -4096,11 +4096,19 @@ for k, v in sorted(d.get("env", {}).items()):
   # interrupt the `wait` instead of deferring until the foreground job
   # finishes.  set -m gives the backgrounded pipeline its own process
   # group so the trap can TERM the whole group.
+  #
+  # `exec` is load-bearing: GNU timeout calls setpgid() on itself unless it
+  # already leads its group.  As a CHILD of this subshell it moved into a
+  # group of its own, and every `kill -- -$_ILK_AGENT_PGID` (the watcher,
+  # the trap, the cleanup below) missed the agent.  Exec'd, gtimeout IS the
+  # group leader and the agent stays in the group we kill.  Measured
+  # 2026-10-03, run 20261003-125807: iteration 1's agent outlived its
+  # plan-amended stop and kept committing through iterations 2 and 3.
   write_phase agent
   set -m
   (cd "$cwd" && { [[ -z "$PATH_PRELUDE" ]] || eval "$PATH_PRELUDE"; } \
       && eval "$settings_env_exports" \
-      && ILK_WORKER_SESSION=1 gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
+      && ILK_WORKER_SESSION=1 exec gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
     | tee "$jsonl_log" | python3 "$renderer" | tee "$iter_log" &
   local _pipeline_pid=$!
   set +m

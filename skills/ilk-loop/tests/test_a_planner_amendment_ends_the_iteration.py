@@ -697,3 +697,84 @@ class TestAC6SignalExitWipPreserved:
         assert "WIP" in log.stdout, (
             f"expected WIP commit after signal kill, got: {log.stdout}"
         )
+
+# ── The kill must reach the agent, not only the pipeline wrapper ─────────────
+
+class TestAmendmentKillReachesTheAgent:
+    """A plan-amended stop must leave no live agent behind.
+
+    The runner records the PGID of its backgrounded pipeline, whose leader is
+    the ``( cd ... && eval ... && gtimeout ... )`` subshell.  GNU timeout
+    calls ``setpgid`` on itself unless it already leads its group, so as a
+    CHILD of that subshell it moved into a group of its own, and every
+    ``kill -- -$PGID`` missed it.  Measured on chad-mbp 2026-10-03, run
+    20261003-125807: iteration 1's agent (pid/pgid 80135) survived its
+    plan-amended stop and kept committing through iterations 2 and 3. Its
+    plan edits tripped iteration 3's watcher, and the runner then gated an
+    unfinished step 0 and stopped with ``local_checks_failed_no_commits``.
+    """
+
+    def test_agent_is_dead_when_the_runner_returns(self, tmp_path: Path) -> None:
+        world = _setup_project(tmp_path)
+        plans_dir = world["plans"]
+        _write_sub_plan(plans_dir / "2026-10-02-test-slug.md")
+        _write_master(plans_dir / "MASTER-2026-10-02-execution-plan.md",
+                      sub_plan_filename="2026-10-02-test-slug.md")
+
+        pid_file = tmp_path / "agent.pid"
+        stub = world["bin"] / "claude"
+        stub.write_text(
+            "#!/usr/bin/env bash\n"
+            f"echo $$ > '{pid_file}'\n"
+            "exec sleep 120\n",
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
+
+        env = {
+            **os.environ,
+            "PATH": f"{world['bin']}{os.pathsep}{os.environ.get('PATH', '')}",
+            "HOME": str(tmp_path),
+            "ILK_DATA_HOME": str(world["data_home"]),
+        }
+        env.pop("ILK_DOTSOURCE_ONLY", None)
+
+        import threading
+
+        def amend_plan() -> None:
+            time.sleep(5)
+            _write_sub_plan(plans_dir / "2026-10-02-test-slug.md",
+                            body_above_findings="## Steps\n\n### Step 0\n\nAMENDED.\n")
+
+        threading.Thread(target=amend_plan, daemon=True).start()
+
+        agent_pid = None
+        try:
+            result = _run_runner(
+                [str(_RUNNER),
+                 "--project-path", str(world["project"]),
+                 "--max-iterations", "1",
+                 "--iteration-timeout-min", "1",
+                 "--model", "test-model"],
+                cwd=str(world["project"]), env=env, timeout=120,
+            )
+            combined = result.stdout + result.stderr
+            assert "plan-amended" in combined, combined[-500:]
+            agent_pid = int(pid_file.read_text().strip())
+            try:
+                os.kill(agent_pid, 0)
+                alive = True
+            except ProcessLookupError:
+                alive = False
+            assert not alive, (
+                f"agent pid {agent_pid} outlived its plan-amended stop: the "
+                "kill went to the pipeline's group, not the agent's"
+            )
+        finally:
+            if agent_pid is None and pid_file.exists():
+                agent_pid = int(pid_file.read_text().strip() or 0) or None
+            if agent_pid:
+                try:
+                    os.kill(agent_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
