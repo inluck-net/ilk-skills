@@ -79,7 +79,6 @@ def _record_without_counts() -> batch_gate.BatchGateRecord:
 
 # ── AC-1: counts are written correctly ───────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="counts field not yet implemented")
 def test_ac1_counts_written_for_mixed_buckets(tmp_path: Path) -> None:
     """With 1 attributed + 2 failed-at-base + 1 born-red, counts are correct."""
     rec = _record_with_counts(
@@ -108,7 +107,6 @@ def test_ac1_counts_written_for_mixed_buckets(tmp_path: Path) -> None:
 
 # ── AC-2: bucket keys sum to suite_failed ────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="counts field not yet implemented")
 def test_ac2_bucket_keys_sum_to_suite_failed(tmp_path: Path) -> None:
     """Every fixture's bucket keys sum to suite_failed."""
     fixtures = [

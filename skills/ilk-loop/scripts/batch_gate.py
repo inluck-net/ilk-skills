@@ -130,6 +130,12 @@ class BatchGateRecord:
     #: means the output was ingested from a pre-existing file.  Absent on
     #: legacy records — readers treat that as ``"tool"``.
     suite_source: Optional[str] = None
+    #: Per-bucket counts derived from the at-base verdicts.  Keys:
+    #: ``suite_failed``, ``attributed``, ``failed_at_base``,
+    #: ``declared_at_base``, ``born_red``, ``flaky_owed``.  The bucket keys
+    #: sum to ``suite_failed``.  Absent on legacy records — readers treat
+    #: that as "not recorded", not as zeros.
+    counts: Optional[dict] = None
 
     def to_dict(self) -> dict:
         d = {
@@ -151,6 +157,8 @@ class BatchGateRecord:
             d["flaky_owed"] = list(self.flaky_owed)
         if self.suite_source is not None:
             d["suite_source"] = self.suite_source
+        if self.counts is not None:
+            d["counts"] = dict(self.counts)
         return d
 
 
@@ -291,6 +299,7 @@ def read_record(
                 tree_sha=data.get("tree_sha") or None,
                 writer=data.get("writer") or None,
                 flaky_owed=_optional_str_list(data.get("flaky_owed")),
+                counts=data.get("counts") if isinstance(data.get("counts"), dict) else None,
             )
         # Fall through to legacy path.
     p = record_path(runtime_dir)
@@ -315,6 +324,7 @@ def read_record(
         tree_sha=data.get("tree_sha") or None,
         writer=data.get("writer") or None,
         flaky_owed=_optional_str_list(data.get("flaky_owed")),
+        counts=data.get("counts") if isinstance(data.get("counts"), dict) else None,
     )
 
 

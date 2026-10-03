@@ -519,11 +519,52 @@ def _rederive_carried(missing: list[str], text: str,
     return owed
 
 
-def verify(record_path: Path, project: Path | None = None) -> tuple[str, int]:
+def _classify_counts(
+    rows: list[list[str]],
+    attributed: list[list[str]],
+    flaky_owed: list[str],
+) -> dict[str, int]:
+    """Derive per-bucket counts from the at-base table.
+
+    Returns a dict with keys ``suite_failed``, ``attributed``,
+    ``failed_at_base``, ``declared_at_base``, ``born_red``, ``flaky_owed``.
+    The non-``suite_failed`` keys sum to ``suite_failed``.
+    """
+    attributed_nodes = {r[0] for r in attributed}
+    flaky_set = set(flaky_owed)
+    failed_at_base = 0
+    declared_at_base = 0
+    born_red = 0
+    for r in rows:
+        if not r:
+            continue
+        node = r[0]
+        if node in attributed_nodes:
+            continue  # counted under attributed
+        if node in flaky_set:
+            continue  # counted under flaky_owed
+        at_base = r[1].strip().lower() if len(r) >= 2 else ""
+        if at_base == "declared-at-base":
+            declared_at_base += 1
+        elif at_base.startswith("born-red-at:"):
+            born_red += 1
+        elif at_base == "failed":
+            failed_at_base += 1
+    return {
+        "suite_failed": len(rows),
+        "attributed": len(attributed),
+        "failed_at_base": failed_at_base,
+        "declared_at_base": declared_at_base,
+        "born_red": born_red,
+        "flaky_owed": len(flaky_owed),
+    }
+
+
+def verify(record_path: Path, project: Path | None = None) -> tuple[str, int, list[str], dict[str, int]]:
     """Raise VerificationError unless the record establishes a clean batch.
 
-    Returns ``(message, excused_count)`` — the number of failures the record
-    accounted for and exonerated.
+    Returns ``(message, excused_count, flaky_owed, counts)`` where counts
+    is a dict of per-bucket failure counts.
     """
     if not record_path.is_file():
         raise VerificationError(f"record not found: {record_path}")
@@ -572,7 +613,11 @@ def verify(record_path: Path, project: Path | None = None) -> tuple[str, int]:
         if carried_owed:
             msg += (f"; {len(carried_owed)} carried flaky (owed): "
                     f"{', '.join(carried_owed)}")
-        return (msg, 0, list(carried_owed))
+        zero_counts = {
+            "suite_failed": 0, "attributed": 0, "failed_at_base": 0,
+            "declared_at_base": 0, "born_red": 0, "flaky_owed": 0,
+        }
+        return (msg, 0, list(carried_owed), zero_counts)
 
     if len(rows) != failed:
         raise VerificationError(
@@ -598,10 +643,11 @@ def verify(record_path: Path, project: Path | None = None) -> tuple[str, int]:
     for node in carried_owed:
         if node not in flaky_owed:
             flaky_owed.append(node)
+    counts = _classify_counts(rows, bad, flaky_owed)
     msg = f"attribution verified: {failed} failure(s), none attributed"
     if flaky_owed:
         msg += f"; {len(flaky_owed)} flaky (owed): {', '.join(flaky_owed)}"
-    return (msg, failed, flaky_owed)
+    return (msg, failed, flaky_owed, counts)
 
 
 
@@ -777,7 +823,9 @@ def check_verified_tree(project: Path, record_path: Path) -> tuple[bool, str]:
 def write_gate_record(project: Path, excused: int,
                       flaky_owed: list[str] | None = None,
                       suite_source: str | None = None,
-                      batch: str | None = None) -> tuple[bool, str]:
+                      batch: str | None = None,
+                      counts: dict[str, int] | None = None,
+                      ) -> tuple[bool, str]:
     """Record the verified verdict where the PROOF CHECK actually reads it.
 
     Verification and proof were two different files. This script validates
@@ -843,6 +891,7 @@ def write_gate_record(project: Path, excused: int,
         writer="verify_attribution",
         flaky_owed=list(flaky_owed) if flaky_owed else None,
         suite_source=suite_source,
+        counts=dict(counts) if counts else None,
     )
     try:
         written = batch_gate.write_record(record, runtime_dir, batch=batch)
@@ -1070,7 +1119,7 @@ def main(argv: list[str] | None = None) -> int:
                     record_path = resolve_batch_record(project, args.batch)
                 # else: record_path already set
 
-        message, excused, flaky_owed = verify(record_path, project=project)
+        message, excused, flaky_owed, counts = verify(record_path, project=project)
     except VerificationError as exc:
         print(f"ATTRIBUTION FAILED: {exc}", file=sys.stderr)
         return 1
@@ -1096,7 +1145,7 @@ def main(argv: list[str] | None = None) -> int:
 
     ok, detail = write_gate_record(project, excused, flaky_owed=flaky_owed,
                                    suite_source=suite_source,
-                                   batch=args.batch)
+                                   batch=args.batch, counts=counts)
     if ok:
         print(f"{message}; batch-gate record written to {detail}")
     else:
