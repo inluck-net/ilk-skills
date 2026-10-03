@@ -19,6 +19,12 @@
 # =============================================================================
 set -euo pipefail
 
+# --- sandbox refusal ---------------------------------------------------------
+if [[ "${ILK_SANDBOX:-}" == "1" ]]; then
+  echo "install-scheduler-autostart: refusing to run under ILK_SANDBOX=1 (sandbox runs are foreground only)" >&2
+  exit 2
+fi
+
 LABEL="net.inluck.ilk.scheduler"
 PLIST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
 HEALTH_LABEL="net.inluck.ilk.scheduler-health"

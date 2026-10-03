@@ -1870,10 +1870,24 @@ get_ilk_runtime_dir() {
 # _runtime_file <name> — echo <runtime dir>/<name>, return 1 if the dir
 # doesn't resolve.  Fail-closed: callers never build a path from an empty dir.
 # Stderr is suppressed so callers get a clean empty-string on failure.
+#
+# Under ILK_SANDBOX=1, refuse if the resolved dir is inside the stable
+# data home (ILK_STABLE_DATA_HOME, or the real user's ~/.ilk-data).
+# This prevents a sandboxed runner from writing into the live data home.
 _runtime_file() {
   local name="$1"
   local rd
   rd="$(get_ilk_runtime_dir 2>/dev/null)" || return 1
+  if [[ "${ILK_SANDBOX:-}" == "1" ]]; then
+    local stable="${ILK_STABLE_DATA_HOME:-${ILK_DATA_HOME:-${ILK_DATA_DIR:-$HOME/.ilk-data}}}"
+    local real_rd real_stable
+    real_rd="$(cd -P "$rd" && pwd -P 2>/dev/null)" || real_rd="$rd"
+    real_stable="$(cd -P "$stable" && pwd -P 2>/dev/null)" || real_stable="$stable"
+    if [[ "$real_rd" == "$real_stable" || "$real_rd" == "$real_stable"/* ]]; then
+      echo "! [sandbox] refusing to write ${rd}/${name}: inside the stable data home ${stable}" >&2
+      return 1
+    fi
+  fi
   echo "${rd}/${name}"
 }
 

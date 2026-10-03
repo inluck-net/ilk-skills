@@ -2,10 +2,6 @@
 
 Sub-plan ``a-sandbox-cannot-write-the-stable-home`` (MASTER-2026-10-02d).
 
-AC-1..AC-5 are ``xfail(strict=True, reason="red-first")`` — the sandbox
-launcher and guards do not exist yet.  AC-6 is a plain control that must
-pass today (nothing refuses writes when ``ILK_SANDBOX`` is unset).
-
 **Every test pins HOME, ILK_DATA_HOME, ILK_RELEASES_ROOT and all other
 paths to tmp.  Never pass the real home, ``~/.ilk-data`` or
 ``~/.ilk-sandbox`` to anything.**
@@ -94,7 +90,6 @@ def _sandbox_env(home: Path, stable: Path, releases: Path) -> dict[str, str]:
 
 # ── AC-1: pinned env ────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac1_sandbox_env_is_pinned(sandbox_dirs: dict) -> None:
     """``ilk-sandbox.sh --root <root> --worktree <wt> -- env`` prints
     all expected pinned variables and omits ``ILK_DATA_DIR``."""
@@ -131,11 +126,8 @@ def test_ac1_sandbox_env_is_pinned(sandbox_dirs: dict) -> None:
 
 # ── AC-2: refusal cases ─────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac2_missing_worktree_exits_nonzero(sandbox_dirs: dict) -> None:
     """Missing ``--worktree`` exits non-zero and does not run the command."""
-    if not SANDBOX_SH.exists():
-        pytest.fail("ilk-sandbox.sh does not exist yet — red-first pin")
     d = sandbox_dirs
     marker = d["root"] / "marker"
     env = _sandbox_env(d["home"], d["stable"], d["releases"])
@@ -155,11 +147,8 @@ def test_ac2_missing_worktree_exits_nonzero(sandbox_dirs: dict) -> None:
     assert not marker.exists(), "command ran despite invalid worktree"
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac2_worktree_under_releases_exits_nonzero(sandbox_dirs: dict) -> None:
     """A worktree whose realpath is under ``ILK_RELEASES_ROOT`` is refused."""
-    if not SANDBOX_SH.exists():
-        pytest.fail("ilk-sandbox.sh does not exist yet — red-first pin")
     d = sandbox_dirs
     # Create a worktree inside releases.
     bad_wt = d["releases"] / "v1" / "repo"
@@ -185,11 +174,8 @@ def test_ac2_worktree_under_releases_exits_nonzero(sandbox_dirs: dict) -> None:
     assert not marker.exists(), "command ran despite worktree under releases"
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac2_detach_flag_exits_nonzero(sandbox_dirs: dict) -> None:
     """``--detach`` in sandbox args exits non-zero."""
-    if not SANDBOX_SH.exists():
-        pytest.fail("ilk-sandbox.sh does not exist yet — red-first pin")
     d = sandbox_dirs
     marker = d["root"] / "marker"
     env = _sandbox_env(d["home"], d["stable"], d["releases"])
@@ -240,7 +226,6 @@ def _source_runner_and_call(
     )
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac3_append_revert_row_refuses_under_sandbox(
     sandbox_dirs: dict,
     tmp_path: Path,
@@ -297,7 +282,6 @@ def test_ac3_append_revert_row_refuses_under_sandbox(
     assert not target.exists(), "file was created despite refusal"
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac3_append_record_refuses_under_sandbox(
     sandbox_dirs: dict,
     tmp_path: Path,
@@ -346,7 +330,6 @@ def test_ac3_append_record_refuses_under_sandbox(
 
 # ── AC-4: _runtime_file refuses ──────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac4_runtime_file_refuses_under_sandbox(
     sandbox_dirs: dict,
     tmp_path: Path,
@@ -393,7 +376,6 @@ def test_ac4_runtime_file_refuses_under_sandbox(
 # ── AC-5: no daemons in sandbox ─────────────────────────────────────────────
 
 @pytest.mark.expects_blocked_host  # install script may call launchctl
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac5_install_scheduler_exits_nonzero_under_sandbox(
     sandbox_dirs: dict,
 ) -> None:
@@ -422,7 +404,6 @@ def test_ac5_install_scheduler_exits_nonzero_under_sandbox(
     assert not plist.exists(), f"plist was written: {plist}"
 
 
-@pytest.mark.xfail(strict=True, reason="red-first")
 def test_ac5_scheduler_exits_nonzero_under_sandbox(
     sandbox_dirs: dict,
 ) -> None:

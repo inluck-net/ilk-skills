@@ -11,7 +11,10 @@ is still not shipped.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+
+from sandbox_guard import SandboxWriteRefused, stable_write_refusal
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -88,6 +91,10 @@ def append_revert_row(
         row["attribution"] = attribution
 
     path = Path(reverts_path)
+    refusal = stable_write_refusal(path)
+    if refusal is not None:
+        print(f"! [sandbox] {refusal}", file=sys.stderr)
+        raise SandboxWriteRefused(refusal)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")

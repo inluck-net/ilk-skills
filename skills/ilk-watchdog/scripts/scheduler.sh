@@ -16,6 +16,15 @@ set -euo pipefail
 
 _ILK_SCRIPT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
+# --- sandbox refusal ---------------------------------------------------------
+# Sandbox runs are foreground processes driven by ilk-sandbox.sh; no daemons,
+# no pidfiles, no plist.  Exit before sourcing _ilk_pid.sh (which acquires
+# the lock at source time).
+if [[ "${ILK_SANDBOX:-}" == "1" ]]; then
+  echo "scheduler: refusing to run under ILK_SANDBOX=1 (sandbox runs are foreground only)" >&2
+  exit 2
+fi
+
 # --- single-instance guard (pidfile) -----------------------------------------
 
 # Sourced here, not next to the skill-root resolution below: the lock is

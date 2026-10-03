@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from sandbox_guard import SandboxWriteRefused, stable_write_refusal
+
 
 def append_record(path: Path, record: dict[str, Any]) -> None:
     """Append one JSON record to the ledger file.
@@ -27,6 +29,10 @@ def append_record(path: Path, record: dict[str, Any]) -> None:
     ``detached-component-contracts.md`` invariant 2b.2).  Creates the
     parent directory if it does not exist.
     """
+    refusal = stable_write_refusal(path)
+    if refusal is not None:
+        print(f"! [sandbox] {refusal}", file=sys.stderr)
+        raise SandboxWriteRefused(refusal)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, separators=(",", ":")) + "\n")
