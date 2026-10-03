@@ -190,20 +190,8 @@ def _write_points_jsonl(repo: Path, entries: list[dict]) -> Path:
     return p
 
 
-# ── xfail markers ─────────────────────────────────────────────────────────
-# These tests xfail(strict=True) until safety_kernel.py and
-# safety-kernel.json exist.  Each imports the module inside the test body
-# so the xfail is on the import, not on pytest collection.
-
-_xfail_no_module = pytest.mark.xfail(
-    reason="safety_kernel.py does not exist yet (step 1 delivers it)",
-    strict=True,
-)
-
-
 # ── AC-1: load() semantics ───────────────────────────────────────────────
 
-@_xfail_no_module
 def test_load_returns_both_tiers(tmp_path: Path) -> None:
     """load() on the shipped file returns a dict with 'rules' and 'kernel'."""
     from safety_kernel import load  # type: ignore[import-untyped]
@@ -218,7 +206,6 @@ def test_load_returns_both_tiers(tmp_path: Path) -> None:
     assert isinstance(result["kernel"], list) and len(result["kernel"]) > 0
 
 
-@_xfail_no_module
 def test_load_missing_file_raises(tmp_path: Path) -> None:
     """Missing safety-kernel.json raises KernelListError."""
     from safety_kernel import KernelListError, load  # type: ignore[import-untyped]
@@ -226,7 +213,6 @@ def test_load_missing_file_raises(tmp_path: Path) -> None:
         load(tmp_path)
 
 
-@_xfail_no_module
 def test_load_invalid_json_raises(tmp_path: Path) -> None:
     """Corrupt JSON raises KernelListError."""
     from safety_kernel import KernelListError, load  # type: ignore[import-untyped]
@@ -239,7 +225,6 @@ def test_load_invalid_json_raises(tmp_path: Path) -> None:
         load(repo)
 
 
-@_xfail_no_module
 def test_load_entry_without_why_raises(tmp_path: Path) -> None:
     """An entry missing 'why' raises KernelListError."""
     from safety_kernel import KernelListError, load  # type: ignore[import-untyped]
@@ -257,7 +242,6 @@ def test_load_entry_without_why_raises(tmp_path: Path) -> None:
 
 # ── AC-2: touches_kernel parity with h ───────────────────────────────────
 
-@_xfail_no_module
 def test_touches_kernel_hits(tmp_path: Path) -> None:
     """touches_kernel hits paths that are in or under the kernel."""
     from safety_kernel import load, touches_kernel  # type: ignore[import-untyped]
@@ -280,7 +264,6 @@ def test_touches_kernel_hits(tmp_path: Path) -> None:
         )
 
 
-@_xfail_no_module
 def test_touches_kernel_misses(tmp_path: Path) -> None:
     """touches_kernel misses paths outside the kernel."""
     from safety_kernel import load, touches_kernel  # type: ignore[import-untyped]
@@ -300,7 +283,6 @@ def test_touches_kernel_misses(tmp_path: Path) -> None:
         )
 
 
-@_xfail_no_module
 def test_touches_kernel_covers_all_protected_kernel(tmp_path: Path) -> None:
     """Every path in h's PROTECTED_KERNEL is a kernel hit."""
     from safety_kernel import load, touches_kernel  # type: ignore[import-untyped]
@@ -319,7 +301,6 @@ def test_touches_kernel_covers_all_protected_kernel(tmp_path: Path) -> None:
 
 # ── AC-3: tier_of rules-wins-over-kernel ─────────────────────────────────
 
-@_xfail_no_module
 def test_tier_of_rules_path(tmp_path: Path) -> None:
     """A path under tests/invariants/ is 'rules' tier."""
     from safety_kernel import load, tier_of  # type: ignore[import-untyped]
@@ -333,7 +314,6 @@ def test_tier_of_rules_path(tmp_path: Path) -> None:
     assert result[0] == "rules", f"expected 'rules', got {result[0]!r}"
 
 
-@_xfail_no_module
 def test_tier_of_kernel_path(tmp_path: Path) -> None:
     """A kernel-only path is 'kernel' tier."""
     from safety_kernel import load, tier_of  # type: ignore[import-untyped]
@@ -347,7 +327,6 @@ def test_tier_of_kernel_path(tmp_path: Path) -> None:
     assert result[0] == "kernel", f"expected 'kernel', got {result[0]!r}"
 
 
-@_xfail_no_module
 def test_tier_of_directory_with_rules_file_wins(tmp_path: Path) -> None:
     """A directory containing a rules file returns 'rules' (rules wins)."""
     from safety_kernel import load, tier_of  # type: ignore[import-untyped]
@@ -367,7 +346,6 @@ def test_tier_of_directory_with_rules_file_wins(tmp_path: Path) -> None:
 
 # ── AC-4: every non-may_be_absent entry exists ───────────────────────────
 
-@_xfail_no_module
 def test_all_required_entries_exist_on_disk() -> None:
     """Every non-may_be_absent entry in safety-kernel.json exists in this repo."""
     from safety_kernel import load  # type: ignore[import-untyped]
@@ -392,19 +370,17 @@ def test_all_required_entries_exist_on_disk() -> None:
 
 # ── AC-5: check_range violations ─────────────────────────────────────────
 
-@_xfail_no_module
 def test_check_range_unattended_kernel_edit(tmp_path: Path) -> None:
     """auto_planned build editing a kernel file → kernel-edit-by-unattended-build."""
-    import safety_kernel  # noqa: F401 — xfail guard
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
-    base = _git_output(["rev-parse", "HEAD"], repo)
     _copy_kernel_json(repo)
     plans = _make_auto_planned_master(repo)
+    base = _git_output(["rev-parse", "HEAD"], repo)
     target = repo / "skills" / "ilk-loop" / "scripts" / "batch_gate.py"
     target.parent.mkdir(parents=True, exist_ok=True)
-    _trailered_commit(repo, target, "# edited\n")
+    _trailered_commit(repo, target, "# edited\n", slug="2026-10-03k-sub")
     head = _git_output(["rev-parse", "HEAD"], repo)
     r = _run_cli(
         ["check-range", "--repo", str(repo), "--base", base, "--head", head,
@@ -419,19 +395,17 @@ def test_check_range_unattended_kernel_edit(tmp_path: Path) -> None:
     )
 
 
-@_xfail_no_module
 def test_check_range_session_rules_edit(tmp_path: Path) -> None:
     """Session master (no auto_planned) editing rules → rules-edit-by-loop-build."""
-    import safety_kernel  # noqa: F401 — xfail guard
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
-    base = _git_output(["rev-parse", "HEAD"], repo)
     _copy_kernel_json(repo)
     plans = _make_session_master(repo)
+    base = _git_output(["rev-parse", "HEAD"], repo)
     target = repo / "tests" / "invariants" / "a.py"
     target.parent.mkdir(parents=True, exist_ok=True)
-    _trailered_commit(repo, target, "# edited\n")
+    _trailered_commit(repo, target, "# edited\n", slug="2026-10-03k-sub")
     head = _git_output(["rev-parse", "HEAD"], repo)
     r = _run_cli(
         ["check-range", "--repo", str(repo), "--base", base, "--head", head,
@@ -446,10 +420,8 @@ def test_check_range_session_rules_edit(tmp_path: Path) -> None:
     )
 
 
-@_xfail_no_module
 def test_check_range_hand_commit_no_violation(tmp_path: Path) -> None:
     """A hand commit (no trailer) editing rules → no violation."""
-    import safety_kernel  # noqa: F401 — xfail guard
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
@@ -468,16 +440,14 @@ def test_check_range_hand_commit_no_violation(tmp_path: Path) -> None:
     assert r.returncode == 0, f"expected clean (exit 0), got {r.returncode}\n{r.stdout}\n{r.stderr}"
 
 
-@_xfail_no_module
 def test_check_range_unresolved_master(tmp_path: Path) -> None:
     """Trailered commit whose slug is in no master → kernel-edit-unresolved-master."""
-    import safety_kernel  # noqa: F401 — xfail guard
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
-    base = _git_output(["rev-parse", "HEAD"], repo)
     _copy_kernel_json(repo)
     plans = _make_auto_planned_master(repo)
+    base = _git_output(["rev-parse", "HEAD"], repo)
     target = repo / "skills" / "ilk-loop" / "scripts" / "batch_gate.py"
     target.parent.mkdir(parents=True, exist_ok=True)
     _trailered_commit(repo, target, "# edited\n", slug="nonexistent-slug")
@@ -495,16 +465,14 @@ def test_check_range_unresolved_master(tmp_path: Path) -> None:
     )
 
 
-@_xfail_no_module
 def test_check_range_points_jsonl_range(tmp_path: Path) -> None:
     """Untrailered commit inside a points.jsonl range → attributed by ledger."""
-    import safety_kernel  # noqa: F401 — xfail guard
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
-    base = _git_output(["rev-parse", "HEAD"], repo)
     _copy_kernel_json(repo)
     plans = _make_auto_planned_master(repo)
+    base = _git_output(["rev-parse", "HEAD"], repo)
 
     # Commit BEFORE so we can record its sha in points.jsonl.
     before_file = repo / "marker.txt"
@@ -541,11 +509,9 @@ def test_check_range_points_jsonl_range(tmp_path: Path) -> None:
 
 # ── AC-6: judged at base ─────────────────────────────────────────────────
 
-@_xfail_no_module
 def test_check_range_judged_at_base_not_head(tmp_path: Path) -> None:
     """A range that deletes the list at base and then edits kernel still
     produces the violation (judged by the list at base, not HEAD)."""
-    import safety_kernel  # noqa: F401 — xfail guard
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
@@ -560,12 +526,13 @@ def test_check_range_judged_at_base_not_head(tmp_path: Path) -> None:
                       if e.get("path") != "skills/ilk-loop/scripts/batch_gate.py"]
     kfile.write_text(json.dumps(data, indent=2), encoding="utf-8")
     _git(["add", "."], repo)
-    _git(["commit", "-m", "remove batch_gate from list [plan:sub#step-0]"], repo)
+    _git(["commit", "-m",
+          "remove batch_gate from list [plan:2026-10-03k-sub#step-0]"], repo)
 
     # Commit 2: edit batch_gate.py (auto-planned).
     target = repo / "skills" / "ilk-loop" / "scripts" / "batch_gate.py"
     target.parent.mkdir(parents=True, exist_ok=True)
-    _trailered_commit(repo, target, "# edited\n")
+    _trailered_commit(repo, target, "# edited\n", slug="2026-10-03k-sub")
     head = _git_output(["rev-parse", "HEAD"], repo)
 
     r = _run_cli(
@@ -582,10 +549,8 @@ def test_check_range_judged_at_base_not_head(tmp_path: Path) -> None:
     )
 
 
-@_xfail_no_module
 def test_check_range_no_list_at_base_gives_no_violations(tmp_path: Path) -> None:
     """A range whose base has no list → no violations, CLI prints judged_by: null."""
-    import safety_kernel  # noqa: F401 — xfail guard
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
@@ -614,10 +579,8 @@ def test_check_range_no_list_at_base_gives_no_violations(tmp_path: Path) -> None
 
 # ── AC-7: control — exit codes ───────────────────────────────────────────
 
-@_xfail_no_module
 def test_check_range_exits_0_on_hand_commits(tmp_path: Path) -> None:
     """CLI check-range exits 0 on a range of hand commits only."""
-    import safety_kernel  # noqa: F401 — xfail guard
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
@@ -639,10 +602,8 @@ def test_check_range_exits_0_on_hand_commits(tmp_path: Path) -> None:
     )
 
 
-@_xfail_no_module
 def test_check_range_exits_2_on_corrupt_list(tmp_path: Path) -> None:
     """CLI check-range exits 2 when the list at base is corrupt."""
-    import safety_kernel  # noqa: F401 — xfail guard
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)

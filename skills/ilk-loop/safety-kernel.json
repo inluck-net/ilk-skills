@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "rules": [
+    {"path": "tests/invariants/", "why": "the invariant suite that judges all improvement builds", "may_be_absent": true},
+    {"path": "skills/ilk-loop/safety-kernel.json", "why": "the single machine-readable safety kernel"},
+    {"path": "skills/ilk-loop/scripts/safety_kernel.py", "why": "the kernel reader every guard imports"},
+    {"path": "skills/ilk-loop/scripts/teeth.py", "why": "mutation harness that proves invariants bite", "may_be_absent": true},
+    {"path": "skills/ilk-loop/scripts/safety_case.py", "why": "aggregator that runs invariants + golden + teeth at release", "may_be_absent": true}
+  ],
+  "kernel": [
+    {"path": "skills/ilk-loop/scripts/run_local_checks.py", "guard": "gates", "why": "the local gate runner"},
+    {"path": "skills/ilk-loop/scripts/blocking_checks.py", "guard": "gates", "why": "blocking gate checks"},
+    {"path": "skills/ilk-loop/scripts/verify_step_integrity.py", "guard": "gates", "why": "step integrity verifier"},
+    {"path": "skills/ilk-loop/scripts/run_ilk_loop_claude.sh", "guard": "gates", "why": "the bash runner"},
+    {"path": "skills/ilk-loop/scripts/run_ilk_loop_claude.ps1", "guard": "gates", "why": "the PowerShell runner"},
+    {"path": "skills/ilk-loop/scripts/_ilk_marker.sh", "guard": "gates", "why": "iteration marker"},
+    {"path": "skills/ilk-loop/scripts/ship_audit.py", "guard": "proof", "why": "ship audit"},
+    {"path": "skills/ilk-loop/scripts/ship_transition.py", "guard": "proof", "why": "ship transition"},
+    {"path": "skills/ilk-loop/scripts/ship_integrity.py", "guard": "proof", "why": "ship integrity"},
+    {"path": "skills/ilk-loop/scripts/verification_record.py", "guard": "proof", "why": "verification record"},
+    {"path": "skills/ilk-loop/scripts/verify_attribution.py", "guard": "proof", "why": "attribution verifier"},
+    {"path": "skills/ilk-loop/scripts/batch_gate.py", "guard": "proof", "why": "batch gate"},
+    {"path": "skills/ilk-loop/scripts/red_owner.py", "guard": "proof", "why": "red owner attribution"},
+    {"path": "skills/ilk-loop/scripts/suite_ledger.py", "guard": "proof", "why": "suite ledger"},
+    {"path": "skills/ilk-loop/scripts/selfmod_worktree.py", "guard": "landing", "why": "selfmod worktree manager"},
+    {"path": "skills/ilk-ship/scripts/release_train.py", "guard": "landing", "why": "the release train", "may_be_absent": true},
+    {"path": "skills/ilk-ship/scripts/phase1_verify.py", "guard": "landing", "why": "phase 1 verify"},
+    {"path": "skills/ilk-upgrade/scripts/ilk_release.py", "guard": "landing", "why": "ilk release"},
+    {"path": "skills/ilk-loop/scripts/plan_lint.py", "guard": "qc", "why": "plan linter"},
+    {"path": "skills/ilk-loop/scripts/plan_preflight.py", "guard": "qc", "why": "plan preflight"},
+    {"path": "skills/ilk-loop/scripts/ilk_audit.py", "guard": "audit", "why": "ilk audit"},
+    {"path": "skills/ilk-watchdog/scripts/triage_apply.py", "guard": "triage", "why": "triage apply"},
+    {"path": "skills/ilk-self-improve/scripts/autoplan.py", "guard": "autoplan", "why": "auto-planner", "may_be_absent": true},
+    {"path": "skills/ilk-self-improve/scripts/autoplan_rails.py", "guard": "autoplan", "why": "auto-planner rails", "may_be_absent": true},
+    {"path": "hooks/no-live-clone-edit.py", "guard": "hooks", "why": "live clone edit guard"},
+    {"path": "hooks/no-foreign-plan-edit.py", "guard": "hooks", "why": "foreign plan edit guard"},
+    {"path": "hooks/no-full-suite.sh", "guard": "hooks", "why": "full suite guard"},
+    {"path": "pytest.ini", "guard": "test-infra", "why": "pytest configuration"},
+    {"path": ".ilk-launch.json", "guard": "test-infra", "why": "launch configuration"}
+  ],
+  "kernel_basenames": [
+    {"name": "conftest.py", "why": "test infrastructure shared fixture file"}
+  ]
+}
