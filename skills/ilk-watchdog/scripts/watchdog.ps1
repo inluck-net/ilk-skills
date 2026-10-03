@@ -316,6 +316,33 @@ function Read-PostmortemFrontmatter {
   return $fm
 }
 
+function Test-SentinelSuperseded {
+  <#
+    Check whether a sentinel's run_id precedes the latest launch's run_id.
+    Reads last-launch.json from the launcher dir and compares timestamps.
+    Returns $true if superseded, $false otherwise.
+  #>
+  param(
+    [string]$LauncherDir,
+    [string]$SentinelRunId
+  )
+  if (-not $LauncherDir -or -not $SentinelRunId) { return $false }
+  $launchJson = Join-Path $LauncherDir 'last-launch.json'
+  if (-not (Test-Path $launchJson)) { return $false }
+  # Validate sentinel run_id is a timestamp
+  if ($SentinelRunId -notmatch '^\d{8}-\d{6}$') { return $false }
+  try {
+    $d = Get-Content $launchJson -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+    $logDir = $d.log_dir
+    if (-not $logDir) { return $false }
+    $launchRunId = Split-Path $logDir -Leaf
+    if ($launchRunId -notmatch '^\d{8}-\d{6}$') { return $false }
+    return ($SentinelRunId -lt $launchRunId)
+  } catch {
+    return $false
+  }
+}
+
 function Get-StartupSentinelAction {
   <#
     Pure helper: decide what to do with a terminal sentinel at startup.
@@ -323,20 +350,22 @@ function Get-StartupSentinelAction {
 
     - 'stale-ignore': sentinel ended before this watchdog launched — ignore it.
       For success states, always stale-ignore if ended < launch.
-      For non-success states, stale-ignore only when a live loop PID is
-      detected (LoopAlive $true) — a previous run's leftover sentinel that
-      coincides with a fresh loop coming up.
+      For non-success states, stale-ignore when a live loop PID is detected
+      (LoopAlive $true), OR when the sentinel is superseded (its run_id
+      precedes the latest launch's run_id).
     - 'work-pending': sentinel says success but loop_status says work pending.
     - 'advance': sentinel says success and loop_status confirms all shipped.
     - 'classify': terminal state to adjudicate — hand off to feedback path.
-      For non-success: either not stale, or stale with no live loop.
+      For non-success: either not stale, or stale with no live loop and
+      not superseded.
   #>
   param(
     [string]$State,
     [string]$EndedAt,
     [datetime]$LaunchTime,
     [int]$LoopStatusExit,
-    [bool]$LoopAlive = $false
+    [bool]$LoopAlive = $false,
+    [bool]$Superseded = $false
   )
 
   $SuccessStates = @('all-shipped', 'already-shipped', 'shipped')
@@ -347,6 +376,9 @@ function Get-StartupSentinelAction {
 
   # Non-success terminal
   if ($SuccessStates -notcontains $State) {
+    if ($Superseded) {
+      return 'stale-ignore'
+    }
     if ($isStale -and $LoopAlive) {
       return 'stale-ignore'
     }
@@ -491,6 +523,7 @@ Blacklist (block): $($BlacklistClasses -join ', ')
   $workPendingStreak = 0
   $LaunchTime = Get-Date
   $RuntimeDir = Get-IlkRuntimeDir -Project $Project
+  $projectLauncherDir = Get-IlkLauncherDir -Project $Project
   if ($RuntimeDir) {
     Write-Log "sentinel runtime dir: $RuntimeDir"
   } else {
@@ -573,15 +606,27 @@ Blacklist (block): $($BlacklistClasses -join ', ')
             Write-Log ("loop_status exit {0} (cannot determine queue state) - BLOCKING rather than keeping alive." -f $loopStatusExit)
             return
           }
+          $sentinelRunId = if ($sentinel -and $sentinel.run_id) { $sentinel.run_id } else { '' }
+          $isSuperseded = Test-SentinelSuperseded -LauncherDir $projectLauncherDir -SentinelRunId $sentinelRunId
           $sentinelAction = Get-StartupSentinelAction `
             -State $sentinel.state `
             -EndedAt $sentinel.ended_at `
             -LaunchTime $LaunchTime `
-            -LoopStatusExit $loopStatusExit
+            -LoopStatusExit $loopStatusExit `
+            -Superseded $isSuperseded
 
           if ($sentinelAction -eq 'stale-ignore') {
             $workPendingStreak = 0
-            Write-Log ("sentinel state={0} ended_at={1} is older than watchdog launch {2} — ignoring stale sentinel." -f $sentinel.state, $sentinel.ended_at, $LaunchTime)
+            if ($isSuperseded) {
+              $launchedRunId = ''
+              try {
+                $lj = Get-Content (Join-Path $projectLauncherDir 'last-launch.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+                $launchedRunId = Split-Path $lj.log_dir -Leaf
+              } catch {}
+              Write-Log ("sentinel run {0} precedes launched run {1} — awaiting the new runner's sentinel." -f $sentinelRunId, $launchedRunId)
+            } else {
+              Write-Log ("sentinel state={0} ended_at={1} is older than watchdog launch {2} — ignoring stale sentinel." -f $sentinel.state, $sentinel.ended_at, $LaunchTime)
+            }
             Start-Sleep -Seconds $PollSec
             continue
           }
@@ -666,15 +711,27 @@ Watchdog exiting cleanly. Job done.
           $rp = Read-ilkPid -Project $Project
           $loopAlive = ($rp -and (Test-ProcessAlive -ProcessId $rp))
 
+          $sentinelRunId = if ($sentinel -and $sentinel.run_id) { $sentinel.run_id } else { '' }
+          $isSuperseded = Test-SentinelSuperseded -LauncherDir $projectLauncherDir -SentinelRunId $sentinelRunId
           $sentinelAction = Get-StartupSentinelAction `
             -State $sentinel.state `
             -EndedAt $sentinel.ended_at `
             -LaunchTime $LaunchTime `
             -LoopStatusExit 0 `
-            -LoopAlive $loopAlive
+            -LoopAlive $loopAlive `
+            -Superseded $isSuperseded
 
           if ($sentinelAction -eq 'stale-ignore') {
-            Write-Log ("stale non-success sentinel {0} ended {1} < launch {2} but loop pid alive — ignoring, keep watching." -f $sentinel.state, $sentinel.ended_at, $LaunchTime)
+            if ($isSuperseded) {
+              $launchedRunId = ''
+              try {
+                $lj = Get-Content (Join-Path $projectLauncherDir 'last-launch.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+                $launchedRunId = Split-Path $lj.log_dir -Leaf
+              } catch {}
+              Write-Log ("sentinel run {0} precedes launched run {1} — awaiting the new runner's sentinel." -f $sentinelRunId, $launchedRunId)
+            } else {
+              Write-Log ("stale non-success sentinel {0} ended {1} < launch {2} but loop pid alive — ignoring, keep watching." -f $sentinel.state, $sentinel.ended_at, $LaunchTime)
+            }
             Start-Sleep -Seconds $PollSec
             continue
           }

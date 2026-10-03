@@ -484,6 +484,55 @@ classify_action() {
   esac
 }
 
+# Check whether a sentinel's run_id precedes the latest launch's run_id.
+# Reads last-launch.json from the launcher dir and compares timestamps.
+#
+# Args:
+#   $1 = launcher_dir    (path to the launcher directory)
+#   $2 = sentinel_run_id (run_id from the sentinel, e.g. "20261003-120000")
+#
+# Echoes "true" if superseded, "false" otherwise. Any parse failure → "false".
+sentinel_superseded_by_launch() {
+  local launcher_dir="$1" sentinel_run_id="$2"
+  local launch_json="${launcher_dir}/last-launch.json"
+  if [[ ! -f "$launch_json" ]]; then
+    echo "false"
+    return
+  fi
+  # Validate sentinel_run_id is a timestamp
+  if ! [[ "$sentinel_run_id" =~ ^[0-9]{8}-[0-9]{6}$ ]]; then
+    echo "false"
+    return
+  fi
+  local log_dir
+  log_dir=$($PYTHON -c "
+import json, sys
+try:
+    with open(sys.argv[1], encoding='utf-8') as f:
+        d = json.load(f)
+    print(d.get('log_dir', ''))
+except Exception:
+    pass
+" "$launch_json" 2>/dev/null) || true
+  if [[ -z "$log_dir" ]]; then
+    echo "false"
+    return
+  fi
+  # Extract basename as run_id
+  local launch_run_id
+  launch_run_id=$(basename "$log_dir")
+  if ! [[ "$launch_run_id" =~ ^[0-9]{8}-[0-9]{6}$ ]]; then
+    echo "false"
+    return
+  fi
+  # String comparison works for YYYYMMDD-HHMMSS lexicographic order
+  if [[ "$sentinel_run_id" < "$launch_run_id" ]]; then
+    echo "true"
+  else
+    echo "false"
+  fi
+}
+
 # Startup sentinel freshness gate — mirrors PS Get-StartupSentinelAction.
 # Determines what to do with a terminal sentinel on watchdog startup.
 #
@@ -493,10 +542,12 @@ classify_action() {
 #   $3 = launch_epoch    (watchdog launch time as unix epoch)
 #   $4 = loop_status_exit (exit code of loop_status.py; unused for non-success)
 #   $5 = loop_alive      ("true" if a live loop process is detected)
+#   $6 = superseded      ("true" if sentinel run_id precedes latest launch; optional, default "false")
 #
 # Echoes one of: stale-ignore | work-pending | advance | classify
 startup_sentinel_action() {
   local state="$1" ended_epoch="$2" launch_epoch="$3" loop_status_exit="$4" loop_alive="$5"
+  local superseded="${6:-false}"
   local success_states=("all-shipped" "already-shipped" "shipped")
   local is_success=false
   local s
@@ -512,7 +563,9 @@ startup_sentinel_action() {
 
   if [[ "$is_success" == false ]]; then
     # Non-success terminal
-    if [[ "$is_stale" == true && "$loop_alive" == true ]]; then
+    if [[ "$superseded" == true ]]; then
+      echo "stale-ignore"
+    elif [[ "$is_stale" == true && "$loop_alive" == true ]]; then
       echo "stale-ignore"
     else
       echo "classify"
@@ -921,6 +974,8 @@ Watchdog PID: $$" 36
   launch_epoch=$(date +%s)
   local runtime_dir
   runtime_dir=$(get_ilk_runtime_dir "$project")
+  local launcher_dir
+  launcher_dir=$(get_ilk_launcher_dir "$project")
   if [[ -n "$runtime_dir" ]]; then
     write_log "sentinel runtime dir: $runtime_dir"
   else
@@ -1081,15 +1136,37 @@ Watchdog PID: $$" 36
             return
           fi
         fi
+        local superseded="false"
+        local launched_run_id=""
+        if [[ -n "$sentinel_run_id" && -n "$launcher_dir" ]]; then
+          superseded=$(sentinel_superseded_by_launch "$launcher_dir" "$sentinel_run_id")
+          if [[ "$superseded" == true ]]; then
+            launched_run_id=$($PYTHON -c "
+import json, sys, os
+try:
+    with open(os.path.join(sys.argv[1], 'last-launch.json'), encoding='utf-8') as f:
+        print(os.path.basename(json.load(f).get('log_dir', '')))
+except Exception:
+    pass
+" "$launcher_dir" 2>/dev/null) || true
+          fi
+        fi
         local startup_action
-        startup_action=$(startup_sentinel_action "$sentinel_state" "$sentinel_ended_epoch" "$launch_epoch" "$loop_status_exit" "$loop_alive")
+        startup_action=$(startup_sentinel_action "$sentinel_state" "$sentinel_ended_epoch" "$launch_epoch" "$loop_status_exit" "$loop_alive" "$superseded")
         case "$startup_action" in
           stale-ignore)
             # Progress this poll — the streak must mean *consecutive*.
             work_pending_streak=0
-            if [[ "$loop_alive" == "true" ]]; then
+            if [[ "$superseded" == true ]]; then
+              # A superseded sentinel belongs to an earlier run than the latest
+              # launch. The new runner hasn't written its sentinel yet — wait
+              # for it rather than classifying the old one.
+              stale_ignore_streak=0
+              write_log "sentinel run ${sentinel_run_id} precedes launched run ${launched_run_id:-?} — awaiting the new runner's sentinel (${stale_ignore_streak}/${stale_ignore_limit})."
+            elif [[ "$loop_alive" == true ]]; then
               # A live loop is the legitimate reason to ignore a stale sentinel.
               stale_ignore_streak=0
+              write_log "stale sentinel (state=$sentinel_state, ended=$sentinel_ended_epoch < launch=$launch_epoch, loop_alive=$loop_alive) — ignoring, keep watching (${stale_ignore_streak}/${stale_ignore_limit})."
             else
               stale_ignore_streak=$(( stale_ignore_streak + 1 ))
               if (( stale_ignore_streak >= stale_ignore_limit )); then
@@ -1099,8 +1176,8 @@ Watchdog PID: $$" 36
                 write_log "stale-ignore streak ${stale_ignore_streak} >= limit ${stale_ignore_limit} with loop_alive=false — nothing to supervise, exiting."
                 return
               fi
+              write_log "stale sentinel (state=$sentinel_state, ended=$sentinel_ended_epoch < launch=$launch_epoch, loop_alive=$loop_alive) — ignoring, keep watching (${stale_ignore_streak}/${stale_ignore_limit})."
             fi
-            write_log "stale sentinel (state=$sentinel_state, ended=$sentinel_ended_epoch < launch=$launch_epoch, loop_alive=$loop_alive) — ignoring, keep watching (${stale_ignore_streak}/${stale_ignore_limit})."
             sleep "$poll_sec"
             continue
             ;;

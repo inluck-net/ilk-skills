@@ -93,7 +93,10 @@ submenu line.
   Computes `alive` from `state` + `pid_alive(pid)`.
 - **`collect.py`** — `read_sentinel` (~line 204). Classifies the run's
   terminal state for postmortem.
-- **Watchdog** — reads sentinel for stale/ hung detection.
+- **Watchdog** — reads sentinel for stale/ hung detection. Also reads
+  `last-launch.json`'s `log_dir` to recognise a superseded sentinel
+  (one whose `run_id` precedes the latest launch's run id); a superseded
+  sentinel is awaited, not classified.
 
 ### State vocabulary
 

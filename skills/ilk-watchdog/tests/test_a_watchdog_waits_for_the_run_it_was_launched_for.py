@@ -91,7 +91,6 @@ def _call_startup_action(state: str, ended_epoch: int, launch_epoch: int,
 
 
 
-@pytest.mark.xfail(strict=True, reason="Step 1: startup_sentinel_action does not yet accept 6th arg (superseded)")
 def test_superseded_non_success_dead_returns_stale_ignore():
     """AC-1: non-success + superseded=true + dead PID → 'stale-ignore'.
     Today this returns 'classify'; the superseded flag must override.
@@ -124,8 +123,10 @@ def _call_superseded(sentinel_run_id: str, launch_log_dir: str,
                 json.dumps(payload), encoding="utf-8"
             )
         func_code = _extract_superseded_function()
-        # Also source read_last_exit_state pattern — the helper reads JSON with $PYTHON
-        script = f"""{func_code}
+        # The helper uses $PYTHON to read JSON; set it explicitly.
+        python_exe = sys.executable or "python3"
+        script = f"""PYTHON='{python_exe}'
+{func_code}
 sentinel_superseded_by_launch '{launcher_dir}' '{sentinel_run_id}'
 """
         result = subprocess.run(
@@ -139,28 +140,24 @@ sentinel_superseded_by_launch '{launcher_dir}' '{sentinel_run_id}'
         return result.stdout.strip()
 
 
-@pytest.mark.xfail(strict=True, reason="Step 1: sentinel_superseded_by_launch does not yet exist")
 def test_superseded_by_launch_earlier_run():
     """AC-2a: sentinel 20261003-120000, launch runs/20261003-180000 → true."""
     out = _call_superseded("20261003-120000", "/some/path/runs/20261003-180000")
     assert out == "true", f"Expected true, got: {out}"
 
 
-@pytest.mark.xfail(strict=True, reason="Step 1: sentinel_superseded_by_launch does not yet exist")
 def test_superseded_by_launch_equal_ids():
     """AC-2b: equal run ids → false."""
     out = _call_superseded("20261003-180000", "/some/path/runs/20261003-180000")
     assert out == "false", f"Expected false, got: {out}"
 
 
-@pytest.mark.xfail(strict=True, reason="Step 1: sentinel_superseded_by_launch does not yet exist")
 def test_superseded_by_launch_later_sentinel():
     """AC-2c: sentinel later than launch → false."""
     out = _call_superseded("20261003-200000", "/some/path/runs/20261003-180000")
     assert out == "false", f"Expected false, got: {out}"
 
 
-@pytest.mark.xfail(strict=True, reason="Step 1: sentinel_superseded_by_launch does not yet exist")
 def test_superseded_by_launch_missing_json():
     """AC-2d: missing last-launch.json → false."""
     out = _call_superseded("20261003-120000", "/some/path/runs/20261003-180000",
@@ -168,7 +165,6 @@ def test_superseded_by_launch_missing_json():
     assert out == "false", f"Expected false, got: {out}"
 
 
-@pytest.mark.xfail(strict=True, reason="Step 1: sentinel_superseded_by_launch does not yet exist")
 def test_superseded_by_launch_non_timestamp_run_id():
     """AC-2e: non-timestamp run id → false."""
     out = _call_superseded("not-a-timestamp", "/some/path/runs/20261003-180000")
@@ -262,7 +258,6 @@ def _wait_for_log(watchdog_dir: Path, contains: str, timeout: float = 20.0) -> s
     sys.platform == "win32",
     reason="Git Bash pipe encoding OSError on Windows",
 )
-@pytest.mark.xfail(strict=True, reason="Step 1: watchdog does not yet check last-launch.json for superseded sentinel")
 def test_superseded_sentinel_awaits_not_classifies(tmp_path):
     """AC-3: stale sentinel with run_id < last-launch.json run_id, dead PID
     → watchdog logs 'awaiting the new runner's sentinel' and never 'classifying'.
@@ -305,7 +300,6 @@ def test_superseded_sentinel_awaits_not_classifies(tmp_path):
     sys.platform == "win32",
     reason="Git Bash pipe encoding OSError on Windows",
 )
-@pytest.mark.xfail(strict=True, reason="Step 1: watchdog does not yet check last-launch.json for superseded sentinel")
 def test_superseded_then_new_sentinel_gets_classified(tmp_path):
     """AC-4: superseded sentinel → awaiting; then sentinel rewritten with
     matching run_id → watchdog classifies it.
@@ -354,7 +348,6 @@ def test_superseded_then_new_sentinel_gets_classified(tmp_path):
 # ── AC-6: PowerShell static check ─────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="Step 1: watchdog.ps1 does not yet have $Superseded parameter")
 def test_ps1_get_startup_sentinel_action_has_superseded_param():
     """AC-6a: Get-StartupSentinelAction declares [bool]$Superseded parameter."""
     text = _WATCHDOG_PS1.read_text(encoding="utf-8")
@@ -371,7 +364,6 @@ def test_ps1_get_startup_sentinel_action_has_superseded_param():
     )
 
 
-@pytest.mark.xfail(strict=True, reason="Step 1: watchdog.ps1 does not yet return stale-ignore on $Superseded")
 def test_ps1_get_startup_sentinel_action_returns_stale_ignore_on_superseded():
     """AC-6b: Get-StartupSentinelAction returns 'stale-ignore' when $Superseded is true."""
     text = _WATCHDOG_PS1.read_text(encoding="utf-8")
@@ -387,7 +379,6 @@ def test_ps1_get_startup_sentinel_action_returns_stale_ignore_on_superseded():
     )
 
 
-@pytest.mark.xfail(strict=True, reason="Step 1: PS1 call sites do not yet pass -Superseded")
 def test_ps1_call_sites_pass_superseded():
     """AC-6c: both call sites of Get-StartupSentinelAction pass -Superseded."""
     text = _WATCHDOG_PS1.read_text(encoding="utf-8")
