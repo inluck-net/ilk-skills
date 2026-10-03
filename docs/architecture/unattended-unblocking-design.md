@@ -142,8 +142,10 @@ played on 2026-10-02, with rails.
 
 **Independence:**
 
-- Runs on the planner home (official provider), never the worker model or
-  the worker home. A batch's own worker never judges its own block.
+- Runs on a **dedicated triage home**, `~/.claude-triage`, logged in to an
+  official provider. It never runs on the worker model, the worker home, or the
+  manager home. A batch's own worker never judges its own block. See **D10**
+  for why this is a separate home, and what was measured.
 - On a selfmod project (ilk-skills), triage edits only plan files in the
   data home, never the clone or the worktree. Plan files are what a
   human-driven session edited today.
@@ -999,6 +1001,43 @@ Two cautions for consumer projects:
   suite runs in both the pinned and the real environment; and the
   importer-coverage lint is HARD for a last step. gh-resolve flips its
   resolver-ship §1a if Chad agrees.
+- **D10 (Chad, 2026-10-03: "keep the separate triage home").** L2 triage
+  decides on its own Claude home, `~/.claude-triage`, one per host, logged in
+  to an official provider (chad-mbp's was provisioned 2026-10-03; its init
+  event reports `claude-opus-5-5`, `apiKeySource: none`, i.e. Chad's login).
+  It does not reuse `~/.claude-manager`.
+  - **Why not the manager home.** A Claude home pins one model for every
+    session under it, and the manager home is GLM on purpose:
+    `glm-5.3` via open.bigmodel.cn is the judgement tier in the role registry
+    ([`model-worker-framework.md`](model-worker-framework.md) §2a), and batch
+    verify sessions run there (`scheduler_scan.py:406`, engine
+    `claude-manager`). Logging it in to an official provider would also move
+    every verify session, which is frequent and long, onto that plan. Triage is
+    rare (once per stuck run) and short (about 2 minutes), so a separate
+    official home costs little.
+  - **Why triage must not be GLM or mimo.** The unblocker sits outside the
+    tier that built the batch, or it can excuse the batch it judges
+    (§"The risk: triage can excuse a batch"; memory
+    `worker-forged-verification-record`). `ilk_triage.decide` refuses any
+    worker-pattern model by its init event, never by self-report.
+  - **What was measured.** Before this decision triage defaulted to the
+    manager home and could never decide: in v0.9.142 a prompt-order bug made
+    every call exit 1 (fixed in 1720168), and with that fixed the manager home
+    answered as `glm-5.3` and was refused (115 s, reason `mimo_model`). On the
+    triage home the same dry-run on run 20261003-192323 returned a reasoned
+    `park-and-escalate` from `claude-opus-5-5` (fc65636).
+  - **Mechanism.** `ilk_triage.resolve_triage_home()`: `--home`, else
+    `$ILK_TRIAGE_HOME`, else `~/.claude-triage`. A missing home escalates
+    with reason `no_triage_home`; it never falls back to another home.
+  - **Per host.** rezmac has no triage home and runs with the host-wide kill
+    switch `~/.ilk-data/triage.disabled` (agreed with gh-resolve-44,
+    2026-10-03). It stays off until triage has a per-project opt-in and
+    gh-resolve decides for its resolver keys; gh-resolve's R6 limits acting L2
+    on rezmac to plan files and ledger rows.
+  - **Revisit when.** If verify sessions are ever moved to an official
+    provider, one official manager home could serve both roles and
+    `~/.claude-triage` could be retired. That is a cost decision about
+    verify, not a change to this rule.
 
 ## Open questions for Chad
 

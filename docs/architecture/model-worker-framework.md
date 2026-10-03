@@ -52,6 +52,7 @@ worker home.
 |---|---|---|---|---|---|---|
 | **planner** | Opus 4.8 | Claude Official | api.anthropic.com | `~/.claude` | — | shipped (dual-homes) |
 | **manager** | `glm-5.3` | Zhipu GLM | open.bigmodel.cn | `~/.claude-manager` | — | **shipped** (registry batch 2026-09-18; judgement tier — see [`role-tier-registry-design.md`](role-tier-registry-design.md)) |
+| **triage** | official (Opus) | Claude Official | api.anthropic.com | `~/.claude-triage` | — | **provisioned** on chad-mbp 2026-10-03; used by `ilk_triage.py` (L2 unblocking). Must stay an official provider: triage refuses worker-pattern models. Not the manager home, see decision 4 |
 | **coder** | `mimo-v2.5-pro` | Xiaomi MiMo V2.5 - Pro | token-plan-cn.xiaomimimo.com | `~/.claude-worker` | no | shipped (dual-homes) |
 | **art code-gen** | `MiniMax-M3` | MiniMax | api.minimaxi.com | `~/.claude-worker-draw` | **yes (input)** | **shipped** |
 | **VL curator** | `MiniMax-M3` | MiniMax | api.minimaxi.com | `~/.claude-worker-draw` (shared) | **yes (input)** | **shipped** |
@@ -167,6 +168,16 @@ flowchart TD
    > `supervised_only` is *unwarranted* (decomposition-principles.md §13); the
    > flag's only trigger is `scope_paths` modifying loop infra.
    > `plan_lint.py --master` now reports this combination as a hard finding.
+
+4. **Triage gets its own home (Chad, 2026-10-03).** L2 triage decides on
+   `~/.claude-triage`, an official-provider login, one per host. It does not
+   reuse the manager home: the manager is `glm-5.3` by design and batch verify
+   sessions run there, so switching it would move every verify session to the
+   official plan. Triage must not run on a GLM/mimo model because it judges
+   batches those tiers built. Full rationale and measurements: decision D10 in
+   [`unattended-unblocking-design.md`](unattended-unblocking-design.md). The
+   triage home is not yet in `tools/claude-worker/role-registry.json`; adding
+   it there (tier and PATH command) is a follow-up.
 
 ## 6. Verification discipline
 
