@@ -5,6 +5,10 @@
       "flags": [
         "--timeout=17",
         "--timeout-method=signal",
+        "-n",
+        "8",
+        "--dist",
+        "loadfile",
         "--durations=25"
       ],
       "timeout": 900,
