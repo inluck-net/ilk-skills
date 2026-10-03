@@ -86,7 +86,6 @@ def _make_project_with_helper(tmp_path: Path, helper_path: str) -> Path:
 # ── AC-1: tests/_helper.py forces full ───────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="_test_infra_change not yet implemented")
 def test_helper_py_forces_full(tmp_path: Path) -> None:
     """AC-1: a diff touching only skills/x/tests/_helper.py gives full scope."""
     repo = _make_project_with_helper(tmp_path, "skills/x/tests/_helper.py")
@@ -100,7 +99,6 @@ def test_helper_py_forces_full(tmp_path: Path) -> None:
 # ── AC-2: root tests/_util.py and tests/__init__.py ──────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="_test_infra_change not yet implemented")
 def test_root_util_py_forces_full(tmp_path: Path) -> None:
     """AC-2a: a diff touching tests/_util.py gives full scope."""
     repo = _make_project_with_helper(tmp_path, "tests/_util.py")
@@ -111,7 +109,6 @@ def test_root_util_py_forces_full(tmp_path: Path) -> None:
     assert "tests/_util.py" in scope["reason"]
 
 
-@pytest.mark.xfail(strict=True, reason="_test_infra_change not yet implemented")
 def test_init_py_forces_full(tmp_path: Path) -> None:
     """AC-2b: a diff touching skills/x/tests/__init__.py gives full scope."""
     repo = _make_project_with_helper(tmp_path, "skills/x/tests/__init__.py")
@@ -125,7 +122,6 @@ def test_init_py_forces_full(tmp_path: Path) -> None:
 # ── AC-3: conftest.py reason names the path ──────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="_test_infra_change not yet implemented")
 def test_conftest_reason_names_path(tmp_path: Path) -> None:
     """AC-3: diff touching conftest.py gives full with reason naming that path."""
     repo = _make_project_with_helper(tmp_path, "skills/x/tests/conftest.py")
@@ -138,7 +134,6 @@ def test_conftest_reason_names_path(tmp_path: Path) -> None:
 # ── AC-4: render_record writes suite_scope_reason ────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="suite_scope_reason not yet written")
 def test_render_record_writes_suite_scope_reason() -> None:
     """AC-4: render_record for full-by-infra scope carries suite_scope_reason."""
     scope = {"mode": "full", "count": 0,
@@ -161,7 +156,6 @@ def test_render_record_writes_suite_scope_reason() -> None:
 # ── AC-5: --scope full over computed full-by-infra ───────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="override reason not yet implemented")
 def test_scope_full_over_computed_full_records_override() -> None:
     """AC-5: --scope full over computed full-by-infra records override+computed."""
     scope = {"mode": "full", "count": 0,

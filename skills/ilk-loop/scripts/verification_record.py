@@ -116,6 +116,28 @@ def _is_global_change(path: str) -> bool:
     return any(pat in norm for pat in _GLOBAL_PATTERNS)
 
 
+def _test_infra_change(path: str) -> bool:
+    """True if *path* is test infrastructure (conftest, pytest config, or tests/_*.py).
+
+    A ``.py`` file whose basename starts with ``_`` and whose parent directory
+    is named ``tests`` or ``test`` counts as test infrastructure, including
+    ``__init__.py``.  Config files (conftest.py, pytest.ini, etc.) are always
+    infrastructure.
+    """
+    norm = path.replace("\\", "/")
+    basename = Path(norm).name
+    # Config files that already live in _GLOBAL_PATTERNS are also infra.
+    if basename in ("conftest.py", "pytest.ini", "setup.cfg",
+                    "pyproject.toml", "tox.ini"):
+        return True
+    # tests/_*.py or tests/__init__.py
+    if basename.endswith(".py") and basename.startswith("_"):
+        parent = Path(norm).parent.name
+        if parent in ("tests", "test"):
+            return True
+    return False
+
+
 def _module_test_name(module_stem: str) -> str:
     """Derive the expected test-file name for a Python module stem."""
     if module_stem.startswith("test_"):
@@ -161,11 +183,22 @@ def compute_suite_scope(project: Path, base_sha: str) -> dict:
     # Non-test Python files: try to map to their test counterparts.
     non_test_py = [p for p in changed
                    if p.endswith(".py") and p not in test_files]
+
+    # Test infrastructure changes (tests/_*.py, conftest.py, config files)
+    # force full scope — a helper breakage can INTERNALERROR every test.
+    infra_hits = [p for p in changed if _test_infra_change(p)]
+    if infra_hits:
+        reason = f"test infrastructure changed: {infra_hits[0]}"
+        if len(infra_hits) > 1:
+            reason += f" (+{len(infra_hits) - 1} more)"
+        return {"mode": "full", "count": 0, "reason": reason}
+
     has_global = any(_is_global_change(p) for p in changed)
 
     if has_global:
+        first = next(p for p in changed if _is_global_change(p))
         return {"mode": "full", "count": 0,
-                "reason": "diff touches conftest/fixtures/build config"}
+                "reason": f"diff touches conftest/fixtures/build config: {first}"}
 
     # Map each changed module to the test files that cover it.
     #
@@ -1427,6 +1460,7 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
         f"base_sha: {base_sha}",
         f"suite_invocation: {invocation}",
         f"suite_scope: {scope['mode']}",
+        f"suite_scope_reason: {scope.get('reason', '').replace(chr(10), '; ')}",
         f"selection_size: {scope['count']}",
         f"suite_total: {c['total']}",
         f"suite_passed: {c['passed']}",
@@ -1823,10 +1857,14 @@ def _write_measured_record(project: Path, record: Path, args,
         return 1
 
     scope = compute_suite_scope(project, args.base_sha)
-    # --scope full overrides the computed scope.
+    # --scope full overrides the computed scope.  When the computed mode was
+    # already full, preserve the computed reason so the record says *why*.
     if getattr(args, "scope", "auto") == "full":
+        if scope["mode"] == "full":
+            scope["reason"] = f"override: --scope full; computed: {scope['reason']}"
+        else:
+            scope["reason"] = "override: --scope full"
         scope["mode"] = "full"
-        scope["reason"] = "override: --scope full"
     record.parent.mkdir(parents=True, exist_ok=True)
 
     stub = (f"# Batch verification record — {args.batch or record.stem}\n\n"
@@ -1836,6 +1874,7 @@ def _write_measured_record(project: Path, record: Path, args,
             f"base_sha: {args.base_sha}\n"
             f"suite_invocation: {invocation}\n"
             f"suite_scope: {scope['mode']}\n"
+            f"suite_scope_reason: {scope.get('reason', '').replace(chr(10), '; ')}\n"
             f"suite_failed: unmeasured\n\n"
             f"## At-base rerun\n\n_(suite did not finish)_\n")
     # The stub only fills a vacuum: write it only when there is no record,
@@ -2319,8 +2358,11 @@ def _write_record_from_output(project: Path, record: Path, args,
 
     scope = compute_suite_scope(project, args.base_sha)
     if getattr(args, "scope", "auto") == "full":
+        if scope["mode"] == "full":
+            scope["reason"] = f"override: --scope full; computed: {scope['reason']}"
+        else:
+            scope["reason"] = "override: --scope full"
         scope["mode"] = "full"
-        scope["reason"] = "override: --scope full"
     record.parent.mkdir(parents=True, exist_ok=True)
 
     # At-base reruns.
