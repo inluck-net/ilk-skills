@@ -389,6 +389,7 @@ class TestAC5RuntimeReconcileNoKill:
     Red-first until plan_fingerprint exists.
     """
 
+    @pytest.mark.timeout(120)
     @pytest.mark.xfail(not _MODULE_EXISTS, strict=True, reason="plan_fingerprint module does not exist yet")
     def test_registry_reconcile_does_not_kill_agent(self, tmp_path: Path) -> None:
         """A mid-iteration registry reconcile does not trigger plan-amended."""
