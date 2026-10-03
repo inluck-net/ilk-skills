@@ -7,7 +7,9 @@ AC-1  (xfail) e2e: master with ``ilk_profile: unattended`` + valid
       exits 1 ⇒ master status/parked_* unchanged, sub-plan not reverted,
       result file row ``outcome: unmeasured`` with that reason,
       ``provenance: runner``.
-AC-2  (pass) the same run without ``ilk_profile`` parks exactly as today.
+AC-2  (pass) the same run without ``ilk_profile`` takes the legacy path: the
+      sub-plan is reverted and no result file is written.  Since 8edd5d9b a
+      reverted violation leaves its master active (contract 2b).
 AC-3  (xfail) SIGTERM mid-iteration under the profile ⇒ result file with
       ``exit_state: interrupted``.
 AC-4  (xfail) ``result_file: relative/path.json`` ⇒ refused and logged,
@@ -330,20 +332,36 @@ def test_result_names_the_source_that_resolved_the_gate(
 def test_without_profile_parks_as_today(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
-    """AC-2: the same run without ``ilk_profile`` parks exactly as today.
+    """AC-2: the same run without ``ilk_profile`` takes the legacy path.
 
-    This is existing behaviour — no xfail.
+    The driver reverts the violating sub-plan to in-progress, which the
+    profile run (AC-1) does not.  Since 8edd5d9b a reverted violation does
+    not park its master (contract 2b, ``ship_integrity_violation``): the
+    sub-plan is runnable, and parking let the scheduler promote the next
+    master over it.  This is existing behaviour — no xfail.
     """
     root = tmp_path_factory.mktemp("no-profile")
     world = _build_world_profile(root, profile=None)
+    fm_before = _read_master_fm(world)
 
     result = _run_one_iteration(world, root)
     tail = "\n".join((result.stdout + result.stderr).splitlines()[-30:])
 
-    # Master should be parked (blocked) — existing behaviour.
+    # The legacy path reverted the sub-plan — the profile path does not.
+    sp = world["plans"] / f"{world['stem']}.md"
+    sp_fm = parse_frontmatter(sp.read_text(encoding="utf-8-sig"))
+    assert sp_fm.get("status") == "in-progress", (
+        f"sub-plan not reverted without profile: {sp_fm}\n{tail}"
+    )
+
+    # A reverted violation leaves its master as it was, unparked.
     fm = _read_master_fm(world)
-    assert fm.get("status") == "blocked", (
-        f"master not parked without profile: status={fm.get('status')!r}\n{tail}"
+    assert fm.get("status") == fm_before.get("status"), (
+        f"master status changed from {fm_before.get('status')!r} to "
+        f"{fm.get('status')!r} after a reverted violation\n{tail}"
+    )
+    assert "parked_reason" not in fm, (
+        f"master parked after a reverted violation: {fm}\n{tail}"
     )
 
     # No result file written (the profile feature should not leak).
