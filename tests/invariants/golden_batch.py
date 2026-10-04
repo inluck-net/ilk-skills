@@ -347,6 +347,16 @@ def _check_results(root: Path, proc: subprocess.CompletedProcess) -> dict:
     }
 
 
+def _check_budget(result: dict, budget: dict, elapsed: float) -> dict:
+    """Add budget fields and fold over_budget into verdict (AC-4)."""
+    max_sec = budget.get("max_seconds", 0)
+    result["budget_seconds"] = max_sec
+    result["over_budget"] = elapsed > max_sec if max_sec > 0 else False
+    if result["over_budget"]:
+        result["verdict"] = "fail"
+    return result
+
+
 def run(*, out: Path | None = None, keep: bool = False) -> dict:
     """Run the golden batch and return the result dict.
 
@@ -364,12 +374,11 @@ def run(*, out: Path | None = None, keep: bool = False) -> dict:
         result = _check_results(root, proc)
         result["seconds"] = round(elapsed, 1)
 
-        # Read budget.json if it exists.
+        # Read budget.json if it exists and check budget (AC-4).
         budget_file = _FIXTURES / "budget.json"
         if budget_file.exists():
             budget = json.loads(budget_file.read_text(encoding="utf-8"))
-            result["budget_seconds"] = budget.get("max_seconds", 0)
-            result["over_budget"] = elapsed > budget.get("max_seconds", float("inf"))
+            result = _check_budget(result, budget, elapsed)
         else:
             result["budget_seconds"] = 0
             result["over_budget"] = False

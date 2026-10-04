@@ -140,11 +140,10 @@
     {
       "id": "golden-vacuous-pin",
       "incident": "decay (a): inert fix shipped green — the pin asserts True",
-      "rail": "golden-real step-0 pin asserts scale(10,2)==5.0",
-      "file": "tests/invariants/fixtures/golden/script/golden-real/step-0.patch",
-      "kind": "replace",
-      "pattern": "assert scale\\(10, 2\\) == 5\\.0",
-      "replacement": "assert True",
+      "rail": "golden-real step-0 stub replaces assertion with assert True",
+      "file": "tests/invariants/fixtures/golden/stub-claude",
+      "kind": "delete-lines",
+      "pattern": "text = text\\.replace\\('assert scale\\(10, 2\\) == 5\\.0', 'assert True'\\)",
       "min_matches": 1,
       "catcher": {
         "argv": [
@@ -171,11 +170,11 @@
     {
       "id": "golden-inert-pin-strictness-dropped",
       "incident": "decay (c): a pin asserted the bug (XPASS) but strictness removed",
-      "rail": "golden-inert step-0 xfail strict=True",
-      "file": "tests/invariants/fixtures/golden/script/golden-inert/step-0.patch",
+      "rail": "golden-inert step-0 stub adds xfail(strict=True) to test_vacuous",
+      "file": "tests/invariants/fixtures/golden/stub-claude",
       "kind": "replace",
-      "pattern": "xfail\\(strict=True",
-      "replacement": "xfail(strict=False",
+      "pattern": "xfail\\(strict=True, reason=\"vacuous pin",
+      "replacement": "xfail(strict=False, reason=\"vacuous pin",
       "min_matches": 1,
       "catcher": {
         "argv": [

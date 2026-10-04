@@ -1,5 +1,5 @@
 {
-  "max_seconds": 60,
-  "measured_seconds": [30.7, 30.8, 31.1],
+  "max_seconds": 105,
+  "measured_seconds": [66.9, 71.1, 69.7],
   "measured_at": "2026-10-04"
 }
