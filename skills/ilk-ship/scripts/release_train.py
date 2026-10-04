@@ -703,6 +703,22 @@ def cut(project: Path, data_dir: Path) -> dict:
     }
 
 
+def _bouncer_for(tag: str) -> Path:
+    """Bouncer of the release being deployed."""
+    releases_root = Path(os.environ.get(
+        "ILK_RELEASES_ROOT",
+        str(Path.home() / ".ilk" / "releases"),
+    ))
+    return releases_root / tag / "skills" / "ilk-watchdog" / "scripts" / "bounce_daemons.sh"
+
+
+def _scheduler_pid_file() -> Path:
+    """The host's scheduler.pid lives in the data root, not per-project."""
+    sys.path.insert(0, str(_LOOP_SCRIPTS))
+    from ilk_paths import ilk_data_root
+    return ilk_data_root() / "scheduler.pid"
+
+
 # ── deploy ──────────────────────────────────────────────────────────────────
 
 def deploy(
@@ -718,11 +734,11 @@ def deploy(
 
     Every external command is an injectable parameter so tests can stub them.
 
-    Returns ``{"tag", "deployed", "scheduler_pid"}`` on success (exit 0).
+    Returns ``{"tag", "deployed", "scheduler_pid", "exit_code": 0}`` on success.
     Returns ``{"tag", "deployed": false, "rolled_back_to", "rollback_smoke",
-    "reason"}`` on rollback (exit 5).
-    Exit 4 when extraction fails.
-    Exit 6 when both smokes fail.
+    "reason", "exit_code": 5}`` on verified rollback.
+    Returns ``{"exit_code": 6}`` when both smokes fail.
+    Exit 4 when extraction fails (raises SystemExit).
     """
     _SCRIPTS = Path(__file__).resolve().parent
     _RELEASE_SCRIPT = _SCRIPTS.parent.parent / "ilk-upgrade" / "scripts" / "ilk_release.py"
@@ -739,28 +755,29 @@ def deploy(
         )
         return r.returncode, r.stdout.strip()
 
-    def _default_bounce_cmd() -> int:
+    def _default_bounce_cmd(tag: str) -> int:
         r = subprocess.run(
-            [str(_BOUNCE_SCRIPT)],
+            [str(_bouncer_for(tag))],
             capture_output=True, text=True,
             encoding="utf-8", errors="replace",
             timeout=60,
         )
         return r.returncode
 
-    def _default_status_cmd(t: str) -> str:
+    def _default_status_cmd(t: str, cwd: Path | None = None) -> str:
         r = subprocess.run(
-            [sys.executable, str(_STATUS_SCRIPT), "--bouncer", str(_BOUNCE_SCRIPT), "--require-tag", t],
+            [sys.executable, str(_STATUS_SCRIPT), "--bouncer", str(_bouncer_for(t)), "--require-tag", t],
             capture_output=True, text=True,
             encoding="utf-8", errors="replace",
             timeout=60,
+            cwd=str(cwd) if cwd else None,
         )
         return r.stdout.strip()
 
     _release = release_cmd if release_cmd is not None else _default_release_cmd
     _bounce = bounce_cmd if bounce_cmd is not None else _default_bounce_cmd
     _status = status_cmd if status_cmd is not None else _default_status_cmd
-    _pid = pid_file if pid_file is not None else (data_dir / "runtime" / "scheduler.pid")
+    _pid = pid_file if pid_file is not None else _scheduler_pid_file()
 
     # ── 1. extract ──────────────────────────────────────────────────────
     rc, _out = _release(tag, project)  # type: ignore[operator]
@@ -769,14 +786,30 @@ def deploy(
         sys.exit(4)
 
     # ── 2. bounce + smoke ───────────────────────────────────────────────
-    _bounce()  # type: ignore[operator]
-    smoke_ok, smoke_reason = _smoke(tag, _status, _pid)  # type: ignore[arg-type]
+    pid_before = _read_pid(_pid)
+    try:
+        bounce_rc = _bounce(tag)  # type: ignore[operator]
+    except TypeError:
+        bounce_rc = _bounce()  # type: ignore[operator]
+    pid_after = _read_pid(_pid)
+    bounce_info = {"exit": bounce_rc, "pid_before": pid_before, "pid_after": pid_after}
+
+    if bounce_rc == 2:
+        smoke_ok, smoke_reason = False, f"bounce failed (exit {bounce_rc})"
+    elif bounce_rc == 0:
+        smoke_ok, smoke_reason = False, "bounce restarted nothing (exit 0)"
+    elif bounce_rc == 1 and pid_before is not None and pid_after == pid_before:
+        smoke_ok, smoke_reason = False, f"scheduler pid {pid_after} unchanged after bounce"
+    else:
+        smoke_ok, smoke_reason = _smoke(tag, _status, _pid, cwd=project)  # type: ignore[arg-type]
 
     if smoke_ok:
         return {
             "tag": tag,
             "deployed": True,
             "scheduler_pid": _read_pid(_pid),
+            "exit_code": 0,
+            "bounce": bounce_info,
         }
 
     # ── 3. rollback ─────────────────────────────────────────────────────
@@ -789,31 +822,63 @@ def deploy(
     if prev_tag:
         prev_tag = Path(prev_tag).name  # extract tag name from symlink target
 
-    _release("--rollback", project)  # type: ignore[operator]
-    _bounce()  # type: ignore[operator]
+    rb_rc, _ = _release("--rollback", project)  # type: ignore[operator]
+    try:
+        rb_bounce_rc = _bounce(prev_tag)  # type: ignore[operator]
+    except TypeError:
+        rb_bounce_rc = _bounce()  # type: ignore[operator]
 
-    rollback_ok, rollback_reason = _smoke(prev_tag, _status, _pid)  # type: ignore[arg-type]
+    if rb_rc != 0 or rb_bounce_rc not in (0, 1):
+        return {
+            "tag": tag,
+            "deployed": False,
+            "rolled_back_to": prev_tag,
+            "rollback_smoke": "failed",
+            "reason": f"rollback unverified (release exit {rb_rc}, bounce exit {rb_bounce_rc})",
+            "exit_code": 6,
+            "bounce": bounce_info,
+        }
 
-    return {
-        "tag": tag,
-        "deployed": False,
-        "rolled_back_to": prev_tag,
-        "rollback_smoke": "ok" if rollback_ok else "failed",
-        "reason": smoke_reason,
-    }
+    rollback_ok, rollback_reason = _smoke(prev_tag, _status, _pid, cwd=project)  # type: ignore[arg-type]
+
+    if rollback_ok:
+        return {
+            "tag": tag,
+            "deployed": False,
+            "rolled_back_to": prev_tag,
+            "rollback_smoke": "ok",
+            "reason": smoke_reason,
+            "exit_code": 5,
+            "bounce": bounce_info,
+        }
+    else:
+        return {
+            "tag": tag,
+            "deployed": False,
+            "rolled_back_to": prev_tag,
+            "rollback_smoke": "failed",
+            "reason": smoke_reason,
+            "exit_code": 6,
+            "bounce": bounce_info,
+        }
 
 
 def _smoke(
     tag: str,
     status_cmd: Callable[[str], str],
     pid_file: Path,
+    *,
+    cwd: Path | None = None,
 ) -> tuple[bool, str]:
     """Smoke check: status ok + pid alive + script under releases/<tag>/.
 
     Returns (ok, reason).
     """
-    # Status check
-    status = status_cmd(tag)
+    # Status check — pass cwd if the status_cmd accepts it
+    try:
+        status = status_cmd(tag, cwd=cwd)  # type: ignore[operator]
+    except TypeError:
+        status = status_cmd(tag)
     if status != "ok":
         return False, f"status={status}"
 
@@ -829,6 +894,7 @@ def _smoke(
         return False, f"scheduler pid {pid} not alive"
 
     # Command-line check: script path must mention releases/<tag>/
+    # Also check through symlinks (e.g. current/ -> releases/<tag>/)
     try:
         r = subprocess.run(
             ["ps", "-o", "command=", "-p", str(pid)],
@@ -838,7 +904,12 @@ def _smoke(
         )
         cmd = r.stdout.strip()
         if f"releases/{tag}/" not in cmd:
-            return False, f"scheduler command does not mention releases/{tag}/"
+            # Try resolving symlinks in the command arguments
+            resolved = " ".join(
+                os.path.realpath(w) for w in cmd.split()
+            )
+            if f"releases/{tag}/" not in resolved:
+                return False, f"scheduler command does not mention releases/{tag}/"
     except (OSError, subprocess.TimeoutExpired):
         return False, "could not read scheduler command"
 
@@ -998,6 +1069,22 @@ def run(
                 _notify("blocked", project_name, f"deploy extraction failed {tag}", notify_script)
                 return {"exit_code": exit_code, "tag": tag, "deployed": False}
 
+        # deploy() now returns a dict with exit_code instead of raising
+        if isinstance(deploy_result, dict) and deploy_result.get("exit_code") in (5, 6):
+            exit_code = deploy_result["exit_code"]
+            severity = "critical" if exit_code == 6 else None
+            audit_kwargs = {"tag": tag, "reason": "smoke failed, rolled back"}
+            if severity:
+                audit_kwargs["severity"] = severity
+            write_audit("rolled-back", project_name, **audit_kwargs)
+            write_event("rolled-back", project_name, tag=tag, **({"severity": severity} if severity else {}))
+            _notify(
+                "blocked", project_name,
+                f"deploy {'CRITICAL: both smokes failed' if exit_code == 6 else 'rolled back'} {tag}",
+                notify_script,
+            )
+            return {"exit_code": exit_code, "tag": tag, "deployed": False, "rolled_back": True}
+
         # Deploy succeeded
         write_audit("released", project_name, tag=tag, outcome="deployed")
         write_event("released", project_name, tag=tag)
@@ -1031,6 +1118,13 @@ def _notify(
         )
     except (OSError, subprocess.TimeoutExpired):
         pass  # notify is best-effort
+
+
+def _project_data_dir(project: Path) -> Path:
+    """Resolve per-project data dir using project_key."""
+    sys.path.insert(0, str(_LOOP_SCRIPTS))
+    from ilk_paths import project_key, project_data_dir
+    return project_data_dir(project_key(project))
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────
@@ -1073,8 +1167,7 @@ def main() -> int:
     from ilk_paths import ilk_data_root  # noqa: E402
 
     project = args.project.resolve()
-    data_root = ilk_data_root()
-    data_dir = data_root / "projects" / project.name
+    data_dir = _project_data_dir(project)
 
     if args.verb == "check":
         result = check(project, data_dir)
@@ -1112,7 +1205,7 @@ def main() -> int:
             print(json.dumps(result))
         else:
             print(json.dumps(result))
-        return 0
+        return result.get("exit_code", 0)
 
     if args.verb == "run":
         result = run(project, data_dir)

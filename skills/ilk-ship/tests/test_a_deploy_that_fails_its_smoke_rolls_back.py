@@ -194,7 +194,7 @@ def _make_release_cmd(
 
 def _make_bounce_cmd(bouncer_path: Path) -> callable:
     """Create a stub bounce_cmd that runs the fake bouncer script."""
-    def _bounce_cmd() -> int:
+    def _bounce_cmd(tag: str) -> int:
         r = subprocess.run(
             [str(bouncer_path)],
             capture_output=True, text=True,
@@ -206,7 +206,7 @@ def _make_bounce_cmd(bouncer_path: Path) -> callable:
 
 def _make_status_cmd(mapping: dict[str, str]) -> callable:
     """Create a stub status_cmd that returns values from a tag→status mapping."""
-    def _status_cmd(tag: str) -> str:
+    def _status_cmd(tag: str, cwd: Path | None = None) -> str:
         return mapping.get(tag, "unreachable")
     return _status_cmd
 
@@ -271,15 +271,27 @@ class TestDeploySucceedsWhenSmokePasses:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        bouncer = _write_stub_bouncer(tmp_path)
         pid_file = _make_pid_file_for_tag(tmp_path, "v0.0.2")
+
+        # Start a new process from releases/v0.0.2/ to simulate a restart
+        release_dir = releases_root / "v0.0.2"
+        script = release_dir / "scheduler.sh"
+        if not script.exists():
+            script.write_text("#!/bin/bash\nsleep 60\n")
+            script.chmod(0o755)
+        new_proc = subprocess.Popen(["bash", str(script)])
+        _LAUNCHED_PROCS.append(new_proc)
+
+        def _bounce_with_restart(tag: str) -> int:
+            pid_file.write_text(str(new_proc.pid))
+            return 1
 
         result = deploy(
             project=project,
             tag="v0.0.2",
             data_dir=data_dir,
             release_cmd=_make_release_cmd(allow_tags={"v0.0.2"}, releases_root=releases_root),
-            bounce_cmd=_make_bounce_cmd(bouncer),
+            bounce_cmd=_bounce_with_restart,
             status_cmd=_make_status_cmd({"v0.0.2": "ok"}),
             pid_file=pid_file,
         )
@@ -305,9 +317,24 @@ class TestDeployRollsBackOnSmokeFailure:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        bouncer = _write_stub_bouncer(tmp_path)
         # The pid file's process must mention releases/v0.0.1/ for the rollback smoke
         pid_file = _make_pid_file_for_tag(tmp_path, "v0.0.1")
+
+        # Start a new process from releases/v0.0.1/ to simulate a restart
+        release_dir = releases_root / "v0.0.1"
+        script = release_dir / "scheduler.sh"
+        if not script.exists():
+            script.write_text("#!/bin/bash\nsleep 60\n")
+            script.chmod(0o755)
+        new_proc = subprocess.Popen(["bash", str(script)])
+        _LAUNCHED_PROCS.append(new_proc)
+
+        call_count = {"n": 0}
+
+        def _bounce_with_restart(tag: str) -> int:
+            call_count["n"] += 1
+            pid_file.write_text(str(new_proc.pid))
+            return 1
 
         result = deploy(
             project=project,
@@ -316,7 +343,7 @@ class TestDeployRollsBackOnSmokeFailure:
             release_cmd=_make_release_cmd(
                 allow_tags={"v0.0.2", "v0.0.1"}, releases_root=releases_root,
             ),
-            bounce_cmd=_make_bounce_cmd(bouncer),
+            bounce_cmd=_bounce_with_restart,
             status_cmd=_make_status_cmd({"v0.0.2": "tag-mismatch", "v0.0.1": "ok"}),
             pid_file=pid_file,
         )
@@ -343,8 +370,15 @@ class TestDeployBothSmokesFail:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        bouncer = _write_stub_bouncer(tmp_path)
         pid_file = _make_pid_file(tmp_path, alive=True)
+
+        # Start a new process to simulate a restart
+        new_proc = subprocess.Popen(["sleep", "60"])
+        _LAUNCHED_PROCS.append(new_proc)
+
+        def _bounce_with_restart(tag: str) -> int:
+            pid_file.write_text(str(new_proc.pid))
+            return 1
 
         result = deploy(
             project=project,
@@ -353,7 +387,7 @@ class TestDeployBothSmokesFail:
             release_cmd=_make_release_cmd(
                 allow_tags={"v0.0.2", "v0.0.1"}, releases_root=releases_root,
             ),
-            bounce_cmd=_make_bounce_cmd(bouncer),
+            bounce_cmd=_bounce_with_restart,
             status_cmd=_make_status_cmd({"v0.0.2": "unreachable", "v0.0.1": "unreachable"}),
             pid_file=pid_file,
         )
@@ -423,15 +457,27 @@ class TestNoRealLaunchctlCalls:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        bouncer = _write_stub_bouncer(tmp_path)
         pid_file = _make_pid_file_for_tag(tmp_path, "v0.0.2")
+
+        # Start a new process from releases/v0.0.2/ to simulate a restart
+        release_dir = releases_root / "v0.0.2"
+        script = release_dir / "scheduler.sh"
+        if not script.exists():
+            script.write_text("#!/bin/bash\nsleep 60\n")
+            script.chmod(0o755)
+        new_proc = subprocess.Popen(["bash", str(script)])
+        _LAUNCHED_PROCS.append(new_proc)
+
+        def _bounce_with_restart(tag: str) -> int:
+            pid_file.write_text(str(new_proc.pid))
+            return 1
 
         result = deploy(
             project=project,
             tag="v0.0.2",
             data_dir=data_dir,
             release_cmd=_make_release_cmd(allow_tags={"v0.0.2"}, releases_root=releases_root),
-            bounce_cmd=_make_bounce_cmd(bouncer),
+            bounce_cmd=_bounce_with_restart,
             status_cmd=_make_status_cmd({"v0.0.2": "ok"}),
             pid_file=pid_file,
         )
