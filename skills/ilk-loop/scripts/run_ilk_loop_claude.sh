@@ -4993,23 +4993,20 @@ ledger_record_point() {
     return 0
   }
   # Resolve active master basename.
-  local master_basename="${_ACTIVE_MASTER_BASENAME:-}"
-  if [[ -z "$master_basename" ]]; then
+  local _rpd
+  _rpd=$(get_plans_dir) || _rpd=""
+  local master_basename=""
+  if [[ -n "$_rpd" && -d "$_rpd" ]]; then
     master_basename=$(python3 -c "
-import sys, json
+import sys
 sys.path.insert(0, sys.argv[1])
-from loop_status import pick_active_master, parse_frontmatter
+from loop_status import pick_active_master
 from pathlib import Path
-plans = sorted(Path(sys.argv[2]).glob('MASTER-*.md'))
-actives = []
-for p in plans:
-    fm = parse_frontmatter(p.read_text(encoding='utf-8'))
-    if fm.get('status') in ('active', 'queued'):
-        actives.append((p, fm))
-if actives:
-    chosen, _ = pick_active_master(actives, json_mode=True)
-    print(chosen.get('file', ''))
-" "${_SKILL_ROOT}/ilk-loop/scripts" "${_PLANS_DIR:-/dev/null}" 2>/dev/null) || master_basename=""
+masters = sorted(Path(sys.argv[2]).glob('MASTER-*.md'))
+if masters:
+    chosen, _ = pick_active_master(masters, json_mode=True)
+    print(chosen.name)
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$_rpd" 2>/dev/null) || master_basename=""
   fi
   local result=""
   result=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/suite_ledger.py" \
@@ -5021,6 +5018,37 @@ if actives:
     return 0
   }
   echo "[ledger] point tree=${after_sha:0:12} shipped=$shipped_slugs"
+}
+
+# Echo the comma-joined slugs from PRE_ITER_ALL_STEPS whose frontmatter
+# status is now "shipped".  Resolves the plans dir with get_plans_dir and
+# each slug's file with find_subplan_file_by_slug.  Never fails the
+# iteration — echoes nothing on any error.
+point_row_shipped_slugs() {
+  [[ -n "${PRE_ITER_ALL_STEPS:-}" ]] || return 0
+  local plans_dir
+  plans_dir=$(get_plans_dir) || return 0
+  [[ -n "$plans_dir" && -d "$plans_dir" ]] || return 0
+  local result=""
+  local _pre_line _pre_slug _pre_file _pre_fm
+  while read -r _pre_line; do
+    _pre_slug="${_pre_line%% *}"
+    [[ -z "$_pre_slug" ]] && continue
+    _pre_file=$(find_subplan_file_by_slug "$plans_dir" "$_pre_slug") || continue
+    _pre_fm=$(python3 -c "
+import sys
+sys.path.insert(0, sys.argv[1])
+from loop_status import parse_frontmatter
+from pathlib import Path
+p = Path(sys.argv[2])
+fm = parse_frontmatter(p.read_text(encoding='utf-8'))
+print(fm.get('status', ''))
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$_pre_file" 2>/dev/null) || _pre_fm=""
+    if [[ "$_pre_fm" == "shipped" ]]; then
+      result="${result:+$result,}$_pre_slug"
+    fi
+  done <<< "$PRE_ITER_ALL_STEPS"
+  [[ -n "$result" ]] && echo "$result"
 }
 
 # ----- Main ------------------------------------------------------------------
@@ -6906,27 +6934,8 @@ append_revert_row(
       local _point_before
       _point_before=$(head_before_sha "$_point_repo" "$heads_before_file")
       if [[ -n "$_point_before" ]]; then
-        # Build shipped list from sub-plans that are now shipped.
-        local _point_shipped=""
-        if [[ -n "${PRE_ITER_ALL_STEPS:-}" ]]; then
-          local _pre_line _pre_slug _pre_status _pre_fm
-          while read -r _pre_line; do
-            _pre_slug="${_pre_line%% *}"
-            [[ -z "$_pre_slug" ]] && continue
-            _pre_fm=$(python3 -c "
-import sys
-sys.path.insert(0, sys.argv[1])
-from loop_status import parse_frontmatter
-from pathlib import Path
-p = Path(sys.argv[2])
-fm = parse_frontmatter(p.read_text(encoding='utf-8'))
-print(fm.get('status', ''))
-" "${_SKILL_ROOT}/ilk-loop/scripts" "${_PLANS_DIR}/${_pre_slug}.md" 2>/dev/null) || _pre_fm=""
-            if [[ "$_pre_fm" == "shipped" ]]; then
-              _point_shipped="${_point_shipped:+$_point_shipped,}$_pre_slug"
-            fi
-          done <<< "$PRE_ITER_ALL_STEPS"
-        fi
+        local _point_shipped
+        _point_shipped=$(point_row_shipped_slugs) || _point_shipped=""
         ledger_record_point "$_point_repo" "$_point_before" "$_point_shipped"
       fi
     fi

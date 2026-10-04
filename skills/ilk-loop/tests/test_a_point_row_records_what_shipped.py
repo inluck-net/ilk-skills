@@ -23,9 +23,8 @@ These tests pin the expected behaviour:
   AC-6  (control) nothing shipped, no commit: no row appended.
   AC-7  (control) every test in the Step 1 gate's existing files passes.
 
-AC-1..AC-4 are ``xfail(strict=True)`` — the function does not exist yet.
-AC-5 is ``xfail`` because it calls the new helper.  AC-6 passes today
-(``ledger_record_point`` already exists and the no-commit guard works).
+AC-1..AC-5 now pass — the function exists and the runner uses it.
+AC-6 passes (``ledger_record_point`` exists and the no-commit guard works).
 """
 from __future__ import annotations
 
@@ -133,7 +132,7 @@ export ILK_DOTSOURCE_ONLY=1
 source '{_RUNNER}'
 PROJECT_PATH='{project}'
 LOOP_STATUS_SCRIPT='{_SCRIPTS / "loop_status.py"}'
-_SKILL_ROOT='{_SCRIPTS.parent}'
+_SKILL_ROOT='{_SCRIPTS.parent.parent}'
 get_all_subplan_steps
 """
     proc = subprocess.run(
@@ -156,12 +155,12 @@ PROJECT_PATH='{project}'
 REPOS=('{project}')
 RUN_ID='test-run-001'
 LOOP_STATUS_SCRIPT='{_SCRIPTS / "loop_status.py"}'
-_SKILL_ROOT='{_SCRIPTS.parent}'
+_SKILL_ROOT='{_SCRIPTS.parent.parent}'
 PRE_ITER_ALL_STEPS=$'{pre_iter_all_steps}'
 set +e
 declare -F {NEW_FUNC} >/dev/null || {{ echo "FUNC_MISSING"; exit 90; }}
 {NEW_FUNC}
-echo "RC=$?"
+echo "RC=$?" >&2
 """
     return subprocess.run(
         ["bash", "-c", script],
@@ -182,12 +181,11 @@ PROJECT_PATH='{project}'
 REPOS=('{project}')
 RUN_ID='test-run-001'
 LOOP_STATUS_SCRIPT='{_SCRIPTS / "loop_status.py"}'
-_SKILL_ROOT='{_SCRIPTS.parent}'
+_SKILL_ROOT='{_SCRIPTS.parent.parent}'
 _iter_slug='test-slug'
-ACTIVE_MASTER_BASENAME=''
 set +e
 ledger_record_point '{project}' '{before}' '{shipped}'
-echo "RC=$?"
+echo "RC=$?" >&2
 """
     return subprocess.run(
         ["bash", "-c", script],
@@ -219,7 +217,6 @@ def _read_points(project: Path, env: dict[str, str]) -> list[dict]:
 
 # ── AC-1 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="point_row_shipped_slugs does not exist yet")
 def test_shipped_slugs_echoes_exactly_the_shipped_ones(tmp_path: Path) -> None:
     """AC-1 — ``point_row_shipped_slugs`` echoes exactly the slugs whose
     frontmatter turned ``shipped`` during the iteration.
@@ -250,7 +247,6 @@ def test_shipped_slugs_echoes_exactly_the_shipped_ones(tmp_path: Path) -> None:
 
 # ── AC-2 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="point_row_shipped_slugs does not exist yet")
 def test_ledger_record_point_writes_shipped_and_master(tmp_path: Path) -> None:
     """AC-2 — ``ledger_record_point`` with the real ``suite_ledger.py`` appends
     a row with ``shipped == ["alpha"]`` and ``master`` equal to the MASTER's
@@ -287,14 +283,13 @@ def test_ledger_record_point_writes_shipped_and_master(tmp_path: Path) -> None:
 
 # ── AC-3 ─────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="_PLANS_DIR is unassigned; inline loop aborts under set -u")
 def test_no_unbound_variable_in_stderr(tmp_path: Path) -> None:
-    """AC-3 — the shipped-list extraction contains 0 occurrences of
+    """AC-3 — calling ``point_row_shipped_slugs`` contains 0 occurrences of
     ``unbound variable`` in stderr.
 
-    This test exercises the REAL inline loop at ``:6911-6929`` (the code path
-    that references ``_PLANS_DIR``), not the new helper.  It sources the
-    runner, sets ``PRE_ITER_ALL_STEPS``, and runs the inline loop directly.
+    Sources the runner, sets ``PRE_ITER_ALL_STEPS``, and calls the new helper
+    directly.  The old inline loop that referenced ``_PLANS_DIR`` has been
+    replaced.
     """
     project = _make_project(tmp_path / "proj", {"alpha": (0, 2), "beta": (0, 2)})
     env = _sandbox_env(tmp_path)
@@ -308,44 +303,7 @@ def test_no_unbound_variable_in_stderr(tmp_path: Path) -> None:
     alpha_file.write_text(text.replace("status: in-progress", "status: shipped"),
                           encoding="utf-8")
 
-    # Run the inline loop (the code at :6911-6929) directly.
-    script = f"""
-export ILK_DOTSOURCE_ONLY=1
-source '{_RUNNER}'
-PROJECT_PATH='{project}'
-REPOS=('{project}')
-RUN_ID='test-run-001'
-LOOP_STATUS_SCRIPT='{_SCRIPTS / "loop_status.py"}'
-_SKILL_ROOT='{_SCRIPTS.parent}'
-PRE_ITER_ALL_STEPS=$'{pre_iter}'
-set +e
-# Inline loop from :6911-6929 (the code that uses _PLANS_DIR).
-_point_shipped=""
-if [[ -n "${{PRE_ITER_ALL_STEPS:-}}" ]]; then
-  while read -r _pre_line; do
-    _pre_slug="${{_pre_line%% *}}"
-    [[ -z "$_pre_slug" ]] && continue
-    _pre_fm=$(python3 -c "
-import sys
-sys.path.insert(0, sys.argv[1])
-from loop_status import parse_frontmatter
-from pathlib import Path
-p = Path(sys.argv[2])
-fm = parse_frontmatter(p.read_text(encoding='utf-8'))
-print(fm.get('status', ''))
-" "${{_SKILL_ROOT}}/ilk-loop/scripts" "${{_PLANS_DIR}}/${{_pre_slug}}.md" 2>/dev/null) || _pre_fm=""
-    if [[ "$_pre_fm" == "shipped" ]]; then
-      _point_shipped="${{_point_shipped:+$_point_shipped,}}$_pre_slug"
-    fi
-  done <<< "$PRE_ITER_ALL_STEPS"
-fi
-echo "shipped=$_point_shipped"
-"""
-    proc = subprocess.run(
-        ["bash", "-c", script],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=120, env=env, cwd=str(project),
-    )
+    proc = _run_point_row_shipped(project, env, pre_iter)
     assert "unbound variable" not in proc.stderr, (
         f"found 'unbound variable' in stderr:\n{proc.stderr}"
     )
@@ -353,7 +311,6 @@ echo "shipped=$_point_shipped"
 
 # ── AC-4 (static) ───────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="_PLANS_DIR and _ACTIVE_MASTER_BASENAME still in runner")
 def test_no_plans_dir_variable_in_runner() -> None:
     """AC-4 (static) — the runner text contains 0 occurrences of ``_PLANS_DIR``
     and 0 of ``_ACTIVE_MASTER_BASENAME``."""
@@ -366,7 +323,6 @@ def test_no_plans_dir_variable_in_runner() -> None:
 
 # ── AC-5 (control) ──────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="point_row_shipped_slugs does not exist yet")
 def test_nothing_shipped_one_commit_writes_row_with_empty_shipped(tmp_path: Path) -> None:
     """AC-5 (control) — nothing shipped, one commit (a sub-plan advanced
     ``current_step`` but stayed ``in-progress``): ``point_row_shipped_slugs``

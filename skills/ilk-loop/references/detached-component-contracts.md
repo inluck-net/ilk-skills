@@ -2938,6 +2938,12 @@ measure`, not the runner.
 | `points.jsonl` | `suite_ledger.py point` (driver) | `red_owner.py` (sub-plan 3) | run_id + iteration |
 | `returned/<slug>.json` | `suite_ledger.py return-reds` (driver) | `suite_ledger.py return-reds` (dedup check) | slug |
 
+**`points.jsonl` row fields.** The main-loop point row's `shipped` lists the
+sub-plans whose frontmatter turned `shipped` during the iteration (resolved
+from the plans dir by `plan:` slug via `point_row_shipped_slugs`).  `master`
+is the active MASTER's basename (resolved by `get_plans_dir` +
+`pick_active_master`).
+
 ### Key
 
 The ledger lives under the external logs dir for the git-common-dir repo's
