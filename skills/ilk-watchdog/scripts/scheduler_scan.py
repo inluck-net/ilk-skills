@@ -91,6 +91,7 @@ from plan_status import (  # noqa: E402
     reconcile_master_registry,
     reconcile_master_status,
 )
+from release_train_dispatch import sentinel_all_shipped  # noqa: E402
 
 
 def resolve_repo_path(project_dir: Path, key: str) -> str | None:
@@ -625,8 +626,39 @@ def _scan_one_project(project_dir: Path) -> dict | None:
         # Note: legacy `pending` is normalized to `queued` above.
 
     # --- pass 2: decide inclusion + FIFO timestamp ---
-    # A project is included iff it has a runnable master.
+    # A project is included iff it has a runnable master OR it is a
+    # train_only candidate (all-shipped sentinel, no runnable master,
+    # no release marker — the release train should run to deploy it).
     if not active_ts and not queued_ts:
+        # Train-only: a project whose sentinel passes the all-shipped rule
+        # but has no runnable master.  The release train should deploy it
+        # without dispatching a new loop iteration.
+        try:
+            sentinel_file = project_dir / "runtime" / "launcher" / "last-exit.json"
+            if sentinel_all_shipped(sentinel_file, plans_dir):
+                # No started marker for this run → the train has not
+                # started yet.
+                sentinel_data = json.loads(
+                    sentinel_file.read_text(encoding="utf-8-sig")
+                )
+                run_id = sentinel_data.get("run_id", "")
+                marker_path = (
+                    project_dir / "runtime" / "release" / f"{run_id}.started"
+                )
+                if run_id and not marker_path.exists():
+                    return {
+                        "key": project_dir.name,
+                        "path": str(project_dir),
+                        "repo_path": resolve_repo_path(
+                            project_dir, project_dir.name
+                        ),
+                        "oldest_queued_ts": datetime.min.isoformat(),
+                        "has_active_master": False,
+                        "active_master_name": None,
+                        "train_only": True,
+                    }
+        except (OSError, ValueError):
+            pass  # unreadable sentinel → not train_only
         return None
 
     # Active master wins for FIFO timestamp; else next-to-promote queued.

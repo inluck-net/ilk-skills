@@ -1475,7 +1475,19 @@ except: pass
       _rt_run_id="${_rt_run_id//$'\r'/}"
       _rt_run_id="${_rt_run_id//$'\n'/}"
       if [[ -n "$_rt_run_id" ]]; then
-        maybe_start_release_train "$key" "$path" "$path" "$repo" "$_rt_run_id" || true
+        if maybe_start_release_train "$key" "$path" "$path" "$repo" "$_rt_run_id"; then
+          # Train started — this project's cycle ends here.
+          # Do not dispatch or fill a slot; the train will commit,
+          # deploy and bounce the scheduler under a live loop.
+          if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+            write_scheduler_log "skip-releasing" "$key" "reason=train-started"
+            echo "{\"decision\":\"skip-releasing\",\"key\":\"$key\",\"reason\":\"train-started\"}"
+          else
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip-releasing: $key reason=train-started"
+            write_scheduler_log "skip-releasing" "$key" "reason=train-started"
+          fi
+          continue
+        fi
       fi
 
       # Fill free slots: collect while capacity remains.

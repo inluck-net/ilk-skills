@@ -3179,3 +3179,65 @@ The literal token `clone-run-on-release-host` is the named reason tests match.
    `ilk-run.sh`'s guard runs before promotion.
 3. **Stderr only.** The guard prints to stderr, never stdout.  Captured-function
    logging rules apply.
+
+---
+
+## The `train_only` scan-row field (`scheduler_scan.py`)
+
+### Purpose
+
+When a project has **no runnable master** (every master is shipped or blocked)
+but its sentinel passes the all-shipped rule (`sentinel_all_shipped` returns
+True) and no release marker exists, `_scan_one_project` returns a row with
+`"train_only": true`. This lets the scheduler start the release train for
+projects whose queue is drained — the common case for the last batch of a
+project.
+
+Without this field, `_scan_one_project` returned `None` for masterless
+projects, and the train hook inside the dispatch loop never reached them.
+The last batch of a queue (the usual ilk-skills case) never got its train.
+
+### Format
+
+The row carries every field `scheduler.sh` reads, plus `train_only`:
+
+```json
+{
+  "key": "<project-key>",
+  "path": "<absolute project data dir>",
+  "repo_path": "<absolute source repo path>",
+  "oldest_queued_ts": "0001-01-01T00:00:00",
+  "has_active_master": false,
+  "active_master_name": null,
+  "train_only": true
+}
+```
+
+### Who writes
+
+- **`scheduler_scan.py` `_scan_one_project`** — the only writer. Emitted
+  when pass 1 finds no active or queued master, and the sentinel +
+  marker check passes.
+
+### Who reads
+
+- **`scheduler.sh`** dispatch loop — treats a `train_only` row differently
+  from a normal dispatch row: it offers the row to
+  `maybe_start_release_train` and moves on without dispatching,
+  promoting, or counting against capacity.
+
+### Invariants
+
+1. **A `train_only` row is never dispatched.** `scheduler.sh` does not
+   pass it to `launch.sh`, does not promote a master, and does not count
+   it against the dispatch capacity. It only offers it to the train hook.
+2. **A `train_only` row is never promoted.** The row's
+   `has_active_master` is always `false`; promotion requires an active
+   or queued master.
+3. **The marker prevents re-start.** Once `maybe_start_release_train`
+   writes `<run_id>.started`, subsequent scans return `None` (the
+   marker check in `_scan_one_project`).
+4. **A non-all-shipped sentinel yields no row.** The sentinel must pass
+   `sentinel_all_shipped`; a failure sentinel (`local_checks_failed`,
+   `error`, etc.) produces no `train_only` row — the project is
+   excluded as before.

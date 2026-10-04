@@ -64,6 +64,7 @@ def _write_project(
     key: str,
     *,
     master_status: str | None = "queued",
+    sub_status: str = "pending",
     sentinel_state: str = "all-shipped",
     run_id: str = "test-run-001",
     plans_dir: Path | None = None,
@@ -71,6 +72,7 @@ def _write_project(
     """Scaffold a minimal project for scheduler scan tests.
 
     When *master_status* is None, no MASTER file is written (masterless project).
+    *sub_status* controls the sub-plan's status (default ``pending``).
     """
     project_dir = tmp_path / "projects" / key
     p_dir = plans_dir or (project_dir / "plans")
@@ -92,7 +94,7 @@ def _write_project(
         (p_dir / "2026-10-04-work.md").write_text(
             "---\n"
             "plan: 2026-10-04-work\n"
-            "status: pending\n"
+            f"status: {sub_status}\n"
             "last_updated: 2026-10-04\n"
             "---\n\n# 2026-10-04-work\n",
             encoding="utf-8",
@@ -211,16 +213,12 @@ class TestMasterlessAllShippedGetsTrain:
     After step 1, it should return a row with ``train_only: true``.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="scheduler_scan does not yet emit train_only rows for masterless all-shipped projects",
-    )
     def test_scan_returns_train_only_row(self, tmp_path: Path) -> None:
         """A masterless project with all-shipped sentinel → scan returns a
         train_only row."""
-        # Master status "shipped" → master_has_runnable returns False → masterless
+        # Master status "shipped" + sub shipped → no runnable master
         _write_project(tmp_path, "proj-2", master_status="shipped",
-                       sentinel_state="all-shipped")
+                       sub_status="shipped", sentinel_state="all-shipped")
         scan = _fresh_scheduler_scan()
         scan.ilk_data_root = lambda: tmp_path
 
@@ -235,7 +233,7 @@ class TestMasterlessAllShippedGetsTrain:
         """sentinel_all_shipped returns True even without a runnable master."""
         project_dir = _write_project(
             tmp_path, "proj-2", master_status="shipped",
-            sentinel_state="all-shipped",
+            sub_status="shipped", sentinel_state="all-shipped",
         )
         sentinel_file = project_dir / "runtime" / "launcher" / "last-exit.json"
         # all-shipped is a legacy success state — accepted without plans_dir check
@@ -247,7 +245,7 @@ class TestMasterlessAllShippedGetsTrain:
         run_id = "test-run-002"
         project_dir = _write_project(
             tmp_path, "proj-2", master_status="shipped",
-            sentinel_state="all-shipped", run_id=run_id,
+            sub_status="shipped", sentinel_state="all-shipped", run_id=run_id,
         )
 
         # First cycle: no marker
@@ -272,15 +270,11 @@ class TestTrainOnlyNeverDispatched:
     exist and the scheduler will skip it for dispatch.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="train_only rows do not yet exist; scheduler dispatch integration pending step 1",
-    )
     def test_train_only_row_exists_for_dispatch_test(self, tmp_path: Path) -> None:
         """Precondition: the scan must return a train_only row before we can
         test that the scheduler skips it for dispatch."""
         _write_project(tmp_path, "proj-3", master_status="shipped",
-                       sentinel_state="all-shipped")
+                       sub_status="shipped", sentinel_state="all-shipped")
         scan = _fresh_scheduler_scan()
         scan.ilk_data_root = lambda: tmp_path
 
@@ -302,18 +296,8 @@ class TestNonAllShippedMasterlessNoRow:
 
     def test_no_scan_row(self, tmp_path: Path) -> None:
         """local_checks_failed sentinel + masterless → no scan row."""
-        project_dir = _write_project(tmp_path, "proj-4", master_status="shipped",
-                                     sentinel_state="local_checks_failed")
-        # Mark the sub-plan as shipped so master_has_runnable returns False
-        plans_dir = project_dir / "plans"
-        (plans_dir / "2026-10-04-work.md").write_text(
-            "---\n"
-            "plan: 2026-10-04-work\n"
-            "status: shipped\n"
-            "last_updated: 2026-10-04\n"
-            "---\n\n# 2026-10-04-work\n",
-            encoding="utf-8",
-        )
+        _write_project(tmp_path, "proj-4", master_status="shipped",
+                       sub_status="shipped", sentinel_state="local_checks_failed")
         scan = _fresh_scheduler_scan()
         scan.ilk_data_root = lambda: tmp_path
 
@@ -327,7 +311,7 @@ class TestNonAllShippedMasterlessNoRow:
         """sentinel_all_shipped returns False for local_checks_failed."""
         project_dir = _write_project(
             tmp_path, "proj-4", master_status="shipped",
-            sentinel_state="local_checks_failed",
+            sub_status="shipped", sentinel_state="local_checks_failed",
         )
         sentinel_file = project_dir / "runtime" / "launcher" / "last-exit.json"
         assert sentinel_all_shipped(sentinel_file) is False
