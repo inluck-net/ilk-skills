@@ -1,7 +1,6 @@
-"""Red-first pins: the scheduler writes yesterday's digest once, detached.
+"""The scheduler writes yesterday's digest once, detached.
 
-AC-1..AC-6 are xfail(strict=True) — the implementation does not exist yet.
-AC-7 (control) is unmarked — the base scheduler dispatch JSON is unchanged.
+AC-1..AC-7 are unmarked — the implementation is in place.
 
 Drives scheduler.sh via ILK_DOTSOURCE_ONLY=1 in the scheduler_sandbox
 fixture (isolated HOME, ILK_DATA_HOME, and ILK_SKILL_HOME).
@@ -195,15 +194,6 @@ def test_dry_run_logs_digest_due(scheduler_sandbox, tmp_path):
     scheduler.log has digest-due naming yesterday, no digest/ file exists.
     """
     stub = _write_stub_digest(tmp_path)
-
-    # Pre-check: maybe_write_digest must exist as a function.
-    precheck = _source_and_call(
-        scheduler_sandbox,
-        'type maybe_write_digest',
-        extra_env={"DIGEST_SCRIPT": str(stub)},
-    )
-    if precheck.returncode != 0:
-        pytest.xfail("maybe_write_digest function not implemented")
 
     result = subprocess.run(
         ["bash", str(SCHEDULER), "--once", "--dry-run"],
