@@ -40,8 +40,50 @@ worktree because it edits the toolkit itself. It does NOT auto-apply changes.
 ## Key files
 
 - `scripts/build_task.py` — reads backlog, emits task description.
+- `scripts/autoplan.py` — unattended auto-planner (see below).
+- `scripts/autoplan_rails.py` — kernel guard, ranking, screening, master checks.
 - Backlog store: `~/.ilk-data/ilk-skills-improvements/candidates.json`
   (managed by `ilk-feedback/scripts/improvement_backlog.py`).
+
+## Unattended mode
+
+`autoplan.py` runs the auto-planner without a session.  When the
+ilk-skills queue has had no runnable master for N consecutive scheduler
+cycles, it starts one detached `claude -p` session on the manager home
+for the top-ranked candidate.
+
+### Enablement
+
+`.ilk-launch.json` `autoplan.enabled: true` in the toolkit repo,
+mirroring `ship.release_train`.  The auto-planner finds the toolkit
+project as the one data dir whose resolved repo has that flag and
+contains `commands/ilk-plan.md`.
+
+### Kill switch
+
+`~/.ilk-data/autoplan.disabled` stops it on a host without a code
+change.
+
+### Paused state
+
+Two consecutive planning attempts that end `draft` write
+`<data root>/autoplan/paused.json`.  The lane stays paused until the
+file is removed.
+
+### Commands
+
+- `autoplan.py tick [--dry-run] [--json]` — called once per scheduler
+  cycle; never waits on claude.
+- `autoplan.py plan --candidate ID --project-key K --run-id R` — the
+  detached planning part (spawned by `tick`).
+- `autoplan.py probe [--json]` — test the manager home (owner session's
+  live check after ship).
+
+### Draft-to-queued decision
+
+The auto-planner (code) owns the `draft` to `queued` flip.  It runs
+`plan_lint` and `plan_preflight` and flips to `queued` only if both
+pass.  This overrides step 8b of `/ilk-plan`.
 
 ## See also
 
