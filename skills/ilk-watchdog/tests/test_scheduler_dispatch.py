@@ -8,6 +8,7 @@ Part of sub-plan: scheduler-dispatch-verification (steps 0–1).
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -88,9 +89,13 @@ def _read_scan_projects(tmp_home: Path) -> list[dict]:
     """Import and call ``scheduler_scan.scan_projects`` with patched data root."""
     sys.path.insert(0, str(SCRIPTS_ILK_WATCHDOG))
     sys.path.insert(0, str(SCRIPTS_ILK_LOOP))
-    for mod_name in ("scheduler_scan", "ilk_paths", "plan_status"):
+    for mod_name in ("scheduler_scan", "ilk_paths", "plan_status", "plan_slug"):
         if mod_name in sys.modules:
             del sys.modules[mod_name]
+    # Ensure scheduler_scan resolves _SKILL_ROOT from the working copy,
+    # not from ILK_SKILL_HOME (which may point at a stale release extract
+    # or claude-worker install in the ambient environment).
+    os.environ["ILK_SKILL_HOME"] = str(REPO_ROOT / "skills")
     import scheduler_scan
     scheduler_scan.ilk_data_root = lambda: tmp_home
     return scheduler_scan.scan_projects()
@@ -109,9 +114,13 @@ def _read_resolve_repo_path(
     """
     sys.path.insert(0, str(SCRIPTS_ILK_WATCHDOG))
     sys.path.insert(0, str(SCRIPTS_ILK_LOOP))
-    for mod_name in ("scheduler_scan", "ilk_paths", "plan_status"):
+    for mod_name in ("scheduler_scan", "ilk_paths", "plan_status", "plan_slug"):
         if mod_name in sys.modules:
             del sys.modules[mod_name]
+    # Ensure scheduler_scan resolves _SKILL_ROOT from the working copy,
+    # not from ILK_SKILL_HOME (which may point at a stale release extract
+    # or claude-worker install in the ambient environment).
+    os.environ["ILK_SKILL_HOME"] = str(REPO_ROOT / "skills")
     import scheduler_scan
     if skill_root is not None:
         scheduler_scan._SKILL_ROOT = skill_root
