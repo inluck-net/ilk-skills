@@ -38,9 +38,9 @@ def _load_module():
     return autoplan_rails
 
 
-def _build_fake_backlog_dir(tmp_path: Path) -> Path:
+def _build_fake_backlog_dir(tmp_path) -> Path:
     """Create an empty backlog directory for testing."""
-    backlog_dir = tmp_path / "ilk-skills-improvements"
+    backlog_dir = Path(tmp_path) / "ilk-skills-improvements"
     backlog_dir.mkdir(parents=True, exist_ok=True)
     return backlog_dir
 
@@ -63,8 +63,8 @@ def _load_candidates(backlog_dir: Path) -> list[dict]:
 def _make_candidate(
     *,
     cid: str = "sig-abc123",
-    title: "Missing feature X",
-    gap: "No support for X",
+    title: str = "Missing feature X",
+    gap: str = "No support for X",
     source: str = "triage",
     status: str = "open",
     seen_count: int = 1,
@@ -97,9 +97,9 @@ def _make_candidate(
     }
 
 
-def _copy_fixture_batch(tmp_path: Path) -> Path:
+def _copy_fixture_batch(tmp_path) -> Path:
     """Copy the fixture batch to a temp plans dir."""
-    plans_dir = tmp_path / "plans"
+    plans_dir = Path(tmp_path) / "plans"
     plans_dir.mkdir()
     for f in FIXTURE_DIR.iterdir():
         if f.suffix == ".md":
@@ -113,56 +113,48 @@ def _copy_fixture_batch(tmp_path: Path) -> Path:
 class TestAC1:
     """touches_kernel hits kernel entries and misses non-kernel paths."""
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_hits_plan_lint(self):
         """Exact file match on a kernel path."""
         mod = _load_module()
         result = mod.touches_kernel("skills/ilk-loop/scripts/plan_lint.py")
         assert result is not None
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_hits_directory_containment(self):
         """Directory path (ends with /) hits a kernel file under it."""
         mod = _load_module()
         result = mod.touches_kernel("skills/ilk-loop/scripts/")
         assert result is not None
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_hits_wildcard(self):
         """Glob pattern matches kernel paths."""
         mod = _load_module()
         result = mod.touches_kernel("skills/**")
         assert result is not None
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_hits_conftest_basename(self):
         """Any conftest.py basename hits the kernel."""
         mod = _load_module()
         result = mod.touches_kernel("skills/foo/tests/conftest.py")
         assert result is not None
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_hits_invariants_dir(self):
         """tests/invariants/ directory is in the kernel."""
         mod = _load_module()
         result = mod.touches_kernel("tests/invariants/test_x.py")
         assert result is not None
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_hits_ilk_launch_json(self):
         """".ilk-launch.json is in the kernel."""
         mod = _load_module()
         result = mod.touches_kernel(".ilk-launch.json")
         assert result is not None
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_misses_non_kernel_file(self):
         """A file not in the kernel returns None."""
         mod = _load_module()
         result = mod.touches_kernel("skills/ilk-feedback/scripts/collect.py")
         assert result is None
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_misses_non_kernel_file_with_similar_name(self):
         """A file with a similar name but not in kernel returns None."""
         mod = _load_module()
@@ -176,7 +168,6 @@ class TestAC1:
 class TestAC2:
     """rank orders eligible candidates correctly and drops ineligible ones."""
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_escalated_before_urgent_before_high_seen(self):
         """Escalation > urgency > seen_count ordering."""
         mod = _load_module()
@@ -189,7 +180,6 @@ class TestAC2:
         ids = [e["id"] for e in ranked]
         assert ids.index("escalated") < ids.index("urgent") < ids.index("high-seen")
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_drops_feedback_source(self):
         """Non-triage source entries are dropped."""
         mod = _load_module()
@@ -202,7 +192,6 @@ class TestAC2:
         ids = [e["id"] for e in ranked]
         assert "feedback-bad" not in ids
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_drops_planned_status(self):
         """Non-open status entries are dropped."""
         mod = _load_module()
@@ -215,7 +204,6 @@ class TestAC2:
         ids = [e["id"] for e in ranked]
         assert "planned-bad" not in ids
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_drops_max_attempts(self):
         """Entries with autoplan_attempts >= 2 are dropped."""
         mod = _load_module()
@@ -228,7 +216,6 @@ class TestAC2:
         ids = [e["id"] for e in ranked]
         assert "exhausted" not in ids
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_drops_blocked(self):
         """Entries with autoplan_blocked are dropped."""
         mod = _load_module()
@@ -248,7 +235,6 @@ class TestAC2:
 class TestAC3:
     """screen_candidate catches kernel references in candidate text."""
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_returns_kernel_entry_for_basename_mention(self):
         """When gap mentions a kernel file by basename, returns it."""
         mod = _load_module()
@@ -259,7 +245,6 @@ class TestAC3:
         assert result is not None
         assert "ship_audit.py" in result
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_returns_none_for_clean_candidate(self):
         """When no kernel path is mentioned, returns None."""
         mod = _load_module()
@@ -277,7 +262,6 @@ class TestAC3:
 class TestAC4:
     """check_master validates batch structure against rails."""
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_clean_batch_passes(self):
         """A well-formed batch with verify-last returns empty problems."""
         mod = _load_module()
@@ -286,26 +270,29 @@ class TestAC4:
         problems = mod.check_master(master_path, plans_dir)
         assert problems == []
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_verify_not_last_fails(self):
         """Verify sub-plan not being last is caught."""
         mod = _load_module()
         plans_dir = _copy_fixture_batch(tmp_path=tempfile.mkdtemp())
-        # Swap the order in the master
+        # Swap the full rows (display text + link targets) and current_subplan
+        # in the master, so that extract_subplan_files sees verify first.
         master_path = plans_dir / "MASTER-2026-10-03-fixture-batch-execution-plan.md"
         text = master_path.read_text(encoding="utf-8")
+        row_feature = "| 0 | [2026-10-03-fixture-feature.md](./2026-10-03-fixture-feature.md) | 1 | 2 | pending |"
+        row_verify = "| 1 | [2026-10-03-fixture-verify.md](./2026-10-03-fixture-verify.md) | 1 | 2 | pending |"
+        # Use a temp marker to avoid replace collision.
+        text = text.replace(row_feature, "ROW_FEATURE_TEMP")
+        text = text.replace(row_verify, row_feature.replace("| 0 |", "| 1 |"))
+        text = text.replace("ROW_FEATURE_TEMP", row_verify.replace("| 1 |", "| 0 |"))
+        # Also swap current_subplan so extract_subplan_files sees verify first.
         text = text.replace(
-            "| 0 | [2026-10-03-fixture-feature.md]",
-            "| 0 | [2026-10-03-fixture-verify.md]",
-        ).replace(
-            "| 1 | [2026-10-03-fixture-verify.md]",
-            "| 1 | [2026-10-03-fixture-feature.md]",
+            "current_subplan: 2026-10-03-fixture-feature.md",
+            "current_subplan: 2026-10-03-fixture-verify.md",
         )
         master_path.write_text(text, encoding="utf-8")
         problems = mod.check_master(master_path, plans_dir)
         assert len(problems) >= 1
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_kernel_scope_path_fails(self):
         """A sub-plan with a kernel scope_path is caught."""
         mod = _load_module()
@@ -322,7 +309,6 @@ class TestAC4:
         problems = mod.check_master(master_path, plans_dir)
         assert len(problems) >= 1
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_conftest_edit_bullet_fails(self):
         """An Edit bullet mentioning conftest.py is caught."""
         mod = _load_module()
@@ -335,7 +321,6 @@ class TestAC4:
         problems = mod.check_master(master_path, plans_dir)
         assert len(problems) >= 1
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_second_auto_planned_queued_fails(self):
         """A second auto-planned master already queued is caught."""
         mod = _load_module()
@@ -361,7 +346,6 @@ class TestAC4:
 class TestAC5:
     """mark_candidate updates entries under lock, refuses corrupt files."""
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_corrupt_file_raises(self):
         """A corrupt candidates.json raises and leaves bytes unchanged."""
         mod = _load_module()
@@ -373,7 +357,6 @@ class TestAC5:
             mod.mark_candidate("sig-abc", status="planned", backlog_dir=backlog_dir)
         assert p.read_text(encoding="utf-8") == original
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_updates_exactly_one_entry(self):
         """mark_candidate changes only the targeted entry."""
         mod = _load_module()
@@ -391,7 +374,6 @@ class TestAC5:
         assert aaa["status"] == "planned"
         assert bbb["status"] == "open"
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_unknown_id_raises(self):
         """An unknown entry id raises KeyError and writes nothing."""
         mod = _load_module()
@@ -412,7 +394,6 @@ class TestAC5:
 class TestAC6:
     """mark_master inserts auto_planned fields into frontmatter."""
 
-    @pytest.mark.xfail(strict=True, reason="autoplan_rails not yet implemented")
     def test_sets_auto_planned_true(self):
         """After mark_master, parse_frontmatter reads auto_planned: true."""
         mod = _load_module()
