@@ -36,13 +36,15 @@ def _check_refusals() -> None:
 
     skill_home = os.environ.get("ILK_SKILL_HOME", "")
     if skill_home:
-        # Check if it resolves inside this repo.
+        # Check if it resolves inside a LIVE git repo (one with .git).
+        # An archive copy (teeth) has no .git and is safe.
         try:
             resolved = Path(skill_home).resolve()
             repo_resolved = _REPO.resolve()
             if resolved == repo_resolved or str(resolved).startswith(str(repo_resolved) + os.sep):
-                print("refusal: ILK_SKILL_HOME resolves inside this repo", file=sys.stderr)
-                raise SystemExit(2)
+                if (repo_resolved / ".git").exists():
+                    print("refusal: ILK_SKILL_HOME resolves inside this repo", file=sys.stderr)
+                    raise SystemExit(2)
         except (OSError, ValueError):
             pass
 
@@ -86,6 +88,12 @@ def _build_tmp_root(keep: bool = False) -> Path:
         cwd=str(project), check=True, capture_output=True, text=True,
     )
 
+    # Capture the initial commit SHA so we can fill MASTER's base_sha.
+    init_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(project), check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
     # Copy skills/ to ILK_SKILL_HOME.
     skill_home = root / "skills"
     if skill_home.exists():
@@ -104,6 +112,12 @@ def _build_tmp_root(keep: bool = False) -> Path:
     plans = data_home / "projects" / key / "plans"
     plans.mkdir(parents=True, exist_ok=True)
     shutil.copytree(_FIXTURES / "plans", plans, dirs_exist_ok=True)
+
+    # Fill MASTER's base_sha with the fixture project's initial commit.
+    for master_file in plans.glob("MASTER-*.md"):
+        text = master_file.read_text(encoding="utf-8")
+        text = text.replace('base_sha: "0000000"', f'base_sha: "{init_sha}"')
+        master_file.write_text(text, encoding="utf-8")
 
     # Copy stub-claude to bin/.
     bin_dir = root / "bin"
@@ -127,14 +141,23 @@ def _build_tmp_root(keep: bool = False) -> Path:
     # /Library/Developer/CommandLineTools/usr/bin first (which has no pytest).
     # BASH_ENV is loaded by bash before /etc/profile, so this overrides it.
     # Use $PATH (literal, not Python f-string) to preserve the existing PATH.
+    # Also export BASE_SHA so gate commands can pass it to verification scripts.
     bash_env = root / ".bash_env"
-    bash_env.write_text(f'export PATH="{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin' + ':$PATH"\n')
+    bash_env.write_text(
+        f'export PATH="{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin' + ':$PATH"\n'
+        f'export BASE_SHA="{init_sha}"\n'
+    )
 
     return root
 
 
 def _run_golden_batch(root: Path) -> subprocess.CompletedProcess:
-    """Run the runner on the fixture project."""
+    """Run the runner on the fixture project.
+
+    The runner exits on gate failures (local_checks_failed), so we call it
+    in a loop until all sub-plans reach their expected status or we hit a
+    hard limit.  Each call processes one step (or quarantines a sub-plan).
+    """
     project = root / "project"
     skill_home = root / "skills"
     data_home = root / ".ilk-data"
@@ -179,20 +202,57 @@ def _run_golden_batch(root: Path) -> subprocess.CompletedProcess:
     if user_site and Path(user_site).is_dir():
         env["PYTHONPATH"] = user_site
     env.pop("ILK_DATA_DIR", None)
+    env.pop("ILK_WORKER_SESSION", None)
 
-    # Read expected.json for max_iterations.
+    # Read expected.json for max_iterations per call and hard loop limit.
     expected = json.loads((_FIXTURES / "expected.json").read_text(encoding="utf-8"))
-    max_iter = expected.get("max_iterations", 8)
+    max_iter_per_call = expected.get("max_iterations", 8)
+    # Hard limit: at most 4 calls (enough for gate failures + quarantine +
+    # shipping + verify).
+    hard_limit = 4
 
-    return subprocess.run(
-        ["bash", "--noprofile", str(_RUNNER),
-         "--project-path", str(project),
-         "--max-iterations", str(max_iter),
-         "--iteration-timeout-min", "2",
-         "--run-local-checks"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=600, env=env, cwd=str(root),
-    )
+    sys.path.insert(0, str(_SCRIPTS))
+    import ilk_paths
+    from unittest.mock import patch as _patch
+    with _patch.dict(os.environ, {"ILK_DATA_HOME": str(data_home)}, clear=False):
+        key = ilk_paths.project_key(project)
+    plans = data_home / "projects" / key / "plans"
+
+    last_proc = None
+    for _call in range(hard_limit):
+        proc = subprocess.run(
+            ["bash", "--noprofile", str(_RUNNER),
+             "--project-path", str(project),
+             "--max-iterations", str(max_iter_per_call),
+             "--iteration-timeout-min", "2",
+             "--run-local-checks"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=600, env=env, cwd=str(root),
+        )
+        last_proc = proc
+
+        # Check if all non-verify sub-plans reached their expected status.
+        all_done = True
+        for slug in ["golden-real", "golden-inert", "golden-red"]:
+            plan_file = plans / f"2026-10-04-{slug}.md"
+            if not plan_file.exists():
+                all_done = False
+                break
+            text = plan_file.read_text(encoding="utf-8")
+            m = re.search(r'^status:\s*(\S+)', text, re.MULTILINE)
+            status = m.group(1) if m else "unknown"
+            want = expected.get(slug, {})
+            if "status" in want and status != want["status"]:
+                all_done = False
+                break
+            if "not_status" in want and status == want["not_status"]:
+                all_done = False
+                break
+        if all_done:
+            break
+
+    assert last_proc is not None
+    return last_proc
 
 
 _ATTRIBUTED_RE = re.compile(r"(\d+) attributed regression\(s\): (.+?)\. A row")
