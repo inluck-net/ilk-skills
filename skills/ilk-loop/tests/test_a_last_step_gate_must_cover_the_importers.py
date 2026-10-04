@@ -3,15 +3,11 @@ the changed module's resolved callers' tests (HARD finding).
 
 AC-1: step 0 gates everything, step 1 (last) gates only test_new → HARD
 AC-2: last step gates test_new + test_shared, no caller test → HARD
-AC-3: 3-step, only step 2 (last) gates everything → no finding (control or xfail)
+AC-3: 3-step, only step 2 (last) gates everything → no finding (control)
 AC-4: ## Findings holds an old gate; last step's own fence is the judge → HARD
 AC-5 (control): frontmatter-only gates, no ### Step → unprefixed finding
 AC-6 (control): whole-suite gate on any step → no finding
 AC-7 (control): leaf module, no importer → no finding
-
-AC-1, AC-2, AC-4 are xfail(strict=True) until the lint changes (step 1).
-AC-3 is xfail only if it fails on current code; otherwise a control.
-AC-5, AC-6, AC-7 are plain tests that pass on the current code.
 """
 from __future__ import annotations
 
@@ -364,7 +360,6 @@ local_checks:
 
 # ── tests ────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="HARD finding for last step gate (step 1)")
 class TestAc1LastStepGateMissesCaller:
     """AC-1: step 0 gates everything, step 1 (last) gates only test_new.
 
@@ -392,7 +387,6 @@ class TestAc1LastStepGateMissesCaller:
         )
 
 
-@pytest.mark.xfail(strict=True, reason="HARD prefix for last step gate (step 1)")
 class TestAc2LastStepMissingCallerNoPrefix:
     """AC-2: last step gates test_new + test_shared, no caller test.
 
@@ -436,7 +430,6 @@ class TestAc3OnlyLastStepCovers:
         )
 
 
-@pytest.mark.xfail(strict=True, reason="Findings gate must not count (step 1)")
 class TestAc4FindingsGateDoesNotCount:
     """AC-4: ## Findings holds an old gate; last step's own fence is the judge.
 

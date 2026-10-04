@@ -653,8 +653,10 @@ per-step `local_checks` yaml block. Warn on each occurrence:
 - **per-file-only gate on a shared module** — a `local_check` that runs
   only the new file's tests while the change touches a shared/imported
   module hides integration + test-state-leak bugs (decomposition-principles
-  §8, field-log bugs #1/#2); the last step must widen beyond the new file
-  to the module's tests plus its resolved callers' tests.
+  §8, field-log bugs #1/#2).  HARD when the last step's gate misses a
+  required test (the last step must widen beyond the new file to the
+  module's tests plus its resolved callers' tests).  A warning only for a
+  sub-plan with no per-step last gate (frontmatter-only or no `### Step`).
 - **Whole-project-only compile gate** (decomposition-principles §16) —
   a sub-plan whose ONLY `local_check` is a whole-project compile
   command (`tsc`, `mypy`, `cargo build`, `npm run build`,
@@ -921,13 +923,16 @@ surface counts in the step-9 report; fix before launching):
   decomposition-principles.md §8.
 - **shared-module gate** — a sub-plan's `scope_paths` modifies a module that
   other production files import, and every gate in the sub-plan runs only a
-  single test file. The callers' integration is never exercised. The finding
-  names the importing files and warns that widening the gate to a directory or
-  whole suite will also require a 'baseline-green on \<platform\>' note (see
-  whole-suite gate baseline above). Uses a caller-aware detector (grep for
-  `from <mod> import` / `import <mod>`, excluding test files); if the oracle
-  cannot run, it reports nothing rather than firing. See
-  decomposition-principles.md §8.
+  single test file. The callers' integration is never exercised.  HARD when
+  the last step's gate misses a required test (the last step must widen
+  beyond the new file to the module's tests plus its resolved callers'
+  tests).  A warning only for a sub-plan with no per-step last gate
+  (frontmatter-only or no `### Step`). The finding names the importing files
+  and warns that widening the gate to a directory or whole suite will also
+  require a 'baseline-green on \<platform\>' note (see whole-suite gate
+  baseline above). Uses a caller-aware detector (grep for `from <mod> import`
+  / `import <mod>`, excluding test files); if the oracle cannot run, it
+  reports nothing rather than firing. See decomposition-principles.md §8.
 - **gate executable off driver PATH** — a `local_checks` command's leading
   executable cannot resolve on the effective PATH (getconf PATH + the project's
   `path_prelude`). The finding names both the executable and the searched

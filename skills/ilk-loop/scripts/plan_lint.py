@@ -2116,6 +2116,29 @@ def lint_shared_module_gate(text: str, slug: str) -> list[str]:
             if _is_whole_suite_command(cmd):
                 return findings  # Later step widens — compliant.
 
+    # D9 item 1: the LAST step's gate must cover the changed module's
+    # importers' tests.  A last-step gate that misses a required test is
+    # a HARD finding — earlier steps' gates are not judged.
+    steps = _extract_step_sections(body)
+    last_step_gate_paths: set[str] | None = None
+    last_heading: str | None = None
+    if steps:
+        last_no = max(s[0] for s in steps)
+        last_heading = next(s[1] for s in steps if s[0] == last_no)
+        last_fence = _step_first_yaml_fence(body, last_no)
+        if last_fence is not None:
+            last_cmds = re.findall(r"command:\s*(.+)", last_fence)
+            if last_cmds:
+                # A whole-suite gate on the last step exempts the sub-plan.
+                for cmd in last_cmds:
+                    if _is_whole_suite_command(cmd):
+                        return findings
+                last_step_gate_paths = set()
+                for cmd in last_cmds:
+                    last_step_gate_paths |= _resolve_test_paths(
+                        _extract_test_file_tokens(cmd), project_root,
+                    )
+
     # All gates are file-scoped.  Check whether any gate covers both the
     # changed module AND its resolved importers' tests.
     for sp, module in source_files:
@@ -2174,7 +2197,36 @@ def lint_shared_module_gate(text: str, slug: str) -> list[str]:
         if not module_test and not callers_test:
             continue
 
-        # New rule: check the UNION of all gates, not each gate individually.
+        # D9 item 1: the last step's gate must cover the required tests.
+        # When a last step with at least one gate command exists, judge it
+        # on its own.  A HARD finding fires when it misses a required test.
+        if last_step_gate_paths is not None:
+            required = set()
+            if callers_test:
+                required |= callers_test
+            if module_test:
+                required |= module_test
+            missing_last = sorted(required - last_step_gate_paths)
+            if missing_last:
+                root_str = str(project_root)
+                rel_missing = [
+                    t[len(root_str):].lstrip("/") if t.startswith(root_str) else t
+                    for t in missing_last
+                ]
+                findings.append(
+                    f"HARD {slug}: {last_heading} changes nothing that "
+                    f"its gate does not test — scope_path '{sp}' changes "
+                    f"module '{module}', imported by: "
+                    f"{', '.join(sorted(set(importers)))}.  "
+                    f"The last step's gate misses: "
+                    f"{', '.join(rel_missing)}.  Add them to that step's "
+                    f"local_checks (D9: the last gate covers the changed "
+                    f"module's importers' tests)."
+                )
+            continue  # Last step's gate is the primary check.
+
+        # Fallback: no per-step last gate.  Check the UNION of all gates,
+        # not each gate individually.
         # Compliant when every resolved caller test is in the union, and,
         # if test_<module>.py exists, it is in the union too.
         all_gate_paths: set[str] = set()
