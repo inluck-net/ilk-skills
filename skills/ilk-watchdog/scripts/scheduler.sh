@@ -161,6 +161,7 @@ LAUNCH_SCRIPT="${_SKILL_ROOT}/ilk-launcher/scripts/launch.sh"
 BOOTSTRAP_SCRIPT="${_SKILL_ROOT}/../tools/claude-worker/bootstrap.sh"
 NOTIFY_PY="${_SKILL_ROOT}/ilk-watchdog/scripts/ilk_notify.py"
 WATCHDOG_SCRIPT="${_ILK_SCRIPT_DIR}/watchdog.sh"
+DIGEST_SCRIPT="${DIGEST_SCRIPT:-${_SKILL_ROOT}/ilk-loop/scripts/ilk_digest.py}"
 
 SCHEDULER_LOG_DIR="$(ilk_data_dir)/logs"
 SCHEDULER_LOG_FILE="${SCHEDULER_LOG_DIR}/scheduler.log"
@@ -171,6 +172,45 @@ invoke_ilk_notify() {
   local args=("$NOTIFY_PY" --event "$event" --project "$project")
   [[ -n "$detail" ]] && args+=(--detail "$detail")
   $PYTHON "${args[@]}" 2>/dev/null || true
+}
+
+# --- daily digest hook --------------------------------------------------------
+
+maybe_write_digest() {
+  # Write yesterday's digest page once per day, detached.
+  # Called as `maybe_write_digest || true` at the top of every cycle.
+  # ILK_DIGEST=0 disables the hook entirely.
+  if [[ "${ILK_DIGEST:-1}" == "0" ]]; then
+    return 0
+  fi
+
+  local today="${1:-$(date '+%Y-%m-%d')}"
+  local yesterday
+  yesterday="$("$PYTHON" -c "
+from datetime import date, timedelta
+print(date.fromisoformat('$today') - timedelta(days=1))
+" 2>/dev/null)" || return 0
+
+  local data_dir
+  data_dir="$(ilk_data_dir)"
+  local marker="${data_dir}/digest/.scheduled-${yesterday}"
+
+  # Already rendered today — nothing to do.
+  if [[ -e "$marker" ]]; then
+    return 0
+  fi
+
+  # Dry-run: log what would happen, spawn nothing.
+  if [[ "$DRY_RUN" == true ]]; then
+    write_scheduler_log "digest-due" "" "$yesterday"
+    return 0
+  fi
+
+  # Render detached.
+  mkdir -p "${data_dir}/digest"
+  nohup "$PYTHON" "$DIGEST_SCRIPT" scheduled --day "$yesterday" \
+    >> "${data_dir}/digest/scheduled-${yesterday}.log" 2>&1 &
+  write_scheduler_log "digest-start" "" "$yesterday"
 }
 
 # Resolve python command (python3 preferred, python fallback for Windows).
@@ -973,6 +1013,9 @@ run_scheduler() {
   fi
 
   while true; do
+    # --- daily digest hook (before scan, so idle cycles also write) ---
+    maybe_write_digest || true
+
     # --- scan for queued projects ---
     local scan_output
     scan_output=$(invoke_scheduler_scan) || {

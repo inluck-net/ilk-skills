@@ -105,7 +105,6 @@ def _yesterday(today_str: str | None = None) -> str:
 # ── AC-1: maybe_write_digest starts the stub once, logs digest-start ─────────
 
 
-@pytest.mark.xfail(strict=True, reason="implementation does not exist yet")
 def test_maybe_write_digest_starts_stub_once(scheduler_sandbox, tmp_path):
     """AC-1: maybe_write_digest 2026-10-04 starts the stub with
     scheduled --day 2026-10-03, and scheduler.log gains digest-start.
@@ -139,7 +138,6 @@ def test_maybe_write_digest_starts_stub_once(scheduler_sandbox, tmp_path):
 # ── AC-2: marker present → no start, no log ─────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="implementation does not exist yet")
 def test_marker_present_no_start(scheduler_sandbox, tmp_path):
     """AC-2: with .scheduled-2026-10-03 present, maybe_write_digest
     starts nothing and logs nothing.
@@ -171,7 +169,6 @@ def test_marker_present_no_start(scheduler_sandbox, tmp_path):
 # ── AC-3: ILK_DIGEST=0 → no start ───────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="implementation does not exist yet")
 def test_ilk_digest_zero_no_start(scheduler_sandbox, tmp_path):
     """AC-3: ILK_DIGEST=0 → maybe_write_digest starts nothing."""
     stub = _write_stub_digest(tmp_path)
@@ -193,7 +190,6 @@ def test_ilk_digest_zero_no_start(scheduler_sandbox, tmp_path):
 # ── AC-4: --once --dry-run logs digest-due, no file ──────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="implementation does not exist yet")
 def test_dry_run_logs_digest_due(scheduler_sandbox, tmp_path):
     """AC-4: scheduler.sh --once --dry-run with no projects:
     scheduler.log has digest-due naming yesterday, no digest/ file exists.
@@ -235,31 +231,101 @@ def test_dry_run_logs_digest_due(scheduler_sandbox, tmp_path):
 # ── AC-5: scheduled() with one escalation → page + marker + notify ───────────
 
 
-@pytest.mark.xfail(strict=True, reason="implementation does not exist yet")
 def test_scheduled_one_escalation(scheduler_sandbox, tmp_path):
     """AC-5: scheduled("D", root=tmp, notify=fake) with one escalated row:
     the page exists, marker has escalations=1/notified=true, fake called once.
     A second call returns already and fake is still at one call.
     """
-    # We need to import the module after it's implemented.
-    sys_path_setup = (
-        f"import sys; sys.path.insert(0, {str(SKILLS_DIR / 'ilk-loop' / 'scripts')!r})\n"
-        f"sys.path.insert(0, {str(SKILLS_DIR / 'ilk-watchdog' / 'scripts')!r})\n"
+    import sys as _sys
+    _sys.path.insert(0, str(SKILLS_DIR / "ilk-loop" / "scripts"))
+    from ilk_digest import scheduled  # noqa: E402
+
+    day = "2026-10-03"
+    root = Path(scheduler_sandbox.env["ILK_DATA_HOME"])
+
+    # Write one escalated audit row.
+    audit_dir = root / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    (audit_dir / f"{day}.jsonl").write_text(
+        '{"kind":"escalated","project":"test","reason":"test reason","ts":"2026-10-03T10:00:00+0800"}\n',
+        encoding="utf-8",
     )
-    # This test will be filled in when ilk_digest.py gains the scheduled verb.
-    # For now it's a structural pin.
-    raise AssertionError("scheduled() not implemented")
+
+    calls: list[tuple[str, int, Path]] = []
+
+    def fake_notify(d: str, count: int, page: Path) -> None:
+        calls.append((d, count, page))
+
+    result = scheduled(day, root=root, notify=fake_notify)
+    assert "error" not in result, f"scheduled errored: {result.get('error')}"
+
+    # Page exists.
+    page = root / "digest" / f"{day}.md"
+    assert page.exists(), f"page not written: {page}"
+
+    # Marker JSON.
+    marker = root / "digest" / f".scheduled-{day}"
+    assert marker.exists(), "marker not written"
+    import json as _json
+    data = _json.loads(marker.read_text(encoding="utf-8"))
+    assert data["escalations"] == 1
+    assert data["notified"] is True
+
+    # Notify called once.
+    assert len(calls) == 1
+    assert calls[0][0] == day
+
+    # Second call: returns already, notify still at one call.
+    result2 = scheduled(day, root=root, notify=fake_notify)
+    assert result2.get("already") is True
+    assert len(calls) == 1
 
 
 # ── AC-6: scheduled() with zero escalations → no notify ──────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="implementation does not exist yet")
 def test_scheduled_zero_escalations_no_notify(scheduler_sandbox, tmp_path):
     """AC-6: scheduled with zero escalations does not call notify;
     with an unreadable audit file it does (escalations=1).
     """
-    raise AssertionError("scheduled() not implemented")
+    import sys as _sys
+    _sys.path.insert(0, str(SKILLS_DIR / "ilk-loop" / "scripts"))
+    from ilk_digest import scheduled  # noqa: E402
+
+    day = "2026-10-03"
+    root = Path(scheduler_sandbox.env["ILK_DATA_HOME"])
+
+    calls: list[tuple[str, int, Path]] = []
+
+    def fake_notify(d: str, count: int, page: Path) -> None:
+        calls.append((d, count, page))
+
+    # --- Part 1: zero escalations → no notify ---
+    result = scheduled(day, root=root, notify=fake_notify)
+    assert "error" not in result, f"scheduled errored: {result.get('error')}"
+    assert len(calls) == 0, f"notify should not have been called, got {len(calls)} calls"
+
+    # Remove the marker for part 2.
+    marker = root / "digest" / f".scheduled-{day}"
+    marker.unlink(missing_ok=True)
+
+    # --- Part 2: unreadable audit file → escalations=1 → notify ---
+    # Create a directory where the audit file should be, so open() fails with
+    # IsADirectoryError (unreadable).
+    audit_dir = root / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    audit_file = audit_dir / f"{day}.jsonl"
+    audit_file.mkdir(exist_ok=True)  # directory blocks the file read
+
+    result2 = scheduled(day, root=root, notify=fake_notify)
+    assert "error" not in result2, f"scheduled errored: {result2.get('error')}"
+
+    # The marker should record the unreadable audit as an escalation.
+    import json as _json
+    data = _json.loads(marker.read_text(encoding="utf-8"))
+    assert data["escalations"] == 1, f"expected 1 escalation, got {data['escalations']}"
+    assert data["notified"] is True
+    assert len(calls) == 1, f"expected 1 notify call, got {len(calls)}"
 
 
 # ── AC-7 (control): dispatch JSON unchanged ──────────────────────────────────

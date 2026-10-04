@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
+import subprocess
 import sys
 import tempfile
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 # Ensure the scripts dir is importable so we can reach ilk_paths / ilk_audit.
 _SCRIPTS_DIR = Path(__file__).resolve().parent
@@ -532,6 +534,108 @@ def write(day: str, *, root: Path | None = None) -> Path:
     return target
 
 
+# ── scheduled ────────────────────────────────────────────────────────────────
+
+
+def scheduled(
+    day: str,
+    root: Path | None = None,
+    *,
+    notify: Callable[[str, int, Path], None] | None = None,
+) -> dict[str, Any]:
+    """Render and write *day*'s page once, behind an atomic marker.
+
+    Returns ``{"day": D, "already": True}`` when the marker already exists.
+    Otherwise renders the page, counts escalations (``escalated`` rows + one
+    when the audit file is unreadable), calls *notify* when escalations >= 1,
+    and writes the marker JSON last.
+
+    A render exception is caught and recorded in the marker's ``error`` field;
+    the marker stays so the scheduler does not retry.
+    """
+    base = root if root is not None else ilk_data_root()
+    marker = base / "digest" / f".scheduled-{day}"
+
+    # Atomic once-per-day guard: O_CREAT|O_EXCL fails if the file exists.
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(str(marker), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        os.close(fd)
+    except FileExistsError:
+        return {"day": day, "already": True}
+
+    error: str | None = None
+    page_path: Path | None = None
+    escalations = 0
+    notified = False
+
+    try:
+        page_path = write(day, root=root)
+
+        data = collect(day, root=root)
+        rows_by_kind = data["rows"]
+        audit_error = data["audit_error"]
+
+        escalated_rows = rows_by_kind.get("escalated", [])
+        escalations = len(escalated_rows)
+        if audit_error:
+            escalations += 1
+
+        if escalations >= 1:
+            _notify(day, escalations, page_path, root=root, notify=notify)
+            notified = True
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+
+    # Write the marker content last.
+    marker_data = {
+        "day": day,
+        "rendered_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "escalations": escalations,
+        "notified": notified,
+        "error": error,
+    }
+    try:
+        marker.write_text(json.dumps(marker_data), encoding="utf-8")
+    except OSError:
+        pass
+
+    if error:
+        return {"day": day, "error": error}
+    return {"day": day, "escalations": escalations, "notified": notified}
+
+
+def _notify(
+    day: str,
+    count: int,
+    page_path: Path,
+    *,
+    root: Path | None = None,
+    notify: Callable[[str, int, Path], None] | None = None,
+) -> None:
+    """Send a digest-ready notification.
+
+    If *notify* is provided, call it directly.  Otherwise invoke
+    ``ilk_notify.py --event digest-ready``.
+    """
+    if notify is not None:
+        notify(day, count, page_path)
+        return
+
+    notify_py = Path(__file__).resolve().parent.parent.parent / "ilk-watchdog" / "scripts" / "ilk_notify.py"
+    hostname = socket.gethostname()
+    detail = f"{count} escalation(s) — {page_path}"
+    try:
+        subprocess.run(
+            [sys.executable, str(notify_py), "--event", "digest-ready",
+             "--project", hostname, "--detail", detail],
+            capture_output=True, timeout=30,
+            encoding="utf-8", errors="replace",
+        )
+    except Exception:
+        pass
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
@@ -546,6 +650,9 @@ def main(argv: list[str] | None = None) -> int:
     p_render.add_argument("--day", required=True, help="YYYY-MM-DD")
 
     sub.add_parser("today", help="Print today's page so far to stdout (no file written).")
+
+    p_scheduled = sub.add_parser("scheduled", help="Render yesterday's page once (behind an atomic marker).")
+    p_scheduled.add_argument("--day", required=True, help="YYYY-MM-DD")
 
     args = parser.parse_args(argv)
 
@@ -564,6 +671,19 @@ def main(argv: list[str] | None = None) -> int:
         today = audit_day()
         page = render(today)
         print(page, end="")
+        return 0
+
+    if args.verb == "scheduled":
+        # Validate --day format
+        try:
+            datetime.strptime(args.day, "%Y-%m-%d")
+        except ValueError:
+            print(f"invalid day: {args.day!r}", file=sys.stderr)
+            return 2
+        result = scheduled(args.day)
+        if result.get("error"):
+            print(f"error: {result['error']}", file=sys.stderr)
+            return 1
         return 0
 
     parser.print_help()

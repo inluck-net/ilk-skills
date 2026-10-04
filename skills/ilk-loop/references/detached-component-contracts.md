@@ -2982,3 +2982,65 @@ Any other exit leaves today's behaviour (verify worker dispatched).
 **`returned/<slug>.json`:** a JSON array of node ids already returned to
 *slug*.  Prevents the same id from being returned twice (exit 4).  Lives
 under the ledger directory.
+
+---
+
+## Contract 20: The daily digest (`digest/`)
+
+### Purpose
+
+The scheduler writes yesterday's digest page once per day, on its first
+cycle after local midnight.  The page is rendered by `ilk_digest.py
+scheduled --day D` behind an atomic marker so it is never retried.
+
+### Files
+
+| File | Writer | Reader |
+|---|---|---|
+| `digest/D.md` | `ilk_digest.py write` (called by `scheduled`) | Chad; `ilk_digest.py today` |
+| `digest/.scheduled-D` | `ilk_digest.py scheduled` (`O_CREAT\|O_EXCL`) | `scheduler.sh` `maybe_write_digest` |
+| `digest/scheduled-D.log` | `nohup` redirect from `scheduler.sh` | Human diagnosis |
+
+### The marker
+
+Created with `os.open(..., O_CREAT|O_EXCL|O_WRONLY)` before the render
+starts.  Its content is written last:
+
+```json
+{"day":"2026-10-03","rendered_at":"...","escalations":1,"notified":true,"error":null}
+```
+
+A render exception is caught and recorded in `error`; the marker stays
+so the scheduler does not retry.  `error` is `null` on success.
+
+### The hook (`scheduler.sh` `maybe_write_digest`)
+
+Called as `maybe_write_digest || true` at the top of every cycle, before
+the scan, so idle cycles also write.  In `--dry-run` it only logs
+`digest-due` and spawns nothing.  `ILK_DIGEST=0` disables the hook
+entirely.
+
+Yesterday is computed with `$PYTHON` (`datetime.date`), not `date -v`
+/ `date -d`.
+
+### Notification
+
+`ilk_notify.py --event digest-ready` is called only when escalations >= 1
+(an `escalated` row or an unreadable audit file).  An unknown event is
+titled `ilk — <event>` (`ilk_notify.py:41`), so `ilk_notify.py` is not
+edited.
+
+### Once-per-day rule
+
+The `O_CREAT|O_EXCL` marker is the sole guard.  A render that fails after
+creating the marker records the error and is NOT retried.  Manual
+re-render: `ilk_digest.py render --day D`.
+
+### Invariants
+
+1. **One render per day.** The marker is atomic; a second call returns
+   `already: true`.
+2. **No retry on failure.** The marker stays; the error is recorded in it.
+3. **Dry-run writes nothing.** No marker, no page, no digest dir.
+4. **Idle cycles write.** The hook runs before the scan.
+5. **`ILK_DIGEST=0` disables.** The hook returns 0 immediately.
