@@ -1100,10 +1100,29 @@ def _is_vitest_project(project: Path) -> bool:
     return False
 
 
+def _read_declared_reds(project: Path) -> list[dict]:
+    """Load ship.baseline_red from the same ShipConfig that _resolve_suite_invocation uses.
+
+    Returns the list of dicts (each with node_id and reason), or [] if
+    the config is missing, unreadable, or has no baseline_red key.
+    An unreadable config gives [] (stricter: the mention gate does not
+    excuse anything when the config cannot be trusted).
+    """
+    try:
+        from ship_config import load_ship_config, ShipConfig  # noqa: E402
+        result = load_ship_config(project)
+        if isinstance(result, ShipConfig):
+            return list(result.ship.get("baseline_red", []))
+    except Exception:
+        pass
+    return []
+
+
 def _synthesize_mention_check(
     project: Path,
     changed_files: list[str],
     existing_commands: set[str],
+    baseline_red: list[dict] | None = None,
 ) -> dict | None:
     """Synthesize a mention gate check (AC-3).
 
@@ -1153,6 +1172,17 @@ def _synthesize_mention_check(
     # De-duplicate and filter norecursedirs
     test_files = sorted(set(f for f in test_files if not _is_under_norecursedirs(f, norecursedirs)))
 
+    # Whole-file baseline_red declarations drop their files from the mention
+    # set (the batch gate's rule: a declared file covers every node in it).
+    declared = baseline_red or []
+    if declared:
+        file_level = [
+            str(e.get("node_id", "")) for e in declared
+            if isinstance(e, dict) and e.get("node_id") and "::" not in str(e.get("node_id", ""))
+        ]
+        if file_level:
+            test_files = [f for f in test_files if f not in file_level]
+
     # AC-4: cap at 20 files
     if len(test_files) > _MENTION_GATE_CAP:
         # Log warning but don't gate
@@ -1188,6 +1218,10 @@ def _synthesize_mention_check(
 
     files_str = " ".join(new_test_files)
     cmd = f"{suite} {files_str}"
+    # Append -rfE when declared reds exist, so pytest prints FAILED/ERROR
+    # summary lines that the verdict can parse.
+    if declared:
+        cmd = f"{cmd} -rfE"
 
     return {
         "command": cmd,
@@ -1811,6 +1845,7 @@ def main(argv: list[str]) -> int:
 
     # AC-1 through AC-7: synthesize mention gate if applicable
     mention_check = None
+    baseline_red: list[dict] = []
     if step is not None:
         # Get pre-iteration head from environment (set by runner)
         pre_iter_head = os.environ.get("ILK_PRE_ITER_HEAD")
@@ -1826,8 +1861,9 @@ def main(argv: list[str]) -> int:
             existing_commands = {
                 c.get("command", "") for c in subplan_checks + step_checks
             }
+            baseline_red = _read_declared_reds(project)
             mention_check = _synthesize_mention_check(
-                project, changed_files, existing_commands
+                project, changed_files, existing_commands, baseline_red
             )
 
     results: list[CheckResult] = []
@@ -1839,7 +1875,36 @@ def main(argv: list[str]) -> int:
         for c in step_checks:
             results.append(run_one(c, "step", run_cwd))
         if mention_check is not None:
-            results.append(run_one(mention_check, "mention", run_cwd))
+            mr = run_one(mention_check, "mention", run_cwd)
+            # Verdict: a mention check passes iff exit 0, OR exit 1 and all
+            # failing ids are declared baseline_red nodes (by the batch gate's
+            # exact rule).  Any other exit code (2, 3, 4, 5, timeout) is a
+            # hard failure — never excused.
+            excused_ids: list[str] = []
+            if mr.exit_code == 1 and baseline_red:
+                from batch_gate import _undeclared_failures  # noqa: E402
+                # Parse from the same output the check captured
+                parsed_ids: list[str] = []
+                for line in (mr.stdout_tail or "").splitlines():
+                    if line.startswith(("FAILED ", "ERROR ")):
+                        rest = line.split(" ", 1)[1]
+                        parsed_ids.append(rest.split(" - ", 1)[0].strip())
+                undeclared = _undeclared_failures(parsed_ids, baseline_red)
+                if not undeclared and parsed_ids:
+                    # All failures are declared — excuse them
+                    excused_ids = parsed_ids
+                    mr.passed = True
+                    mr.outcome = "pass"
+                    mr.reason = f"excused {len(excused_ids)} declared baseline_red node(s)"
+                    print(
+                        f"[local_checks] mention: excused {len(excused_ids)} "
+                        f"declared baseline_red node(s): {', '.join(excused_ids)}",
+                        file=sys.stderr,
+                    )
+            results.append(mr)
+            # Stash excused ids on the result for JSON serialization
+            if excused_ids:
+                mr._excused_declared_reds = excused_ids  # type: ignore[attr-defined]
 
     passed = all(r.passed for r in results)
 
@@ -1881,7 +1946,11 @@ def main(argv: list[str]) -> int:
         "mention_check_count": 1 if mention_check is not None else 0,
         "all_passed": passed,
         "outcome": rollup,
-        "results": [asdict(r) for r in results],
+        "results": [
+            {**asdict(r), **({"excused_declared_reds": r._excused_declared_reds}
+                             if hasattr(r, "_excused_declared_reds") else {})}
+            for r in results
+        ],
         "head_sha": iso.head_sha,
         "dirty_paths": iso.dirty_paths,
         "isolated": iso.isolated,

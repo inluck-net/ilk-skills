@@ -2,9 +2,8 @@ r"""Red-first pins: the mention gate excuses exactly the declared baseline_red n
 
 Part of sub-plan ``the-mention-gate-skips-declared-reds`` (step 0 of 2).
 
-AC-1, AC-2, and AC-7 are ``xfail(strict=True)`` until step 1
-implements the excuse logic in ``run_local_checks.py``.  AC-4 through
-AC-6 are plain tests that verify the current control behavior.
+All tests are plain — step 1 implements the excuse logic in
+``run_local_checks.py``.
 
 AC-1: declared node excused end to end — the mention check passes and
       records ``excused_declared_reds``.
@@ -147,10 +146,6 @@ def _run(repo: Path, slug: str = "alpha", step: int = 1) -> dict:
 # ── AC-1: declared node excused, end to end ─────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="mention gate does not yet excuse declared baseline_red nodes",
-)
 def test_ac1_declared_node_excused(tmp_path: Path) -> None:
     """A declared baseline_red node is excused by the mention gate."""
     launch = {
@@ -188,10 +183,6 @@ def test_ac1_declared_node_excused(tmp_path: Path) -> None:
 # ── AC-2: whole-file declaration drops the file ─────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="mention gate does not yet drop whole-file declared reds",
-)
 def test_ac2_whole_file_drops_file(tmp_path: Path) -> None:
     """A whole-file baseline_red entry drops that file from the mention set."""
     launch = {
@@ -213,7 +204,8 @@ def test_ac2_whole_file_drops_file(tmp_path: Path) -> None:
         },
         commit_files={
             "test_foo.py": "def test_foo(): assert False\n",
-            "test_bar.py": "def test_bar(): assert True\n",
+            # test_bar.py must actually change (git diff) to be in changed_files
+            "test_bar.py": "def test_bar_v2(): assert True\n",
         },
     )
 
@@ -226,10 +218,6 @@ def test_ac2_whole_file_drops_file(tmp_path: Path) -> None:
     assert "test_foo.py" not in cmd, f"test_foo.py should be dropped: {cmd}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="mention gate does not yet drop whole-file declared reds",
-)
 def test_ac2_whole_file_only_changed_file(tmp_path: Path) -> None:
     """When the only changed file is a whole-file declaration, no mention check."""
     launch = {
@@ -402,10 +390,6 @@ def test_ac6_exit_2_not_excused(tmp_path: Path) -> None:
 # ── AC-7: excuse visible in stdout ─────────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="mention gate does not yet output excuse lines",
-)
 def test_ac7_excuse_visible_in_stdout(tmp_path: Path) -> None:
     """The excuse is printed to stdout."""
     launch = {
@@ -430,14 +414,19 @@ def test_ac7_excuse_visible_in_stdout(tmp_path: Path) -> None:
         },
     )
 
-    # capture both stdout and the rlc output
-    old_stdout = sys.stdout
-    sys.stdout = StringIO()
+    # capture stderr for the excuse line
+    old_stderr = sys.stderr
+    sys.stderr = StringIO()
     try:
-        rlc.main(["--project", str(repo), "--slug", "alpha", "--step", "1"])
-        output = sys.stdout.getvalue()
+        old_stdout = sys.stdout
+        sys.stdout = StringIO()
+        try:
+            rlc.main(["--project", str(repo), "--slug", "alpha", "--step", "1"])
+        finally:
+            sys.stdout = old_stdout
+        stderr_output = sys.stderr.getvalue()
     finally:
-        sys.stdout = old_stdout
+        sys.stderr = old_stderr
 
-    assert "mention: excused 1 declared baseline_red node(s):" in output
-    assert "test_foo.py::test_declared_red" in output
+    assert "mention: excused 1 declared baseline_red node(s):" in stderr_output
+    assert "test_foo.py::test_declared_red" in stderr_output
