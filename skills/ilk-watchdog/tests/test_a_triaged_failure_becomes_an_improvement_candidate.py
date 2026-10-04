@@ -1,18 +1,16 @@
-"""Red-first pins: a triaged failure becomes one deduplicated improvement candidate.
+"""Tests: a triaged failure becomes one deduplicated improvement candidate.
 
-Sub-plan: a-triaged-failure-becomes-an-improvement-candidate (step 0).
+Sub-plan: a-triaged-failure-becomes-an-improvement-candidate (step 1).
 Covers AC-1..AC-7: the triage backlog emitter creates candidates from triage
 outcomes, deduplicates by signature, tracks escalations and urgency, refuses
 corrupt files, and integrates with ilk_triage.py and ilk_audit.py.
-
-AC-1..AC-6 are xfail(strict=True) — the emitter module does not yet exist.
-AC-7 (control) is also xfail(strict=True) — it calls emit.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -113,17 +111,44 @@ def _make_decision(
     }
 
 
+def _build_fake_data_dir(tmp_path: Path) -> Path:
+    """Build a fake data root with plans, runtime, and logs from the replay fixture.
+
+    Returns the project data dir (data_root / projects / test-project).
+    """
+    data_root = tmp_path / "ilk-data"
+    data_root.mkdir()
+
+    # Create project dir under data_root/projects/test-project
+    project_dir = data_root / "projects" / "test-project"
+    project_dir.mkdir(parents=True)
+
+    # Copy fixture runtime + logs
+    for sub in ("runtime", "logs"):
+        src = FIXTURE_DIR / sub
+        if src.exists():
+            shutil.copytree(src, project_dir / sub)
+
+    # Copy fixture plans
+    plans_dir = project_dir / "plans"
+    plans_dir.mkdir()
+    fixture_plans = FIXTURE_DIR / "plans"
+    if fixture_plans.exists():
+        for p in fixture_plans.iterdir():
+            shutil.copy(p, plans_dir)
+
+    return project_dir
+
+
 # ── AC-1: applied decision creates one candidate ────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="triage_backlog.emit does not exist yet")
 def test_ac1_applied_decision_creates_one_candidate(tmp_path):
     """AC-1: an applied decision on a fixture evidence pack creates one candidate
     with source: 'triage', source_id = signature(...), status: 'open',
     seen_count: 1, and relations.run_id; a candidate-emitted row exists."""
     backlog_dir = _build_fake_backlog_dir(tmp_path)
 
-    # Import the module (will fail until it exists)
     from triage_backlog import emit, signature
 
     evidence = _make_evidence_pack()
@@ -157,7 +182,6 @@ def test_ac1_applied_decision_creates_one_candidate(tmp_path):
 # ── AC-2: dedup by signature ────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="triage_backlog.emit does not exist yet")
 def test_ac2_same_signature_bumps_seen_count(tmp_path):
     """AC-2: the same failure from a second run_id (same signature) bumps the
     same entry to seen_count: 2 and leaves the candidate count unchanged."""
@@ -194,7 +218,6 @@ def test_ac2_same_signature_bumps_seen_count(tmp_path):
     assert candidates[0]["seen_count"] == 2
 
 
-@pytest.mark.xfail(strict=True, reason="triage_backlog.emit does not exist yet")
 def test_ac2_different_failing_node_creates_second_entry(tmp_path):
     """AC-2: a different failing node gives a second entry."""
     backlog_dir = _build_fake_backlog_dir(tmp_path)
@@ -231,7 +254,6 @@ def test_ac2_different_failing_node_creates_second_entry(tmp_path):
 # ── AC-3: escalation and urgency tracking ────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="triage_backlog.emit does not exist yet")
 def test_ac3_escalation_sets_high_severity(tmp_path):
     """AC-3: an escalation sets severity: 'high' and relations.escalations: 1."""
     backlog_dir = _build_fake_backlog_dir(tmp_path)
@@ -256,7 +278,6 @@ def test_ac3_escalation_sets_high_severity(tmp_path):
     assert candidates[0]["relations"]["escalations"] == 1
 
 
-@pytest.mark.xfail(strict=True, reason="triage_backlog.emit does not exist yet")
 def test_ac3_two_applications_in_one_master_sets_urgent(tmp_path):
     """AC-3: two applications in one master set relations.urgent: true."""
     backlog_dir = _build_fake_backlog_dir(tmp_path)
@@ -295,7 +316,6 @@ def test_ac3_two_applications_in_one_master_sets_urgent(tmp_path):
     assert candidates[0]["relations"]["applied_in_master"] == 2
 
 
-@pytest.mark.xfail(strict=True, reason="triage_backlog.emit does not exist yet")
 def test_ac3_new_master_resets_applied_in_master(tmp_path):
     """AC-3: the second application in a new master resets applied_in_master to 1."""
     backlog_dir = _build_fake_backlog_dir(tmp_path)
@@ -336,7 +356,6 @@ def test_ac3_new_master_resets_applied_in_master(tmp_path):
 # ── AC-4: corrupt file raises BacklogReadError ──────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="triage_backlog.emit does not exist yet")
 def test_ac4_corrupt_file_raises_error_and_preserves_bytes(tmp_path):
     """AC-4: a candidates.json holding {not json makes emit raise
     BacklogReadError, and the file's bytes are unchanged afterwards."""
@@ -369,25 +388,135 @@ def test_ac4_corrupt_file_raises_error_and_preserves_bytes(tmp_path):
 # ── AC-5: ilk_triage.py integration ─────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="triage_backlog.emit does not exist yet")
-def test_ac5_triage_run_creates_candidate(tmp_path):
+def test_ac5_triage_run_creates_candidate(tmp_path, monkeypatch):
     """AC-5: ilk_triage.py run with a stub decision park-and-escalate leaves
     one triage candidate."""
-    # This test will need to stub claude and ilk_notify on PATH
-    # and run ilk_triage.py with the fixture evidence
-    pytest.skip("AC-5 requires integration test setup — implement in step 1")
+    # Set up isolated data root
+    data_dir = _build_fake_data_dir(tmp_path)  # returns data_root/projects/test-project
+    data_root = data_dir.parent.parent  # tmp_path / "ilk-data"
+    monkeypatch.setenv("ILK_DATA_HOME", str(data_root))
+
+    # Stub claude on PATH (returns a park-and-escalate decision)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    claude_stub = bin_dir / "claude"
+    claude_stub.write_text(
+        "#!/bin/sh\n"
+        "cat <<'EOF'\n"
+        '{"action":"park-and-escalate","slug":"test-slug","step":0,'
+        '"finding":"stub finding","basis":"stub basis","falsifier":"stub falsifier",'
+        '"model":"stub-model","elapsed_s":0.1}\n'
+        "EOF\n",
+        encoding="utf-8",
+    )
+    claude_stub.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir), prepend=":")
+
+    # Stub ilk_notify (no-op, must export main)
+    scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+    notify_stub = scripts_dir / "ilk_notify.py"
+    original_notify = None
+    if notify_stub.exists():
+        original_notify = notify_stub.read_text(encoding="utf-8")
+    notify_stub.write_text(
+        "#!/usr/bin/env python3\n"
+        "def main(*args, **kwargs):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+
+    try:
+        # Create a triage home with minimal config
+        triage_home = tmp_path / "claude-triage"
+        triage_home.mkdir()
+        (triage_home / "CLAUDE.md").write_text("# Triage agent\n", encoding="utf-8")
+
+        from ilk_triage import run_triage
+
+        result = run_triage(
+            project_key="test-project",
+            run_id="20261003-125807",
+            home=triage_home,
+        )
+
+        # The result should be an escalation (stub returns park-and-escalate)
+        assert result["action"] == "park-and-escalate"
+
+        # Check that a candidate was emitted
+        backlog_dir = data_root / "ilk-skills-improvements"
+        candidates = _load_candidates(backlog_dir)
+        assert len(candidates) == 1
+        assert candidates[0]["source"] == "triage"
+        assert candidates[0]["severity"] == "high"  # escalated
+    finally:
+        # Restore ilk_notify
+        if original_notify:
+            notify_stub.write_text(original_notify, encoding="utf-8")
+        elif notify_stub.exists():
+            notify_stub.unlink()
 
 
-@pytest.mark.xfail(strict=True, reason="triage_backlog.emit does not exist yet")
-def test_ac5_kill_switch_prevents_candidate(tmp_path):
+def test_ac5_kill_switch_prevents_candidate(tmp_path, monkeypatch):
     """AC-5: with the kill switch present it leaves none."""
-    pytest.skip("AC-5 requires integration test setup — implement in step 1")
+    # Set up isolated data root
+    data_dir = _build_fake_data_dir(tmp_path)  # returns data_root/projects/test-project
+    data_root = data_dir.parent.parent  # tmp_path / "ilk-data"
+    monkeypatch.setenv("ILK_DATA_HOME", str(data_root))
+
+    # Place kill switch (apply checks data_dir.parent which is data_root/projects)
+    (data_dir.parent / "triage.disabled").touch()
+
+    # Stub claude on PATH
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    claude_stub = bin_dir / "claude"
+    claude_stub.write_text(
+        "#!/bin/sh\n"
+        "echo '{\"action\":\"amend\",\"slug\":\"test\",\"step\":0,\"finding\":\"f\",\"basis\":\"b\",\"falsifier\":\"fl\"}'\n",
+        encoding="utf-8",
+    )
+    claude_stub.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir), prepend=":")
+
+    # Stub ilk_notify (must export main)
+    scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+    notify_stub = scripts_dir / "ilk_notify.py"
+    original_notify = None
+    if notify_stub.exists():
+        original_notify = notify_stub.read_text(encoding="utf-8")
+    notify_stub.write_text(
+        "#!/usr/bin/env python3\n"
+        "def main(*args, **kwargs):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+
+    try:
+        from ilk_triage import run_triage
+
+        result = run_triage(
+            project_key="test-project",
+            run_id="20261003-125807",
+        )
+
+        # Kill switch → refused
+        assert result["action"] == "refused"
+        assert result["reason"] == "kill_switch"
+
+        # No candidate should be emitted
+        backlog_dir = data_root / "ilk-skills-improvements"
+        candidates = _load_candidates(backlog_dir)
+        assert len(candidates) == 0
+    finally:
+        if original_notify:
+            notify_stub.write_text(original_notify, encoding="utf-8")
+        elif notify_stub.exists():
+            notify_stub.unlink()
 
 
 # ── AC-6: audit kinds accepted ───────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="ilk_audit.py does not have the new kinds yet")
 def test_ac6_write_audit_accepts_new_kinds():
     """AC-6: write_audit accepts each of the five new kinds and write_event
     the two new events."""
@@ -408,27 +537,27 @@ def test_ac6_write_audit_accepts_new_kinds():
 
     # These should not raise
     for kind in new_kinds:
-        # write_audit needs a data_dir; we'll use a temp dir
         with tempfile.TemporaryDirectory() as tmpdir:
             write_audit(
-                data_dir=Path(tmpdir),
-                kind=kind,
-                detail={"test": True},
+                kind,
+                "test-project",
+                root=Path(tmpdir),
+                test=True,
             )
 
     for event in new_events:
         with tempfile.TemporaryDirectory() as tmpdir:
             write_event(
-                data_dir=Path(tmpdir),
-                event_type=event,
-                detail={"test": True},
+                event,
+                "test-project",
+                root=Path(tmpdir),
+                test=True,
             )
 
 
 # ── AC-7 (control): legacy entries preserved ─────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="triage_backlog.emit does not exist yet")
 def test_ac7_legacy_entries_preserved_after_emit(tmp_path):
     """AC-7: a backlog fixture with 3 legacy entries (sources feedback,
     supervisor, '') keeps all 3 byte-identical as dicts after an emit."""

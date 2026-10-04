@@ -475,10 +475,10 @@ def run_triage(
     resolved_home = resolve_triage_home(home)
 
     # Build evidence and decide (skip the triage-decided audit row).
+    evidence = build_evidence(data_dir, run_id)
     if not resolved_home.is_dir():
         decision = _missing_home_decision(resolved_home)
     else:
-        evidence = build_evidence(data_dir, run_id)
         decision = decide(evidence, home=resolved_home, timeout_s=timeout_s,
                           skip_audit=True)
 
@@ -498,6 +498,35 @@ def run_triage(
 
     # Apply (writes the terminal audit row).
     result = apply(decision, data_dir, run_id=run_id)
+
+    # Emit improvement candidate when the outcome is applied or escalated.
+    # An exception from emit is caught: write a candidate-emitted row with
+    # ok: false, and leave the triage outcome and exit code unchanged.
+    audit_kind = result.get("audit_kind")
+    action = result.get("action")
+    if audit_kind == "triage-applied" or action == "park-and-escalate":
+        outcome = "escalated" if action == "park-and-escalate" else "applied"
+        try:
+            from triage_backlog import emit
+            emit(
+                project_key=project_key,
+                run_id=run_id,
+                outcome=outcome,
+                decision=decision,
+                evidence=evidence,
+                backlog_dir=None,
+            )
+        except Exception as exc:
+            try:
+                write_audit(
+                    "candidate-emitted", project_key,
+                    root=data_dir,
+                    ok=False,
+                    error=str(exc)[:600],
+                )
+            except Exception:
+                pass
+
     return result
 
 
