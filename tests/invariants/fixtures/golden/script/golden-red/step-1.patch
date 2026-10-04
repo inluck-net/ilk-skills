@@ -18,7 +18,7 @@ index de4957f..07efd23 100644
 -    return max(lo, min(hi, value))
 +    return min(lo, max(hi, value))
 diff --git a/tests/test_calc.py b/tests/test_calc.py
-index 2e4fed4..6bd0bc1 100644
+index bbb4564..ad4ede8 100644
 --- a/tests/test_calc.py
 +++ b/tests/test_calc.py
 @@ -1,9 +1,7 @@

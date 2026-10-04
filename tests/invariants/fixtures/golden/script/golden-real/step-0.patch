@@ -1,20 +1,16 @@
-diff --git a/tests/test_calc.py b/tests/test_calc.py
-index ad4ede8..d6dcfb1 100644
---- a/tests/test_calc.py
-+++ b/tests/test_calc.py
-@@ -1,4 +1,5 @@
- """Tests for calc.py — add, scale, clamp."""
+diff --git a/tests/test_scale.py b/tests/test_scale.py
+index bcd36b7..dbaba7b 100644
+--- a/tests/test_scale.py
++++ b/tests/test_scale.py
+@@ -1,7 +1,9 @@
+ """Tests for scale — isolated so golden-real's gate is not affected by other sub-plans."""
 +import pytest
- from calc import add, scale, clamp
+ from calc import scale
  
  
-@@ -10,3 +11,9 @@ def test_clamp():
-     assert clamp(5, 0, 10) == 5
-     assert clamp(-1, 0, 10) == 0
-     assert clamp(15, 0, 10) == 10
-+
-+
 +@pytest.mark.xfail(strict=True, reason="scale is broken: multiplies instead of dividing")
-+def test_scale():
-+    """Pin: scale(10, 2) should be 5.0 (10 / 2).  BUG: returns 20.0."""
+ def test_scale():
+     """Pin: scale(10, 2) should be 5.0 (10 / 2).  BUG: returns 20.0."""
+-    assert scale(10, 2) == 5.0
+\ No newline at end of file
 +    assert scale(10, 2) == 5.0
