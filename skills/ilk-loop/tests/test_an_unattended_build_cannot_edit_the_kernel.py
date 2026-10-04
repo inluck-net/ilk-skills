@@ -167,7 +167,6 @@ class TestSessionMasterDeniesRules:
     """With ILK_ITERATION_SUBPLAN set and a session master:
     editing a rules-tier file is denied; editing a kernel-tier file is allowed."""
 
-    @pytest.mark.xfail(strict=True, reason="hook does not yet check safety kernel tiers")
     def test_edit_rules_file_denied(self, _toolkit_env: dict) -> None:
         """AC-1: Edit tests/invariants/test_x.py (rules tier) ⇒ deny."""
         toolkit = _toolkit_env["toolkit"]
@@ -222,7 +221,6 @@ class TestAutoPlannedMasterDeniesKernel:
     """With ILK_ITERATION_SUBPLAN set and an auto_planned master:
     editing a kernel-tier file is denied; editing a non-kernel file is allowed."""
 
-    @pytest.mark.xfail(strict=True, reason="hook does not yet check safety kernel tiers")
     def test_edit_kernel_file_denied_under_auto_planned(self, _toolkit_env: dict) -> None:
         """AC-2: Edit batch_gate.py (kernel tier) under auto_planned master ⇒ deny."""
         toolkit = _toolkit_env["toolkit"]
@@ -239,6 +237,7 @@ class TestAutoPlannedMasterDeniesKernel:
             **os.environ,
             "ILK_ITERATION_SUBPLAN": "an-unattended-build-cannot-edit-the-kernel",
             "ILK_PLANS_DIR": str(plans),
+            "ILK_MASTER": "MASTER-2026-10-03k.md",
         }
         result = _run_hook(event, env)
         assert result["allowed"] is False

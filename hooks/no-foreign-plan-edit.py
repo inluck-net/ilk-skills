@@ -106,6 +106,54 @@ def _is_foreign_plan(target: Path, plans: Path, own_slug: str) -> bool:
     return slug != own_slug
 
 
+# ── safety-kernel helpers ────────────────────────────────────────────────────
+
+
+def _find_repo(target: Path) -> Path | None:
+    """Walk up from *target* to the nearest ancestor containing ``.git``."""
+    probe = target
+    if probe.is_file():
+        probe = probe.parent
+    while probe != probe.parent:
+        if (probe / ".git").exists():
+            return probe
+        probe = probe.parent
+    return None
+
+
+def _resolve_master(plans: Path, own_slug: str) -> dict | None:
+    """Resolve the iteration's master frontmatter.
+
+    Order: ``ILK_MASTER`` env var → scan masters for registry listing
+    *own_slug*.  Returns the frontmatter dict, or ``None`` if unresolvable.
+    """
+    scripts = (
+        Path(__file__).resolve().parent.parent / "skills" / "ilk-loop" / "scripts"
+    )
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+
+    master_name = os.environ.get("ILK_MASTER")
+    if master_name:
+        master_path = plans / master_name
+        if master_path.exists():
+            try:
+                from plan_status import parse_frontmatter  # type: ignore[import-untyped]
+                return parse_frontmatter(
+                    master_path.read_text(encoding="utf-8-sig")
+                )
+            except Exception:
+                pass
+
+    # Fallback: scan masters for a registry row naming this slug.
+    try:
+        from safety_kernel import _find_master_for_slug  # type: ignore[import-untyped]
+        return _find_master_for_slug(own_slug, plans)
+    except Exception:
+        pass
+    return None
+
+
 # ── Bash checks ──────────────────────────────────────────────────────────────
 
 
@@ -204,6 +252,69 @@ def main() -> int:
                 f"{target} belongs to another sub-plan"
             )
             return 0
+
+        # ── safety-kernel tier check ───────────────────────────────────
+        if target is not None:
+            repo = _find_repo(target)
+            if repo is not None:
+                kernel_file = (
+                    repo / "skills" / "ilk-loop" / "safety-kernel.json"
+                )
+                if kernel_file.exists():
+                    try:
+                        scripts = (
+                            Path(__file__).resolve().parent.parent
+                            / "skills" / "ilk-loop" / "scripts"
+                        )
+                        if str(scripts) not in sys.path:
+                            sys.path.insert(0, str(scripts))
+                        from safety_kernel import (  # type: ignore[import-untyped]
+                            KernelListError, load, tier_of,
+                        )
+                        kernel = load(repo)
+                        try:
+                            rel = str(target.relative_to(repo))
+                        except ValueError:
+                            rel = str(target)
+                        result = tier_of(rel, kernel=kernel)
+                        if result is not None:
+                            tier, _entry = result
+                            if tier == "rules":
+                                _deny(
+                                    f"{target} is in the safety "
+                                    f"kernel's rules tier; no loop "
+                                    f"build changes the rules "
+                                    f"(design guard 1). Write what "
+                                    f"you needed in Findings and "
+                                    f"end your turn."
+                                )
+                                return 0
+                            if tier == "kernel":
+                                master_fm = _resolve_master(
+                                    plans, own_slug,
+                                )
+                                if (
+                                    master_fm is not None
+                                    and master_fm.get("auto_planned")
+                                    == "true"
+                                ):
+                                    _deny(
+                                        f"{target} is tier-0 and "
+                                        f"this is an unattended "
+                                        f"build; it cannot touch "
+                                        f"the kernel. Write it in "
+                                        f"Findings and end your "
+                                        f"turn."
+                                    )
+                                    return 0
+                    except KernelListError:
+                        print(
+                            "safety-kernel.json failed to load, "
+                            "allowing edit",
+                            file=sys.stderr,
+                        )
+                    except Exception:
+                        pass  # allow (must never wedge a worker)
 
     # ── Bash ─────────────────────────────────────────────────────────────
     elif tool_name == "Bash":

@@ -149,7 +149,6 @@ def _make_decision(
 class TestValidateRejectsKernelSteer:
     """validate must return problems when the finding or basis names a kernel entry."""
 
-    @pytest.mark.xfail(strict=True, reason="triage_apply.validate does not yet screen for kernel entries")
     def test_finding_naming_kernel_entry_returns_problem(self, _toolkit_env: dict) -> None:
         """AC-4: finding says "fix by editing ship_audit.py" under auto_planned master
         ⇒ problem naming skills/ilk-loop/scripts/ship_audit.py."""
@@ -161,11 +160,10 @@ class TestValidateRejectsKernelSteer:
         decision = _make_decision(
             finding="fix by editing skills/ilk-loop/scripts/ship_audit.py",
         )
-        problems = validate(decision, plans)
+        problems = validate(decision, plans, repo=_toolkit_env["toolkit"])
         assert any("ship_audit.py" in p for p in problems), \
             f"must reject kernel entry ship_audit.py, got: {problems}"
 
-    @pytest.mark.xfail(strict=True, reason="triage_apply.validate does not yet screen for kernel entries")
     def test_finding_naming_rules_entry_returns_problem(self, _toolkit_env: dict) -> None:
         """AC-4: finding says "edit tests/invariants/mutations.json" under any master
         ⇒ problem naming rules tier."""
@@ -177,11 +175,10 @@ class TestValidateRejectsKernelSteer:
         decision = _make_decision(
             finding="fix by editing tests/invariants/mutations.json",
         )
-        problems = validate(decision, plans)
+        problems = validate(decision, plans, repo=_toolkit_env["toolkit"])
         assert any("rules" in p.lower() for p in problems), \
             f"must reject rules-tier entry, got: {problems}"
 
-    @pytest.mark.xfail(strict=True, reason="triage_apply.validate does not yet screen for kernel entries")
     def test_apply_writes_escalated_row_and_no_plan_edit(self, _toolkit_env: dict) -> None:
         """AC-4: apply with a kernel-steering finding writes an escalated row and no sub-plan edit."""
         from triage_apply import apply
@@ -237,7 +234,7 @@ class TestValidateRejectsKernelSteer:
                 basis="the gate failed",
                 falsifier="rerun the gate",
             )
-            result = apply(decision, data_dir, run_id="test-run-001")
+            result = apply(decision, data_dir, run_id="test-run-001", repo=_toolkit_env["toolkit"])
             assert result["action"] == "park-and-escalate", \
                 f"must escalate due to kernel steer, got: {result}"
 

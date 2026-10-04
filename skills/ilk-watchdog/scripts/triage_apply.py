@@ -373,7 +373,22 @@ def _project_name(data_dir: Path) -> str:
 # ── validate ─────────────────────────────────────────────────────────────────
 
 
-def validate(decision: dict[str, Any], plans_dir: Path) -> list[str]:
+def _any_master_auto_planned(plans_dir: Path) -> bool:
+    """True when any master in *plans_dir* has ``auto_planned: true``."""
+    for master_file in sorted(plans_dir.glob("MASTER-*.md")):
+        try:
+            text = master_file.read_text(encoding="utf-8-sig")
+            fm = parse_frontmatter(text)
+            if fm.get("auto_planned") == "true":
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def validate(
+    decision: dict[str, Any], plans_dir: Path, *, repo: Path | None = None,
+) -> list[str]:
     """Return the list of problems with *decision* against *plans_dir*.
 
     An empty list means the decision is valid.
@@ -417,6 +432,60 @@ def validate(decision: dict[str, Any], plans_dir: Path) -> list[str]:
                         f"(current_step: {current})"
                     )
 
+    # ── kernel entry screening ─────────────────────────────────────────
+    if repo is not None:
+        kernel_file = repo / "skills" / "ilk-loop" / "safety-kernel.json"
+        if kernel_file.exists():
+            try:
+                from safety_kernel import KernelListError, load  # type: ignore[import-untyped]
+                kernel = load(repo)
+                auto_planned = _any_master_auto_planned(plans_dir)
+                finding = decision.get("finding", "")
+                basis = decision.get("basis", "")
+                text = finding + " " + basis
+
+                # Rules entries: always screened.
+                for entry in kernel.get("rules", []):
+                    entry_path = entry["path"]
+                    if entry_path in text:
+                        problems.append(
+                            f"steers into rules-tier {entry_path}"
+                        )
+                    elif not entry_path.endswith("/"):
+                        basename = os.path.basename(entry_path.rstrip("/"))
+                        if basename and basename in text:
+                            problems.append(
+                                f"steers into rules-tier {entry_path}"
+                            )
+
+                # Kernel entries: screened only under auto-planned master.
+                if auto_planned:
+                    for entry in kernel.get("kernel", []):
+                        entry_path = entry["path"]
+                        if entry_path in text:
+                            problems.append(
+                                f"steers into kernel {entry_path} "
+                                f"under an auto-planned master"
+                            )
+                        elif not entry_path.endswith("/"):
+                            basename = os.path.basename(
+                                entry_path.rstrip("/")
+                            )
+                            if basename and basename in text:
+                                problems.append(
+                                    f"steers into kernel {entry_path} "
+                                    f"under an auto-planned master"
+                                )
+                    for entry in kernel.get("kernel_basenames", []):
+                        name = entry.get("name", "")
+                        if name and name in text:
+                            problems.append(
+                                f"steers into kernel basename:{name} "
+                                f"under an auto-planned master"
+                            )
+            except Exception:
+                pass  # skip screening on error
+
     return problems
 
 
@@ -429,6 +498,7 @@ def apply(
     *,
     run_id: str,
     data_root: Path | None = None,
+    repo: Path | None = None,
 ) -> dict[str, Any]:
     """Validate and apply a triage decision.
 
@@ -489,7 +559,7 @@ def apply(
         return {"action": "refused", "reason": "kill_switch"}
 
     # ── validate ────────────────────────────────────────────────────────
-    problems = validate(decision, plans_dir)
+    problems = validate(decision, plans_dir, repo=repo)
     if problems:
         reason = "; ".join(problems)
         escalate_decision = {
