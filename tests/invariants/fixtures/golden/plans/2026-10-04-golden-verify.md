@@ -16,8 +16,7 @@ recommended_iteration_timeout_min: 5
 local_checks: []
 scope_paths:
   - "tests/"
-unit_test_targets:
-  - "tests/"
+unit_test_targets: []
 e2e_test_targets: []
 must_add_tests: false
 ci_required: false
@@ -33,29 +32,35 @@ auto_block_fails: 0
 
 # Sub-plan: golden-verify
 
-Batch verification — runs the full suite and attributes any reds.
+Batch verification — runs the full suite and attributes any reds.  Uses the
+shipped verification machinery (verification_record.py + verify_attribution.py)
+so the golden batch proves the verify pipeline catches a planted red.
 
 ## Steps
 
-### Step 0 — run full suite
+### Step 0 — run full suite, record the result
 
 ```yaml
+gate_first: true
 local_checks:
-  - command: "/usr/bin/python3 -m pytest tests/ -q -p no:cacheprovider --timeout=30 --timeout-method=signal"
-    timeout: 60
+  - command: "python3 $ILK_SKILL_HOME/ilk-loop/scripts/verification_record.py --project . --batch golden --run-suite --scope full --ledger prefer --base-sha $BASE_SHA"
+    timeout: 300
 ```
 
-Run the full suite. The breakage in `clamp` (from golden-red) should surface
-here as `tests/test_other.py::test_clamp_boundary` failing.
+Run the full suite via verification_record.py.  The breakage in `clamp`
+(from golden-red) should surface here as `tests/test_other.py::test_clamp_boundary`
+failing.  The record is written to the external logs directory.
 
-### Step 1 — attribute the red
+### Step 1 — verify attribution
 
 ```yaml
+gate_first: true
 local_checks:
-  - command: "/usr/bin/python3 -m pytest tests/ -q -p no:cacheprovider --timeout=30 --timeout-method=signal"
-    timeout: 60
+  - command: "python3 $ILK_SKILL_HOME/ilk-loop/scripts/verify_attribution.py --batch golden --project ."
+    timeout: 300
 ```
 
-Run the full suite again and attribute the red to golden-red.
+Re-derive the verdict from the at-base rerun table.  The planted clamp red
+must be attributed to golden-red; no other test is attributed.
 
 ## Findings

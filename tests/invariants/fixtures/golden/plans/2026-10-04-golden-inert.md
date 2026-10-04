@@ -27,7 +27,7 @@ expected_entities:
   migrations: []
   api_endpoints: []
   db_tables: []
-auto_block_fails: 1
+auto_block_fails: 2
 ---
 
 # Sub-plan: golden-inert

@@ -11,7 +11,9 @@
   "golden-verify": {
     "not_status": "shipped",
     "attributed_nodes": [
-      "tests/test_other.py::test_clamp_boundary"
+      "tests/test_calc.py::test_clamp",
+      "tests/test_other.py::test_clamp_boundary",
+      "tests/test_other.py::test_vacuous"
     ]
   },
   "max_iterations": 8,
