@@ -24,6 +24,8 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 from ilk_audit import AuditReadError, audit_day, read_audit  # noqa: E402
 from ilk_paths import ilk_data_root  # noqa: E402
+from plan_status import parse_frontmatter  # noqa: E402
+from status_all import resolve_project_status  # noqa: E402
 
 
 # ── path helpers ─────────────────────────────────────────────────────────────
@@ -197,6 +199,265 @@ def _triage_section(
     return "\n".join(lines)
 
 
+def _batches_section(
+    day: str,
+    *,
+    root: Path | None = None,
+    now: datetime | None = None,
+) -> str:
+    """Render ``## Batches`` — per-project shipped / in-flight / blocked / idle."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    base = root if root is not None else ilk_data_root()
+    projects_dir = base / "projects"
+
+    lines = ["## Batches", ""]
+
+    if not projects_dir.is_dir():
+        lines.append(f"None. 0 projects under {projects_dir}.")
+        return "\n".join(lines)
+
+    project_keys = sorted(d.name for d in projects_dir.iterdir() if d.is_dir())
+
+    total_shipped = 0
+    total_in_flight = 0
+    total_blocked = 0
+    total_unreadable = 0
+    idle_keys: list[str] = []
+
+    for key in project_keys:
+        proj_dir = projects_dir / key
+        plans_dir = proj_dir / "plans"
+
+        # Count sub-plans shipped on *day*
+        shipped_on_day = 0
+        total_subplans_on_day = 0
+        if plans_dir.is_dir():
+            for sp_file in sorted(plans_dir.glob("20??-??-??-*.md")):
+                try:
+                    text = sp_file.read_text(encoding="utf-8-sig")
+                    fm = parse_frontmatter(text)
+                except (OSError, ValueError):
+                    continue
+                if fm.get("last_updated") == day:
+                    total_subplans_on_day += 1
+                    if fm.get("status") == "shipped":
+                        shipped_on_day += 1
+
+        # Resolve project status for in-flight / blocked
+        try:
+            status = resolve_project_status(proj_dir, roles=[], providers=[])
+        except Exception as exc:
+            lines.append(f"- **{key}** status unreadable: {type(exc).__name__}: {exc}")
+            total_unreadable += 1
+            continue
+
+        sentinel = status.get("sentinel", {})
+        sentinel_alive = sentinel.get("alive", False)
+        blocked = status.get("blocked", False)
+        blocked_reason = status.get("blocked_reason")
+        active_master = status.get("active_master", "")
+        subplan_index = status.get("subplan_index", 0)
+        subplan_count = status.get("subplan_count", 0)
+        sentinel_state = sentinel.get("state", "")
+
+        is_active = False
+        if shipped_on_day > 0:
+            lines.append(f"- **{key}** {shipped_on_day} shipped of {total_subplans_on_day} sub-plans last updated on D")
+            total_shipped += shipped_on_day
+
+        if sentinel_alive and active_master:
+            lines.append(
+                f"- **{key}** in flight: {active_master}, sub-plan {subplan_index} of {subplan_count}, {sentinel_state}"
+            )
+            total_in_flight += 1
+            is_active = True
+        elif blocked:
+            reason_text = blocked_reason or "unknown"
+            lines.append(f"- **{key}** blocked: {reason_text}")
+            total_blocked += 1
+            is_active = True
+
+        if not is_active and shipped_on_day == 0:
+            idle_keys.append(key)
+
+    total_projects = len(project_keys)
+    if idle_keys:
+        lines.append(f"{len(idle_keys)} of {total_projects} projects idle: {', '.join(idle_keys)}")
+
+    # Header line (prepend after building)
+    header = (
+        f"State at render {now.isoformat(timespec='seconds')}. "
+        f"{total_projects} projects: "
+        f"{total_shipped} shipped work on D, "
+        f"{total_in_flight} in flight, "
+        f"{total_blocked} blocked, "
+        f"{total_unreadable} unreadable, "
+        f"{len(idle_keys)} idle."
+    )
+    lines.insert(1, header)
+
+    return "\n".join(lines)
+
+
+def _judgment_calls_section(
+    day: str,
+    *,
+    root: Path | None = None,
+) -> str:
+    """Render ``## Judgment calls made`` — from masters created on *day*."""
+    base = root if root is not None else ilk_data_root()
+    projects_dir = base / "projects"
+
+    lines = ["## Judgment calls made", ""]
+
+    total_calls = 0
+    total_masters_on_day = 0
+    total_masters_with_calls = 0
+
+    if not projects_dir.is_dir():
+        lines.append(f"None. 0 judgment calls in 0 masters created on D.")
+        return "\n".join(lines)
+
+    for proj_dir in sorted(projects_dir.iterdir()):
+        if not proj_dir.is_dir():
+            continue
+        plans_dir = proj_dir / "plans"
+        if not plans_dir.is_dir():
+            continue
+        key = proj_dir.name
+
+        for master_file in sorted(plans_dir.glob("MASTER-*.md")):
+            try:
+                text = master_file.read_text(encoding="utf-8-sig")
+                fm = parse_frontmatter(text)
+            except (OSError, ValueError):
+                continue
+
+            created = fm.get("created", "")
+            if not created.startswith(day):
+                continue
+
+            total_masters_on_day += 1
+            master_slug = fm.get("master_plan", master_file.stem)
+
+            # Find ## Execution rationale section
+            calls = _extract_judgment_calls(text)
+            if calls:
+                total_masters_with_calls += 1
+                total_calls += len(calls)
+                for call, basis, falsifier in calls:
+                    parts = [f"- **{key}** {master_slug}: {call}"]
+                    parts.append(f"  Basis: {basis}")
+                    parts.append(f"  Wrong if: {falsifier}")
+                    lines.append("\n".join(parts))
+
+    if total_calls:
+        lines.insert(
+            1,
+            f"{total_calls} judgment calls in {total_masters_with_calls} of {total_masters_on_day} masters created on D."
+        )
+    else:
+        lines.insert(
+            1,
+            f"None. 0 judgment calls in {total_masters_on_day} masters created on D."
+        )
+
+    return "\n".join(lines)
+
+
+def _extract_judgment_calls(master_text: str) -> list[tuple[str, str, str]]:
+    """Extract judgment calls from a master's ## Execution rationale section.
+
+    Returns list of (call, basis, falsifier) tuples.
+    Each part is ``(not recorded)`` when missing.
+    """
+    import re
+
+    # Find the Execution rationale section
+    idx = master_text.find("## Execution rationale")
+    if idx < 0:
+        return []
+
+    section = master_text[idx:]
+    # Cut at the next ## heading (or end of text)
+    next_heading = section.find("\n## ", 1)
+    if next_heading >= 0:
+        section = section[:next_heading]
+
+    results: list[tuple[str, str, str]] = []
+    lines = section.splitlines()
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped.startswith("- Judgment call:"):
+            i += 1
+            continue
+
+        # Collect continuation lines (indented by 2 spaces)
+        block_lines = [stripped]
+        i += 1
+        while i < len(lines):
+            next_line = lines[i]
+            if next_line.startswith("  ") and next_line.strip():
+                block_lines.append(next_line.strip())
+                i += 1
+            elif next_line.strip() == "":
+                i += 1
+                continue
+            else:
+                break
+
+        block = " ".join(block_lines)
+
+        # Remove leading "- Judgment call: "
+        if block.startswith("- Judgment call:"):
+            block = block[len("- Judgment call:"):].strip()
+
+        call = block
+        basis = "(not recorded)"
+        falsifier = "(not recorded)"
+
+        # Find "Basis:" and "Wrong if:" — use regex to match at a sentence
+        # boundary (after . ? ! or start-of-string) so that "Basis:" embedded
+        # inside the call text (e.g. "looking. Basis: the memory rule") is not
+        # mistaken for the section marker.
+        basis_match = re.search(r'(?<=[.?!] )Basis:|^Basis:', block)
+        wrong_match = re.search(r'(?<=[.?!] )Wrong if:|^Wrong if:', block)
+
+        if basis_match and wrong_match:
+            b_start = basis_match.start()
+            w_start = wrong_match.start()
+            if b_start < w_start:
+                call = block[:b_start].strip()
+                basis = block[b_start + len("Basis:"):w_start].strip()
+                falsifier = block[w_start + len("Wrong if:"):].strip()
+            else:
+                call = block[:w_start].strip()
+                falsifier = block[w_start + len("Wrong if:"):b_start].strip()
+                basis = block[b_start + len("Basis:"):].strip()
+        elif basis_match:
+            b_start = basis_match.start()
+            call = block[:b_start].strip()
+            basis = block[b_start + len("Basis:"):].strip()
+        elif wrong_match:
+            w_start = wrong_match.start()
+            call = block[:w_start].strip()
+            falsifier = block[w_start + len("Wrong if:"):].strip()
+
+        # Strip trailing periods from parts
+        call = call.rstrip(".")
+        basis = basis.rstrip(".")
+        falsifier = falsifier.rstrip(".")
+
+        results.append((call, basis, falsifier))
+
+    return results
+
+
 def render(
     day: str,
     *,
@@ -238,6 +499,10 @@ def render(
         _releases_section(rows_by_kind, audit_error),
         "",
         _triage_section(rows_by_kind, audit_error),
+        "",
+        _batches_section(day, root=root, now=now),
+        "",
+        _judgment_calls_section(day, root=root),
         "",
     ]
     return "\n".join(parts)
