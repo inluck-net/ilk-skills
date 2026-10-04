@@ -28,6 +28,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.allow_real_data_home
+
 # ── Path setup ──────────────────────────────────────────────────────────────
 
 SHIP_SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
