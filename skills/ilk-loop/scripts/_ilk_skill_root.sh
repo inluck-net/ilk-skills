@@ -51,3 +51,79 @@ ilk_skill_root() {
   echo "ilk_skill_root: cannot resolve skill root" >&2
   return 1
 }
+
+# ── release-layout / clone-run guard ──────────────────────────────────────
+
+# Print "release" when the layout file exists and its content (whitespace-
+# trimmed) is exactly "release"; else print "clone".  Same rule as
+# install.sh:910-913.
+ilk_host_layout() {
+  local releases_root="${ILK_RELEASES_ROOT:-$HOME/.ilk/releases}"
+  local releases_parent
+  releases_parent="$(dirname "$releases_root")"
+  local layout_file="$releases_parent/layout"
+  if [[ -f "$layout_file" ]]; then
+    local content
+    content="$(cat "$layout_file")"
+    # Trim leading/trailing whitespace (bash 3.2 compatible).
+    content="${content#"${content%%[![:space:]]*}"}"
+    content="${content%"${content##*[![:space:]]}"}"
+    if [[ "$content" == "release" ]]; then
+      echo "release"
+      return
+    fi
+  fi
+  echo "clone"
+}
+
+# Return 0 when walking up from <dir> finds a .git (file or dir) at a
+# shallower level than any .ilk-release.json; 1 otherwise.
+# The _ilk_toolkit_head.sh:47-66 rule.
+ilk_dir_is_git_tree() {
+  local start="$1"
+  local cur
+  cur="$(cd -P "$start" && pwd -P)" || return 1
+  while true; do
+    if [[ -e "$cur/.ilk-release.json" ]]; then
+      return 1  # release marker found first → not a git tree
+    fi
+    if [[ -e "$cur/.git" ]]; then
+      return 0  # git marker found first → is a git tree
+    fi
+    local parent
+    parent="$(dirname "$cur")"
+    [[ "$parent" == "$cur" ]] && break
+    cur="$parent"
+  done
+  return 1  # reached / without finding either
+}
+
+# Return 0 (proceed) when ILK_ALLOW_CLONE_RUN=1, or when the layout is not
+# "release", or when none of the given dirs is a git tree.
+# Otherwise print to stderr and return 3.
+ilk_refuse_clone_run_on_release_host() {
+  local component="$1"
+  shift
+  if [[ "${ILK_ALLOW_CLONE_RUN:-}" == "1" ]]; then
+    return 0
+  fi
+  if [[ "$(ilk_host_layout)" != "release" ]]; then
+    return 0
+  fi
+  # Collect dirs to check: positional args + ILK_SKILL_HOME if set.
+  local -a dirs=("$@")
+  if [[ -n "${ILK_SKILL_HOME:-}" ]]; then
+    dirs+=("$ILK_SKILL_HOME")
+  fi
+  local dir
+  for dir in "${dirs[@]}"; do
+    if [[ -d "$dir" ]] && ilk_dir_is_git_tree "$dir"; then
+      local releases_root="${ILK_RELEASES_ROOT:-$HOME/.ilk/releases}"
+      local releases_parent
+      releases_parent="$(dirname "$releases_root")"
+      echo "$component: refusing: clone-run-on-release-host: this host's ilk layout is release ($releases_parent/layout) but $dir is inside a git working tree; run it through ~/.ilk/current, or set ILK_ALLOW_CLONE_RUN=1" >&2
+      return 3
+    fi
+  done
+  return 0
+}

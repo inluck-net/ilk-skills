@@ -7,6 +7,9 @@ source "$SCRIPT_DIR/../../ilk-loop/scripts/_ilk_skill_root.sh"
 source "$SCRIPT_DIR/../../ilk-loop/scripts/_resolve_python.sh"
 
 SKILL_ROOT="$(ilk_skill_root)"
+# Refuse to run from a git tree on a release-layout host.  Must happen
+# before any promotion or launch, so a refused run changes no plan state.
+ilk_refuse_clone_run_on_release_host ilk-run.sh "$SCRIPT_DIR" "$SKILL_ROOT" || exit $?
 PATHS_PY="$SKILL_ROOT/ilk-loop/scripts/ilk_paths.py"
 LOOP_STATUS_PY="$SKILL_ROOT/ilk-loop/scripts/loop_status.py"
 PROMOTE_PY="$SKILL_ROOT/ilk-loop/scripts/promote_next_master.py"

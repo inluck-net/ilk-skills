@@ -917,3 +917,23 @@ def _empty_timing_root(tmp_path_factory):
 @pytest.fixture(autouse=True)
 def _hermetic_plan_lint_timing(monkeypatch, _empty_timing_root):
     monkeypatch.setenv("ILK_PLAN_LINT_TIMING_DATA_HOME", str(_empty_timing_root))
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Release-layout isolation — pins ILK_RELEASES_ROOT so that every subprocess
+# sees the "clone" layout regardless of the host's real ~/.ilk/layout.
+#
+# The guard reads $(dirname $ILK_RELEASES_ROOT)/layout.  By pointing at a
+# tmp dir whose parent has NO layout file, every test runs as if on a dev
+# machine (no release layout).  Tests that need the release layout set
+# ILK_RELEASES_ROOT (or delete it and pin HOME) in their own env.
+# ───────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _isolate_release_layout(monkeypatch, tmp_path_factory):
+    """Pin ILK_RELEASES_ROOT so no test sees the host's real layout file."""
+    root = tmp_path_factory.mktemp("ilk-release-isolation")
+    releases_root = root / ".ilk" / "releases"
+    releases_root.mkdir(parents=True)
+    monkeypatch.setenv("ILK_RELEASES_ROOT", str(releases_root))

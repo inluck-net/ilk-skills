@@ -25,6 +25,19 @@ if [[ "${ILK_SANDBOX:-}" == "1" ]]; then
   exit 2
 fi
 
+# --- clone-run refusal (release host) --------------------------------------
+# Source _ilk_skill_root.sh early for the guard functions.  The full skill
+# root resolution and ILK_SKILL_HOME export happen later (line ~146); only
+# the function definitions are needed here.
+source "${_ILK_SCRIPT_DIR}/../../ilk-loop/scripts/_ilk_skill_root.sh"
+if [[ "${ILK_DOTSOURCE_ONLY:-}" != "1" ]]; then
+  _sched_guard_args=("$_ILK_SCRIPT_DIR")
+  if [[ -n "${ILK_SKILL_HOME:-}" ]]; then
+    _sched_guard_args+=("$ILK_SKILL_HOME")
+  fi
+  ilk_refuse_clone_run_on_release_host scheduler.sh "${_sched_guard_args[@]}" || exit $?
+fi
+
 # --- single-instance guard (pidfile) -----------------------------------------
 
 # Sourced here, not next to the skill-root resolution below: the lock is
@@ -143,7 +156,6 @@ acquire_scheduler_lock
 
 # --- skill root resolution ---------------------------------------------------
 
-source "${_ILK_SCRIPT_DIR}/../../ilk-loop/scripts/_ilk_skill_root.sh"
 _SKILL_ROOT="$(ilk_skill_root)"
 export ILK_SKILL_HOME="$_SKILL_ROOT"
 

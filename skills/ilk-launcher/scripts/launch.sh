@@ -1045,5 +1045,8 @@ for p in d:
 # source this file to access functions (print_toolkit_staleness_notice,
 # etc.) without launching a window.
 if [[ "${ILK_SKIP_MAIN:-}" != "1" ]]; then
+  source "$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../../ilk-loop/scripts/_ilk_skill_root.sh"
+  _SKILL_ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+  ilk_refuse_clone_run_on_release_host launch.sh "$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)" "$_SKILL_ROOT" || exit $?
   main "$@"
 fi

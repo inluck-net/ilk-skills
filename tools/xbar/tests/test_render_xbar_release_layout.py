@@ -20,11 +20,6 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _RENDER_PY = _REPO_ROOT / "tools" / "xbar" / "render_xbar.py"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="render_xbar release-layout resolution not yet implemented",
-    raises=Exception,
-)
 def test_ac9_start_now_row_resolves_through_current(tmp_path: Path) -> None:
     """AC-9: on release layout, 'Start now' param1 is under ~/.ilk/current/."""
     # Build a fake release layout

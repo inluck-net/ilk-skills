@@ -1538,5 +1538,7 @@ main() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  source "$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../../ilk-loop/scripts/_ilk_skill_root.sh"
+  ilk_refuse_clone_run_on_release_host watchdog.sh "$_ILK_SCRIPT_DIR" "$(cd -P "$_ILK_SCRIPT_DIR/../.." && pwd -P)" || exit $?
   main "$@"
 fi

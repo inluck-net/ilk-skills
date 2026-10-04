@@ -27,6 +27,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.allow_real_data_home
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _SKILLS_DIR = _REPO_ROOT / "skills"
 
@@ -143,11 +145,6 @@ def release_skills_dir(tmp_path: Path) -> Path:
 # ── AC-1: release layout + clone → exit 3 ────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="guard not yet implemented",
-    raises=AssertionError,
-)
 @pytest.mark.parametrize("script_name", ["launch.sh", "watchdog.sh", "scheduler.sh"])
 def test_ac1_release_layout_clone_refuses(
     script_name: str,
@@ -169,11 +166,6 @@ def test_ac1_release_layout_clone_refuses(
 # ── AC-2: release layout + ILK_SKILL_HOME=clone → exit 3 ────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="guard not yet implemented",
-    raises=AssertionError,
-)
 @pytest.mark.parametrize("script_name", ["launch.sh", "watchdog.sh"])
 def test_ac2_release_layout_skill_home_clone_refuses(
     script_name: str,
@@ -279,11 +271,6 @@ def test_ac5_release_dir_no_git_allows(
 # ── AC-6: selfmod worktree under release layout → exit 3 ────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="guard not yet implemented",
-    raises=AssertionError,
-)
 @pytest.mark.parametrize("script_name", ["launch.sh", "watchdog.sh", "scheduler.sh"])
 def test_ac6_selfmod_worktree_refuses(
     script_name: str,
@@ -349,11 +336,6 @@ def test_ac7_sourcing_does_not_refuse(
 # ── AC-8: ilk_host_layout content matching ───────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="ilk_host_layout not yet implemented",
-    raises=AssertionError,
-)
 @pytest.mark.parametrize(
     "content,expected",
     [
@@ -400,11 +382,6 @@ def test_ac8_ilk_host_layout_content_matching(
 # ── AC-10: ilk-run.sh refuses and doesn't promote ───────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="guard not yet implemented in ilk-run.sh",
-    raises=AssertionError,
-)
 def test_ac10_ilk_run_refuses_no_promotion(
     release_layout_home: Path,
     clone_dir: Path,

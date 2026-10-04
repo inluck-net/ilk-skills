@@ -3122,3 +3122,60 @@ Tree SHA (`HEAD^{tree}`) — stable across commits with identical tree content.
 5. **Missing budget.json is a failure.** A missing or corrupt
    `budget.json` for the golden batch returns `ok: false` with exit 2,
    never skipped.
+
+## Startup refusal: a release host never runs from the clone
+
+### Purpose
+
+On a host whose layout file reads `release`, running ilk from a git working
+tree (the live clone or a selfmod worktree) would bypass the release's pinned
+code.  Three entry points (`launch.sh`, `watchdog.sh`, `scheduler.sh`) plus
+`ilk-run.sh` now refuse at startup, before any state-changing work.
+
+### Layout file rule
+
+The layout file is `$(dirname ${ILK_RELEASES_ROOT:-$HOME/.ilk/releases})/layout`.
+The host is on the release layout when that file exists and its content
+(whitespace-trimmed) is exactly `release`.  Same rule as `install.sh:910-913`.
+
+### Entry points
+
+| Script | Guard location | Sourced-use skip |
+|---|---|---|
+| `launch.sh` | Inside `ILK_SKIP_MAIN` block, before `main "$@"` | `ILK_SKIP_MAIN=1` |
+| `watchdog.sh` | Inside `BASH_SOURCE == $0` block, before `main "$@"` | sourced (not `$0`) |
+| `scheduler.sh` | After `ILK_SANDBOX` refusal, before `_ilk_pid.sh` | `ILK_DOTSOURCE_ONLY=1` |
+| `ilk-run.sh` | After skill-root resolution, before promotion | none (always runs) |
+
+### Clone detection
+
+`ilk_dir_is_git_tree <dir>` walks up from `<dir>` checking each ancestor for
+`.ilk-release.json` and `.git` (file or dir).  The shallowest marker wins:
+`.ilk-release.json` first → not a git tree; `.git` first → is a git tree.
+Same rule as `_ilk_toolkit_head.sh:47-66`.  A selfmod worktree has a `.git`
+FILE, so it counts as a git tree.
+
+### Exit code and token
+
+A refusal exits **3** (free in all three scripts) and prints to STDERR:
+
+```
+<component>: refusing: clone-run-on-release-host: this host's ilk layout is release (<layout file>) but <dir> is inside a git working tree; run it through ~/.ilk/current, or set ILK_ALLOW_CLONE_RUN=1
+```
+
+The literal token `clone-run-on-release-host` is the named reason tests match.
+
+### Override
+
+`ILK_ALLOW_CLONE_RUN=1` skips the guard entirely (returns 0).
+
+### Invariants
+
+1. **Execution-only.** The guard runs at each script's EXECUTION entry, never
+   at source time.  Sourced use (`ILK_SKIP_MAIN=1`, `ILK_DOTSOURCE_ONLY=1`,
+   watchdog sourced) never runs the guard.
+2. **No state change on refusal.** `scheduler.sh`'s guard runs BEFORE
+   `_ilk_pid.sh` / the lock, so a refusal creates no pid or lock file.
+   `ilk-run.sh`'s guard runs before promotion.
+3. **Stderr only.** The guard prints to stderr, never stdout.  Captured-function
+   logging rules apply.

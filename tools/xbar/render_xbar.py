@@ -20,9 +20,54 @@ from pathlib import Path
 # Default script paths — resolved once relative to this file's location.
 _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parent.parent
-_DEFAULT_RUN_SCRIPT = str(_REPO_ROOT / "skills" / "ilk-runner" / "scripts" / "ilk-run.sh")
-_DEFAULT_RESUME_SCRIPT = str(_REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "blacklist_status.py")
 _DEFAULT_COPY_SCRIPT = str(_REPO_ROOT / "tools" / "xbar" / "copy_ref.sh")
+
+
+def _resolve_through_current_if_release(
+    repo_relative: Path,
+    *,
+    _env_home: str | None = None,
+    _env_releases_root: str | None = None,
+) -> str:
+    """Resolve *repo_relative* through ``~/.ilk/current/`` on a release host.
+
+    When the host's layout file (``$(dirname $ILK_RELEASES_ROOT)/layout``)
+    reads exactly ``release`` and the ``current`` symlink target contains the
+    same relative path, return that resolved path.  Otherwise return the
+    repo-relative path unchanged.  Resolve at call time (not import) so tests
+    can set the env.
+    """
+    import os
+
+    home = Path(_env_home or os.environ.get("HOME", ""))
+    releases_root = Path(
+        _env_releases_root
+        or os.environ.get("ILK_RELEASES_ROOT", str(home / ".ilk" / "releases"))
+    )
+    layout_file = releases_root.parent / "layout"
+    if layout_file.exists():
+        content = layout_file.read_text(encoding="utf-8").strip()
+        if content == "release":
+            current = releases_root.parent / "current"
+            if current.exists():
+                try:
+                    # repo_relative is like <repo>/skills/ilk-runner/scripts/ilk-run.sh
+                    # We need the part after _REPO_ROOT.
+                    rel = repo_relative.relative_to(_REPO_ROOT)
+                except ValueError:
+                    return str(repo_relative)
+                candidate = current / rel
+                if candidate.exists():
+                    return str(candidate)
+    return str(repo_relative)
+
+
+_DEFAULT_RUN_SCRIPT = _resolve_through_current_if_release(
+    _REPO_ROOT / "skills" / "ilk-runner" / "scripts" / "ilk-run.sh",
+)
+_DEFAULT_RESUME_SCRIPT = _resolve_through_current_if_release(
+    _REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "blacklist_status.py",
+)
 
 # Interpreter used to launch shell actions.  Absolute so the row does not
 # depend on SwiftBar's PATH, which is not a login shell's PATH.
