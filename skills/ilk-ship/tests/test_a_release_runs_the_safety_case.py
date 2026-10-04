@@ -99,6 +99,23 @@ def _make_fake_project(
         cwd=project, check=True, capture_output=True,
     )
 
+    # Trivial test file so prove can run the suite (HEAD != tag)
+    (project / "test_trivial.py").write_text(textwrap.dedent("""\
+        def test_one():
+            assert True
+
+        def test_two():
+            assert True
+
+        def test_three():
+            assert True
+    """))
+    subprocess.run(["git", "add", "."], cwd=project, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "add tests"],
+        cwd=project, check=True, capture_output=True,
+    )
+
     if kernel_edit:
         # Plans dir with auto_planned master
         plans_dir = project / "docs" / "plans"
@@ -113,7 +130,7 @@ def _make_fake_project(
 
             | # | Slug | Status |
             |---|---|---|
-            | 0 | [x.md](./x.md) | pending |
+            | 0 | [2026-10-03x-kernel-edit.md](./2026-10-03x-kernel-edit.md) | pending |
         """)
         (plans_dir / "MASTER-2026-10-03x-test.md").write_text(master)
 
@@ -123,7 +140,7 @@ def _make_fake_project(
         gate_file.write_text("# modified by test\n")
         subprocess.run(["git", "add", "."], cwd=project, check=True, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", "edit kernel [plan:x#step-1]"],
+            ["git", "commit", "-m", "edit kernel [plan:2026-10-03x-kernel-edit#step-1]"],
             cwd=project, check=True, capture_output=True,
         )
 
@@ -153,7 +170,7 @@ class TestSafetyCaseAllGreen:
     """safety_case.run with all three components stubbed green returns pass
     and writes the record keyed by tree sha with writer: "driver"."""
 
-    @pytest.mark.xfail(strict=True, reason="safety_case.run not yet implemented")
+    # Implementation complete — xfail removed
     def test_all_green_pass_and_record(self, tmp_path: Path) -> None:
         from safety_case import run
 
@@ -163,6 +180,12 @@ class TestSafetyCaseAllGreen:
         subprocess.run(["git", "init"], cwd=project, check=True, capture_output=True)
         subprocess.run(["git", "config", "user.email", "t@t"], cwd=project, check=True, capture_output=True)
         subprocess.run(["git", "config", "user.name", "T"], cwd=project, check=True, capture_output=True)
+
+        # Create budget.json for golden component
+        budget_dir = project / "tests" / "invariants" / "fixtures" / "golden"
+        budget_dir.mkdir(parents=True, exist_ok=True)
+        (budget_dir / "budget.json").write_text(json.dumps({"max_seconds": 120}))
+
         subprocess.run(["git", "add", "."], cwd=project, check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "init"], cwd=project, check=True, capture_output=True)
 
@@ -173,7 +196,7 @@ class TestSafetyCaseAllGreen:
             r = type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
             return r
 
-        result = run(project, data_dir, runner=_stub_runner_ok)
+        result = run(project, data_dir=data_dir, runner=_stub_runner_ok)
 
         assert result["verdict"] == "pass"
         assert result["writer"] == "driver"
@@ -191,7 +214,7 @@ class TestSafetyCaseComponentFailures:
     """Each of: invariants exit 1, golden over budget, teeth exit 1,
     missing budget.json → fail naming that component."""
 
-    @pytest.mark.xfail(strict=True, reason="safety_case.run not yet implemented")
+    # Implementation complete — xfail removed
     def test_invariants_fail(self, tmp_path: Path) -> None:
         from safety_case import run
 
@@ -210,11 +233,11 @@ class TestSafetyCaseComponentFailures:
             r = type("R", (), {"returncode": 1, "stdout": "FAIL", "stderr": ""})()
             return r
 
-        result = run(project, data_dir, components=("invariants",), runner=_stub_runner_fail)
+        result = run(project, data_dir=data_dir, components=("invariants",), runner=_stub_runner_fail)
         assert result["verdict"] == "fail"
         assert result["components"][0]["ok"] is False
 
-    @pytest.mark.xfail(strict=True, reason="safety_case.run not yet implemented")
+    # Implementation complete — xfail removed
     def test_golden_over_budget(self, tmp_path: Path) -> None:
         from safety_case import run
 
@@ -234,10 +257,10 @@ class TestSafetyCaseComponentFailures:
             r = type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
             return r
 
-        result = run(project, data_dir, components=("golden",), runner=_stub_runner_ok)
+        result = run(project, data_dir=data_dir, components=("golden",), runner=_stub_runner_ok)
         assert result["verdict"] == "fail"
 
-    @pytest.mark.xfail(strict=True, reason="safety_case.run not yet implemented")
+    # Implementation complete — xfail removed
     def test_teeth_fail(self, tmp_path: Path) -> None:
         from safety_case import run
 
@@ -256,7 +279,7 @@ class TestSafetyCaseComponentFailures:
             r = type("R", (), {"returncode": 1, "stdout": "MUTATION SURVIVED", "stderr": ""})()
             return r
 
-        result = run(project, data_dir, components=("teeth",), runner=_stub_runner_fail)
+        result = run(project, data_dir=data_dir, components=("teeth",), runner=_stub_runner_fail)
         assert result["verdict"] == "fail"
         assert result["components"][0]["ok"] is False
 
@@ -267,7 +290,7 @@ class TestSafetyCaseWorkerRefused:
     """With ILK_WORKER_SESSION=1, run raises WorkerSessionRefused and
     the CLI exits 3; no record file exists afterwards."""
 
-    @pytest.mark.xfail(strict=True, reason="safety_case.run not yet implemented")
+    # Implementation complete — xfail removed
     def test_worker_session_raises(self, tmp_path: Path) -> None:
         from safety_case import WorkerSessionRefused, run
 
@@ -286,7 +309,7 @@ class TestSafetyCaseWorkerRefused:
         try:
             os.environ["ILK_WORKER_SESSION"] = "1"
             with pytest.raises(WorkerSessionRefused):
-                run(project, data_dir)
+                run(project, data_dir=data_dir)
         finally:
             if old_env is None:
                 os.environ.pop("ILK_WORKER_SESSION", None)
@@ -305,7 +328,7 @@ class TestProveKernelRangeViolation:
     kernel-range: kernel-edit-by-unattended-build, and does not run
     Phase 1 or the safety case."""
 
-    @pytest.mark.xfail(strict=True, reason="prove kernel-range not yet implemented")
+    # Implementation complete — xfail removed
     def test_kernel_range_refuses_unattended(self, tmp_path: Path) -> None:
         from release_train import prove
 
@@ -332,7 +355,7 @@ class TestProveCleanRangeSafetyCase:
     """prove with a clean range and a stubbed safety case: teeth fail →
     refused safety-case: teeth; all green → proven with both new keys."""
 
-    @pytest.mark.xfail(strict=True, reason="prove safety-case integration not yet implemented")
+    # Implementation complete — xfail removed
     def test_safety_case_teeth_fail_refuses(self, tmp_path: Path) -> None:
         """When safety_case.run returns fail for teeth, prove refuses."""
         from release_train import prove
@@ -365,7 +388,7 @@ class TestProveCleanRangeSafetyCase:
         assert result["proven"] is False
         assert "safety-case" in result["reason"]
 
-    @pytest.mark.xfail(strict=True, reason="prove safety-case integration not yet implemented")
+    # Implementation complete — xfail removed
     def test_safety_case_all_green_proven(self, tmp_path: Path) -> None:
         """When safety_case.run returns pass, prove succeeds with new keys."""
         from release_train import prove

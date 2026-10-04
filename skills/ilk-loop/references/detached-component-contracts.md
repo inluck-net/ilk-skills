@@ -3044,3 +3044,75 @@ re-render: `ilk_digest.py render --day D`.
 3. **Dry-run writes nothing.** No marker, no page, no digest dir.
 4. **Idle cycles write.** The hook runs before the scan.
 5. **`ILK_DIGEST=0` disables.** The hook returns 0 immediately.
+
+---
+
+## Contract 21: Safety-case verdict record (`runtime/safety-case/<tree>.json`)
+
+### Purpose
+
+The RSI safety case runs three components (invariants, golden batch, teeth)
+and records its verdict keyed by tree SHA. The release train reads this
+record as a precondition for cutting a release.
+
+### Format
+
+```json
+{
+  "tree": "<40-char tree sha>",
+  "head": "<40-char commit sha>",
+  "verdict": "pass" | "fail",
+  "components": [
+    {
+      "name": "invariants" | "golden" | "teeth",
+      "ok": true | false,
+      "seconds": 42.1,
+      "budget_seconds": 120,
+      "exit": 0,
+      "tail": "last 500 chars of stdout+stderr"
+    }
+  ],
+  "catalog_sha256": "<sha256 of mutations.json>",
+  "kernel_sha256": "<sha256 of safety-kernel.json>",
+  "writer": "driver",
+  "ts": "2026-10-04T12:00:00+0800"
+}
+```
+
+### Key
+
+Tree SHA (`HEAD^{tree}`) — stable across commits with identical tree content.
+
+### Writers
+
+- **`safety_case.py run`** — the only writer. Refuses in a worker session
+  (`ILK_WORKER_SESSION=1`). Atomic write (tempfile + `os.replace`).
+
+### Readers
+
+- **`release_train.py prove`** — after Phase 1 passes, runs
+  `safety_case.run` with `no_record=True` (the proof file carries the
+  result; no standalone record is written during prove). A `fail` verdict
+  is a prove refusal with reason `safety-case: <component> <tail>`.
+
+### New prove refusal reasons
+
+| Reason prefix | Meaning |
+|---|---|
+| `kernel-range: <reason> <sha12> <path>` | A kernel-range violation was found in `<last_tag>..HEAD`. Sub-reasons: `kernel-edit-by-unattended-build`, `rules-edit-by-loop-build`, `kernel-edit-unresolved-master`. |
+| `safety-case: <component> <tail>` | A safety-case component failed (exit ≠ 0 or over budget). Component names: `invariants`, `golden`, `teeth`. |
+
+### Invariants
+
+1. **Driver-only write.** `safety_case.py` refuses to run when
+   `ILK_WORKER_SESSION=1`.
+2. **Atomic record.** The record is written via tempfile + `os.replace`.
+3. **No record during prove.** `prove` passes `no_record=True` so a gate
+   never writes a real record; the proof file carries the safety-case
+   result inline.
+4. **Budget enforcement.** Each component has a hard timeout and a budget
+   (invariants: 120s, golden: `budget.json max_seconds`, teeth: 900s).
+   A component that exceeds either is `ok: false`.
+5. **Missing budget.json is a failure.** A missing or corrupt
+   `budget.json` for the golden batch returns `ok: false` with exit 2,
+   never skipped.

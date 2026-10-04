@@ -36,6 +36,33 @@ sys.path.insert(0, str(SHIP_SCRIPTS))
 sys.path.insert(0, str(LOOP_SCRIPTS))
 
 from release_train import check, prove  # noqa: E402
+import safety_case  # noqa: E402
+
+
+# ── Fixtures ────────────────────────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def _stub_safety_case_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub safety_case.run to always return pass.
+
+    prove() now runs the safety case after Phase 1.  The old tests' fake
+    projects don't have the golden-batch / teeth fixtures, so we stub the
+    call to always pass.  The new tests in
+    test_a_release_runs_the_safety_case.py exercise the real integration.
+    """
+    def _pass(*a, **kw):
+        return {
+            "verdict": "pass",
+            "tree": "stub",
+            "head": "stub",
+            "components": [
+                {"name": "invariants", "ok": True, "seconds": 1, "budget_seconds": 120, "exit": 0, "tail": ""},
+                {"name": "golden", "ok": True, "seconds": 1, "budget_seconds": 120, "exit": 0, "tail": ""},
+                {"name": "teeth", "ok": True, "seconds": 1, "budget_seconds": 900, "exit": 0, "tail": ""},
+            ],
+            "writer": "driver",
+        }
+    monkeypatch.setattr(safety_case, "run", _pass)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────

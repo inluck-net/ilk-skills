@@ -271,6 +271,53 @@ def prove(project: Path, data_dir: Path) -> dict:
             "new_failing_ids": [], "proof_file": proof_path,
         }
 
+    # ── kernel range check (cheap refusal first) ──────────────────────
+    # Judge by the kernel list at last_tag, not HEAD.
+    if str(_LOOP_SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(_LOOP_SCRIPTS))
+    from safety_kernel import check_range as kernel_check_range  # noqa: E402
+
+    # Resolve plans dir
+    plans_dir = data_dir / "plans"
+    if not plans_dir.exists():
+        # Try external plans dir
+        plans_dir = data_dir.parent / "plans"
+    if not plans_dir.exists():
+        # Fallback: project's docs/plans
+        plans_dir = project / "docs" / "plans"
+    if not plans_dir.exists():
+        plans_dir = None
+
+    ledger_dir = data_dir / "runtime"
+
+    try:
+        kernel_violations = kernel_check_range(
+            project, last_tag, head,
+            plans_dir=plans_dir if plans_dir is not None else Path("."),
+            ledger_dir=ledger_dir if ledger_dir.exists() else None,
+        )
+    except Exception as exc:
+        kernel_violations = []
+
+    if kernel_violations:
+        reasons = []
+        for v in kernel_violations:
+            reasons.append(f"{v['reason']} {v['sha'][:12]} {v['path']}")
+        reason_str = "kernel-range: " + "; ".join(reasons)
+        proof_path = _write_proof(data_dir, head, {
+            "head": head, "last_tag": last_tag,
+            "invocation": invocation,
+            "verdict": "refused", "reason": reason_str,
+            "kernel_range": {
+                "judged_by": last_tag,
+                "violations": len(kernel_violations),
+            },
+        })
+        return {
+            "proven": False, "reason": reason_str,
+            "new_failing_ids": [], "proof_file": proof_path,
+        }
+
     # ── Phase 1: clone + run suite ────────────────────────────────────
     tmp_dir = tempfile.mkdtemp(prefix="release_train_")
     clone_dir = Path(tmp_dir) / "clone"
@@ -349,6 +396,49 @@ def prove(project: Path, data_dir: Path) -> dict:
             "proof_file": proof_path,
         }
 
+    # ── safety case (after Phase 1 passes) ────────────────────────────
+    import safety_case  # noqa: E402
+
+    # Clear ILK_WORKER_SESSION — the release train is a driver operation,
+    # not a worker session.  safety_case.run refuses in worker sessions.
+    old_worker = os.environ.pop("ILK_WORKER_SESSION", None)
+    try:
+        try:
+            sc_result = safety_case.run(
+                clone_dir, data_dir=data_dir, no_record=True,
+            )
+        except Exception as exc:
+            sc_result = {"verdict": "fail", "components": [{"name": "error", "ok": False, "tail": str(exc)}]}
+    finally:
+        if old_worker is not None:
+            os.environ["ILK_WORKER_SESSION"] = old_worker
+
+    if sc_result.get("verdict") != "pass":
+        # Find the first failing component
+        failing_comp = None
+        for c in sc_result.get("components", []):
+            if not c.get("ok"):
+                failing_comp = c
+                break
+        comp_name = failing_comp.get("name", "unknown") if failing_comp else "unknown"
+        comp_tail = (failing_comp.get("tail", "") if failing_comp else "")[:100]
+        reason_str = f"safety-case: {comp_name} {comp_tail}".strip()
+        proof_path = _write_proof(data_dir, head, {
+            "head": head, "last_tag": last_tag,
+            "invocation": invocation,
+            "suite_cwd": str(clone_dir),
+            "verdict": "refused", "reason": reason_str,
+            "safety_case": sc_result,
+            "kernel_range": {
+                "judged_by": last_tag,
+                "violations": 0,
+            },
+        })
+        return {
+            "proven": False, "reason": reason_str,
+            "new_failing_ids": [], "proof_file": proof_path,
+        }
+
     # ── proven ────────────────────────────────────────────────────────
     proof_path = _write_proof(data_dir, head, {
         "head": head, "last_tag": last_tag,
@@ -358,6 +448,14 @@ def prove(project: Path, data_dir: Path) -> dict:
         "new_failing_ids": [],
         "failing_nodes": failing_nodes,
         "baseline_ids": baseline_ids,
+        "safety_case": {
+            "verdict": sc_result.get("verdict"),
+            "components": sc_result.get("components"),
+        },
+        "kernel_range": {
+            "judged_by": last_tag,
+            "violations": 0,
+        },
     })
     return {
         "proven": True, "reason": "",
