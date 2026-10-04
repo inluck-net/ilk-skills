@@ -118,8 +118,14 @@ elif slug == 'golden-red':
         p.write_text(text)
 PYEOF
 
-# Run the transformation.
-python3 "$transform_script" "$slug" "$current_step"
+# Apply the patch file if it exists, otherwise use the hard-coded transformation.
+patch_file="script/${slug}/step-${current_step}.patch"
+if [[ -f "$patch_file" ]]; then
+    # Apply the unified diff patch.
+    git apply "$patch_file"
+else
+    python3 "$transform_script" "$slug" "$current_step"
+fi
 rm -f "$transform_script"
 
 # Stage and commit.
