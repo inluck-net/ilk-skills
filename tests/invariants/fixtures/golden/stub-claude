@@ -56,7 +56,6 @@ if slug == 'golden-real':
         text = p.read_text()
         text = text.replace('from calc import scale', 'import pytest\nfrom calc import scale')
         text = text.replace('def test_scale():', '@pytest.mark.xfail(strict=True, reason="scale is broken: multiplies instead of dividing")\ndef test_scale():')
-        text = text.replace('assert scale(10, 2) == 5.0', 'assert True')
         p.write_text(text)
     elif step == 1:
         # Fix scale and remove xfail

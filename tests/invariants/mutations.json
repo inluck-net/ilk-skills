@@ -12,11 +12,19 @@
       "min_matches": 1,
       "catcher": {
         "argv": [
-          "python3", "-m", "pytest",
+          "python3",
+          "-m",
+          "pytest",
           "skills/ilk-loop/tests/test_a_sourced_runner_writes_nothing_live.py::test_ac1_empty_project_path_refused",
-          "-q", "-p", "no:cacheprovider", "--timeout=120"
+          "-q",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=120"
         ],
-        "expect_in_output": ["FAILED", "test_ac1_empty_project_path_refused"]
+        "expect_in_output": [
+          "FAILED",
+          "test_ac1_empty_project_path_refused"
+        ]
       }
     },
     {
@@ -29,11 +37,19 @@
       "min_matches": 1,
       "catcher": {
         "argv": [
-          "python3", "-m", "pytest",
+          "python3",
+          "-m",
+          "pytest",
           "tests/invariants/test_a_red_gate_blocks_a_ship.py",
-          "-q", "-p", "no:cacheprovider", "--timeout=120"
+          "-q",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=120"
         ],
-        "expect_in_output": ["FAILED", "test_a_red_gate_blocks_a_ship"]
+        "expect_in_output": [
+          "FAILED",
+          "test_a_red_gate_blocks_a_ship"
+        ]
       }
     },
     {
@@ -46,11 +62,19 @@
       "min_matches": 1,
       "catcher": {
         "argv": [
-          "python3", "-m", "pytest",
+          "python3",
+          "-m",
+          "pytest",
           "tests/invariants/test_a_vacuous_pin_is_a_red_gate.py",
-          "-q", "-p", "no:cacheprovider", "--timeout=120"
+          "-q",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=120"
         ],
-        "expect_in_output": ["FAILED", "test_a_vacuous_pin_is_a_red_gate"]
+        "expect_in_output": [
+          "FAILED",
+          "test_a_vacuous_pin_is_a_red_gate"
+        ]
       }
     },
     {
@@ -63,11 +87,19 @@
       "min_matches": 1,
       "catcher": {
         "argv": [
-          "python3", "-m", "pytest",
+          "python3",
+          "-m",
+          "pytest",
           "tests/invariants/test_a_worker_cannot_write_proof_or_run_the_suite.py",
-          "-q", "-p", "no:cacheprovider", "--timeout=120"
+          "-q",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=120"
         ],
-        "expect_in_output": ["FAILED", "test_a_worker_cannot_write_proof_or_run_the_suite"]
+        "expect_in_output": [
+          "FAILED",
+          "test_a_worker_cannot_write_proof_or_run_the_suite"
+        ]
       }
     },
     {
@@ -80,11 +112,19 @@
       "min_matches": 1,
       "catcher": {
         "argv": [
-          "python3", "-m", "pytest",
+          "python3",
+          "-m",
+          "pytest",
           "tests/invariants/test_a_red_goes_to_its_owner.py",
-          "-q", "-p", "no:cacheprovider", "--timeout=120"
+          "-q",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=120"
         ],
-        "expect_in_output": ["FAILED", "test_a_red_goes_to_its_owner"]
+        "expect_in_output": [
+          "FAILED",
+          "test_a_red_goes_to_its_owner"
+        ]
       }
     },
     {
@@ -96,11 +136,19 @@
       "min_matches": 1,
       "catcher": {
         "argv": [
-          "python3", "-m", "pytest",
+          "python3",
+          "-m",
+          "pytest",
           "tests/invariants/test_a_worker_ends_its_turn_after_a_ship.py",
-          "-q", "-p", "no:cacheprovider", "--timeout=120"
+          "-q",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=120"
         ],
-        "expect_in_output": ["FAILED", "test_a_worker_ends_its_turn_after_a_ship"]
+        "expect_in_output": [
+          "FAILED",
+          "test_a_worker_ends_its_turn_after_a_ship"
+        ]
       }
     },
     {
@@ -113,11 +161,19 @@
       "min_matches": 1,
       "catcher": {
         "argv": [
-          "python3", "-m", "pytest",
+          "python3",
+          "-m",
+          "pytest",
           "tests/invariants/test_a_batch_cannot_excuse_its_own_red.py",
-          "-q", "-p", "no:cacheprovider", "--timeout=120"
+          "-q",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=120"
         ],
-        "expect_in_output": ["FAILED", "test_a_batch_cannot_excuse_its_own_red"]
+        "expect_in_output": [
+          "FAILED",
+          "test_a_batch_cannot_excuse_its_own_red"
+        ]
       }
     },
     {
@@ -130,26 +186,39 @@
       "min_matches": 1,
       "catcher": {
         "argv": [
-          "python3", "-m", "pytest",
+          "python3",
+          "-m",
+          "pytest",
           "tests/invariants/test_an_unattended_build_cannot_land_a_kernel_edit.py",
-          "-q", "-p", "no:cacheprovider", "--timeout=120"
+          "-q",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=120"
         ],
-        "expect_in_output": ["FAILED", "test_an_unattended_build_cannot_land_a_kernel_edit"]
+        "expect_in_output": [
+          "FAILED",
+          "test_an_unattended_build_cannot_land_a_kernel_edit"
+        ]
       }
     },
     {
       "id": "golden-vacuous-pin",
       "incident": "decay (a): inert fix shipped green — the pin asserts True",
-      "rail": "golden-real step-0 stub replaces assertion with assert True",
+      "rail": "golden-real step-0 pin asserts scale(10,2)==5.0 (real assertion)",
       "file": "tests/invariants/fixtures/golden/stub-claude",
-      "kind": "delete-lines",
-      "pattern": "text = text\\.replace\\('assert scale\\(10, 2\\) == 5\\.0', 'assert True'\\)",
+      "kind": "replace",
+      "pattern": "scale\\ is\\ broken:\\ multiplies\\ instead\\ of\\ dividing\"\\)\\\\ndef\\ test_scale\\(\\):'\\)\n\\ \\ \\ \\ \\ \\ \\ \\ p\\.write_text\\(text\\)",
+      "replacement": "scale is broken: multiplies instead of dividing\")\\\\ndef test_scale():')\n        text = text.replace('assert scale(10, 2) == 5.0', 'assert True')\n        p.write_text(text)",
       "min_matches": 1,
       "catcher": {
         "argv": [
-          "python3", "tests/invariants/golden_batch.py", "--json"
+          "python3",
+          "tests/invariants/golden_batch.py",
+          "--json"
         ],
-        "expect_in_output": ["golden-real"]
+        "expect_in_output": [
+          "golden-real"
+        ]
       }
     },
     {
@@ -162,9 +231,13 @@
       "min_matches": 1,
       "catcher": {
         "argv": [
-          "python3", "tests/invariants/golden_batch.py", "--json"
+          "python3",
+          "tests/invariants/golden_batch.py",
+          "--json"
         ],
-        "expect_in_output": ["golden-red"]
+        "expect_in_output": [
+          "golden-red"
+        ]
       }
     },
     {
@@ -178,9 +251,13 @@
       "min_matches": 1,
       "catcher": {
         "argv": [
-          "python3", "tests/invariants/golden_batch.py", "--json"
+          "python3",
+          "tests/invariants/golden_batch.py",
+          "--json"
         ],
-        "expect_in_output": ["golden-inert"]
+        "expect_in_output": [
+          "golden-inert"
+        ]
       }
     },
     {
@@ -194,11 +271,19 @@
       "min_matches": 1,
       "catcher": {
         "argv": [
-          "python3", "-m", "pytest",
+          "python3",
+          "-m",
+          "pytest",
           "tests/invariants/test_the_golden_batch_harness.py::test_golden_batch_refuses_when_skill_home_in_repo",
-          "-q", "-p", "no:cacheprovider", "--timeout=120"
+          "-q",
+          "-p",
+          "no:cacheprovider",
+          "--timeout=120"
         ],
-        "expect_in_output": ["FAILED", "test_golden_batch_refuses_when_skill_home_in_repo"]
+        "expect_in_output": [
+          "FAILED",
+          "test_golden_batch_refuses_when_skill_home_in_repo"
+        ]
       }
     }
   ]
