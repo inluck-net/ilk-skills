@@ -286,16 +286,8 @@ def test_ac1_layout_release_rewires_links_and_plist(tmp_path: Path) -> None:
     result = _run_install(home, "--layout", "release", "--apply")
     assert result.returncode == 0, f"exit {result.returncode}: {result.stderr}"
 
-    # Claude homes: existing controls (green today).
-    _assert_links_through_current(home, current, CLAUDE_HOMES)
-
-    # Cursor and Codex: red-first pins (xfail until step 1).
-    pytest.importorskip("pytest")
-    for agent_home in [".cursor", ".codex"]:
-        try:
-            _assert_links_through_current(home, current, [agent_home])
-        except AssertionError as exc:
-            pytest.xfail(f"layout switch does not yet cover {agent_home}: {exc}")
+    # All homes should point through current.
+    _assert_links_through_current(home, current, ALL_AGENT_HOMES)
 
     # Plist script element should point through current.
     plist_path = fx["agents_dir"] / f"{SCHEDULER_LABEL}.plist"
@@ -343,21 +335,10 @@ def test_ac2_idempotent(tmp_path: Path) -> None:
 
     _run_install(home, "--layout", "release", "--apply")
 
-    # No mtime change on Claude homes (existing control).
+    # No mtime change on any home.
     for link_str, mtime_before in mtimes.items():
         link = Path(link_str)
-        if any(link_str.endswith(f".claude{s}/skills/{n}") or link_str.endswith(f".claude{s}/commands/{f}")
-               for s in ["", "-worker", "-manager"] for n in SKILL_NAMES for f in COMMAND_FILES):
-            assert link.lstat().st_mtime_ns == mtime_before, f"{link} mtime changed"
-
-    # Cursor/Codex mtimes: xfail if the layout switch touched them.
-    for link_str, mtime_before in mtimes.items():
-        link = Path(link_str)
-        if ".cursor/" in link_str or ".codex/" in link_str:
-            try:
-                assert link.lstat().st_mtime_ns == mtime_before, f"{link} mtime changed"
-            except AssertionError as exc:
-                pytest.xfail(f"layout switch does not yet leave Cursor/Codex idempotent: {exc}")
+        assert link.lstat().st_mtime_ns == mtime_before, f"{link} mtime changed"
 
     # No plist byte change.
     assert plist_path.read_bytes() == plist_before
@@ -375,15 +356,8 @@ def test_ac3_layout_clone_restores(tmp_path: Path) -> None:
     _run_install(home, "--layout", "release", "--apply")
     _run_install(home, "--layout", "clone", "--apply")
 
-    # Claude homes: existing control (green today).
-    _assert_links_to_repo(home, CLAUDE_HOMES)
-
-    # Cursor and Codex: red-first pins.
-    for agent_home in [".cursor", ".codex"]:
-        try:
-            _assert_links_to_repo(home, [agent_home])
-        except AssertionError as exc:
-            pytest.xfail(f"clone restore does not yet cover {agent_home}: {exc}")
+    # All homes should point to the repo (clone layout).
+    _assert_links_to_repo(home, ALL_AGENT_HOMES)
 
     # Plist script restored to clone.
     plist_path = fx["agents_dir"] / f"{SCHEDULER_LABEL}.plist"
@@ -475,34 +449,22 @@ def test_ac6_plain_install_respects_release_layout(tmp_path: Path) -> None:
     assert target == expected, f"{link} -> {target!r}, expected {expected!r}"
 
     # Cursor/Codex: plain apply should recreate removed links on current.
-    # This is a red-first pin — the current installer skips Cursor/Codex
-    # in release layout, so the link will be recreated pointing at the
-    # clone instead of current.
-    try:
-        assert cursor_skill_link.is_symlink(), f"{cursor_skill_link} was not recreated"
-        target = os.readlink(cursor_skill_link)
-        expected = str(current / "skills" / "ilk-loop")
-        assert target == expected, f"{cursor_skill_link} -> {target!r}, expected {expected!r}"
-    except AssertionError as exc:
-        pytest.xfail(f"plain install does not yet recreate Cursor links on current: {exc}")
+    assert cursor_skill_link.is_symlink(), f"{cursor_skill_link} was not recreated"
+    target = os.readlink(cursor_skill_link)
+    expected = str(current / "skills" / "ilk-loop")
+    assert target == expected, f"{cursor_skill_link} -> {target!r}, expected {expected!r}"
 
-    try:
-        assert codex_cmd_link.is_symlink(), f"{codex_cmd_link} was not recreated"
-        target = os.readlink(codex_cmd_link)
-        expected = str(current / "commands" / "ilk.md")
-        assert target == expected, f"{codex_cmd_link} -> {target!r}, expected {expected!r}"
-    except AssertionError as exc:
-        pytest.xfail(f"plain install does not yet recreate Codex links on current: {exc}")
+    assert codex_cmd_link.is_symlink(), f"{codex_cmd_link} was not recreated"
+    target = os.readlink(codex_cmd_link)
+    expected = str(current / "commands" / "ilk.md")
+    assert target == expected, f"{codex_cmd_link} -> {target!r}, expected {expected!r}"
 
     # Run plain apply again — idempotent for Cursor/Codex too.
     mtimes_before = _snapshot_mtimes(home, [".cursor", ".codex"])
     _run_install(home, "--apply")
     for link_str, mtime_before in mtimes_before.items():
         link = Path(link_str)
-        try:
-            assert link.lstat().st_mtime_ns == mtime_before, f"{link} mtime changed"
-        except AssertionError as exc:
-            pytest.xfail(f"plain install Cursor/Codex not yet idempotent: {exc}")
+        assert link.lstat().st_mtime_ns == mtime_before, f"{link} mtime changed"
 
 
 # --- AC-7: missing .claude-manager and plist ⇒ exit 0, create neither ----

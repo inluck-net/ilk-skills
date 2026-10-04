@@ -742,9 +742,11 @@ if [[ $only_auto_plan -eq 1 ]]; then
 fi
 
 # --- layout mode (--layout release|clone) ------------------------------------
-# Rewires the three Claude homes' skill/command links and the scheduler plist
-# to point at either the release layout (~/.ilk/current) or the dev clone.
-# Only Claude homes and existing LaunchAgent plists are touched.
+# Rewires every supported agent home's skill/command links and the scheduler
+# plist to point at either the release layout (~/.ilk/current) or the dev
+# clone.  Supported homes: Claude Code (.claude, .claude-worker, .claude-manager),
+# Cursor (.cursor), Codex (.codex).  Only existing homes and LaunchAgent plists
+# are touched.
 
 if [[ -n "$layout_mode" ]]; then
   mode="DRY-RUN"
@@ -830,6 +832,39 @@ if [[ -n "$layout_mode" ]]; then
     done
   done
 
+  # --- Cursor and Codex homes --------------------------------------------
+  # These agent homes follow the same layout as Claude Code.
+  for agent_home in "$HOME/.cursor" "$HOME/.codex"; do
+    if [[ ! -d "$agent_home" ]]; then
+      echo "  skip: $agent_home does not exist"
+      continue
+    fi
+    # Skill links.
+    for name in "${SKILL_NAMES[@]}"; do
+      link="$agent_home/skills/$name"
+      source="$base/skills/$name"
+      action="$(plan_link "$link" "$source")"
+      if [[ $apply -eq 1 ]]; then
+        outcome="$(apply_action "$action" "$link" "$source")"
+        printf '  [%s] %s -> %s\n' "$outcome" "$link" "$source"
+      else
+        printf '  [%s] %s -> %s\n' "$action" "$link" "$source"
+      fi
+    done
+    # Command links.
+    for f in "${COMMAND_FILES[@]}"; do
+      link="$agent_home/commands/$f"
+      source="$base/commands/$f"
+      action="$(plan_link "$link" "$source")"
+      if [[ $apply -eq 1 ]]; then
+        outcome="$(apply_action "$action" "$link" "$source")"
+        printf '  [%s] %s -> %s\n' "$outcome" "$link" "$source"
+      else
+        printf '  [%s] %s -> %s\n' "$action" "$link" "$source"
+      fi
+    done
+  done
+
   # --- Plist --------------------------------------------------------------
   agents_dir="$HOME/Library/LaunchAgents"
   for plist_name in "net.inluck.ilk.scheduler" "net.inluck.ilk.scheduler-health"; do
@@ -904,36 +939,24 @@ print(args[1] if len(args) >= 2 else '(none)')
 fi
 
 # --- Plain install.sh respects a release layout --------------------------
-# When the layout file says 'release', plain install.sh --apply skips the
-# Claude home skill/command links (they should stay on current) and still
-# does everything else.
+# When the layout file says 'release', plain install.sh --apply uses
+# ~/.ilk/current as the source for all agent skill/command links instead
+# of the repo root.  This preserves existing release links and recreates
+# any missing ones through current.  Hooks, PATH entries, and plists
+# retain their existing sources.
 releases_root="${ILK_RELEASES_ROOT:-$HOME/.ilk/releases}"
 releases_parent="$(dirname "$releases_root")"
 layout_file="$releases_parent/layout"
+install_layout_release=0
 if [[ -f "$layout_file" ]] && [[ "$(cat "$layout_file")" == "release" ]]; then
-  if [[ $any_only -eq 0 || $only_claude -eq 1 ]]; then
-    echo "layout is release ($layout_file); skipping Claude home skill/command links; use --layout clone to switch"
-    # Remove Claude Code skill/command targets from the plan arrays so they
-    # are not processed.  Worker homes' hooks are still installed.
-    _filtered_names=()
-    _filtered_skills=()
-    _filtered_commands=()
-    _filtered_hooks=()
-    for i in "${!TARGET_NAMES[@]}"; do
-      case "${TARGET_NAMES[$i]}" in
-        "Claude Code"*)
-          # Keep hooks target if present, skip skill/command targets.
-          ;;
-        *)
-          _filtered_names+=("${TARGET_NAMES[$i]}")
-          _filtered_skills+=("${TARGET_SKILLS[$i]}")
-          _filtered_commands+=("${TARGET_COMMANDS[$i]}")
-          ;;
-      esac
-    done
-    TARGET_NAMES=("${_filtered_names[@]+"${_filtered_names[@]}"}")
-    TARGET_SKILLS=("${_filtered_skills[@]+"${_filtered_skills[@]}"}")
-    TARGET_COMMANDS=("${_filtered_commands[@]+"${_filtered_commands[@]}"}")
+  current_link="$releases_parent/current"
+  if [[ -L "$current_link" ]]; then
+    install_layout_release=1
+    SKILLS_SRC="$current_link/skills"
+    COMMANDS_SRC="$current_link/commands"
+    echo "layout is release ($layout_file); agent links will point through current"
+  else
+    echo "warning: layout is release but $current_link missing; falling back to clone source" >&2
   fi
 fi
 
@@ -944,38 +967,42 @@ declare -a PLAN_LINK=()
 declare -a PLAN_SOURCE=()
 declare -a PLAN_ACTION=()
 
-for i in "${!TARGET_NAMES[@]}"; do
-  for name in "${SKILL_NAMES[@]}"; do
-    link="${TARGET_SKILLS[$i]}/$name"
-    source="$SKILLS_SRC/$name"
-    action="$(plan_link "$link" "$source")"
-    PLAN_TARGET+=("${TARGET_NAMES[$i]}")
-    PLAN_LINK+=("$link")
-    PLAN_SOURCE+=("$source")
-    PLAN_ACTION+=("$action")
+if [[ ${#TARGET_NAMES[@]} -gt 0 ]]; then
+  for i in "${!TARGET_NAMES[@]}"; do
+    for name in "${SKILL_NAMES[@]}"; do
+      link="${TARGET_SKILLS[$i]}/$name"
+      source="$SKILLS_SRC/$name"
+      action="$(plan_link "$link" "$source")"
+      PLAN_TARGET+=("${TARGET_NAMES[$i]}")
+      PLAN_LINK+=("$link")
+      PLAN_SOURCE+=("$source")
+      PLAN_ACTION+=("$action")
+    done
+    for f in "${COMMAND_FILES[@]}"; do
+      link="${TARGET_COMMANDS[$i]}/$f"
+      source="$COMMANDS_SRC/$f"
+      action="$(plan_link "$link" "$source")"
+      PLAN_TARGET+=("${TARGET_NAMES[$i]}")
+      PLAN_LINK+=("$link")
+      PLAN_SOURCE+=("$source")
+      PLAN_ACTION+=("$action")
+    done
   done
-  for f in "${COMMAND_FILES[@]}"; do
-    link="${TARGET_COMMANDS[$i]}/$f"
-    source="$COMMANDS_SRC/$f"
-    action="$(plan_link "$link" "$source")"
-    PLAN_TARGET+=("${TARGET_NAMES[$i]}")
-    PLAN_LINK+=("$link")
-    PLAN_SOURCE+=("$source")
-    PLAN_ACTION+=("$action")
-  done
-done
+fi
 
 # Hooks are Claude Code only — one entry per discovered hook.
 for hook_name in "${HOOK_FILES[@]}"; do
-  for i in "${!TARGET_HOOKS[@]}"; do
-    link="${TARGET_HOOKS[$i]}/$hook_name"
-    source="$HOOKS_SRC/$hook_name"
-    action="$(plan_link "$link" "$source" 1)"
-    PLAN_TARGET+=("hooks")
-    PLAN_LINK+=("$link")
-    PLAN_SOURCE+=("$source")
-    PLAN_ACTION+=("$action")
-  done
+  if [[ ${#TARGET_HOOKS[@]} -gt 0 ]]; then
+    for i in "${!TARGET_HOOKS[@]}"; do
+      link="${TARGET_HOOKS[$i]}/$hook_name"
+      source="$HOOKS_SRC/$hook_name"
+      action="$(plan_link "$link" "$source" 1)"
+      PLAN_TARGET+=("hooks")
+      PLAN_LINK+=("$link")
+      PLAN_SOURCE+=("$source")
+      PLAN_ACTION+=("$action")
+    done
+  fi
 done
 
 # --- print plan -------------------------------------------------------------
@@ -990,7 +1017,9 @@ echo "skills found:   ${#SKILL_NAMES[@]} (ilk-*)"
 echo "commands found: ${#COMMAND_FILES[@]} (ilk*)"
 echo "hooks found:    ${#HOOK_FILES[@]} (*.sh/*.py)"
 printf 'targets:        '
-printf '%s ' "${TARGET_NAMES[@]}"
+if [[ ${#TARGET_NAMES[@]} -gt 0 ]]; then
+  printf '%s ' "${TARGET_NAMES[@]}"
+fi
 echo
 # bash 3.2 compatibility: count actions by dedup + grep -c instead of
 # `declare -A`. The action set is small and bounded; the few extra
@@ -1023,9 +1052,11 @@ tools_migration_link() {
   printf '[ok] %-12s %s\n' "symlink" "$link"
 }
 
-for i in "${!TARGET_NAMES[@]}"; do
-  tools_migration_link "${TARGET_SKILLS[$i]}"
-done
+if [[ ${#TARGET_NAMES[@]} -gt 0 ]]; then
+  for i in "${!TARGET_NAMES[@]}"; do
+    tools_migration_link "${TARGET_SKILLS[$i]}"
+  done
+fi
 
 # blocked summary
 blocked_any=0
