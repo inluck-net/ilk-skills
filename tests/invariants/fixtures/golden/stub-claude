@@ -40,7 +40,7 @@ print(m.group(1) if m else '1')
 " "$plan_file")
 
 # Write the transformation script to a temp file to avoid bash quoting issues.
-transform_script=$(mktemp /tmp/stub_transform_XXXXXX.py)
+transform_script=$(mktemp "/tmp/stub_transform_${$}_XXXXXX.py")
 cat > "$transform_script" << 'PYEOF'
 import sys
 import re
