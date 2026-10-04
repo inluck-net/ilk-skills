@@ -135,7 +135,6 @@ estimated_steps: 2
 # ── AC-1: blocked-no-runnable + shipped master + shipped sub-plans → True ───
 
 
-@pytest.mark.xfail(strict=True, reason="AC-1: blocked-no-runnable not yet accepted")
 def test_ac1_blocked_no_runnable_all_shipped(tmp_path: Path) -> None:
     """A blocked-no-runnable sentinel where every active master's sub-plans
     shipped should return True (the train should start)."""
@@ -156,7 +155,6 @@ def test_ac1_blocked_no_runnable_all_shipped(tmp_path: Path) -> None:
     assert sentinel_all_shipped(sentinel_file, plans_dir=plans_dir) is True
 
 
-@pytest.mark.xfail(strict=True, reason="AC-1b: active master (not shipped) with all sub-plans shipped")
 def test_ac1b_active_master_all_subplans_shipped(tmp_path: Path) -> None:
     """Same as AC-1 but the master is still status: active (not yet flipped
     to shipped).  Should still return True."""
@@ -180,7 +178,6 @@ def test_ac1b_active_master_all_subplans_shipped(tmp_path: Path) -> None:
 # ── AC-2: batch-h shape → True ──────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="AC-2: batch-h shape not yet accepted")
 def test_ac2_batch_h_shape(tmp_path: Path) -> None:
     """Master A shipped (all sub-plans shipped) + master B queued with 3 pending
     sub-plans → True (only active masters are checked)."""
@@ -218,11 +215,7 @@ def test_ac2_batch_h_shape(tmp_path: Path) -> None:
 
 
 def test_ac3_blocked_no_runnable_is_false(tmp_path: Path) -> None:
-    """blocked-no-runnable → False on today's code (no plans_dir check yet).
-
-    In step 1, this test will be updated to pass plans_dir and verify the
-    enhanced logic (active master with mixed sub-plans still → False).
-    """
+    """blocked-no-runnable with no plans_dir → False (guard: no MASTER files)."""
     sentinel_file = _write_sentinel(
         tmp_path / "runtime" / "launcher" / "last-exit.json",
         state="blocked-no-runnable",
@@ -231,14 +224,12 @@ def test_ac3_blocked_no_runnable_is_false(tmp_path: Path) -> None:
 
 
 def test_ac3_active_master_mixed_subplans_shipped_blocked(tmp_path: Path) -> None:
-    """Active master with 1 shipped + 1 blocked → False.
-
-    Builds the plans structure now; will call with plans_dir in step 1.
-    Today the function returns False for blocked-no-runnable unconditionally.
-    """
+    """Active master with 1 shipped + 1 blocked → False."""
     data_dir = tmp_path / "projects" / "k"
     plans_dir = data_dir / "plans"
+    sentinel_file = data_dir / "runtime" / "launcher" / "last-exit.json"
 
+    _write_sentinel(sentinel_file, state="blocked-no-runnable", iterations=3)
     _write_master(
         plans_dir,
         "MASTER-2026-10-04-batch.md",
@@ -248,22 +239,16 @@ def test_ac3_active_master_mixed_subplans_shipped_blocked(tmp_path: Path) -> Non
     _write_subplan(plans_dir, "2026-10-04-a.md", status="shipped")
     _write_subplan(plans_dir, "2026-10-04-b.md", status="blocked")
 
-    sentinel_file = _write_sentinel(
-        data_dir / "runtime" / "launcher" / "last-exit.json",
-        state="blocked-no-runnable",
-    )
-    # Today: blocked-no-runnable → False unconditionally
-    assert sentinel_all_shipped(sentinel_file) is False
+    assert sentinel_all_shipped(sentinel_file, plans_dir=plans_dir) is False
 
 
 def test_ac3_active_master_mixed_subplans_shipped_pending(tmp_path: Path) -> None:
-    """Active master with 1 shipped + 1 pending → False.
-
-    Builds the plans structure now; will call with plans_dir in step 1.
-    """
+    """Active master with 1 shipped + 1 pending → False."""
     data_dir = tmp_path / "projects" / "k"
     plans_dir = data_dir / "plans"
+    sentinel_file = data_dir / "runtime" / "launcher" / "last-exit.json"
 
+    _write_sentinel(sentinel_file, state="blocked-no-runnable", iterations=3)
     _write_master(
         plans_dir,
         "MASTER-2026-10-04-batch.md",
@@ -273,21 +258,16 @@ def test_ac3_active_master_mixed_subplans_shipped_pending(tmp_path: Path) -> Non
     _write_subplan(plans_dir, "2026-10-04-a.md", status="shipped")
     _write_subplan(plans_dir, "2026-10-04-b.md", status="pending")
 
-    sentinel_file = _write_sentinel(
-        data_dir / "runtime" / "launcher" / "last-exit.json",
-        state="blocked-no-runnable",
-    )
-    assert sentinel_all_shipped(sentinel_file) is False
+    assert sentinel_all_shipped(sentinel_file, plans_dir=plans_dir) is False
 
 
 def test_ac3_registered_subplan_file_missing(tmp_path: Path) -> None:
-    """Active master registers a sub-plan whose file is missing → False.
-
-    Builds the plans structure now; will call with plans_dir in step 1.
-    """
+    """Active master registers a sub-plan whose file is missing → False."""
     data_dir = tmp_path / "projects" / "k"
     plans_dir = data_dir / "plans"
+    sentinel_file = data_dir / "runtime" / "launcher" / "last-exit.json"
 
+    _write_sentinel(sentinel_file, state="blocked-no-runnable", iterations=3)
     _write_master(
         plans_dir,
         "MASTER-2026-10-04-batch.md",
@@ -297,11 +277,7 @@ def test_ac3_registered_subplan_file_missing(tmp_path: Path) -> None:
     _write_subplan(plans_dir, "2026-10-04-a.md", status="shipped")
     # 2026-10-04-b.md deliberately not written
 
-    sentinel_file = _write_sentinel(
-        data_dir / "runtime" / "launcher" / "last-exit.json",
-        state="blocked-no-runnable",
-    )
-    assert sentinel_all_shipped(sentinel_file) is False
+    assert sentinel_all_shipped(sentinel_file, plans_dir=plans_dir) is False
 
 
 # ── AC-4: (control) guard conditions → False ────────────────────────────────
@@ -430,7 +406,6 @@ def test_ac5_no_progress_stays_false(tmp_path: Path) -> None:
 # ── AC-6: default plans_dir resolves from sentinel path ─────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="AC-6: default plans_dir resolution not yet implemented")
 def test_ac6_default_plans_dir_from_sentinel_path(tmp_path: Path) -> None:
     """A sentinel at <tmp>/projects/k/runtime/launcher/last-exit.json
     resolves <tmp>/projects/k/plans as the default plans_dir."""
