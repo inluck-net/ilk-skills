@@ -29,6 +29,7 @@ Environment: requires Python 3.8+. Uses stdlib only.
 from __future__ import annotations
 
 import argparse
+import configparser
 import contextlib
 import json
 import os
@@ -861,6 +862,50 @@ def _is_test_file(path: str) -> bool:
     return any(p.search(basename) for p in _TEST_FILE_PATTERNS)
 
 
+def _get_norecursedirs(project: Path) -> set[str]:
+    """Read norecursedirs from pytest config (pytest.ini / setup.cfg / pyproject.toml).
+
+    Returns a set of directory names that pytest would skip during collection.
+    The mention gate should also skip them — fixture dirs hold sample payloads
+    and throwaway trees that are not themselves tests.
+    """
+    defaults = {".git", ".pytest_cache", "__pycache__", "fixtures", "logs"}
+    # Try pytest.ini first
+    for name, parser_cls in [
+        ("pytest.ini", configparser.ConfigParser),
+        ("setup.cfg", configparser.ConfigParser),
+    ]:
+        p = project / name
+        if p.exists():
+            try:
+                cfg = parser_cls()
+                cfg.read(str(p))
+                val = cfg.get("pytest", "norecursedirs", fallback="")
+                if val:
+                    return defaults | set(val.split())
+            except Exception:
+                pass
+    # pyproject.toml
+    p = project / "pyproject.toml"
+    if p.exists():
+        try:
+            import tomllib
+            with open(p, "rb") as f:
+                data = tomllib.load(f)
+            val = data.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("norecursedirs", "")
+            if val:
+                return defaults | set(val if isinstance(val, list) else val.split())
+        except Exception:
+            pass
+    return defaults
+
+
+def _is_under_norecursedirs(path: str, norecursedirs: set[str]) -> bool:
+    """Check if *path* has any component matching a norecursedirs entry."""
+    parts = Path(path).parts
+    return bool(set(parts) & norecursedirs)
+
+
 def _get_changed_files_for_step(
     project: Path, slug: str, step: int, pre_iter_head: str | None
 ) -> list[str] | None:
@@ -1076,9 +1121,14 @@ def _synthesize_mention_check(
     test_files = [f for f in all_mentioned if _is_test_file(f)]
     non_test_files = [f for f in all_mentioned if not _is_test_file(f)]
 
-    # AC-2: include changed test files directly
+    # Exclude files under norecursedirs (fixtures/, logs/, etc.) — these are
+    # sample payloads and throwaway trees, not real tests.  Running them would
+    # produce false gate failures (e.g. fixture projects with planted bugs).
+    norecursedirs = _get_norecursedirs(project)
+
+    # AC-2: include changed test files directly (but not under norecursedirs)
     for changed in changed_files:
-        if _is_test_file(changed) and changed not in test_files:
+        if _is_test_file(changed) and changed not in test_files and not _is_under_norecursedirs(changed, norecursedirs):
             test_files.append(changed)
 
     # For non-test files, find test files that mention them
@@ -1100,8 +1150,8 @@ def _synthesize_mention_check(
         except Exception:
             pass
 
-    # De-duplicate
-    test_files = sorted(set(test_files))
+    # De-duplicate and filter norecursedirs
+    test_files = sorted(set(f for f in test_files if not _is_under_norecursedirs(f, norecursedirs)))
 
     # AC-4: cap at 20 files
     if len(test_files) > _MENTION_GATE_CAP:
