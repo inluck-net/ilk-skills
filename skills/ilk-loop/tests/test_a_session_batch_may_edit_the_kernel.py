@@ -148,13 +148,6 @@ def _run_cli(
 
 # ── AC-1: session master editing kernel → no violation (xfail) ───────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "check_range at 4e5ec01a labels session-master kernel edits as "
-        "kernel-edit-unresolved-master; the fix lets them pass."
-    ),
-)
 def test_session_master_kernel_edit_no_violation(tmp_path: Path) -> None:
     """A session master (no auto_planned) editing a kernel path should
     produce NO violation — the slow path governs, not a refusal."""

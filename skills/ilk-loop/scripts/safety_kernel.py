@@ -278,6 +278,10 @@ def check_range(
     The kernel list is judged by the one **at base** (``git show
     <base>:skills/ilk-loop/safety-kernel.json``).  No list at base means
     no violations.
+
+    A ``kernel``-tier edit by a session-planned master (no ``auto_planned``)
+    is NOT a violation — the slow path (full-scope verify) governs it.
+    See docs/architecture/unattended-unblocking-design.md:306-309.
     """
     # Read the kernel list at base.
     raw = _git_output(
@@ -337,12 +341,16 @@ def check_range(
                 reason = "rules-edit-by-loop-build"
             else:
                 # kernel tier: fail closed if master unresolvable.
+                # A resolved, session-planned master's kernel edit takes the
+                # slow path (full-scope verify) rather than being refused.
+                # See docs/architecture/unattended-unblocking-design.md:306-309.
                 if master_fm is None:
                     reason = "kernel-edit-unresolved-master"
                 elif master_fm.get("auto_planned") == "true":
                     reason = "kernel-edit-by-unattended-build"
                 else:
-                    reason = "kernel-edit-unresolved-master"
+                    # Session-planned master — slow path, not a violation.
+                    continue
 
             violations.append({
                 "sha": sha, "path": p, "tier": tier, "entry": entry,
