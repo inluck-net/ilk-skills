@@ -358,11 +358,13 @@ def test_no_python_string_join_for_sentinel():
             # Must be a path construction, not a variable name or docstring
             if not ("/" in line or "Path" in line or "parent" in line):
                 continue
-            # Check if this is near sentinel/last-exit.json resolution
-            context_start = max(0, i - 10)
-            context_end = min(len(lines), i + 10)
-            context = "\n".join(lines[context_start:context_end])
-            if "last-exit" in context or "sentinel" in context.lower():
+            # The line itself must reference sentinel resolution — not
+            # merely be near a sentinel reference in the surrounding
+            # context.  A bare "runtime" used for a non-sentinel path
+            # (e.g. runtime/release/) that happens to sit near
+            # sentinel code is not a violation.
+            line_lower = stripped.lower()
+            if "last-exit" in line_lower or "sentinel" in line_lower:
                 violations.append(f"{py_file}:{i+1}: {stripped}")
 
     assert not violations, (
