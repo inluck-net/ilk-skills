@@ -1,8 +1,7 @@
 """Contract tests for the one-page daily digest renderer.
 
 Each test imports ``ilk_digest`` inside its body so the file can collect
-even when the module is on a different path.  All ACs are xfail(strict=True)
-until ``ilk_digest.py`` exists.
+even when the module is on a different path.
 """
 from __future__ import annotations
 
@@ -54,7 +53,6 @@ def _build_day(
 # ── AC-1: fixture day with escalations, releases, triage actions ─────────────
 
 
-@pytest.mark.xfail(strict=True, reason="ilk_digest.py not yet written")
 def test_ac1_fixture_day_with_escalations_releases_triage(tmp_path: Path):
     """AC-1: escalations section first, names 'two strikes'; releases names
     v0.0.2 and says 1 nothing-to-release; triage says 3 applied, 0 refused,
@@ -108,7 +106,6 @@ def test_ac1_fixture_day_with_escalations_releases_triage(tmp_path: Path):
 # ── AC-2: no escalations, denominators present ───────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="ilk_digest.py not yet written")
 def test_ac2_no_escalations_shows_denominators(tmp_path: Path):
     """AC-2: 0 of 4 triage decisions escalated."""
     from ilk_digest import render
@@ -132,7 +129,6 @@ def test_ac2_no_escalations_shows_denominators(tmp_path: Path):
 # ── AC-3: unreadable audit file ──────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="ilk_digest.py not yet written")
 def test_ac3_unreadable_audit_file(tmp_path: Path):
     """AC-3: second line is 'not json'; page contains unreadable, path:2,
     no ' 0 of ' count anywhere."""
@@ -159,7 +155,6 @@ def test_ac3_unreadable_audit_file(tmp_path: Path):
 # ── AC-4: render --day D as subprocess writes only digest/ ───────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="ilk_digest.py not yet written")
 def test_ac4_subprocess_render_writes_only_digest(tmp_path: Path):
     """AC-4: render --day D writes <tmp>/digest/D.md and nothing else."""
     day = "2026-10-03"
@@ -181,6 +176,8 @@ def test_ac4_subprocess_render_writes_only_digest(tmp_path: Path):
         env={**os.environ, "ILK_DATA_HOME": str(tmp_path)},
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=30,
     )
     assert result.returncode == 0, f"exit 0 expected, got {result.returncode}\n{result.stderr}"
@@ -200,7 +197,6 @@ def test_ac4_subprocess_render_writes_only_digest(tmp_path: Path):
 # ── AC-5: today prints page, writes nothing ─────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="ilk_digest.py not yet written")
 def test_ac5_today_prints_writes_nothing(tmp_path: Path):
     """AC-5: 'today' prints a page whose title holds today's date, writes no file."""
     from ilk_digest import render
@@ -224,6 +220,8 @@ def test_ac5_today_prints_writes_nothing(tmp_path: Path):
         env={**os.environ, "ILK_DATA_HOME": str(tmp_path)},
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=30,
     )
     assert result.returncode == 0, f"exit 0 expected, got {result.returncode}\n{result.stderr}"
@@ -240,7 +238,6 @@ def test_ac5_today_prints_writes_nothing(tmp_path: Path):
 # ── AC-6 (control): no day file ──────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="ilk_digest.py not yet written")
 def test_ac6_no_day_file_missing_source(tmp_path: Path):
     """AC-6: no day file → source says 'missing — nothing was recorded',
     escalations empty state says '0 of 0'."""
