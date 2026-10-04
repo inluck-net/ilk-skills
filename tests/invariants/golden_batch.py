@@ -230,6 +230,11 @@ def _run_golden_batch(root: Path) -> subprocess.CompletedProcess:
             timeout=600, env=env, cwd=str(root),
         )
         last_proc = proc
+        print(f"[_run_golden_batch] call {_call}: exit={proc.returncode}", file=sys.stderr)
+        if proc.stdout:
+            print(f"[_run_golden_batch] stdout (last 500): {proc.stdout[-500:]}", file=sys.stderr)
+        if proc.stderr:
+            print(f"[_run_golden_batch] stderr (last 500): {proc.stderr[-500:]}", file=sys.stderr)
 
         # Check if all non-verify sub-plans reached their expected status.
         all_done = True
