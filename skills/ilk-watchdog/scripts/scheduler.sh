@@ -162,6 +162,7 @@ BOOTSTRAP_SCRIPT="${_SKILL_ROOT}/../tools/claude-worker/bootstrap.sh"
 NOTIFY_PY="${_SKILL_ROOT}/ilk-watchdog/scripts/ilk_notify.py"
 WATCHDOG_SCRIPT="${_ILK_SCRIPT_DIR}/watchdog.sh"
 DIGEST_SCRIPT="${DIGEST_SCRIPT:-${_SKILL_ROOT}/ilk-loop/scripts/ilk_digest.py}"
+AUTOPLAN_PY="${AUTOPLAN_PY:-${_ILK_SCRIPT_DIR}/../../ilk-self-improve/scripts/autoplan.py}"
 
 SCHEDULER_LOG_DIR="$(ilk_data_dir)/logs"
 SCHEDULER_LOG_FILE="${SCHEDULER_LOG_DIR}/scheduler.log"
@@ -913,6 +914,78 @@ except Exception:
   write_scheduler_log "triage-start" "$_triage_key" "$_triage_run_id"
 }
 
+maybe_tick_autoplan() {
+  # Offer one tick to the auto-planner.  Called once per scanned cycle.
+  # Captures stdout/stderr to tick.log; never fails the cycle.
+  #
+  # Kill switch: ILK_AUTOPLAN=0 disables the hook entirely.
+  if [[ "${ILK_AUTOPLAN:-1}" == "0" ]]; then
+    return 0
+  fi
+
+  # Guard: AUTOPLAN_PY must be a real file.
+  if [[ ! -f "$AUTOPLAN_PY" ]]; then
+    return 0
+  fi
+
+  local _tick_log_dir
+  _tick_log_dir="$(ilk_data_dir)/autoplan"
+  mkdir -p "$_tick_log_dir" 2>/dev/null || true
+  local _tick_log="${_tick_log_dir}/tick.log"
+
+  local _tick_args=("tick")
+  if [[ "${DRY_RUN:-false}" == true ]]; then
+    _tick_args+=("--dry-run")
+  fi
+
+  local _tick_stdout _tick_rc
+  _tick_stdout=$("$PYTHON" "$AUTOPLAN_PY" "${_tick_args[@]}" 2>>"$_tick_log") || _tick_rc=$?
+  _tick_rc=${_tick_rc:-0}
+
+  # Always append stdout to tick.log (even on success).
+  if [[ -n "$_tick_stdout" ]]; then
+    printf '%s\n' "$_tick_stdout" >> "$_tick_log" 2>/dev/null || true
+  fi
+
+  # On crash (nonzero exit), the traceback is already in tick.log via stderr
+  # redirect.  Never fail the cycle.
+  if [[ "$_tick_rc" -ne 0 ]]; then
+    return 0
+  fi
+
+  # Parse the decision from stdout.
+  local _decision _detail
+  _decision=$("$PYTHON" -c "
+import json, sys
+try:
+    d = json.loads(sys.stdin.read())
+    print(d.get('decision', ''))
+except Exception:
+    print('')
+" <<<"$_tick_stdout" 2>/dev/null) || _decision=""
+  _decision="${_decision//$'\r'/}"
+  _decision="${_decision//$'\n'/}"
+
+  _detail=$("$PYTHON" -c "
+import json, sys
+try:
+    d = json.loads(sys.stdin.read())
+    print(d.get('detail', '') or '')
+except Exception:
+    print('')
+" <<<"$_tick_stdout" 2>/dev/null) || _detail=""
+  _detail="${_detail//$'\r'/}"
+  _detail="${_detail//$'\n'/}"
+
+  if [[ "$_decision" == "started" ]]; then
+    write_scheduler_log "autoplan-start" "" "$_detail"
+  elif [[ "$_decision" == "ambiguous-toolkit" || "$_decision" == "bad-home" || "$_decision" == "backlog-unreadable" ]]; then
+    write_scheduler_log "autoplan-refused" "" "$_decision: $_detail"
+  fi
+
+  return 0
+}
+
 log_held_projects() {
   # Copy each `skip-held: <key> (<master>)` line of the last scan into
   # scheduler.log.
@@ -1046,6 +1119,10 @@ run_scheduler() {
     # the scan.  Put it in the journal: a held project must not read as an
     # empty queue (design §4, condition B).
     log_held_projects
+
+    # Offer one tick to the auto-planner (idle-counting, rate-limiting,
+    # and the actual plan start all live inside autoplan.py tick).
+    maybe_tick_autoplan || true
 
     local count
     count=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(len(d))" <<<"$scan_output" | tr -d '\r')

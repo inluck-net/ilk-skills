@@ -9,7 +9,6 @@ records its argv and prints a canned JSON decision.  The scheduler is driven
 via ``ILK_DOTSOURCE_ONLY=1`` sourcing (for AC-1..AC-4) or via
 ``--dry-run --once`` (for AC-5..AC-6).
 
-AC-1..AC-5 are xfail(strict=True) — the hook does not exist yet.
 AC-6 is a control: the dispatch path is unchanged and must pass.
 """
 from __future__ import annotations
@@ -76,14 +75,18 @@ def _read_argv(stub_path: Path) -> list[str]:
     return json.loads(argv_file.read_text(encoding="utf-8"))
 
 
-def _source_scheduler_fn(env: dict[str, str], fn_name: str, *args: str) -> subprocess.CompletedProcess:
+def _source_scheduler_fn(env: dict[str, str], fn_name: str, *args: str,
+                         post_source: str = "") -> subprocess.CompletedProcess:
     """Source scheduler.sh with ILK_DOTSOURCE_ONLY=1 and call fn_name.
 
-    This avoids running the full scheduler loop.
+    This avoids running the full scheduler loop.  *post_source* is injected
+    between the ``source`` and the function call so tests can override
+    variables the script's top-level defaults would otherwise shadow.
     """
     script = textwrap.dedent(f"""\
         export ILK_DOTSOURCE_ONLY=1
         source "{SCHEDULER}"
+        {post_source}
         {fn_name} {" ".join(repr(a) for a in args)}
     """)
     return subprocess.run(
@@ -159,7 +162,6 @@ def _run_scheduler_dry_run(env: dict[str, str], *, timeout: int = 30) -> subproc
 # ── AC-1: tick runs with correct argv ──────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="hook does not exist yet")
 def test_ac1_tick_runs_with_dry_run_flag(tmp_path: Path) -> None:
     """AC-1: sourced scheduler with DRY_RUN=false runs stub with ``tick``;
     DRY_RUN=true runs stub with ``tick --dry-run``."""
@@ -169,7 +171,7 @@ def test_ac1_tick_runs_with_dry_run_flag(tmp_path: Path) -> None:
     stub = _write_stub_autoplan(tmp_path)
     env = _make_env(tmp_path, data_home, extra={"AUTOPLAN_PY": str(stub)})
 
-    # DRY_RUN=false
+    # DRY_RUN=false (default after sourcing)
     result = _source_scheduler_fn(env, "maybe_tick_autoplan")
     assert result.returncode == 0, result.stderr
     argv = _read_argv(stub)
@@ -178,9 +180,9 @@ def test_ac1_tick_runs_with_dry_run_flag(tmp_path: Path) -> None:
     # Clean argv for next run
     (stub.with_name("argv.json")).unlink(missing_ok=True)
 
-    # DRY_RUN=true
-    env["DRY_RUN"] = "true"
-    result = _source_scheduler_fn(env, "maybe_tick_autoplan")
+    # DRY_RUN=true — set after sourcing so the top-level default doesn't shadow
+    result = _source_scheduler_fn(env, "maybe_tick_autoplan",
+                                  post_source="DRY_RUN=true")
     assert result.returncode == 0, result.stderr
     argv = _read_argv(stub)
     assert argv == ["tick", "--dry-run"], f"expected ['tick', '--dry-run'], got {argv}"
@@ -189,7 +191,6 @@ def test_ac1_tick_runs_with_dry_run_flag(tmp_path: Path) -> None:
 # ── AC-2: started decision logs autoplan-start ─────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="hook does not exist yet")
 def test_ac2_started_decision_logs_autoplan_start(tmp_path: Path) -> None:
     """AC-2: stub printing ``{"decision":"started","detail":"abc123"}`` gives
     one ``autoplan-start`` line in scheduler.log; idle gives none."""
@@ -211,8 +212,10 @@ def test_ac2_started_decision_logs_autoplan_start(tmp_path: Path) -> None:
 
     # idle decision — clean log and retry
     (data_home / "logs" / "scheduler.log").unlink(missing_ok=True)
+    stub2_dir = tmp_path / "stub2"
+    stub2_dir.mkdir(parents=True, exist_ok=True)
     stub2 = _write_stub_autoplan(
-        tmp_path / "stub2",
+        stub2_dir,
         stdout='{"decision":"idle","detail":"3/6"}',
     )
     env2 = _make_env(tmp_path, data_home, extra={"AUTOPLAN_PY": str(stub2)})
@@ -226,7 +229,6 @@ def test_ac2_started_decision_logs_autoplan_start(tmp_path: Path) -> None:
 # ── AC-3: stub crash leaves function status 0 and traceback in tick.log ─────
 
 
-@pytest.mark.xfail(strict=True, reason="hook does not exist yet")
 def test_ac3_stub_crash_leaves_status_zero(tmp_path: Path) -> None:
     """AC-3: a stub that exits 1 and prints a traceback leaves the function's
     status 0 and the traceback in tick.log."""
@@ -253,7 +255,6 @@ def test_ac3_stub_crash_leaves_status_zero(tmp_path: Path) -> None:
 # ── AC-4: ILK_AUTOPLAN=0 disables the hook ─────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="hook does not exist yet")
 def test_ac4_kill_switch_disables_hook(tmp_path: Path) -> None:
     """AC-4: ILK_AUTOPLAN=0 means the stub never runs (argv file absent)."""
     data_home = tmp_path / ".ilk-data"
@@ -275,7 +276,6 @@ def test_ac4_kill_switch_disables_hook(tmp_path: Path) -> None:
 # ── AC-5: --dry-run --once on empty queue runs stub with tick --dry-run ─────
 
 
-@pytest.mark.xfail(strict=True, reason="hook does not exist yet")
 def test_ac5_dry_run_once_on_empty_queue(tmp_path: Path) -> None:
     """AC-5: ``scheduler.sh --dry-run --once`` on a sandbox with an empty
     queue runs the stub once with ``tick --dry-run`` and still prints the
