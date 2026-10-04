@@ -1,20 +1,27 @@
+diff --git a/calc.py b/calc.py
+index ca0b0fd..de4957f 100644
 --- a/calc.py
 +++ b/calc.py
-@@ -10,7 +10,7 @@
+@@ -7,7 +7,7 @@ the golden-real sub-plan can pin it and then fix it.
+ 
  def add(a: float, b: float) -> float:
      """Return a + b."""
 -    return a + b
 +    return a - b
-
-
+ 
+ 
+ def scale(value: float, factor: float) -> float:
+diff --git a/tests/test_calc.py b/tests/test_calc.py
+index 6bd0bc1..2e4fed4 100644
 --- a/tests/test_calc.py
 +++ b/tests/test_calc.py
 @@ -1,7 +1,9 @@
  """Tests for calc.py — add, scale, clamp."""
 +import pytest
  from calc import add, scale, clamp
-
-
+ 
+ 
 +@pytest.mark.xfail(strict=True, reason="add is broken")
  def test_add():
      assert add(2, 3) == 5
+ 

@@ -1,26 +1,30 @@
+diff --git a/calc.py b/calc.py
+index 81baad1..ca0b0fd 100644
 --- a/calc.py
 +++ b/calc.py
-@@ -17,7 +17,7 @@
-     """Return value / factor.
-
+@@ -15,7 +15,7 @@ def scale(value: float, factor: float) -> float:
+ 
      BUG: multiplies instead of dividing — planted for golden-real to fix.
      """
 -    return value * factor
 +    return value / factor
-
-
+ 
+ 
+ def clamp(value: float, lo: float, hi: float) -> float:
+diff --git a/tests/test_calc.py b/tests/test_calc.py
+index d6dcfb1..6bd0bc1 100644
 --- a/tests/test_calc.py
 +++ b/tests/test_calc.py
 @@ -1,5 +1,4 @@
  """Tests for calc.py — add, scale, clamp."""
 -import pytest
  from calc import add, scale, clamp
-
-
-@@ -13,7 +12,6 @@
+ 
+ 
+@@ -13,7 +12,6 @@ def test_clamp():
      assert clamp(15, 0, 10) == 10
-
-
+ 
+ 
 -@pytest.mark.xfail(strict=True, reason="scale is broken: multiplies instead of dividing")
  def test_scale():
 -    """Pin: scale(10, 2) should be 5.0 (10 / 2).  BUG: returns 20.0."""
