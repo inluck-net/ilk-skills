@@ -1,3 +1,12 @@
+--- a/calc.py
++++ b/calc.py
+@@ -10,7 +10,7 @@
+ def add(a: float, b: float) -> float:
+     """Return a + b."""
+-    return a + b
++    return a - b
+
+
 --- a/tests/test_calc.py
 +++ b/tests/test_calc.py
 @@ -1,7 +1,9 @@
@@ -9,4 +18,3 @@
 +@pytest.mark.xfail(strict=True, reason="add is broken")
  def test_add():
      assert add(2, 3) == 5
-

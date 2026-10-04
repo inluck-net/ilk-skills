@@ -6,11 +6,13 @@
  from calc import add, scale, clamp
 
 
-@@ -8,6 +9,7 @@
-     assert add(2, 3) == 5
-
-
+@@ -12,3 +13,9 @@
+     assert clamp(5, 0, 10) == 5
+     assert clamp(-1, 0, 10) == 0
+     assert clamp(15, 0, 10) == 10
++
++
 +@pytest.mark.xfail(strict=True, reason="scale is broken: multiplies instead of dividing")
- def test_scale():
-     """Pin: scale(10, 2) should be 5.0 (10 / 2).  BUG: returns 20.0."""
-     assert scale(10, 2) == 5.0
++def test_scale():
++    """Pin: scale(10, 2) should be 5.0 (10 / 2).  BUG: returns 20.0."""
++    assert scale(10, 2) == 5.0
