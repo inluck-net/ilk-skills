@@ -2094,7 +2094,6 @@ class TestTagMismatchAfterAcquisition:
 # commands receive it as one argument.
 
 
-@pytest.mark.xfail(strict=True, reason="v0.9.151 literal-path bug: _acquire_remote_tag hardcodes 'repo'")
 class TestRemoteAcquisitionUsesProjectPath:
     """AC-1: both remote acquisition commands use the same explicit project
     path supplied to _ssh_deploy; neither contains the literal 'repo'."""

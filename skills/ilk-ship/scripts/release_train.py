@@ -1251,6 +1251,8 @@ def _acquire_remote_tag(
     tag: str,
     expected_tag_sha: str,
     timeout: int = 120,
+    *,
+    repo_path: Path | None = None,
 ) -> dict | None:
     """Fetch the exact candidate tag on the remote host and verify it.
 
@@ -1262,8 +1264,9 @@ def _acquire_remote_tag(
     the remote repository's current branch or working tree.  It runs only
     ``git fetch origin tag refs/tags/<tag>`` and ``git rev-parse``.
     """
+    _repo = str(repo_path) if repo_path is not None else "repo"
     fetch_cmd = [
-        "git", "-C", "repo", "fetch", "origin",
+        "git", "-C", _repo, "fetch", "origin",
         f"tag refs/tags/{tag}:refs/tags/{tag}",
     ]
 
@@ -1281,7 +1284,7 @@ def _acquire_remote_tag(
         }
 
     # Verify the tag exists on the remote after fetch.
-    verify_cmd = ["git", "-C", "repo", "rev-parse", f"refs/tags/{tag}^{{}}"]
+    verify_cmd = ["git", "-C", _repo, "rev-parse", f"refs/tags/{tag}^{{}}"]
     verify_result = ssh_runner(host, verify_cmd, timeout=timeout)
     if verify_result["rc"] != 0:
         return {
@@ -1377,7 +1380,7 @@ def _ssh_deploy(
     # refs/tags/<tag>.  This ensures the remote repository has the pushed
     # tag available for extraction, without rewriting its checked-out branch.
     expected_sha = _tag_sha(project, tag) or ""
-    acquire_failure = _acquire_remote_tag(_run, host, tag, expected_sha, timeout=timeout)
+    acquire_failure = _acquire_remote_tag(_run, host, tag, expected_sha, timeout=timeout, repo_path=project)
     if acquire_failure is not None:
         return acquire_failure
 
