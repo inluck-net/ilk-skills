@@ -95,7 +95,6 @@ def interrupted_worktree(tmp_path: Path):
 
 
 @pytest.mark.parametrize("use_worktree", [False, True])
-@pytest.mark.xfail(strict=True, reason="feedback keys and filters ordinary worktrees as separate projects")
 def test_default_feedback_selects_interrupted_worktree_run(interrupted_worktree, use_worktree: bool) -> None:
     clone, worktree, launcher, env, tail_marker = interrupted_worktree
     query = worktree if use_worktree else clone
@@ -110,11 +109,10 @@ def test_default_feedback_selects_interrupted_worktree_run(interrupted_worktree,
     report = launcher / "postmortems" / "20261005-202912.md"
     assert report.exists()
     body = report.read_text(encoding="utf-8")
-    assert "classification: interrupted" in body
+    assert 'classification: "interrupted"' in body
     assert tail_marker in body
 
 
-@pytest.mark.xfail(strict=True, reason="explicit lookup rejects the worktree-path started record")
 def test_explicit_run_id_uses_matching_sentinel_and_iteration_tail(interrupted_worktree) -> None:
     clone, _worktree, launcher, env, tail_marker = interrupted_worktree
     result = subprocess.run(
@@ -134,6 +132,28 @@ def test_explicit_run_id_uses_matching_sentinel_and_iteration_tail(interrupted_w
     )
     assert result.returncode == 0, result.stdout + result.stderr
     body = (launcher / "postmortems" / "20261005-202912.md").read_text(encoding="utf-8")
-    assert "classification: interrupted" in body
+    assert 'classification: "interrupted"' in body
     assert tail_marker in body
 
+
+def test_older_run_does_not_borrow_newer_launch_parameters(interrupted_worktree) -> None:
+    clone, _worktree, launcher, env, _tail_marker = interrupted_worktree
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(COLLECT),
+            "--project-path",
+            str(clone),
+            "--run-id",
+            "20261005-161027",
+            "--quiet",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    body = (launcher / "postmortems" / "20261005-161027.md").read_text(encoding="utf-8")
+    assert 'iterations_max_configured: "unknown"' in body
+    assert 'iteration_timeout_min_configured: "unknown"' in body

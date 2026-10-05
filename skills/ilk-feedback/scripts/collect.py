@@ -3426,6 +3426,14 @@ def main() -> int:
                 by_run[target_run] = per_iter
 
     iters = by_run[target_run]
+    # last-launch.json is a latest-run pointer, not historical metadata.  It
+    # may help discover the shared log before target selection, but it must not
+    # classify or parameterize a different run (Kira 161027 vs 162826).
+    target_launch = (
+        last_launch
+        if last_launch is not None and last_launch.get("run_id") == target_run
+        else None
+    )
 
     # Guard: when --run-id is explicit and records lack the "iteration" key,
     # emit a clear message instead of crashing with KeyError.
@@ -3454,13 +3462,13 @@ def main() -> int:
     # #52: no postmortem for a live run.  classify() raises LiveRunError
     # when the sentinel is "running" with a live pid for the same run.
     try:
-        label, facts = classify(iters, last_launch, project_path)
+        label, facts = classify(iters, target_launch, project_path)
     except LiveRunError as exc:
         print(str(exc), file=sys.stderr)
         return 3
 
     # Count rate-limit events for this run (independently useful metadata).
-    rl_count = count_rate_limit_events(target_run, project_path, last_launch)
+    rl_count = count_rate_limit_events(target_run, project_path, target_launch)
     if rl_count > 0:
         facts["rate_limit_event_count"] = rl_count
     if skipped_non_object > 0:
@@ -3472,16 +3480,16 @@ def main() -> int:
 
     # Detect ceiling-hit-with-no-output from per-iteration JSONL.  Reported
     # as evidence in the postmortem, not as a classification change.
-    hangs = detect_suspected_hangs(target_run, project_path, last_launch)
+    hangs = detect_suspected_hangs(target_run, project_path, target_launch)
     if hangs:
         facts["ceiling_hit_no_output"] = hangs
 
-    rec_max, rec_to, rationale = recommend_params(label, iters, last_launch, facts)
+    rec_max, rec_to, rationale = recommend_params(label, iters, target_launch, facts)
     last_log = iters[-1].get("log") if iters else None
     if not last_log and iters:
         iter_num = iters[-1].get("iteration")
         if iter_num is not None:
-            resolved = resolve_iter_log(target_run, iter_num, project_path, last_launch)
+            resolved = resolve_iter_log(target_run, iter_num, project_path, target_launch)
             if resolved:
                 last_log = str(resolved)
     tail = tail_log(last_log)
@@ -3491,7 +3499,7 @@ def main() -> int:
         project_name=project_name,
         run_id=target_run,
         iters=iters,
-        last_launch=last_launch,
+        last_launch=target_launch,
         label=label,
         facts=facts,
         rec_max=rec_max,
@@ -3516,7 +3524,7 @@ def main() -> int:
     if not args.quiet:
         print(f"[ilk-feedback] project: {project_name}  run: {target_run}")
         print(f"[ilk-feedback] classification: {label}")
-        print(f"[ilk-feedback] iters: {len(iters)} / {(last_launch or {}).get('max_iterations', '?')}")
+        print(f"[ilk-feedback] iters: {len(iters)} / {(target_launch or {}).get('max_iterations', '?')}")
         print(f"[ilk-feedback] new_commits_total: {sum((r.get('new_commits_total') or 0) for r in iters)}")
         print(f"[ilk-feedback] recommendation: MaxIterations={rec_max if rec_max is not None else 'none'} IterationTimeoutMin={rec_to if rec_to is not None else 'none'}")
         print(f"[ilk-feedback] rationale: {rationale}")
