@@ -34,6 +34,7 @@ AUDIT_KINDS: tuple[str, ...] = (
     "autoplan-queued",
     "autoplan-drafted",
     "autoplan-refused",
+    "dry-period-drafted",
 )
 
 EVENT_TYPES: tuple[str, ...] = (
@@ -46,6 +47,7 @@ EVENT_TYPES: tuple[str, ...] = (
     "rolled-back",
     "autoplan-started",
     "autoplan-queued",
+    "dry-period-drafted",
 )
 
 

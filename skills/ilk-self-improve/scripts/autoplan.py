@@ -629,12 +629,20 @@ def plan(
     claude_cmd: list[str] | None = None,
     lint_cmd: list[str] | None = None,
     preflight_cmd: list[str] | None = None,
+    draft_only: bool | None = None,
     env_overrides: dict[str, str] | None = None,
     _time_fn: Callable[[], float] | None = None,
 ) -> dict[str, Any]:
     """The detached planning part.  ``finally``: remove inflight.json.
 
     Returns a dict with ``decision`` and optional ``problems``.
+
+    When *draft_only* is ``True``, the full planner pipeline runs (lint,
+    preflight, rails, audit, candidate-linking) but the master stays
+    ``status: draft``.  A ``dry-period-drafted`` audit event is written
+    instead of ``autoplan-queued``.  The consecutive-drafts counter does
+    not increment and ``paused.json`` is never written for an intentional
+    draft-only outcome.
     """
     global _now
     if _time_fn is not None:
@@ -649,6 +657,30 @@ def plan(
     result: dict[str, Any] = {"decision": "unknown"}
 
     try:
+        # 0. Resolve and validate draft_only config (fail-closed).
+        #    The keyword argument overrides the toolkit config; the toolkit
+        #    config is the source of truth for validation.
+        launch_file = Path(toolkit_repo) / ".ilk-launch.json"
+        launch_cfg = _read_json(launch_file) or {}
+        autoplan_cfg = launch_cfg.get("autoplan", {})
+        draft_only_val = autoplan_cfg.get("draft_only")
+        if draft_only is not None:
+            # Keyword argument overrides config
+            draft_only_val = draft_only
+        # Validate: must be bool or absent
+        if draft_only_val is not None and not isinstance(draft_only_val, bool):
+            _write_plan_refused(
+                data_root,
+                f"draft_only config error: expected bool, got {type(draft_only_val).__name__}",
+                candidate_id,
+            )
+            result = {
+                "decision": "refused",
+                "reason": f"draft_only config error: expected bool, got {type(draft_only_val).__name__}",
+            }
+            return result
+        draft_only = draft_only_val
+
         # 1. Kill switch
         if disabled_file.exists():
             _write_plan_refused(data_root, "disabled", candidate_id)
@@ -864,22 +896,47 @@ def plan(
 
         # 8. Decide draft or queued
         if not problems:
-            write_status(master_path, "queued", allow_from_held=True)
-            mark_candidate(
-                candidate_id,
-                status="planned",
-                relations={"autoplan_master": master_path.name},
-                backlog_dir=backlog_dir,
-            )
-            write_audit("autoplan-queued", "ilk-skills", root=data_root,
-                        candidate=candidate_id, master=master_path.name,
-                        run_id=run_id)
-            write_event("autoplan-queued", "ilk-skills", root=data_root,
-                        candidate=candidate_id, master=master_path.name)
-            state = _read_json(autoplan_dir / "state.json") or {}
-            state["consecutive_drafts"] = 0
-            _write_json(autoplan_dir / "state.json", state)
-            result = {"decision": "queued", "master": master_path.name}
+            if draft_only is True:
+                # Draft-only dry period: full pipeline ran clean but
+                # the master stays draft for human review.  The
+                # consecutive-drafts counter does NOT increment and
+                # paused.json is never written for an intentional
+                # draft-only outcome.
+                mark_candidate(
+                    candidate_id,
+                    status="planned",
+                    relations={"autoplan_master": master_path.name},
+                    backlog_dir=backlog_dir,
+                )
+                write_audit("dry-period-drafted", "ilk-skills", root=data_root,
+                            candidate=candidate_id, master=master_path.name,
+                            run_id=run_id)
+                write_event("dry-period-drafted", "ilk-skills", root=data_root,
+                            candidate=candidate_id, master=master_path.name)
+                # Reset consecutive_drafts to 0 (intentional draft-only
+                # outcome is not a failed draft).
+                state = _read_json(autoplan_dir / "state.json") or {}
+                state["consecutive_drafts"] = 0
+                _write_json(autoplan_dir / "state.json", state)
+                result = {"decision": "drafted", "master": master_path.name,
+                          "draft_only": True}
+            else:
+                write_status(master_path, "queued", allow_from_held=True)
+                mark_candidate(
+                    candidate_id,
+                    status="planned",
+                    relations={"autoplan_master": master_path.name},
+                    backlog_dir=backlog_dir,
+                )
+                write_audit("autoplan-queued", "ilk-skills", root=data_root,
+                            candidate=candidate_id, master=master_path.name,
+                            run_id=run_id)
+                write_event("autoplan-queued", "ilk-skills", root=data_root,
+                            candidate=candidate_id, master=master_path.name)
+                state = _read_json(autoplan_dir / "state.json") or {}
+                state["consecutive_drafts"] = 0
+                _write_json(autoplan_dir / "state.json", state)
+                result = {"decision": "queued", "master": master_path.name}
         else:
             # Stay draft
             truncated = [p[:300] for p in problems[:20]]

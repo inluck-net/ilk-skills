@@ -130,6 +130,7 @@ def _setup_project_with_config(tmp_path: Path, *, autoplan_config: dict,
 
     # Create plans
     plans = project_dir / "plans"
+    plans.mkdir(parents=True, exist_ok=True)
     _write_master_with_auto_planned(
         plans, "MASTER-draft.md", status=plans_status,
         subplans=["2026-06-08-work.md"], auto_planned=auto_planned,
@@ -142,7 +143,6 @@ def _setup_project_with_config(tmp_path: Path, *, autoplan_config: dict,
 class TestDraftOnlyDryPeriod:
     """Auto-planned draft master with draft_only config stays non-runnable."""
 
-    @pytest.mark.xfail(strict=True, reason="draft_only config not yet implemented")
     def test_draft_only_auto_planned_master_non_runnable(self, tmp_path):
         """AC-1: auto-planned draft master + draft_only: true → non-runnable."""
         _setup_project_with_config(
@@ -168,7 +168,6 @@ class TestDraftOnlyDryPeriod:
         promote = _run_promote(plans)
         assert promote["promoted"] is None, "draft-only master must not be promoted"
 
-    @pytest.mark.xfail(strict=True, reason="draft_only config not yet implemented")
     def test_draft_only_false_auto_planned_master_runnable(self, tmp_path):
         """AC-3: auto-planned draft master + draft_only: false → can be promoted."""
         _setup_project_with_config(
@@ -184,7 +183,6 @@ class TestDraftOnlyDryPeriod:
             "queued auto-planned master must be runnable when draft_only is false"
         )
 
-    @pytest.mark.xfail(strict=True, reason="draft_only config not yet implemented")
     def test_draft_only_absent_auto_planned_master_runnable(self, tmp_path):
         """AC-3: no draft_only key → default false, queued master is runnable."""
         _setup_project_with_config(

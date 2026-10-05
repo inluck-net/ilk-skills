@@ -1316,7 +1316,6 @@ def _build_fake_toolkit_with_config(tmp_path, data_root, *, autoplan_config: dic
 class TestAC9:
     """Draft-only dry period: planner runs fully but master stays draft."""
 
-    @pytest.mark.xfail(strict=True, reason="draft_only config not yet implemented")
     def test_draft_only_true_keeps_master_draft(self, tmp_path):
         """draft_only: true → full pipeline runs, master stays draft, event is dry-period-drafted."""
         mod = _load_module()
@@ -1402,7 +1401,6 @@ class TestAC9:
         # No paused.json
         assert not (data_root / "autoplan" / "paused.json").exists()
 
-    @pytest.mark.xfail(strict=True, reason="draft_only config not yet implemented")
     def test_draft_only_false_promotes_to_queued(self, tmp_path):
         """draft_only: false → normal behavior, master becomes queued."""
         mod = _load_module()
@@ -1533,7 +1531,6 @@ class TestAC9:
         fm = parse_frontmatter(masters[0].read_text(encoding="utf-8-sig"))
         assert fm.get("status") == "queued", "absent draft_only must default to false"
 
-    @pytest.mark.xfail(strict=True, reason="draft_only config not yet implemented")
     def test_draft_only_malformed_refuses(self, tmp_path):
         """draft_only: \"yes\" (string, not bool) → refuse, no master queued."""
         mod = _load_module()
