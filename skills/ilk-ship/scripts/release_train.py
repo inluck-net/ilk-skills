@@ -1132,6 +1132,7 @@ def _deploy_all_hosts(
     hosts: list[str] | None = None,
     local_hosts: list[str] | None = None,
     deploy_fn: Callable | None = None,
+    ssh_deploy_fn: Callable | None = None,
 ) -> dict:
     """Deploy to every configured host, tracking per-host results.
 
@@ -1144,11 +1145,13 @@ def _deploy_all_hosts(
         data_dir: Project data root.
         hosts: Explicit host list.  If None, reads from config.
         local_hosts: Hosts that are this machine.  If None, uses first host.
-        deploy_fn: Injectable deploy function (default: ``deploy``).
+        deploy_fn: Injectable local deploy function (default: ``deploy``).
+        ssh_deploy_fn: Injectable SSH deploy function (default: ``_ssh_deploy``).
 
     Returns ``{"tag", "hosts": {host: result_dict}, "exit_code"}``.
     """
     _deploy = deploy_fn if deploy_fn is not None else deploy
+    _ssh = ssh_deploy_fn if ssh_deploy_fn is not None else _ssh_deploy
 
     # Resolve hosts
     if hosts is None:
@@ -1183,16 +1186,21 @@ def _deploy_all_hosts(
             except Exception as exc:
                 host_results[host] = {"exit_code": 6, "deployed": False, "reason": str(exc), "host": host}
         else:
-            # Remote deploy — record as unverified (SSH deploy not yet implemented)
-            # This is a placeholder: real remote deploy would SSH and run the
-            # release train on the remote host.
-            host_results[host] = {
-                "exit_code": 2,
-                "deployed": False,
-                "reason": "remote deploy not yet implemented",
-                "host": host,
-                "transport": "ssh",
-            }
+            # Remote deploy — use SSH adapter
+            try:
+                result = _ssh(project, tag, data_dir, host=host)
+                host_results[host] = result
+            except Exception as exc:
+                host_results[host] = {
+                    "exit_code": 2,
+                    "deployed": False,
+                    "reason": f"ssh adapter error: {exc}",
+                    "host": host,
+                    "transport": "ssh",
+                    "extract": {"rc": -1, "tag": tag},
+                    "bounce": {"exit": -1, "pid_before": None, "pid_after": None},
+                    "smoke": {"ok": False, "reason": "adapter error"},
+                }
 
         exit_code = host_results[host].get("exit_code", 0)
         if exit_code > worst_exit:
@@ -1216,6 +1224,161 @@ def _deploy_all_hosts(
         "untouched": untouched_hosts,
         "unverified": unverified_hosts,
     }
+
+
+def _ssh_deploy(
+    project: Path,
+    tag: str,
+    data_dir: Path,
+    *,
+    host: str,
+    ssh_runner: Callable | None = None,
+    timeout: int = 120,
+) -> dict:
+    """Deploy to a remote host via SSH.
+
+    Fetches the exact pushed tag, extracts/flips it, bounces with the new
+    tag's bouncer, performs required-tag smoke, and returns structured
+    evidence.  Rollback on smoke failure.
+
+    Every external command is an injectable parameter so tests can stub them.
+
+    Args:
+        project: Project path.
+        tag: Release tag to deploy.
+        data_dir: Project data root.
+        host: Target host name.
+        ssh_runner: Injectable SSH runner.  Default: real SSH subprocess.
+        timeout: SSH command timeout in seconds.
+
+    Returns a dict with: tag, deployed, exit_code, host, transport,
+    extract, bounce, smoke.
+    """
+    _SCRIPTS = Path(__file__).resolve().parent
+    _RELEASE_SCRIPT = _SCRIPTS.parent.parent / "ilk-upgrade" / "scripts" / "ilk_release.py"
+    _BOUNCE_SCRIPT = _SCRIPTS.parent.parent / "ilk-watchdog" / "scripts" / "bounce_daemons.sh"
+    _STATUS_SCRIPT = _SCRIPTS / "host_deploy_status.py"
+
+    def _default_ssh_runner(host: str, cmd: list[str], timeout: int = 120) -> dict:
+        try:
+            r = subprocess.run(
+                ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", host] + cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+            )
+            return {"rc": r.returncode, "stdout": r.stdout.strip(), "stderr": r.stderr.strip()}
+        except subprocess.TimeoutExpired:
+            return {"rc": -1, "stdout": "", "stderr": "ssh timeout"}
+        except Exception as exc:
+            return {"rc": -1, "stdout": "", "stderr": str(exc)}
+
+    _run = ssh_runner if ssh_runner is not None else _default_ssh_runner
+
+    # ── 1. extract ──────────────────────────────────────────────────────
+    extract_result = _run(host, [
+        sys.executable, str(_RELEASE_SCRIPT), tag, "--repo", str(project),
+    ], timeout=timeout)
+
+    if extract_result["rc"] != 0:
+        return {
+            "tag": tag, "deployed": False, "exit_code": 2,
+            "host": host, "transport": "ssh",
+            "reason": f"ssh extraction failed: {extract_result.get('stderr', '')}",
+            "extract": {"rc": extract_result["rc"], "tag": tag},
+            "bounce": {"exit": -1, "pid_before": None, "pid_after": None},
+            "smoke": {"ok": False, "reason": "skipped"},
+        }
+
+    # ── 2. bounce ───────────────────────────────────────────────────────
+    bounce_result = _run(host, [
+        str(_BOUNCE_SCRIPT), tag,
+    ], timeout=60)
+
+    # ── 3. smoke ────────────────────────────────────────────────────────
+    smoke_result = _run(host, [
+        sys.executable, str(_STATUS_SCRIPT),
+        "--bouncer", str(_BOUNCE_SCRIPT),
+        "--require-tag", tag,
+    ], timeout=60)
+
+    smoke_ok = smoke_result["rc"] == 0 and smoke_result["stdout"] == "ok"
+    bounce_info = {"exit": bounce_result["rc"]}
+
+    if smoke_ok:
+        return {
+            "tag": tag, "deployed": True, "exit_code": 0,
+            "host": host, "transport": "ssh",
+            "extract": {"rc": 0, "tag": tag},
+            "bounce": bounce_info,
+            "smoke": {"ok": True, "reason": ""},
+        }
+
+    # ── 4. rollback ─────────────────────────────────────────────────────
+    prev_result = _run(host, [
+        sys.executable, str(_RELEASE_SCRIPT), "--status", "--repo", str(project),
+    ], timeout=60)
+
+    prev_tag = ""
+    if prev_result["rc"] == 0:
+        try:
+            status_data = json.loads(prev_result["stdout"])
+            prev_path = status_data.get("previous", "")
+            if prev_path:
+                prev_tag = Path(prev_path).name
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    rb_result = _run(host, [
+        sys.executable, str(_RELEASE_SCRIPT), "--rollback", "--repo", str(project),
+    ], timeout=60)
+
+    rb_bounce_result = _run(host, [
+        str(_BOUNCE_SCRIPT), prev_tag,
+    ], timeout=60) if prev_tag else {"rc": -1}
+
+    if rb_result["rc"] != 0 or rb_bounce_result["rc"] not in (0, 1):
+        return {
+            "tag": tag, "deployed": False, "exit_code": 6,
+            "host": host, "transport": "ssh",
+            "reason": f"rollback unverified: release={rb_result['rc']}, bounce={rb_bounce_result['rc']}",
+            "rolled_back_to": prev_tag, "rollback_smoke": "failed",
+            "extract": {"rc": 0, "tag": tag},
+            "bounce": bounce_info,
+            "smoke": {"ok": False, "reason": smoke_result.get("stdout", "")},
+        }
+
+    rb_smoke_result = _run(host, [
+        sys.executable, str(_STATUS_SCRIPT),
+        "--bouncer", str(_BOUNCE_SCRIPT),
+        "--require-tag", prev_tag,
+    ], timeout=60)
+
+    rb_smoke_ok = rb_smoke_result["rc"] == 0 and rb_smoke_result["stdout"] == "ok"
+
+    if rb_smoke_ok:
+        return {
+            "tag": tag, "deployed": False, "exit_code": 5,
+            "host": host, "transport": "ssh",
+            "reason": f"smoke failed: {smoke_result.get('stdout', '')}",
+            "rolled_back_to": prev_tag, "rollback_smoke": "ok",
+            "rollback_host": host,
+            "extract": {"rc": 0, "tag": tag},
+            "bounce": bounce_info,
+            "smoke": {"ok": False, "reason": smoke_result.get("stdout", "")},
+        }
+    else:
+        return {
+            "tag": tag, "deployed": False, "exit_code": 6,
+            "host": host, "transport": "ssh",
+            "reason": "both smokes failed",
+            "rolled_back_to": prev_tag, "rollback_smoke": "failed",
+            "extract": {"rc": 0, "tag": tag},
+            "bounce": bounce_info,
+            "smoke": {"ok": False, "reason": smoke_result.get("stdout", "")},
+        }
 
 
 def _smoke(

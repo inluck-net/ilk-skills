@@ -1355,7 +1355,6 @@ class TestSSHDeploySucceeds:
     """AC-2: a successful fake SSH deploy returns structured evidence with
     extract, bounce, smoke, and tag conformance for the named host."""
 
-    @pytest.mark.xfail(strict=True, reason="SSH deploy adapter not yet implemented")
     def test_fake_ssh_deploy_returns_structured_evidence(self, tmp_path: Path) -> None:
         """A remote host reached via SSH should return a result dict with:
         - host name
@@ -1399,7 +1398,7 @@ class TestSSHDeploySucceeds:
             project, "v0.0.2", data_dir,
             hosts=["rezmac"],
             local_hosts=[],  # rezmac is remote
-            deploy_fn=_fake_ssh_deploy,
+            ssh_deploy_fn=_fake_ssh_deploy,
         )
 
         assert result["exit_code"] == 0
@@ -1423,7 +1422,6 @@ class TestSSHTransportRefusal:
     """AC-3: SSH/auth/timeout failures are explicit nonzero per-host results
     and can never be classified as deployed or ok."""
 
-    @pytest.mark.xfail(strict=True, reason="SSH adapter not yet invoked for remote hosts")
     def test_ssh_auth_failure_returns_nonzero_exit(self, tmp_path: Path) -> None:
         """A remote host must be reached via the SSH adapter (not the
         placeholder stub).  The adapter should be invoked with the target
@@ -1458,7 +1456,6 @@ class TestSSHTransportRefusal:
             "SSH adapter should be called, not the placeholder stub"
         )
 
-    @pytest.mark.xfail(strict=True, reason="SSH adapter not yet invoked for remote hosts")
     def test_ssh_timeout_returns_nonzero_exit(self, tmp_path: Path) -> None:
         """An SSH timeout must be reported by the real adapter with a
         bounded timeout value in the result, not by the placeholder stub."""
@@ -1491,7 +1488,6 @@ class TestSSHTransportRefusal:
                 f"Remote host result must carry '{key}' evidence"
             )
 
-    @pytest.mark.xfail(strict=True, reason="SSH adapter not yet invoked for remote hosts")
     def test_ssh_extraction_failure_returns_nonzero_exit(self, tmp_path: Path) -> None:
         """An extraction failure on remote host must come from the real
         SSH adapter, not the placeholder stub."""
@@ -1521,7 +1517,6 @@ class TestPerHostRollback:
     """AC-4: forward failure invokes rollback on that same host and records
     verified rollback or critical unverified rollback."""
 
-    @pytest.mark.xfail(strict=True, reason="per-host SSH rollback not yet implemented")
     def test_ssh_smoke_failure_triggers_rollback_on_same_host(self, tmp_path: Path) -> None:
         """When remote smoke fails, rollback runs on the same host and
         returns structured evidence."""
@@ -1557,7 +1552,7 @@ class TestPerHostRollback:
             project, "v0.0.2", data_dir,
             hosts=["rezmac"],
             local_hosts=[],
-            deploy_fn=_deploy_with_rollback,
+            ssh_deploy_fn=_deploy_with_rollback,
         )
 
         host_result = result["hosts"]["rezmac"]
@@ -1568,7 +1563,6 @@ class TestPerHostRollback:
         assert host_result.get("rollback_host") == "rezmac"
         assert "rezmac" in result["rolled_back"]
 
-    @pytest.mark.xfail(strict=True, reason="unverified SSH rollback not yet implemented")
     def test_both_ssh_smokes_fail_returns_critical(self, tmp_path: Path) -> None:
         """When both forward and rollback smokes fail on remote host,
         result is exit_code=6 (critical)."""
@@ -1598,7 +1592,7 @@ class TestPerHostRollback:
             project, "v0.0.2", data_dir,
             hosts=["rezmac"],
             local_hosts=[],
-            deploy_fn=_critical_ssh_deploy,
+            ssh_deploy_fn=_critical_ssh_deploy,
         )
 
         assert result["exit_code"] == 6
@@ -1647,7 +1641,6 @@ class TestPerHostAuditTruth:
         assert result["exit_code"] == 4
         assert "permits refused" in result.get("reason", "")
 
-    @pytest.mark.xfail(strict=True, reason="remote host deploy result must carry transport evidence")
     def test_multi_host_result_lists_are_exhaustive(self, tmp_path: Path) -> None:
         """Every host must appear in exactly one of: deployed, rolled_back,
         untouched, unverified.  A remote host's result must carry transport
