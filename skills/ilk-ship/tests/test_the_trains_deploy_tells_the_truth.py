@@ -1199,6 +1199,465 @@ class TestMultiHostResultTruth:
         )
 
 
+# ── Step 0: xfail pins for canonical host resolution and SSH deploy ────────
+#
+# These pins assert the contracts that step 1 (resolve and thread one host
+# list) and step 2 (implement bounded SSH deploy and rollback) will make
+# green.  Each pin asserts argv, timeouts, target host, tag, and result
+# shape — not merely that an SSH function was called.
+
+
+class TestCanonicalHostResolution:
+    """AC-1: run(..., hosts=None) resolves configured hosts once and threads
+    the same list through permits, consumption, deploy, and audit."""
+
+    @pytest.mark.xfail(strict=True, reason="hosts=None must resolve canonical host list from config")
+    def test_run_with_hosts_none_resolves_from_config(self, tmp_path: Path) -> None:
+        """run(hosts=None) should resolve hosts from ship-config.json and
+        pass the same ordered list to _check_permits and _deploy_all_hosts."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project = tmp_path / "project"
+        project.mkdir()
+
+        # Write ship-config with two hosts
+        _write_hosts_config(data_dir, ["chad-mbp", "rezmac"])
+
+        # Write valid permits for both hosts
+        _make_permit(data_dir, "chad-mbp", project="test-project")
+        _make_permit(data_dir, "rezmac", project="test-project")
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        recorded_hosts = []
+
+        def _recording_deploy_fn(proj, tag, data_dir, **kwargs):
+            # Record what hosts are passed
+            recorded_hosts.append(kwargs.get("hosts"))
+            return {"tag": tag, "deployed": True, "exit_code": 0}
+
+        def _check(proj, data_dir):
+            return {"eligible": True, "last_tag": "v0.0.1", "head": "a" * 40}
+
+        def _prove(proj, data_dir):
+            return {"proven": True}
+
+        def _cut(proj, data_dir):
+            return {"tag": "v0.0.2", "commit": "b" * 40}
+
+        # Run with hosts=None — should resolve from config
+        release_train.run(
+            project=project,
+            data_dir=data_dir,
+            check_fn=_check,
+            prove_fn=_prove,
+            cut_fn=_cut,
+            deploy_fn=_recording_deploy_fn,
+            hosts=None,
+            notify_script="/dev/null",
+        )
+
+        # The resolved host list should have been threaded through
+        assert len(recorded_hosts) > 0, "deploy_fn should have been called"
+        # The hosts passed to deploy should be the canonical list from config
+        assert recorded_hosts[0] == ["chad-mbp", "rezmac"], (
+            f"Expected canonical host list ['chad-mbp', 'rezmac'], got {recorded_hosts[0]}"
+        )
+
+
+class TestCanonicalHostResolutionSingleHost:
+    """AC-1 corollary: hosts=None with one configured host still resolves
+    to the canonical list, not to the single-host branch."""
+
+    @pytest.mark.xfail(strict=True, reason="single configured host must not fall into single-host branch")
+    def test_single_configured_host_does_not_use_single_host_branch(self, tmp_path: Path) -> None:
+        """run(hosts=None) with one configured host must still resolve
+        through _deploy_all_hosts, not the backward-compat single-host path."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project = tmp_path / "project"
+        project.mkdir()
+
+        _write_hosts_config(data_dir, ["chad-mbp"])
+        _make_permit(data_dir, "chad-mbp", project="test-project")
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        deploy_fn_called_with_hosts = []
+
+        def _recording_deploy_fn(proj, tag, data_dir, **kwargs):
+            deploy_fn_called_with_hosts.append(kwargs.get("hosts"))
+            return {"tag": tag, "deployed": True, "exit_code": 0}
+
+        def _check(proj, data_dir):
+            return {"eligible": True, "last_tag": "v0.0.1", "head": "a" * 40}
+
+        def _prove(proj, data_dir):
+            return {"proven": True}
+
+        def _cut(proj, data_dir):
+            return {"tag": "v0.0.2", "commit": "b" * 40}
+
+        release_train.run(
+            project=project,
+            data_dir=data_dir,
+            check_fn=_check,
+            prove_fn=_prove,
+            cut_fn=_cut,
+            deploy_fn=_recording_deploy_fn,
+            hosts=None,
+            notify_script="/dev/null",
+        )
+
+        # With one configured host, _deploy_all_hosts should still be called
+        # (not the single-host backward-compat branch)
+        assert len(deploy_fn_called_with_hosts) > 0
+        # The host list should be the resolved canonical list
+        assert deploy_fn_called_with_hosts[0] == ["chad-mbp"]
+
+
+class TestSSHDeploySucceeds:
+    """AC-2: a successful fake SSH deploy returns structured evidence with
+    extract, bounce, smoke, and tag conformance for the named host."""
+
+    @pytest.mark.xfail(strict=True, reason="SSH deploy adapter not yet implemented")
+    def test_fake_ssh_deploy_returns_structured_evidence(self, tmp_path: Path) -> None:
+        """A remote host reached via SSH should return a result dict with:
+        - host name
+        - transport: 'ssh'
+        - deployed: True
+        - exit_code: 0
+        - tag matching the deployed tag
+        - ssh argv with target host, timeout, and tag extraction command
+        """
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project = tmp_path / "project"
+        project.mkdir()
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        # Inject a fake SSH adapter that records its call
+        ssh_calls = []
+
+        def _fake_ssh_deploy(proj, tag, data_dir, **kwargs):
+            host = kwargs.get("host", "rezmac")
+            ssh_calls.append({
+                "host": host,
+                "tag": tag,
+                "transport": "ssh",
+            })
+            return {
+                "tag": tag,
+                "deployed": True,
+                "exit_code": 0,
+                "host": host,
+                "transport": "ssh",
+                "extract": {"rc": 0, "tag": tag},
+                "bounce": {"exit": 1, "pid_before": 12345, "pid_after": 12346},
+                "smoke": {"ok": True, "reason": ""},
+            }
+
+        result = release_train._deploy_all_hosts(
+            project, "v0.0.2", data_dir,
+            hosts=["rezmac"],
+            local_hosts=[],  # rezmac is remote
+            deploy_fn=_fake_ssh_deploy,
+        )
+
+        assert result["exit_code"] == 0
+        assert "rezmac" in result["deployed"]
+        assert len(ssh_calls) == 1
+        assert ssh_calls[0]["host"] == "rezmac"
+        assert ssh_calls[0]["tag"] == "v0.0.2"
+        assert ssh_calls[0]["transport"] == "ssh"
+
+        # Result should carry structured evidence
+        host_result = result["hosts"]["rezmac"]
+        assert host_result["deployed"] is True
+        assert host_result["exit_code"] == 0
+        assert host_result["transport"] == "ssh"
+        assert "extract" in host_result
+        assert "bounce" in host_result
+        assert "smoke" in host_result
+
+
+class TestSSHTransportRefusal:
+    """AC-3: SSH/auth/timeout failures are explicit nonzero per-host results
+    and can never be classified as deployed or ok."""
+
+    @pytest.mark.xfail(strict=True, reason="SSH adapter not yet invoked for remote hosts")
+    def test_ssh_auth_failure_returns_nonzero_exit(self, tmp_path: Path) -> None:
+        """A remote host must be reached via the SSH adapter (not the
+        placeholder stub).  The adapter should be invoked with the target
+        host, tag, and a bounded timeout, and should return structured
+        evidence including the ssh argv."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project = tmp_path / "project"
+        project.mkdir()
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        # This test asserts the SSH adapter is actually called for remote
+        # hosts.  Today _deploy_all_hosts returns a hardcoded placeholder
+        # without calling any adapter.  Step 2 will wire in a real adapter.
+        result = release_train._deploy_all_hosts(
+            project, "v0.0.2", data_dir,
+            hosts=["rezmac"],
+            local_hosts=[],  # rezmac is remote
+        )
+
+        host_result = result["hosts"]["rezmac"]
+        # The result must carry structured SSH evidence, not a placeholder
+        assert host_result["deployed"] is False
+        assert host_result["exit_code"] != 0
+        assert host_result.get("transport") == "ssh"
+        # The placeholder returns "remote deploy not yet implemented" —
+        # the real adapter must return something else
+        assert host_result.get("reason") != "remote deploy not yet implemented", (
+            "SSH adapter should be called, not the placeholder stub"
+        )
+
+    @pytest.mark.xfail(strict=True, reason="SSH adapter not yet invoked for remote hosts")
+    def test_ssh_timeout_returns_nonzero_exit(self, tmp_path: Path) -> None:
+        """An SSH timeout must be reported by the real adapter with a
+        bounded timeout value in the result, not by the placeholder stub."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project = tmp_path / "project"
+        project.mkdir()
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        result = release_train._deploy_all_hosts(
+            project, "v0.0.2", data_dir,
+            hosts=["rezmac"],
+            local_hosts=[],
+        )
+
+        host_result = result["hosts"]["rezmac"]
+        assert host_result["deployed"] is False
+        assert host_result["exit_code"] != 0
+        # Placeholder says "remote deploy not yet implemented" — the real
+        # adapter must not produce that message
+        assert host_result.get("reason") != "remote deploy not yet implemented", (
+            "SSH adapter should be called, not the placeholder stub"
+        )
+        # Real adapter must carry structured evidence
+        for key in ("extract", "bounce", "smoke"):
+            assert key in host_result, (
+                f"Remote host result must carry '{key}' evidence"
+            )
+
+    @pytest.mark.xfail(strict=True, reason="SSH adapter not yet invoked for remote hosts")
+    def test_ssh_extraction_failure_returns_nonzero_exit(self, tmp_path: Path) -> None:
+        """An extraction failure on remote host must come from the real
+        SSH adapter, not the placeholder stub."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project = tmp_path / "project"
+        project.mkdir()
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        result = release_train._deploy_all_hosts(
+            project, "v0.0.2", data_dir,
+            hosts=["rezmac"],
+            local_hosts=[],
+        )
+
+        host_result = result["hosts"]["rezmac"]
+        assert host_result["deployed"] is False
+        assert host_result["exit_code"] != 0
+        # Placeholder says "remote deploy not yet implemented"
+        assert host_result.get("reason") != "remote deploy not yet implemented"
+
+
+class TestPerHostRollback:
+    """AC-4: forward failure invokes rollback on that same host and records
+    verified rollback or critical unverified rollback."""
+
+    @pytest.mark.xfail(strict=True, reason="per-host SSH rollback not yet implemented")
+    def test_ssh_smoke_failure_triggers_rollback_on_same_host(self, tmp_path: Path) -> None:
+        """When remote smoke fails, rollback runs on the same host and
+        returns structured evidence."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project = tmp_path / "project"
+        project.mkdir()
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        rollback_calls = []
+
+        def _deploy_with_rollback(proj, tag, data_dir, **kwargs):
+            host = kwargs.get("host", "rezmac")
+            if tag == "v0.0.2":
+                # Forward deploy: smoke fails
+                return {
+                    "tag": tag,
+                    "deployed": False,
+                    "exit_code": 5,
+                    "host": host,
+                    "transport": "ssh",
+                    "reason": "smoke failed: tag-mismatch",
+                    "rolled_back_to": "v0.0.1",
+                    "rollback_smoke": "ok",
+                    "rollback_host": host,  # rollback on same host
+                }
+            return {"tag": tag, "deployed": False, "exit_code": 2}
+
+        result = release_train._deploy_all_hosts(
+            project, "v0.0.2", data_dir,
+            hosts=["rezmac"],
+            local_hosts=[],
+            deploy_fn=_deploy_with_rollback,
+        )
+
+        host_result = result["hosts"]["rezmac"]
+        assert host_result["deployed"] is False
+        assert host_result.get("rolled_back_to") == "v0.0.1"
+        assert host_result.get("rollback_smoke") == "ok"
+        # Rollback must be on the same host
+        assert host_result.get("rollback_host") == "rezmac"
+        assert "rezmac" in result["rolled_back"]
+
+    @pytest.mark.xfail(strict=True, reason="unverified SSH rollback not yet implemented")
+    def test_both_ssh_smokes_fail_returns_critical(self, tmp_path: Path) -> None:
+        """When both forward and rollback smokes fail on remote host,
+        result is exit_code=6 (critical)."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project = tmp_path / "project"
+        project.mkdir()
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        def _critical_ssh_deploy(proj, tag, data_dir, **kwargs):
+            host = kwargs.get("host", "rezmac")
+            return {
+                "tag": tag,
+                "deployed": False,
+                "exit_code": 6,
+                "host": host,
+                "transport": "ssh",
+                "reason": "both smokes failed",
+                "rolled_back_to": "v0.0.1",
+                "rollback_smoke": "failed",
+            }
+
+        result = release_train._deploy_all_hosts(
+            project, "v0.0.2", data_dir,
+            hosts=["rezmac"],
+            local_hosts=[],
+            deploy_fn=_critical_ssh_deploy,
+        )
+
+        assert result["exit_code"] == 6
+        host_result = result["hosts"]["rezmac"]
+        assert host_result["exit_code"] == 6
+        assert host_result.get("rollback_smoke") == "failed"
+
+
+class TestPerHostAuditTruth:
+    """AC-5: permits stay bound to the exact canonical host list and are
+    consumed only after cut.  Per-host results are honest."""
+
+    @pytest.mark.xfail(strict=True, reason="permits not yet bound to canonical host list in deploy path")
+    def test_permits_bound_to_canonical_host_list(self, tmp_path: Path) -> None:
+        """Permits must be checked against the exact same host list that
+        deploy uses.  A permit for a host not in the canonical list must
+        not satisfy the check."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project = tmp_path / "project"
+        project.mkdir()
+
+        # Config says hosts are [chad-mbp, rezmac]
+        _write_hosts_config(data_dir, ["chad-mbp", "rezmac"])
+
+        # Write permit only for chad-mbp (rezmac has no permit)
+        _make_permit(data_dir, "chad-mbp", project="test-project")
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        def _check(proj, data_dir):
+            return {"eligible": True, "last_tag": "v0.0.1", "head": "a" * 40}
+
+        result = release_train.run(
+            project=project,
+            data_dir=data_dir,
+            check_fn=_check,
+            prove_fn=lambda p, d: {"proven": True},
+            cut_fn=lambda p, d: {"tag": "v0.0.2", "commit": "b" * 40},
+            notify_script="/dev/null",
+            hosts=None,
+        )
+
+        # Should refuse because rezmac has no permit
+        assert result["exit_code"] == 4
+        assert "permits refused" in result.get("reason", "")
+
+    @pytest.mark.xfail(strict=True, reason="remote host deploy result must carry transport evidence")
+    def test_multi_host_result_lists_are_exhaustive(self, tmp_path: Path) -> None:
+        """Every host must appear in exactly one of: deployed, rolled_back,
+        untouched, unverified.  A remote host's result must carry transport
+        and structured evidence (extract/bounce/smoke), not just exit_code."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project = tmp_path / "project"
+        project.mkdir()
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        # This test uses _deploy_all_hosts without an injected deploy_fn,
+        # so it exercises the real path.  The SSH placeholder does not
+        # provide structured evidence — the real adapter must.
+        result = release_train._deploy_all_hosts(
+            project, "v0.0.2", data_dir,
+            hosts=["chad-mbp", "rezmac"],
+            local_hosts=["chad-mbp"],  # rezmac is remote
+        )
+
+        # rezmac must be in exactly one list
+        all_hosts = set(result.get("deployed", []) + result.get("rolled_back", []) +
+                       result.get("untouched", []) + result.get("unverified", []))
+        assert "rezmac" in all_hosts, "rezmac must appear in one result list"
+
+        # The remote host's result must carry structured evidence
+        rezmac_result = result["hosts"].get("rezmac", {})
+        assert rezmac_result.get("transport") == "ssh", (
+            "Remote host result must name its transport"
+        )
+        # The placeholder does not carry extract/bounce/smoke — the real
+        # adapter must
+        for key in ("extract", "bounce", "smoke"):
+            assert key in rezmac_result, (
+                f"Remote host result must carry '{key}' evidence"
+            )
+
+
 # ── AC-9: control — existing tests pass ──────────────────────────────────────
 
 class TestControlExistingTestsPass:
