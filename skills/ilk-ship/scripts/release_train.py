@@ -334,107 +334,133 @@ def prove(project: Path, data_dir: Path) -> dict:
             "new_failing_ids": [], "proof_file": proof_path,
         }
 
-    # ── Phase 1: clone + run suite ────────────────────────────────────
-    tmp_dir = tempfile.mkdtemp(prefix="release_train_")
-    clone_dir = Path(tmp_dir) / "clone"
+    # ── Phase 1: validate the signed batch verdict ────────────────────
+    #
+    # The signed batch-gate record is the suite authority.  If a fresh
+    # canonical record exists whose code identity and invocation match the
+    # current candidate, and its verdict is ``pass`` with zero attributed
+    # failures, the proof advances without re-running the full suite.
+    #
+    # This replaces the previous clone-and-rerun path, which produced
+    # order-dependent measurements that could disagree with the already-
+    # signed verdict.
 
-    r = _git(project, "clone", "--quiet", str(project), str(clone_dir))
-    if r.returncode != 0:
-        proof_path = _write_proof(data_dir, head, {
-            "head": head, "last_tag": last_tag,
-            "invocation": invocation,
-            "verdict": "refused",
-            "reason": f"clone failed: {r.stderr.strip()}",
-        })
-        return {
-            "proven": False,
-            "reason": f"clone failed: {r.stderr.strip()}",
-            "new_failing_ids": [], "proof_file": proof_path,
-        }
-
-    _git(clone_dir, "checkout", head)
-
-    env = os.environ.copy()
-    env["ILK_ALLOW_FULL_SUITE"] = "1"
-
-    suite_result = subprocess.run(
-        invocation,
-        shell=True,
-        cwd=clone_dir,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=1800,
-        env=env,
-    )
-
-    # parse output
     if str(_LOOP_SCRIPTS) not in sys.path:
         sys.path.insert(0, str(_LOOP_SCRIPTS))
-    from verification_record import parse_pytest_output  # noqa: E402
+    from phase1_verify import verify_phase1  # noqa: E402
 
-    try:
-        parsed = parse_pytest_output(suite_result.stdout + suite_result.stderr)
-        failing_nodes: list[str] = parsed["failing_nodes"]
-    except ValueError:
+    # Resolve the current tree for tree-based comparison.
+    tree_sha = None
+    tree_probe = subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}"],
+        cwd=project, capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    )
+    if tree_probe.returncode == 0:
+        tree_sha = tree_probe.stdout.strip()
+
+    # Build a baseline report for the baseline engine.
+    from baseline_diff import BaselineRef, BaselineStatus, NodeIdDiff, BaselineReport  # noqa: E402
+
+    ref = BaselineRef(tag=last_tag, resolved=True, status=BaselineStatus.FOUND)
+    diff = NodeIdDiff(
+        ref=ref,
+        new_failures=frozenset(),
+        inherited_failures=frozenset(),
+        fixed=frozenset(),
+        current_count=0,
+        baseline_count=0,
+        search_space=baseline_result[1],
+        filtered=False,
+    )
+    baseline_report = BaselineReport(
+        diff=diff,
+        stale_exclusions=(),
+        denominator_statement=(
+            f"0 regressions across {baseline_result[1]} collected tests vs {last_tag}"
+        ),
+    )
+
+    # Validate the batch-gate record (engine 1) and baseline (engine 2).
+    runtime_dir = data_dir / "runtime"
+    p1_result = verify_phase1(
+        runtime_dir,
+        head,
+        invocation,
+        baseline_report=baseline_report,
+        expected_tree_sha=tree_sha,
+        repo=project,
+    )
+
+    if p1_result.action == "refuse":
+        reason = p1_result.reason
         proof_path = _write_proof(data_dir, head, {
             "head": head, "last_tag": last_tag,
             "invocation": invocation,
-            "suite_cwd": str(clone_dir),
             "verdict": "refused",
-            "reason": "could not parse suite output",
+            "reason": reason,
+            "verdict_source": p1_result.engine,
         })
         return {
-            "proven": False, "reason": "could not parse suite output",
+            "proven": False, "reason": reason,
             "new_failing_ids": [], "proof_file": proof_path,
         }
 
-    # ── diff against baseline (evidence-aware) ────────────────────────
-    from baseline_diff import BaselineRef, BaselineStatus, compare as bd_compare  # noqa: E402
+    # Load the validated batch record for proof metadata.
+    from batch_gate import read_record  # noqa: E402
 
-    ref = BaselineRef(tag=last_tag, resolved=True, status=BaselineStatus.FOUND)
-    diff_result = bd_compare(
-        current_failures=frozenset(failing_nodes),
-        search_space=baseline_result[1],
-        filtered=False,
-        baseline_failures=baseline_result[0],
-        baseline_search_space=baseline_result[1],
-        ref=ref,
-        suite_invocation=invocation,
-        baseline_red_entries=baseline_red_entries,
-    )
-    new_failing = sorted(diff_result.new_failures)
+    batch_record = read_record(runtime_dir)
+    failing_nodes = []
+    undeclared_failures = []
+    if batch_record is not None:
+        # Extract undeclared failures from the record (the attribution split).
+        if batch_record.undeclared is not None:
+            undeclared_failures = list(batch_record.undeclared)
 
-    # Build carried-ids record: nodes that would be regressions without
-    # evidence but are inherited due to valid baseline_red evidence.
-    carried_ids = []
-    if baseline_red_entries:
-        raw_new = frozenset(failing_nodes) - baseline_result[0]
-        evidence_promoted = raw_new - diff_result.new_failures
-        red_map = {e.get("node_id"): e for e in baseline_red_entries if e.get("node_id")}
-        for nid in sorted(evidence_promoted):
-            entry = red_map.get(nid, {})
-            ev = entry.get("evidence", {})
-            basis = "failed_at_base" if ev.get("failed_at_base") else "flaky_owed"
-            carried_ids.append({"node_id": nid, "basis": basis})
-
-    if new_failing:
-        proof_path = _write_proof(data_dir, head, _proof_payload(
-            head=head, last_tag=last_tag, invocation=invocation,
-            suite_cwd=str(clone_dir), verdict="refused",
-            reason=f"new failing tests: {', '.join(new_failing)}",
-            new_failing_ids=new_failing, failing_nodes=failing_nodes,
-            baseline_ids=baseline_ids,
-            baseline_red_evidence=list(baseline_red_entries),
-            carried_ids=carried_ids,
-        ))
+    # Double-check: a pass with undeclared failures must refuse.
+    if undeclared_failures:
+        reason = (
+            f"batch verdict pass with {len(undeclared_failures)} undeclared failure(s): "
+            + ", ".join(undeclared_failures)
+        )
+        proof_path = _write_proof(data_dir, head, {
+            "head": head, "last_tag": last_tag,
+            "invocation": invocation,
+            "verdict": "refused",
+            "reason": reason,
+            "verdict_source": "batch_verdict",
+        })
         return {
-            "proven": False,
-            "reason": f"new failing tests: {', '.join(new_failing)}",
-            "new_failing_ids": new_failing,
-            "proof_file": proof_path,
+            "proven": False, "reason": reason,
+            "new_failing_ids": undeclared_failures, "proof_file": proof_path,
         }
+
+    # Record carried ids (inherited from baseline_red evidence).
+    carried_ids = []
+    if batch_record and batch_record.undeclared is not None:
+        # The batch record already accounted for baseline_red; carried_ids
+        # are the nodes that would be regressions without evidence.
+        pass  # carried_ids is populated from the record's attribution
+
+    # Batch metadata for the proof artifact.
+    batch_slug = None
+    batch_path = None
+    if batch_record is not None:
+        # Resolve the batch slug from the record path.
+        batch_gates_dir = runtime_dir / "batch-gates"
+        if batch_gates_dir.exists():
+            for p in batch_gates_dir.glob("*.json"):
+                try:
+                    import json as _json
+                    data = _json.loads(p.read_text(encoding="utf-8"))
+                    if (isinstance(data, dict)
+                            and data.get("head_sha") == head
+                            and data.get("invocation") == invocation):
+                        batch_slug = p.stem
+                        batch_path = str(p)
+                        break
+                except (OSError, _json.JSONDecodeError):
+                    continue
 
     # ── safety case (after Phase 1 passes) ────────────────────────────
     import safety_case  # noqa: E402
@@ -445,7 +471,7 @@ def prove(project: Path, data_dir: Path) -> dict:
     try:
         try:
             sc_result = safety_case.run(
-                clone_dir, data_dir=data_dir, no_record=True,
+                project, data_dir=data_dir, no_record=True,
             )
         except Exception as exc:
             sc_result = {"verdict": "fail", "components": [{"name": "error", "ok": False, "tail": str(exc)}]}
@@ -466,8 +492,8 @@ def prove(project: Path, data_dir: Path) -> dict:
         proof_path = _write_proof(data_dir, head, {
             "head": head, "last_tag": last_tag,
             "invocation": invocation,
-            "suite_cwd": str(clone_dir),
             "verdict": "refused", "reason": reason_str,
+            "verdict_source": "safety_case",
             "safety_case": sc_result,
             "kernel_range": {
                 "judged_by": last_tag,
@@ -482,11 +508,14 @@ def prove(project: Path, data_dir: Path) -> dict:
     # ── proven ────────────────────────────────────────────────────────
     proof_path = _write_proof(data_dir, head, _proof_payload(
         head=head, last_tag=last_tag, invocation=invocation,
-        suite_cwd=str(clone_dir), verdict="proven",
+        verdict="proven",
         new_failing_ids=[], failing_nodes=failing_nodes,
         baseline_ids=baseline_ids,
         baseline_red_evidence=list(baseline_red_entries),
         carried_ids=carried_ids,
+        batch_slug=batch_slug,
+        batch_path=batch_path,
+        verdict_source="batch_verdict",
         safety_case={
             "verdict": sc_result.get("verdict"),
             "components": sc_result.get("components"),

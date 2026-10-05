@@ -172,6 +172,36 @@ def _write_baseline(data_dir: Path, tag: str, invocation: str, ids: list) -> Non
     (baselines_dir / f"{key}.json").write_text(json.dumps(data, indent=2) + "\n")
 
 
+def _write_batch_gate_record(
+    data_dir: Path, project: Path,
+    invocation: str = "python3 -m pytest", verdict: str = "pass",
+) -> None:
+    """Write a batch-gate record for the current HEAD."""
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=project, capture_output=True, text=True,
+    ).stdout.strip()
+    tree = subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}"],
+        cwd=project, capture_output=True, text=True,
+    ).stdout.strip()
+    runtime_dir = data_dir / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    record = {
+        "verdict": verdict,
+        "head_sha": head,
+        "invocation": invocation,
+        "timestamp": "2026-10-05T00:00:00+00:00",
+        "tree_sha": tree,
+        "writer": "batch_gate.py",
+        "undeclared": [],
+        "excused_count": 0,
+    }
+    (runtime_dir / "batch-gate.json").write_text(
+        json.dumps(record, indent=2) + "\n", encoding="utf-8",
+    )
+
+
 # ── AC-1: safety_case.run all green → pass, record written ──────────────────
 
 class TestSafetyCaseAllGreen:
@@ -373,6 +403,7 @@ class TestProveCleanRangeSafetyCase:
 
         invocation = "python3 -m pytest"
         _write_baseline(data_dir, "v0.0.1", invocation, [])
+        _write_batch_gate_record(data_dir, project, invocation)
 
         # Stub safety_case.run to return fail
         import safety_case
@@ -406,6 +437,7 @@ class TestProveCleanRangeSafetyCase:
 
         invocation = "python3 -m pytest"
         _write_baseline(data_dir, "v0.0.1", invocation, [])
+        _write_batch_gate_record(data_dir, project, invocation)
 
         # Stub safety_case.run to return pass
         import safety_case

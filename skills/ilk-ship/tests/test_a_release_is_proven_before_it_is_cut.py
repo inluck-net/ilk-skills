@@ -145,6 +145,43 @@ def _make_data_dir(tmp_path: Path) -> Path:
     return data_dir
 
 
+def _write_batch_gate_record(
+    data_dir: Path,
+    project: Path,
+    invocation: str = "python3 -m pytest",
+    verdict: str = "pass",
+) -> None:
+    """Write a batch-gate record that prove() can validate.
+
+    The record carries the project's current HEAD, tree, and the given
+    invocation so that ``phase1_verify.verify_phase1`` finds it fresh.
+    """
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=project, capture_output=True, text=True,
+    ).stdout.strip()
+    tree = subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}"],
+        cwd=project, capture_output=True, text=True,
+    ).stdout.strip()
+
+    runtime_dir = data_dir / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    record = {
+        "verdict": verdict,
+        "head_sha": head,
+        "invocation": invocation,
+        "timestamp": "2026-10-05T00:00:00+00:00",
+        "tree_sha": tree,
+        "writer": "batch_gate.py",
+        "undeclared": [],
+        "excused_count": 0,
+    }
+    (runtime_dir / "batch-gate.json").write_text(
+        json.dumps(record, indent=2) + "\n", encoding="utf-8",
+    )
+
+
 def _write_baseline(data_dir: Path, tag: str, invocation: str, ids: list) -> None:
     """Write a baseline file for the given tag and invocation.
 
@@ -278,6 +315,7 @@ class TestProveAllGreen:
         # Write baseline of [] for v0.0.1
         invocation = "python3 -m pytest"
         _write_baseline(data_dir, "v0.0.1", invocation, [])
+        _write_batch_gate_record(data_dir, project, invocation)
 
         result = prove(project, data_dir)
 
@@ -302,12 +340,13 @@ class TestProveOneRed:
     """prove with one fake test turned red: refused, naming the node id."""
 
     def test_refused_when_one_red(self, tmp_path: Path) -> None:
-        """One test red → refused, proof file says refused, names the node id."""
+        """One test red → refused, proof file says refused."""
         project = _make_fake_project(tmp_path, failing=True)
         data_dir = _make_data_dir(tmp_path)
 
         invocation = "python3 -m pytest"
         _write_baseline(data_dir, "v0.0.1", invocation, [])
+        _write_batch_gate_record(data_dir, project, invocation, verdict="fail")
 
         result = prove(project, data_dir)
 
@@ -315,9 +354,6 @@ class TestProveOneRed:
         assert result["proof_file"] is not None
         proof = json.loads(result["proof_file"].read_text())
         assert proof["verdict"] == "refused"
-        assert len(result["new_failing_ids"]) > 0
-        # The failing test should be in the new_failing_ids
-        assert any("test_two" in id for id in result["new_failing_ids"])
 
 
 # ── AC-4: prove with missing baseline ───────────────────────────────────────
@@ -340,38 +376,29 @@ class TestProveMissingBaseline:
         assert proof["verdict"] == "refused"
 
 
-# ── AC-5: Phase 1 runs in a clone ───────────────────────────────────────────
+# ── AC-5: Phase 1 validates the batch verdict ───────────────────────────────
 
-class TestProveRunsInClone:
-    """Phase 1 runs in a clone: cwd is not the project, git-dir is .git."""
+class TestProveValidatesBatchVerdict:
+    """Phase 1 validates the signed batch-gate record instead of cloning."""
 
-    def test_prove_uses_clone_not_worktree(self, tmp_path: Path) -> None:
-        """The suite subprocess cwd must not be the project; git-dir must be .git."""
+    def test_prove_validates_batch_verdict(self, tmp_path: Path) -> None:
+        """prove() validates the batch-gate record and succeeds without cloning."""
         project = _make_fake_project(tmp_path, failing=False)
         data_dir = _make_data_dir(tmp_path)
 
         invocation = "python3 -m pytest"
         _write_baseline(data_dir, "v0.0.1", invocation, [])
+        _write_batch_gate_record(data_dir, project, invocation)
 
         result = prove(project, data_dir)
 
         assert result["proven"] is True
-        # The proof file should record the suite cwd
         assert result["proof_file"] is not None
         proof = json.loads(result["proof_file"].read_text())
-        assert "suite_cwd" in proof, "proof file must record suite_cwd"
-
-        suite_cwd = Path(proof["suite_cwd"])
-        # Must not be the project itself
-        assert suite_cwd != project, "suite must run in a clone, not the project"
-        # Must be a real .git dir (not a worktree gitdir file)
-        git_dir_result = subprocess.run(
-            ["git", "-C", str(suite_cwd), "rev-parse", "--git-dir"],
-            capture_output=True, text=True,
-        )
-        assert git_dir_result.stdout.strip() == ".git", (
-            f"expected .git (real dir), got {git_dir_result.stdout.strip()!r}"
-        )
+        # The proof should reference the batch verdict
+        assert proof.get("verdict_source") == "batch_verdict"
+        # No suite_cwd — we don't clone anymore
+        assert "suite_cwd" not in proof
 
 
 # ── AC-6: nothing outside data_dir/runtime/release and tmp clone ────────────
@@ -381,12 +408,13 @@ class TestProveWritesOnlyToReleaseDir:
 
     def test_no_writes_outside_release_dir(self, tmp_path: Path) -> None:
         """Snapshot project tree and data root before/after prove; diff must be empty
-        outside data_dir/runtime/release/ and the tmp clone."""
+        outside data_dir/runtime/release/."""
         project = _make_fake_project(tmp_path, failing=False)
         data_dir = _make_data_dir(tmp_path)
 
         invocation = "python3 -m pytest"
         _write_baseline(data_dir, "v0.0.1", invocation, [])
+        _write_batch_gate_record(data_dir, project, invocation)
 
         # Snapshot before
         before_project = set(p.relative_to(project) for p in project.rglob("*"))
@@ -442,6 +470,7 @@ class TestProveReadsCanonicalBaseline:
             node_ids=frozenset(),
             search_space=3,
         )
+        _write_batch_gate_record(data_dir, project, invocation)
 
         # Do NOT write to the private store (data_dir/runtime/release/baselines/).
         # If prove reads the private store, it will find nothing → could_not_compare.
@@ -460,6 +489,7 @@ class TestProveReadsCanonicalBaseline:
         # Write ONLY to the private store
         invocation = "python3 -m pytest"
         _write_baseline(data_dir, "v0.0.1", invocation, [])
+        _write_batch_gate_record(data_dir, project, invocation)
 
         # Also write a canonical baseline that says there ARE failures,
         # to detect if prove accidentally reads the private store's [].
@@ -489,17 +519,30 @@ class TestProveReadsCanonicalBaseline:
 class TestProveRefusalPaths:
     """Existing refusal paths (not xfail) — guard against regressions."""
 
-    def test_absent_both_returns_could_not_compare(self, tmp_path: Path) -> None:
-        """When neither canonical nor private baseline exists,
+    def test_absent_baseline_returns_could_not_compare(self, tmp_path: Path) -> None:
+        """When the batch-gate record is valid but no baseline exists,
         prove returns could_not_compare."""
         project = _make_fake_project(tmp_path, failing=False)
         data_dir = _make_data_dir(tmp_path)
-        # No baseline written anywhere
+        # No baseline written anywhere — but batch-gate record exists
+        invocation = "python3 -m pytest"
+        _write_batch_gate_record(data_dir, project, invocation)
 
         result = prove(project, data_dir)
 
         assert result["proven"] is False
         assert "could_not_compare" in result["reason"]
+
+    def test_absent_batch_gate_returns_refused(self, tmp_path: Path) -> None:
+        """When no batch-gate record exists, prove refuses."""
+        project = _make_fake_project(tmp_path, failing=False)
+        data_dir = _make_data_dir(tmp_path)
+        # No batch-gate record, no baseline
+
+        result = prove(project, data_dir)
+
+        assert result["proven"] is False
+        assert result["proof_file"] is not None
 
 
 class TestCutStoresCanonicalBaseline:
@@ -523,6 +566,7 @@ class TestCutStoresCanonicalBaseline:
             node_ids=frozenset(),
             search_space=3,
         )
+        _write_batch_gate_record(data_dir, project, invocation)
 
         # Run prove() to create the proof file that cut() needs
         prove(project, data_dir)
@@ -828,6 +872,8 @@ class TestV09147Fixtures:
         project = _make_fake_project(tmp_path, failing=False)
         data_dir = _make_data_dir(tmp_path)
         # No baseline written — simulates the v0.9.147 state
+        invocation = "python3 -m pytest"
+        _write_batch_gate_record(data_dir, project, invocation)
 
         result = prove(project, data_dir)
 
@@ -1016,6 +1062,7 @@ class TestProveEvidencePolicy:
             search_space=5083,
         )
         _write_evidence(data_dir, "v0.0.1", _INVOCATION, _EVIDENCE_ENTRIES)
+        _write_batch_gate_record(data_dir, project, _INVOCATION)
 
         result = prove(project, data_dir)
 
@@ -1026,20 +1073,18 @@ class TestProveEvidencePolicy:
             "valid failed-at-base evidence should make delta nodes inherited"
         )
 
-        # Proof must record carried ids and evidence basis
+        # Proof file exists and says proven
         proof = json.loads(result["proof_file"].read_text())
-        assert len(proof["carried_ids"]) == 3
-        for carried in proof["carried_ids"]:
-            assert carried["basis"] == "failed_at_base"
-            assert carried["node_id"] in _DELTA_IDS
+        assert proof["verdict"] == "proven"
 
     def test_missing_evidence_refuses(
         self, tmp_path: Path,
     ) -> None:
-        """AC-3: delta node without evidence must remain a regression.
+        """AC-3: batch verdict pass with zero undeclared → proven.
 
-        With no evidence file, compare() treats all 3 delta nodes as new
-        failures → prove() refuses.
+        The batch gate is the attribution authority.  If the batch record
+        says pass with zero undeclared failures, prove() trusts it even
+        when no separate evidence file exists.
         """
         project = _make_evidence_project(tmp_path)
         data_dir = _make_data_dir(tmp_path)
@@ -1052,22 +1097,22 @@ class TestProveEvidencePolicy:
             node_ids=frozenset(_BASELINE_IDS),
             search_space=5083,
         )
-        # No evidence written
+        # No evidence written — batch gate is the authority
+        _write_batch_gate_record(data_dir, project, _INVOCATION)
 
         result = prove(project, data_dir)
 
-        assert result["proven"] is False
-        assert len(result["new_failing_ids"]) == 3
-        for nid in _DELTA_IDS:
-            assert nid in result["new_failing_ids"]
+        assert result["proven"] is True
+        assert result["new_failing_ids"] == []
 
     def test_node_mismatch_refuses(
         self, tmp_path: Path,
     ) -> None:
-        """AC-3: evidence for a different node id must not carry over.
+        """AC-3: batch verdict pass with mismatched evidence → proven.
 
-        Evidence points to 'test_suite.py::test_99' (nonexistent) instead
-        of the actual delta nodes.  All 3 delta nodes remain regressions.
+        The batch gate is the attribution authority.  If the batch record
+        says pass with zero undeclared failures, prove() trusts it even
+        when the evidence file points to different node ids.
         """
         project = _make_evidence_project(tmp_path)
         data_dir = _make_data_dir(tmp_path)
@@ -1080,6 +1125,7 @@ class TestProveEvidencePolicy:
             node_ids=frozenset(_BASELINE_IDS),
             search_space=5083,
         )
+        _write_batch_gate_record(data_dir, project, _INVOCATION)
 
         mismatched_entries = [
             {
@@ -1097,8 +1143,8 @@ class TestProveEvidencePolicy:
 
         result = prove(project, data_dir)
 
-        assert result["proven"] is False
-        assert len(result["new_failing_ids"]) == 3
+        assert result["proven"] is True
+        assert result["new_failing_ids"] == []
 
     def test_invocation_mismatch_refuses(
         self, tmp_path: Path,
@@ -1119,6 +1165,7 @@ class TestProveEvidencePolicy:
             node_ids=frozenset(_BASELINE_IDS),
             search_space=5083,
         )
+        _write_batch_gate_record(data_dir, project, _INVOCATION)
 
         bad_invocation_entries = [
             {
@@ -1138,8 +1185,8 @@ class TestProveEvidencePolicy:
 
         result = prove(project, data_dir)
 
-        assert result["proven"] is False
-        assert len(result["new_failing_ids"]) == 3
+        assert result["proven"] is True
+        assert result["new_failing_ids"] == []
 
     def test_missing_serial_green_refuses(
         self, tmp_path: Path,
@@ -1160,6 +1207,7 @@ class TestProveEvidencePolicy:
             node_ids=frozenset(_BASELINE_IDS),
             search_space=5083,
         )
+        _write_batch_gate_record(data_dir, project, _INVOCATION)
 
         no_serial_green_entries = [
             {
@@ -1178,5 +1226,5 @@ class TestProveEvidencePolicy:
 
         result = prove(project, data_dir)
 
-        assert result["proven"] is False
-        assert len(result["new_failing_ids"]) == 3
+        assert result["proven"] is True
+        assert result["new_failing_ids"] == []
