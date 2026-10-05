@@ -6260,6 +6260,11 @@ print('false' if not d.get('blocked', True) else 'true')
             # whether this iteration caused the red.  An inherited or
             # pre-existing red does not strike.
             local _red_owner_skip_quarantine="false"
+            # Quarantine redirect state is consumed after the optional
+            # attribution branch.  Keep it in the enclosing confirmed-red
+            # scope so the attribution-unavailable path is safe under set -u
+            # (Kira run 20261005-202912).
+            local _redirect_quarantine_to=""
             local _red_owner_script="${_SKILL_ROOT}/ilk-loop/scripts/red_owner.py"
             local _iteration_base=""
             if [[ -n "$heads_before_file" && -f "$heads_before_file" ]]; then
@@ -6312,7 +6317,6 @@ if m:
             fi
             if [[ -n "$_red_owner_script" && -f "$_red_owner_script" && -n "$_iteration_base" ]]; then
               local _all_inherited_or_preexisting=true
-              local _redirect_quarantine_to=""
               # Attribute each blocking record.
               while IFS= read -r _blocking_line; do
                 [[ -z "$_blocking_line" ]] && continue

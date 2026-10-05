@@ -10,14 +10,10 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
-
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = ROOT / "skills" / "ilk-loop" / "scripts" / "run_ilk_loop_claude.sh"
 
 
-@pytest.mark.xfail(strict=True, reason="redirect state is scoped inside optional attribution")
 def test_redirect_state_exists_before_optional_red_owner_attribution() -> None:
     text = RUNNER.read_text(encoding="utf-8")
     branch = 'if [[ -n "$_red_owner_script" && -f "$_red_owner_script" && -n "$_iteration_base" ]]; then'
@@ -41,4 +37,3 @@ def test_normal_terminal_footer_owns_run_exit_and_pid_cleanup() -> None:
     text = RUNNER.read_text(encoding="utf-8")
     assert "'record_type': 'run_exit'" in text
     assert 'rm -f "${runtime_dir}/running.pid"' in text
-
