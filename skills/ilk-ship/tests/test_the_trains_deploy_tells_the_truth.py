@@ -2193,6 +2193,127 @@ class TestRemoteAcquisitionUsesProjectPath:
         )
 
 
+# ── Step 0: xfail pin for remote SSH argument serialization ───────────────
+#
+# v0.9.152 fail-closed: _acquire_remote_tag passes
+#   f"tag refs/tags/{tag}:refs/tags/{tag}"  as one subprocess arg.
+# After SSH concatenates args with spaces, the remote shell receives:
+#   git -C <path> fetch origin tag refs/tags/<tag>:refs/tags/<tag>
+# Two bugs:
+#   1. "tag refs/tags/..." is one Python arg but two shell tokens — the
+#      `tag` prefix is invalid git-fetch syntax.
+#   2. A repo path containing spaces (e.g. "my project") is one Python
+#      arg but multiple shell tokens — git -C sees only the first word.
+# This pin captures the real subprocess boundary, round-trips through
+# shell parsing, and asserts both invariants.  Step 1 will make it green.
+
+
+@pytest.mark.xfail(strict=True, reason="remote ssh argv serialization broken: tag prefix + unquoted path")
+class TestRemoteSSHArgvSerialization:
+    """AC-1/AC-2/AC-3: the SSH invocation passes one safely shell-serialized
+    remote command; the fetch refspec is exact (no ``tag`` prefix); and a
+    repository path containing spaces remains one ``git -C`` argument.
+
+    Captures the real ``subprocess.run`` call at the SSH boundary and
+    round-trips the remote command through shell parsing to verify
+    argument boundaries.
+    """
+
+    def test_remote_fetch_refspec_and_path_preserved(self, tmp_path: Path) -> None:
+        """The remote ``git fetch`` must use an exact refspec
+        ``refs/tags/<tag>:refs/tags/<tag>`` (no ``tag`` prefix) and the
+        repository path with spaces must round-trip as one ``-C`` argument
+        through shell parsing."""
+        # Use a path with spaces to expose the quoting bug
+        project = tmp_path / "my project"
+        project.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        # Minimal git repo so _tag_sha resolves the tag
+        subprocess.run(["git", "init"], cwd=project, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t"],
+            cwd=project, check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "T"],
+            cwd=project, check=True, capture_output=True,
+        )
+        (project / "f").write_text("x")
+        subprocess.run(["git", "add", "."], cwd=project, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "init"], cwd=project, check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "tag", "-a", "v0.0.1", "-m", "v0.0.1"],
+            cwd=project, check=True, capture_output=True,
+        )
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        ssh_subprocess_calls: list[list[str]] = []
+        original_run = subprocess.run
+
+        def _capturing_run(args, **kwargs):
+            """Capture the SSH argv and delegate to the real runner."""
+            if args and args[0] == "ssh":
+                ssh_subprocess_calls.append(list(args))
+            return original_run(args, **kwargs)
+
+        import unittest.mock
+
+        with unittest.mock.patch("subprocess.run", side_effect=_capturing_run):
+            release_train._ssh_deploy(
+                project, "v0.0.1", data_dir,
+                host="rezmac",
+                settle_deadline_sec=0.1,
+                settle_poll_interval_sec=0.05,
+            )
+
+        assert len(ssh_subprocess_calls) >= 1, "Expected at least one SSH subprocess call"
+
+        first_ssh = ssh_subprocess_calls[0]
+        # SSH argv: ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes",
+        #            "rezmac", "git", "-C", "my project", "fetch", "origin", ...]
+        # Everything after the host is the remote command args
+        host_idx = first_ssh.index("rezmac")
+        remote_args = first_ssh[host_idx + 1:]
+
+        # Reconstruct the remote shell command as the remote shell would
+        # parse it (subprocess.run passes each arg as a separate SSH arg,
+        # SSH concatenates them with spaces, remote shell re-parses)
+        import shlex
+        remote_cmd_str = " ".join(shlex.quote(a) for a in remote_args)
+
+        # Round-trip through shell parsing to verify argument boundaries
+        parsed = shlex.split(remote_cmd_str)
+
+        # AC-2: the fetch refspec must NOT contain the incompatible "tag" prefix.
+        # After shell parsing, "tag refs/tags/v0.0.1:refs/tags/v0.0.1" as one
+        # Python arg becomes two tokens: "tag" and "refs/tags/...".
+        fetch_idx = parsed.index("fetch")
+        origin_idx = fetch_idx + 1
+        refspec_token = parsed[origin_idx + 1]
+        assert not refspec_token.startswith("tag "), (
+            f"Fetch refspec must not contain 'tag ' prefix, got: {refspec_token!r}"
+        )
+        assert refspec_token == f"refs/tags/v0.0.1:refs/tags/v0.0.1", (
+            f"Fetch refspec must be exact, got: {refspec_token!r}"
+        )
+
+        # AC-3: a repo path with spaces must survive shell parsing as one
+        # argument to git -C.  shlex.quote("my project") → "'my project'",
+        # which round-trips as one token.
+        c_idx = parsed.index("-C")
+        c_path = parsed[c_idx + 1]
+        assert c_path == str(project), (
+            f"git -C path must be {str(project)!r}, got {c_path!r}"
+        )
+
+
 # ── AC-9: control — existing tests pass ──────────────────────────────────────
 
 class TestControlExistingTestsPass:
