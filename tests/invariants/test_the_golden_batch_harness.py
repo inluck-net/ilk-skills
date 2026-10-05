@@ -148,16 +148,26 @@ def test_golden_batch_refuses_without_gtimeout(tmp_path: Path) -> None:
 
 
 def test_golden_batch_refuses_when_skill_home_in_repo(tmp_path: Path) -> None:
-    """AC-3b: golden_batch.run exits 2 when ILK_SKILL_HOME resolves
-    inside this repo (would pollute the live skills/)."""
+    """AC-3b: _check_refusals exits 2 when ILK_SKILL_HOME resolves
+    inside a live git repo (one with .git).
+
+    The test owns its own git-shaped fixture so it is hermetic: it
+    passes identically from a ``git archive`` copy (teeth) and from
+    the live clone.
+    """
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import golden_batch
 
-    # Point ILK_SKILL_HOME at the repo root (a git repo).
+    # Build a self-contained "repo" with a .git marker and a skills dir.
+    fake_repo = tmp_path / "fake-repo"
+    (fake_repo / ".git").mkdir(parents=True)
+    (fake_repo / "skills").mkdir(parents=True)
+
     from unittest.mock import patch as _patch
-    with _patch.dict(os.environ, {"ILK_SKILL_HOME": str(_REPO)}, clear=False):
-        with pytest.raises(SystemExit) as exc_info:
-            golden_batch.run(out=tmp_path / "out.json")
+    with _patch.object(golden_batch, "_REPO", fake_repo):
+        with _patch.dict(os.environ, {"ILK_SKILL_HOME": str(fake_repo / "skills")}, clear=False):
+            with pytest.raises(SystemExit) as exc_info:
+                golden_batch._check_refusals()
     assert exc_info.value.code == 2, (
         f"expected exit 2 for skill-home-in-repo, got {exc_info.value.code}"
     )
