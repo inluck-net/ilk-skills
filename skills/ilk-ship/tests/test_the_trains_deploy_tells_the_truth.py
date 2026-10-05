@@ -2085,6 +2085,115 @@ class TestTagMismatchAfterAcquisition:
         assert result["deployed"] is False, "Tag mismatch must not report deployed"
 
 
+# ── Step 0: xfail pin for remote acquisition project path ─────────────────
+#
+# The v0.9.151 rezmac fail-closed: _acquire_remote_tag hardcodes the literal
+# string "repo" as the -C argument for both git fetch and git rev-parse.
+# The real project path must flow from _ssh_deploy through to both commands.
+# This pin supplies a nonliteral path (with spaces) and asserts both git -C
+# commands receive it as one argument.
+
+
+@pytest.mark.xfail(strict=True, reason="v0.9.151 literal-path bug: _acquire_remote_tag hardcodes 'repo'")
+class TestRemoteAcquisitionUsesProjectPath:
+    """AC-1: both remote acquisition commands use the same explicit project
+    path supplied to _ssh_deploy; neither contains the literal 'repo'."""
+
+    def test_fetch_and_revparse_receive_project_path(self, tmp_path: Path) -> None:
+        """When _ssh_deploy receives a project path like 'my project',
+        both git -C commands in _acquire_remote_tag must use it (not 'repo')."""
+        # Use a path with spaces to prove it's passed as one argument
+        project = tmp_path / "my project"
+        project.mkdir()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        # Make a minimal git repo so _tag_sha can resolve the tag
+        subprocess.run(["git", "init"], cwd=project, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t"], cwd=project, check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "T"], cwd=project, check=True, capture_output=True,
+        )
+        (project / "f").write_text("x")
+        subprocess.run(["git", "add", "."], cwd=project, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "init"], cwd=project, check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "tag", "-a", "v0.0.1", "-m", "v0.0.1"],
+            cwd=project, check=True, capture_output=True,
+        )
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        ssh_calls: list[dict] = []
+
+        def _fake_ssh(host: str, cmd: list[str], timeout: int = 120) -> dict:
+            ssh_calls.append({"host": host, "args": list(cmd)})
+            if any(str(a) == "fetch" for a in cmd):
+                return {"rc": 0, "stdout": "", "stderr": ""}
+            if "rev-parse" in " ".join(str(c) for c in cmd):
+                return {"rc": 0, "stdout": "a" * 40, "stderr": ""}
+            if "ilk_release.py" in " ".join(str(c) for c in cmd):
+                return {"rc": 0, "stdout": "ok", "stderr": ""}
+            if "host_deploy_status" in " ".join(str(c) for c in cmd):
+                return {"rc": 0, "stdout": "ok", "stderr": ""}
+            if "bounce_daemons" in " ".join(str(c) for c in cmd):
+                return {"rc": 1, "stdout": "", "stderr": ""}
+            return {"rc": 0, "stdout": "", "stderr": ""}
+
+        release_train._ssh_deploy(
+            project, "v0.0.1", data_dir,
+            host="rezmac",
+            ssh_runner=_fake_ssh,
+            settle_deadline_sec=0.1,
+            settle_poll_interval_sec=0.05,
+        )
+
+        # Find the git fetch and git rev-parse calls
+        fetch_calls = [
+            c for c in ssh_calls
+            if any(str(a) == "fetch" for a in c["args"])
+        ]
+        revparse_calls = [
+            c for c in ssh_calls
+            if any(str(a) == "rev-parse" for a in c["args"])
+        ]
+
+        assert len(fetch_calls) >= 1, "Expected a git fetch call"
+        assert len(revparse_calls) >= 1, "Expected a git rev-parse call"
+
+        # Both must use the real project path, not the literal "repo"
+        fetch_args = fetch_calls[0]["args"]
+        revparse_args = revparse_calls[0]["args"]
+
+        # git -C <path> → the element after -C is the path
+        def _get_c_path(args: list) -> str | None:
+            for i, a in enumerate(args):
+                if str(a) == "-C" and i + 1 < len(args):
+                    return str(args[i + 1])
+            return None
+
+        fetch_c_path = _get_c_path(fetch_args)
+        revparse_c_path = _get_c_path(revparse_args)
+
+        assert fetch_c_path is not None, "fetch command must use -C"
+        assert revparse_c_path is not None, "rev-parse command must use -C"
+
+        # The path must be the project path (with spaces), not "repo"
+        project_str = str(project)
+        assert fetch_c_path == project_str, (
+            f"fetch -C must be {project_str!r}, got {fetch_c_path!r}"
+        )
+        assert revparse_c_path == project_str, (
+            f"rev-parse -C must be {project_str!r}, got {revparse_c_path!r}"
+        )
+
+
 # ── AC-9: control — existing tests pass ──────────────────────────────────────
 
 class TestControlExistingTestsPass:
