@@ -870,3 +870,334 @@ class TestV09147Fixtures:
         assert diff.regression_count == 1, (
             "declared node without evidence must count as regression"
         )
+
+
+# ── Step 0 integration: prove() + evidence-aware compare() ─────────────────
+#
+# These fixtures pin the production-caller gap: prove() delegates to
+# baseline_diff.compare() but does not pass baseline_red_entries, so
+# the evidence-aware policy is never invoked.  Each fixture monkeypatches
+# compare() to inject the entries, then asserts the correct outcome.
+# xfail(strict=True) captures the expected behaviour before step 1 wires
+# the mechanism.  When step 1 makes prove() pass baseline_red_entries
+# natively, the monkeypatch becomes a no-op and the xfail markers are removed.
+#
+# The 5→8 node-id shape mirrors batch-2026-10-05o vs v0.9.147:
+# baseline has 5 known failures; current has 8 (3 "new" nodes with evidence).
+
+
+def _make_evidence_project(
+    tmp_path: Path,
+    num_tests: int = 8,
+    failing_indices: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6, 7),
+) -> Path:
+    """Create a project with num_tests tests, failing at the given indices.
+
+    All tests fail deterministically (assert False) so the test can control
+    exactly which node ids appear in the baseline and current sets.
+    """
+    project = tmp_path / "project"
+    project.mkdir()
+
+    subprocess.run(["git", "init"], cwd=project, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=project, check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=project, check=True, capture_output=True,
+    )
+
+    (project / ".ilk-launch.json").write_text(json.dumps({
+        "ship": {
+            "release_train": True,
+            "suite": {
+                "command": "python3 -m pytest",
+                "flags": [],
+            },
+        },
+    }))
+
+    # Tag commit — identical tests so baseline can be written
+    lines = []
+    for i in range(num_tests):
+        assertion = "False" if i in failing_indices else "True"
+        lines.append(f"def test_{i}():\n    assert {assertion}\n\n")
+    (project / "test_suite.py").write_text("".join(lines))
+
+    subprocess.run(["git", "add", "."], cwd=project, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=project, check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v0.0.1", "-m", "v0.0.1"],
+        cwd=project, check=True, capture_output=True,
+    )
+
+    # HEAD commit (must differ from tag)
+    (project / "marker.txt").write_text("head")
+    subprocess.run(["git", "add", "."], cwd=project, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "head"],
+        cwd=project, check=True, capture_output=True,
+    )
+
+    return project
+
+
+# Baseline: indices 0–4 fail (5 nodes)
+_BASELINE_FAIL_INDICES = (0, 1, 2, 3, 4)
+# Current: all 8 fail (indices 0–7)
+_CURRENT_FAIL_INDICES = (0, 1, 2, 3, 4, 5, 6, 7)
+# The 3 "new" nodes (in current, not in baseline)
+_DELTA_INDICES = (5, 6, 7)
+
+_BASELINE_IDS = sorted({f"test_suite.py::test_{i}" for i in _BASELINE_FAIL_INDICES})
+_CURRENT_IDS = sorted({f"test_suite.py::test_{i}" for i in _CURRENT_FAIL_INDICES})
+_DELTA_IDS = sorted({f"test_suite.py::test_{i}" for i in _DELTA_INDICES})
+
+_INVOCATION = "python3 -m pytest"
+
+_EVIDENCE_ENTRIES = [
+    {
+        "node_id": nid,
+        "reason": "declared-at-base",
+        "as_of": "2026-10-05",
+        "evidence": {
+            "failed_at_base": True,
+            "base_sha": "d75016e57272" + "0" * 28,
+            "measured_at": "2026-10-05T10:00:00+08:00",
+        },
+    }
+    for nid in _DELTA_IDS
+]
+
+
+def _patch_compare_with_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    baseline_red_entries: list[dict],
+) -> None:
+    """Patch baseline_diff.compare to inject baseline_red_entries.
+
+    This simulates what step 1 will do: make prove() pass evidence to compare().
+    """
+    import baseline_diff
+    _original_compare = baseline_diff.compare
+
+    def _patched_compare(**kwargs):
+        kwargs["baseline_red_entries"] = baseline_red_entries
+        return _original_compare(**kwargs)
+
+    monkeypatch.setattr(baseline_diff, "compare", _patched_compare)
+
+
+class TestProveEvidencePolicyXfail:
+    """Step 0 fixture pinning the prove() + evidence policy gap.
+
+    prove() currently does raw set subtraction (set(current) - set(baseline))
+    instead of delegating to the evidence-aware compare() with
+    baseline_red_entries.  The xfail test asserts the CORRECT behaviour
+    (0 new failures when evidence is valid) and fails because prove()
+    reports 3 regressions via raw subtraction.
+
+    The non-xfail negative controls verify that refusal invariants hold
+    regardless of the evidence mechanism — they pass both before and after
+    step 1, guarding against the fix accidentally accepting nodes without
+    valid evidence.
+    """
+
+    # ── THE GAP: valid evidence should yield 0 new failures ──────────────
+
+    @pytest.mark.xfail(strict=True, reason="production-caller gap: prove() does not pass baseline_red_entries to compare()")
+    def test_valid_evidence_yields_zero_new_failures(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """AC-2: 5→8 shape with valid failed-at-base evidence on all 3 delta
+        nodes must yield 0 new failures.
+
+        prove() currently reports 3 regressions (raw set subtraction).
+        After step 1, the evidence-aware policy will treat them as inherited.
+        """
+        project = _make_evidence_project(tmp_path)
+        data_dir = _make_data_dir(tmp_path)
+
+        from baseline_diff import store_baseline
+        store_baseline(
+            project_root=data_dir,
+            tag="v0.0.1",
+            suite_invocation=_INVOCATION,
+            node_ids=frozenset(_BASELINE_IDS),
+            search_space=5083,
+        )
+
+        _patch_compare_with_evidence(monkeypatch, _EVIDENCE_ENTRIES)
+
+        result = prove(project, data_dir)
+
+        assert result["proven"] is True, (
+            f"expected proven with valid evidence, got: {result['reason']}"
+        )
+        assert result["new_failing_ids"] == [], (
+            "valid failed-at-base evidence should make delta nodes inherited"
+        )
+
+    # ── Negative controls: refusal invariants that hold regardless ───────
+    #
+    # These pass NOW (raw subtraction already produces 3 regressions for
+    # missing/malformed evidence) and will STILL PASS after step 1 (the
+    # evidence-aware policy also produces 3 regressions).  They guard
+    # against the fix accidentally accepting nodes without valid evidence.
+    # The monkeypatch ensures compare() receives the entries even before
+    # step 1 wires prove() to pass them natively.
+
+    def test_missing_evidence_still_refuses(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """AC-3: delta node without evidence must remain a regression.
+
+        With empty baseline_red_entries, compare() treats all 3 delta
+        nodes as new failures → prove() refuses.  This holds both before
+        and after step 1.
+        """
+        project = _make_evidence_project(tmp_path)
+        data_dir = _make_data_dir(tmp_path)
+
+        from baseline_diff import store_baseline
+        store_baseline(
+            project_root=data_dir,
+            tag="v0.0.1",
+            suite_invocation=_INVOCATION,
+            node_ids=frozenset(_BASELINE_IDS),
+            search_space=5083,
+        )
+
+        _patch_compare_with_evidence(monkeypatch, [])
+
+        result = prove(project, data_dir)
+
+        assert result["proven"] is False
+        assert len(result["new_failing_ids"]) == 3
+        for nid in _DELTA_IDS:
+            assert nid in result["new_failing_ids"]
+
+    def test_node_mismatch_still_refuses(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """AC-3: evidence for a different node id must not carry over.
+
+        Evidence points to 'test_suite.py::test_99' (nonexistent) instead
+        of the actual delta nodes.  All 3 delta nodes remain regressions.
+        """
+        project = _make_evidence_project(tmp_path)
+        data_dir = _make_data_dir(tmp_path)
+
+        from baseline_diff import store_baseline
+        store_baseline(
+            project_root=data_dir,
+            tag="v0.0.1",
+            suite_invocation=_INVOCATION,
+            node_ids=frozenset(_BASELINE_IDS),
+            search_space=5083,
+        )
+
+        mismatched_entries = [
+            {
+                "node_id": "test_suite.py::test_99",
+                "reason": "wrong node",
+                "as_of": "2026-10-05",
+                "evidence": {
+                    "failed_at_base": True,
+                    "base_sha": "d75016e57272" + "0" * 28,
+                    "measured_at": "2026-10-05T10:00:00+08:00",
+                },
+            },
+        ]
+        _patch_compare_with_evidence(monkeypatch, mismatched_entries)
+
+        result = prove(project, data_dir)
+
+        assert result["proven"] is False
+        assert len(result["new_failing_ids"]) == 3
+
+    def test_invocation_mismatch_still_refuses(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """AC-4: flaky-owed evidence with wrong invocation → remains regression.
+
+        Evidence has invocation='python3 -m pytest --wrong' but actual
+        suite invocation is 'python3 -m pytest'.  Policy refuses inheritance.
+        """
+        project = _make_evidence_project(tmp_path)
+        data_dir = _make_data_dir(tmp_path)
+
+        from baseline_diff import store_baseline
+        store_baseline(
+            project_root=data_dir,
+            tag="v0.0.1",
+            suite_invocation=_INVOCATION,
+            node_ids=frozenset(_BASELINE_IDS),
+            search_space=5083,
+        )
+
+        bad_invocation_entries = [
+            {
+                "node_id": nid,
+                "reason": "flaky",
+                "as_of": "2026-10-05",
+                "evidence": {
+                    "flaky_owed": True,
+                    "invocation": "python3 -m pytest --wrong",
+                    "serial_green": True,
+                    "serial_green_at": "2026-10-05T09:00:00+08:00",
+                },
+            }
+            for nid in _DELTA_IDS
+        ]
+        _patch_compare_with_evidence(monkeypatch, bad_invocation_entries)
+
+        result = prove(project, data_dir)
+
+        assert result["proven"] is False
+        assert len(result["new_failing_ids"]) == 3
+
+    def test_missing_serial_green_still_refuses(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """AC-4: flaky-owed without serial_green → remains regression.
+
+        Evidence claims flaky_owed but has no serial_green record.
+        Policy refuses inheritance.
+        """
+        project = _make_evidence_project(tmp_path)
+        data_dir = _make_data_dir(tmp_path)
+
+        from baseline_diff import store_baseline
+        store_baseline(
+            project_root=data_dir,
+            tag="v0.0.1",
+            suite_invocation=_INVOCATION,
+            node_ids=frozenset(_BASELINE_IDS),
+            search_space=5083,
+        )
+
+        no_serial_green_entries = [
+            {
+                "node_id": nid,
+                "reason": "flaky",
+                "as_of": "2026-10-05",
+                "evidence": {
+                    "flaky_owed": True,
+                    "invocation": _INVOCATION,
+                    # serial_green missing
+                },
+            }
+            for nid in _DELTA_IDS
+        ]
+        _patch_compare_with_evidence(monkeypatch, no_serial_green_entries)
+
+        result = prove(project, data_dir)
+
+        assert result["proven"] is False
+        assert len(result["new_failing_ids"]) == 3
