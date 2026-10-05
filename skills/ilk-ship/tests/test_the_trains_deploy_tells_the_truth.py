@@ -1681,6 +1681,379 @@ class TestPerHostAuditTruth:
             )
 
 
+# ── Step 0: xfail pins for remote tag acquisition ────────────────────────────
+#
+# These pins assert the contracts that step 1 will make green: before
+# remote extraction, the SSH adapter must fetch the exact candidate tag
+# from the configured origin into refs/tags/<tag>.  Each pin asserts
+# command order (acquire before extract), failure behavior (fail-closed),
+# and branch immutability.
+
+
+class TestRemoteTagAcquisition:
+    """AC-1: remote missing the pushed tag fetches it before extraction.
+
+    The SSH adapter must run ``git fetch origin tag <tag>`` before
+    ``ilk_release.py`` extraction.  Command order is pinned: acquire,
+    extract, bounce, settle.
+    """
+
+    @pytest.mark.xfail(strict=True, reason="step 1: tag acquisition not yet implemented")
+    def test_remote_missing_tag_fetches_before_extraction(self, tmp_path: Path) -> None:
+        """When the remote repo does not have the candidate tag, the SSH
+        adapter must fetch it from origin before calling extraction."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project = tmp_path / "project"
+        project.mkdir()
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        # Record SSH calls in order
+        ssh_calls: list[dict] = []
+
+        def _fake_ssh_runner(host: str, cmd: list[str], timeout: int = 120) -> dict:
+            cmd_str = " ".join(str(c) for c in cmd)
+            ssh_calls.append({"host": host, "cmd": cmd_str, "args": list(cmd)})
+
+            # git fetch origin tag v0.0.2 → succeed
+            if any(str(a) == "fetch" for a in cmd) and "v0.0.2" in cmd_str:
+                return {"rc": 0, "stdout": "", "stderr": ""}
+
+            # ilk_release.py extraction → succeed
+            if "ilk_release.py" in cmd_str and "--repo" in cmd_str:
+                return {"rc": 0, "stdout": "extracted v0.0.2", "stderr": ""}
+
+            # bounce → succeed
+            if "bounce_daemons" in cmd_str:
+                return {"rc": 1, "stdout": "", "stderr": ""}
+
+            # host_deploy_status → ok
+            if "host_deploy_status" in cmd_str:
+                return {"rc": 0, "stdout": "ok", "stderr": ""}
+
+            return {"rc": 0, "stdout": "", "stderr": ""}
+
+        result = release_train._ssh_deploy(
+            project, "v0.0.2", data_dir,
+            host="rezmac",
+            ssh_runner=_fake_ssh_runner,
+            settle_deadline_sec=0.1,
+            settle_poll_interval_sec=0.05,
+        )
+
+        # The first SSH call must be a fetch
+        assert len(ssh_calls) >= 1, "Expected at least one SSH call"
+        first_cmd = ssh_calls[0]["cmd"]
+        assert "fetch" in first_cmd, (
+            f"First SSH call must be tag acquisition (git fetch), got: {first_cmd}"
+        )
+        assert "v0.0.2" in first_cmd, (
+            f"Fetch must target the candidate tag v0.0.2, got: {first_cmd}"
+        )
+
+        # Extract must come after fetch
+        extract_idx = None
+        for i, call in enumerate(ssh_calls):
+            if "ilk_release.py" in call["cmd"] and "--repo" in call["cmd"]:
+                extract_idx = i
+                break
+        assert extract_idx is not None, "Expected an extraction call"
+        assert extract_idx > 0, "Extraction must come after tag acquisition"
+
+
+class TestTagAcquisitionCommandShape:
+    """AC-1 corollary: the fetch refspec must be exact (refs/tags/<tag>),
+    not a wildcard or branch fetch."""
+
+    @pytest.mark.xfail(strict=True, reason="step 1: tag acquisition not yet implemented")
+    def test_fetch_refspec_is_exact_tag(self, tmp_path: Path) -> None:
+        """The fetch command must use an exact refspec for the candidate tag,
+        not a wildcard like 'refs/tags/*'."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project = tmp_path / "project"
+        project.mkdir()
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        ssh_calls: list[dict] = []
+
+        def _fake_ssh_runner(host: str, cmd: list[str], timeout: int = 120) -> dict:
+            cmd_str = " ".join(str(c) for c in cmd)
+            ssh_calls.append({"host": host, "cmd": cmd_str, "args": list(cmd)})
+            if any(str(a) == "fetch" for a in cmd):
+                return {"rc": 0, "stdout": "", "stderr": ""}
+            if "ilk_release.py" in cmd_str:
+                return {"rc": 0, "stdout": "ok", "stderr": ""}
+            if "bounce_daemons" in cmd_str:
+                return {"rc": 1, "stdout": "", "stderr": ""}
+            if "host_deploy_status" in cmd_str:
+                return {"rc": 0, "stdout": "ok", "stderr": ""}
+            return {"rc": 0, "stdout": "", "stderr": ""}
+
+        release_train._ssh_deploy(
+            project, "v0.0.2", data_dir,
+            host="rezmac",
+            ssh_runner=_fake_ssh_runner,
+            settle_deadline_sec=0.1,
+            settle_poll_interval_sec=0.05,
+        )
+
+        # Find the fetch call (use args-based check to avoid temp dir false positives)
+        fetch_calls = [c for c in ssh_calls if any(str(a) == "fetch" for a in c["args"])]
+        assert len(fetch_calls) >= 1, "Expected a fetch call"
+
+        fetch_args = fetch_calls[0]["args"]
+        # Must NOT fetch all tags (wildcard)
+        assert "refs/tags/*" not in fetch_args, (
+            f"Fetch must not use wildcard refspec, got: {fetch_args}"
+        )
+        # Must fetch the specific tag ref
+        tag_ref = f"refs/tags/v0.0.2"
+        assert any(tag_ref in str(a) for a in fetch_args), (
+            f"Fetch must target {tag_ref}, got: {fetch_args}"
+        )
+
+
+class TestFetchFailureIsFailClosed:
+    """AC-3: fetch failure returns explicit nonzero evidence and skips
+    extraction, bounce, and smoke."""
+
+    @pytest.mark.xfail(strict=True, reason="step 1: tag acquisition not yet implemented")
+    def test_fetch_failure_skips_extraction(self, tmp_path: Path) -> None:
+        """When the SSH fetch fails, the adapter must return nonzero exit
+        and must NOT call extraction."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project = tmp_path / "project"
+        project.mkdir()
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        ssh_calls: list[dict] = []
+
+        def _fake_ssh_runner(host: str, cmd: list[str], timeout: int = 120) -> dict:
+            cmd_str = " ".join(str(c) for c in cmd)
+            ssh_calls.append({"host": host, "cmd": cmd_str, "args": list(cmd)})
+
+            # fetch fails
+            if any(str(a) == "fetch" for a in cmd):
+                return {"rc": 1, "stdout": "", "stderr": "fatal: couldn't find remote ref"}
+
+            # Any other call should not happen
+            return {"rc": 0, "stdout": "", "stderr": ""}
+
+        result = release_train._ssh_deploy(
+            project, "v0.0.2", data_dir,
+            host="rezmac",
+            ssh_runner=_fake_ssh_runner,
+            settle_deadline_sec=0.1,
+            settle_poll_interval_sec=0.05,
+        )
+
+        assert result["exit_code"] != 0, "Fetch failure must yield nonzero exit"
+        assert result["deployed"] is False, "Fetch failure must not report deployed"
+
+        # Extraction must NOT have been called
+        extract_calls = [c for c in ssh_calls
+                        if "ilk_release.py" in c["cmd"] and "--repo" in c["cmd"]]
+        assert len(extract_calls) == 0, (
+            f"Extraction must not run after fetch failure, "
+            f"but {len(extract_calls)} extraction calls recorded"
+        )
+
+
+class TestMissingTagAfterFetchIsFailClosed:
+    """AC-3 corollary: if the tag is still missing after fetch, the adapter
+    must return nonzero and skip extraction."""
+
+    @pytest.mark.xfail(strict=True, reason="step 1: tag acquisition not yet implemented")
+    def test_missing_tag_after_fetch_skips_extraction(self, tmp_path: Path) -> None:
+        """When fetch succeeds but the tag is still not present on the remote,
+        the adapter must return nonzero and must NOT extract."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project = tmp_path / "project"
+        project.mkdir()
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        ssh_calls: list[dict] = []
+
+        def _fake_ssh_runner(host: str, cmd: list[str], timeout: int = 120) -> dict:
+            cmd_str = " ".join(str(c) for c in cmd)
+            ssh_calls.append({"host": host, "cmd": cmd_str, "args": list(cmd)})
+
+            # fetch succeeds (the tag exists on origin)
+            if any(str(a) == "fetch" for a in cmd):
+                return {"rc": 0, "stdout": "", "stderr": ""}
+
+            # tag verification after fetch — tag not found
+            if "rev-parse" in cmd_str and "v0.0.2" in cmd_str:
+                return {"rc": 1, "stdout": "", "stderr": "unknown revision"}
+
+            return {"rc": 0, "stdout": "", "stderr": ""}
+
+        result = release_train._ssh_deploy(
+            project, "v0.0.2", data_dir,
+            host="rezmac",
+            ssh_runner=_fake_ssh_runner,
+            settle_deadline_sec=0.1,
+            settle_poll_interval_sec=0.05,
+        )
+
+        assert result["exit_code"] != 0, "Missing tag must yield nonzero exit"
+        assert result["deployed"] is False, "Missing tag must not report deployed"
+
+        extract_calls = [c for c in ssh_calls
+                        if "ilk_release.py" in c["cmd"] and "--repo" in c["cmd"]]
+        assert len(extract_calls) == 0, (
+            f"Extraction must not run when tag is missing, "
+            f"but {len(extract_calls)} extraction calls recorded"
+        )
+
+
+class TestCheckedOutBranchUntouched:
+    """AC-2: tag acquisition never checks out, resets, merges, or otherwise
+    rewrites the remote repository's current branch or working tree."""
+
+    @pytest.mark.xfail(strict=True, reason="step 1: tag acquisition not yet implemented")
+    def test_fetch_does_not_modify_remote_branch(self, tmp_path: Path) -> None:
+        """The SSH adapter must not run checkout, reset, merge, or any
+        branch-modifying command on the remote host."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project = tmp_path / "project"
+        project.mkdir()
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        ssh_calls: list[dict] = []
+
+        def _fake_ssh_runner(host: str, cmd: list[str], timeout: int = 120) -> dict:
+            cmd_str = " ".join(str(c) for c in cmd)
+            ssh_calls.append({"host": host, "cmd": cmd_str, "args": list(cmd)})
+
+            # Fail immediately if any branch-modifying command is detected
+            dangerous = ["checkout", "reset", "merge", "rebase", "push"]
+            for word in dangerous:
+                if word in cmd_str.lower() and not any(str(a) == "fetch" for a in cmd):
+                    assert False, (
+                        f"Dangerous command detected on remote host: {cmd_str}"
+                    )
+
+            if any(str(a) == "fetch" for a in cmd):
+                return {"rc": 0, "stdout": "", "stderr": ""}
+            if "ilk_release.py" in cmd_str:
+                return {"rc": 0, "stdout": "ok", "stderr": ""}
+            if "bounce_daemons" in cmd_str:
+                return {"rc": 1, "stdout": "", "stderr": ""}
+            if "host_deploy_status" in cmd_str:
+                return {"rc": 0, "stdout": "ok", "stderr": ""}
+            return {"rc": 0, "stdout": "", "stderr": ""}
+
+        result = release_train._ssh_deploy(
+            project, "v0.0.2", data_dir,
+            host="rezmac",
+            ssh_runner=_fake_ssh_runner,
+            settle_deadline_sec=0.1,
+            settle_poll_interval_sec=0.05,
+        )
+
+        # Tag acquisition must have been attempted
+        # Use args-based check to avoid false positives from temp dir names
+        fetch_calls = [c for c in ssh_calls if any(str(a) == "fetch" for a in c["args"])]
+        assert len(fetch_calls) >= 1, (
+            "Expected tag acquisition (git fetch) to be called on the remote host"
+        )
+
+        # Verify no branch-modifying commands were issued
+        for call in ssh_calls:
+            cmd = call["cmd"].lower()
+            for word in ["checkout", "reset", "merge", "rebase"]:
+                assert word not in cmd or "fetch" in cmd, (
+                    f"Remote branch must not be modified, found '{word}' in: {call['cmd']}"
+                )
+
+
+class TestTagMismatchAfterAcquisition:
+    """AC-3: a fetched tag whose object does not match the expected SHA
+    must return nonzero and skip extraction."""
+
+    @pytest.mark.xfail(strict=True, reason="step 1: tag acquisition not yet implemented")
+    def test_tag_sha_mismatch_returns_nonzero(self, tmp_path: Path) -> None:
+        """When the fetched tag resolves to a different SHA than expected,
+        the adapter must refuse and return nonzero."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        project = tmp_path / "project"
+        project.mkdir()
+
+        # Create a PID file for the current process so settle loop succeeds
+        releases_dir = project / "releases" / "v0.0.2"
+        releases_dir.mkdir(parents=True)
+        pid_file = project / "releases" / "v0.0.2" / "scheduler.pid"
+        pid_file.write_text(str(os.getpid()))
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        ssh_calls: list[dict] = []
+
+        def _fake_ssh_runner(host: str, cmd: list[str], timeout: int = 120) -> dict:
+            cmd_str = " ".join(str(c) for c in cmd)
+            ssh_calls.append({"host": host, "cmd": cmd_str, "args": list(cmd)})
+
+            # fetch succeeds
+            if any(str(a) == "fetch" for a in cmd):
+                return {"rc": 0, "stdout": "", "stderr": ""}
+
+            # tag verification — resolves to wrong SHA
+            if "rev-parse" in cmd_str and "v0.0.2" in cmd_str:
+                return {"rc": 0, "stdout": "f" * 40, "stderr": ""}
+
+            # extraction — succeed (so deploy would succeed without tag check)
+            if "ilk_release.py" in cmd_str:
+                return {"rc": 0, "stdout": "extracted v0.0.2", "stderr": ""}
+
+            # status check — ok (must come before bounce because
+            # host_deploy_status --bouncer contains "bounce_daemons")
+            if "host_deploy_status" in cmd_str:
+                return {"rc": 0, "stdout": "ok", "stderr": ""}
+
+            # bounce — succeed (deploy must succeed to expose tag mismatch)
+            if "bounce_daemons" in cmd_str:
+                return {"rc": 0, "stdout": "", "stderr": ""}
+
+            return {"rc": 0, "stdout": "", "stderr": ""}
+
+        result = release_train._ssh_deploy(
+            project, "v0.0.2", data_dir,
+            host="rezmac",
+            ssh_runner=_fake_ssh_runner,
+            settle_deadline_sec=0.1,
+            settle_poll_interval_sec=0.05,
+        )
+
+        # Without tag SHA verification, the deploy succeeds (exit_code=0).
+        # This test asserts that a tag SHA mismatch must cause nonzero exit,
+        # which will only be true after step 1 implements tag verification.
+        assert result["exit_code"] != 0, "Tag SHA mismatch must yield nonzero exit"
+        assert result["deployed"] is False, "Tag mismatch must not report deployed"
+
+
 # ── AC-9: control — existing tests pass ──────────────────────────────────────
 
 class TestControlExistingTestsPass:
