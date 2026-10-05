@@ -100,7 +100,7 @@ def test_ac1_guard_removed_kills(tmp_path: Path) -> None:
     result = teeth.run(repo, catalog)
     assert result["verdict"] == "pass"
     assert len(result["results"]) == 1
-    assert result["results"][0]["outcome"] == "killed"
+    assert result["results"][0]["outcome"] == "caught-red"
 
 
 # ── AC-2: catcher still passes after mutation → survived → fail ──────────────
