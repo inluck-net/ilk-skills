@@ -477,6 +477,112 @@ class TestRefusalOnIncompleteRecord:
         assert result["proven"] is False, "incomplete record must refuse"
 
 
+class TestRefusalOnUntrustedWriter:
+    """AC-3: non-empty untrusted writer → refusal.
+
+    A record whose writer is not in the trusted set must not reach
+    cut(), permit consumption, deployment, or notification.
+    """
+
+    def test_refuses_on_untrusted_writer(self, tmp_path: Path) -> None:
+        """A record with a non-empty untrusted writer → refusal."""
+        project = _make_fake_project(tmp_path, failing=False)
+        data_dir = _make_data_dir(tmp_path)
+        invocation = "python3 -m pytest"
+        head_sha = _get_head_sha(project)
+        tree_sha = _get_tree_sha(project)
+        _write_baseline(data_dir, "v0.0.1", invocation, [])
+
+        runtime = data_dir / "runtime"
+        runtime.mkdir(parents=True, exist_ok=True)
+        _write_batch_gate_record(
+            runtime,
+            verdict="pass",
+            head_sha=head_sha,
+            invocation=invocation,
+            tree_sha=tree_sha,
+            writer="hand_crafted_script",  # untrusted
+            undeclared=[],
+            excused_count=0,
+        )
+
+        result = prove(project, data_dir)
+
+        assert result["proven"] is False, (
+            f"untrusted writer must refuse; got: {result['reason']}"
+        )
+        assert "untrusted" in result["reason"].lower() or "writer" in result["reason"].lower()
+
+    def test_refuses_on_empty_writer(self, tmp_path: Path) -> None:
+        """A record with empty writer (unsigned) → refusal."""
+        project = _make_fake_project(tmp_path, failing=False)
+        data_dir = _make_data_dir(tmp_path)
+        invocation = "python3 -m pytest"
+        head_sha = _get_head_sha(project)
+        tree_sha = _get_tree_sha(project)
+        _write_baseline(data_dir, "v0.0.1", invocation, [])
+
+        runtime = data_dir / "runtime"
+        runtime.mkdir(parents=True, exist_ok=True)
+        _write_batch_gate_record(
+            runtime,
+            verdict="pass",
+            head_sha=head_sha,
+            invocation=invocation,
+            tree_sha=tree_sha,
+            writer="",  # unsigned
+            undeclared=[],
+            excused_count=0,
+        )
+
+        result = prove(project, data_dir)
+
+        assert result["proven"] is False, "unsigned record must refuse"
+        assert "unsigned" in result["reason"].lower() or "writer" in result["reason"].lower()
+
+
+class TestRefusalOnWrongSource:
+    """AC-3: wrong record source → refusal.
+
+    A record whose suite_source is not from the standard verification
+    pipeline must not reach cut(), permit consumption, deployment, or
+    notification.
+    """
+
+    def test_refuses_on_operator_source(self, tmp_path: Path) -> None:
+        """A record with suite_source='operator:/path' → refusal."""
+        project = _make_fake_project(tmp_path, failing=False)
+        data_dir = _make_data_dir(tmp_path)
+        invocation = "python3 -m pytest"
+        head_sha = _get_head_sha(project)
+        tree_sha = _get_tree_sha(project)
+        _write_baseline(data_dir, "v0.0.1", invocation, [])
+
+        runtime = data_dir / "runtime"
+        runtime.mkdir(parents=True, exist_ok=True)
+
+        from batch_gate import BatchGateRecord, write_record
+        record = BatchGateRecord(
+            verdict="pass",
+            head_sha=head_sha,
+            invocation=invocation,
+            timestamp="2026-10-05T12:00:00+08:00",
+            tree_sha=tree_sha,
+            writer="batch_gate.py",
+            undeclared=[],
+            excused_count=0,
+            suite_source="operator:/tmp/pre-existing-output.txt",
+        )
+        write_record(record, runtime, batch="batch-wrong-source")
+
+        result = prove(project, data_dir)
+
+        assert result["proven"] is False, (
+            f"wrong source must refuse; got: {result['reason']}"
+        )
+        assert "source" in result["reason"].lower()
+
+
 # ── AC-3: two-matching-record ambiguity ──────────────────────────────────────
 
 
@@ -686,7 +792,6 @@ class TestProofRecordsVerdictIdentity:
     """AC-5: the proof artifact names the consumed batch slug/path, candidate
     identity, invocation, and signature/provenance result."""
 
-    @pytest.mark.xfail(strict=True, reason="production gap: prove ignores batch-gate records")
     def test_proof_records_batch_slug(self, tmp_path: Path) -> None:
         """After consuming a batch verdict, the proof must name the batch."""
         project = _make_fake_project(tmp_path, failing=False)
@@ -716,7 +821,6 @@ class TestProofRecordsVerdictIdentity:
         assert "batch" in proof, "proof must record the consumed batch slug"
         assert "batch-2026-10-05q" in str(proof["batch"])
 
-    @pytest.mark.xfail(strict=True, reason="production gap: prove ignores batch-gate records")
     def test_proof_records_signature_provenance(self, tmp_path: Path) -> None:
         """After consuming a batch verdict, the proof must record the
         signature/provenance validation result."""

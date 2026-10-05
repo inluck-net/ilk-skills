@@ -134,6 +134,186 @@ def _write_proof(
     return p
 
 
+# ── batch-record validation ───────────────────────────────────────────────
+
+def _validate_batch_record(
+    runtime_dir: Path,
+    head: str,
+    invocation: str,
+    tree_sha: str | None = None,
+    repo: Path | None = None,
+) -> dict:
+    """Validate a batch-gate record for the release train.
+
+    Shared validator consumed by ``prove()``.  Performs:
+      1. Per-batch discovery — find the matching record in
+         ``runtime/batch-gates/``.
+      2. Structural validation via ``batch_gate.validate_record_detail``.
+      3. Trusted-writer enforcement — only records written by
+         ``_TRUSTED_WRITERS`` are accepted.
+      4. Source validation — records with an unacceptable ``suite_source``
+         are refused.
+      5. Provenance reporting — the result carries the validated record
+         and its source path.
+
+    Returns ``{"ok": True, "record": BatchGateRecord, "batch_slug": str,
+    "batch_path": str, "provenance": dict}`` on success.
+
+    Returns ``{"ok": False, "reason": str, "verdict_source": str}`` on
+    refusal.
+    """
+    from batch_gate import (
+        BatchGateRecord,
+        batch_record_path,
+        read_record,
+        record_path,
+        validate_record_detail,
+    )
+
+    # ── 1. Per-batch discovery ────────────────────────────────────────
+    #
+    # Scan ``runtime/batch-gates/`` for the canonical matching record.
+    # Exactly one match is required; zero means absent, >1 means
+    # ambiguous.  Do not select by filename, mtime, or the legacy
+    # latest-record alias.
+    batch_gates_dir = runtime_dir / "batch-gates"
+    matching_batches: list[tuple[Path, dict]] = []
+    if batch_gates_dir.is_dir():
+        for p in sorted(batch_gates_dir.glob("*.json")):
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            rec_head = data.get("head_sha", "")
+            rec_inv = data.get("invocation", "")
+            rec_tree = data.get("tree_sha")
+            head_match = rec_head == head
+            tree_match = bool(rec_tree and tree_sha and rec_tree == tree_sha)
+            inv_match = rec_inv == invocation
+            if (head_match or tree_match) and inv_match:
+                matching_batches.append((p, data))
+
+    if len(matching_batches) > 1:
+        names = ", ".join(p.stem for p, _ in matching_batches)
+        return {
+            "ok": False,
+            "reason": (
+                f"ambiguous batch verdict: {len(matching_batches)} records "
+                f"match the candidate — {names}"
+            ),
+            "verdict_source": "batch_verdict",
+        }
+
+    if not matching_batches:
+        # No per-batch record found — fall back to legacy batch-gate.json.
+        legacy_path = record_path(runtime_dir)
+        detail = validate_record_detail(
+            legacy_path, head, invocation, tree_sha, repo=repo,
+        )
+        if detail != "fresh":
+            return {
+                "ok": False,
+                "reason": f"batch verdict not fresh: {detail}",
+                "verdict_source": "batch_verdict",
+            }
+        record = read_record(runtime_dir)
+        if record is None:
+            return {
+                "ok": False,
+                "reason": "batch verdict absent: could not load record",
+                "verdict_source": "batch_verdict",
+            }
+        raw_data = json.loads(legacy_path.read_text(encoding="utf-8"))
+        batch_slug = None
+        batch_path = str(legacy_path)
+    else:
+        p, raw_data = matching_batches[0]
+        detail = validate_record_detail(
+            p, head, invocation, tree_sha, repo=repo,
+        )
+        if detail != "fresh":
+            return {
+                "ok": False,
+                "reason": f"batch verdict not fresh: {detail}",
+                "verdict_source": "batch_verdict",
+            }
+        record = read_record(runtime_dir, batch=p.stem)
+        if record is None:
+            return {
+                "ok": False,
+                "reason": f"batch verdict absent: could not load {p.name}",
+                "verdict_source": "batch_verdict",
+            }
+        batch_slug = p.stem
+        batch_path = str(p)
+
+    # ── 2. Trusted-writer enforcement ─────────────────────────────────
+    writer = (record.writer or "").strip()
+    if not writer:
+        return {
+            "ok": False,
+            "reason": (
+                "unsigned batch verdict: record has no writer field — "
+                "only records written by a trusted writer are accepted "
+                "as suite authority"
+            ),
+            "verdict_source": "batch_verdict",
+        }
+    if writer not in _TRUSTED_WRITERS:
+        return {
+            "ok": False,
+            "reason": (
+                f"untrusted batch verdict writer: '{writer}' — "
+                f"accepted writers: {', '.join(sorted(_TRUSTED_WRITERS))}"
+            ),
+            "verdict_source": "batch_verdict",
+        }
+
+    # ── 3. Source validation ──────────────────────────────────────────
+    #
+    # ``suite_source`` records how the suite output was obtained.
+    # ``"tool"`` means the standard verification_record.py --run-suite
+    # path ran it.  ``"operator:<path>"`` means the output was ingested
+    # from a pre-existing file.  Absent on legacy records — treat as
+    # "tool".
+    #
+    # Note: ``read_record`` does not populate ``suite_source`` from JSON
+    # (pre-existing gap), so we read it from the raw data discovered
+    # during per-batch scanning.
+    source = (raw_data.get("suite_source") or "tool").strip()
+    ACCEPTED_SOURCES = {"tool"}
+    # Also accept the prefix form "tool:" (future extensibility).
+    if not (source in ACCEPTED_SOURCES or source.startswith("tool:")):
+        return {
+            "ok": False,
+            "reason": (
+                f"wrong batch verdict source: '{source}' — "
+                f"only records produced by the standard verification "
+                f"pipeline are accepted as suite authority"
+            ),
+            "verdict_source": "batch_verdict",
+        }
+
+    # ── 4. Provenance reporting ───────────────────────────────────────
+    provenance = {
+        "writer": record.writer,
+        "suite_source": raw_data.get("suite_source"),
+        "tree_sha": record.tree_sha,
+        "head_sha": record.head_sha,
+        "verdict": record.verdict,
+    }
+
+    return {
+        "ok": True,
+        "record": record,
+        "batch_slug": batch_slug,
+        "batch_path": batch_path,
+        "provenance": provenance,
+    }
+
+
 # ── check ────────────────────────────────────────────────────────────────
 
 def check(project: Path, data_dir: Path) -> dict:
@@ -406,59 +586,39 @@ def prove(project: Path, data_dir: Path) -> dict:
             "new_failing_ids": [], "proof_file": proof_path,
         }
 
-    # ── Ambiguity check: multiple matching per-batch records ────────────
+    # ── Batch-record validation (shared validator) ───────────────────
     #
-    # When two or more per-batch records both match the candidate (same
-    # head/tree/invocation), prove must refuse as ambiguous.  The legacy
-    # batch-gate.json holds only the latest write, so this check scans
-    # the per-batch directory directly.
-    from batch_gate import read_record, batch_record_path  # noqa: E402
+    # Phase 1 validated structural freshness (head/tree/invocation).
+    # The shared validator now enforces trusted-writer, source, and
+    # ambiguity checks, and returns the validated record with its
+    # provenance.
+    validation = _validate_batch_record(
+        runtime_dir, head, invocation, tree_sha=tree_sha, repo=project,
+    )
 
-    batch_gates_dir = runtime_dir / "batch-gates"
-    matching_batches = []
-    if batch_gates_dir.is_dir():
-        for p in sorted(batch_gates_dir.glob("*.json")):
-            try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if not isinstance(data, dict):
-                continue
-            # Check if this record matches the candidate
-            rec_head = data.get("head_sha", "")
-            rec_inv = data.get("invocation", "")
-            rec_tree = data.get("tree_sha")
-            head_match = rec_head == head
-            tree_match = (rec_tree and tree_sha and rec_tree == tree_sha)
-            inv_match = rec_inv == invocation
-            if (head_match or tree_match) and inv_match:
-                matching_batches.append(p.stem)
-
-    if len(matching_batches) > 1:
-        reason = (
-            f"ambiguous batch verdict: {len(matching_batches)} records match "
-            f"the candidate — {', '.join(matching_batches)}"
-        )
+    if not validation["ok"]:
+        reason = validation["reason"]
         proof_path = _write_proof(data_dir, head, {
             "head": head, "last_tag": last_tag,
             "invocation": invocation,
-            "verdict": "refused", "reason": reason,
-            "verdict_source": "batch_verdict",
+            "verdict": "refused",
+            "reason": reason,
+            "verdict_source": validation.get("verdict_source", "batch_verdict"),
         })
         return {
             "proven": False, "reason": reason,
             "new_failing_ids": [], "proof_file": proof_path,
         }
 
-    # Load the validated batch record for proof metadata.
+    batch_record = validation["record"]
+    batch_slug = validation["batch_slug"]
+    batch_path = validation["batch_path"]
+    provenance = validation["provenance"]
 
-    batch_record = read_record(runtime_dir)
     failing_nodes = []
     undeclared_failures = []
-    if batch_record is not None:
-        # Extract undeclared failures from the record (the attribution split).
-        if batch_record.undeclared is not None:
-            undeclared_failures = list(batch_record.undeclared)
+    if batch_record.undeclared is not None:
+        undeclared_failures = list(batch_record.undeclared)
 
     # Double-check: a pass with undeclared failures must refuse.
     if undeclared_failures:
@@ -480,30 +640,6 @@ def prove(project: Path, data_dir: Path) -> dict:
 
     # Record carried ids (inherited from baseline_red evidence).
     carried_ids = []
-    if batch_record and batch_record.undeclared is not None:
-        # The batch record already accounted for baseline_red; carried_ids
-        # are the nodes that would be regressions without evidence.
-        pass  # carried_ids is populated from the record's attribution
-
-    # Batch metadata for the proof artifact.
-    batch_slug = None
-    batch_path = None
-    if batch_record is not None:
-        # Resolve the batch slug from the record path.
-        batch_gates_dir = runtime_dir / "batch-gates"
-        if batch_gates_dir.exists():
-            for p in batch_gates_dir.glob("*.json"):
-                try:
-                    import json as _json
-                    data = _json.loads(p.read_text(encoding="utf-8"))
-                    if (isinstance(data, dict)
-                            and data.get("head_sha") == head
-                            and data.get("invocation") == invocation):
-                        batch_slug = p.stem
-                        batch_path = str(p)
-                        break
-                except (OSError, _json.JSONDecodeError):
-                    continue
 
     # ── safety case (after Phase 1 passes) ────────────────────────────
     import safety_case  # noqa: E402
@@ -556,8 +692,9 @@ def prove(project: Path, data_dir: Path) -> dict:
         baseline_ids=baseline_ids,
         baseline_red_evidence=list(baseline_red_entries),
         carried_ids=carried_ids,
-        batch_slug=batch_slug,
+        batch=batch_slug,
         batch_path=batch_path,
+        provenance=provenance,
         verdict_source="batch_verdict",
         safety_case={
             "verdict": sc_result.get("verdict"),
@@ -603,6 +740,14 @@ def _next_patch(tag: str) -> str:
 
 
 _TRAILER_RE = __import__("re").compile(r"\[plan:([a-z0-9-]+)#")
+
+# Writers whose records the release train accepts as suite authority.
+# Only records stamped by ``write_record`` in ``batch_gate.py`` (writer
+# ``batch_gate.py``) or by the verification runner (writer
+# ``verify_attribution``) are trusted.  A hand-authored record — which
+# has no writer at all, or an unrecognised one — must not reach ``cut()``,
+# permit consumption, deployment, or notification.
+_TRUSTED_WRITERS = frozenset({"batch_gate.py", "verify_attribution"})
 
 
 def _gather_master_titles(project: Path, last_tag: str, plans_dir: Path) -> str:
