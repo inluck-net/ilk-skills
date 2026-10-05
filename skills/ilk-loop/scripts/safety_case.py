@@ -117,6 +117,8 @@ def _run_component(
             "--jobs", "4", "--json",
         ]
         budget = _BUDGETS["teeth"]
+        # Parse structured outcomes from teeth JSON output.
+        # This is filled after the subprocess completes.
     else:
         return {
             "name": name, "ok": False, "seconds": 0,
@@ -133,7 +135,8 @@ def _run_component(
             result = runner(cmd, cwd=project, timeout=effective_timeout)
             elapsed = time.monotonic() - t0
             exit_code = result.returncode
-            tail = (result.stdout + result.stderr).strip()
+            stdout_text = result.stdout
+            raw_output = (result.stdout + result.stderr).strip()
         else:
             result = subprocess.run(
                 cmd, cwd=project,
@@ -143,7 +146,8 @@ def _run_component(
             )
             elapsed = time.monotonic() - t0
             exit_code = result.returncode
-            tail = (result.stdout + result.stderr).strip()
+            stdout_text = result.stdout
+            raw_output = (result.stdout + result.stderr).strip()
     except subprocess.TimeoutExpired:
         elapsed = time.monotonic() - t0
         return {
@@ -161,9 +165,9 @@ def _run_component(
 
     ok = exit_code == 0 and elapsed <= budget
     # Truncate tail to last 500 chars for readability
-    tail_display = tail[-500:] if len(tail) > 500 else tail
+    tail_display = raw_output[-500:] if len(raw_output) > 500 else raw_output
 
-    return {
+    component = {
         "name": name,
         "ok": ok,
         "seconds": round(elapsed, 1),
@@ -171,6 +175,20 @@ def _run_component(
         "exit": exit_code,
         "tail": tail_display,
     }
+
+    # For teeth, parse the JSON output and include structured mutation outcomes.
+    # Use the full stdout (not truncated tail) for reliable JSON parsing.
+    if name == "teeth" and exit_code in (0, 1):
+        try:
+            teeth_data = json.loads(stdout_text.strip())
+            component["mutation_outcomes"] = [
+                {"id": r["id"], "outcome": r["outcome"]}
+                for r in teeth_data.get("results", [])
+            ]
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    return component
 
 
 # ── Record writer ───────────────────────────────────────────────────────────

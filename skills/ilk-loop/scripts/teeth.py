@@ -52,18 +52,36 @@ def _run_catcher(
     cwd: Path,
     env: dict[str, str],
     timeout_s: int,
-) -> tuple[int, str, str]:
-    """Run a catcher subprocess.  Returns (exit_code, stdout, stderr)."""
+) -> tuple[int, str, str, bool]:
+    """Run a catcher subprocess.
+
+    Returns ``(exit_code, stdout, stderr, timed_out)``.
+
+    The subprocess runs in its own process group (``start_new_session=True``)
+    so that on timeout the entire group can be killed, cleaning up any
+    grandchildren.
+    """
+    proc = subprocess.Popen(
+        argv, cwd=str(cwd), env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace",
+        start_new_session=True,
+    )
     try:
-        cp = subprocess.run(
-            argv, cwd=str(cwd), env=env,
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
-            timeout=timeout_s,
-        )
-        return cp.returncode, cp.stdout, cp.stderr
+        stdout, stderr = proc.communicate(timeout=timeout_s)
+        return proc.returncode, stdout, stderr, False
     except subprocess.TimeoutExpired:
-        return -1, "", "timeout"
+        # Kill the entire process group, cleaning up grandchildren.
+        try:
+            os.killpg(os.getpgid(proc.pid), 9)
+        except (ProcessLookupError, PermissionError):
+            pass
+        # Drain remaining output so pipes don't leak.
+        try:
+            stdout, stderr = proc.communicate(timeout=5)
+        except (subprocess.TimeoutExpired, OSError):
+            stdout, stderr = "", ""
+        return -1, stdout, stderr, True
 
 
 def _extract_archive(repo: Path, dest: Path) -> None:
@@ -170,7 +188,7 @@ def run(
         }
 
     # Deduplicate control runs: each unique catcher argv runs once.
-    control_cache: dict[tuple[str, ...], tuple[int, str, str]] = {}
+    control_cache: dict[tuple[str, ...], tuple[int, str, str, bool]] = {}
 
     def _run_control(argv_key: tuple[str, ...]) -> None:
         if argv_key in control_cache:
@@ -180,9 +198,9 @@ def run(
             _extract_archive(repo, control_root / "src")
             skill_home = control_root / "src" / "skills"
             env = _hermetic_env(control_root, skill_home)
-            exit_code, stdout, stderr = _run_catcher(
+            exit_code, stdout, stderr, timed_out = _run_catcher(
                 list(argv_key), control_root / "src", env, timeout_s)
-            control_cache[argv_key] = (exit_code, stdout, stderr)
+            control_cache[argv_key] = (exit_code, stdout, stderr, timed_out)
         finally:
             shutil.rmtree(control_root, ignore_errors=True)
 
@@ -207,7 +225,7 @@ def run(
         t1 = time.monotonic()
 
         # Guard: control must be green.
-        ctrl_exit, _, _ = control_cache[argv_key]
+        ctrl_exit, _, _, _ = control_cache[argv_key]
         if ctrl_exit != 0:
             return {
                 "id": mid, "outcome": "control-red",
@@ -231,13 +249,21 @@ def run(
 
             skill_home = mutant_root / "src" / "skills"
             env = _hermetic_env(mutant_root, skill_home)
-            exit_code, stdout, stderr = _run_catcher(
+            exit_code, stdout, stderr, timed_out = _run_catcher(
                 argv, mutant_root / "src", env, timeout_s)
 
             combined = stdout + "\n" + stderr
             if exit_code == 0:
                 return {
                     "id": mid, "outcome": "survived",
+                    "seconds": round(time.monotonic() - t1, 3),
+                    "catcher_exit": exit_code, "missing_expect": [],
+                }
+
+            # Timeout is its own outcome — never ambiguous with caught-red.
+            if timed_out:
+                return {
+                    "id": mid, "outcome": "timeout",
                     "seconds": round(time.monotonic() - t1, 3),
                     "catcher_exit": exit_code, "missing_expect": [],
                 }
@@ -251,7 +277,7 @@ def run(
                 }
 
             return {
-                "id": mid, "outcome": "killed",
+                "id": mid, "outcome": "caught-red",
                 "seconds": round(time.monotonic() - t1, 3),
                 "catcher_exit": exit_code, "missing_expect": [],
             }
@@ -267,8 +293,8 @@ def run(
     order = {m["id"]: i for i, m in enumerate(all_mutations)}
     results.sort(key=lambda r: order.get(r["id"], 999))
 
-    all_killed = all(r["outcome"] == "killed" for r in results)
-    verdict = "pass" if all_killed else "fail"
+    all_caught = all(r["outcome"] == "caught-red" for r in results)
+    verdict = "pass" if all_caught else "fail"
 
     return {
         "verdict": verdict,

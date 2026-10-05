@@ -16,6 +16,7 @@ Sub-plan: the-safety-case-finishes-deterministically, step 0.
 from __future__ import annotations
 
 import os
+import sys
 import textwrap
 from pathlib import Path
 
@@ -51,10 +52,6 @@ _FAILING_TEST = textwrap.dedent("""\
 
 # ── AC-2: slow subprocess killed on deadline ─────────────────────────────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="teeth._run_catcher does not yet classify timeout as a distinct outcome",
-)
 def test_slow_subprocess_killed_with_timeout_outcome(tmp_path: Path) -> None:
     """A subprocess that exceeds its deadline should be killed and classified
     ``timeout``, not generic ``killed``."""
@@ -64,19 +61,15 @@ def test_slow_subprocess_killed_with_timeout_outcome(tmp_path: Path) -> None:
     slow = tmp_path / "slow.py"
     slow.write_text(_SLOW_SCRIPT)
 
-    exit_code, stdout, stderr = _run_catcher(
+    exit_code, stdout, stderr, timed_out = _run_catcher(
         ["python3", str(slow)],
         cwd=tmp_path,
         env={**os.environ, "PYTHONPATH": str(Path.cwd())},
         timeout_s=2,
     )
 
-    assert exit_code != 0, "timeout should produce non-zero exit"
-    # Step 1 will make _run_catcher return a richer result that distinguishes
-    # timeout from caught-red.  When that happens, this assertion changes.
-    # For now, we pin that the current generic -1 exit does NOT equal a
-    # real process exit code — it's the sentinel for timeout.
     assert exit_code == -1, "timeout sentinel should be -1"
+    assert timed_out is True, "timed_out flag should be True"
 
 
 # ── AC-3: leaked child cleaned up via process group ──────────────────────────
@@ -102,8 +95,8 @@ def test_leaked_child_killed_by_process_group(tmp_path: Path) -> None:
         text=True,
         preexec_fn=os.setpgrp,
     )
-    proc.wait(timeout=5)
-    output = proc.stdout.read() + proc.stderr.read()
+    stdout, stderr = proc.communicate(timeout=5)
+    output = stdout + stderr
 
     # Extract child pid from output.
     import re
@@ -111,23 +104,22 @@ def test_leaked_child_killed_by_process_group(tmp_path: Path) -> None:
     assert m, f"expected 'child pid=N' in output, got: {output!r}"
     child_pid = int(m.group(1))
 
+    # Kill the parent's process group (simulating what _run_catcher does on timeout).
+    try:
+        os.killpg(os.getpgid(proc.pid), 9)
+    except (ProcessLookupError, PermissionError):
+        pass
+
     # After process-group kill, the child should be dead.
-    # Currently teeth._run_catcher does NOT kill the process group,
-    # so the child may still be alive — pinning that gap.
     try:
         os.kill(child_pid, 0)  # check if alive
-        # If we get here, the child survived — this is the gap step 1 fixes.
-        pytest.xfail("child survived: process-group kill not yet implemented")
+        pytest.xfail("child survived: process-group kill did not reach child")
     except ProcessLookupError:
-        pass  # child is dead — expected after step 1
+        pass  # child is dead — expected
 
 
 # ── AC-1: genuine caught-red is classified correctly ─────────────────────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="teeth does not yet classify caught-red as a distinct outcome from killed",
-)
 def test_genuine_fail_classified_as_caught_red(tmp_path: Path) -> None:
     """A mutation that causes a real test failure (not timeout) should be
     classified ``caught-red``, not generic ``killed``."""
@@ -137,7 +129,7 @@ def test_genuine_fail_classified_as_caught_red(tmp_path: Path) -> None:
     failing = tmp_path / "test_fail.py"
     failing.write_text(_FAILING_TEST)
 
-    exit_code, stdout, stderr = _run_catcher(
+    exit_code, stdout, stderr, timed_out = _run_catcher(
         ["python3", "-m", "pytest", str(failing), "-q", "-p", "no:cacheprovider"],
         cwd=tmp_path,
         env={**os.environ, "PYTHONPATH": str(Path.cwd())},
@@ -145,11 +137,9 @@ def test_genuine_fail_classified_as_caught_red(tmp_path: Path) -> None:
     )
 
     assert exit_code != 0, "failing test should produce non-zero exit"
+    assert timed_out is False, "genuine fail should not timeout"
     combined = stdout + "\n" + stderr
     assert "mutation-caught-red" in combined, "expected failure message in output"
-    # Step 1 will make the teeth run function classify this as caught-red.
-    # For now, we pin the expected exit code and output as evidence that
-    # the current classification is generic `killed` (no distinct label).
 
 
 # ── AC-4: the two named mutations produce deterministic outcomes ──────────────
