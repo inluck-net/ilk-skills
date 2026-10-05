@@ -239,7 +239,6 @@ class TestCanonicalRecordSelection:
             f"a fresh pass verdict must advance proof; got: {result['reason']}"
         )
 
-    @pytest.mark.xfail(strict=True, reason="production gap: prove ignores batch-gate records and always reruns suite")
     def test_prove_does_not_rerun_suite_on_pass(self, tmp_path: Path) -> None:
         """AC-2: a matching pass with zero attributed failures must NOT invoke
         the configured full-suite command a second time."""
@@ -299,11 +298,7 @@ class TestRefusalOnAbsentRecord:
 
         result = prove(project, data_dir)
 
-        # Currently prove will run the suite (ignoring batch-gate), but
-        # after step 1 it must refuse because no record exists.
-        # For step 0 we just assert it doesn't crash — the xfail on the
-        # positive cases captures the production gap.
-        assert result["proven"] is False or result["proven"] is True
+        assert result["proven"] is False, "absent batch-gate record must refuse"
 
 
 class TestRefusalOnStaleRecord:
@@ -330,9 +325,7 @@ class TestRefusalOnStaleRecord:
 
         result = prove(project, data_dir)
 
-        # After step 1: must refuse on stale record.
-        # Step 0: just verify no crash.
-        assert result["proven"] is False or result["proven"] is True
+        assert result["proven"] is False, "stale head must refuse"
 
 
 class TestRefusalOnStaleInvocation:
@@ -361,9 +354,7 @@ class TestRefusalOnStaleInvocation:
 
         result = prove(project, data_dir)
 
-        # After step 1: must refuse on stale invocation.
-        # Step 0: just verify no crash.
-        assert result["proven"] is False or result["proven"] is True
+        assert result["proven"] is False, "stale invocation must refuse"
 
 
 class TestRefusalOnFailVerdict:
@@ -427,9 +418,7 @@ class TestRefusalOnErrorVerdict:
 
         result = prove(project, data_dir)
 
-        # After step 1: must refuse on error verdict.
-        # Step 0: just verify no crash.
-        assert result["proven"] is False or result["proven"] is True
+        assert result["proven"] is False, "error verdict must refuse"
 
 
 class TestRefusalOnMalformedRecord:
@@ -459,9 +448,7 @@ class TestRefusalOnMalformedRecord:
 
         result = prove(project, data_dir)
 
-        # After step 1: must refuse on unsigned record.
-        # Step 0: just verify no crash.
-        assert result["proven"] is False or result["proven"] is True
+        assert result["proven"] is False, "unsigned record must refuse"
 
 
 class TestRefusalOnIncompleteRecord:
@@ -487,9 +474,7 @@ class TestRefusalOnIncompleteRecord:
 
         result = prove(project, data_dir)
 
-        # After step 1: must refuse on incomplete record.
-        # Step 0: just verify no crash.
-        assert result["proven"] is False or result["proven"] is True
+        assert result["proven"] is False, "incomplete record must refuse"
 
 
 # ── AC-3: two-matching-record ambiguity ──────────────────────────────────────
@@ -535,9 +520,7 @@ class TestAmbiguousRecordsRefuse:
 
         result = prove(project, data_dir)
 
-        # After step 1: must refuse on ambiguity.
-        # Step 0: just verify no crash.
-        assert result["proven"] is False or result["proven"] is True
+        assert result["proven"] is False, "ambiguous records must refuse"
 
 
 # ── AC-4: kernel and safety-case still fail closed ──────────────────────────
@@ -822,7 +805,6 @@ class TestBatchVerdictIsSuiteAuthority:
         )
         assert result["new_failing_ids"] == []
 
-    @pytest.mark.xfail(strict=True, reason="production gap: prove ignores fail verdict and reruns suite — suite is green, so proven=True")
     def test_failing_verdict_refuses_even_if_suite_would_pass(self, tmp_path: Path) -> None:
         """A fail verdict must refuse even if a second suite run would pass
         (order-dependent test results).

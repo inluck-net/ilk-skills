@@ -406,8 +406,51 @@ def prove(project: Path, data_dir: Path) -> dict:
             "new_failing_ids": [], "proof_file": proof_path,
         }
 
+    # ── Ambiguity check: multiple matching per-batch records ────────────
+    #
+    # When two or more per-batch records both match the candidate (same
+    # head/tree/invocation), prove must refuse as ambiguous.  The legacy
+    # batch-gate.json holds only the latest write, so this check scans
+    # the per-batch directory directly.
+    from batch_gate import read_record, batch_record_path  # noqa: E402
+
+    batch_gates_dir = runtime_dir / "batch-gates"
+    matching_batches = []
+    if batch_gates_dir.is_dir():
+        for p in sorted(batch_gates_dir.glob("*.json")):
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            # Check if this record matches the candidate
+            rec_head = data.get("head_sha", "")
+            rec_inv = data.get("invocation", "")
+            rec_tree = data.get("tree_sha")
+            head_match = rec_head == head
+            tree_match = (rec_tree and tree_sha and rec_tree == tree_sha)
+            inv_match = rec_inv == invocation
+            if (head_match or tree_match) and inv_match:
+                matching_batches.append(p.stem)
+
+    if len(matching_batches) > 1:
+        reason = (
+            f"ambiguous batch verdict: {len(matching_batches)} records match "
+            f"the candidate — {', '.join(matching_batches)}"
+        )
+        proof_path = _write_proof(data_dir, head, {
+            "head": head, "last_tag": last_tag,
+            "invocation": invocation,
+            "verdict": "refused", "reason": reason,
+            "verdict_source": "batch_verdict",
+        })
+        return {
+            "proven": False, "reason": reason,
+            "new_failing_ids": [], "proof_file": proof_path,
+        }
+
     # Load the validated batch record for proof metadata.
-    from batch_gate import read_record  # noqa: E402
 
     batch_record = read_record(runtime_dir)
     failing_nodes = []

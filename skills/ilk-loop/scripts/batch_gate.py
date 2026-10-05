@@ -664,6 +664,14 @@ def validate_record_detail(
             f"writer produces this; it is the shape a hand-authored record "
             f"takes. The enforced gate result, not this file, is the evidence."
         )
+    # A record without a writer is unsigned — no component vouches for it.
+    # Only write_record stamps WRITER_ID, so absence means the record was
+    # not produced by the canonical writer.
+    if not str(data.get("writer") or "").strip():
+        return (
+            f"unsigned: record has no writer field — only records written by "
+            f"'{WRITER_ID}' are accepted as suite authority"
+        )
     if not _head_is_current(data, expected_head_sha, expected_tree_sha, repo=repo):
         # When trees differ, name the changed paths (up to 5) instead of
         # just the commit sha — more useful for debugging.
