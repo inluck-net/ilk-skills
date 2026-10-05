@@ -566,7 +566,7 @@ class TestDelayedPidCreationSettles:
 
         # Create release dir with a scheduler.sh so ps can find releases/<tag>/
         release_dir = tmp_path / "releases" / "v0.0.2"
-        release_dir.mkdir(parents=True)
+        release_dir.mkdir(parents=True, exist_ok=True)
         script = release_dir / "scheduler.sh"
         script.write_text("#!/bin/bash\nsleep 60\n")
         script.chmod(0o755)
@@ -628,7 +628,7 @@ class TestDelayedStatusOkSettles:
 
         # Create release dir with a scheduler.sh so ps can find releases/<tag>/
         release_dir = tmp_path / "releases" / "v0.0.2"
-        release_dir.mkdir(parents=True)
+        release_dir.mkdir(parents=True, exist_ok=True)
         script = release_dir / "scheduler.sh"
         script.write_text("#!/bin/bash\nsleep 60\n")
         script.chmod(0o755)
@@ -731,7 +731,7 @@ class TestPersistentTagMismatchAtDeadline:
 
         # Create release dir with a scheduler.sh so ps can find releases/<tag>/
         release_dir = tmp_path / "releases" / "v0.0.2"
-        release_dir.mkdir(parents=True)
+        release_dir.mkdir(parents=True, exist_ok=True)
         script = release_dir / "scheduler.sh"
         script.write_text("#!/bin/bash\nsleep 60\n")
         script.chmod(0o755)
@@ -830,24 +830,14 @@ class TestRollbackSmokeUsesSameContract:
         assert call_count["n"] > 2
 
 
-# ── Step 0: xfail pins for the production default-value bypass ─────────────
+# ── Step 0-1: production default-value bypass coverage ──────────────────────
 #
-# These tests reproduce the v0.9.150 defect: when deploy() is called with
-# default settle parameters (the production path), _smoke falls through to
-# single-shot because its dispatch condition checks
-#   `clock is not None or sleeper is not None or deadline_sec != 30.0 or poll_interval_sec != 2.0`
-# and all four are false for the default call.  A delayed daemon startup
-# that _settle would handle correctly instead fails immediately via the
-# single-shot path.
-#
-# These pins are xfail(strict=True) — they must FAIL on the current code
-# and PASS once step 1 removes the default-value bypass.
+# Step 0 added xfail(strict=True) pins that reproduced the v0.9.150 defect:
+# deploy() with default settle parameters bypassed bounded settling because
+# _smoke dispatched on non-default values only.  Step 1 removed the dispatch
+# so _smoke always uses _settle, and these tests now pass.
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="production default settle args select single-shot instead of bounded settling",
-)
 class TestDeployWithDefaultSettleArgsSettles:
     """Production deploy with default settle args must use bounded settling.
 
@@ -863,8 +853,9 @@ class TestDeployWithDefaultSettleArgsSettles:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
+        # Create release dir with a scheduler.sh so ps can find releases/<tag>/
         release_dir = tmp_path / "releases" / "v0.0.2"
-        release_dir.mkdir(parents=True)
+        release_dir.mkdir(parents=True, exist_ok=True)
         script = release_dir / "scheduler.sh"
         script.write_text("#!/bin/bash\nsleep 60\n")
         script.chmod(0o755)
@@ -873,18 +864,24 @@ class TestDeployWithDefaultSettleArgsSettles:
         pid_dir.mkdir(parents=True, exist_ok=True)
         pid_file = pid_dir / "scheduler.pid"
 
+        # Pre-bounce PID (stale, not alive) — ensures deploy enters _smoke
+        pid_file.write_text("99999999")
+
         # Daemon starts after 3 poll cycles
         poll_count = {"n": 0}
         proc_holder: list[subprocess.Popen] = []
 
+        def _bounce_with_restart(tag: str) -> int:
+            """Simulate bounce: start a new process from releases/<tag>/."""
+            proc = subprocess.Popen(["bash", str(script)])
+            _LAUNCHED_PROCS.append(proc)
+            proc_holder.append(proc)
+            pid_file.write_text(str(proc.pid))
+            return 1
+
         def _status_delayed(tag: str, cwd: Path | None = None) -> str:
             poll_count["n"] += 1
             if poll_count["n"] >= 3:
-                if not proc_holder:
-                    proc = subprocess.Popen(["bash", str(script)])
-                    _LAUNCHED_PROCS.append(proc)
-                    proc_holder.append(proc)
-                    pid_file.write_text(str(proc.pid))
                 return "ok"
             return "unreachable"
 
@@ -895,7 +892,7 @@ class TestDeployWithDefaultSettleArgsSettles:
             release_cmd=_make_release_cmd(
                 allow_tags={"v0.0.2"}, releases_root=releases_root,
             ),
-            bounce_cmd=lambda tag: 1,
+            bounce_cmd=_bounce_with_restart,
             status_cmd=_status_delayed,
             pid_file=pid_file,
             # All settle args at their documented defaults — the production path
@@ -907,10 +904,6 @@ class TestDeployWithDefaultSettleArgsSettles:
         assert poll_count["n"] > 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="production default settle args select single-shot instead of bounded settling",
-)
 class TestRollbackWithDefaultSettleArgsSettles:
     """Rollback smoke with default settle args must use bounded settling.
 
@@ -925,8 +918,9 @@ class TestRollbackWithDefaultSettleArgsSettles:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
+        # Create release dir for v0.0.1 so ps can find releases/<tag>/
         release_dir = tmp_path / "releases" / "v0.0.1"
-        release_dir.mkdir(parents=True)
+        release_dir.mkdir(parents=True, exist_ok=True)
         script = release_dir / "scheduler.sh"
         script.write_text("#!/bin/bash\nsleep 60\n")
         script.chmod(0o755)
@@ -935,22 +929,28 @@ class TestRollbackWithDefaultSettleArgsSettles:
         pid_dir.mkdir(parents=True, exist_ok=True)
         pid_file = pid_dir / "scheduler.pid"
 
+        # Pre-bounce PID (stale, not alive) — ensures deploy enters _smoke
+        pid_file.write_text("99999999")
+
         # Forward always fails; rollback succeeds after a delay
         call_count = {"n": 0}
         proc_holder: list[subprocess.Popen] = []
+
+        def _bounce_with_restart(tag: str) -> int:
+            """Simulate bounce: start a new process from releases/<tag>/."""
+            proc = subprocess.Popen(["bash", str(script)])
+            _LAUNCHED_PROCS.append(proc)
+            proc_holder.append(proc)
+            pid_file.write_text(str(proc.pid))
+            return 1
 
         def _status_rollback_delayed(tag: str, cwd: Path | None = None) -> str:
             call_count["n"] += 1
             if tag == "v0.0.2":
                 return "tag-mismatch"
-            # v0.0.1 (rollback target): delayed start
+            # v0.0.1 (rollback target): first 3 calls return unreachable
             if call_count["n"] <= 3:
                 return "unreachable"
-            if not proc_holder:
-                proc = subprocess.Popen(["bash", str(script)])
-                _LAUNCHED_PROCS.append(proc)
-                proc_holder.append(proc)
-                pid_file.write_text(str(proc.pid))
             return "ok"
 
         result = deploy(
@@ -960,7 +960,7 @@ class TestRollbackWithDefaultSettleArgsSettles:
             release_cmd=_make_release_cmd(
                 allow_tags={"v0.0.2", "v0.0.1"}, releases_root=releases_root,
             ),
-            bounce_cmd=lambda tag: 1,
+            bounce_cmd=_bounce_with_restart,
             status_cmd=_status_rollback_delayed,
             pid_file=pid_file,
             # All settle args at their documented defaults — the production path

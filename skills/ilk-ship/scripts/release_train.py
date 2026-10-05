@@ -1659,65 +1659,23 @@ def _smoke(
 ) -> tuple[bool, str]:
     """Smoke check: status ok + pid alive + script under releases/<tag>/.
 
-    When settle parameters are provided, polls with bounded settling.
-    Without them, performs a single-shot check (backward compatible).
+    Always uses bounded settling via _settle.  When the daemon is
+    already up, _settle returns on the first poll cycle — no slower
+    than the former single-shot path.  When the daemon is starting
+    late, _settle polls until the deadline rather than failing
+    immediately.
 
     Returns (ok, reason).
     """
-    if clock is not None or sleeper is not None or deadline_sec != 30.0 or poll_interval_sec != 2.0:
-        # Bounded settling mode — use settle helper when any settle
-        # parameter is explicitly provided.
-        result = _settle(
-            tag, status_cmd, pid_file,
-            deadline_sec=deadline_sec,
-            poll_interval_sec=poll_interval_sec,
-            clock=clock,
-            sleeper=sleeper,
-            cwd=cwd,
-        )
-        return result["ok"], result["terminal_reason"] if not result["ok"] else ""
-
-    # Single-shot check (backward compatible — no settling)
-    # Status check — pass cwd if the status_cmd accepts it
-    try:
-        status = status_cmd(tag, cwd=cwd)  # type: ignore[operator]
-    except TypeError:
-        status = status_cmd(tag)
-    if status != "ok":
-        return False, f"status={status}"
-
-    # Pid check
-    if not pid_file.exists():
-        return False, "scheduler.pid missing"
-    try:
-        pid = int(pid_file.read_text().strip())
-    except (ValueError, OSError):
-        return False, "scheduler.pid unreadable"
-
-    if not _is_pid_alive(pid):
-        return False, f"scheduler pid {pid} not alive"
-
-    # Command-line check: script path must mention releases/<tag>/
-    # Also check through symlinks (e.g. current/ -> releases/<tag>/)
-    try:
-        r = subprocess.run(
-            ["ps", "-o", "command=", "-p", str(pid)],
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
-            timeout=10,
-        )
-        cmd = r.stdout.strip()
-        if f"releases/{tag}/" not in cmd:
-            # Try resolving symlinks in the command arguments
-            resolved = " ".join(
-                os.path.realpath(w) for w in cmd.split()
-            )
-            if f"releases/{tag}/" not in resolved:
-                return False, f"scheduler command does not mention releases/{tag}/"
-    except (OSError, subprocess.TimeoutExpired):
-        return False, "could not read scheduler command"
-
-    return True, ""
+    result = _settle(
+        tag, status_cmd, pid_file,
+        deadline_sec=deadline_sec,
+        poll_interval_sec=poll_interval_sec,
+        clock=clock,
+        sleeper=sleeper,
+        cwd=cwd,
+    )
+    return result["ok"], result["terminal_reason"] if not result["ok"] else ""
 
 
 def _read_pid(pid_file: Path) -> int | None:
