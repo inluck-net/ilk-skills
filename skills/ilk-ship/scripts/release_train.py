@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 
 # ── path setup ───────────────────────────────────────────────────────────
@@ -873,6 +874,116 @@ def deploy(
         }
 
 
+def _deploy_all_hosts(
+    project: Path,
+    tag: str,
+    data_dir: Path,
+    *,
+    hosts: list[str] | None = None,
+    local_hosts: list[str] | None = None,
+    deploy_fn: Callable | None = None,
+) -> dict:
+    """Deploy to every configured host, tracking per-host results.
+
+    Iterates ``ship.hosts``, choosing local or remote adapters based on
+    ``local_hosts``.  One host's failure cannot hide another host's success.
+
+    Args:
+        project: Project path.
+        tag: Release tag to deploy.
+        data_dir: Project data root.
+        hosts: Explicit host list.  If None, reads from config.
+        local_hosts: Hosts that are this machine.  If None, uses first host.
+        deploy_fn: Injectable deploy function (default: ``deploy``).
+
+    Returns ``{"tag", "hosts": {host: result_dict}, "exit_code"}``.
+    """
+    _deploy = deploy_fn if deploy_fn is not None else deploy
+
+    # Resolve hosts
+    if hosts is None:
+        config_path = data_dir / "runtime" / "ship-config.json"
+        if config_path.exists():
+            try:
+                cfg = json.loads(config_path.read_text())
+                hosts = cfg.get("ship", {}).get("hosts", [])
+            except (json.JSONDecodeError, KeyError):
+                hosts = []
+        else:
+            launch_config = project / ".ilk-launch.json"
+            if launch_config.exists():
+                try:
+                    cfg = json.loads(launch_config.read_text())
+                    hosts = cfg.get("ship", {}).get("hosts", [])
+                except (json.JSONDecodeError, KeyError):
+                    hosts = []
+            else:
+                hosts = []
+
+    if not hosts:
+        # No hosts configured — deploy locally (backward compatible)
+        result = _deploy(project, tag, data_dir)
+        return {"tag": tag, "hosts": {"_local": result}, "exit_code": result.get("exit_code", 0)}
+
+    if local_hosts is None:
+        local_hosts = [hosts[0]]  # first host is local by default
+
+    host_results: dict[str, dict] = {}
+    worst_exit = 0
+    deployed_hosts: list[str] = []
+    rolled_back_hosts: list[str] = []
+    untouched_hosts: list[str] = []
+    unverified_hosts: list[str] = []
+
+    for host in hosts:
+        is_local = host in local_hosts if local_hosts else False
+
+        if is_local:
+            # Local deploy — use the existing deploy() function
+            try:
+                result = _deploy(project, tag, data_dir)
+                host_results[host] = result
+            except SystemExit as exc:
+                exit_code = exc.code if isinstance(exc.code, int) else 1
+                host_results[host] = {"exit_code": exit_code, "deployed": False, "host": host}
+            except Exception as exc:
+                host_results[host] = {"exit_code": 6, "deployed": False, "reason": str(exc), "host": host}
+        else:
+            # Remote deploy — record as unverified (SSH deploy not yet implemented)
+            # This is a placeholder: real remote deploy would SSH and run the
+            # release train on the remote host.
+            host_results[host] = {
+                "exit_code": 2,
+                "deployed": False,
+                "reason": "remote deploy not yet implemented",
+                "host": host,
+                "transport": "ssh",
+            }
+
+        exit_code = host_results[host].get("exit_code", 0)
+        if exit_code > worst_exit:
+            worst_exit = exit_code
+
+        if host_results[host].get("deployed"):
+            deployed_hosts.append(host)
+        elif host_results[host].get("rolled_back_to"):
+            rolled_back_hosts.append(host)
+        elif exit_code == 2:
+            unverified_hosts.append(host)
+        else:
+            untouched_hosts.append(host)
+
+    return {
+        "tag": tag,
+        "hosts": host_results,
+        "exit_code": worst_exit,
+        "deployed": deployed_hosts,
+        "rolled_back": rolled_back_hosts,
+        "untouched": untouched_hosts,
+        "unverified": unverified_hosts,
+    }
+
+
 def _smoke(
     tag: str,
     status_cmd: Callable[[str], str],
@@ -967,6 +1078,128 @@ def _release_lock(lock_file: Path) -> None:
         pass
 
 
+def _check_permits(
+    data_dir: Path,
+    project: Path,
+    check_result: dict,
+    *,
+    hosts: list[str] | None = None,
+    consume: bool = False,
+) -> dict:
+    """Check that every configured host has a fresh, valid permit.
+
+    Permits live at ``<data_dir>/runtime/permits/<host>.json``.  Each must
+    contain: project, base_tag, candidate_head, host, issued_at, expires_at,
+    consumed, revoked.
+
+    Args:
+        data_dir: The project data root.
+        project: The project path (for project_key resolution).
+        check_result: The check() result (provides last_tag and head).
+        hosts: Explicit host list.  If None, reads from
+            ``<data_dir>/runtime/ship-config.json`` → ``ship.hosts``.
+        consume: If True, atomically mark permits as consumed.
+
+    Returns ``{"ok": True}`` when all permits are valid, or
+    ``{"ok": False, "reason": "..."}`` on refusal.
+    """
+    import hashlib
+
+    # Resolve hosts
+    if hosts is None:
+        config_path = data_dir / "runtime" / "ship-config.json"
+        if config_path.exists():
+            try:
+                cfg = json.loads(config_path.read_text())
+                hosts = cfg.get("ship", {}).get("hosts", [])
+            except (json.JSONDecodeError, KeyError):
+                hosts = []
+        else:
+            # Also try the project's .ilk-launch.json
+            launch_config = project / ".ilk-launch.json"
+            if launch_config.exists():
+                try:
+                    cfg = json.loads(launch_config.read_text())
+                    hosts = cfg.get("ship", {}).get("hosts", [])
+                except (json.JSONDecodeError, KeyError):
+                    hosts = []
+            else:
+                hosts = []
+
+    if not hosts:
+        return {"ok": True}  # no hosts configured → no permits needed
+
+    # Resolve expected bindings
+    base_tag = check_result.get("last_tag", "")
+    candidate_head = check_result.get("head", "")
+
+    # Resolve project key
+    if str(_LOOP_SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(_LOOP_SCRIPTS))
+    from ilk_paths import project_key  # noqa: E402
+    project_name = project_key(project)
+
+    permit_dir = data_dir / "runtime" / "permits"
+    now = datetime.now(timezone.utc)
+    permits_to_consume: list[Path] = []
+
+    for host in hosts:
+        permit_path = permit_dir / f"{host}.json"
+        if not permit_path.exists():
+            return {"ok": False, "reason": f"missing permit for host {host}"}
+
+        try:
+            permit = json.loads(permit_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return {"ok": False, "reason": f"corrupt permit for host {host}"}
+
+        # Check required fields
+        required = {"project", "base_tag", "candidate_head", "host", "expires_at", "consumed", "revoked"}
+        missing = required - set(permit.keys())
+        if missing:
+            return {"ok": False, "reason": f"partial permit for host {host}: missing {missing}"}
+
+        # Check revoked
+        if permit.get("revoked", False):
+            return {"ok": False, "reason": f"revoked permit for host {host}"}
+
+        # Check consumed
+        if permit.get("consumed", False):
+            return {"ok": False, "reason": f"consumed permit for host {host}"}
+
+        # Check expiry
+        try:
+            expires_at = datetime.fromisoformat(permit["expires_at"])
+            if now > expires_at:
+                return {"ok": False, "reason": f"stale permit for host {host}"}
+        except (ValueError, TypeError):
+            return {"ok": False, "reason": f"invalid expiry in permit for host {host}"}
+
+        # Check bindings
+        if permit.get("project") != project_name:
+            return {"ok": False, "reason": f"crossed permit for host {host}: project mismatch"}
+        if base_tag and permit.get("base_tag") != base_tag:
+            return {"ok": False, "reason": f"crossed permit for host {host}: base_tag mismatch"}
+        if candidate_head and permit.get("candidate_head") != candidate_head:
+            return {"ok": False, "reason": f"crossed permit for host {host}: candidate_head mismatch"}
+
+        if consume:
+            permits_to_consume.append(permit_path)
+
+    # Atomic consumption: mark all permits as consumed
+    if consume and permits_to_consume:
+        for permit_path in permits_to_consume:
+            try:
+                permit = json.loads(permit_path.read_text())
+                permit["consumed"] = True
+                permit["consumed_at"] = now.isoformat()
+                permit_path.write_text(json.dumps(permit, indent=2) + "\n")
+            except (OSError, json.JSONDecodeError) as exc:
+                return {"ok": False, "reason": f"failed to consume permit {permit_path.name}: {exc}"}
+
+    return {"ok": True}
+
+
 def run(
     project: Path,
     data_dir: Path,
@@ -977,6 +1210,7 @@ def run(
     deploy_fn: Callable | None = None,
     notify_script: str | None = None,
     deploy_exit_code: int | None = None,
+    hosts: list[str] | None = None,
 ) -> dict:
     """Run the full release train: check → prove → cut → deploy.
 
@@ -1021,6 +1255,17 @@ def run(
             )
             return {"exit_code": 3, "reason": reason}
 
+        # ── 1b. permit check ───────────────────────────────────────────
+        permit_result = _check_permits(data_dir, project, check_result, hosts=hosts, consume=False)
+        if not permit_result.get("ok"):
+            reason = permit_result.get("reason", "permit check failed")
+            write_audit(
+                "escalated", project_name,
+                reason=f"permits refused: {reason}",
+            )
+            _notify("blocked", project_name, f"permits refused: {reason}", notify_script)
+            return {"exit_code": 4, "reason": f"permits refused: {reason}"}
+
         # ── 2. prove ───────────────────────────────────────────────────
         prove_result = _prove(project, data_dir)
         if not prove_result.get("proven"):
@@ -1044,66 +1289,120 @@ def run(
             _notify("blocked", project_name, f"cut refused: {reason}", notify_script)
             return {"exit_code": 4, "reason": f"cut refused: {reason}"}
 
+        # ── 3b. consume permits ────────────────────────────────────────
+        consume_result = _check_permits(
+            data_dir, project, check_result, hosts=hosts, consume=True,
+        )
+        if not consume_result.get("ok"):
+            reason = consume_result.get("reason", "permit consumption failed")
+            write_audit(
+                "escalated", project_name,
+                reason=f"permit consumption refused: {reason}",
+            )
+            _notify("blocked", project_name, f"permit consumption refused: {reason}", notify_script)
+            return {"exit_code": 4, "reason": f"permit consumption refused: {reason}"}
+
         # ── 4. deploy ──────────────────────────────────────────────────
-        try:
-            deploy_result = _deploy(project, tag, data_dir)
-        except SystemExit as exc:
-            # deploy raises SystemExit(5) on rollback, SystemExit(6) on
-            # both-smokes-fail, SystemExit(4) on extraction failure.
-            exit_code = exc.code if isinstance(exc.code, int) else 1
-            if exit_code == 5:
-                # Rollback succeeded
+        if hosts:
+            # Multi-host deploy
+            deploy_result = _deploy_all_hosts(
+                project, tag, data_dir, hosts=hosts, deploy_fn=_deploy,
+            )
+            exit_code = deploy_result.get("exit_code", 0)
+            deployed = deploy_result.get("deployed", [])
+            rolled_back = deploy_result.get("rolled_back", [])
+            unverified = deploy_result.get("unverified", [])
+
+            if exit_code == 0:
+                write_audit("released", project_name, tag=tag, outcome="deployed")
+                write_event("released", project_name, tag=tag)
+                return {
+                    "exit_code": 0,
+                    "tag": tag,
+                    "deployed": True,
+                    "rolled_back": False,
+                    "hosts": deploy_result.get("hosts", {}),
+                }
+            elif rolled_back:
                 write_audit(
                     "rolled-back", project_name,
-                    tag=tag, reason="smoke failed, rolled back",
+                    tag=tag, reason=f"hosts rolled back: {', '.join(rolled_back)}",
                 )
                 write_event("rolled-back", project_name, tag=tag)
                 _notify("blocked", project_name, f"deploy rolled back {tag}", notify_script)
-                return {"exit_code": 5, "tag": tag, "deployed": False, "rolled_back": True}
-            elif exit_code == 6:
-                # Both smokes failed
-                write_audit(
-                    "rolled-back", project_name,
-                    tag=tag, reason="both smokes failed",
-                    severity="critical",
-                )
-                write_event("rolled-back", project_name, tag=tag, severity="critical")
-                _notify("blocked", project_name, f"deploy CRITICAL: both smokes failed {tag}", notify_script)
-                return {"exit_code": 6, "tag": tag, "deployed": False, "rolled_back": True}
+                return {
+                    "exit_code": 5,
+                    "tag": tag,
+                    "deployed": False,
+                    "rolled_back": True,
+                    "hosts": deploy_result.get("hosts", {}),
+                }
             else:
-                # Extraction failed
                 write_audit(
                     "escalated", project_name,
-                    reason=f"deploy extraction failed (exit {exit_code})",
+                    reason=f"deploy failed (exit {exit_code})",
                 )
-                _notify("blocked", project_name, f"deploy extraction failed {tag}", notify_script)
-                return {"exit_code": exit_code, "tag": tag, "deployed": False}
+                _notify("blocked", project_name, f"deploy failed {tag}", notify_script)
+                return {
+                    "exit_code": exit_code,
+                    "tag": tag,
+                    "deployed": False,
+                    "hosts": deploy_result.get("hosts", {}),
+                }
+        else:
+            # Single-host deploy (backward compatible)
+            try:
+                deploy_result = _deploy(project, tag, data_dir)
+            except SystemExit as exc:
+                exit_code = exc.code if isinstance(exc.code, int) else 1
+                if exit_code == 5:
+                    write_audit(
+                        "rolled-back", project_name,
+                        tag=tag, reason="smoke failed, rolled back",
+                    )
+                    write_event("rolled-back", project_name, tag=tag)
+                    _notify("blocked", project_name, f"deploy rolled back {tag}", notify_script)
+                    return {"exit_code": 5, "tag": tag, "deployed": False, "rolled_back": True}
+                elif exit_code == 6:
+                    write_audit(
+                        "rolled-back", project_name,
+                        tag=tag, reason="both smokes failed",
+                        severity="critical",
+                    )
+                    write_event("rolled-back", project_name, tag=tag, severity="critical")
+                    _notify("blocked", project_name, f"deploy CRITICAL: both smokes failed {tag}", notify_script)
+                    return {"exit_code": 6, "tag": tag, "deployed": False, "rolled_back": True}
+                else:
+                    write_audit(
+                        "escalated", project_name,
+                        reason=f"deploy extraction failed (exit {exit_code})",
+                    )
+                    _notify("blocked", project_name, f"deploy extraction failed {tag}", notify_script)
+                    return {"exit_code": exit_code, "tag": tag, "deployed": False}
 
-        # deploy() now returns a dict with exit_code instead of raising
-        if isinstance(deploy_result, dict) and deploy_result.get("exit_code") in (5, 6):
-            exit_code = deploy_result["exit_code"]
-            severity = "critical" if exit_code == 6 else None
-            audit_kwargs = {"tag": tag, "reason": "smoke failed, rolled back"}
-            if severity:
-                audit_kwargs["severity"] = severity
-            write_audit("rolled-back", project_name, **audit_kwargs)
-            write_event("rolled-back", project_name, tag=tag, **({"severity": severity} if severity else {}))
-            _notify(
-                "blocked", project_name,
-                f"deploy {'CRITICAL: both smokes failed' if exit_code == 6 else 'rolled back'} {tag}",
-                notify_script,
-            )
-            return {"exit_code": exit_code, "tag": tag, "deployed": False, "rolled_back": True}
+            if isinstance(deploy_result, dict) and deploy_result.get("exit_code") in (5, 6):
+                exit_code = deploy_result["exit_code"]
+                severity = "critical" if exit_code == 6 else None
+                audit_kwargs = {"tag": tag, "reason": "smoke failed, rolled back"}
+                if severity:
+                    audit_kwargs["severity"] = severity
+                write_audit("rolled-back", project_name, **audit_kwargs)
+                write_event("rolled-back", project_name, tag=tag, **({"severity": severity} if severity else {}))
+                _notify(
+                    "blocked", project_name,
+                    f"deploy {'CRITICAL: both smokes failed' if exit_code == 6 else 'rolled back'} {tag}",
+                    notify_script,
+                )
+                return {"exit_code": exit_code, "tag": tag, "deployed": False, "rolled_back": True}
 
-        # Deploy succeeded
-        write_audit("released", project_name, tag=tag, outcome="deployed")
-        write_event("released", project_name, tag=tag)
-        return {
-            "exit_code": 0,
-            "tag": tag,
-            "deployed": True,
-            "rolled_back": False,
-        }
+            write_audit("released", project_name, tag=tag, outcome="deployed")
+            write_event("released", project_name, tag=tag)
+            return {
+                "exit_code": 0,
+                "tag": tag,
+                "deployed": True,
+                "rolled_back": False,
+            }
 
     finally:
         _release_lock(lock_file)

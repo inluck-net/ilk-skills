@@ -47,11 +47,19 @@ def _permit_path(data_dir: Path, host: str) -> Path:
     return data_dir / _PERMIT_DIR / f"{host}.json"
 
 
+def _project_key(project: Path) -> str:
+    """Resolve the project key for a given project path."""
+    sys.path.insert(0, str(LOOP_SCRIPTS))
+    from ilk_paths import project_key
+    return project_key(project)
+
+
 def _write_permit(
     data_dir: Path,
     host: str,
     *,
-    project: str = "test-project",
+    project: str | None = None,
+    project_path: Path | None = None,
     base_tag: str = "v0.0.1",
     candidate_head: str = "a" * 40,
     expiry_minutes: int = 60,
@@ -66,7 +74,8 @@ def _write_permit(
     Args:
         data_dir: The project data root.
         host: Host name.
-        project: Project key the permit is bound to.
+        project: Project key the permit is bound to.  If None, resolved from project_path.
+        project_path: Project path for key resolution (used when project is None).
         base_tag: Base tag the permit is bound to.
         candidate_head: Candidate head SHA the permit is bound to.
         expiry_minutes: Minutes from now until expiry (negative = stale).
@@ -76,6 +85,11 @@ def _write_permit(
         crossed_base_tag: Override base_tag field (crossed-write permit).
         crossed_candidate_head: Override candidate_head field (crossed-write permit).
     """
+    if project is None:
+        if project_path is None:
+            raise ValueError("Either project or project_path must be provided")
+        project = _project_key(project_path)
+
     permit_dir = data_dir / _PERMIT_DIR
     permit_dir.mkdir(parents=True, exist_ok=True)
 
@@ -173,8 +187,8 @@ class TestPermitContract:
         project = tmp_path / "project"
         project.mkdir()
 
-        _write_permit(data_dir, "host-a", project="test-project")
-        _write_permit(data_dir, "host-b", project="test-project")
+        _write_permit(data_dir, "host-a", project_path=project)
+        _write_permit(data_dir, "host-b", project_path=project)
         _write_hosts_config(data_dir, ["host-a", "host-b"])
 
         prove_fn, prove_calls = _make_recording_prove()
@@ -198,10 +212,6 @@ class TestPermitContract:
 
         assert len(prove_calls) == 1, "prove should be called with a complete permit"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Permit contract not yet implemented — XPASSes when AC-1 lands",
-    )
     def test_missing_permit_refuses_prove(self, tmp_path: Path) -> None:
         """No permit file for host-b → prove is NOT called."""
         data_dir = tmp_path / "data"
@@ -209,7 +219,7 @@ class TestPermitContract:
         project = tmp_path / "project"
         project.mkdir()
 
-        _write_permit(data_dir, "host-a", project="test-project")
+        _write_permit(data_dir, "host-a", project_path=project)
         # host-b: no permit file
         _write_hosts_config(data_dir, ["host-a", "host-b"])
 
@@ -235,10 +245,6 @@ class TestPermitContract:
         assert len(cut_calls) == 0, "cut should NOT be called with a missing permit"
         assert len(deploy_calls) == 0, "deploy should NOT be called with a missing permit"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Permit contract not yet implemented — XPASSes when AC-1 lands",
-    )
     def test_stale_permit_refuses_prove(self, tmp_path: Path) -> None:
         """Permit for host-b is expired → prove is NOT called."""
         data_dir = tmp_path / "data"
@@ -246,8 +252,8 @@ class TestPermitContract:
         project = tmp_path / "project"
         project.mkdir()
 
-        _write_permit(data_dir, "host-a", project="test-project")
-        _write_permit(data_dir, "host-b", project="test-project", expiry_minutes=-10)
+        _write_permit(data_dir, "host-a", project_path=project)
+        _write_permit(data_dir, "host-b", project_path=project, expiry_minutes=-10)
         _write_hosts_config(data_dir, ["host-a", "host-b"])
 
         prove_fn, prove_calls = _make_recording_prove()
@@ -272,10 +278,6 @@ class TestPermitContract:
         assert len(cut_calls) == 0, "cut should NOT be called with a stale permit"
         assert len(deploy_calls) == 0, "deploy should NOT be called with a stale permit"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Permit contract not yet implemented — XPASSes when AC-2 lands",
-    )
     def test_revoked_permit_refuses_prove(self, tmp_path: Path) -> None:
         """Permit for host-b is revoked → prove is NOT called."""
         data_dir = tmp_path / "data"
@@ -283,8 +285,8 @@ class TestPermitContract:
         project = tmp_path / "project"
         project.mkdir()
 
-        _write_permit(data_dir, "host-a", project="test-project")
-        _write_permit(data_dir, "host-b", project="test-project", revoked=True)
+        _write_permit(data_dir, "host-a", project_path=project)
+        _write_permit(data_dir, "host-b", project_path=project, revoked=True)
         _write_hosts_config(data_dir, ["host-a", "host-b"])
 
         prove_fn, prove_calls = _make_recording_prove()
@@ -309,10 +311,6 @@ class TestPermitContract:
         assert len(cut_calls) == 0, "cut should NOT be called with a revoked permit"
         assert len(deploy_calls) == 0, "deploy should NOT be called with a revoked permit"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Permit contract not yet implemented — XPASSes when AC-2 lands",
-    )
     def test_partial_permit_refuses_prove(self, tmp_path: Path) -> None:
         """Permit for host-b is missing required fields → prove is NOT called."""
         data_dir = tmp_path / "data"
@@ -320,8 +318,8 @@ class TestPermitContract:
         project = tmp_path / "project"
         project.mkdir()
 
-        _write_permit(data_dir, "host-a", project="test-project")
-        _write_permit(data_dir, "host-b", project="test-project", missing_fields=["candidate_head"])
+        _write_permit(data_dir, "host-a", project_path=project)
+        _write_permit(data_dir, "host-b", project_path=project, missing_fields=["candidate_head"])
         _write_hosts_config(data_dir, ["host-a", "host-b"])
 
         prove_fn, prove_calls = _make_recording_prove()
@@ -346,10 +344,6 @@ class TestPermitContract:
         assert len(cut_calls) == 0, "cut should NOT be called with a partial permit"
         assert len(deploy_calls) == 0, "deploy should NOT be called with a partial permit"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Permit contract not yet implemented — XPASSes when AC-2 lands",
-    )
     def test_crossed_permit_refuses_prove(self, tmp_path: Path) -> None:
         """Permit for host-b is bound to wrong project → prove is NOT called."""
         data_dir = tmp_path / "data"
@@ -357,8 +351,8 @@ class TestPermitContract:
         project = tmp_path / "project"
         project.mkdir()
 
-        _write_permit(data_dir, "host-a", project="test-project")
-        _write_permit(data_dir, "host-b", project="test-project", crossed_project="wrong-project")
+        _write_permit(data_dir, "host-a", project_path=project)
+        _write_permit(data_dir, "host-b", project_path=project, crossed_project="wrong-project")
         _write_hosts_config(data_dir, ["host-a", "host-b"])
 
         prove_fn, prove_calls = _make_recording_prove()
@@ -383,10 +377,6 @@ class TestPermitContract:
         assert len(cut_calls) == 0, "cut should NOT be called with a crossed permit"
         assert len(deploy_calls) == 0, "deploy should NOT be called with a crossed permit"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Permit contract not yet implemented — XPASSes when AC-2 lands",
-    )
     def test_crossed_base_tag_refuses_prove(self, tmp_path: Path) -> None:
         """Permit for host-b is bound to wrong base tag → prove is NOT called."""
         data_dir = tmp_path / "data"
@@ -394,8 +384,8 @@ class TestPermitContract:
         project = tmp_path / "project"
         project.mkdir()
 
-        _write_permit(data_dir, "host-a", project="test-project", base_tag="v0.0.1")
-        _write_permit(data_dir, "host-b", project="test-project", crossed_base_tag="v0.0.0")
+        _write_permit(data_dir, "host-a", project_path=project, base_tag="v0.0.1")
+        _write_permit(data_dir, "host-b", project_path=project, crossed_base_tag="v0.0.0")
         _write_hosts_config(data_dir, ["host-a", "host-b"])
 
         prove_fn, prove_calls = _make_recording_prove()
@@ -420,10 +410,6 @@ class TestPermitContract:
         assert len(cut_calls) == 0, "cut should NOT be called with a crossed base_tag permit"
         assert len(deploy_calls) == 0, "deploy should NOT be called with a crossed base_tag permit"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Permit contract not yet implemented — XPASSes when AC-2 lands",
-    )
     def test_crossed_candidate_head_refuses_prove(self, tmp_path: Path) -> None:
         """Permit for host-b is bound to wrong candidate head → prove is NOT called."""
         data_dir = tmp_path / "data"
@@ -431,8 +417,8 @@ class TestPermitContract:
         project = tmp_path / "project"
         project.mkdir()
 
-        _write_permit(data_dir, "host-a", project="test-project", candidate_head="a" * 40)
-        _write_permit(data_dir, "host-b", project="test-project", crossed_candidate_head="f" * 40)
+        _write_permit(data_dir, "host-a", project_path=project, candidate_head="a" * 40)
+        _write_permit(data_dir, "host-b", project_path=project, crossed_candidate_head="f" * 40)
         _write_hosts_config(data_dir, ["host-a", "host-b"])
 
         prove_fn, prove_calls = _make_recording_prove()
@@ -464,10 +450,6 @@ class TestPermitContract:
 class TestConsumedPermitRefusesReuse:
     """AC-2: a permit marked consumed cannot be reused."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Permit contract not yet implemented — XPASSes when AC-2 lands",
-    )
     def test_consumed_permit_refuses_prove(self, tmp_path: Path) -> None:
         """Permit for host-b is already consumed → prove is NOT called."""
         data_dir = tmp_path / "data"
@@ -475,8 +457,8 @@ class TestConsumedPermitRefusesReuse:
         project = tmp_path / "project"
         project.mkdir()
 
-        _write_permit(data_dir, "host-a", project="test-project")
-        _write_permit(data_dir, "host-b", project="test-project")
+        _write_permit(data_dir, "host-a", project_path=project)
+        _write_permit(data_dir, "host-b", project_path=project)
         # Mark host-b's permit as consumed
         permit = json.loads(_permit_path(data_dir, "host-b").read_text())
         permit["consumed"] = True
