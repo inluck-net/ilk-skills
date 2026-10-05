@@ -573,6 +573,24 @@ print('true' if sentinel_all_shipped(Path('$sentinel_file')) else 'false')
     return 1
   fi
 
+  # Pre-flight: check permits before starting the train.
+  # The train's run() also checks, but catching a missing permit here
+  # avoids wasting a prove+cut cycle on a detached train that would
+  # exit 4 at step 3.
+  local permit_ok
+  permit_ok="$("$PYTHON" -c "
+import sys; sys.path.insert(0, '$(dirname "$_RELEASE_TRAIN_DISPATCH")')
+from release_train_dispatch import check_permits_for_dispatch
+from pathlib import Path
+r = check_permits_for_dispatch(Path('$data_dir'), Path('$repo'))
+print('true' if r.get('ok') else r.get('reason', 'permit check failed'))
+" 2>/dev/null)" || permit_ok="permit check error"
+
+  if [[ "$permit_ok" != "true" ]]; then
+    write_scheduler_log "skip-permits" "$key" "$permit_ok"
+    return 1
+  fi
+
   # Start release_train.py run --project <path> detached
   mkdir -p "$marker_dir"
   touch "$marker_file"

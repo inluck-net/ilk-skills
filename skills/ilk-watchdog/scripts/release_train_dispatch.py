@@ -142,6 +142,117 @@ def sentinel_is_failure(sentinel_file: Path) -> bool:
     )
 
 
+def check_permits_for_dispatch(data_dir: Path, project: Path) -> dict:
+    """Check that every configured host has a valid permit before dispatch.
+
+    This is the scheduler-side pre-flight check: the release train's
+    ``run()`` also checks permits, but a detached train that discovers
+    missing permits only at step 3 wastes a prove+cut cycle.  Checking
+    here lets the scheduler skip the dispatch entirely and log a reason.
+
+    Permits live at ``<data_dir>/runtime/permits/<host>.json``.  Each must
+    contain: project, base_tag, candidate_head, host, issued_at, expires_at,
+    consumed, revoked.
+
+    Returns ``{"ok": True}`` when all permits are valid, or
+    ``{"ok": False, "reason": "..."}`` on refusal.
+    """
+    import hashlib
+    from datetime import datetime, timezone
+
+    # Resolve hosts from config
+    hosts: list[str] = []
+    config_path = data_dir / "runtime" / "ship-config.json"
+    if config_path.exists():
+        try:
+            cfg = json.loads(config_path.read_text())
+            hosts = cfg.get("ship", {}).get("hosts", [])
+        except (json.JSONDecodeError, KeyError):
+            hosts = []
+    else:
+        launch_config = project / ".ilk-launch.json"
+        if launch_config.exists():
+            try:
+                cfg = json.loads(launch_config.read_text())
+                hosts = cfg.get("ship", {}).get("hosts", [])
+            except (json.JSONDecodeError, KeyError):
+                hosts = []
+
+    if not hosts:
+        return {"ok": True}  # no hosts configured → no permits needed
+
+    # Resolve expected bindings from the latest tag and HEAD
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "ilk-loop" / "scripts"))
+    from ilk_paths import project_key  # noqa: E402
+    project_name = project_key(project)
+
+    # Read base_tag and candidate_head from the project's git state.
+    # Best-effort: if git is unavailable, skip binding checks (the train's
+    # own run() will catch binding mismatches at prove time).
+    base_tag = ""
+    candidate_head = ""
+    try:
+        import subprocess
+        head_r = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=project, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+        if head_r.returncode == 0:
+            candidate_head = head_r.stdout.strip()
+
+        tag_r = subprocess.run(
+            ["git", "describe", "--tags", "--abbrev=0"],
+            cwd=project, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+        if tag_r.returncode == 0:
+            base_tag = tag_r.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass  # skip binding checks
+
+    permit_dir = data_dir / "runtime" / "permits"
+    now = datetime.now(timezone.utc)
+
+    for host in hosts:
+        permit_path = permit_dir / f"{host}.json"
+        if not permit_path.exists():
+            return {"ok": False, "reason": f"missing permit for host {host}"}
+
+        try:
+            permit = json.loads(permit_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return {"ok": False, "reason": f"corrupt permit for host {host}"}
+
+        # Check required fields
+        required = {"project", "base_tag", "candidate_head", "host", "expires_at", "consumed", "revoked"}
+        missing = required - set(permit.keys())
+        if missing:
+            return {"ok": False, "reason": f"partial permit for host {host}: missing {missing}"}
+
+        if permit.get("revoked", False):
+            return {"ok": False, "reason": f"revoked permit for host {host}"}
+        if permit.get("consumed", False):
+            return {"ok": False, "reason": f"consumed permit for host {host}"}
+
+        try:
+            expires_at = datetime.fromisoformat(permit["expires_at"])
+            if now > expires_at:
+                return {"ok": False, "reason": f"stale permit for host {host}"}
+        except (ValueError, TypeError):
+            return {"ok": False, "reason": f"invalid expiry in permit for host {host}"}
+
+        # Check bindings
+        if permit.get("project") != project_name:
+            return {"ok": False, "reason": f"crossed permit for host {host}: project mismatch"}
+        if base_tag and permit.get("base_tag") != base_tag:
+            return {"ok": False, "reason": f"crossed permit for host {host}: base_tag mismatch"}
+        if candidate_head and permit.get("candidate_head") != candidate_head:
+            return {"ok": False, "reason": f"crossed permit for host {host}: candidate_head mismatch"}
+
+    return {"ok": True}
+
+
 def _is_pid_alive(pid: int) -> bool:
     """Check if a process with the given pid is alive."""
     try:

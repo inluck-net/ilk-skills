@@ -304,6 +304,178 @@ class TestSchedulerDispatch:
         assert len(scan) == 1, "supervised_only master must be dispatched — flag is tolerated"
 
 
+# ── permit check tests ───────────────────────────────────────────────
+
+
+def _write_permit(
+    data_dir: Path,
+    host: str,
+    *,
+    project: str = "test-proj",
+    base_tag: str = "v0.0.1",
+    candidate_head: str = "b" * 40,
+    consumed: bool = False,
+    revoked: bool = False,
+    expired: bool = False,
+) -> Path:
+    """Write a permit file for a host."""
+    from datetime import datetime, timezone, timedelta
+
+    permit_dir = data_dir / "runtime" / "permits"
+    permit_dir.mkdir(parents=True, exist_ok=True)
+    permit_path = permit_dir / f"{host}.json"
+
+    now = datetime.now(timezone.utc)
+    expires = now - timedelta(hours=1) if expired else now + timedelta(hours=1)
+
+    permit = {
+        "project": project,
+        "base_tag": base_tag,
+        "candidate_head": candidate_head,
+        "host": host,
+        "issued_at": now.isoformat(),
+        "expires_at": expires.isoformat(),
+        "consumed": consumed,
+        "consumed_at": None,
+        "revoked": revoked,
+    }
+    permit_path.write_text(json.dumps(permit, indent=2) + "\n")
+    return permit_path
+
+
+def _write_ship_config(data_dir: Path, hosts: list[str]) -> None:
+    """Write a ship-config.json with the given hosts."""
+    config_dir = data_dir / "runtime"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config = {"ship": {"hosts": hosts}}
+    (config_dir / "ship-config.json").write_text(
+        json.dumps(config, indent=2) + "\n"
+    )
+
+
+def _read_check_permits(data_dir: Path, project: Path) -> dict:
+    """Import and call check_permits_for_dispatch."""
+    sys.path.insert(0, str(SCRIPTS_ILK_WATCHDOG))
+    sys.path.insert(0, str(SCRIPTS_ILK_LOOP))
+    for mod_name in ("release_train_dispatch", "ilk_paths"):
+        if mod_name in sys.modules:
+            del sys.modules[mod_name]
+    from release_train_dispatch import check_permits_for_dispatch
+    return check_permits_for_dispatch(data_dir, project)
+
+
+def _project_key_for(project: Path) -> str:
+    """Compute the project_key for a repo path."""
+    sys.path.insert(0, str(SCRIPTS_ILK_LOOP))
+    for mod_name in ("ilk_paths",):
+        if mod_name in sys.modules:
+            del sys.modules[mod_name]
+    from ilk_paths import project_key
+    return project_key(project)
+
+
+class TestPermitCheck:
+    """Permit pre-flight check before release train dispatch."""
+
+    def test_no_hosts_configured_permits_ok(self, tmp_path):
+        """No hosts configured → permits ok (no permits needed)."""
+        project_dir = _write_project_data(tmp_path, "test-proj")
+        data_dir = tmp_path / "projects" / "test-proj"
+        result = _read_check_permits(data_dir, tmp_path / "fake-repo")
+        assert result["ok"] is True
+
+    def test_all_permits_valid_permits_ok(self, tmp_path):
+        """All hosts have valid permits → ok."""
+        project_dir = _write_project_data(tmp_path, "test-proj")
+        data_dir = tmp_path / "projects" / "test-proj"
+
+        # Create a real git repo to resolve base_tag and candidate_head
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        import subprocess
+        subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True, capture_output=True)
+        (repo / "f").write_text("x")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "tag", "-a", "v0.0.1", "-m", "v0.0.1"], cwd=repo, check=True, capture_output=True)
+
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+        pk = _project_key_for(repo)
+        _write_ship_config(data_dir, ["h1", "h2"])
+        _write_permit(data_dir, "h1", project=pk, base_tag="v0.0.1", candidate_head=head)
+        _write_permit(data_dir, "h2", project=pk, base_tag="v0.0.1", candidate_head=head)
+
+        result = _read_check_permits(data_dir, repo)
+        assert result["ok"] is True
+
+    def test_missing_permit_refuses(self, tmp_path):
+        """Missing permit for one host → refused."""
+        project_dir = _write_project_data(tmp_path, "test-proj")
+        data_dir = tmp_path / "projects" / "test-proj"
+        repo = tmp_path / "fake-repo"
+        repo.mkdir()
+        pk = _project_key_for(repo)
+
+        _write_ship_config(data_dir, ["h1", "h2"])
+        _write_permit(data_dir, "h1", project=pk)
+
+        result = _read_check_permits(data_dir, repo)
+        assert result["ok"] is False
+        assert "missing permit" in result["reason"]
+        assert "h2" in result["reason"]
+
+    def test_consumed_permit_refuses(self, tmp_path):
+        """Consumed permit → refused."""
+        project_dir = _write_project_data(tmp_path, "test-proj")
+        data_dir = tmp_path / "projects" / "test-proj"
+        repo = tmp_path / "fake-repo"
+        repo.mkdir()
+        pk = _project_key_for(repo)
+
+        _write_ship_config(data_dir, ["h1"])
+        _write_permit(data_dir, "h1", project=pk, consumed=True)
+
+        result = _read_check_permits(data_dir, repo)
+        assert result["ok"] is False
+        assert "consumed" in result["reason"]
+
+    def test_revoked_permit_refuses(self, tmp_path):
+        """Revoked permit → refused."""
+        project_dir = _write_project_data(tmp_path, "test-proj")
+        data_dir = tmp_path / "projects" / "test-proj"
+        repo = tmp_path / "fake-repo"
+        repo.mkdir()
+        pk = _project_key_for(repo)
+
+        _write_ship_config(data_dir, ["h1"])
+        _write_permit(data_dir, "h1", project=pk, revoked=True)
+
+        result = _read_check_permits(data_dir, repo)
+        assert result["ok"] is False
+        assert "revoked" in result["reason"]
+
+    def test_stale_permit_refuses(self, tmp_path):
+        """Expired permit → refused."""
+        project_dir = _write_project_data(tmp_path, "test-proj")
+        data_dir = tmp_path / "projects" / "test-proj"
+        repo = tmp_path / "fake-repo"
+        repo.mkdir()
+        pk = _project_key_for(repo)
+
+        _write_ship_config(data_dir, ["h1"])
+        _write_permit(data_dir, "h1", project=pk, expired=True)
+
+        result = _read_check_permits(data_dir, repo)
+        assert result["ok"] is False
+        assert "stale" in result["reason"]
+
+
 class TestRapidTerminal:
     """Scan returns projects correctly when last-exit.json exists (rapid-terminal guard)."""
 
