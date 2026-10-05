@@ -267,10 +267,34 @@ def project_name_for(path: Path) -> str:
 # ---------- log reading ------------------------------------------------------
 
 
+def _canonical_project_path(project_path: Path) -> Path:
+    """Return the project root that owns external ilk state.
+
+    Ordinary linked worktrees execute at their own paths, but ``ilk-loop``
+    stores their runtime under the original clone's key.  Feedback must use
+    the same resolver or querying the worktree forks an empty data store.
+    """
+    path = Path(project_path).resolve()
+    if _find_project_root is not None:
+        try:
+            root, _kind = _find_project_root(path)
+            if root is not None:
+                return Path(root).resolve()
+        except Exception:
+            pass
+    return path
+
+
+def _project_key_for(project_path: Path) -> str:
+    if project_key is None:
+        raise RuntimeError("ilk_paths.project_key is unavailable")
+    return project_key(_canonical_project_path(project_path))
+
+
 def read_last_launch(project_path: Path) -> dict | None:
     if external_launcher_dir is None or project_key is None:
         return None
-    f = external_launcher_dir(project_key(project_path)) / "last-launch.json"
+    f = external_launcher_dir(_project_key_for(project_path)) / "last-launch.json"
     if not f.exists():
         return None
     try:
@@ -297,7 +321,7 @@ def read_sentinel(project_path: Path) -> dict | None:
     """
     if external_runtime_dir is None or project_key is None:
         return None
-    f = external_launcher_dir(project_key(project_path)) / "last-exit.json"
+    f = external_launcher_dir(_project_key_for(project_path)) / "last-exit.json"
     if not f.exists():
         return None
     try:
@@ -349,7 +373,7 @@ def _jsonl_log_candidates(project_path: Path, last_launch: dict | None = None) -
 
     # 3. External logs dir
     if external_logs_dir is not None and project_key is not None:
-        p = external_logs_dir(project_key(project_path)) / ".ilk-loop.log"
+        p = external_logs_dir(_project_key_for(project_path)) / ".ilk-loop.log"
         if p not in candidates:
             candidates.append(p)
 
@@ -383,7 +407,7 @@ def _iter_log_root_candidates(project_path: Path, last_launch: dict | None = Non
 
     # 2. External logs dir
     if external_logs_dir is not None and project_key is not None:
-        p = external_logs_dir(project_key(project_path))
+        p = external_logs_dir(_project_key_for(project_path))
         if p not in candidates:
             candidates.append(p)
 
@@ -409,6 +433,47 @@ def _normalize_path_for_compare(p: str | os.PathLike) -> str:
     symlinks or canonicalise drive letters.
     """
     return str(p).replace("\\", "/").lower()
+
+
+def _record_project_matches(
+    record_project: str | os.PathLike,
+    project_path: Path,
+    last_launch: dict | None = None,
+) -> bool:
+    """Whether a JSONL row belongs to the selected canonical project.
+
+    Exact paths remain the fast path.  Existing linked worktrees are matched
+    by resolving both sides through ``find_project_root``.  A matching launch
+    path is also accepted so evidence remains readable after its worktree has
+    been removed.  The legacy shared log therefore still excludes unrelated
+    projects instead of trusting its containing file alone.
+    """
+    raw = str(record_project or "")
+    if not raw:
+        return False
+    rec_norm = _normalize_path_for_compare(raw)
+    canonical = _canonical_project_path(project_path)
+    accepted = {
+        _normalize_path_for_compare(project_path),
+        _normalize_path_for_compare(canonical),
+    }
+    launch_path = (last_launch or {}).get("project_path")
+    if launch_path:
+        accepted.add(_normalize_path_for_compare(launch_path))
+    if external_launcher_dir is not None and project_key is not None:
+        accepted.add(_normalize_path_for_compare(
+            external_launcher_dir(_project_key_for(project_path))
+            / "worktrees" / "selfmod-batch"
+        ))
+    if rec_norm in accepted:
+        return True
+    try:
+        rec_path = Path(raw)
+        if rec_path.exists():
+            return _canonical_project_path(rec_path) == canonical
+    except (OSError, ValueError):
+        pass
+    return False
 
 
 def _carries_outcome(rec: dict) -> bool:
@@ -438,19 +503,6 @@ def read_jsonl_iters(project_path: Path, last_launch: dict | None = None) -> lis
     Scans all candidate JSONL files (external, last-launch.json hint,
     legacy) and de-duplicates by (run_id, iteration).
     """
-    project_path_norm = _normalize_path_for_compare(project_path)
-    # Also accept records whose project is the selfmod worktree path for
-    # this key.  A selfmod run writes its records with project = the
-    # worktree path, but collect.py is invoked with the clone path.
-    selfmod_norm: str | None = None
-    if external_launcher_dir is not None and project_key is not None:
-        try:
-            key = project_key(project_path)
-            selfmod_norm = _normalize_path_for_compare(
-                external_launcher_dir(key) / "worktrees" / "selfmod-batch"
-            )
-        except Exception:
-            pass
     # key -> index into `records`, so a later completion line can SUPERSEDE an
     # earlier `status: started` placeholder in place (preserving position)
     # rather than being discarded as a duplicate.
@@ -474,8 +526,9 @@ def read_jsonl_iters(project_path: Path, last_launch: dict | None = None) -> lis
                     if not isinstance(rec, dict):
                         skipped_non_object += 1
                         continue
-                    rec_proj = _normalize_path_for_compare(rec.get("project", ""))
-                    if rec_proj != project_path_norm and rec_proj != selfmod_norm:
+                    if not _record_project_matches(
+                        rec.get("project", ""), project_path, last_launch
+                    ):
                         continue
                     rid = rec.get("run_id", "")
                     it = rec.get("iteration", 0)
@@ -576,7 +629,6 @@ def count_rate_limit_events(
     it tells the operator how much of the run's wall-clock was spent waiting.
     """
     total = 0
-    project_path_norm = _normalize_path_for_compare(project_path)
     for candidate in _jsonl_log_candidates(project_path, last_launch):
         if not candidate.exists():
             continue
@@ -594,8 +646,9 @@ def count_rate_limit_events(
                         continue
                     if rec.get("type") != "rate_limit_event":
                         continue
-                    rec_proj = _normalize_path_for_compare(rec.get("project", ""))
-                    if rec_proj != project_path_norm:
+                    if not _record_project_matches(
+                        rec.get("project", ""), project_path, last_launch
+                    ):
                         continue
                     if rec.get("session_id") == run_id or rec.get("run_id") == run_id:
                         total += 1
@@ -3051,7 +3104,7 @@ def run_reclassify(args) -> int:
             return 1
         if not postmortem_paths:
             if external_launcher_dir is not None and project_key is not None:
-                pm_dir = external_launcher_dir(project_key(project_path)) / "postmortems"
+                pm_dir = external_launcher_dir(_project_key_for(project_path)) / "postmortems"
                 if pm_dir.is_dir():
                     postmortem_paths = list(pm_dir.glob("*.md"))
             else:
@@ -3249,7 +3302,7 @@ def main() -> int:
                 if external_launcher_dir is None or project_key is None:
                     print("ilk_paths not available; cannot resolve external launcher dir.", file=sys.stderr)
                     return 1
-                out_dir = external_launcher_dir(project_key(project_path)) / "postmortems"
+                out_dir = external_launcher_dir(_project_key_for(project_path)) / "postmortems"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 out_path = out_dir / f"{target_run}.md"
                 out_path.write_text(report, encoding="utf-8")
@@ -3310,7 +3363,7 @@ def main() -> int:
                     if external_launcher_dir is None or project_key is None:
                         print("ilk_paths not available; cannot resolve external launcher dir.", file=sys.stderr)
                         return 1
-                    out_dir = external_launcher_dir(project_key(project_path)) / "postmortems"
+                    out_dir = external_launcher_dir(_project_key_for(project_path)) / "postmortems"
                     out_dir.mkdir(parents=True, exist_ok=True)
                     out_path = out_dir / f"{target_run}.md"
                     out_path.write_text(report, encoding="utf-8")
@@ -3350,7 +3403,7 @@ def main() -> int:
                 if external_launcher_dir is None or project_key is None:
                     print("ilk_paths not available; cannot resolve external launcher dir.", file=sys.stderr)
                     return 1
-                out_dir = external_launcher_dir(project_key(project_path)) / "postmortems"
+                out_dir = external_launcher_dir(_project_key_for(project_path)) / "postmortems"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 out_path = out_dir / f"{target_run}.md"
                 out_path.write_text(report, encoding="utf-8")
@@ -3387,7 +3440,7 @@ def main() -> int:
         if run_log_dir is None:
             # Fallback: construct the expected path even if it doesn't exist.
             if external_logs_dir is not None and project_key is not None:
-                run_log_dir = external_logs_dir(project_key(project_path)) / "runs" / target_run
+                run_log_dir = external_logs_dir(_project_key_for(project_path)) / "runs" / target_run
             else:
                 run_log_dir = LOOP_LOG_DIR / "runs" / target_run
         print(
@@ -3451,7 +3504,7 @@ def main() -> int:
     if external_launcher_dir is None or project_key is None:
         print("ilk_paths not available; cannot resolve external launcher dir.", file=sys.stderr)
         return 1
-    out_dir = external_launcher_dir(project_key(project_path)) / "postmortems"
+    out_dir = external_launcher_dir(_project_key_for(project_path)) / "postmortems"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{target_run}.md"
     out_path.write_text(report, encoding="utf-8")
