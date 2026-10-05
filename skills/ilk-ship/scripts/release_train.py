@@ -258,9 +258,13 @@ def prove(project: Path, data_dir: Path) -> dict:
             "new_failing_ids": [], "proof_file": proof_path,
         }
 
-    # ── load baseline ─────────────────────────────────────────────────
-    baseline_ids = _load_baseline_ids(data_dir, last_tag, invocation)
-    if baseline_ids is None:
+    # ── load baseline (canonical .ilk-baselines/ only) ────────────────
+    if str(_LOOP_SCRIPTS.parent / "ilk-ship" / "scripts") not in sys.path:
+        sys.path.insert(0, str(_LOOP_SCRIPTS.parent / "ilk-ship" / "scripts"))
+    from baseline_diff import load_baseline  # noqa: E402
+
+    baseline_result = load_baseline(data_dir, last_tag, invocation)
+    if baseline_result is None:
         proof_path = _write_proof(data_dir, head, {
             "head": head, "last_tag": last_tag,
             "invocation": invocation,
@@ -270,6 +274,7 @@ def prove(project: Path, data_dir: Path) -> dict:
             "proven": False, "reason": "could_not_compare",
             "new_failing_ids": [], "proof_file": proof_path,
         }
+    baseline_ids = sorted(baseline_result[0])
 
     # ── kernel range check (cheap refusal first) ──────────────────────
     # Judge by the kernel list at last_tag, not HEAD.
@@ -674,6 +679,21 @@ def cut(project: Path, data_dir: Path) -> dict:
         print(f"refused: tag creation failed: {r.stderr.strip()}", file=sys.stderr)
         sys.exit(4)
 
+    # ── store baseline (canonical .ilk-baselines/) ─────────────────────
+    # Written before push so the baseline is captured even if push fails.
+    if str(_LOOP_SCRIPTS.parent / "ilk-ship" / "scripts") not in sys.path:
+        sys.path.insert(0, str(_LOOP_SCRIPTS.parent / "ilk-ship" / "scripts"))
+    from baseline_diff import store_baseline  # noqa: E402
+
+    search_space = len(failing_nodes) + (len(baseline_ids) - phase1_new) if baseline_ids else 0
+    baseline_path = store_baseline(
+        project_root=data_dir,
+        tag=next_tag,
+        suite_invocation=invocation,
+        node_ids=frozenset(failing_nodes),
+        search_space=search_space,
+    )
+
     # ── push ─────────────────────────────────────────────────────────────
     r = _git_mut(project, "push", "origin", "main")
     if r.returncode != 0:
@@ -684,16 +704,6 @@ def cut(project: Path, data_dir: Path) -> dict:
     if r.returncode != 0:
         print(f"refused: push tag failed: {r.stderr.strip()}", file=sys.stderr)
         sys.exit(4)
-
-    # ── store baseline ───────────────────────────────────────────────────
-    baselines_dir = data_dir / "runtime" / "release" / "baselines"
-    baselines_dir.mkdir(parents=True, exist_ok=True)
-    key = f"{next_tag}_{invocation.replace(' ', '_')}"
-    baseline_path = baselines_dir / f"{key}.json"
-    # Baseline = the proof's failing node ids (same search space)
-    search_space = len(failing_nodes) + (len(baseline_ids) - phase1_new) if baseline_ids else 0
-    baseline_data = failing_nodes
-    baseline_path.write_text(json.dumps(baseline_data, indent=2) + "\n")
 
     return {
         "tag": next_tag,

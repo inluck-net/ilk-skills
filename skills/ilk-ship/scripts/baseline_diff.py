@@ -482,10 +482,13 @@ def compare(
     baseline_search_space: int,
     ref: BaselineRef,
     suite_invocation: str = "",
+    baseline_red_entries: Sequence[dict] = (),
 ) -> NodeIdDiff:
     """Full comparison: node-id diff with ref metadata.
 
     AC-3: missing baseline → could_not_compare, NOT zero regressions.
+    AC-3: baseline_red with measured failed-at-base evidence is inherited.
+    AC-4: flaky-owed evidence requires exact node + invocation + serial-green.
     """
     if baseline_failures is None:
         # AC-3: could not compare — distinct from zero regressions
@@ -506,6 +509,13 @@ def compare(
         )
 
     new, inherited, fixed = diff_by_node_id(current_failures, baseline_failures)
+
+    # AC-3 / AC-4: apply baseline_red evidence policy
+    if baseline_red_entries:
+        new, inherited = _apply_evidence_policy(
+            new, inherited, baseline_red_entries, suite_invocation,
+        )
+
     return NodeIdDiff(
         ref=ref,
         new_failures=new,
@@ -516,6 +526,78 @@ def compare(
         search_space=search_space,
         filtered=filtered,
     )
+
+
+def _apply_evidence_policy(
+    new_failures: FrozenSet[str],
+    inherited_failures: FrozenSet[str],
+    baseline_red_entries: Sequence[dict],
+    suite_invocation: str,
+) -> Tuple[FrozenSet[str], FrozenSet[str]]:
+    """Apply baseline_red evidence policy to diff results.
+
+    AC-3: a node with measured failed_at_base=True evidence → inherited.
+    AC-4: flaky_owed requires exact node + invocation + serial-green.
+    A declared node without evidence remains a regression (stays in new_failures).
+    """
+    red_map: Dict[str, dict] = {}
+    for entry in baseline_red_entries:
+        nid = entry.get("node_id", "")
+        if nid:
+            red_map[nid] = entry
+
+    promoted: Set[str] = set()
+    for node_id in new_failures:
+        entry = red_map.get(node_id)
+        if entry is None:
+            # Not declared in baseline_red → remains regression
+            continue
+        evidence = entry.get("evidence")
+        if evidence is None:
+            # Declaration without evidence → remains regression
+            continue
+        if evidence.get("failed_at_base"):
+            # AC-3: measured evidence → inherited
+            promoted.add(node_id)
+        elif evidence.get("flaky_owed"):
+            # AC-4: flaky-owed requires exact match
+            if (
+                evidence.get("invocation") == suite_invocation
+                and evidence.get("serial_green") is True
+            ):
+                promoted.add(node_id)
+
+    return frozenset(new_failures - promoted), frozenset(inherited_failures | promoted)
+
+
+def check_baseline_red_evidence(
+    baseline_red_entries: Sequence[dict],
+    suite_invocation: str,
+) -> Tuple[dict, ...]:
+    """Validate baseline_red evidence entries.
+
+    Returns a tuple of error dicts for entries with invalid evidence.
+    Empty tuple means all entries are valid.
+    """
+    errors = []
+    for entry in baseline_red_entries:
+        evidence = entry.get("evidence")
+        if evidence is None:
+            continue
+        if evidence.get("flaky_owed"):
+            if evidence.get("invocation") != suite_invocation:
+                errors.append({
+                    "node_id": entry.get("node_id"),
+                    "error": "invocation mismatch",
+                    "expected": suite_invocation,
+                    "got": evidence.get("invocation"),
+                })
+            if not evidence.get("serial_green"):
+                errors.append({
+                    "node_id": entry.get("node_id"),
+                    "error": "missing serial_green",
+                })
+    return tuple(errors)
 
 
 # ── Stale exclusion check (AC-8) ────────────────────────────────────────────

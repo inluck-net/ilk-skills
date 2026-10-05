@@ -35,7 +35,7 @@ LOOP_SCRIPTS = Path(__file__).resolve().parents[2] / "ilk-loop" / "scripts"
 sys.path.insert(0, str(SHIP_SCRIPTS))
 sys.path.insert(0, str(LOOP_SCRIPTS))
 
-from release_train import check, prove  # noqa: E402
+from release_train import check, cut, prove  # noqa: E402
 import safety_case  # noqa: E402
 
 
@@ -146,11 +146,19 @@ def _make_data_dir(tmp_path: Path) -> Path:
 
 
 def _write_baseline(data_dir: Path, tag: str, invocation: str, ids: list) -> None:
-    """Write a baseline file for the given tag and invocation."""
-    baselines_dir = data_dir / "runtime" / "release" / "baselines"
-    baselines_dir.mkdir(parents=True, exist_ok=True)
-    key = f"{tag}_{invocation.replace(' ', '_')}"
-    (baselines_dir / f"{key}.json").write_text(json.dumps(ids))
+    """Write a baseline file for the given tag and invocation.
+
+    Writes to both the canonical .ilk-baselines/ store (which prove reads)
+    and the legacy private store (for tests that check both paths).
+    """
+    from baseline_diff import store_baseline
+    store_baseline(
+        project_root=data_dir,
+        tag=tag,
+        suite_invocation=invocation,
+        node_ids=frozenset(ids),
+        search_space=len(ids),
+    )
 
 
 # ── AC-1: check eligibility ─────────────────────────────────────────────────
@@ -411,7 +419,6 @@ class TestProveWritesOnlyToReleaseDir:
 # until step 1 implements the canonical-source policy in release_train.py.
 
 
-@pytest.mark.xfail(strict=True, reason="AC-1: prove must read canonical .ilk-baselines/ not private store")
 class TestProveReadsCanonicalBaseline:
     """AC-1: release_train.prove reads .ilk-baselines/<tag>__<inv-hash>.json
     written by baseline_diff.store_baseline; absence returns could_not_compare
@@ -495,7 +502,6 @@ class TestProveRefusalPaths:
         assert "could_not_compare" in result["reason"]
 
 
-@pytest.mark.xfail(strict=True, reason="AC-2: cut must store canonical baseline with full metadata")
 class TestCutStoresCanonicalBaseline:
     """AC-2: cut stores the new tag baseline through baseline_diff.store_baseline,
     preserving search_space, invocation, tag, and exact node IDs."""
@@ -518,21 +524,18 @@ class TestCutStoresCanonicalBaseline:
             search_space=3,
         )
 
-        # cut() does git push which will fail in a tmp repo, so we
-        # test the storage contract by checking what cut() WOULD write.
-        # The canonical file should be at:
-        #   data_dir/.ilk-baselines/<next_tag>__<hash(invocation)>.json
-        # with content: {tag, suite_invocation, node_ids, search_space}
-        #
-        # Step 1 replaces cut's private-store writer with baseline_diff.store_baseline.
-        # This test verifies that cut's output lands in .ilk-baselines/, not
-        # in runtime/release/baselines/.
+        # Run prove() to create the proof file that cut() needs
+        prove(project, data_dir)
+
         import hashlib
         expected_key = f"v0.0.2__{hashlib.sha256(invocation.encode()).hexdigest()[:12]}"
         canonical_path = data_dir / ".ilk-baselines" / f"{expected_key}.json"
         private_path = data_dir / "runtime" / "release" / "baselines" / "v0.0.2_python3_-_m_pytest.json"
 
-        # After cut(), the canonical path must exist and the private must not
+        # cut() writes baseline before push; push will fail (no remote).
+        with pytest.raises(SystemExit):
+            cut(project, data_dir)
+
         assert canonical_path.exists(), (
             "cut must write to .ilk-baselines/ canonical store"
         )
@@ -555,7 +558,6 @@ class TestCutStoresCanonicalBaseline:
 # parsing into the comparison.
 
 
-@pytest.mark.xfail(strict=True, reason="AC-3: baseline_red with failed-at-base evidence must be inherited")
 class TestBaselineRedEvidenceInheritance:
     """AC-3: an exact baseline_red node with measured failed-at-base evidence
     is inherited; a declared node without evidence and every undeclared node
@@ -659,7 +661,6 @@ class TestBaselineRedEvidenceInheritance:
         assert diff.new_failures == frozenset({"tests/test_undeclared.py::test_new_fail"})
 
 
-@pytest.mark.xfail(strict=True, reason="AC-4: flaky-owed evidence must carry exact node + invocation + serial-green")
 class TestFlakyOwedEvidenceContract:
     """AC-4: bounded flaky-owed evidence may carry only the exact node and
     exact suite invocation; a changed node, invocation, or missing
@@ -833,7 +834,6 @@ class TestV09147Fixtures:
         assert result["proven"] is False
         assert "could_not_compare" in result["reason"]
 
-    @pytest.mark.xfail(strict=True, reason="AC-3: declared node without evidence must remain regression after evidence-aware compare")
     def test_declared_order_flake_refused_before_fix(self, tmp_path: Path) -> None:
         """v0.9.147 scenario: declared order-dependent failure without evidence
         must be refused (remains a regression).

@@ -656,7 +656,6 @@ class TestFullPipeline:
 # step 1 adds baseline_red_entries + evidence parsing to compare().
 
 
-@pytest.mark.xfail(strict=True, reason="AC-3: baseline_red with failed-at-base evidence is inherited")
 class TestBaselineRedEvidenceInheritance:
     """AC-3: an exact baseline_red node with measured failed-at-base evidence
     is inherited; a declared node without evidence remains a regression;
@@ -736,7 +735,6 @@ class TestBaselineRedEvidenceInheritance:
         assert diff.new_failures == frozenset({"tests/test_new.py::test_surprise"})
 
 
-@pytest.mark.xfail(strict=True, reason="AC-4: flaky-owed evidence contract")
 class TestFlakyOwedEvidenceContract:
     """AC-4: bounded flaky-owed evidence may carry only the exact node and
     exact suite invocation; a changed node, invocation, or missing
