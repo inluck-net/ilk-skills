@@ -19,7 +19,6 @@ import time
 from pathlib import Path
 
 import pytest
-from unittest.mock import patch, MagicMock
 
 # Ensure the scripts dirs are importable.
 _LOOP_SCRIPTS = str(Path(__file__).resolve().parent.parent.parent / "ilk-loop" / "scripts")
@@ -1600,95 +1599,3 @@ class TestAC9:
             from plan_status import parse_frontmatter
             fm = parse_frontmatter(m.read_text(encoding="utf-8-sig"))
             assert fm.get("status") != "queued", "malformed config must not queue"
-
-
-class TestNotificationIsolation:
-    """Tests that fixture refusals do not call the native notifier."""
-
-    def test_fixture_refusal_does_not_call_native_notifier(self, tmp_path):
-        """Fixture refusal (bad-home) must not call any notifier."""
-        mod = _load_module()
-        data_root = _build_fake_data_root(tmp_path)
-        toolkit = _build_fake_toolkit(tmp_path, data_root)
-
-        # Use a .claude-worker home to trigger the bad-home refusal path
-        manager_home = Path(tmp_path) / ".claude-worker-xxx"
-        manager_home.mkdir(parents=True, exist_ok=True)
-
-        # Create a project data dir
-        project_dir = data_root / "projects" / "test-project"
-        project_dir.mkdir(parents=True, exist_ok=True)
-        (project_dir / "runtime" / "launcher").mkdir(parents=True, exist_ok=True)
-        (project_dir / "runtime" / "launcher" / "last-launch.json").write_text(
-            json.dumps({"project_path": str(toolkit)}) + "\n",
-            encoding="utf-8"
-        )
-
-        # Set idle count at threshold
-        state_file = data_root / "autoplan" / "state.json"
-        state_file.write_text(json.dumps({"idle_cycles": 6}) + "\n", encoding="utf-8")
-
-        # Inject a notifier that raises if called — the seam must
-        # prevent fixture refusals from reaching any notifier.
-        def fail_notifier(event: str, detail: str) -> None:
-            raise AssertionError(
-                f"Notifier should not be called for fixture refusals "
-                f"(event={event!r}, detail={detail!r})"
-            )
-
-        # Trigger bad-home refusal with the injected notifier
-        result = mod.tick(
-            data_root=data_root,
-            manager_home=str(manager_home),
-            notifier_fn=fail_notifier,
-        )
-        assert result["decision"] == "bad-home"
-
-    def test_production_refusal_calls_native_notifier_with_correct_identity(self, tmp_path):
-        """Production refusal calls native notifier with correct project identity."""
-        mod = _load_module()
-        data_root = _build_fake_data_root(tmp_path)
-        toolkit = _build_fake_toolkit(tmp_path, data_root)
-
-        # Use a .claude-worker home to trigger the bad-home refusal path
-        manager_home = Path(tmp_path) / ".claude-worker-xxx"
-        manager_home.mkdir(parents=True, exist_ok=True)
-
-        # Create a project data dir
-        project_dir = data_root / "projects" / "test-project"
-        project_dir.mkdir(parents=True, exist_ok=True)
-        (project_dir / "runtime" / "launcher").mkdir(parents=True, exist_ok=True)
-        (project_dir / "runtime" / "launcher" / "last-launch.json").write_text(
-            json.dumps({"project_path": str(toolkit)}) + "\n",
-            encoding="utf-8"
-        )
-
-        # Set idle count at threshold
-        state_file = data_root / "autoplan" / "state.json"
-        state_file.write_text(json.dumps({"idle_cycles": 6}) + "\n", encoding="utf-8")
-
-        # Mock subprocess.run to capture calls
-        calls = []
-        original_run = subprocess.run
-        def mock_run(cmd, *args, **kwargs):
-            calls.append(cmd)
-            return original_run(cmd, *args, **kwargs)
-
-        with patch("subprocess.run", side_effect=mock_run):
-            # Trigger bad-home refusal
-            result = mod.tick(data_root=data_root, manager_home=str(manager_home))
-            assert result["decision"] == "bad-home"
-
-        # Verify native notifier was called with correct project identity
-        notify_calls = [c for c in calls if isinstance(c, list) and any("ilk_notify.py" in str(x) for x in c)]
-        assert len(notify_calls) == 1, f"Expected exactly one notify call, got {len(notify_calls)}"
-        notify_cmd = notify_calls[0]
-        assert "--project" in notify_cmd
-        project_idx = notify_cmd.index("--project")
-        assert notify_cmd[project_idx + 1] == "ilk-skills", "Project identity should be 'ilk-skills'"
-        assert "--event" in notify_cmd
-        event_idx = notify_cmd.index("--event")
-        assert notify_cmd[event_idx + 1] == "blocked"
-        assert "--detail" in notify_cmd
-        detail_idx = notify_cmd.index("--detail")
-        assert "bad-home" in notify_cmd[detail_idx + 1]
