@@ -20,6 +20,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -990,6 +991,8 @@ def deploy(
     bounce_cmd: object | None = None,
     status_cmd: object | None = None,
     pid_file: Path | None = None,
+    settle_deadline_sec: float = 30.0,
+    settle_poll_interval_sec: float = 2.0,
 ) -> dict:
     """Deploy a release: extract, flip, bounce, smoke.  Rollback on failure.
 
@@ -1062,7 +1065,12 @@ def deploy(
     elif bounce_rc == 1 and pid_before is not None and pid_after == pid_before:
         smoke_ok, smoke_reason = False, f"scheduler pid {pid_after} unchanged after bounce"
     else:
-        smoke_ok, smoke_reason = _smoke(tag, _status, _pid, cwd=project)  # type: ignore[arg-type]
+        smoke_ok, smoke_reason = _smoke(  # type: ignore[arg-type]
+            tag, _status, _pid,
+            cwd=project,
+            deadline_sec=settle_deadline_sec,
+            poll_interval_sec=settle_poll_interval_sec,
+        )
 
     if smoke_ok:
         return {
@@ -1100,7 +1108,12 @@ def deploy(
             "bounce": bounce_info,
         }
 
-    rollback_ok, rollback_reason = _smoke(prev_tag, _status, _pid, cwd=project)  # type: ignore[arg-type]
+    rollback_ok, rollback_reason = _smoke(  # type: ignore[arg-type]
+        prev_tag, _status, _pid,
+        cwd=project,
+        deadline_sec=settle_deadline_sec,
+        poll_interval_sec=settle_poll_interval_sec,
+    )
 
     if rollback_ok:
         return {
@@ -1234,6 +1247,10 @@ def _ssh_deploy(
     host: str,
     ssh_runner: Callable | None = None,
     timeout: int = 120,
+    settle_deadline_sec: float = 30.0,
+    settle_poll_interval_sec: float = 2.0,
+    clock: Callable[[], float] | None = None,
+    sleeper: Callable[[float], None] | None = None,
 ) -> dict:
     """Deploy to a remote host via SSH.
 
@@ -1250,6 +1267,10 @@ def _ssh_deploy(
         host: Target host name.
         ssh_runner: Injectable SSH runner.  Default: real SSH subprocess.
         timeout: SSH command timeout in seconds.
+        settle_deadline_sec: Bounded settling deadline for smoke checks.
+        settle_poll_interval_sec: Poll interval for settling.
+        clock: Injectable monotonic clock (for testing).
+        sleeper: Injectable sleep function (for testing).
 
     Returns a dict with: tag, deployed, exit_code, host, transport,
     extract, bounce, smoke.
@@ -1297,14 +1318,35 @@ def _ssh_deploy(
         str(_BOUNCE_SCRIPT), tag,
     ], timeout=60)
 
-    # ── 3. smoke ────────────────────────────────────────────────────────
-    smoke_result = _run(host, [
-        sys.executable, str(_STATUS_SCRIPT),
-        "--bouncer", str(_BOUNCE_SCRIPT),
-        "--require-tag", tag,
-    ], timeout=60)
+    # ── 3. smoke (bounded settling) ────────────────────────────────────
+    _clock = clock if clock is not None else time.monotonic
+    _sleep = sleeper if sleeper is not None else time.sleep
 
-    smoke_ok = smoke_result["rc"] == 0 and smoke_result["stdout"] == "ok"
+    smoke_start = _clock()
+    smoke_attempts = 0
+    smoke_ok = False
+    smoke_result: dict = {"rc": -1, "stdout": "", "stderr": ""}
+    settle_elapsed = 0.0
+
+    while True:
+        smoke_attempts += 1
+        settle_elapsed = _clock() - smoke_start
+
+        smoke_result = _run(host, [
+            sys.executable, str(_STATUS_SCRIPT),
+            "--bouncer", str(_BOUNCE_SCRIPT),
+            "--require-tag", tag,
+        ], timeout=60)
+
+        if smoke_result["rc"] == 0 and smoke_result["stdout"] == "ok":
+            smoke_ok = True
+            break
+
+        if settle_elapsed >= settle_deadline_sec:
+            break
+
+        _sleep(settle_poll_interval_sec)
+
     bounce_info = {"exit": bounce_result["rc"]}
 
     if smoke_ok:
@@ -1313,7 +1355,10 @@ def _ssh_deploy(
             "host": host, "transport": "ssh",
             "extract": {"rc": 0, "tag": tag},
             "bounce": bounce_info,
-            "smoke": {"ok": True, "reason": ""},
+            "smoke": {
+                "ok": True, "reason": "",
+                "attempts": smoke_attempts, "elapsed": settle_elapsed,
+            },
         }
 
     # ── 4. rollback ─────────────────────────────────────────────────────
@@ -1350,13 +1395,29 @@ def _ssh_deploy(
             "smoke": {"ok": False, "reason": smoke_result.get("stdout", "")},
         }
 
-    rb_smoke_result = _run(host, [
-        sys.executable, str(_STATUS_SCRIPT),
-        "--bouncer", str(_BOUNCE_SCRIPT),
-        "--require-tag", prev_tag,
-    ], timeout=60)
+    # Rollback smoke with bounded settling (same contract as forward)
+    rb_smoke_start = _clock()
+    rb_smoke_attempts = 0
+    rb_smoke_ok = False
+    rb_smoke_result: dict = {"rc": -1, "stdout": "", "stderr": ""}
 
-    rb_smoke_ok = rb_smoke_result["rc"] == 0 and rb_smoke_result["stdout"] == "ok"
+    while True:
+        rb_smoke_attempts += 1
+
+        rb_smoke_result = _run(host, [
+            sys.executable, str(_STATUS_SCRIPT),
+            "--bouncer", str(_BOUNCE_SCRIPT),
+            "--require-tag", prev_tag,
+        ], timeout=60)
+
+        if rb_smoke_result["rc"] == 0 and rb_smoke_result["stdout"] == "ok":
+            rb_smoke_ok = True
+            break
+
+        if (_clock() - rb_smoke_start) >= settle_deadline_sec:
+            break
+
+        _sleep(settle_poll_interval_sec)
 
     if rb_smoke_ok:
         return {
@@ -1367,7 +1428,11 @@ def _ssh_deploy(
             "rollback_host": host,
             "extract": {"rc": 0, "tag": tag},
             "bounce": bounce_info,
-            "smoke": {"ok": False, "reason": smoke_result.get("stdout", "")},
+            "smoke": {
+                "ok": False,
+                "reason": smoke_result.get("stdout", ""),
+                "attempts": smoke_attempts, "elapsed": settle_elapsed,
+            },
         }
     else:
         return {
@@ -1377,7 +1442,130 @@ def _ssh_deploy(
             "rolled_back_to": prev_tag, "rollback_smoke": "failed",
             "extract": {"rc": 0, "tag": tag},
             "bounce": bounce_info,
-            "smoke": {"ok": False, "reason": smoke_result.get("stdout", "")},
+            "smoke": {
+                "ok": False,
+                "reason": smoke_result.get("stdout", ""),
+                "attempts": smoke_attempts, "elapsed": settle_elapsed,
+            },
+        }
+
+
+def _settle(
+    tag: str,
+    status_cmd: Callable,
+    pid_file: Path,
+    *,
+    deadline_sec: float = 30.0,
+    poll_interval_sec: float = 2.0,
+    clock: Callable[[], float] | None = None,
+    sleeper: Callable[[float], None] | None = None,
+    cwd: Path | None = None,
+) -> dict:
+    """Bounded settling: poll PID liveness + required-tag status until both
+    conformant or a monotonic deadline expires.
+
+    Each poll cycle checks status first (cheap, may indicate the daemon is
+    coming up), then PID.  The settle completes only when status is ``ok``,
+    the PID is alive, and the script path mentions the tag.
+
+    Returns ``{"ok", "pid", "status", "attempts", "elapsed", "terminal_reason"}``.
+    """
+    _clock = clock if clock is not None else time.monotonic
+    _sleep = sleeper if sleeper is not None else time.sleep
+
+    start = _clock()
+    attempts = 0
+
+    while True:
+        attempts += 1
+        elapsed = _clock() - start
+
+        # ── status check (always — cheap, signals daemon coming up) ──
+        try:
+            status = status_cmd(tag, cwd=cwd)  # type: ignore[operator]
+        except TypeError:
+            status = status_cmd(tag)
+
+        if status != "ok":
+            if elapsed >= deadline_sec:
+                return {
+                    "ok": False, "pid": None, "status": status,
+                    "attempts": attempts, "elapsed": elapsed,
+                    "terminal_reason": status,
+                }
+            _sleep(poll_interval_sec)
+            continue
+
+        # ── status ok — now check PID ──────────────────────────────
+        if not pid_file.exists():
+            if elapsed >= deadline_sec:
+                return {
+                    "ok": False, "pid": None, "status": status,
+                    "attempts": attempts, "elapsed": elapsed,
+                    "terminal_reason": "pid_absent",
+                }
+            _sleep(poll_interval_sec)
+            continue
+
+        try:
+            pid = int(pid_file.read_text().strip())
+        except (ValueError, OSError):
+            if elapsed >= deadline_sec:
+                return {
+                    "ok": False, "pid": None, "status": status,
+                    "attempts": attempts, "elapsed": elapsed,
+                    "terminal_reason": "pid_unreadable",
+                }
+            _sleep(poll_interval_sec)
+            continue
+
+        if not _is_pid_alive(pid):
+            if elapsed >= deadline_sec:
+                return {
+                    "ok": False, "pid": pid, "status": status,
+                    "attempts": attempts, "elapsed": elapsed,
+                    "terminal_reason": "pid_dead",
+                }
+            _sleep(poll_interval_sec)
+            continue
+
+        # ── PID alive + status ok — command-line check ─────────────
+        try:
+            r = subprocess.run(
+                ["ps", "-o", "command=", "-p", str(pid)],
+                capture_output=True, text=True,
+                encoding="utf-8", errors="replace",
+                timeout=10,
+            )
+            cmd = r.stdout.strip()
+            if f"releases/{tag}/" not in cmd:
+                resolved = " ".join(
+                    os.path.realpath(w) for w in cmd.split()
+                )
+                if f"releases/{tag}/" not in resolved:
+                    if elapsed >= deadline_sec:
+                        return {
+                            "ok": False, "pid": pid, "status": status,
+                            "attempts": attempts, "elapsed": elapsed,
+                            "terminal_reason": "wrong_script",
+                        }
+                    _sleep(poll_interval_sec)
+                    continue
+        except (OSError, subprocess.TimeoutExpired):
+            if elapsed >= deadline_sec:
+                return {
+                    "ok": False, "pid": pid, "status": status,
+                    "attempts": attempts, "elapsed": elapsed,
+                    "terminal_reason": "ps_failed",
+                }
+            _sleep(poll_interval_sec)
+            continue
+
+        # ── all checks passed ─────────────────────────────────────
+        return {
+            "ok": True, "pid": pid, "status": status,
+            "attempts": attempts, "elapsed": elapsed,
+            "terminal_reason": "ok",
         }
 
 
@@ -1387,11 +1575,32 @@ def _smoke(
     pid_file: Path,
     *,
     cwd: Path | None = None,
+    deadline_sec: float = 30.0,
+    poll_interval_sec: float = 2.0,
+    clock: Callable[[], float] | None = None,
+    sleeper: Callable[[float], None] | None = None,
 ) -> tuple[bool, str]:
     """Smoke check: status ok + pid alive + script under releases/<tag>/.
 
+    When settle parameters are provided, polls with bounded settling.
+    Without them, performs a single-shot check (backward compatible).
+
     Returns (ok, reason).
     """
+    if clock is not None or sleeper is not None or deadline_sec != 30.0 or poll_interval_sec != 2.0:
+        # Bounded settling mode — use settle helper when any settle
+        # parameter is explicitly provided.
+        result = _settle(
+            tag, status_cmd, pid_file,
+            deadline_sec=deadline_sec,
+            poll_interval_sec=poll_interval_sec,
+            clock=clock,
+            sleeper=sleeper,
+            cwd=cwd,
+        )
+        return result["ok"], result["terminal_reason"] if not result["ok"] else ""
+
+    # Single-shot check (backward compatible — no settling)
     # Status check — pass cwd if the status_cmd accepts it
     try:
         status = status_cmd(tag, cwd=cwd)  # type: ignore[operator]
