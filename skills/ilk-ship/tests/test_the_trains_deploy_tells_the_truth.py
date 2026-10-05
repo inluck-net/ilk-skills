@@ -252,6 +252,34 @@ def _read_current_target(parent: Path) -> str | None:
     return None
 
 
+# ── Fake clock/sleeper for settle tests ────────────────────────────────────
+
+
+class FakeClock:
+    """A monotonic clock whose time advances only via advance(seconds)."""
+
+    def __init__(self, start: float = 1000.0) -> None:
+        self._now = start
+
+    def monotonic(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
+
+
+class FakeSleeper:
+    """Records each sleep(duration) call without actually sleeping."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        self.clock = clock
+        self.calls: list[float] = []
+
+    def sleep(self, seconds: float) -> None:
+        self.calls.append(seconds)
+        self.clock.advance(seconds)
+
+
 # ── AC-1: main() uses project_key for data_dir ──────────────────────────────
 
 class TestMainUsesProjectKeyForDataDir:
@@ -597,6 +625,9 @@ class TestFailedBounceIsReported:
         sys.path.insert(0, str(LOOP_SCRIPTS))
         import release_train
 
+        clock = FakeClock()
+        sleeper = FakeSleeper(clock)
+
         result = release_train.deploy(
             project=project,
             tag="v0.0.2",
@@ -605,6 +636,8 @@ class TestFailedBounceIsReported:
             bounce_cmd=_make_bounce_cmd_with_exit(0),
             status_cmd=_make_status_cmd({"v0.0.2": "ok", "v0.0.1": "ok"}),
             pid_file=pid_file,
+            settle_clock=clock.monotonic,
+            settle_sleeper=sleeper.sleep,
         )
 
         assert result["deployed"] is False
@@ -623,6 +656,9 @@ class TestFailedBounceIsReported:
         sys.path.insert(0, str(LOOP_SCRIPTS))
         import release_train
 
+        clock = FakeClock()
+        sleeper = FakeSleeper(clock)
+
         result = release_train.deploy(
             project=project,
             tag="v0.0.2",
@@ -631,6 +667,8 @@ class TestFailedBounceIsReported:
             bounce_cmd=_make_bounce_cmd_with_exit(1),
             status_cmd=_make_status_cmd({"v0.0.2": "ok", "v0.0.1": "ok"}),
             pid_file=pid_file,
+            settle_clock=clock.monotonic,
+            settle_sleeper=sleeper.sleep,
         )
 
         assert result["deployed"] is False

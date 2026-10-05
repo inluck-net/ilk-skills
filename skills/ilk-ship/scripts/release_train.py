@@ -993,6 +993,8 @@ def deploy(
     pid_file: Path | None = None,
     settle_deadline_sec: float = 30.0,
     settle_poll_interval_sec: float = 2.0,
+    settle_clock: object | None = None,
+    settle_sleeper: object | None = None,
 ) -> dict:
     """Deploy a release: extract, flip, bounce, smoke.  Rollback on failure.
 
@@ -1070,6 +1072,8 @@ def deploy(
             cwd=project,
             deadline_sec=settle_deadline_sec,
             poll_interval_sec=settle_poll_interval_sec,
+            clock=settle_clock,
+            sleeper=settle_sleeper,
         )
 
     if smoke_ok:
@@ -1113,6 +1117,8 @@ def deploy(
         cwd=project,
         deadline_sec=settle_deadline_sec,
         poll_interval_sec=settle_poll_interval_sec,
+        clock=settle_clock,
+        sleeper=settle_sleeper,
     )
 
     if rollback_ok:

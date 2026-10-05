@@ -336,6 +336,9 @@ class TestDeployRollsBackOnSmokeFailure:
             pid_file.write_text(str(new_proc.pid))
             return 1
 
+        clock = FakeClock()
+        sleeper = FakeSleeper(clock)
+
         result = deploy(
             project=project,
             tag="v0.0.2",
@@ -346,6 +349,8 @@ class TestDeployRollsBackOnSmokeFailure:
             bounce_cmd=_bounce_with_restart,
             status_cmd=_make_status_cmd({"v0.0.2": "tag-mismatch", "v0.0.1": "ok"}),
             pid_file=pid_file,
+            settle_clock=clock.monotonic,
+            settle_sleeper=sleeper.sleep,
         )
 
         assert result["deployed"] is False
@@ -380,6 +385,9 @@ class TestDeployBothSmokesFail:
             pid_file.write_text(str(new_proc.pid))
             return 1
 
+        clock = FakeClock()
+        sleeper = FakeSleeper(clock)
+
         result = deploy(
             project=project,
             tag="v0.0.2",
@@ -390,6 +398,8 @@ class TestDeployBothSmokesFail:
             bounce_cmd=_bounce_with_restart,
             status_cmd=_make_status_cmd({"v0.0.2": "unreachable", "v0.0.1": "unreachable"}),
             pid_file=pid_file,
+            settle_clock=clock.monotonic,
+            settle_sleeper=sleeper.sleep,
         )
 
         assert result["deployed"] is False
@@ -953,6 +963,9 @@ class TestRollbackWithDefaultSettleArgsSettles:
                 return "unreachable"
             return "ok"
 
+        clock = FakeClock()
+        sleeper = FakeSleeper(clock)
+
         result = deploy(
             project=project,
             tag="v0.0.2",
@@ -964,6 +977,8 @@ class TestRollbackWithDefaultSettleArgsSettles:
             status_cmd=_status_rollback_delayed,
             pid_file=pid_file,
             # All settle args at their documented defaults — the production path
+            settle_clock=clock.monotonic,
+            settle_sleeper=sleeper.sleep,
         )
 
         assert result["deployed"] is False
