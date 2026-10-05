@@ -1263,15 +1263,17 @@ def _acquire_remote_tag(
 
     Acquisition never checks out, resets, merges, or otherwise rewrites
     the remote repository's current branch or working tree.  It runs only
-    ``git fetch origin tag refs/tags/<tag>`` and ``git rev-parse``.
+    ``git -C <repo> fetch origin refs/tags/<tag>:refs/tags/<tag>`` and
+    ``git -C <repo> rev-parse refs/tags/<tag>^{}``.
+
+    The caller (``_ssh_deploy`` → ``_default_ssh_runner``) is responsible
+    for serializing the command argv at the SSH transport boundary.
+    This function passes raw semantic argv — the project path and the
+    exact source:destination refspec — without shell quoting.
     """
     _repo = str(repo_path) if repo_path is not None else "repo"
-    # Quote the repo path so that paths containing spaces survive SSH arg
-    # concatenation as one remote-shell token.  shlex.quote is idempotent
-    # on paths that need no quoting, so this is safe for all callers.
-    _quoted_repo = shlex.quote(_repo)
     fetch_cmd = [
-        "git", "-C", _quoted_repo, "fetch", "origin",
+        "git", "-C", _repo, "fetch", "origin",
         f"refs/tags/{tag}:refs/tags/{tag}",
     ]
 
@@ -1289,7 +1291,7 @@ def _acquire_remote_tag(
         }
 
     # Verify the tag exists on the remote after fetch.
-    verify_cmd = ["git", "-C", _quoted_repo, "rev-parse", f"refs/tags/{tag}^{{}}"]
+    verify_cmd = ["git", "-C", _repo, "rev-parse", f"refs/tags/{tag}^{{}}"]
     verify_result = ssh_runner(host, verify_cmd, timeout=timeout)
     if verify_result["rc"] != 0:
         return {
@@ -1364,7 +1366,7 @@ def _ssh_deploy(
     def _default_ssh_runner(host: str, cmd: list[str], timeout: int = 120) -> dict:
         try:
             r = subprocess.run(
-                ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", host] + cmd,
+                ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", host, shlex.join(cmd)],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

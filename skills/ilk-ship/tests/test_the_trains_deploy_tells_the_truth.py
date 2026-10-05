@@ -2100,7 +2100,11 @@ class TestRemoteAcquisitionUsesProjectPath:
 
     def test_fetch_and_revparse_receive_project_path(self, tmp_path: Path) -> None:
         """When _ssh_deploy receives a project path like 'my project',
-        both git -C commands in _acquire_remote_tag must use it (not 'repo')."""
+        both git -C commands in _acquire_remote_tag must use it (not 'repo').
+
+        The SSH runner receives raw semantic argv — the project path is
+        unquoted.  Serialization happens at the transport boundary
+        (_default_ssh_runner), not in _acquire_remote_tag."""
         # Use a path with spaces to prove it's passed as one argument
         project = tmp_path / "my project"
         project.mkdir()
@@ -2170,17 +2174,11 @@ class TestRemoteAcquisitionUsesProjectPath:
         fetch_args = fetch_calls[0]["args"]
         revparse_args = revparse_calls[0]["args"]
 
-        # git -C <path> → the element after -C is the path.
-        # The path may be shell-quoted (shlex.quote) to survive SSH arg
-        # concatenation, so strip shell quotes before comparing.
+        # The runner receives raw argv — the path is the element after -C.
         def _get_c_path(args: list) -> str | None:
-            import shlex as _shlex
             for i, a in enumerate(args):
                 if str(a) == "-C" and i + 1 < len(args):
-                    raw = str(args[i + 1])
-                    # shlex.split strips one layer of shell quoting
-                    parts = _shlex.split(raw)
-                    return parts[0] if parts else raw
+                    return str(args[i + 1])
             return None
 
         fetch_c_path = _get_c_path(fetch_args)
@@ -2219,16 +2217,20 @@ class TestRemoteSSHArgvSerialization:
     remote command; the fetch refspec is exact (no ``tag`` prefix); and a
     repository path containing spaces remains one ``git -C`` argument.
 
-    Captures the real ``subprocess.run`` call at the SSH boundary and
-    round-trips the remote command through shell parsing to verify
-    argument boundaries.
+    Fully hermetic: patches ``subprocess.run`` to capture the SSH argv and
+    return controlled results for every deployment phase (fetch, rev-parse,
+    extraction, bounce, status).  No real SSH connection is opened.
     """
 
     def test_remote_fetch_refspec_and_path_preserved(self, tmp_path: Path) -> None:
         """The remote ``git fetch`` must use an exact refspec
         ``refs/tags/<tag>:refs/tags/<tag>`` (no ``tag`` prefix) and the
         repository path with spaces must round-trip as one ``-C`` argument
-        through shell parsing."""
+        through shell parsing.  The SSH invocation must pass exactly one
+        serialized remote-command argument after the host."""
+        import shlex
+        import unittest.mock
+
         # Use a path with spaces to expose the quoting bug
         project = tmp_path / "my project"
         project.mkdir()
@@ -2260,17 +2262,36 @@ class TestRemoteSSHArgvSerialization:
         import release_train
 
         ssh_subprocess_calls: list[list[str]] = []
-        original_run = subprocess.run
 
-        def _capturing_run(args, **kwargs):
-            """Capture the SSH argv and delegate to the real runner."""
+        def _fake_run(args, **kwargs):
+            """Capture SSH argv and return controlled results."""
             if args and args[0] == "ssh":
                 ssh_subprocess_calls.append(list(args))
-            return original_run(args, **kwargs)
+                # Parse the single serialized remote-command argument
+                remote_cmd = args[-1]  # one arg after host
+                parsed = shlex.split(remote_cmd)
+                cmd_str = " ".join(parsed)
 
-        import unittest.mock
+                # git fetch → succeed
+                if "fetch" in cmd_str:
+                    return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+                # git rev-parse → return expected SHA
+                if "rev-parse" in cmd_str:
+                    return subprocess.CompletedProcess(args, 0, stdout="a" * 40, stderr="")
+                # ilk_release.py extraction → succeed
+                if "ilk_release.py" in cmd_str:
+                    return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
+                # host_deploy_status → ok
+                if "host_deploy_status" in cmd_str:
+                    return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
+                # bounce → succeed (exit 1 = restarted)
+                if "bounce_daemons" in cmd_str:
+                    return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
 
-        with unittest.mock.patch("subprocess.run", side_effect=_capturing_run):
+            # Non-SSH calls (git rev-parse for _tag_sha) — delegate
+            return subprocess.CompletedProcess(args, 0, stdout="a" * 40, stderr="")
+
+        with unittest.mock.patch("release_train.subprocess.run", side_effect=_fake_run):
             release_train._ssh_deploy(
                 project, "v0.0.1", data_dir,
                 host="rezmac",
@@ -2282,26 +2303,21 @@ class TestRemoteSSHArgvSerialization:
 
         first_ssh = ssh_subprocess_calls[0]
         # SSH argv: ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes",
-        #            "rezmac", "git", "-C", "my project", "fetch", "origin", ...]
-        # Everything after the host is the remote command args
+        #            "rezmac", "<serialized remote command>"]
+        # Exactly one arg after the host.
         host_idx = first_ssh.index("rezmac")
         remote_args = first_ssh[host_idx + 1:]
 
-        # Reconstruct the remote shell command as the remote shell would
-        # parse it (subprocess.run passes each arg as a separate SSH arg,
-        # SSH concatenates them with spaces, remote shell re-parses).
-        # The production code already applies shlex.quote() to paths, so
-        # joining with spaces (no additional quoting) reproduces the exact
-        # string the remote shell receives.
-        import shlex
-        remote_cmd_str = " ".join(str(a) for a in remote_args)
+        # AC-1: exactly one serialized remote-command argument after the host.
+        assert len(remote_args) == 1, (
+            f"Expected exactly one serialized remote-command arg, got {len(remote_args)}: {remote_args}"
+        )
 
-        # Round-trip through shell parsing to verify argument boundaries
+        # Round-trip through shell parsing to verify argument boundaries.
+        remote_cmd_str = remote_args[0]
         parsed = shlex.split(remote_cmd_str)
 
         # AC-2: the fetch refspec must NOT contain the incompatible "tag" prefix.
-        # After shell parsing, "tag refs/tags/v0.0.1:refs/tags/v0.0.1" as one
-        # Python arg becomes two tokens: "tag" and "refs/tags/...".
         fetch_idx = parsed.index("fetch")
         origin_idx = fetch_idx + 1
         refspec_token = parsed[origin_idx + 1]
@@ -2313,7 +2329,7 @@ class TestRemoteSSHArgvSerialization:
         )
 
         # AC-3: a repo path with spaces must survive shell parsing as one
-        # argument to git -C.  shlex.quote("my project") → "'my project'",
+        # argument to git -C.  shlex.join quotes "my project" → "my\\ project",
         # which round-trips as one token.
         c_idx = parsed.index("-C")
         c_path = parsed[c_idx + 1]
