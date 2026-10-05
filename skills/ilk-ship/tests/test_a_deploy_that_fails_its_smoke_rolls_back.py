@@ -502,3 +502,307 @@ def _cleanup():
             proc.wait(timeout=5)
         except Exception:
             pass
+
+
+# ── Step 0: xfail pins for bounded daemon settling ─────────────────────────
+#
+# These pins assert the contracts that step 1 (implement bounded settling)
+# will make green.  Each pin uses a fake monotonic clock/sleeper so no
+# wall-clock sleeps appear in the test suite.
+#
+# AC-1  Delayed PID creation: settle helper waits until PID appears.
+# AC-2  Delayed status ok: settle helper waits for status to transition
+#       from non-ok to ok inside the bound.
+# AC-3  Deadline expiry: persistent absence/mismatch at the deadline stays
+#       red and enters rollback.
+# AC-4  Persistent tag mismatch at deadline: settle helper returns
+#       terminal reason naming the mismatch.
+# AC-5  Rollback smoke uses the same bounded settling contract.
+
+
+class FakeClock:
+    """A monotonic clock whose time advances only via advance(seconds).
+
+    Used to test time-dependent settling logic without wall-clock sleeps.
+    """
+
+    def __init__(self, start: float = 1000.0) -> None:
+        self._now = start
+
+    def monotonic(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
+
+
+class FakeSleeper:
+    """Records each sleep(duration) call without actually sleeping."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        self.clock = clock
+        self.calls: list[float] = []
+
+    def sleep(self, seconds: float) -> None:
+        self.calls.append(seconds)
+        self.clock.advance(seconds)
+
+
+# ── AC-1: delayed PID creation — settle waits ─────────────────────────────
+
+
+@pytest.mark.xfail(strict=True, reason="settle helper not yet implemented")
+class TestDelayedPidCreationSettles:
+    """AC-1: after bounce, the settle helper polls until PID appears.
+
+    The PID file is initially absent; it is written after a few poll
+    cycles.  The settle helper must find it within the deadline.
+    """
+
+    def test_settle_finds_late_pid(self, tmp_path: Path) -> None:
+        """PID absent at bounce time but appears after 2 poll cycles."""
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        pid_dir = tmp_path / "data" / "runtime"
+        pid_dir.mkdir(parents=True, exist_ok=True)
+        pid_file = pid_dir / "scheduler.pid"
+
+        # PID is absent initially — settle must poll.
+        # After the status cmd sees it, it writes the file.
+        proc = subprocess.Popen(["sleep", "60"])
+        _LAUNCHED_PROCS.append(proc)
+
+        poll_count = {"n": 0}
+
+        def _status_with_delayed_pid(tag: str, cwd: Path | None = None) -> str:
+            poll_count["n"] += 1
+            if poll_count["n"] >= 3:
+                # Daemon started — write PID file now
+                if not pid_file.exists():
+                    pid_file.write_text(str(proc.pid))
+                return "ok"
+            return "unreachable"
+
+        clock = FakeClock()
+        sleeper = FakeSleeper(clock)
+
+        result = release_train._settle(
+            tag="v0.0.2",
+            status_cmd=_status_with_delayed_pid,
+            pid_file=pid_file,
+            deadline_sec=30.0,
+            poll_interval_sec=1.0,
+            clock=clock.monotonic,
+            sleeper=sleeper.sleep,
+            cwd=tmp_path,
+        )
+
+        assert result["ok"] is True
+        assert result["pid"] == proc.pid
+        assert result["attempts"] >= 3
+        assert result["terminal_reason"] == "ok"
+
+
+# ── AC-2: delayed status ok — settle waits for transition ─────────────────
+
+
+@pytest.mark.xfail(strict=True, reason="settle helper not yet implemented")
+class TestDelayedStatusOkSettles:
+    """AC-2: status transitions from non-ok to ok inside the bound.
+
+    The status cmd returns 'tag-mismatch' for the first few calls, then
+    'ok'.  The settle helper must wait and succeed.
+    """
+
+    def test_settle_waits_for_status_transition(self, tmp_path: Path) -> None:
+        """Status starts tag-mismatch, transitions to ok after 4 polls."""
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        pid_dir = tmp_path / "data" / "runtime"
+        pid_dir.mkdir(parents=True, exist_ok=True)
+        pid_file = pid_dir / "scheduler.pid"
+
+        proc = subprocess.Popen(["sleep", "60"])
+        _LAUNCHED_PROCS.append(proc)
+        pid_file.write_text(str(proc.pid))
+
+        poll_count = {"n": 0}
+
+        def _status_transitioning(tag: str, cwd: Path | None = None) -> str:
+            poll_count["n"] += 1
+            if poll_count["n"] >= 5:
+                return "ok"
+            return "tag-mismatch"
+
+        clock = FakeClock()
+        sleeper = FakeSleeper(clock)
+
+        result = release_train._settle(
+            tag="v0.0.2",
+            status_cmd=_status_transitioning,
+            pid_file=pid_file,
+            deadline_sec=30.0,
+            poll_interval_sec=1.0,
+            clock=clock.monotonic,
+            sleeper=sleeper.sleep,
+            cwd=tmp_path,
+        )
+
+        assert result["ok"] is True
+        assert result["attempts"] >= 5
+        assert result["terminal_reason"] == "ok"
+
+
+# ── AC-3: deadline expiry — persistent absence stays red ──────────────────
+
+
+@pytest.mark.xfail(strict=True, reason="settle helper not yet implemented")
+class TestDeadlineExpiryPersistentAbsence:
+    """AC-3: persistent absence at the deadline stays red and enters rollback.
+
+    The PID never appears and the status never returns ok.  The settle
+    helper must hit the deadline and return a failure result.
+    """
+
+    def test_settle_deadline_expires_on_persistent_absence(
+        self, tmp_path: Path,
+    ) -> None:
+        """PID absent and status unreachable for entire deadline."""
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        pid_dir = tmp_path / "data" / "runtime"
+        pid_dir.mkdir(parents=True, exist_ok=True)
+        pid_file = pid_dir / "scheduler.pid"
+        # PID file never created — persistent absence.
+
+        def _status_always_unreachable(tag: str, cwd: Path | None = None) -> str:
+            return "unreachable"
+
+        clock = FakeClock()
+        sleeper = FakeSleeper(clock)
+
+        result = release_train._settle(
+            tag="v0.0.2",
+            status_cmd=_status_always_unreachable,
+            pid_file=pid_file,
+            deadline_sec=10.0,
+            poll_interval_sec=1.0,
+            clock=clock.monotonic,
+            sleeper=sleeper.sleep,
+            cwd=tmp_path,
+        )
+
+        assert result["ok"] is False
+        assert result["elapsed"] >= 10.0
+        assert result["terminal_reason"] != "ok"
+
+
+# ── AC-4: persistent tag mismatch at deadline ─────────────────────────────
+
+
+@pytest.mark.xfail(strict=True, reason="settle helper not yet implemented")
+class TestPersistentTagMismatchAtDeadline:
+    """AC-4: tag mismatch that never resolves stays red at deadline.
+
+    The status cmd always returns 'tag-mismatch'.  The settle helper
+    must hit the deadline and name the mismatch in its terminal reason.
+    """
+
+    def test_settle_names_persistent_mismatch(self, tmp_path: Path) -> None:
+        """Status always tag-mismatch → settle fails naming mismatch."""
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        pid_dir = tmp_path / "data" / "runtime"
+        pid_dir.mkdir(parents=True, exist_ok=True)
+        pid_file = pid_dir / "scheduler.pid"
+
+        proc = subprocess.Popen(["sleep", "60"])
+        _LAUNCHED_PROCS.append(proc)
+        pid_file.write_text(str(proc.pid))
+
+        def _status_always_mismatch(tag: str, cwd: Path | None = None) -> str:
+            return "tag-mismatch"
+
+        clock = FakeClock()
+        sleeper = FakeSleeper(clock)
+
+        result = release_train._settle(
+            tag="v0.0.2",
+            status_cmd=_status_always_mismatch,
+            pid_file=pid_file,
+            deadline_sec=10.0,
+            poll_interval_sec=1.0,
+            clock=clock.monotonic,
+            sleeper=sleeper.sleep,
+            cwd=tmp_path,
+        )
+
+        assert result["ok"] is False
+        assert result["terminal_reason"] == "tag-mismatch"
+        assert result["attempts"] >= 10
+
+
+# ── AC-5: rollback smoke uses the same bounded settling contract ───────────
+
+
+@pytest.mark.xfail(strict=True, reason="settle helper not yet implemented")
+class TestRollbackSmokeUsesSameContract:
+    """AC-5: rollback smoke uses the same _settle helper as forward smoke.
+
+    After a forward smoke failure triggers rollback, the rollback smoke
+    must also use the bounded settling contract (poll + deadline).
+    """
+
+    def test_rollback_smoke_uses_settle(self, tmp_path: Path) -> None:
+        """Forward smoke fails, rollback smoke settles within bound."""
+        releases_root, parent = _make_releases_root(tmp_path)
+        project = _make_fake_project(tmp_path)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        pid_dir = data_dir / "runtime"
+        pid_dir.mkdir(parents=True, exist_ok=True)
+        pid_file = pid_dir / "scheduler.pid"
+
+        proc = subprocess.Popen(["sleep", "60"])
+        _LAUNCHED_PROCS.append(proc)
+        pid_file.write_text(str(proc.pid))
+
+        call_count = {"n": 0}
+
+        def _status_rollback_settles(tag: str, cwd: Path | None = None) -> str:
+            call_count["n"] += 1
+            if tag == "v0.0.2":
+                return "tag-mismatch"  # forward always fails
+            # v0.0.1: first call fails, then settles
+            if call_count["n"] <= 2:
+                return "tag-mismatch"
+            return "ok"
+
+        result = deploy(
+            project=project,
+            tag="v0.0.2",
+            data_dir=data_dir,
+            release_cmd=_make_release_cmd(
+                allow_tags={"v0.0.2", "v0.0.1"}, releases_root=releases_root,
+            ),
+            bounce_cmd=lambda tag: 1,
+            status_cmd=_status_rollback_settles,
+            pid_file=pid_file,
+            settle_deadline_sec=30.0,
+            settle_poll_interval_sec=1.0,
+        )
+
+        assert result["deployed"] is False
+        assert result["rolled_back_to"] == "v0.0.1"
+        assert result["rollback_smoke"] == "ok"
+        # Rollback should have polled more than once (settling)
+        assert call_count["n"] > 2
