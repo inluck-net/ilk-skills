@@ -1239,6 +1239,73 @@ def _deploy_all_hosts(
     }
 
 
+def _acquire_remote_tag(
+    ssh_runner: Callable,
+    host: str,
+    tag: str,
+    expected_tag_sha: str,
+    timeout: int = 120,
+) -> dict | None:
+    """Fetch the exact candidate tag on the remote host and verify it.
+
+    Returns ``None`` on success (tag acquired and verified).
+    Returns a failure dict with ``exit_code``, ``reason``, ``acquire``,
+    and zeroed bounce/smoke/extract fields on any failure.
+
+    Acquisition never checks out, resets, merges, or otherwise rewrites
+    the remote repository's current branch or working tree.  It runs only
+    ``git fetch origin tag refs/tags/<tag>`` and ``git rev-parse``.
+    """
+    fetch_cmd = [
+        "git", "-C", "repo", "fetch", "origin",
+        f"tag refs/tags/{tag}:refs/tags/{tag}",
+    ]
+
+    fetch_result = ssh_runner(host, fetch_cmd, timeout=timeout)
+    if fetch_result["rc"] != 0:
+        err = fetch_result.get("stderr") or fetch_result.get("stdout") or "unknown"
+        return {
+            "exit_code": 2, "deployed": False,
+            "host": host, "transport": "ssh",
+            "reason": f"tag acquisition failed: {err}",
+            "acquire": {"rc": fetch_result["rc"], "tag": tag, "phase": "fetch"},
+            "extract": {"rc": -1, "tag": tag},
+            "bounce": {"exit": -1, "pid_before": None, "pid_after": None},
+            "smoke": {"ok": False, "reason": "skipped"},
+        }
+
+    # Verify the tag exists on the remote after fetch.
+    verify_cmd = ["git", "-C", "repo", "rev-parse", f"refs/tags/{tag}^{{}}"]
+    verify_result = ssh_runner(host, verify_cmd, timeout=timeout)
+    if verify_result["rc"] != 0:
+        return {
+            "exit_code": 2, "deployed": False,
+            "host": host, "transport": "ssh",
+            "reason": f"tag {tag} not found after fetch",
+            "acquire": {"rc": 1, "tag": tag, "phase": "verify"},
+            "extract": {"rc": -1, "tag": tag},
+            "bounce": {"exit": -1, "pid_before": None, "pid_after": None},
+            "smoke": {"ok": False, "reason": "skipped"},
+        }
+
+    # SHA mismatch: the fetched tag does not point to the expected commit.
+    # Skip when expected is empty (caller has no local tag to compare against).
+    actual_sha = verify_result["stdout"].strip()
+    if expected_tag_sha and actual_sha != expected_tag_sha:
+        return {
+            "exit_code": 2, "deployed": False,
+            "host": host, "transport": "ssh",
+            "reason": f"tag {tag} sha mismatch: expected {expected_tag_sha[:12]}, "
+                      f"got {verify_result['stdout'].strip()[:12]}",
+            "acquire": {"rc": 2, "tag": tag, "phase": "sha_mismatch"},
+            "extract": {"rc": -1, "tag": tag},
+            "bounce": {"exit": -1, "pid_before": None, "pid_after": None},
+            "smoke": {"ok": False, "reason": "skipped"},
+        }
+
+    return None  # success
+
+
 def _ssh_deploy(
     project: Path,
     tag: str,
@@ -1297,6 +1364,16 @@ def _ssh_deploy(
             return {"rc": -1, "stdout": "", "stderr": str(exc)}
 
     _run = ssh_runner if ssh_runner is not None else _default_ssh_runner
+
+    # ── 0. acquire exact tag ─────────────────────────────────────────────
+    #
+    # Before extraction, fetch the exact candidate tag from origin into
+    # refs/tags/<tag>.  This ensures the remote repository has the pushed
+    # tag available for extraction, without rewriting its checked-out branch.
+    expected_sha = _tag_sha(project, tag) or ""
+    acquire_failure = _acquire_remote_tag(_run, host, tag, expected_sha, timeout=timeout)
+    if acquire_failure is not None:
+        return acquire_failure
 
     # ── 1. extract ──────────────────────────────────────────────────────
     extract_result = _run(host, [

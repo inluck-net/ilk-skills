@@ -1698,7 +1698,6 @@ class TestRemoteTagAcquisition:
     extract, bounce, settle.
     """
 
-    @pytest.mark.xfail(strict=True, reason="step 1: tag acquisition not yet implemented")
     def test_remote_missing_tag_fetches_before_extraction(self, tmp_path: Path) -> None:
         """When the remote repo does not have the candidate tag, the SSH
         adapter must fetch it from origin before calling extraction."""
@@ -1768,7 +1767,6 @@ class TestTagAcquisitionCommandShape:
     """AC-1 corollary: the fetch refspec must be exact (refs/tags/<tag>),
     not a wildcard or branch fetch."""
 
-    @pytest.mark.xfail(strict=True, reason="step 1: tag acquisition not yet implemented")
     def test_fetch_refspec_is_exact_tag(self, tmp_path: Path) -> None:
         """The fetch command must use an exact refspec for the candidate tag,
         not a wildcard like 'refs/tags/*'."""
@@ -1824,7 +1822,6 @@ class TestFetchFailureIsFailClosed:
     """AC-3: fetch failure returns explicit nonzero evidence and skips
     extraction, bounce, and smoke."""
 
-    @pytest.mark.xfail(strict=True, reason="step 1: tag acquisition not yet implemented")
     def test_fetch_failure_skips_extraction(self, tmp_path: Path) -> None:
         """When the SSH fetch fails, the adapter must return nonzero exit
         and must NOT call extraction."""
@@ -1874,7 +1871,6 @@ class TestMissingTagAfterFetchIsFailClosed:
     """AC-3 corollary: if the tag is still missing after fetch, the adapter
     must return nonzero and skip extraction."""
 
-    @pytest.mark.xfail(strict=True, reason="step 1: tag acquisition not yet implemented")
     def test_missing_tag_after_fetch_skips_extraction(self, tmp_path: Path) -> None:
         """When fetch succeeds but the tag is still not present on the remote,
         the adapter must return nonzero and must NOT extract."""
@@ -1926,7 +1922,6 @@ class TestCheckedOutBranchUntouched:
     """AC-2: tag acquisition never checks out, resets, merges, or otherwise
     rewrites the remote repository's current branch or working tree."""
 
-    @pytest.mark.xfail(strict=True, reason="step 1: tag acquisition not yet implemented")
     def test_fetch_does_not_modify_remote_branch(self, tmp_path: Path) -> None:
         """The SSH adapter must not run checkout, reset, merge, or any
         branch-modifying command on the remote host."""
@@ -1991,14 +1986,12 @@ class TestTagMismatchAfterAcquisition:
     """AC-3: a fetched tag whose object does not match the expected SHA
     must return nonzero and skip extraction."""
 
-    @pytest.mark.xfail(strict=True, reason="step 1: tag acquisition not yet implemented")
     def test_tag_sha_mismatch_returns_nonzero(self, tmp_path: Path) -> None:
         """When the fetched tag resolves to a different SHA than expected,
         the adapter must refuse and return nonzero."""
         data_dir = tmp_path / "data"
         data_dir.mkdir()
-        project = tmp_path / "project"
-        project.mkdir()
+        project = _make_fake_project(tmp_path)
 
         # Create a PID file for the current process so settle loop succeeds
         releases_dir = project / "releases" / "v0.0.2"
