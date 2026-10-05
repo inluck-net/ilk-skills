@@ -1293,3 +1293,312 @@ class TestAC8:
         cand = [c for c in candidates if c["id"] == "sig-abc123"][0]
         assert cand["status"] == "open"
         assert cand["relations"]["autoplan_attempts"] == 1
+
+
+# ── AC-9: draft-only dry period ───────────────────────────────────────────
+
+
+def _build_fake_toolkit_with_config(tmp_path, data_root, *, autoplan_config: dict) -> Path:
+    """Create a fake toolkit repo with a custom .ilk-launch.json autoplan config."""
+    toolkit = Path(tmp_path) / "toolkit"
+    toolkit.mkdir(parents=True, exist_ok=True)
+    (toolkit / "commands").mkdir(exist_ok=True)
+    (toolkit / "commands" / "ilk-plan.md").write_text("# ilk-plan\n", encoding="utf-8")
+    (toolkit / ".ilk-launch.json").write_text(
+        json.dumps({"autoplan": autoplan_config}) + "\n",
+        encoding="utf-8",
+    )
+    plans_dir = data_root / "plans"
+    plans_dir.mkdir(exist_ok=True)
+    return toolkit
+
+
+class TestAC9:
+    """Draft-only dry period: planner runs fully but master stays draft."""
+
+    @pytest.mark.xfail(strict=True, reason="draft_only config not yet implemented")
+    def test_draft_only_true_keeps_master_draft(self, tmp_path):
+        """draft_only: true → full pipeline runs, master stays draft, event is dry-period-drafted."""
+        mod = _load_module()
+        data_root = _build_fake_data_root(tmp_path)
+        toolkit = _build_fake_toolkit_with_config(
+            tmp_path, data_root,
+            autoplan_config={"enabled": True, "draft_only": True},
+        )
+        manager_home = _build_fake_manager_home(tmp_path)
+
+        # Create a project data dir
+        project_dir = data_root / "projects" / "test-project"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        (project_dir / "runtime" / "launcher").mkdir(parents=True, exist_ok=True)
+        (project_dir / "runtime" / "launcher" / "last-launch.json").write_text(
+            json.dumps({"project_path": str(toolkit)}) + "\n",
+            encoding="utf-8",
+        )
+
+        # Create a candidate
+        backlog_dir = data_root / "ilk-skills-improvements"
+        backlog_dir.mkdir(parents=True, exist_ok=True)
+        _save_candidates(backlog_dir, [_make_candidate()])
+
+        # Create plans dir
+        plans_dir = data_root / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
+
+        # Stub claude that writes the fixture batch
+        stub_claude = _make_stub_claude(tmp_path, model="claude-opus-test",
+                                         write_batch=True)
+        marker = tmp_path / "claude-marker.txt"
+
+        # Stub lint and preflight that pass
+        lint, preflight = _make_stub_lint_preflight(tmp_path)
+
+        result = mod.plan(
+            candidate_id="sig-abc123",
+            project_key="test-project",
+            run_id="run-001",
+            data_root=data_root,
+            toolkit_repo=str(toolkit),
+            manager_home=str(manager_home),
+            claude_cmd=[sys.executable, str(stub_claude)],
+            lint_cmd=[sys.executable, str(lint)],
+            preflight_cmd=[sys.executable, str(preflight)],
+            draft_only=True,
+            env_overrides={
+                "ILK_PLANS_DIR": str(plans_dir),
+                "ILK_REPO_DIR": str(toolkit),
+                "ILK_MARKER": str(marker),
+                "ILK_FIXTURE_DIR": str(FIXTURE_DIR),
+            },
+        )
+
+        # Master should be draft (not queued)
+        from plan_status import parse_frontmatter
+        masters = list(plans_dir.glob("MASTER-*.md"))
+        assert len(masters) == 1
+        fm = parse_frontmatter(masters[0].read_text(encoding="utf-8-sig"))
+        assert fm.get("status") == "draft", "draft_only master must stay draft"
+        assert fm.get("auto_planned") == "true"
+
+        # Full pipeline ran: lint and preflight were called
+        # (lint/preflight stubs exit 0, so no problems)
+        # The dry-period-drafted event should be written
+        rows = _read_audit_rows(data_root, "dry-period-drafted")
+        assert len(rows) == 1, "dry-period-drafted audit row must be written"
+        assert rows[0].get("candidate") == "sig-abc123"
+        assert rows[0].get("master") == masters[0].name
+
+        # Candidate should be planned (not refused)
+        candidates = _load_candidates(backlog_dir)
+        cand = [c for c in candidates if c["id"] == "sig-abc123"][0]
+        assert cand["status"] == "planned"
+
+        # Consecutive drafts counter must NOT increment
+        state = json.loads((data_root / "autoplan" / "state.json").read_text(encoding="utf-8"))
+        assert state.get("consecutive_drafts", 0) == 0, (
+            "draft_only must not count as a consecutive draft"
+        )
+
+        # No paused.json
+        assert not (data_root / "autoplan" / "paused.json").exists()
+
+    @pytest.mark.xfail(strict=True, reason="draft_only config not yet implemented")
+    def test_draft_only_false_promotes_to_queued(self, tmp_path):
+        """draft_only: false → normal behavior, master becomes queued."""
+        mod = _load_module()
+        data_root = _build_fake_data_root(tmp_path)
+        toolkit = _build_fake_toolkit_with_config(
+            tmp_path, data_root,
+            autoplan_config={"enabled": True, "draft_only": False},
+        )
+        manager_home = _build_fake_manager_home(tmp_path)
+
+        # Create a project data dir
+        project_dir = data_root / "projects" / "test-project"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        (project_dir / "runtime" / "launcher").mkdir(parents=True, exist_ok=True)
+        (project_dir / "runtime" / "launcher" / "last-launch.json").write_text(
+            json.dumps({"project_path": str(toolkit)}) + "\n",
+            encoding="utf-8",
+        )
+
+        # Create a candidate
+        backlog_dir = data_root / "ilk-skills-improvements"
+        backlog_dir.mkdir(parents=True, exist_ok=True)
+        _save_candidates(backlog_dir, [_make_candidate()])
+
+        # Create plans dir
+        plans_dir = data_root / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
+
+        # Stub claude that writes the fixture batch
+        stub_claude = _make_stub_claude(tmp_path, model="claude-opus-test",
+                                         write_batch=True)
+        marker = tmp_path / "claude-marker.txt"
+
+        # Stub lint and preflight that pass
+        lint, preflight = _make_stub_lint_preflight(tmp_path)
+
+        result = mod.plan(
+            candidate_id="sig-abc123",
+            project_key="test-project",
+            run_id="run-001",
+            data_root=data_root,
+            toolkit_repo=str(toolkit),
+            manager_home=str(manager_home),
+            claude_cmd=[sys.executable, str(stub_claude)],
+            lint_cmd=[sys.executable, str(lint)],
+            preflight_cmd=[sys.executable, str(preflight)],
+            draft_only=False,
+            env_overrides={
+                "ILK_PLANS_DIR": str(plans_dir),
+                "ILK_REPO_DIR": str(toolkit),
+                "ILK_MARKER": str(marker),
+                "ILK_FIXTURE_DIR": str(FIXTURE_DIR),
+            },
+        )
+
+        # Master should be queued (normal behavior)
+        from plan_status import parse_frontmatter
+        masters = list(plans_dir.glob("MASTER-*.md"))
+        assert len(masters) == 1
+        fm = parse_frontmatter(masters[0].read_text(encoding="utf-8-sig"))
+        assert fm.get("status") == "queued", "draft_only: false must promote to queued"
+
+        # autoplan-queued row (not dry-period-drafted)
+        rows = _read_audit_rows(data_root, "autoplan-queued")
+        assert len(rows) == 1
+        assert _read_audit_rows(data_root, "dry-period-drafted") == [], (
+            "dry-period-drafted must not fire when draft_only is false"
+        )
+
+    def test_draft_only_absent_promotes_to_queued(self, tmp_path):
+        """No draft_only key → default false, master becomes queued."""
+        mod = _load_module()
+        data_root = _build_fake_data_root(tmp_path)
+        toolkit = _build_fake_toolkit_with_config(
+            tmp_path, data_root,
+            autoplan_config={"enabled": True},  # no draft_only key
+        )
+        manager_home = _build_fake_manager_home(tmp_path)
+
+        # Create a project data dir
+        project_dir = data_root / "projects" / "test-project"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        (project_dir / "runtime" / "launcher").mkdir(parents=True, exist_ok=True)
+        (project_dir / "runtime" / "launcher" / "last-launch.json").write_text(
+            json.dumps({"project_path": str(toolkit)}) + "\n",
+            encoding="utf-8",
+        )
+
+        # Create a candidate
+        backlog_dir = data_root / "ilk-skills-improvements"
+        backlog_dir.mkdir(parents=True, exist_ok=True)
+        _save_candidates(backlog_dir, [_make_candidate()])
+
+        # Create plans dir
+        plans_dir = data_root / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
+
+        # Stub claude that writes the fixture batch
+        stub_claude = _make_stub_claude(tmp_path, model="claude-opus-test",
+                                         write_batch=True)
+        marker = tmp_path / "claude-marker.txt"
+
+        # Stub lint and preflight that pass
+        lint, preflight = _make_stub_lint_preflight(tmp_path)
+
+        result = mod.plan(
+            candidate_id="sig-abc123",
+            project_key="test-project",
+            run_id="run-001",
+            data_root=data_root,
+            toolkit_repo=str(toolkit),
+            manager_home=str(manager_home),
+            claude_cmd=[sys.executable, str(stub_claude)],
+            lint_cmd=[sys.executable, str(lint)],
+            preflight_cmd=[sys.executable, str(preflight)],
+            env_overrides={
+                "ILK_PLANS_DIR": str(plans_dir),
+                "ILK_REPO_DIR": str(toolkit),
+                "ILK_MARKER": str(marker),
+                "ILK_FIXTURE_DIR": str(FIXTURE_DIR),
+            },
+        )
+
+        # Master should be queued (default behavior)
+        from plan_status import parse_frontmatter
+        masters = list(plans_dir.glob("MASTER-*.md"))
+        assert len(masters) == 1
+        fm = parse_frontmatter(masters[0].read_text(encoding="utf-8-sig"))
+        assert fm.get("status") == "queued", "absent draft_only must default to false"
+
+    @pytest.mark.xfail(strict=True, reason="draft_only config not yet implemented")
+    def test_draft_only_malformed_refuses(self, tmp_path):
+        """draft_only: \"yes\" (string, not bool) → refuse, no master queued."""
+        mod = _load_module()
+        data_root = _build_fake_data_root(tmp_path)
+        toolkit = _build_fake_toolkit_with_config(
+            tmp_path, data_root,
+            autoplan_config={"enabled": True, "draft_only": "yes"},  # malformed
+        )
+        manager_home = _build_fake_manager_home(tmp_path)
+
+        # Create a project data dir
+        project_dir = data_root / "projects" / "test-project"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        (project_dir / "runtime" / "launcher").mkdir(parents=True, exist_ok=True)
+        (project_dir / "runtime" / "launcher" / "last-launch.json").write_text(
+            json.dumps({"project_path": str(toolkit)}) + "\n",
+            encoding="utf-8",
+        )
+
+        # Create a candidate
+        backlog_dir = data_root / "ilk-skills-improvements"
+        backlog_dir.mkdir(parents=True, exist_ok=True)
+        _save_candidates(backlog_dir, [_make_candidate()])
+
+        # Create plans dir
+        plans_dir = data_root / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
+
+        # Stub claude that writes the fixture batch
+        stub_claude = _make_stub_claude(tmp_path, model="claude-opus-test",
+                                         write_batch=True)
+        marker = tmp_path / "claude-marker.txt"
+
+        # Stub lint and preflight that pass
+        lint, preflight = _make_stub_lint_preflight(tmp_path)
+
+        result = mod.plan(
+            candidate_id="sig-abc123",
+            project_key="test-project",
+            run_id="run-001",
+            data_root=data_root,
+            toolkit_repo=str(toolkit),
+            manager_home=str(manager_home),
+            claude_cmd=[sys.executable, str(stub_claude)],
+            lint_cmd=[sys.executable, str(lint)],
+            preflight_cmd=[sys.executable, str(preflight)],
+            env_overrides={
+                "ILK_PLANS_DIR": str(plans_dir),
+                "ILK_REPO_DIR": str(toolkit),
+                "ILK_MARKER": str(marker),
+                "ILK_FIXTURE_DIR": str(FIXTURE_DIR),
+            },
+        )
+
+        # Should be refused with config error
+        rows = _read_audit_rows(data_root, "autoplan-refused")
+        assert len(rows) >= 1
+        assert "draft_only" in rows[0].get("reason", "").lower() or \
+               "config" in rows[0].get("reason", "").lower(), (
+            "malformed draft_only must refuse with a config error"
+        )
+
+        # No queued master
+        masters = list(plans_dir.glob("MASTER-*.md"))
+        for m in masters:
+            from plan_status import parse_frontmatter
+            fm = parse_frontmatter(m.read_text(encoding="utf-8-sig"))
+            assert fm.get("status") != "queued", "malformed config must not queue"
