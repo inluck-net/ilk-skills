@@ -828,3 +828,146 @@ class TestRollbackSmokeUsesSameContract:
         assert result["rollback_smoke"] == "ok"
         # Rollback should have polled more than once (settling)
         assert call_count["n"] > 2
+
+
+# ── Step 0: xfail pins for the production default-value bypass ─────────────
+#
+# These tests reproduce the v0.9.150 defect: when deploy() is called with
+# default settle parameters (the production path), _smoke falls through to
+# single-shot because its dispatch condition checks
+#   `clock is not None or sleeper is not None or deadline_sec != 30.0 or poll_interval_sec != 2.0`
+# and all four are false for the default call.  A delayed daemon startup
+# that _settle would handle correctly instead fails immediately via the
+# single-shot path.
+#
+# These pins are xfail(strict=True) — they must FAIL on the current code
+# and PASS once step 1 removes the default-value bypass.
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="production default settle args select single-shot instead of bounded settling",
+)
+class TestDeployWithDefaultSettleArgsSettles:
+    """Production deploy with default settle args must use bounded settling.
+
+    When deploy() is called with its documented defaults (settle_deadline_sec=30.0,
+    settle_poll_interval_sec=2.0) and no explicit clock/sleeper, a delayed daemon
+    startup must succeed via polling — not fail via the single-shot check.
+    """
+
+    def test_forward_deploy_settles_with_default_args(self, tmp_path: Path) -> None:
+        """Daemon starts late → deploy must poll and succeed with default settle args."""
+        releases_root, parent = _make_releases_root(tmp_path)
+        project = _make_fake_project(tmp_path)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        release_dir = tmp_path / "releases" / "v0.0.2"
+        release_dir.mkdir(parents=True)
+        script = release_dir / "scheduler.sh"
+        script.write_text("#!/bin/bash\nsleep 60\n")
+        script.chmod(0o755)
+
+        pid_dir = data_dir / "runtime"
+        pid_dir.mkdir(parents=True, exist_ok=True)
+        pid_file = pid_dir / "scheduler.pid"
+
+        # Daemon starts after 3 poll cycles
+        poll_count = {"n": 0}
+        proc_holder: list[subprocess.Popen] = []
+
+        def _status_delayed(tag: str, cwd: Path | None = None) -> str:
+            poll_count["n"] += 1
+            if poll_count["n"] >= 3:
+                if not proc_holder:
+                    proc = subprocess.Popen(["bash", str(script)])
+                    _LAUNCHED_PROCS.append(proc)
+                    proc_holder.append(proc)
+                    pid_file.write_text(str(proc.pid))
+                return "ok"
+            return "unreachable"
+
+        result = deploy(
+            project=project,
+            tag="v0.0.2",
+            data_dir=data_dir,
+            release_cmd=_make_release_cmd(
+                allow_tags={"v0.0.2"}, releases_root=releases_root,
+            ),
+            bounce_cmd=lambda tag: 1,
+            status_cmd=_status_delayed,
+            pid_file=pid_file,
+            # All settle args at their documented defaults — the production path
+        )
+
+        assert result["deployed"] is True
+        assert result["exit_code"] == 0
+        # Must have polled more than once (bounded settling, not single-shot)
+        assert poll_count["n"] > 1
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="production default settle args select single-shot instead of bounded settling",
+)
+class TestRollbackWithDefaultSettleArgsSettles:
+    """Rollback smoke with default settle args must use bounded settling.
+
+    After forward smoke fails, rollback must poll with the same bounded
+    contract — not fall through to a single-shot check.
+    """
+
+    def test_rollback_settles_with_default_args(self, tmp_path: Path) -> None:
+        """Rollback daemon starts late → rollback must poll and succeed."""
+        releases_root, parent = _make_releases_root(tmp_path)
+        project = _make_fake_project(tmp_path)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        release_dir = tmp_path / "releases" / "v0.0.1"
+        release_dir.mkdir(parents=True)
+        script = release_dir / "scheduler.sh"
+        script.write_text("#!/bin/bash\nsleep 60\n")
+        script.chmod(0o755)
+
+        pid_dir = data_dir / "runtime"
+        pid_dir.mkdir(parents=True, exist_ok=True)
+        pid_file = pid_dir / "scheduler.pid"
+
+        # Forward always fails; rollback succeeds after a delay
+        call_count = {"n": 0}
+        proc_holder: list[subprocess.Popen] = []
+
+        def _status_rollback_delayed(tag: str, cwd: Path | None = None) -> str:
+            call_count["n"] += 1
+            if tag == "v0.0.2":
+                return "tag-mismatch"
+            # v0.0.1 (rollback target): delayed start
+            if call_count["n"] <= 3:
+                return "unreachable"
+            if not proc_holder:
+                proc = subprocess.Popen(["bash", str(script)])
+                _LAUNCHED_PROCS.append(proc)
+                proc_holder.append(proc)
+                pid_file.write_text(str(proc.pid))
+            return "ok"
+
+        result = deploy(
+            project=project,
+            tag="v0.0.2",
+            data_dir=data_dir,
+            release_cmd=_make_release_cmd(
+                allow_tags={"v0.0.2", "v0.0.1"}, releases_root=releases_root,
+            ),
+            bounce_cmd=lambda tag: 1,
+            status_cmd=_status_rollback_delayed,
+            pid_file=pid_file,
+            # All settle args at their documented defaults — the production path
+        )
+
+        assert result["deployed"] is False
+        assert result["rolled_back_to"] == "v0.0.1"
+        assert result["rollback_smoke"] == "ok"
+        # Rollback must have polled more than once (bounded settling, not single-shot)
+        assert call_count["n"] > 2
