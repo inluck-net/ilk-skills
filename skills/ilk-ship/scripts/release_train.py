@@ -1152,23 +1152,7 @@ def _deploy_all_hosts(
 
     # Resolve hosts
     if hosts is None:
-        config_path = data_dir / "runtime" / "ship-config.json"
-        if config_path.exists():
-            try:
-                cfg = json.loads(config_path.read_text())
-                hosts = cfg.get("ship", {}).get("hosts", [])
-            except (json.JSONDecodeError, KeyError):
-                hosts = []
-        else:
-            launch_config = project / ".ilk-launch.json"
-            if launch_config.exists():
-                try:
-                    cfg = json.loads(launch_config.read_text())
-                    hosts = cfg.get("ship", {}).get("hosts", [])
-                except (json.JSONDecodeError, KeyError):
-                    hosts = []
-            else:
-                hosts = []
+        hosts = _resolve_hosts(data_dir, project)
 
     if not hosts:
         # No hosts configured — deploy locally (backward compatible)
@@ -1328,6 +1312,47 @@ def _release_lock(lock_file: Path) -> None:
         pass
 
 
+def _resolve_hosts(
+    data_dir: Path,
+    project: Path,
+    hosts: list[str] | None = None,
+) -> list[str]:
+    """Resolve the canonical ordered host list once.
+
+    Resolution order:
+      1. Explicit ``hosts`` argument (passed by caller).
+      2. ``<data_dir>/runtime/ship-config.json`` → ``ship.hosts``.
+      3. ``<project>/.ilk-launch.json`` → ``ship.hosts``.
+      4. Empty list (no hosts configured).
+
+    Returns an immutable copy of the resolved list.
+    """
+    if hosts is not None:
+        return list(hosts)
+
+    config_path = data_dir / "runtime" / "ship-config.json"
+    if config_path.exists():
+        try:
+            cfg = json.loads(config_path.read_text())
+            resolved = cfg.get("ship", {}).get("hosts", [])
+            if resolved:
+                return list(resolved)
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    launch_config = project / ".ilk-launch.json"
+    if launch_config.exists():
+        try:
+            cfg = json.loads(launch_config.read_text())
+            resolved = cfg.get("ship", {}).get("hosts", [])
+            if resolved:
+                return list(resolved)
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    return []
+
+
 def _check_permits(
     data_dir: Path,
     project: Path,
@@ -1346,8 +1371,7 @@ def _check_permits(
         data_dir: The project data root.
         project: The project path (for project_key resolution).
         check_result: The check() result (provides last_tag and head).
-        hosts: Explicit host list.  If None, reads from
-            ``<data_dir>/runtime/ship-config.json`` → ``ship.hosts``.
+        hosts: Host list.  If None, resolved via ``_resolve_hosts``.
         consume: If True, atomically mark permits as consumed.
 
     Returns ``{"ok": True}`` when all permits are valid, or
@@ -1357,24 +1381,7 @@ def _check_permits(
 
     # Resolve hosts
     if hosts is None:
-        config_path = data_dir / "runtime" / "ship-config.json"
-        if config_path.exists():
-            try:
-                cfg = json.loads(config_path.read_text())
-                hosts = cfg.get("ship", {}).get("hosts", [])
-            except (json.JSONDecodeError, KeyError):
-                hosts = []
-        else:
-            # Also try the project's .ilk-launch.json
-            launch_config = project / ".ilk-launch.json"
-            if launch_config.exists():
-                try:
-                    cfg = json.loads(launch_config.read_text())
-                    hosts = cfg.get("ship", {}).get("hosts", [])
-                except (json.JSONDecodeError, KeyError):
-                    hosts = []
-            else:
-                hosts = []
+        hosts = _resolve_hosts(data_dir, project)
 
     if not hosts:
         return {"ok": True}  # no hosts configured → no permits needed
@@ -1505,8 +1512,11 @@ def run(
             )
             return {"exit_code": 3, "reason": reason}
 
+        # ── 1a. resolve canonical host list ────────────────────────────
+        resolved_hosts = _resolve_hosts(data_dir, project, hosts)
+
         # ── 1b. permit check ───────────────────────────────────────────
-        permit_result = _check_permits(data_dir, project, check_result, hosts=hosts, consume=False)
+        permit_result = _check_permits(data_dir, project, check_result, hosts=resolved_hosts, consume=False)
         if not permit_result.get("ok"):
             reason = permit_result.get("reason", "permit check failed")
             write_audit(
@@ -1541,7 +1551,7 @@ def run(
 
         # ── 3b. consume permits ────────────────────────────────────────
         consume_result = _check_permits(
-            data_dir, project, check_result, hosts=hosts, consume=True,
+            data_dir, project, check_result, hosts=resolved_hosts, consume=True,
         )
         if not consume_result.get("ok"):
             reason = consume_result.get("reason", "permit consumption failed")
@@ -1553,10 +1563,10 @@ def run(
             return {"exit_code": 4, "reason": f"permit consumption refused: {reason}"}
 
         # ── 4. deploy ──────────────────────────────────────────────────
-        if hosts:
+        if resolved_hosts:
             # Multi-host deploy
             deploy_result = _deploy_all_hosts(
-                project, tag, data_dir, hosts=hosts, deploy_fn=_deploy,
+                project, tag, data_dir, hosts=resolved_hosts, deploy_fn=_deploy,
             )
             exit_code = deploy_result.get("exit_code", 0)
             deployed = deploy_result.get("deployed", [])

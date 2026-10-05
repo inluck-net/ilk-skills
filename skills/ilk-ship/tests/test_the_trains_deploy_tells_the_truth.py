@@ -1207,11 +1207,21 @@ class TestMultiHostResultTruth:
 # shape — not merely that an SSH function was called.
 
 
+def _write_ship_config(data_dir: Path, hosts: list[str]) -> None:
+    """Write a minimal ship.hosts configuration."""
+    config_dir = data_dir / "runtime"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config = {"ship": {"hosts": hosts}}
+    (config_dir / "ship-config.json").write_text(
+        json.dumps(config, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 class TestCanonicalHostResolution:
     """AC-1: run(..., hosts=None) resolves configured hosts once and threads
     the same list through permits, consumption, deploy, and audit."""
 
-    @pytest.mark.xfail(strict=True, reason="hosts=None must resolve canonical host list from config")
     def test_run_with_hosts_none_resolves_from_config(self, tmp_path: Path) -> None:
         """run(hosts=None) should resolve hosts from ship-config.json and
         pass the same ordered list to _check_permits and _deploy_all_hosts."""
@@ -1221,22 +1231,30 @@ class TestCanonicalHostResolution:
         project.mkdir()
 
         # Write ship-config with two hosts
-        _write_hosts_config(data_dir, ["chad-mbp", "rezmac"])
+        _write_ship_config(data_dir, ["chad-mbp", "rezmac"])
 
-        # Write valid permits for both hosts
-        _make_permit(data_dir, "chad-mbp", project="test-project")
-        _make_permit(data_dir, "rezmac", project="test-project")
+        # Write valid permits with correct project key and matching candidate_head
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        from ilk_paths import project_key
+        pkey = project_key(project)
+        _make_permit(data_dir, "chad-mbp", project=pkey, candidate_head="a" * 40)
+        _make_permit(data_dir, "rezmac", project=pkey, candidate_head="a" * 40)
 
         sys.path.insert(0, str(SHIP_SCRIPTS))
         sys.path.insert(0, str(LOOP_SCRIPTS))
         import release_train
 
-        recorded_hosts = []
+        # Monkey-patch _deploy_all_hosts to record the hosts it receives
+        recorded_args = []
+        original_deploy_all = release_train._deploy_all_hosts
 
-        def _recording_deploy_fn(proj, tag, data_dir, **kwargs):
-            # Record what hosts are passed
-            recorded_hosts.append(kwargs.get("hosts"))
-            return {"tag": tag, "deployed": True, "exit_code": 0}
+        def _recording_deploy_all(project, tag, data_dir, **kwargs):
+            recorded_args.append(kwargs.get("hosts"))
+            return {"tag": tag, "hosts": {"chad-mbp": {"deployed": True}, "rezmac": {"deployed": True}},
+                    "exit_code": 0, "deployed": ["chad-mbp", "rezmac"],
+                    "rolled_back": [], "untouched": [], "unverified": []}
+
+        release_train._deploy_all_hosts = _recording_deploy_all
 
         def _check(proj, data_dir):
             return {"eligible": True, "last_tag": "v0.0.1", "head": "a" * 40}
@@ -1254,16 +1272,17 @@ class TestCanonicalHostResolution:
             check_fn=_check,
             prove_fn=_prove,
             cut_fn=_cut,
-            deploy_fn=_recording_deploy_fn,
             hosts=None,
             notify_script="/dev/null",
         )
 
+        release_train._deploy_all_hosts = original_deploy_all
+
         # The resolved host list should have been threaded through
-        assert len(recorded_hosts) > 0, "deploy_fn should have been called"
+        assert len(recorded_args) > 0, "_deploy_all_hosts should have been called"
         # The hosts passed to deploy should be the canonical list from config
-        assert recorded_hosts[0] == ["chad-mbp", "rezmac"], (
-            f"Expected canonical host list ['chad-mbp', 'rezmac'], got {recorded_hosts[0]}"
+        assert recorded_args[0] == ["chad-mbp", "rezmac"], (
+            f"Expected canonical host list ['chad-mbp', 'rezmac'], got {recorded_args[0]}"
         )
 
 
@@ -1271,7 +1290,6 @@ class TestCanonicalHostResolutionSingleHost:
     """AC-1 corollary: hosts=None with one configured host still resolves
     to the canonical list, not to the single-host branch."""
 
-    @pytest.mark.xfail(strict=True, reason="single configured host must not fall into single-host branch")
     def test_single_configured_host_does_not_use_single_host_branch(self, tmp_path: Path) -> None:
         """run(hosts=None) with one configured host must still resolve
         through _deploy_all_hosts, not the backward-compat single-host path."""
@@ -1280,18 +1298,28 @@ class TestCanonicalHostResolutionSingleHost:
         project = tmp_path / "project"
         project.mkdir()
 
-        _write_hosts_config(data_dir, ["chad-mbp"])
-        _make_permit(data_dir, "chad-mbp", project="test-project")
+        _write_ship_config(data_dir, ["chad-mbp"])
+
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        from ilk_paths import project_key
+        pkey = project_key(project)
+        _make_permit(data_dir, "chad-mbp", project=pkey, candidate_head="a" * 40)
 
         sys.path.insert(0, str(SHIP_SCRIPTS))
         sys.path.insert(0, str(LOOP_SCRIPTS))
         import release_train
 
-        deploy_fn_called_with_hosts = []
+        # Monkey-patch _deploy_all_hosts to record that it was called
+        deploy_all_called = []
+        original_deploy_all = release_train._deploy_all_hosts
 
-        def _recording_deploy_fn(proj, tag, data_dir, **kwargs):
-            deploy_fn_called_with_hosts.append(kwargs.get("hosts"))
-            return {"tag": tag, "deployed": True, "exit_code": 0}
+        def _recording_deploy_all(project, tag, data_dir, **kwargs):
+            deploy_all_called.append(kwargs.get("hosts"))
+            return {"tag": tag, "hosts": {"chad-mbp": {"deployed": True}},
+                    "exit_code": 0, "deployed": ["chad-mbp"],
+                    "rolled_back": [], "untouched": [], "unverified": []}
+
+        release_train._deploy_all_hosts = _recording_deploy_all
 
         def _check(proj, data_dir):
             return {"eligible": True, "last_tag": "v0.0.1", "head": "a" * 40}
@@ -1308,16 +1336,19 @@ class TestCanonicalHostResolutionSingleHost:
             check_fn=_check,
             prove_fn=_prove,
             cut_fn=_cut,
-            deploy_fn=_recording_deploy_fn,
             hosts=None,
             notify_script="/dev/null",
         )
 
+        release_train._deploy_all_hosts = original_deploy_all
+
         # With one configured host, _deploy_all_hosts should still be called
         # (not the single-host backward-compat branch)
-        assert len(deploy_fn_called_with_hosts) > 0
+        assert len(deploy_all_called) > 0, "_deploy_all_hosts should have been called"
         # The host list should be the resolved canonical list
-        assert deploy_fn_called_with_hosts[0] == ["chad-mbp"]
+        assert deploy_all_called[0] == ["chad-mbp"], (
+            f"Expected ['chad-mbp'], got {deploy_all_called[0]}"
+        )
 
 
 class TestSSHDeploySucceeds:
@@ -1580,7 +1611,6 @@ class TestPerHostAuditTruth:
     """AC-5: permits stay bound to the exact canonical host list and are
     consumed only after cut.  Per-host results are honest."""
 
-    @pytest.mark.xfail(strict=True, reason="permits not yet bound to canonical host list in deploy path")
     def test_permits_bound_to_canonical_host_list(self, tmp_path: Path) -> None:
         """Permits must be checked against the exact same host list that
         deploy uses.  A permit for a host not in the canonical list must
@@ -1591,7 +1621,7 @@ class TestPerHostAuditTruth:
         project.mkdir()
 
         # Config says hosts are [chad-mbp, rezmac]
-        _write_hosts_config(data_dir, ["chad-mbp", "rezmac"])
+        _write_ship_config(data_dir, ["chad-mbp", "rezmac"])
 
         # Write permit only for chad-mbp (rezmac has no permit)
         _make_permit(data_dir, "chad-mbp", project="test-project")
