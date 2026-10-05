@@ -388,6 +388,7 @@ def tick(
     manager_home: str | None = None,
     popen_fn: Callable[..., subprocess.Popen] | None = None,
     dry_run: bool = False,
+    notifier_fn: Callable[[str, str], None] | None = None,
     _time_fn: Callable[[], float] | None = None,
 ) -> dict[str, Any]:
     """Called once per scheduler cycle; never waits on claude.
@@ -423,7 +424,9 @@ def tick(
             write_audit("autoplan-refused", "ilk-skills", root=data_root,
                         reason=reason)
             if notify:
-                _notify(data_root, "blocked", f"autoplan refused: {reason}")
+                _notify(data_root, "blocked",
+                        f"autoplan refused: {reason}",
+                        notifier_fn=notifier_fn)
             state["last_refusal"] = reason
             _write_json(state_file, state)
 
@@ -531,7 +534,8 @@ def tick(
                     candidate=cand["id"],
                 )
                 _notify(data_root, "blocked",
-                        f"autoplan: {cand['id']} touches kernel ({hit})")
+                        f"autoplan: {cand['id']} touches kernel ({hit})",
+                        notifier_fn=notifier_fn)
             continue
         selected = cand
         break
@@ -630,6 +634,7 @@ def plan(
     lint_cmd: list[str] | None = None,
     preflight_cmd: list[str] | None = None,
     draft_only: bool | None = None,
+    notifier_fn: Callable[[str, str], None] | None = None,
     env_overrides: dict[str, str] | None = None,
     _time_fn: Callable[[], float] | None = None,
 ) -> dict[str, Any]:
@@ -799,7 +804,8 @@ def plan(
                 severity="critical", candidate=candidate_id,
             )
             _notify(data_root, "blocked",
-                    f"autoplan: clone modified during plan ({candidate_id})")
+                    f"autoplan: clone modified during plan ({candidate_id})",
+                    notifier_fn=notifier_fn)
         elif git_head_after != git_head_before:
             problems.append("head-moved")
 
@@ -945,7 +951,8 @@ def plan(
                         run_id=run_id, problems=truncated)
             _notify(data_root, "blocked",
                     f"autoplan drafted: {master_path.name} "
-                    f"({len(problems)} problems)")
+                    f"({len(problems)} problems)",
+                    notifier_fn=notifier_fn)
             _increment_attempts(data_root, candidate_id)
 
             # Track consecutive drafts
@@ -1207,8 +1214,8 @@ def _run_cmd(
         return None
 
 
-def _notify(data_root: Path, event: str, detail: str) -> None:
-    """Send a notification via ilk_notify.py."""
+def _default_notifier(event: str, detail: str) -> None:
+    """Send a notification via the native ilk_notify.py subprocess."""
     notify_script = _REPO / "skills" / "ilk-watchdog" / "scripts" / "ilk_notify.py"
     if not notify_script.is_file():
         return
@@ -1224,6 +1231,16 @@ def _notify(data_root: Path, event: str, detail: str) -> None:
             errors="replace",
         )
     except (subprocess.TimeoutExpired, OSError):
+        pass
+
+
+def _notify(data_root: Path, event: str, detail: str,
+            notifier_fn: Callable[[str, str], None] | None = None) -> None:
+    """Send a notification.  *notifier_fn* overrides the native backend."""
+    target = notifier_fn if notifier_fn is not None else _default_notifier
+    try:
+        target(event, detail)
+    except Exception:
         pass
 
 

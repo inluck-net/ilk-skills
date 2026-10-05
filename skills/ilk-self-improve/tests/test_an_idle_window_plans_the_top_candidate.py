@@ -1605,13 +1605,15 @@ class TestAC9:
 class TestNotificationIsolation:
     """Tests that fixture refusals do not call the native notifier."""
 
-    @pytest.mark.xfail(strict=True, reason="Native notifier still called; will be fixed in step 1")
     def test_fixture_refusal_does_not_call_native_notifier(self, tmp_path):
-        """Fixture refusal (bad-home) must not call the native notifier."""
+        """Fixture refusal (bad-home) must not call any notifier."""
         mod = _load_module()
         data_root = _build_fake_data_root(tmp_path)
         toolkit = _build_fake_toolkit(tmp_path, data_root)
-        manager_home = _build_fake_manager_home(tmp_path)
+
+        # Use a .claude-worker home to trigger the bad-home refusal path
+        manager_home = Path(tmp_path) / ".claude-worker-xxx"
+        manager_home.mkdir(parents=True, exist_ok=True)
 
         # Create a project data dir
         project_dir = data_root / "projects" / "test-project"
@@ -1626,17 +1628,21 @@ class TestNotificationIsolation:
         state_file = data_root / "autoplan" / "state.json"
         state_file.write_text(json.dumps({"idle_cycles": 6}) + "\n", encoding="utf-8")
 
-        # Mock subprocess.run to fail if called with ilk_notify.py
-        original_run = subprocess.run
-        def mock_run(cmd, *args, **kwargs):
-            if isinstance(cmd, list) and any("ilk_notify.py" in str(c) for c in cmd):
-                raise AssertionError("Native notifier should not be called for fixture refusals")
-            return original_run(cmd, *args, **kwargs)
+        # Inject a notifier that raises if called — the seam must
+        # prevent fixture refusals from reaching any notifier.
+        def fail_notifier(event: str, detail: str) -> None:
+            raise AssertionError(
+                f"Notifier should not be called for fixture refusals "
+                f"(event={event!r}, detail={detail!r})"
+            )
 
-        with patch("subprocess.run", side_effect=mock_run):
-            # Trigger bad-home refusal
-            result = mod.tick(data_root=data_root, manager_home=str(manager_home))
-            assert result["decision"] == "bad-home"
+        # Trigger bad-home refusal with the injected notifier
+        result = mod.tick(
+            data_root=data_root,
+            manager_home=str(manager_home),
+            notifier_fn=fail_notifier,
+        )
+        assert result["decision"] == "bad-home"
 
     def test_production_refusal_calls_native_notifier_with_correct_identity(self, tmp_path):
         """Production refusal calls native notifier with correct project identity."""
