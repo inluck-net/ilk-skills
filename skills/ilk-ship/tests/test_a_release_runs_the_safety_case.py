@@ -20,6 +20,7 @@ The six acceptance criteria:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -157,11 +158,18 @@ def _make_data_dir(tmp_path: Path) -> Path:
 
 
 def _write_baseline(data_dir: Path, tag: str, invocation: str, ids: list) -> None:
-    """Write a baseline file for the given tag and invocation."""
-    baselines_dir = data_dir / "runtime" / "release" / "baselines"
+    """Write a baseline file in canonical .ilk-baselines/ format."""
+    baselines_dir = data_dir / ".ilk-baselines"
     baselines_dir.mkdir(parents=True, exist_ok=True)
-    key = f"{tag}_{invocation.replace(' ', '_')}"
-    (baselines_dir / f"{key}.json").write_text(json.dumps(ids))
+    h = hashlib.sha256(invocation.encode()).hexdigest()[:12]
+    key = f"{tag}__{h}"
+    data = {
+        "tag": tag,
+        "suite_invocation": invocation,
+        "node_ids": sorted(ids),
+        "search_space": len(ids),
+    }
+    (baselines_dir / f"{key}.json").write_text(json.dumps(data, indent=2) + "\n")
 
 
 # ── AC-1: safety_case.run all green → pass, record written ──────────────────

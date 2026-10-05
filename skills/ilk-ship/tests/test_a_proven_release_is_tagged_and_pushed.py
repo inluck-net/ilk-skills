@@ -16,6 +16,7 @@ The five acceptance criteria:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -163,11 +164,18 @@ def _write_proof(
 
 
 def _write_baseline(data_dir: Path, tag: str, invocation: str, ids: list) -> None:
-    """Write a baseline file for the given tag and invocation."""
-    baselines_dir = data_dir / "runtime" / "release" / "baselines"
+    """Write a baseline file in canonical .ilk-baselines/ format."""
+    baselines_dir = data_dir / ".ilk-baselines"
     baselines_dir.mkdir(parents=True, exist_ok=True)
-    key = f"{tag}_{invocation.replace(' ', '_')}"
-    (baselines_dir / f"{key}.json").write_text(json.dumps(ids))
+    h = hashlib.sha256(invocation.encode()).hexdigest()[:12]
+    key = f"{tag}__{h}"
+    data = {
+        "tag": tag,
+        "suite_invocation": invocation,
+        "node_ids": sorted(ids),
+        "search_space": len(ids),
+    }
+    (baselines_dir / f"{key}.json").write_text(json.dumps(data, indent=2) + "\n")
 
 
 def _get_head_sha(project: Path) -> str:
@@ -354,14 +362,16 @@ class TestCutStoresBaseline:
         cut = _import_cut()
         result = cut(project, data_dir)
 
-        # Baseline file for v0.0.2 should exist
-        baselines_dir = data_dir / "runtime" / "release" / "baselines"
-        key = f"v0.0.2_{invocation.replace(' ', '_')}"
+        # Baseline file for v0.0.2 should exist in canonical .ilk-baselines/
+        baselines_dir = data_dir / ".ilk-baselines"
+        h = hashlib.sha256(invocation.encode()).hexdigest()[:12]
+        key = f"v0.0.2__{h}"
         baseline_path = baselines_dir / f"{key}.json"
         assert baseline_path.exists(), f"baseline file not found: {baseline_path}"
 
         baseline_data = json.loads(baseline_path.read_text())
-        assert isinstance(baseline_data, list) or isinstance(baseline_data, dict)
+        assert isinstance(baseline_data, dict)
+        assert "node_ids" in baseline_data
 
 
 # ── AC-5: check after cut reports not eligible ──────────────────────────────
