@@ -18,6 +18,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from baseline_diff import (
+    BaselineRef,
     BaselineReport,
     BaselineStatus,
     CollectionError,
@@ -646,3 +647,222 @@ class TestFullPipeline:
         # Must not raise
         serialized = json.dumps(report.to_dict())
         assert isinstance(serialized, str)
+
+
+# ── Step 0 red-first fixtures: baseline_red evidence contracts ─────────────
+#
+# These pin the evidence-aware inheritance behaviour for sub-plan
+# one-proof-source-and-explicit-red-policy.  xfail(strict=True) until
+# step 1 adds baseline_red_entries + evidence parsing to compare().
+
+
+@pytest.mark.xfail(strict=True, reason="AC-3: baseline_red with failed-at-base evidence is inherited")
+class TestBaselineRedEvidenceInheritance:
+    """AC-3: an exact baseline_red node with measured failed-at-base evidence
+    is inherited; a declared node without evidence remains a regression;
+    every undeclared node remains a regression."""
+
+    def test_measured_evidence_makes_inherited(self, tmp_path: Path) -> None:
+        """baseline_red entry with failed_at_base=True → inherited, not regression."""
+        ref = BaselineRef(tag="v1.0", resolved=True, status=BaselineStatus.FOUND)
+        baseline_red = [
+            {
+                "node_id": "tests/test_known.py::test_flaky",
+                "reason": "order-dependent",
+                "as_of": "2026-10-05",
+                "evidence": {
+                    "failed_at_base": True,
+                    "base_sha": "abc1234" + "0" * 33,
+                    "measured_at": "2026-10-05T10:00:00+08:00",
+                },
+            },
+        ]
+
+        diff = compare(
+            current_failures=frozenset({"tests/test_known.py::test_flaky"}),
+            search_space=100,
+            filtered=False,
+            baseline_failures=frozenset(),  # not in baseline
+            baseline_search_space=100,
+            ref=ref,
+            baseline_red_entries=baseline_red,
+        )
+
+        assert diff.new_failures == frozenset(), (
+            "measured failed-at-base evidence should make the node inherited"
+        )
+        assert diff.inherited_failures == frozenset({"tests/test_known.py::test_flaky"})
+
+    def test_declared_without_evidence_is_regression(self) -> None:
+        """baseline_red entry without evidence → remains a regression."""
+        ref = BaselineRef(tag="v1.0", resolved=True, status=BaselineStatus.FOUND)
+        baseline_red = [
+            {
+                "node_id": "tests/test_declared.py::test_flaky",
+                "reason": "I think this is flaky",
+                "as_of": "2026-10-05",
+                # No "evidence" key
+            },
+        ]
+
+        diff = compare(
+            current_failures=frozenset({"tests/test_declared.py::test_flaky"}),
+            search_space=100,
+            filtered=False,
+            baseline_failures=frozenset(),
+            baseline_search_space=100,
+            ref=ref,
+            baseline_red_entries=baseline_red,
+        )
+
+        assert diff.new_failures == frozenset({"tests/test_declared.py::test_flaky"}), (
+            "declared node without evidence must remain a regression"
+        )
+
+    def test_undeclared_node_is_regression(self) -> None:
+        """Node not in baseline_red at all → regression."""
+        ref = BaselineRef(tag="v1.0", resolved=True, status=BaselineStatus.FOUND)
+
+        diff = compare(
+            current_failures=frozenset({"tests/test_new.py::test_surprise"}),
+            search_space=100,
+            filtered=False,
+            baseline_failures=frozenset(),
+            baseline_search_space=100,
+            ref=ref,
+            baseline_red_entries=[],
+        )
+
+        assert diff.new_failures == frozenset({"tests/test_new.py::test_surprise"})
+
+
+@pytest.mark.xfail(strict=True, reason="AC-4: flaky-owed evidence contract")
+class TestFlakyOwedEvidenceContract:
+    """AC-4: bounded flaky-owed evidence may carry only the exact node and
+    exact suite invocation; a changed node, invocation, or missing
+    serial-green record refuses."""
+
+    def test_exact_match_inherited(self, tmp_path: Path) -> None:
+        """Exact node + invocation + serial-green → inherited."""
+        ref = BaselineRef(tag="v1.0", resolved=True, status=BaselineStatus.FOUND)
+        baseline_red = [
+            {
+                "node_id": "tests/test_flaky.py::test_order_dep",
+                "reason": "order-dependent",
+                "as_of": "2026-10-05",
+                "evidence": {
+                    "flaky_owed": True,
+                    "invocation": "python3 -m pytest",
+                    "serial_green": True,
+                    "serial_green_at": "2026-10-05T09:00:00+08:00",
+                },
+            },
+        ]
+
+        diff = compare(
+            current_failures=frozenset({"tests/test_flaky.py::test_order_dep"}),
+            search_space=100,
+            filtered=False,
+            baseline_failures=frozenset(),
+            baseline_search_space=100,
+            ref=ref,
+            baseline_red_entries=baseline_red,
+            suite_invocation="python3 -m pytest",
+        )
+
+        assert diff.new_failures == frozenset(), (
+            "exact match with serial-green should be inherited"
+        )
+
+    def test_mismatched_invocation_refuses(self) -> None:
+        """flaky-owed with wrong invocation → remains regression."""
+        ref = BaselineRef(tag="v1.0", resolved=True, status=BaselineStatus.FOUND)
+        baseline_red = [
+            {
+                "node_id": "tests/test_flaky.py::test_order_dep",
+                "reason": "order-dependent",
+                "as_of": "2026-10-05",
+                "evidence": {
+                    "flaky_owed": True,
+                    "invocation": "python3 -m pytest --timeout-method=thread",  # WRONG
+                    "serial_green": True,
+                },
+            },
+        ]
+
+        diff = compare(
+            current_failures=frozenset({"tests/test_flaky.py::test_order_dep"}),
+            search_space=100,
+            filtered=False,
+            baseline_failures=frozenset(),
+            baseline_search_space=100,
+            ref=ref,
+            baseline_red_entries=baseline_red,
+            suite_invocation="python3 -m pytest",
+        )
+
+        assert diff.new_failures == frozenset({"tests/test_flaky.py::test_order_dep"}), (
+            "mismatched invocation must refuse inheritance"
+        )
+
+    def test_missing_serial_green_refuses(self) -> None:
+        """flaky-owed without serial_green → remains regression."""
+        ref = BaselineRef(tag="v1.0", resolved=True, status=BaselineStatus.FOUND)
+        baseline_red = [
+            {
+                "node_id": "tests/test_flaky.py::test_order_dep",
+                "reason": "order-dependent",
+                "as_of": "2026-10-05",
+                "evidence": {
+                    "flaky_owed": True,
+                    "invocation": "python3 -m pytest",
+                    # serial_green missing
+                },
+            },
+        ]
+
+        diff = compare(
+            current_failures=frozenset({"tests/test_flaky.py::test_order_dep"}),
+            search_space=100,
+            filtered=False,
+            baseline_failures=frozenset(),
+            baseline_search_space=100,
+            ref=ref,
+            baseline_red_entries=baseline_red,
+            suite_invocation="python3 -m pytest",
+        )
+
+        assert diff.new_failures == frozenset({"tests/test_flaky.py::test_order_dep"}), (
+            "missing serial_green must refuse inheritance"
+        )
+
+    def test_changed_node_refuses(self) -> None:
+        """flaky-owed for a different node id → remains regression."""
+        ref = BaselineRef(tag="v1.0", resolved=True, status=BaselineStatus.FOUND)
+        baseline_red = [
+            {
+                "node_id": "tests/test_flaky.py::test_old_name",  # WRONG node
+                "reason": "order-dependent",
+                "as_of": "2026-10-05",
+                "evidence": {
+                    "flaky_owed": True,
+                    "invocation": "python3 -m pytest",
+                    "serial_green": True,
+                },
+            },
+        ]
+
+        diff = compare(
+            current_failures=frozenset({"tests/test_flaky.py::test_changed"}),
+            search_space=100,
+            filtered=False,
+            baseline_failures=frozenset(),
+            baseline_search_space=100,
+            ref=ref,
+            baseline_red_entries=baseline_red,
+            suite_invocation="python3 -m pytest",
+        )
+
+        assert diff.new_failures == frozenset({"tests/test_flaky.py::test_changed"}), (
+            "evidence for a different node must not carry over"
+        )

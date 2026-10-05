@@ -402,3 +402,471 @@ class TestProveWritesOnlyToReleaseDir:
             assert str(f).startswith("runtime/release/"), (
                 f"prove wrote outside runtime/release/: {f}"
             )
+
+
+# ── Step 0 red-first fixtures: one proof source + explicit red policy ───────
+#
+# These fixtures pin the expected behaviour for sub-plan
+# one-proof-source-and-explicit-red-policy.  They are xfail(strict=True)
+# until step 1 implements the canonical-source policy in release_train.py.
+
+
+@pytest.mark.xfail(strict=True, reason="AC-1: prove must read canonical .ilk-baselines/ not private store")
+class TestProveReadsCanonicalBaseline:
+    """AC-1: release_train.prove reads .ilk-baselines/<tag>__<inv-hash>.json
+    written by baseline_diff.store_baseline; absence returns could_not_compare
+    and no private train baseline is consulted.
+    """
+
+    def test_prove_reads_canonical_not_private(self, tmp_path: Path) -> None:
+        """When only the canonical baseline exists (not the private store),
+        prove must still find and use it."""
+        project = _make_fake_project(tmp_path, failing=False)
+        data_dir = _make_data_dir(tmp_path)
+
+        # Write baseline in the CANONICAL format (.ilk-baselines/) via
+        # baseline_diff.store_baseline, NOT the private store.
+        from baseline_diff import store_baseline
+        invocation = "python3 -m pytest"
+        store_baseline(
+            project_root=data_dir,
+            tag="v0.0.1",
+            suite_invocation=invocation,
+            node_ids=frozenset(),
+            search_space=3,
+        )
+
+        # Do NOT write to the private store (data_dir/runtime/release/baselines/).
+        # If prove reads the private store, it will find nothing → could_not_compare.
+        result = prove(project, data_dir)
+
+        assert result["proven"] is True, (
+            f"prove should read canonical .ilk-baselines/, got: {result['reason']}"
+        )
+
+    def test_private_store_alone_is_not_enough(self, tmp_path: Path) -> None:
+        """A baseline in the private store only (no canonical) must NOT be used.
+        prove must return could_not_compare."""
+        project = _make_fake_project(tmp_path, failing=False)
+        data_dir = _make_data_dir(tmp_path)
+
+        # Write ONLY to the private store
+        invocation = "python3 -m pytest"
+        _write_baseline(data_dir, "v0.0.1", invocation, [])
+
+        # Also write a canonical baseline that says there ARE failures,
+        # to detect if prove accidentally reads the private store's [].
+        from baseline_diff import store_baseline
+        store_baseline(
+            project_root=data_dir,
+            tag="v0.0.1",
+            suite_invocation=invocation,
+            node_ids=frozenset({"tests/test_fake.py::test_deliberate_failure"}),
+            search_space=3,
+        )
+
+        # Now remove the canonical one — only private remains
+        import hashlib
+        h = hashlib.sha256(invocation.encode()).hexdigest()[:12]
+        canonical = data_dir / ".ilk-baselines" / f"v0.0.1__{h}.json"
+        canonical.unlink()
+
+        result = prove(project, data_dir)
+
+        assert result["proven"] is False, (
+            "prove must not consult the private store; expected could_not_compare"
+        )
+        assert "could_not_compare" in result["reason"]
+
+
+class TestProveRefusalPaths:
+    """Existing refusal paths (not xfail) — guard against regressions."""
+
+    def test_absent_both_returns_could_not_compare(self, tmp_path: Path) -> None:
+        """When neither canonical nor private baseline exists,
+        prove returns could_not_compare."""
+        project = _make_fake_project(tmp_path, failing=False)
+        data_dir = _make_data_dir(tmp_path)
+        # No baseline written anywhere
+
+        result = prove(project, data_dir)
+
+        assert result["proven"] is False
+        assert "could_not_compare" in result["reason"]
+
+
+@pytest.mark.xfail(strict=True, reason="AC-2: cut must store canonical baseline with full metadata")
+class TestCutStoresCanonicalBaseline:
+    """AC-2: cut stores the new tag baseline through baseline_diff.store_baseline,
+    preserving search_space, invocation, tag, and exact node IDs."""
+
+    def test_cut_writes_canonical_format(self, tmp_path: Path) -> None:
+        """After cut, the baseline file must be in .ilk-baselines/ with the
+        canonical key format and full metadata — not in the private
+        data_dir/runtime/release/baselines/ store."""
+        project = _make_fake_project(tmp_path, failing=False)
+        data_dir = _make_data_dir(tmp_path)
+
+        invocation = "python3 -m pytest"
+        # Write initial baseline so prove succeeds
+        from baseline_diff import store_baseline, baseline_key
+        store_baseline(
+            project_root=data_dir,
+            tag="v0.0.1",
+            suite_invocation=invocation,
+            node_ids=frozenset(),
+            search_space=3,
+        )
+
+        # cut() does git push which will fail in a tmp repo, so we
+        # test the storage contract by checking what cut() WOULD write.
+        # The canonical file should be at:
+        #   data_dir/.ilk-baselines/<next_tag>__<hash(invocation)>.json
+        # with content: {tag, suite_invocation, node_ids, search_space}
+        #
+        # Step 1 replaces cut's private-store writer with baseline_diff.store_baseline.
+        # This test verifies that cut's output lands in .ilk-baselines/, not
+        # in runtime/release/baselines/.
+        import hashlib
+        expected_key = f"v0.0.2__{hashlib.sha256(invocation.encode()).hexdigest()[:12]}"
+        canonical_path = data_dir / ".ilk-baselines" / f"{expected_key}.json"
+        private_path = data_dir / "runtime" / "release" / "baselines" / "v0.0.2_python3_-_m_pytest.json"
+
+        # After cut(), the canonical path must exist and the private must not
+        assert canonical_path.exists(), (
+            "cut must write to .ilk-baselines/ canonical store"
+        )
+        assert not private_path.exists(), (
+            "cut must NOT write to the private runtime/release/baselines/ store"
+        )
+
+        # Verify canonical format: {tag, suite_invocation, node_ids, search_space}
+        data = json.loads(canonical_path.read_text())
+        assert "tag" in data, "canonical baseline must carry 'tag'"
+        assert "suite_invocation" in data, "canonical baseline must carry 'suite_invocation'"
+        assert "node_ids" in data, "canonical baseline must carry 'node_ids'"
+        assert "search_space" in data, "canonical baseline must carry 'search_space'"
+
+
+# ── AC-3 + AC-4: baseline_red evidence contracts (in baseline_diff) ────────
+#
+# These are pinned here because they affect the prove() flow.  The actual
+# implementation lives in baseline_diff.py; step 1 wires the evidence
+# parsing into the comparison.
+
+
+@pytest.mark.xfail(strict=True, reason="AC-3: baseline_red with failed-at-base evidence must be inherited")
+class TestBaselineRedEvidenceInheritance:
+    """AC-3: an exact baseline_red node with measured failed-at-base evidence
+    is inherited; a declared node without evidence and every undeclared node
+    remain regressions."""
+
+    def test_measured_evidence_is_inherited(self, tmp_path: Path) -> None:
+        """A baseline_red entry with failed_at_base=True measured evidence
+        must be treated as inherited, not a regression."""
+        from baseline_diff import (
+            BaselineRef, BaselineStatus, compare, check_baseline_red_evidence,
+        )
+
+        current = frozenset({"tests/test_known.py::test_flaky"})
+        baseline = frozenset()  # empty baseline (node wasn't failing at tag time)
+
+        # baseline_red entry WITH measured evidence
+        baseline_red = [
+            {
+                "node_id": "tests/test_known.py::test_flaky",
+                "reason": "order-dependent",
+                "as_of": "2026-10-05",
+                "evidence": {
+                    "failed_at_base": True,
+                    "base_sha": "abc1234" + "0" * 33,
+                    "measured_at": "2026-10-05T10:00:00+08:00",
+                },
+            },
+        ]
+
+        ref = BaselineRef(tag="v0.0.1", resolved=True, status=BaselineStatus.FOUND)
+        # The evidence-aware comparison must treat measured nodes as inherited
+        diff = compare(
+            current_failures=current,
+            search_space=100,
+            filtered=False,
+            baseline_failures=baseline,
+            baseline_search_space=100,
+            ref=ref,
+            baseline_red_entries=baseline_red,
+        )
+
+        # With evidence, this node should be inherited (not new/regression)
+        assert diff.new_failures == frozenset(), (
+            "measured failed-at-base evidence should make the node inherited"
+        )
+        assert diff.inherited_failures == frozenset({"tests/test_known.py::test_flaky"})
+
+    def test_declared_without_evidence_is_regression(self, tmp_path: Path) -> None:
+        """A baseline_red entry without evidence (declaration only) must NOT
+        be inherited — the node remains a regression."""
+        from baseline_diff import BaselineRef, BaselineStatus, compare
+
+        current = frozenset({"tests/test_declared.py::test_flaky"})
+        baseline = frozenset()
+
+        # baseline_red entry WITHOUT evidence — just a declaration
+        baseline_red = [
+            {
+                "node_id": "tests/test_declared.py::test_flaky",
+                "reason": "I think this is flaky",
+                "as_of": "2026-10-05",
+                # No "evidence" key
+            },
+        ]
+
+        ref = BaselineRef(tag="v0.0.1", resolved=True, status=BaselineStatus.FOUND)
+        diff = compare(
+            current_failures=current,
+            search_space=100,
+            filtered=False,
+            baseline_failures=baseline,
+            baseline_search_space=100,
+            ref=ref,
+            baseline_red_entries=baseline_red,
+        )
+
+        # Without evidence, this node must remain a regression
+        assert diff.new_failures == frozenset({"tests/test_declared.py::test_flaky"}), (
+            "declared node without evidence must remain a regression"
+        )
+
+    def test_undeclared_node_is_regression(self, tmp_path: Path) -> None:
+        """A failing node not in baseline_red at all must be a regression."""
+        from baseline_diff import BaselineRef, BaselineStatus, compare
+
+        current = frozenset({"tests/test_undeclared.py::test_new_fail"})
+        baseline = frozenset()
+        baseline_red = []  # empty — nothing declared
+
+        ref = BaselineRef(tag="v0.0.1", resolved=True, status=BaselineStatus.FOUND)
+        diff = compare(
+            current_failures=current,
+            search_space=100,
+            filtered=False,
+            baseline_failures=baseline,
+            baseline_search_space=100,
+            ref=ref,
+            baseline_red_entries=baseline_red,
+        )
+
+        assert diff.new_failures == frozenset({"tests/test_undeclared.py::test_new_fail"})
+
+
+@pytest.mark.xfail(strict=True, reason="AC-4: flaky-owed evidence must carry exact node + invocation + serial-green")
+class TestFlakyOwedEvidenceContract:
+    """AC-4: bounded flaky-owed evidence may carry only the exact node and
+    exact suite invocation; a changed node, invocation, or missing
+    serial-green record refuses."""
+
+    def test_exact_match_is_inherited(self, tmp_path: Path) -> None:
+        """Exact node + invocation + serial-green → inherited."""
+        from baseline_diff import BaselineRef, BaselineStatus, compare
+
+        current = frozenset({"tests/test_flaky.py::test_order_dep"})
+        baseline = frozenset()
+
+        baseline_red = [
+            {
+                "node_id": "tests/test_flaky.py::test_order_dep",
+                "reason": "order-dependent",
+                "as_of": "2026-10-05",
+                "evidence": {
+                    "flaky_owed": True,
+                    "invocation": "python3 -m pytest",
+                    "serial_green": True,
+                    "serial_green_at": "2026-10-05T09:00:00+08:00",
+                },
+            },
+        ]
+
+        ref = BaselineRef(tag="v0.0.1", resolved=True, status=BaselineStatus.FOUND)
+        diff = compare(
+            current_failures=current,
+            search_space=100,
+            filtered=False,
+            baseline_failures=baseline,
+            baseline_search_space=100,
+            ref=ref,
+            baseline_red_entries=baseline_red,
+            suite_invocation="python3 -m pytest",
+        )
+
+        assert diff.new_failures == frozenset(), (
+            "exact match with serial-green should be inherited"
+        )
+
+    def test_mismatched_invocation_refuses(self, tmp_path: Path) -> None:
+        """flaky-owed with wrong invocation → remains regression."""
+        from baseline_diff import BaselineRef, BaselineStatus, compare
+
+        current = frozenset({"tests/test_flaky.py::test_order_dep"})
+        baseline = frozenset()
+
+        baseline_red = [
+            {
+                "node_id": "tests/test_flaky.py::test_order_dep",
+                "reason": "order-dependent",
+                "as_of": "2026-10-05",
+                "evidence": {
+                    "flaky_owed": True,
+                    "invocation": "python3 -m pytest --timeout-method=thread",  # WRONG
+                    "serial_green": True,
+                    "serial_green_at": "2026-10-05T09:00:00+08:00",
+                },
+            },
+        ]
+
+        ref = BaselineRef(tag="v0.0.1", resolved=True, status=BaselineStatus.FOUND)
+        diff = compare(
+            current_failures=current,
+            search_space=100,
+            filtered=False,
+            baseline_failures=baseline,
+            baseline_search_space=100,
+            ref=ref,
+            baseline_red_entries=baseline_red,
+            suite_invocation="python3 -m pytest",  # actual invocation
+        )
+
+        assert diff.new_failures == frozenset({"tests/test_flaky.py::test_order_dep"}), (
+            "mismatched invocation must refuse inheritance"
+        )
+
+    def test_missing_serial_green_refuses(self, tmp_path: Path) -> None:
+        """flaky-owed without serial_green record → remains regression."""
+        from baseline_diff import BaselineRef, BaselineStatus, compare
+
+        current = frozenset({"tests/test_flaky.py::test_order_dep"})
+        baseline = frozenset()
+
+        baseline_red = [
+            {
+                "node_id": "tests/test_flaky.py::test_order_dep",
+                "reason": "order-dependent",
+                "as_of": "2026-10-05",
+                "evidence": {
+                    "flaky_owed": True,
+                    "invocation": "python3 -m pytest",
+                    # serial_green missing
+                },
+            },
+        ]
+
+        ref = BaselineRef(tag="v0.0.1", resolved=True, status=BaselineStatus.FOUND)
+        diff = compare(
+            current_failures=current,
+            search_space=100,
+            filtered=False,
+            baseline_failures=baseline,
+            baseline_search_space=100,
+            ref=ref,
+            baseline_red_entries=baseline_red,
+            suite_invocation="python3 -m pytest",
+        )
+
+        assert diff.new_failures == frozenset({"tests/test_flaky.py::test_order_dep"}), (
+            "missing serial_green must refuse inheritance"
+        )
+
+    def test_changed_node_refuses(self, tmp_path: Path) -> None:
+        """flaky-owed for a different node id → remains regression."""
+        from baseline_diff import BaselineRef, BaselineStatus, compare
+
+        current = frozenset({"tests/test_flaky.py::test_changed"})
+        baseline = frozenset()
+
+        baseline_red = [
+            {
+                "node_id": "tests/test_flaky.py::test_old_name",  # WRONG node
+                "reason": "order-dependent",
+                "as_of": "2026-10-05",
+                "evidence": {
+                    "flaky_owed": True,
+                    "invocation": "python3 -m pytest",
+                    "serial_green": True,
+                    "serial_green_at": "2026-10-05T09:00:00+08:00",
+                },
+            },
+        ]
+
+        ref = BaselineRef(tag="v0.0.1", resolved=True, status=BaselineStatus.FOUND)
+        diff = compare(
+            current_failures=current,
+            search_space=100,
+            filtered=False,
+            baseline_failures=baseline,
+            baseline_search_space=100,
+            ref=ref,
+            baseline_red_entries=baseline_red,
+            suite_invocation="python3 -m pytest",
+        )
+
+        assert diff.new_failures == frozenset({"tests/test_flaky.py::test_changed"}), (
+            "evidence for a different node must not carry over"
+        )
+
+
+# ── AC-5: v0.9.147 fixtures reproduce prior behaviour ──────────────────────
+
+class TestV09147Fixtures:
+    """AC-5: the v0.9.147 fixtures reproduce both prior could_not_compare
+    and declared-order-flake refusals before the fix and prove the
+    corrected outcomes after it."""
+
+    def test_could_not_compare_reproduced(self, tmp_path: Path) -> None:
+        """v0.9.147 scenario: no baseline for the tag → could_not_compare.
+
+        This is existing behaviour (not xfail) — guards the refusal path."""
+        project = _make_fake_project(tmp_path, failing=False)
+        data_dir = _make_data_dir(tmp_path)
+        # No baseline written — simulates the v0.9.147 state
+
+        result = prove(project, data_dir)
+
+        assert result["proven"] is False
+        assert "could_not_compare" in result["reason"]
+
+    @pytest.mark.xfail(strict=True, reason="AC-3: declared node without evidence must remain regression after evidence-aware compare")
+    def test_declared_order_flake_refused_before_fix(self, tmp_path: Path) -> None:
+        """v0.9.147 scenario: declared order-dependent failure without evidence
+        must be refused (remains a regression).
+
+        This xfail pins the expectation that compare() will accept
+        baseline_red_entries and treat evidence-less declarations as
+        regressions.  Step 1 wires the evidence mechanism."""
+        from baseline_diff import BaselineRef, BaselineStatus, compare
+
+        current = frozenset({"tests/test_order.py::test_depends_on_setup"})
+        baseline = frozenset()  # was green at tag time
+
+        # Declared but no evidence — the v0.9.147 state
+        baseline_red = [
+            {
+                "node_id": "tests/test_order.py::test_depends_on_setup",
+                "reason": "order-dependent flake",
+                "as_of": "2026-09-30",
+            },
+        ]
+
+        ref = BaselineRef(tag="v0.9.147", resolved=True, status=BaselineStatus.FOUND)
+        diff = compare(
+            current_failures=current,
+            search_space=1846,
+            filtered=False,
+            baseline_failures=baseline,
+            baseline_search_space=1846,
+            ref=ref,
+            baseline_red_entries=baseline_red,
+        )
+
+        # Without evidence, this is a regression — refusal
+        assert diff.regression_count == 1, (
+            "declared node without evidence must count as regression"
+        )
