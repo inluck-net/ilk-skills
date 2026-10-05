@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -1265,9 +1266,13 @@ def _acquire_remote_tag(
     ``git fetch origin tag refs/tags/<tag>`` and ``git rev-parse``.
     """
     _repo = str(repo_path) if repo_path is not None else "repo"
+    # Quote the repo path so that paths containing spaces survive SSH arg
+    # concatenation as one remote-shell token.  shlex.quote is idempotent
+    # on paths that need no quoting, so this is safe for all callers.
+    _quoted_repo = shlex.quote(_repo)
     fetch_cmd = [
-        "git", "-C", _repo, "fetch", "origin",
-        f"tag refs/tags/{tag}:refs/tags/{tag}",
+        "git", "-C", _quoted_repo, "fetch", "origin",
+        f"refs/tags/{tag}:refs/tags/{tag}",
     ]
 
     fetch_result = ssh_runner(host, fetch_cmd, timeout=timeout)
@@ -1284,7 +1289,7 @@ def _acquire_remote_tag(
         }
 
     # Verify the tag exists on the remote after fetch.
-    verify_cmd = ["git", "-C", _repo, "rev-parse", f"refs/tags/{tag}^{{}}"]
+    verify_cmd = ["git", "-C", _quoted_repo, "rev-parse", f"refs/tags/{tag}^{{}}"]
     verify_result = ssh_runner(host, verify_cmd, timeout=timeout)
     if verify_result["rc"] != 0:
         return {

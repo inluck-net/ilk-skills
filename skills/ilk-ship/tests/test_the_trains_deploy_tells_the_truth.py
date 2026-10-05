@@ -2170,11 +2170,17 @@ class TestRemoteAcquisitionUsesProjectPath:
         fetch_args = fetch_calls[0]["args"]
         revparse_args = revparse_calls[0]["args"]
 
-        # git -C <path> → the element after -C is the path
+        # git -C <path> → the element after -C is the path.
+        # The path may be shell-quoted (shlex.quote) to survive SSH arg
+        # concatenation, so strip shell quotes before comparing.
         def _get_c_path(args: list) -> str | None:
+            import shlex as _shlex
             for i, a in enumerate(args):
                 if str(a) == "-C" and i + 1 < len(args):
-                    return str(args[i + 1])
+                    raw = str(args[i + 1])
+                    # shlex.split strips one layer of shell quoting
+                    parts = _shlex.split(raw)
+                    return parts[0] if parts else raw
             return None
 
         fetch_c_path = _get_c_path(fetch_args)
@@ -2208,7 +2214,6 @@ class TestRemoteAcquisitionUsesProjectPath:
 # shell parsing, and asserts both invariants.  Step 1 will make it green.
 
 
-@pytest.mark.xfail(strict=True, reason="remote ssh argv serialization broken: tag prefix + unquoted path")
 class TestRemoteSSHArgvSerialization:
     """AC-1/AC-2/AC-3: the SSH invocation passes one safely shell-serialized
     remote command; the fetch refspec is exact (no ``tag`` prefix); and a
@@ -2284,9 +2289,12 @@ class TestRemoteSSHArgvSerialization:
 
         # Reconstruct the remote shell command as the remote shell would
         # parse it (subprocess.run passes each arg as a separate SSH arg,
-        # SSH concatenates them with spaces, remote shell re-parses)
+        # SSH concatenates them with spaces, remote shell re-parses).
+        # The production code already applies shlex.quote() to paths, so
+        # joining with spaces (no additional quoting) reproduces the exact
+        # string the remote shell receives.
         import shlex
-        remote_cmd_str = " ".join(shlex.quote(a) for a in remote_args)
+        remote_cmd_str = " ".join(str(a) for a in remote_args)
 
         # Round-trip through shell parsing to verify argument boundaries
         parsed = shlex.split(remote_cmd_str)
