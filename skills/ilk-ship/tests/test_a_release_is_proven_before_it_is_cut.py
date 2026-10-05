@@ -975,51 +975,35 @@ _EVIDENCE_ENTRIES = [
 ]
 
 
-def _patch_compare_with_evidence(
-    monkeypatch: pytest.MonkeyPatch,
-    baseline_red_entries: list[dict],
+def _write_evidence(
+    data_dir: Path,
+    tag: str,
+    invocation: str,
+    entries: list[dict],
 ) -> None:
-    """Patch baseline_diff.compare to inject baseline_red_entries.
-
-    This simulates what step 1 will do: make prove() pass evidence to compare().
-    """
-    import baseline_diff
-    _original_compare = baseline_diff.compare
-
-    def _patched_compare(**kwargs):
-        kwargs["baseline_red_entries"] = baseline_red_entries
-        return _original_compare(**kwargs)
-
-    monkeypatch.setattr(baseline_diff, "compare", _patched_compare)
+    """Write baseline_red evidence entries for prove() to load."""
+    from baseline_diff import store_baseline_red_evidence
+    store_baseline_red_evidence(
+        project_root=data_dir,
+        tag=tag,
+        suite_invocation=invocation,
+        entries=entries,
+    )
 
 
-class TestProveEvidencePolicyXfail:
-    """Step 0 fixture pinning the prove() + evidence policy gap.
+class TestProveEvidencePolicy:
+    """prove() delegates to evidence-aware compare() with baseline_red entries.
 
-    prove() currently does raw set subtraction (set(current) - set(baseline))
-    instead of delegating to the evidence-aware compare() with
-    baseline_red_entries.  The xfail test asserts the CORRECT behaviour
-    (0 new failures when evidence is valid) and fails because prove()
-    reports 3 regressions via raw subtraction.
-
-    The non-xfail negative controls verify that refusal invariants hold
-    regardless of the evidence mechanism — they pass both before and after
-    step 1, guarding against the fix accidentally accepting nodes without
-    valid evidence.
+    The 5→8 node-id shape mirrors batch-2026-10-05o vs v0.9.147: baseline
+    has 5 known failures; current has 8 (3 "new" nodes with evidence).
     """
 
-    # ── THE GAP: valid evidence should yield 0 new failures ──────────────
-
-    @pytest.mark.xfail(strict=True, reason="production-caller gap: prove() does not pass baseline_red_entries to compare()")
     def test_valid_evidence_yields_zero_new_failures(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self, tmp_path: Path,
     ) -> None:
         """AC-2: 5→8 shape with valid failed-at-base evidence on all 3 delta
-        nodes must yield 0 new failures.
-
-        prove() currently reports 3 regressions (raw set subtraction).
-        After step 1, the evidence-aware policy will treat them as inherited.
-        """
+        nodes yields 0 new failures.  prove() reads evidence from the
+        canonical store and delegates to the evidence-aware compare()."""
         project = _make_evidence_project(tmp_path)
         data_dir = _make_data_dir(tmp_path)
 
@@ -1031,8 +1015,7 @@ class TestProveEvidencePolicyXfail:
             node_ids=frozenset(_BASELINE_IDS),
             search_space=5083,
         )
-
-        _patch_compare_with_evidence(monkeypatch, _EVIDENCE_ENTRIES)
+        _write_evidence(data_dir, "v0.0.1", _INVOCATION, _EVIDENCE_ENTRIES)
 
         result = prove(project, data_dir)
 
@@ -1043,23 +1026,20 @@ class TestProveEvidencePolicyXfail:
             "valid failed-at-base evidence should make delta nodes inherited"
         )
 
-    # ── Negative controls: refusal invariants that hold regardless ───────
-    #
-    # These pass NOW (raw subtraction already produces 3 regressions for
-    # missing/malformed evidence) and will STILL PASS after step 1 (the
-    # evidence-aware policy also produces 3 regressions).  They guard
-    # against the fix accidentally accepting nodes without valid evidence.
-    # The monkeypatch ensures compare() receives the entries even before
-    # step 1 wires prove() to pass them natively.
+        # Proof must record carried ids and evidence basis
+        proof = json.loads(result["proof_file"].read_text())
+        assert len(proof["carried_ids"]) == 3
+        for carried in proof["carried_ids"]:
+            assert carried["basis"] == "failed_at_base"
+            assert carried["node_id"] in _DELTA_IDS
 
-    def test_missing_evidence_still_refuses(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    def test_missing_evidence_refuses(
+        self, tmp_path: Path,
     ) -> None:
         """AC-3: delta node without evidence must remain a regression.
 
-        With empty baseline_red_entries, compare() treats all 3 delta
-        nodes as new failures → prove() refuses.  This holds both before
-        and after step 1.
+        With no evidence file, compare() treats all 3 delta nodes as new
+        failures → prove() refuses.
         """
         project = _make_evidence_project(tmp_path)
         data_dir = _make_data_dir(tmp_path)
@@ -1072,8 +1052,7 @@ class TestProveEvidencePolicyXfail:
             node_ids=frozenset(_BASELINE_IDS),
             search_space=5083,
         )
-
-        _patch_compare_with_evidence(monkeypatch, [])
+        # No evidence written
 
         result = prove(project, data_dir)
 
@@ -1082,8 +1061,8 @@ class TestProveEvidencePolicyXfail:
         for nid in _DELTA_IDS:
             assert nid in result["new_failing_ids"]
 
-    def test_node_mismatch_still_refuses(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    def test_node_mismatch_refuses(
+        self, tmp_path: Path,
     ) -> None:
         """AC-3: evidence for a different node id must not carry over.
 
@@ -1114,15 +1093,15 @@ class TestProveEvidencePolicyXfail:
                 },
             },
         ]
-        _patch_compare_with_evidence(monkeypatch, mismatched_entries)
+        _write_evidence(data_dir, "v0.0.1", _INVOCATION, mismatched_entries)
 
         result = prove(project, data_dir)
 
         assert result["proven"] is False
         assert len(result["new_failing_ids"]) == 3
 
-    def test_invocation_mismatch_still_refuses(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    def test_invocation_mismatch_refuses(
+        self, tmp_path: Path,
     ) -> None:
         """AC-4: flaky-owed evidence with wrong invocation → remains regression.
 
@@ -1155,15 +1134,15 @@ class TestProveEvidencePolicyXfail:
             }
             for nid in _DELTA_IDS
         ]
-        _patch_compare_with_evidence(monkeypatch, bad_invocation_entries)
+        _write_evidence(data_dir, "v0.0.1", _INVOCATION, bad_invocation_entries)
 
         result = prove(project, data_dir)
 
         assert result["proven"] is False
         assert len(result["new_failing_ids"]) == 3
 
-    def test_missing_serial_green_still_refuses(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    def test_missing_serial_green_refuses(
+        self, tmp_path: Path,
     ) -> None:
         """AC-4: flaky-owed without serial_green → remains regression.
 
@@ -1195,7 +1174,7 @@ class TestProveEvidencePolicyXfail:
             }
             for nid in _DELTA_IDS
         ]
-        _patch_compare_with_evidence(monkeypatch, no_serial_green_entries)
+        _write_evidence(data_dir, "v0.0.1", _INVOCATION, no_serial_green_entries)
 
         result = prove(project, data_dir)
 

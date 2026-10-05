@@ -219,6 +219,11 @@ def check(project: Path, data_dir: Path) -> dict:
 
 # ── prove ────────────────────────────────────────────────────────────────
 
+def _proof_payload(**kwargs: object) -> dict:
+    """Build a proof payload, injecting baseline_red_evidence and carried_ids."""
+    return {k: v for k, v in kwargs.items() if v is not None}
+
+
 def prove(project: Path, data_dir: Path) -> dict:
     """Prove HEAD against the last-tag baseline in a fresh clone.
 
@@ -262,7 +267,7 @@ def prove(project: Path, data_dir: Path) -> dict:
     # ── load baseline (canonical .ilk-baselines/ only) ────────────────
     if str(_LOOP_SCRIPTS.parent / "ilk-ship" / "scripts") not in sys.path:
         sys.path.insert(0, str(_LOOP_SCRIPTS.parent / "ilk-ship" / "scripts"))
-    from baseline_diff import load_baseline  # noqa: E402
+    from baseline_diff import load_baseline, load_baseline_red_evidence  # noqa: E402
 
     baseline_result = load_baseline(data_dir, last_tag, invocation)
     if baseline_result is None:
@@ -276,6 +281,11 @@ def prove(project: Path, data_dir: Path) -> dict:
             "new_failing_ids": [], "proof_file": proof_path,
         }
     baseline_ids = sorted(baseline_result[0])
+
+    # ── load baseline_red evidence (batch-verification artifacts) ──────
+    baseline_red_entries = load_baseline_red_evidence(data_dir, last_tag, invocation)
+    if baseline_red_entries is None:
+        baseline_red_entries = ()
 
     # ── kernel range check (cheap refusal first) ──────────────────────
     # Judge by the kernel list at last_tag, not HEAD.
@@ -380,21 +390,45 @@ def prove(project: Path, data_dir: Path) -> dict:
             "new_failing_ids": [], "proof_file": proof_path,
         }
 
-    # ── diff against baseline ─────────────────────────────────────────
-    baseline_set = set(baseline_ids)
-    new_failing = sorted(set(failing_nodes) - baseline_set)
+    # ── diff against baseline (evidence-aware) ────────────────────────
+    from baseline_diff import BaselineRef, BaselineStatus, compare as bd_compare  # noqa: E402
+
+    ref = BaselineRef(tag=last_tag, resolved=True, status=BaselineStatus.FOUND)
+    diff_result = bd_compare(
+        current_failures=frozenset(failing_nodes),
+        search_space=baseline_result[1],
+        filtered=False,
+        baseline_failures=baseline_result[0],
+        baseline_search_space=baseline_result[1],
+        ref=ref,
+        suite_invocation=invocation,
+        baseline_red_entries=baseline_red_entries,
+    )
+    new_failing = sorted(diff_result.new_failures)
+
+    # Build carried-ids record: nodes that would be regressions without
+    # evidence but are inherited due to valid baseline_red evidence.
+    carried_ids = []
+    if baseline_red_entries:
+        raw_new = frozenset(failing_nodes) - baseline_result[0]
+        evidence_promoted = raw_new - diff_result.new_failures
+        red_map = {e.get("node_id"): e for e in baseline_red_entries if e.get("node_id")}
+        for nid in sorted(evidence_promoted):
+            entry = red_map.get(nid, {})
+            ev = entry.get("evidence", {})
+            basis = "failed_at_base" if ev.get("failed_at_base") else "flaky_owed"
+            carried_ids.append({"node_id": nid, "basis": basis})
 
     if new_failing:
-        proof_path = _write_proof(data_dir, head, {
-            "head": head, "last_tag": last_tag,
-            "invocation": invocation,
-            "suite_cwd": str(clone_dir),
-            "verdict": "refused",
-            "reason": f"new failing tests: {', '.join(new_failing)}",
-            "new_failing_ids": new_failing,
-            "failing_nodes": failing_nodes,
-            "baseline_ids": baseline_ids,
-        })
+        proof_path = _write_proof(data_dir, head, _proof_payload(
+            head=head, last_tag=last_tag, invocation=invocation,
+            suite_cwd=str(clone_dir), verdict="refused",
+            reason=f"new failing tests: {', '.join(new_failing)}",
+            new_failing_ids=new_failing, failing_nodes=failing_nodes,
+            baseline_ids=baseline_ids,
+            baseline_red_evidence=list(baseline_red_entries),
+            carried_ids=carried_ids,
+        ))
         return {
             "proven": False,
             "reason": f"new failing tests: {', '.join(new_failing)}",
@@ -446,23 +480,22 @@ def prove(project: Path, data_dir: Path) -> dict:
         }
 
     # ── proven ────────────────────────────────────────────────────────
-    proof_path = _write_proof(data_dir, head, {
-        "head": head, "last_tag": last_tag,
-        "invocation": invocation,
-        "suite_cwd": str(clone_dir),
-        "verdict": "proven",
-        "new_failing_ids": [],
-        "failing_nodes": failing_nodes,
-        "baseline_ids": baseline_ids,
-        "safety_case": {
+    proof_path = _write_proof(data_dir, head, _proof_payload(
+        head=head, last_tag=last_tag, invocation=invocation,
+        suite_cwd=str(clone_dir), verdict="proven",
+        new_failing_ids=[], failing_nodes=failing_nodes,
+        baseline_ids=baseline_ids,
+        baseline_red_evidence=list(baseline_red_entries),
+        carried_ids=carried_ids,
+        safety_case={
             "verdict": sc_result.get("verdict"),
             "components": sc_result.get("components"),
         },
-        "kernel_range": {
+        kernel_range={
             "judged_by": last_tag,
             "violations": 0,
         },
-    })
+    ))
     return {
         "proven": True, "reason": "",
         "new_failing_ids": [], "proof_file": proof_path,

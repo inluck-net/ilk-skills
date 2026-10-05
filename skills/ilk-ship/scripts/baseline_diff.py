@@ -454,6 +454,51 @@ def load_baseline(
         return None
 
 
+def store_baseline_red_evidence(
+    project_root: Path,
+    tag: str,
+    suite_invocation: str,
+    entries: Sequence[dict],
+) -> Path:
+    """Store baseline_red evidence entries for later use by prove().
+
+    Evidence is keyed identically to the baseline (tag + invocation hash).
+    Each entry carries a node_id and structured evidence (failed_at_base
+    or flaky_owed with invocation + serial_green).
+    """
+    d = baseline_dir(project_root)
+    d.mkdir(parents=True, exist_ok=True)
+    key = baseline_key(tag, suite_invocation)
+    p = d / f"evidence_{key}.json"
+    p.write_text(json.dumps(list(entries), indent=2) + "\n")
+    return p
+
+
+def load_baseline_red_evidence(
+    project_root: Path,
+    tag: str,
+    suite_invocation: str,
+) -> Optional[Tuple[dict, ...]]:
+    """Load stored baseline_red evidence entries.
+
+    Returns a tuple of entry dicts, or None when no evidence file exists.
+    Each entry has: node_id, reason, as_of, and optionally evidence
+    (with failed_at_base or flaky_owed sub-keys).
+    """
+    d = baseline_dir(project_root)
+    key = baseline_key(tag, suite_invocation)
+    p = d / f"evidence_{key}.json"
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text())
+        if isinstance(data, list):
+            return tuple(data)
+        return None
+    except (json.JSONDecodeError, KeyError):
+        return None
+
+
 # ── Node-id diff (AC-1) ─────────────────────────────────────────────────────
 
 def diff_by_node_id(
