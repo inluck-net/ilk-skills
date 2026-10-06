@@ -1100,6 +1100,37 @@ def _is_vitest_project(project: Path) -> bool:
     return False
 
 
+def _resolve_vitest_runner(project: Path) -> str | None:
+    """Resolve the vitest runner for a vitest project.
+
+    Resolution order (AC-1):
+      (a) If the configured ``ship.suite`` command mentions ``vitest``, return
+          the full suite invocation (command + flags).
+      (b) Else if ``<project>/node_modules/.bin/vitest`` exists and is
+          executable, return its absolute path followed by ``run``.
+      (c) Else return ``None`` (caller emits a harness_error).
+
+    AC-2: this is independent of ``$PATH`` — steps (a) and (b) don't search it.
+    """
+    # (a) Check configured suite
+    suite = _resolve_suite_invocation(project)
+    if suite and "vitest" in suite:
+        return suite
+
+    # (b) Check node_modules/.bin/vitest
+    vitest_bin = project / "node_modules" / ".bin" / "vitest"
+    if vitest_bin.exists():
+        try:
+            import os
+            if os.access(str(vitest_bin), os.X_OK):
+                return f"{vitest_bin} run"
+        except Exception:
+            pass
+
+    # (c) Not resolvable
+    return None
+
+
 def _read_declared_reds(project: Path) -> list[dict]:
     """Load ship.baseline_red from the same ShipConfig that _resolve_suite_invocation uses.
 
@@ -1212,9 +1243,17 @@ def _synthesize_mention_check(
         # No suite configured — use pytest as default
         suite = "python3 -m pytest"
 
-    # AC-6: vitest projects get vitest form
+    # AC-6: vitest projects get vitest form — resolve the project's own runner
     if _is_vitest_project(project):
-        suite = "vitest run"
+        resolved = _resolve_vitest_runner(project)
+        if resolved is None:
+            return {
+                "command": "",
+                "timeout": 300,
+                "scope": "mention",
+                "harness_error": "vitest not resolvable",
+            }
+        suite = resolved
 
     files_str = " ".join(new_test_files)
     cmd = f"{suite} {files_str}"
