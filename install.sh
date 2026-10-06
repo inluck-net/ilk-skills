@@ -1091,6 +1091,7 @@ reconcile_hooks_settings() {
     "no-live-clone-edit.py:Bash:worker"
     "no-foreign-plan-edit.py:Edit|Write|MultiEdit|NotebookEdit:worker"
     "no-foreign-plan-edit.py:Bash:worker"
+    "no-sealed-read.py:Read|Grep|Glob|LS|Bash|Edit|Write|MultiEdit|NotebookEdit:worker"
   )
 
   # Serialise the table for the Python block.

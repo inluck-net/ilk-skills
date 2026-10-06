@@ -33,6 +33,7 @@
     {"path": "skills/ilk-self-improve/scripts/autoplan.py", "guard": "autoplan", "why": "auto-planner", "may_be_absent": true},
     {"path": "skills/ilk-self-improve/scripts/autoplan_rails.py", "guard": "autoplan", "why": "auto-planner rails", "may_be_absent": true},
     {"path": "hooks/no-live-clone-edit.py", "guard": "hooks", "why": "live clone edit guard"},
+    {"path": "hooks/no-sealed-read.py", "guard": "hooks", "why": "sealed held-out slice guard (RSI design point 2)"},
     {"path": "hooks/no-foreign-plan-edit.py", "guard": "hooks", "why": "foreign plan edit guard"},
     {"path": "hooks/no-full-suite.sh", "guard": "hooks", "why": "full suite guard"},
     {"path": "pytest.ini", "guard": "test-infra", "why": "pytest configuration"},
