@@ -395,3 +395,121 @@ class TestBaselineRedIsRead:
         with pytest.raises((RuntimeError, ValueError)):
             vr.run_at_base(tmp_path, "deadbeef", ["tests/test_new.py::test_x"],
                            "python3 -m pytest", baseline_red=[])
+
+
+# ── failure surge stop: refuse before any rerun when too many fail ─────────
+#
+# Measured 2026-10-06: 53 environmental failures each spawned a separate
+# pytest process (14 min).  A failure count that large is itself the signal
+# that the environment, not the batch, is broken.  The surge stop fires
+# before any at-base rerun and names the environment fault.
+
+class TestFailureSurgeStop:
+    """AC-4a/4b/4c: a surge of non-declared failures refuses before reruns."""
+
+    THRESHOLD = 20  # must match FAILURE_SURGE_THRESHOLD once built
+
+    def _make_failing_ids(self, n: int) -> list[str]:
+        """Generate *n* synthetic failing node ids."""
+        return [f"tests/test_surge_{i}.py::test_case" for i in range(n)]
+
+    @pytest.mark.xfail(strict=True, reason="failure surge stop not built")
+    def test_above_threshold_writes_named_stop_and_exits_nonzero(
+            self, tmp_path: Path, monkeypatch) -> None:
+        """AC-4a: above threshold → zero at-base/head-rerun processes,
+        named stop written, non-zero exit."""
+        ids = self._make_failing_ids(self.THRESHOLD + 1)
+        record = tmp_path / "record.md"
+        # Mock suite to return many failing ids.
+        suite_result = {
+            "counts": {"passed": 0, "failed": len(ids), "errors": 0,
+                       "skipped": 0, "total": len(ids)},
+            "failing_nodes": ids,
+            "exit_code": 1,
+            "suite_duration_sec": 5,
+            "suite_output_text": "FAILED ...\n",
+        }
+        monkeypatch.setattr(vr, "run_suite", lambda *a, **kw: suite_result)
+        # Track whether run_at_base is called.
+        at_base_called = {"v": False}
+        real_run_at_base = vr.run_at_base
+        def tracking_run_at_base(*a, **kw):
+            at_base_called["v"] = True
+            return real_run_at_base(*a, **kw)
+        monkeypatch.setattr(vr, "run_at_base", tracking_run_at_base)
+        # Call main with the right args.
+        ret = vr.main([
+            "--batch", "batch-surge-test",
+            "--base-sha", "a" * 40,
+            "--record", str(record),
+        ])
+        assert ret != 0, "surge stop must exit non-zero"
+        assert not at_base_called["v"], "surge stop must NOT call run_at_base"
+        assert record.exists(), "named stop record must be written"
+
+    @pytest.mark.xfail(strict=True, reason="failure surge stop not built")
+    def test_stop_record_names_environment_fault(self, tmp_path: Path,
+                                                 monkeypatch) -> None:
+        """AC-4b: the stop record names environment fault with count,
+        threshold, first ids, output path."""
+        n = self.THRESHOLD + 5
+        ids = self._make_failing_ids(n)
+        record = tmp_path / "record.md"
+        suite_output = "FAILED tests/test_surge_0.py::test_case\n" * n
+        suite_result = {
+            "counts": {"passed": 0, "failed": n, "errors": 0,
+                       "skipped": 0, "total": n},
+            "failing_nodes": ids,
+            "exit_code": 1,
+            "suite_duration_sec": 5,
+            "suite_output_text": suite_output,
+        }
+        monkeypatch.setattr(vr, "run_suite", lambda *a, **kw: suite_result)
+        vr.main([
+            "--batch", "batch-surge-test",
+            "--base-sha", "a" * 40,
+            "--record", str(record),
+        ])
+        text = record.read_text(encoding="utf-8")
+        assert "environment" in text.lower() or "env" in text.lower(), (
+            "stop must name the environment fault")
+        assert str(n) in text, "stop must carry the failure count"
+        assert str(self.THRESHOLD) in text, "stop must carry the threshold"
+        # First 5 ids must appear.
+        for i in range(5):
+            assert f"test_surge_{i}" in text, f"stop must carry first ids (missing {i})"
+
+    def test_at_or_below_threshold_proceeds_normally(self, tmp_path: Path,
+                                                     monkeypatch) -> None:
+        """AC-4c: at or below threshold → behaviour unchanged (at-base
+        reruns proceed).  Uses exactly the threshold."""
+        ids = self._make_failing_ids(self.THRESHOLD)
+        record = tmp_path / "record.md"
+        suite_result = {
+            "counts": {"passed": 0, "failed": len(ids), "errors": 0,
+                       "skipped": 0, "total": len(ids)},
+            "failing_nodes": ids,
+            "exit_code": 1,
+            "suite_duration_sec": 5,
+            "suite_output_text": "FAILED ...\n",
+        }
+        monkeypatch.setattr(vr, "run_suite", lambda *a, **kw: suite_result)
+        # Mock run_at_base to succeed (no real git/subprocess needed).
+        monkeypatch.setattr(vr, "run_at_base",
+                            lambda *a, **kw: {nid: "failed" for nid in ids})
+        # Mock adding-commit and head reruns to no-op.
+        monkeypatch.setattr(vr, "run_at_adding_commit",
+                            lambda *a, **kw: ({}, {}))
+        monkeypatch.setattr(vr, "run_head_reruns",
+                            lambda *a, **kw: {})
+        ret = vr.main([
+            "--batch", "batch-surge-test",
+            "--base-sha", "a" * 40,
+            "--record", str(record),
+        ])
+        # At threshold, the code should proceed normally (exit 0 or at least
+        # not refuse).  The pin verifies it does NOT write a surge stop.
+        if record.exists():
+            text = record.read_text(encoding="utf-8")
+            assert "environment fault" not in text.lower(), (
+                "at threshold must NOT write a surge stop")
