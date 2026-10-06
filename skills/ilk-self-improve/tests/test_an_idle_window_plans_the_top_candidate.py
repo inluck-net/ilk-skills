@@ -1809,3 +1809,55 @@ class TestCliTickAndGatedSpawn:
         assert log_file.exists(), (
             f"Run log {log_file} does not exist"
         )
+
+
+class TestTheRealLintAcceptsThePlannersArgv:
+    """plan() calls the REAL plan_lint.py with an argv it can parse.
+
+    Every other plan() test stubs lint_cmd, so the argv was never checked:
+    plan() passed ``--subplan <path>``, which plan_lint.py does not define,
+    and argparse exited 2.  Every auto-planned draft therefore read
+    ``lint-exit-2`` whatever it contained (manual run 2026-10-06
+    manual-20261006-192151; the same batch linted clean by hand).
+    plan_lint returns 0 or 1; only a usage error returns 2.
+    """
+
+    def test_real_plan_lint_parses_the_argv(self, tmp_path):
+        mod = _load_module()
+        data_root = _build_fake_data_root(tmp_path)
+        toolkit = _build_fake_toolkit(tmp_path, data_root)
+        manager_home = _build_fake_manager_home(tmp_path)
+        project_dir = data_root / "projects" / "test-project"
+        (project_dir / "runtime" / "launcher").mkdir(parents=True, exist_ok=True)
+        (project_dir / "runtime" / "launcher" / "last-launch.json").write_text(
+            json.dumps({"project_path": str(toolkit)}) + "\n", encoding="utf-8",
+        )
+        backlog_dir = data_root / "ilk-skills-improvements"
+        backlog_dir.mkdir(parents=True, exist_ok=True)
+        _save_candidates(backlog_dir, [_make_candidate()])
+        plans_dir = data_root / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
+        stub_claude = _make_stub_claude(tmp_path, model="claude-opus-test",
+                                         write_batch=True)
+        _lint_stub, preflight = _make_stub_lint_preflight(tmp_path)
+        real_lint = Path(_LOOP_SCRIPTS) / "plan_lint.py"
+
+        result = mod.plan(
+            candidate_id="sig-abc123",
+            project_key="test-project",
+            run_id="run-real-lint",
+            data_root=data_root,
+            toolkit_repo=str(toolkit),
+            manager_home=str(manager_home),
+            claude_cmd=[sys.executable, str(stub_claude)],
+            lint_cmd=[sys.executable, str(real_lint)],
+            preflight_cmd=[sys.executable, str(preflight)],
+            env_overrides={
+                "ILK_PLANS_DIR": str(plans_dir),
+                "ILK_REPO_DIR": str(toolkit),
+                "ILK_MARKER": str(tmp_path / "claude-marker.txt"),
+                "ILK_FIXTURE_DIR": str(FIXTURE_DIR),
+            },
+        )
+
+        assert "lint-exit-2" not in result.get("problems", []), result

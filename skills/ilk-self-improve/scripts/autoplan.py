@@ -875,7 +875,8 @@ def plan(
             "--master", str(master_path),
         ]
         for sf in subplan_files:
-            lint_args.extend(["--subplan", str(plans_dir / sf)])
+            # Positional: plan_lint.py defines no --subplan (argparse exit 2).
+            lint_args.append(str(plans_dir / sf))
         lint_args.extend(["--project-root", toolkit_repo])
 
         lint_result = _run_cmd(lint_args, timeout=300)
