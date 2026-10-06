@@ -1429,6 +1429,7 @@ def _ssh_deploy(
             sys.executable, str(_STATUS_SCRIPT),
             "--bouncer", str(_BOUNCE_SCRIPT),
             "--require-tag", tag,
+            "--repo", str(project),
         ], timeout=60)
 
         if smoke_result["rc"] == 0 and smoke_result["stdout"] == "ok":
@@ -1501,6 +1502,7 @@ def _ssh_deploy(
             sys.executable, str(_STATUS_SCRIPT),
             "--bouncer", str(_BOUNCE_SCRIPT),
             "--require-tag", prev_tag,
+            "--repo", str(project),
         ], timeout=60)
 
         if rb_smoke_result["rc"] == 0 and rb_smoke_result["stdout"] == "ok":

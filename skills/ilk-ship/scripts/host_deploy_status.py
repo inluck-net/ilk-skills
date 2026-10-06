@@ -109,15 +109,19 @@ def is_local_host(host: str, local_hosts: Sequence[str] | None = None) -> bool:
     return needle in _local_aliases()
 
 
-def _default_tag_resolver(sha: str) -> str | None:
+def _default_tag_resolver(sha: str, repo: Path | None = None) -> str | None:
     """Resolve a commit SHA to a tag name, or None if it points to no tag.
 
-    Uses ``git tag --points-at <sha>`` — the first tag found wins.
-    Returns None when the sha resolves to no tag (fail closed: not-conformant).
+    Uses ``git tag --points-at <sha>`` — the first tag found wins — in *repo*
+    when given, else in the cwd. Over ssh the cwd is ``~``, not a repo, so a
+    remote caller must pass the repo (v0.9.154 train: every rezmac smoke read
+    tag-mismatch this way). Returns None when the sha resolves to no tag
+    (fail closed: not-conformant).
     """
+    git = ["git", "-C", str(repo)] if repo is not None else ["git"]
     try:
         result = subprocess.run(
-            ["git", "tag", "--points-at", sha],
+            [*git, "tag", "--points-at", sha],
             capture_output=True,
             text=True,
                 encoding="utf-8", errors="replace",
@@ -573,9 +577,22 @@ def main(argv: list[str] | None = None) -> None:
             "Omit for the default three-state check."
         ),
     )
+    parser.add_argument(
+        "--repo",
+        default=None,
+        type=Path,
+        metavar="PATH",
+        help=(
+            "Toolkit git repo in which --require-tag resolves the recorded sha. "
+            "Default: the cwd, which over ssh is ~ (not a repo)."
+        ),
+    )
     args = parser.parse_args(argv)
 
     bounce = args.bounce_hosts
+    tag_resolver = (
+        (lambda sha: _default_tag_resolver(sha, args.repo)) if args.repo else None
+    )
 
     if args.hosts:
         # Multi-host mode — resolve every declared host.
@@ -596,6 +613,7 @@ def main(argv: list[str] | None = None) -> None:
             local_hosts=local_declared,
             bounce_hosts=bounce,
             require_tag=args.require_tag,
+            tag_resolver=tag_resolver,
         )
         for host in host_list:
             transport = "local" if is_local_host(host, local_declared) else "ssh"
@@ -611,7 +629,7 @@ def main(argv: list[str] | None = None) -> None:
         bouncer = Path(args.bouncer[0])
         state = resolve_host(
             bouncer, Path("/tmp"), bounce_hosts=bounce,
-            require_tag=args.require_tag,
+            require_tag=args.require_tag, tag_resolver=tag_resolver,
         )
         print(state)
         sys.exit(_STATE_EXIT_CODES.get(state, 2))
