@@ -232,6 +232,51 @@ def test_ac3_known_writer_writes_no_live_rows(tmp_path: Path) -> None:
         )
 
 
+# ── Pin: runner e2e tests carry a load-sized timeout ────────────────────────
+
+@pytest.mark.xfail(strict=True, reason="timeout markers not added yet")
+def test_runner_e2e_tests_carry_a_load_sized_timeout() -> None:
+    """Pin: the seven runner-driving e2e tests must carry @pytest.mark.timeout(90).
+
+    AC-2 from sub-plan runner-e2e-tests-carry-a-load-sized-timeout.
+    Reads markers via pytestmark attributes (no subprocess).
+    """
+    from . import test_verify_without_a_worker
+    from . import test_a_worker_cannot_remove_its_own_gate
+
+    # The seven test ids that need timeout markers (AC-1).
+    test_ids: list[tuple[object, str]] = [
+        (test_verify_without_a_worker, "test_red_step1_gate_falls_through_to_agent"),
+        (test_verify_without_a_worker, "test_batch_verification_green_ships_without_worker"),
+        (test_verify_without_a_worker, "test_no_batch_verification_final_gate_first_step_is_shipped_by_the_driver"),
+        (test_a_worker_cannot_remove_its_own_gate, "test_worker_editing_gate_timeout_is_restored_and_parked"),
+        (test_a_worker_cannot_remove_its_own_gate, "test_worker_deleting_gate_is_restored_and_parked"),
+        (test_a_worker_cannot_remove_its_own_gate, "test_worker_editing_findings_only_no_violation"),
+        (None, "test_ac3_known_writer_writes_no_live_rows"),  # this module
+    ]
+
+    missing: list[str] = []
+    short_timeout: list[str] = []
+
+    for module, func_name in test_ids:
+        func = globals()[func_name] if module is None else getattr(module, func_name)
+        timeout_markers = [
+            mark for mark in getattr(func, "pytestmark", [])
+            if mark.name == "timeout"
+        ]
+        if not timeout_markers:
+            missing.append(func_name)
+        elif timeout_markers[0].args[0] < 90:
+            short_timeout.append(f"{func_name} (timeout={timeout_markers[0].args[0]})")
+
+    parts: list[str] = []
+    if missing:
+        parts.append(f"missing timeout marker: {', '.join(missing)}")
+    if short_timeout:
+        parts.append(f"timeout < 90: {', '.join(short_timeout)}")
+    assert not parts, "; ".join(parts)
+
+
 # ── AC-4 (control): with PROJECT_PATH set, returns the project's launcher dir ─
 
 def test_ac4_project_path_returns_launcher_dir(tmp_path: Path) -> None:
