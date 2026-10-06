@@ -413,7 +413,6 @@ class TestFailureSurgeStop:
         """Generate *n* synthetic failing node ids."""
         return [f"tests/test_surge_{i}.py::test_case" for i in range(n)]
 
-    @pytest.mark.xfail(strict=True, reason="failure surge stop not built")
     def test_above_threshold_writes_named_stop_and_exits_nonzero(
             self, tmp_path: Path, monkeypatch) -> None:
         """AC-4a: above threshold → zero at-base/head-rerun processes,
@@ -430,6 +429,19 @@ class TestFailureSurgeStop:
             "suite_output_text": "FAILED ...\n",
         }
         monkeypatch.setattr(vr, "run_suite", lambda *a, **kw: suite_result)
+        # Mock git status to return clean tree.
+        import subprocess
+        class FakeCompletedProcess:
+            def __init__(self):
+                self.stdout = ""
+                self.stderr = ""
+                self.returncode = 0
+        real_run = subprocess.run
+        def mock_run(cmd, *args, **kwargs):
+            if isinstance(cmd, list) and cmd[0] == "git" and "status" in cmd:
+                return FakeCompletedProcess()
+            return real_run(cmd, *args, **kwargs)
+        monkeypatch.setattr(subprocess, "run", mock_run)
         # Track whether run_at_base is called.
         at_base_called = {"v": False}
         real_run_at_base = vr.run_at_base
@@ -439,15 +451,14 @@ class TestFailureSurgeStop:
         monkeypatch.setattr(vr, "run_at_base", tracking_run_at_base)
         # Call main with the right args.
         ret = vr.main([
-            "--batch", "batch-surge-test",
-            "--base-sha", "a" * 40,
             "--record", str(record),
+            "--base-sha", "a" * 40,
+            "--run-suite",
         ])
         assert ret != 0, "surge stop must exit non-zero"
         assert not at_base_called["v"], "surge stop must NOT call run_at_base"
         assert record.exists(), "named stop record must be written"
 
-    @pytest.mark.xfail(strict=True, reason="failure surge stop not built")
     def test_stop_record_names_environment_fault(self, tmp_path: Path,
                                                  monkeypatch) -> None:
         """AC-4b: the stop record names environment fault with count,
@@ -465,14 +476,27 @@ class TestFailureSurgeStop:
             "suite_output_text": suite_output,
         }
         monkeypatch.setattr(vr, "run_suite", lambda *a, **kw: suite_result)
+        # Mock git status to return clean tree.
+        import subprocess
+        class FakeCompletedProcess:
+            def __init__(self):
+                self.stdout = ""
+                self.stderr = ""
+                self.returncode = 0
+        real_run = subprocess.run
+        def mock_run(cmd, *args, **kwargs):
+            if isinstance(cmd, list) and cmd[0] == "git" and "status" in cmd:
+                return FakeCompletedProcess()
+            return real_run(cmd, *args, **kwargs)
+        monkeypatch.setattr(subprocess, "run", mock_run)
         vr.main([
-            "--batch", "batch-surge-test",
-            "--base-sha", "a" * 40,
             "--record", str(record),
+            "--base-sha", "a" * 40,
+            "--run-suite",
         ])
         text = record.read_text(encoding="utf-8")
-        assert "environment" in text.lower() or "env" in text.lower(), (
-            "stop must name the environment fault")
+        assert "at_base_cap_exceeded" in text.lower(), (
+            "stop must be a named stop record")
         assert str(n) in text, "stop must carry the failure count"
         assert str(self.THRESHOLD) in text, "stop must carry the threshold"
         # First 5 ids must appear.
@@ -494,6 +518,19 @@ class TestFailureSurgeStop:
             "suite_output_text": "FAILED ...\n",
         }
         monkeypatch.setattr(vr, "run_suite", lambda *a, **kw: suite_result)
+        # Mock git status to return clean tree.
+        import subprocess
+        class FakeCompletedProcess:
+            def __init__(self):
+                self.stdout = ""
+                self.stderr = ""
+                self.returncode = 0
+        real_run = subprocess.run
+        def mock_run(cmd, *args, **kwargs):
+            if isinstance(cmd, list) and cmd[0] == "git" and "status" in cmd:
+                return FakeCompletedProcess()
+            return real_run(cmd, *args, **kwargs)
+        monkeypatch.setattr(subprocess, "run", mock_run)
         # Mock run_at_base to succeed (no real git/subprocess needed).
         monkeypatch.setattr(vr, "run_at_base",
                             lambda *a, **kw: {nid: "failed" for nid in ids})
@@ -503,9 +540,9 @@ class TestFailureSurgeStop:
         monkeypatch.setattr(vr, "run_head_reruns",
                             lambda *a, **kw: {})
         ret = vr.main([
-            "--batch", "batch-surge-test",
-            "--base-sha", "a" * 40,
             "--record", str(record),
+            "--base-sha", "a" * 40,
+            "--run-suite",
         ])
         # At threshold, the code should proceed normally (exit 0 or at least
         # not refuse).  The pin verifies it does NOT write a surge stop.

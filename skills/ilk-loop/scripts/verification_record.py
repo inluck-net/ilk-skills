@@ -753,6 +753,16 @@ def run_suite(project: Path, invocation: str, timeout: int,
 
 AT_BASE_CAP = 50
 
+# Judgment call: FAILURE_SURGE_THRESHOLD = 20.  Basis: on ilk-skills,
+# canonical full suites on 2026-10-05/06 recorded 7-16 failures before
+# declared reds were removed (v0.9.149: 16 of 5134; Batch W/X: 8; Batch Y:
+# 7), and clean scoped verifies record 0, while the measured environmental
+# surge was 53.  Wrong if a genuine batch regression of more than 20
+# non-declared failures is refused as an environment fault and then
+# reproduces at base-clean HEAD — in that case the stop still fails closed,
+# but its message misleads, and the threshold should rise.
+FAILURE_SURGE_THRESHOLD = 20
+
 # Judgment call: K = 3.  Basis: keeps the worst case at 3 small pytest
 # processes over the failing set only.  Wrong if a 1-in-4 flake routinely
 # reads 3/3; then raise K, which is a single module constant.
@@ -1580,11 +1590,25 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
     if at_base_error and "exceeds the" in at_base_error and "cap" in at_base_error:
         # Designed human-escalation: name the stop, not the symptom.
         uncovered = c['failed'] + c['errors']
-        lines += [
-            f"at_base_cap_exceeded: {uncovered} uncovered (>50 cap) — complete "
-            f"ship.baseline_red coverage for the pre-existing families and re-run",
-            "",
-        ]
+        if "surge cap" in at_base_error:
+            # Failure surge: environment fault, not a batch issue.
+            # Extract first failing ids from the error message if present.
+            first_ids_part = ""
+            if "First failing ids:" in at_base_error:
+                first_ids_part = ". " + at_base_error.split("First failing ids:")[1].split(". Suite")[0]
+            lines += [
+                f"at_base_cap_exceeded: {uncovered} non-declared failures "
+                f"exceeds the {FAILURE_SURGE_THRESHOLD} surge cap; "
+                f"environment fault, not a batch issue"
+                f"{first_ids_part}",
+                "",
+            ]
+        else:
+            lines += [
+                f"at_base_cap_exceeded: {uncovered} uncovered (>50 cap) — complete "
+                f"ship.baseline_red coverage for the pre-existing families and re-run",
+                "",
+            ]
     elif not at_base:
         lines += ["_(no failures)_", ""]
     else:
@@ -2115,6 +2139,31 @@ def _write_measured_record(project: Path, record: Path, args,
     try:
         base_red = read_baseline_red_at(project, args.base_sha)
         head_red = read_baseline_red(project)
+        # Failure surge stop: if too many non-declared failures, refuse
+        # before any rerun — this is an environment fault, not a batch issue.
+        non_declared = [n for n in nodes
+                        if not _in_baseline_red(n, base_red)]
+        if len(non_declared) > FAILURE_SURGE_THRESHOLD:
+            first_ids = non_declared[:5]
+            suite_output_path = record.parent / f"{record.stem}.output.txt"
+            error_msg = (
+                f"{len(non_declared)} non-declared failures exceeds the "
+                f"{FAILURE_SURGE_THRESHOLD} surge cap; "
+                f"environment fault, not a batch issue. "
+                f"First failing ids: {', '.join(first_ids)}. "
+                f"Suite output: {suite_output_path}"
+            )
+            _atomic_write(record, render_record(
+                batch=args.batch or record.stem,
+                head=head, tree=tree, base_sha=args.base_sha,
+                invocation=invocation, scope=scope, results=results,
+                at_base={}, base_red=base_red, head_red=head_red,
+                at_base_error=error_msg,
+                suite_source="tool",
+            ))
+            print(f"ERROR: {error_msg}", file=sys.stderr)
+            print("ILK-CHECK: unmeasured failure surge", file=sys.stderr)
+            return 1
         # Try ledger at-base first when we have a ledger entry for HEAD.
         if ledger_entry is not None and ledger_mode != "off":
             import suite_ledger
@@ -2485,6 +2534,33 @@ def _write_record_from_output(project: Path, record: Path, args,
     try:
         base_red = read_baseline_red_at(project, args.base_sha)
         head_red = read_baseline_red(project)
+        # Failure surge stop: if too many non-declared failures, refuse
+        # before any rerun — this is an environment fault, not a batch issue.
+        non_declared = [n for n in nodes
+                        if not _in_baseline_red(n, base_red)]
+        if len(non_declared) > FAILURE_SURGE_THRESHOLD:
+            first_ids = non_declared[:5]
+            error_msg = (
+                f"{len(non_declared)} non-declared failures exceeds the "
+                f"{FAILURE_SURGE_THRESHOLD} surge cap; "
+                f"environment fault, not a batch issue. "
+                f"First failing ids: {', '.join(first_ids)}. "
+                f"Suite output: {suite_output_path}"
+            )
+            _atomic_write(record, render_record(
+                batch=args.batch or record.stem,
+                head=head, tree=tree, base_sha=args.base_sha,
+                invocation=configured_invocation, scope=scope,
+                results=results,
+                at_base={}, base_red=base_red, head_red=head_red,
+                at_base_error=error_msg,
+                suite_source=f"operator:{suite_output_path}",
+                suite_source_sha256=hashlib.sha256(
+                    suite_output_path.read_bytes()
+                ).hexdigest(),
+            ))
+            print(f"ERROR: {error_msg}", file=sys.stderr)
+            return 1
         at_base = run_at_base(project, args.base_sha, nodes,
                               configured_invocation,
                               baseline_red=base_red)
