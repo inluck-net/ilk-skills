@@ -529,6 +529,7 @@ get_rapid_terminal_backoff() {
 # Resolve the release_train.py script relative to the scheduler's own script dir.
 _RELEASE_TRAIN_SCRIPT="${_ILK_SCRIPT_DIR}/../../ilk-ship/scripts/release_train.py"
 _RELEASE_TRAIN_DISPATCH="${_ILK_SCRIPT_DIR}/release_train_dispatch.py"
+_SPAWN_DETACHED="${_ILK_SCRIPT_DIR}/spawn_detached.py"
 
 is_release_lock_held() {
   # Returns 0 (true) if train.lock names a live pid; 1 (false) otherwise.
@@ -597,7 +598,9 @@ print('true' if r.get('ok') else r.get('reason', 'permit check failed'))
   touch "$marker_file"
 
   local log_file="${marker_dir}/train-$(date +%s).log"
-  nohup "$PYTHON" "$_RELEASE_TRAIN_SCRIPT" run --project "$repo" \
+  # The train must not share the scheduler job's process group, because its
+  # own local bounce boots that job out (backlog 806f0c3cecabcb64).
+  "$PYTHON" "$_SPAWN_DETACHED" "$PYTHON" "$_RELEASE_TRAIN_SCRIPT" run --project "$repo" \
     >> "$log_file" 2>&1 &
 
   write_scheduler_log "release-train-started" "$key" "run_id=$run_id pid=$!"

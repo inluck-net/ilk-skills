@@ -52,10 +52,6 @@ def _spawn_detached_path() -> str:
 # ── AC-1: detached child is in its own session and group, same pid ──────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="train still launched with nohup in the scheduler's group",
-)
 def test_detached_child_own_session_and_group(tmp_path: Path) -> None:
     """AC-1: spawn_detached.py puts the child in its own session and group.
 
@@ -64,11 +60,12 @@ def test_detached_child_own_session_and_group(tmp_path: Path) -> None:
     """
     py = _python_path()
     sd = _spawn_detached_path()
+    # Parent spawns a detached child, echoes the pid, then exits immediately.
+    # No ``wait`` — the child outlives the parent.
     parent_script = textwrap.dedent(f"""\
         #!/usr/bin/env bash
         "{py}" "{sd}" "{py}" -c "import os, sys; print(os.getpid(), flush=True)" &
         echo $!
-        wait
     """)
     script_path = tmp_path / "parent.sh"
     script_path.write_text(parent_script)
@@ -81,11 +78,14 @@ def test_detached_child_own_session_and_group(tmp_path: Path) -> None:
         start_new_session=True,
     )
     try:
-        stdout, stderr = proc.communicate(timeout=10)
-        lines = stdout.decode().strip().splitlines()
-        assert len(lines) >= 2, f"expected 2 lines (child_pid, parent_echo), got: {lines!r}"
-        child_pid = int(lines[0].strip())
-        echo_pid = int(lines[1].strip())
+        # Read two lines: child_pid (from the child's print) and echo_pid (from
+        # the parent's echo).  Use readline() instead of communicate() because
+        # the parent exits immediately and the child lives on.
+        child_line = proc.stdout.readline()
+        echo_line = proc.stdout.readline()
+        proc.wait(timeout=5)
+        child_pid = int(child_line.strip())
+        echo_pid = int(echo_line.strip())
         assert child_pid == echo_pid, (
             f"exec must keep the pid: $!={echo_pid} vs child print={child_pid}"
         )
@@ -93,13 +93,16 @@ def test_detached_child_own_session_and_group(tmp_path: Path) -> None:
         # The child must be in its own session and process group.
         child_sid = os.getsid(child_pid)
         child_pgid = os.getpgid(child_pid)
-        parent_sid = os.getsid(proc.pid)
-        parent_pgid = os.getpgid(proc.pid)
-        assert child_sid != parent_sid, (
-            f"child session {child_sid} must differ from parent session {parent_sid}"
+        # The parent already exited, so use the child's own sid/pgid as
+        # reference for "parent session" — the parent was in a different
+        # session (start_new_session=True) and the child must NOT be in it.
+        # We verify by checking the child is a session leader (sid == pid)
+        # and a process-group leader (pgid == pid).
+        assert child_sid == child_pid, (
+            f"child must be session leader: sid={child_sid}, pid={child_pid}"
         )
-        assert child_pgid != parent_pgid, (
-            f"child pgid {child_pgid} must differ from parent pgid {parent_pgid}"
+        assert child_pgid == child_pid, (
+            f"child must be process-group leader: pgid={child_pgid}, pid={child_pid}"
         )
     finally:
         try:
@@ -113,10 +116,6 @@ def test_detached_child_own_session_and_group(tmp_path: Path) -> None:
 # ── AC-2: detached child survives the job's group kill ──────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="train still launched with nohup in the scheduler's group",
-)
 def test_detached_survives_group_kill(tmp_path: Path) -> None:
     """AC-2: a detached child survives SIGTERM to the parent's process group.
 
@@ -125,6 +124,7 @@ def test_detached_survives_group_kill(tmp_path: Path) -> None:
     """
     py = _python_path()
     sd = _spawn_detached_path()
+    # Parent stays alive (sleep 60) so we can kill its process group.
     parent_script = textwrap.dedent(f"""\
         #!/usr/bin/env bash
         # Detached child (through spawn_detached.py)
@@ -134,7 +134,7 @@ def test_detached_survives_group_kill(tmp_path: Path) -> None:
         nohup sleep 30 &
         NOHUP_PID=$!
         echo "$DETACHED_PID $NOHUP_PID"
-        wait
+        sleep 60
     """)
     script_path = tmp_path / "parent.sh"
     script_path.write_text(parent_script)
@@ -146,16 +146,19 @@ def test_detached_survives_group_kill(tmp_path: Path) -> None:
         stderr=subprocess.PIPE,
         start_new_session=True,
     )
+    detached_pid = None
+    nohup_pid = None
     try:
-        stdout, _ = proc.communicate(timeout=10)
-        line = stdout.decode().strip()
+        # Read PIDs line by line — don't use communicate() (parent sleeps 60).
+        line = proc.stdout.readline().decode().strip()
         parts = line.split()
         assert len(parts) == 2, f"expected 2 pids, got: {line!r}"
         detached_pid = int(parts[0])
         nohup_pid = int(parts[1])
 
-        # Wait a moment for children to start.
         import time
+
+        # Wait a moment for children to start.
         time.sleep(0.5)
 
         # Kill the parent's entire process group.
@@ -185,14 +188,16 @@ def test_detached_survives_group_kill(tmp_path: Path) -> None:
             f"detached child {detached_pid} must survive the group kill"
         )
     finally:
-        try:
-            os.kill(detached_pid, signal.SIGTERM)
-        except Exception:
-            pass
-        try:
-            os.kill(nohup_pid, signal.SIGTERM)
-        except Exception:
-            pass
+        if detached_pid is not None:
+            try:
+                os.kill(detached_pid, signal.SIGTERM)
+            except Exception:
+                pass
+        if nohup_pid is not None:
+            try:
+                os.kill(nohup_pid, signal.SIGTERM)
+            except Exception:
+                pass
         proc.kill()
         proc.wait(timeout=5)
 
@@ -200,10 +205,6 @@ def test_detached_survives_group_kill(tmp_path: Path) -> None:
 # ── AC-3: spawn_detached.py with no arguments exits 2 ───────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="train still launched with nohup in the scheduler's group",
-)
 def test_spawn_detached_no_args_exits_2() -> None:
     """AC-3: spawn_detached.py with no arguments prints usage and exits 2."""
     result = subprocess.run(
@@ -225,10 +226,6 @@ def test_spawn_detached_no_args_exits_2() -> None:
 # ── AC-4: scheduler.sh uses spawn_detached.py, not nohup ────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="train still launched with nohup in the scheduler's group",
-)
 def test_scheduler_uses_spawn_detached_not_nohup() -> None:
     """AC-4: maybe_start_release_train launches through spawn_detached.py.
 
