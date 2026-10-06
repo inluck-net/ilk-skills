@@ -163,6 +163,11 @@ try:
 except ImportError:
     detect_stale_running = None  # type: ignore
 
+try:
+    from integrity_violation import parse_file as _parse_integrity_violations
+except ImportError:
+    _parse_integrity_violations = None  # type: ignore
+
 # How many lines of the last problematic iter's log to embed in the report.
 TAIL_LINES = 80
 
@@ -301,6 +306,34 @@ def _project_key_for(project_path: Path) -> str:
     if project_key is None:
         raise RuntimeError("ilk_paths.project_key is unavailable")
     return project_key(_canonical_project_path(project_path))
+
+
+def _integrity_violations(project_path: Path, run_id: str | None) -> list[dict]:
+    """Find the launcher log for *run_id* and return structured violation data.
+
+    Returns ``[]`` when *run_id* is falsy, when ``external_logs_dir`` is
+    unavailable, when no launcher log exists, or when the
+    ``integrity_violation`` module cannot be imported (installed copy may
+    predate the module).
+    """
+    if not run_id or _parse_integrity_violations is None:
+        return []
+    if external_logs_dir is None or project_key is None:
+        return []
+    try:
+        key = _project_key_for(project_path)
+        logs_dir = external_logs_dir(key)
+    except Exception:
+        return []
+    if logs_dir is None:
+        return []
+    launcher_dir = logs_dir / "launcher"
+    if not launcher_dir.is_dir():
+        return []
+    candidates = list(launcher_dir.glob(f"*-{run_id}.log"))
+    if not candidates:
+        return []
+    return _parse_integrity_violations(candidates[0])
 
 
 def read_last_launch(project_path: Path) -> dict | None:
@@ -1285,6 +1318,7 @@ def _classify_core(
             "iter_at_stop": last.get("iteration"),
             "reason": "run_exit terminal state",
             "route": "ship_integrity_violation",
+            "integrity_violations": _integrity_violations(project_path, last.get("run_id")),
         }
     # Shipped-unproven: every sub-plan says shipped but at least one has no
     # ship-proof.  Same label as the sentinel map.
@@ -1762,6 +1796,8 @@ def classify(
                 # route-specific text for shipped-unverified.
                 if label == "shipped-unverified":
                     facts["route"] = sentinel_state
+                if sentinel_state == "ship_integrity_violation":
+                    facts["integrity_violations"] = _integrity_violations(project_path, run_id)
                 if sentinel_state == "local_checks_failed":
                     facts["has_broken_gate"] = has_broken_gate
                 if sentinel_state == "local_checks_failed_no_commits":
@@ -2020,6 +2056,16 @@ def recommend_params(
     if label == "shipped-unverified":
         route = facts.get("route", "")
         if route == "ship_integrity_violation":
+            violations = facts.get("integrity_violations", [])
+            has_red_ship = any(v.get("kind") == "red-ship" for v in violations)
+            if not has_red_ship and violations:
+                # Kind-aware text: the gates were restored, no ship happened
+                return cur_max, cur_to, (
+                    "the gates were restored and the work was WIP-preserved; "
+                    "relaunching re-runs the step against the original gates. "
+                    "If the gate itself is wrong, re-scope it between runs."
+                )
+            # Fallback: red-ship or empty/missing violations
             return cur_max, cur_to, (
                 "a sub-plan was marked shipped while its gate was red; "
                 "the ship was reverted. Fix the gate or the sub-plan, then relaunch."
@@ -2781,6 +2827,26 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
     if label == "shipped-unverified":
         route = facts.get("route", "")
         if route == "ship_integrity_violation":
+            violations = facts.get("integrity_violations", [])
+            has_red_ship = any(v.get("kind") == "red-ship" for v in violations)
+            if not has_red_ship and violations:
+                # Kind-aware text: name the edit, not "marked shipped"
+                gate_edits = [v for v in violations if v.get("kind") == "gates-edited"]
+                master_edits = [v for v in violations if v.get("kind") == "master-edited"]
+                if gate_edits:
+                    slugs = ", ".join(f"`{v['slug']}`" for v in gate_edits)
+                    return (
+                        f"stopped: the worker edited the declared gates of {slugs} "
+                        f"mid-iteration; the runner restored them from the "
+                        f"pre-dispatch snapshot. No ship was reverted."
+                    )
+                if master_edits:
+                    return (
+                        "stopped: the worker edited the master state "
+                        "mid-iteration; the runner restored it from the "
+                        "pre-dispatch snapshot. No ship was reverted."
+                    )
+            # Fallback: red-ship or empty/missing violations
             return (
                 "stopped: a sub-plan was marked shipped while its gate was red; "
                 "the ship was reverted and the master parked."

@@ -43,7 +43,6 @@ _RECOMMEND_PARAMS_BASE = (
 class TestLabelNarrativeKindAware:
     """_label_narrative names the violation kind for gates-edited."""
 
-    @pytest.mark.xfail(strict=True, reason="violation kind not yet parsed")
     def test_gates_edited_names_the_gate(self):
         """gates-edited → text contains 'gates' and the slug, not 'marked shipped'."""
         facts = {
@@ -86,7 +85,6 @@ class TestLabelNarrativeKindAware:
 class TestRecommendParamsKindAware:
     """recommend_params names the violation kind for gates-edited."""
 
-    @pytest.mark.xfail(strict=True, reason="violation kind not yet parsed")
     def test_gates_edited_names_the_gate(self):
         """gates-edited → rationale contains 'gates' and the slug, not 'marked shipped'."""
         facts = {
@@ -126,7 +124,6 @@ class TestRecommendParamsKindAware:
 class TestIntegrityViolationsWiring:
     """_integrity_violations reads the launcher log and returns structured data."""
 
-    @pytest.mark.xfail(strict=True, reason="violation kind not yet parsed")
     def test_finds_log_and_returns_gates_edited(self, tmp_path: Path):
         """_integrity_violations finds a log under external_logs_dir and returns
         the gates-edited entry."""
@@ -147,13 +144,11 @@ class TestIntegrityViolationsWiring:
 
         assert result == [{"kind": "gates-edited", "slug": "ticket-attachment-projector"}]
 
-    @pytest.mark.xfail(strict=True, reason="violation kind not yet parsed")
     def test_run_id_none_returns_empty(self, tmp_path: Path):
         """With run_id=None, returns []."""
         result = collect._integrity_violations(tmp_path, None)
         assert result == []
 
-    @pytest.mark.xfail(strict=True, reason="violation kind not yet parsed")
     def test_no_log_returns_empty(self, tmp_path: Path):
         """When no launcher log exists, returns []."""
         with patch("collect.external_logs_dir", return_value=tmp_path / "logs"):
