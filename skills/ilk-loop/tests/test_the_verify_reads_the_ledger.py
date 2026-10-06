@@ -547,3 +547,234 @@ def test_ac7_template_has_ledger_require() -> None:
     text = template.read_text(encoding="utf-8")
     assert "--ledger require" in text, \
         f"--ledger require not found in template step-0 command:\n{text[:500]}"
+
+
+# ── Batch Z regression: scoped ledger cache-miss runs full suite ─────────────
+#
+# These tests pin the contract from AC-2 through AC-5 for the
+# ``ledger=require`` cache-miss path.  When ``compute_suite_scope``
+# returns scoped with a ``selection``, the ``require`` path must pass
+# that selection to ``run_suite`` so that only the selected tests run.
+#
+# MEASURED 2026-10-06 (Batch Z): ``run_suite(project, invocation,
+# suite_budget)`` at ``verification_record.py:1941`` was called without
+# ``selection``, so the full 5,142-test suite ran while the record
+# claimed ``suite_scope: scoped, selection_size: 8``.
+#
+# These pins are ``xfail(strict=True)`` — the current code is the
+# reason they fail.  Step 1 of the sub-plan will fix the bug and
+# remove the xfail markers.
+
+_SCOPED_SCOPE_RESULT = {
+    "mode": "scoped", "count": 2, "reason": "2 test file(s) selected",
+    "selection": ["test_a_selection.py", "test_b_sentinel.py"],
+}
+_SCOPED_SUITE_RESULT = {
+    "exit_code": 0,
+    "counts": {"passed": 2, "failed": 0, "errors": 0, "skipped": 0,
+               "total": 2},
+    "failing_nodes": [],
+}
+_FULL_SUITE_RESULT = {
+    "exit_code": 0,
+    "counts": {"passed": 3, "failed": 0, "errors": 0, "skipped": 0,
+               "total": 3},
+    "failing_nodes": [],
+}
+
+
+def _tracking_run_suite(project, invocation, timeout, selection=None):
+    """Return scoped result when selection is given, full result otherwise."""
+    if selection is None:
+        return dict(_FULL_SUITE_RESULT)
+    return dict(_SCOPED_SUITE_RESULT)
+
+
+@pytest.mark.xfail(strict=True, reason="red-first: Batch Z ledger=require "
+                   "cache-miss drops computed selection")
+def test_z1_require_cache_miss_passes_selection(tmp_path: Path,
+                                                monkeypatch: pytest.MonkeyPatch):
+    """AC-2: ledger=require cache-miss passes computed selection to run_suite.
+
+    A scoped scope with a ``selection`` list must reach ``run_suite`` so
+    that only the selected tests execute.  The persisted record must
+    reflect the scoped count, not the full-suite count.
+    """
+    from verification_record import main as vr_main  # type: ignore[import-untyped]
+
+    project = tmp_path / "project"
+    project.mkdir()
+    subprocess.run(["git", "init"], cwd=project, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=project,
+                   capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=project,
+                   capture_output=True, check=True)
+
+    launch = {"ship": {"suite": {"command": "python3 -m pytest",
+                                 "flags": ["-q", "-p", "no:cacheprovider"]}}}
+    (project / ".ilk-launch.json").write_text(
+        json.dumps(launch, indent=2) + "\n", encoding="utf-8")
+
+    (project / "seed.txt").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=project, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=project,
+                   capture_output=True, check=True)
+
+    (project / "test_a_selection.py").write_text("def test_a1(): pass\n",
+                                                 encoding="utf-8")
+    (project / "test_b_sentinel.py").write_text("def test_b1(): pass\n",
+                                                encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=project, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "add tests"], cwd=project,
+                   capture_output=True, check=True)
+
+    base_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD~1"], cwd=project, text=True).strip()
+
+    # Mock suite_ledger: no entry exists (cache miss), so require path
+    # must measure in-process.
+    mock_ledger = MagicMock()
+    mock_ledger.lookup.return_value = None
+    mock_ledger.wait_for.return_value = None
+    mock_ledger._compute_digest.return_value = "abc123"
+    mock_ledger.ledger_dir.return_value = tmp_path / "ledger"
+    monkeypatch.setitem(sys.modules, "suite_ledger", mock_ledger)
+
+    monkeypatch.setattr("verification_record.compute_suite_scope",
+                        lambda *_a, **_kw: dict(_SCOPED_SCOPE_RESULT))
+    monkeypatch.setattr("verification_record.run_suite", _tracking_run_suite)
+    monkeypatch.setattr("verification_record.run_at_base",
+                        lambda *a, **kw: {})
+    monkeypatch.setattr("verification_record.read_baseline_red",
+                        lambda *a, **kw: {})
+    monkeypatch.setattr("verification_record.read_baseline_red_at",
+                        lambda *a, **kw: {})
+
+    record_path = tmp_path / "record.md"
+    rc = vr_main([
+        "--project", str(project),
+        "--record", str(record_path),
+        "--run-suite",
+        "--base-sha", base_sha,
+        "--ledger", "require",
+    ])
+    assert rc == 0, f"expected exit 0, got {rc}"
+
+    # The record must reflect the scoped run, not the full run.
+    text = record_path.read_text(encoding="utf-8")
+    assert "suite_scope: scoped" in text, (
+        f"expected suite_scope: scoped in record:\n{text}")
+    assert "suite_total: 2" in text, (
+        "expected suite_total: 2 (scoped selection), "
+        f"got record:\n{text}")
+    assert "selection_size: 2" in text, (
+        f"expected selection_size: 2 in record:\n{text}")
+
+    # The ledger entry must have been written with scoped counts.
+    tree = subprocess.check_output(
+        ["git", "rev-parse", "HEAD^{tree}"], cwd=project, text=True).strip()
+    ledger_dir = tmp_path / "ledger"
+    entry_path = ledger_dir / f"{tree}.json"
+    assert entry_path.is_file(), f"ledger entry not written: {entry_path}"
+    entry = json.loads(entry_path.read_text(encoding="utf-8"))
+    assert entry["tree"] == tree, (
+        f"ledger tree mismatch: {entry['tree']} != {tree}")
+    assert entry["counts"]["total"] == 2, (
+        f"ledger total should be 2 (scoped), got {entry['counts']['total']}")
+    assert entry["digest"] == "abc123", (
+        f"ledger digest not computed: {entry['digest']}")
+
+
+@pytest.mark.xfail(strict=True, reason="red-first: Batch Z ledger=require "
+                   "cache-miss drops computed selection")
+def test_z2_require_cache_miss_record_identity(tmp_path: Path,
+                                               monkeypatch: pytest.MonkeyPatch):
+    """AC-2 through AC-5: the persisted record and ledger entry carry
+    consistent identity fields after a scoped ledger=require cache miss.
+
+    Checks: ``ledger_mode: require``, ``head_source`` cites the ledger
+    tree+digest, ``selection_size`` matches the scope, and the ledger
+    entry's ``tree`` matches ``verified_tree`` in the record.
+    """
+    from verification_record import main as vr_main  # type: ignore[import-untyped]
+
+    project = tmp_path / "project"
+    project.mkdir()
+    subprocess.run(["git", "init"], cwd=project, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=project,
+                   capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=project,
+                   capture_output=True, check=True)
+
+    launch = {"ship": {"suite": {"command": "python3 -m pytest",
+                                 "flags": ["-q", "-p", "no:cacheprovider"]}}}
+    (project / ".ilk-launch.json").write_text(
+        json.dumps(launch, indent=2) + "\n", encoding="utf-8")
+
+    (project / "seed.txt").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=project, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=project,
+                   capture_output=True, check=True)
+
+    (project / "test_a_selection.py").write_text("def test_a1(): pass\n",
+                                                 encoding="utf-8")
+    (project / "test_b_sentinel.py").write_text("def test_b1(): pass\n",
+                                                encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=project, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "add tests"], cwd=project,
+                   capture_output=True, check=True)
+
+    base_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD~1"], cwd=project, text=True).strip()
+    expected_tree = subprocess.check_output(
+        ["git", "rev-parse", "HEAD^{tree}"], cwd=project, text=True).strip()
+
+    mock_ledger = MagicMock()
+    mock_ledger.lookup.return_value = None
+    mock_ledger.wait_for.return_value = None
+    mock_ledger._compute_digest.return_value = "deadbeef01234567"
+    mock_ledger.ledger_dir.return_value = tmp_path / "ledger"
+    monkeypatch.setitem(sys.modules, "suite_ledger", mock_ledger)
+
+    monkeypatch.setattr("verification_record.compute_suite_scope",
+                        lambda *_a, **_kw: dict(_SCOPED_SCOPE_RESULT))
+    monkeypatch.setattr("verification_record.run_suite", _tracking_run_suite)
+    monkeypatch.setattr("verification_record.run_at_base",
+                        lambda *a, **kw: {})
+    monkeypatch.setattr("verification_record.read_baseline_red",
+                        lambda *a, **kw: {})
+    monkeypatch.setattr("verification_record.read_baseline_red_at",
+                        lambda *a, **kw: {})
+
+    record_path = tmp_path / "record.md"
+    rc = vr_main([
+        "--project", str(project),
+        "--record", str(record_path),
+        "--run-suite",
+        "--base-sha", base_sha,
+        "--ledger", "require",
+    ])
+    assert rc == 0, f"expected exit 0, got {rc}"
+
+    text = record_path.read_text(encoding="utf-8")
+
+    # Record identity: verified_tree matches the HEAD tree.
+    assert f"verified_tree: {expected_tree}" in text, (
+        f"verified_tree not in record:\n{text}")
+
+    # Ledger citation: ledger_mode is require, head_source cites the tree.
+    assert "ledger_mode: require" in text, (
+        f"ledger_mode not require:\n{text}")
+    assert "head_source: ledger" in text, (
+        f"head_source not ledger:\n{text}")
+    assert expected_tree[:12] in text, (
+        f"tree prefix not in head_source:\n{text}")
+
+    # Ledger entry identity: tree matches, digest is set.
+    ledger_dir = tmp_path / "ledger"
+    entry_path = ledger_dir / f"{expected_tree}.json"
+    assert entry_path.is_file(), f"ledger entry not written: {entry_path}"
+    entry = json.loads(entry_path.read_text(encoding="utf-8"))
+    assert entry["tree"] == expected_tree
+    assert entry["digest"] == "deadbeef01234567"
+    assert entry["invocation"] == "python3 -m pytest -q -p no:cacheprovider"
