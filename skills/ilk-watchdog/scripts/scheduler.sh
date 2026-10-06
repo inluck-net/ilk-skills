@@ -1294,13 +1294,14 @@ run_scheduler() {
     local -a disp_keys=() disp_paths=() disp_repos=() disp_actives=() disp_masters=()
 
     # Parse the JSON array and iterate
-    local keys paths repo_paths has_actives master_names line
-    keys=(); paths=(); repo_paths=(); has_actives=(); master_names=()
+    local keys paths repo_paths has_actives master_names train_onlys line
+    keys=(); paths=(); repo_paths=(); has_actives=(); master_names=(); train_onlys=()
     while IFS= read -r line; do keys+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p['key']) for p in d]" <<<"$scan_output" | tr -d '\r')
     while IFS= read -r line; do paths+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p['path']) for p in d]" <<<"$scan_output" | tr -d '\r')
     while IFS= read -r line; do repo_paths+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p.get('repo_path') or '') for p in d]" <<<"$scan_output" | tr -d '\r')
     while IFS= read -r line; do has_actives+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(str(p.get('has_active_master', True)).lower()) for p in d]" <<<"$scan_output" | tr -d '\r')
     while IFS= read -r line; do master_names+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p.get('active_master_name') or '') for p in d]" <<<"$scan_output" | tr -d '\r')
+    while IFS= read -r line; do train_onlys+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(str(p.get('train_only', False)).lower()) for p in d]" <<<"$scan_output" | tr -d '\r')
 
     for i in "${!keys[@]}"; do
       local key="${keys[$i]}"
@@ -1580,6 +1581,22 @@ except: pass
           fi
           continue
         fi
+      fi
+
+      # A train-only entry (scheduler_scan: all-shipped sentinel, no runnable
+      # master) is here to be OFFERED the train, never dispatched.  Dispatching
+      # it ran a loop with nothing to do that exited after 0 iterations and
+      # overwrote the shipped sentinel, so the project left the scan and later
+      # permits never started a train (ilk-skills 2026-10-06 19:59, and
+      # 2026-10-07 00:16 run 20261007-001633).
+      if [[ "${train_onlys[$i]:-false}" == "true" ]]; then
+        if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+          echo "{\"decision\":\"skip-train-only\",\"key\":\"$key\"}"
+        else
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip-train-only: $key"
+        fi
+        write_scheduler_log "skip-train-only" "$key"
+        continue
       fi
 
       # Fill free slots: collect while capacity remains.
