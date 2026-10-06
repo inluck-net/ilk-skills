@@ -138,11 +138,42 @@ def _check_subprocess_leak(
 
     This helper exists so AC-2 pins can inject a fixture root instead of
     walking the real data home.
-
-    **Stub:** the full implementation lands in step 1.  This version always
-    returns an empty list so the xfail pins fire.
     """
-    return []
+    import json
+
+    violations: list[str] = []
+    marker_str = str(marker_path)
+
+    for sr in data_home.rglob("ship-reverts.jsonl"):
+        prev_size = pre_run_sizes.get(sr, 0)
+        current_size = sr.stat().st_size
+        if current_size <= prev_size:
+            continue
+
+        # Read only the bytes appended after the subprocess started.
+        with open(sr, "rb") as f:
+            f.seek(prev_size)
+            new_bytes = f.read()
+
+        # Parse each new line; skip unparseable (fail-closed, same as
+        # Contract 2b invariant 5).
+        for line in new_bytes.decode("utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            # A row names marker_path if any string value contains it.
+            for val in row.values():
+                if isinstance(val, str) and marker_str in val:
+                    violations.append(
+                        f"Attributable row in {sr}: {line}"
+                    )
+                    break
+
+    return violations
 
 
 # ── AC-1: get_ilk_runtime_dir refuses an empty PROJECT_PATH ──────────────────
@@ -216,12 +247,12 @@ def test_ac2_no_writes_when_empty_project_path(tmp_path: Path) -> None:
 def test_ac3_known_writer_writes_no_live_rows(tmp_path: Path) -> None:
     """Run test_ship_audit.py as a subprocess with HOME and ILK_DATA_HOME
     under tmp_path.  Afterwards, no ship-reverts.jsonl under the REAL data
-    home has an mtime later than the subprocess start.
+    home gained a row attributable to this test's subprocess.
 
-    Today test_ship_audit.py's _source_runner_and_call replaces the env
-    (no HOME, no ILK_DATA_HOME), so the runner resolves from cwd and writes
-    to the real data home.  After the fix, HOME/ILK_DATA_HOME are set under
-    tmp_path and the runner refuses empty PROJECT_PATH, so no writes happen.
+    AC-1: the check counts only rows whose value contains tmp_path (the
+    subprocess's project / cwd / data paths all live under it).  Concurrent
+    writers appending unrelated rows to the real data home do NOT fail this
+    test.
     """
     tmp_home = tmp_path / "home"
     tmp_home.mkdir()
@@ -234,7 +265,12 @@ def test_ac3_known_writer_writes_no_live_rows(tmp_path: Path) -> None:
     import site as _site
     user_site = _site.getusersitepackages()
 
-    before = time.time()
+    # Snapshot sizes of every ship-reverts.jsonl under the REAL data home
+    # before the subprocess runs.
+    real_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    real_data = Path(os.environ.get("ILK_DATA_HOME", real_home / ".ilk-data"))
+    pre_sizes = _capture_revert_sizes(real_data)
+
     result = subprocess.run(
         [python, "-m", "pytest", str(TEST_SHIP_AUDIT),
          "-q", "--tb=no", "-p", "no:cacheprovider"],
@@ -256,19 +292,20 @@ def test_ac3_known_writer_writes_no_live_rows(tmp_path: Path) -> None:
         f"stdout:\n{result.stdout[-2000:]}\nstderr:\n{result.stderr[-2000:]}"
     )
 
-    # No ship-reverts.jsonl under the REAL data home with mtime >= before.
-    real_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
-    real_data = Path(os.environ.get("ILK_DATA_HOME", real_home / ".ilk-data"))
-    for sr in real_data.rglob("ship-reverts.jsonl"):
-        assert sr.stat().st_mtime < before, (
-            f"Found live ship-reverts.jsonl written after subprocess start: {sr}\n"
-            f"mtime={sr.stat().st_mtime}, before={before}"
-        )
+    # Check only rows attributable to this test's subprocess.
+    violations = _check_subprocess_leak(
+        data_home=real_data,
+        marker_path=tmp_path,
+        pre_run_sizes=pre_sizes,
+    )
+    assert violations == [], (
+        f"Found {len(violations)} attributable live row(s) after subprocess:\n"
+        + "\n".join(violations)
+    )
 
 
 # ── AC-2 pins: attributable-only leak detection ─────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="attributable-only leak check not built")
 def test_ac2_attributable_only_leak_detection(tmp_path: Path) -> None:
     """Pin: the leak check counts only rows naming the marker path.
 
