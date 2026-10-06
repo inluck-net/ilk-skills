@@ -1517,8 +1517,11 @@ def _ssh_deploy(
         }
 
     # ── 2. bounce ───────────────────────────────────────────────────────
+    # The CANDIDATE's bouncer: bounce_daemons.sh judges staleness against its
+    # own release manifest, so the incumbent's copy sees a fresh daemon and
+    # bounces nothing (v0.9.156 train, rezmac: bounce exit 0, tag-mismatch).
     bounce_result = _run(host, [
-        str(_BOUNCE_SCRIPT),
+        str(_bouncer_for(tag)),
     ], timeout=60)
 
     # ── 3. smoke (bounded settling) ────────────────────────────────────
@@ -1537,7 +1540,7 @@ def _ssh_deploy(
 
         smoke_result = _run(host, [
             sys.executable, str(_STATUS_SCRIPT),
-            "--bouncer", str(_BOUNCE_SCRIPT),
+            "--bouncer", str(_bouncer_for(tag)),
             "--require-tag", tag,
             "--repo", str(project),
         ], timeout=60)
@@ -1584,8 +1587,11 @@ def _ssh_deploy(
         sys.executable, str(_RELEASE_SCRIPT), "--rollback", "--repo", str(project),
     ], timeout=60)
 
+    # bounce_daemons.sh takes no positional argument (an unknown one exits 2,
+    # which made every remote rollback read "unverified"); the release whose
+    # bouncer runs is what selects the target.
     rb_bounce_result = _run(host, [
-        str(_BOUNCE_SCRIPT), prev_tag,
+        str(_bouncer_for(prev_tag)),
     ], timeout=60) if prev_tag else {"rc": -1}
 
     if rb_result["rc"] != 0 or rb_bounce_result["rc"] not in (0, 1):
@@ -1610,7 +1616,7 @@ def _ssh_deploy(
 
         rb_smoke_result = _run(host, [
             sys.executable, str(_STATUS_SCRIPT),
-            "--bouncer", str(_BOUNCE_SCRIPT),
+            "--bouncer", str(_bouncer_for(prev_tag)),
             "--require-tag", prev_tag,
             "--repo", str(project),
         ], timeout=60)

@@ -91,12 +91,15 @@ def _ssh_deploy_calls(tmp_path: Path, smoke_stdout: str) -> tuple[Path, list[lis
         s = " ".join(str(c) for c in cmd)
         if "fetch" in s:
             return {"rc": 0, "stdout": "", "stderr": ""}
+        if "ilk_release.py" in s and "--status" in s:
+            return {"rc": 0, "stdout": '{"previous": "/Users/x/.ilk/releases/v0.0.1"}', "stderr": ""}
         if "ilk_release.py" in s:
             return {"rc": 0, "stdout": "", "stderr": ""}
-        if "bounce_daemons" in s:
-            return {"rc": 1, "stdout": "", "stderr": ""}
+        # status first: its argv also names the bouncer.
         if "host_deploy_status" in s:
             return {"rc": 0 if smoke_stdout == "ok" else 1, "stdout": smoke_stdout, "stderr": ""}
+        if "bounce_daemons" in s:
+            return {"rc": 1, "stdout": "", "stderr": ""}
         return {"rc": 0, "stdout": "", "stderr": ""}
 
     release_train._ssh_deploy(project, "v0.0.2", data_dir, host="rezmac", ssh_runner=runner,
@@ -122,3 +125,36 @@ def test_the_rollback_smoke_passes_the_repo_too(tmp_path: Path) -> None:
     assert len(smokes) >= 2, calls  # deploy smoke(s) + rollback smoke
     for c in smokes:
         assert "--repo" in c and c[c.index("--repo") + 1] == str(project), c
+
+
+# ── The remote host is bounced by the bouncer of the release being deployed ──
+#
+# Measured 2026-10-06, v0.9.156 train: the rezmac bounce ran the INCUMBENT's
+# bounce_daemons.sh, which compares the daemon with its own release manifest,
+# found it "fresh", bounced nothing (exit 0), and the smoke read tag-mismatch.
+# The local deploy already uses _bouncer_for(tag).
+
+
+def test_the_remote_bounce_and_smoke_use_the_candidate_release(tmp_path: Path) -> None:
+    project, calls = _ssh_deploy_calls(tmp_path, "ok")
+    bouncer_args = [a for c in calls for a in c if a.endswith("bounce_daemons.sh")]
+    assert bouncer_args, calls
+    for a in bouncer_args:
+        assert "/v0.0.2/" in a, a
+
+
+def test_the_rollback_bounce_uses_the_previous_release(tmp_path: Path) -> None:
+    project, calls = _ssh_deploy_calls(tmp_path, "tag-mismatch")
+    smokes = _smoke_calls(calls)
+    rollback_smoke = smokes[-1]
+    b = rollback_smoke[rollback_smoke.index("--bouncer") + 1]
+    assert "/v0.0.1/" in b and b.endswith("bounce_daemons.sh"), b
+
+
+def test_the_rollback_bounce_passes_no_argument(tmp_path: Path) -> None:
+    # bounce_daemons.sh exits 2 on any unknown argument (:44); the train used
+    # to pass the tag, so every remote rollback read "bounce=2, unverified".
+    project, calls = _ssh_deploy_calls(tmp_path, "tag-mismatch")
+    bounces = [c for c in calls if c and c[0].endswith("bounce_daemons.sh")]
+    assert len(bounces) == 2, calls  # deploy bounce + rollback bounce
+    assert bounces[-1] == [bounces[-1][0]] and "/v0.0.1/" in bounces[-1][0], bounces[-1]
