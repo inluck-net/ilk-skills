@@ -56,6 +56,56 @@ def test_spawn_returns_while_the_measurement_still_runs(tmp_path: Path) -> None:
     subprocess.run(["pkill", "-f", f"touch {marker}"], check=False)
 
 
+def test_spawn_does_not_keep_the_callers_run_lock(tmp_path: Path) -> None:
+    """2026-10-06 23:13 (gh-resolve): the runner exited, but every re-dispatch
+    refused with 'another runner holds this lock'.  lsof: the background
+    measurement held run.lock on fd 3u, the flock ilk_run_lock.py passes down
+    to the runner.  Redirecting fds 0-2 left fd 3 inherited."""
+    project = tmp_path / "proj"
+    project.mkdir()
+    for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "c"]):
+        subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=T", *args],
+                       cwd=project, check=True)
+    lock = tmp_path / "run.lock"
+    marker = tmp_path / "measure-ran"
+    wrapper = tmp_path / "wrap.py"
+    wrapper.write_text(textwrap.dedent(f"""
+        import fcntl, os, sys
+        sys.path.insert(0, {str(SCRIPTS)!r})
+        fd = os.open({str(lock)!r}, os.O_RDWR | os.O_CREAT)
+        os.set_inheritable(fd, True)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        import suite_ledger as s
+        s.lookup = lambda *a, **k: None
+        s._is_ledger_disabled = lambda *a, **k: False
+        s._background_measure_command = lambda *a, **k: [
+            "sh", "-c", "touch {marker}; sleep 30"]
+        from pathlib import Path
+        print(s.spawn(Path({str(project)!r}), "HEAD"))
+    """))
+    env = {**os.environ, "HOME": str(tmp_path / "home"),
+           "ILK_DATA_HOME": str(tmp_path / "data")}
+    env.pop("ILK_WORKER_SESSION", None)
+    r = subprocess.run([sys.executable, str(wrapper)], capture_output=True, text=True,
+                       env=env, timeout=25)
+    assert "spawned" in r.stdout, (r.stdout, r.stderr)
+    deadline = time.monotonic() + 5
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert marker.exists(), "the measurement itself must still run"
+    try:
+        probe = subprocess.run(
+            [sys.executable, "-c",
+             f"import fcntl,os; fd=os.open({str(lock)!r}, os.O_RDWR); "
+             "fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)"],
+            capture_output=True, text=True, timeout=10)
+        assert probe.returncode == 0, (
+            "the caller exited but its run lock is still held by the measurement: "
+            + probe.stderr[-200:])
+    finally:
+        subprocess.run(["pkill", "-f", f"touch {marker}"], check=False)
+
+
 # ── Class guard: no detached spawn inherits its caller's stdio ──────────────
 #
 # The 2026-10-06 hang was one instance of a class: a child started in a new
@@ -105,6 +155,8 @@ def _violations() -> list[str]:
                 if isinstance(node.func, ast.Attribute) and node.func.attr == "setsid":
                     if not ("dup2(" in src and ", 1)" in src and ", 2)" in src):
                         bad.append(f"{rel}:{node.lineno} {fn.name}: setsid child keeps fds 1/2")
+                    if "closerange(" not in src and "close_fds" not in src:
+                        bad.append(f"{rel}:{node.lineno} {fn.name}: setsid child keeps fds >= 3 (locks)")
     return bad
 
 

@@ -802,6 +802,11 @@ def _spawn_detached(project: Path, sha_str: str,
                    os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
     os.dup2(_log, 1)
     os.dup2(_log, 2)
+    # Close every other inherited fd.  The runner runs under ilk_run_lock.py's
+    # flock, so the measurement otherwise keeps run.lock and every re-dispatch
+    # refuses "another runner holds this lock" until the suite ends -- measured
+    # 2026-10-06 23:13, gh-resolve: lsof showed the measure on run.lock fd 3u.
+    os.closerange(3, os.sysconf("SC_OPEN_MAX"))
 
     # exec replaces the process.
     os.execvp(cmd[0], cmd)
