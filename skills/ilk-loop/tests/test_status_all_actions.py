@@ -38,7 +38,10 @@ def _project_key(root: Path) -> str:
 
 
 # Fixed scratch dir inside the repo (gitignored).
-SCRATCH = REPO_ROOT / "scratch" / "status-actions"
+# Per xdist worker: two workers sharing one fixed dir raced its rmtree, and
+# the old onerror chmod(0o666) then stripped the dir's x bit, poisoning
+# every later run (2026-10-06).
+SCRATCH = REPO_ROOT / "scratch" / f"status-actions-{os.environ.get('PYTEST_XDIST_WORKER', 'main')}"
 ILK_DATA = SCRATCH / "ilk-data"
 
 
@@ -161,7 +164,7 @@ def _cleanup():
         import shutil
         def _rm_onerror(func, path, exc):
             try:
-                os.chmod(path, 0o666)
+                os.chmod(path, os.stat(path).st_mode | 0o700)  # add, never strip x
                 func(path)
             except OSError:
                 pass
