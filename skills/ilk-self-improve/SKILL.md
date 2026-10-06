@@ -49,8 +49,29 @@ worktree because it edits the toolkit itself. It does NOT auto-apply changes.
 
 `autoplan.py` runs the auto-planner without a session.  When the
 ilk-skills queue has had no runnable master for N consecutive scheduler
-cycles, it starts one detached `claude -p` session on the manager home
-for the top-ranked candidate.
+cycles, it starts one detached `claude -p` session on the planner home
+(below) for the top-ranked candidate.
+
+Only `open` candidates with `source: triage` are eligible, and any
+candidate whose text names a kernel path is escalated, never planned
+(`autoplan_rails.py` `rank` / `screen_candidate`).  Rows filed by hand
+(`source: supervisor`) are a record for the owner, not RSI input.
+
+### Planner home
+
+`plan()` refuses a session whose init event reports a GLM or MiMo model
+(`refused`, reason `model <name>`).  The manager home stays GLM because
+verification runs there, so the scheduler's tick does not inherit it.
+The tick's home is `$ILK_AUTOPLAN_HOME`, else `~/.claude-triage` when
+that directory exists, else the scheduler's environment unchanged.  A
+host with no triage home therefore behaves as before.  Before relying on
+a host, run `CLAUDE_MANAGER_HOME=<home> autoplan.py probe` and check that
+the model is allowed.
+
+RSI runs on the development Mac only while it is being proven end to end.
+Moving it to a long-running host needs three things: a planner home with
+an allowed model, the backlog (it lives in each host's own `~/.ilk-data`),
+and `autoplan.enabled` true on that host only.
 
 ### Enablement
 
@@ -75,7 +96,17 @@ file is removed.
 - `autoplan.py tick [--dry-run] [--json]` — called once per scheduler
   cycle; never waits on claude.
 - `autoplan.py plan --candidate ID --project-key K --run-id R` — the
-  detached planning part (spawned by `tick`).
+  detached planning part (spawned by `tick`).  It is also the **manual
+  trigger**: run it from the toolkit clone, with
+  `CLAUDE_MANAGER_HOME=<planner home>` and `--run-id manual-<timestamp>`,
+  to test the planning session without waiting for the idle window
+  (60 min after the last master edit, plus 6 idle ticks).  It goes
+  through the same `plan()` pipeline: forced draft, `check_master`, lint,
+  preflight and `draft_only`.  It skips the idle gate and ranking, so use
+  the candidate `rank` would choose.  A failed run spends one of the
+  candidate's two `autoplan_attempts`.  Do not edit or commit in the
+  clone while a session runs: `plan()` compares `git status` before and
+  after, and any change reads `clone-modified`, a critical escalation.
 - `autoplan.py probe [--json]` — test the manager home (owner session's
   live check after ship).
 
@@ -84,6 +115,10 @@ file is removed.
 The auto-planner (code) owns the `draft` to `queued` flip.  It runs
 `plan_lint` and `plan_preflight` and flips to `queued` only if both
 pass.  This overrides step 8b of `/ilk-plan`.
+
+While `.ilk-launch.json` `autoplan.draft_only` is true, a clean draft
+stays `draft` (audit `dry-period-drafted`) for the owner to review; set
+to false, a clean draft is queued and the scheduler runs it.
 
 ## See also
 
