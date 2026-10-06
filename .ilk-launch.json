@@ -120,6 +120,6 @@
   "iteration_timeout_min": 60,
   "autoplan": {
     "enabled": true,
-    "draft_only": true
+    "draft_only": false
   }
 }
