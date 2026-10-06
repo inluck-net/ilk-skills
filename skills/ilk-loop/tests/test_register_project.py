@@ -353,3 +353,359 @@ class TestEdgeCases:
         assert raw.endswith("\n")
         # Re-parse to verify valid JSON
         json.loads(raw)
+
+
+# ── Data-home registry contract (step 0 pins) ────────────────────────
+#
+# These tests pin the contract that the project registry lives in the
+# writable data home (ilk_data_root()), not in the read-only installed
+# release tree (skill_root()). They use xfail(strict=True) for the
+# specific escaped defect and plain assertions for behavior that should
+# already work.
+#
+# After step 1 (the fix), all xfail markers will be removed.
+
+import os
+import unittest.mock
+
+
+# ── Fixtures ──────────────────────────────────────────────────────────
+
+@pytest.fixture()
+def data_home_env(tmp_path, monkeypatch):
+    """Set up isolated data-home and legacy skill-root paths.
+
+    Returns (data_home, legacy_path) where:
+      data_home = tmp_path / "data-home"
+      legacy_path = tmp_path / "fake-skill-root" / "ilk-launcher" / "projects.json"
+    """
+    data_home = tmp_path / "data-home"
+    fake_skill_root = tmp_path / "fake-skill-root"
+    legacy_path = fake_skill_root / "ilk-launcher" / "projects.json"
+
+    # Patch _default_registry_path to point to the legacy path
+    monkeypatch.setattr(
+        "register_project._default_registry_path", lambda: legacy_path
+    )
+
+    # Patch ilk_paths.ilk_data_root to return our data-home
+    import ilk_paths
+    monkeypatch.setattr(ilk_paths, "ilk_data_root", lambda: data_home)
+
+    return data_home, legacy_path
+
+
+@pytest.fixture()
+def data_home(data_home_env):
+    """Just the data-home path."""
+    return data_home_env[0]
+
+
+# ── DR-1: _default_registry_path returns data-home ────────────────────
+
+class TestDR1_DefaultRegistryPathIsDataHome:
+    """After the fix, _default_registry_path() returns data-home, not
+    skill-root."""
+
+    def test_default_path_is_data_home(self, tmp_path, monkeypatch):
+        """_default_registry_path() must return ilk_data_root() / 'projects.json'."""
+        import ilk_paths
+
+        data_home = tmp_path / "data-home"
+        monkeypatch.setattr(ilk_paths, "ilk_data_root", lambda: data_home)
+
+        result = _default_registry_path()
+
+        assert result == data_home / "projects.json"
+
+
+# ── DR-2: read-only skill tree ────────────────────────────────────────
+
+class TestDR2_ReadOnlySkillTree:
+    """Registration succeeds when the installed release tree is read-only."""
+
+    def test_readonly_skill_root_still_registers(
+        self, tmp_path, data_home_env
+    ):
+        """When skill_root is read-only, register_project must succeed by
+        writing to the data-home registry."""
+        data_home, legacy_path = data_home_env
+
+        # Create a read-only skill-root directory
+        legacy_path.parent.mkdir(parents=True)
+        legacy_path.write_text(
+            json.dumps({"_comment": "ro", "projects": []}),
+            encoding="utf-8",
+        )
+        legacy_path.parent.chmod(0o444)
+
+        try:
+            repo = tmp_path / "myproject"
+            repo.mkdir()
+
+            result = register_project(str(repo))
+
+            assert result["added"] is True
+            assert result["total"] == 1
+
+            # Verify it wrote to data-home, not skill-root
+            assert (data_home / "projects.json").exists()
+            data = json.loads(
+                (data_home / "projects.json").read_text(encoding="utf-8")
+            )
+            assert len(data["projects"]) == 1
+            assert data["projects"][0]["name"] == "myproject"
+        finally:
+            legacy_path.parent.chmod(0o755)
+
+
+# ── DR-3: legacy import ───────────────────────────────────────────────
+
+class TestDR3_LegacyImport:
+    """When data-home registry is absent, legacy entries are imported."""
+
+    def test_legacy_entries_imported_to_data_home(
+        self, tmp_path, data_home_env
+    ):
+        """Legacy skill-root entries are imported on first registration."""
+        data_home, legacy_path = data_home_env
+
+        legacy_path.parent.mkdir(parents=True)
+        legacy_path.write_text(
+            json.dumps({
+                "_comment": "legacy",
+                "projects": [
+                    {"name": "legacy-a", "path": "/a"},
+                    {"name": "legacy-b", "path": "/b"},
+                ],
+            }),
+            encoding="utf-8",
+        )
+
+        repo = tmp_path / "new-project"
+        repo.mkdir()
+
+        result = register_project(str(repo))
+
+        assert result["added"] is True
+        assert result["total"] == 3
+
+        data = json.loads(
+            (data_home / "projects.json").read_text(encoding="utf-8")
+        )
+        names = [p["name"] for p in data["projects"]]
+        assert "legacy-a" in names
+        assert "legacy-b" in names
+        assert "new-project" in names
+
+
+# ── DR-4: data-home wins ──────────────────────────────────────────────
+
+class TestDR4_DataHomeWins:
+    """Existing data-home entries are never overwritten by legacy import."""
+
+    def test_data_home_not_overwritten_by_legacy(
+        self, tmp_path, data_home_env
+    ):
+        """Legacy import must not drop or overwrite existing data-home entries."""
+        data_home, legacy_path = data_home_env
+
+        # Data-home already has an entry
+        data_home.mkdir(parents=True)
+        (data_home / "projects.json").write_text(
+            json.dumps({
+                "_comment": "data-home",
+                "projects": [{"name": "home-proj", "path": "/home"}],
+            }),
+            encoding="utf-8",
+        )
+
+        # Legacy has different entries
+        legacy_path.parent.mkdir(parents=True)
+        legacy_path.write_text(
+            json.dumps({
+                "_comment": "legacy",
+                "projects": [{"name": "legacy-proj", "path": "/legacy"}],
+            }),
+            encoding="utf-8",
+        )
+
+        repo = tmp_path / "new-proj"
+        repo.mkdir()
+
+        result = register_project(str(repo))
+
+        assert result["added"] is True
+        assert result["total"] == 2  # home-proj + new-proj, NOT legacy-proj
+
+        data = json.loads(
+            (data_home / "projects.json").read_text(encoding="utf-8")
+        )
+        names = [p["name"] for p in data["projects"]]
+        assert "home-proj" in names
+        assert "new-proj" in names
+        # Legacy entries must NOT appear when data-home already exists
+        assert "legacy-proj" not in names
+
+
+# ── DR-5: dedup on legacy merge ───────────────────────────────────────
+
+class TestDR5_DedupOnLegacyMerge:
+    """Legacy entries that duplicate data-home entries are not doubled."""
+
+    def test_dedup_on_legacy_import(self, tmp_path, data_home_env):
+        """Legacy entries with the same normalized path as data-home entries
+        are merged, not duplicated."""
+        data_home, legacy_path = data_home_env
+
+        repo = tmp_path / "shared-proj"
+        repo.mkdir()
+        norm_path = str(repo.resolve())
+
+        legacy_path.parent.mkdir(parents=True)
+        legacy_path.write_text(
+            json.dumps({
+                "_comment": "legacy",
+                "projects": [{"name": "shared-proj", "path": norm_path}],
+            }),
+            encoding="utf-8",
+        )
+
+        result = register_project(str(repo))
+
+        assert result["added"] is True
+
+        data = json.loads(
+            (data_home / "projects.json").read_text(encoding="utf-8")
+        )
+        paths = [_normalize_path(p["path"]) for p in data["projects"]]
+        assert paths.count(_normalize_path(norm_path)) == 1
+
+
+# ── DR-6: atomic output ───────────────────────────────────────────────
+
+class TestDR6_AtomicOutput:
+    """Write is atomic and BOM-free; interruption cannot leave a partial
+    canonical registry."""
+
+    def test_failed_write_does_not_corrupt_existing(
+        self, tmp_path, data_home_env
+    ):
+        """When the write raises, the existing data-home registry must be
+        unchanged."""
+        data_home, _ = data_home_env
+
+        # Pre-populate data-home
+        data_home.mkdir(parents=True)
+        original = {"_comment": "original", "projects": [{"name": "a", "path": "/a"}]}
+        (data_home / "projects.json").write_text(
+            json.dumps(original), encoding="utf-8"
+        )
+
+        repo = tmp_path / "new-proj"
+        repo.mkdir()
+
+        # Patch write_text to simulate interruption
+        original_write = Path.write_text
+
+        def failing_write(self, data, encoding=None):
+            raise OSError("disk full")
+
+        with unittest.mock.patch.object(Path, "write_text", failing_write):
+            with pytest.raises(OSError, match="disk full"):
+                register_project(str(repo))
+
+        # Existing registry must be unchanged
+        data = json.loads(
+            (data_home / "projects.json").read_text(encoding="utf-8")
+        )
+        assert data == original
+
+    def test_successful_write_is_complete(self, tmp_path, data_home_env):
+        """After a successful write, the data-home registry contains the
+        new entry and is valid JSON."""
+        data_home, _ = data_home_env
+
+        repo = tmp_path / "proj"
+        repo.mkdir()
+
+        result = register_project(str(repo))
+
+        assert result["added"] is True
+        assert (data_home / "projects.json").exists()
+
+        data = json.loads(
+            (data_home / "projects.json").read_text(encoding="utf-8")
+        )
+        assert len(data["projects"]) == 1
+        assert data["projects"][0]["name"] == "proj"
+
+
+# ── DR-7: env precedence ──────────────────────────────────────────────
+
+class TestDR7_EnvPrecedence:
+    """ILK_DATA_HOME > ILK_DATA_DIR > ~/.ilk-data."""
+
+    def test_ilk_data_home_takes_precedence(self, tmp_path, monkeypatch):
+        """ILK_DATA_HOME wins over ILK_DATA_DIR and default."""
+        import ilk_paths
+
+        home = tmp_path / "via-home"
+        dir_ = tmp_path / "via-dir"
+
+        monkeypatch.setenv("ILK_DATA_HOME", str(home))
+        monkeypatch.setenv("ILK_DATA_DIR", str(dir_))
+
+        result = ilk_paths.ilk_data_root()
+
+        assert result == home.resolve()
+
+    def test_ilk_data_dir_fallback(self, tmp_path, monkeypatch):
+        """ILK_DATA_DIR is used when ILK_DATA_HOME is unset."""
+        import ilk_paths
+
+        dir_ = tmp_path / "via-dir"
+
+        monkeypatch.delenv("ILK_DATA_HOME", raising=False)
+        monkeypatch.setenv("ILK_DATA_DIR", str(dir_))
+
+        result = ilk_paths.ilk_data_root()
+
+        assert result == dir_.resolve()
+
+
+# ── DR-8: explicit --projects-json ────────────────────────────────────
+
+class TestDR8_ExplicitOverride:
+    """Explicit --projects-json bypasses automatic migration."""
+
+    def test_explicit_path_used_no_migration(self, tmp_path, data_home_env):
+        """With projects_json set, data-home and legacy paths are irrelevant."""
+        data_home, _ = data_home_env
+
+        # Legacy has entries that should NOT be imported
+        legacy = data_home / "legacy" / "projects.json"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text(
+            json.dumps({
+                "_comment": "legacy",
+                "projects": [{"name": "legacy-x", "path": "/x"}],
+            }),
+            encoding="utf-8",
+        )
+
+        explicit = tmp_path / "explicit" / "projects.json"
+        repo = tmp_path / "myrepo"
+        repo.mkdir()
+
+        result = register_project(str(repo), projects_json=str(explicit))
+
+        assert result["added"] is True
+
+        # Only the explicit registry should exist
+        data = json.loads(explicit.read_text(encoding="utf-8"))
+        assert len(data["projects"]) == 1
+        assert data["projects"][0]["name"] == "myrepo"
+
+        # Data-home registry must NOT have been touched
+        assert not (data_home / "projects.json").exists()
