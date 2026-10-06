@@ -24,6 +24,7 @@ appending a second copy.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import re
@@ -211,6 +212,25 @@ def compute_suite_scope(project: Path, base_sha: str) -> dict:
     # test_record_is_measured.py, neither of which is test_verification_record.py.
     # One naming mismatch cost the whole selection.
     #
+    # Candidates are git-TRACKED test files only. MEASURED 2026-10-06: an
+    # rglob walked into a git-excluded worktree at .claude/worktrees/ and
+    # selected its older test copies (28 -> 53 files); their stale modules
+    # broke the real tests and 33 failures were attributed to a clean batch.
+    try:
+        ls = subprocess.run(
+            ["git", "ls-files", "-z", "--", "*.py"],
+            cwd=project, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {"mode": "full", "count": 0,
+                "reason": "git ls-files failed — tracked test set uncomputable"}
+    if ls.returncode != 0:
+        return {"mode": "full", "count": 0,
+                "reason": f"git ls-files exited {ls.returncode}"}
+    tracked_tests = sorted(p for p in ls.stdout.split("\0")
+                           if Path(p).name.startswith("test_"))
+
     # Three ways a module maps, cheapest first. A module that matches none of
     # them contributes nothing and is RECORDED; it does not veto the rest.
     mapped: set[str] = set()
@@ -220,24 +240,25 @@ def compute_suite_scope(project: Path, base_sha: str) -> dict:
         hits: set[str] = set()
 
         # 1. exact conventional name, e.g. foo.py -> test_foo.py
-        for c in project.rglob(_module_test_name(stem)):
-            hits.add(str(c.relative_to(project)))
+        exact = _module_test_name(stem)
+        hits.update(p for p in tracked_tests if Path(p).name == exact)
 
         # 2. prefixed variants, e.g. foo.py -> test_foo_emission.py
         if not hits:
-            for c in project.rglob(f"test_{stem}*.py"):
-                hits.add(str(c.relative_to(project)))
+            hits.update(p for p in tracked_tests
+                        if fnmatch.fnmatch(Path(p).name, f"test_{stem}*.py"))
 
         # 3. importers — the actual contract the docstring promises. A test
         #    that imports the module covers it whatever the file is called.
         if not hits:
-            for c in project.rglob("test_*.py"):
+            for rel in tracked_tests:
                 try:
-                    src = c.read_text(encoding="utf-8", errors="replace")
+                    src = (project / rel).read_text(encoding="utf-8",
+                                                    errors="replace")
                 except OSError:
                     continue
                 if f"import {stem}" in src or f"from {stem} import" in src:
-                    hits.add(str(c.relative_to(project)))
+                    hits.add(rel)
 
         if hits:
             mapped |= hits
