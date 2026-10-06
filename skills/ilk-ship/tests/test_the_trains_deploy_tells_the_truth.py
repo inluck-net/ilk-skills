@@ -1245,7 +1245,6 @@ class TestMultiHostResultTruth:
 # AC-3  canary deployed → remote called once (no canary gate, normal path).
 
 
-@pytest.mark.xfail(strict=True, reason="canary gate not built")
 class TestCanaryRollbackStopsFleet:
     """AC-1: canary (hosts[0]) returns rolled_back → no remote deploy."""
 
@@ -1297,7 +1296,6 @@ class TestCanaryRollbackStopsFleet:
         )
 
 
-@pytest.mark.xfail(strict=True, reason="canary gate not built")
 class TestCanaryAdapterExceptionStopsFleet:
     """AC-1 variant: canary deploy raises SystemExit → no remote deploy."""
 
@@ -1845,13 +1843,18 @@ class TestPerHostAuditTruth:
         sys.path.insert(0, str(LOOP_SCRIPTS))
         import release_train
 
-        # This test uses _deploy_all_hosts without an injected deploy_fn,
-        # so it exercises the real path.  The SSH placeholder does not
-        # provide structured evidence — the real adapter must.
+        # Inject a canary deploy_fn that succeeds so the canary gate lets
+        # the SSH path run for the remote host.
+        def _canary_succeeds(proj, tag, data_dir, **kwargs):
+            return {"tag": tag, "deployed": True, "exit_code": 0}
+
+        # The SSH placeholder does not provide structured evidence — the
+        # real adapter must.
         result = release_train._deploy_all_hosts(
             project, "v0.0.2", data_dir,
             hosts=["chad-mbp", "rezmac"],
             local_hosts=["chad-mbp"],  # rezmac is remote
+            deploy_fn=_canary_succeeds,
         )
 
         # rezmac must be in exactly one list

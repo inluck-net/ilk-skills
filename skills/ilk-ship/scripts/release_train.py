@@ -1192,7 +1192,62 @@ def _deploy_all_hosts(
     untouched_hosts: list[str] = []
     unverified_hosts: list[str] = []
 
-    for host in hosts:
+    # ── Canary gate: deploy hosts[0] first; stop the fleet if it fails ──
+    canary = hosts[0]
+    canary_is_local = canary in local_hosts if local_hosts else False
+
+    if canary_is_local:
+        try:
+            canary_result = _deploy(project, tag, data_dir)
+        except SystemExit as exc:
+            exit_code = exc.code if isinstance(exc.code, int) else 1
+            canary_result = {"exit_code": exit_code, "deployed": False, "host": canary}
+        except Exception as exc:
+            canary_result = {"exit_code": 6, "deployed": False, "reason": str(exc), "host": canary}
+    else:
+        try:
+            canary_result = _ssh(project, tag, data_dir, host=canary)
+        except Exception as exc:
+            canary_result = {
+                "exit_code": 2,
+                "deployed": False,
+                "reason": f"ssh adapter error: {exc}",
+                "host": canary,
+                "transport": "ssh",
+                "extract": {"rc": -1, "tag": tag},
+                "bounce": {"exit": -1, "pid_before": None, "pid_after": None},
+                "smoke": {"ok": False, "reason": "adapter error"},
+            }
+
+    host_results[canary] = canary_result
+    canary_exit = canary_result.get("exit_code", 0)
+    if canary_exit > worst_exit:
+        worst_exit = canary_exit
+
+    if canary_result.get("deployed"):
+        deployed_hosts.append(canary)
+    elif canary_result.get("rolled_back_to"):
+        rolled_back_hosts.append(canary)
+    elif canary_exit == 2:
+        unverified_hosts.append(canary)
+    else:
+        untouched_hosts.append(canary)
+
+    canary_deployed = canary_result.get("deployed", False)
+
+    for host in hosts[1:]:
+        if not canary_deployed:
+            # Canary gate: canary did not deploy → stop the fleet
+            reason_detail = canary_result.get("reason", "unknown")
+            host_results[host] = {
+                "exit_code": 0,
+                "deployed": False,
+                "host": host,
+                "reason": f"canary-failed: {reason_detail}",
+            }
+            untouched_hosts.append(host)
+            continue
+
         is_local = host in local_hosts if local_hosts else False
 
         if is_local:
