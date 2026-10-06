@@ -78,7 +78,6 @@ def _setup_launch_config(project: Path) -> None:
 # ── AC-1: writes permits, accepted by dispatcher ───────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="permit writer not in the toolkit yet")
 def test_writes_permits_accepted_by_dispatcher(tmp_path: Path, monkeypatch, capsys) -> None:
     """probe quiet → exit 0, two permit files, dispatcher accepts."""
     project = tmp_path / "project"
@@ -118,7 +117,6 @@ def test_writes_permits_accepted_by_dispatcher(tmp_path: Path, monkeypatch, caps
 # ── AC-2: busy fleet refuses ───────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="permit writer not in the toolkit yet")
 def test_busy_fleet_refuses(tmp_path: Path, monkeypatch, capsys) -> None:
     """remote-b has a live loop → exit 2, REFUSED, no permit files."""
     project = tmp_path / "project"
@@ -149,7 +147,6 @@ def test_busy_fleet_refuses(tmp_path: Path, monkeypatch, capsys) -> None:
 # ── AC-3: unreachable host refuses ─────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="permit writer not in the toolkit yet")
 def test_unreachable_host_refuses(tmp_path: Path, monkeypatch, capsys) -> None:
     """remote-b ssh fails → exit 2, REFUSED, no permit files."""
     project = tmp_path / "project"
@@ -180,7 +177,6 @@ def test_unreachable_host_refuses(tmp_path: Path, monkeypatch, capsys) -> None:
 # ── AC-4: previous permit kept on re-run ────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="permit writer not in the toolkit yet")
 def test_previous_permit_kept_on_rerun(tmp_path: Path, monkeypatch, capsys) -> None:
     """Two runs → .prev-* backup and fresh unconsumed permit."""
     project = tmp_path / "project"
@@ -218,7 +214,6 @@ def test_previous_permit_kept_on_rerun(tmp_path: Path, monkeypatch, capsys) -> N
 # ── AC-5: no hard-coded repo path, project key, or host list ────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="permit writer not in the toolkit yet")
 def test_no_hard_coding() -> None:
     """Source contains neither inluck-net, 604d727, nor rezmac."""
     source = (SHIP_SCRIPTS / "write_permits.py").read_text(encoding="utf-8")
