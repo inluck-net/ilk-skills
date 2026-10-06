@@ -1144,6 +1144,21 @@ def deploy(
         }
 
 
+# ── Canary window: observation before remote hosts ──────────────────────
+
+CANARY_WINDOW_SEC: float = 720.0  # Two scheduler intervals plus margin
+"""Seconds to wait for a clean scheduler tick on the canary before proceeding.
+
+Judgment call: 720s = two 5-min intervals + margin.  Wrong if launchd ticks
+slower than 5 min on a host, then raise it.
+"""
+
+_KNOWN_VERBS: frozenset[str] = frozenset({
+    "idle", "dispatch:", "promote:", "skip-",
+})
+"""Scheduler verbs that indicate a clean tick."""
+
+
 def _deploy_all_hosts(
     project: Path,
     tag: str,
@@ -1153,6 +1168,11 @@ def _deploy_all_hosts(
     local_hosts: list[str] | None = None,
     deploy_fn: Callable | None = None,
     ssh_deploy_fn: Callable | None = None,
+    canary_window_sec: float = CANARY_WINDOW_SEC,
+    scheduler_log: Path | None = None,
+    scheduler_pid_file: Path | None = None,
+    canary_clock: Callable[[], float] | None = None,
+    canary_sleeper: Callable[[float], None] | None = None,
 ) -> dict:
     """Deploy to every configured host, tracking per-host results.
 
@@ -1235,6 +1255,37 @@ def _deploy_all_hosts(
 
     canary_deployed = canary_result.get("deployed", False)
 
+    # ── Canary window: wait for one clean scheduler tick ────────────────
+    canary_tick_info: dict | None = None
+    if canary_deployed and scheduler_log is not None and scheduler_pid_file is not None:
+        window_result = _canary_window(
+            tag,
+            scheduler_log,
+            scheduler_pid_file,
+            deadline_sec=canary_window_sec,
+            clock=canary_clock,
+            sleeper=canary_sleeper,
+        )
+        if not window_result["ok"]:
+            # Canary window failed → roll back canary and stop fleet
+            canary_deployed = False
+            reason = f"canary-window: {window_result['terminal_reason']}"
+            canary_result["deployed"] = False
+            canary_result["rolled_back_to"] = canary_result.get("rolled_back_to")
+            canary_result["reason"] = reason
+            # Roll back via the existing rollback path
+            try:
+                _deploy(project, tag, data_dir)  # triggers rollback
+            except Exception:
+                pass
+            host_results[canary] = canary_result
+            # Update tracking lists
+            if canary in deployed_hosts:
+                deployed_hosts.remove(canary)
+            rolled_back_hosts.append(canary)
+        else:
+            canary_tick_info = window_result
+
     for host in hosts[1:]:
         if not canary_deployed:
             # Canary gate: canary did not deploy → stop the fleet
@@ -1290,7 +1341,7 @@ def _deploy_all_hosts(
         else:
             untouched_hosts.append(host)
 
-    return {
+    result = {
         "tag": tag,
         "hosts": host_results,
         "exit_code": worst_exit,
@@ -1299,6 +1350,10 @@ def _deploy_all_hosts(
         "untouched": untouched_hosts,
         "unverified": unverified_hosts,
     }
+    if canary_tick_info is not None:
+        result["canary_tick"] = canary_tick_info.get("tick_line")
+        result["canary_wait_sec"] = canary_tick_info.get("wait_sec")
+    return result
 
 
 def _acquire_remote_tag(
@@ -1717,6 +1772,149 @@ def _settle(
             "attempts": attempts, "elapsed": elapsed,
             "terminal_reason": "ok",
         }
+
+
+def _canary_window(
+    tag: str,
+    scheduler_log: Path,
+    scheduler_pid_file: Path,
+    *,
+    deadline_sec: float = CANARY_WINDOW_SEC,
+    poll_interval_sec: float = 30.0,
+    clock: Callable[[], float] | None = None,
+    sleeper: Callable[[float], None] | None = None,
+) -> dict:
+    """Wait for one clean scheduler tick on the canary before remote hosts.
+
+    A clean tick is a ``scheduler.log`` line whose verb is in
+    :data:`_KNOWN_VERBS`, whose PID (from the pid file) is alive, and
+    whose command line contains ``releases/<tag>/``.
+
+    Returns ``{"ok", "tick_line", "wait_sec", "terminal_reason"}``.
+    """
+    _clock = clock if clock is not None else time.monotonic
+    _sleep = sleeper if sleeper is not None else time.sleep
+
+    start = _clock()
+    attempts = 0
+
+    while True:
+        attempts += 1
+        elapsed = _clock() - start
+
+        # ── read scheduler log ────────────────────────────────────
+        try:
+            log_text = scheduler_log.read_text(encoding="utf-8")
+        except OSError:
+            if elapsed >= deadline_sec:
+                return {
+                    "ok": False, "tick_line": None,
+                    "wait_sec": elapsed,
+                    "terminal_reason": "log_unreadable",
+                }
+            _sleep(poll_interval_sec)
+            continue
+
+        # ── check PID liveness ────────────────────────────────────
+        if not scheduler_pid_file.exists():
+            if elapsed >= deadline_sec:
+                return {
+                    "ok": False, "tick_line": None,
+                    "wait_sec": elapsed,
+                    "terminal_reason": "pid_absent",
+                }
+            _sleep(poll_interval_sec)
+            continue
+
+        try:
+            pid = int(scheduler_pid_file.read_text().strip())
+        except (ValueError, OSError):
+            if elapsed >= deadline_sec:
+                return {
+                    "ok": False, "tick_line": None,
+                    "wait_sec": elapsed,
+                    "terminal_reason": "pid_unreadable",
+                }
+            _sleep(poll_interval_sec)
+            continue
+
+        if not _is_pid_alive(pid):
+            if elapsed >= deadline_sec:
+                return {
+                    "ok": False, "tick_line": None,
+                    "wait_sec": elapsed,
+                    "terminal_reason": "pid_dead",
+                }
+            _sleep(poll_interval_sec)
+            continue
+
+        # ── check command line contains the new release tag ───────
+        try:
+            r = subprocess.run(
+                ["ps", "-o", "command=", "-p", str(pid)],
+                capture_output=True, text=True,
+                encoding="utf-8", errors="replace",
+                timeout=10,
+            )
+            cmd = r.stdout.strip()
+            if f"releases/{tag}/" not in cmd:
+                resolved = " ".join(
+                    os.path.realpath(w) for w in cmd.split()
+                )
+                if f"releases/{tag}/" not in resolved:
+                    if elapsed >= deadline_sec:
+                        return {
+                            "ok": False, "tick_line": None,
+                            "wait_sec": elapsed,
+                            "terminal_reason": "wrong_script",
+                        }
+                    _sleep(poll_interval_sec)
+                    continue
+        except (OSError, subprocess.TimeoutExpired):
+            if elapsed >= deadline_sec:
+                return {
+                    "ok": False, "tick_line": None,
+                    "wait_sec": elapsed,
+                    "terminal_reason": "ps_failed",
+                }
+            _sleep(poll_interval_sec)
+            continue
+
+        # ── scan log for a clean tick ─────────────────────────────
+        for line in log_text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+
+            # Parse: [YYYY-MM-DD HH:MM:SS] verb ...
+            if not line.startswith("["):
+                continue
+            bracket_end = line.find("]")
+            if bracket_end < 0:
+                continue
+            rest = line[bracket_end + 1:].strip()
+
+            # Extract verb (first word or prefix)
+            verb = rest.split()[0] if rest.split() else ""
+            # Check if verb matches any known verb (exact or prefix)
+            if not any(verb == kv or verb.startswith(kv) for kv in _KNOWN_VERBS):
+                continue
+
+            # This is a clean tick
+            return {
+                "ok": True, "tick_line": line,
+                "wait_sec": elapsed,
+                "terminal_reason": "clean_tick",
+            }
+
+        # ── no clean tick yet ─────────────────────────────────────
+        if elapsed >= deadline_sec:
+            return {
+                "ok": False, "tick_line": None,
+                "wait_sec": elapsed,
+                "terminal_reason": "window_expired",
+            }
+        _sleep(poll_interval_sec)
 
 
 def _smoke(

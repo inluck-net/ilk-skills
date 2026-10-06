@@ -2649,7 +2649,7 @@ def _write_scheduler_log(log_path: Path, entries: list[tuple[str, str, str]]) ->
     log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _write_scheduler_pid_for_cmd(pid_dir: Path, cmd_pattern: str) -> tuple[Path, int]:
+def _write_scheduler_pid_for_cmd(pid_dir: Path, cmd_pattern: Path | str) -> tuple[Path, int]:
     """Create a fake scheduler.pid whose process command line contains cmd_pattern.
 
     Returns (pid_file, pid).
@@ -2658,7 +2658,8 @@ def _write_scheduler_pid_for_cmd(pid_dir: Path, cmd_pattern: str) -> tuple[Path,
     pid_file = pid_dir / "scheduler.pid"
 
     # Write a script whose path contains the pattern
-    script_dir = Path(cmd_pattern).parent if "/" in cmd_pattern else pid_dir
+    cmd_str = str(cmd_pattern)
+    script_dir = Path(cmd_pattern).parent if "/" in cmd_str else pid_dir
     script_dir.mkdir(parents=True, exist_ok=True)
     script = script_dir / "scheduler.sh"
     script.write_text("#!/bin/bash\nsleep 60\n")
@@ -2671,7 +2672,6 @@ def _write_scheduler_pid_for_cmd(pid_dir: Path, cmd_pattern: str) -> tuple[Path,
     return pid_file, proc.pid
 
 
-@pytest.mark.xfail(strict=True, reason="canary window not built")
 class TestCanaryWindowCleanTick:
     """AC-1/AC-3: a clean tick after canary bounce → remote hosts deploy."""
 
@@ -2732,7 +2732,6 @@ class TestCanaryWindowCleanTick:
         assert "canary_wait_sec" in result, "Result must record the wait duration"
 
 
-@pytest.mark.xfail(strict=True, reason="canary window not built")
 class TestCanaryWindowNoTick:
     """AC-2: no clean tick within window → canary rolled back, remote untouched."""
 
@@ -2794,7 +2793,6 @@ class TestCanaryWindowNoTick:
         )
 
 
-@pytest.mark.xfail(strict=True, reason="canary window not built")
 class TestCanaryWindowUnknownVerb:
     """AC-2: unknown verb in tick → canary rolled back, remote untouched."""
 
@@ -2855,7 +2853,6 @@ class TestCanaryWindowUnknownVerb:
         )
 
 
-@pytest.mark.xfail(strict=True, reason="canary window not built")
 class TestCanaryWindowDeadPid:
     """AC-2: dead scheduler pid → canary rolled back, remote untouched."""
 
@@ -2916,7 +2913,6 @@ class TestCanaryWindowDeadPid:
         )
 
 
-@pytest.mark.xfail(strict=True, reason="canary window not built")
 class TestCanaryWindowOldTagPid:
     """AC-2: pid command line lacks the new tag → canary rolled back."""
 
@@ -2977,7 +2973,6 @@ class TestCanaryWindowOldTagPid:
         )
 
 
-@pytest.mark.xfail(strict=True, reason="canary window not built")
 class TestCanaryWindowInjection:
     """AC-4: all waits use injected clock/sleeper/log/pid; tests fast."""
 
