@@ -38,10 +38,6 @@ from test_bounce_daemons import (
 class TestSelfBootoutRefuses:
     """AC-1: bouncer inside the daemon's process group refuses with exit 2."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="bouncer still boots out its own group",
-    )
     def test_refuses_same_process_group(self, tmp_path):
         """pid in the bouncer's own process group → refuse, no bootout.
 

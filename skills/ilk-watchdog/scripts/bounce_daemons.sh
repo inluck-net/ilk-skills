@@ -8,7 +8,8 @@
 #   0 — nothing to do (all daemons fresh)
 #   1 — bounced at least one daemon (and verified it came back)
 #   2 — could not reach at least one daemon (plist missing, not loaded,
-#       bootstrap failed after retries, or bounced but daemon still absent)
+#       bootstrap failed after retries, or bounced but daemon still absent),
+#       or refused to boot out the job that contains this bouncer
 #
 # Retry: bootstrap is attempted up to 3 times with a 1s settle wait between
 # attempts.  The wait exists because launchctl bootstrap can return exit 5
@@ -367,6 +368,23 @@ print(args[1] if len(args) >= 2 else '')
     echo "stale: $name — $reason (would bounce)"
     i=$((i + 1))
     continue
+  fi
+
+  # Self-bootout guard: refuse to boot out a daemon whose pid is in our own
+  # process group (would kill us before bootstrap).
+  guard_pid=""
+  if grep -q '"pid"' "$STATE_FILE" 2>/dev/null; then
+    guard_pid=$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' "$STATE_FILE")
+  fi
+  if [[ -n "$guard_pid" ]] && ps -p "$guard_pid" >/dev/null 2>&1; then
+    guard_pgid=$(ps -o pgid= -p "$guard_pid" 2>/dev/null | tr -d '[:space:]')
+    my_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d '[:space:]')
+    if [[ -n "$guard_pgid" && -n "$my_pgid" && "$guard_pgid" == "$my_pgid" ]]; then
+      echo "refused: $name — this bouncer runs inside the daemon's process group (pgid $my_pgid); bootout would terminate it before bootstrap. Start the caller detached (spawn_detached.py)."
+      unreachable=1
+      i=$((i + 1))
+      continue
+    fi
   fi
 
   # Bounce: bootout then bootstrap.  Never kill.
