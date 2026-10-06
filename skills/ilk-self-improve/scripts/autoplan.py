@@ -571,30 +571,27 @@ def tick(
             start_new_session=True,
         )
     else:
-        # Real mode: spawn claude -p
-        claude_bin = _resolve_claude_cmd()
-        prompt = _build_plan_prompt(selected, toolkit_repo, project_key)
+        # Real mode: spawn autoplan.py plan detached (goes through plan()'s
+        # lint, preflight, rails, forced draft, draft_only handling).
         log_file = autoplan_dir / "runs" / f"{run_id}.log"
         log_file.parent.mkdir(parents=True, exist_ok=True)
 
-        env = {**os.environ, "CLAUDE_CONFIG_DIR": manager_home or ""}
+        default_home = str(Path.home() / ".claude-manager")
+        env = {**os.environ, "CLAUDE_MANAGER_HOME": manager_home or default_home}
+        log_fh = log_file.open("a")
         proc = subprocess.Popen(
-            claude_bin + [
-                "-p", prompt,
-                "--output-format", "stream-json",
-                "--verbose",
-                "--allowedTools",
-                "Read Grep Glob Write Edit",
-                "Bash(python3:*)", "Bash(git log:*)", "Bash(git show:*)",
-                "Bash(git rev-parse:*)", "Bash(git status:*)",
-                "Bash(date:*)", "Bash(ls:*)",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            [sys.executable, str(plan_script), "plan",
+             "--candidate", selected["id"],
+             "--project-key", project_key,
+             "--run-id", run_id],
+            stdin=subprocess.DEVNULL,
+            stdout=log_fh,
+            stderr=log_fh,
             env=env,
             cwd=toolkit_repo,
             start_new_session=True,
         )
+        log_fh.close()  # parent releases its fd; child keeps its copy
 
     # Write inflight.json
     _write_json(inflight_file, {
@@ -1055,7 +1052,12 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.command == "tick":
-        result = tick(dry_run=args.dry_run)
+        result = tick(
+            data_root=ilk_data_root(),
+            manager_home=os.environ.get("CLAUDE_MANAGER_HOME",
+                                        str(Path.home() / ".claude-manager")),
+            dry_run=args.dry_run,
+        )
         if args.json:
             print(json.dumps(result))
         else:

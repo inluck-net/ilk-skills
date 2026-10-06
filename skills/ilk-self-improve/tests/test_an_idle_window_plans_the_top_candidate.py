@@ -1611,7 +1611,6 @@ class TestCliTickAndGatedSpawn:
     Both tests are xfail(strict=True) until step 1 ships the fix.
     """
 
-    @pytest.mark.xfail(strict=True, reason="autoplan tick defect, fixed in step 1")
     def test_cli_tick_runs_and_prints_a_decision(self, tmp_path):
         """AC-1: ``python3 autoplan.py tick --dry-run --json`` exits 0 and prints JSON.
 
@@ -1671,7 +1670,6 @@ class TestCliTickAndGatedSpawn:
             f"CLI tick JSON missing 'decision' key: {parsed}"
         )
 
-    @pytest.mark.xfail(strict=True, reason="autoplan tick defect, fixed in step 1")
     def test_real_mode_tick_spawns_the_gated_plan_subcommand(self, tmp_path):
         """AC-2 + AC-3: real-mode tick spawns ``autoplan.py plan …``, not ``claude -p``.
 
