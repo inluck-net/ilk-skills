@@ -679,3 +679,54 @@ class TestDrainVerifyPromoteJoin:
         assert promote_data["promoted"] == "MASTER-B.md", (
             "loop-verified dependency should NOT block promotion"
         )
+
+
+class TestTheTrainIsNextSkip:
+    """2026-10-06 (chad-mbp 15:57:38 and 18:25:29): with every master shipped,
+    the drain dispatch launched a manager verify session for loop-verified
+    masters. It found nothing to run, exited in 1 s with iterations 0, and
+    overwrote last-exit.json -- so sentinel_all_shipped turned False and the
+    scheduler could not start the release train for the batch that had just
+    shipped. When the project's last run finished all-shipped and the master
+    has nothing a verify session could verify (no unverified compile-only /
+    device-manual sub-plan), the release train is the verifier: skip."""
+
+    def _all_shipped_sentinel(self, project_dir: Path) -> None:
+        d = project_dir / "runtime" / "launcher"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "last-exit.json").write_text(json.dumps(
+            {"state": "all-shipped", "iterations": 3, "pid": 1}), encoding="utf-8")
+
+    def _tier(self, plans_dir: Path, tier: str, verified: str | None = None) -> None:
+        p = plans_dir / "2026-07-29-work.md"
+        t = p.read_text(encoding="utf-8")
+        extra = f"verification_tier: {tier}\n" + (f"verified: {verified}\n" if verified else "")
+        p.write_text(t.replace("last_updated:", extra + "last_updated:", 1), encoding="utf-8")
+
+    def _dispatched(self, tmp_path: Path, *, sentinel: bool, tier: str | None = None,
+                    verified: str | None = None) -> list:
+        project_dir = _setup_project(tmp_path)
+        plans_dir = project_dir / "plans"
+        if tier:
+            self._tier(plans_dir, tier, verified)
+        if sentinel:
+            self._all_shipped_sentinel(project_dir)
+        calls: list = []
+        _call_dispatch(project_dir, plans_dir / "MASTER-test.md", plans_dir,
+                       launch_fn=lambda cmd: calls.append(cmd))
+        return calls
+
+    def test_loop_verified_master_before_the_train_is_not_dispatched(self, tmp_path: Path) -> None:
+        assert self._dispatched(tmp_path, sentinel=True) == []
+
+    def test_explicit_loop_verified_tier_is_not_dispatched(self, tmp_path: Path) -> None:
+        assert self._dispatched(tmp_path, sentinel=True, tier="loop-verified") == []
+
+    def test_unverified_compile_only_master_is_still_dispatched(self, tmp_path: Path) -> None:
+        assert len(self._dispatched(tmp_path, sentinel=True, tier="compile-only")) == 1
+
+    def test_verified_device_manual_master_is_not_dispatched(self, tmp_path: Path) -> None:
+        assert self._dispatched(tmp_path, sentinel=True, tier="device-manual", verified="true") == []
+
+    def test_without_an_all_shipped_sentinel_behaviour_is_unchanged(self, tmp_path: Path) -> None:
+        assert len(self._dispatched(tmp_path, sentinel=False)) == 1

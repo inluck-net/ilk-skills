@@ -264,6 +264,20 @@ def scan_projects() -> list[dict]:
 _VERIFICATION_DISPATCH_MARKER = "verification-dispatched.json"
 
 
+def _has_unverified_manual_tier(master_path: Path, plans_dir: Path) -> bool:
+    """True when a registered sub-plan is compile-only / device-manual and not verified."""
+    for name in extract_subplan_files(master_path.read_text(encoding="utf-8-sig")):
+        sp = plans_dir / name
+        if not sp.is_file():
+            continue
+        fm = parse_frontmatter(sp.read_text(encoding="utf-8-sig"))
+        tier = (fm.get("verification_tier") or "loop-verified").strip().lower()
+        verified = (fm.get("verified") or "").strip().lower()
+        if tier in ("compile-only", "device-manual") and verified not in ("true", "yes", "1"):
+            return True
+    return False
+
+
 def _dispatch_verification_on_drain(
     project_dir: Path,
     master_path: Path,
@@ -382,6 +396,27 @@ def _dispatch_verification_on_drain(
                     return
     except (OSError, ValueError):
         pass  # no/unreadable sentinel: nothing to be busy with
+
+    # --- the release train is next (2026-10-06) ---
+    # When the project's last run finished all-shipped, the release train is
+    # about to verify this tree, and a verify session can only add
+    # ``verified: true`` for a compile-only / device-manual sub-plan (the only
+    # tiers promote_next_master gates on). For anything else it finds nothing
+    # to run, exits with iterations 0 and OVERWRITES last-exit.json, which
+    # turns sentinel_all_shipped False and stops the scheduler from starting
+    # the train (chad-mbp, 15:57:38 and 18:25:29).
+    try:
+        if (sentinel_all_shipped(
+                project_dir / "runtime" / "launcher" / "last-exit.json", plans_dir)
+                and not _has_unverified_manual_tier(master_path, plans_dir)):
+            _log.info(
+                "[verify-dispatch] %s: %s has nothing a verify session can "
+                "verify and the release train is next — skipping",
+                project_dir.name, master_path.name,
+            )
+            return
+    except Exception:  # noqa: BLE001 — fail open to the old behaviour
+        pass
 
     # --- dispatch the planner verification ---
     skill_root = _SKILL_ROOT
