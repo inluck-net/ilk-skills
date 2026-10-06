@@ -1408,7 +1408,7 @@ def _ssh_deploy(
 
     # ── 2. bounce ───────────────────────────────────────────────────────
     bounce_result = _run(host, [
-        str(_BOUNCE_SCRIPT), tag,
+        str(_BOUNCE_SCRIPT),
     ], timeout=60)
 
     # ── 3. smoke (bounded settling) ────────────────────────────────────

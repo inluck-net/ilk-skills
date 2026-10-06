@@ -2350,10 +2350,6 @@ class TestRemoteSSHArgvSerialization:
 # with no extra arguments.  Step 1 will remove the tag and make it green.
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="v0.9.153: _ssh_deploy passes tag to bounce_daemons.sh; bouncer accepts no positional args",
-)
 def test_remote_bounce_argv_contains_only_bouncer_path(tmp_path: Path) -> None:
     """The remote bounce invocation must contain exactly the bouncer
     executable and no positional tag argument.  bounce_daemons.sh accepts
