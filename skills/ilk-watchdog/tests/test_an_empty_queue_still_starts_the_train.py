@@ -162,17 +162,23 @@ def _write_release_train_stub(tmp_path: Path) -> Path:
 
 
 def _read_release_train_argv(stub_path: Path) -> list[str]:
-    """Read the argv.json the release train stub recorded."""
+    """Read the argv.json the release train stub recorded.
+
+    The stub is launched via ``nohup ... &`` (backgrounded), so the file
+    may not exist yet when the caller returns.  Wait briefly for it.
+    """
+    import time
     argv_file = stub_path.with_name("release_train_argv.json")
-    if not argv_file.exists():
-        return []
-    return json.loads(argv_file.read_text(encoding="utf-8"))
+    for _ in range(20):
+        if argv_file.exists():
+            return json.loads(argv_file.read_text(encoding="utf-8"))
+        time.sleep(0.1)
+    return []
 
 
 # ── AC-1: No permits → train starts ────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="offer_release_trains not built yet")
 def test_ac1_no_permits_starts_train(tmp_path: Path) -> None:
     """AC-1: no permits configured (no hosts) → one ``offer_release_trains '[]'``
     call writes ``runtime/release/R1.started``, the stub records
@@ -210,7 +216,6 @@ def test_ac1_no_permits_starts_train(tmp_path: Path) -> None:
 # ── AC-2: Permits configured but missing → skip-permits, then start ────────
 
 
-@pytest.mark.xfail(strict=True, reason="offer_release_trains not built yet")
 def test_ac2_permits_missing_then_present(tmp_path: Path) -> None:
     """AC-2: ``runtime/ship-config.json`` with hosts but no permit →
     ``skip-permits`` logged, no marker, stub not run.  After a valid permit
@@ -293,7 +298,6 @@ def test_ac2_permits_missing_then_present(tmp_path: Path) -> None:
 # ── AC-3: Second call after AC-1 starts nothing ────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="offer_release_trains not built yet")
 def test_ac3_second_call_starts_nothing(tmp_path: Path) -> None:
     """AC-3: a second call after AC-1 starts nothing (marker present)."""
     data_home = tmp_path / ".ilk-data"
@@ -325,7 +329,6 @@ def test_ac3_second_call_starts_nothing(tmp_path: Path) -> None:
 # ── AC-4: Key in scan JSON is NOT offered ──────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="offer_release_trains not built yet")
 def test_ac4_key_in_scan_excluded(tmp_path: Path) -> None:
     """AC-4: a key passed in the scan JSON is NOT offered, even with a
     success sentinel."""
@@ -356,7 +359,6 @@ def test_ac4_key_in_scan_excluded(tmp_path: Path) -> None:
 # ── AC-5 (control): Sentinel local_checks_failed → nothing started ─────────
 
 
-@pytest.mark.xfail(strict=True, reason="offer_release_trains not built yet")
 def test_ac5_failed_sentinel_starts_nothing(tmp_path: Path) -> None:
     """AC-5 (control): sentinel ``local_checks_failed`` → nothing started."""
     data_home = tmp_path / ".ilk-data"
@@ -391,7 +393,6 @@ def test_ac5_failed_sentinel_starts_nothing(tmp_path: Path) -> None:
 # ── AC-6: Call site ordering in scheduler.sh ────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="offer_release_trains not built yet")
 def test_ac6_call_site_follows_autoplan(tmp_path: Path) -> None:
     """AC-6: the call site follows ``maybe_tick_autoplan || true`` and
     precedes the ``"$count" == "0"`` idle test (assert by line numbers)."""

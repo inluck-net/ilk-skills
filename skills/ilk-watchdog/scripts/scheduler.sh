@@ -604,6 +604,46 @@ print('true' if r.get('ok') else r.get('reason', 'permit check failed'))
   return 0
 }
 
+# --- offer release trains for unscanned projects (2026-10-06) ----------------
+#
+# On every scheduler pass — even when the dispatch scan returns 0 projects —
+# find projects whose sentinel is a fresh success but that are NOT in the
+# scan (their queue is empty).  Offer each one a release-train start via the
+# existing maybe_start_release_train, which handles permits and markers.
+#
+# Projects in the scan are excluded on purpose: their existing in-loop call
+# is authoritative (it also sets the dispatch skip for that pass).
+_TRAIN_CANDIDATES="${_ILK_SCRIPT_DIR}/train_candidates.py"
+
+offer_release_trains() {
+  local scan_json="$1"
+  # Extract keys from the scan JSON to exclude them
+  local exclude_keys
+  exclude_keys="$("$PYTHON" -c "
+import json, sys
+try:
+    d = json.loads(sys.stdin.read())
+    print(','.join(item.get('key','') for item in d if item.get('key')))
+except: pass
+" <<<"$scan_json" 2>/dev/null)" || exclude_keys=""
+  exclude_keys="${exclude_keys//$'\r'/}"
+  exclude_keys="${exclude_keys//$'\n'/}"
+
+  local candidates_json
+  candidates_json="$("$PYTHON" "$_TRAIN_CANDIDATES" --exclude-keys "$exclude_keys" 2>/dev/null)" || return 0
+
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    local ckey cpath crepo crun_id
+    ckey="$("$PYTHON" -c "import json,sys; print(json.loads(sys.stdin.read())['key'])" <<<"$line" 2>/dev/null)" || continue
+    cpath="$("$PYTHON" -c "import json,sys; print(json.loads(sys.stdin.read())['path'])" <<<"$line" 2>/dev/null)" || continue
+    crepo="$("$PYTHON" -c "import json,sys; print(json.loads(sys.stdin.read())['repo'])" <<<"$line" 2>/dev/null)" || continue
+    crun_id="$("$PYTHON" -c "import json,sys; print(json.loads(sys.stdin.read())['run_id'])" <<<"$line" 2>/dev/null)" || continue
+    maybe_start_release_train "$ckey" "$cpath" "$cpath" "$crepo" "$crun_id" || true
+  done <<<"$candidates_json"
+  return 0
+}
+
 # --- no-progress dispatch bound (2026-08-29) ---------------------------------
 #
 # read_blacklist_from_postmortems below builds the blacklist from postmortem
@@ -1168,6 +1208,10 @@ run_scheduler() {
     # Offer one tick to the auto-planner (idle-counting, rate-limiting,
     # and the actual plan start all live inside autoplan.py tick).
     maybe_tick_autoplan || true
+
+    # Offer release trains for projects whose queue is empty but whose
+    # sentinel is a fresh success.  Runs on every pass, empty or not.
+    offer_release_trains "$scan_output" || true
 
     local count
     count=$($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); print(len(d))" <<<"$scan_output" | tr -d '\r')
