@@ -7,7 +7,7 @@ merely built. Blocker 1 (self-modification race) has machinery built but **not
 wired**; the cutover is still open. **Blocker 4 (progress is self-reported) was
 found on 2026-09-08 and is open** — and it is the one that survives closing the
 other three.
-**Last touched**: 2026-09-08 (v0.9.89)
+**Last touched**: 2026-10-07 (v0.9.163; release modes section)
 **Origin**: asked directly after a session that carried an ilk-skills defect
 from discovery through two releases and a two-host deploy, entirely by hand —
 v0.9.86 (verification attribution) and v0.9.87 (Phase 4 ssh). The question was
@@ -293,6 +293,53 @@ already has the shape for (two hosts, and prior art in the gh-resolve batch's
 Pushing a tag remains outward-facing, but for a private toolkit repo it is the
 low-risk half. **Deploying to the two hosts that run everything else is the
 high-risk half**, and that is what the canary stage is for.
+
+## Release modes once RSI is live (decided 2026-10-07)
+
+What "the human gate" became in practice is a **release permit**: one JSON file
+per host at `~/.ilk-data/projects/<key>/runtime/permits/<host>.json`. The train
+refuses to tag or deploy unless every configured host has one that is
+unrevoked, unconsumed, unexpired, and bound to this project, the current base
+tag and the candidate HEAD (`skills/ilk-ship/scripts/release_train.py`,
+`_check_permits`). It consumes them when it deploys. A permit is therefore a
+one-hour, single-use "deploy this exact commit now" token, and a commit landing
+after it is written makes it "crossed" and refused.
+
+Everything upstream of the permit runs unattended in both modes: the idle tick
+plans a batch, the scheduler dispatches it, the worker ships it, the batch
+verification gates it, and the scheduler offers the train. The modes differ
+only in **who writes the permit**.
+
+| | (a) owner-issued permits | (b) fully automatic |
+|---|---|---|
+| plan → run → ship → verify | unattended | unattended |
+| deploy to both hosts | waits for an owner to open a window | the scheduler opens its own window |
+| who writes the permit | an owner session (or Chad), via `write_permits.py`, after confirming 0 live loops on both hosts and asking gh-resolve to hold dispatch | the scheduler, after a bounded wait for a quiet fleet |
+| human in the path | once per release, at "deploy now" | none |
+| cost | shipped batches queue between windows; one permit releases them together | a deploy can only be as safe as the quiet-fleet wait |
+| still to build | nothing beyond go criteria 2 and 4 | cf5c9e7c (bounded quiet-fleet wait before the bounce; `release_train.py` is kernel) and a machine-issued permit (530fdb377655fdbc) |
+
+**Decision (Chad, 2026-10-07): mode (a).** It removes the one risk that cannot
+be rolled back cheaply, a daemon bounce under another project's live loop,
+using machinery that already exists, and it lets the train prove itself on
+real releases before the permit is automated. Mode (b) is a later step, not a
+go-live blocker.
+
+There is no config flag for either mode: (a) is an operating rule, and the
+absence of a machine-issued permit is what enforces it. Known gap: the permit
+writer lives at `~/.ilk-data/tools/write_permits.py`, outside the repo, with
+the project path and host list hard-coded. It belongs in
+`skills/ilk-ship/scripts/` before any second owner or host relies on it.
+
+**State at the decision (2026-10-07 02:00):** the first scheduler-started
+train (v0.9.162 → v0.9.163) tagged, pushed and flipped chad-mbp, then killed
+itself. It runs inside the scheduler's launchd job, and the local bounce's
+`launchctl bootout` took down the scheduler, the train and the bouncer
+together, so rezmac was never deployed and the scheduler stayed unloaded
+until it was reloaded by hand. Backlog `806f0c3cecabcb64`. Until it is fixed,
+mode (a) still needs an owner to watch each train finish, and the release
+carrying the fix has to be an owner-run train, because the scheduler that
+would start it runs the old code.
 
 ## Trigger conditions (when to actually build this)
 
