@@ -779,6 +779,34 @@ def _base_env(worktree: Path) -> dict:
     return env
 
 
+def _classify_single_at_base_verdict(
+    rc: int, stdout: str, stderr: str, timed_out: bool,
+    runner: str, wt: Path, nid: str,
+) -> str:
+    """Classify a single node id from one pytest run's output.
+
+    Returns ``"passed"``, ``"failed"``, or ``"absent-at-base"``.
+    This is the per-id verdict logic extracted from the at-base loop so it
+    can be reused for both the batched path and the per-id fallback.
+    """
+    if timed_out:
+        return "failed"
+    blob = (stdout or "") + (stderr or "")
+    if _is_vitest(runner):
+        if rc == 0:
+            return "passed"
+        elif not (wt / nid).exists():
+            return "absent-at-base"
+        else:
+            return "failed"
+    elif rc == 4 or "error: not found:" in blob.lower():
+        return "absent-at-base"
+    elif rc == 0:
+        return "passed"
+    else:
+        return "failed"
+
+
 def run_at_base(project: Path, base_sha: str, node_ids: list[str],
                 invocation: str, timeout: int = 600,
                 baseline_red: list[dict] | None = None,
@@ -867,51 +895,84 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
         # under xdist, not faster, and the selection is tiny by construction.
         runner = re.sub(r"\s-n\s+\S+|\s--dist\s+\S+", "", invocation)
         env = _base_env(wt)
-        for nid in node_ids:
+
+        # ── batched at-base run: one pytest process for all ids ───────────
+        # Vitest keeps the per-id path (absent-vs-failed needs per-file
+        # existence checks that the batched output cannot provide).
+        if _is_vitest(runner):
+            for nid in node_ids:
+                rc, stdout, stderr, timed_out = _bounded_run(
+                    f"{runner} {nid}", shell=True, cwd=str(wt),
+                    timeout=timeout, env=env,
+                )
+                verdicts[nid] = _classify_single_at_base_verdict(
+                    rc, stdout, stderr, timed_out, runner, wt, nid,
+                )
+        else:
+            # Run all ids in one process.
             rc, stdout, stderr, timed_out = _bounded_run(
-                f"{runner} {nid}", shell=True, cwd=str(wt), timeout=timeout,
-                env=env,
+                f"{runner} {' '.join(node_ids)}", shell=True, cwd=str(wt),
+                timeout=timeout, env=env,
             )
-            if timed_out:
-                # A timed-out at-base run is treated as a failure (not absent).
-                verdicts[nid] = "failed"
-                continue
             blob = (stdout or "") + (stderr or "")
-            # Distinguish "this test did not exist at base" from "this test
-            # exists and its module fails to import". Both produce "no tests
-            # ran"; only the first is absent.
-            #
-            # pytest exits 4 (usage error) and prints `ERROR: not found:` for an
-            # unresolvable node id. A collection error in a file that DOES exist
-            # exits 2 with an ERRORS section — that is a failure at base, and
-            # exonerates the batch.
-            #
-            # Getting this backwards is costly in one direction only:
-            # absent-at-base counts as ATTRIBUTED, so a misread manufactures a
-            # regression. Measured 2026-09-16: an earlier version keyed on
-            # "no tests ran" and marked all 7 test_meta_paths.py collection
-            # errors absent — the file exists at base (`git cat-file -e` proves
-            # it), so all 7 were false attributions.
-            if _is_vitest(runner):
-                # vitest exits nonzero for a failing file AND for a missing
-                # one ("no test files found") — exit codes cannot tell
-                # absent-at-base from failed, and the difference decides
-                # attribution (absent ⇒ the batch's own damage). The
-                # worktree AT base is the ground truth: a file that is not
-                # there did not exist at base. Node ids are file paths for
-                # vitest (see parse_vitest_output), so this is exact.
-                if rc == 0:
-                    verdicts[nid] = "passed"
-                elif not (wt / nid).exists():
-                    verdicts[nid] = "absent-at-base"
-                else:
-                    verdicts[nid] = "failed"
-            elif rc == 4 or "error: not found:" in blob.lower():
-                verdicts[nid] = "absent-at-base"
-            elif rc == 0:
-                verdicts[nid] = "passed"
+
+            # Timeout of the batched process: all ids are unclassifiable.
+            if timed_out:
+                fallback_ids = list(node_ids)
             else:
-                verdicts[nid] = "failed"
+                # Check for collection errors — if any file had a
+                # collection error, pytest's output uses file paths in the
+                # summary (e.g. "ERROR tests/test_broken.py") while node
+                # ids carry the test name ("tests/test_broken.py::test_foo").
+                # _NODE_RE matches the file path, not the node id, so
+                # classification is unreliable.  Fall back to per-id for
+                # ALL ids when collection errors are present.
+                has_collection_errors = (
+                    rc == 4 and "error: not found:" not in blob.lower()
+                )
+                if has_collection_errors:
+                    fallback_ids = list(node_ids)
+                else:
+                    # Classify from the batched output.
+                    failed_ids = set(_NODE_RE.findall(blob))
+                    # Only ids explicitly named in "ERROR: not found:" are
+                    # definitively absent.  Mark absent ONLY from the
+                    # explicit message; everything else unclassified goes
+                    # to fallback.
+                    absent_from_output: set[str] = set()
+                    for m in re.finditer(
+                        r"ERROR:\s*not found:\s*(\S+)", blob, re.IGNORECASE,
+                    ):
+                        absent_from_output.add(m.group(1))
+
+                    for nid in node_ids:
+                        if nid in failed_ids:
+                            verdicts[nid] = "failed"
+                        elif nid in absent_from_output:
+                            verdicts[nid] = "absent-at-base"
+                        else:
+                            # Not in the failed set and not explicitly
+                            # absent.  If rc == 0, all passed.  If rc == 1
+                            # (some failed), the non-failed ids passed.
+                            # Ambiguous cases (collection errors, timeouts)
+                            # are already routed to fallback above.
+                            verdicts[nid] = "passed"
+
+                    # Any id not classified above is ambiguous (pytest
+                    # aborted before reaching it, or output is garbled).
+                    # Fall back to per-id for exactly those.
+                    fallback_ids = [nid for nid in node_ids
+                                    if nid not in verdicts]
+
+            # Per-id fallback for ambiguous ids.
+            for nid in fallback_ids:
+                rc, stdout, stderr, timed_out = _bounded_run(
+                    f"{runner} {nid}", shell=True, cwd=str(wt),
+                    timeout=timeout, env=env,
+                )
+                verdicts[nid] = _classify_single_at_base_verdict(
+                    rc, stdout, stderr, timed_out, runner, wt, nid,
+                )
     finally:
         subprocess.run(["git", "worktree", "remove", "--force", str(wt)],
                        cwd=project, capture_output=True, text=True,

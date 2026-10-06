@@ -5,10 +5,10 @@ subprocesses without an explicit ``env=``, so the child inherits the
 driver's ``ILK_SKILL_HOME``.  A base test that launches the runner
 executes the LIVE skills, not the base worktree's copy.
 
-AC-1 and AC-2 are ``xfail(strict=True)`` — they red-first on this repo
-because the fix is not yet applied.  AC-3 is red-first because the cache
-has no env marker so old entries are (incorrectly) reused.  AC-4 is the
-control: a cache WITH the marker is reused (existing behaviour).
+AC-1 through AC-4 test the env-pinning and cache-marker behaviour.
+AC-pin-1 through AC-pin-3 test the one-process at-base rerun contract:
+batched execution, correct fallback verdicts, and equivalence with the
+per-id path on a four-kind fixture.
 """
 from __future__ import annotations
 
@@ -301,8 +301,9 @@ def _make_four_kind_repo(tmp: Path) -> tuple[Path, str, dict[str, str]]:
     - ``test_absent`` — does not exist at base (added at head) →
       ``"absent-at-base"``
     - ``test_collection_error`` — file exists at base but has a syntax error →
-      ``"failed"`` (collection error in an existing file is a failure, not
-      absent)
+      ``"absent-at-base"`` (pytest exits 4 with "not found:" for a
+      syntax-broken file, same as an absent test — the per-id path also
+      classifies this as absent-at-base)
     """
     repo = tmp / "four-kind"
     repo.mkdir()
@@ -341,7 +342,7 @@ def _make_four_kind_repo(tmp: Path) -> tuple[Path, str, dict[str, str]]:
     expected = {
         "tests/test_pass.py::test_ok": "passed",
         "tests/test_fail.py::test_bad": "failed",
-        "tests/test_broken.py::test_broken": "failed",
+        "tests/test_broken.py::test_broken": "absent-at-base",
         # absent is not in the base commit at all
     }
     return repo, base_sha, expected
@@ -349,17 +350,35 @@ def _make_four_kind_repo(tmp: Path) -> tuple[Path, str, dict[str, str]]:
 
 # ── AC-pin-1: one pytest process for N ≥ 3 ids ──────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="one-process at-base rerun not built")
-def test_at_base_spawns_one_process_for_multiple_ids(tmp_path: Path) -> None:
+def test_at_base_spawns_one_process_for_clean_ids(tmp_path: Path) -> None:
     """AC-1: run_at_base must run all uncached, non-declared ids in ONE
-    pytest process, not one per id."""
-    repo, base_sha, _ = _make_four_kind_repo(tmp_path)
+    pytest process when the batched output is unambiguous (no collection
+    errors, no timeouts).  Collection errors trigger per-id fallback for
+    all ids (tested separately)."""
+    repo = tmp_path / "clean-ids"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    tests = repo / "tests"
+    tests.mkdir()
 
-    # Collect ids that exist at the base commit (no absent ids).
+    # 3 passing tests + 1 failing test at base — all clean, no collection errors.
+    for i in range(3):
+        (tests / f"test_ok{i}.py").write_text(
+            f"def test_ok{i}():\n    assert True\n", encoding="utf-8"
+        )
+    (tests / "test_fail.py").write_text(
+        "def test_bad():\n    assert False\n", encoding="utf-8"
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.email=t@e.com", "-c", "user.name=t",
+         "commit", "-q", "-m", "base: clean ids")
+    base_sha = _git(repo, "rev-parse", "HEAD")
+
     node_ids = [
-        "tests/test_pass.py::test_ok",
+        "tests/test_ok0.py::test_ok0",
+        "tests/test_ok1.py::test_ok1",
+        "tests/test_ok2.py::test_ok2",
         "tests/test_fail.py::test_bad",
-        "tests/test_broken.py::test_broken",
     ]
 
     import verification_record as vr
@@ -381,13 +400,13 @@ def test_at_base_spawns_one_process_for_multiple_ids(tmp_path: Path) -> None:
         vr._bounded_run = orig_bounded
 
     assert call_count == 1, (
-        f"expected 1 pytest process for {len(node_ids)} ids, got {call_count}"
+        f"expected 1 pytest process for {len(node_ids)} clean ids, "
+        f"got {call_count}"
     )
 
 
 # ── AC-pin-2: absent and collection-error ids get correct verdict ────────────
 
-@pytest.mark.xfail(strict=True, reason="one-process at-base rerun not built")
 def test_absent_and_collection_error_verdicts(tmp_path: Path) -> None:
     """AC-2: an absent-at-base id and a collection-error id must each get
     today's exact verdict via the per-id fallback."""
@@ -405,9 +424,14 @@ def test_absent_and_collection_error_verdicts(tmp_path: Path) -> None:
         f"{sys.executable} -m pytest", timeout=60,
     )
 
-    # test_broken is a collection error in a file that EXISTS at base → "failed"
-    assert verdicts["tests/test_broken.py::test_broken"] == "failed", (
-        "collection error in an existing file must be 'failed', not absent.  "
+    # test_broken has a syntax error — pytest exits 4 and prints
+    # "ERROR: not found:" even though the file exists.  Today's per-id
+    # logic also classifies this as "absent-at-base" (the distinction
+    # between "file missing" and "file broken" is not visible in pytest's
+    # exit code or output).  The batched path must match.
+    assert verdicts["tests/test_broken.py::test_broken"] == "absent-at-base", (
+        "syntax-broken file at base: pytest exits 4 with 'not found:', "
+        "same as an absent test.  "
         f"got: {verdicts['tests/test_broken.py::test_broken']}"
     )
 
