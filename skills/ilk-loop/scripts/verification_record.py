@@ -1907,6 +1907,17 @@ def _write_measured_record(project: Path, record: Path, args,
                 ledger_wait_sec = round(time.monotonic() - record_start)
                 ledger_entry = running_entry
         if ledger_entry:
+            # AC-4: a full-suite request must not reuse a scoped ledger
+            # entry.  The scoped result satisfies a different cost
+            # boundary and cannot substitute for a full-suite measurement.
+            entry_scope_mode = ledger_entry.get("scope_mode", "full")
+            if (getattr(args, "scope", "auto") == "full"
+                    and entry_scope_mode == "scoped"):
+                print("INFO: refusing scoped ledger entry for --scope full "
+                      "request; will re-measure", file=sys.stderr)
+                ledger_entry = None
+
+        if ledger_entry:
             # Build results from the ledger entry.
             results = {
                 "counts": ledger_entry["counts"],
@@ -1926,19 +1937,36 @@ def _write_measured_record(project: Path, record: Path, args,
                               f"{tree[:12]}", file=sys.stderr)
             else:
                 suite_output_text = ""
-            # Scope is full when reading from the ledger.
-            scope["mode"] = "full"
-            scope["reason"] = "ledger entry is a full-suite run"
-            scope["count"] = ledger_entry["counts"]["total"]
+            # Preserve the entry's recorded scope.  Legacy entries lack
+            # scope_mode and are treated as full-suite runs.
+            entry_scope = ledger_entry.get("scope_mode", "full")
+            scope["mode"] = entry_scope
+            if entry_scope == "scoped":
+                selected = ledger_entry.get("selected_files", [])
+                scope["reason"] = (f"ledger entry is a scoped run "
+                                   f"({len(selected)} file(s))")
+                scope["count"] = len(selected)
+                scope["selection"] = selected
+            else:
+                scope["reason"] = "ledger entry is a full-suite run"
+                scope["count"] = ledger_entry["counts"]["total"]
             results["suite_duration_sec"] = ledger_entry.get(
                 "suite_duration_sec")
             results["suite_budget"] = (0, "ledger")
         elif ledger_mode == "require":
             # No entry found — measure in-process, then use the result.
+            # Apply the computed scope selection so the run matches the
+            # record's suite_scope claim.  Without this the require path
+            # ran the full suite while recording suite_scope: scoped.
+            # MEASURED 2026-10-06 (Batch Z): 5,142 tests ran, record
+            # claimed selection_size: 8.
+            selection = (scope.get("selection")
+                         if scope.get("mode") == "scoped" else None)
             try:
                 suite_budget, suite_budget_source = compute_suite_budget(
                     project, args.suite_timeout)
-                results = run_suite(project, invocation, suite_budget)
+                results = run_suite(project, invocation, suite_budget,
+                                    selection=selection)
                 suite_output_text = results.get("suite_output_text", "")
             except (TimeoutError, ValueError) as exc:
                 print(f"ERROR: ledger require — no entry and suite failed: "
@@ -1947,6 +1975,8 @@ def _write_measured_record(project: Path, record: Path, args,
                       file=sys.stderr)
                 return 1
             # Write the entry to the ledger for future lookups.
+            # Include scope metadata so readers can distinguish scoped
+            # from full measurements and refuse unsafe reuse.
             try:
                 import suite_ledger
                 measure_entry = {
@@ -1955,6 +1985,9 @@ def _write_measured_record(project: Path, record: Path, args,
                     "counts": results["counts"],
                     "failing_nodes": sorted(results["failing_nodes"]),
                     "suite_duration_sec": results.get("suite_duration_sec", 0),
+                    "scope_mode": scope["mode"],
+                    "selected_files": (sorted(selection)
+                                       if selection else []),
                     "digest": "",
                 }
                 measure_entry["digest"] = suite_ledger._compute_digest(
