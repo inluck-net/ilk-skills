@@ -166,3 +166,88 @@ def test_resolve_incumbent_follows_the_current_symlink(tmp_path: Path, monkeypat
     link.symlink_to(inc)
     monkeypatch.setenv("ILK_GOLDEN_INCUMBENT", str(link))
     assert safety_case._resolve_incumbent(_project(tmp_path)) == inc.resolve()
+
+
+# ── Sealed held-out slice (RSI design point 2) ─────────────────────────────
+
+
+def _teeth_stub(outcomes: list[str], rc: int | None = None):
+    calls: list[list[str]] = []
+
+    def stub(cmd, **kw):
+        calls.append(list(cmd))
+        out = json.dumps({"verdict": "pass" if all(o == "caught-red" for o in outcomes) else "fail",
+                          "results": [{"id": f"secret-{i}", "outcome": o, "output": f"secret-{i} FAILED"}
+                                      for i, o in enumerate(outcomes)]})
+        code = rc if rc is not None else (0 if all(o == "caught-red" for o in outcomes) else 1)
+        return type("R", (), {"returncode": code, "stdout": out, "stderr": "secret tail"})()
+    stub.calls = calls
+    return stub
+
+
+def _sealed(tmp_path, stub, catalog):
+    result = safety_case.run(_project(tmp_path), data_dir=tmp_path / "data",
+                             components=("sealed",), runner=stub, no_record=True,
+                             incumbent=None, sealed_catalog=catalog)
+    return result, result["components"][0]
+
+
+def _catalog(tmp_path: Path) -> Path:
+    c = tmp_path / "sealed" / "mutations.json"
+    c.parent.mkdir()
+    c.write_text('{"schema": 1, "mutations": []}')
+    return c
+
+
+def test_every_sealed_case_caught_passes_with_a_count_only(tmp_path: Path) -> None:
+    cat = _catalog(tmp_path)
+    stub = _teeth_stub(["caught-red"] * 4)
+    result, c = _sealed(tmp_path, stub, cat)
+    assert result["verdict"] == "pass"
+    assert c["sealed"] == {"total": 4, "caught": 4}
+    assert stub.calls[0][-2:] == ["--catalog", str(cat)]
+    # Nothing that names a case survives into the result.
+    assert "secret" not in json.dumps(result)
+    assert str(cat) not in json.dumps(result)
+
+
+def test_a_surviving_sealed_case_refuses(tmp_path: Path) -> None:
+    result, c = _sealed(tmp_path, _teeth_stub(["caught-red", "survived", "caught-red"]),
+                        _catalog(tmp_path))
+    assert result["verdict"] == "fail"
+    assert c["sealed"] == {"total": 3, "caught": 2}
+    assert "secret" not in json.dumps(result)
+
+
+def test_unparseable_teeth_output_refuses(tmp_path: Path) -> None:
+    def stub(cmd, **kw):
+        return type("R", (), {"returncode": 0, "stdout": "not json", "stderr": ""})()
+    result, c = _sealed(tmp_path, stub, _catalog(tmp_path))
+    assert result["verdict"] == "fail"
+    assert c["sealed"] == {"total": None, "caught": None}
+
+
+def test_an_empty_sealed_result_refuses(tmp_path: Path) -> None:
+    result, c = _sealed(tmp_path, _teeth_stub([]), _catalog(tmp_path))
+    assert result["verdict"] == "fail"
+
+
+def test_an_absent_sealed_catalog_is_recorded_not_run(tmp_path: Path) -> None:
+    stub = _teeth_stub(["caught-red"])
+    result, c = _sealed(tmp_path, stub, tmp_path / "nope.json")
+    assert result["verdict"] == "pass"
+    assert c["sealed"] == {"status": "absent"}
+    assert stub.calls == []
+
+
+def test_an_injected_runner_never_reads_the_real_sealed_slice(tmp_path: Path) -> None:
+    stub = _teeth_stub(["caught-red"])
+    result, c = _sealed(tmp_path, stub, "auto")
+    assert c["sealed"] == {"status": "absent"}
+    assert stub.calls == []
+
+
+def test_the_default_run_includes_the_sealed_slice() -> None:
+    import inspect
+    default = inspect.signature(safety_case.run).parameters["components"].default
+    assert "sealed" in default

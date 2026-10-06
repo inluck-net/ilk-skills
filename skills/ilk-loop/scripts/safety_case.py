@@ -4,7 +4,7 @@
 Part of guard 4 of the RSI safety case (design :325-331).
 
 Verbs:
-  run  — run invariants + golden + teeth, record the verdict
+  run  — run invariants + golden + teeth + sealed, record the verdict
 
 CLI: safety_case.py run --project P [--data-dir D] [--only C ...] [--no-record] [--json]
 
@@ -70,6 +70,10 @@ def _file_sha256(path: Path) -> str:
 _BUDGETS = {
     "invariants": 120,
     "teeth": 900,
+    # Judgment call: the sealed slice gets 300 s. Basis: Chad's Oct 6 cap of
+    # ~5 min per train for golden-vs-incumbent + sealed; 4 cases measured
+    # 35 s at --jobs 4. Wrong if the cap is meant to cover more than these two.
+    "sealed": 300,
 }
 
 
@@ -120,6 +124,14 @@ def _run_component(
         budget = _BUDGETS["teeth"]
         # Parse structured outcomes from teeth JSON output.
         # This is filled after the subprocess completes.
+    elif name == "sealed":
+        # The catalog path comes in through extra_args (see _run_sealed);
+        # it lives outside the repo and is never named in the record.
+        cmd = [
+            sys.executable, str(scripts_dir / "teeth.py"),
+            "run", "--repo", str(project), "--jobs", "4", "--json",
+        ]
+        budget = _BUDGETS["sealed"]
     else:
         return {
             "name": name, "ok": False, "seconds": 0,
@@ -190,6 +202,9 @@ def _run_component(
         except (json.JSONDecodeError, KeyError):
             pass
 
+    if name == "sealed":
+        component["_stdout"] = stdout_text
+
     if name == "golden" and exit_code in (0, 1):
         try:
             g = json.loads(stdout_text.strip())
@@ -202,6 +217,51 @@ def _run_component(
             pass
 
     return component
+
+
+# ── Sealed held-out slice (RSI design point 2, Oct 6) ──────────────────────
+
+
+def _default_sealed_catalog() -> Path:
+    if str(_SCRIPTS_DIR) not in sys.path:
+        sys.path.insert(0, str(_SCRIPTS_DIR))
+    from ilk_paths import ilk_data_root  # noqa: E402
+    return ilk_data_root() / "sealed" / "mutations.json"
+
+
+def _run_sealed(project: Path, *, runner: object | None,
+                catalog: Path | None) -> dict:
+    """Run the sealed mutations; record ONLY how many exist and were caught.
+
+    Each case's catcher is the whole invariant suite, so a case names no
+    test. Ids, outcomes and the output tail never enter the record: a
+    sealed case that is reported becomes a public one. Every case must be
+    caught; a survivor or a red control refuses.
+
+    Judgment call: an ABSENT catalog passes with ``status: absent`` (it is
+    a strength check, not a rail, and only the train host has one). Wrong
+    if absence goes unread in the digest; the deny hook keeps workers from
+    deleting it.
+    """
+    if catalog is None or not catalog.is_file():
+        return {"name": "sealed", "ok": True, "seconds": 0,
+                "budget_seconds": _BUDGETS["sealed"], "exit": 0,
+                "tail": "", "sealed": {"status": "absent"}}
+    comp = _run_component("sealed", project, runner=runner,
+                          extra_args=("--catalog", str(catalog)))
+    total = caught = None
+    try:
+        # The tail is truncated, so counts come from teeth's full stdout.
+        data = json.loads(comp.pop("_stdout", "") or "{}")
+        results = data.get("results") or []
+        total = len(results)
+        caught = sum(1 for r in results if r.get("outcome") == "caught-red")
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    comp["tail"] = ""
+    comp["sealed"] = {"total": total, "caught": caught}
+    comp["ok"] = bool(comp["ok"] and total and caught == total)
+    return comp
 
 
 # ── Golden: incumbent vs candidate (RSI design point 1, Oct 6) ─────────────
@@ -319,10 +379,11 @@ def run(
     project: Path,
     *,
     data_dir: Path,
-    components: tuple[str, ...] = ("invariants", "golden", "teeth"),
+    components: tuple[str, ...] = ("invariants", "golden", "teeth", "sealed"),
     runner: object | None = None,
     no_record: bool = False,
     incumbent: Path | None | str = "auto",
+    sealed_catalog: Path | None | str = "auto",
 ) -> dict:
     """Run the safety case and return the verdict.
 
@@ -350,7 +411,17 @@ def run(
         # real deployed release unless the test passes one explicitly.
         incumbent = None if runner is not None else _resolve_incumbent(project)
 
+    if sealed_catalog == "auto":
+        # Same rule as the incumbent: a test stub never reads the real slice.
+        sealed_catalog = None if runner is not None else _default_sealed_catalog()
+
     for name in components:
+        if name == "sealed":
+            results.append(_run_sealed(project, runner=runner,
+                                       catalog=sealed_catalog))
+            if not results[-1]["ok"]:
+                all_ok = False
+            continue
         result = _run_component(name, project, runner=runner)
         if name == "golden":
             result = _compare_golden(project, result, runner=runner,
@@ -411,7 +482,7 @@ def main() -> int:
         data_root = ilk_data_root()
         data_dir = data_root / "projects" / project.name
 
-    components = tuple(args.only) if args.only else ("invariants", "golden", "teeth")
+    components = tuple(args.only) if args.only else ("invariants", "golden", "teeth", "sealed")
 
     try:
         result = run(
