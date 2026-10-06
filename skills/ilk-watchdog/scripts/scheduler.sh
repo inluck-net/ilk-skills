@@ -969,8 +969,22 @@ maybe_tick_autoplan() {
     _tick_args+=("--dry-run")
   fi
 
+  # The planner's home.  plan() refuses a GLM/MiMo model, and the manager home
+  # stays GLM (verification runs there), so the tick must not inherit it.
+  # ILK_AUTOPLAN_HOME, else the triage home (official model) when this host has
+  # one, else the scheduler's own env unchanged: a host with only ilk-skills
+  # deployed and no triage home behaves exactly as before.
+  local _plan_home="${ILK_AUTOPLAN_HOME:-}"
+  if [[ -z "$_plan_home" && -d "$HOME/.claude-triage" ]]; then
+    _plan_home="$HOME/.claude-triage"
+  fi
+
   local _tick_stdout _tick_rc
-  _tick_stdout=$("$PYTHON" "$AUTOPLAN_PY" "${_tick_args[@]}" 2>>"$_tick_log") || _tick_rc=$?
+  if [[ -n "$_plan_home" ]]; then
+    _tick_stdout=$(CLAUDE_MANAGER_HOME="$_plan_home" "$PYTHON" "$AUTOPLAN_PY" "${_tick_args[@]}" 2>>"$_tick_log") || _tick_rc=$?
+  else
+    _tick_stdout=$("$PYTHON" "$AUTOPLAN_PY" "${_tick_args[@]}" 2>>"$_tick_log") || _tick_rc=$?
+  fi
   _tick_rc=${_tick_rc:-0}
 
   # Always append stdout to tick.log (even on success).

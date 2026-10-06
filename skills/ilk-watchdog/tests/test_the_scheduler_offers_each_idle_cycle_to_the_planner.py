@@ -329,3 +329,72 @@ def test_ac6_control_dispatch_unchanged(tmp_path: Path) -> None:
         last_line = stdout.splitlines()[-1]
         parsed = json.loads(last_line)
         assert "decision" in parsed, f"expected 'decision' key in JSON, got {parsed}"
+
+# ── The tick plans on a home whose model autoplan accepts ──────────────────
+#
+# plan() refuses a GLM/MiMo model (autoplan.py, "model ..." refusal) and the
+# manager home stays GLM (D10: verification runs there), so the tick must not
+# inherit it.  Precedence: ILK_AUTOPLAN_HOME, else ~/.claude-triage when it
+# exists, else whatever the scheduler already had (a host with only
+# ilk-skills deployed and no triage home behaves exactly as before).
+
+
+def _write_env_stub(tmp_path: Path) -> Path:
+    """A stub autoplan.py that records the CLAUDE_MANAGER_HOME it was given."""
+    stub = tmp_path / "autoplan_env_stub.py"
+    stub.write_text(textwrap.dedent("""\
+        import json, os, sys, pathlib
+        out = pathlib.Path(sys.argv[0]).with_name("env.json")
+        out.write_text(json.dumps({"home": os.environ.get("CLAUDE_MANAGER_HOME")}))
+        sys.stdout.write('{"decision":"idle","detail":"1/6"}\\n')
+    """), encoding="utf-8")
+    return stub
+
+
+def _tick_home(tmp_path: Path, extra: dict[str, str], *,
+               drop: tuple[str, ...] = ()) -> tuple[str | None, str]:
+    """Run one tick; return (home the stub saw, scheduler's own home after)."""
+    data_home = tmp_path / ".ilk-data"
+    data_home.mkdir(parents=True, exist_ok=True)
+    stub = _write_env_stub(tmp_path)
+    env = _make_env(tmp_path, data_home, extra={"AUTOPLAN_PY": str(stub), **extra})
+    for k in ("ILK_AUTOPLAN_HOME", "CLAUDE_MANAGER_HOME") + drop:
+        if k not in extra:
+            env.pop(k, None)
+    script = textwrap.dedent(f"""\
+        export ILK_DOTSOURCE_ONLY=1
+        source "{SCHEDULER}"
+        maybe_tick_autoplan
+        echo "after=${{CLAUDE_MANAGER_HOME-unset}}"
+    """)
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                       timeout=30, env=env, encoding="utf-8")
+    assert r.returncode == 0, r.stderr
+    seen = json.loads(stub.with_name("env.json").read_text(encoding="utf-8"))["home"]
+    after = [l for l in r.stdout.splitlines() if l.startswith("after=")][-1][6:]
+    return seen, after
+
+
+def test_autoplan_home_override_wins(tmp_path: Path) -> None:
+    (tmp_path / ".claude-triage").mkdir()
+    seen, _ = _tick_home(tmp_path, {"ILK_AUTOPLAN_HOME": "/x/planner-home",
+                                    "CLAUDE_MANAGER_HOME": "/x/manager"})
+    assert seen == "/x/planner-home"
+
+
+def test_triage_home_is_used_when_present(tmp_path: Path) -> None:
+    (tmp_path / ".claude-triage").mkdir()
+    seen, after = _tick_home(tmp_path, {"CLAUDE_MANAGER_HOME": "/x/manager"})
+    assert seen == str(tmp_path / ".claude-triage")
+    # Scoped to the tick: the scheduler's own manager identity is untouched.
+    assert after == "/x/manager"
+
+
+def test_no_triage_home_keeps_todays_behaviour(tmp_path: Path) -> None:
+    # A host with only ilk-skills deployed (rezmac today): no triage home.
+    seen, after = _tick_home(tmp_path, {"CLAUDE_MANAGER_HOME": "/x/manager"})
+    assert seen == "/x/manager"
+    assert after == "/x/manager"
+    seen, after = _tick_home(tmp_path, {})
+    assert seen is None  # autoplan falls back to ~/.claude-manager itself
+    assert after == "unset"
