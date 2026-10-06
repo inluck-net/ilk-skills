@@ -66,7 +66,8 @@ from typing import Any
 
 HOME = Path(os.path.expanduser("~"))
 LAUNCHER_DIR = HOME / ".cursor" / "skills" / "ilk-launcher"
-PROJECTS_JSON = LAUNCHER_DIR / "projects.json"
+# PROJECTS_JSON removed — use _resolve_projects_json() at call time so
+# ILK_DATA_HOME / ILK_DATA_DIR move every reader together.
 LOOP_LOG_DIR = HOME / ".cursor" / "skills" / "ilk-loop" / "logs"
 JSONL_LOG = LOOP_LOG_DIR / ".ilk-loop.log"
 LOOP_STATUS_SCRIPT = HOME / ".cursor" / "skills" / "ilk-loop" / "scripts" / "loop_status.py"
@@ -140,6 +141,7 @@ try:
         external_runtime_dir,
         find_plans_dir as _find_plans_dir,
         find_project_root as _find_project_root,
+        ilk_data_root,
         project_key,
         skill_root as _skill_root,
     )  # type: ignore
@@ -218,11 +220,21 @@ def _maybe_autoclose(project_path: Path, quiet: bool) -> None:
 # ---------- project resolution (mirror launcher logic) -----------------------
 
 
+def _resolve_projects_json() -> Path:
+    """Canonical data-home registry with bounded legacy fallback."""
+    canonical = ilk_data_root() / "projects.json"
+    if canonical.is_file():
+        return canonical
+    legacy = _skill_root() / "ilk-launcher" / "projects.json"
+    return legacy  # may not exist; caller checks .is_file()
+
+
 def read_projects_registry() -> list[dict]:
-    if not PROJECTS_JSON.exists():
+    reg = _resolve_projects_json()
+    if not reg.is_file():
         return []
     try:
-        data = json.loads(PROJECTS_JSON.read_text(encoding="utf-8-sig"))
+        data = json.loads(reg.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError:
         return []
     return data.get("projects", []) or []

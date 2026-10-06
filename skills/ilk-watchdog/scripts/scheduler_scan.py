@@ -114,7 +114,9 @@ def resolve_repo_path(project_dir: Path, key: str) -> str | None:
         except (OSError, ValueError):
             pass
 
-    registry = _SKILL_ROOT / "ilk-launcher" / "projects.json"
+    registry = ilk_data_root() / "projects.json"
+    if not registry.is_file():
+        registry = _SKILL_ROOT / "ilk-launcher" / "projects.json"
     if registry.is_file():
         try:
             data = json.loads(registry.read_text(encoding="utf-8-sig"))
