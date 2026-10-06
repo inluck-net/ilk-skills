@@ -10,6 +10,7 @@ themselves are the authoritative record.
 
 | Version | Date | Highlights |
 |---|---|---|
+| v0.9.163 | 2026-10-07 | **07 A Gate Edit Is Named Not Misread Execution Plan.Md.** RELEASE TRAIN (unattended) — gate-edit-diagnosis-verify, a-gate-edit-is-named-in-the-diagnosis, a-worker-never-edits-its-own-gates. Phase 0 0/0 proven. Phase 1: 0 failed / 0 passed with python3 -m pytest --timeout=17 --timeout-method=signal -n 8 --dist loadfile --durations=25, 0 new ids vs v0.9.162. |
 | v0.9.162 | 2026-10-07 | **.** RELEASE TRAIN (unattended) — direct commits. Phase 0 0/0 proven. Phase 1: 0 failed / 0 passed with python3 -m pytest --timeout=17 --timeout-method=signal -n 8 --dist loadfile --durations=25, 0 new ids vs v0.9.161. |
 | v0.9.161 | 2026-10-07 | **.** RELEASE TRAIN (unattended) — direct commits. Phase 0 0/0 proven. Phase 1: 0 failed / 0 passed with python3 -m pytest --timeout=17 --timeout-method=signal -n 8 --dist loadfile --durations=25, 0 new ids vs v0.9.160. |
 | v0.9.160 | 2026-10-07 | **06 An Empty Queue Still Starts The Train Execution Plan.Md.** RELEASE TRAIN (unattended) — an-empty-queue-still-starts-the-train-verify, an-empty-queue-still-starts-the-train. Phase 0 0/0 proven. Phase 1: 0 failed / 0 passed with python3 -m pytest --timeout=17 --timeout-method=signal -n 8 --dist loadfile --durations=25, 0 new ids vs v0.9.159. |
