@@ -110,7 +110,6 @@ def test_gate_passed_false_alone_unchanged(tmp_path: Path) -> None:
 # entering the ship-integrity revert loop.
 # ─────────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="environment-fault stop not built")
 def test_exit127_mention_check_is_environment_fault() -> None:
     """AC-1: exit-127 mention check → gate record with outcome=error,
     reason=environment-fault: command not found.
@@ -132,7 +131,6 @@ def test_exit127_mention_check_is_environment_fault() -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="environment-fault stop not built")
 def test_runner_stops_once_on_environment_fault() -> None:
     """AC-2: runner sets stop_reason=local_checks_environment_fault,
     does NOT apply ship-integrity revert, sub-plan stays at current step.
@@ -167,7 +165,6 @@ def test_runner_stops_once_on_environment_fault() -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason="environment-fault stop not built")
 def test_collect_maps_environment_fault_to_local_checks_stuck() -> None:
     """AC-3: collect.py classifies local_checks_environment_fault as
     local-checks-stuck (the existing blacklist label).
@@ -176,14 +173,11 @@ def test_collect_maps_environment_fault_to_local_checks_stuck() -> None:
     it in a loop.
     """
     # The _SENTINEL_FAILURE_MAP in collect.py must include this mapping.
-    # Import and check the class attribute directly.
-    sys.path.insert(0, str(SCRIPTS_DIR.parent.parent / "skills" / "ilk-feedback" / "scripts"))
-    import collect
-
-    # Find the _SENTINEL_FAILURE_MAP in the classify method
-    source = inspect.getsource(collect.Collector.classify)
+    # Read the source file directly to check for the mapping.
+    collect_path = SCRIPTS_DIR.parent.parent / "ilk-feedback" / "scripts" / "collect.py"
+    source = collect_path.read_text(encoding="utf-8")
     assert "local_checks_environment_fault" in source, (
-        "collect.py classify() does not reference local_checks_environment_fault — "
+        "collect.py does not reference local_checks_environment_fault — "
         "the new stop reason will fall through to generic heuristics and be "
         "classified as clean-success, causing the watchdog to relaunch forever"
     )

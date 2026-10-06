@@ -1662,6 +1662,15 @@ def classify(
         # worker broke something).  Same watchdog action (block), but
         # a different label so the postmortem is honest about the cause.
         "local_checks_failed_no_commits": "local-checks-unchanged",
+        # A derived check (e.g. mention gate) could not run because its
+        # binary is missing from PATH (exit 126/127).  The gate record
+        # carries reason="environment-fault: ...".  Distinct from
+        # local_checks_failed (which means tests actually ran and failed).
+        # Same watchdog action (block + park) as local-checks-stuck — the
+        # environment is broken, not the code.  The project should be
+        # parked, not re-dispatched in a revert loop.
+        # (sub-plan an-unrunnable-derived-check-stops-once, AC-3)
+        "local_checks_environment_fault": "local-checks-stuck",
         # A selfmod merge was deferred because a live loop is running.
         # Transient — the scheduler relaunches when the other loop exits.
         # Without this entry the state fell through to generic heuristics,

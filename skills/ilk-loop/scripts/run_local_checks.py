@@ -797,14 +797,16 @@ def _classify_check(
     if exit_code == 0:
         return "pass", None
 
-    # exit 126 / 127: command not found / not executable
+    # exit 126 / 127: command not found / not executable.
+    # Prefix with "environment-fault:" so the runner can distinguish a
+    # missing binary (environment problem) from a real test failure
+    # (exit 1 with undeclared failures).  The runner uses this prefix to
+    # set stop_reason="local_checks_environment_fault" and skip the
+    # ship-integrity revert (sub-plan an-unrunnable-derived-check-stops-once).
     if exit_code == 126:
-        return "error", "command not executable"
+        return "error", "environment-fault: command not executable"
     if exit_code == 127:
-        # Extract the leading word from the command for a useful reason.
-        # The error field from Exception would say "FileNotFoundError" but
-        # exit 127 comes from bash itself, not from our except block.
-        return "error", "command not found"
+        return "error", "environment-fault: command not found"
 
     # ILK-CHECK: unmeasured marker on stderr
     m = _ILK_CHECK_RE.search(stderr_full)

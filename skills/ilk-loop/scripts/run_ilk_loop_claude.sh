@@ -6480,7 +6480,35 @@ print('true' if d.get('blocked') else 'false')
             if [[ "$quarantined" == "true" ]]; then
               echo "B2 quarantine: continuing to next runnable sub-plan" >&2
             else
-              if [[ "$total_new" -eq 0 ]]; then
+              # Check if the gate failure is an environment fault (exit 126/127).
+              # When a derived check cannot run because its binary is missing,
+              # the gate record carries reason="environment-fault: ...".  Use a
+              # distinct stop reason so the watchdog parks the project instead of
+              # re-dispatching it in a revert loop.
+              # (sub-plan an-unrunnable-derived-check-stops-once, AC-2)
+              local _is_env_fault="false"
+              if [[ -n "$local_checks_results" && -s "$local_checks_results" ]]; then
+                _is_env_fault=$(python3 -c "
+import json, sys
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    try:
+        rec = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    reason = rec.get('reason', '') or ''
+    if reason.startswith('environment-fault:'):
+        print('true')
+        sys.exit(0)
+print('false')
+" < "$local_checks_results" 2>/dev/null || echo "false")
+              fi
+
+              if [[ "$_is_env_fault" == "true" ]]; then
+                iter_stop_reason="local_checks_environment_fault"
+                echo "Loop stopped: environment fault — derived check cannot run (B2 confirmed)" >&2
+              elif [[ "$total_new" -eq 0 ]]; then
                 iter_stop_reason="local_checks_failed_no_commits"
                 echo "Loop stopped: local_checks not passing (B2 confirmed, 0 new commits — gate red on an unchanged tree)" >&2
               else
@@ -6800,7 +6828,17 @@ append_revert_row(
     # --only-interrupted note in converge_ship_transition).
     converge_ship_transition "$(get_plans_dir)"
 
+    # Skip ship-integrity enforcement when the gate couldn't run (environment
+    # fault).  A missing binary (exit 126/127) is not a test failure — the
+    # sub-plan's work is still valid.  Reverting it would trigger the same
+    # work in the next iteration, which would fail the same way, ad infinitum.
+    # Instead, stop once with local_checks_environment_fault and let the
+    # watchdog park the project.
+    # (sub-plan an-unrunnable-derived-check-stops-once, AC-2)
     local _si_stderr=""
+    if [[ "$iter_stop_reason" == "local_checks_environment_fault" ]]; then
+      echo "  [ship-integrity] skipped — environment fault (derived check could not run)" >&2
+    else
     _si_stderr=$(test_ship_integrity "$(get_plans_dir)" "$local_checks_results" "$heads_before_file" "$heads_after_file" 2>&1 1>/dev/null) || {
       stop_reason="ship_integrity_violation"
       iter_stop_reason="ship_integrity_violation"
@@ -6851,6 +6889,7 @@ append_revert_row(
         echo "[unattended] park skipped under profile; violations recorded in result file" >&2
       fi
     }
+    fi
     # Print ship-integrity diagnostics even on success (e.g. inconclusive
     # revert messages). The subshell captured them; surface them now.
     if [[ -n "$_si_stderr" ]]; then

@@ -106,6 +106,7 @@ submenu line.
 | `"shipped"` | All sub-plans shipped, clean exit | Terminal |
 | `"local_checks_failed"` | A step's local_checks failed | Terminal |
 | `"local_checks_failed_no_commits"` | A step's local_checks failed with 0 new commits this iteration (gate red on an unchanged tree — a red base or environment). Never set after an interrupted iteration with 0 commits (the gate is skipped; `_should_gate_iteration` returns 1) | Terminal |
+| `"local_checks_environment_fault"` | A derived check (e.g. mention gate) could not run because its binary is missing from PATH (exit 126/127). The gate record carries `reason: "environment-fault: ..."`. Distinct from `local_checks_failed` (tests ran and failed) — the environment is broken, not the code. The sub-plan is NOT reverted; the project is parked. (sub-plan `an-unrunnable-derived-check-stops-once`) | Terminal |
 | `"interrupted"` | The run ended without a terminal state. An operator stop (INT/TERM to the runner) adds `stopped_by: "signal:<SIG>"`; its absence means a crash or an unexplained exit. The watchdog never relaunches a sentinel carrying `stopped_by` (`relaunch_guard.py`) | Terminal |
 | `"error"` | Unexpected runner error | Terminal |
 | `"max-iterations"` | Hit iteration budget | Terminal |
@@ -159,6 +160,7 @@ is how a failed run gets classified `clean-success`.
 | `"interrupted"` | `interrupted` | `relaunch` |
 | `"local_checks_failed"` | `local-checks-broken` (broken-gate result in checks) / `local-checks-stuck` | `block` |
 | `"local_checks_failed_no_commits"` | `local-checks-unchanged` | `block` |
+| `"local_checks_environment_fault"` | `local-checks-stuck` | `block` |
 | `"ship_integrity_violation"` | `shipped-unverified` | `needs-human` |
 | `"shipped-unproven"` | `shipped-unverified` | `needs-human` |
 | `"merge-deferred"` | `merge-deferred` | `relaunch` |
