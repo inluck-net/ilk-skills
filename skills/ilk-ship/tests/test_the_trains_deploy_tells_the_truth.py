@@ -2621,6 +2621,417 @@ class TestControlExistingTestsPass:
         assert hasattr(release_train, "deploy")
 
 
+# ── Canary window: xfail pins for one-clean-tick observation ──────────────
+#
+# AC-1  After the canary deploys, the train waits for one clean scheduler tick
+#       before deploying remote hosts.  A clean tick is a new scheduler.log
+#       line timestamped after the canary's bounce, written while the scheduler
+#       pid is alive and its command line contains the new release tag, whose
+#       verb is in the known set (idle, dispatch:, promote:, skip-).
+#
+# AC-2  No clean tick within CANARY_WINDOW_SEC, an unknown verb, or a dead /
+#       old scheduler pid → roll the canary back, report it rolled_back with
+#       reason "canary-window: <why>", and leave every other host untouched.
+#
+# AC-3  A clean tick → remote hosts deploy as today.  The result records the
+#       observed tick line and the wait in seconds.
+#
+# AC-4  All waits use injected clock / sleeper / log path / pid file;
+#       tests run in well under a second.
+
+
+def _write_scheduler_log(log_path: Path, entries: list[tuple[str, str, str]]) -> None:
+    """Write a fake scheduler.log with entries [(timestamp, pid, verb+detail)]."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for ts, pid, verb in entries:
+        lines.append(f"[{ts}] {verb} (pid={pid})")
+    log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _write_scheduler_pid_for_cmd(pid_dir: Path, cmd_pattern: str) -> tuple[Path, int]:
+    """Create a fake scheduler.pid whose process command line contains cmd_pattern.
+
+    Returns (pid_file, pid).
+    """
+    pid_dir.mkdir(parents=True, exist_ok=True)
+    pid_file = pid_dir / "scheduler.pid"
+
+    # Write a script whose path contains the pattern
+    script_dir = Path(cmd_pattern).parent if "/" in cmd_pattern else pid_dir
+    script_dir.mkdir(parents=True, exist_ok=True)
+    script = script_dir / "scheduler.sh"
+    script.write_text("#!/bin/bash\nsleep 60\n")
+    script.chmod(0o755)
+
+    proc = subprocess.Popen(["bash", str(script)])
+    _LAUNCHED_PROCS.append(proc)
+    pid_file.write_text(str(proc.pid))
+
+    return pid_file, proc.pid
+
+
+@pytest.mark.xfail(strict=True, reason="canary window not built")
+class TestCanaryWindowCleanTick:
+    """AC-1/AC-3: a clean tick after canary bounce → remote hosts deploy."""
+
+    def test_clean_tick_allows_remote_deploy(self, tmp_path: Path) -> None:
+        """When a clean scheduler tick appears after the canary bounces,
+        remote hosts must be called and the result must record the tick
+        line and the wait in seconds."""
+        project = _make_fake_project(tmp_path)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        # Setup scheduler log with a clean tick
+        scheduler_log = tmp_path / "scheduler.log"
+        _write_scheduler_log(scheduler_log, [
+            ("2026-10-06 10:00:00", "100", "idle"),
+            ("2026-10-06 10:05:00", "100", "idle"),
+        ])
+
+        # Setup scheduler pid file pointing to an alive process
+        pid_dir = tmp_path / "data" / "runtime"
+        pid_file, pid = _write_scheduler_pid_for_cmd(
+            pid_dir, tmp_path / "releases" / "v0.0.2" / "scheduler"
+        )
+
+        clock = FakeClock(start=1000.0)
+        sleeper = FakeSleeper(clock)
+
+        ssh_calls = []
+
+        def _canary_succeeds(proj, tag, data_dir, **kwargs):
+            return {"tag": tag, "deployed": True, "exit_code": 0, "bounce": {"exit": 1}}
+
+        def _ssh_records(proj, tag, data_dir, **kwargs):
+            ssh_calls.append(kwargs.get("host", "unknown"))
+            return {"tag": tag, "deployed": True, "exit_code": 0, "host": kwargs.get("host")}
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        result = release_train._deploy_all_hosts(
+            project, "v0.0.2", data_dir,
+            hosts=["chad-mbp", "rezmac"],
+            local_hosts=["chad-mbp"],
+            deploy_fn=_canary_succeeds,
+            ssh_deploy_fn=_ssh_records,
+            canary_window_sec=720.0,
+            scheduler_log=scheduler_log,
+            scheduler_pid_file=pid_file,
+            canary_clock=clock.monotonic,
+            canary_sleeper=sleeper.sleep,
+        )
+
+        assert "rezmac" in ssh_calls, "Remote host must be called after clean tick"
+        assert "rezmac" in result.get("deployed", []), "Remote host must be deployed"
+        # Result must record the observed tick and wait
+        assert "canary_tick" in result, "Result must record the observed tick"
+        assert "canary_wait_sec" in result, "Result must record the wait duration"
+
+
+@pytest.mark.xfail(strict=True, reason="canary window not built")
+class TestCanaryWindowNoTick:
+    """AC-2: no clean tick within window → canary rolled back, remote untouched."""
+
+    def test_no_tick_rolls_back_canary(self, tmp_path: Path) -> None:
+        """When no scheduler tick appears within CANARY_WINDOW_SEC,
+        the canary must be rolled back and remote hosts untouched."""
+        project = _make_fake_project(tmp_path)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        # Empty scheduler log — no ticks at all
+        scheduler_log = tmp_path / "scheduler.log"
+        scheduler_log.write_text("", encoding="utf-8")
+
+        # Setup scheduler pid file
+        pid_dir = tmp_path / "data" / "runtime"
+        pid_file, pid = _write_scheduler_pid_for_cmd(
+            pid_dir, tmp_path / "releases" / "v0.0.2" / "scheduler"
+        )
+
+        clock = FakeClock(start=1000.0)
+        sleeper = FakeSleeper(clock)
+
+        ssh_calls = []
+        rollback_called = []
+
+        def _canary_succeeds(proj, tag, data_dir, **kwargs):
+            return {"tag": tag, "deployed": True, "exit_code": 0, "bounce": {"exit": 1}}
+
+        def _ssh_should_not_run(proj, tag, data_dir, **kwargs):
+            ssh_calls.append(kwargs.get("host", "unknown"))
+            return {"tag": tag, "deployed": True, "exit_code": 0}
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        result = release_train._deploy_all_hosts(
+            project, "v0.0.2", data_dir,
+            hosts=["chad-mbp", "rezmac"],
+            local_hosts=["chad-mbp"],
+            deploy_fn=_canary_succeeds,
+            ssh_deploy_fn=_ssh_should_not_run,
+            canary_window_sec=720.0,
+            scheduler_log=scheduler_log,
+            scheduler_pid_file=pid_file,
+            canary_clock=clock.monotonic,
+            canary_sleeper=sleeper.sleep,
+        )
+
+        assert len(ssh_calls) == 0, "Remote host must NOT be called without a clean tick"
+        assert "rezmac" in result.get("untouched", []), "Remote host must be untouched"
+        # Canary must be rolled back
+        assert "chad-mbp" in result.get("rolled_back", []), "Canary must be rolled back"
+        canary_result = result["hosts"]["chad-mbp"]
+        assert canary_result.get("reason", "").startswith("canary-window:"), (
+            f"Canary reason must start with 'canary-window:', "
+            f"got: {canary_result.get('reason')!r}"
+        )
+
+
+@pytest.mark.xfail(strict=True, reason="canary window not built")
+class TestCanaryWindowUnknownVerb:
+    """AC-2: unknown verb in tick → canary rolled back, remote untouched."""
+
+    def test_unknown_verb_rolls_back_canary(self, tmp_path: Path) -> None:
+        """When a scheduler tick has an unknown verb, the canary must
+        be rolled back and remote hosts untouched."""
+        project = _make_fake_project(tmp_path)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        # Scheduler log with an unknown verb
+        scheduler_log = tmp_path / "scheduler.log"
+        _write_scheduler_log(scheduler_log, [
+            ("2026-10-06 10:00:00", "100", "UNKNOWN_ACTION something"),
+        ])
+
+        # Setup scheduler pid file
+        pid_dir = tmp_path / "data" / "runtime"
+        pid_file, pid = _write_scheduler_pid_for_cmd(
+            pid_dir, tmp_path / "releases" / "v0.0.2" / "scheduler"
+        )
+
+        clock = FakeClock(start=1000.0)
+        sleeper = FakeSleeper(clock)
+
+        ssh_calls = []
+
+        def _canary_succeeds(proj, tag, data_dir, **kwargs):
+            return {"tag": tag, "deployed": True, "exit_code": 0, "bounce": {"exit": 1}}
+
+        def _ssh_should_not_run(proj, tag, data_dir, **kwargs):
+            ssh_calls.append(kwargs.get("host", "unknown"))
+            return {"tag": tag, "deployed": True, "exit_code": 0}
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        result = release_train._deploy_all_hosts(
+            project, "v0.0.2", data_dir,
+            hosts=["chad-mbp", "rezmac"],
+            local_hosts=["chad-mbp"],
+            deploy_fn=_canary_succeeds,
+            ssh_deploy_fn=_ssh_should_not_run,
+            canary_window_sec=720.0,
+            scheduler_log=scheduler_log,
+            scheduler_pid_file=pid_file,
+            canary_clock=clock.monotonic,
+            canary_sleeper=sleeper.sleep,
+        )
+
+        assert len(ssh_calls) == 0, "Remote host must NOT be called with unknown verb"
+        assert "rezmac" in result.get("untouched", []), "Remote host must be untouched"
+        canary_result = result["hosts"]["chad-mbp"]
+        assert canary_result.get("reason", "").startswith("canary-window:"), (
+            f"Canary reason must start with 'canary-window:', "
+            f"got: {canary_result.get('reason')!r}"
+        )
+
+
+@pytest.mark.xfail(strict=True, reason="canary window not built")
+class TestCanaryWindowDeadPid:
+    """AC-2: dead scheduler pid → canary rolled back, remote untouched."""
+
+    def test_dead_pid_rolls_back_canary(self, tmp_path: Path) -> None:
+        """When the scheduler pid file names a dead process, the canary
+        must be rolled back and remote hosts untouched."""
+        project = _make_fake_project(tmp_path)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        # Scheduler log with a clean tick (but pid will be dead)
+        scheduler_log = tmp_path / "scheduler.log"
+        _write_scheduler_log(scheduler_log, [
+            ("2026-10-06 10:00:00", "100", "idle"),
+        ])
+
+        # Write a dead pid (pid 99999999 is unlikely to be alive)
+        pid_dir = tmp_path / "data" / "runtime"
+        pid_dir.mkdir(parents=True, exist_ok=True)
+        pid_file = pid_dir / "scheduler.pid"
+        pid_file.write_text("99999999")
+
+        clock = FakeClock(start=1000.0)
+        sleeper = FakeSleeper(clock)
+
+        ssh_calls = []
+
+        def _canary_succeeds(proj, tag, data_dir, **kwargs):
+            return {"tag": tag, "deployed": True, "exit_code": 0, "bounce": {"exit": 1}}
+
+        def _ssh_should_not_run(proj, tag, data_dir, **kwargs):
+            ssh_calls.append(kwargs.get("host", "unknown"))
+            return {"tag": tag, "deployed": True, "exit_code": 0}
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        result = release_train._deploy_all_hosts(
+            project, "v0.0.2", data_dir,
+            hosts=["chad-mbp", "rezmac"],
+            local_hosts=["chad-mbp"],
+            deploy_fn=_canary_succeeds,
+            ssh_deploy_fn=_ssh_should_not_run,
+            canary_window_sec=720.0,
+            scheduler_log=scheduler_log,
+            scheduler_pid_file=pid_file,
+            canary_clock=clock.monotonic,
+            canary_sleeper=sleeper.sleep,
+        )
+
+        assert len(ssh_calls) == 0, "Remote host must NOT be called with dead pid"
+        assert "rezmac" in result.get("untouched", []), "Remote host must be untouched"
+        canary_result = result["hosts"]["chad-mbp"]
+        assert canary_result.get("reason", "").startswith("canary-window:"), (
+            f"Canary reason must start with 'canary-window:', "
+            f"got: {canary_result.get('reason')!r}"
+        )
+
+
+@pytest.mark.xfail(strict=True, reason="canary window not built")
+class TestCanaryWindowOldTagPid:
+    """AC-2: pid command line lacks the new tag → canary rolled back."""
+
+    def test_old_tag_pid_rolls_back_canary(self, tmp_path: Path) -> None:
+        """When the scheduler pid's command line mentions the old release
+        (not the new one), the canary must be rolled back."""
+        project = _make_fake_project(tmp_path)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        # Scheduler log with a clean tick (but pid points to old release)
+        scheduler_log = tmp_path / "scheduler.log"
+        _write_scheduler_log(scheduler_log, [
+            ("2026-10-06 10:00:00", "100", "idle"),
+        ])
+
+        # Setup scheduler pid file pointing to v0.0.1 (old release)
+        pid_dir = tmp_path / "data" / "runtime"
+        pid_file, pid = _write_scheduler_pid_for_cmd(
+            pid_dir, tmp_path / "releases" / "v0.0.1" / "scheduler"
+        )
+
+        clock = FakeClock(start=1000.0)
+        sleeper = FakeSleeper(clock)
+
+        ssh_calls = []
+
+        def _canary_succeeds(proj, tag, data_dir, **kwargs):
+            return {"tag": tag, "deployed": True, "exit_code": 0, "bounce": {"exit": 1}}
+
+        def _ssh_should_not_run(proj, tag, data_dir, **kwargs):
+            ssh_calls.append(kwargs.get("host", "unknown"))
+            return {"tag": tag, "deployed": True, "exit_code": 0}
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        result = release_train._deploy_all_hosts(
+            project, "v0.0.2", data_dir,
+            hosts=["chad-mbp", "rezmac"],
+            local_hosts=["chad-mbp"],
+            deploy_fn=_canary_succeeds,
+            ssh_deploy_fn=_ssh_should_not_run,
+            canary_window_sec=720.0,
+            scheduler_log=scheduler_log,
+            scheduler_pid_file=pid_file,
+            canary_clock=clock.monotonic,
+            canary_sleeper=sleeper.sleep,
+        )
+
+        assert len(ssh_calls) == 0, "Remote host must NOT be called with old tag pid"
+        assert "rezmac" in result.get("untouched", []), "Remote host must be untouched"
+        canary_result = result["hosts"]["chad-mbp"]
+        assert canary_result.get("reason", "").startswith("canary-window:"), (
+            f"Canary reason must start with 'canary-window:', "
+            f"got: {canary_result.get('reason')!r}"
+        )
+
+
+@pytest.mark.xfail(strict=True, reason="canary window not built")
+class TestCanaryWindowInjection:
+    """AC-4: all waits use injected clock/sleeper/log/pid; tests fast."""
+
+    def test_injected_clock_and_sleeper_are_used(self, tmp_path: Path) -> None:
+        """The canary window must use the injected clock and sleeper,
+        not real time.sleep or time.monotonic."""
+        project = _make_fake_project(tmp_path)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        # Empty log — will timeout
+        scheduler_log = tmp_path / "scheduler.log"
+        scheduler_log.write_text("", encoding="utf-8")
+
+        pid_dir = tmp_path / "data" / "runtime"
+        pid_file, pid = _write_scheduler_pid_for_cmd(
+            pid_dir, tmp_path / "releases" / "v0.0.2" / "scheduler"
+        )
+
+        clock = FakeClock(start=1000.0)
+        sleeper = FakeSleeper(clock)
+
+        def _canary_succeeds(proj, tag, data_dir, **kwargs):
+            return {"tag": tag, "deployed": True, "exit_code": 0, "bounce": {"exit": 1}}
+
+        def _ssh_noop(proj, tag, data_dir, **kwargs):
+            return {"tag": tag, "deployed": True, "exit_code": 0}
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        result = release_train._deploy_all_hosts(
+            project, "v0.0.2", data_dir,
+            hosts=["chad-mbp", "rezmac"],
+            local_hosts=["chad-mbp"],
+            deploy_fn=_canary_succeeds,
+            ssh_deploy_fn=_ssh_noop,
+            canary_window_sec=720.0,
+            scheduler_log=scheduler_log,
+            scheduler_pid_file=pid_file,
+            canary_clock=clock.monotonic,
+            canary_sleeper=sleeper.sleep,
+        )
+
+        # Sleeper must have been called (the window waited)
+        assert len(sleeper.calls) > 0, "Injected sleeper must have been called"
+        # Clock must have advanced by the window duration
+        assert clock.monotonic() >= 1000.0 + 720.0, (
+            f"Clock must advance by CANARY_WINDOW_SEC (720s), "
+            f"now at {clock.monotonic()}"
+        )
+
+
 # ── Cleanup ─────────────────────────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
