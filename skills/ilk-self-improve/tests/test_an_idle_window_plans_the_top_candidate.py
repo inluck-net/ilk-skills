@@ -1017,12 +1017,16 @@ class TestAC6:
         backlog_dir.mkdir(parents=True, exist_ok=True)
         _save_candidates(backlog_dir, [_make_candidate()])
 
-        # Create plans dir with a batch that has kernel scope_path
+        # Stage a batch with a kernel scope_path OUTSIDE the plans dir, so
+        # the stub's copy is what makes it new (a pre-seeded plans dir only
+        # passed through the removed fallback to pre-existing masters).
         plans_dir = data_root / "plans"
         plans_dir.mkdir(parents=True, exist_ok=True)
-        _copy_fixture_batch(plans_dir)
+        staged = Path(tmp_path) / "staged-batch"
+        staged.mkdir()
+        _copy_fixture_batch(staged)
         # Modify the feature sub-plan to have a kernel scope_path
-        feature = plans_dir / "2026-10-03-fixture-feature.md"
+        feature = staged / "2026-10-03-fixture-feature.md"
         text = feature.read_text(encoding="utf-8")
         text = text.replace(
             '- "skills/ilk-feedback/scripts/helper.py"',
@@ -1040,7 +1044,7 @@ class TestAC6:
             f"#!/usr/bin/env python3\n"
             f"import shutil, pathlib, os\n"
             f"print('{{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"claude-opus-test\"}}')\n"
-            f"src = pathlib.Path('{plans_dir}')\n"
+            f"src = pathlib.Path('{staged}')\n"
             f"dst = pathlib.Path(os.environ['ILK_PLANS_DIR'])\n"
             f"for f in src.glob('*.md'):\n"
             f"    shutil.copy2(f, dst / f.name)\n"
@@ -1293,6 +1297,65 @@ class TestAC8:
         cand = [c for c in candidates if c["id"] == "sig-abc123"][0]
         assert cand["status"] == "open"
         assert cand["relations"]["autoplan_attempts"] == 1
+
+    def test_stale_with_existing_masters_touches_none(self, tmp_path):
+        """A stale plan never re-drafts or re-marks a pre-existing master.
+
+        2026-10-07 04:21: run autoplan-1791317991 wrote no master and the
+        fallback treated all 122 existing masters as new, forcing each to
+        draft and marking the first as auto-planned.
+        """
+        mod = _load_module()
+        data_root = _build_fake_data_root(tmp_path)
+        toolkit = _build_fake_toolkit(tmp_path, data_root)
+        manager_home = _build_fake_manager_home(tmp_path)
+
+        project_dir = data_root / "projects" / "test-project"
+        (project_dir / "runtime" / "launcher").mkdir(parents=True, exist_ok=True)
+        (project_dir / "runtime" / "launcher" / "last-launch.json").write_text(
+            json.dumps({"project_path": str(toolkit)}) + "\n",
+            encoding="utf-8",
+        )
+
+        backlog_dir = data_root / "ilk-skills-improvements"
+        backlog_dir.mkdir(parents=True, exist_ok=True)
+        _save_candidates(backlog_dir, [_make_candidate()])
+
+        plans_dir = data_root / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
+        shipped = plans_dir / "MASTER-2026-01-01-old-execution-plan.md"
+        shipped.write_text("---\nstatus: shipped\n---\n\n# old\n", encoding="utf-8")
+        paused = plans_dir / "MASTER-2026-01-02-held-execution-plan.md"
+        paused.write_text("---\nstatus: paused\n---\n\n# held\n", encoding="utf-8")
+        before = {p.name: p.read_bytes() for p in (shipped, paused)}
+
+        stub_claude = _make_stub_claude(tmp_path, model="claude-opus-test",
+                                         write_nothing=True,
+                                         stale_reason="fixed in abc123")
+        marker = tmp_path / "claude-marker.txt"
+        lint, preflight = _make_stub_lint_preflight(tmp_path)
+
+        result = mod.plan(
+            candidate_id="sig-abc123",
+            project_key="test-project",
+            run_id="run-001",
+            data_root=data_root,
+            toolkit_repo=str(toolkit),
+            manager_home=str(manager_home),
+            claude_cmd=[sys.executable, str(stub_claude)],
+            lint_cmd=[sys.executable, str(lint)],
+            preflight_cmd=[sys.executable, str(preflight)],
+            env_overrides={
+                "ILK_PLANS_DIR": str(plans_dir),
+                "ILK_REPO_DIR": str(toolkit),
+                "ILK_MARKER": str(marker)},
+        )
+
+        assert result["decision"] == "refused", result
+        assert result["reason"] == "stale fixed in abc123", result
+        for p in (shipped, paused):
+            assert p.read_bytes() == before[p.name], p.name
+        assert not _read_audit_rows(data_root, "autoplan-drafted")
 
 
 # ── AC-9: draft-only dry period ───────────────────────────────────────────

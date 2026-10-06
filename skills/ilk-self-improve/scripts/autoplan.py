@@ -810,16 +810,8 @@ def plan(
         after_names = {p.name for p in plans_dir.glob("*.md")}
         new_names = after_names - before_names
         new_masters = [n for n in new_names if n.startswith("MASTER-")]
-
-        # If no new masters, check for any existing masters in the plans dir
-        # (the stub may have written to the same dir the snapshot read from)
-        if not new_masters:
-            existing_masters = [
-                p.name for p in plans_dir.glob("MASTER-*.md")
-                if p.name not in before_names or True  # include pre-existing
-            ]
-            if existing_masters:
-                new_masters = existing_masters
+        # Never fall back to pre-existing masters: on 2026-10-07 that fallback
+        # forced all 122 existing masters to draft after a stale plan.
 
         # Also check for AUTOPLAN: stale line
         has_stale_line = "AUTOPLAN: stale" in stdout
