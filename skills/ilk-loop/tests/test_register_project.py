@@ -254,16 +254,14 @@ class TestAC6_ExplicitPath:
 # ── AC-7: default registry path (skill-root, not per-project) ───────
 
 class TestAC7_DefaultRegistryPath:
-    """_default_registry_path returns <skill-root>/ilk-launcher/projects.json,
-    the canonical registry read by scheduler and launcher."""
+    """_default_registry_path returns ilk_data_root() / 'projects.json',
+    the canonical writable registry in the data home."""
 
-    def test_default_path_is_skill_root(self, tmp_path: Path, monkeypatch):
-        """Without projects_json arg, register_project writes to skill-root path."""
-        # Set up a fake skill root
-        fake_skill_root = tmp_path / "skill-root"
-        launcher_dir = fake_skill_root / "ilk-launcher"
-        launcher_dir.mkdir(parents=True)
-        canonical_reg = launcher_dir / "projects.json"
+    def test_default_path_is_data_home(self, tmp_path: Path, monkeypatch):
+        """Without projects_json arg, register_project writes to data-home path."""
+        data_home = tmp_path / "data-home"
+        data_home.mkdir(parents=True)
+        canonical_reg = data_home / "projects.json"
 
         # Pre-populate with existing entries (simulating a real registry)
         existing = {
@@ -275,21 +273,21 @@ class TestAC7_DefaultRegistryPath:
         }
         canonical_reg.write_text(json.dumps(existing), encoding="utf-8")
 
-        # Monkeypatch skill_root to return our fake path
+        # Monkeypatch ilk_data_root to return our fake data-home
         import ilk_paths
-        monkeypatch.setattr(ilk_paths, "skill_root", lambda: fake_skill_root)
+        monkeypatch.setattr(ilk_paths, "ilk_data_root", lambda: data_home)
 
         # Create a real directory for the repo
         repo = tmp_path / "myproject"
         repo.mkdir()
 
-        # Call register_project WITHOUT projects_json — should use canonical path
+        # Call register_project WITHOUT projects_json — should use data-home path
         result = register_project(str(repo))
 
         assert result["added"] is True
         assert result["total"] == 3  # 2 existing + 1 new
 
-        # Verify it wrote to the canonical path (not a per-project phantom)
+        # Verify it wrote to the data-home path
         data = json.loads(canonical_reg.read_text(encoding="utf-8"))
         names = [p["name"] for p in data["projects"]]
         assert "proj-a" in names
@@ -297,11 +295,10 @@ class TestAC7_DefaultRegistryPath:
         assert "myproject" in names
 
     def test_default_path_idempotent(self, tmp_path: Path, monkeypatch):
-        """Registering a path already in the canonical registry returns added=False."""
-        fake_skill_root = tmp_path / "skill-root"
-        launcher_dir = fake_skill_root / "ilk-launcher"
-        launcher_dir.mkdir(parents=True)
-        canonical_reg = launcher_dir / "projects.json"
+        """Registering a path already in the data-home registry returns added=False."""
+        data_home = tmp_path / "data-home"
+        data_home.mkdir(parents=True)
+        canonical_reg = data_home / "projects.json"
 
         repo = tmp_path / "existing-proj"
         repo.mkdir()
@@ -313,7 +310,7 @@ class TestAC7_DefaultRegistryPath:
         canonical_reg.write_text(json.dumps(existing), encoding="utf-8")
 
         import ilk_paths
-        monkeypatch.setattr(ilk_paths, "skill_root", lambda: fake_skill_root)
+        monkeypatch.setattr(ilk_paths, "ilk_data_root", lambda: data_home)
 
         result = register_project(str(repo))
 
@@ -375,6 +372,9 @@ import unittest.mock
 def data_home_env(tmp_path, monkeypatch):
     """Set up isolated data-home and legacy skill-root paths.
 
+    After the fix, _default_registry_path() returns data_home / "projects.json".
+    The legacy file lives at legacy_path for migration testing.
+
     Returns (data_home, legacy_path) where:
       data_home = tmp_path / "data-home"
       legacy_path = tmp_path / "fake-skill-root" / "ilk-launcher" / "projects.json"
@@ -383,22 +383,17 @@ def data_home_env(tmp_path, monkeypatch):
     fake_skill_root = tmp_path / "fake-skill-root"
     legacy_path = fake_skill_root / "ilk-launcher" / "projects.json"
 
-    # Patch _default_registry_path to point to the legacy path
+    # Patch _default_registry_path to return data-home path (the fix)
     monkeypatch.setattr(
-        "register_project._default_registry_path", lambda: legacy_path
+        "register_project._default_registry_path",
+        lambda: data_home / "projects.json",
+    )
+    # Patch _legacy_registry_path to return our fake legacy path
+    monkeypatch.setattr(
+        "register_project._legacy_registry_path", lambda: legacy_path
     )
 
-    # Patch ilk_paths.ilk_data_root to return our data-home
-    import ilk_paths
-    monkeypatch.setattr(ilk_paths, "ilk_data_root", lambda: data_home)
-
     return data_home, legacy_path
-
-
-@pytest.fixture()
-def data_home(data_home_env):
-    """Just the data-home path."""
-    return data_home_env[0]
 
 
 # ── DR-1: _default_registry_path returns data-home ────────────────────
@@ -424,12 +419,12 @@ class TestDR1_DefaultRegistryPathIsDataHome:
 class TestDR2_ReadOnlySkillTree:
     """Registration succeeds when the installed release tree is read-only."""
 
-    def test_readonly_skill_root_still_registers(
-        self, tmp_path, data_home_env
-    ):
+    def test_readonly_skill_root_still_registers(self, tmp_path, monkeypatch):
         """When skill_root is read-only, register_project must succeed by
         writing to the data-home registry."""
-        data_home, legacy_path = data_home_env
+        data_home = tmp_path / "data-home"
+        fake_skill_root = tmp_path / "fake-skill-root"
+        legacy_path = fake_skill_root / "ilk-launcher" / "projects.json"
 
         # Create a read-only skill-root directory
         legacy_path.parent.mkdir(parents=True)
@@ -438,6 +433,17 @@ class TestDR2_ReadOnlySkillTree:
             encoding="utf-8",
         )
         legacy_path.parent.chmod(0o444)
+
+        # Patch _default_registry_path to return data-home (the fix)
+        monkeypatch.setattr(
+            "register_project._default_registry_path",
+            lambda: data_home / "projects.json",
+        )
+        # Patch _legacy_registry_path to return our fake legacy
+        monkeypatch.setattr(
+            "register_project._legacy_registry_path",
+            lambda: legacy_path,
+        )
 
         try:
             repo = tmp_path / "myproject"
@@ -470,6 +476,7 @@ class TestDR3_LegacyImport:
         """Legacy skill-root entries are imported on first registration."""
         data_home, legacy_path = data_home_env
 
+        # Legacy has entries; data-home is absent (migration scenario)
         legacy_path.parent.mkdir(parents=True)
         legacy_path.write_text(
             json.dumps({
@@ -507,7 +514,8 @@ class TestDR4_DataHomeWins:
     def test_data_home_not_overwritten_by_legacy(
         self, tmp_path, data_home_env
     ):
-        """Legacy import must not drop or overwrite existing data-home entries."""
+        """When data-home registry already exists, legacy entries are NOT
+        imported. Only the new project is added to the existing data-home."""
         data_home, legacy_path = data_home_env
 
         # Data-home already has an entry
@@ -520,7 +528,7 @@ class TestDR4_DataHomeWins:
             encoding="utf-8",
         )
 
-        # Legacy has different entries
+        # Legacy has different entries — must NOT be imported
         legacy_path.parent.mkdir(parents=True)
         legacy_path.write_text(
             json.dumps({
@@ -551,17 +559,18 @@ class TestDR4_DataHomeWins:
 # ── DR-5: dedup on legacy merge ───────────────────────────────────────
 
 class TestDR5_DedupOnLegacyMerge:
-    """Legacy entries that duplicate data-home entries are not doubled."""
+    """Legacy entries that duplicate the registered path are not doubled."""
 
     def test_dedup_on_legacy_import(self, tmp_path, data_home_env):
-        """Legacy entries with the same normalized path as data-home entries
-        are merged, not duplicated."""
+        """When a legacy entry has the same path as the project being
+        registered, it is imported and dedup triggers — no duplicate entry."""
         data_home, legacy_path = data_home_env
 
         repo = tmp_path / "shared-proj"
         repo.mkdir()
         norm_path = str(repo.resolve())
 
+        # Legacy has an entry with the same path as the project being registered
         legacy_path.parent.mkdir(parents=True)
         legacy_path.write_text(
             json.dumps({
@@ -573,13 +582,13 @@ class TestDR5_DedupOnLegacyMerge:
 
         result = register_project(str(repo))
 
-        assert result["added"] is True
+        # Legacy entry was imported; dedup finds the same path → added=False
+        assert result["added"] is False
+        assert result["total"] == 1
+        assert "already registered" in result.get("reason", "")
 
-        data = json.loads(
-            (data_home / "projects.json").read_text(encoding="utf-8")
-        )
-        paths = [_normalize_path(p["path"]) for p in data["projects"]]
-        assert paths.count(_normalize_path(norm_path)) == 1
+        # No file was written (dedup returned early before write)
+        assert not (data_home / "projects.json").exists()
 
 
 # ── DR-6: atomic output ───────────────────────────────────────────────

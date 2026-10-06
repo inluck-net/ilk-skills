@@ -38,19 +38,58 @@ def _normalize_path(p: str | Path) -> str:
 def _default_registry_path() -> Path:
     """Resolve the default projects.json path.
 
-    The canonical registry is ``<skill-root>/ilk-launcher/projects.json`` —
-    the same file read by ``status_all.py`` (launcher) and
-    ``scheduler_scan.resolve_repo_path``.  A per-project
-    ``external_launcher_dir(key)/projects.json`` exists but nothing reads
-    it; using it as the default was a silent no-op (auto-register wrote to
-    a phantom file the scheduler never saw).
+    The canonical registry is ``<ilk_data_root>/projects.json`` — the
+    writable data home, not the read-only installed release tree.
+
+    Legacy fallback: if the canonical file is absent but a legacy
+    ``<skill-root>/ilk-launcher/projects.json`` exists, callers should
+    import its entries once (see ``_import_legacy_if_needed``).
     """
-    # Import ilk_paths from sibling directory
     here = Path(__file__).resolve().parent
     if str(here) not in sys.path:
         sys.path.insert(0, str(here))
-    from ilk_paths import skill_root  # type: ignore
-    return skill_root() / "ilk-launcher" / "projects.json"
+    from ilk_paths import ilk_data_root  # type: ignore
+    return ilk_data_root() / "projects.json"
+
+
+def _legacy_registry_path() -> Path | None:
+    """Return the legacy skill-root registry path, or None if unresolvable."""
+    here = Path(__file__).resolve().parent
+    if str(here) not in sys.path:
+        sys.path.insert(0, str(here))
+    try:
+        from ilk_paths import skill_root  # type: ignore
+        return skill_root() / "ilk-launcher" / "projects.json"
+    except FileNotFoundError:
+        return None
+
+
+def _import_legacy_if_needed(reg: Path) -> list[dict]:
+    """Import legacy entries when the canonical registry is absent.
+
+    If *reg* already exists, returns an empty list (no migration needed).
+    If it doesn't, attempts to read the legacy skill-root registry and
+    returns its ``projects`` list (may be empty if legacy is also absent).
+    """
+    if reg.is_file():
+        return []
+    try:
+        legacy = _legacy_registry_path()
+    except (FileNotFoundError, OSError):
+        return []
+    if legacy is None:
+        return []
+    try:
+        if not legacy.is_file():
+            return []
+    except OSError:
+        # Permission denied or other OS error on read-only release tree
+        return []
+    try:
+        data = json.loads(legacy.read_text(encoding="utf-8"))
+        return list(data.get("projects", []))
+    except (json.JSONDecodeError, OSError):
+        return []
 
 
 def register_project(
@@ -90,7 +129,7 @@ def register_project(
     # Resolve registry path
     reg = Path(projects_json) if projects_json else _default_registry_path()
 
-    # Load existing registry (or start fresh)
+    # Load existing registry (or start fresh, with legacy migration)
     entries: list[dict] = []
     if reg.is_file():
         try:
@@ -98,6 +137,9 @@ def register_project(
             entries = list(data.get("projects", []))
         except (json.JSONDecodeError, OSError):
             entries = []
+    else:
+        # Canonical file absent — try importing legacy entries once
+        entries = _import_legacy_if_needed(reg)
 
     # Dedup by normalized path
     for e in entries:
