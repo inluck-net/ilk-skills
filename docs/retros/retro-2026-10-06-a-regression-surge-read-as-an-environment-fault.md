@@ -102,3 +102,31 @@ fixtures the PR is on `fix/<n>`, not this fleet's `resolver-<N>`.
 - A phase that reads `agent` for an hour with no commit is a stall in
   progress, even when the log shows activity. Look at what the gate handed
   the worker.
+
+## Addendum: the re-dispatch was refused by a lock nobody held
+
+| time | event | evidence |
+|---|---|---|
+| 23:13:07 | The scheduler re-dispatches the unparked batch. | scheduler.log |
+| 23:13:18 | The new runner exits at once: `ilk_run_lock: another runner holds this lock (pid=69752)`. 69752 had exited at 23:09:54. | launcher log `…-20261006-231318.log` |
+| 23:14 | `lsof run.lock`: the only holder is `suite_ledger.py measure` (pid 48934, ppid 1), on **fd 3u**. That is the background measurement the runner spawned after the 23:08 commit. | lsof |
+| 23:15 | The owner kills its process group; the lock has 0 holders and no ledger processes are left. | lsof / ps |
+
+**Mechanism.** The runner re-execs under `ilk_run_lock.py`, which holds an
+exclusive flock on `run.lock` (`run_ilk_loop_claude.sh:5060-5085`).
+`suite_ledger._spawn_detached` double-forks and `setsid`s; since 1b6e5c4e
+(earlier the same day) it redirects fds 0-2, but every other fd stayed
+inherited. The measurement therefore kept the flock for its whole full-suite
+run, and every dispatch in that window refused. The same shape probably
+explains ilk-skills' instant `another runner holds this lock` exit at 19:54
+(not re-measured).
+
+**Fix: 71ea2b8b** (ilk-skills main, unreleased). The grandchild runs
+`os.closerange(3, SC_OPEN_MAX)` before exec. The red-first test holds a
+flocked, inheritable fd across `spawn()` and then takes the lock from a second
+process while the measurement still runs. The class guard now flags any
+`setsid` child that does not close fds >= 3; it flags exactly the pre-fix
+`_spawn_detached` and nothing else in the repo.
+
+**Rule.** Detaching a child means closing everything it does not need, not
+just stdio. A lock is an fd.
