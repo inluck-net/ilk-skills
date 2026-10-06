@@ -434,6 +434,7 @@ def _gate_snapshot_exists(world: dict) -> bool:
 # ── AC-1 (xfail): worker deletes gate ⇒ restored, ship_integrity_violation ──
 
 @_NEEDS_GTIMEOUT
+@pytest.mark.timeout(90)  # measured 17.07-17.15 s kills under -n 8 (2026-10-06)
 def test_worker_deleting_gate_is_restored_and_parked(tmp_path: Path) -> None:
     """A stub worker deletes step 1's gate from its sub-plan ⇒ the driver
     still runs that gate, the file is restored, and the run exits
@@ -466,6 +467,7 @@ def test_worker_deleting_gate_is_restored_and_parked(tmp_path: Path) -> None:
 # ── AC-2 (xfail): worker edits gate timeout ⇒ restored, ship_integrity ─────
 
 @_NEEDS_GTIMEOUT
+@pytest.mark.timeout(90)  # measured 17.07-17.15 s kills under -n 8 (2026-10-06)
 def test_worker_editing_gate_timeout_is_restored_and_parked(tmp_path: Path) -> None:
     """A stub worker lowers step 1's gate timeout ⇒ the driver restores it
     and exits ``ship_integrity_violation``.
@@ -498,6 +500,7 @@ def test_worker_editing_gate_timeout_is_restored_and_parked(tmp_path: Path) -> N
 # ── AC-3 (control): worker edits Findings only ⇒ no violation ──────────────
 
 @_NEEDS_GTIMEOUT
+@pytest.mark.timeout(90)  # measured 17.07-17.15 s kills under -n 8 (2026-10-06)
 def test_worker_editing_findings_only_no_violation(tmp_path: Path) -> None:
     """A stub worker edits only ``## Findings`` ⇒ no ship_integrity_violation.
 

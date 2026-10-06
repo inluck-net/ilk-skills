@@ -179,6 +179,7 @@ def test_ac2_no_writes_when_empty_project_path(tmp_path: Path) -> None:
 
 # ── AC-3: the known writer (test_ship_audit.py) writes nothing live ──────────
 
+@pytest.mark.timeout(90)  # measured 17.07-17.15 s kills under -n 8 (2026-10-06)
 def test_ac3_known_writer_writes_no_live_rows(tmp_path: Path) -> None:
     """Run test_ship_audit.py as a subprocess with HOME and ILK_DATA_HOME
     under tmp_path.  Afterwards, no ship-reverts.jsonl under the REAL data
@@ -234,7 +235,6 @@ def test_ac3_known_writer_writes_no_live_rows(tmp_path: Path) -> None:
 
 # ── Pin: runner e2e tests carry a load-sized timeout ────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="timeout markers not added yet")
 def test_runner_e2e_tests_carry_a_load_sized_timeout() -> None:
     """Pin: the seven runner-driving e2e tests must carry @pytest.mark.timeout(90).
 

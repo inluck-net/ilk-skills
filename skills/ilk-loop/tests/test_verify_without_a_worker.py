@@ -228,6 +228,7 @@ def _read_subplan_status(world: dict) -> tuple[int, str]:
 # ── AC-1 (xfail): batch_verification green ⇒ shipped by the driver ─────────
 
 @_NEEDS_GTIMEOUT
+@pytest.mark.timeout(90)  # measured 17.07-17.15 s kills under -n 8 (2026-10-06)
 def test_batch_verification_green_ships_without_worker(tmp_path: Path) -> None:
     """A ``batch_verification: true`` sub-plan whose gates are all green is
     shipped by the driver with zero agent invocations.
@@ -290,6 +291,7 @@ def test_batch_verification_green_ships_without_worker(tmp_path: Path) -> None:
 # ── AC-2: no batch_verification ⇒ pointer advances, not shipped ────────────
 
 @_NEEDS_GTIMEOUT
+@pytest.mark.timeout(90)  # measured 17.07-17.15 s kills under -n 8 (2026-10-06)
 def test_no_batch_verification_final_gate_first_step_is_shipped_by_the_driver(tmp_path: Path) -> None:
     """Without ``batch_verification: true``, a green gate-first FINAL step is
     still shipped by the driver.
@@ -321,6 +323,7 @@ def test_no_batch_verification_final_gate_first_step_is_shipped_by_the_driver(tm
 # ── AC-3: red step 1 gate ⇒ falls through to agent ────────────────────────
 
 @_NEEDS_GTIMEOUT
+@pytest.mark.timeout(90)  # measured 17.07-17.15 s kills under -n 8 (2026-10-06)
 def test_red_step1_gate_falls_through_to_agent(tmp_path: Path) -> None:
     """When step 1's gate is red, the driver falls through to the agent
     (exactly 1 invocation) and does not ship.
