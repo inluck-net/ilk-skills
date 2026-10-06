@@ -1237,6 +1237,159 @@ class TestMultiHostResultTruth:
         )
 
 
+# ── Canary gate: xfail pins for canary-first stop-on-failure ─────────────
+#
+# AC-1  canary deploy returns rollback → ssh_deploy_fn never called;
+#       rezmac untouched with canary-failed reason.
+# AC-1v canary adapter exception → same behaviour (untouched, reason names it).
+# AC-3  canary deployed → remote called once (no canary gate, normal path).
+
+
+@pytest.mark.xfail(strict=True, reason="canary gate not built")
+class TestCanaryRollbackStopsFleet:
+    """AC-1: canary (hosts[0]) returns rolled_back → no remote deploy."""
+
+    def test_canary_rollback_prevents_remote_deploy(self, tmp_path: Path) -> None:
+        """When the canary host's deploy returns rolled_back, ssh_deploy_fn
+        must never be called and the remote host must be untouched with
+        reason starting 'canary-failed:'."""
+        project = _make_fake_project(tmp_path)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        ssh_calls = []
+
+        def _canary_rollback(proj, tag, data_dir, **kwargs):
+            return {
+                "tag": tag,
+                "deployed": False,
+                "rolled_back_to": "v0.0.1",
+                "rollback_smoke": "ok",
+                "reason": "smoke failed: tag-mismatch",
+                "exit_code": 5,
+            }
+
+        def _ssh_should_not_run(proj, tag, data_dir, **kwargs):
+            ssh_calls.append(kwargs)
+            return {"tag": tag, "deployed": True, "exit_code": 0}
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        result = release_train._deploy_all_hosts(
+            project, "v0.0.2", data_dir,
+            hosts=["chad-mbp", "rezmac"],
+            local_hosts=["chad-mbp"],
+            deploy_fn=_canary_rollback,
+            ssh_deploy_fn=_ssh_should_not_run,
+        )
+
+        assert len(ssh_calls) == 0, (
+            f"ssh_deploy_fn must NOT be called when canary failed, "
+            f"but was called {len(ssh_calls)} time(s)"
+        )
+        assert "rezmac" in result["untouched"]
+        rezmac_result = result["hosts"]["rezmac"]
+        assert rezmac_result.get("reason", "").startswith("canary-failed:"), (
+            f"Remote host reason must start with 'canary-failed:', "
+            f"got: {rezmac_result.get('reason')!r}"
+        )
+
+
+@pytest.mark.xfail(strict=True, reason="canary gate not built")
+class TestCanaryAdapterExceptionStopsFleet:
+    """AC-1 variant: canary deploy raises SystemExit → no remote deploy."""
+
+    def test_canary_exception_prevents_remote_deploy(self, tmp_path: Path) -> None:
+        """When the canary host's deploy raises an exception, ssh_deploy_fn
+        must never be called and the remote host must be untouched with
+        reason starting 'canary-failed:'."""
+        project = _make_fake_project(tmp_path)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        ssh_calls = []
+
+        def _canary_explodes(proj, tag, data_dir, **kwargs):
+            raise SystemExit(4)
+
+        def _ssh_should_not_run(proj, tag, data_dir, **kwargs):
+            ssh_calls.append(kwargs)
+            return {"tag": tag, "deployed": True, "exit_code": 0}
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        result = release_train._deploy_all_hosts(
+            project, "v0.0.2", data_dir,
+            hosts=["chad-mbp", "rezmac"],
+            local_hosts=["chad-mbp"],
+            deploy_fn=_canary_explodes,
+            ssh_deploy_fn=_ssh_should_not_run,
+        )
+
+        assert len(ssh_calls) == 0, (
+            f"ssh_deploy_fn must NOT be called when canary failed, "
+            f"but was called {len(ssh_calls)} time(s)"
+        )
+        assert "rezmac" in result["untouched"]
+        rezmac_result = result["hosts"]["rezmac"]
+        assert rezmac_result.get("reason", "").startswith("canary-failed:"), (
+            f"Remote host reason must start with 'canary-failed:', "
+            f"got: {rezmac_result.get('reason')!r}"
+        )
+
+
+class TestCanaryDeployedAllowsRemote:
+    """AC-3: canary deploys → remote deploy proceeds normally.
+
+    This tests the existing baseline behaviour (no canary gate change):
+    when the canary succeeds, the remote host is called once.  Not xfail
+    because the current code already satisfies this contract."""
+
+    def test_canary_deployed_then_remote_called(self, tmp_path: Path) -> None:
+        """When the canary deploys successfully, ssh_deploy_fn must be
+        called exactly once for the remote host, and only AFTER the
+        canary's deploy_fn returned (ordering guarantee)."""
+        project = _make_fake_project(tmp_path)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        call_order = []
+
+        def _canary_succeeds(proj, tag, data_dir, **kwargs):
+            call_order.append("canary")
+            return {"tag": tag, "deployed": True, "exit_code": 0}
+
+        def _ssh_records(proj, tag, data_dir, **kwargs):
+            call_order.append(f"ssh:{kwargs.get('host', 'unknown')}")
+            return {"tag": tag, "deployed": True, "exit_code": 0, "host": kwargs.get("host")}
+
+        sys.path.insert(0, str(SHIP_SCRIPTS))
+        sys.path.insert(0, str(LOOP_SCRIPTS))
+        import release_train
+
+        result = release_train._deploy_all_hosts(
+            project, "v0.0.2", data_dir,
+            hosts=["chad-mbp", "rezmac"],
+            local_hosts=["chad-mbp"],
+            deploy_fn=_canary_succeeds,
+            ssh_deploy_fn=_ssh_records,
+        )
+
+        ssh_calls = [c for c in call_order if c.startswith("ssh:")]
+        assert len(ssh_calls) == 1, (
+            f"ssh_deploy_fn should be called exactly once, was called {len(ssh_calls)} time(s)"
+        )
+        assert "rezmac" in result["deployed"]
+        # Ordering: canary must deploy before any remote host
+        assert call_order == ["canary", "ssh:rezmac"], (
+            f"Expected canary then remote, got: {call_order}"
+        )
+
+
 # ── Step 0: xfail pins for canonical host resolution and SSH deploy ────────
 #
 # These pins assert the contracts that step 1 (resolve and thread one host
