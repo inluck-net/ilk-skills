@@ -54,3 +54,68 @@ def test_spawn_returns_while_the_measurement_still_runs(tmp_path: Path) -> None:
         time.sleep(0.1)
     assert marker.exists(), "the measurement itself must still run"
     subprocess.run(["pkill", "-f", f"touch {marker}"], check=False)
+
+
+# ── Class guard: no detached spawn inherits its caller's stdio ──────────────
+#
+# The 2026-10-06 hang was one instance of a class: a child started in a new
+# session outlives its caller and, with inherited fds, keeps the caller's
+# stdout pipe open (a `$(...)` reader never sees EOF). A sibling seen the same
+# day: autoplan's real-mode tick spawned with stdout=PIPE that nothing read.
+# These rules are checked over every tracked non-test .py file.
+
+import ast  # noqa: E402
+
+_REPO = Path(__file__).resolve().parents[3]
+_DRAIN = ("communicate", "wait", "_stream_output", "_read_init_event", "_kill_group",
+          "read", "readline")
+
+
+def _tracked_sources() -> list[Path]:
+    out = subprocess.run(["git", "ls-files", "*.py"], cwd=_REPO,
+                         capture_output=True, text=True, check=True).stdout.split()
+    return [_REPO / f for f in out if "/tests/" not in f and not f.startswith("tests/")]
+
+
+def _violations() -> list[str]:
+    bad: list[str] = []
+    for path in _tracked_sources():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        rel = path.relative_to(_REPO)
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            src = ast.get_source_segment(text, fn) or ""
+            for node in ast.walk(fn):
+                if not isinstance(node, ast.Call):
+                    continue
+                kws = {k.arg: k.value for k in node.keywords if k.arg}
+                sns = kws.get("start_new_session")
+                if isinstance(sns, ast.Constant) and sns.value is True:
+                    for stream in ("stdout", "stderr"):
+                        if stream not in kws:
+                            bad.append(f"{rel}:{node.lineno} {fn.name}: detached Popen inherits {stream}")
+                        elif (ast.unparse(kws[stream]).endswith("PIPE")
+                              and not any(f".{d}(" in src or f"{d}(" in src for d in _DRAIN)):
+                            bad.append(f"{rel}:{node.lineno} {fn.name}: detached Popen {stream}=PIPE never drained")
+                if isinstance(node.func, ast.Attribute) and node.func.attr == "setsid":
+                    if not ("dup2(" in src and ", 1)" in src and ", 2)" in src):
+                        bad.append(f"{rel}:{node.lineno} {fn.name}: setsid child keeps fds 1/2")
+    return bad
+
+
+def test_no_detached_spawn_inherits_or_strands_its_callers_stdio() -> None:
+    assert _violations() == []
+
+
+def test_the_guard_sees_the_original_defect(tmp_path: Path, monkeypatch) -> None:
+    # Positive control: the pre-fix _spawn_detached shape must be flagged.
+    bad_src = tmp_path / "bad.py"
+    bad_src.write_text("import os\ndef spawn():\n    os.setsid()\n    os.execvp('x', ['x'])\n")
+    monkeypatch.setattr(sys.modules[__name__], "_REPO", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "_tracked_sources", lambda: [bad_src])
+    assert any("setsid child keeps fds 1/2" in v for v in _violations())

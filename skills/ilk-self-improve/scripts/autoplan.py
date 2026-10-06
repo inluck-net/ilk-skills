@@ -566,8 +566,8 @@ def tick(
              "--candidate", selected["id"],
              "--project-key", project_key,
              "--run-id", run_id],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
     else:
