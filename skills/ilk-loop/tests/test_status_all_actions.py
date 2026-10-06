@@ -54,7 +54,10 @@ def _make_git_project(name: str) -> Path:
     subprocess.run(["git", "init", str(root)], capture_output=True, check=True,
                    encoding="utf-8", errors="replace")
     subprocess.run(["git", "-C", str(root), "commit", "--allow-empty", "-m", "init"],
-                   capture_output=True, check=True, encoding="utf-8", errors="replace")
+                   capture_output=True, check=True, encoding="utf-8", errors="replace",
+        # never climb into the enclosing repo if root/.git vanished (2026-10-06:
+        # a racing cleanup made this commit land in the real worktree)
+        env={**os.environ, "GIT_CEILING_DIRECTORIES": str(root.parent)})
     return root
 
 
