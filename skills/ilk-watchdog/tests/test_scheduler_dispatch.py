@@ -110,7 +110,9 @@ def _read_resolve_repo_path(
     """Import and call ``scheduler_scan.resolve_repo_path``.
 
     If *skill_root* is given, patches ``scheduler_scan._SKILL_ROOT`` so
-    the registry fallback reads from a temp location.
+    the registry fallback reads from a temp location.  Also isolates
+    ``ILK_DATA_HOME`` so ``ilk_data_root()`` doesn't find the real
+    data-home registry.
     """
     sys.path.insert(0, str(SCRIPTS_ILK_WATCHDOG))
     sys.path.insert(0, str(SCRIPTS_ILK_LOOP))
@@ -121,6 +123,10 @@ def _read_resolve_repo_path(
     # not from ILK_SKILL_HOME (which may point at a stale release extract
     # or claude-worker install in the ambient environment).
     os.environ["ILK_SKILL_HOME"] = str(REPO_ROOT / "skills")
+    # Isolate ILK_DATA_HOME so ilk_data_root() doesn't find the real
+    # registry — the test's temp skill_root is the intended source.
+    if skill_root is not None:
+        os.environ["ILK_DATA_HOME"] = str(skill_root / "fake-data-home")
     import scheduler_scan
     if skill_root is not None:
         scheduler_scan._SKILL_ROOT = skill_root

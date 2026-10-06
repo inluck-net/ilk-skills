@@ -262,6 +262,7 @@ class TestFalseOkDirtyTree:
         )
         assert set(_STATE_EXIT_CODES) == {
             "ok", "stale-daemon", "tag-mismatch", "dirty-tree", "unreachable",
+            "registry-missing", "registry-unreadable", "registry-project-missing",
         }, (
             "every documented state needs an explicit exit code; the .get() "
             "default hides a missing one as 'unreachable'"

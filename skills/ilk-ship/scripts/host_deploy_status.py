@@ -140,6 +140,8 @@ def resolve_host(
     ssh_program: str = "ssh",
     require_tag: str | None = None,
     tag_resolver: Callable[[str], str | None] | None = None,
+    require_registry: bool = False,
+    toolkit_project_key: str | None = None,
 ) -> str:
     """Resolve a single host's deploy status.
 
@@ -171,10 +173,21 @@ def resolve_host(
                      (fail closed).  Absent (default): behaviour unchanged.
         tag_resolver: Callable ``(sha) -> tag | None``.  Default uses
                       ``git tag --points-at``.  Injected by tests.
+        require_registry: If True, the host must have a readable canonical
+                          data-home registry that resolves the toolkit project.
+                          Failure returns 'registry-missing',
+                          'registry-unreadable', or 'registry-project-missing'
+                          instead of 'ok'.  Absent (default): behaviour
+                          unchanged.
+        toolkit_project_key: Project key to look up in the registry when
+                             *require_registry* is set.  Absent: skip
+                             project-resolution check (registry readable is
+                             sufficient).
 
     Returns:
         One of 'ok', 'stale-daemon', 'unreachable', 'tag-mismatch',
-        'dirty-tree'.
+        'dirty-tree', 'registry-missing', 'registry-unreadable',
+        'registry-project-missing'.
     """
     if remote_host is None:
         # A missing bouncer script means the host is unreachable.
@@ -299,12 +312,87 @@ def resolve_host(
         if tree_state in ("dirty", "unknown"):
             return "dirty-tree"
 
+    # Registry discovery check: the canonical data-home registry must be
+    # readable and (when a project key is given) must resolve the toolkit
+    # project.  This catches a two-host deploy that reports 'ok' while
+    # project discovery is blind.
+    if require_registry:
+        env = env_override or os.environ
+        data_home_str = env.get("ILK_DATA_HOME") or env.get("ILK_DATA_DIR")
+        data_home = Path(data_home_str).expanduser().resolve() if data_home_str else None
+        registry_result = _check_registry(toolkit_project_key, data_home=data_home)
+        if registry_result is not None:
+            return registry_result
+
     # Any stale line (exit 0 in --check mode) → stale-daemon.
     if has_stale:
         return "stale-daemon"
 
     # All fresh.
     return "ok"
+
+
+def _check_registry(
+    project_key: str | None,
+    *,
+    data_home: Path | None = None,
+) -> str | None:
+    """Check canonical data-home registry readability and project resolution.
+
+    Returns None when the registry is present and (if *project_key* is given)
+    resolves the project.  Otherwise returns the first failing state:
+    'registry-missing', 'registry-unreadable', or 'registry-project-missing'.
+
+    Args:
+        project_key: Project key to look up.  None skips project resolution.
+        data_home: Override data home directory.  When None, resolves via
+                   ilk_data_root().
+    """
+    import json as _json
+
+    if data_home is None:
+        # Resolve the canonical path through ilk_data_root.
+        here = Path(__file__).resolve().parent
+        loop_scripts = here.parent.parent / "ilk-loop" / "scripts"
+        if str(loop_scripts) not in sys.path:
+            sys.path.insert(0, str(loop_scripts))
+        try:
+            from ilk_paths import ilk_data_root  # type: ignore
+            data_home = ilk_data_root()
+        except ImportError:
+            return "registry-missing"
+
+    reg_path = data_home / "projects.json"
+    if not reg_path.is_file():
+        return "registry-missing"
+
+    try:
+        data = _json.loads(reg_path.read_text(encoding="utf-8-sig"))
+    except (OSError, _json.JSONDecodeError):
+        return "registry-unreadable"
+
+    if project_key is not None:
+        projects = data.get("projects", []) or []
+        here = Path(__file__).resolve().parent
+        loop_scripts = here.parent.parent / "ilk-loop" / "scripts"
+        if str(loop_scripts) not in sys.path:
+            sys.path.insert(0, str(loop_scripts))
+        try:
+            from ilk_paths import project_key as _pk  # type: ignore
+        except ImportError:
+            return "registry-unreadable"
+        for entry in projects:
+            ep = entry.get("path")
+            if not ep:
+                continue
+            try:
+                if _pk(Path(ep)) == project_key:
+                    return None
+            except (OSError, ValueError):
+                continue
+        return "registry-project-missing"
+
+    return None
 
 
 def _extract_tree_state(bouncer_output: str) -> str | None:
@@ -419,6 +507,9 @@ _STATE_EXIT_CODES = {
     # caught by running the CLI rather than by the unit tests, which call
     # resolve_host() and never reach the exit-code table.
     "dirty-tree": 1,
+    "registry-missing": 1,
+    "registry-unreadable": 1,
+    "registry-project-missing": 1,
     "unreachable": 2,
 }
 

@@ -27,7 +27,10 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _BOUNCE_SH = _REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "bounce_daemons.sh"
 
 # The three valid states — AC-1
-_VALID_STATES = {"ok", "stale-daemon", "tag-mismatch", "unreachable"}
+_VALID_STATES = {
+    "ok", "stale-daemon", "tag-mismatch", "unreachable",
+    "registry-missing", "registry-unreadable", "registry-project-missing",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -1370,3 +1373,109 @@ class TestRequireTagCli:
         )
         assert result.returncode == 0
         assert "--require-tag" in result.stdout
+
+
+class TestRequireRegistry:
+    """require_registry flag: registry discovery must succeed for 'ok'."""
+
+    def test_missing_registry_returns_registry_missing(self, tmp_path: Path) -> None:
+        """A host with no data-home registry cannot report 'ok'."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "fresh: scheduler — fresh",
+        ], exit_code=0)
+        # Point ILK_DATA_HOME at an empty dir so no registry exists.
+        data_home = tmp_path / "empty-data-home"
+        data_home.mkdir()
+        import host_deploy_status
+        status = host_deploy_status.resolve_host(
+            fake, tmp_path,
+            require_registry=True,
+            env_override={**os.environ, "ILK_DATA_HOME": str(data_home)},
+        )
+        assert status == "registry-missing"
+
+    def test_unreadable_registry_returns_registry_unreadable(self, tmp_path: Path) -> None:
+        """A malformed registry file returns 'registry-unreadable'."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "fresh: scheduler — fresh",
+        ], exit_code=0)
+        data_home = tmp_path / "data-home"
+        data_home.mkdir()
+        (data_home / "projects.json").write_text("NOT VALID JSON{", encoding="utf-8")
+        import host_deploy_status
+        status = host_deploy_status.resolve_host(
+            fake, tmp_path,
+            require_registry=True,
+            toolkit_project_key="nonexistent-key",
+            env_override={**os.environ, "ILK_DATA_HOME": str(data_home)},
+        )
+        assert status == "registry-unreadable"
+
+    def test_project_missing_returns_registry_project_missing(self, tmp_path: Path) -> None:
+        """A registry that doesn't contain the project key returns 'registry-project-missing'."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "fresh: scheduler — fresh",
+        ], exit_code=0)
+        data_home = tmp_path / "data-home"
+        data_home.mkdir()
+        (data_home / "projects.json").write_text(
+            '{"projects": [{"name": "other", "path": "/some/path"}]}',
+            encoding="utf-8",
+        )
+        import host_deploy_status
+        status = host_deploy_status.resolve_host(
+            fake, tmp_path,
+            require_registry=True,
+            toolkit_project_key="nonexistent-key",
+            env_override={**os.environ, "ILK_DATA_HOME": str(data_home)},
+        )
+        assert status == "registry-project-missing"
+
+    def test_valid_registry_returns_ok(self, tmp_path: Path) -> None:
+        """A readable registry with the project resolves 'ok'."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "fresh: scheduler — fresh",
+        ], exit_code=0)
+        data_home = tmp_path / "data-home"
+        data_home.mkdir()
+        real_repo = tmp_path / "real-repo"
+        real_repo.mkdir()
+        # Register using the canonical data-home path.
+        sys.path.insert(0, str(_REPO_ROOT / "skills" / "ilk-loop" / "scripts"))
+        from register_project import register_project
+        register_project(real_repo, projects_json=data_home / "projects.json")
+        from ilk_paths import project_key
+        key = project_key(real_repo)
+        import host_deploy_status
+        status = host_deploy_status.resolve_host(
+            fake, tmp_path,
+            require_registry=True,
+            toolkit_project_key=key,
+            env_override={**os.environ, "ILK_DATA_HOME": str(data_home)},
+        )
+        assert status == "ok"
+
+    def test_require_registry_without_project_key(self, tmp_path: Path) -> None:
+        """require_registry without project_key only checks readability."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "fresh: scheduler — fresh",
+        ], exit_code=0)
+        data_home = tmp_path / "data-home"
+        data_home.mkdir()
+        (data_home / "projects.json").write_text('{"projects": []}', encoding="utf-8")
+        import host_deploy_status
+        status = host_deploy_status.resolve_host(
+            fake, tmp_path,
+            require_registry=True,
+            env_override={**os.environ, "ILK_DATA_HOME": str(data_home)},
+        )
+        assert status == "ok"
+
+    def test_legacy_generic_status_remains_compatible(self, tmp_path: Path) -> None:
+        """Without require_registry, the legacy status command is unchanged."""
+        fake = _write_fake_bouncer(tmp_path, output_lines=[
+            "fresh: scheduler — fresh",
+        ], exit_code=0)
+        import host_deploy_status
+        status = host_deploy_status.resolve_host(fake, tmp_path)
+        assert status == "ok"
