@@ -792,6 +792,17 @@ def _spawn_detached(project: Path, sha_str: str,
     if _ORIGINAL_HOME:
         os.environ["HOME"] = _ORIGINAL_HOME
 
+    # Detach stdio. Without this the measurement inherits the caller's
+    # stdout, and a caller reading it (the runner's `result=$(... spawn)`)
+    # blocks until the whole suite ends -- measured 2026-10-06, run
+    # 20261006-174019: the loop sat in phase `between` for 7+ minutes.
+    _devnull = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(_devnull, 0)
+    _log = os.open(str(ld / f"measure-{sha_str[:12]}.log"),
+                   os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    os.dup2(_log, 1)
+    os.dup2(_log, 2)
+
     # exec replaces the process.
     os.execvp(cmd[0], cmd)
 
