@@ -405,7 +405,7 @@ class TestBaselineRedIsRead:
 # before any at-base rerun and names the environment fault.
 
 class TestFailureSurgeStop:
-    """AC-4a/4b/4c: a surge of non-declared failures refuses before reruns."""
+    """AC-4a/4b/4c: a surge is measured at base; it stops only if it reproduces there."""
 
     THRESHOLD = 20  # must match FAILURE_SURGE_THRESHOLD once built
 
@@ -443,11 +443,11 @@ class TestFailureSurgeStop:
             return real_run(cmd, *args, **kwargs)
         monkeypatch.setattr(subprocess, "run", mock_run)
         # Track whether run_at_base is called.
-        at_base_called = {"v": False}
-        real_run_at_base = vr.run_at_base
-        def tracking_run_at_base(*a, **kw):
-            at_base_called["v"] = True
-            return real_run_at_base(*a, **kw)
+        # Since 2026-10-06 the surge is measured: ONE batched at-base call.
+        at_base_called = {"v": 0}
+        def tracking_run_at_base(project, base, nodes, *a, **kw):
+            at_base_called["v"] += 1
+            return {nid: "failed" for nid in nodes}
         monkeypatch.setattr(vr, "run_at_base", tracking_run_at_base)
         # Call main with the right args.
         ret = vr.main([
@@ -456,7 +456,7 @@ class TestFailureSurgeStop:
             "--run-suite",
         ])
         assert ret != 0, "surge stop must exit non-zero"
-        assert not at_base_called["v"], "surge stop must NOT call run_at_base"
+        assert at_base_called["v"] == 1, "a surge is measured by one batched at-base rerun"
         assert record.exists(), "named stop record must be written"
 
     def test_stop_record_names_environment_fault(self, tmp_path: Path,
@@ -489,6 +489,10 @@ class TestFailureSurgeStop:
                 return FakeCompletedProcess()
             return real_run(cmd, *args, **kwargs)
         monkeypatch.setattr(subprocess, "run", mock_run)
+        # The stop now needs a measurement: every id also fails at base.
+        monkeypatch.setattr(vr, "run_at_base",
+                            lambda project, base, nodes, *a, **kw:
+                            {nid: "failed" for nid in nodes})
         vr.main([
             "--record", str(record),
             "--base-sha", "a" * 40,
@@ -550,3 +554,67 @@ class TestFailureSurgeStop:
             text = record.read_text(encoding="utf-8")
             assert "environment fault" not in text.lower(), (
                 "at threshold must NOT write a surge stop")
+
+
+# ── a surge is measured at base, not presumed environmental ────────────────
+#
+# 2026-10-06, gh-resolve batch 2026-10-06a: 34 failures (> the 20 threshold)
+# were refused before any rerun as "environment fault, not a batch issue".
+# Re-run at base in ONE batched pytest process (66 s), 30 of 34 passed: they
+# were the batch's own regressions.  The refusal made a worker re-derive the
+# attribution by hand (3 full suites, 69 min, no commit).  run_at_base already
+# batches every id into one process, so measuring costs one rerun; a surge is
+# an environment fault only when it also reproduces at base.
+
+class TestSurgeIsMeasuredAtBase:
+    N = 34
+
+    def _ids(self):
+        return [f"tests/test_surge_{i}.py::test_case" for i in range(self.N)]
+
+    def _run(self, tmp_path, monkeypatch, at_base_verdict):
+        import subprocess
+        ids = self._ids()
+        record = tmp_path / "record.md"
+        monkeypatch.setattr(vr, "run_suite", lambda *a, **kw: {
+            "counts": {"passed": 0, "failed": len(ids), "errors": 0,
+                       "skipped": 0, "total": len(ids)},
+            "failing_nodes": ids, "exit_code": 1, "suite_duration_sec": 5,
+            "suite_output_text": "FAILED ...\n"})
+        real_run = subprocess.run
+
+        class _Ok:
+            stdout, stderr, returncode = "", "", 0
+
+        monkeypatch.setattr(subprocess, "run", lambda cmd, *a, **kw: _Ok()
+                            if isinstance(cmd, list) and cmd[0] == "git"
+                            and "status" in cmd else real_run(cmd, *a, **kw))
+        calls = []
+
+        def fake_at_base(project, base, nodes, *a, **kw):
+            calls.append(list(nodes))
+            return {nid: at_base_verdict(i) for i, nid in enumerate(nodes)}
+
+        monkeypatch.setattr(vr, "run_at_base", fake_at_base)
+        monkeypatch.setattr(vr, "run_at_adding_commit", lambda *a, **kw: ({}, {}))
+        monkeypatch.setattr(vr, "run_head_reruns", lambda *a, **kw: {})
+        ret = vr.main(["--record", str(record), "--base-sha", "a" * 40,
+                       "--run-suite"])
+        text = record.read_text(encoding="utf-8") if record.exists() else ""
+        return ret, calls, text
+
+    def test_a_regression_surge_is_attributed_not_refused(self, tmp_path, monkeypatch):
+        # 30 pass at base (regressions), 4 fail at base (pre-existing).
+        ret, calls, text = self._run(tmp_path, monkeypatch,
+                                     lambda i: "passed" if i < 30 else "failed")
+        assert len(calls) == 1 and len(calls[0]) == self.N, calls
+        assert "environment fault" not in text.lower(), text
+        assert "## At-base rerun" in text and "test_surge_0" in text
+
+    def test_a_surge_that_reproduces_at_base_is_an_environment_fault(
+            self, tmp_path, monkeypatch):
+        ret, calls, text = self._run(tmp_path, monkeypatch, lambda i: "failed")
+        assert len(calls) == 1, calls
+        assert ret != 0
+        assert "environment fault" in text.lower()
+        assert f"{self.N} of {self.N}" in text, "the stop must carry the measured count"

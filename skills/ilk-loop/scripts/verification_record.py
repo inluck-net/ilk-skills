@@ -1596,9 +1596,14 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
             first_ids_part = ""
             if "First failing ids:" in at_base_error:
                 first_ids_part = ". " + at_base_error.split("First failing ids:")[1].split(". Suite")[0]
+            # The measured reproduce count ("N of M also fail at base") is
+            # the evidence for the verdict, so the record carries it.
+            measured = re.search(r"\d+ of \d+ also fail at base", at_base_error)
+            measured_part = f" and {measured.group(0)}" if measured else ""
             lines += [
                 f"at_base_cap_exceeded: {uncovered} non-declared failures "
-                f"exceeds the {FAILURE_SURGE_THRESHOLD} surge cap; "
+                f"exceeds the {FAILURE_SURGE_THRESHOLD} surge cap"
+                f"{measured_part}; "
                 f"environment fault, not a batch issue"
                 f"{first_ids_part}",
                 "",
@@ -2139,31 +2144,15 @@ def _write_measured_record(project: Path, record: Path, args,
     try:
         base_red = read_baseline_red_at(project, args.base_sha)
         head_red = read_baseline_red(project)
-        # Failure surge stop: if too many non-declared failures, refuse
-        # before any rerun — this is an environment fault, not a batch issue.
+        # A failure surge is MEASURED at base, not presumed environmental.
+        # run_at_base reruns every id in one pytest process, so the
+        # measurement costs one rerun (66 s for 34 ids on gh-resolve,
+        # 2026-10-06, where 30 of 34 passed at base: the batch's own
+        # regressions, refused here before this change as "environment
+        # fault").  Ids over AT_BASE_CAP still stop inside run_at_base.
         non_declared = [n for n in nodes
                         if not _in_baseline_red(n, base_red)]
-        if len(non_declared) > FAILURE_SURGE_THRESHOLD:
-            first_ids = non_declared[:5]
-            suite_output_path = record.parent / f"{record.stem}.output.txt"
-            error_msg = (
-                f"{len(non_declared)} non-declared failures exceeds the "
-                f"{FAILURE_SURGE_THRESHOLD} surge cap; "
-                f"environment fault, not a batch issue. "
-                f"First failing ids: {', '.join(first_ids)}. "
-                f"Suite output: {suite_output_path}"
-            )
-            _atomic_write(record, render_record(
-                batch=args.batch or record.stem,
-                head=head, tree=tree, base_sha=args.base_sha,
-                invocation=invocation, scope=scope, results=results,
-                at_base={}, base_red=base_red, head_red=head_red,
-                at_base_error=error_msg,
-                suite_source="tool",
-            ))
-            print(f"ERROR: {error_msg}", file=sys.stderr)
-            print("ILK-CHECK: unmeasured failure surge", file=sys.stderr)
-            return 1
+        surge = len(non_declared) > FAILURE_SURGE_THRESHOLD
         # Try ledger at-base first when we have a ledger entry for HEAD.
         if ledger_entry is not None and ledger_mode != "off":
             import suite_ledger
@@ -2181,6 +2170,34 @@ def _write_measured_record(project: Path, record: Path, args,
         if not at_base_from_ledger:
             at_base = run_at_base(project, args.base_sha, nodes, invocation,
                                   baseline_red=base_red)
+        # Judgment call: a surge is an environment fault when at least half
+        # of its non-declared ids also fail at base.  Basis: a broken
+        # environment fails both trees, a regression fails only HEAD
+        # (2026-10-06: 30 of 34 passed at base).  Wrong if a real surge
+        # splits near half; then the message misleads but still fails closed.
+        if surge:
+            reproduced = [n for n in non_declared if at_base.get(n) == "failed"]
+            if 2 * len(reproduced) >= len(non_declared):
+                suite_output_path = record.parent / f"{record.stem}.output.txt"
+                error_msg = (
+                    f"{len(non_declared)} non-declared failures exceeds the "
+                    f"{FAILURE_SURGE_THRESHOLD} surge cap and "
+                    f"{len(reproduced)} of {len(non_declared)} also fail at "
+                    f"base; environment fault, not a batch issue. "
+                    f"First failing ids: {', '.join(reproduced[:5])}. "
+                    f"Suite output: {suite_output_path}"
+                )
+                _atomic_write(record, render_record(
+                    batch=args.batch or record.stem,
+                    head=head, tree=tree, base_sha=args.base_sha,
+                    invocation=invocation, scope=scope, results=results,
+                    at_base={}, base_red=base_red, head_red=head_red,
+                    at_base_error=error_msg,
+                    suite_source="tool",
+                ))
+                print(f"ERROR: {error_msg}", file=sys.stderr)
+                print("ILK-CHECK: unmeasured failure surge", file=sys.stderr)
+                return 1
     except (ValueError, RuntimeError) as exc:
         if "exceeds the" in str(exc) and "cap" in str(exc):
             # Designed human-escalation: write the named stop, not the stub.
