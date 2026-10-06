@@ -92,9 +92,23 @@ def _run_component(
     # Build the command for each component.
     scripts_dir = project / "skills" / "ilk-loop" / "scripts"
 
+    env = None
     if name == "invariants":
         cmd = [sys.executable, "-m", "pytest", "tests/invariants", "-q", "-p", "no:cacheprovider"]
         budget = _BUDGETS["invariants"]
+        # Pin HOME and ILK_DATA_HOME together to a private root, as teeth's
+        # control runs do, so the conftest data-root guard watches only this
+        # run's writes. Measured 2026-10-06: a scheduler drain-verification
+        # launch wrote the real ilk-skills runtime mid-run and the guard
+        # refused the v0.9.154 train with golden and teeth green.
+        if str(_SCRIPTS_DIR) not in sys.path:
+            sys.path.insert(0, str(_SCRIPTS_DIR))
+        import teeth  # noqa: E402
+        _inv_root = Path(tempfile.mkdtemp(prefix="ilk-safety-invariants-"))
+        env = {**os.environ, **teeth._hermetic_env(_inv_root, project / "skills")}
+        for _k in ("ILK_DATA_DIR", "ILK_WORKER_SESSION", "ILK_ITERATION_SUBPLAN",
+                   "ILK_MASTER", "ILK_SHIPPED_MARKER"):
+            env.pop(_k, None)
     elif name == "golden":
         cmd = [sys.executable, str(project / "tests" / "invariants" / "golden_batch.py"), "--json"]
         # Budget from fixture budget.json
@@ -146,7 +160,8 @@ def _run_component(
     try:
         if runner is not None:
             # Injectable runner (for testing)
-            result = runner(cmd, cwd=project, timeout=effective_timeout)
+            result = runner(cmd, cwd=project, timeout=effective_timeout,
+                            **({"env": env} if env is not None else {}))
             elapsed = time.monotonic() - t0
             exit_code = result.returncode
             stdout_text = result.stdout
@@ -156,7 +171,7 @@ def _run_component(
                 cmd, cwd=project,
                 capture_output=True, text=True,
                 encoding="utf-8", errors="replace",
-                timeout=effective_timeout,
+                timeout=effective_timeout, env=env,
             )
             elapsed = time.monotonic() - t0
             exit_code = result.returncode

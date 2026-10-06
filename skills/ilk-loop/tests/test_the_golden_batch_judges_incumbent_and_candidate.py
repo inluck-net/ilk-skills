@@ -251,3 +251,37 @@ def test_the_default_run_includes_the_sealed_slice() -> None:
     import inspect
     default = inspect.signature(safety_case.run).parameters["components"].default
     assert "sealed" in default
+
+
+# ── Invariants run in a private data root (v0.9.154 train refusal) ─────────
+
+
+def test_the_invariants_run_pins_home_and_data_home_together(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ILK_DATA_DIR", "/should/not/leak")
+    monkeypatch.setenv("ILK_WORKER_SESSION", "0")
+    seen = {}
+
+    def stub(cmd, **kw):
+        seen.update(kw)
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    safety_case.run(_project(tmp_path), data_dir=tmp_path / "data", components=("invariants",),
+                    runner=stub, no_record=True, incumbent=None, sealed_catalog=None)
+    env = seen["env"]
+    import os
+    assert env["HOME"] != os.path.expanduser("~")
+    assert env["ILK_DATA_HOME"].startswith(env["HOME"])
+    assert "ILK_DATA_DIR" not in env and "ILK_WORKER_SESSION" not in env
+    assert env["PYTHONNOUSERSITE"] == "1" and env["PYTHONPATH"]
+
+
+def test_other_components_keep_the_ambient_env(tmp_path: Path) -> None:
+    seen = {}
+
+    def stub(cmd, **kw):
+        seen.update(kw)
+        return type("R", (), {"returncode": 0, "stdout": "{}", "stderr": ""})()
+
+    safety_case.run(_project(tmp_path), data_dir=tmp_path / "data", components=("teeth",),
+                    runner=stub, no_record=True, incumbent=None, sealed_catalog=None)
+    assert "env" not in seen
