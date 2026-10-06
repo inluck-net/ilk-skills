@@ -56,7 +56,6 @@ INCIDENT_LOG_LINES = [
 
 # -- AC-2: build_evidence returns integrity_violations from the launcher log --
 
-@pytest.mark.xfail(strict=True, reason="violation kind not yet parsed")
 def test_ac2_triage_evidence_carries_violations(tmp_path: Path):
     """build_evidence extracts gates-edited violation from launcher log."""
     from ilk_triage import build_evidence
@@ -104,7 +103,6 @@ def test_ac2_triage_evidence_carries_violations(tmp_path: Path):
     ]
 
 
-@pytest.mark.xfail(strict=True, reason="violation kind not yet parsed")
 def test_ac2_no_launcher_log_gives_empty_violations(tmp_path: Path):
     """When no launcher log exists, integrity_violations is []."""
     from ilk_triage import build_evidence

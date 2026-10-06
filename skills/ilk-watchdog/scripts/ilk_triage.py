@@ -25,13 +25,18 @@ from ilk_audit import write_audit
 from ilk_paths import ilk_data_root
 from plan_status import parse_frontmatter
 
+try:
+    from integrity_violation import parse_file as _parse_integrity_violations
+except ImportError:
+    _parse_integrity_violations = None
+
 
 # ── constants ────────────────────────────────────────────────────────────────
 
 VALID_ACTIONS = frozenset({"reopen", "amend", "ack-and-relaunch", "park-and-escalate"})
 WORKER_MODEL_PATTERN = re.compile(r"mimo|glm", re.IGNORECASE)
 DRIVER_LOG_PATTERN = re.compile(
-    r"local_checks|amended|DBG|Loop ended|red-owner|ship-integrity.*FAIL"
+    r"local_checks|amended|DBG|Loop ended|red-owner|ship-integrity.*FAIL|ship-integrity VIOLATION|\[gates\]"
 )
 WORKER_HOME_PATTERN = re.compile(r"\.claude-worker")
 
@@ -127,9 +132,17 @@ def build_evidence(data_dir: Path, run_id: str) -> dict[str, Any]:
                 if len(matching_lines) >= 200:
                     break
         evidence["driver_log"] = matching_lines
+        driver_log_path = driver_log
     else:
         missing.append(f"{data_dir}/logs/launcher/*-{run_id}.log")
         evidence["driver_log"] = []
+        driver_log_path = None
+
+    # 5b. integrity violations from the runner's VIOLATION lines
+    if _parse_integrity_violations is not None and driver_log_path is not None:
+        evidence["integrity_violations"] = _parse_integrity_violations(driver_log_path)
+    else:
+        evidence["integrity_violations"] = []
 
     # 6. git status and log (requires project_path from last_exit)
     project_path = evidence.get("last_exit", {}).get("project_path")
