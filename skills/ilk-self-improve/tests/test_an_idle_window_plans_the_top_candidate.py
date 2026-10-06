@@ -1599,3 +1599,215 @@ class TestAC9:
             from plan_status import parse_frontmatter
             fm = parse_frontmatter(m.read_text(encoding="utf-8-sig"))
             assert fm.get("status") != "queued", "malformed config must not queue"
+
+
+# ── AC-1 / AC-2: CLI tick and gated spawn (step 0 pins) ─────────────────
+
+
+class TestCliTickAndGatedSpawn:
+    """Pin the two defects that block RSI: CLI tick args and real-mode spawn.
+
+    Step 0 of the-scheduler-tick-reaches-the-gated-planner.
+    Both tests are xfail(strict=True) until step 1 ships the fix.
+    """
+
+    @pytest.mark.xfail(strict=True, reason="autoplan tick defect, fixed in step 1")
+    def test_cli_tick_runs_and_prints_a_decision(self, tmp_path):
+        """AC-1: ``python3 autoplan.py tick --dry-run --json`` exits 0 and prints JSON.
+
+        Today it crashes with ``TypeError: tick() missing 1 required keyword-only
+        argument: 'data_root'`` because the CLI ``tick`` branch calls
+        ``tick(dry_run=args.dry_run)`` without passing ``data_root`` or
+        ``manager_home``.
+        """
+        mod = _load_module()
+        autoplan_py = Path(mod.__file__).resolve()
+
+        # Build a minimal data root so the tick can compute a decision.
+        data_root = _build_fake_data_root(tmp_path)
+        manager_home = _build_fake_manager_home(tmp_path)
+
+        # A project with a toolkit so the tick doesn't refuse early.
+        toolkit = _build_fake_toolkit(tmp_path, data_root)
+        project_dir = data_root / "projects" / "test-project"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        (project_dir / "runtime" / "launcher").mkdir(parents=True, exist_ok=True)
+        (project_dir / "runtime" / "launcher" / "last-launch.json").write_text(
+            json.dumps({"project_path": str(toolkit)}) + "\n",
+            encoding="utf-8",
+        )
+
+        # Run the CLI tick as a subprocess, isolating the data home.
+        env = {
+            **os.environ,
+            "ILK_DATA_HOME": str(data_root),
+            "HOME": str(tmp_path),
+            "CLAUDE_MANAGER_HOME": str(manager_home),
+        }
+        # Keep PYTHONUSERBASE so the child can import the same packages.
+
+        result = subprocess.run(
+            [sys.executable, str(autoplan_py), "tick", "--dry-run", "--json"],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
+        )
+
+        # Must exit 0.
+        assert result.returncode == 0, (
+            f"CLI tick exited {result.returncode}\n"
+            f"stderr: {result.stderr[-500:]}"
+        )
+
+        # stderr must have no traceback.
+        assert "Traceback" not in result.stderr, (
+            f"CLI tick produced a traceback on stderr:\n{result.stderr[-500:]}"
+        )
+
+        # stdout must be valid JSON with a "decision" key.
+        parsed = json.loads(result.stdout.strip())
+        assert "decision" in parsed, (
+            f"CLI tick JSON missing 'decision' key: {parsed}"
+        )
+
+    @pytest.mark.xfail(strict=True, reason="autoplan tick defect, fixed in step 1")
+    def test_real_mode_tick_spawns_the_gated_plan_subcommand(self, tmp_path):
+        """AC-2 + AC-3: real-mode tick spawns ``autoplan.py plan …``, not ``claude -p``.
+
+        With ``popen_fn=None`` and ``dry_run=False``, the start branch must
+        call ``subprocess.Popen`` exactly once with an argv that contains
+        ``autoplan.py plan --candidate --project-key --run-id``, writes
+        stdout/stderr to the run log (not PIPE), and uses
+        ``start_new_session=True``.
+        """
+        mod = _load_module()
+        data_root = _build_fake_data_root(tmp_path)
+        manager_home = _build_fake_manager_home(tmp_path)
+        toolkit = _build_fake_toolkit(tmp_path, data_root)
+
+        # Create a project so the tick can resolve the toolkit repo.
+        project_dir = data_root / "projects" / "test-project"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        (project_dir / "runtime" / "launcher").mkdir(parents=True, exist_ok=True)
+        (project_dir / "runtime" / "launcher" / "last-launch.json").write_text(
+            json.dumps({"project_path": str(toolkit)}) + "\n",
+            encoding="utf-8",
+        )
+
+        # Create a candidate so the tick selects something.
+        backlog_dir = data_root / "ilk-skills-improvements"
+        backlog_dir.mkdir(parents=True, exist_ok=True)
+        _save_candidates(backlog_dir, [_make_candidate()])
+
+        # Record subprocess.Popen calls (monkeypatch on the module).
+        popen_calls: list[tuple[tuple, dict]] = []
+
+        class FakeProc:
+            def __init__(self, pid: int = 99999):
+                self.pid = pid
+
+        original_popen = subprocess.Popen
+
+        def recording_popen(*args, **kwargs):
+            popen_calls.append((args, kwargs))
+            # Return a fake process with a pid so inflight.json is written.
+            return FakeProc()
+
+        # Run enough idle ticks to reach the start branch (threshold is 5).
+        # dry_run=False is required so the idle_cycles counter persists.
+        # The first 5 ticks use popen_fn (test-mode) since they never reach
+        # the start branch. The 6th tick uses popen_fn=None (real mode).
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(subprocess, "Popen", recording_popen)
+
+            # Drive 5 idle ticks (dry_run=False to persist counter).
+            for i in range(5):
+                result = mod.tick(
+                    data_root=data_root,
+                    manager_home=str(manager_home),
+                    popen_fn=recording_popen,  # test-mode stub for idle ticks
+                    dry_run=False,
+                )
+                assert result["decision"] == "idle", (
+                    f"Tick {i+1} expected 'idle', got {result['decision']}"
+                )
+
+            # The 6th tick in real mode (popen_fn=None, dry_run=False).
+            # This is the one that should spawn autoplan.py plan.
+            popen_calls.clear()  # reset — only the real spawn counts
+            result = mod.tick(
+                data_root=data_root,
+                manager_home=str(manager_home),
+                popen_fn=None,  # real mode
+                dry_run=False,
+            )
+
+        assert result["decision"] == "started", (
+            f"Expected 'started', got {result['decision']}"
+        )
+
+        # Exactly one Popen call (the real-mode spawn).
+        assert len(popen_calls) == 1, (
+            f"Expected 1 Popen call, got {len(popen_calls)}"
+        )
+
+        args, kwargs = popen_calls[0]
+
+        # argv checks
+        argv = args[0] if args else kwargs.get("args", [])
+        argv_str = " ".join(str(a) for a in argv)
+
+        # Must contain autoplan.py (or its path) followed by "plan".
+        assert "plan" in argv, (
+            f"argv must contain 'plan', got: {argv}"
+        )
+
+        # Must have --candidate, --project-key, --run-id.
+        assert "--candidate" in argv, f"argv missing --candidate: {argv}"
+        assert "--project-key" in argv, f"argv missing --project-key: {argv}"
+        assert "--run-id" in argv, f"argv missing --run-id: {argv}"
+
+        # Must NOT contain "-p" (the raw claude prompt flag).
+        assert "-p" not in argv, f"argv must not contain '-p': {argv}"
+
+        # stdout must NOT be subprocess.PIPE (should go to log file).
+        assert kwargs.get("stdout") is not subprocess.PIPE, (
+            f"stdout should not be PIPE (goes to log file), got: {kwargs.get('stdout')}"
+        )
+
+        # stdin must be subprocess.DEVNULL.
+        assert kwargs.get("stdin") is subprocess.DEVNULL, (
+            f"stdin should be DEVNULL, got: {kwargs.get('stdin')}"
+        )
+
+        # start_new_session must be True.
+        assert kwargs.get("start_new_session") is True, (
+            f"start_new_session should be True, got: {kwargs.get('start_new_session')}"
+        )
+
+        # env must contain CLAUDE_MANAGER_HOME.
+        spawn_env = kwargs.get("env", {})
+        assert spawn_env.get("CLAUDE_MANAGER_HOME") == str(manager_home), (
+            f"env CLAUDE_MANAGER_HOME mismatch: {spawn_env.get('CLAUDE_MANAGER_HOME')}"
+        )
+
+        # cwd must be the toolkit repo.
+        assert kwargs.get("cwd") == str(toolkit), (
+            f"cwd should be toolkit repo, got: {kwargs.get('cwd')}"
+        )
+
+        # AC-3: inflight.json must name the spawned pid.
+        inflight_file = data_root / "autoplan" / "inflight.json"
+        assert inflight_file.exists(), "inflight.json not written"
+        inflight = json.loads(inflight_file.read_text(encoding="utf-8"))
+        assert inflight["pid"] == 99999, (
+            f"inflight pid mismatch: {inflight['pid']}"
+        )
+
+        # AC-3: the run log file must exist (stdout/stderr redirected there).
+        run_id = result.get("run_id", "")
+        log_file = data_root / "autoplan" / "runs" / f"{run_id}.log"
+        assert log_file.exists(), (
+            f"Run log {log_file} does not exist"
+        )
