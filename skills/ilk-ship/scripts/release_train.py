@@ -975,6 +975,32 @@ def _bouncer_for(tag: str) -> Path:
     return releases_root / tag / "skills" / "ilk-watchdog" / "scripts" / "bounce_daemons.sh"
 
 
+def _releases_root() -> Path:
+    return Path(os.environ.get(
+        "ILK_RELEASES_ROOT",
+        str(Path.home() / ".ilk" / "releases"),
+    ))
+
+
+def _remote_extractor() -> Path:
+    """The REMOTE host's incumbent extractor: <releases>/../current/...
+
+    Never Path(__file__).resolve(): the train runs via ~/.ilk/current, which
+    the local canary deploy has already flipped to the candidate, so that path
+    names a release directory the remote only gets from this very extraction
+    (every train v0.9.158-v0.9.161 failed rezmac that way; backlog
+    7a395f927acbbc0a).  The unresolved current/ symlink is resolved on the
+    remote, by the remote.
+    """
+    return (_releases_root().parent / "current" / "skills" / "ilk-upgrade"
+            / "scripts" / "ilk_release.py")
+
+
+def _status_script_for(tag: str) -> Path:
+    """host_deploy_status.py of the release a smoke checks."""
+    return _releases_root() / tag / "skills" / "ilk-ship" / "scripts" / "host_deploy_status.py"
+
+
 def _scheduler_pid_file() -> Path:
     """The host's scheduler.pid lives in the data root, not per-project."""
     sys.path.insert(0, str(_LOOP_SCRIPTS))
@@ -1469,9 +1495,9 @@ def _ssh_deploy(
     extract, bounce, smoke.
     """
     _SCRIPTS = Path(__file__).resolve().parent
-    _RELEASE_SCRIPT = _SCRIPTS.parent.parent / "ilk-upgrade" / "scripts" / "ilk_release.py"
+    # Remote commands name REMOTE paths (see _remote_extractor).
+    _RELEASE_SCRIPT = _remote_extractor()
     _BOUNCE_SCRIPT = _SCRIPTS.parent.parent / "ilk-watchdog" / "scripts" / "bounce_daemons.sh"
-    _STATUS_SCRIPT = _SCRIPTS / "host_deploy_status.py"
 
     def _default_ssh_runner(host: str, cmd: list[str], timeout: int = 120) -> dict:
         try:
@@ -1539,7 +1565,7 @@ def _ssh_deploy(
         settle_elapsed = _clock() - smoke_start
 
         smoke_result = _run(host, [
-            sys.executable, str(_STATUS_SCRIPT),
+            sys.executable, str(_status_script_for(tag)),
             "--bouncer", str(_bouncer_for(tag)),
             "--require-tag", tag,
             "--repo", str(project),
@@ -1615,7 +1641,7 @@ def _ssh_deploy(
         rb_smoke_attempts += 1
 
         rb_smoke_result = _run(host, [
-            sys.executable, str(_STATUS_SCRIPT),
+            sys.executable, str(_status_script_for(prev_tag)),
             "--bouncer", str(_bouncer_for(prev_tag)),
             "--require-tag", prev_tag,
             "--repo", str(project),

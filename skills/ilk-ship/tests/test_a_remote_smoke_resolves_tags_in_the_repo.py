@@ -158,3 +158,40 @@ def test_the_rollback_bounce_passes_no_argument(tmp_path: Path) -> None:
     bounces = [c for c in calls if c and c[0].endswith("bounce_daemons.sh")]
     assert len(bounces) == 2, calls  # deploy bounce + rollback bounce
     assert bounces[-1] == [bounces[-1][0]] and "/v0.0.1/" in bounces[-1][0], bounces[-1]
+
+
+# ── The remote extractor is the remote's own incumbent ──────────────────────
+#
+# Measured 2026-10-06/07, every train from v0.9.158 to v0.9.161: rezmac failed
+# "ssh extraction failed: can't open file '/Users/chad/.ilk/releases/<new>/
+# skills/ilk-upgrade/scripts/ilk_release.py'".  _ssh_deploy resolved its
+# script paths from Path(__file__).resolve() at call time, AFTER the local
+# canary had flipped ~/.ilk/current to the candidate, so the remote command
+# named a release directory that only extraction creates.  Each train needed
+# rezmac finished by hand with the incumbent's extractor.
+
+import os  # noqa: E402
+
+
+def _releases_root() -> Path:
+    return Path(os.environ.get("ILK_RELEASES_ROOT",
+                               str(Path.home() / ".ilk" / "releases")))
+
+
+def test_remote_extraction_uses_the_remotes_incumbent_extractor(tmp_path: Path) -> None:
+    _project, calls = _ssh_deploy_calls(tmp_path, "ok")
+    expected = str(_releases_root().parent / "current" / "skills" / "ilk-upgrade"
+                   / "scripts" / "ilk_release.py")
+    release_calls = [c for c in calls if any(a.endswith("ilk_release.py") for a in c)]
+    assert release_calls, calls
+    for c in release_calls:
+        assert expected in c, c
+
+
+def test_remote_smokes_use_the_release_they_check(tmp_path: Path) -> None:
+    _project, calls = _ssh_deploy_calls(tmp_path, "tag-mismatch")  # forward + rollback
+    for c in _smoke_calls(calls):
+        tag = c[c.index("--require-tag") + 1]
+        expected = str(_releases_root() / tag / "skills" / "ilk-ship" / "scripts"
+                       / "host_deploy_status.py")
+        assert expected in c, c
