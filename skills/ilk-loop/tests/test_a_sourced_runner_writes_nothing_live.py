@@ -112,6 +112,39 @@ def _call_append_revert_row(reverts_path: str, slug: str = "test-slug") -> None:
         sys.path.remove(str(SCRIPTS_DIR))
 
 
+def _capture_revert_sizes(data_home: Path) -> dict[Path, int]:
+    """Snapshot the byte size of every ``ship-reverts.jsonl`` under *data_home*.
+
+    Returns a mapping ``{path: size}`` for files that exist at call time.
+    Missing files are omitted (the caller treats absence as size 0).
+    """
+    sizes: dict[Path, int] = {}
+    for sr in data_home.rglob("ship-reverts.jsonl"):
+        sizes[sr] = sr.stat().st_size
+    return sizes
+
+
+def _check_subprocess_leak(
+    data_home: Path,
+    marker_path: Path,
+    pre_run_sizes: dict[Path, int],
+) -> list[str]:
+    """Check whether a subprocess leaked rows attributable to *marker_path*.
+
+    For every ``ship-reverts.jsonl`` under *data_home*, reads only the bytes
+    appended after *pre_run_sizes* and inspects each new row for a field
+    whose value contains *marker_path*.  Returns a list of human-readable
+    violation descriptions (empty ⇒ no attributable leak).
+
+    This helper exists so AC-2 pins can inject a fixture root instead of
+    walking the real data home.
+
+    **Stub:** the full implementation lands in step 1.  This version always
+    returns an empty list so the xfail pins fire.
+    """
+    return []
+
+
 # ── AC-1: get_ilk_runtime_dir refuses an empty PROJECT_PATH ──────────────────
 
 def test_ac1_empty_project_path_refused(tmp_path: Path) -> None:
@@ -231,6 +264,44 @@ def test_ac3_known_writer_writes_no_live_rows(tmp_path: Path) -> None:
             f"Found live ship-reverts.jsonl written after subprocess start: {sr}\n"
             f"mtime={sr.stat().st_mtime}, before={before}"
         )
+
+
+# ── AC-2 pins: attributable-only leak detection ─────────────────────────────
+
+@pytest.mark.xfail(strict=True, reason="attributable-only leak check not built")
+def test_ac2_attributable_only_leak_detection(tmp_path: Path) -> None:
+    """Pin: the leak check counts only rows naming the marker path.
+
+    AC-2 from sub-plan the-leak-test-counts-only-its-own-writes.
+    Appends two rows to a fixture ``ship-reverts.jsonl`` — one unrelated,
+    one whose slug contains the marker path — and asserts exactly 1 violation.
+    The stub returns ``[]`` (0 violations), so this xfail fires.
+    """
+    fixture_data = tmp_path / "fixture-data"
+    fixture_data.mkdir()
+    reverts_dir = fixture_data / "launcher"
+    reverts_dir.mkdir()
+    reverts_file = reverts_dir / "ship-reverts.jsonl"
+
+    marker = tmp_path / "my-project"
+
+    # Pre-run snapshot: file does not exist yet.
+    pre_sizes = _capture_revert_sizes(fixture_data)
+
+    # Row 1: unrelated — should be exonerated.
+    _call_append_revert_row(str(reverts_file), slug="unrelated-slug")
+    # Row 2: names marker_path — should be detected.
+    _call_append_revert_row(str(reverts_file), slug=str(marker))
+
+    violations = _check_subprocess_leak(
+        data_home=fixture_data,
+        marker_path=marker,
+        pre_run_sizes=pre_sizes,
+    )
+    assert len(violations) == 1, (
+        f"Expected exactly 1 attributable leak (the marker row), "
+        f"got {len(violations)}: {violations}"
+    )
 
 
 # ── Pin: runner e2e tests carry a load-sized timeout ────────────────────────
