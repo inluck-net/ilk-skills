@@ -175,6 +175,7 @@ NOTIFY_PY="${_SKILL_ROOT}/ilk-watchdog/scripts/ilk_notify.py"
 WATCHDOG_SCRIPT="${_ILK_SCRIPT_DIR}/watchdog.sh"
 DIGEST_SCRIPT="${DIGEST_SCRIPT:-${_SKILL_ROOT}/ilk-loop/scripts/ilk_digest.py}"
 AUTOPLAN_PY="${AUTOPLAN_PY:-${_ILK_SCRIPT_DIR}/../../ilk-self-improve/scripts/autoplan.py}"
+PARK_DEAD_MASTER_SCRIPT="${_ILK_SCRIPT_DIR}/park_dead_master.py"
 
 SCHEDULER_LOG_DIR="$(ilk_data_dir)/logs"
 SCHEDULER_LOG_FILE="${SCHEDULER_LOG_DIR}/scheduler.log"
@@ -1430,6 +1431,21 @@ print(int((ea-sa).total_seconds()))
           write_scheduler_log "skip-missing-path" "$key"
         fi
         continue
+      fi
+
+      # --- park dead work tree before the no-progress bound -------------
+      # A work_tree_invalid sentinel is a config error no restart can fix.
+      # Park the active master so the promoter can advance the queue,
+      # instead of relaunching the dead master every pass until the
+      # no-progress bound fires (which blocks the WHOLE project).
+      local _park_out _parked_master _parked_run_id
+      _park_out="$("$PYTHON" "$PARK_DEAD_MASTER_SCRIPT" "$path" 2>/dev/null)" || true
+      if [[ -n "$_park_out" ]]; then
+        _parked_master="$("$PYTHON" -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('master') or d.get('parked') or '')" "$_park_out" 2>/dev/null)" || true
+        _parked_run_id="$("$PYTHON" -c "import json,sys; print(json.loads(sys.argv[1]).get('run_id',''))" "$_park_out" 2>/dev/null)" || true
+        if [[ -n "$_parked_master" && "$_parked_master" != "None" ]]; then
+          write_scheduler_log "parked-dead-work-tree" "$key" "$_parked_master run=$_parked_run_id"
+        fi
       fi
 
       # --- no-progress dispatch bound (independent of postmortems) -------

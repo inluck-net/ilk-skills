@@ -396,7 +396,6 @@ _PARK_DEAD_MASTER = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason="park_dead_master not built yet")
 def test_work_tree_invalid_pauses_active_master(scheduler_sandbox, tmp_path):
     """AC-1: work_tree_invalid sentinel pauses the active master.
 
@@ -439,7 +438,6 @@ def test_work_tree_invalid_pauses_active_master(scheduler_sandbox, tmp_path):
     assert marker.exists(), "idempotency marker not written"
 
 
-@pytest.mark.xfail(strict=True, reason="park_dead_master not built yet")
 def test_parking_twice_is_idempotent(scheduler_sandbox):
     """AC-2: running park_dead_master.py twice for the same run_id is a no-op
     the second time.
@@ -473,7 +471,6 @@ def test_parking_twice_is_idempotent(scheduler_sandbox):
     assert fm_before == fm_after, "second run changed the front-matter"
 
 
-@pytest.mark.xfail(strict=True, reason="park_dead_master not built yet")
 @pytest.mark.parametrize("sentinel_state", [
     "blocked-no-runnable",
     "all-shipped",
@@ -504,7 +501,6 @@ def test_non_work_tree_invalid_states_park_nothing(scheduler_sandbox, sentinel_s
     )
 
 
-@pytest.mark.xfail(strict=True, reason="park_dead_master not built yet")
 def test_missing_sentinel_parks_nothing(scheduler_sandbox):
     """AC-3 (missing sentinel): no last-exit.json → no parking."""
     data_home = scheduler_sandbox.root / ".ilk-data"
@@ -520,7 +516,6 @@ def test_missing_sentinel_parks_nothing(scheduler_sandbox):
     assert out["parked"] is None, f"missing sentinel still parked: {out!r}"
 
 
-@pytest.mark.xfail(strict=True, reason="park_dead_master not built yet")
 def test_scheduler_calls_park_before_no_progress_bound():
     """AC-4: scheduler.sh calls park_dead_master.py before the no-progress
     bound, and logs 'parked-dead-work-tree' when it parks.
