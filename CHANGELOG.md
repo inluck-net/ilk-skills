@@ -10,6 +10,7 @@ themselves are the authoritative record.
 
 | Version | Date | Highlights |
 |---|---|---|
+| v0.9.164 | 2026-10-07 | **07 A Train Survives Its Own Bounce Execution Plan.Md.** RELEASE TRAIN (unattended) — train-survives-bounce-verify, a-bouncer-never-boots-out-its-own-job, a-train-runs-in-its-own-session. Phase 0 0/0 proven. Phase 1: 0 failed / 0 passed with python3 -m pytest --timeout=17 --timeout-method=signal -n 8 --dist loadfile --durations=25, 0 new ids vs v0.9.163. |
 | v0.9.163 | 2026-10-07 | **07 A Gate Edit Is Named Not Misread Execution Plan.Md.** RELEASE TRAIN (unattended) — gate-edit-diagnosis-verify, a-gate-edit-is-named-in-the-diagnosis, a-worker-never-edits-its-own-gates. Phase 0 0/0 proven. Phase 1: 0 failed / 0 passed with python3 -m pytest --timeout=17 --timeout-method=signal -n 8 --dist loadfile --durations=25, 0 new ids vs v0.9.162. |
 | v0.9.162 | 2026-10-07 | **.** RELEASE TRAIN (unattended) — direct commits. Phase 0 0/0 proven. Phase 1: 0 failed / 0 passed with python3 -m pytest --timeout=17 --timeout-method=signal -n 8 --dist loadfile --durations=25, 0 new ids vs v0.9.161. |
 | v0.9.161 | 2026-10-07 | **.** RELEASE TRAIN (unattended) — direct commits. Phase 0 0/0 proven. Phase 1: 0 failed / 0 passed with python3 -m pytest --timeout=17 --timeout-method=signal -n 8 --dist loadfile --durations=25, 0 new ids vs v0.9.160. |
