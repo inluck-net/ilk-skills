@@ -8,8 +8,16 @@ Drives the real runner (``run_ilk_loop_claude.sh``) from a private copy of
 Usage::
 
     python3 tests/invariants/golden_batch.py [--json] [--keep] [--measure N]
+        [--skills-from DIR]
 
-Exit codes: 0 pass, 1 fail, 2 refusal (no gtimeout, ILK_SKILL_HOME in repo).
+``--skills-from DIR`` runs the batch against ``DIR/skills`` (a release dir
+such as ``~/.ilk/current``, or another tree) instead of this repo's
+``skills/``. The fixture and the oracle always come from THIS file's
+directory, so an incumbent and a candidate are judged by the same oracle
+(RSI design point 1, Oct 6).
+
+Exit codes: 0 pass, 1 fail, 2 refusal (no gtimeout, ILK_SKILL_HOME in repo,
+--skills-from without a runner).
 """
 from __future__ import annotations
 
@@ -49,7 +57,11 @@ def _check_refusals() -> None:
             pass
 
 
-def _build_tmp_root(keep: bool = False) -> Path:
+def _runner_for(skills_src: Path) -> Path:
+    return skills_src / "skills" / "ilk-loop" / "scripts" / "run_ilk_loop_claude.sh"
+
+
+def _build_tmp_root(keep: bool = False, skills_src: Path = _REPO) -> Path:
     """Build a hermetic tmp root with the fixture project and a skills copy."""
     if keep:
         root = Path("/tmp/golden-batch-keep")
@@ -98,7 +110,13 @@ def _build_tmp_root(keep: bool = False) -> Path:
     skill_home = root / "skills"
     if skill_home.exists():
         shutil.rmtree(skill_home)
-    shutil.copytree(_REPO / "skills", skill_home)
+    shutil.copytree(skills_src / "skills", skill_home)
+    # A release dir is read-only (dr-xr-xr-x) and copytree keeps modes, so
+    # make the private copy owner-writable or the runner and cleanup fail.
+    for dirpath, dirnames, filenames in os.walk(skill_home):
+        for name in [dirpath, *(os.path.join(dirpath, f) for f in dirnames + filenames)]:
+            if not os.path.islink(name):
+                os.chmod(name, os.stat(name).st_mode | 0o200)
 
     # Set up ILK_DATA_HOME.
     data_home = root / ".ilk-data"
@@ -151,7 +169,7 @@ def _build_tmp_root(keep: bool = False) -> Path:
     return root
 
 
-def _run_golden_batch(root: Path) -> subprocess.CompletedProcess:
+def _run_golden_batch(root: Path, runner: Path = _RUNNER) -> subprocess.CompletedProcess:
     """Run the runner on the fixture project.
 
     The runner exits on gate failures (local_checks_failed), so we call it
@@ -221,7 +239,7 @@ def _run_golden_batch(root: Path) -> subprocess.CompletedProcess:
     last_proc = None
     for _call in range(hard_limit):
         proc = subprocess.run(
-            ["bash", "--noprofile", str(_RUNNER),
+            ["bash", "--noprofile", str(runner),
              "--project-path", str(project),
              "--max-iterations", str(max_iter_per_call),
              "--iteration-timeout-min", "2",
@@ -357,22 +375,30 @@ def _check_budget(result: dict, budget: dict, elapsed: float) -> dict:
     return result
 
 
-def run(*, out: Path | None = None, keep: bool = False) -> dict:
+def run(*, out: Path | None = None, keep: bool = False,
+        skills_from: Path | None = None) -> dict:
     """Run the golden batch and return the result dict.
 
     Raises SystemExit(2) for refusals.
     """
     _check_refusals()
 
-    root = _build_tmp_root(keep=keep)
+    skills_src = (skills_from or _REPO).resolve()
+    runner = _runner_for(skills_src) if skills_from else _RUNNER
+    if not runner.is_file():
+        print(f"refusal: no runner at {runner}", file=sys.stderr)
+        raise SystemExit(2)
+
+    root = _build_tmp_root(keep=keep, skills_src=skills_src)
     start = time.monotonic()
 
     try:
-        proc = _run_golden_batch(root)
+        proc = _run_golden_batch(root, runner=runner)
         elapsed = time.monotonic() - start
 
         result = _check_results(root, proc)
         result["seconds"] = round(elapsed, 1)
+        result["skills_from"] = str(skills_src)
 
         # Read budget.json if it exists and check budget (AC-4).
         budget_file = _FIXTURES / "budget.json"
@@ -401,18 +427,20 @@ def main() -> int:
     parser.add_argument("--keep", action="store_true", help="Keep tmp dir for debugging")
     parser.add_argument("--measure", type=int, default=0, help="Run N times and print seconds")
     parser.add_argument("--out", type=Path, help="Write result to file")
+    parser.add_argument("--skills-from", type=Path, default=None,
+                        help="Run against DIR/skills (e.g. ~/.ilk/current) with this repo's oracle")
     args = parser.parse_args()
 
     if args.measure > 0:
         times = []
         for i in range(args.measure):
-            result = run(keep=args.keep)
+            result = run(keep=args.keep, skills_from=args.skills_from)
             times.append(result["seconds"])
             print(f"run {i+1}: {result['seconds']}s", file=sys.stderr)
         print(json.dumps({"runs": times}))
         return 0
 
-    result = run(out=args.out, keep=args.keep)
+    result = run(out=args.out, keep=args.keep, skills_from=args.skills_from)
 
     if args.json:
         print(json.dumps(result, indent=2))

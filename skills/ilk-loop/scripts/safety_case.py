@@ -79,6 +79,7 @@ def _run_component(
     *,
     runner: object | None = None,
     timeout: int | None = None,
+    extra_args: tuple[str, ...] = (),
 ) -> dict:
     """Run one safety-case component.
 
@@ -126,6 +127,7 @@ def _run_component(
             "tail": f"unknown component: {name}",
         }
 
+    cmd = cmd + list(extra_args)
     effective_timeout = timeout or budget
     t0 = time.monotonic()
 
@@ -188,7 +190,81 @@ def _run_component(
         except (json.JSONDecodeError, KeyError):
             pass
 
+    if name == "golden" and exit_code in (0, 1):
+        try:
+            g = json.loads(stdout_text.strip())
+            component["golden"] = {
+                "verdict": g.get("verdict"),
+                "mismatches": len(g.get("mismatches") or []),
+                "seconds": g.get("seconds"),
+            }
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
     return component
+
+
+# ── Golden: incumbent vs candidate (RSI design point 1, Oct 6) ─────────────
+
+# Judgment call: flag (never fail) a candidate golden run more than 10% slower
+# than the incumbent's. Basis: 3 runs spanned 66.9-71.1 s (Oct 6). Wrong if
+# load noise between two back-to-back runs exceeds 10%.
+GOLDEN_TIME_FLAG_RATIO = 1.10
+
+
+def _resolve_incumbent(project: Path) -> Path | None:
+    """The deployed release to compare against, or None.
+
+    ``$ILK_GOLDEN_INCUMBENT`` wins; otherwise ``~/.ilk/current``. None when it
+    does not resolve, has no runner, or IS the project under test.
+    """
+    raw = os.environ.get("ILK_GOLDEN_INCUMBENT") or str(Path.home() / ".ilk" / "current")
+    try:
+        inc = Path(raw).expanduser().resolve(strict=True)
+    except OSError:
+        return None
+    if not (inc / "skills" / "ilk-loop" / "scripts" / "run_ilk_loop_claude.sh").is_file():
+        return None
+    if inc == project.resolve():
+        return None
+    return inc
+
+
+def _brief(c: dict) -> dict:
+    return {k: c.get(k) for k in ("ok", "seconds", "exit", "golden", "tail")}
+
+
+def _compare_golden(project: Path, candidate: dict, *, runner: object | None,
+                    incumbent: Path | None) -> dict:
+    """Run the golden batch on the incumbent too, and apply the flip rule.
+
+    The oracle (fixture + expected.json) is the candidate tree's
+    ``tests/invariants`` for both runs; that directory is rules tier, so no
+    loop build can move it. Rules:
+      - incumbent passes, candidate fails: re-run the candidate once; still
+        failing => refuse (``ok`` stays False, ``refusal`` says why).
+      - time: candidate > incumbent * GOLDEN_TIME_FLAG_RATIO => ``time_flag``
+        only; it never changes ``ok``.
+      - no incumbent: recorded as unavailable; ``ok`` unchanged.
+    """
+    if incumbent is None:
+        candidate["incumbent"] = {"status": "unavailable"}
+        return candidate
+    inc = _run_component("golden", project, runner=runner,
+                         extra_args=("--skills-from", str(incumbent)))
+    candidate["incumbent"] = {"skills_from": str(incumbent), **_brief(inc)}
+    if not candidate["ok"] and inc["ok"]:
+        retry = _run_component("golden", project, runner=runner)
+        candidate["candidate_retry"] = _brief(retry)
+        if retry["ok"]:
+            candidate["ok"] = True
+            candidate["note"] = "verdict flip cleared on one re-run"
+        else:
+            candidate["refusal"] = "verdict flip: incumbent passes, candidate fails twice"
+    if candidate["ok"] and inc["ok"] and inc.get("seconds"):
+        candidate["time_flag"] = (
+            candidate["seconds"] > inc["seconds"] * GOLDEN_TIME_FLAG_RATIO)
+    return candidate
 
 
 # ── Record writer ───────────────────────────────────────────────────────────
@@ -246,6 +322,7 @@ def run(
     components: tuple[str, ...] = ("invariants", "golden", "teeth"),
     runner: object | None = None,
     no_record: bool = False,
+    incumbent: Path | None | str = "auto",
 ) -> dict:
     """Run the safety case and return the verdict.
 
@@ -268,8 +345,16 @@ def run(
     results: list[dict] = []
     all_ok = True
 
+    if incumbent == "auto":
+        # An injected runner is a test stub; never compare it against the
+        # real deployed release unless the test passes one explicitly.
+        incumbent = None if runner is not None else _resolve_incumbent(project)
+
     for name in components:
         result = _run_component(name, project, runner=runner)
+        if name == "golden":
+            result = _compare_golden(project, result, runner=runner,
+                                     incumbent=incumbent)
         results.append(result)
         if not result["ok"]:
             all_ok = False
