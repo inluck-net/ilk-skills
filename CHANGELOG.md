@@ -10,6 +10,7 @@ themselves are the authoritative record.
 
 | Version | Date | Highlights |
 |---|---|---|
+| v0.9.159 | 2026-10-06 | **.** RELEASE TRAIN (unattended) — direct commits. Phase 0 0/0 proven. Phase 1: 0 failed / 0 passed with python3 -m pytest --timeout=17 --timeout-method=signal -n 8 --dist loadfile --durations=25, 0 new ids vs v0.9.158. |
 | v0.9.158 | 2026-10-06 | **06 Triage Evidence Is The Stopped Runs Execution Plan.Md.** RELEASE TRAIN (unattended) — triage-evidence-is-the-stopped-runs-verify, triage-evidence-is-the-stopped-runs. Phase 0 0/0 proven. Phase 1: 0 failed / 0 passed with python3 -m pytest --timeout=17 --timeout-method=signal -n 8 --dist loadfile --durations=25, 0 new ids vs v0.9.157. |
 | v0.9.157 | 2026-10-06 | **.** RELEASE TRAIN (unattended) — direct commits. Phase 0 0/0 proven. Phase 1: 0 failed / 0 passed with python3 -m pytest --timeout=17 --timeout-method=signal -n 8 --dist loadfile --durations=25, 0 new ids vs v0.9.156. |
 | v0.9.156 | 2026-10-06 | **06 A Dead Work Tree Parks Its Master Execution Plan.Md; 06 Canary Host Gates The Fleet Execution Plan.Md.** RELEASE TRAIN (unattended) — a-dead-work-tree-parks-its-master-verify, a-dead-work-tree-parks-its-master, canary-host-gates-the-fleet-verify, the-canary-survives-one-scheduler-tick, a-failed-canary-stops-the-fleet. Phase 0 0/0 proven. Phase 1: 0 failed / 0 passed with python3 -m pytest --timeout=17 --timeout-method=signal -n 8 --dist loadfile --durations=25, 0 new ids vs v0.9.155. |
