@@ -51,7 +51,6 @@ def _write_plan(plans_dir: Path, filename: str, slug: str, status: str,
 
 # -- AC-1: slug from sentinel's failed_check when run_id matches -------------
 
-@pytest.mark.xfail(strict=True, reason="evidence is not yet run-scoped")
 def test_ac1_slug_from_sentinel_when_run_id_matches(tmp_path: Path):
     """When sentinel run_id == triaged run_id, slug comes from failed_check."""
     from ilk_triage import build_evidence
@@ -81,7 +80,6 @@ def test_ac1_slug_from_sentinel_when_run_id_matches(tmp_path: Path):
 
 # -- AC-2: slug from gate-history when sentinel is superseded ----------------
 
-@pytest.mark.xfail(strict=True, reason="evidence is not yet run-scoped")
 def test_ac2_slug_from_gate_history_when_sentinel_superseded(tmp_path: Path):
     """When sentinel run_id != triaged run_id, slug comes from gate-history."""
     from ilk_triage import build_evidence
@@ -119,7 +117,6 @@ def test_ac2_slug_from_gate_history_when_sentinel_superseded(tmp_path: Path):
 
 # -- AC-3: no slug when sentinel superseded and no gate-history for this run --
 
-@pytest.mark.xfail(strict=True, reason="evidence is not yet run-scoped")
 def test_ac3_no_slug_when_no_gate_history_for_run(tmp_path: Path):
     """When sentinel is superseded and no gate-history rows exist for this run,
     subplan_frontmatter is empty and missing_sources names the sub-plan gap."""
@@ -150,7 +147,6 @@ def test_ac3_no_slug_when_no_gate_history_for_run(tmp_path: Path):
 
 # -- AC-4: exact slug match (foo does not select foo-verify) ------------------
 
-@pytest.mark.xfail(strict=True, reason="evidence is not yet run-scoped")
 def test_ac4_exact_slug_match_not_substring(tmp_path: Path):
     """Slug 'foo' must match plan: foo, not plan: foo-verify."""
     from ilk_triage import build_evidence

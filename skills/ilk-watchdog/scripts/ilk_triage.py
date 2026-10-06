@@ -23,6 +23,7 @@ sys.path.insert(0, str(_HERE.parent.parent / "ilk-loop" / "scripts"))
 
 from ilk_audit import write_audit
 from ilk_paths import ilk_data_root
+from plan_status import parse_frontmatter
 
 
 # ── constants ────────────────────────────────────────────────────────────────
@@ -43,15 +44,27 @@ def build_evidence(data_dir: Path, run_id: str) -> dict[str, Any]:
 
     Returns a dict with keys: last_exit, gate_history, postmortem_classification,
     iter_tail, driver_log, git_status, git_log, subplan_frontmatter,
-    subplan_findings, missing_sources.
+    subplan_findings, subplan_slug, subplan_slug_source, subplan_candidates,
+    missing_sources.
     """
     missing: list[str] = []
     evidence: dict[str, Any] = {"missing_sources": missing}
 
-    # 1. last-exit.json
+    # 1. last-exit.json — matched by run_id (contract A)
     last_exit_path = data_dir / "runtime" / "launcher" / "last-exit.json"
     if last_exit_path.exists():
-        evidence["last_exit"] = json.loads(last_exit_path.read_text(encoding="utf-8"))
+        sentinel = json.loads(last_exit_path.read_text(encoding="utf-8"))
+        sentinel_run_id = sentinel.get("run_id")
+        if sentinel_run_id == run_id:
+            evidence["last_exit"] = sentinel
+        else:
+            # Superseded: another run wrote this sentinel after ours stopped.
+            evidence["last_exit"] = {
+                "superseded": True,
+                "sentinel_run_id": sentinel_run_id,
+                "project_path": sentinel.get("project_path"),
+            }
+            missing.append(f"last-exit.json superseded (belongs to {sentinel_run_id})")
     else:
         missing.append(str(last_exit_path))
         evidence["last_exit"] = {"missing": str(last_exit_path)}
@@ -142,27 +155,68 @@ def build_evidence(data_dir: Path, run_id: str) -> dict[str, Any]:
         evidence["git_status"] = []
         evidence["git_log"] = []
 
-    # 7. active sub-plan frontmatter and ## Findings section
-    plans_dir = data_dir / "plans"
-    if plans_dir.exists():
-        # Find the active sub-plan (status: in-progress or pending)
-        for plan_file in sorted(plans_dir.glob("*.md")):
-            if plan_file.name.startswith("MASTER-"):
-                continue
-            text = plan_file.read_text(encoding="utf-8")
-            if text.startswith("---"):
-                end = text.find("---", 3)
-                if end != -1:
-                    frontmatter = text[3:end]
-                    if "status: in-progress" in frontmatter or "status: pending" in frontmatter:
-                        evidence["subplan_frontmatter"] = frontmatter
-                        # Extract ## Findings section
-                        findings_match = re.search(r"## Findings\n(.*?)(?=\n## |\Z)", text, re.DOTALL)
-                        evidence["subplan_findings"] = findings_match.group(1).strip() if findings_match else ""
-                        break
-    if "subplan_frontmatter" not in evidence:
+    # 7. slug from the run's own records (contract B), first hit wins
+    slug: str | None = None
+    slug_source: str | None = None
+    sentinel_matched = evidence.get("last_exit", {}).get("run_id") == run_id
+
+    # B1: failed_check.slug from the sentinel, only when sentinel matched this run
+    if sentinel_matched:
+        fc_slug = evidence.get("last_exit", {}).get("failed_check", {}).get("slug")
+        if fc_slug:
+            slug = fc_slug
+            slug_source = "last_exit"
+
+    # B2/B3: last gate-history row for this run with a non-pass outcome, then any outcome
+    if slug is None:
+        gh_rows = evidence.get("gate_history", [])
+        fail_row = None
+        any_row = None
+        for row in gh_rows:
+            if row.get("run_id") == run_id:
+                any_row = row
+                if row.get("outcome") != "pass":
+                    fail_row = row
+        chosen = fail_row or any_row
+        if chosen and chosen.get("slug"):
+            slug = chosen["slug"]
+            slug_source = "gate_history_fail" if fail_row else "gate_history"
+
+    # B4: nothing — no sub-plan attached
+    if slug is None:
         evidence["subplan_frontmatter"] = ""
         evidence["subplan_findings"] = ""
+        evidence["subplan_slug"] = None
+        evidence["subplan_slug_source"] = None
+        missing.append(f"sub-plan for run_id {run_id}")
+    else:
+        evidence["subplan_slug"] = slug
+        evidence["subplan_slug_source"] = slug_source
+
+        # C. Locate the file by exact slug match on plan: frontmatter
+        plans_dir = data_dir / "plans"
+        found_text: str | None = None
+        candidates: list[str] = []
+        if plans_dir.exists():
+            for plan_file in sorted(plans_dir.glob("*.md")):
+                if plan_file.name.startswith("MASTER-"):
+                    continue
+                text = plan_file.read_text(encoding="utf-8")
+                if text.startswith("---"):
+                    fm = parse_frontmatter(text)
+                    if fm.get("plan") == slug:
+                        candidates.append(plan_file.name)
+                        found_text = text  # last match wins (sorted ⇒ newest)
+        if candidates:
+            evidence["subplan_candidates"] = candidates
+            if found_text:
+                evidence["subplan_frontmatter"] = found_text.split("---", 2)[1] if found_text.startswith("---") else ""
+                findings_match = re.search(r"## Findings\n(.*?)(?=\n## |\Z)", found_text, re.DOTALL)
+                evidence["subplan_findings"] = findings_match.group(1).strip() if findings_match else ""
+        else:
+            evidence["subplan_frontmatter"] = ""
+            evidence["subplan_findings"] = ""
+            missing.append(f"sub-plan file for slug {slug}")
 
     return evidence
 
