@@ -430,3 +430,135 @@ def test_ac7_excuse_visible_in_stdout(tmp_path: Path) -> None:
 
     assert "mention: excused 1 declared baseline_red node(s):" in stderr_output
     assert "test_foo.py::test_declared_red" in stderr_output
+
+
+# ── Vitest runner resolution (AC-1, AC-2) ────────────────────────────────────
+
+
+def _make_vitest_project(
+    tmp_path: Path,
+    *,
+    suite_config: dict | None = None,
+    with_node_modules_bin: bool = True,
+) -> Path:
+    """Create a tmp git repo that looks like a vitest project.
+
+    - ``package.json`` with vitest in devDependencies
+    - optional ``node_modules/.bin/vitest`` stub
+    - ``.ilk-launch.json`` with the given suite config (or a default)
+    - a changed test file so the mention gate synthesises a check
+    """
+    launch: dict = {"ship": {}}
+    if suite_config is not None:
+        launch["ship"]["suite"] = suite_config
+
+    base_files: dict[str, str] = {"test_app.ts": "export const a = 1;\n"}
+    commit_files: dict[str, str] = {"test_app.ts": "export const a = 2;\n"}
+
+    # package.json with vitest in devDependencies
+    pkg = {"devDependencies": {"vitest": "^3.0.0"}, "scripts": {"test": "vitest run"}}
+    base_files["package.json"] = json.dumps(pkg, indent=2)
+
+    repo = _setup_repo(
+        tmp_path, launch,
+        base_files=base_files,
+        commit_files=commit_files,
+    )
+
+    if with_node_modules_bin:
+        vitest_bin = repo / "node_modules" / ".bin" / "vitest"
+        vitest_bin.parent.mkdir(parents=True, exist_ok=True)
+        vitest_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        vitest_bin.chmod(0o755)
+
+    # A test file that imports the changed file (so the mention gate picks it up)
+    (repo / "test_app.test.ts").write_text(
+        'import { a } from "./test_app";\ntest("a", () => expect(a).toBe(2));\n',
+        encoding="utf-8",
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "chore: add test file")
+
+    return repo
+
+
+@pytest.mark.xfail(strict=True, reason="mention check uses bare vitest")
+def test_vitest_ac1a_configured_suite_mentions_vitest(tmp_path: Path) -> None:
+    """AC-1(a): when ship.suite mentions vitest, the mention check uses that invocation."""
+    repo = _make_vitest_project(
+        tmp_path,
+        suite_config={"command": "npx vitest run", "flags": []},
+    )
+    result = _run(repo)
+    checks = [c for c in result["results"] if c.get("scope") == "mention"]
+    assert len(checks) == 1
+    cmd = checks[0]["command"]
+    # Must use the configured suite, not bare "vitest run"
+    assert cmd.startswith("npx vitest run"), f"expected configured suite, got: {cmd}"
+    assert not cmd.startswith("vitest run "), f"bare vitest run detected: {cmd}"
+
+
+@pytest.mark.xfail(strict=True, reason="mention check uses bare vitest")
+def test_vitest_ac1b_absolute_path_fallback(tmp_path: Path) -> None:
+    """AC-1(b): when suite doesn't mention vitest but node_modules/.bin/vitest exists, use absolute path."""
+    repo = _make_vitest_project(
+        tmp_path,
+        suite_config={"command": "python3 -m pytest", "flags": ["-q"]},
+    )
+    result = _run(repo)
+    checks = [c for c in result["results"] if c.get("scope") == "mention"]
+    assert len(checks) == 1
+    cmd = checks[0]["command"]
+    vitest_abs = str(repo / "node_modules" / ".bin" / "vitest")
+    assert vitest_abs in cmd, f"expected absolute vitest path in command: {cmd}"
+    assert cmd.endswith("run"), f"command should end with 'run': {cmd}"
+
+
+@pytest.mark.xfail(strict=True, reason="mention check uses bare vitest")
+def test_vitest_ac1c_no_resolvable_vitest(tmp_path: Path) -> None:
+    """AC-1(c): no suite vitest, no node_modules/.bin/vitest → harness_error, not bare vitest run."""
+    repo = _make_vitest_project(
+        tmp_path,
+        suite_config={"command": "python3 -m pytest", "flags": ["-q"]},
+        with_node_modules_bin=False,
+    )
+    result = _run(repo)
+    checks = [c for c in result["results"] if c.get("scope") == "mention"]
+    # Either no mention check emitted, or it carries a harness_error
+    if checks:
+        assert checks[0].get("harness_error") is not None, (
+            f"expected harness_error when vitest not resolvable, got: {checks[0]}"
+        )
+        assert "vitest" in checks[0]["harness_error"].lower()
+    # Under no circumstances should a bare "vitest run" command appear
+    all_cmds = " ".join(c.get("command", "") for c in result["results"])
+    assert "vitest run" not in all_cmds or "node_modules" in all_cmds, (
+        f"bare vitest run should not appear: {all_cmds}"
+    )
+
+
+@pytest.mark.xfail(strict=True, reason="mention check uses bare vitest")
+def test_vitest_ac2_path_stripped_still_resolves(tmp_path: Path) -> None:
+    """AC-2: with PATH stripped of any vitest, the absolute node_modules path is still used."""
+    import os
+
+    repo = _make_vitest_project(
+        tmp_path,
+        suite_config={"command": "python3 -m pytest", "flags": ["-q"]},
+    )
+
+    # Strip PATH of anything that might resolve vitest
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = "/usr/bin:/bin"
+    try:
+        result = _run(repo)
+    finally:
+        os.environ["PATH"] = old_path
+
+    checks = [c for c in result["results"] if c.get("scope") == "mention"]
+    assert len(checks) == 1
+    cmd = checks[0]["command"]
+    vitest_abs = str(repo / "node_modules" / ".bin" / "vitest")
+    assert vitest_abs in cmd, (
+        f"expected absolute vitest path even with PATH stripped: {cmd}"
+    )
