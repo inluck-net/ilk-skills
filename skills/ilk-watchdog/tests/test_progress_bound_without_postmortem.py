@@ -306,3 +306,245 @@ def test_a_resolve_ack_clears_the_new_bound(scheduler_sandbox) -> None:
     assert stale.stdout.strip() == "false", (
         f"a stale ack cleared the bound; got {stale.stdout!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# park_dead_master — AC-1..AC-4  (sub-plan a-dead-work-tree-parks-its-master)
+# ---------------------------------------------------------------------------
+
+import json as _json
+
+
+def _park_setup(
+    data_home: Path,
+    key: str = "test-park",
+    *,
+    sentinel_state: str = "work_tree_invalid",
+    run_id: str = "run-dead-001",
+    active_master: bool = True,
+    queued_master: bool = True,
+) -> Path:
+    """Scaffold a project with an active master, a queued master, and a sentinel.
+
+    Returns the project data dir.
+    """
+    project_dir = data_home / "projects" / key
+    plans_dir = project_dir / "plans"
+    plans_dir.mkdir(parents=True, exist_ok=True)
+
+    if active_master:
+        master = (
+            "---\n"
+            "title: MASTER-active\n"
+            "created: 2026-10-06T00:00:00+08:00\n"
+            "status: active\n"
+            "priority: 0\n"
+            "pause_after_ship: false\n"
+            "---\n\n"
+            "# MASTER-active\n\n"
+            "## Sub-plan registry\n\n"
+            "| # | Sub-plan | Status |\n"
+            "|---|---|---|\n"
+            "| 1 | [2026-10-06-work.md](./2026-10-06-work.md) | pending |\n"
+        )
+        (plans_dir / "MASTER-active.md").write_text(master, encoding="utf-8")
+
+    if queued_master:
+        master_q = (
+            "---\n"
+            "title: MASTER-queued\n"
+            "created: 2026-10-06T00:00:00+08:00\n"
+            "status: queued\n"
+            "priority: 0\n"
+            "pause_after_ship: false\n"
+            "---\n\n"
+            "# MASTER-queued\n\n"
+            "## Sub-plan registry\n\n"
+            "| # | Sub-plan | Status |\n"
+            "|---|---|---|\n"
+            "| 1 | [2026-10-06-other.md](./2026-10-06-other.md) | pending |\n"
+        )
+        (plans_dir / "MASTER-queued.md").write_text(master_q, encoding="utf-8")
+
+    # last-launch.json so scan_projects finds a repo_path
+    launcher_dir = project_dir / "runtime" / "launcher"
+    launcher_dir.mkdir(parents=True, exist_ok=True)
+    (launcher_dir / "last-launch.json").write_text(
+        _json.dumps({"project_path": str(project_dir)}),
+        encoding="utf-8",
+    )
+
+    # sentinel
+    if sentinel_state is not None:
+        sentinel = {
+            "state": sentinel_state,
+            "run_id": run_id,
+            "pid": 0,
+            "started_at": "2026-10-06T10:00:00+0800",
+            "ended_at": "2026-10-06T10:05:00+0800",
+            "iterations": 0,
+        }
+        (launcher_dir / "last-exit.json").write_text(
+            _json.dumps(sentinel), encoding="utf-8"
+        )
+
+    return project_dir
+
+
+_PARK_DEAD_MASTER = (
+    _REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "park_dead_master.py"
+)
+
+
+@pytest.mark.xfail(strict=True, reason="park_dead_master not built yet")
+def test_work_tree_invalid_pauses_active_master(scheduler_sandbox, tmp_path):
+    """AC-1: work_tree_invalid sentinel pauses the active master.
+
+    After park_dead_master.py runs:
+    - the active master is paused with one new progress-log row and one audit row
+    - the queued master is untouched
+    """
+    data_home = scheduler_sandbox.root / ".ilk-data"
+    project_dir = _park_setup(data_home, sentinel_state="work_tree_invalid")
+
+    result = subprocess.run(
+        ["python3", str(_PARK_DEAD_MASTER), str(project_dir)],
+        capture_output=True, text=True, timeout=10,
+        encoding="utf-8", env=scheduler_sandbox.env,
+    )
+    assert result.returncode == 0, f"park_dead_master failed: {result.stderr!r}"
+    out = _json.loads(result.stdout)
+    assert out["parked"] is not None, f"nothing was parked: {out!r}"
+
+    # Active master is now paused
+    active_fm = (project_dir / "plans" / "MASTER-active.md").read_text()
+    assert "status: paused" in active_fm, (
+        f"active master not paused after parking; front-matter:\n{active_fm}"
+    )
+
+    # Queued master untouched
+    queued_fm = (project_dir / "plans" / "MASTER-queued.md").read_text()
+    assert "status: queued" in queued_fm, (
+        f"queued master was changed; front-matter:\n{queued_fm}"
+    )
+
+    # Exactly one progress-log row mentioning work_tree_invalid
+    body = active_fm.split("---", 2)[2] if active_fm.count("---") >= 2 else active_fm
+    assert "work_tree_invalid" in body.lower(), (
+        "progress-log row missing work_tree_invalid mention"
+    )
+
+    # Marker written so it's not re-handled
+    marker = project_dir / "runtime" / "launcher" / f"parked-run-dead-001.json"
+    assert marker.exists(), "idempotency marker not written"
+
+
+@pytest.mark.xfail(strict=True, reason="park_dead_master not built yet")
+def test_parking_twice_is_idempotent(scheduler_sandbox):
+    """AC-2: running park_dead_master.py twice for the same run_id is a no-op
+    the second time.
+    """
+    data_home = scheduler_sandbox.root / ".ilk-data"
+    project_dir = _park_setup(data_home, sentinel_state="work_tree_invalid")
+
+    # First run — parks
+    r1 = subprocess.run(
+        ["python3", str(_PARK_DEAD_MASTER), str(project_dir)],
+        capture_output=True, text=True, timeout=10,
+        encoding="utf-8", env=scheduler_sandbox.env,
+    )
+    assert r1.returncode == 0, f"first run failed: {r1.stderr!r}"
+    out1 = _json.loads(r1.stdout)
+    assert out1["parked"] is not None, f"first run did not park: {out1!r}"
+
+    fm_before = (project_dir / "plans" / "MASTER-active.md").read_text()
+
+    # Second run — no-op
+    r2 = subprocess.run(
+        ["python3", str(_PARK_DEAD_MASTER), str(project_dir)],
+        capture_output=True, text=True, timeout=10,
+        encoding="utf-8", env=scheduler_sandbox.env,
+    )
+    assert r2.returncode == 0, f"second run failed: {r2.stderr!r}"
+    out2 = _json.loads(r2.stdout)
+    assert out2["parked"] is None, f"second run parked again: {out2!r}"
+
+    fm_after = (project_dir / "plans" / "MASTER-active.md").read_text()
+    assert fm_before == fm_after, "second run changed the front-matter"
+
+
+@pytest.mark.xfail(strict=True, reason="park_dead_master not built yet")
+@pytest.mark.parametrize("sentinel_state", [
+    "blocked-no-runnable",
+    "all-shipped",
+    "ship_integrity_violation",
+])
+def test_non_work_tree_invalid_states_park_nothing(scheduler_sandbox, sentinel_state):
+    """AC-3: only work_tree_invalid triggers parking; other terminal states
+    are no-ops.
+    """
+    data_home = scheduler_sandbox.root / ".ilk-data"
+    project_dir = _park_setup(data_home, sentinel_state=sentinel_state)
+
+    result = subprocess.run(
+        ["python3", str(_PARK_DEAD_MASTER), str(project_dir)],
+        capture_output=True, text=True, timeout=10,
+        encoding="utf-8", env=scheduler_sandbox.env,
+    )
+    assert result.returncode == 0, f"unexpected exit: {result.stderr!r}"
+    out = _json.loads(result.stdout)
+    assert out["parked"] is None, (
+        f"{sentinel_state} incorrectly parked a master: {out!r}"
+    )
+
+    # Active master unchanged
+    fm = (project_dir / "plans" / "MASTER-active.md").read_text()
+    assert "status: active" in fm, (
+        f"{sentinel_state} changed active master status: {fm}"
+    )
+
+
+@pytest.mark.xfail(strict=True, reason="park_dead_master not built yet")
+def test_missing_sentinel_parks_nothing(scheduler_sandbox):
+    """AC-3 (missing sentinel): no last-exit.json → no parking."""
+    data_home = scheduler_sandbox.root / ".ilk-data"
+    project_dir = _park_setup(data_home, sentinel_state=None)
+
+    result = subprocess.run(
+        ["python3", str(_PARK_DEAD_MASTER), str(project_dir)],
+        capture_output=True, text=True, timeout=10,
+        encoding="utf-8", env=scheduler_sandbox.env,
+    )
+    assert result.returncode == 0, f"unexpected exit: {result.stderr!r}"
+    out = _json.loads(result.stdout)
+    assert out["parked"] is None, f"missing sentinel still parked: {out!r}"
+
+
+@pytest.mark.xfail(strict=True, reason="park_dead_master not built yet")
+def test_scheduler_calls_park_before_no_progress_bound():
+    """AC-4: scheduler.sh calls park_dead_master.py before the no-progress
+    bound, and logs 'parked-dead-work-tree' when it parks.
+
+    Assert by reading scheduler.sh: the call site's line number is between the
+    dispatch loop start and get_no_progress_verdict.
+    """
+    src = _SCHEDULER_SH.read_text()
+
+    # Find the dispatch loop region
+    assert "park_dead_master" in src, (
+        "scheduler.sh never calls park_dead_master"
+    )
+
+    # The call must sit before the no-progress verdict
+    park_at = src.index("park_dead_master")
+    np_verdict_at = src.index("get_no_progress_verdict")
+    assert park_at < np_verdict_at, (
+        f"park_dead_master (char {park_at}) sits after get_no_progress_verdict "
+        f"(char {np_verdict_at}); it must run before the bound"
+    )
+
+    # Must log 'parked-dead-work-tree' on success
+    region_after = src[park_at:]
+    assert "parked-dead-work-tree" in region_after, (
+        "parking a dead work tree produces no scheduler log line"
+    )
