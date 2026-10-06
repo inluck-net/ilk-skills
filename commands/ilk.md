@@ -79,9 +79,23 @@ For each step:
    sub-plan file lives in the external plans dir
    (`~/.ilk-data/projects/<key>/plans/`) — that file edit is NOT a
    commit in any member repo (plans live outside SCM).
-4. If a step uncovers a new bug: file a new ticket via the lark-tickets
-   skill, add a one-line note under "Out of scope" in the current sub-plan.
+4. The only parts of a sub-plan file a worker may edit are `current_step`,
+   `last_updated` (and `status` only through `ship_transition.py`) in the
+   frontmatter, plus anything under `## Findings`. Everything else — including
+   `local_checks` — is the planner's surface. Touching anything above
+   `## Findings` ends the iteration immediately (`plan-amended`). Touching
+   any `local_checks` also stops the run: the runner restores gates from
+   the pre-dispatch snapshot and exits `ship_integrity_violation`.
+   Uncommitted work is then only
+   WIP-preserved, so **commit before any plan-file edit**.
+5. If a step uncovers a new bug: file a new ticket via the lark-tickets
+   skill, add a one-line note under `## Findings` in the current sub-plan.
    Do NOT silently expand the plan.
+6. When the declared gate names a test file or command that does not match where
+   you put the work, move the work to where the gate looks, never the gate to
+   the work. If the gate is genuinely wrong, write the proposed replacement
+   command under `## Findings` and continue. The planner or operator applies it
+   between runs.
 
 ### Running tests / long commands during a step
 
@@ -194,8 +208,9 @@ Stop and hand back to the human when ANY of these is true:
      `python3 <skill-root>/ilk-loop/scripts/ship_transition.py --ship <slug> --plans-dir <plans dir> --repo <repo>`.
      Never edit `status:` and never author a `#ship` commit by hand.
      never set `shipped` while the declared gate is red — if gate
-     failures are genuinely pre-existing and unrelated, re-scope the gate
-     (fix its `local_checks` to exclude the unrelated failures) — do NOT
+     failures are genuinely pre-existing and unrelated, record the
+     unrelated failing node ids and the proposed re-scoped gate command
+     under `## Findings`, and leave the sub-plan `in-progress` — do NOT
      override or rationalize a red gate as acceptable. A sub-plan with a
      red declared gate must stay `in-progress` until the gate is green.
      A `batch_verification: true` sub-plan is shipped only by the driver.

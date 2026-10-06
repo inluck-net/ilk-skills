@@ -30,7 +30,6 @@ class TestAC1NoLicence:
     """commands/ilk.md must never tell the worker to edit local_checks
     or to write under 'Out of scope'."""
 
-    @pytest.mark.xfail(strict=True, reason="ilk.md still licenses gate edits")
     def test_no_local_checks_edit_instruction(self) -> None:
         """AC-1a: no line says to edit/change/fix local_checks without a negation."""
         text = COMMANDS_ILK.read_text(encoding="utf-8")
@@ -53,7 +52,6 @@ class TestAC1NoLicence:
                     f"ilk.md line {i} tells worker to edit local_checks: {line!r}"
                 )
 
-    @pytest.mark.xfail(strict=True, reason="ilk.md still licenses gate edits")
     def test_no_out_of_scope_write_instruction(self) -> None:
         """AC-1b: no line says to write under 'Out of scope'."""
         text = COMMANDS_ILK.read_text(encoding="utf-8")
@@ -71,7 +69,6 @@ class TestAC1NoLicence:
 class TestAC2RulePresent:
     """§5 must contain the key phrases naming the new contract."""
 
-    @pytest.mark.xfail(strict=True, reason="ilk.md still licenses gate edits")
     def test_section5_names_contract(self) -> None:
         """AC-2: §5 contains Findings, plan-amended, ship_integrity_violation,
         and local_checks."""
