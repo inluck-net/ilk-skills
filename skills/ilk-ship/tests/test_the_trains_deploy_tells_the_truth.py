@@ -2338,6 +2338,123 @@ class TestRemoteSSHArgvSerialization:
         )
 
 
+# ── Step 0: xfail pin for remote bounce argv contract ─────────────────────
+#
+# v0.9.153 fail-closed: _ssh_deploy passes the release tag as a positional
+# argument to bounce_daemons.sh:
+#   [str(_BOUNCE_SCRIPT), tag]
+# The bouncer's documented CLI accepts no positional arguments; the tag
+# causes it to exit 2 ("unknown option").  This pin asserts the remote
+# bounce invocation carries exactly the bouncer path — matching the local
+# deploy() contract where _default_bounce_cmd invokes [str(_bouncer_for(tag))]
+# with no extra arguments.  Step 1 will remove the tag and make it green.
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="v0.9.153: _ssh_deploy passes tag to bounce_daemons.sh; bouncer accepts no positional args",
+)
+def test_remote_bounce_argv_contains_only_bouncer_path(tmp_path: Path) -> None:
+    """The remote bounce invocation must contain exactly the bouncer
+    executable and no positional tag argument.  bounce_daemons.sh accepts
+    no positional arguments; passing the tag causes exit 2.
+
+    This pin captures the real SSH subprocess argv via ``subprocess.run``
+    patching, finds the bounce_daemons invocation in the serialized remote
+    command, and asserts it carries exactly one element (the bouncer path).
+    """
+    import shlex
+    import unittest.mock
+
+    project = tmp_path / "my project"
+    project.mkdir()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+
+    # Minimal git repo so _tag_sha resolves
+    subprocess.run(["git", "init"], cwd=project, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "t@t"],
+        cwd=project, check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "T"],
+        cwd=project, check=True, capture_output=True,
+    )
+    (project / "f").write_text("x")
+    subprocess.run(["git", "add", "."], cwd=project, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init"], cwd=project, check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "tag", "-a", "v0.0.1", "-m", "v0.0.1"],
+        cwd=project, check=True, capture_output=True,
+    )
+
+    sys.path.insert(0, str(SHIP_SCRIPTS))
+    sys.path.insert(0, str(LOOP_SCRIPTS))
+    import release_train
+
+    ssh_subprocess_calls: list[list[str]] = []
+
+    def _fake_run(args, **kwargs):
+        if args and args[0] == "ssh":
+            ssh_subprocess_calls.append(list(args))
+            remote_cmd = args[-1]
+            parsed = shlex.split(remote_cmd)
+            cmd_str = " ".join(parsed)
+
+            if "fetch" in cmd_str:
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            if "rev-parse" in cmd_str:
+                return subprocess.CompletedProcess(args, 0, stdout="a" * 40, stderr="")
+            if "ilk_release.py" in cmd_str:
+                return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
+            if "host_deploy_status" in cmd_str:
+                return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
+            # bounce — succeed (the xfail is about argv, not exit code)
+            if "bounce_daemons" in cmd_str:
+                return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+
+        return subprocess.CompletedProcess(args, 0, stdout="a" * 40, stderr="")
+
+    with unittest.mock.patch("release_train.subprocess.run", side_effect=_fake_run):
+        release_train._ssh_deploy(
+            project, "v0.0.1", data_dir,
+            host="rezmac",
+            settle_deadline_sec=0.1,
+            settle_poll_interval_sec=0.05,
+        )
+
+    assert len(ssh_subprocess_calls) >= 1, "Expected at least one SSH subprocess call"
+
+    # Find the bounce_daemons invocation inside the serialized remote command
+    bounce_cmd_args: list[str] | None = None
+    for ssh_call in ssh_subprocess_calls:
+        remote_cmd_str = ssh_call[-1]
+        parsed = shlex.split(remote_cmd_str)
+        for i, tok in enumerate(parsed):
+            if "bounce_daemons" in tok:
+                bounce_cmd_args = parsed[i:]
+                break
+        if bounce_cmd_args is not None:
+            break
+
+    assert bounce_cmd_args is not None, (
+        "Expected a bounce_daemons invocation in SSH remote commands"
+    )
+
+    # The contract: exactly the bouncer executable, no tag argument.
+    # bounce_daemons.sh accepts no positional arguments.
+    assert len(bounce_cmd_args) == 1, (
+        f"bounce invocation must contain only the bouncer path (no tag), "
+        f"got {len(bounce_cmd_args)} args: {bounce_cmd_args}"
+    )
+    assert "bounce_daemons" in bounce_cmd_args[0], (
+        f"First arg must be the bouncer path, got: {bounce_cmd_args[0]!r}"
+    )
+
+
 # ── AC-9: control — existing tests pass ──────────────────────────────────────
 
 class TestControlExistingTestsPass:
