@@ -284,3 +284,176 @@ def test_cache_with_env_marker_is_reused(tmp_path: Path) -> None:
         "cache with env marker must be reused without a rerun.  "
         f"got: {verdicts}"
     )
+
+
+# ── helpers for one-process at-base pins ─────────────────────────────────────
+
+def _make_four_kind_repo(tmp: Path) -> tuple[Path, str, dict[str, str]]:
+    """Create a repo whose base commit has four test kinds.
+
+    Returns ``(repo, base_sha, expected_verdicts)`` where
+    ``expected_verdicts`` maps each node id to its expected at-base verdict
+    when run against the base commit.
+
+    The four kinds:
+    - ``test_pass`` — passes at base → ``"passed"``
+    - ``test_fail`` — fails at base → ``"failed"``
+    - ``test_absent`` — does not exist at base (added at head) →
+      ``"absent-at-base"``
+    - ``test_collection_error`` — file exists at base but has a syntax error →
+      ``"failed"`` (collection error in an existing file is a failure, not
+      absent)
+    """
+    repo = tmp / "four-kind"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    tests = repo / "tests"
+    tests.mkdir()
+
+    # test_pass — a trivial passing test
+    (tests / "test_pass.py").write_text(
+        "def test_ok():\n    assert True\n", encoding="utf-8"
+    )
+
+    # test_fail — a trivially failing test
+    (tests / "test_fail.py").write_text(
+        "def test_bad():\n    assert False\n", encoding="utf-8"
+    )
+
+    # test_collection_error — file exists at base but has a syntax error
+    (tests / "test_broken.py").write_text(
+        "def test_broken(:\n    pass\n", encoding="utf-8"
+    )
+
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.email=t@e.com", "-c", "user.name=t",
+         "commit", "-q", "-m", "base: four test kinds")
+    base_sha = _git(repo, "rev-parse", "HEAD")
+
+    # head commit — adds test_absent
+    (tests / "test_absent.py").write_text(
+        "def test_new():\n    assert True\n", encoding="utf-8"
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.email=t@e.com", "-c", "user.name=t",
+         "commit", "-q", "-m", "head: add test_absent")
+
+    expected = {
+        "tests/test_pass.py::test_ok": "passed",
+        "tests/test_fail.py::test_bad": "failed",
+        "tests/test_broken.py::test_broken": "failed",
+        # absent is not in the base commit at all
+    }
+    return repo, base_sha, expected
+
+
+# ── AC-pin-1: one pytest process for N ≥ 3 ids ──────────────────────────────
+
+@pytest.mark.xfail(strict=True, reason="one-process at-base rerun not built")
+def test_at_base_spawns_one_process_for_multiple_ids(tmp_path: Path) -> None:
+    """AC-1: run_at_base must run all uncached, non-declared ids in ONE
+    pytest process, not one per id."""
+    repo, base_sha, _ = _make_four_kind_repo(tmp_path)
+
+    # Collect ids that exist at the base commit (no absent ids).
+    node_ids = [
+        "tests/test_pass.py::test_ok",
+        "tests/test_fail.py::test_bad",
+        "tests/test_broken.py::test_broken",
+    ]
+
+    import verification_record as vr
+    call_count = 0
+    orig_bounded = vr._bounded_run
+
+    def _counting_bounded(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return orig_bounded(*args, **kwargs)
+
+    vr._bounded_run = _counting_bounded
+    try:
+        run_at_base(
+            repo, base_sha, node_ids,
+            f"{sys.executable} -m pytest", timeout=60,
+        )
+    finally:
+        vr._bounded_run = orig_bounded
+
+    assert call_count == 1, (
+        f"expected 1 pytest process for {len(node_ids)} ids, got {call_count}"
+    )
+
+
+# ── AC-pin-2: absent and collection-error ids get correct verdict ────────────
+
+@pytest.mark.xfail(strict=True, reason="one-process at-base rerun not built")
+def test_absent_and_collection_error_verdicts(tmp_path: Path) -> None:
+    """AC-2: an absent-at-base id and a collection-error id must each get
+    today's exact verdict via the per-id fallback."""
+    repo, base_sha, _ = _make_four_kind_repo(tmp_path)
+
+    node_ids = [
+        "tests/test_pass.py::test_ok",
+        "tests/test_fail.py::test_bad",
+        "tests/test_broken.py::test_broken",
+        "tests/test_absent.py::test_new",
+    ]
+
+    verdicts = run_at_base(
+        repo, base_sha, node_ids,
+        f"{sys.executable} -m pytest", timeout=60,
+    )
+
+    # test_broken is a collection error in a file that EXISTS at base → "failed"
+    assert verdicts["tests/test_broken.py::test_broken"] == "failed", (
+        "collection error in an existing file must be 'failed', not absent.  "
+        f"got: {verdicts['tests/test_broken.py::test_broken']}"
+    )
+
+    # test_absent does not exist at the base commit → "absent-at-base"
+    assert verdicts["tests/test_absent.py::test_new"] == "absent-at-base", (
+        "a test that does not exist at base must be 'absent-at-base'.  "
+        f"got: {verdicts['tests/test_absent.py::test_new']}"
+    )
+
+
+# ── AC-pin-3: equivalence — batched == per-id on four kinds ──────────────────
+
+def test_batched_equals_per_id_on_four_kinds(tmp_path: Path) -> None:
+    """AC-3: the batched implementation and the per-id implementation must
+    return identical verdict dicts on the four-kind fixture.
+
+    This test passes today because both paths use the same per-id loop.
+    Once step 1 introduces the batched path, this becomes the regression
+    guard proving the batched path produces the same verdicts.
+    """
+    repo, base_sha, _ = _make_four_kind_repo(tmp_path)
+
+    node_ids = [
+        "tests/test_pass.py::test_ok",
+        "tests/test_fail.py::test_bad",
+        "tests/test_broken.py::test_broken",
+        "tests/test_absent.py::test_new",
+    ]
+
+    runner = f"{sys.executable} -m pytest"
+
+    # Per-id: run each id separately (today's path).
+    per_id_verdicts: dict[str, str] = {}
+    for nid in node_ids:
+        single = run_at_base(
+            repo, base_sha, [nid], runner, timeout=60,
+        )
+        per_id_verdicts.update(single)
+
+    # Batched: run all ids at once (the new path, once built).
+    batched_verdicts = run_at_base(
+        repo, base_sha, node_ids, runner, timeout=60,
+    )
+
+    assert batched_verdicts == per_id_verdicts, (
+        "batched and per-id paths must return identical verdict dicts.\n"
+        f"  batched: {batched_verdicts}\n"
+        f"  per-id:  {per_id_verdicts}"
+    )
