@@ -12,12 +12,19 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_skill_root.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_pid.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../../ilk-loop/scripts/_ilk_data_dir.sh"
 _SKILL_ROOT="$(ilk_skill_root)"
 
 # ----- Defaults & globals ----------------------------------------------------
 
 LAUNCHER_DIR="${_SKILL_ROOT}/ilk-launcher"
-PROJECTS_JSON="${LAUNCHER_DIR}/projects.json"
+# Canonical data-home registry; bounded legacy fallback.
+_DATA_HOME_PROJECTS_JSON="$(ilk_data_dir)/projects.json"
+if [[ -f "$_DATA_HOME_PROJECTS_JSON" ]]; then
+  PROJECTS_JSON="$_DATA_HOME_PROJECTS_JSON"
+else
+  PROJECTS_JSON="${LAUNCHER_DIR}/projects.json"
+fi
 DEFAULT_MAX_ITER=30
 DEFAULT_TIMEOUT=30
 # Hard ceiling so a typo'd sub-plan declaration cannot pin a slot forever.
