@@ -1829,6 +1829,7 @@ def _load_base_red_ids(project: Path, batch_name: str) -> tuple[list[str], str]:
         from verify_attribution import (
             resolve_batch_record,
             _compute_record_digest,
+            _read_history,
             parse_rows,
         )
     except ImportError:
@@ -1844,19 +1845,23 @@ def _load_base_red_ids(project: Path, batch_name: str) -> tuple[list[str], str]:
     except OSError as exc:
         return [], f"[gates] cannot read record {rec_path}: {exc}; pytest gate runs as authored"
 
-    # Verify digest.
-    surface = text.split("## Findings")[0] if "## Findings" in text else text
-    expected_digest = hashlib.sha256(surface.encode("utf-8")).hexdigest()
-
-    # Look for record_digest line.
-    digest_match = re.search(r"^record_digest:\s*(\S+)", text, re.MULTILINE)
-    if digest_match:
-        actual_digest = digest_match.group(1)
-        if actual_digest != expected_digest:
-            return [], (
-                f"[gates] no signed record for {batch_name} (digest mismatch); "
-                f"pytest gate runs as authored"
-            )
+    # Verify digest via history: require a non-empty history whose latest
+    # entry's digest matches the record surface.  Missing history, malformed
+    # rows, a latest row with no/string-invalid digest, or a mismatch all
+    # fail closed and run the authored gate.
+    history = _read_history(rec_path)
+    if not history:
+        return [], f"[gates] no recorded record for {batch_name} (no history); pytest gate runs as authored"
+    latest = history[-1]
+    latest_digest = latest.get("digest")
+    if not isinstance(latest_digest, str):
+        return [], f"[gates] no recorded record for {batch_name} (no history); pytest gate runs as authored"
+    expected_digest = _compute_record_digest(text)
+    if latest_digest != expected_digest:
+        return [], (
+            f"[gates] no recorded record for {batch_name} (digest mismatch); "
+            f"pytest gate runs as authored"
+        )
 
     # Parse the at-base rerun table.
     section_match = re.search(

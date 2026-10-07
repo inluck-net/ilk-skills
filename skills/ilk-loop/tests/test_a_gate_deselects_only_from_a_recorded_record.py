@@ -118,10 +118,6 @@ def _load_with_stub(tmp_path: Path, batch: str = "test-batch"):
 class TestNoHistoryDeselectsNothing:
     """When there is no history file, deselect nothing and run authored gate."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="base code has no history check; deselects when record_digest line absent",
-    )
     def test_no_history_returns_empty(self, tmp_path: Path) -> None:
         _make_record(
             tmp_path,
@@ -130,15 +126,6 @@ class TestNoHistoryDeselectsNothing:
         ids, diag = _load_with_stub(tmp_path)
         assert ids == []
         assert "no history" in diag or "no recorded record" in diag
-
-    def test_no_history_base_deselects(self, tmp_path: Path) -> None:
-        """Control: at base, no history still deselects (the bug)."""
-        _make_record(
-            tmp_path,
-            table_rows="| test_alpha | failed |\n| test_beta | passed |\n",
-        )
-        ids, _diag = _load_with_stub(tmp_path)
-        assert "test_alpha" in ids
 
 
 class TestDigestMismatchDeselectsNothing:
@@ -153,21 +140,11 @@ class TestDigestMismatchDeselectsNothing:
         _write_history(rec, [{"digest": digest[::-1], "attempt": 1}])
         return rec
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="base code has no history digest check; deselects when record_digest line absent",
-    )
     def test_mismatch_returns_empty(self, tmp_path: Path) -> None:
         self._make_mismatched(tmp_path)
         ids, diag = _load_with_stub(tmp_path)
         assert ids == []
         assert "digest" in diag.lower() or "no recorded record" in diag
-
-    def test_mismatch_base_deselects(self, tmp_path: Path) -> None:
-        """Control: at base, digest mismatch still deselects (the bug)."""
-        self._make_mismatched(tmp_path)
-        ids, _diag = _load_with_stub(tmp_path)
-        assert "test_alpha" in ids
 
 
 class TestMatchingDigestDeselects:
@@ -219,10 +196,6 @@ class TestMatchingDigestDeselects:
 class TestMalformedHistoryRows:
     """History with only malformed rows is treated as no history."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="base code has no history check; deselects regardless",
-    )
     def test_all_malformed_returns_empty(self, tmp_path: Path) -> None:
         rec = _make_record(
             tmp_path,
@@ -234,25 +207,10 @@ class TestMalformedHistoryRows:
         assert ids == []
         assert "no history" in diag or "no recorded record" in diag
 
-    def test_all_malformed_base_deselects(self, tmp_path: Path) -> None:
-        """Control: at base, malformed history still deselects."""
-        rec = _make_record(
-            tmp_path,
-            table_rows="| test_alpha | failed |\n",
-        )
-        hist = rec.with_suffix(".history.jsonl")
-        hist.write_text("not json\n{bad\n\n", encoding="utf-8")
-        ids, _diag = _load_with_stub(tmp_path)
-        assert "test_alpha" in ids
-
 
 class TestLatestRowMissingDigest:
     """History latest row with no digest field → treated as no history."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="base code has no history check; deselects regardless",
-    )
     def test_no_digest_field_returns_empty(self, tmp_path: Path) -> None:
         rec = _make_record(
             tmp_path,
@@ -263,24 +221,10 @@ class TestLatestRowMissingDigest:
         assert ids == []
         assert "no history" in diag or "no recorded record" in diag
 
-    def test_no_digest_field_base_deselects(self, tmp_path: Path) -> None:
-        """Control: at base, missing digest field still deselects."""
-        rec = _make_record(
-            tmp_path,
-            table_rows="| test_alpha | failed |\n",
-        )
-        _write_history(rec, [{"attempt": 1}])
-        ids, _diag = _load_with_stub(tmp_path)
-        assert "test_alpha" in ids
-
 
 class TestLatestRowNonStringDigest:
     """History latest row with non-string digest → treated as no history."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="base code has no history check; deselects regardless",
-    )
     def test_int_digest_returns_empty(self, tmp_path: Path) -> None:
         rec = _make_record(
             tmp_path,
@@ -291,16 +235,6 @@ class TestLatestRowNonStringDigest:
         assert ids == []
         assert "no history" in diag or "no recorded record" in diag
 
-    def test_int_digest_base_deselects(self, tmp_path: Path) -> None:
-        """Control: at base, non-string digest still deselects."""
-        rec = _make_record(
-            tmp_path,
-            table_rows="| test_alpha | failed |\n",
-        )
-        _write_history(rec, [{"digest": 42, "attempt": 1}])
-        ids, _diag = _load_with_stub(tmp_path)
-        assert "test_alpha" in ids
-
 
 class TestNoAttemptHeaderRequiresHistory:
     """Records without attempt: header still require history for deselection.
@@ -310,10 +244,6 @@ class TestNoAttemptHeaderRequiresHistory:
     fail closed.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="base code has no history requirement; deselects when record_digest line absent",
-    )
     def test_no_attempt_no_history_returns_empty(self, tmp_path: Path) -> None:
         """No attempt header + no history → fail closed."""
         _make_record(
@@ -322,15 +252,6 @@ class TestNoAttemptHeaderRequiresHistory:
         )
         ids, diag = _load_with_stub(tmp_path)
         assert ids == []
-
-    def test_no_attempt_no_history_base_deselects(self, tmp_path: Path) -> None:
-        """Control: at base, no attempt + no history still deselects."""
-        _make_record(
-            tmp_path,
-            table_rows="| test_alpha | failed |\n",
-        )
-        ids, _diag = _load_with_stub(tmp_path)
-        assert "test_alpha" in ids
 
     def test_no_attempt_with_matching_history_deselects(self, tmp_path: Path) -> None:
         """No attempt header + matching history → deselects as before."""
@@ -363,10 +284,6 @@ class TestProseEditBelowFindingsAllowed:
 class TestMachineEditAboveFindingsFailsClosed:
     """A machine-readable edit above ## Findings causes digest mismatch."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="base code checks record_digest line, not history; edit above Findings is undetected",
-    )
     def test_extra_field_causes_mismatch(self, tmp_path: Path) -> None:
         rec = _make_record(
             tmp_path,
@@ -383,21 +300,6 @@ class TestMachineEditAboveFindingsFailsClosed:
         assert ids == []
         assert "digest" in diag.lower() or "no recorded record" in diag
 
-    def test_extra_field_base_deselects(self, tmp_path: Path) -> None:
-        """Control: at base, edit above Findings still deselects (the bug)."""
-        rec = _make_record(
-            tmp_path,
-            table_rows="| test_alpha | failed |\n",
-        )
-        digest = _compute_digest(rec)
-        _write_history(rec, [{"digest": digest, "attempt": 1}])
-        text = rec.read_text(encoding="utf-8")
-        text = text.replace("record_writer: verify_attribution",
-                            "record_writer: verify_attribution\nextra_field: oops")
-        rec.write_text(text, encoding="utf-8")
-        ids, _diag = _load_with_stub(tmp_path)
-        assert "test_alpha" in ids
-
 
 class TestRecordDigestLineRemoved:
     """The record_digest: line branch is removed.
@@ -405,14 +307,10 @@ class TestRecordDigestLineRemoved:
     After step 1, the record_digest: line is ignored — only history matters.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="base code checks record_digest line (abc123 != real digest → mismatch → empty)",
-    )
     def test_record_digest_line_ignored_when_history_matches(
         self, tmp_path: Path,
     ) -> None:
-        """After step 1: even if record_digest: line mismatches, history wins."""
+        """Even if record_digest: line mismatches, history wins."""
         body = textwrap.dedent("""\
             ---
             batch: test-batch
