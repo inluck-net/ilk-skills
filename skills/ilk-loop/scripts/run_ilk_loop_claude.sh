@@ -2830,6 +2830,48 @@ print("")
     return 0
   fi
 
+  # Guard: do not ship if the MASTER has a batch_verification sub-plan
+  # that has not shipped yet.  The verify sub-plan's signed verdict is
+  # part of the batch's acceptance; shipping before it completes is the
+  # shape ship_integrity reverts.
+  local _bv_pending
+  _bv_pending=$(python3 -c "
+import re, sys
+from pathlib import Path
+plans_dir = Path(sys.argv[1])
+slug = sys.argv[2]
+# Find the MASTER that contains this sub-plan.
+for master in sorted(plans_dir.glob('MASTER-*.md')):
+    body = master.read_text(encoding='utf-8-sig')
+    if slug not in body:
+        continue
+    # Extract sub-plan file references from the registry table.
+    for m in re.finditer(r'\]\(\./([^)]+\.md)\)', body):
+        sp_file = plans_dir / m.group(1)
+        if not sp_file.is_file():
+            continue
+        sp_body = sp_file.read_text(encoding='utf-8-sig')
+        fm = re.match(r'^---\n(.*?)\n---', sp_body, re.DOTALL)
+        if not fm:
+            continue
+        is_bv = False
+        sp_status = ''
+        for line in fm.group(1).splitlines():
+            if re.match(r'batch_verification:\s*(true|yes|1)\s*$', line, re.IGNORECASE):
+                is_bv = True
+            sm = re.match(r'status:\s*(.*)', line)
+            if sm:
+                sp_status = sm.group(1).strip()
+        if is_bv and sp_status != 'shipped':
+            print(sp_file.stem)
+            raise SystemExit(0)
+    break
+" "$plans_dir" "$slug" 2>/dev/null) || true
+  if [[ -n "$_bv_pending" ]]; then
+    echo "[driver-ship] $slug: deferred — batch_verification sub-plan $_bv_pending not yet shipped"
+    return 0
+  fi
+
   local repo ship_script
   repo=$(selfmod_effective_repo "${REPOS[0]:-$PROJECT_PATH}")
   [[ -n "$repo" ]] || repo="$PROJECT_PATH"
