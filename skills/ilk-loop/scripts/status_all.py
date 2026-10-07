@@ -911,11 +911,10 @@ def resolve_project_status(project_dir: Path, *,
                 and not _is_superseded_park(mfm.get("parked_reason") or "")
             ):
                 pending_batches += 1
-            if mstatus == "queued":
+            if mstatus == "queued" and not queued_has_work:
                 q_slug, _, _, _, _ = _resolve_next_subplan(plans_dir, mtext)
                 if q_slug:
                     queued_has_work = True
-                    break
 
     # Sentinel
     sentinel_raw = _read_sentinel(runtime_dir)

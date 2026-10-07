@@ -156,7 +156,6 @@ def _clean():
 
 # ── AC-1 ────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="count stops at the first queued master with work")
 def test_pending_batches_counts_all_owed_masters():
     """1 active + 5 queued masters → pending_batches == 6."""
     masters = [("active-batch", "active")]
@@ -170,7 +169,6 @@ def test_pending_batches_counts_all_owed_masters():
 
 # ── AC-2 ────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="count stops at the first queued master with work")
 def test_pending_batches_ignores_draft_paused_shipped():
     """+1 draft, +1 paused, +1 shipped → still 6."""
     masters = [("active-batch", "active")]
