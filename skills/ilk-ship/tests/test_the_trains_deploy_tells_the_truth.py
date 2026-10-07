@@ -1139,11 +1139,16 @@ class TestMultiHostHost2TransportFails:
         sys.path.insert(0, str(LOOP_SCRIPTS))
         import release_train
 
+        def _ssh_with_quiet(proj, tag, data_dir, **kwargs):
+            kwargs.setdefault("quiet_probe", lambda: [])
+            return release_train._ssh_deploy(proj, tag, data_dir, **kwargs)
+
         result = release_train._deploy_all_hosts(
             project, "v0.0.2", data_dir,
             hosts=["chad-mbp", "rezmac"],
             local_hosts=["chad-mbp"],
             deploy_fn=_deploy_fn,
+            ssh_deploy_fn=_ssh_with_quiet,
         )
 
         assert result["exit_code"] == 2
@@ -1628,10 +1633,15 @@ class TestSSHTransportRefusal:
         # This test asserts the SSH adapter is actually called for remote
         # hosts.  Today _deploy_all_hosts returns a hardcoded placeholder
         # without calling any adapter.  Step 2 will wire in a real adapter.
+        def _ssh_with_quiet(proj, tag, data_dir, **kwargs):
+            kwargs.setdefault("quiet_probe", lambda: [])
+            return release_train._ssh_deploy(proj, tag, data_dir, **kwargs)
+
         result = release_train._deploy_all_hosts(
             project, "v0.0.2", data_dir,
             hosts=["rezmac"],
             local_hosts=[],  # rezmac is remote
+            ssh_deploy_fn=_ssh_with_quiet,
         )
 
         host_result = result["hosts"]["rezmac"]
@@ -1657,10 +1667,15 @@ class TestSSHTransportRefusal:
         sys.path.insert(0, str(LOOP_SCRIPTS))
         import release_train
 
+        def _ssh_with_quiet(proj, tag, data_dir, **kwargs):
+            kwargs.setdefault("quiet_probe", lambda: [])
+            return release_train._ssh_deploy(proj, tag, data_dir, **kwargs)
+
         result = release_train._deploy_all_hosts(
             project, "v0.0.2", data_dir,
             hosts=["rezmac"],
             local_hosts=[],
+            ssh_deploy_fn=_ssh_with_quiet,
         )
 
         host_result = result["hosts"]["rezmac"]
@@ -1689,10 +1704,15 @@ class TestSSHTransportRefusal:
         sys.path.insert(0, str(LOOP_SCRIPTS))
         import release_train
 
+        def _ssh_with_quiet(proj, tag, data_dir, **kwargs):
+            kwargs.setdefault("quiet_probe", lambda: [])
+            return release_train._ssh_deploy(proj, tag, data_dir, **kwargs)
+
         result = release_train._deploy_all_hosts(
             project, "v0.0.2", data_dir,
             hosts=["rezmac"],
             local_hosts=[],
+            ssh_deploy_fn=_ssh_with_quiet,
         )
 
         host_result = result["hosts"]["rezmac"]
@@ -1848,6 +1868,10 @@ class TestPerHostAuditTruth:
         def _canary_succeeds(proj, tag, data_dir, **kwargs):
             return {"tag": tag, "deployed": True, "exit_code": 0}
 
+        def _ssh_with_quiet(proj, tag, data_dir, **kwargs):
+            kwargs.setdefault("quiet_probe", lambda: [])
+            return release_train._ssh_deploy(proj, tag, data_dir, **kwargs)
+
         # The SSH placeholder does not provide structured evidence — the
         # real adapter must.
         result = release_train._deploy_all_hosts(
@@ -1855,6 +1879,7 @@ class TestPerHostAuditTruth:
             hosts=["chad-mbp", "rezmac"],
             local_hosts=["chad-mbp"],  # rezmac is remote
             deploy_fn=_canary_succeeds,
+            ssh_deploy_fn=_ssh_with_quiet,
         )
 
         # rezmac must be in exactly one list
