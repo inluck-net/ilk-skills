@@ -1008,6 +1008,142 @@ def _scheduler_pid_file() -> Path:
     return ilk_data_root() / "scheduler.pid"
 
 
+# ── Quiet-fleet wait ────────────────────────────────────────────────────────
+
+QUIET_WAIT_SEC: float = 5400.0
+"""Seconds to wait for all ilk loops on the host to finish before deploying.
+
+Judgment call: 5400s = 90 min, one full iteration timeout.  Wrong if a loop
+runs many iterations back to back after its hold starts; then the train ends
+fleet-busy and a later window retries.
+"""
+
+QUIET_POLL_SEC: float = 30.0
+"""Seconds between quiet-fleet liveness polls.
+
+Judgment call: 30s balances responsiveness against pgrep overhead.
+"""
+
+FLEET_BUSY_EXIT: int = 7
+"""Exit code when the fleet is still busy after the quiet wait expires.
+
+Judgment call: 7 is not 0 (success), not 2 (smoke failure), not 5/6 (rollback),
+so run() can distinguish fleet-busy from other failures.  Wrong if a reader
+treats every non-zero deploy exit as 'rolled back'.
+"""
+
+
+def _live_loops_local() -> list[int]:
+    """Return pids of live ilk loops on this host.
+
+    Matches ``run_ilk_loop_claude.(sh|ps1)`` via pgrep, then filters:
+    - this process and its parent (``os.getpid()``, ``os.getppid()``),
+    - dead pids (``os.kill(pid, 0)`` raises ``OSError``),
+    - pids whose ``ps -o command=`` contains ``grep``.
+
+    Returns an empty list when no live loops are found.
+    """
+    # Build the pgrep pattern from parts so this module's own argv never matches.
+    _PGREP_PATTERN = "run_ilk_loop_claude" + r"\.(sh|ps1)"
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", _PGREP_PATTERN],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    my_pid = os.getpid()
+    parent_pid = os.getppid()
+    live: list[int] = []
+
+    for line in result.stdout.strip().splitlines():
+        try:
+            pid = int(line.strip())
+        except ValueError:
+            continue
+        if pid == my_pid or pid == parent_pid:
+            continue
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            continue
+        try:
+            ps_result = subprocess.run(
+                ["ps", "-o", "command=", "-p", str(pid)],
+                capture_output=True, text=True,
+                encoding="utf-8", errors="replace",
+                timeout=5,
+            )
+            cmd = ps_result.stdout.strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            cmd = ""
+        if "grep" in cmd:
+            continue
+        live.append(pid)
+
+    return live
+
+
+def _live_loops_remote(
+    run: Callable[[str, list[str], int], dict],
+    host: str,
+) -> list[int] | None:
+    """Return pids of live ilk loops on a remote host, or None on error.
+
+    Uses the same pgrep pattern as ``_live_loops_local`` but runs over
+    ``ssh_runner``.  rc 0 → parse pids, rc 1 → [], anything else → None
+    (treated as busy).
+    """
+    _PGREP_PATTERN = "run_ilk_loop_claude" + r"\.(sh|ps1)"
+    result = run(host, ["pgrep", "-f", _PGREP_PATTERN], timeout=10)
+    rc = result.get("rc", -1)
+    if rc == 0:
+        pids: list[int] = []
+        for line in result.get("stdout", "").strip().splitlines():
+            try:
+                pids.append(int(line.strip()))
+            except ValueError:
+                continue
+        return pids
+    if rc == 1:
+        return []
+    return None  # unreachable or error → treat as busy
+
+
+def _wait_for_quiet(
+    probe: Callable[[], list[int] | None],
+    *,
+    deadline_sec: float,
+    poll_sec: float,
+    clock: Callable[[], float] | None = None,
+    sleeper: Callable[[float], None] | None = None,
+) -> tuple[bool, list[int] | None]:
+    """Wait for ``probe()`` to return ``[]`` or the deadline to pass.
+
+    Returns ``(True, [])`` when the fleet is quiet, or
+    ``(False, last_result)`` when the deadline expires.
+    """
+    _clock = clock if clock is not None else time.monotonic
+    _sleep = sleeper if sleeper is not None else time.sleep
+
+    deadline = _clock() + deadline_sec
+    last_result: list[int] | None = None
+
+    while True:
+        last_result = probe()
+        if last_result == []:
+            return (True, [])
+        if _clock() >= deadline:
+            return (False, last_result)
+        _sleep(poll_sec)
+
+
 # ── deploy ──────────────────────────────────────────────────────────────────
 
 def deploy(
@@ -1022,6 +1158,11 @@ def deploy(
     settle_poll_interval_sec: float = 2.0,
     settle_clock: object | None = None,
     settle_sleeper: object | None = None,
+    quiet_probe: object | None = None,
+    quiet_deadline_sec: float = QUIET_WAIT_SEC,
+    quiet_poll_sec: float = QUIET_POLL_SEC,
+    quiet_clock: object | None = None,
+    quiet_sleeper: object | None = None,
 ) -> dict:
     """Deploy a release: extract, flip, bounce, smoke.  Rollback on failure.
 
@@ -1071,6 +1212,29 @@ def deploy(
     _bounce = bounce_cmd if bounce_cmd is not None else _default_bounce_cmd
     _status = status_cmd if status_cmd is not None else _default_status_cmd
     _pid = pid_file if pid_file is not None else _scheduler_pid_file()
+
+    # ── 0. quiet-fleet wait ─────────────────────────────────────────────
+    # Only wait when an explicit probe is provided.  Production callers
+    # (run()) pass _live_loops_local; tests and callers that don't need
+    # the wait skip it entirely (no real pgrep, no real sleep).
+    if quiet_probe is not None:
+        quiet, last_loops = _wait_for_quiet(
+            quiet_probe,
+            deadline_sec=quiet_deadline_sec,
+            poll_sec=quiet_poll_sec,
+            clock=quiet_clock,
+            sleeper=quiet_sleeper,
+        )
+        if not quiet:
+            pids = last_loops if last_loops else []
+            host_label = os.uname().nodename
+            return {
+                "tag": tag,
+                "deployed": False,
+                "exit_code": FLEET_BUSY_EXIT,
+                "reason": f"fleet-busy: {len(pids)} loop(s) live on {host_label}: {pids}",
+                "host": host_label,
+            }
 
     # ── 1. extract ──────────────────────────────────────────────────────
     rc, _out = _release(tag, project)  # type: ignore[operator]
@@ -1470,6 +1634,9 @@ def _ssh_deploy(
     settle_poll_interval_sec: float = 2.0,
     clock: Callable[[], float] | None = None,
     sleeper: Callable[[float], None] | None = None,
+    quiet_probe: Callable[[], list[int] | None] | None = None,
+    quiet_deadline_sec: float = QUIET_WAIT_SEC,
+    quiet_poll_sec: float = QUIET_POLL_SEC,
 ) -> dict:
     """Deploy to a remote host via SSH.
 
@@ -1517,7 +1684,27 @@ def _ssh_deploy(
 
     _run = ssh_runner if ssh_runner is not None else _default_ssh_runner
 
-    # ── 0. acquire exact tag ─────────────────────────────────────────────
+    # ── 0. quiet-fleet wait (BEFORE tag acquire) ─────────────────────────
+    _probe = quiet_probe if quiet_probe is not None else (lambda: _live_loops_remote(_run, host))
+    quiet, last_loops = _wait_for_quiet(
+        _probe,
+        deadline_sec=quiet_deadline_sec,
+        poll_sec=quiet_poll_sec,
+        clock=clock,
+        sleeper=sleeper,
+    )
+    if not quiet:
+        pids = last_loops if last_loops else []
+        return {
+            "tag": tag,
+            "deployed": False,
+            "exit_code": FLEET_BUSY_EXIT,
+            "reason": f"fleet-busy: {len(pids)} loop(s) live on {host}: {pids}",
+            "host": host,
+            "transport": "ssh",
+        }
+
+    # ── 1. acquire exact tag ─────────────────────────────────────────────
     #
     # Before extraction, fetch the exact candidate tag from origin into
     # refs/tags/<tag>.  This ensures the remote repository has the pushed
@@ -2308,11 +2495,20 @@ def run(
                     "hosts": deploy_result.get("hosts", {}),
                 }
             else:
+                # Check if any host is fleet-busy
+                fleet_busy_hosts: list[str] = []
+                for h, h_result in deploy_result.get("hosts", {}).items():
+                    if isinstance(h_result, dict) and h_result.get("reason", "").startswith("fleet-busy"):
+                        fleet_busy_hosts.append(h)
+                if fleet_busy_hosts:
+                    reason = f"fleet-busy: {', '.join(sorted(fleet_busy_hosts))}"
+                else:
+                    reason = f"deploy failed (exit {exit_code})"
                 write_audit(
                     "escalated", project_name,
-                    reason=f"deploy failed (exit {exit_code})",
+                    reason=reason,
                 )
-                _notify("blocked", project_name, f"deploy failed {tag}", notify_script)
+                _notify("blocked", project_name, reason, notify_script)
                 return {
                     "exit_code": exit_code,
                     "tag": tag,

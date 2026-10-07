@@ -72,12 +72,20 @@ def _make_release_cmd_stub() -> tuple[Callable, list]:
     return _release_cmd, calls
 
 
-def _make_bounce_cmd_stub() -> tuple[Callable, list]:
-    """Stub bounce_cmd that records calls and returns exit 1 (restarted)."""
+def _make_bounce_cmd_stub(pid_file: Path | None = None) -> tuple[Callable, list]:
+    """Stub bounce_cmd that records calls and returns exit 1 (restarted).
+
+    If ``pid_file`` is given, writes a new PID to simulate a restart.
+    """
     calls: list[str] = []
 
     def _bounce_cmd(tag: str) -> int:
         calls.append(tag)
+        if pid_file is not None:
+            # Write a new PID to simulate a scheduler restart
+            proc = subprocess.Popen(["sleep", "60"])
+            _LAUNCHED_PROCS.append(proc)
+            pid_file.write_text(str(proc.pid))
         return 1
 
     return _bounce_cmd, calls
@@ -140,8 +148,7 @@ class TestQuietFleetWaitsThenDeploys:
     and the result is deployed: True.
     """
 
-    @pytest.mark.xfail(strict=True, reason="the train does not wait for a quiet fleet yet")
-    def test_waits_then_deploys(self, tmp_path: Path) -> None:
+    def test_waits_then_deploys(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Probe returns pids twice then empty → deploy proceeds."""
         sys.path.insert(0, str(SHIP_SCRIPTS))
         sys.path.insert(0, str(LOOP_SCRIPTS))
@@ -156,12 +163,15 @@ class TestQuietFleetWaitsThenDeploys:
             probe_calls.append(len(result))
             return result
 
+        # Stub _smoke to always pass (we're testing the quiet-fleet wait, not smoke)
+        monkeypatch.setattr(release_train, "_smoke", lambda *a, **kw: (True, ""))
+
         clock = FakeClock()
         sleeper = FakeSleeper(clock)
-        release_cmd, release_calls = _make_release_cmd_stub()
-        bounce_cmd, bounce_calls = _make_bounce_cmd_stub()
-        status_cmd, status_calls = _make_status_cmd_stub()
         pid_file = _make_pid_file(tmp_path, alive=True)
+        release_cmd, release_calls = _make_release_cmd_stub()
+        bounce_cmd, bounce_calls = _make_bounce_cmd_stub(pid_file)
+        status_cmd, status_calls = _make_status_cmd_stub()
 
         result = release_train.deploy(
             project=tmp_path / "project",
@@ -192,7 +202,6 @@ class TestQuietFleetTimesOut:
     reason starts with 'fleet-busy', and release/bounce/status are never called.
     """
 
-    @pytest.mark.xfail(strict=True, reason="the train does not wait for a quiet fleet yet")
     def test_timeout_returns_fleet_busy(self, tmp_path: Path) -> None:
         """Probe always busy, deadline exhausted → exit 7, no deploy."""
         sys.path.insert(0, str(SHIP_SCRIPTS))
@@ -249,7 +258,6 @@ class TestRemoteQuietFleetTimesOut:
     (unreachable) behaves as busy.
     """
 
-    @pytest.mark.xfail(strict=True, reason="the train does not wait for a quiet fleet yet")
     def test_remote_busy_returns_fleet_busy(self, tmp_path: Path) -> None:
         """Remote probe always busy → exit 7, no ssh calls."""
         sys.path.insert(0, str(SHIP_SCRIPTS))
@@ -287,7 +295,6 @@ class TestRemoteQuietFleetTimesOut:
         )
         assert len(ssh_calls) == 0, f"SSH runner must not be called, got {len(ssh_calls)}"
 
-    @pytest.mark.xfail(strict=True, reason="the train does not wait for a quiet fleet yet")
     def test_remote_unreachable_behaves_as_busy(self, tmp_path: Path) -> None:
         """Remote probe returning None (unreachable) → fleet-busy."""
         sys.path.insert(0, str(SHIP_SCRIPTS))
@@ -383,7 +390,6 @@ class TestLiveLoopsLocalPredicate:
     with one real live pid not matching those rules it returns that pid.
     """
 
-    @pytest.mark.xfail(strict=True, reason="the train does not wait for a quiet fleet yet")
     def test_filters_self_parent_and_grep(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Self pid, parent pid, and grep pid are all filtered out."""
         sys.path.insert(0, str(SHIP_SCRIPTS))
@@ -436,7 +442,6 @@ class TestLiveLoopsLocalPredicate:
         # Self, parent, and dead pid are all filtered → empty list
         assert result == [], f"Expected empty list, got {result}"
 
-    @pytest.mark.xfail(strict=True, reason="the train does not wait for a quiet fleet yet")
     def test_returns_live_pid_not_filtered(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A real live pid that is not self, parent, or grep is returned."""
         sys.path.insert(0, str(SHIP_SCRIPTS))
