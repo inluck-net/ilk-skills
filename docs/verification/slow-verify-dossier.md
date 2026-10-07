@@ -80,10 +80,10 @@ Idle-machine references:
 | 07i verify-reruns-only-what-can-change | full | 142.0 min | 1 (444 s) | step 0 ~15 min, including ~4.5 min starved ledger wait. **Step 1 failed 6×, 12:34-14:31**, on a test red AT BASE. Scheduler `no-progress-bound` 12:49-14:17 |
 | 07j the-suite-fits-the-free-cores | full | **15.2 min** | 1 (474 s) | clean, the only one at the bar. Owner killed a stale-tree ledger drainer at 15:32 |
 | 07e a-gate-never-waits-on-nothing ("R2e") | full | 77.3 min | 2 (535, 398 s) | ~6 min waiting on a per-commit background suite that then timed out. Step 1 red on 5 base reds |
-| 07k a-verify-gate-judges-only-this-batch | full | 79.2 min | **3** (546, 535, 590 s) | attempt 1 `phase_seconds`: suite 546, **at_base 451**, head_reruns 13, total 1010 (measured, backlog row 6e75db2b). Then a one-file fix forced a full re-measure, twice |
+| 07k a-verify-gate-judges-only-this-batch | full | 79.2 min | **3** (546, 535, 590 s) | attempt 1 `phase_seconds`: suite 546, **at_base 451**, head_reruns 13, total 1010, with **24 failing ids** (measured, backlog row 6e75db2b and the 07k history). Then a one-file fix forced a full re-measure, twice |
 | 5 scoped verifies, 00:05-04:43 | scoped | 6.8-7.3 min | 1 each (3-7 s) | — |
 
-**Takeaway.** One full-scope suite plus attribution costs about 10-15 min (07j). Every overrun came from the machinery around the suite: head reruns, a base red that the step-1 gate could not pass, waits on background suites, re-measuring everything after a small fix, and quarantine idle between runs. Suite speed was never the cause.
+**Takeaway.** One full-scope suite plus attribution cost about 15 min in the one clean case (07j); that is an observation, not yet a distribution. The large overruns came from the machinery around the suite: head reruns, a base red that the step-1 gate could not pass, waits on background suites, re-measuring everything after a small fix, and quarantine idle between runs. Suite speed was not what produced them, but the suite's rise from ~270 s to 485-590 s used most of a 15-minute budget and makes the target fragile (Codex §8.2 Q6).
 
 ---
 
@@ -115,7 +115,7 @@ Recurring shape across M1-M14 (from retro-2026-10-07-one-suite-per-batch): **rep
 
 ## 4. Batches that targeted verify cost, and their results
 
-*Release* is the first tag containing the verify's `#ship` commit. *Result* is measured where marked, otherwise reported from the plan's Findings. 44 of 62 Findings sections in these 16 masters are empty, so most batches never recorded an after-number. §2 is the after-measurement they lack.
+*Release* is the first tag containing the verify's `#ship` commit. *Result* is measured where marked, otherwise reported from the plan's Findings. 44 of 62 Findings sections in the 16 masters read for this table (07l excluded) are empty, so most batches never recorded an after-number. §2 is the after-measurement they lack.
 
 | Master | Release | Targeted | Changed (main files) | Result |
 |---|---|---|---|---|
@@ -246,6 +246,23 @@ G3 should be a release prerequisite, especially before carry-forward places more
 6. Emit an explicit end-to-end verify start event and report both end-to-end and per-attempt latency.
 
 Minor editorial correction: §4 says "these 16 masters", while its table and Appendix B describe 17 masters.
+
+### 8.4 Owner check of the review (2026-10-08)
+
+Each finding was checked against the code at `3ab40c0d`:
+
+- **R1: confirmed.**
+  - `test_importers.importer_tests` (`skills/ilk-loop/scripts/test_importers.py:87-175`) maps only changed `.py` modules to tests that import them directly by AST.
+  - `_try_remeasure` (`verification_record.py:2098-2275`) selects changed tests ∪ those importers ∪ the files of prior failing ids.
+  - A change to a shell script, for example `run_ilk_loop_claude.sh`, which many tests source or spawn, therefore selects nothing. Every test that exercises it is carried forward as passing. That is a false-green path, not just a weak one.
+- **R2: confirmed.**
+  - `verification_record.py:2238-2245`: `passed`, `skipped`, `xfailed` and `xpassed` are `prior + selection`, so every re-run test is counted twice.
+  - `carried_count = prior_total - selection_total` (:2229) is test-count arithmetic on file-level selections.
+- **R3: confirmed.**
+  - `run_local_checks._load_base_red_ids` compares `record_digest` only `if digest_match:`, so a record without the line is trusted.
+  - The digest is an unkeyed sha256 of the record surface, recomputable by whoever edits the record. This is M10's class; 07k #0 widens what it buys.
+- **Q1: corrected.** Attempt 1 had 24 failing ids, not 7-9 (7 was attempt 3). 24 × 17 s ≈ 408 s fits the 451 s `at_base` only if those ids hit the per-test timeout at base. That is unmeasured; the sub-timers in §8.3 item 4 settle it.
+- **Action taken:** the automatic post-07l release job was stopped at 02:08, before 07l shipped, so 07k + 07l are not released. The live permits are consumed and expired, so no train can start without new ones.
 
 ---
 
