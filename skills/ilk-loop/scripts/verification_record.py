@@ -2063,9 +2063,14 @@ def _write_measured_record(project: Path, record: Path, args,
         ledger_entry = suite_ledger.lookup(project, tree, invocation)
         if not ledger_entry:
             # Check if a background job is measuring this tree.
+            # Use the suite budget (what a foreground run would get)
+            # instead of the 300 s fallback.
+            suite_budget, _ = compute_suite_budget(
+                project, getattr(args, "suite_timeout", None))
             running_entry = suite_ledger.wait_for(
                 project, tree, invocation,
-                timeout_s=max(60, getattr(args, "suite_timeout", 300) or 300),
+                timeout_s=suite_budget,
+                sha=head,
             )
             if running_entry:
                 ledger_wait_sec = round(time.monotonic() - record_start)

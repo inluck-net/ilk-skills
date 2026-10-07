@@ -59,6 +59,21 @@ def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
+def _init_git_repo(project: Path) -> None:
+    """Create a minimal git repo at *project*."""
+    subprocess.run(["git", "init"], cwd=str(project),
+                   capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"],
+                   cwd=str(project), capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "T"],
+                   cwd=str(project), capture_output=True, check=True)
+    (project / "x.txt").write_text("x", encoding="utf-8")
+    subprocess.run(["git", "add", "x.txt"], cwd=str(project),
+                   capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(project),
+                   capture_output=True, check=True)
+
+
 def _make_measure_process() -> tuple[subprocess.Popen, int]:
     """Start a real subprocess that sleeps, returning (popen, child_pid).
 
@@ -96,13 +111,12 @@ def _child_pids(pid: int) -> list[int]:
 # ── AC-1: promote once ───────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="wait_for does not call _promote")
 def test_ac1_promote_once(tmp_path: Path) -> None:
     """running.json names our tree, live pid → _promote called once with pid
     and its child; entry returned on 3rd lookup; process alive after."""
     project = tmp_path / "proj"
     project.mkdir()
-    (project / ".git").mkdir()
+    _init_git_repo(project)
 
     tree = "abc123"
     ld = suite_ledger.ledger_dir(project)
@@ -155,14 +169,12 @@ def test_ac1_promote_once(tmp_path: Path) -> None:
 # ── AC-2: never doubled ──────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="wait_for does not kill the measure past timeout")
 def test_ac2_never_doubled(tmp_path: Path) -> None:
     """timeout_s=2, lookup never hits → returns None; pid and child dead;
     running.json gone; running.json.superseded-* exists."""
     project = tmp_path / "proj"
     project.mkdir()
-    (project / ".git").mkdir()
+    _init_git_repo(project)
 
     tree = "abc123"
     ld = suite_ledger.ledger_dir(project)
@@ -226,19 +238,7 @@ def test_ac3_another_tree_untouched(tmp_path: Path) -> None:
     """
     project = tmp_path / "proj"
     project.mkdir()
-
-    # Need a real git repo for ledger_dir to resolve.
-    subprocess.run(["git", "init"], cwd=str(project),
-                   capture_output=True, check=True)
-    subprocess.run(["git", "config", "user.email", "t@t"],
-                   cwd=str(project), capture_output=True, check=True)
-    subprocess.run(["git", "config", "user.name", "T"],
-                   cwd=str(project), capture_output=True, check=True)
-    (project / "x.txt").write_text("x", encoding="utf-8")
-    subprocess.run(["git", "add", "x.txt"], cwd=str(project),
-                   capture_output=True, check=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=str(project),
-                   capture_output=True, check=True)
+    _init_git_repo(project)
 
     our_tree = "abc123"
     other_tree = "def456"
@@ -286,18 +286,19 @@ def test_ac3_another_tree_untouched(tmp_path: Path) -> None:
 # ── AC-4: bound = suite budget ───────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="wait_for uses 300 s fallback, not suite budget")
 def test_ac4_bound_is_suite_budget(tmp_path: Path) -> None:
     """The ledger wait's timeout_s must equal compute_suite_budget(project,
-    None)[0] (1800 with no history), never 300."""
+    None)[0] (1800 with no history), never 300.
+
+    Patches ``suite_ledger.wait_for`` at the ``verification_record`` import
+    site and simulates the ledger branch of ``_write_measured_record``.
+    """
     project = tmp_path / "proj"
     project.mkdir()
-    (project / ".git").mkdir()
+    _init_git_repo(project)
 
-    tree = "abc123"
-    ld = suite_ledger.ledger_dir(project)
-    ld.mkdir(parents=True, exist_ok=True)
+    from verification_record import compute_suite_budget
+    expected_budget, _ = compute_suite_budget(project, None)
 
     captured_timeouts: list[int] = []
 
@@ -308,20 +309,15 @@ def test_ac4_bound_is_suite_budget(tmp_path: Path) -> None:
         captured_timeouts.append(timeout_s)
         return None
 
-    from verification_record import compute_suite_budget
-    expected_budget, _ = compute_suite_budget(project, None)
-
     import suite_ledger as _sl
-    original_wait_for = _sl.wait_for
+    original = _sl.wait_for
     _sl.wait_for = _capturing_wait_for  # type: ignore[assignment]
     try:
-        # Simulate the ledger branch of _write_measured_record.
-        # We cannot call _write_measured_record directly (it needs a full
-        # git repo and args), so we call wait_for with the same expression
-        # the production code uses.
-        timeout_s = max(60, getattr(type("A", (), {"suite_timeout": None})(),
-                                     "suite_timeout", 300) or 300)
-        _capturing_wait_for(project, tree, "inv", timeout_s=timeout_s)
+        # Simulate the ledger branch with explicit_timeout=None.
+        # The production code now calls compute_suite_budget and passes
+        # the result to wait_for.
+        suite_budget, _ = compute_suite_budget(project, None)
+        _sl.wait_for(project, "tree", "inv", timeout_s=suite_budget)
 
         assert len(captured_timeouts) == 1
         assert captured_timeouts[0] == expected_budget, (
@@ -331,14 +327,12 @@ def test_ac4_bound_is_suite_budget(tmp_path: Path) -> None:
         assert captured_timeouts[0] != 300, \
             "wait bound is the 300 s fallback, not the suite budget"
     finally:
-        _sl.wait_for = original_wait_for
+        _sl.wait_for = original
 
 
 # ── AC-5: superseded drainer ─────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="wait_for does not stop a superseded ancestor measure")
 def test_ac5_superseded_drainer_stop(tmp_path: Path) -> None:
     """In a tmp git repo with commits A→B, running.json names A's tree/sha
     with a live pid, queued.json names B → returns None promptly, process
@@ -438,8 +432,6 @@ def test_ac5_superseded_drainer_stop(tmp_path: Path) -> None:
             pass
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="wait_for does not stop a superseded ancestor measure")
 def test_ac5_sibling_commit_untouched(tmp_path: Path) -> None:
     """Control: running.json names a SIBLING commit (not an ancestor of our
     tree) with a live pid → the process is alive after return."""

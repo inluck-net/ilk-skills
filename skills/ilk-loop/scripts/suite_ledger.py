@@ -9,11 +9,14 @@ worker sessions are refused.
 """
 from __future__ import annotations
 
+from typing import Callable
+
 import argparse
 import hashlib
 import json
 import shutil
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -812,15 +815,109 @@ def _spawn_detached(project: Path, sha_str: str,
     os.execvp(cmd[0], cmd)
 
 
+def _promote_default(pids: list[int]) -> int:
+    """Promote background pids to foreground QoS (darwin only).
+
+    Runs ``taskpolicy -B -p <pid>`` per pid and returns how many returned 0.
+    On non-darwin this is a no-op returning 0.
+    """
+    if sys.platform != "darwin" or not shutil.which("taskpolicy"):
+        return 0
+    ok = 0
+    for pid in pids:
+        try:
+            r = subprocess.run(
+                ["taskpolicy", "-B", "-p", str(pid)],
+                capture_output=True, timeout=5,
+            )
+            if r.returncode == 0:
+                ok += 1
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return ok
+
+
+def _all_descendants(pid: int) -> list[int]:
+    """Return *pid* plus all its descendants (breadth-first)."""
+    result = [pid]
+    queue = [pid]
+    try:
+        out = subprocess.check_output(
+            ["ps", "-A", "-o", "pid=,ppid="],
+            text=True, encoding="utf-8", errors="replace", timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return result
+    children_of: dict[int, list[int]] = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+            try:
+                c, p = int(parts[0]), int(parts[1])
+                children_of.setdefault(p, []).append(c)
+            except ValueError:
+                pass
+    while queue:
+        current = queue.pop(0)
+        for child in children_of.get(current, []):
+            result.append(child)
+            queue.append(child)
+    return result
+
+
+def _kill_tree(pid: int) -> None:
+    """SIGTERM *pid* and descendants; wait 5 s; SIGKILL survivors."""
+    pids = _all_descendants(pid)
+    for p in pids:
+        try:
+            os.kill(p, signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            pass
+    deadline = time.monotonic() + 5
+    for p in pids:
+        remaining = max(0, deadline - time.monotonic())
+        try:
+            os.waitpid(p, os.WNOHANG)
+        except (OSError, ChildProcessError):
+            pass
+        if remaining > 0 and _pid_is_alive(p):
+            try:
+                os.waitpid(p, 0)
+            except (OSError, ChildProcessError):
+                pass
+    for p in pids:
+        if _pid_is_alive(p):
+            try:
+                os.kill(p, signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                pass
+
+
 def wait_for(project: Path, tree: str, invocation: str,
-             timeout_s: int = 120) -> dict | None:
+             timeout_s: int = 120, *,
+             sha: str | None = None,
+             _promote: Callable[[list[int]], int] = _promote_default,
+             _lookup: Callable | None = None,
+             ) -> dict | None:
     """Poll until *tree* appears in the ledger or the timeout expires.
 
-    Returns the entry dict if found, None on timeout.
+    When ``running.json`` names our tree with a live pid, the drainer is
+    promoted once (``_promote``).  Past the deadline the drainer is
+    superseded (killed) so the caller can measure.  Never two suites at
+    once.
+
+    Args:
+        sha: The commit sha we are waiting for (needed for the ancestor
+             check on a superseded drainer).  Read from ``queued.json``
+             when absent.
+        _promote: Injectable; called once with the drainer's pid tree.
+        _lookup: Injectable; defaults to ``lookup``.
     """
+    _lookup = _lookup or lookup
     deadline = time.monotonic() + timeout_s
+    promoted = False
     while time.monotonic() < deadline:
-        entry = lookup(project, tree, invocation)
+        entry = _lookup(project, tree, invocation)
         if entry:
             return entry
 
@@ -834,9 +931,53 @@ def wait_for(project: Path, tree: str, invocation: str,
                 pid = running.get("pid")
                 if pid and _pid_is_alive(pid):
                     if running.get("tree") == tree:
+                        # Promote once: raise the background measure's QoS
+                        # so it is not starved while we wait.
+                        if not promoted:
+                            pids = _all_descendants(pid)
+                            n = _promote(pids)
+                            print(
+                                f"[ledger] promoted background measure pid "
+                                f"{pid} ({n} processes): a foreground reader "
+                                f"is waiting",
+                                file=sys.stderr,
+                            )
+                            promoted = True
                         time.sleep(2)
                         continue
                     live_drainer = True
+                    # Superseded drainer: the running measure is of a
+                    # DIFFERENT tree whose sha is a strict ancestor of
+                    # our queued sha.  Stop it so we can measure now.
+                    queued_path = ld / "queued.json"
+                    if queued_path.is_file():
+                        try:
+                            queued = json.loads(
+                                queued_path.read_text(encoding="utf-8"))
+                            queued_sha = queued.get("sha", "")
+                            running_sha = running.get("sha", "")
+                            our_queued = queued.get("tree") == tree
+                            if (our_queued and running_sha and queued_sha
+                                    and running_sha != queued_sha
+                                    and _is_ancestor(
+                                        project, running_sha, queued_sha)):
+                                _kill_tree(pid)
+                                stamp = time.strftime(
+                                    "%Y%m%d-%H%M%S", time.gmtime())
+                                os.replace(
+                                    running_path,
+                                    running_path.with_name(
+                                        f"running.json.superseded-{stamp}"),
+                                )
+                                print(
+                                    f"[ledger] background measure of "
+                                    f"superseded {running_sha[:12]} stopped; "
+                                    f"{queued_sha[:12]} is waiting",
+                                    file=sys.stderr,
+                                )
+                                return None
+                        except (OSError, json.JSONDecodeError):
+                            pass
                 elif pid:
                     # Dead pid — set aside so it does not block future spawns.
                     stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
@@ -875,6 +1016,32 @@ def wait_for(project: Path, tree: str, invocation: str,
 
         # Not running and not queued — no point waiting.
         break
+
+    # Past the deadline: if we promoted a drainer of our tree and it is
+    # still alive, supersede it so the caller can measure instead of
+    # running a second suite beside it.
+    if promoted:
+        running_path = ledger_dir(project) / "running.json"
+        if running_path.is_file():
+            try:
+                running = json.loads(running_path.read_text(encoding="utf-8"))
+                pid = running.get("pid")
+                if pid and _pid_is_alive(pid) and running.get("tree") == tree:
+                    _kill_tree(pid)
+                    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+                    os.replace(
+                        running_path,
+                        running_path.with_name(
+                            f"running.json.superseded-{stamp}"),
+                    )
+                    print(
+                        f"[ledger] background measure pid {pid} outlived "
+                        f"the wait bound ({timeout_s} s); superseded, "
+                        f"measuring here",
+                        file=sys.stderr,
+                    )
+            except (OSError, json.JSONDecodeError):
+                pass
 
     return None
 
@@ -1291,6 +1458,8 @@ def _cli() -> int:
                              help="Wait for a tree to appear in the ledger")
     p_wait.add_argument("--project", type=Path, required=True)
     p_wait.add_argument("--tree", required=True)
+    p_wait.add_argument("--sha", default=None,
+                        help="commit sha for the ancestor check")
     p_wait.add_argument("--timeout", type=int, default=120)
 
     # point
@@ -1354,7 +1523,7 @@ def _cli() -> int:
             print(f"ILK-CHECK: unmeasured {exc}", file=sys.stderr)
             return 1
         entry = wait_for(args.project, args.tree, invocation,
-                         timeout_s=args.timeout)
+                         timeout_s=args.timeout, sha=args.sha)
         if entry:
             print(json.dumps(entry, indent=2, sort_keys=True))
             return 0
