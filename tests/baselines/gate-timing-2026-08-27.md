@@ -198,6 +198,23 @@ Measured in a fresh `git clone` at `3e935f4` + 64d03a8 on `chad-mbp`
 0 parallel-only ids: all 5 `-n 8` reds are in the serial red set. `rezmac`
 is still unmeasured under `-n 8`.
 
+## 2026-10-07 — -n auto with the load-fitted worker hook
+
+`conftest.py` `pytest_xdist_auto_num_workers` hook clamps workers to
+`[4, 8]` after subtracting load: `max(4, min(8, ncpu - round(load1)))`.
+The hook printed `xdist workers: 6 (ncpu 10, load1 4.1)` in the suite header.
+
+| variant | wall-clock | vs serial | failed | passed |
+|---|---|---|---|---|
+| serial (`--timeout=17 --timeout-method=signal --durations=25`) | 17:56 | — | 8 | 4537 |
+| -n auto --dist loadfile (hook chose 6 workers, load1 4.1) | 5:45 | **3.1× faster** | 10 | 5300 |
+
+Measured 2026-10-07 on `chad-mbp` at HEAD `29253456` (the step-1 commit).
+The 10 failures include `test_gate_invocation_parallel` (this row's
+pre-existence is what it guards) and `test_taxonomy_documented` (baseline-red
+since 2026-10-05). Node-id count grew from 4537 to 5300+ due to new tests
+added since the 2026-10-03 measurement.
+
 ## Committed alongside
 
 `gate-nodeids-2026-08-27-sp3-{serial,n2,n4,nauto}.txt` — one
