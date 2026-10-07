@@ -1,10 +1,6 @@
 """Tests that a detached train owns its stdout/stderr and closes inherited fds.
 
-Sub-plan: a-detached-train-owns-its-output, step 0 (red-first pins).
-
-The current ``spawn_detached.py`` redirects stdin from /dev/null but leaves
-stdout and stderr as inherited.  It also does not close fds >= 3, so any
-caller lock fd survives into the child.  These tests pin the fix contract.
+Sub-plan: a-detached-train-owns-its-output, step 1 (implemented).
 
 Acceptance criteria:
   AC-1  the guard module's _violations() returns no entry naming spawn_detached.py
@@ -39,10 +35,6 @@ def _python_path() -> str:
 # ── AC-1: guard violations returns no entry naming spawn_detached.py ──────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base spawn_detached.py keeps fds 1/2 and fds >= 3; guard flags it",
-)
 def test_guard_violations_spawn_detached_clean() -> None:
     """AC-1: _violations() from the guard module returns no entry naming spawn_detached.py."""
     # Import the guard module from the sibling test file.
@@ -71,10 +63,6 @@ def test_guard_violations_spawn_detached_clean() -> None:
 # ── AC-2: --log captures stdout and stderr ──────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base spawn_detached.py does not accept --log; output goes to caller's pipe",
-)
 def test_log_flag_captures_stdout_and_stderr(tmp_path: Path) -> None:
     """AC-2: --log captures both streams; caller's pipe sees EOF after child exits."""
     py = _python_path()
@@ -109,13 +97,12 @@ def test_log_flag_captures_stdout_and_stderr(tmp_path: Path) -> None:
 def test_child_closes_inherited_fds_ge3(tmp_path: Path) -> None:
     """AC-3: parent opens fd >= 3; child reports it closed.
 
-    On macOS, exec already closes inherited fds (no O_CLOEXEC on os.open).
-    The guard violation is a code-quality issue (spawn_detached.py should
-    explicitly call closerange), but the runtime behavior is already correct.
-    This test is NOT xfail — it passes at base and after the fix.
+    Uses --log to capture the child's output (without --log, spawn_detached
+    redirects stdout to /dev/null so the parent's pipe would see nothing).
     """
     py = _python_path()
     sd = str(SPAWN_DETACHED)
+    log_file = tmp_path / "child.log"
 
     # Open a file and leave it as fd >= 3.
     lock_file = tmp_path / "lock"
@@ -136,12 +123,15 @@ def test_child_closes_inherited_fds_ge3(tmp_path: Path) -> None:
     child_py.write_text(child_script)
 
     proc = subprocess.Popen(
-        [py, sd, py, str(child_py)],
+        [py, sd, "--log", str(log_file), py, str(child_py)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    stdout, _ = proc.communicate(timeout=10)
-    result = stdout.decode().strip()
+    proc.wait(timeout=10)
+
+    # Read result from the log file (child's stdout goes there).
+    assert log_file.exists(), f"log file not created: {log_file}"
+    result = log_file.read_text().strip()
     assert result == "closed", (
         f"child fd {lock_fd} should be closed, got: {result!r}"
     )
@@ -152,10 +142,6 @@ def test_child_closes_inherited_fds_ge3(tmp_path: Path) -> None:
 # ── AC-4: scheduler.sh passes --log and drops >> redirect ───────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base scheduler.sh uses >> redirect instead of --log",
-)
 def test_scheduler_passes_log_flag_and_no_redirect() -> None:
     """AC-4: maybe_start_release_train contains --log and no >> redirect."""
     content = SCHEDULER_SH.read_text(encoding="utf-8")

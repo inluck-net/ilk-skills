@@ -600,8 +600,7 @@ print('true' if r.get('ok') else r.get('reason', 'permit check failed'))
   local log_file="${marker_dir}/train-$(date +%s).log"
   # The train must not share the scheduler job's process group, because its
   # own local bounce boots that job out (backlog 806f0c3cecabcb64).
-  "$PYTHON" "$_SPAWN_DETACHED" "$PYTHON" "$_RELEASE_TRAIN_SCRIPT" run --project "$repo" \
-    >> "$log_file" 2>&1 &
+  "$PYTHON" "$_SPAWN_DETACHED" --log "$log_file" "$PYTHON" "$_RELEASE_TRAIN_SCRIPT" run --project "$repo" &
 
   write_scheduler_log "release-train-started" "$key" "run_id=$run_id pid=$!"
   return 0

@@ -62,9 +62,13 @@ def test_detached_child_own_session_and_group(tmp_path: Path) -> None:
     sd = _spawn_detached_path()
     # Parent spawns a detached child, echoes the pid, then exits immediately.
     # No ``wait`` — the child outlives the parent.
+    # Use --log so the child's pid print is captured (spawn_detached redirects
+    # stdout to /dev/null without --log).
+    log_file = tmp_path / "child.log"
+    # Child prints its pid and stays alive (sleep 30) so we can check its sid.
     parent_script = textwrap.dedent(f"""\
         #!/usr/bin/env bash
-        "{py}" "{sd}" "{py}" -c "import os, sys; print(os.getpid(), flush=True)" &
+        "{py}" "{sd}" --log "{log_file}" "{py}" -c "import os, sys, time; print(os.getpid(), flush=True); time.sleep(30)" &
         echo $!
     """)
     script_path = tmp_path / "parent.sh"
@@ -78,14 +82,20 @@ def test_detached_child_own_session_and_group(tmp_path: Path) -> None:
         start_new_session=True,
     )
     try:
-        # Read two lines: child_pid (from the child's print) and echo_pid (from
-        # the parent's echo).  Use readline() instead of communicate() because
-        # the parent exits immediately and the child lives on.
-        child_line = proc.stdout.readline()
+        # Read the echo_pid from the parent's stdout.  The child's pid print
+        # goes to the log file (spawn_detached redirects stdout).
         echo_line = proc.stdout.readline()
         proc.wait(timeout=5)
-        child_pid = int(child_line.strip())
         echo_pid = int(echo_line.strip())
+
+        # Read child_pid from the log file.
+        import time
+        for _ in range(20):
+            if log_file.exists() and log_file.read_text().strip():
+                break
+            time.sleep(0.25)
+        assert log_file.exists(), f"log file not created: {log_file}"
+        child_pid = int(log_file.read_text().strip())
         assert child_pid == echo_pid, (
             f"exec must keep the pid: $!={echo_pid} vs child print={child_pid}"
         )
