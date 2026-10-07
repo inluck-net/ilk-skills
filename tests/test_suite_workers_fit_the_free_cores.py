@@ -19,42 +19,36 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # ── AC-1: suite_worker_count pure helper ──────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="workers fixed at -n 8")
 def test_suite_worker_count_quiet_high_core():
     """(10, 0.0) → 8 — quiet host, plenty of cores."""
     from conftest import suite_worker_count
     assert suite_worker_count(10, 0.0) == 8
 
 
-@pytest.mark.xfail(strict=True, reason="workers fixed at -n 8")
 def test_suite_worker_count_moderate_load():
     """(10, 1.6) → 8 — moderate load still fits."""
     from conftest import suite_worker_count
     assert suite_worker_count(10, 1.6) == 8
 
 
-@pytest.mark.xfail(strict=True, reason="workers fixed at -n 8")
 def test_suite_worker_count_heavy_load():
     """(10, 4.2) → 6 — heavy load reduces workers."""
     from conftest import suite_worker_count
     assert suite_worker_count(10, 4.2) == 6
 
 
-@pytest.mark.xfail(strict=True, reason="workers fixed at -n 8")
 def test_suite_worker_count_extreme_load():
     """(10, 13.4) → 4 — extreme load clamps to floor."""
     from conftest import suite_worker_count
     assert suite_worker_count(10, 13.4) == 4
 
 
-@pytest.mark.xfail(strict=True, reason="workers fixed at -n 8")
 def test_suite_worker_count_many_cores():
     """(16, 0.0) → 8 — cap at 8 even with many cores."""
     from conftest import suite_worker_count
     assert suite_worker_count(16, 0.0) == 8
 
 
-@pytest.mark.xfail(strict=True, reason="workers fixed at -n 8")
 def test_suite_worker_count_few_cores():
     """(4, 0.0) → 4 — floor at 4 even when quiet."""
     from conftest import suite_worker_count
@@ -63,7 +57,6 @@ def test_suite_worker_count_few_cores():
 
 # ── AC-2: pytest_xdist_auto_num_workers hook ─────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="workers fixed at -n 8")
 def test_xdist_auto_num_workers_extreme_load():
     """Hook returns 4 when ncpu=10, load=13.4."""
     import conftest as root_conftest
@@ -76,7 +69,6 @@ def test_xdist_auto_num_workers_extreme_load():
     assert result == 4
 
 
-@pytest.mark.xfail(strict=True, reason="workers fixed at -n 8")
 def test_xdist_auto_num_workers_getloadavg_oserror():
     """Hook returns 8 when getloadavg raises OSError (fallback to load 0)."""
     import conftest as root_conftest
@@ -91,7 +83,6 @@ def test_xdist_auto_num_workers_getloadavg_oserror():
 
 # ── AC-3: .ilk-launch.json has -n auto ────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="workers fixed at -n 8")
 def test_ilk_launch_json_has_n_auto():
     """ship.suite.flags contains the adjacent pair '-n', 'auto'."""
     import json
@@ -107,7 +98,6 @@ def test_ilk_launch_json_has_n_auto():
     pytest.fail("no '-n' found in ship.suite.flags")
 
 
-@pytest.mark.xfail(strict=True, reason="workers fixed at -n 8")
 def test_ilk_launch_json_no_digit_after_n():
     """No '-n' followed by a digit anywhere in flags."""
     import json
@@ -120,7 +110,6 @@ def test_ilk_launch_json_no_digit_after_n():
             )
 
 
-@pytest.mark.xfail(strict=True, reason="workers fixed at -n 8")
 def test_resolve_expected_invocation_contains_n_auto():
     """ship_audit._resolve_expected_invocation shows -n auto."""
     sys.path.insert(0, str(_REPO_ROOT / "skills" / "ilk-loop" / "scripts"))
@@ -133,22 +122,28 @@ def test_resolve_expected_invocation_contains_n_auto():
 
 # ── AC-4: pytester/subprocess header line ─────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="workers fixed at -n 8")
-def test_report_header_prints_worker_count(pytester):
+def test_report_header_prints_worker_count(tmp_path):
     """A run with -n auto -p xdist prints the xdist workers header."""
-    # Write a trivial test
-    pytester.makepyfile("""
-        def test_trivial():
-            pass
-    """)
-    # Write a conftest that imports the root hook
+    import subprocess as _sp
+    # Write a trivial test and a conftest that loads the root hook
+    (tmp_path / "test_trivial.py").write_text("def test_trivial(): pass\n")
+    _conftest_path = str(_REPO_ROOT / "conftest.py")
     conftest_src = (
-        f"import sys; sys.path.insert(0, {str(_REPO_ROOT)!r})\n"
-        "from conftest import pytest_report_header, pytest_xdist_auto_num_workers\n"
+        "import importlib.util\n"
+        f"_spec = importlib.util.spec_from_file_location('_root_conftest', {_conftest_path!r})\n"
+        "_mod = importlib.util.module_from_spec(_spec)\n"
+        "_spec.loader.exec_module(_mod)\n"
+        "pytest_report_header = _mod.pytest_report_header\n"
+        "pytest_xdist_auto_num_workers = _mod.pytest_xdist_auto_num_workers\n"
     )
-    pytester.makeconftest(conftest_src)
-    result = pytester.runpytest("-n", "auto", "-p", "xdist", "--timeout=30",
-                                "--timeout-method=signal")
-    result.stdout.fnmatch_lines([
-        "xdist workers: * (ncpu *, load1 *)",
-    ])
+    (tmp_path / "conftest.py").write_text(conftest_src)
+    result = _sp.run(
+        [sys.executable, "-m", "pytest", str(tmp_path / "test_trivial.py"),
+         "-n", "auto", "-p", "xdist", "--timeout=30", "--timeout-method=signal",
+         "-v"],
+        capture_output=True, text=True, cwd=str(tmp_path), timeout=60,
+    )
+    import re
+    assert re.search(r"xdist workers: \d+ \(ncpu \d+, load1 \d+\.\d\)", result.stdout), (
+        f"header line not found in stdout:\n{result.stdout[-500:]}"
+    )

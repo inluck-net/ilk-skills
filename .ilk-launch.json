@@ -7,7 +7,7 @@
         "--timeout=17",
         "--timeout-method=signal",
         "-n",
-        "8",
+        "auto",
         "--dist",
         "loadfile",
         "--durations=25"

@@ -148,6 +148,47 @@ def pytest_configure(config) -> None:
     )
 
 
+# ── xdist worker count — fitted to free cores ────────────────────────────────
+#
+# Under -n auto the xdist plugin calls pytest_xdist_auto_num_workers to
+# choose the worker count.  The default uses all logical cores, which
+# oversubscribes a busy host and turns slow-but-correct subprocess tests
+# into 17 s timeout reds.  The helper below clamps to [4, 8] after
+# subtracting the current load, so a quiet host keeps 8 workers (the
+# measured optimum) and a loaded host drops to 4 (floor avoids near-serial).
+
+def suite_worker_count(ncpu: int, load1: float) -> int:
+    """Clamp worker count to ``[4, 8]`` after subtracting system load."""
+    return max(4, min(8, ncpu - round(load1)))
+
+
+def pytest_xdist_auto_num_workers(config):  # noqa: ARG001
+    """xdist hook: choose worker count based on free cores."""
+    ncpu = os.cpu_count() or 8
+    try:
+        load1 = os.getloadavg()[0]
+    except OSError:
+        load1 = 0.0
+    return suite_worker_count(ncpu, load1)
+
+
+def pytest_report_header(config):
+    """Print xdist worker count and system load in the suite header."""
+    # Only on the controller with -n auto (not on workers, not serial).
+    if hasattr(config, "workerinput"):
+        return None  # worker — skip
+    xdist_cfg = config.getvalue("numprocesses")
+    if not xdist_cfg:
+        return None  # serial
+    ncpu = os.cpu_count() or 8
+    try:
+        load1 = os.getloadavg()[0]
+    except OSError:
+        load1 = 0.0
+    n = suite_worker_count(ncpu, load1)
+    return f"xdist workers: {n} (ncpu {ncpu}, load1 {load1:.1f})"
+
+
 def _ambiguous_module_names() -> set[str]:
     """Module basenames that exist in more than one skill/tool scripts dir.
 
