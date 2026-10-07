@@ -2804,7 +2804,10 @@ driver_ship_if_complete() {
   plans_dir=$(_gate_first_plans_dir) || return 0
   sub_file=$(find_subplan_file_by_slug "$plans_dir" "$slug") || return 0
 
-  # Check status is in-progress
+  # Check status: must be in-progress or pending (not shipped).
+  # When all steps are discharged (current_step >= estimated_steps),
+  # a pending sub-plan can be shipped directly — the agent may not have
+  # transitioned the status, but the work is done.
   local status
   status=$(python3 -c '
 import re, sys
@@ -2819,21 +2822,22 @@ for line in fm.group(1).splitlines():
         raise SystemExit(0)
 print("")
 ' "$sub_file" 2>/dev/null) || status=""
-  if [[ "$status" != "in-progress" ]]; then
+  if [[ "$status" == "shipped" ]]; then
     return 0
   fi
 
-  # Check current_step == estimated_steps (count of ### Step headings)
+  # Check current_step >= estimated_steps (count of ### Step headings)
   cur_step=$(_read_subplan_current_step "$slug") || return 0
   total_steps=$(count_step_headings "$slug") || total_steps=0
-  if [[ "$total_steps" -le 0 || "$cur_step" -ne "$total_steps" ]]; then
+  if [[ "$total_steps" -le 0 || "$cur_step" -lt "$total_steps" ]]; then
     return 0
   fi
 
-  # Guard: do not ship if the MASTER has a batch_verification sub-plan
-  # that has not shipped yet.  The verify sub-plan's signed verdict is
-  # part of the batch's acceptance; shipping before it completes is the
-  # shape ship_integrity reverts.
+  # Guard: do not ship a batch_verification sub-plan if it has not
+  # shipped yet.  The verify sub-plan's signed verdict is part of the
+  # batch's acceptance; shipping before it completes is the shape
+  # ship_integrity reverts.  Non-batch-verification sub-plans are not
+  # blocked by this check.
   local _bv_pending
   _bv_pending=$(python3 -c "
 import re, sys
@@ -2856,13 +2860,19 @@ for master in sorted(plans_dir.glob('MASTER-*.md')):
             continue
         is_bv = False
         sp_status = ''
+        sp_slug = ''
         for line in fm.group(1).splitlines():
             if re.match(r'batch_verification:\s*(true|yes|1)\s*$', line, re.IGNORECASE):
                 is_bv = True
             sm = re.match(r'status:\s*(.*)', line)
             if sm:
                 sp_status = sm.group(1).strip()
-        if is_bv and sp_status != 'shipped':
+            pm = re.match(r'plan:\s*(.*)', line)
+            if pm:
+                sp_slug = pm.group(1).strip()
+        # Only block if THIS slug is the batch_verification sub-plan
+        # and it hasn't shipped yet.
+        if is_bv and sp_slug == slug and sp_status != 'shipped':
             print(sp_file.stem)
             raise SystemExit(0)
     break
@@ -5766,6 +5776,31 @@ print(fm.get('result_file', ''))
     # slug.  One-ship enforcement (below) reverts any non-dispatched ship,
     # so we track gate-first ships here and exempt them.
     local _GATE_FIRST_SHIPPED_SLUGS=""
+
+    # -- Pre-dispatch: ship if all steps discharged ----------------------
+    # When current_step >= estimated_steps (count of ### Step headings),
+    # the sub-plan is complete but unshipped.  The gate-first flow handles
+    # this for steps with gate_first: true, but for steps without it the
+    # main loop would dispatch the agent, the gate would run with
+    # "no-checks" (vacuously pass), and the step counter would increment
+    # past estimated_steps indefinitely.  Detect this case and ship
+    # directly, skipping the agent dispatch entirely.
+    if [[ -n "${_iter_slug:-}" && -n "${PRE_ITER_TARGET:-}" ]]; then
+      local _pre_step="${PRE_ITER_TARGET#* }"
+      if [[ "$_pre_step" =~ ^[0-9]+$ ]]; then
+        local _pre_total
+        _pre_total=$(count_step_headings "$_iter_slug" 2>/dev/null) || _pre_total=0
+        if [[ "$_pre_total" -gt 0 && "$_pre_step" -ge "$_pre_total" ]]; then
+          driver_ship_if_complete "$_iter_slug" "pre-dispatch all-steps-discharged"
+          # Mark as green so the rest of the iteration is skipped
+          GATE_FIRST_GREEN=1
+          ITER_COMPLETED=1
+          ITER_EXIT_CODE=0
+          ITER_BUDGET_EXHAUSTED=0
+          ITER_QUOTA_EXHAUSTED=0
+        fi
+      fi
+    fi
 
     # -- One-ship marker: clear stale, export fresh ----------------------
     # The marker blocks further work after a ship in this iteration.
