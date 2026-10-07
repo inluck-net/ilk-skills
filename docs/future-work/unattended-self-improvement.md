@@ -7,7 +7,7 @@ merely built. Blocker 1 (self-modification race) has machinery built but **not
 wired**; the cutover is still open. **Blocker 4 (progress is self-reported) was
 found on 2026-09-08 and is open** — and it is the one that survives closing the
 other three.
-**Last touched**: 2026-10-07 (v0.9.163; release modes section)
+**Last touched**: 2026-10-07 (v0.9.165; mode (a) live, roadmap to (b))
 **Origin**: asked directly after a session that carried an ilk-skills defect
 from discovery through two releases and a two-host deploy, entirely by hand —
 v0.9.86 (verification attribution) and v0.9.87 (Phase 4 ssh). The question was
@@ -331,15 +331,22 @@ writer lives at `~/.ilk-data/tools/write_permits.py`, outside the repo, with
 the project path and host list hard-coded. It belongs in
 `skills/ilk-ship/scripts/` before any second owner or host relies on it.
 
-**State at the decision (2026-10-07 02:00):** the first scheduler-started
-train (v0.9.162 → v0.9.163) tagged, pushed and flipped chad-mbp, then killed
-itself. It runs inside the scheduler's launchd job, and the local bounce's
-`launchctl bootout` took down the scheduler, the train and the bouncer
-together, so rezmac was never deployed and the scheduler stayed unloaded
-until it was reloaded by hand. Backlog `806f0c3cecabcb64`. Until it is fixed,
-mode (a) still needs an owner to watch each train finish, and the release
-carrying the fix has to be an owner-run train, because the scheduler that
-would start it runs the old code.
+**History on 2026-10-07.** The first scheduler-started train (v0.9.162 →
+v0.9.163) killed itself: it ran inside the scheduler's launchd job, and its
+local bounce's `launchctl bootout` took down the scheduler, the train and the
+bouncer together (backlog `806f0c3cecabcb64`). v0.9.164 starts the train in its
+own session and makes the bouncer refuse to boot out its own process group. The
+v0.9.165 train was started by the scheduler, survived its own bounce, and
+deployed both hosts unaided (04:50-04:54). **Mode (a) went live about 06:30.**
+
+**Roadmap to mode (b), decided 2026-10-07:** keep mode (a) for several releases;
+build the host-independent prerequisites (a golden-batch harness that cannot
+orphan fixture runners `630af2e3`, a bounded quiet-fleet wait before the bounce
+`cf5c9e7c`, a machine-issued permit `530fdb37`); move to a long-running host and
+re-prove a scheduler train there; only then flip to (b). Mode (b) is not flipped
+on chad-mbp first, because the move changes which host is local (the `hosts[0]`
+canary, the probes, the service manager), so (b) would have to be proven twice.
+The tracker is the RSI release-gap checklist kept with the owner's handoffs.
 
 ## Trigger conditions (when to actually build this)
 
