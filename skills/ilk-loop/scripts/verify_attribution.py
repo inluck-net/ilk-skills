@@ -609,7 +609,7 @@ def _rederive_carried(missing: list[str], text: str,
     base, invocation = base_m.group(1), inv_m.group(1).strip()
     try:
         at_base = vr.run_at_base(project, base, missing, invocation)
-        reruns = vr.run_head_reruns(project, missing, invocation)
+        reruns, _bound_hit = vr.run_head_reruns(project, missing, invocation)
         touched = vr.batch_touched_files(project, base, missing)
     except Exception as exc:  # noqa: BLE001 — any failure to measure refuses
         raise VerificationError(refusal + f" (re-derivation failed: {exc})")
@@ -622,7 +622,8 @@ def _rederive_carried(missing: list[str], text: str,
                                     f"nothing for {node})")
         if ab.startswith("born-red-at:"):
             continue
-        cls = vr.classify_flaky(node, ab, reruns[node], vr.FLAKY_RERUN_COUNT,
+        red_count, runs = reruns[node]
+        cls = vr.classify_flaky(node, ab, red_count, runs,
                                 touched.get(node, True))
         if cls == "attributed":
             attributed.append(node)

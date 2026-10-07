@@ -351,7 +351,9 @@ def test_ac4_flaky_touched_stops_the_batch(repo: Path, vdir: Path,
     rec = (vdir / "b4-batch.md").read_text(encoding="utf-8")
     cells = _parse_row_cells(rec, "tests/test_untouched.py::test_f")
     assert cells["at base"] == "passed"
-    assert cells["head reruns"] == "1/3"
+    # Touched ids are excluded from reruns → 0/0 (never ran).
+    # classify_flaky("passed", 0/0, touched=True) → attributed → still stops.
+    assert cells["head reruns"] == "0/0"
     assert cells["batch touched file"] == "yes"
 
     gate_rc = _run_main(va, [
