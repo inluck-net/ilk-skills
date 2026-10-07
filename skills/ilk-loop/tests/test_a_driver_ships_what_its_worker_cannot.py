@@ -196,7 +196,7 @@ export PROJECT_PATH="{repo}"
     env = {
         **os.environ,
         "ILK_DATA_HOME": str(data_home),
-        "ILK_SKILL_HOME": str(_SCRIPTS.parent),
+        "ILK_SKILL_HOME": str(_SCRIPTS.parent.parent),
     }
     env.pop("ILK_ITERATION_SUBPLAN", None)
     env.pop("ILK_WORKER_SESSION", None)
@@ -224,10 +224,6 @@ def _assert_fn_ran(proc: subprocess.CompletedProcess) -> None:
 # ── AC-1: green gate + last step done → driver ships ────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="driver_ship_if_complete does not exist yet (07l #0 gap)",
-)
 def test_driver_ships_after_green_gate_last_step(tmp_path: Path) -> None:
     """After a green gate and current_step == estimated_steps, the driver
     calls ship_transition.py --ship without ILK_WORKER_SESSION."""
@@ -249,10 +245,6 @@ def test_driver_ships_after_green_gate_last_step(tmp_path: Path) -> None:
     assert _read_frontmatter_field(plans, "green-slug", "status") == "shipped"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="driver_ship_if_complete does not exist yet (07l #0 gap)",
-)
 def test_driver_ship_creates_marker_commit(tmp_path: Path) -> None:
     """A successful driver ship creates a #ship marker commit."""
     repo = _make_repo(tmp_path)
@@ -343,10 +335,6 @@ def test_driver_does_not_ship_when_step_not_complete(tmp_path: Path) -> None:
 # ── AC-4: unsets ILK_ITERATION_SUBPLAN and ILK_WORKER_SESSION ────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="driver_ship_if_complete does not exist yet (07l #0 gap)",
-)
 def test_driver_ship_refuses_in_worker_session(tmp_path: Path) -> None:
     """The driver must NOT inherit ILK_WORKER_SESSION from the iteration."""
     repo = _make_repo(tmp_path)
@@ -369,10 +357,6 @@ def test_driver_ship_refuses_in_worker_session(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="driver_ship_if_complete does not exist yet (07l #0 gap)",
-)
 def test_driver_ship_clears_iteration_env_for_ship_call(tmp_path: Path) -> None:
     """Verify ILK_ITERATION_SUBPLAN is unset in the ship call environment."""
     repo = _make_repo(tmp_path)
@@ -398,10 +382,6 @@ def test_driver_ship_clears_iteration_env_for_ship_call(tmp_path: Path) -> None:
 # ── AC-5: appends slug to _GATE_FIRST_SHIPPED_SLUGS ─────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="driver_ship_if_complete does not exist yet (07l #0 gap)",
-)
 def test_driver_ship_tracks_slug_in_gate_first_shipped(tmp_path: Path) -> None:
     """After shipping, the slug is appended to _GATE_FIRST_SHIPPED_SLUGS."""
     repo = _make_repo(tmp_path)
