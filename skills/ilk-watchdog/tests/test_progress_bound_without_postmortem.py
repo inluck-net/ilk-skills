@@ -35,7 +35,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _SCHEDULER_SH = _REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "scheduler.sh"
 
 #: The commit this batch started from. AC-7's pin compares against it.
-_BASE_COMMIT = "6aaf28b"
+_BASE_COMMIT = "a9a184ad"  # last changed by a-blacklist-holds-one-master-not-the-project#step-1
 
 #: Observed consecutive launches on 2026-08-29 before anything declined.
 _OBSERVED_LAUNCHES = 3

@@ -172,7 +172,11 @@ class TestAC1OneWriterInDocs:
         )
 
     def test_skill_md_step6_names_ship_transition(self) -> None:
-        """AC-1: SKILL.md "The loop" step 6 names ship_transition.py."""
+        """AC-1: SKILL.md "The loop" step 6 tells the worker not to ship by hand.
+
+        Since the driver ships after the gate passes, step 6 must tell the
+        worker to never edit status or author a #ship commit.
+        """
         text = SKILL_MD.read_text(encoding="utf-8")
         # Find "The loop" section
         loop_start = text.find("## The loop")
@@ -183,8 +187,11 @@ class TestAC1OneWriterInDocs:
         step6_start = loop_section.find("6.")
         if step6_start == -1:
             pytest.fail("step 6 not found in The loop section")
-        assert "ship_transition.py" in loop_section[step6_start:], (
-            "SKILL.md The loop step 6 does not mention ship_transition.py"
+        step6_text = loop_section[step6_start:]
+        # The worker must be told not to ship by hand (driver ships after gate).
+        assert ("never edit" in step6_text.lower() and "status" in step6_text.lower()) or \
+               "ship_transition.py" in step6_text, (
+            "SKILL.md The loop step 6 does not tell the worker to skip manual shipping"
         )
 
 
