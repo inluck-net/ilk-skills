@@ -2397,6 +2397,25 @@ def _write_measured_record(project: Path, record: Path, args,
         rerun_selection = remeasure["rerun_selection"]
         phase_seconds = remeasure["phase_seconds"]
 
+        # At-base rerun: even on the re-measure path, every failing node
+        # must appear in the at-base table.  Without this, a re-measure
+        # that finds failures writes _(no failures)_ and verify_attribution
+        # correctly rejects the record (0 rows vs N failures).
+        at_base_start_r = time.monotonic()
+        base_red = read_baseline_red_at(project, args.base_sha)
+        head_red = read_baseline_red(project)
+        nodes = results["failing_nodes"]
+        at_base = {}
+        try:
+            at_base = run_at_base(project, args.base_sha, nodes, invocation,
+                                  baseline_red=base_red)
+        except (ValueError, RuntimeError) as exc:
+            print(f"WARNING: at-base rerun in re-measure path failed: {exc}",
+                  file=sys.stderr)
+        at_base_elapsed_r = round(time.monotonic() - at_base_start_r)
+        phase_seconds["at_base"] = at_base_elapsed_r
+        phase_seconds["total"] = phase_seconds["suite"] + at_base_elapsed_r
+
         # Read history for attempt number.
         history = _read_history(record)
         attempt = len(history) + 1
@@ -2405,7 +2424,7 @@ def _write_measured_record(project: Path, record: Path, args,
             batch=args.batch or record.stem,
             head=head, tree=tree, base_sha=args.base_sha,
             invocation=invocation, scope=scope, results=results,
-            at_base={}, base_red=[], head_red=[],
+            at_base=at_base, base_red=base_red, head_red=head_red,
             suite_duration_sec=results.get("suite_duration_sec"),
             suite_source="tool",
             phase_seconds=phase_seconds,
