@@ -21,9 +21,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 if str(SCRIPTS) not in sys.path:
@@ -34,7 +32,6 @@ import verification_record as vr  # noqa: E402
 
 # ── AC-1a: measure_contention returns the right structure ─────────────────
 
-@pytest.mark.xfail(strict=True, reason="measure_contention does not exist at base")
 def test_measure_contention_returns_dict_with_three_keys() -> None:
     """measure_contention() must return {other_suites, load1, cpus}."""
     result = vr.measure_contention()
@@ -44,14 +41,12 @@ def test_measure_contention_returns_dict_with_three_keys() -> None:
     assert "cpus" in result
 
 
-@pytest.mark.xfail(strict=True, reason="measure_contention does not exist at base")
 def test_measure_contention_load1_is_float() -> None:
     """load1 must be a float (from os.getloadavg)."""
     result = vr.measure_contention()
     assert isinstance(result["load1"], float)
 
 
-@pytest.mark.xfail(strict=True, reason="measure_contention does not exist at base")
 def test_measure_contention_cpus_is_int_or_none() -> None:
     """cpus must be an int (from os.cpu_count) or None."""
     result = vr.measure_contention()
@@ -59,7 +54,6 @@ def test_measure_contention_cpus_is_int_or_none() -> None:
     assert cpus is None or isinstance(cpus, int)
 
 
-@pytest.mark.xfail(strict=True, reason="measure_contention does not exist at base")
 def test_measure_contention_other_suites_is_int_or_unmeasured() -> None:
     """other_suites must be an int or the string 'unmeasured'."""
     result = vr.measure_contention()
@@ -69,37 +63,33 @@ def test_measure_contention_other_suites_is_int_or_unmeasured() -> None:
 
 # ── AC-1b: other_suites counts pytest processes, excluding own tree ───────
 
-@pytest.mark.xfail(strict=True, reason="measure_contention / _ps_axo do not exist at base")
 def test_other_suites_excludes_own_process() -> None:
     """A process in our own tree must not count as 'other'."""
     my_pid = str(os.getpid())
     # Simulate ps output where only our own process appears.
-    fake_ps = f"  {my_pid}     1 python -m pytest tests/\n"
+    fake_ps = f"  PID  PPID COMMAND\n  {my_pid}     1 python -m pytest tests/\n"
     with patch.object(vr, "_ps_axo", return_value=fake_ps):
         result = vr.measure_contention()
     # Our own process should be excluded.
     assert result["other_suites"] == 0
 
 
-@pytest.mark.xfail(strict=True, reason="measure_contention / _ps_axo do not exist at base")
 def test_other_suites_counts_foreign_pytest() -> None:
     """A pytest process not in our tree counts as 'other'."""
-    fake_ps = "  99999     1 python -m pytest other_tests/\n"
+    fake_ps = "  PID  PPID COMMAND\n  99999     1 python -m pytest other_tests/\n"
     with patch.object(vr, "_ps_axo", return_value=fake_ps):
         result = vr.measure_contention()
     assert result["other_suites"] == 1
 
 
-@pytest.mark.xfail(strict=True, reason="measure_contention / _ps_axo do not exist at base")
 def test_other_suites_ignores_non_pytest() -> None:
     """A process whose command does not contain ' -m pytest' is ignored."""
-    fake_ps = "  99999     1 python manage.py runserver\n"
+    fake_ps = "  PID  PPID COMMAND\n  99999     1 python manage.py runserver\n"
     with patch.object(vr, "_ps_axo", return_value=fake_ps):
         result = vr.measure_contention()
     assert result["other_suites"] == 0
 
 
-@pytest.mark.xfail(strict=True, reason="measure_contention / _ps_axo do not exist at base")
 def test_other_suites_ps_failure_records_unmeasured() -> None:
     """A ps failure records other_suites: unmeasured, never 0."""
     with patch.object(vr, "_ps_axo", return_value=None):
@@ -109,7 +99,6 @@ def test_other_suites_ps_failure_records_unmeasured() -> None:
 
 # ── AC-1c: render_record accepts contention and renders it ────────────────
 
-@pytest.mark.xfail(strict=True, reason="render_record does not accept contention param at base")
 def test_render_record_accepts_contention_param() -> None:
     """render_record must accept a contention keyword argument."""
     contention = {
@@ -135,7 +124,6 @@ def test_render_record_accepts_contention_param() -> None:
     assert "contention:" in record_text
 
 
-@pytest.mark.xfail(strict=True, reason="render_record does not accept contention param at base")
 def test_render_record_contention_line_format() -> None:
     """The contention line must show start and end with suites and load."""
     contention = {
@@ -162,7 +150,6 @@ def test_render_record_contention_line_format() -> None:
     assert "end 2 suites load 3.0/8" in record_text
 
 
-@pytest.mark.xfail(strict=True, reason="render_record does not accept contention param at base")
 def test_render_record_contention_unmeasured() -> None:
     """When ps fails, other_suites is 'unmeasured' in the rendered line."""
     contention = {
@@ -210,7 +197,6 @@ def test_render_record_contention_none_omits_line() -> None:
 
 # ── AC-1d: history entry carries contention ───────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="_append_history_entry does not accept contention param at base")
 def test_history_entry_carries_contention(tmp_path: Path) -> None:
     """_append_history_entry must include contention when provided."""
     record = tmp_path / "record.md"
