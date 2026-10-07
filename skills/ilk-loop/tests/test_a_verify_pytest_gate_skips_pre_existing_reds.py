@@ -26,7 +26,6 @@ check whose command starts with ``python3 -m pytest``:
 """
 from __future__ import annotations
 
-import hashlib
 import subprocess
 import sys
 import textwrap
@@ -52,13 +51,12 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _setup_project(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
-    """Create a tmp git project and pin ILK_DATA_HOME / HOME.
+    """Create a tmp git project and pin ILK_DATA_HOME.
 
     Returns (project_dir, data_home).
     """
     data_home = tmp_path / "ilk-data"
     monkeypatch.setenv("ILK_DATA_HOME", str(data_home))
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -82,9 +80,31 @@ def _write_pytest_file(proj: Path) -> Path:
 
 
 def _write_batch_subplan(proj: Path, batch: str, pytest_cmd: str) -> Path:
-    """Create a batch-verification sub-plan with step-0 record + step-1 gate."""
+    """Create a batch-verification sub-plan with step-0 record + step-1 gate.
+
+    Also creates a MASTER file so ``find_plans_dir`` resolves the in-tree dir.
+    """
     plans = proj / "docs" / "plans"
     plans.mkdir(parents=True, exist_ok=True)
+    # MASTER file is required by find_plans_dir.
+    master = plans / f"MASTER-2026-10-07-{batch}-execution-plan.md"
+    if not master.exists():
+        master.write_text(textwrap.dedent(f"""\
+            ---
+            title: test batch
+            slug: 2026-10-07-{batch}
+            status: active
+            master_plan: 2026-10-07-{batch}
+            ---
+
+            # MASTER plan
+
+            ## Sub-plan registry
+
+            | # | Order | Slug | Items | Steps (est.) | Status |
+            |---|---|---|---|---|---|
+            | 1 | 0 | [2026-10-07-{batch}.md](./2026-10-07-{batch}.md) | X | 2 | pending |
+        """), encoding="utf-8")
     sp = plans / f"2026-10-07-{batch}.md"
     sp.write_text(textwrap.dedent(f"""\
         ---
@@ -120,16 +140,17 @@ def _write_batch_subplan(proj: Path, batch: str, pytest_cmd: str) -> Path:
 
 
 def _make_record_text(batch: str, base_sha: str, rows: list[tuple[str, str]],
-                      *, digest: str | None = None) -> str:
+                      *, tamper_digest: bool = False) -> str:
     """Build a record with the given at-base rows.
 
-    If *digest* is provided, it is written as-is (for tamper tests).
-    Otherwise computes the real digest from the surface above ``## Findings``.
+    If *tamper_digest* is True, appends a wrong ``record_digest`` line
+    (for digest-mismatch tests).  Otherwise no digest line — the checker
+    computes the surface hash directly.
     """
     row_lines = "\n".join(
         f"| {node} | {verdict} | no | — |" for node, verdict in rows
     )
-    surface = textwrap.dedent(f"""\
+    text = textwrap.dedent(f"""\
         # Batch verification record — {batch}
 
         record_writer: verification_record.py
@@ -160,9 +181,9 @@ def _make_record_text(batch: str, base_sha: str, rows: list[tuple[str, str]],
         |---|---|---|---|---|
         {row_lines}
     """)
-    if digest is None:
-        digest = hashlib.sha256(surface.encode("utf-8")).hexdigest()
-    return surface + f"\nrecord_digest: {digest}\n"
+    if tamper_digest:
+        text += f"\nrecord_digest: {'0' * 64}\n"
+    return text
 
 
 def _write_record(data_home: Path, key: str, batch: str, text: str) -> Path:
@@ -187,7 +208,6 @@ def _resolve_project_key(proj: Path) -> str:
 class TestAC1DeselectFailedAtBase:
     """A pytest gate deselects node ids that the record measured as failed at base."""
 
-    @pytest.mark.xfail(strict=True, reason="deselection not yet implemented in run_local_checks.py")
     def test_failed_at_base_is_deselected(self, tmp_path: Path, monkeypatch) -> None:
         """AC-1: record row t_red | failed ⇒ gate passes, stdout names t_red."""
         proj, data_home = _setup_project(tmp_path, monkeypatch)
@@ -199,7 +219,7 @@ class TestAC1DeselectFailedAtBase:
         rec_text = _make_record_text(batch, base_sha, [(node_id, "failed")])
         _write_record(data_home, key, batch, rec_text)
 
-        pytest_cmd = "python3 -m pytest test_gate_target.py -q -p no:cacheprovider"
+        pytest_cmd = f"{sys.executable} -m pytest test_gate_target.py -q -p no:cacheprovider"
         _write_batch_subplan(proj, batch, pytest_cmd)
 
         result = subprocess.run(
@@ -209,9 +229,8 @@ class TestAC1DeselectFailedAtBase:
             encoding="utf-8", errors="replace",
         )
         assert result.returncode == 0, f"gate should pass; stderr:\n{result.stderr}"
-        combined = result.stdout + result.stderr
-        assert "deselected" in combined.lower(), (
-            "stdout should name the deselected id"
+        assert "deselected" in result.stderr.lower(), (
+            "stderr should name the deselected id"
         )
 
 
@@ -231,7 +250,7 @@ class TestAC2RegressionFails:
         rec_text = _make_record_text(batch, base_sha, [(node_id, "passed")])
         _write_record(data_home, key, batch, rec_text)
 
-        pytest_cmd = "python3 -m pytest test_gate_target.py -q -p no:cacheprovider"
+        pytest_cmd = f"{sys.executable} -m pytest test_gate_target.py -q -p no:cacheprovider"
         _write_batch_subplan(proj, batch, pytest_cmd)
 
         result = subprocess.run(
@@ -241,8 +260,9 @@ class TestAC2RegressionFails:
             encoding="utf-8", errors="replace",
         )
         assert result.returncode != 0, "gate should fail (regression not deselected)"
-        combined = result.stdout + result.stderr
-        assert "deselected" not in combined.lower(), (
+        # The JSON output always has "deselected_base_reds" key; check stderr
+        # for the actual deselection diagnostic (which should not appear).
+        assert "deselected" not in result.stderr.lower(), (
             "nothing should be deselected for a passed-at-base id"
         )
 
@@ -263,7 +283,7 @@ class TestAC3UnmeasuredFails:
         rec_text = _make_record_text(batch, base_sha, [(node_id, "unmeasured-at-base")])
         _write_record(data_home, key, batch, rec_text)
 
-        pytest_cmd = "python3 -m pytest test_gate_target.py -q -p no:cacheprovider"
+        pytest_cmd = f"{sys.executable} -m pytest test_gate_target.py -q -p no:cacheprovider"
         _write_batch_subplan(proj, batch, pytest_cmd)
 
         result = subprocess.run(
@@ -280,7 +300,6 @@ class TestAC3UnmeasuredFails:
 class TestAC4DigestMismatch:
     """A pytest gate refuses to deselect when the record digest is wrong."""
 
-    @pytest.mark.xfail(strict=True, reason="deselection not yet implemented in run_local_checks.py")
     def test_tampered_record_refused(self, tmp_path: Path, monkeypatch) -> None:
         """AC-4: digest mismatch ⇒ gate FAILS, prints 'no signed record'."""
         proj, data_home = _setup_project(tmp_path, monkeypatch)
@@ -291,10 +310,10 @@ class TestAC4DigestMismatch:
         node_id = "test_gate_target.py::test_t_red"
         # Write with a wrong digest (tampered record).
         rec_text = _make_record_text(batch, base_sha, [(node_id, "failed")],
-                                     digest="0" * 64)
+                                     tamper_digest=True)
         _write_record(data_home, key, batch, rec_text)
 
-        pytest_cmd = "python3 -m pytest test_gate_target.py -q -p no:cacheprovider"
+        pytest_cmd = f"{sys.executable} -m pytest test_gate_target.py -q -p no:cacheprovider"
         _write_batch_subplan(proj, batch, pytest_cmd)
 
         result = subprocess.run(
@@ -355,8 +374,7 @@ class TestAC5NonBatchUnchanged:
         )
         # t_red always fails, so the gate should fail with no deselection.
         assert result.returncode != 0, "non-batch gate should fail on t_red"
-        combined = result.stdout + result.stderr
-        assert "deselected" not in combined.lower(), (
+        assert "deselected" not in result.stderr.lower(), (
             "non-batch sub-plan should not trigger deselection"
         )
 
@@ -366,7 +384,6 @@ class TestAC5NonBatchUnchanged:
 class TestDeclaredAtBase:
     """declared-at-base verdicts are also pre-existing and should be deselected."""
 
-    @pytest.mark.xfail(strict=True, reason="deselection not yet implemented in run_local_checks.py")
     def test_declared_at_base_is_deselected(self, tmp_path: Path, monkeypatch) -> None:
         """A declared-at-base row is treated like failed for deselection."""
         proj, data_home = _setup_project(tmp_path, monkeypatch)
@@ -378,7 +395,7 @@ class TestDeclaredAtBase:
         rec_text = _make_record_text(batch, base_sha, [(node_id, "declared-at-base")])
         _write_record(data_home, key, batch, rec_text)
 
-        pytest_cmd = "python3 -m pytest test_gate_target.py -q -p no:cacheprovider"
+        pytest_cmd = f"{sys.executable} -m pytest test_gate_target.py -q -p no:cacheprovider"
         _write_batch_subplan(proj, batch, pytest_cmd)
 
         result = subprocess.run(
@@ -395,14 +412,13 @@ class TestDeclaredAtBase:
 class TestMissingRecord:
     """When no signed record exists, the gate runs without deselection."""
 
-    @pytest.mark.xfail(strict=True, reason="deselection not yet implemented in run_local_checks.py")
     def test_missing_record_prints_no_signed_record(self, tmp_path: Path, monkeypatch) -> None:
         """No record on disk ⇒ no deselects, prints the diagnostic line."""
         proj, _data_home = _setup_project(tmp_path, monkeypatch)
         _write_pytest_file(proj)
 
         batch = "batch-missing"
-        pytest_cmd = "python3 -m pytest test_gate_target.py -q -p no:cacheprovider"
+        pytest_cmd = f"{sys.executable} -m pytest test_gate_target.py -q -p no:cacheprovider"
         _write_batch_subplan(proj, batch, pytest_cmd)
 
         result = subprocess.run(

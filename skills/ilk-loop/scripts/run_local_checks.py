@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import configparser
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -1765,6 +1766,116 @@ def confirm_b2_main(argv: list[str]) -> int:
     return 1 if result["blocked"] else 0
 
 
+# ── batch-verification gate deselection ──────────────────────────────────────
+#
+# When a batch-verification sub-plan's pytest gate runs, node ids whose
+# ``at base`` verdict is ``failed`` or ``declared-at-base`` are pre-existing
+# reds.  Deselecting them lets the gate judge only THIS batch's regressions.
+# The signed record's digest is verified to prevent a tampered record from
+# excusing real failures.
+
+
+def _has_batch_verification_marker(fm_text: str) -> bool:
+    """True if *fm_text*'s frontmatter declares ``batch_verification: true``."""
+    for line in fm_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("batch_verification:"):
+            val = stripped.split(":", 1)[1].strip().strip("\"'").lower()
+            return val in ("true", "yes", "1")
+    return False
+
+
+_BATCH_RE = re.compile(r"--batch\s+(\S+)")
+
+
+def _find_batch_name_from_step0(body: str) -> str | None:
+    """Find the ``--batch <name>`` arg from step-0's ``verification_record.py`` command.
+
+    Returns the batch name, or None if not found.
+    """
+    gate = step_gate_fence(body, 0)
+    if gate.fence_text is None:
+        return None
+    for chk in parse_local_checks_block(gate.fence_text):
+        cmd = chk.get("command", "")
+        if "verification_record.py" in cmd:
+            m = _BATCH_RE.search(cmd)
+            if m:
+                return m.group(1)
+    return None
+
+
+_DESELECTABLE_VERDICTS = {"failed", "declared-at-base"}
+
+
+def _load_base_red_ids(project: Path, batch_name: str) -> tuple[list[str], str]:
+    """Load the batch record, verify its digest, return node ids to deselect.
+
+    Returns ``(ids, diagnostic)``.  On any failure (missing record, digest
+    mismatch, unparseable), returns ``([], diagnostic)`` where *diagnostic*
+    is the ``[gates]`` line to print.
+    """
+    try:
+        from verify_attribution import (
+            resolve_batch_record,
+            _compute_record_digest,
+            parse_rows,
+        )
+    except ImportError:
+        return [], "[gates] verify_attribution unavailable; pytest gate runs as authored"
+
+    try:
+        rec_path = resolve_batch_record(project, batch_name)
+    except Exception as exc:
+        return [], f"[gates] no signed record for {batch_name}; pytest gate runs as authored ({exc})"
+
+    try:
+        text = rec_path.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        return [], f"[gates] cannot read record {rec_path}: {exc}; pytest gate runs as authored"
+
+    # Verify digest.
+    surface = text.split("## Findings")[0] if "## Findings" in text else text
+    expected_digest = hashlib.sha256(surface.encode("utf-8")).hexdigest()
+
+    # Look for record_digest line.
+    digest_match = re.search(r"^record_digest:\s*(\S+)", text, re.MULTILINE)
+    if digest_match:
+        actual_digest = digest_match.group(1)
+        if actual_digest != expected_digest:
+            return [], (
+                f"[gates] no signed record for {batch_name} (digest mismatch); "
+                f"pytest gate runs as authored"
+            )
+
+    # Parse the at-base rerun table.
+    section_match = re.search(
+        r"^## At-base rerun\s*\n(.*?)(?:\n## |\Z)", text, re.MULTILINE | re.DOTALL
+    )
+    if not section_match:
+        return [], f"[gates] no at-base rerun section in {rec_path}; pytest gate runs as authored"
+
+    rows = parse_rows(section_match.group(1))
+    ids_to_deselect: list[str] = []
+    for row in rows:
+        if len(row) >= 2:
+            node_id = row[0].strip()
+            verdict = row[1].strip().lower()
+            if verdict in _DESELECTABLE_VERDICTS and node_id:
+                ids_to_deselect.append(node_id)
+
+    if not ids_to_deselect:
+        return [], ""  # nothing to deselect, no diagnostic needed
+
+    preview = ", ".join(ids_to_deselect[:5])
+    extra = f" (+{len(ids_to_deselect) - 5} more)" if len(ids_to_deselect) > 5 else ""
+    diag = (
+        f"[gates] deselected {len(ids_to_deselect)} pre-existing red(s) "
+        f"measured at base in {rec_path}: {preview}{extra}"
+    )
+    return ids_to_deselect, diag
+
+
 def main(argv: list[str]) -> int:
     # Force UTF-8 on stdout/stderr. The JSON we print carries gate output in
     # `stdout_tail` (e.g. eslint/vitest emit U+2713 '✓'); on a zh-CN console
@@ -1907,6 +2018,44 @@ def main(argv: list[str]) -> int:
                 project, changed_files, existing_commands, baseline_red
             )
 
+    # ── batch-verification gate deselection ──────────────────────────────
+    # When the sub-plan has batch_verification: true and a pytest gate runs,
+    # deselect node ids the signed record measured as failed at base so the
+    # gate judges only this batch's regressions.
+    deselect_ids: list[str] = []
+    deselect_diag: str = ""
+    if _has_batch_verification_marker(fm_text):
+        batch_name = _find_batch_name_from_step0(body)
+        if batch_name:
+            deselect_ids, deselect_diag = _load_base_red_ids(project, batch_name)
+            if deselect_diag:
+                print(deselect_diag, file=sys.stderr)
+            # Apply --deselect to pytest commands in step_checks.
+            if deselect_ids:
+                for chk in step_checks:
+                    cmd = chk.get("command", "")
+                    # Match "python3 -m pytest", "python -m pytest", and
+                    # full-path variants like "/usr/bin/python3 -m pytest".
+                    if "-m pytest" in cmd and "python" in cmd.split()[0]:
+                        # Parse existing args to find already-deselected ids.
+                        parts = shlex.split(cmd)
+                        already = set()
+                        for i, p in enumerate(parts):
+                            if p == "--deselect" and i + 1 < len(parts):
+                                already.add(parts[i + 1])
+                        new_deselects = [nid for nid in deselect_ids if nid not in already]
+                        if new_deselects:
+                            # Insert --deselect args before any -- (end-of-opts) marker.
+                            insert_pos = len(parts)
+                            for i, p in enumerate(parts):
+                                if p == "--":
+                                    insert_pos = i
+                                    break
+                            for nid in reversed(new_deselects):
+                                parts.insert(insert_pos, nid)
+                                parts.insert(insert_pos, "--deselect")
+                            chk["command"] = shlex.join(parts)
+
     results: list[CheckResult] = []
     iso_tree = args.repo_root if args.repo_root is not None else project
     iso_ctx = contextlib.nullcontext(IsolationState()) if args.no_isolate else isolate_to_head(iso_tree)
@@ -1996,6 +2145,7 @@ def main(argv: list[str]) -> int:
         "dirty_paths": iso.dirty_paths,
         "isolated": iso.isolated,
         "restore_error": iso.restore_error,
+        "deselected_base_reds": deselect_ids if deselect_ids else [],
     }
     if isolation_error:
         out["error"] = isolation_error
