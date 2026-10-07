@@ -720,8 +720,11 @@ def _check_added_baseline_red(
         base_bl = []
 
     # ── Diff ─────────────────────────────────────────────────────────────
-    base_set = set(base_bl)
-    added = [e for e in head_bl if e not in base_set]
+    def _node_id(e):
+        return e["node_id"] if isinstance(e, dict) else e
+
+    base_set = {_node_id(e) for e in base_bl}
+    added = [e for e in head_bl if _node_id(e) not in base_set]
     if not added:
         return
 
@@ -738,11 +741,12 @@ def _check_added_baseline_red(
 
     # ── Check each added entry ───────────────────────────────────────────
     for entry in added:
+        entry_id = _node_id(entry)
         # Prefix match: a baseline_red entry "test_foo" covers
         # "test_foo[param1]", "test_foo[param2]", etc.
         matched_verdict: str | None = None
         for node, verdict in row_map.items():
-            if node == entry or node.startswith(entry + "["):
+            if node == entry_id or node.startswith(entry_id + "["):
                 matched_verdict = verdict
                 break
         if matched_verdict is None:
