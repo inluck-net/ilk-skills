@@ -189,6 +189,66 @@ Recurring shape across M1-M14 (from retro-2026-10-07-one-suite-per-batch): **rep
 
 ---
 
+## 8. Codex review — 2026-10-08
+
+**Verdict:** the dossier is strong and evidence-rich, but 07l should not be released as written. The carry-forward re-verify has one release-blocking correctness gap and one concrete accounting bug. M10 also remains open because the pytest deselection path does not establish a trust boundary around the record it consumes.
+
+### 8.1 Release-blocking findings
+
+#### R1. Carry-forward does not have a sound dependency boundary
+
+The ancestor + digest + no-test-infrastructure-change precondition is not sufficient. `test_importers.importer_tests` finds only test files whose AST directly imports the filename stem of a changed Python module. It does not cover:
+
+- transitive imports (`test → A → changed B`);
+- dynamic imports and pytest plugins or fixtures;
+- data files, templates, configuration, shell scripts and subprocess executables;
+- test helper modules under `tests/` whose consumers, rather than the helper path itself, must run.
+
+Refusing carry-forward whenever a non-`.py` path changed would close only part of the hole. Python changes can still affect an unselected test through an indirect dependency. Until there is a conservative dependency closure, the safe rule is to fail closed to a full re-measure for arbitrary source changes. A narrower carry-forward may be allowed only for a proven-safe change class whose affected tests are complete by construction.
+
+#### R2. The merged counts double-count the rerun selection
+
+`verification_record._try_remeasure` says it substitutes the selection's new results into the prior counts, but the implementation adds the new passing, skipped, xfailed and xpassed counts to the old totals without subtracting those tests' old buckets. `carried_count = prior_total - selection_total` can also become negative when tests were added.
+
+The verdict currently relies more heavily on `failing_nodes`, so this is not by itself a demonstrated false green. It nevertheless corrupts the verification record, proof counts and reuse metric. The tests should assert exact merged bucket counts and cover added and removed tests; presence-only assertions for `carried_from`, `rerun_selection` and `reused` are insufficient.
+
+#### R3. The step-1 deselection path accepts an unsigned record
+
+Adding a new HEAD-only `baseline_red` entry does not directly earn a deselection: `declared-at-base` is derived from the base configuration, and `verify_attribution` checks declarations added by the batch. That part of 07k #1 is sound.
+
+The remaining M10 problem is the record itself. `run_local_checks._load_base_red_ids` verifies `record_digest` only if that line exists, does not require it, and does not independently check the history digest, record freshness or writer provenance before trusting `failed` and `declared-at-base` rows. The digest and history are also worker-writable. A worker able to rewrite the record and history can therefore manufacture rows that the pytest gate deselects.
+
+G3 should be a release prerequisite, especially before carry-forward places more trust in previous evidence. The durable fix needs a driver-owned trust boundary, not another unkeyed digest stored beside worker-writable data.
+
+### 8.2 Answers to the review questions
+
+1. **M15:** the slow attempt had **24 failing ids**, not 7-9 (`attempt: 1` in the 07k history). `run_at_base` strips xdist and runs those ids serially in one pytest process. At the configured 17 s per-test timeout, `24 × 17 = 408 s`; collection and worktree overhead make 451 s plausible. This is the leading explanation. `owner_of` is also capable of hundreds of seconds because its fallback clones a snapshot and may run the id at each first-parent commit with a 120 s bound, separately for every candidate. `run_at_adding_commit` is serial per id as well, but only applies to foreign-added absent-at-base tests. Add separate timers for all three before removing anything.
+
+   The HEAD suite cannot replace `run_at_base`, because it contains no base verdict. `run_at_adding_commit` and `owner_of` are not needed to answer the batch-level question "did HEAD regress relative to the batch base?"; they are needed only to assign a failure among interleaved batches. They should be conditional or moved outside the critical gate if interleaved ownership is not present.
+
+2. **Carry-forward:** no, the current precondition is insufficient. Non-`.py` refusal is necessary but not sufficient; indirect Python dependencies remain. Do not release the general carry-forward path until it has a conservative dependency boundary and exact count-merging tests.
+
+3. **07k #0 and M10:** a worker-writable `baseline_red` alone does not reopen the simple amnesty bug, but a worker-writable record/history does. The pytest deselection helper's optional digest check is weaker than its "signed record" description.
+
+4. **No-progress:** "same failing set and no new commit" is not sound alone. Uncommitted edits or changed failure signatures may represent progress without a commit, while irrelevant commits can evade the rule indefinitely. Compare a fingerprint containing failing ids, normalised failure signatures, tested HEAD/tree, relevant tracked diff or worktree state, and the exact invocation. Keep an outer attempt or time budget so irrelevant commits cannot reset progress forever.
+
+5. **Metric:** keep two metrics. The user-facing SLO should be an explicit `verify_entered` event to a valid `batch-gate.json` (or `#ship` if shipping is deliberately part of the contract), including retries and idle. `phase_seconds.total` should remain a per-attempt diagnostic. The Appendix join can start late when an earlier attempt produces no `local_checks` row, so it should not be the authoritative start signal.
+
+6. **Attribution:** M7 is plausible but still inferred until the new contention measurement produces comparative data. Also soften §2.3's "Suite speed was never the cause": wrapper mechanisms explain the large overruns, but the increase from about 270 s to 485-590 s consumed most of a 15-minute budget and made the target fragile. The 10-15 minute happy-path estimate is currently an observed case, not yet a stable distribution.
+
+### 8.3 Required changes before release
+
+1. Disable or fail closed from the general 07l carry-forward path; retain it only for a proven-safe change class.
+2. Correct the merged-count algorithm and add exact-count tests, including added/removed tests.
+3. Close the worker-writable record/history escape path before allowing the pytest gate to deselect from recorded at-base rows.
+4. Add `run_at_base`, `run_at_adding_commit` and `owner_of` sub-timers; record candidate and subprocess counts with them.
+5. Replace the no-progress commit check with a tested-state fingerprint plus a finite outer bound.
+6. Emit an explicit end-to-end verify start event and report both end-to-end and per-attempt latency.
+
+Minor editorial correction: §4 says "these 16 masters", while its table and Appendix B describe 17 masters.
+
+---
+
 ## Appendix A: reproduce the numbers
 
 The scripts used are in the session scratchpad. They are reproduced here because they are short; run them read-only from any cwd.
