@@ -102,3 +102,44 @@ def decide_gate_retry(
         write_gate_red=False,
         append_prompt_line=False,
     )
+
+
+# ── CLI ─────────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    """CLI entry point.  Prints JSON to stdout."""
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(
+        description="Decide whether to retry or stop after a red gate."
+    )
+    parser.add_argument(
+        "--red-count", type=int, required=True,
+        help="Number of consecutive red gates for this (slug, step).",
+    )
+    parser.add_argument(
+        "--is-env-fault", type=str, default="false",
+        help="True if environment fault detected.",
+    )
+    parser.add_argument(
+        "--is-no-commits", type=str, default="false",
+        help="True if gate red on unchanged tree (0 new commits).",
+    )
+    args = parser.parse_args()
+
+    d = decide_gate_retry(
+        red_count=args.red_count,
+        is_environment_fault=args.is_env_fault.lower() == "true",
+        is_no_commits=args.is_no_commits.lower() == "true",
+    )
+    print(json.dumps({
+        "should_stop": d.should_stop,
+        "stop_reason": d.stop_reason,
+        "write_gate_red": d.write_gate_red,
+        "append_prompt_line": d.append_prompt_line,
+    }, separators=(",", ":")))
+
+
+if __name__ == "__main__":
+    main()

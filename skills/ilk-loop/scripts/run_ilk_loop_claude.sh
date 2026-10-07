@@ -1909,6 +1909,54 @@ write_ilk_sentinel() {
   }
 }
 
+# ── Gate-red count tracking (sub-plan a-failed-gate-is-retried-in-run) ──
+# Tracks consecutive red gate outcomes per (slug, step) within a run.
+# The file lives in RUN_LOG_DIR and is a JSON object:
+#   {"<slug>:<step>": <count>, ...}
+
+_gate_red_count_file() {
+  echo "${RUN_LOG_DIR}/gate-red-counts.json"
+}
+
+_read_gate_red_count() {
+  local slug="$1"
+  local step="$2"
+  local f
+  f="$(_gate_red_count_file)" || echo 0; return 0
+  if [[ ! -f "$f" ]]; then
+    echo 0
+    return 0
+  fi
+  python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    print(d.get(sys.argv[2] + ':' + sys.argv[3], 0))
+except Exception:
+    print(0)
+" "$f" "$slug" "$step" 2>/dev/null || echo 0
+}
+
+_increment_gate_red_count() {
+  local slug="$1"
+  local step="$2"
+  local f
+  f="$(_gate_red_count_file)" || return 0
+  python3 -c "
+import json, sys
+path = sys.argv[1]
+key = sys.argv[2] + ':' + sys.argv[3]
+try:
+    d = json.load(open(path))
+except Exception:
+    d = {}
+d[key] = d.get(key, 0) + 1
+with open(path, 'w') as fh:
+    json.dump(d, fh, separators=(',', ':'))
+print(d[key])
+" "$f" "$slug" "$step" 2>/dev/null || echo 1
+}
+
 record_err_context() {
   # Called by the ERR trap: captures the failing line number and command
   # so finalize_sentinel can include them in stopped_reason.
@@ -5679,6 +5727,21 @@ ${iter_prompt}"
       echo "[revert-notice] injected revert notice into prompt"
     fi
 
+    # ── Gate-red notice injection (sub-plan a-failed-gate-is-retried-in-run)
+    # If the previous iteration had a first red gate, inject a notice so
+    # the next iteration knows to read the gate-red file first.
+    local _gate_red_notice=""
+    local _prev_gate_red_file="${RUN_LOG_DIR}/gate-red-$((i - 1)).txt"
+    if [[ -f "$_prev_gate_red_file" ]]; then
+      _gate_red_notice="Your previous iteration failed this step's gate; read ${_prev_gate_red_file} first."
+    fi
+    if [[ -n "$_gate_red_notice" ]]; then
+      iter_prompt="${_gate_red_notice}
+
+${iter_prompt}"
+      echo "[gate-retry] injected gate-red notice into prompt"
+    fi
+
     # ── Pre-iteration record ──────────────────────────────────────────
     # Written BEFORE the agent runs, so a killed runner still leaves a
     # classifiable trace.
@@ -6481,15 +6544,64 @@ print('false')
 " < "$local_checks_results" 2>/dev/null || echo "false")
               fi
 
-              if [[ "$_is_env_fault" == "true" ]]; then
-                iter_stop_reason="local_checks_environment_fault"
-                echo "Loop stopped: environment fault — derived check cannot run (B2 confirmed)" >&2
-              elif [[ "$total_new" -eq 0 ]]; then
-                iter_stop_reason="local_checks_failed_no_commits"
-                echo "Loop stopped: local_checks not passing (B2 confirmed, 0 new commits — gate red on an unchanged tree)" >&2
+              # Gate-retry decision: first red → retry, second red → stop.
+              # (sub-plan a-failed-gate-is-retried-in-run)
+              local _is_no_commits="false"
+              if [[ "$total_new" -eq 0 ]]; then
+                _is_no_commits="true"
+              fi
+              local _gate_retry_step="${PRE_ITER_TARGET#* }"
+              [[ "$_gate_retry_step" =~ ^[0-9]+$ ]] || _gate_retry_step=0
+              local _gate_red_count
+              _gate_red_count=$(_read_gate_red_count "${_iter_slug:-}" "$_gate_retry_step")
+              local _retry_json
+              _retry_json=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/gate_retry.py" \
+                --red-count "$_gate_red_count" \
+                --is-env-fault "$_is_env_fault" \
+                --is-no-commits "$_is_no_commits" 2>/dev/null) || _retry_json=""
+              local _should_stop _retry_stop_reason
+              if [[ -n "$_retry_json" ]]; then
+                _should_stop=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print('true' if d.get('should_stop') else 'false')" "$_retry_json" 2>/dev/null || echo "true")
+                _retry_stop_reason=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('stop_reason') or '')" "$_retry_json" 2>/dev/null || echo "")
               else
-                iter_stop_reason="local_checks_failed"
-                echo "Loop stopped: local_checks not passing (B2 confirmed)" >&2
+                # Fallback: if gate_retry.py fails, use today's path.
+                _should_stop="true"
+                if [[ "$_is_env_fault" == "true" ]]; then
+                  _retry_stop_reason="local_checks_environment_fault"
+                elif [[ "$_is_no_commits" == "true" ]]; then
+                  _retry_stop_reason="local_checks_failed_no_commits"
+                else
+                  _retry_stop_reason="local_checks_failed"
+                fi
+              fi
+
+              if [[ "$_should_stop" == "true" ]]; then
+                iter_stop_reason="$_retry_stop_reason"
+                echo "Loop stopped: $_retry_stop_reason (B2 confirmed)" >&2
+              else
+                # First red gate → retry next iteration.
+                _increment_gate_red_count "${_iter_slug:-}" "$_gate_retry_step"
+                # Write gate-red-<iteration>.txt with failing checks' tail.
+                local _gate_red_file="${RUN_LOG_DIR}/gate-red-${i}.txt"
+                if [[ -n "$local_checks_results" && -s "$local_checks_results" ]]; then
+                  python3 -c "
+import json, sys
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    try:
+        rec = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    cmd = rec.get('command', '')
+    tail = rec.get('stderr_tail', '')
+    print(f'Command: {cmd}')
+    if tail:
+        print(f'Tail: {tail}')
+    print()
+" < "$local_checks_results" > "$_gate_red_file" 2>/dev/null || true
+                fi
+                echo "  [gate-retry] first red gate for ${_iter_slug:-?} step ${_gate_retry_step} — retrying next iteration (red count: $((_gate_red_count + 1)))" >&2
               fi
             fi
           fi

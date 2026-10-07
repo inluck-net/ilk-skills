@@ -162,26 +162,16 @@ class TestDecideGateRetryUnit:
 # ── Integration tests: runner must call the helper ─────────────────────────
 
 class TestRunnerCallsGateRetry:
-    """At base, the runner does NOT call decide_gate_retry.  xfail."""
+    """The runner must call gate_retry.py and honour its decision."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="base runner sets iter_stop_reason=local_checks_failed on "
-               "first red and breaks (run_ilk_loop_claude.sh:6491, :7017) "
-               "without calling decide_gate_retry",
-    )
-    def test_driver_calls_decide_gate_retry(self) -> None:
-        """AC: the runner's gate-failure block calls decide_gate_retry."""
+    def test_driver_calls_gate_retry_cli(self) -> None:
+        """AC: the runner's gate-failure block calls gate_retry.py."""
         src = _DRIVER.read_text(encoding="utf-8", errors="replace")
-        assert "decide_gate_retry" in src, (
-            "run_ilk_loop_claude.sh does not call decide_gate_retry — "
+        assert "gate_retry.py" in src, (
+            "run_ilk_loop_claude.sh does not call gate_retry.py — "
             "the runner must call it in its gate-failure block"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="base runner does not write gate-red file on first red",
-    )
     def test_driver_writes_gate_red_on_retry(self) -> None:
         """AC: the runner writes gate-red-<iteration>.txt when helper says retry."""
         src = _DRIVER.read_text(encoding="utf-8", errors="replace")
@@ -190,10 +180,6 @@ class TestRunnerCallsGateRetry:
             "the runner must write failing checks' tail on first red"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="base runner does not append prompt line on first red",
-    )
     def test_driver_appends_prompt_on_retry(self) -> None:
         """AC: the runner appends a prompt line for the next iteration."""
         src = _DRIVER.read_text(encoding="utf-8", errors="replace")
