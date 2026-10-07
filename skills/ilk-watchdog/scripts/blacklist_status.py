@@ -84,9 +84,13 @@ def _parse_frontmatter(path: Path) -> dict[str, str]:
     return fm
 
 
-def latest_postmortem(project_data_dir: str | os.PathLike) -> tuple[str | None, str | None] | None:
-    """Return (classification, generated_at) of the NEWEST postmortem by mtime,
-    or None when there are no postmortems."""
+def latest_postmortem(project_data_dir: str | os.PathLike) -> tuple[str | None, str | None, str | None] | None:
+    """Return (classification, generated_at, master) of the NEWEST postmortem
+    by mtime, or None when there are no postmortems.
+
+    ``master`` is the MASTER file name from the postmortem frontmatter
+    (empty string when absent — back-compat with pre-existing postmortems).
+    """
     pm_dir = _postmortems_dir(project_data_dir)
     if not pm_dir.is_dir():
         return None
@@ -95,7 +99,7 @@ def latest_postmortem(project_data_dir: str | os.PathLike) -> tuple[str | None, 
         return None
     newest = max(mds, key=lambda p: p.stat().st_mtime)
     fm = _parse_frontmatter(newest)
-    return fm.get("classification"), fm.get("generated_at")
+    return fm.get("classification"), fm.get("generated_at"), fm.get("master", "")
 
 
 def _parse_dt(s: str | None) -> dt.datetime | None:
@@ -117,8 +121,13 @@ def read_resume_ack(project_data_dir: str | os.PathLike) -> dt.datetime | None:
     return _parse_dt(data.get("cleared_at") if isinstance(data, dict) else None)
 
 
-def is_blacklisted(project_data_dir: str | os.PathLike, now: dt.datetime | None = None) -> dict:
-    """Decide whether the project is currently blacklisted (see module docstring)."""
+def is_blacklisted(project_data_dir: str | os.PathLike, now: dt.datetime | None = None, master: str | None = None) -> dict:
+    """Decide whether the project is currently blacklisted (see module docstring).
+
+    When *master* is given, a postmortem whose ``master`` field names a
+    different master does NOT blacklist the queried master.  A postmortem
+    with no ``master`` field keeps today's project-wide meaning (back-compat).
+    """
     if now is None:
         now = dt.datetime.now()
     res = {
@@ -132,9 +141,16 @@ def is_blacklisted(project_data_dir: str | os.PathLike, now: dt.datetime | None 
     pm = latest_postmortem(project_data_dir)
     if pm is None:
         return res
-    classification, generated_at = pm
+    classification, generated_at, pm_master = pm
     res["classification"] = classification
     res["postmortem_generated_at"] = generated_at
+
+    # Master-scoped blacklist: when the query names a master and the
+    # postmortem names a DIFFERENT master, this master is not blacklisted.
+    # A postmortem with no master field keeps project-wide scope (back-compat).
+    if master is not None and pm_master and pm_master != master:
+        res["reason"] = "different-master"
+        return res
 
     if classification not in BLACKLIST_CLASSES:
         res["reason"] = "latest-not-blacklist-class"

@@ -79,11 +79,6 @@ def _make_project(tmp_path: Path) -> Path:
 class TestMasterScopedBlacklist:
     """is_blacklisted respects the master parameter."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="is_blacklisted has no master parameter at base; "
-               "a postmortem for master A blacklists master B",
-    )
     def test_different_master_does_not_blacklist(self, tmp_path: Path) -> None:
         """Postmortem names master-A; querying for master-B is not blacklisted."""
         d = _make_project(tmp_path)
@@ -92,11 +87,6 @@ class TestMasterScopedBlacklist:
         result = bl.is_blacklisted(d, now=NOW_WITHIN, master="MASTER-2026-10-07l.md")
         assert result["blacklisted"] is False
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="is_blacklisted has no master parameter at base; "
-               "cannot match on master",
-    )
     def test_matching_master_blacklists(self, tmp_path: Path) -> None:
         """Postmortem names master-A; querying for master-A is blacklisted."""
         d = _make_project(tmp_path)
@@ -121,11 +111,6 @@ class TestBackCompatAbsentMaster:
         result = bl.is_blacklisted(d, now=NOW_WITHIN)
         assert result["blacklisted"] is True
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="is_blacklisted has no master parameter at base; "
-               "absent-master back-compat path does not exist",
-    )
     def test_absent_master_blacklists_even_with_master_kwarg(self, tmp_path: Path) -> None:
         """No master field in postmortem → still blacklists even when master given."""
         d = _make_project(tmp_path)

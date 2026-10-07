@@ -2013,6 +2013,7 @@ _write_terminal_sentinel() {
     'ended_at': '$ts',
     'iterations': 0,
     'project_path': '$PROJECT_PATH',
+    'master': '${_UNATTENDED_MASTER_SLUG:-}',
     'cli': 'claude'
   }
 if os.environ.get('_HELD_BY'):
@@ -2169,13 +2170,15 @@ finalize_sentinel() {
   fi
   ILK_STOPPED_REASON="$stopped_reason" ILK_STOPPED_BY="$stopped_by" python3 -c "
 import json, os
+_prev = json.load(open('$target'))
 d = {
     'state': 'interrupted',
     'pid': None,
     'run_id': '$RUN_ID',
-    'started_at': json.load(open('$target')).get('started_at',''),
+    'started_at': _prev.get('started_at',''),
     'ended_at': '$ended_at',
     'project_path': '$PROJECT_PATH',
+    'master': _prev.get('master', ''),
     'cli': 'claude',
     'stopped_reason': os.environ['ILK_STOPPED_REASON']
 }
@@ -5247,6 +5250,7 @@ print(fm.get('result_file', ''))
       'run_id': '$RUN_ID',
       'started_at': '$loop_started_at',
       'project_path': '$PROJECT_PATH',
+      'master': '${_UNATTENDED_MASTER_SLUG:-}',
       'cli': 'claude'
     }))" > "${runtime_dir}/last-exit.json.tmp" && mv -f "${runtime_dir}/last-exit.json.tmp" "${runtime_dir}/last-exit.json"
     echo "Sentinel: ${runtime_dir}/last-exit.json (state=running)"

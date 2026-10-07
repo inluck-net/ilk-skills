@@ -2565,8 +2565,17 @@ def render_report(
     rationale: str,
     tail: list[str],
     last_log_path: str | None = None,
+    master: str = "",
 ) -> str:
     iter_count = len(iters)
+    # Resolve master from sentinel when not supplied by caller.
+    if not master:
+        try:
+            _sent = read_sentinel(project_path)
+            if _sent is not None:
+                master = (_sent.get("master") or "").strip()
+        except Exception:
+            pass
     if last_launch is not None:
         max_iter_cfg = last_launch.get("max_iterations") or 0
         to_cfg = last_launch.get("iteration_timeout_min") or 0
@@ -2614,6 +2623,8 @@ def render_report(
         "started_at": started_at,
         "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
     }
+    if master:
+        fm["master"] = master
     if facts.get("skipped_non_object"):
         fm["skipped_non_object"] = facts["skipped_non_object"]
 

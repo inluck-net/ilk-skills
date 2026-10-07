@@ -414,13 +414,27 @@ blacklist_epoch_for_key() {
   local haystack="${2-${blacklist_skip:-}}"
   local max_epoch=""
   local key epoch
-  while IFS=' ' read -r key epoch; do
+  while IFS=' ' read -r key epoch _rest; do
     [[ -z "$key" || "$key" != "$target" || -z "$epoch" ]] && continue
     if [[ -z "$max_epoch" || "$epoch" -gt "$max_epoch" ]]; then
       max_epoch="$epoch"
     fi
   done <<<"${haystack}"
   echo "$max_epoch"
+}
+
+blacklist_master_for_key() {
+  # Look up the master name from a "key epoch master" blacklist line.
+  # Echoes the master (empty if not found or postmortem has no master field).
+  local target="$1"
+  local haystack="${2}"
+  local found_master=""
+  local key epoch master
+  while IFS=' ' read -r key epoch master; do
+    [[ -z "$key" || "$key" != "$target" ]] && continue
+    found_master="$master"
+  done <<<"${haystack}"
+  echo "$found_master"
 }
 
 file_mtime_epoch() {
@@ -1087,7 +1101,8 @@ log_held_projects() {
 
 read_blacklist_from_postmortems() {
   # Check queued projects for recent postmortem files with blacklist
-  # classifications. Outputs one line per blacklisted project: "key epoch".
+  # classifications. Outputs one line per blacklisted project:
+  # "key epoch master" (master empty when postmortem has no master field).
   local scan_output="$1"
   # Delegate the blacklist-vs-resolve-ack decision to blacklist_status.py (the
   # single source of truth shared with scheduler.ps1), so the cleared_at >=
@@ -1101,14 +1116,15 @@ import blacklist_status as bl
 
 projects = json.loads(sys.stdin.read())
 for proj in projects:
-    r = bl.is_blacklisted(proj['path'])
+    master = proj.get('active_master_name') or ''
+    r = bl.is_blacklisted(proj['path'], master=master if master else None)
     if r.get('blacklisted') and r.get('expiry'):
         try:
             epoch = int(datetime.fromisoformat(r['expiry']).timestamp())
         except (ValueError, TypeError):
             epoch = 0
         if epoch:
-            print(f\"{proj['key']} {epoch}\")
+            print(f\"{proj['key']} {epoch} {master}\")
 " <<<"$scan_output" | tr -d '\r'
 }
 
@@ -1344,7 +1360,17 @@ if h: print(h)
       pm_epoch="$(blacklist_epoch_for_key "$key" "$postmortem_blacklist")"
       bo_epoch="$(blacklist_epoch_for_key "$key" "$blacklist_skip")"
       if [[ -n "$pm_epoch" && "$now_epoch" -lt "$pm_epoch" ]]; then
-        skip_decision="skip-blacklist"
+        # Master-scoped blacklist: when the postmortem names a specific
+        # master, skip only that master.  If this project's active master
+        # differs, it is NOT blacklisted (another master can run).
+        local bl_master
+        bl_master="$(blacklist_master_for_key "$key" "$postmortem_blacklist")"
+        if [[ -n "$bl_master" && -n "$master_name" && "$bl_master" != "$master_name" ]]; then
+          # Different master — not blacklisted.  Log and continue to dispatch.
+          write_scheduler_log "skip-blacklist-master" "$key" "$bl_master (active=$master_name not blocked)"
+        else
+          skip_decision="skip-blacklist"
+        fi
       elif [[ -n "$bo_epoch" && "$now_epoch" -lt "$bo_epoch" ]]; then
         skip_decision="skip-backoff"
       fi
