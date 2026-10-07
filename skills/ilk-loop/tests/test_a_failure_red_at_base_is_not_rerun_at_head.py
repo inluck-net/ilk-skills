@@ -138,13 +138,14 @@ def test_red_at_base_ids_excluded_from_head_reruns(tmp_path: Path) -> None:
         # After the fix, non_declared excludes red-at-base ids.
         non_declared = [nid for nid, v in at_base.items()
                         if v not in ("declared-at-base", "failed")]
-        head_reruns = vr.run_head_reruns(repo, non_declared, invocation)
+        head_reruns, bound_hit = vr.run_head_reruns(repo, non_declared, invocation)
 
         assert RED_AT_BASE_ID not in head_rerun_ids
         assert PASSED_AT_BASE_ID in head_rerun_ids
         assert ABSENT_AT_BASE_ID in head_rerun_ids
-        assert head_reruns[PASSED_AT_BASE_ID] == 0
-        assert head_reruns[ABSENT_AT_BASE_ID] == 0
+        # All passed in the first pass → settled with (0, 1).
+        assert head_reruns[PASSED_AT_BASE_ID] == (0, 1)
+        assert head_reruns[ABSENT_AT_BASE_ID] == (0, 1)
 
 
 # ── AC-2: "Failed at base, not in baseline_red" section ─────────────────────
@@ -265,7 +266,7 @@ def test_passed_and_absent_still_get_head_reruns(tmp_path: Path) -> None:
 
         non_declared = [nid for nid, v in at_base.items()
                         if v not in ("declared-at-base", "failed")]
-        head_reruns = vr.run_head_reruns(repo, non_declared, invocation)
+        head_reruns, bound_hit = vr.run_head_reruns(repo, non_declared, invocation)
 
         assert PASSED_AT_BASE_ID in head_rerun_ids
         assert ABSENT_AT_BASE_ID in head_rerun_ids

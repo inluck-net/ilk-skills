@@ -454,6 +454,7 @@ class TestFailureSurgeStop:
             "--record", str(record),
             "--base-sha", "a" * 40,
             "--run-suite",
+            "--ledger", "off",
         ])
         assert ret != 0, "surge stop must exit non-zero"
         assert at_base_called["v"] == 1, "a surge is measured by one batched at-base rerun"
@@ -497,6 +498,7 @@ class TestFailureSurgeStop:
             "--record", str(record),
             "--base-sha", "a" * 40,
             "--run-suite",
+            "--ledger", "off",
         ])
         text = record.read_text(encoding="utf-8")
         assert "at_base_cap_exceeded" in text.lower(), (
@@ -542,11 +544,12 @@ class TestFailureSurgeStop:
         monkeypatch.setattr(vr, "run_at_adding_commit",
                             lambda *a, **kw: ({}, {}))
         monkeypatch.setattr(vr, "run_head_reruns",
-                            lambda *a, **kw: {})
+                            lambda *a, **kw: ({}, False))
         ret = vr.main([
             "--record", str(record),
             "--base-sha", "a" * 40,
             "--run-suite",
+            "--ledger", "off",
         ])
         # At threshold, the code should proceed normally (exit 0 or at least
         # not refuse).  The pin verifies it does NOT write a surge stop.
@@ -597,9 +600,9 @@ class TestSurgeIsMeasuredAtBase:
 
         monkeypatch.setattr(vr, "run_at_base", fake_at_base)
         monkeypatch.setattr(vr, "run_at_adding_commit", lambda *a, **kw: ({}, {}))
-        monkeypatch.setattr(vr, "run_head_reruns", lambda *a, **kw: {})
+        monkeypatch.setattr(vr, "run_head_reruns", lambda *a, **kw: ({}, False))
         ret = vr.main(["--record", str(record), "--base-sha", "a" * 40,
-                       "--run-suite"])
+                       "--run-suite", "--ledger", "off"])
         text = record.read_text(encoding="utf-8") if record.exists() else ""
         return ret, calls, text
 

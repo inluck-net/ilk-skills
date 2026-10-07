@@ -768,6 +768,12 @@ FAILURE_SURGE_THRESHOLD = 20
 # reads 3/3; then raise K, which is a single module constant.
 FLAKY_RERUN_COUNT = 3
 
+# Judgment call: total head-rerun budget 600 s.  Basis: a whole loaded
+# -n 8 suite took 485 s; a rerun of ≤ 50 ids under the same flags
+# should take a small fraction.  Wrong if real verifies hit the bound;
+# the record says so, and the fix is to raise it with the measured pass times.
+HEAD_RERUN_BUDGET_S = 600
+
 # ── Env pinning for at-base / adding-commit reruns ──────────────────────────
 
 _ENV_MARKER = "base-pinned-v1"
@@ -1313,31 +1319,63 @@ def read_baseline_red_at(project: Path, sha: str) -> list[dict]:
 
 def run_head_reruns(project: Path, node_ids: list[str], invocation: str,
                     K: int = FLAKY_RERUN_COUNT,
-                    timeout: int = 600) -> dict[str, int]:
-    """Run failing node ids at HEAD K times and return {node_id: red_count}.
+                    timeout: int = 600,
+                    budget_s: int = HEAD_RERUN_BUDGET_S
+                    ) -> tuple[dict[str, tuple[int, int]], bool]:
+    """Run failing node ids at HEAD, dropping settled ids after each pass.
 
-    Each rerun is ONE pytest process over all the given ids, using the suite's
-    own invocation and flags (xdist included).  A test run on its own does not
-    reproduce suite load, which is how gh-resolve 23d's 3 failures "passed on
-    rerun".
+    Each rerun is ONE pytest process over the remaining set, using the suite's
+    own invocation and flags (xdist included).  An id that does NOT fail in a
+    pass leaves the set; subsequent passes skip it.  Stop after K passes or
+    when the set is empty.
 
-    Returns ``{node_id: <number of times it failed>}`` out of K reruns.
+    The total wall clock is bounded by *budget_s*.  Each pass's subprocess
+    timeout is the remaining budget.  If a pass times out or the budget is
+    spent, stop rerunning; ids still in the set keep the red count of the
+    passes they completed.
+
+    Returns ``(results, bound_hit)`` where *results* is
+    ``{node_id: (red_count, runs)}`` and *bound_hit* is ``True`` when the
+    budget was exhausted before all passes completed.
     """
     if not node_ids:
-        return {}
-    runner = re.sub(r"\s-n\s+\S+|\s--dist\s+\S+", "", invocation)
+        return {}, False
+    # Keep xdist — the suite's own flags.
+    remaining = list(node_ids)
     red_counts: dict[str, int] = {nid: 0 for nid in node_ids}
-    for _ in range(K):
-        r = subprocess.run(f"{runner} {' '.join(node_ids)}", shell=True,
-                           cwd=project, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", timeout=timeout)
+    runs: dict[str, int] = {nid: 0 for nid in node_ids}
+    bound_hit = False
+    import time as _time
+    deadline = _time.monotonic() + budget_s
+    for _pass in range(K):
+        if not remaining:
+            break
+        remaining_budget = deadline - _time.monotonic()
+        if remaining_budget <= 0:
+            bound_hit = True
+            break
+        pass_timeout = max(1, int(remaining_budget))
+        try:
+            r = subprocess.run(
+                f"{invocation} {' '.join(remaining)}", shell=True,
+                cwd=project, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=pass_timeout)
+        except subprocess.TimeoutExpired:
+            bound_hit = True
+            break
         blob = (r.stdout or "") + (r.stderr or "")
-        # Parse which ids failed in this rerun.
         failed_this_run = set(_NODE_RE.findall(blob))
-        for nid in node_ids:
+        still_remaining: list[str] = []
+        for nid in remaining:
+            runs[nid] += 1
             if nid in failed_this_run:
                 red_counts[nid] += 1
-    return red_counts
+                still_remaining.append(nid)
+            # else: id passed — settled, drop from set.
+        remaining = still_remaining
+    # If we exhausted all K passes with remaining ids, that's not a bound hit.
+    results = {nid: (red_counts[nid], runs[nid]) for nid in node_ids}
+    return results, bound_hit
 
 
 def run_head_alone(project: Path, node_ids: list[str], invocation: str,
@@ -1503,7 +1541,7 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   invocation: str, scope: dict, results: dict,
                   at_base: dict, base_red: list[dict], head_red: list[dict],
                   at_base_error: str | None = None,
-                  head_reruns: dict[str, int] | None = None,
+                  head_reruns: dict[str, int | tuple[int, int]] | None = None,
                   batch_touched: dict[str, bool] | None = None,
                   alone: dict[str, str] | None = None,
                   flaky_owed: list[str] | None = None,
@@ -1520,7 +1558,8 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   base_source: str | None = None,
                   ledger_wait_sec: int | None = None,
                   record_elapsed_sec: int | None = None,
-                  owners: dict[str, dict] | None = None) -> str:
+                  owners: dict[str, dict] | None = None,
+                  head_rerun_bound_hit: bool = False) -> str:
     """Render the complete record.  Measurements only — no verdict column.
 
     The ``attributed`` column is deliberately absent.  It was the cell that
@@ -1639,11 +1678,15 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
             else:
                 red = "no"
             if has_reruns and head_reruns is not None and batch_touched is not None:
-                rerun_val = head_reruns.get(nid, 0)
+                rerun_val = head_reruns.get(nid, (0, 0))
                 touched_val = batch_touched.get(nid, False)
                 if rerun_val == "—":
                     rerun_str = "—"
+                elif isinstance(rerun_val, tuple):
+                    red_count, runs = rerun_val
+                    rerun_str = f"{red_count}/{runs}"
                 else:
+                    # Legacy int format (red_count only, denominator = K).
                     rerun_str = f"{rerun_val}/{FLAKY_RERUN_COUNT}"
                 if touched_val == "—":
                     touched_str = "—"
@@ -1653,18 +1696,26 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                     alone_val = alone.get(nid, "—")
                     lines.append(f"| {nid} | {verdict} | {red} | {rerun_str} | {touched_str} | {alone_val} |")
                     # Track order-dependent: passes alone but red in batch.
-                    if alone_val == "passed" and isinstance(rerun_val, int) and rerun_val >= 1:
+                    rerun_red = rerun_val[0] if isinstance(rerun_val, tuple) else rerun_val
+                    if alone_val == "passed" and isinstance(rerun_red, int) and rerun_red >= 1:
                         order_dependent.append(nid)
                 else:
                     lines.append(f"| {nid} | {verdict} | {red} | {rerun_str} | {touched_str} |")
             else:
                 lines.append(f"| {nid} | {verdict} | {red} |")
         lines.append("")
+        if head_rerun_bound_hit:
+            lines.append(f"head reruns: stopped at the {HEAD_RERUN_BUDGET_S} s bound; unsettled ids count as red")
+            lines.append("")
         if order_dependent:
             lines += ["## Order-dependent", ""]
             for nid in order_dependent:
-                red_count = head_reruns.get(nid, 0) if head_reruns else 0
-                lines.append(f"order-dependent: {nid} — passes alone, red {red_count}/{FLAKY_RERUN_COUNT} with the failing set")
+                rv = head_reruns.get(nid, (0, 0)) if head_reruns else (0, 0)
+                if isinstance(rv, tuple):
+                    rc, rn = rv
+                else:
+                    rc, rn = rv, FLAKY_RERUN_COUNT
+                lines.append(f"order-dependent: {nid} — passes alone, red {rc}/{rn} with the failing set")
             lines.append("")
     if adding_slugs:
         born_red = {nid: v for nid, v in at_base.items()
@@ -2280,9 +2331,10 @@ def _write_measured_record(project: Path, record: Path, args,
                 if v == "declared-at-base"]
     failed_at_base_ids = [nid for nid, v in at_base.items()
                           if v == "failed"]
-    head_reruns: dict[str, int] = {}
+    head_reruns: dict[str, tuple[int, int]] = {}
     batch_touched: dict[str, bool] = {}
     flaky_owed: list[str] = []
+    head_rerun_bound_hit = False
     # Mark declared, red-at-base, and owned-by rows with — (no rerun).
     declared_reruns: dict[str, str] = {nid: "—" for nid in declared}
     declared_touched: dict[str, str] = {nid: "—" for nid in declared}
@@ -2292,14 +2344,25 @@ def _write_measured_record(project: Path, record: Path, args,
     owned_touched: dict[str, str] = {nid: "—" for nid in owned_by_ids}
     if non_declared:
         try:
-            head_reruns = run_head_reruns(project, non_declared, invocation)
+            # Compute batch_touched BEFORE reruns so touched ids are excluded.
             batch_touched = batch_touched_files(project, args.base_sha,
                                                 non_declared,
                                                 batch_slugs=registry_slugs)
+            untouched = [nid for nid in non_declared
+                         if not batch_touched.get(nid, False)]
+            head_reruns_raw, head_rerun_bound_hit = run_head_reruns(
+                project, untouched, invocation)
+            # Merge untouched results; touched ids get (0, 0).
             for nid in non_declared:
+                if nid in head_reruns_raw:
+                    head_reruns[nid] = head_reruns_raw[nid]
+                else:
+                    head_reruns[nid] = (0, 0)
+            for nid in non_declared:
+                red_count, runs = head_reruns.get(nid, (0, 0))
                 cls = classify_flaky(
                     nid, at_base.get(nid, "failed"),
-                    head_reruns.get(nid, 0), FLAKY_RERUN_COUNT,
+                    red_count, runs,
                     batch_touched.get(nid, False))
                 if cls == "flaky-owed":
                     flaky_owed.append(nid)
@@ -2363,6 +2426,7 @@ def _write_measured_record(project: Path, record: Path, args,
         ledger_wait_sec=ledger_wait_sec if ledger_wait_sec else None,
         record_elapsed_sec=record_elapsed_sec,
         owners=owners or None,
+        head_rerun_bound_hit=head_rerun_bound_hit,
     )
     # Inject attempt header after the batch line.
     record_text = record_text.replace(
@@ -2623,24 +2687,33 @@ def _write_record_from_output(project: Path, record: Path, args,
                 if v == "declared-at-base"]
     failed_at_base_ids = [nid for nid, v in at_base.items()
                           if v == "failed"]
-    head_reruns: dict[str, int] = {}
+    head_reruns: dict[str, tuple[int, int]] = {}
     batch_touched: dict[str, bool] = {}
     flaky_owed: list[str] = []
+    head_rerun_bound_hit = False
     declared_reruns: dict[str, str] = {nid: "—" for nid in declared}
     declared_touched: dict[str, str] = {nid: "—" for nid in declared}
     failed_reruns: dict[str, str] = {nid: "—" for nid in failed_at_base_ids}
     failed_touched: dict[str, str] = {nid: "—" for nid in failed_at_base_ids}
     if non_declared:
         try:
-            head_reruns = run_head_reruns(project, non_declared,
-                                          configured_invocation)
             batch_touched = batch_touched_files(project, args.base_sha,
                                                 non_declared,
                                                 batch_slugs=registry_slugs)
+            untouched = [nid for nid in non_declared
+                         if not batch_touched.get(nid, False)]
+            head_reruns_raw, head_rerun_bound_hit = run_head_reruns(
+                project, untouched, configured_invocation)
             for nid in non_declared:
+                if nid in head_reruns_raw:
+                    head_reruns[nid] = head_reruns_raw[nid]
+                else:
+                    head_reruns[nid] = (0, 0)
+            for nid in non_declared:
+                red_count, runs = head_reruns.get(nid, (0, 0))
                 cls = classify_flaky(
                     nid, at_base.get(nid, "failed"),
-                    head_reruns.get(nid, 0), FLAKY_RERUN_COUNT,
+                    red_count, runs,
                     batch_touched.get(nid, False))
                 if cls == "flaky-owed":
                     flaky_owed.append(nid)
@@ -2683,6 +2756,7 @@ def _write_record_from_output(project: Path, record: Path, args,
         suite_output_text=raw_output,
         suite_source=suite_source,
         suite_source_sha256=suite_source_sha256,
+        head_rerun_bound_hit=head_rerun_bound_hit,
     )
     record_text = record_text.replace(
         "record_writer:", f"attempt: {attempt}\nrecord_writer:", 1)

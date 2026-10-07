@@ -110,11 +110,6 @@
         "node_id": "skills/ilk-loop/tests/test_violation_parks_the_owning_master.py::test_e2e_reverted_violation_keeps_the_owner_runnable",
         "reason": "order-dependent under parallel run: passes at batch base 1eec0588 in isolation, fails intermittently under -n 8 --dist loadfile (measured 2026-10-05).",
         "as_of": "2026-10-05"
-      },
-      {
-        "node_id": "skills/ilk-loop/tests/test_record_is_measured.py::TestFailureSurgeStop::test_stop_record_names_environment_fault",
-        "reason": "pre-existing: environment-dependent, fails at base eb6bfe47 under ILK_WORKER_SESSION=1 (the _write_measured_record guard returns early, causing the real suite to run instead of the mock). Unchanged by this batch (no diff to verification_record.py or test_record_is_measured.py).",
-        "as_of": "2026-10-07"
       }
     ],
     "hosts": [

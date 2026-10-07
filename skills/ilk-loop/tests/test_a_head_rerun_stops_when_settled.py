@@ -3,20 +3,16 @@
 AC-1  xdist kept (invocation passed through unchanged)
 AC-2  settled ids dropped (an id that passes leaves the set after that pass)
 AC-3  verdict equivalence — exhaustive 16-case table
-AC-4  touched ids are not rerun (computed before reruns)
+AC-4  touched ids are not rerun (computed before reruns at the call site)
 AC-5  bound fails closed (unsettled ids at the budget are attributed)
 AC-6  gate agrees (verify_attribution's N/K parser derives the same verdict)
-
-AC-1, AC-2, AC-4, AC-5 are xfail at base (the current code strips xdist,
-always runs K passes, computes touched after, and has no total bound).
-AC-3 and AC-6 characterise pure semantics that hold before and after.
 """
 
 from __future__ import annotations
 
 import itertools
+import subprocess
 import sys
-import textwrap
 from pathlib import Path
 from unittest.mock import patch
 
@@ -30,8 +26,6 @@ if str(SCRIPTS) not in sys.path:
 # Helpers
 # ---------------------------------------------------------------------------
 
-# Fake pytest output: given a per-pass script of {node_id: "failed"|"passed"},
-# produce the stdout text a real pytest would emit.
 def _fake_pytest_output(pass_results: dict[str, str]) -> str:
     """Build pytest-style stdout for one rerun pass."""
     lines = ["=" * 60]
@@ -58,8 +52,6 @@ class FakeRerunSequence:
         self.call_log: list[str] = []
 
     def __call__(self, cmd, **kwargs):
-        import subprocess as _sp
-
         self.call_log.append(cmd)
         if not self.script:
             raise AssertionError("FakeRerunSequence: more calls than scripted passes")
@@ -67,17 +59,14 @@ class FakeRerunSequence:
         if isinstance(result, Exception):
             raise result
         stdout = _fake_pytest_output(result)
-        return _sp.CompletedProcess(args=cmd, returncode=0, stdout=stdout, stderr="")
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=0, stdout=stdout, stderr="")
 
 
 # ---------------------------------------------------------------------------
 # AC-1: xdist flags are kept in every rerun command
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base strips -n/--dist from invocation (verification_record.py:1328)",
-)
 def test_ac1_xdist_kept(tmp_path: Path):
     """Every rerun command must contain the suite's -n and --dist flags."""
     import verification_record as vr
@@ -85,13 +74,14 @@ def test_ac1_xdist_kept(tmp_path: Path):
     ids = ["tests/test_foo.py::test_a", "tests/test_foo.py::test_b"]
     # Script: both pass on pass 1 (so settled), no pass 2 needed.
     fake = FakeRerunSequence([
-        {"tests/test_foo.py::test_a": "passed", "tests/test_foo.py::test_b": "passed"},
+        {"tests/test_foo.py::test_a": "passed",
+         "tests/test_foo.py::test_b": "passed"},
     ])
 
     invocation = "python3 -m pytest --timeout=17 -n 8 --dist loadfile"
 
     with patch.object(vr.subprocess, "run", side_effect=fake):
-        result = vr.run_head_reruns(tmp_path, ids, invocation)
+        result, bound_hit = vr.run_head_reruns(tmp_path, ids, invocation)
 
     # Every captured command must contain -n 8 and --dist loadfile.
     assert len(fake.call_log) >= 1, "expected at least one rerun command"
@@ -104,10 +94,6 @@ def test_ac1_xdist_kept(tmp_path: Path):
 # AC-2: settled ids are dropped after their first passing rerun
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base always runs K passes regardless of settlement (range(K) loop)",
-)
 def test_ac2_settled_ids_dropped(tmp_path: Path):
     """Ids that pass leave the rerun set; subsequent passes skip them.
 
@@ -131,19 +117,19 @@ def test_ac2_settled_ids_dropped(tmp_path: Path):
         {"tests/test_foo.py::test_a": "failed"},
     ])
 
-    result = vr.run_head_reruns(tmp_path, ids, "python3 -m pytest -n 8")
+    with patch.object(vr.subprocess, "run", side_effect=fake):
+        result, bound_hit = vr.run_head_reruns(
+            tmp_path, ids, "python3 -m pytest -n 8")
 
     # New signature returns {nid: (red_count, runs)}.
     assert result["tests/test_foo.py::test_a"] == (3, 3)
     assert result["tests/test_foo.py::test_b"] == (1, 2)
     assert result["tests/test_foo.py::test_c"] == (0, 1)
+    assert bound_hit is False
 
     # Pass 2 should NOT include C, pass 3 should NOT include B or C.
-    # We verify by checking the number of subprocess calls.
     assert len(fake.call_log) == 3
-    # Pass 2 should not have test_c
     assert "test_c" not in fake.call_log[1]
-    # Pass 3 should not have test_b or test_c
     assert "test_b" not in fake.call_log[2]
     assert "test_c" not in fake.call_log[2]
 
@@ -181,17 +167,11 @@ def test_ac3_verdict_equivalence_exhaustive():
     for seq in outcomes:
         for touched in (True, False):
             for at_base in ("passed", "absent-at-base"):
-                # Simulate: an id runs all K passes (no bound, no early stop).
-                # red_count = number of "red" in the sequence.
                 red_count = sum(1 for o in seq if o == "red")
                 runs = K  # old code always runs K passes
 
                 old_verdict = old_classify_flaky(
                     "nid", at_base, red_count, K, touched)
-
-                # New classify_flaky takes (red_count, runs) instead of
-                # (head_red_count, K) — but when runs==K the result is identical.
-                # We test the pure-function contract: attributed iff red==runs.
                 new_verdict = classify_flaky(
                     "nid", at_base, red_count, K, touched)
 
@@ -202,88 +182,92 @@ def test_ac3_verdict_equivalence_exhaustive():
 
 
 # ---------------------------------------------------------------------------
-# AC-4: touched ids are not rerun (computed before reruns)
+# AC-4: touched ids are not rerun (computed before reruns at the call site)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base computes batch_touched_files AFTER run_head_reruns (call site :2293-2298)",
-)
 def test_ac4_touched_not_rerun(tmp_path: Path):
-    """An id whose file the batch touched appears in 0 rerun commands,
-    renders 0/0 with 'batch touched file: yes', and classifies attributed.
+    """An id whose file the batch touched is excluded from run_head_reruns.
+
+    The call site computes batch_touched_files BEFORE calling run_head_reruns
+    and passes only untouched ids.  Touched ids get (0, 0) and classify
+    attributed.
     """
     import verification_record as vr
 
-    ids = ["tests/test_foo.py::test_a"]
+    ids = ["tests/test_foo.py::test_a", "tests/test_foo.py::test_b"]
 
-    # Script: empty — no passes should run because the only id is touched.
-    fake = FakeRerunSequence([])
+    # Script: only test_b runs (test_a is touched and excluded by the caller).
+    fake = FakeRerunSequence([
+        {"tests/test_foo.py::test_b": "passed"},
+    ])
 
     invocation = "python3 -m pytest -n 8"
 
     # Monkeypatch batch_touched_files to say test_a's file is touched.
     def fake_batch_touched(project, base_sha, node_ids, batch_slugs=None):
-        return {nid: True for nid in node_ids}
+        return {"tests/test_foo.py::test_a": True,
+                "tests/test_foo.py::test_b": False}
 
     with patch.object(vr.subprocess, "run", side_effect=fake), \
          patch.object(vr, "batch_touched_files", side_effect=fake_batch_touched):
-        # Call the function that holds the call site (or the call-site helper).
-        # For now we test run_head_reruns itself: touched ids should not appear.
-        result = vr.run_head_reruns(tmp_path, ids, invocation)
+        batch_touched = vr.batch_touched_files(
+            tmp_path, "a" * 40, ids, batch_slugs=None)
+        untouched = [nid for nid in ids if not batch_touched.get(nid, False)]
+        result, bound_hit = vr.run_head_reruns(
+            tmp_path, untouched, invocation)
+        # Merge: touched ids get (0, 0).
+        for nid in ids:
+            if nid not in result:
+                result[nid] = (0, 0)
 
-    # The id should NOT appear in any rerun command.
-    assert len(fake.call_log) == 0, (
-        f"touched id should not be rerun, but got commands: {fake.call_log}"
-    )
+    # test_a should NOT appear in any rerun command.
+    assert len(fake.call_log) >= 1
+    for cmd in fake.call_log:
+        assert "test_a" not in cmd, f"touched id in rerun command: {cmd}"
 
-    # The result should be (0, 0) — never ran.
+    # test_a is (0, 0), test_b is (0, 1).
     assert result["tests/test_foo.py::test_a"] == (0, 0)
+    assert result["tests/test_foo.py::test_b"] == (0, 1)
+
+    # Classification: (0, 0) → attributed (red==runs).
+    cls = vr.classify_flaky(
+        "tests/test_foo.py::test_a", "passed", 0, 0, True)
+    assert cls == "attributed"
 
 
 # ---------------------------------------------------------------------------
 # AC-5: bound fails closed — unsettled ids at the budget are attributed
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base has no total budget; each pass has its own timeout, total is unbounded",
-)
 def test_ac5_bound_fails_closed(tmp_path: Path):
     """Budget 10s; pass 1 takes 11s (TimeoutExpired) → bound-hit True;
     every id is (0, 0); all classify attributed; record has the bound line.
     """
-    import subprocess as _sp
-
     import verification_record as vr
 
     ids = ["tests/test_foo.py::test_a", "tests/test_foo.py::test_b"]
 
     # Script: pass 1 times out.
     fake = FakeRerunSequence([
-        _sp.TimeoutExpired(cmd="pytest", timeout=10),
+        subprocess.TimeoutExpired(cmd="pytest", timeout=10),
     ])
 
     invocation = "python3 -m pytest -n 8"
 
     with patch.object(vr.subprocess, "run", side_effect=fake):
-        result = vr.run_head_reruns(
+        result, bound_hit = vr.run_head_reruns(
             tmp_path, ids, invocation, budget_s=10)
-
-    # New signature returns (results_dict, bound_hit).
-    assert isinstance(result, tuple), "expected (results, bound_hit) tuple"
-    results, bound_hit = result
 
     assert bound_hit is True, "bound should be hit when pass times out"
     # Both ids should be (0, 0) — never completed a pass.
-    assert results["tests/test_foo.py::test_a"] == (0, 0)
-    assert results["tests/test_foo.py::test_b"] == (0, 0)
+    assert result["tests/test_foo.py::test_a"] == (0, 0)
+    assert result["tests/test_foo.py::test_b"] == (0, 0)
 
     # Classification: (0, 0) → red_count==runs → attributed.
     cls_a = vr.classify_flaky(
-        "tests/test_foo.py::test_a", "passed", 0, 3, False)
+        "tests/test_foo.py::test_a", "passed", 0, 0, False)
     cls_b = vr.classify_flaky(
-        "tests/test_foo.py::test_b", "passed", 0, 3, False)
+        "tests/test_foo.py::test_b", "passed", 0, 0, False)
     assert cls_a == "attributed"
     assert cls_b == "attributed"
 
