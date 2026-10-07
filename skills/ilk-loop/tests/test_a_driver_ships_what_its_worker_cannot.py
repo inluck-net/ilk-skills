@@ -34,6 +34,8 @@ if str(_SCRIPTS) not in sys.path:
 
 _SCRIPT = _SCRIPTS / "run_ilk_loop_claude.sh"
 
+import ilk_paths  # noqa: E402
+
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -88,21 +90,60 @@ Body.
 """
 
 
+class _scoped_data_home:
+    """Pin ILK_DATA_HOME for a block."""
+
+    def __init__(self, data_home: Path) -> None:
+        self._data_home = data_home
+        self._prev: str | None = None
+
+    def __enter__(self) -> Path:
+        self._prev = os.environ.get("ILK_DATA_HOME")
+        os.environ["ILK_DATA_HOME"] = str(self._data_home)
+        return self._data_home
+
+    def __exit__(self, *exc: object) -> None:
+        if self._prev is None:
+            os.environ.pop("ILK_DATA_HOME", None)
+        else:
+            os.environ["ILK_DATA_HOME"] = self._prev
+
+
 def _make_plans_dir(
     tmp_path: Path,
+    repo: Path,
     slug: str = "my-slug",
     status: str = "in-progress",
     step: int = 2,
     est: int = 2,
-) -> Path:
-    plans = tmp_path / "plans"
-    plans.mkdir()
+) -> tuple[Path, Path]:
+    """Create plans dir under the proper ILK_DATA_HOME structure.
+
+    Returns (data_home, plans_dir).
+    """
+    data_home = tmp_path / ".ilk-data"
+    with _scoped_data_home(data_home):
+        key = ilk_paths.project_key(repo)
+    plans = data_home / "projects" / key / "plans"
+    plans.mkdir(parents=True)
+    # MASTER file is required for ilk_paths.find_plans_dir to resolve.
+    (plans / "MASTER-2026-10-07n-execution-plan.md").write_text(
+        "---\n"
+        "master_plan: 2026-10-07n-execution\n"
+        "batch_date: 2026-10-07\n"
+        "status: active\n"
+        "supervised_only: false\n"
+        "---\n\n"
+        "# MASTER\n\n## Sub-plan registry\n\n"
+        f"| # | Slug |\n|---|---|\n| 1 | [2026-10-07n-{slug}](./2026-10-07n-{slug}.md) |\n",
+        encoding="utf-8",
+    )
     fname = f"2026-10-07n-{slug}.md"
     (plans / fname).write_text(
         SUBPLAN_TEMPLATE.format(slug=slug, status=status, step=step, est=est),
         encoding="utf-8",
     )
-    return plans
+    return data_home, plans
 
 
 def _read_frontmatter_field(plans_dir: Path, slug: str, field: str) -> str:
@@ -133,6 +174,7 @@ def _run_fn_in_subprocess(
     fn_body: str,
     plans_dir: Path,
     repo: Path,
+    data_home: Path,
     extra_env: dict[str, str] | None = None,
     extra_code: str = "",
 ) -> subprocess.CompletedProcess:
@@ -147,12 +189,15 @@ export ILK_DOTSOURCE_ONLY=1
 source "{_SCRIPT}" || exit 90
 unset ILK_DOTSOURCE_ONLY
 export PROJECT_PATH="{repo}"
-export _SKILL_ROOT="{_SCRIPTS.parent}"
 {env_vars}
 {extra_code}
 {fn_body}
 """
-    env = {**os.environ}
+    env = {
+        **os.environ,
+        "ILK_DATA_HOME": str(data_home),
+        "ILK_SKILL_HOME": str(_SCRIPTS.parent),
+    }
     env.pop("ILK_ITERATION_SUBPLAN", None)
     env.pop("ILK_WORKER_SESSION", None)
     return subprocess.run(
@@ -187,12 +232,15 @@ def test_driver_ships_after_green_gate_last_step(tmp_path: Path) -> None:
     """After a green gate and current_step == estimated_steps, the driver
     calls ship_transition.py --ship without ILK_WORKER_SESSION."""
     repo = _make_repo(tmp_path)
-    plans = _make_plans_dir(tmp_path, slug="green-slug", status="in-progress", step=2)
+    data_home, plans = _make_plans_dir(
+        tmp_path, repo, slug="green-slug", status="in-progress", step=2,
+    )
     proc = _run_fn_in_subprocess(
         tmp_path,
         'driver_ship_if_complete "green-slug" "a green gate"',
         plans,
         repo,
+        data_home,
     )
     _assert_fn_ran(proc)
     assert "shipped" in proc.stdout.lower(), (
@@ -208,13 +256,16 @@ def test_driver_ships_after_green_gate_last_step(tmp_path: Path) -> None:
 def test_driver_ship_creates_marker_commit(tmp_path: Path) -> None:
     """A successful driver ship creates a #ship marker commit."""
     repo = _make_repo(tmp_path)
-    plans = _make_plans_dir(tmp_path, slug="marker-slug", status="in-progress", step=2)
+    data_home, plans = _make_plans_dir(
+        tmp_path, repo, slug="marker-slug", status="in-progress", step=2,
+    )
     before_sha = _git(repo, "rev-parse", "HEAD")
     proc = _run_fn_in_subprocess(
         tmp_path,
         'driver_ship_if_complete "marker-slug" "a green gate"',
         plans,
         repo,
+        data_home,
     )
     _assert_fn_ran(proc)
     log = _git(repo, "log", "--oneline", "-1")
@@ -228,40 +279,38 @@ def test_driver_ship_creates_marker_commit(tmp_path: Path) -> None:
 # ── AC-2: only ships when status is in-progress ─────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="driver_ship_if_complete does not exist yet (07l #0 gap)",
-)
 def test_driver_does_not_ship_pending_subplan(tmp_path: Path) -> None:
     """A pending sub-plan must not be shipped. The function must run and skip."""
     repo = _make_repo(tmp_path)
-    plans = _make_plans_dir(tmp_path, slug="pend-slug", status="pending", step=2)
+    data_home, plans = _make_plans_dir(
+        tmp_path, repo, slug="pend-slug", status="pending", step=2,
+    )
     before_sha = _git(repo, "rev-parse", "HEAD")
     proc = _run_fn_in_subprocess(
         tmp_path,
         'driver_ship_if_complete "pend-slug" "a green gate"',
         plans,
         repo,
+        data_home,
     )
     _assert_fn_ran(proc)
     assert _read_frontmatter_field(plans, "pend-slug", "status") != "shipped"
     assert _git(repo, "rev-parse", "HEAD") == before_sha
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="driver_ship_if_complete does not exist yet (07l #0 gap)",
-)
 def test_driver_does_not_ship_already_shipped_subplan(tmp_path: Path) -> None:
     """An already-shipped sub-plan must not be shipped again."""
     repo = _make_repo(tmp_path)
-    plans = _make_plans_dir(tmp_path, slug="done-slug", status="shipped", step=2)
+    data_home, plans = _make_plans_dir(
+        tmp_path, repo, slug="done-slug", status="shipped", step=2,
+    )
     before_sha = _git(repo, "rev-parse", "HEAD")
     proc = _run_fn_in_subprocess(
         tmp_path,
         'driver_ship_if_complete "done-slug" "a green gate"',
         plans,
         repo,
+        data_home,
     )
     _assert_fn_ran(proc)
     assert _git(repo, "rev-parse", "HEAD") == before_sha, (
@@ -272,15 +321,11 @@ def test_driver_does_not_ship_already_shipped_subplan(tmp_path: Path) -> None:
 # ── AC-3: only ships when current_step == estimated_steps ───────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="driver_ship_if_complete does not exist yet (07l #0 gap)",
-)
 def test_driver_does_not_ship_when_step_not_complete(tmp_path: Path) -> None:
     """current_step < estimated_steps must not trigger a ship."""
     repo = _make_repo(tmp_path)
-    plans = _make_plans_dir(
-        tmp_path, slug="half-slug", status="in-progress", step=1, est=2,
+    data_home, plans = _make_plans_dir(
+        tmp_path, repo, slug="half-slug", status="in-progress", step=1, est=2,
     )
     before_sha = _git(repo, "rev-parse", "HEAD")
     proc = _run_fn_in_subprocess(
@@ -288,6 +333,7 @@ def test_driver_does_not_ship_when_step_not_complete(tmp_path: Path) -> None:
         'driver_ship_if_complete "half-slug" "a green gate"',
         plans,
         repo,
+        data_home,
     )
     _assert_fn_ran(proc)
     assert _read_frontmatter_field(plans, "half-slug", "status") != "shipped"
@@ -304,12 +350,15 @@ def test_driver_does_not_ship_when_step_not_complete(tmp_path: Path) -> None:
 def test_driver_ship_refuses_in_worker_session(tmp_path: Path) -> None:
     """The driver must NOT inherit ILK_WORKER_SESSION from the iteration."""
     repo = _make_repo(tmp_path)
-    plans = _make_plans_dir(tmp_path, slug="ws-slug", status="in-progress", step=2)
+    data_home, plans = _make_plans_dir(
+        tmp_path, repo, slug="ws-slug", status="in-progress", step=2,
+    )
     proc = _run_fn_in_subprocess(
         tmp_path,
         'driver_ship_if_complete "ws-slug" "a green gate"',
         plans,
         repo,
+        data_home,
         extra_env={"ILK_WORKER_SESSION": "1", "ILK_ITERATION_SUBPLAN": "ws-slug"},
     )
     _assert_fn_ran(proc)
@@ -327,12 +376,15 @@ def test_driver_ship_refuses_in_worker_session(tmp_path: Path) -> None:
 def test_driver_ship_clears_iteration_env_for_ship_call(tmp_path: Path) -> None:
     """Verify ILK_ITERATION_SUBPLAN is unset in the ship call environment."""
     repo = _make_repo(tmp_path)
-    plans = _make_plans_dir(tmp_path, slug="env-slug", status="in-progress", step=2)
+    data_home, plans = _make_plans_dir(
+        tmp_path, repo, slug="env-slug", status="in-progress", step=2,
+    )
     proc = _run_fn_in_subprocess(
         tmp_path,
         'driver_ship_if_complete "env-slug" "a green gate"',
         plans,
         repo,
+        data_home,
         extra_env={"ILK_WORKER_SESSION": "1", "ILK_ITERATION_SUBPLAN": "env-slug"},
     )
     _assert_fn_ran(proc)
@@ -353,13 +405,16 @@ def test_driver_ship_clears_iteration_env_for_ship_call(tmp_path: Path) -> None:
 def test_driver_ship_tracks_slug_in_gate_first_shipped(tmp_path: Path) -> None:
     """After shipping, the slug is appended to _GATE_FIRST_SHIPPED_SLUGS."""
     repo = _make_repo(tmp_path)
-    plans = _make_plans_dir(tmp_path, slug="track-slug", status="in-progress", step=2)
+    data_home, plans = _make_plans_dir(
+        tmp_path, repo, slug="track-slug", status="in-progress", step=2,
+    )
     proc = _run_fn_in_subprocess(
         tmp_path,
         'driver_ship_if_complete "track-slug" "a green gate"\n'
         'echo "TRACKED=$_GATE_FIRST_SHIPPED_SLUGS"',
         plans,
         repo,
+        data_home,
     )
     _assert_fn_ran(proc)
     assert "TRACKED=track-slug" in proc.stdout, (
@@ -371,15 +426,26 @@ def test_driver_ship_tracks_slug_in_gate_first_shipped(tmp_path: Path) -> None:
 # ── AC-6: ship_transition failure is handled gracefully ──────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="driver_ship_if_complete does not exist yet (07l #0 gap)",
-)
 def test_driver_ship_handles_transition_failure(tmp_path: Path) -> None:
     """On ship_transition failure, the sub-plan stays as-is and no crash."""
     repo = _make_repo(tmp_path)
-    plans = tmp_path / "plans"
-    plans.mkdir()
+    data_home = tmp_path / ".ilk-data"
+    with _scoped_data_home(data_home):
+        key = ilk_paths.project_key(repo)
+    plans = data_home / "projects" / key / "plans"
+    plans.mkdir(parents=True)
+    # MASTER file required for ilk_paths.find_plans_dir.
+    (plans / "MASTER-2026-10-07n-execution-plan.md").write_text(
+        "---\n"
+        "master_plan: 2026-10-07n-execution\n"
+        "batch_date: 2026-10-07\n"
+        "status: active\n"
+        "supervised_only: false\n"
+        "---\n\n"
+        "# MASTER\n\n## Sub-plan registry\n\n"
+        "| # | Slug |\n|---|---|\n| 1 | [mismatch](./2026-10-07n-mismatch.md) |\n",
+        encoding="utf-8",
+    )
     # Mismatched plan: field vs the slug we pass — ship_transition will fail.
     (plans / "2026-10-07n-mismatch.md").write_text(
         SUBPLAN_TEMPLATE.format(slug="real-slug", status="in-progress", step=2, est=2),
@@ -391,6 +457,7 @@ def test_driver_ship_handles_transition_failure(tmp_path: Path) -> None:
         'driver_ship_if_complete "nonexistent-slug" "a green gate"',
         plans,
         repo,
+        data_home,
     )
     _assert_fn_ran(proc)
     assert _git(repo, "rev-parse", "HEAD") == before_sha, (
@@ -433,7 +500,9 @@ def test_ship_refuses_in_worker_session_for_regular_subplan(
     import ship_transition  # noqa: E402
 
     repo = _make_repo(tmp_path)
-    plans = _make_plans_dir(tmp_path, slug="ctrl-slug", status="in-progress", step=2)
+    data_home, plans = _make_plans_dir(
+        tmp_path, repo, slug="ctrl-slug", status="in-progress", step=2,
+    )
     monkeypatch.setenv("ILK_WORKER_SESSION", "1")
     monkeypatch.setenv("ILK_ITERATION_SUBPLAN", "ctrl-slug")
     with pytest.raises(ship_transition.ShipTransitionError, match="refused.*driver"):

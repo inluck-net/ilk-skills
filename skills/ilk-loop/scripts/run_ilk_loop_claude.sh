@@ -2789,6 +2789,75 @@ attempt_gate_first_fast_path() {
   return 0
 }
 
+# driver_ship_if_complete <slug> <reason>
+# After a green post-iteration gate (or a run with gates off), ship a
+# sub-plan whose last step is done.  Extracted from the gate-first block
+# (:2755-2786) and used by BOTH call sites (gate-first keeps its exact
+# behaviour and log line).
+# Ships only when:
+#   - the sub-plan's status is in-progress
+#   - count_step_headings > 0 and current_step equals it
+#   - the sub-plan is not already shipped
+driver_ship_if_complete() {
+  local slug="$1" reason="$2"
+  local plans_dir sub_file cur_step total_steps
+  plans_dir=$(_gate_first_plans_dir) || return 0
+  sub_file=$(find_subplan_file_by_slug "$plans_dir" "$slug") || return 0
+
+  # Check status is in-progress
+  local status
+  status=$(python3 -c '
+import re, sys
+body = open(sys.argv[1], encoding="utf-8").read()
+fm = re.match(r"^---\n(.*?)\n---", body, re.DOTALL)
+if not fm:
+    raise SystemExit(1)
+for line in fm.group(1).splitlines():
+    m = re.match(r"status:\s*(.*)", line)
+    if m:
+        print(m.group(1).strip())
+        raise SystemExit(0)
+print("")
+' "$sub_file" 2>/dev/null) || status=""
+  if [[ "$status" != "in-progress" ]]; then
+    return 0
+  fi
+
+  # Check current_step == estimated_steps (count of ### Step headings)
+  cur_step=$(_read_subplan_current_step "$slug") || return 0
+  total_steps=$(count_step_headings "$slug") || total_steps=0
+  if [[ "$total_steps" -le 0 || "$cur_step" -ne "$total_steps" ]]; then
+    return 0
+  fi
+
+  local repo ship_script
+  repo=$(selfmod_effective_repo "${REPOS[0]:-$PROJECT_PATH}")
+  [[ -n "$repo" ]] || repo="$PROJECT_PATH"
+  ship_script="${_SKILL_ROOT}/ilk-loop/scripts/ship_transition.py"
+  if [[ -f "$ship_script" ]]; then
+    local ship_out=""
+    # Unset ILK_ITERATION_SUBPLAN and ILK_WORKER_SESSION so
+    # ship_transition.py knows this is the driver shipping, not a worker.
+    ship_out=$(unset ILK_ITERATION_SUBPLAN ILK_WORKER_SESSION; python3 "$ship_script" --ship "$slug"       --plans-dir "$plans_dir" --repo "$repo" 2>&1)
+    if [[ $? -eq 0 ]]; then
+      echo "[driver-ship] $slug: shipped after $reason"
+      # Track this slug so one-ship enforcement does not revert it.
+      _GATE_FIRST_SHIPPED_SLUGS="${_GATE_FIRST_SHIPPED_SLUGS:+$_GATE_FIRST_SHIPPED_SLUGS
+}$slug"
+      # Record a driver-written point row.
+      if [[ -n "${heads_before_file:-}" && -f "${heads_before_file:-}" ]]; then
+        local _ds_before
+        _ds_before=$(head_before_sha "$repo" "$heads_before_file") || _ds_before=""
+        if [[ -n "$_ds_before" ]]; then
+          ledger_record_point "$repo" "$_ds_before" "$slug"
+        fi
+      fi
+    else
+      echo "  [driver-ship] $slug: ship_transition failed — $ship_out" >&2
+    fi
+  fi
+}
+
 invoke_local_checks() {
   local project="$1"
   local targets_file="$2"
@@ -6784,6 +6853,18 @@ for line in sys.stdin:
     # gate_pass_at_head can fire for zero-commit green gates.
     if [[ "$total_new" -gt 0 || "$_gate_outcome" == "pass" ]]; then
       write_ship_proof_records "$heads_before_file" "$heads_after_file" "$i" "$_gate_outcome"
+    fi
+
+    # Driver-side ship: after a green gate (or a run with gates off), ship
+    # the dispatched sub-plan if its last step is done.  This is the missing
+    # half of 07l #0 — the worker's ship is refused, so the driver must do it.
+    if [[ -n "${_iter_slug:-}" ]]; then
+      if [[ "$_gate_outcome" == "pass" ]]; then
+        driver_ship_if_complete "$_iter_slug" "a green gate"
+      elif [[ "$_gate_outcome" == "" ]]; then
+        # No gate ran (local checks OFF) — still ship if the step is done.
+        driver_ship_if_complete "$_iter_slug" "a run with gates off"
+      fi
     fi
 
     # Build new_commits JSON
