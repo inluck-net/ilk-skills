@@ -248,7 +248,7 @@ class TestValidateRejectsKernelSteer:
 
             # Verify notification was fired
             assert len(notify_calls) == 1, f"expected 1 notify call, got {len(notify_calls)}"
-            assert notify_calls[0]["event"] == "blocked"
+            assert notify_calls[0]["event"] == "triage-escalated"
         finally:
             triage_apply.ilk_notify = original_notify
 

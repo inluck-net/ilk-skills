@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -521,6 +522,150 @@ def _missing_home_decision(home: Path) -> dict[str, Any]:
     }
 
 
+def _try_rule_first(
+    data_dir: Path,
+    *,
+    run_id: str,
+    plans_dir: Path,
+    data_root: Path,
+) -> dict[str, Any] | None:
+    """Rule-first ack-and-relaunch for a plain owned red.
+
+    When the stopped run's stop reason is ``local_checks_failed`` and
+    ``gate-history.jsonl``'s last red row for the run names the (slug, step)
+    and at least one failing node id, apply ``ack-and-relaunch`` WITHOUT a
+    model call.
+
+    Bound: fires at most twice in a row for the same (slug, step).  A third
+    consecutive red returns ``None`` so the caller falls through to
+    ``decide()``.
+    """
+    sentinel_path = data_dir / "runtime" / "launcher" / "last-exit.json"
+    if not sentinel_path.exists():
+        return None
+    try:
+        sentinel = json.loads(sentinel_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    if sentinel.get("state") != "local_checks_failed":
+        return None
+    if sentinel.get("run_id") != run_id:
+        return None
+
+    fc = sentinel.get("failed_check") or {}
+    slug = fc.get("slug")
+    step = fc.get("step")
+    if not slug or step is None:
+        return None
+
+    gate_path = data_dir / "runtime" / "launcher" / "gate-history.jsonl"
+    if not gate_path.exists():
+        return None
+
+    last_red = None
+    try:
+        for line in gate_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if (row.get("run_id") == run_id
+                    and row.get("outcome") == "fail"
+                    and row.get("slug")):
+                last_red = row
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    if last_red is None:
+        return None
+
+    node_ids = (last_red.get("attribution") or {}).get("node_ids") or []
+    if not node_ids:
+        return None
+
+    # ── bound: at most twice for the same (slug, step) ──
+    # Stored at data_root level so the counter is visible across project keys
+    # that share the same data root (different runs of the same project).
+    rule_state_path = data_root / "runtime" / "triage" / "rule-state.json"
+    rule_state = {}
+    if rule_state_path.exists():
+        try:
+            rule_state = json.loads(
+                rule_state_path.read_text(encoding="utf-8")
+            )
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    rule_key = f"rule:{slug}:{step}"
+    prev = rule_state.get(rule_key)
+    consecutive_reds = prev.get("consecutive_reds", 0) if prev else 0
+    if consecutive_reds >= 2:
+        return None
+
+    rule_state[rule_key] = {
+        "consecutive_reds": consecutive_reds + 1,
+        "run_id": run_id,
+    }
+    rule_state_path.parent.mkdir(parents=True, exist_ok=True)
+    rule_state_path.write_text(
+        json.dumps(rule_state, indent=2) + "\n", encoding="utf-8",
+    )
+
+    red_owner = last_red.get("red_owner")
+    _write_rule_finding(
+        plans_dir, data_dir,
+        slug=slug, run_id=run_id,
+        node_ids=node_ids, red_owner=red_owner,
+    )
+
+    return {
+        "action": "ack-and-relaunch",
+        "slug": slug,
+        "step": step,
+        "finding": (
+            f"gate red — failing ids: {', '.join(node_ids)}"
+            + (f"\nred-owner: {red_owner}" if red_owner else "")
+        ),
+        "basis": "local_checks_failed with known failing node ids",
+        "falsifier": "gate green",
+        "model": None,
+    }
+
+
+def _write_rule_finding(
+    plans_dir: Path,
+    data_dir: Path,
+    *,
+    slug: str,
+    run_id: str,
+    node_ids: list[str],
+    red_owner: str | None,
+) -> None:
+    """Append a ``#### Triage <ts> (rule)`` block to the sub-plan's Findings."""
+    matches = list(plans_dir.glob(f"*{slug}*.md"))
+    if not matches:
+        return
+    plan_path = matches[0]
+    text = plan_path.read_text(encoding="utf-8")
+
+    ts = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    ids_block = "\n".join(f"  - {nid}" for nid in node_ids)
+    block = (
+        f"\n#### Triage {ts} (rule)\n"
+        f"- Failing ids:\n{ids_block}\n"
+    )
+    if red_owner:
+        block += f"- Red-owner: {red_owner}\n"
+    block += "- Fix the code, never the assertion.\n"
+
+    if "## Findings" in text:
+        text = text.replace("## Findings\n", "## Findings\n" + block, 1)
+    else:
+        text += f"\n## Findings\n{block}\n"
+
+    plan_path.write_text(text, encoding="utf-8")
+
+
 def run_triage(
     *,
     project_key: str,
@@ -540,6 +685,15 @@ def run_triage(
 
     # Resolve home; a missing one escalates instead of falling back.
     resolved_home = resolve_triage_home(home)
+
+    # ── rule-first: ack-and-relaunch for a plain owned red ──
+    plans_dir = data_dir / "plans"
+    rule_decision = _try_rule_first(
+        data_dir, run_id=run_id, plans_dir=plans_dir, data_root=data_root,
+    )
+    if rule_decision is not None:
+        result = apply(rule_decision, data_dir, run_id=run_id)
+        return result
 
     # Build evidence and decide (skip the triage-decided audit row).
     evidence = build_evidence(data_dir, run_id)

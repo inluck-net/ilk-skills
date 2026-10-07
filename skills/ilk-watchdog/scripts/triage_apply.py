@@ -746,7 +746,7 @@ def _do_escalate(
     run_id: str,
     reason: str | None = None,
 ) -> dict[str, Any]:
-    """Park-and-escalate: no plan edit, no ack; notify + audit."""
+    """Park-and-escalate: no plan edit, no ack; notify + audit + triage log."""
     effective_reason = reason or decision.get("reason") or "escalated"
 
     write_audit(
@@ -759,8 +759,25 @@ def _do_escalate(
     )
 
     # Fire-and-forget notification (patchable by tests via triage_apply.ilk_notify).
+    slug = decision.get("slug") or ""
+    detail = f"{project}/{slug}: {effective_reason}" if slug else effective_reason
     try:
-        ilk_notify(event="blocked", project=project, detail=effective_reason)
+        ilk_notify(event="triage-escalated", project=project, detail=detail)
+    except Exception:
+        pass
+
+    # Write triage log with reason and finding.
+    try:
+        log_dir = data_dir / "runtime" / "triage"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"{run_id}.log"
+        ts = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+        entry = (
+            f"[{ts}] park-and-escalate\n"
+            f"  Reason: {effective_reason}\n"
+            f"  Finding: {decision.get('finding', '')}\n"
+        )
+        log_path.write_text(entry, encoding="utf-8")
     except Exception:
         pass
 

@@ -18,7 +18,7 @@ AC-4: a decision whose finding asks to edit skills/foo.py still only writes
       path, on a MASTER path and on runtime/batch-gate.json raises. Red-first.
 AC-5: the kill switch and idempotency refusals write no plan change. Red-first.
 AC-6 (control): park-and-escalate calls the stubbed ilk_notify once with
-      --event blocked.
+      event triage-escalated.
 """
 from __future__ import annotations
 
@@ -408,7 +408,7 @@ def test_idempotency_writes_no_plan_change():
 
 
 def test_park_and_escalate_calls_ilk_notify():
-    """park-and-escalate must call ilk_notify once with --event blocked."""
+    """park-and-escalate must call ilk_notify once with event triage-escalated."""
     from triage_apply import apply
 
     with tempfile.TemporaryDirectory() as td:
@@ -432,6 +432,6 @@ def test_park_and_escalate_calls_ilk_notify():
             result = apply(decision, data_dir, run_id="20261003-125807")
             assert result["action"] == "park-and-escalate"
             assert len(notify_calls) == 1, f"expected 1 notify call, got {len(notify_calls)}"
-            assert notify_calls[0]["event"] == "blocked"
+            assert notify_calls[0]["event"] == "triage-escalated"
         finally:
             triage_apply.ilk_notify = original_notify

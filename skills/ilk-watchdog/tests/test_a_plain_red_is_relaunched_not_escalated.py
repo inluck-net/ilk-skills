@@ -145,13 +145,9 @@ class TestAC1_RuleFirstAckAndRelaunch:
     with (slug, step) and failing node ids, triage applies ack-and-relaunch
     WITHOUT calling decide()."""
 
-    @pytest.mark.xfail(strict=True, reason="base unconditionally calls decide() — no rule-first path")
     def test_rule_first_skips_decide_and_relapses(self, tmp_path, monkeypatch):
         """run_triage applies ack-and-relaunch by rule when the sentinel is
         local_checks_failed and gate-history names the failing ids.
-
-        xfail: at base, run_triage unconditionally calls decide() — there is
-        no rule-first path.
         """
         from ilk_triage import run_triage
         import ilk_triage
@@ -184,13 +180,10 @@ class TestAC1_RuleFirstAckAndRelaunch:
             f"expected ack-and-relaunch by rule, got {result.get('action')}"
         )
 
-    @pytest.mark.xfail(strict=True, reason="base has no rule-first path — no rule-format Triage block")
     def test_rule_first_appends_finding_with_ids_and_verdict(self, tmp_path, monkeypatch):
         """The rule-first ack-and-relaunch appends a ``#### Triage <ts> (rule)``
         block to the sub-plan's Findings, containing the failing node ids,
         the red-owner verdict line, and ``Fix the code, never the assertion.``
-
-        xfail: at base, there is no rule-first path and no rule-format block.
         """
         from ilk_triage import run_triage
         import ilk_triage
@@ -227,12 +220,9 @@ class TestAC1_RuleFirstAckAndRelaunch:
             assert nid in text, f"failing node id {nid!r} missing from Findings"
         assert "Fix the code, never the assertion." in text
 
-    @pytest.mark.xfail(strict=True, reason="base has no rule-first path — red-owner verdict not included")
     def test_rule_first_includes_red_owner_verdict(self, tmp_path, monkeypatch):
         """When gate-history includes a red-owner verdict line, the rule-format
         Triage block includes it.
-
-        xfail: at base, there is no rule-first path.
         """
         from ilk_triage import run_triage
         import ilk_triage
@@ -272,17 +262,11 @@ class TestAC1_RuleFirstAckAndRelaunch:
 class TestAC2_BoundAtMostTwice:
     """The rule-first ack-and-relaunch fires at most twice in a row for the
     same (slug, step). A third consecutive red goes to decide().
-
-    xfail: at base, there is no rule-first path and no consecutive-red counter.
     """
 
-    @pytest.mark.xfail(strict=True, reason="base has no bound — decide() called for all three runs, count==3")
     def test_third_consecutive_red_goes_to_decide(self, tmp_path, monkeypatch):
         """After two rule-first ack-and-relaunches for the same (slug, step),
         a third local_checks_failed goes to decide() instead of the rule.
-
-        xfail: at base, every run_triage call goes to decide() — the counter
-        is 3, not 1.  The rule-first path and bound counter do not exist yet.
         """
         from ilk_triage import run_triage
         import ilk_triage
@@ -342,12 +326,9 @@ class TestAC3_ParkAndEscalateNotification:
     with event triage-escalated and detail = project + slug + reason, writes
     reason/finding into runtime/triage/<run_id>.log, and writes an audit row."""
 
-    @pytest.mark.xfail(strict=True, reason="base _do_escalate calls ilk_notify(event='blocked') not 'triage-escalated'")
     def test_escalate_notifies_with_triage_escalated_event(self, tmp_path, monkeypatch):
         """park-and-escalate must call ilk_notify with event=triage-escalated
         (not event=blocked).
-
-        xfail: at base, _do_escalate calls ilk_notify(event="blocked").
         """
         import triage_apply
 
@@ -389,12 +370,9 @@ class TestAC3_ParkAndEscalateNotification:
         )
         assert "test_reason" in call["detail"], "detail must contain the reason"
 
-    @pytest.mark.xfail(strict=True, reason="base _do_escalate does not write runtime/triage/<run_id>.log")
     def test_escalate_writes_triage_log_with_reason_and_finding(self, tmp_path, monkeypatch):
         """park-and-escalate writes reason/finding into
         runtime/triage/<run_id>.log.
-
-        xfail: at base, no triage log is written.
         """
         import triage_apply
         monkeypatch.setattr(
