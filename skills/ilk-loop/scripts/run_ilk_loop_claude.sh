@@ -1957,6 +1957,91 @@ print(d[key])
 " "$f" "$slug" "$step" 2>/dev/null || echo 1
 }
 
+# ── Failing-set tracking (sub-plan a-worker-turns-its-red-green) ────────
+# Tracks the failing test ids from each red gate per (slug, step) so the
+# gate-retry logic can detect progress (different failing set = progress).
+
+_gate_red_ids_file() {
+  echo "${RUN_LOG_DIR}/gate-red-ids.json"
+}
+
+_read_gate_red_ids() {
+  local slug="$1"
+  local step="$2"
+  local f
+  f="$(_gate_red_ids_file)" || echo "[]"; return 0
+  if [[ ! -f "$f" ]]; then
+    echo "[]"
+    return 0
+  fi
+  python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    d = {}
+key = sys.argv[2] + ':' + sys.argv[3]
+ids = d.get(key, [])
+print(json.dumps(sorted(ids)))
+" "$f" "$slug" "$step" 2>/dev/null || echo "[]"
+}
+
+_write_gate_red_ids() {
+  local slug="$1"
+  local step="$2"
+  local ids_json="$3"
+  local f
+  f="$(_gate_red_ids_file)" || return 0
+  python3 -c "
+import json, sys
+path = sys.argv[1]
+slug = sys.argv[2]
+step = sys.argv[3]
+ids = json.loads(sys.argv[4])
+try:
+    d = json.load(open(path))
+except Exception:
+    d = {}
+d[slug + ':' + step] = ids
+with open(path, 'w') as fh:
+    json.dump(d, fh, separators=(',', ':'))
+" "$f" "$slug" "$step" "$ids_json" 2>/dev/null || true
+}
+
+_extract_failing_ids() {
+  # Extract failing test node ids from the local_checks results JSONL.
+  # Each fail/error record's command field contains the test invocation.
+  # For pytest, the failing ids are in stdout_tail as "FAILED path::id".
+  local results_file="$1"
+  if [[ ! -s "$results_file" ]]; then
+    echo "[]"
+    return 0
+  fi
+  python3 -c "
+import json, re, sys
+ids = set()
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        rec = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    outcome = rec.get('outcome', '')
+    if outcome not in ('fail', 'error'):
+        continue
+    # Extract from stdout_tail: FAILED path::id or paths::id
+    tail = rec.get('stdout_tail', '') + '\n' + rec.get('stderr_tail', '')
+    for m in re.finditer(r'FAILED\s+(\S+?)(?:::\S+)?(?:\s|$)', tail):
+        ids.add(m.group(1))
+    # Also extract from pytest short test summary: FAILED path::id
+    for m in re.finditer(r'FAILED\s+(\S+)', tail):
+        ids.add(m.group(1))
+print(json.dumps(sorted(ids)))
+" "$results_file" 2>/dev/null || echo "[]"
+}
+
 record_err_context() {
   # Called by the ERR trap: captures the failing line number and command
   # so finalize_sentinel can include them in stopped_reason.
@@ -5746,6 +5831,44 @@ ${iter_prompt}"
       echo "[gate-retry] injected gate-red notice into prompt"
     fi
 
+    # ── Worker gate-running notice (sub-plan a-worker-turns-its-red-green)
+    # After committing the step, the worker must run its declared gate
+    # and iterate until green before ending its turn.
+    local _worker_gate_notice=""
+    if [[ -n "${PRE_ITER_TARGET:-}" ]]; then
+      local _wgn_slug="${PRE_ITER_TARGET%% *}"
+      local _wgn_step="${PRE_ITER_TARGET#* }"
+      # Find the sub-plan file for this slug
+      local _wgn_plans_dir
+      _wgn_plans_dir=$(get_plans_dir 2>/dev/null) || _wgn_plans_dir=""
+      if [[ -n "$_wgn_plans_dir" ]]; then
+        local _wgn_subplan
+        _wgn_subplan=$(find "$_wgn_plans_dir" -maxdepth 1 -name "*-${_wgn_slug}.md" 2>/dev/null | head -1)
+        if [[ -n "$_wgn_subplan" ]]; then
+          local _wgn_gate_cmds
+          _wgn_gate_cmds=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_local_checks.py" \
+            --print-step-gate "$_wgn_subplan" "$_wgn_step" 2>/dev/null) || true
+          if [[ -n "$_wgn_gate_cmds" ]]; then
+            _worker_gate_notice="AFTER your step commit, run the declared gate and iterate until green:
+$(echo "$_wgn_gate_cmds" | sed 's/^/  /')
+
+Rules:
+- Run every command above after your commit.
+- While any is red: fix the code (or fix a test-infra fault), commit with 'test-infra:' in the body if fixing a test, then rerun.
+- End your turn ONLY when all are green.
+- Never weaken or delete an assertion. Never add a deselect or baseline_red entry.
+- If green is not reachable, end your turn with the failing ids written to the sub-plan's Findings section."
+          fi
+        fi
+      fi
+    fi
+    if [[ -n "$_worker_gate_notice" ]]; then
+      iter_prompt="${_worker_gate_notice}
+
+${iter_prompt}"
+      echo "[worker-gate] injected gate-running instructions into prompt"
+    fi
+
     # ── Pre-iteration record ──────────────────────────────────────────
     # Written BEFORE the agent runs, so a killed runner still leaves a
     # classifiable trace.
@@ -6548,8 +6671,9 @@ print('false')
 " < "$local_checks_results" 2>/dev/null || echo "false")
               fi
 
-              # Gate-retry decision: first red → retry, second red → stop.
-              # (sub-plan a-failed-gate-is-retried-in-run)
+              # Gate-retry decision: first red → retry, second red → stop
+              # only if same failing set (no progress).
+              # (sub-plan a-failed-gate-is-retried-in-run, a-worker-turns-its-red-green)
               local _is_no_commits="false"
               if [[ "$total_new" -eq 0 ]]; then
                 _is_no_commits="true"
@@ -6558,11 +6682,28 @@ print('false')
               [[ "$_gate_retry_step" =~ ^[0-9]+$ ]] || _gate_retry_step=0
               local _gate_red_count
               _gate_red_count=$(_read_gate_red_count "${_iter_slug:-}" "$_gate_retry_step")
+
+              # Extract failing ids and compare with previous red.
+              local _current_failing_ids="[]"
+              local _same_failing_set="false"
+              if [[ -n "$local_checks_results" && -s "$local_checks_results" ]]; then
+                _current_failing_ids=$(_extract_failing_ids "$local_checks_results")
+                if [[ "$_gate_red_count" -ge 1 ]]; then
+                  local _previous_failing_ids
+                  _previous_failing_ids=$(_read_gate_red_ids "${_iter_slug:-}" "$_gate_retry_step")
+                  if [[ "$_current_failing_ids" == "$_previous_failing_ids" && \
+                        "$_current_failing_ids" != "[]" ]]; then
+                    _same_failing_set="true"
+                  fi
+                fi
+              fi
+
               local _retry_json
               _retry_json=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/gate_retry.py" \
                 --red-count "$_gate_red_count" \
                 --is-env-fault "$_is_env_fault" \
-                --is-no-commits "$_is_no_commits" 2>/dev/null) || _retry_json=""
+                --is-no-commits "$_is_no_commits" \
+                --same-failing-set "$_same_failing_set" 2>/dev/null) || _retry_json=""
               local _should_stop _retry_stop_reason
               if [[ -n "$_retry_json" ]]; then
                 _should_stop=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print('true' if d.get('should_stop') else 'false')" "$_retry_json" 2>/dev/null || echo "true")
@@ -6583,8 +6724,10 @@ print('false')
                 iter_stop_reason="$_retry_stop_reason"
                 echo "Loop stopped: $_retry_stop_reason (B2 confirmed)" >&2
               else
-                # First red gate → retry next iteration.
+                # Red gate → retry next iteration.
                 _increment_gate_red_count "${_iter_slug:-}" "$_gate_retry_step"
+                # Save failing ids for next iteration's comparison.
+                _write_gate_red_ids "${_iter_slug:-}" "$_gate_retry_step" "$_current_failing_ids"
                 # Write gate-red-<iteration>.txt with failing checks' tail.
                 local _gate_red_file="${RUN_LOG_DIR}/gate-red-${i}.txt"
                 if [[ -n "$local_checks_results" && -s "$local_checks_results" ]]; then

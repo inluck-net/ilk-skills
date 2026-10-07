@@ -1886,6 +1886,63 @@ def _load_base_red_ids(project: Path, batch_name: str) -> tuple[list[str], str]:
     return ids_to_deselect, diag
 
 
+def _print_step_gate_main(argv: list[str]) -> int:
+    """Print a step's declared gate commands, one per line.
+
+    Usage: ``run_local_checks.py --print-step-gate <subplan.md> <step>``
+
+    Exit 0 with commands printed (one per line) if the step declares gates.
+    Exit 2 if the step declares no gates.
+    """
+    ap = argparse.ArgumentParser(
+        description="Print a step's declared gate commands")
+    ap.add_argument("--print-step-gate", action="store_true",
+                    help=argparse.SUPPRESS)
+    ap.add_argument("subplan", type=Path, help="path to the sub-plan .md file")
+    ap.add_argument("step", type=int, help="step number (0-indexed)")
+    args = ap.parse_args(argv)
+
+    if not args.subplan.is_file():
+        print(f"error: sub-plan file not found: {args.subplan}", file=sys.stderr)
+        return 2
+
+    body = read_text(args.subplan)
+    checks = extract_step_local_checks(body, args.step)
+
+    if not checks:
+        print(f"step {args.step} declares no gate", file=sys.stderr)
+        return 2
+
+    # Resolve path prelude from the sub-plan's project root.
+    # The sub-plan lives in <project>/docs/plans/ or ~/.ilk-data/projects/<key>/plans/.
+    # For the external layout, we can't resolve the project root from the sub-plan
+    # path alone, so we try to find it from the plans dir.
+    prelude = ""
+    try:
+        # Try to resolve project from the sub-plan's parent dir structure.
+        plans_dir = args.subplan.parent
+        # External layout: ~/.ilk-data/projects/<key>/plans/
+        # The project path is not directly recoverable, but the runner
+        # sets ILK_PROJECT_PATH or we can look for .ilk-launch.json up the tree.
+        # For the worker's use case, the prelude comes from the runner's
+        # environment, so we read it if available.
+        import os
+        project_path = os.environ.get("ILK_PROJECT_PATH")
+        if project_path:
+            prelude = _read_path_prelude(Path(project_path))
+    except Exception:
+        pass
+
+    for check in checks:
+        cmd = check.get("command", "")
+        if prelude and cmd:
+            print(f"{prelude}; {cmd}")
+        else:
+            print(cmd)
+
+    return 0
+
+
 def main(argv: list[str]) -> int:
     # Force UTF-8 on stdout/stderr. The JSON we print carries gate output in
     # `stdout_tail` (e.g. eslint/vitest emit U+2713 '✓'); on a zh-CN console
@@ -1903,6 +1960,10 @@ def main(argv: list[str]) -> int:
     # Dispatch to confirm-b2 subcommand if present
     if "--confirm-b2" in argv:
         return confirm_b2_main(argv)
+
+    # Dispatch to --print-step-gate subcommand if present
+    if "--print-step-gate" in argv:
+        return _print_step_gate_main(argv)
 
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--project", required=True, type=Path)

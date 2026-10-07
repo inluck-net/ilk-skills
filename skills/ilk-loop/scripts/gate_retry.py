@@ -51,6 +51,7 @@ def decide_gate_retry(
     red_count: int,
     is_environment_fault: bool = False,
     is_no_commits: bool = False,
+    same_failing_set: bool = False,
 ) -> GateRetryDecision:
     """Decide whether to retry or stop after a confirmed-red gate.
 
@@ -64,6 +65,11 @@ def decide_gate_retry(
         ``environment-fault:``.
     is_no_commits:
         True when ``total_new == 0`` (gate red on an unchanged tree).
+    same_failing_set:
+        True when the current red gate has the same failing test ids as
+        the previous red gate for this (slug, step).  When True and
+        ``red_count >= 2``, the run stops (no progress).  When False and
+        ``red_count >= 2``, the run retries (the worker made progress).
 
     Returns
     -------
@@ -95,12 +101,22 @@ def decide_gate_retry(
             append_prompt_line=True,
         )
 
-    # Bullet 2: second red → stop (today's path).
+    # Bullet 2: second red → stop only if same failing set (no progress).
+    # If the failing set changed, the worker made progress → retry.
+    if same_failing_set:
+        return GateRetryDecision(
+            should_stop=True,
+            stop_reason="local_checks_failed",
+            write_gate_red=False,
+            append_prompt_line=False,
+        )
+
+    # Different failing set → progress was made, retry.
     return GateRetryDecision(
-        should_stop=True,
-        stop_reason="local_checks_failed",
-        write_gate_red=False,
-        append_prompt_line=False,
+        should_stop=False,
+        stop_reason=None,
+        write_gate_red=True,
+        append_prompt_line=True,
     )
 
 
@@ -126,12 +142,17 @@ def main() -> None:
         "--is-no-commits", type=str, default="false",
         help="True if gate red on unchanged tree (0 new commits).",
     )
+    parser.add_argument(
+        "--same-failing-set", type=str, default="false",
+        help="True if current red has same failing ids as previous red.",
+    )
     args = parser.parse_args()
 
     d = decide_gate_retry(
         red_count=args.red_count,
         is_environment_fault=args.is_env_fault.lower() == "true",
         is_no_commits=args.is_no_commits.lower() == "true",
+        same_failing_set=args.same_failing_set.lower() == "true",
     )
     print(json.dumps({
         "should_stop": d.should_stop,

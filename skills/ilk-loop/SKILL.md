@@ -198,6 +198,16 @@ helper is idempotent — running it twice does not duplicate files.
 4. Execute exactly the next step (or a few consecutive ones if context allows).
 5. After each step:
      - commit with message containing  [plan:<slug>#step-N]
+     - run the step's declared gate (the runner injects the commands into
+       your prompt; if not injected, use `run_local_checks.py --print-step-gate
+       <subplan.md> <step>` to discover them)
+     - while any gate command is red: fix the code (or fix a test-infra fault),
+       commit with `test-infra:` in the body if fixing a test, then rerun
+     - end the turn only when all gate commands are green
+     - never weaken or delete an assertion; never add a deselect or
+       `baseline_red` entry
+     - if green is not reachable, end the turn with the failing ids written
+       to the sub-plan's Findings section
      - bump `current_step` in sub-plan front-matter
      - commit:  chore(plans): bump <slug> current_step to <N+1>
 6. When current_step reaches estimated_steps:

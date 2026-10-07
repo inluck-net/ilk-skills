@@ -88,24 +88,36 @@ class TestDecideGateRetryUnit:
         d = decide_gate_retry(red_count=1)
         assert d.append_prompt_line is True
 
-    # -- Bullet 2: second red → stop (today's path) ------------------------
+    # -- Bullet 2: second red with same failing set → stop -----------------
 
-    def test_second_red_sets_local_checks_failed(self) -> None:
-        d = decide_gate_retry(red_count=2)
+    def test_second_red_same_set_sets_local_checks_failed(self) -> None:
+        d = decide_gate_retry(red_count=2, same_failing_set=True)
         _assert_decision(
             d,
             should_stop=True,
             stop_reason="local_checks_failed",
         )
 
-    def test_second_red_does_not_write_gate_red(self) -> None:
-        d = decide_gate_retry(red_count=2)
+    def test_second_red_same_set_does_not_write_gate_red(self) -> None:
+        d = decide_gate_retry(red_count=2, same_failing_set=True)
         assert d.write_gate_red is False
 
-    def test_third_red_also_stops(self) -> None:
-        d = decide_gate_retry(red_count=3)
+    def test_third_red_same_set_also_stops(self) -> None:
+        d = decide_gate_retry(red_count=3, same_failing_set=True)
         _assert_decision(
             d, should_stop=True, stop_reason="local_checks_failed"
+        )
+
+    # -- Bullet 2b: second red with different set → retry (progress) ------
+
+    def test_second_red_different_set_retries(self) -> None:
+        d = decide_gate_retry(red_count=2, same_failing_set=False)
+        _assert_decision(
+            d,
+            should_stop=False,
+            stop_reason=None,
+            write_gate_red=True,
+            append_prompt_line=True,
         )
 
     # -- Bullet 3: environment_fault and no_commits keep today's behaviour --

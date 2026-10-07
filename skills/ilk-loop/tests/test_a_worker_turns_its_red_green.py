@@ -100,14 +100,12 @@ def _run_print_step_gate(subplan: Path, step: int) -> subprocess.CompletedProces
 class TestPrintStepGateCLI:
     """Tests for the --print-step-gate CLI option."""
 
-    @pytest.mark.xfail(strict=True, reason="--print-step-gate does not exist at base")
     def test_print_step_gate_exits_zero_with_declared_gate(self, tmp_path: Path) -> None:
         """AC: exit 0 when the step declares a gate."""
         sp = _make_subplan(tmp_path, step_gate="echo ok")
         r = _run_print_step_gate(sp, step=0)
         assert r.returncode == 0, f"expected exit 0, got {r.returncode}: {r.stderr}"
 
-    @pytest.mark.xfail(strict=True, reason="--print-step-gate does not exist at base")
     def test_print_step_gate_exits_two_without_declared_gate(self, tmp_path: Path) -> None:
         """AC: exit 2 when the step declares no gate (not exit 2 from arg parse failure)."""
         sp = _make_subplan(tmp_path, step_gate=None)
@@ -121,7 +119,6 @@ class TestPrintStepGateCLI:
             f"stdout={r.stdout!r} stderr={r.stderr!r}"
         )
 
-    @pytest.mark.xfail(strict=True, reason="--print-step-gate does not exist at base")
     def test_print_step_gate_outputs_one_command_per_line(self, tmp_path: Path) -> None:
         """AC: prints each declared command on its own line."""
         sp = _make_subplan(tmp_path, step_gate="echo hello")
@@ -130,7 +127,6 @@ class TestPrintStepGateCLI:
         assert len(lines) == 1, f"expected 1 command, got {len(lines)}: {r.stdout!r}"
         assert "echo hello" in lines[0]
 
-    @pytest.mark.xfail(strict=True, reason="--print-step-gate does not exist at base")
     def test_print_step_gate_multiple_commands(self, tmp_path: Path) -> None:
         """AC: prints multiple declared commands, one per line."""
         body = textwrap.dedent("""\
@@ -161,7 +157,6 @@ class TestPrintStepGateCLI:
         lines = [l for l in r.stdout.strip().splitlines() if l.strip()]
         assert len(lines) == 2, f"expected 2 commands, got {len(lines)}: {r.stdout!r}"
 
-    @pytest.mark.xfail(strict=True, reason="--print-step-gate does not exist at base")
     def test_print_step_gate_includes_path_prelude(self, tmp_path: Path) -> None:
         """AC: the output includes the same path prelude the driver applies."""
         # The driver reads path_prelude from .ilk-launch.json and prepends it.
@@ -179,7 +174,6 @@ class TestPrintStepGateCLI:
 class TestWorkerGateContract:
     """Tests for the worker running its step gate after committing."""
 
-    @pytest.mark.xfail(strict=True, reason="worker does not run gates at base")
     def test_worker_runs_declared_gate_after_commit(self) -> None:
         """AC: the worker runs every printed gate command after the step commit.
 
@@ -194,7 +188,6 @@ class TestWorkerGateContract:
             "runner does not instruct the worker to run its declared gate"
         )
 
-    @pytest.mark.xfail(strict=True, reason="worker does not iterate until green at base")
     def test_worker_iterates_until_green(self) -> None:
         """AC: the worker iterates (fix + commit + rerun) until all gates pass.
 
@@ -208,7 +201,6 @@ class TestWorkerGateContract:
             "runner does not instruct the worker to iterate until green"
         )
 
-    @pytest.mark.xfail(strict=True, reason="test-infra exception not enforced at base")
     def test_worker_allows_test_infra_fix_only(self) -> None:
         """AC: fixing a test is allowed only for test-infrastructure fault.
 
@@ -221,7 +213,6 @@ class TestWorkerGateContract:
             "runner does not restrict test fixes to infrastructure faults"
         )
 
-    @pytest.mark.xfail(strict=True, reason="assertion-weakening guard not enforced at base")
     def test_worker_never_weakens_assertions(self) -> None:
         """AC: never weaken or delete an assertion, never add deselect or baseline_red.
 
@@ -235,7 +226,6 @@ class TestWorkerGateContract:
             "runner does not include assertion-weakening guard"
         )
 
-    @pytest.mark.xfail(strict=True, reason="failing-ids recording not implemented at base")
     def test_worker_records_failing_ids_on_unreachable_green(self) -> None:
         """AC: if green is not reachable, end the turn with failing ids in Findings.
 
@@ -276,8 +266,6 @@ class TestDriverGateRetry:
             "run_ilk_loop_claude.sh does not write gate-red file"
         )
 
-    @pytest.mark.xfail(strict=True,
-                        reason="no-progress compares failing sets, not just counts — not at base")
     def test_driver_stops_on_same_failing_set_no_progress(self) -> None:
         """AC: the run ends local_checks_failed when two consecutive red gates
         on the same (slug, step) have the SAME FAILING SET and no new commit.
