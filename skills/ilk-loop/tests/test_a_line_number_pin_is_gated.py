@@ -234,6 +234,13 @@ def _make_vitest_repo(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
 
+    # vitest binary stub so _resolve_vitest_runner finds it (AC: the-vitest-mention-test-has-a-vitest)
+    vitest_bin = repo / "node_modules" / ".bin"
+    vitest_bin.mkdir(parents=True, exist_ok=True)
+    (vitest_bin / "vitest").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    import os as _os
+    _os.chmod(str(vitest_bin / "vitest"), 0o755)
+
     _git(repo, "add", ".")
     _git(repo, "commit", "-m", "base: vitest setup")
 

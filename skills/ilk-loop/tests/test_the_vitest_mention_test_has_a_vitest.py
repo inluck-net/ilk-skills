@@ -26,10 +26,6 @@ _sys.modules["run_local_checks"] = _rlc
 _spec.loader.exec_module(_rlc)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base 4b80aaa1: _make_vitest_repo does not create node_modules/.bin/vitest, so _resolve_vitest_runner returns None",
-)
 def test_vitest_fixture_resolves_runner(tmp_path: Path) -> None:
     """A vitest fixture repo resolves a runner (not None)."""
     repo = _make_vitest_repo(tmp_path)
