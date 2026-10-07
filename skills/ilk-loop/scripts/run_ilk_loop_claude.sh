@@ -5892,6 +5892,12 @@ print(fm.get('result_file', ''))
     # so we track gate-first ships here and exempt them.
     local _GATE_FIRST_SHIPPED_SLUGS=""
 
+    # Gate-first flags: initialised here (before pre-dispatch) so that a red
+    # pre-dispatch gate can set GATE_FIRST_NO_DISPATCH=1 without the gate-first
+    # block re-initialising it to 0.
+    local GATE_FIRST_GREEN=0
+    local GATE_FIRST_NO_DISPATCH=0
+
     # -- Pre-dispatch: ship a complete sub-plan only on a green last gate --
     # When current_step >= the step count, the sub-plan is complete but
     # unshipped.  Dispatching it would gate a non-existent step ("no-checks")
@@ -5914,6 +5920,10 @@ print(fm.get('result_file', ''))
           ITER_QUOTA_EXHAUSTED=0
         elif [[ "$_pre_rc" -eq 1 ]]; then
           PRE_ITER_TARGET="${_iter_slug} $(_read_subplan_current_step "$_iter_slug" 2>/dev/null || echo "$_pre_step")"
+          # A red pre-dispatch gate on a finished batch-verify: the driver
+          # cannot ship and dispatching a worker is wasteful (ship_transition
+          # would refuse it).  Prevent agent dispatch.
+          GATE_FIRST_NO_DISPATCH=1
         fi
       fi
     fi
@@ -6184,8 +6194,11 @@ print(json.dumps({
     # the step opts in.  Green advances with an empty marker and zero model
     # turns; red falls through to the agent exactly as today.  A step without
     # the marker never reaches this branch.
-    local GATE_FIRST_GREEN=0
-    local GATE_FIRST_NO_DISPATCH=0
+    #
+    # GATE_FIRST_GREEN and GATE_FIRST_NO_DISPATCH are initialised BEFORE the
+    # pre-dispatch ship block (below) so that a red pre-dispatch gate can set
+    # GATE_FIRST_NO_DISPATCH=1 without the gate-first block re-initialising it
+    # to 0.
     local gate_first_results=""
     if [[ "$RUN_LOCAL_CHECKS" == true ]]; then
       gate_first_results=$(mktemp)
