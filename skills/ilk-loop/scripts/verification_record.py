@@ -806,8 +806,10 @@ def _classify_single_at_base_verdict(
     can be reused for both the batched path and the per-id fallback.
     """
     if timed_out:
-        return "failed"
+        return "unmeasured-at-base"
     blob = (stdout or "") + (stderr or "")
+    if "Timeout (>" in blob and "from pytest-timeout" in blob:
+        return "unmeasured-at-base"
     if _is_vitest(runner):
         if rc == 0:
             return "passed"

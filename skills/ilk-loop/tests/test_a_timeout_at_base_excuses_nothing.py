@@ -38,11 +38,6 @@ WT = Path("/tmp/fake-worktree")
 class TestTimedOutVerdict:
     """A whole-process timeout at base must never classify as "failed"."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="base returns 'failed' for timed_out=True; contract wants "
-               "'unmeasured-at-base'",
-    )
     def test_timed_out_is_unmeasured(self) -> None:
         """timed_out=True must return unmeasured-at-base, not failed."""
         result = vr._classify_single_at_base_verdict(
@@ -86,11 +81,6 @@ ASSERT_STDOUT = (
 class TestTimeoutKillInOutput:
     """A pytest-timeout kill in the output is not a real failure."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="base does not detect Timeout (> in output; contract wants "
-               "'unmeasured-at-base'",
-    )
     def test_timeout_kill_in_output_is_unmeasured(self) -> None:
         """Output containing `Timeout (>…` from pytest-timeout is unmeasured."""
         result = vr._classify_single_at_base_verdict(
@@ -123,11 +113,6 @@ def _signed_5col_section(body_lines: list[str]) -> str:
 class TestAttributionWithUnmeasuredAtBase:
     """unmeasured-at-base is NOT pre-existing — it goes through red==runs."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="unmeasured-at-base not in _AT_BASE_OK; contract wants it "
-               "treated like passed (red==runs rule)",
-    )
     def test_unmeasured_red_all_attributed(self) -> None:
         """2/2 red + unmeasured-at-base → attributed (red every time)."""
         section = _signed_5col_section([
@@ -138,11 +123,6 @@ class TestAttributionWithUnmeasuredAtBase:
         assert bad, "2/2 red should be attributed"
         assert bad[0][0] == "tests/test_it.py::test_it"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="unmeasured-at-base not in _AT_BASE_OK; contract wants it "
-               "treated like passed (red==runs rule)",
-    )
     def test_unmeasured_intermittent_no_touch_flaky(self) -> None:
         """1/2 red, no batch touch → flaky_owed (intermittent, not attributed)."""
         section = _signed_5col_section([
@@ -153,11 +133,6 @@ class TestAttributionWithUnmeasuredAtBase:
         assert not bad, "intermittent without batch touch should be flaky, not bad"
         assert "tests/test_it.py::test_it" in flaky
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="unmeasured-at-base not in _AT_BASE_OK; contract wants it "
-               "treated like passed (red==runs rule)",
-    )
     def test_unmeasured_no_reruns_batch_touched_attributed(self) -> None:
         """0/0 reruns but batch touched → attributed."""
         section = _signed_5col_section([

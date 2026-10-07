@@ -258,7 +258,7 @@ def parse_rows(section: str) -> list[list[str]]:
 _SIGNED_RE = re.compile(r"^record_writer:[ \t]*(\S+)", re.MULTILINE)
 
 _AT_BASE_OK = {"passed", "failed", "absent-at-base", "failed-differently",
-               "declared-at-base", "born-red-at"}
+               "declared-at-base", "born-red-at", "unmeasured-at-base"}
 
 
 def _validate_owned_by(at_base: str, node: str) -> None:
@@ -405,7 +405,8 @@ def derive_attributed(rows: list[list[str]]) -> tuple[list[list[str]], list[str]
             continue
 
         # 3-column (legacy) path.
-        if at_base in {"passed", "absent-at-base", "failed-differently"}:
+        if at_base in {"passed", "absent-at-base", "failed-differently",
+                       "unmeasured-at-base"}:
             bad.append(r)
     return bad, flaky_owed
 
