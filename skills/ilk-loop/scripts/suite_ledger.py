@@ -827,24 +827,49 @@ def wait_for(project: Path, tree: str, invocation: str,
         # Check if the running job is still alive.
         ld = ledger_dir(project)
         running_path = ld / "running.json"
+        live_drainer = False
         if running_path.is_file():
             try:
                 running = json.loads(running_path.read_text(encoding="utf-8"))
                 pid = running.get("pid")
-                if pid and _pid_is_alive(pid) and running.get("tree") == tree:
-                    time.sleep(2)
-                    continue
+                if pid and _pid_is_alive(pid):
+                    if running.get("tree") == tree:
+                        time.sleep(2)
+                        continue
+                    live_drainer = True
+                elif pid:
+                    # Dead pid — set aside so it does not block future spawns.
+                    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+                    dead_path = running_path.with_name(
+                        f"running.json.dead-{stamp}")
+                    try:
+                        running_path.rename(dead_path)
+                    except OSError:
+                        pass
+                    print(
+                        f"[ledger] running.json named dead pid {pid}; "
+                        f"set aside",
+                        file=sys.stderr,
+                    )
             except (OSError, json.JSONDecodeError):
                 pass
 
-        # Check queued.
+        # Check queued.  A queued job for our tree can only be drained while
+        # a live drainer exists.  With no live drainer the queue is stuck and
+        # waiting would sleep until the full gate timeout.
         queued_path = ld / "queued.json"
         if queued_path.is_file():
             try:
                 queued = json.loads(queued_path.read_text(encoding="utf-8"))
                 if queued.get("tree") == tree:
-                    time.sleep(2)
-                    continue
+                    if live_drainer:
+                        time.sleep(2)
+                        continue
+                    print(
+                        "[ledger] queued.json names this tree but nothing "
+                        "can drain it; measuring here",
+                        file=sys.stderr,
+                    )
             except (OSError, json.JSONDecodeError):
                 pass
 

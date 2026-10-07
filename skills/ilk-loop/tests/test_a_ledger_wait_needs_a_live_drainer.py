@@ -55,10 +55,6 @@ def _write_json(path: Path, data: dict) -> None:
 # ── AC-1: dead drainer on another tree → returns at once ────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="wait_for trusts a queue with no drainer",
-)
 def test_ac1_dead_drainer_returns_at_once(tmp_path: Path) -> None:
     """queued.json names our tree, running.json names a dead pid on another
     tree → returns None with 0 sleeps; the dead file is renamed."""
