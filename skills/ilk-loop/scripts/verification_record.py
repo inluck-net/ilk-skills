@@ -40,6 +40,99 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from bounded_run import run as _bounded_run  # noqa: E402
 
 
+# ── Contention measurement ────────────────────────────────────────────────
+
+def _ps_axo() -> str | None:
+    """Run ``ps -axo pid,ppid,command`` and return stdout, or None on failure."""
+    try:
+        r = subprocess.run(
+            ["ps", "-axo", "pid,ppid,command"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    return r.stdout
+
+
+def _own_pids() -> set[int]:
+    """Return the set of PIDs in this process's tree (self + ancestors + descendants)."""
+    own: set[int] = set()
+    my_pid = os.getpid()
+    own.add(my_pid)
+    # Walk ancestors (stop before PID 1 — that's init, not our tree).
+    try:
+        r = subprocess.run(
+            ["ps", "-o", "ppid=", "-p", str(my_pid)],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=5,
+        )
+        if r.returncode == 0:
+            ppid = int(r.stdout.strip())
+            while ppid > 1:
+                own.add(ppid)
+                r2 = subprocess.run(
+                    ["ps", "-o", "ppid=", "-p", str(ppid)],
+                    capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=5,
+                )
+                if r2.returncode != 0:
+                    break
+                ppid = int(r2.stdout.strip())
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    # Walk descendants.
+    try:
+        r = subprocess.run(
+            ["pgrep", "-P", str(my_pid)],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=5,
+        )
+        if r.returncode == 0:
+            for line in r.stdout.strip().splitlines():
+                try:
+                    own.add(int(line.strip()))
+                except ValueError:
+                    pass
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return own
+
+
+def measure_contention() -> dict:
+    """Measure current contention: other pytest suites, load, and CPUs.
+
+    Returns ``{other_suites, load1, cpus}``.  A ``ps`` failure records
+    ``other_suites: "unmeasured"``, never 0.
+    """
+    try:
+        load1 = os.getloadavg()[0]
+    except OSError:
+        load1 = 0.0
+    cpus = os.cpu_count()
+
+    ps_out = _ps_axo()
+    if ps_out is None:
+        return {"other_suites": "unmeasured", "load1": load1, "cpus": cpus}
+
+    own = _own_pids()
+    other = 0
+    for line in ps_out.splitlines()[1:]:  # skip header
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        cmd = parts[2]
+        if " -m pytest" in cmd and pid not in own:
+            other += 1
+    return {"other_suites": other, "load1": load1, "cpus": cpus}
+
+
 def _git(project: Path, *args: str) -> str | None:
     """Run a read-only git command, returning stripped stdout or None."""
     try:
@@ -1607,6 +1700,7 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   ledger_wait_sec: int | None = None,
                   record_elapsed_sec: int | None = None,
                   phase_seconds: dict[str, int] | None = None,
+                  contention: dict[str, dict] | None = None,
                   owners: dict[str, dict] | None = None,
                   head_rerun_bound_hit: bool = False,
                   carried_from: str | None = None,
@@ -1675,6 +1769,15 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
     if phase_seconds is not None:
         parts = [f"{k}={v}" for k, v in phase_seconds.items()]
         lines.append(f"phase_seconds: {' '.join(parts)}")
+    if contention is not None:
+        def _fmt_side(side: dict) -> str:
+            os_val = side.get("other_suites", "unmeasured")
+            load = side.get("load1", 0.0)
+            cpus = side.get("cpus", "?")
+            return f"{os_val} suites load {load}/{cpus}"
+        lines.append(
+            f"contention: start {_fmt_side(contention['start'])}; "
+            f"end {_fmt_side(contention['end'])}")
     if carried_from is not None:
         lines.append(f"carried_from: {carried_from}")
     if rerun_selection is not None:
@@ -1854,7 +1957,8 @@ def _append_history_entry(record: Path, attempt: int, digest: str,
                           failing_nodes: list[str],
                           suite_duration_sec: int | None = None,
                           head: str | None = None,
-                          tree: str | None = None) -> None:
+                          tree: str | None = None,
+                          contention: dict[str, dict] | None = None) -> None:
     """Append one attempt's metadata to the history file (R3).
 
     The history is append-only; each line is a JSON object with the attempt
@@ -1872,6 +1976,8 @@ def _append_history_entry(record: Path, attempt: int, digest: str,
         entry["head"] = head
     if tree:
         entry["tree"] = tree
+    if contention is not None:
+        entry["contention"] = contention
     with open(hist, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, sort_keys=True) + "\n")
 
@@ -2344,6 +2450,7 @@ def _write_measured_record(project: Path, record: Path, args,
     ledger_wait_sec = 0
     record_start = time.monotonic()
     suite_start = time.monotonic()
+    contention_start = measure_contention()
     suite_budget: int = 0
     suite_budget_source: str = "default"
 
@@ -2475,6 +2582,7 @@ def _write_measured_record(project: Path, record: Path, args,
             return 1
 
     suite_elapsed = round(time.monotonic() - suite_start)
+    contention_end = measure_contention()
     at_base_start = time.monotonic()
     nodes = results["failing_nodes"]
     try:
@@ -2698,6 +2806,7 @@ def _write_measured_record(project: Path, record: Path, args,
         "head_reruns": head_reruns_elapsed,
         "total": record_elapsed_sec,
     }
+    contention = {"start": contention_start, "end": contention_end}
 
     record_text = render_record(
         batch=args.batch or record.stem,
@@ -2720,6 +2829,7 @@ def _write_measured_record(project: Path, record: Path, args,
         ledger_wait_sec=ledger_wait_sec if ledger_wait_sec else None,
         record_elapsed_sec=record_elapsed_sec,
         phase_seconds=phase_seconds,
+        contention=contention,
         owners=owners or None,
         head_rerun_bound_hit=head_rerun_bound_hit,
     )
@@ -2738,7 +2848,7 @@ def _write_measured_record(project: Path, record: Path, args,
     digest = _compute_record_digest(record_text)
     _append_history_entry(record, attempt, digest, nodes,
                           suite_duration_sec=results.get("suite_duration_sec"),
-                          head=head, tree=tree)
+                          head=head, tree=tree, contention=contention)
 
     c = results["counts"]
     print(f"recorded: {c['passed']} passed, {c['failed']} failed, "
