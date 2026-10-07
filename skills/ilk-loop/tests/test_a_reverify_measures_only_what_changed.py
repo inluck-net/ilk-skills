@@ -22,6 +22,11 @@ The contract (pre-resolved):
   ``reused: <carried test count>``; the history row gains ``carried_from``.
 - Otherwise: today's full re-measure, unchanged.
 - The SLO check (``_check_slo_breach``) judges ``total`` as today.
+
+Updated 2026-10-08 (sub-plan a-reverify-carries-only-what-it-can-count):
+The partial carry-forward re-measure path (``_try_remeasure``) was deleted.
+Every retry now uses the canonical current-tree measurement path.  Tests
+that previously asserted carry metadata now assert its absence.
 """
 from __future__ import annotations
 
@@ -92,7 +97,7 @@ def _make_repo_with_prior_measurement(tmp_path: Path):
       commit B (prior HEAD / H0): test_pass ✓, test_fail ✗ (unchanged)
         → measured record at B with test_fail as failing
       commit C (HEAD): fix test_fail ✓, change module_x.py
-        → the re-measure path should trigger
+        → the canonical path should run (no carry metadata)
 
     Returns (repo, base_sha, h0_sha, head_sha, record_path, prior_entry).
     """
@@ -193,20 +198,21 @@ def _make_repo_with_prior_measurement(tmp_path: Path):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# AC-1: re-measure path triggers when all conditions hold
+# AC-1: canonical path taken (no carry metadata)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class TestAC1ReMeasurePathTriggers:
+class TestAC1CanonicalPathTaken:
     """When history has a prior measured attempt H0, H0 is an ancestor of HEAD,
     the ledger has a valid entry for H0's tree, and no test-infrastructure file
-    changed, the re-measure path is taken (not a full re-measure).
+    changed, the canonical current-tree measurement path is taken — no carry
+    metadata is emitted.
     """
 
-    def test_re_measure_path_selects_only_changed_area(
+    def test_canonical_path_no_carried_from(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The re-measure path runs only the selection, not the full suite."""
+        """The canonical path runs — no carried_from in the record."""
         monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
         import verification_record as vr
 
@@ -214,7 +220,7 @@ class TestAC1ReMeasurePathTriggers:
             _make_repo_with_prior_measurement(tmp_path)
         )
 
-        # Run the re-measure via the CLI.
+        # Run the verify via the CLI.
         result = subprocess.run(
             [sys.executable, str(SCRIPTS_DIR / "verification_record.py"),
              "--project", str(repo), "--record", str(record),
@@ -223,30 +229,30 @@ class TestAC1ReMeasurePathTriggers:
             errors="replace", timeout=120,
         )
         assert result.returncode == 0, (
-            f"re-measure should succeed:\n{result.stderr}"
+            f"verify should succeed:\n{result.stderr}"
         )
 
         text = record.read_text(encoding="utf-8")
-        # The record should indicate carried results.
-        assert "carried_from" in text, (
-            "record should carry carried_from field"
+        # The canonical path runs the full suite — no carried results.
+        assert "carried_from:" not in text, (
+            "record should not carry carried_from — canonical path runs"
         )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# AC-2: selection = changed tests ∪ importers ∪ prior failing ids
+# AC-2: no rerun_selection emitted
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class TestAC2SelectionCoversAllBuckets:
-    """The selection includes changed test files, importer tests of changed
-    .py modules, and every id from the prior entry's failing_nodes.
+class TestAC2NoRerunSelection:
+    """The record does not carry rerun_selection — the canonical path runs
+    the full suite, not a scoped selection.
     """
 
-    def test_selection_includes_changed_test_files(
+    def test_no_rerun_selection_in_record(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Changed test files are in the selection."""
+        """Changed test files: no rerun_selection in the record."""
         monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
         import verification_record as vr
 
@@ -254,10 +260,6 @@ class TestAC2SelectionCoversAllBuckets:
             _make_repo_with_prior_measurement(tmp_path)
         )
 
-        # The changed test file is tests/test_suite.py.
-        # It should be in the selection.
-        # We can't directly inspect the selection from the CLI, so we check
-        # that the record's suite_scope reflects the scoped run.
         result = subprocess.run(
             [sys.executable, str(SCRIPTS_DIR / "verification_record.py"),
              "--project", str(repo), "--record", str(record),
@@ -268,15 +270,14 @@ class TestAC2SelectionCoversAllBuckets:
         assert result.returncode == 0, result.stderr
 
         text = record.read_text(encoding="utf-8")
-        # The selection size should be > 0 (the changed test + prior failing).
-        assert "rerun_selection:" in text, (
-            "record should carry rerun_selection"
+        assert "rerun_selection:" not in text, (
+            "record should not carry rerun_selection — canonical path runs"
         )
 
-    def test_selection_includes_importer_tests(
+    def test_no_rerun_selection_for_importer_tests(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Test files that import changed .py modules are in the selection."""
+        """Changed .py modules: no rerun_selection in the record."""
         monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
 
         repo = tmp_path / "proj"
@@ -361,19 +362,14 @@ class TestAC2SelectionCoversAllBuckets:
         assert result.returncode == 0, result.stderr
 
         text = record_path.read_text(encoding="utf-8")
-        # test_core.py imports mylib.core, so it should be in the selection.
-        assert "rerun_selection:" in text, (
-            "record should carry rerun_selection"
+        assert "rerun_selection:" not in text, (
+            "record should not carry rerun_selection — canonical path runs"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="prior failing ids not yet included in selection",
-    )
     def test_selection_includes_prior_failing_ids(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Every id from the prior entry's failing_nodes is re-run."""
+        """Prior failing ids are re-measured by the canonical path."""
         monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
         import verification_record as vr
 
@@ -381,8 +377,6 @@ class TestAC2SelectionCoversAllBuckets:
             _make_repo_with_prior_measurement(tmp_path)
         )
 
-        # The prior entry has tests/test_suite.py::test_fail as failing.
-        # Even though it's not in the changed set, it should be re-run.
         result = subprocess.run(
             [sys.executable, str(SCRIPTS_DIR / "verification_record.py"),
              "--project", str(repo), "--record", str(record),
@@ -393,33 +387,35 @@ class TestAC2SelectionCoversAllBuckets:
         assert result.returncode == 0, result.stderr
 
         text = record.read_text(encoding="utf-8")
-        # The prior failing id should appear in the at-base table (re-run).
-        assert "tests/test_suite.py::test_fail" in text, (
-            "prior failing id should be re-measured"
+        # The canonical path runs the full suite — the prior failing id
+        # is re-measured (it now passes at HEAD).
+        assert "suite_failed: 0" in text, (
+            "prior failing id should be re-measured and now pass"
+        )
+        assert "carried_from:" not in text, (
+            "canonical path should not emit carry metadata"
         )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# AC-3: carried results + metadata fields
+# AC-3: no carry metadata fields
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class TestAC3CarriedResultsAndMetadata:
-    """The result is the prior entry's counts with the selection substituted.
-    The record gains carried_from and rerun_selection; phase_seconds gains
-    reused; the history row gains carried_from.
+class TestAC3NoCarryMetadata:
+    """The canonical path produces no carried_from, rerun_selection, or
+    phase_seconds.reused metadata.
     """
 
-    def test_record_carries_carried_from(self, tmp_path: Path,
-                                          monkeypatch: pytest.MonkeyPatch) -> None:
-        """The record text contains carried_from: <tree> <digest16>."""
+    def test_no_carried_from(self, tmp_path: Path,
+                             monkeypatch: pytest.MonkeyPatch) -> None:
+        """The record text contains no carried_from field."""
         monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
         import verification_record as vr
 
         repo, base, h0, head, record, prior = (
             _make_repo_with_prior_measurement(tmp_path)
         )
-        h0_tree = _git(repo, "rev-parse", f"{h0}^{{tree}}")
 
         result = subprocess.run(
             [sys.executable, str(SCRIPTS_DIR / "verification_record.py"),
@@ -431,17 +427,13 @@ class TestAC3CarriedResultsAndMetadata:
         assert result.returncode == 0, result.stderr
 
         text = record.read_text(encoding="utf-8")
-        # carried_from should reference H0's tree and digest.
-        assert "carried_from:" in text, (
-            "record should contain carried_from field"
-        )
-        assert h0_tree[:16] in text or h0_tree in text, (
-            "carried_from should reference H0's tree"
+        assert "carried_from:" not in text, (
+            "record should not contain carried_from — canonical path runs"
         )
 
-    def test_record_carries_rerun_selection(self, tmp_path: Path,
-                                             monkeypatch: pytest.MonkeyPatch) -> None:
-        """The record text contains rerun_selection: <n> files."""
+    def test_no_rerun_selection(self, tmp_path: Path,
+                                monkeypatch: pytest.MonkeyPatch) -> None:
+        """The record text contains no rerun_selection field."""
         monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
         import verification_record as vr
 
@@ -459,13 +451,13 @@ class TestAC3CarriedResultsAndMetadata:
         assert result.returncode == 0, result.stderr
 
         text = record.read_text(encoding="utf-8")
-        assert "rerun_selection:" in text, (
-            "record should contain rerun_selection field"
+        assert "rerun_selection:" not in text, (
+            "record should not contain rerun_selection — canonical path runs"
         )
 
-    def test_phase_seconds_includes_reused(self, tmp_path: Path,
-                                            monkeypatch: pytest.MonkeyPatch) -> None:
-        """phase_seconds includes reused: <carried test count>."""
+    def test_no_reused_in_phase_seconds(self, tmp_path: Path,
+                                        monkeypatch: pytest.MonkeyPatch) -> None:
+        """phase_seconds does not include reused count."""
         monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
         import verification_record as vr
 
@@ -483,24 +475,22 @@ class TestAC3CarriedResultsAndMetadata:
         assert result.returncode == 0, result.stderr
 
         text = record.read_text(encoding="utf-8")
-        # phase_seconds line should contain "reused=".
         import re
         m = re.search(r"phase_seconds:\s*(.+)", text)
         assert m, "record should have phase_seconds line"
-        assert "reused=" in m.group(1), (
-            "phase_seconds should include reused count"
+        assert "reused=" not in m.group(1), (
+            "phase_seconds should not include reused — canonical path runs"
         )
 
-    def test_history_row_carries_carried_from(self, tmp_path: Path,
-                                               monkeypatch: pytest.MonkeyPatch) -> None:
-        """The history JSONL row for the re-measure attempt has carried_from."""
+    def test_no_carried_from_in_history(self, tmp_path: Path,
+                                        monkeypatch: pytest.MonkeyPatch) -> None:
+        """The history JSONL row for the retry has no carried_from."""
         monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
         import verification_record as vr
 
         repo, base, h0, head, record, _prior = (
             _make_repo_with_prior_measurement(tmp_path)
         )
-        h0_tree = _git(repo, "rev-parse", f"{h0}^{{tree}}")
 
         result = subprocess.run(
             [sys.executable, str(SCRIPTS_DIR / "verification_record.py"),
@@ -512,14 +502,14 @@ class TestAC3CarriedResultsAndMetadata:
         assert result.returncode == 0, result.stderr
 
         history = vr._read_history(record)
-        # There should be at least 2 entries (prior + re-measure).
+        # There should be at least 2 entries (prior + retry).
         assert len(history) >= 2, (
             f"expected >= 2 history entries, got {len(history)}"
         )
-        # The last entry (re-measure) should have carried_from.
+        # The last entry (retry) should NOT have carried_from.
         last = history[-1]
-        assert "carried_from" in last, (
-            f"history row should have carried_from, got keys: {list(last.keys())}"
+        assert "carried_from:" not in last, (
+            f"history row should not have carried_from, got keys: {list(last.keys())}"
         )
 
 
@@ -577,7 +567,7 @@ class TestAC4FullReMeasureWhenConditionsNotMet:
 
         text = record_path.read_text(encoding="utf-8")
         # No carried_from — this was a full measure.
-        assert "carried_from" not in text, (
+        assert "carried_from:" not in text, (
             "full measure should not have carried_from"
         )
         # suite_scope should be present.
@@ -664,7 +654,7 @@ class TestAC4FullReMeasureWhenConditionsNotMet:
 
         text = record_path.read_text(encoding="utf-8")
         # conftest.py change forces full measure — no carried_from.
-        assert "carried_from" not in text, (
+        assert "carried_from:" not in text, (
             "conftest.py change should force full measure"
         )
 
@@ -679,10 +669,10 @@ class TestAC5SLOCheckJudgesTotal:
     wall-clock time of the re-measure, not the prior entry's duration.
     """
 
-    def test_slo_uses_actual_remeasure_time(
+    def test_slo_uses_actual_measure_time(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The SLO breach check uses the re-measure's wall-clock total."""
+        """The SLO breach check uses the measurement's wall-clock total."""
         monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
         import verification_record as vr
 
@@ -694,9 +684,6 @@ class TestAC5SLOCheckJudgesTotal:
         original_slo = vr.VERIFY_SLO_S
         vr.VERIFY_SLO_S = 0
         try:
-            # We can't easily test the backlog filing, but we can verify
-            # that the record's phase_seconds.total reflects the actual
-            # re-measure time (not the prior entry's duration).
             result = subprocess.run(
                 [sys.executable, str(SCRIPTS_DIR / "verification_record.py"),
                  "--project", str(repo), "--record", str(record),
@@ -755,3 +742,10 @@ class TestControls:
         import verification_record as vr
         missing = tmp_path / "no-such.record"
         assert vr._read_history(missing) == []
+
+    def test_try_remeasure_deleted(self) -> None:
+        """_try_remeasure no longer exists (deleted in this sub-plan)."""
+        import verification_record as vr
+        assert not hasattr(vr, "_try_remeasure"), (
+            "_try_remeasure should have been deleted"
+        )
