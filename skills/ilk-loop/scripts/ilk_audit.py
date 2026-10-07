@@ -49,6 +49,7 @@ EVENT_TYPES: tuple[str, ...] = (
     "autoplan-started",
     "autoplan-queued",
     "dry-period-drafted",
+    "gate-stalled",
 )
 
 
