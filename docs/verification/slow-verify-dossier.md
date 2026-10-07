@@ -269,6 +269,28 @@ Each finding was checked against the code at `3ab40c0d`:
   - **Release:** 07k + 07l + 07m are released together on 07m's verdict (`~/Documents/handoffs/ilk-skills-release-gap-07m.sh`). 07d/f/g/h are re-queued after that release.
 - **Live evidence for R1, same night:** 07l's verify (02:06-02:10) attributed 2 reds its step gates missed: `test_read_blacklist_from_postmortems_is_unchanged` (07l #2 changed `scheduler.sh`) and `test_skill_md_step6_names_ship_transition` (07l #0 changed `SKILL.md`). Neither changed file maps to a test via `importer_tests`. The same verify met the bar on cost: one full suite, `phase_seconds` total 576 (suite 512, at_base 53), contention 0 other suites.
 
+## 9. Codex review of 07m
+
+**Verdict:** 07m is ready to queue after the edits below. The original #0 proposal did not safely close R1: `test_importers._is_test_file` treats every path beneath `test`, `tests`, `spec`, or `specs` as a test file (`skills/ilk-loop/scripts/test_importers.py:59-69`), so its proposed guard admitted `conftest.py`, fixtures, and helper modules whose effects are not file-local. Because the ledger writer has aggregate counts but no per-file outcomes (`skills/ilk-loop/scripts/suite_ledger.py:274-304`), the proposed exact merge was also deliberately unreachable. Carrying that dormant branch into release added risk without reducing any current re-verify cost. I changed #0 to remove the partial carry-forward path entirely; every retry now must use the canonical exact current-tree ledger/suite path. That closes R1 and removes, rather than repairs, the R2 merge (`skills/ilk-loop/scripts/verification_record.py:2098-2271`, `:2388-2445`).
+
+For R3, #1 now accurately claims reuse of attribution's history/digest evidence, not exact policy parity. `verify_attribution` skips history for legacy records without an `attempt:` header (`skills/ilk-loop/scripts/verify_attribution.py:537-540`); deselection is intentionally stricter and fails closed because running the authored pytest gate is safe. Recorder-written records remain compatible: the recorder writes the machine-readable record and then appends its digest to history (`skills/ilk-loop/scripts/verification_record.py:2836-2851`), matching the owner's 20-of-20 recent-record measurement.
+
+Changes made:
+
+- `MASTER-2026-10-07m-a-reverify-cannot-carry-a-regression-execution-plan.md`: changed the release contract from a dormant `file_counts`-guarded merge to deletion of carry-forward; added the broad test-directory predicate and aggregate-ledger evidence; kept `status: draft`, `priority: 11`, `base_branch: main`, filename, and ordering unchanged.
+- `2026-10-07m-a-reverify-carries-only-what-it-can-count.md`: requires deletion of `_try_remeasure` and its early-return writer branch, preserves historical-field compatibility, adds the existing 07l carry test to scope and requires rewriting its obsolete assertions, and requires regression cases for `conftest.py`, `_helper.py`, arbitrary helpers, added/deleted/renamed/moved tests, shell, non-test Python, and `SKILL.md`. The current unsafe assertions are visible in `skills/ilk-loop/tests/test_a_reverify_measures_only_what_changed.py:1-24` and `:195-233`.
+- `2026-10-07m-a-gate-deselects-only-from-a-recorded-record.md`: requires `_read_history` plus the shared digest helper, fails closed for missing/empty/malformed history, missing or invalid latest digest, and mismatch, preserves a recorder-written matching control and Findings-only edits, and replaces misleading “signed record” diagnostics with “recorded record” (`skills/ilk-loop/scripts/verify_attribution.py:466-493`, `skills/ilk-loop/scripts/run_local_checks.py:1821-1886`).
+- `2026-10-07m-a-reverify-cannot-carry-a-regression-verify.md`: reviewed against `skills/ilk-loop/templates/batch-verification-subplan.md`; no edit was needed. It retains a full-scope recorder gate followed by attribution plus the generated importer/caller test gate.
+
+Both implementation sub-plans retain strict-xfail red-first step 0 gates. Their step 1 gates include the new test and the importer/caller closure generated for the touched production file. The full-scope verify remains the only new full-suite run.
+
+Recommendations not changed: keep partial carry-forward out of this release. If re-verify latency later justifies restoring it, first design and separately review a per-test or per-file outcome schema with exact added/deleted/renamed/moved-file semantics. The keyed signature or driver-owned trust boundary remains backlog work (c34d8d67, ddbc28eb); 07m's R3 fix is fail-closed provenance checking, not that boundary.
+
+Validation from `/Users/chad/Projects/github/inluck-net/ilk-skills`:
+
+- `plan_lint.py`: zero `WARN: HARD` lines. It emitted exactly the four known inherited warnings: the 70 s test-file measurement (twice), the 4560 s step-1 timeout sum, and the reported `--remeasure-if-stale` warning. The verify command itself still contains `--remeasure-if-stale` at plan line 78; this is the known inherited lint result.
+- `plan_preflight.py`: exit 0, `OK: preflight clean`.
+
 ---
 
 ## Appendix A: reproduce the numbers
