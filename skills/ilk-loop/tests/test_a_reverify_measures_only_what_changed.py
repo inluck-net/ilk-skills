@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,34 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
+
+
+@pytest.fixture(autouse=True)
+def _pin_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin HOME and ILK_DATA_HOME so verification_record writes into tmp_path.
+
+    Without this, the DATA-ROOT GUARD in conftest.py sees new entries under
+    the real ~/.ilk-data/projects/ and fails the session.  See triage note
+    in the sub-plan's Findings section.
+
+    PYTHONUSERBASE is also pinned so that the subprocess's user site-packages
+    still resolve correctly — pytest is installed in the user site, and changing
+    HOME without PYTHONUSERBASE makes the subprocess unable to find it.
+    """
+    # Capture the real home BEFORE changing HOME, because Path.home() reads
+    # the HOME env var and would return the tmp_path after setenv.
+    real_home = Path(os.environ.get("HOME", Path.home())).resolve()
+    data_home = tmp_path / ".ilk-data"
+    data_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("ILK_DATA_HOME", str(data_home))
+    monkeypatch.delenv("ILK_DATA_DIR", raising=False)
+    monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
+    # Preserve the real user site-packages path so pytest remains importable
+    # in subprocesses that inherit this environment.
+    user_base = real_home / "Library" / "Python" / "3.9"
+    if user_base.is_dir():
+        monkeypatch.setenv("PYTHONUSERBASE", str(user_base))
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -174,10 +203,6 @@ class TestAC1ReMeasurePathTriggers:
     changed, the re-measure path is taken (not a full re-measure).
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="re-measure path not yet implemented in _write_measured_record",
-    )
     def test_re_measure_path_selects_only_changed_area(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -218,10 +243,6 @@ class TestAC2SelectionCoversAllBuckets:
     .py modules, and every id from the prior entry's failing_nodes.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="selection logic not yet implemented",
-    )
     def test_selection_includes_changed_test_files(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -252,10 +273,6 @@ class TestAC2SelectionCoversAllBuckets:
             "record should carry rerun_selection"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="importer discovery not yet wired into re-measure path",
-    )
     def test_selection_includes_importer_tests(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -393,10 +410,6 @@ class TestAC3CarriedResultsAndMetadata:
     reused; the history row gains carried_from.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="carried_from field not yet written to record",
-    )
     def test_record_carries_carried_from(self, tmp_path: Path,
                                           monkeypatch: pytest.MonkeyPatch) -> None:
         """The record text contains carried_from: <tree> <digest16>."""
@@ -426,10 +439,6 @@ class TestAC3CarriedResultsAndMetadata:
             "carried_from should reference H0's tree"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="rerun_selection field not yet written to record",
-    )
     def test_record_carries_rerun_selection(self, tmp_path: Path,
                                              monkeypatch: pytest.MonkeyPatch) -> None:
         """The record text contains rerun_selection: <n> files."""
@@ -454,10 +463,6 @@ class TestAC3CarriedResultsAndMetadata:
             "record should contain rerun_selection field"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="reused phase_seconds not yet written",
-    )
     def test_phase_seconds_includes_reused(self, tmp_path: Path,
                                             monkeypatch: pytest.MonkeyPatch) -> None:
         """phase_seconds includes reused: <carried test count>."""
@@ -486,10 +491,6 @@ class TestAC3CarriedResultsAndMetadata:
             "phase_seconds should include reused count"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="history row does not yet carry carried_from",
-    )
     def test_history_row_carries_carried_from(self, tmp_path: Path,
                                                monkeypatch: pytest.MonkeyPatch) -> None:
         """The history JSONL row for the re-measure attempt has carried_from."""

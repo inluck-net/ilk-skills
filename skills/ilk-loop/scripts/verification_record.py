@@ -1608,7 +1608,9 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   record_elapsed_sec: int | None = None,
                   phase_seconds: dict[str, int] | None = None,
                   owners: dict[str, dict] | None = None,
-                  head_rerun_bound_hit: bool = False) -> str:
+                  head_rerun_bound_hit: bool = False,
+                  carried_from: str | None = None,
+                  rerun_selection: int | None = None) -> str:
     """Render the complete record.  Measurements only — no verdict column.
 
     The ``attributed`` column is deliberately absent.  It was the cell that
@@ -1673,6 +1675,10 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
     if phase_seconds is not None:
         parts = [f"{k}={v}" for k, v in phase_seconds.items()]
         lines.append(f"phase_seconds: {' '.join(parts)}")
+    if carried_from is not None:
+        lines.append(f"carried_from: {carried_from}")
+    if rerun_selection is not None:
+        lines.append(f"rerun_selection: {rerun_selection} files")
     lines += [
         "",
         "## At-base rerun",
@@ -1983,6 +1989,182 @@ def _atomic_write(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
+def _try_remeasure(
+    project: Path,
+    record: Path,
+    head: str,
+    tree: str,
+    base_sha: str,
+    invocation: str,
+    scope: dict,
+    args,
+) -> dict | None:
+    """Attempt the incremental re-measure path.
+
+    Returns a dict with the merged results and metadata if the re-measure
+    path triggers, or None if a full re-measure is needed.
+
+    The re-measure path triggers when ALL hold:
+    1. History has a prior measured attempt with head H0.
+    2. H0 is an ancestor of HEAD.
+    3. suite_ledger.lookup(tree(H0), invocation) returns an entry whose
+       digest validates.
+    4. No path in ``git diff --name-only H0..HEAD`` is test infrastructure.
+    """
+    import suite_ledger
+
+    # 1. Read history to find the most recent measured attempt.
+    history = _read_history(record)
+    if not history:
+        return None
+
+    # Find the most recent entry with a head field.
+    prior = None
+    for entry in reversed(history):
+        if "head" in entry and "tree" in entry:
+            prior = entry
+            break
+    if prior is None:
+        return None
+
+    h0_sha = prior["head"]
+    h0_tree = prior["tree"]
+
+    # 2. Check if H0 is an ancestor of HEAD.
+    try:
+        result = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", h0_sha, head],
+            cwd=project, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+        if result.returncode != 0:
+            return None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    # 3. Look up the ledger entry for H0's tree.
+    ledger_entry = suite_ledger.lookup(project, h0_tree, invocation)
+    if ledger_entry is None:
+        return None
+
+    # Validate the digest.
+    expected_digest = ledger_entry.get("digest", "")
+    computed = suite_ledger._compute_digest({
+        k: v for k, v in ledger_entry.items() if k != "digest"
+    })
+    if expected_digest != computed:
+        return None
+
+    # 4. Check if no test infrastructure files changed between H0 and HEAD.
+    try:
+        diff_result = subprocess.run(
+            ["git", "diff", "--name-only", h0_sha, head],
+            cwd=project, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+        if diff_result.returncode != 0:
+            return None
+        changed_files = [f for f in diff_result.stdout.splitlines() if f.strip()]
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    # Check for test infrastructure changes.
+    for f in changed_files:
+        if _test_infra_change(f):
+            return None
+
+    # All conditions hold — compute the selection.
+    # Selection = changed test files ∪ importer tests ∪ prior failing ids.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_importers import _is_test_file, importer_tests
+
+    changed_test_files = [f for f in changed_files if _is_test_file(f)]
+
+    # Importer tests of changed .py modules.
+    importer_files = importer_tests(project, changed_files)
+
+    # Prior failing ids.
+    prior_failing = prior.get("failing_nodes", [])
+
+    # Combine and deduplicate the selection.
+    selection_set: set[str] = set()
+    selection_set.update(changed_test_files)
+    selection_set.update(importer_files)
+    # For prior failing ids, we need to include their test files.
+    for nid in prior_failing:
+        # Node id format: tests/test_suite.py::test_name
+        test_file = nid.split("::")[0]
+        selection_set.add(test_file)
+    selection = sorted(selection_set)
+
+    if not selection:
+        # No selection — fall back to full re-measure.
+        return None
+
+    # Run only the selection.
+    suite_budget, suite_budget_source = compute_suite_budget(
+        project, args.suite_timeout)
+    suite_start = time.monotonic()
+    try:
+        results = run_suite(project, invocation, suite_budget,
+                            selection=selection)
+    except (TimeoutError, ValueError):
+        return None
+    suite_elapsed = round(time.monotonic() - suite_start)
+
+    # Merge results: prior entry's counts with the selection's results
+    # substituted.
+    prior_counts = ledger_entry["counts"]
+    selection_counts = results["counts"]
+
+    # Compute the carried test count (tests not in the selection).
+    prior_total = prior_counts["total"]
+    selection_total = selection_counts["total"]
+    carried_count = prior_total - selection_total
+
+    # Merge counts: for each category, use the selection's count for tests
+    # in the selection, and the prior count for carried tests.
+    # This is a simplification: we assume the selection covers all failing
+    # tests and the carried tests are all passing.
+    merged_counts = {
+        "passed": prior_counts["passed"] + selection_counts["passed"],
+        "failed": selection_counts["failed"],  # Only selection failures matter
+        "errors": selection_counts["errors"],
+        "skipped": prior_counts["skipped"] + selection_counts["skipped"],
+        "xfailed": prior_counts["xfailed"] + selection_counts["xfailed"],
+        "xpassed": prior_counts["xpassed"] + selection_counts["xpassed"],
+    }
+    merged_counts["total"] = sum(v for k, v in merged_counts.items()
+                                  if k != "total")
+
+    # Build the carried_from string: <tree> <digest16>.
+    carried_from = f"{h0_tree} {ledger_entry['digest'][:16]}"
+
+    # Build phase_seconds with reused.
+    phase_seconds = {
+        "suite": suite_elapsed,
+        "at_base": 0,
+        "head_reruns": 0,
+        "total": suite_elapsed,
+        "reused": carried_count,
+    }
+
+    # Build the merged results.
+    merged_results = {
+        "counts": merged_counts,
+        "failing_nodes": results["failing_nodes"],
+        "suite_duration_sec": results.get("suite_duration_sec"),
+    }
+
+    return {
+        "results": merged_results,
+        "carried_from": carried_from,
+        "rerun_selection": len(selection),
+        "phase_seconds": phase_seconds,
+        "suite_elapsed": suite_elapsed,
+    }
+
+
 def _write_measured_record(project: Path, record: Path, args,
                           registry_slugs: set[str] | None = None) -> int:
     """Own the whole machine-read surface: measure it, then write it.
@@ -2096,6 +2278,63 @@ def _write_measured_record(project: Path, record: Path, args,
     # (numeric suite_failed) for the same HEAD is never replaced by a stub.
     if not _existing_record_is_measured(record, head):
         _atomic_write(record, stub)
+
+    # ── Re-measure path ─────────────────────────────────────────────────
+    # Try the incremental re-measure path first.  If it triggers, we skip
+    # the full suite run and use the carried-forward results.
+    remeasure = _try_remeasure(project, record, head, tree, args.base_sha,
+                               invocation, scope, args)
+    if remeasure is not None:
+        # Re-measure path triggered — write the record with carried results.
+        results = remeasure["results"]
+        carried_from = remeasure["carried_from"]
+        rerun_selection = remeasure["rerun_selection"]
+        phase_seconds = remeasure["phase_seconds"]
+
+        # Read history for attempt number.
+        history = _read_history(record)
+        attempt = len(history) + 1
+
+        record_text = render_record(
+            batch=args.batch or record.stem,
+            head=head, tree=tree, base_sha=args.base_sha,
+            invocation=invocation, scope=scope, results=results,
+            at_base={}, base_red=[], head_red=[],
+            suite_duration_sec=results.get("suite_duration_sec"),
+            suite_source="tool",
+            phase_seconds=phase_seconds,
+            carried_from=carried_from,
+            rerun_selection=rerun_selection,
+        )
+        # Inject attempt header after the batch line.
+        record_text = record_text.replace(
+            "record_writer:", f"attempt: {attempt}\nrecord_writer:", 1)
+        _atomic_write(record, record_text)
+
+        # SLO breach check.
+        _check_slo_breach(args.batch or record.stem, head, record,
+                          phase_seconds)
+
+        # Append to history with carried_from.
+        digest = _compute_record_digest(record_text)
+        hist_entry = {
+            "attempt": attempt, "digest": digest,
+            "failing_nodes": sorted(results["failing_nodes"]),
+            "carried_from": carried_from,
+        }
+        if results.get("suite_duration_sec") is not None:
+            hist_entry["suite_duration_sec"] = results["suite_duration_sec"]
+        hist_entry["head"] = head
+        hist_entry["tree"] = tree
+        hist_path = _history_path(record)
+        with open(hist_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(hist_entry, sort_keys=True) + "\n")
+
+        c = results["counts"]
+        print(f"recorded (re-measure): {c['passed']} passed, {c['failed']} failed, "
+              f"{c['errors']} errors of {c['total']} · scope={scope['mode']} · "
+              f"carried_from={carried_from} · rerun_selection={rerun_selection} → {record}")
+        return 0
 
     # ── Ledger mode ──────────────────────────────────────────────────────
     ledger_mode = getattr(args, "ledger", "off")
