@@ -93,64 +93,44 @@ def _make_repo_two_commits(tmp_path: Path) -> tuple[Path, str, str]:
     return repo, sha_a, sha_b
 
 
-# ── AC-1: ledger_spawn_for_head calls spawn exactly once ─────────────────────
+# ── AC-1: main() contains no ledger_spawn_for_head and no suite_ledger spawn ──
 
 
-def test_ledger_spawn_for_head_calls_spawn_once(tmp_path: Path) -> None:
-    """AC-1: ``ledger_spawn_for_head <repo>`` calls ``suite_ledger.py spawn``
-    with ``--project``, ``--sha <HEAD>``, ``--run-id <RUN_ID>`` exactly once.
-    Returns 0 even when the stub exits 1.
+def test_main_has_no_ledger_spawn_for_head() -> None:
+    """AC-1 (contract change): ``main()`` in the runner defines no
+    ``ledger_spawn_for_head`` function and contains no call to it.
     """
-    repo, head = _make_repo(tmp_path)
-
-    # Stub suite_ledger.py that records argv calls and exits 1.
-    # Place it where the runner expects: ${_SKILL_ROOT}/ilk-loop/scripts/
-    stub_dir = tmp_path / "ilk-loop" / "scripts"
-    stub_dir.mkdir(parents=True)
-    log_file = tmp_path / "spawn-calls.jsonl"
-    (stub_dir / "suite_ledger.py").write_text(
-        "#!/usr/bin/env python3\n"
-        "import json, sys\n"
-        f"with open({str(log_file)!r}, 'a') as f:\n"
-        "    f.write(json.dumps(sys.argv[1:]) + '\\n')\n"
-        "sys.exit(1)\n",
-        encoding="utf-8",
+    text = _RUNNER.read_text(encoding="utf-8")
+    assert "ledger_spawn_for_head()" not in text, (
+        "runner still defines ledger_spawn_for_head()"
+    )
+    main_start = text.find("main()")
+    assert main_start != -1, "main() not found in runner"
+    main_body = text[main_start:]
+    assert "ledger_spawn_for_head" not in main_body, (
+        "main() still references ledger_spawn_for_head"
     )
 
-    # Source the runner under ILK_DOTSOURCE_ONLY=1 and call
-    # ledger_spawn_for_head in a subshell.
-    run_id = "20261003-120000"
-    env = {
-        **os.environ,
-        "ILK_DOTSOURCE_ONLY": "1",
-        "_SKILL_ROOT": str(tmp_path),
-        "RUN_ID": run_id,
-        "HOME": str(tmp_path / "home"),
-        "ILK_DATA_HOME": str(tmp_path / ".ilk-data"),
-    }
-    # We need to source the runner and call the function.  The function
-    # is defined inside main()'s scope, so we test it by sourcing and
-    # overriding the suite_ledger path.
-    script = (
-        f"source '{_RUNNER}' 2>/dev/null; "
-        f"_SKILL_ROOT='{tmp_path}'; RUN_ID='{run_id}'; "
-        f"ledger_spawn_for_head '{repo}' 2>/dev/null; echo rc=$?"
-    )
-    result = subprocess.run(
-        ["bash", "-c", script],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        env=env, timeout=30,
-    )
-    # The function should return 0 even when the stub exits 1.
-    assert "rc=0" in result.stdout, f"expected rc=0, got: {result.stdout!r}"
-    # The stub should have been called exactly once with spawn args.
-    assert log_file.exists(), "stub was never called"
-    calls = [json.loads(line) for line in log_file.read_text().splitlines() if line.strip()]
-    assert len(calls) == 1, f"expected 1 call, got {len(calls)}"
-    args = calls[0]
-    assert "spawn" in args, f"expected 'spawn' in args, got {args}"
-    assert "--sha" in args and head in args, f"expected --sha {head} in {args}"
-    assert "--run-id" in args and run_id in args, f"expected --run-id {run_id} in {args}"
+
+def test_main_has_no_suite_ledger_spawn_call() -> None:
+    """AC-1 (contract change): ``main()`` in the runner contains no call to
+    ``suite_ledger.py`` with ``spawn`` or ``spawn --project``.
+    """
+    import re
+    text = _RUNNER.read_text(encoding="utf-8")
+    main_start = text.find("main()")
+    assert main_start != -1, "main() not found in runner"
+    main_body = text[main_start:]
+    # Join continuation lines so a multi-line invocation is detected.
+    joined = main_body.replace("\\\n", " ")
+    pattern = re.compile(r'suite_ledger\.py["\']?\s+spawn\b')
+    m = pattern.search(joined)
+    if m:
+        offset = m.start()
+        line_no = joined[:offset].count("\n") + 1
+        pytest.fail(
+            f"main() invokes suite_ledger.py with spawn near line {line_no}"
+        )
 
 
 # ── AC-2: ledger_record_point passes all fields ─────────────────────────────
@@ -322,30 +302,33 @@ def test_record_point_noop_when_no_change(
 # ── AC-4: call order in the runner is correct (static analysis) ──────────────
 
 
-def test_call_order_spawn_after_heads_before_gate() -> None:
-    """AC-4: the first ``ledger_spawn_for_head`` call inside ``main()`` sits
-    after ``get_repo_heads "$heads_after_file"`` and before
-    ``_should_gate_iteration "$ITER_COMPLETED"``.
+def test_call_order_no_spawn_between_heads_and_gate() -> None:
+    """AC-4 (contract change): ``main()`` contains no ``ledger_spawn_for_head``
+    and no ``suite_ledger.py spawn`` call between ``get_repo_heads`` and
+    ``_should_gate_iteration``.
     """
     text = _RUNNER.read_text(encoding="utf-8")
 
-    # Find the main() function body.
     main_start = text.find("main()")
     assert main_start != -1, "main() not found in runner"
     main_body = text[main_start:]
 
-    # Find the key landmarks.
     heads_idx = main_body.find('get_repo_heads "$heads_after_file"')
     assert heads_idx != -1, "get_repo_heads not found in main()"
     gate_idx = main_body.find('_should_gate_iteration "$ITER_COMPLETED"')
     assert gate_idx != -1, "_should_gate_iteration not found in main()"
-    spawn_idx = main_body.find("ledger_spawn_for_head")
-    assert spawn_idx != -1, "ledger_spawn_for_head not found in main()"
 
-    # spawn must be between heads and gate.
-    assert heads_idx < spawn_idx < gate_idx, (
-        f"ledger_spawn_for_head at offset {spawn_idx} is not between "
-        f"get_repo_heads ({heads_idx}) and _should_gate_iteration ({gate_idx})"
+    segment = main_body[heads_idx:gate_idx]
+    assert "ledger_spawn_for_head" not in segment, (
+        "ledger_spawn_for_head still appears between get_repo_heads and "
+        "_should_gate_iteration"
+    )
+    import re
+    joined = segment.replace("\\\n", " ")
+    pattern = re.compile(r'suite_ledger\.py["\']?\s+spawn\b')
+    assert not pattern.search(joined), (
+        "suite_ledger.py spawn still appears between get_repo_heads and "
+        "_should_gate_iteration"
     )
 
 

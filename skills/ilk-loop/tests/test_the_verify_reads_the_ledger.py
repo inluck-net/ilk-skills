@@ -634,7 +634,6 @@ def test_z1_require_cache_miss_passes_selection(tmp_path: Path,
     # must measure in-process.
     mock_ledger = MagicMock()
     mock_ledger.lookup.return_value = None
-    mock_ledger.wait_for.return_value = None
     mock_ledger._compute_digest.return_value = "abc123"
     mock_ledger.ledger_dir.return_value = tmp_path / "ledger"
     monkeypatch.setitem(sys.modules, "suite_ledger", mock_ledger)
@@ -735,7 +734,6 @@ def test_z2_require_cache_miss_record_identity(tmp_path: Path,
 
     mock_ledger = MagicMock()
     mock_ledger.lookup.return_value = None
-    mock_ledger.wait_for.return_value = None
     mock_ledger._compute_digest.return_value = "deadbeef01234567"
     mock_ledger.ledger_dir.return_value = tmp_path / "ledger"
     monkeypatch.setitem(sys.modules, "suite_ledger", mock_ledger)
@@ -844,7 +842,6 @@ def test_z3_scope_full_refuses_scoped_ledger_entry(
 
     mock_ledger = MagicMock()
     mock_ledger.lookup.return_value = scoped_entry
-    mock_ledger.wait_for.return_value = None
     mock_ledger._compute_digest.return_value = "full-digest-xyz"
     mock_ledger.ledger_dir.return_value = ledger_dir
     monkeypatch.setitem(sys.modules, "suite_ledger", mock_ledger)

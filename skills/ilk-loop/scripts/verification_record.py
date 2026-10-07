@@ -2061,20 +2061,6 @@ def _write_measured_record(project: Path, record: Path, args,
         import suite_ledger
         base_tree = _git(project, "rev-parse", f"{args.base_sha}^{{tree}}")
         ledger_entry = suite_ledger.lookup(project, tree, invocation)
-        if not ledger_entry:
-            # Check if a background job is measuring this tree.
-            # Use the suite budget (what a foreground run would get)
-            # instead of the 300 s fallback.
-            suite_budget, _ = compute_suite_budget(
-                project, getattr(args, "suite_timeout", None))
-            running_entry = suite_ledger.wait_for(
-                project, tree, invocation,
-                timeout_s=suite_budget,
-                sha=head,
-            )
-            if running_entry:
-                ledger_wait_sec = round(time.monotonic() - record_start)
-                ledger_entry = running_entry
         if ledger_entry:
             # AC-4: a full-suite request must not reuse a scoped ledger
             # entry.  The scoped result satisfies a different cost

@@ -4958,27 +4958,6 @@ print(json.dumps(d))" \
 
 # ----- Ledger helpers --------------------------------------------------------
 
-ledger_spawn_for_head() {
-  # Spawn a background ledger measurement for HEAD of $1.
-  # Never fails the iteration: prints a diagnostic on error and returns 0.
-  local repo="$1"
-  local head_sha
-  head_sha=$(git -C "$repo" rev-parse HEAD 2>/dev/null) || {
-    echo "[ledger] spawn failed: cannot resolve HEAD of $repo" >&2
-    return 0
-  }
-  local tree12="${head_sha:0:12}"
-  local result=""
-  result=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/suite_ledger.py" \
-    spawn --project "$repo" --sha "$head_sha" --run-id "$RUN_ID" 2>&1) || {
-    echo "[ledger] spawn failed: ${result%%$'\n'*}" >&2
-    return 0
-  }
-  local action
-  action=$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin).get('action','unknown'))" 2>/dev/null) || action="unknown"
-  echo "[ledger] $action tree=$tree12"
-}
-
 ledger_record_point() {
   # Record a driver-written point row for a gated boundary.
   # $1 = repo, $2 = before_sha, $3 = shipped_slugs (comma-separated).
@@ -5986,9 +5965,6 @@ print(json.dumps({
         echo "$r $count" >> "$new_commits_file"
       fi
     done
-
-    # Spawn a background ledger measurement for any repo with new commits.
-    [[ "$total_new" -gt 0 ]] && ledger_spawn_for_head "$(selfmod_effective_repo "$PROJECT_PATH")"
 
     # Ship-gap: committed-vs-changed path accounting
     local _SHIP_GAP_JSON=""
