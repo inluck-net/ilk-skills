@@ -774,6 +774,55 @@ FLAKY_RERUN_COUNT = 3
 # the record says so, and the fix is to raise it with the measured pass times.
 HEAD_RERUN_BUDGET_S = 600
 
+# 900 s.  Basis: 2026-10-07 unblocked verifies took ~11-12 min of step 0 on a
+# loaded host (07j: suite 474 s); R2b's took 52 min.  Wrong if healthy verifies
+# routinely exceed it (then raise it with the measured phase_seconds, never to
+# hide a phase that grew).
+VERIFY_SLO_S = 900
+
+
+def _check_slo_breach(batch: str, head: str, record: Path,
+                      phase_seconds: dict[str, int]) -> None:
+    """File to improvement backlog when total > VERIFY_SLO_S.
+
+    Wrapped in try/except: a backlog failure prints one stderr line and
+    NEVER changes the verify's exit code or record verdict.
+    """
+    total = phase_seconds.get("total", 0)
+    if total <= VERIFY_SLO_S:
+        return
+    # Find the largest phase (excluding total).
+    phases = {k: v for k, v in phase_seconds.items() if k != "total"}
+    largest_phase = max(phases, key=phases.get)
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent
+                               / "ilk-feedback" / "scripts"))
+        import improvement_backlog
+        improvement_backlog.add_candidate(
+            kind="toolkit",
+            source="supervisor",
+            title="batch verify exceeded 15 min",
+            gap=f"{largest_phase}={phase_seconds[largest_phase]} s",
+            evidence={
+                "batch": batch,
+                "head": head,
+                "phase_seconds": phase_seconds,
+                "record": str(record),
+            },
+            severity="high",
+            leverage="high",
+            proposed_fix=(
+                "find the phase that grew; the rule is one suite per "
+                "batch and no waits"
+            ),
+        )
+        print(f"[verify-slo] {batch} took {total} s (> {VERIFY_SLO_S}): "
+              f"{largest_phase}={phase_seconds[largest_phase]} s; "
+              f"filed to the improvement backlog",
+              file=sys.stderr)
+    except Exception as exc:
+        print(f"[verify-slo] backlog filing failed: {exc}", file=sys.stderr)
+
 # ── Env pinning for at-base / adding-commit reruns ──────────────────────────
 
 _ENV_MARKER = "base-pinned-v1"
@@ -1560,6 +1609,7 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   base_source: str | None = None,
                   ledger_wait_sec: int | None = None,
                   record_elapsed_sec: int | None = None,
+                  phase_seconds: dict[str, int] | None = None,
                   owners: dict[str, dict] | None = None,
                   head_rerun_bound_hit: bool = False) -> str:
     """Render the complete record.  Measurements only — no verdict column.
@@ -1623,6 +1673,9 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
         lines.append(f"ledger_wait_sec: {ledger_wait_sec}")
     if record_elapsed_sec is not None:
         lines.append(f"record_elapsed_sec: {record_elapsed_sec}")
+    if phase_seconds is not None:
+        parts = [f"{k}={v}" for k, v in phase_seconds.items()]
+        lines.append(f"phase_seconds: {' '.join(parts)}")
     lines += [
         "",
         "## At-base rerun",
@@ -2054,6 +2107,7 @@ def _write_measured_record(project: Path, record: Path, args,
     at_base_from_ledger = False
     ledger_wait_sec = 0
     record_start = time.monotonic()
+    suite_start = time.monotonic()
     suite_budget: int = 0
     suite_budget_source: str = "default"
 
@@ -2184,6 +2238,8 @@ def _write_measured_record(project: Path, record: Path, args,
             print(f"stub record left at {record}", file=sys.stderr)
             return 1
 
+    suite_elapsed = round(time.monotonic() - suite_start)
+    at_base_start = time.monotonic()
     nodes = results["failing_nodes"]
     try:
         base_red = read_baseline_red_at(project, args.base_sha)
@@ -2317,6 +2373,8 @@ def _write_measured_record(project: Path, record: Path, args,
     # Red-at-base rows also get — ; their verdict is already pre-existing
     # and reruns cannot change it (classify_flaky returns pre-existing
     # for at_base == "failed" before reading rerun counts).
+    at_base_elapsed = round(time.monotonic() - at_base_start)
+    head_reruns_start = time.monotonic()
     non_declared = [nid for nid, v in at_base.items()
                     if v not in ("declared-at-base", "failed")
                     and nid not in owned_by_ids]
@@ -2396,7 +2454,14 @@ def _write_measured_record(project: Path, record: Path, args,
                        f"{base_ledger['digest'][:16]}")
     else:
         base_source = "rerun"
+    head_reruns_elapsed = round(time.monotonic() - head_reruns_start)
     record_elapsed_sec = round(time.monotonic() - record_start)
+    phase_seconds = {
+        "suite": suite_elapsed,
+        "at_base": at_base_elapsed,
+        "head_reruns": head_reruns_elapsed,
+        "total": record_elapsed_sec,
+    }
 
     record_text = render_record(
         batch=args.batch or record.stem,
@@ -2418,6 +2483,7 @@ def _write_measured_record(project: Path, record: Path, args,
         base_source=base_source,
         ledger_wait_sec=ledger_wait_sec if ledger_wait_sec else None,
         record_elapsed_sec=record_elapsed_sec,
+        phase_seconds=phase_seconds,
         owners=owners or None,
         head_rerun_bound_hit=head_rerun_bound_hit,
     )
@@ -2425,6 +2491,9 @@ def _write_measured_record(project: Path, record: Path, args,
     record_text = record_text.replace(
         "record_writer:", f"attempt: {attempt}\nrecord_writer:", 1)
     _atomic_write(record, record_text)
+
+    # SLO breach check: when total > VERIFY_SLO_S, file to improvement backlog.
+    _check_slo_breach(args.batch or record.stem, head, record, phase_seconds)
 
     # R4: compute digest and append to history.
     # Use the raw suite failures (nodes), not the at-base classification.
