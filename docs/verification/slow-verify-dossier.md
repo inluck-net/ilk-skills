@@ -263,6 +263,11 @@ Each finding was checked against the code at `3ab40c0d`:
   - The digest is an unkeyed sha256 of the record surface, recomputable by whoever edits the record. This is M10's class; 07k #0 widens what it buys.
 - **Q1: corrected.** Attempt 1 had 24 failing ids, not 7-9 (7 was attempt 3). 24 × 17 s ≈ 408 s fits the 451 s `at_base` only if those ids hit the per-test timeout at base. That is unmeasured; the sub-timers in §8.3 item 4 settle it.
 - **Action taken:** the automatic post-07l release job was stopped at 02:08, before 07l shipped, so 07k + 07l are not released. The live permits are consumed and expired, so no train can start without new ones.
+- **Decision (Chad, 2026-10-08 ~02:10): "Fix batch first."** MASTER-2026-10-07m `a-reverify-cannot-carry-a-regression` (priority 11, draft until 07l ships) has two sub-plans plus a full-scope verify:
+  - **#0 `a-reverify-carries-only-what-it-can-count` (R1 + R2).** Carry-forward runs only when every changed path is a test file AND the prior ledger entry carries per-file counts; the merge is then exact. No ledger entry carries per-file counts today, so every re-verify is a full re-measure until a later batch records them (judgment call: correctness over the carry-forward's speed).
+  - **#1 `a-gate-deselects-only-from-a-recorded-record` (R3, minimal).** Deselect only when the latest history digest matches the record (20 of 20 recent records do). The keyed trust boundary stays open (c34d8d67, ddbc28eb).
+  - **Release:** 07k + 07l + 07m are released together on 07m's verdict (`~/Documents/handoffs/ilk-skills-release-gap-07m.sh`). 07d/f/g/h are re-queued after that release.
+- **Live evidence for R1, same night:** 07l's verify (02:06-02:10) attributed 2 reds its step gates missed: `test_read_blacklist_from_postmortems_is_unchanged` (07l #2 changed `scheduler.sh`) and `test_skill_md_step6_names_ship_transition` (07l #0 changed `SKILL.md`). Neither changed file maps to a test via `importer_tests`. The same verify met the bar on cost: one full suite, `phase_seconds` total 576 (suite 512, at_base 53), contention 0 other suites.
 
 ---
 
