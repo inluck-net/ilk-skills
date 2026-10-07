@@ -1914,33 +1914,41 @@ def _discover_tests_by_import(
 ) -> set[str]:
     """Find test files that import *module_name* via ``ast`` parsing.
 
-    Returns a set of resolved absolute paths.  Only files under the
-    project's configured ``testpaths`` (or ``tests/``) are scanned.
+    Thin wrapper around ``test_importers.importer_tests``.  Returns a set
+    of resolved absolute paths.  Only files under the project's configured
+    ``testpaths`` (or ``tests/``) are scanned.
     """
-    test_dirs = _find_testpaths(project_root)
-    results: set[str] = set()
-    for td in test_dirs:
-        if not td.is_dir():
-            continue
-        for py in td.rglob("test_*.py"):
-            try:
-                tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
-            except (SyntaxError, OSError):
+    try:
+        from test_importers import importer_tests  # noqa: E402
+        rel_paths = importer_tests(project_root, [f"{module_name}.py"])
+        return {str(project_root / p) for p in rel_paths}
+    except ImportError:
+        # Fallback: inline the logic (same semantics as the helper).
+        test_dirs = _find_testpaths(project_root)
+        results: set[str] = set()
+        for td in test_dirs:
+            if not td.is_dir():
                 continue
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        top = alias.name.split(".")[0]
-                        if top == module_name:
-                            results.add(str(py))
-                            break
-                elif isinstance(node, ast.ImportFrom):
-                    if node.module:
-                        top = node.module.split(".")[0]
-                        if top == module_name:
-                            results.add(str(py))
-                            break
-    return results
+            for py in td.rglob("test_*.py"):
+                try:
+                    tree = ast.parse(py.read_text(encoding="utf-8"),
+                                     filename=str(py))
+                except (SyntaxError, OSError):
+                    continue
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
+                        for alias in node.names:
+                            top = alias.name.split(".")[0]
+                            if top == module_name:
+                                results.add(str(py))
+                                break
+                    elif isinstance(node, ast.ImportFrom):
+                        if node.module:
+                            top = node.module.split(".")[0]
+                            if top == module_name:
+                                results.add(str(py))
+                                break
+        return results
 
 
 def _find_importers(module_name: str, project_root: Path) -> list[str]:

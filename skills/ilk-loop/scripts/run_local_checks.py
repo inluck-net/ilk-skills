@@ -1203,6 +1203,16 @@ def _synthesize_mention_check(
         except Exception:
             pass
 
+    # Importer tests: tests that import each changed module
+    try:
+        from test_importers import importer_tests  # noqa: E402
+        importer_hits = importer_tests(project, changed_files)
+        for hit in importer_hits:
+            if hit not in test_files and not _is_under_norecursedirs(hit, norecursedirs):
+                test_files.append(hit)
+    except ImportError:
+        pass
+
     # De-duplicate and filter norecursedirs
     test_files = sorted(set(f for f in test_files if not _is_under_norecursedirs(f, norecursedirs)))
 

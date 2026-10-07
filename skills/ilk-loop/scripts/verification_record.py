@@ -251,14 +251,11 @@ def compute_suite_scope(project: Path, base_sha: str) -> dict:
         # 3. importers — the actual contract the docstring promises. A test
         #    that imports the module covers it whatever the file is called.
         if not hits:
-            for rel in tracked_tests:
-                try:
-                    src = (project / rel).read_text(encoding="utf-8",
-                                                    errors="replace")
-                except OSError:
-                    continue
-                if f"import {stem}" in src or f"from {stem} import" in src:
-                    hits.add(rel)
+            try:
+                from test_importers import importer_tests  # noqa: E402
+                hits.update(importer_tests(project, [py_path]))
+            except ImportError:
+                pass
 
         if hits:
             mapped |= hits

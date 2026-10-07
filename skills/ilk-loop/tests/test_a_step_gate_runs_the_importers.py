@@ -82,10 +82,6 @@ def _make_repo(
 class TestImporterHelper:
     """The shared importer helper finds test files by ast import analysis."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="test_importers.py does not exist at base",
-    )
     def test_importer_tests_returns_test_that_imports_changed_module(
         self, tmp_path: Path,
     ) -> None:
@@ -110,10 +106,6 @@ class TestImporterHelper:
         result = mod.importer_tests(repo, ["src/widget.py"])
         assert "tests/test_widget.py" in result
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="test_importers.py does not exist at base",
-    )
     def test_importer_tests_returns_test_that_from_imports_module(
         self, tmp_path: Path,
     ) -> None:
@@ -134,10 +126,6 @@ class TestImporterHelper:
         result = mod.importer_tests(repo, ["src/widget.py"])
         assert "tests/test_widget.py" in result
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="test_importers.py does not exist at base",
-    )
     def test_importer_tests_skips_non_importing_tests(
         self, tmp_path: Path,
     ) -> None:
@@ -158,10 +146,6 @@ class TestImporterHelper:
         result = mod.importer_tests(repo, ["src/widget.py"])
         assert "tests/test_other.py" not in result
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="test_importers.py does not exist at base",
-    )
     def test_importer_tests_skips_test_files_in_changed_list(
         self, tmp_path: Path,
     ) -> None:
@@ -182,10 +166,6 @@ class TestImporterHelper:
         result = mod.importer_tests(repo, ["tests/test_widget.py"])
         assert "tests/test_widget.py" not in result
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="test_importers.py does not exist at base",
-    )
     def test_importer_tests_only_returns_git_tracked_files(
         self, tmp_path: Path,
     ) -> None:
@@ -213,10 +193,6 @@ class TestImporterHelper:
         result = mod.importer_tests(repo, ["src/widget.py"])
         assert "tests/test_untracked.py" not in result
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="test_importers.py does not exist at base",
-    )
     def test_importer_tests_returns_sorted_paths(
         self, tmp_path: Path,
     ) -> None:
@@ -241,10 +217,6 @@ class TestImporterHelper:
         result = mod.importer_tests(repo, ["src/widget.py"])
         assert result == sorted(result)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="test_importers.py does not exist at base",
-    )
     def test_importer_tests_handles_subpackage_imports(
         self, tmp_path: Path,
     ) -> None:
@@ -266,10 +238,6 @@ class TestImporterHelper:
         result = mod.importer_tests(repo, ["src/pkg/widget.py"])
         assert "tests/test_widget.py" in result
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="test_importers.py does not exist at base",
-    )
     def test_importer_tests_returns_empty_for_no_imports(
         self, tmp_path: Path,
     ) -> None:
@@ -284,10 +252,6 @@ class TestImporterHelper:
         result = mod.importer_tests(repo, ["src/widget.py"])
         assert result == []
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="test_importers.py does not exist at base",
-    )
     def test_importer_tests_port_of_plan_lint_semantics(
         self, tmp_path: Path,
     ) -> None:
@@ -382,10 +346,6 @@ class TestMentionCheckUsesHelper:
 class TestSuiteScopeUsesHelper:
     """compute_suite_scope uses the importer helper instead of substring."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="compute_suite_scope uses substring match at base, not the importer helper",
-    )
     def test_suite_scope_finds_importer_tests(self, tmp_path: Path) -> None:
         """A changed module whose test imports it is found by suite scope."""
         repo = _make_repo(
@@ -445,10 +405,32 @@ def _run_compute_suite_scope(
     project: Path,
     changed_files: list[str],
 ) -> dict | None:
-    """Run compute_suite_scope with the given files."""
+    """Run compute_suite_scope with a two-commit repo.
+
+    Creates a base commit (empty or with existing files), then a second
+    commit with *changed_files* so that ``git diff base..HEAD`` shows them.
+    """
     try:
         import verification_record as vr
-        return vr.compute_suite_scope(project, changed_files)
     except ImportError:
         pytest.skip("verification_record not importable")
         return None
+
+    # The repo already has one commit from _make_repo.  Record its SHA as
+    # base, then make a no-op change so HEAD differs from base.
+    base = _git(project, "rev-parse", "HEAD~0")
+    # Modify each changed file to create a content diff entry.
+    for f in changed_files:
+        p = project / f
+        if p.exists():
+            # Append a marker so git detects a content change.
+            p.write_text(
+                p.read_text(encoding="utf-8") + "\n# changed\n",
+                encoding="utf-8",
+            )
+        else:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("# changed\n", encoding="utf-8")
+    _git(project, "add", ".")
+    _git(project, "commit", "-m", "change", "--allow-empty")
+    return vr.compute_suite_scope(project, base)
