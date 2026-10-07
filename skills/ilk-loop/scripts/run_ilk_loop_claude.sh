@@ -2572,6 +2572,100 @@ raise SystemExit(0)
 ' "$sub_file" "$step"
 }
 
+# _write_subplan_current_step <slug> <step>
+# Set current_step to a specific value (not advance). Used by pre-dispatch
+# to roll back current_step on red gate.
+_write_subplan_current_step() {
+  local slug="$1" step="$2"
+  local plans_dir sub_file
+  plans_dir=$(_gate_first_plans_dir) || return 1
+  sub_file=$(find_subplan_file_by_slug "$plans_dir" "$slug") || return 1
+  python3 -c '
+import re, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+step = int(sys.argv[2])
+body = p.read_text(encoding="utf-8")
+m = re.search(r"^current_step:[ \t]*(\d+)[ \t]*$", body, re.MULTILINE)
+if not m:
+    raise SystemExit(1)
+p.write_text(body[:m.start()] + "current_step: " + str(step) + body[m.end():], encoding="utf-8")
+raise SystemExit(0)
+' "$sub_file" "$step"
+}
+
+# pre_dispatch_ship_if_complete <slug>
+# Pre-dispatch ship logic: run the last step's gate first, ship only on green.
+# This is a wrapper around the pre-dispatch block for testing.
+pre_dispatch_ship_if_complete() {
+  local slug="$1"
+  local plans_dir sub_file
+  plans_dir=$(_gate_first_plans_dir) || return 0
+  sub_file=$(find_subplan_file_by_slug "$plans_dir" "$slug") || return 0
+
+  # Get total steps.
+  local total_steps
+  total_steps=$(count_step_headings "$slug" 2>/dev/null) || total_steps=0
+  if [[ "$total_steps" -le 0 ]]; then
+    return 0
+  fi
+
+  # Get current_step.
+  local cur_step
+  cur_step=$(_read_subplan_current_step "$slug") || cur_step=0
+  if [[ "$cur_step" -lt "$total_steps" ]]; then
+    return 0
+  fi
+
+  # Extract the last step's declared gate commands.
+  local last_step=$(( total_steps - 1 ))
+  local gate_cmds=""
+  gate_cmds=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_local_checks.py" \
+    --print-step-gate "$sub_file" "$last_step" 2>/dev/null) || gate_cmds=""
+
+  if [[ -n "$gate_cmds" ]]; then
+    # Run the gate commands.
+    local gate_result=0
+    local gate_output=""
+    gate_output=$(bash -c "$gate_cmds" 2>&1) || gate_result=$?
+
+    # Record in gate-history.jsonl.
+    local runtime_dir
+    runtime_dir=$(get_ilk_runtime_dir 2>/dev/null) || runtime_dir=""
+    if [[ -n "$runtime_dir" ]]; then
+      mkdir -p "$runtime_dir/launcher" 2>/dev/null || true
+      local gate_history="${runtime_dir}/launcher/gate-history.jsonl"
+      local timestamp
+      timestamp=$(date +%Y-%m-%dT%H:%M:%S%z)
+      python3 -c "
+import json, sys
+entry = {
+    'slug': sys.argv[1],
+    'step': int(sys.argv[2]),
+    'reason': 'pre-dispatch last gate',
+    'timestamp': sys.argv[3],
+    'exit_code': int(sys.argv[4]),
+    'outcome': 'pass' if sys.argv[4] == '0' else 'fail'
+}
+print(json.dumps(entry))
+" "$slug" "$last_step" "$timestamp" "$gate_result" >> "$gate_history" 2>/dev/null || true
+    fi
+
+    if [[ "$gate_result" -eq 0 ]]; then
+      # Green → ship and skip dispatch.
+      driver_ship_if_complete "$slug" "pre-dispatch, last gate green"
+    else
+      # Red → do NOT ship; roll back current_step to last step index.
+      echo "[driver-ship] $slug: pre-dispatch gate red — current_step reset to $last_step" >&2
+      _write_subplan_current_step "$slug" "$last_step"
+      return 1
+    fi
+  else
+    # No checks → ship as today (same as a run with gates off).
+    driver_ship_if_complete "$slug" "pre-dispatch all-steps-discharged (no gate)"
+  fi
+}
+
 # Does the sub-plan's frontmatter carry `batch_verification: true`?  Exit 0
 # = yes.  Used after gate-first advances to decide whether the driver should
 # ship the sub-plan when every step is discharged.
@@ -5785,19 +5879,86 @@ print(fm.get('result_file', ''))
     # "no-checks" (vacuously pass), and the step counter would increment
     # past estimated_steps indefinitely.  Detect this case and ship
     # directly, skipping the agent dispatch entirely.
+    #
+    # The pre-dispatch block runs the LAST step's declared gate first:
+    #   - Green → ship and skip dispatch (today's behaviour)
+    #   - Red or inconclusive → do NOT ship; roll back current_step to
+    #     last step index; dispatch the worker normally
+    #   - No checks → ship as today (same as a run with gates off)
     if [[ -n "${_iter_slug:-}" && -n "${PRE_ITER_TARGET:-}" ]]; then
       local _pre_step="${PRE_ITER_TARGET#* }"
       if [[ "$_pre_step" =~ ^[0-9]+$ ]]; then
         local _pre_total
         _pre_total=$(count_step_headings "$_iter_slug" 2>/dev/null) || _pre_total=0
         if [[ "$_pre_total" -gt 0 && "$_pre_step" -ge "$_pre_total" ]]; then
-          driver_ship_if_complete "$_iter_slug" "pre-dispatch all-steps-discharged"
-          # Mark as green so the rest of the iteration is skipped
-          GATE_FIRST_GREEN=1
-          ITER_COMPLETED=1
-          ITER_EXIT_CODE=0
-          ITER_BUDGET_EXHAUSTED=0
-          ITER_QUOTA_EXHAUSTED=0
+          # Extract the last step's declared gate commands.
+          local _pre_subplan
+          _pre_subplan=$(find_subplan_file_by_slug "$(get_plans_dir 2>/dev/null)" "$_iter_slug" 2>/dev/null) || _pre_subplan=""
+          local _pre_gate_cmds=""
+          if [[ -n "$_pre_subplan" ]]; then
+            local _pre_last_step=$(( _pre_total - 1 ))
+            _pre_gate_cmds=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_local_checks.py" \
+              --print-step-gate "$_pre_subplan" "$_pre_last_step" 2>/dev/null) || _pre_gate_cmds=""
+          fi
+
+          if [[ -n "$_pre_gate_cmds" ]]; then
+            # Run the gate commands.
+            local _pre_gate_result=0
+            local _pre_gate_output=""
+            _pre_gate_output=$(bash -c "$_pre_gate_cmds" 2>&1) || _pre_gate_result=$?
+
+            # Record in gate-history.jsonl.
+            local _pre_runtime_dir
+            _pre_runtime_dir=$(get_ilk_runtime_dir 2>/dev/null) || _pre_runtime_dir=""
+            if [[ -n "$_pre_runtime_dir" ]]; then
+              local _pre_gate_history="${_pre_runtime_dir}/gate-history.jsonl"
+              local _pre_timestamp
+              _pre_timestamp=$(date +%Y-%m-%dT%H:%M:%S%z)
+              python3 -c "
+import json, sys
+entry = {
+    'slug': sys.argv[1],
+    'step': int(sys.argv[2]),
+    'reason': 'pre-dispatch last gate',
+    'timestamp': sys.argv[3],
+    'exit_code': int(sys.argv[4]),
+    'outcome': 'pass' if sys.argv[4] == '0' else 'fail'
+}
+print(json.dumps(entry))
+" "$_iter_slug" "$_pre_last_step" "$_pre_timestamp" "$_pre_gate_result" >> "$_pre_gate_history" 2>/dev/null || true
+            fi
+
+            if [[ "$_pre_gate_result" -eq 0 ]]; then
+              # Green → ship and skip dispatch.
+              driver_ship_if_complete "$_iter_slug" "pre-dispatch, last gate green"
+              GATE_FIRST_GREEN=1
+              ITER_COMPLETED=1
+              ITER_EXIT_CODE=0
+              ITER_BUDGET_EXHAUSTED=0
+              ITER_QUOTA_EXHAUSTED=0
+            else
+              # Red → do NOT ship; roll back current_step to last step index.
+              echo "[driver-ship] $_iter_slug: pre-dispatch gate red — current_step reset to $((_pre_total - 1))" >&2
+              _write_subplan_current_step "$_iter_slug" "$((_pre_total - 1))"
+              # Write gate-red-<iteration>.txt with failure output.
+              local _pre_gate_red_file="${RUN_LOG_DIR}/gate-red-${i}.txt"
+              if [[ -n "$_pre_gate_output" ]]; then
+                echo "Command: pre-dispatch last gate" > "$_pre_gate_red_file"
+                echo "Exit code: $_pre_gate_result" >> "$_pre_gate_red_file"
+                echo "Output:" >> "$_pre_gate_red_file"
+                echo "$_pre_gate_output" >> "$_pre_gate_red_file"
+              fi
+              # Dispatch the worker normally (do not set GATE_FIRST_GREEN).
+            fi
+          else
+            # No checks → ship as today (same as a run with gates off).
+            driver_ship_if_complete "$_iter_slug" "pre-dispatch all-steps-discharged (no gate)"
+            GATE_FIRST_GREEN=1
+            ITER_COMPLETED=1
+            ITER_EXIT_CODE=0
+            ITER_BUDGET_EXHAUSTED=0
+            ITER_QUOTA_EXHAUSTED=0
+          fi
         fi
       fi
     fi
