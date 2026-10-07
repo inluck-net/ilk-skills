@@ -169,6 +169,54 @@ def _build_tmp_root(keep: bool = False, skills_src: Path = _REPO) -> Path:
     return root
 
 
+def _run_runner(cmd: list[str], *, env: dict | None, cwd: str | None,
+                timeout: float) -> subprocess.CompletedProcess:
+    """Run one runner call in its own process group and never leave it behind.
+
+    The group is killed on timeout, on SIGTERM to this harness, and when this
+    harness is orphaned (its parent pid changes).  On 2026-10-07 an orphaned
+    harness kept two fixture runners alive for 3+ minutes, which made the
+    release-permit writer refuse "fleet not quiet" (backlog 630af2e3).
+    """
+    import signal
+
+    parent = os.getppid()
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace",
+        env=env, cwd=cwd, start_new_session=True,
+    )
+
+    def _kill_group() -> None:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+    def _on_term(signum, frame):  # noqa: ARG001
+        _kill_group()
+        raise SystemExit(128 + signum)
+
+    previous = signal.signal(signal.SIGTERM, _on_term)
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            try:
+                out, err = proc.communicate(timeout=1)
+                return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+            except subprocess.TimeoutExpired:
+                if os.getppid() != parent:
+                    _kill_group()
+                    raise SystemExit("golden_batch: parent died; runner group killed")
+                if time.monotonic() >= deadline:
+                    _kill_group()
+                    proc.communicate()
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+    finally:
+        _kill_group()
+        signal.signal(signal.SIGTERM, previous)
+
+
 def _run_golden_batch(root: Path, runner: Path = _RUNNER) -> subprocess.CompletedProcess:
     """Run the runner on the fixture project.
 
@@ -238,14 +286,13 @@ def _run_golden_batch(root: Path, runner: Path = _RUNNER) -> subprocess.Complete
 
     last_proc = None
     for _call in range(hard_limit):
-        proc = subprocess.run(
+        proc = _run_runner(
             ["bash", "--noprofile", str(runner),
              "--project-path", str(project),
              "--max-iterations", str(max_iter_per_call),
              "--iteration-timeout-min", "2",
              "--run-local-checks"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=600, env=env, cwd=str(root),
+            env=env, cwd=str(root), timeout=600,
         )
         last_proc = proc
         print(f"[_run_golden_batch] call {_call}: exit={proc.returncode}", file=sys.stderr)

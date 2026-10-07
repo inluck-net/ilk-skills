@@ -171,3 +171,92 @@ def test_golden_batch_refuses_when_skill_home_in_repo(tmp_path: Path) -> None:
     assert exc_info.value.code == 2, (
         f"expected exit 2 for skill-home-in-repo, got {exc_info.value.code}"
     )
+
+# ── 630af2e3: the harness never leaves a runner behind ───────────────────────
+#
+# 2026-10-07 04:44: golden_batch.py (pid 41478) was reparented to pid 1 and
+# kept two fixture runners alive for 3+ min; the release-permit writer refused
+# "fleet not quiet" until they were reaped by hand.
+
+_FAKE_RUNNER = """#!/bin/bash
+sleep 300 &
+echo "$$ $!" > "$1"
+wait
+"""
+
+_DRIVER = """
+import sys
+sys.path.insert(0, {inv!r})
+import golden_batch
+golden_batch._run_runner(["bash", {runner!r}, {pids!r}], env=None, cwd=None, timeout=600)
+"""
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _start(tmp_path: Path, launcher: list[str]) -> tuple[subprocess.Popen, list[int]]:
+    runner = tmp_path / "fake_runner.sh"
+    runner.write_text(_FAKE_RUNNER, encoding="utf-8")
+    pids_file = tmp_path / "pids.txt"
+    driver = tmp_path / "driver.py"
+    driver.write_text(_DRIVER.format(inv=str(Path(__file__).resolve().parent),
+                                     runner=str(runner), pids=str(pids_file)),
+                      encoding="utf-8")
+    proc = subprocess.Popen(launcher + [sys.executable, str(driver)],
+                            start_new_session=True)
+    for _ in range(100):
+        if pids_file.exists() and len(pids_file.read_text().split()) == 2:
+            break
+        import time as _t
+        _t.sleep(0.1)
+    pids = [int(x) for x in pids_file.read_text().split()]
+    assert all(_alive(p) for p in pids)
+    return proc, pids
+
+
+def _wait_dead(pids: list[int], seconds: float = 10.0) -> list[int]:
+    import time as _t
+    deadline = _t.monotonic() + seconds
+    while _t.monotonic() < deadline:
+        live = [p for p in pids if _alive(p)]
+        if not live:
+            return []
+        _t.sleep(0.2)
+    return [p for p in pids if _alive(p)]
+
+
+def test_sigterm_to_the_harness_kills_its_runner(tmp_path: Path) -> None:
+    """SIGTERM to the harness kills the runner and the runner's children."""
+    import signal
+    proc, pids = _start(tmp_path, [])
+    try:
+        os.kill(proc.pid, signal.SIGTERM)
+        assert _wait_dead(pids) == []
+    finally:
+        for p in pids:
+            if _alive(p):
+                os.kill(p, signal.SIGKILL)
+        proc.kill()
+
+
+def test_an_orphaned_harness_kills_its_runner(tmp_path: Path) -> None:
+    """When the harness's parent dies, it kills its runner and exits."""
+    import signal
+    # bash starts the driver in the background and exits after 2 s, so the
+    # driver is reparented mid-run, as happened on 2026-10-07.
+    proc, pids = _start(tmp_path, ["bash", "-c", '"$@" & sleep 2', "_"])
+    try:
+        assert _wait_dead(pids, seconds=15.0) == []
+    finally:
+        for p in pids:
+            if _alive(p):
+                os.kill(p, signal.SIGKILL)
+        proc.kill()
