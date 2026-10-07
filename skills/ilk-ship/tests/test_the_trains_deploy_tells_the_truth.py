@@ -1933,6 +1933,7 @@ class TestRemoteTagAcquisition:
             project, "v0.0.2", data_dir,
             host="rezmac",
             ssh_runner=_fake_ssh_runner,
+            quiet_probe=lambda: [],  # fleet is quiet immediately
             settle_deadline_sec=0.1,
             settle_poll_interval_sec=0.05,
         )
@@ -2451,6 +2452,7 @@ class TestRemoteSSHArgvSerialization:
             release_train._ssh_deploy(
                 project, "v0.0.1", data_dir,
                 host="rezmac",
+                quiet_probe=lambda: [],  # fleet is quiet immediately
                 settle_deadline_sec=0.1,
                 settle_poll_interval_sec=0.05,
             )

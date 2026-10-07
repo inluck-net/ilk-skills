@@ -195,6 +195,10 @@ class TestPermitContract:
         cut_fn, cut_calls = _make_recording_cut()
         deploy_fn, deploy_calls = _make_recording_deploy()
 
+        # Stub SSH deploy to avoid real SSH + quiet-fleet wait
+        def _stub_ssh_deploy(project, tag, data_dir, **kwargs):
+            return {"tag": tag, "deployed": True, "exit_code": 0, "host": "host-b", "transport": "ssh"}
+
         sys.path.insert(0, str(SHIP_SCRIPTS))
         sys.path.insert(0, str(LOOP_SCRIPTS))
         import release_train
@@ -207,6 +211,7 @@ class TestPermitContract:
             prove_fn=prove_fn,
             cut_fn=cut_fn,
             deploy_fn=deploy_fn,
+            ssh_deploy_fn=_stub_ssh_deploy,
             notify_script="/dev/null",
         )
 

@@ -2362,6 +2362,7 @@ def run(
     prove_fn: Callable | None = None,
     cut_fn: Callable | None = None,
     deploy_fn: Callable | None = None,
+    ssh_deploy_fn: Callable | None = None,
     notify_script: str | None = None,
     deploy_exit_code: int | None = None,
     hosts: list[str] | None = None,
@@ -2463,7 +2464,8 @@ def run(
         if resolved_hosts:
             # Multi-host deploy
             deploy_result = _deploy_all_hosts(
-                project, tag, data_dir, hosts=resolved_hosts, deploy_fn=_deploy,
+                project, tag, data_dir, hosts=resolved_hosts,
+                deploy_fn=_deploy, ssh_deploy_fn=ssh_deploy_fn,
             )
             exit_code = deploy_result.get("exit_code", 0)
             deployed = deploy_result.get("deployed", [])
