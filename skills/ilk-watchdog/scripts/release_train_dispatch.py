@@ -253,6 +253,22 @@ def check_permits_for_dispatch(data_dir: Path, project: Path) -> dict:
     return {"ok": True}
 
 
+def any_release_lock_held(data_root: Path) -> str | None:
+    """Check if any project under ``data_root`` holds a live release lock.
+
+    Walks ``data_root / "projects" / *`` and returns the first project-dir
+    name whose ``is_release_lock_held(project_dir)`` is True, else ``None``.
+    A missing ``projects`` dir returns ``None``.
+    """
+    projects_dir = data_root / "projects"
+    if not projects_dir.is_dir():
+        return None
+    for entry in sorted(projects_dir.iterdir()):
+        if entry.is_dir() and is_release_lock_held(entry):
+            return entry.name
+    return None
+
+
 def _is_pid_alive(pid: int) -> bool:
     """Check if a process with the given pid is alive."""
     try:
