@@ -978,3 +978,14 @@ def _isolate_release_layout(monkeypatch, tmp_path_factory):
     releases_root = root / ".ilk" / "releases"
     releases_root.mkdir(parents=True)
     monkeypatch.setenv("ILK_RELEASES_ROOT", str(releases_root))
+
+
+@pytest.fixture(autouse=True)
+def _no_live_fleet_in_tests(monkeypatch):
+    """Prevent any test from reaching the real fleet probe (pgrep over SSH).
+
+    ``release_train._ssh_deploy`` and ``deploy`` check this var before
+    choosing a default probe; if set and no ``quiet_probe`` was injected,
+    they raise ``RuntimeError`` immediately instead of waiting up to 90 min.
+    """
+    monkeypatch.setenv("ILK_TEST_NO_LIVE_FLEET", "1")
