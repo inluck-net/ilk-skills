@@ -369,6 +369,7 @@ class TestDeployReadsHostSchedulerPid:
             bounce_cmd=_make_bounce_cmd(bouncer),
             status_cmd=_make_status_cmd({"v0.0.2": "ok"}),
             pid_file=None,
+            quiet_probe=lambda: [],
         )
 
         expected_pid = str(tmp_path / "data" / "scheduler.pid")
@@ -412,6 +413,7 @@ class TestPassingSmokeReturnsExitCodeZero:
             bounce_cmd=_make_bounce_cmd_with_pid(None, pid_file, new_proc.pid),
             status_cmd=_make_status_cmd({"v0.0.2": "ok"}),
             pid_file=pid_file,
+            quiet_probe=lambda: [],
         )
 
         assert result["deployed"] is True
@@ -469,6 +471,7 @@ class TestRolledBackVerifiedExitCodeFive:
             bounce_cmd=_make_bounce_cmd_with_pid(None, pid_file, new_proc.pid),
             status_cmd=_make_status_cmd({"v0.0.2": "tag-mismatch", "v0.0.1": "ok"}),
             pid_file=pid_file,
+            quiet_probe=lambda: [],
         )
 
         assert result["exit_code"] == 5
@@ -555,6 +558,7 @@ class TestRollbackUnverifiedExitCodeSix:
             bounce_cmd=_make_bounce_cmd_with_pid(None, pid_file, new_proc.pid),
             status_cmd=_make_status_cmd({"v0.0.2": "unreachable", "v0.0.1": "unreachable"}),
             pid_file=pid_file,
+            quiet_probe=lambda: [],
         )
 
         assert result["exit_code"] == 6
@@ -606,6 +610,7 @@ class TestFailedBounceIsReported:
             bounce_cmd=_failing_bounce,
             status_cmd=_make_status_cmd({"v0.0.2": "ok", "v0.0.1": "ok"}),
             pid_file=pid_file,
+            quiet_probe=lambda: [],
         )
 
         assert result["deployed"] is False
@@ -638,6 +643,7 @@ class TestFailedBounceIsReported:
             pid_file=pid_file,
             settle_clock=clock.monotonic,
             settle_sleeper=sleeper.sleep,
+            quiet_probe=lambda: [],
         )
 
         assert result["deployed"] is False
@@ -669,6 +675,7 @@ class TestFailedBounceIsReported:
             pid_file=pid_file,
             settle_clock=clock.monotonic,
             settle_sleeper=sleeper.sleep,
+            quiet_probe=lambda: [],
         )
 
         assert result["deployed"] is False
@@ -816,6 +823,7 @@ class TestBouncerForResolvesCorrectly:
             bounce_cmd=_test_bounce,
             status_cmd=lambda t, cwd=None: "ok",
             pid_file=pid_file,
+            quiet_probe=lambda: [],
         )
 
         assert "bounce_cmd" in recorded
@@ -2020,6 +2028,7 @@ class TestTagAcquisitionCommandShape:
             ssh_runner=_fake_ssh_runner,
             settle_deadline_sec=0.1,
             settle_poll_interval_sec=0.05,
+            quiet_probe=lambda: [],
         )
 
         # Find the fetch call (use args-based check to avoid temp dir false positives)
@@ -2073,6 +2082,7 @@ class TestFetchFailureIsFailClosed:
             ssh_runner=_fake_ssh_runner,
             settle_deadline_sec=0.1,
             settle_poll_interval_sec=0.05,
+            quiet_probe=lambda: [],
         )
 
         assert result["exit_code"] != 0, "Fetch failure must yield nonzero exit"
@@ -2125,6 +2135,7 @@ class TestMissingTagAfterFetchIsFailClosed:
             ssh_runner=_fake_ssh_runner,
             settle_deadline_sec=0.1,
             settle_poll_interval_sec=0.05,
+            quiet_probe=lambda: [],
         )
 
         assert result["exit_code"] != 0, "Missing tag must yield nonzero exit"
@@ -2184,6 +2195,7 @@ class TestCheckedOutBranchUntouched:
             ssh_runner=_fake_ssh_runner,
             settle_deadline_sec=0.1,
             settle_poll_interval_sec=0.05,
+            quiet_probe=lambda: [],
         )
 
         # Tag acquisition must have been attempted
@@ -2258,6 +2270,7 @@ class TestTagMismatchAfterAcquisition:
             ssh_runner=_fake_ssh_runner,
             settle_deadline_sec=0.1,
             settle_poll_interval_sec=0.05,
+            quiet_probe=lambda: [],
         )
 
         # Without tag SHA verification, the deploy succeeds (exit_code=0).
@@ -2337,6 +2350,7 @@ class TestRemoteAcquisitionUsesProjectPath:
             ssh_runner=_fake_ssh,
             settle_deadline_sec=0.1,
             settle_poll_interval_sec=0.05,
+            quiet_probe=lambda: [],
         )
 
         # Find the git fetch and git rev-parse calls
@@ -2603,6 +2617,7 @@ def test_remote_bounce_argv_contains_only_bouncer_path(tmp_path: Path) -> None:
             host="rezmac",
             settle_deadline_sec=0.1,
             settle_poll_interval_sec=0.05,
+            quiet_probe=lambda: [],
         )
 
     assert len(ssh_subprocess_calls) >= 1, "Expected at least one SSH subprocess call"

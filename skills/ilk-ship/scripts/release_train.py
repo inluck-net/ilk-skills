@@ -1217,6 +1217,10 @@ def deploy(
     # Only wait when an explicit probe is provided.  Production callers
     # (run()) pass _live_loops_local; tests and callers that don't need
     # the wait skip it entirely (no real pgrep, no real sleep).
+    if quiet_probe is None and os.environ.get("ILK_TEST_NO_LIVE_FLEET") == "1":
+        raise RuntimeError(
+            "a test reached the live fleet probe; inject quiet_probe="
+        )
     if quiet_probe is not None:
         quiet, last_loops = _wait_for_quiet(
             quiet_probe,
@@ -1685,6 +1689,10 @@ def _ssh_deploy(
     _run = ssh_runner if ssh_runner is not None else _default_ssh_runner
 
     # ── 0. quiet-fleet wait (BEFORE tag acquire) ─────────────────────────
+    if quiet_probe is None and os.environ.get("ILK_TEST_NO_LIVE_FLEET") == "1":
+        raise RuntimeError(
+            "a test reached the live fleet probe; inject quiet_probe="
+        )
     _probe = quiet_probe if quiet_probe is not None else (lambda: _live_loops_remote(_run, host))
     quiet, last_loops = _wait_for_quiet(
         _probe,

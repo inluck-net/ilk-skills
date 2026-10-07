@@ -32,10 +32,6 @@ _LOOP_SCRIPTS = _HERE.parent.parent / "ilk-loop" / "scripts"
 class TestNoLiveFleetProbe:
     """Under pytest the live fleet probe must never run."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="a test can reach the live fleet probe and wait",
-    )
     def test_ssh_deploy_without_probe_raises_immediately(self, tmp_path: Path) -> None:
         """AC-1: _ssh_deploy with no quiet_probe raises RuntimeError in < 1 s."""
         sys.path.insert(0, str(_SHIP_SCRIPTS))
