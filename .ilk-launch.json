@@ -1,5 +1,6 @@
 {
   "ship": {
+    "ledger": false,
     "release_train": true,
     "suite": {
       "command": "python3 -m pytest",
