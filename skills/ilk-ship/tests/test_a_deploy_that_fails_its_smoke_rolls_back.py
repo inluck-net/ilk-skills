@@ -294,6 +294,7 @@ class TestDeploySucceedsWhenSmokePasses:
             bounce_cmd=_bounce_with_restart,
             status_cmd=_make_status_cmd({"v0.0.2": "ok"}),
             pid_file=pid_file,
+            quiet_probe=lambda: [],
         )
 
         assert result["deployed"] is True
@@ -351,6 +352,7 @@ class TestDeployRollsBackOnSmokeFailure:
             pid_file=pid_file,
             settle_clock=clock.monotonic,
             settle_sleeper=sleeper.sleep,
+            quiet_probe=lambda: [],
         )
 
         assert result["deployed"] is False
@@ -400,6 +402,7 @@ class TestDeployBothSmokesFail:
             pid_file=pid_file,
             settle_clock=clock.monotonic,
             settle_sleeper=sleeper.sleep,
+            quiet_probe=lambda: [],
         )
 
         assert result["deployed"] is False
@@ -438,6 +441,7 @@ class TestDeployExtractionFails:
                 bounce_cmd=_make_bounce_cmd(bouncer),
                 status_cmd=_make_status_cmd({"v99.99.99": "ok"}),
                 pid_file=pid_file,
+                quiet_probe=lambda: [],
             )
         assert exc_info.value.code == 4
 
@@ -490,6 +494,7 @@ class TestNoRealLaunchctlCalls:
             bounce_cmd=_bounce_with_restart,
             status_cmd=_make_status_cmd({"v0.0.2": "ok"}),
             pid_file=pid_file,
+            quiet_probe=lambda: [],
         )
 
         # If we got here without the host guard failing, no real launchctl ran.
@@ -831,6 +836,7 @@ class TestRollbackSmokeUsesSameContract:
             pid_file=pid_file,
             settle_deadline_sec=30.0,
             settle_poll_interval_sec=1.0,
+            quiet_probe=lambda: [],
         )
 
         assert result["deployed"] is False
@@ -906,6 +912,7 @@ class TestDeployWithDefaultSettleArgsSettles:
             status_cmd=_status_delayed,
             pid_file=pid_file,
             # All settle args at their documented defaults — the production path
+            quiet_probe=lambda: [],
         )
 
         assert result["deployed"] is True
@@ -979,6 +986,7 @@ class TestRollbackWithDefaultSettleArgsSettles:
             # All settle args at their documented defaults — the production path
             settle_clock=clock.monotonic,
             settle_sleeper=sleeper.sleep,
+            quiet_probe=lambda: [],
         )
 
         assert result["deployed"] is False

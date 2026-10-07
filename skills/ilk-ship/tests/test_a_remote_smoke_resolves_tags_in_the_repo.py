@@ -103,7 +103,8 @@ def _ssh_deploy_calls(tmp_path: Path, smoke_stdout: str) -> tuple[Path, list[lis
         return {"rc": 0, "stdout": "", "stderr": ""}
 
     release_train._ssh_deploy(project, "v0.0.2", data_dir, host="rezmac", ssh_runner=runner,
-                              settle_deadline_sec=0.1, settle_poll_interval_sec=0.05)
+                              settle_deadline_sec=0.1, settle_poll_interval_sec=0.05,
+                              quiet_probe=lambda: [])
     return project, calls
 
 
