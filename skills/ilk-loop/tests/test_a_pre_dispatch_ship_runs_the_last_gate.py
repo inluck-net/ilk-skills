@@ -379,7 +379,7 @@ def test_no_checks_ships(tmp_path: Path) -> None:
 
 
 def test_gate_history_records_pre_dispatch_run(tmp_path: Path) -> None:
-    """Gate history records the pre-dispatch gate run."""
+    """Gate history records the pre-dispatch gate run (same row as any gate)."""
     repo = _make_repo(tmp_path)
     data_home, plans = _make_plans_dir(
         tmp_path, repo, slug="hist-gate", status="in-progress", step=2, est=2,
@@ -391,19 +391,19 @@ def test_gate_history_records_pre_dispatch_run(tmp_path: Path) -> None:
         plans,
         repo,
         data_home,
+        extra_env={"RUN_ID": "test-run"},
     )
     _assert_fn_ran(proc)
-    # Check gate-history.jsonl exists and has a pre-dispatch entry.
-    # The file might not exist in test environment if get_ilk_runtime_dir fails.
     runtime = data_home / "projects" / ilk_paths.project_key(repo) / "runtime"
     gate_history = runtime / "launcher" / "gate-history.jsonl"
-    if gate_history.exists():
-        lines = gate_history.read_text(encoding="utf-8").strip().splitlines()
-        assert len(lines) > 0, "gate-history.jsonl is empty"
-        last_entry = json.loads(lines[-1])
-        assert "pre-dispatch" in last_entry.get("reason", "").lower(), (
-            f"expected pre-dispatch in gate history entry, got: {last_entry}"
-        )
+    assert gate_history.is_file(), (
+        f"no gate-history.jsonl at {gate_history}.\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+    )
+    rows = [json.loads(l) for l in gate_history.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert any(
+        r.get("slug") == "hist-gate" and r.get("step") == 1 and r.get("outcome") == "pass"
+        for r in rows
+    ), f"no pass row for hist-gate step 1: {rows}"
 
 
 # ── AC-5: current_step rolled back on red gate ──────────────────────────────
@@ -455,7 +455,8 @@ def test_driver_ship_if_complete_green_gate(tmp_path: Path) -> None:
 
 
 def test_driver_ship_if_complete_ships_pending_when_steps_done(tmp_path: Path) -> None:
-    """Control: driver_ship_if_complete ships pending sub-plan when all steps done."""
+    """Control: a pending sub-plan with every step done ships (f67ad8cf; golden
+    ships golden-red from pending)."""
     repo = _make_repo(tmp_path)
     data_home, plans = _make_plans_dir(
         tmp_path, repo, slug="ctrl-pend", status="pending", step=2, est=2,
@@ -468,5 +469,91 @@ def test_driver_ship_if_complete_ships_pending_when_steps_done(tmp_path: Path) -
         data_home,
     )
     _assert_fn_ran(proc)
-    # Pending sub-plans with all steps done are shipped (f67ad8cf behavior).
     assert _read_frontmatter_field(plans, "ctrl-pend", "status") == "shipped"
+
+
+# ── fail-closed pins (owner review of e950ab3e, 2026-10-08) ──────────────────
+
+SUBPLAN_RED_THEN_GREEN = SUBPLAN_WITH_GATE.replace(
+    '''  - command: "exit 1"
+    timeout: 30
+''',
+    '''  - command: "false"
+    timeout: 30
+  - command: "true"
+    timeout: 30
+''',
+)
+
+SUBPLAN_UNPARSEABLE_GATE = SUBPLAN_WITH_GATE.replace(
+    '''  - command: "exit 1"
+    timeout: 30
+''',
+    '''  - timeout: 30
+''',
+)
+
+
+def test_a_red_check_before_a_green_one_is_red(tmp_path: Path) -> None:
+    """Every declared check counts, not the last line's exit code."""
+    repo = _make_repo(tmp_path)
+    data_home, plans = _make_plans_dir(
+        tmp_path, repo, slug="red-green", status="in-progress", step=2, est=2,
+        template=SUBPLAN_RED_THEN_GREEN,
+    )
+    before_sha = _git(repo, "rev-parse", "HEAD")
+    proc = _run_fn_in_subprocess(
+        tmp_path, 'pre_dispatch_ship_if_complete "red-green"', plans, repo, data_home,
+    )
+    assert proc.returncode == 1, f"rc={proc.returncode}\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+    assert _git(repo, "rev-parse", "HEAD") == before_sha
+    assert _read_frontmatter_field(plans, "red-green", "status") == "in-progress"
+    assert _read_frontmatter_field(plans, "red-green", "current_step") == "1"
+
+
+def test_a_declared_but_unextractable_gate_is_not_no_checks(tmp_path: Path) -> None:
+    """local_checks declared but no command extracted → inconclusive, never shipped."""
+    repo = _make_repo(tmp_path)
+    data_home, plans = _make_plans_dir(
+        tmp_path, repo, slug="bad-gate", status="in-progress", step=2, est=2,
+        template=SUBPLAN_UNPARSEABLE_GATE,
+    )
+    before_sha = _git(repo, "rev-parse", "HEAD")
+    proc = _run_fn_in_subprocess(
+        tmp_path, 'pre_dispatch_ship_if_complete "bad-gate"', plans, repo, data_home,
+    )
+    assert proc.returncode == 1, f"rc={proc.returncode}\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+    assert _git(repo, "rev-parse", "HEAD") == before_sha
+    assert _read_frontmatter_field(plans, "bad-gate", "status") == "in-progress"
+
+
+def test_a_declined_ship_is_not_green(tmp_path: Path) -> None:
+    """A green gate on a sub-plan the driver declines (an unshipped
+    batch_verification sub-plan) returns 2, not 0, so the main loop dispatches
+    instead of marking the iteration green."""
+    repo = _make_repo(tmp_path)
+    data_home, plans = _make_plans_dir(
+        tmp_path, repo, slug="declined", status="in-progress", step=2, est=2,
+        template=SUBPLAN_WITH_GREEN_GATE.replace(
+            "local_checks: []\n---", "local_checks: []\nbatch_verification: true\n---", 1,
+        ),
+    )
+    proc = _run_fn_in_subprocess(
+        tmp_path,
+        'rc=0; pre_dispatch_ship_if_complete "declined" || rc=$?; echo "RC=$rc"',
+        plans, repo, data_home,
+    )
+    _assert_fn_ran(proc)
+    assert "RC=2" in proc.stdout, f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
+    assert _read_frontmatter_field(plans, "declined", "status") == "in-progress"
+
+
+def test_the_main_loop_calls_the_tested_function() -> None:
+    """The live pre-dispatch block is the tested function, not an inline copy."""
+    text = _SCRIPT.read_text(encoding="utf-8")
+    start = text.index("# -- Pre-dispatch: ship a complete sub-plan only on a green last gate")
+    end = text.index("# -- One-ship marker: clear stale, export fresh", start)
+    block = text[start:end]
+    assert 'pre_dispatch_ship_if_complete "$_iter_slug"' in block
+    assert "--print-step-gate" not in block
+    assert "driver_ship_if_complete" not in block

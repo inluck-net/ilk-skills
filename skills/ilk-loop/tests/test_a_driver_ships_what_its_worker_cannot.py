@@ -272,10 +272,15 @@ def test_driver_ship_creates_marker_commit(tmp_path: Path) -> None:
 
 
 def test_driver_does_not_ship_pending_subplan(tmp_path: Path) -> None:
-    """A pending sub-plan must not be shipped. The function must run and skip."""
+    """A pending sub-plan with steps still left must not be shipped.
+
+    Narrowed 2026-10-08 (owner): a pending sub-plan at current_step == total
+    IS shipped (f67ad8cf) — no driver path moves pending→in-progress, and the
+    golden safety case ships golden-red from pending.  The intent kept here:
+    work that is not done never ships, whatever the status."""
     repo = _make_repo(tmp_path)
     data_home, plans = _make_plans_dir(
-        tmp_path, repo, slug="pend-slug", status="pending", step=2,
+        tmp_path, repo, slug="pend-slug", status="pending", step=1,
     )
     before_sha = _git(repo, "rev-parse", "HEAD")
     proc = _run_fn_in_subprocess(
