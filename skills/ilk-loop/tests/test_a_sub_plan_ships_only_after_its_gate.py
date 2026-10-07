@@ -93,11 +93,11 @@ def test_ship_refuses_in_worker_session_for_regular_subplan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC-1: ship() refuses when ILK_WORKER_SESSION=1 for a non-batch_verification sub-plan."""
+    """AC-1: ship() refuses when dispatched as a worker for a non-batch_verification sub-plan."""
     repo = _make_repo(tmp_path)
     plans = _make_plans_dir(tmp_path, slug="regular-slug", status="in-progress", step=2)
     monkeypatch.setenv("ILK_WORKER_SESSION", "1")
-    monkeypatch.delenv("ILK_ITERATION_SUBPLAN", raising=False)
+    monkeypatch.setenv("ILK_ITERATION_SUBPLAN", "regular-slug")
     with pytest.raises(ship_transition.ShipTransitionError, match="refused.*driver"):
         ship_transition.ship(plans, repo, "regular-slug")
 
@@ -112,7 +112,7 @@ def test_ship_refuses_in_worker_session_status_unchanged(
     subplan = plans / "2026-10-07-my-slug.md"
     before = subplan.read_text(encoding="utf-8")
     monkeypatch.setenv("ILK_WORKER_SESSION", "1")
-    monkeypatch.delenv("ILK_ITERATION_SUBPLAN", raising=False)
+    monkeypatch.setenv("ILK_ITERATION_SUBPLAN", "my-slug")
     with pytest.raises(ship_transition.ShipTransitionError):
         ship_transition.ship(plans, repo, "my-slug")
     after = subplan.read_text(encoding="utf-8")
@@ -128,7 +128,7 @@ def test_ship_refuses_in_worker_session_no_marker_commit(
     plans = _make_plans_dir(tmp_path, slug="my-slug", status="in-progress", step=2)
     before_sha = _git(repo, "rev-parse", "HEAD")
     monkeypatch.setenv("ILK_WORKER_SESSION", "1")
-    monkeypatch.delenv("ILK_ITERATION_SUBPLAN", raising=False)
+    monkeypatch.setenv("ILK_ITERATION_SUBPLAN", "my-slug")
     with pytest.raises(ship_transition.ShipTransitionError):
         ship_transition.ship(plans, repo, "my-slug")
     after_sha = _git(repo, "rev-parse", "HEAD")

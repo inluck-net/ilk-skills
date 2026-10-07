@@ -485,11 +485,16 @@ def _check_batch_verification(plans_dir: Path, slug: str) -> None:
 def _check_worker_session() -> None:
     """Refuse to ship ANY sub-plan in a worker session.
 
-    When ``ILK_WORKER_SESSION=1``, the worker must not ship — the driver
+    When the driver dispatches a worker, it sets ``ILK_ITERATION_SUBPLAN``
+    and ``ILK_WORKER_SESSION``.  The worker must not ship — the driver
     ships after the post-iteration gate passes.  This prevents a red gate
     from leaving a sub-plan ``shipped``.
+
+    A manual ``/ilk`` session (no ``ILK_ITERATION_SUBPLAN``) may ship.
     """
-    if os.environ.get("ILK_WORKER_SESSION", "").strip():
+    dispatched = os.environ.get("ILK_ITERATION_SUBPLAN", "").strip()
+    worker = os.environ.get("ILK_WORKER_SESSION", "").strip()
+    if dispatched and worker:
         raise ShipTransitionError(
             "refused: ship is the driver's — end your turn after the "
             "last step's commit"
