@@ -37,6 +37,8 @@ _SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
+import json
+
 import verify_attribution as va  # noqa: E402
 
 
@@ -195,6 +197,15 @@ def _write_record(data_home: Path, key: str, batch: str, text: str) -> Path:
     return rec
 
 
+def _write_history_for_record(rec_path: Path, text: str, *, digest: str | None = None) -> None:
+    """Write a history JSONL file next to the record with a matching digest."""
+    hist_path = rec_path.with_suffix(".history.jsonl")
+    if digest is None:
+        digest = va._compute_record_digest(text)
+    entry = {"digest": digest, "attempt": 1}
+    hist_path.write_text(json.dumps(entry, separators=(",", ":")) + "\n", encoding="utf-8")
+
+
 def _resolve_project_key(proj: Path) -> str:
     """Resolve the ilk project key for a path."""
     from ilk_paths import resolve_project_key
@@ -217,7 +228,8 @@ class TestAC1DeselectFailedAtBase:
         base_sha = _git(proj, "rev-parse", "HEAD")
         node_id = "test_gate_target.py::test_t_red"
         rec_text = _make_record_text(batch, base_sha, [(node_id, "failed")])
-        _write_record(data_home, key, batch, rec_text)
+        rec_path = _write_record(data_home, key, batch, rec_text)
+        _write_history_for_record(rec_path, rec_text)
 
         pytest_cmd = f"{sys.executable} -m pytest test_gate_target.py -q -p no:cacheprovider"
         _write_batch_subplan(proj, batch, pytest_cmd)
@@ -311,7 +323,8 @@ class TestAC4DigestMismatch:
         # Write with a wrong digest (tampered record).
         rec_text = _make_record_text(batch, base_sha, [(node_id, "failed")],
                                      tamper_digest=True)
-        _write_record(data_home, key, batch, rec_text)
+        rec_path = _write_record(data_home, key, batch, rec_text)
+        _write_history_for_record(rec_path, rec_text, digest="0" * 64)
 
         pytest_cmd = f"{sys.executable} -m pytest test_gate_target.py -q -p no:cacheprovider"
         _write_batch_subplan(proj, batch, pytest_cmd)
@@ -325,8 +338,8 @@ class TestAC4DigestMismatch:
         # Gate should fail (t_red still fails, nothing deselected).
         assert result.returncode != 0
         combined = result.stdout + result.stderr
-        assert "no signed record" in combined.lower(), (
-            "should print the 'no signed record' line"
+        assert "no recorded record" in combined.lower() or "no signed record" in combined.lower(), (
+            "should print the 'no recorded record' or 'no signed record' line"
         )
 
 
@@ -393,7 +406,8 @@ class TestDeclaredAtBase:
         base_sha = _git(proj, "rev-parse", "HEAD")
         node_id = "test_gate_target.py::test_t_red"
         rec_text = _make_record_text(batch, base_sha, [(node_id, "declared-at-base")])
-        _write_record(data_home, key, batch, rec_text)
+        rec_path = _write_record(data_home, key, batch, rec_text)
+        _write_history_for_record(rec_path, rec_text)
 
         pytest_cmd = f"{sys.executable} -m pytest test_gate_target.py -q -p no:cacheprovider"
         _write_batch_subplan(proj, batch, pytest_cmd)
