@@ -89,11 +89,6 @@ def _make_plans_dir(
 # ── AC-1: ship refuses in worker session for every sub-plan ──────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base: _check_batch_verification only refuses batch_verification sub-plans; "
-           "ILK_WORKER_SESSION=1 does not refuse all sub-plans",
-)
 def test_ship_refuses_in_worker_session_for_regular_subplan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -107,11 +102,6 @@ def test_ship_refuses_in_worker_session_for_regular_subplan(
         ship_transition.ship(plans, repo, "regular-slug")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base: _check_batch_verification only refuses batch_verification sub-plans; "
-           "ILK_WORKER_SESSION=1 does not refuse all sub-plans",
-)
 def test_ship_refuses_in_worker_session_status_unchanged(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -129,11 +119,6 @@ def test_ship_refuses_in_worker_session_status_unchanged(
     assert before == after, "status was changed on refusal"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base: _check_batch_verification only refuses batch_verification sub-plans; "
-           "ILK_WORKER_SESSION=1 does not refuse all sub-plans",
-)
 def test_ship_refuses_in_worker_session_no_marker_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

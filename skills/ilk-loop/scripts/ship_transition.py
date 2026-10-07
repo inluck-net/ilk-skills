@@ -482,6 +482,20 @@ def _check_batch_verification(plans_dir: Path, slug: str) -> None:
         )
 
 
+def _check_worker_session() -> None:
+    """Refuse to ship ANY sub-plan in a worker session.
+
+    When ``ILK_WORKER_SESSION=1``, the worker must not ship — the driver
+    ships after the post-iteration gate passes.  This prevents a red gate
+    from leaving a sub-plan ``shipped``.
+    """
+    if os.environ.get("ILK_WORKER_SESSION", "").strip():
+        raise ShipTransitionError(
+            "refused: ship is the driver's — end your turn after the "
+            "last step's commit"
+        )
+
+
 def ship(
     plans_dir: Path,
     repo: Path,
@@ -508,6 +522,7 @@ def ship(
     not part of the public contract.
     """
     plans_dir, repo = Path(plans_dir), Path(repo)
+    _check_worker_session()  # refuses before anything is written
     _check_iteration_subplan(slug)  # refuses before anything is written
     _check_batch_verification(plans_dir, slug)  # refuses before anything is written
     subplan = find_subplan(plans_dir, slug)  # refuses before anything is written

@@ -203,7 +203,7 @@ helper is idempotent — running it twice does not duplicate files.
 6. When current_step reaches estimated_steps:
      - transition every listed ticket in the tracker to the next state
        (use the ilk-lark-tickets skill if it's a Lark Bitable)
-     - ship only through `python3 <skill-root>/ilk-loop/scripts/ship_transition.py --ship <slug> --plans-dir <plans dir> --repo <repo>`
+     - commit the last step and end your turn; the driver ships after the gate passes
        (never edit `status:` or author a `#ship` commit by hand)
 7. Print loop_status.py output again so the human sees updated state.
 8. Exit (let the human start a fresh chat for the next iteration).
