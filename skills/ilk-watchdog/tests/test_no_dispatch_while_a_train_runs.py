@@ -165,7 +165,6 @@ class TestFleetHoldWiring:
     ``if is_release_lock_held "$path"`` line, and the string
     ``reason=fleet-hold``."""
 
-    @pytest.mark.xfail(strict=True, reason="fleet-hold wiring not yet added to scheduler.sh")
     def test_wiring_present(self) -> None:
         """scheduler.sh has the fleet-hold wiring."""
         text = SCHEDULER_SH.read_text(encoding="utf-8")
@@ -176,7 +175,6 @@ class TestFleetHoldWiring:
             "scheduler.sh should log reason=fleet-hold"
         )
 
-    @pytest.mark.xfail(strict=True, reason="fleet-hold wiring not yet added to scheduler.sh")
     def test_fleet_hold_before_per_project(self) -> None:
         """The fleet-hold check appears BEFORE the per-project lock check."""
         text = SCHEDULER_SH.read_text(encoding="utf-8")
@@ -199,7 +197,6 @@ class TestFleetHoldBehaviour:
     ``fleet-hold`` and no ``dispatch`` decision for B.  Control: with A's
     lock removed, B is dispatched."""
 
-    @pytest.mark.xfail(strict=True, reason="scheduler holds only the releasing project")
     def test_fleet_hold_skips_other_projects(self, tmp_path: Path) -> None:
         """With a live train.lock in A, B gets skip-releasing fleet-hold."""
         data_root = tmp_path / "ilk-data"

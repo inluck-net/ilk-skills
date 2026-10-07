@@ -1293,6 +1293,7 @@ run_scheduler() {
     local now_epoch
     now_epoch=$(date +%s)
 
+
     # Collect dispatchable projects (keys, paths, repos, has_actives).
     local -a disp_keys=() disp_paths=() disp_repos=() disp_actives=() disp_masters=()
 
@@ -1305,6 +1306,32 @@ run_scheduler() {
     while IFS= read -r line; do has_actives+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(str(p.get('has_active_master', True)).lower()) for p in d]" <<<"$scan_output" | tr -d '\r')
     while IFS= read -r line; do master_names+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(p.get('active_master_name') or '') for p in d]" <<<"$scan_output" | tr -d '\r')
     while IFS= read -r line; do train_onlys+=("$line"); done < <($PYTHON -c "import json,sys; d=json.loads(sys.stdin.read()); [print(str(p.get('train_only', False)).lower()) for p in d]" <<<"$scan_output" | tr -d '\r')
+
+    # --- fleet-hold: skip ALL projects while any train.lock is live ---------
+    # Evaluate once per scheduler pass (not per project).
+    local _fleet_holder
+    _fleet_holder="$("$PYTHON" -c "
+import sys; sys.path.insert(0, '$(dirname "$_RELEASE_TRAIN_DISPATCH")')
+from release_train_dispatch import any_release_lock_held
+from pathlib import Path
+h = any_release_lock_held(Path('$(ilk_data_dir)'))
+if h: print(h)
+" 2>/dev/null)" || true
+    if [[ -n "${_fleet_holder:-}" ]]; then
+      for i in "${!keys[@]}"; do
+        local key="${keys[$i]}"
+        if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+          write_scheduler_log "skip-releasing" "$key" "reason=fleet-hold holder=$_fleet_holder"
+          echo "{\"decision\":\"skip-releasing\",\"key\":\"$key\",\"reason\":\"fleet-hold holder=$_fleet_holder\"}"
+        else
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip-releasing: $key reason=fleet-hold holder=$_fleet_holder"
+          write_scheduler_log "skip-releasing" "$key" "reason=fleet-hold holder=$_fleet_holder"
+        fi
+      done
+      if [[ "$ONCE" == true ]]; then return; fi
+      sleep $((POLL_MIN * 60)) & wait $!
+      continue
+    fi
 
     for i in "${!keys[@]}"; do
       local key="${keys[$i]}"
