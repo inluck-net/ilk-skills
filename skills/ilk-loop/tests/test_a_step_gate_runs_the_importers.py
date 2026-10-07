@@ -283,12 +283,12 @@ class TestImporterHelper:
 
 
 class TestMentionCheckUsesHelper:
-    """The mention gate adds importer tests to the files it runs."""
+    """The mention gate does NOT add importer tests to the files it runs."""
 
-    def test_mention_check_includes_importer_tests(
+    def test_mention_check_excludes_importer_tests(
         self, tmp_path: Path,
     ) -> None:
-        """Changed module's importer tests are added to the mention gate."""
+        """Changed module's importer tests are NOT added to the mention gate."""
         repo = _make_repo(
             tmp_path,
             source_files={"src/widget.py": "class Widget: pass\n"},
@@ -299,44 +299,19 @@ class TestMentionCheckUsesHelper:
                 ),
             },
         )
-        # _synthesize_mention_check should add importer tests
+        # _synthesize_mention_check should NOT add importer tests
         result = _run_synthesize_mention_check(
             repo, changed_files=["src/widget.py"],
         )
-        # The result should include test_widget.py because it imports
-        # src.widget
-        if result is not None:
-            cmd = result.get("command", "")
-            assert "test_widget.py" in cmd, (
-                f"mention gate command {cmd!r} does not include "
-                f"test_widget.py which imports src.widget"
-            )
-
-    def test_mention_check_applies_deselection_to_importer_tests(
-        self, tmp_path: Path,
-    ) -> None:
-        """Declared-red tests are excluded from importer tests too."""
-        repo = _make_repo(
-            tmp_path,
-            source_files={"src/widget.py": "class Widget: pass\n"},
-            test_files={
-                "tests/test_widget.py": (
-                    "import src.widget\n"
-                    "def test_widget(): pass\n"
-                ),
-            },
-        )
-        baseline_red = [{"node_id": "tests/test_widget.py"}]
-        result = _run_synthesize_mention_check(
-            repo,
-            changed_files=["src/widget.py"],
-            baseline_red=baseline_red,
-        )
+        # The result should NOT include test_widget.py because the runtime
+        # step gate only runs tests that pin the changed file by line number,
+        # not importers (importer tests may be red from peer sub-plans).
         if result is not None:
             cmd = result.get("command", "")
             assert "test_widget.py" not in cmd, (
                 f"mention gate command {cmd!r} includes "
-                f"test_widget.py which is declared-red"
+                f"test_widget.py which imports src.widget — "
+                f"the runtime step gate should not add importer tests"
             )
 
 

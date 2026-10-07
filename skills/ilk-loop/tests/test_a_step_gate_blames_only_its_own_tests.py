@@ -101,13 +101,6 @@ def _run_synthesize_mention_check(
 class TestStepGateBlamesOnlyOwnTests:
     """The synthesized step gate does not add importer tests to its file set."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "base adds importer_tests hits to the synthesized check; "
-            "the fix removes that block from _synthesize_mention_check"
-        ),
-    )
     def test_changed_module_with_importer_is_not_added_to_synthesized_gate(
         self, tmp_path: Path,
     ) -> None:
@@ -139,13 +132,6 @@ class TestStepGateBlamesOnlyOwnTests:
                 f"run tests that pin the changed file, not importers"
             )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "base adds importer_tests hits to the synthesized check; "
-            "the fix removes that block from _synthesize_mention_check"
-        ),
-    )
     def test_importer_red_pre_existing_does_not_block_synthesized_gate(
         self, tmp_path: Path,
     ) -> None:
