@@ -116,10 +116,6 @@ def _build_record(
 
 # ── AC-1: added entry with passed at base ⇒ refused ─────────────────────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base has no _check_added_baseline_red function",
-)
 class TestAC1AddedEntryPassedAtBase:
     """Record row X | passed | added | 0/1 | no ⇒ refused, message names X
     and passed (the 23daa4dd shape)."""
@@ -146,10 +142,6 @@ class TestAC1AddedEntryPassedAtBase:
 
 # ── AC-2: added entry with unmeasured-at-base ⇒ refused ──────────────────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base has no _check_added_baseline_red function",
-)
 class TestAC2AddedEntryUnmeasuredAtBase:
     """Record row X | unmeasured-at-base | added | 1/2 | no ⇒ refused
     (the gh-resolve shape)."""
@@ -178,10 +170,6 @@ class TestAC2AddedEntryUnmeasuredAtBase:
 
 # ── AC-3: added entry with no row ⇒ refused ──────────────────────────────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base has no _check_added_baseline_red function",
-)
 class TestAC3AddedEntryNoRow:
     """No row for X ⇒ refused, message says 'no row'."""
 
@@ -205,10 +193,6 @@ class TestAC3AddedEntryNoRow:
 
 # ── AC-4: added entry with failed at base ⇒ not refused by this rule ──────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base has no _check_added_baseline_red function",
-)
 class TestAC4AddedEntryFailedAtBase:
     """Record row X | failed | added | — | — ⇒ not refused by this rule."""
 
@@ -229,10 +213,6 @@ class TestAC4AddedEntryFailedAtBase:
 
 # ── AC-5: entry already present at base ⇒ not refused by this rule ────────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base has no _check_added_baseline_red function",
-)
 class TestAC5EntryPresentAtBase:
     """X already present at base ⇒ not refused by this rule (this check only
     looks at entries added during the batch)."""

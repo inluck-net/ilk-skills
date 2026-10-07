@@ -679,6 +679,86 @@ def _classify_counts(
     }
 
 
+def _check_added_baseline_red(
+    record_path: Path, project: Path, base_sha: str,
+) -> None:
+    """Refuse a baseline_red entry added in the batch unless the record has
+    that id ``failed`` at base.
+
+    Computes node ids present in ``.ilk-launch.json`` ``ship.baseline_red``
+    at HEAD but not at *base_sha*.  For each added id the record must carry a
+    row whose ``at base`` is ``failed``; otherwise :class:`VerificationError`
+    names the id and the record's verdict (or ``no row``).
+
+    Entries already present at base are unaffected.
+    """
+    import subprocess as _sp
+
+    # ── Load HEAD baseline_red ───────────────────────────────────────────
+    head_path = project / ".ilk-launch.json"
+    try:
+        head_text = head_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        head_text = "{}"
+    try:
+        head_bl = json.loads(head_text).get("ship", {}).get("baseline_red", [])
+    except (json.JSONDecodeError, AttributeError):
+        head_bl = []
+
+    # ── Load base baseline_red ───────────────────────────────────────────
+    try:
+        cp = _sp.run(
+            ["git", "-C", str(project), "show", f"{base_sha}:.ilk-launch.json"],
+            capture_output=True, text=True, timeout=30,
+        )
+        base_text = cp.stdout if cp.returncode == 0 else "{}"
+    except (OSError, _sp.SubprocessError):
+        base_text = "{}"
+    try:
+        base_bl = json.loads(base_text).get("ship", {}).get("baseline_red", [])
+    except (json.JSONDecodeError, AttributeError):
+        base_bl = []
+
+    # ── Diff ─────────────────────────────────────────────────────────────
+    base_set = set(base_bl)
+    added = [e for e in head_bl if e not in base_set]
+    if not added:
+        return
+
+    # ── Parse record rows ────────────────────────────────────────────────
+    text = record_path.read_text(encoding="utf-8-sig", errors="replace")
+    section = extract_section(text)
+    rows = parse_rows(section)
+    row_map: dict[str, str] = {}
+    for r in rows:
+        if r:
+            node = r[0]
+            at_base = r[1].strip().lower() if len(r) > 1 else ""
+            row_map[node] = at_base
+
+    # ── Check each added entry ───────────────────────────────────────────
+    for entry in added:
+        # Prefix match: a baseline_red entry "test_foo" covers
+        # "test_foo[param1]", "test_foo[param2]", etc.
+        matched_verdict: str | None = None
+        for node, verdict in row_map.items():
+            if node == entry or node.startswith(entry + "["):
+                matched_verdict = verdict
+                break
+        if matched_verdict is None:
+            raise VerificationError(
+                f"baseline_red entry {entry!r} was added in this batch "
+                f"without a failed-at-base measurement (record: no row); "
+                f"remove it or measure it"
+            )
+        if matched_verdict != "failed":
+            raise VerificationError(
+                f"baseline_red entry {entry!r} was added in this batch "
+                f"without a failed-at-base measurement (record: {matched_verdict}); "
+                f"remove it or measure it"
+            )
+
+
 def verify_detailed(record_path: Path, project: Path | None = None) -> tuple[str, int, list[str], dict[str, int]]:
     """Raise VerificationError unless the record establishes a clean batch.
 
@@ -713,6 +793,14 @@ def verify_detailed(record_path: Path, project: Path | None = None) -> tuple[str
     _verify_ledger_citations(text, project)
 
     rows = parse_rows(section)
+
+    # ── Added-baseline_red check ─────────────────────────────────────────
+    # An entry added to baseline_red during this batch must have a
+    # failed-at-base row in the record; otherwise refuse by name.
+    if project is not None:
+        base_sha_m = re.search(r"^base_sha:\s*(\S+)", text, re.MULTILINE)
+        if base_sha_m:
+            _check_added_baseline_red(record_path, project, base_sha_m.group(1))
 
     # R3/R4: check attempt history before attribution.
     current_nodes = {r[0] for r in rows if r}
