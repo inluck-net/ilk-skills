@@ -74,3 +74,37 @@ def test_train_only_entry_is_offered_but_not_dispatched(tmp_path: Path) -> None:
     # The shipped sentinel survives, so a later pass with permits can start it.
     sentinel = json.loads((pd / "runtime" / "launcher" / "last-exit.json").read_text())
     assert sentinel["run_id"] == "R1" and sentinel["iterations"] == 3
+
+
+def test_offering_a_train_is_not_counted_as_a_launch(tmp_path: Path) -> None:
+    """Passes that only offer a train never advance the no-progress counter.
+
+    Backlog 05f11c22, measured 2026-10-07/08: the bound sat above the train
+    offer and the skip-train-only exit, so each post-ship pass counted as a
+    non-clean, no-progress launch.  gh-resolve reached 92 with 0 launches,
+    and ilk-skills blocked its own release at 11:47 (3 permit-wait passes).
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "c"]):
+        subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=T", *args],
+                       cwd=repo, check=True)
+    data_home = tmp_path / ".ilk-data"
+    pd = _shipped_project(data_home, repo)
+    env = {**os.environ, "HOME": str(tmp_path), "ILK_DATA_HOME": str(data_home),
+           "ILK_SKILL_HOME": str(SKILLS_DIR), "ILK_AUTOPLAN": "0",
+           "ILK_BATCH_AUDIT": "0"}  # test-only: skip audit, test train logic
+    env.pop("ILK_DATA_DIR", None)
+
+    for _ in range(4):  # one more than the threshold of 3
+        r = subprocess.run(["bash", str(SCHEDULER), "--once", "--dry-run"],
+                           capture_output=True, text=True, timeout=60, env=env,
+                           encoding="utf-8")
+        assert r.returncode == 0, r.stderr[-800:]
+
+    log = (data_home / "logs" / "scheduler.log").read_text(encoding="utf-8")
+    assert log.count(f"skip-train-only: {pd.name}") == 4, log
+    assert f"no-progress-bound: {pd.name}" not in log, log
+    np_file = pd / "runtime" / "launcher" / "no-progress.json"
+    count = json.loads(np_file.read_text())["count"] if np_file.exists() else 0
+    assert count == 0, f"4 train offers counted as {count} launches"

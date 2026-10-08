@@ -162,6 +162,43 @@ def test_the_bound_sits_below_every_skip_gate() -> None:
         )
 
 
+def test_the_bound_sits_below_the_train_offer_and_inside_the_slot_fill() -> None:
+    """Backlog 05f11c22: only a project collected for launch is counted.
+
+    Above the train offer and the skip-train-only exit, every post-ship pass
+    counted as a launch (gh-resolve 1->92 with 0 launches, 2026-10-07/08).
+    Outside the capacity check, a project that gets no slot this pass would
+    be counted too.
+    """
+    src = _SCHEDULER_SH.read_text()
+    bound_at = src.index("_np_file=\"$(no_progress_state_file")
+    for marker in (
+        'maybe_start_release_train "$key"',
+        'write_scheduler_log "skip-train-only"',
+        "# Fill free slots: collect while capacity remains.",
+    ):
+        assert src.index(marker) < bound_at, (
+            f"the no-progress bound runs BEFORE {marker!r}: a pass that ends "
+            f"there launches nothing, so the counter would count a non-launch"
+        )
+    assert bound_at < src.index('disp_keys+=("$key")'), (
+        "the bound must run before the project is collected for dispatch"
+    )
+
+
+def test_a_blocked_project_does_not_count_polls(scheduler_sandbox) -> None:
+    """Once at the bound, the count holds: a blocked project is not launched.
+
+    The count climbed 3 -> 149 on gh-resolve with zero launches, one per
+    5-minute poll, because a block verdict still incremented.
+    """
+    assert _verdict(2, "false", "false", env=scheduler_sandbox.env) == "3 block"
+    assert _verdict(3, "false", "false", env=scheduler_sandbox.env) == "3 block"
+    assert _verdict(149, "false", "false", env=scheduler_sandbox.env) == "149 block"
+    # Progress still clears a blocked project.
+    assert _verdict(149, "true", "false", env=scheduler_sandbox.env) == "0 allow"
+
+
 # ---------------------------------------------------------------------------
 # AC-3
 # ---------------------------------------------------------------------------
