@@ -590,15 +590,22 @@ print('true' if sentinel_all_shipped(Path('$sentinel_file')) else 'false')
   fi
 
   # Batch audit: mechanical review before offering a train.
-  # Skip if ILK_BATCH_AUDIT=0 (test-only override).
+  # Skip if ILK_BATCH_AUDIT=0 (test-only override).  audit_verdict is
+  # declared outside the branch: the machine-mode branch below reads it, and
+  # under set -u an audit-off pass aborted on it (backlog 39d0d4e0).
+  local audit_verdict="skipped"
   if [[ "${ILK_BATCH_AUDIT:-1}" != "0" ]]; then
-    local audit_result
+    local audit_result="" audit_failed=""
+    # batch_audit.py exits 1 on fail and 2 on unmeasured WITH its JSON on
+    # stdout; keep it.  `|| audit_result="{}"` threw it away, so every
+    # non-pass was logged as verdict=error (backlog a47ea3a1).
     audit_result="$("$PYTHON" "${_ILK_SCRIPT_DIR}/../../ilk-ship/scripts/batch_audit.py" \
-      --project "$repo" --run-id "$run_id" --json 2>/dev/null)" || audit_result="{}"
-    local audit_verdict
+      --project "$repo" --run-id "$run_id" --json 2>/dev/null)" || true
+    [[ -n "$audit_result" ]] || audit_result="{}"
     audit_verdict="$("$PYTHON" -c "import json,sys; print(json.loads(sys.argv[1]).get('verdict','error'))" "$audit_result" 2>/dev/null)" || audit_verdict="error"
+    audit_failed="$("$PYTHON" -c "import json,sys; print(','.join(c.get('name','?') for c in json.loads(sys.argv[1]).get('checks',[]) if not c.get('ok')))" "$audit_result" 2>/dev/null)" || audit_failed=""
     if [[ "$audit_verdict" != "pass" ]]; then
-      write_scheduler_log "skip-audit-failed" "$key" "verdict=$audit_verdict"
+      write_scheduler_log "skip-audit-failed" "$key" "verdict=$audit_verdict${audit_failed:+ failed=$audit_failed}"
       return 1
     fi
   fi

@@ -552,3 +552,63 @@ def test_the_cli_runs_as_a_plain_script(tmp_path: Path) -> None:
     assert {"pass": 0, "fail": 1, "unmeasured": 2}.get(verdict) == cp.returncode, (
         f"verdict={verdict} rc={cp.returncode}\nstdout: {cp.stdout}\nstderr: {cp.stderr}"
     )
+
+
+# ── Scope is the batch's own range, not base..HEAD (backlog a47ea3a1) ─────────
+
+
+def _commit(repo: Path, rel: str, msg: str) -> None:
+    f = repo / rel
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(f"# {msg}\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-q", "-m", msg], cwd=repo, check=True, capture_output=True)
+
+
+def _scope_after(tmp_path: Path, commits: list[tuple[str, str]]) -> dict:
+    repo = _make_git_repo(tmp_path)
+    data_dir = tmp_path / "data"
+    plans_dir = data_dir / "plans"
+    plans_dir.mkdir(parents=True)
+    run_id = "20261008-130000"
+    _write_master_plan(plans_dir, slug="test-sub", base_sha="HEAD",
+                       scope_paths=["skills/ilk-ship/"])
+    _write_batch_gate(data_dir, verdict="pass", attributed=0)
+    _write_sentinel(data_dir, run_id=run_id)
+    _write_iter_log(data_dir, run_id)
+    for rel, msg in commits:
+        _commit(repo, rel, msg)
+    from batch_audit import audit
+    result = audit(project=repo, data_dir=data_dir, run_id=run_id)
+    return next(c for c in result["checks"] if c["name"] == "scope")
+
+
+def test_a_commit_after_the_batch_is_not_judged(tmp_path: Path) -> None:
+    """2026-10-08: a direct release's fix + changelog landed after the
+    autoplanned batch shipped, and its audit failed scope on them."""
+    scope = _scope_after(tmp_path, [
+        ("skills/ilk-ship/a.py", "fix: in scope [plan:test-sub#step-1]"),
+        ("skills/ilk-ship/b.py", "chore(plans): test-sub shipped [plan:test-sub#ship]"),
+        ("CHANGELOG.md", "docs(changelog): v9.9.9"),
+        ("skills/ilk-watchdog/x.py", "fix(watchdog): someone else's change"),
+    ])
+    assert scope["ok"] is True, scope
+
+
+def test_an_out_of_scope_batch_commit_still_fails(tmp_path: Path) -> None:
+    scope = _scope_after(tmp_path, [
+        ("skills/ilk-watchdog/x.py", "fix: out of scope [plan:test-sub#step-1]"),
+        ("CHANGELOG.md", "docs(changelog): v9.9.9"),
+    ])
+    assert scope["ok"] is False and "skills/ilk-watchdog/x.py" in scope["detail"], scope
+
+
+def test_an_untrailered_commit_inside_the_batch_is_judged(tmp_path: Path) -> None:
+    """Bounding the range (not filtering by trailer) keeps an untrailered
+    worker commit made during the batch in view (07g's 39165927 was one)."""
+    scope = _scope_after(tmp_path, [
+        ("skills/ilk-ship/a.py", "fix: in scope [plan:test-sub#step-0]"),
+        ("skills/ilk-watchdog/x.py", "test-infra: no trailer"),
+        ("skills/ilk-ship/b.py", "chore(plans): test-sub shipped [plan:test-sub#ship]"),
+    ])
+    assert scope["ok"] is False and "skills/ilk-watchdog/x.py" in scope["detail"], scope

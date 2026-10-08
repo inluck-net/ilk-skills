@@ -108,3 +108,44 @@ def test_offering_a_train_is_not_counted_as_a_launch(tmp_path: Path) -> None:
     np_file = pd / "runtime" / "launcher" / "no-progress.json"
     count = json.loads(np_file.read_text())["count"] if np_file.exists() else 0
     assert count == 0, f"4 train offers counted as {count} launches"
+
+
+def _run_once(tmp_path: Path, extra_env: dict[str, str]) -> tuple[subprocess.CompletedProcess, Path, str]:
+    repo = tmp_path / "repo"
+    repo.mkdir(exist_ok=True)
+    for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "c"]):
+        subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=T", *args],
+                       cwd=repo, check=True)
+    data_home = tmp_path / ".ilk-data"
+    pd = _shipped_project(data_home, repo)
+    env = {**os.environ, "HOME": str(tmp_path), "ILK_DATA_HOME": str(data_home),
+           "ILK_SKILL_HOME": str(SKILLS_DIR), "ILK_AUTOPLAN": "0", **extra_env}
+    env.pop("ILK_DATA_DIR", None)
+    r = subprocess.run(["bash", str(SCHEDULER), "--once", "--dry-run"],
+                       capture_output=True, text=True, timeout=60, env=env,
+                       encoding="utf-8")
+    log_path = data_home / "logs" / "scheduler.log"
+    return r, pd, log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+
+
+def test_a_non_pass_audit_is_logged_with_its_real_verdict(tmp_path: Path) -> None:
+    """Backlog a47ea3a1: batch_audit.py exits 1/2 with its JSON on stdout,
+    and `|| audit_result="{}"` logged every non-pass as verdict=error."""
+    r, pd, log = _run_once(tmp_path, {"ILK_BATCH_AUDIT": "1"})
+    assert r.returncode == 0, r.stderr[-800:]
+    line = next((l for l in log.splitlines() if f"skip-audit-failed: {pd.name}" in l), "")
+    assert line, log
+    assert "verdict=error" not in line and "failed=" in line, line
+
+
+def test_machine_permits_with_the_audit_off_do_not_abort(tmp_path: Path) -> None:
+    """Backlog 39d0d4e0: audit_verdict was declared only inside the audit
+    branch, so machine mode + ILK_BATCH_AUDIT=0 hit an unbound variable."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".ilk-launch.json").write_text(
+        json.dumps({"ship": {"permit_mode": "machine"}}), encoding="utf-8")
+    r, pd, log = _run_once(tmp_path, {"ILK_BATCH_AUDIT": "0"})
+    assert r.returncode == 0, r.stderr[-800:]
+    assert "unbound variable" not in r.stderr, r.stderr[-800:]
+    assert f"skip-permits: {pd.name}" in log, log

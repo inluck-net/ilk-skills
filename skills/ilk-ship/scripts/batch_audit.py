@@ -106,10 +106,19 @@ def _check_scope(project: Path, base_sha: str | None, sub_plans: list[dict]) -> 
     if not scope_paths:
         return {"name": "scope", "ok": True, "detail": "no scope_paths defined"}
 
+    # The batch's range ends at its LAST commit carrying one of its own
+    # [plan:<slug>#...] trailers (normally the #ship marker), not at HEAD.
+    # Judging base..HEAD failed every batch that another commit followed:
+    # a direct release's changelog and fix (2026-10-08, backlog a47ea3a1).
+    # Bounding the range, rather than keeping only trailered commits, still
+    # judges an untrailered commit made INSIDE the batch.  With no trailered
+    # commit in base..HEAD the end is unknown, so fall back to HEAD.
+    end = _batch_end_sha(project, base_sha, [sp.get("slug", "") for sp in sub_plans]) or "HEAD"
+
     # Get changed files
     try:
         result = subprocess.run(
-            ["git", "diff", "--name-only", f"{base_sha}..HEAD"],
+            ["git", "diff", "--name-only", f"{base_sha}..{end}"],
             cwd=project, capture_output=True, text=True, check=True,
         )
         changed_files = [f for f in result.stdout.strip().split("\n") if f]
@@ -139,6 +148,27 @@ def _check_scope(project: Path, base_sha: str | None, sub_plans: list[dict]) -> 
             "detail": f"{len(violations)} file(s) outside scope: {', '.join(violations[:5])}",
         }
     return {"name": "scope", "ok": True, "detail": f"{len(changed_files)} files in scope"}
+
+
+def _batch_end_sha(project: Path, base_sha: str, slugs: list[str]) -> str | None:
+    """Newest commit in base..HEAD whose message carries [plan:<slug>#...]
+    for one of *slugs*, or None when there is none (or git fails)."""
+    slugs = [s for s in slugs if s]
+    if not slugs:
+        return None
+    try:
+        out = subprocess.run(
+            ["git", "log", "--format=%H%x1f%B%x1e", f"{base_sha}..HEAD"],
+            cwd=project, capture_output=True, text=True, check=True,
+        ).stdout
+    except subprocess.CalledProcessError:
+        return None
+    pat = re.compile(r"\[plan:(" + "|".join(re.escape(s) for s in slugs) + r")#")
+    for rec in out.split("\x1e"):  # newest first
+        sha, _, body = rec.strip().partition("\x1f")
+        if sha and pat.search(body):
+            return sha
+    return None
 
 
 # ── Gate check ──────────────────────────────────────────────────────────────
@@ -309,6 +339,7 @@ def _parse_sub_plans(master: Path, plans_dir: Path) -> list[dict]:
             scope_paths = _extract_yaml_list(sp_content, "scope_paths")
             sub_plans.append({
                 "name": sub_plan_name,
+                "slug": _extract_frontmatter_field(sp_content, "plan") or "",
                 "scope_paths": scope_paths,
             })
 
