@@ -268,6 +268,35 @@ def _module_test_name(module_stem: str) -> str:
     return f"test_{module_stem}.py"
 
 
+def _write_ledger_entry(project: Path, tree: str, invocation: str,
+                        results: dict, scope_mode: str,
+                        selection: list | None,
+                        suite_output_text: str) -> dict:
+    """Write a measured run to the per-tree suite ledger; return the entry.
+
+    The entry carries scope metadata so readers can tell scoped from full
+    measurements and refuse unsafe reuse.  Raises OSError on write failure.
+    """
+    import suite_ledger
+    entry = {
+        "tree": tree,
+        "invocation": invocation,
+        "counts": results["counts"],
+        "failing_nodes": sorted(results["failing_nodes"]),
+        "suite_duration_sec": results.get("suite_duration_sec", 0),
+        "scope_mode": scope_mode,
+        "selected_files": sorted(selection) if selection else [],
+        "digest": "",
+    }
+    entry["digest"] = suite_ledger._compute_digest(entry)
+    ld = suite_ledger.ledger_dir(project)
+    ld.mkdir(parents=True, exist_ok=True)
+    (ld / f"{tree}.json").write_text(
+        json.dumps(entry, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    (ld / f"{tree}.output.txt").write_text(suite_output_text, encoding="utf-8")
+    return entry
+
+
 def compute_suite_scope(project: Path, base_sha: str) -> dict:
     """Derive the suite scope from ``base_sha..HEAD``.
 
@@ -2334,34 +2363,10 @@ def _write_measured_record(project: Path, record: Path, args,
                       file=sys.stderr)
                 return 1
             # Write the entry to the ledger for future lookups.
-            # Include scope metadata so readers can distinguish scoped
-            # from full measurements and refuse unsafe reuse.
             try:
-                import suite_ledger
-                measure_entry = {
-                    "tree": tree,
-                    "invocation": invocation,
-                    "counts": results["counts"],
-                    "failing_nodes": sorted(results["failing_nodes"]),
-                    "suite_duration_sec": results.get("suite_duration_sec", 0),
-                    "scope_mode": scope["mode"],
-                    "selected_files": (sorted(selection)
-                                       if selection else []),
-                    "digest": "",
-                }
-                measure_entry["digest"] = suite_ledger._compute_digest(
-                    measure_entry)
-                ld = suite_ledger.ledger_dir(project)
-                ld.mkdir(parents=True, exist_ok=True)
-                entry_path = ld / f"{tree}.json"
-                entry_path.write_text(
-                    json.dumps(measure_entry, sort_keys=True, indent=2) + "\n",
-                    encoding="utf-8",
-                )
-                ledger_entry = measure_entry
-                # Write output text.
-                output_path = ld / f"{tree}.output.txt"
-                output_path.write_text(suite_output_text, encoding="utf-8")
+                ledger_entry = _write_ledger_entry(
+                    project, tree, invocation, results, scope["mode"],
+                    selection, suite_output_text)
             except (OSError, PermissionError) as exc:
                 print(f"WARNING: could not write ledger entry: {exc}",
                       file=sys.stderr)
@@ -2381,6 +2386,19 @@ def _write_measured_record(project: Path, record: Path, args,
                                 selection=selection)
             # Save raw suite output beside the record for failure diagnostics.
             suite_output_text = results.get("suite_output_text", "")
+            # A full run in prefer mode is recorded too (c0b75341): it was
+            # the only measurement of this tree, and without an entry a
+            # pre-push hook or the next verify reruns the whole suite.
+            # Only a full run: a scoped one must never answer "is tree X
+            # green?".  ledger_entry stays None so this run's at-base
+            # handling is unchanged.
+            if ledger_mode == "prefer" and selection is None:
+                try:
+                    _write_ledger_entry(project, tree, invocation, results,
+                                        "full", None, suite_output_text)
+                except (OSError, PermissionError, FileNotFoundError) as exc:
+                    print(f"WARNING: could not write ledger entry: {exc}",
+                          file=sys.stderr)
         except (TimeoutError, ValueError) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             reason = "timeout" if isinstance(exc, TimeoutError) else "no summary line"
