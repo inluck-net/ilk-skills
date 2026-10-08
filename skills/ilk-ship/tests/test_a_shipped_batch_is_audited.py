@@ -241,7 +241,6 @@ def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 # ── AC-1: clean run → pass; JSON written under logs/audits/ ─────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="no batch audit yet")
 class TestAC1CleanPass:
     """AC-1: a clean run passes and writes the audit JSON."""
 
@@ -276,7 +275,6 @@ class TestAC1CleanPass:
 # ── AC-2: scope violation → fail ────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="no batch audit yet")
 class TestAC2ScopeViolation:
     """AC-2: a commit touching a file outside scope_paths → fail (scope)."""
 
@@ -318,7 +316,6 @@ class TestAC2ScopeViolation:
 # ── AC-3: batch-gate attributed > 0 → fail (gate) ───────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="no batch audit yet")
 class TestAC3GateFailure:
     """AC-3: batch-gate.json attributed > 0 → fail (gate)."""
 
@@ -349,7 +346,6 @@ class TestAC3GateFailure:
 # ── AC-4: tamper detection ──────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="no batch audit yet")
 class TestAC4TamperDetection:
     """AC-4: Bash tool_use tampering → fail; tool_result mentioning → pass."""
 
@@ -408,7 +404,6 @@ class TestAC4TamperDetection:
 # ── AC-5: another master's mtime inside window → fail (masters) ─────────────
 
 
-@pytest.mark.xfail(strict=True, reason="no batch audit yet")
 class TestAC5MastersCheck:
     """AC-5: another master's mtime inside the run window → fail (masters)."""
 
@@ -451,7 +446,6 @@ class TestAC5MastersCheck:
 # ── AC-6: no base_sha → unmeasured ──────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="no batch audit yet")
 class TestAC6Unmeasured:
     """AC-6: no base_sha in the master → unmeasured."""
 
@@ -480,7 +474,6 @@ class TestAC6Unmeasured:
 # ── AC-7: scheduler wiring ──────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="no batch audit yet")
 class TestAC7SchedulerWiring:
     """AC-7: scheduler.sh maybe_start_release_train calls batch_audit.py."""
 

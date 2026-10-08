@@ -589,6 +589,20 @@ print('true' if sentinel_all_shipped(Path('$sentinel_file')) else 'false')
     return 1
   fi
 
+  # Batch audit: mechanical review before offering a train.
+  # Skip if ILK_BATCH_AUDIT=0 (test-only override).
+  if [[ "${ILK_BATCH_AUDIT:-1}" != "0" ]]; then
+    local audit_result
+    audit_result="$("$PYTHON" "${_ILK_SCRIPT_DIR}/../../ilk-ship/scripts/batch_audit.py" \
+      --project "$repo" --run-id "$run_id" --json 2>/dev/null)" || audit_result="{}"
+    local audit_verdict
+    audit_verdict="$("$PYTHON" -c "import json,sys; print(json.loads(sys.argv[1]).get('verdict','error'))" "$audit_result" 2>/dev/null)" || audit_verdict="error"
+    if [[ "$audit_verdict" != "pass" ]]; then
+      write_scheduler_log "skip-audit-failed" "$key" "verdict=$audit_verdict"
+      return 1
+    fi
+  fi
+
   # Pre-flight: check permits before starting the train.
   # The train's run() also checks, but catching a missing permit here
   # avoids wasting a prove+cut cycle on a detached train that would
