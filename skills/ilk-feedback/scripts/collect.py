@@ -1215,17 +1215,21 @@ def _classify_core(
             "reason": "no JSONL records for this run — possibly failed before first iter completed",
         }
 
-    last = iters[-1]
+    # Exclude run_exit records from iteration aggregates: the terminal record
+    # (iteration=999999) is not a real iteration — it carries the stop_reason
+    # and total iter count but has no exit_code, duration, or commits.
+    _real_iters = [r for r in iters if r.get("record_type") != "run_exit"]
+    last = _real_iters[-1] if _real_iters else iters[-1]
     # A run-level terminal record (record_type="run_exit") carries the
     # enforcement-set stop_reason that the per-iteration record missed (D1).
     # Prefer it over the last iteration's (possibly empty) stop_reason.
     terminal = next((r for r in iters if r.get("record_type") == "run_exit"), None)
     last_stop = (terminal or last).get("stop_reason")
-    error_count = sum(1 for r in iters if r.get("exit_code") not in (0, None))
-    err_rate = error_count / len(iters) if iters else 0.0
-    new_commits_total = sum((r.get("new_commits_total") or 0) for r in iters)
+    error_count = sum(1 for r in _real_iters if r.get("exit_code") not in (0, None))
+    err_rate = error_count / len(_real_iters) if _real_iters else 0.0
+    new_commits_total = sum((r.get("new_commits_total") or 0) for r in _real_iters)
 
-    iter_count = len(iters)
+    iter_count = len(_real_iters)
     max_iter_configured = (last_launch or {}).get("max_iterations") or 0
     timeout_configured_min = (last_launch or {}).get("iteration_timeout_min") or 0
 
@@ -1255,7 +1259,7 @@ def _classify_core(
     last_checks = _items(last)
     last_failed = any(c.get("outcome") in ("fail", "error") for c in last_checks)
     if last_failed:
-        recent = iters[-5:] if len(iters) >= 5 else iters
+        recent = _real_iters[-5:] if len(_real_iters) >= 5 else _real_iters
         fail_iters = sum(
             1 for r in recent
             if any(c.get("outcome") in ("fail", "error") for c in _items(r))
@@ -1411,7 +1415,7 @@ def _classify_core(
             rl_count = count_rate_limit_events(run_id, project_path, last_launch)
             if rl_count > 0:
                 # Compute output-per-second across the last few iters.
-                last3 = iters[-3:]
+                last3 = _real_iters[-3:]
                 total_output = sum((r.get("output_tokens") or 0) for r in last3)
                 total_dur = sum((r.get("duration_sec") or 0) for r in last3)
                 output_per_sec = total_output / total_dur if total_dur > 0 else 0
@@ -1425,7 +1429,7 @@ def _classify_core(
                         "output_per_sec": round(output_per_sec, 2),
                     }
         # split by error pattern
-        last3 = iters[-3:]
+        last3 = _real_iters[-3:]
         last3_errs = sum(1 for r in last3 if r.get("exit_code") not in (0, None))
         if last3_errs >= 2:
             # Disambiguate API errors from local-check failures via log keywords.
@@ -2567,7 +2571,9 @@ def render_report(
     last_log_path: str | None = None,
     master: str = "",
 ) -> str:
-    iter_count = len(iters)
+    # Exclude run_exit terminal records from iteration counts.
+    _real_iters = [r for r in iters if r.get("record_type") != "run_exit"]
+    iter_count = len(_real_iters)
     # Resolve master from sentinel when not supplied by caller.
     if not master:
         try:
@@ -2586,25 +2592,25 @@ def render_report(
         to_cfg = next(
             (r.get("iteration_timeout_min") for r in iters if r.get("iteration_timeout_min") is not None), "unknown"
         )
-    total_elapsed = sum((r.get("duration_sec") or 0) for r in iters)
-    new_commits_total = sum((r.get("new_commits_total") or 0) for r in iters)
-    err_count = sum(1 for r in iters if r.get("exit_code") not in (0, None))
-    durations_min = [(r.get("duration_sec") or 0) / 60.0 for r in iters]
+    total_elapsed = sum((r.get("duration_sec") or 0) for r in _real_iters)
+    new_commits_total = sum((r.get("new_commits_total") or 0) for r in _real_iters)
+    err_count = sum(1 for r in _real_iters if r.get("exit_code") not in (0, None))
+    durations_min = [(r.get("duration_sec") or 0) / 60.0 for r in _real_iters]
     avg_dur = sum(durations_min) / len(durations_min) if durations_min else 0
     max_dur = max(durations_min) if durations_min else 0
 
     # Prefer the run's own earliest record timestamp.  Only fall back to
     # last-launch.json when it names the SAME run — a last-launch that
     # belongs to a later run would give a wrong start time.
-    started_at = iters[0].get("timestamp") if iters else None
+    started_at = _real_iters[0].get("timestamp") if _real_iters else None
     if not started_at and last_launch is not None and last_launch.get("run_id") == run_id:
         started_at = last_launch.get("started_at")
     if not started_at:
         started_at = "unknown"
-    model = next((r.get("model") for r in iters if r.get("model")), "?")
-    base_url = next((r.get("base_url") for r in iters if r.get("base_url")), "?")
+    model = next((r.get("model") for r in _real_iters if r.get("model")), "?")
+    base_url = next((r.get("base_url") for r in _real_iters if r.get("base_url")), "?")
 
-    last = iters[-1] if iters else {}
+    last = _real_iters[-1] if _real_iters else {}
     last_iter_log = last_log_path if last_log_path else last.get("log") if last else None
 
     fm = {
