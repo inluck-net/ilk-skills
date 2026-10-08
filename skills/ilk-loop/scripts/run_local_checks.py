@@ -1272,6 +1272,44 @@ def _synthesize_mention_check(
     }
 
 
+def pin_gate_command(cmd: str, env: dict[str, str]) -> str:
+    """Rewrite ``~/.ilk/current/skills/`` prefixes to the pinned release.
+
+    When *env* contains non-empty ``ILK_RUN_RELEASE_DIR`` and
+    ``ILK_SKILL_HOME``, every occurrence of
+    ``<HOME>/.ilk/current/skills/`` or ``~/.ilk/current/skills/`` in
+    *cmd* is replaced with ``<ILK_SKILL_HOME>/``.  Relative
+    ``skills/…`` paths are left untouched.
+
+    Returns the (possibly rewritten) command string.
+    """
+    release_dir = env.get("ILK_RUN_RELEASE_DIR", "")
+    skill_home = env.get("ILK_SKILL_HOME", "")
+    if not release_dir or not skill_home:
+        return cmd
+
+    home = env.get("HOME") or str(Path.home())
+    # Normalise: no trailing slash on the replacement prefix
+    skill_home = skill_home.rstrip("/")
+
+    # Two prefixes to rewrite:
+    #   1. $HOME/.ilk/current/skills/   (absolute)
+    #   2. ~/.ilk/current/skills/       (tilde)
+    prefix_abs = f"{home}/.ilk/current/skills/"
+    prefix_tilde = "~/.ilk/current/skills/"
+
+    rewritten = cmd
+    if prefix_abs in rewritten:
+        rewritten = rewritten.replace(prefix_abs, f"{skill_home}/")
+    if prefix_tilde in rewritten:
+        rewritten = rewritten.replace(prefix_tilde, f"{skill_home}/")
+
+    if rewritten != cmd:
+        print(f"[pinned] gate path ~/.ilk/current/skills -> {skill_home}",
+              file=sys.stderr)
+    return rewritten
+
+
 def run_one(check: dict, scope: str, project: Path,
             default_timeout: int = DEFAULT_CHECK_TIMEOUT_S) -> CheckResult:
     cmd = check.get("command", "")
@@ -1302,6 +1340,8 @@ def run_one(check: dict, scope: str, project: Path,
         )
         r.outcome, r.reason = _classify_check(r.exit_code, r.error, "")
         return r
+    # Rewrite gate paths for pinned runs (AC: gates-never-pin-current)
+    cmd = pin_gate_command(cmd, os.environ)
     # Apply path_prelude if configured (AC-1, AC-2)
     path_prelude = _read_path_prelude(project)
     applied = bool(path_prelude)

@@ -1,14 +1,11 @@
 """Tests that a pinned run's gates rewrite ``~/.ilk/current/skills`` paths
 to the run's own release directory (``ILK_SKILL_HOME``).
 
-AC-1 through AC-4 from sub-plan gates-never-pin-current step 0.
-All marked xfail until the rewrite is implemented in step 1.
+AC-1 through AC-4 from sub-plan gates-never-pin-current.
 """
 import sys
 from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import run_local_checks as rlc  # noqa: E402
@@ -18,7 +15,6 @@ import run_local_checks as rlc  # noqa: E402
 # AC-1: absolute HOME-prefixed and tilde paths are rewritten when pinned
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="gates follow the current symlink")
 def test_pin_rewrites_home_prefix() -> None:
     """``$HOME/.ilk/current/skills/…`` → ``$ILK_SKILL_HOME/…``."""
     env = {
@@ -31,7 +27,6 @@ def test_pin_rewrites_home_prefix() -> None:
     assert result == "python3 /r/v1/skills/ilk-loop/scripts/x.py --a"
 
 
-@pytest.mark.xfail(strict=True, reason="gates follow the current symlink")
 def test_pin_rewrites_tilde_prefix() -> None:
     """``~/.ilk/current/skills/…`` → ``$ILK_SKILL_HOME/…``."""
     env = {
@@ -48,7 +43,6 @@ def test_pin_rewrites_tilde_prefix() -> None:
 # AC-2: without ILK_RUN_RELEASE_DIR the command is unchanged
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="gates follow the current symlink")
 def test_no_pin_when_release_dir_unset() -> None:
     """Without ``ILK_RUN_RELEASE_DIR`` the command passes through."""
     env = {"HOME": "/h"}
@@ -62,7 +56,6 @@ def test_no_pin_when_release_dir_unset() -> None:
 # AC-3: relative paths are never rewritten (pinned or not)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="gates follow the current symlink")
 def test_relative_path_unchanged_when_pinned() -> None:
     """A relative ``skills/…`` path stays as-is."""
     env = {
@@ -78,7 +71,6 @@ def test_relative_path_unchanged_when_pinned() -> None:
 # AC-4: wiring — run_one rewrites the command before execution
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="gates follow the current symlink")
 def test_run_one_pins_gate_command(tmp_path: Path) -> None:
     """A gate through ``run_one`` prints the rewritten path, not ``current``."""
     release = tmp_path / "release"
