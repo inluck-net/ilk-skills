@@ -413,3 +413,51 @@ class TestAC6:
         assert fm.get("autoplan_run") == "run-001"
         # Original status preserved
         assert fm.get("status") == "queued"
+
+# ── 0d03cc65: one malformed row never stops ranking ─────────────────────────
+
+
+class TestMalformedRowsDoNotRaise:
+    """A row whose relations is not a dict is ranked as if relations were {}.
+
+    On 2026-10-08 six live rows had ``relations: []``; rank() raised
+    AttributeError on them, which would have failed every autoplan tick.
+    """
+
+    def _bad_rows(self):
+        rows = []
+        for cid, rel in (("rel-list", []), ("rel-str", "a,b"),
+                         ("rel-none", None)):
+            e = _make_candidate(cid=cid, title=cid, gap="gap")
+            e["relations"] = rel
+            rows.append(e)
+        odd = _make_candidate(cid="odd-numbers", title="odd", gap="gap")
+        odd["seen_count"] = "many"
+        odd["relations"]["escalations"] = "1"
+        odd["relations"]["autoplan_attempts"] = "2"
+        rows.append(odd)
+        return rows
+
+    def test_rank_returns_the_other_rows(self):
+        mod = _load_module()
+        entries = [_make_candidate(cid="good", seen_count=5)] + self._bad_rows()
+        entries.append("not-a-row")
+        ids = [e["id"] for e in mod.rank(entries)]
+        assert ids[0] == "good"
+        assert set(ids) == {"good", "rel-list", "rel-str", "rel-none"}
+        # "2" attempts still trips the rail.
+        assert "odd-numbers" not in ids
+
+    def test_mark_candidate_rewrites_malformed_relations(self, tmp_path):
+        mod = _load_module()
+        backlog_dir = _build_fake_backlog_dir(tmp_path)
+        _save_candidates(backlog_dir, self._bad_rows()[:2])
+        mod.mark_candidate("rel-list", relations={"autoplan_blocked": True},
+                           backlog_dir=backlog_dir)
+        mod.mark_candidate("rel-str", increment={"autoplan_attempts": 1},
+                           backlog_dir=backlog_dir)
+        by_id = {e["id"]: e for e in _load_candidates(backlog_dir)}
+        assert by_id["rel-list"]["relations"] == {"autoplan_blocked": True}
+        assert by_id["rel-list"]["relations_malformed"] == []
+        assert by_id["rel-str"]["relations"] == {"autoplan_attempts": 1}
+        assert by_id["rel-str"]["relations_malformed"] == "a,b"

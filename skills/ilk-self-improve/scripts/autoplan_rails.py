@@ -175,6 +175,28 @@ def _parse_date(s: str) -> datetime | None:
     return dt
 
 
+def _relations(entry: dict) -> dict:
+    """An entry's relations, or {} when a writer left another shape.
+
+    Writers have emitted [] and comma strings (da8107a9); on 2026-10-08 six
+    rows with ``relations: []`` made rank() raise on every tick (0d03cc65).
+    """
+    rel = entry.get("relations")
+    return rel if isinstance(rel, dict) else {}
+
+
+def _as_int(value: Any) -> int:
+    """An int for ranking: a bool, a non-numeric string or None counts as 0."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return 0
+
+
 def rank(entries: list[dict], *, now: datetime | None = None) -> list[dict]:
     """Filter and rank eligible autoplan candidates.
 
@@ -193,13 +215,15 @@ def rank(entries: list[dict], *, now: datetime | None = None) -> list[dict]:
 
     eligible = []
     for e in entries:
+        if not isinstance(e, dict):
+            continue
         if e.get("status") != "open":
             continue
         source = e.get("source")
         if source not in ELIGIBLE_SOURCES:
             continue
-        rel = e.get("relations", {})
-        if rel.get("autoplan_attempts", 0) >= 2:
+        rel = _relations(e)
+        if _as_int(rel.get("autoplan_attempts", 0)) >= 2:
             continue
         if rel.get("autoplan_blocked"):
             continue
@@ -215,11 +239,11 @@ def rank(entries: list[dict], *, now: datetime | None = None) -> list[dict]:
 
     eligible.sort(key=lambda e: (
         _SOURCE_TIER.get(e.get("source", ""), 99),
-        -(e.get("relations", {}).get("escalations", 0) > 0),
-        -(e.get("relations", {}).get("urgent", False)),
-        -e.get("seen_count", 0),
-        e.get("first_seen", ""),
-        e.get("id", ""),
+        -(_as_int(_relations(e).get("escalations", 0)) > 0),
+        -bool(_relations(e).get("urgent", False)),
+        -_as_int(e.get("seen_count", 0)),
+        str(e.get("first_seen", "")),
+        str(e.get("id", "")),
     ))
     return eligible
 
@@ -480,6 +504,13 @@ def mark_candidate(
         # Apply updates.
         if status is not None:
             target["status"] = status
+        if (relations is not None or increment is not None) and not isinstance(
+            target.get("relations", {}), dict
+        ):
+            # Keep a malformed value for the owner instead of raising
+            # (0d03cc65): the row stays writable and nothing is lost.
+            target["relations_malformed"] = target["relations"]
+            target["relations"] = {}
         if relations is not None:
             existing_rels = target.get("relations", {})
             existing_rels.update(relations)
