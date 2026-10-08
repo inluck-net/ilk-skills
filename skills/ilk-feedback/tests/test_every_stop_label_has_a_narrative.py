@@ -26,33 +26,10 @@ if str(_SCRIPTS_DIR) not in sys.path:
 import collect  # noqa: E402
 
 
-# Labels that have no narrative/rationale at base 6bfeead3.
-_RED_AT_BASE: set[str] = {
-    "merge-conflict",
-    "merge-deferred",
-    "yielded",
-    "local-checks-unchanged",
-    "blocked-no-runnable",
-}
-
-_XFAIL_REASON = "label has no narrative/rationale"
-
-
 # ── AC-1: totality ─────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize(
-    "label",
-    [
-        pytest.param(
-            lbl,
-            marks=pytest.mark.xfail(strict=True, reason=_XFAIL_REASON),
-        )
-        if lbl in _RED_AT_BASE
-        else lbl
-        for lbl in collect.CLASSIFICATION_LABELS
-    ],
-)
+@pytest.mark.parametrize("label", collect.CLASSIFICATION_LABELS)
 def test_label_narrative_not_placeholder(label):
     """_label_narrative must return real text, not the placeholder."""
     narrative = collect._label_narrative(label, {})
@@ -67,7 +44,6 @@ def test_label_narrative_not_placeholder(label):
 # ── AC-2: local-checks-unchanged detail ────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_local_checks_unchanged_with_iter():
     """With iter_at_stop in facts, narrative mentions the iteration."""
     facts = {"iter_at_stop": 1}
@@ -97,7 +73,6 @@ def test_local_checks_unchanged_without_iter():
 # ── AC-3: merge-conflict names its route ───────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_merge_conflict_live_clone():
     facts = {"stop_reason": "selfmod_live_clone_touched"}
     narrative = collect._label_narrative("merge-conflict", facts)
@@ -106,7 +81,6 @@ def test_merge_conflict_live_clone():
     )
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_merge_conflict_merge_failed():
     facts = {"stop_reason": "selfmod_merge_failed"}
     narrative = collect._label_narrative("merge-conflict", facts)
@@ -118,18 +92,13 @@ def test_merge_conflict_merge_failed():
 # ── AC-4: rationale ────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize(
-    "label",
-    [
-        pytest.param(
-            lbl,
-            marks=pytest.mark.xfail(strict=True, reason=_XFAIL_REASON),
-        )
-        if lbl in _RED_AT_BASE
-        else lbl
-        for lbl in _RED_AT_BASE
-    ],
-)
+@pytest.mark.parametrize("label", [
+    "merge-conflict",
+    "merge-deferred",
+    "yielded",
+    "local-checks-unchanged",
+    "blocked-no-runnable",
+])
 def test_recommend_params_has_rationale(label):
     """recommend_params returns a real rationale, not the placeholder."""
     _, _, rationale = collect.recommend_params(label, [], None, {})
@@ -153,7 +122,6 @@ _BLOCK_LABELS = {"local-checks-unchanged", "merge-conflict", "blocked-no-runnabl
 _RELAUNCH_LABELS = {"merge-deferred", "yielded"}
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 @pytest.mark.parametrize("label", sorted(_BLOCK_LABELS))
 def test_block_stance_narrative(label):
     """Block/stop-clean labels must say 'Do not auto-relaunch' in narrative."""
@@ -164,7 +132,6 @@ def test_block_stance_narrative(label):
     )
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 @pytest.mark.parametrize("label", sorted(_BLOCK_LABELS))
 def test_block_stance_rationale(label):
     """Block/stop-clean labels must say 'Do not auto-relaunch' in rationale."""
@@ -175,7 +142,6 @@ def test_block_stance_rationale(label):
     )
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 @pytest.mark.parametrize("label", sorted(_RELAUNCH_LABELS))
 def test_relaunch_stance_narrative(label):
     """Relaunch labels must have a narrative (not the placeholder)."""
@@ -185,7 +151,6 @@ def test_relaunch_stance_narrative(label):
     )
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 @pytest.mark.parametrize("label", sorted(_RELAUNCH_LABELS))
 def test_relaunch_stance_rationale(label):
     """Relaunch labels must have a rationale (not the placeholder)."""

@@ -2214,6 +2214,35 @@ def recommend_params(
             "Params unchanged; resume when ready."
         )
 
+    if label == "local-checks-unchanged":
+        return cur_max, cur_to, (
+            "Do not auto-relaunch — the gate was red on code this iteration "
+            "did not touch. A relaunch re-runs the same gate on the same "
+            "tree. Check whether the gate is red at the base commit."
+        )
+    if label == "merge-conflict":
+        return cur_max, cur_to, (
+            "Do not auto-relaunch — committed work is stranded in a "
+            "selfmod worktree. A fresh launch cannot reach it; needs "
+            "manual recovery."
+        )
+    if label == "merge-deferred":
+        return cur_max, cur_to, (
+            "Merge-back deferred, not failed. The scheduler relaunches "
+            "when the other loop exits. Params unchanged."
+        )
+    if label == "yielded":
+        return cur_max, cur_to, (
+            "Yielded for another project's pending merge. The scheduler "
+            "relaunches when that merge completes. Params unchanged."
+        )
+    if label == "blocked-no-runnable":
+        return cur_max, cur_to, (
+            "Do not auto-relaunch — no runnable sub-plans remain. "
+            "Every outstanding sub-plan is blocked or skipped. Needs "
+            "a human to unblock or add work."
+        )
+
     return cur_max, cur_to, "no specific recommendation"
 
 
@@ -3081,6 +3110,62 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
         )
     if label == "interrupted":
         return facts.get("note") or "Loop did not reach a natural stop."
+    if label == "local-checks-unchanged":
+        iter_clause = (
+            f" at iter {facts['iter_at_stop']}"
+            if facts.get("iter_at_stop")
+            else ""
+        )
+        return (
+            f"Gate was red{iter_clause} after an iteration that made "
+            f"no new commits — the red is on code this iteration did not "
+            f"touch: a red base or an environment fault. "
+            f"Read the 'Failing check details' section below and check "
+            f"whether the gate is red at the base commit. "
+            f"Do not auto-relaunch — a relaunch re-runs the same gate "
+            f"on the same tree."
+        )
+    if label == "merge-conflict":
+        reason = facts.get("stop_reason", "")
+        if reason == "selfmod_live_clone_touched":
+            detail = (
+                "the worker edited the live clone "
+                "(e.g. via ~/.claude/skills/…) instead of the selfmod "
+                "worktree"
+            )
+        else:
+            detail = (
+                "the selfmod worktree's merge-back failed, and committed "
+                "work is parked in the worktree"
+            )
+        return (
+            f"Stopped: {detail}. Neither is recovered by a relaunch. "
+            f"Do not auto-relaunch — committed work is stranded in a "
+            f"worktree that a fresh launch cannot reach."
+        )
+    if label == "merge-deferred":
+        return (
+            "The selfmod merge-back was deferred because another live "
+            "loop was running. Nothing failed, and the work stays "
+            "committed in the worktree. The scheduler will relaunch "
+            "this project when the other loop exits."
+        )
+    if label == "yielded":
+        return (
+            "This run yielded so the scheduler could dispatch another "
+            "project's pending merge first. This is distinct from "
+            "merge-deferred, which is about this run's own merge. "
+            "The scheduler will relaunch when the other project's "
+            "merge completes."
+        )
+    if label == "blocked-no-runnable":
+        return (
+            "Sub-plans are still outstanding, but none is runnable: "
+            "every remaining one is blocked (e.g. auto-quarantined "
+            "after confirmed reds) or skipped. A relaunch has nothing "
+            "to run. Do not auto-relaunch — needs a human to unblock "
+            "or add a runnable sub-plan."
+        )
     return "(no narrative for this label)"
 
 
