@@ -406,6 +406,55 @@ def _proof_payload(**kwargs: object) -> dict:
     return {k: v for k, v in kwargs.items() if v is not None}
 
 
+#: Release-path files outside the safety kernel list.  The kernel list
+#: already names the runner, ship scripts and gates; the scheduler is not on
+#: it but every loop on the host runs it (07h changed it under a scoped
+#: verify).
+_RELEASE_PATH_EXTRA = ("skills/ilk-watchdog/scripts/scheduler.sh",)
+
+
+def _scope_summary(scope: dict | None) -> dict:
+    """A batch record's suite_scope, with ``mode: unrecorded`` when absent."""
+    if not isinstance(scope, dict) or not scope.get("mode"):
+        return {"mode": "unrecorded"}
+    return dict(scope)
+
+
+def _scope_phrase(scope: dict) -> str:
+    """``8 of 8 tests passed, 1 file selected`` or ``not recorded``."""
+    if scope.get("mode") == "unrecorded":
+        return "scope not recorded in batch-gate.json"
+    parts = []
+    if "passed" in scope:
+        parts.append(f"{scope['passed']} of {scope.get('total', '?')} tests passed")
+    if scope.get("mode") == "scoped" and "selection_size" in scope:
+        parts.append(f"{scope['selection_size']} file(s) selected")
+    return ", ".join(parts) or "no counts recorded"
+
+
+def _release_path_hits(project: Path, base: str, head: str) -> list[str]:
+    """Files in ``base..head`` that are on the release path.
+
+    Release path = the safety-kernel list (both tiers) plus
+    ``_RELEASE_PATH_EXTRA``.  An unreadable diff counts as a hit: a range
+    the train cannot list is not one it can call clean.
+    """
+    if str(_LOOP_SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(_LOOP_SCRIPTS))
+    from safety_kernel import check_paths, load as load_kernel  # noqa: E402
+
+    r = _git(project, "diff", "--name-only", base, head)
+    if r.returncode != 0:
+        return [f"<git diff {base}..{head[:12]} failed>"]
+    paths = [p for p in r.stdout.splitlines() if p.strip()]
+    # The toolkit's own list, named explicitly: load()'s default repo
+    # resolves to <toolkit>/skills, one level short.
+    kernel = load_kernel(_LOOP_SCRIPTS.parents[2])
+    hits = {h["path"] for h in check_paths(paths, kernel=kernel)}
+    hits.update(p for p in paths if p in _RELEASE_PATH_EXTRA)
+    return sorted(hits)
+
+
 def prove(project: Path, data_dir: Path) -> dict:
     """Prove HEAD against the last-tag baseline in a fresh clone.
 
@@ -640,6 +689,38 @@ def prove(project: Path, data_dir: Path) -> dict:
             "new_failing_ids": undeclared_failures, "proof_file": proof_path,
         }
 
+    # ── verify scope (93d82cba) ───────────────────────────────────────
+    #
+    # A scoped verify proves only its selection.  07h (2026-10-08) verified
+    # 8 tests and read to the train like a full-suite pass while its diff
+    # changed scheduler.sh.  A verify that is not recorded as ``full`` may
+    # not prove a range that touches the release path.
+    suite_scope = _scope_summary(batch_record.suite_scope)
+    if suite_scope["mode"] != "full":
+        hits = _release_path_hits(project, last_tag, head)
+        if hits:
+            reason = (
+                f"scoped-verify-over-release-path: the verify was "
+                f"{suite_scope['mode']} ({_scope_phrase(suite_scope)}) but "
+                f"{last_tag}..HEAD changes release-path files: "
+                + ", ".join(hits[:8])
+                + (f" (+{len(hits) - 8} more)" if len(hits) > 8 else "")
+                + ". Run a full-scope verify (--scope full) or release by hand "
+                  "stating the narrower claim."
+            )
+            proof_path = _write_proof(data_dir, head, {
+                "head": head, "last_tag": last_tag,
+                "invocation": invocation,
+                "verdict": "refused",
+                "reason": reason,
+                "verdict_source": "batch_verdict",
+                "suite_scope": suite_scope,
+            })
+            return {
+                "proven": False, "reason": reason,
+                "new_failing_ids": [], "proof_file": proof_path,
+            }
+
     # Record carried ids (inherited from baseline_red evidence).
     carried_ids = []
 
@@ -698,6 +779,7 @@ def prove(project: Path, data_dir: Path) -> dict:
         batch_path=batch_path,
         provenance=provenance,
         verdict_source="batch_verdict",
+        suite_scope=suite_scope,
         safety_case={
             "verdict": sc_result.get("verdict"),
             "components": sc_result.get("components"),
@@ -885,6 +967,8 @@ def cut(project: Path, data_dir: Path) -> dict:
     phase1_passed = 0
     phase1_failed = len(failing_nodes)
     phase1_new = len(new_failing_ids)
+    suite_scope = _scope_summary(proof.get("suite_scope"))
+    scope_line = f"verify scope {suite_scope['mode']} ({_scope_phrase(suite_scope)})"
 
     # ── CHANGELOG row ────────────────────────────────────────────────────
     import datetime
@@ -902,7 +986,8 @@ def cut(project: Path, data_dir: Path) -> dict:
         f" — {', '.join(master_slugs) if master_slugs else 'direct commits'}."
         f" Phase 0 {phase0_total}/{phase0_total} proven."
         f" Phase 1: {phase1_failed} failed / {phase1_passed} passed"
-        f" with {invocation}, {phase1_new} new ids vs {last_tag}."
+        f" with {invocation}, {phase1_new} new ids vs {last_tag};"
+        f" {scope_line}."
     )
     row = f"| {next_tag} | {today} | {highlights} |"
     _insert_changelog_row(project, row)
@@ -924,7 +1009,8 @@ def cut(project: Path, data_dir: Path) -> dict:
         f"Masters: {', '.join(master_slugs) if master_slugs else 'direct commits'}\n"
         f"Phase 0: {phase0_total}/{phase0_total} proven\n"
         f"Phase 1: {phase1_failed} failed / {phase1_passed} passed\n"
-        f"Invocation: {invocation}\n\n"
+        f"Invocation: {invocation}\n"
+        f"Verify: {scope_line}\n\n"
         f"Cut by the release train (unattended), authorized by Chad 2026-10-03.\n"
     )
     r = _git_mut(project, "tag", "-a", next_tag, "-m", tag_body)

@@ -1046,11 +1046,39 @@ def check_verified_tree(project: Path, record_path: Path) -> tuple[bool, str]:
     )
 
 
+def read_suite_scope(text: str) -> dict | None:
+    """The verify's scope fields from a verification record, or None.
+
+    Carried into batch-gate.json so the proof says how much of the suite
+    backed it (93d82cba).  None when the record has no ``suite_scope`` line.
+    """
+    def field(name: str) -> str | None:
+        m = re.search(rf"^[-*\s]*\**\s*{name}[ \t]*:\**[ \t]*(.*)$",
+                      text, re.MULTILINE)
+        return m.group(1).replace("`", "").strip() if m else None
+
+    mode = field("suite_scope")
+    if not mode:
+        return None
+    mode = mode.split()[0].strip("`")
+    scope: dict = {"mode": mode}
+    reason = field("suite_scope_reason")
+    if reason:
+        scope["reason"] = reason[:300]
+    for key, name in (("selection_size", "selection_size"),
+                      ("passed", "suite_passed"), ("total", "suite_total")):
+        v = field(name)
+        if v is not None and v.isdigit():
+            scope[key] = int(v)
+    return scope
+
+
 def write_gate_record(project: Path, excused: int,
                       flaky_owed: list[str] | None = None,
                       suite_source: str | None = None,
                       batch: str | None = None,
                       counts: dict[str, int] | None = None,
+                      suite_scope: dict | None = None,
                       ) -> tuple[bool, str]:
     """Record the verified verdict where the PROOF CHECK actually reads it.
 
@@ -1121,6 +1149,7 @@ def write_gate_record(project: Path, excused: int,
         flaky_owed=list(flaky_owed) if flaky_owed else None,
         suite_source=suite_source,
         counts=dict(counts) if counts else None,
+        suite_scope=dict(suite_scope) if suite_scope else None,
     )
     try:
         written = batch_gate.write_record(record, runtime_dir, batch=batch)
@@ -1374,7 +1403,8 @@ def main(argv: list[str] | None = None) -> int:
 
     ok, detail = write_gate_record(project, excused, flaky_owed=flaky_owed,
                                    suite_source=suite_source,
-                                   batch=args.batch, counts=counts)
+                                   batch=args.batch, counts=counts,
+                                   suite_scope=read_suite_scope(_ss_text))
     if ok:
         print(f"{message}; batch-gate record written to {detail}")
     else:

@@ -149,6 +149,13 @@ class BatchGateRecord:
     #: sum to ``suite_failed``.  Absent on legacy records — readers treat
     #: that as "not recorded", not as zeros.
     counts: Optional[dict] = None
+    #: How much of the suite the verify ran: ``{"mode": "full"|"scoped",
+    #: "reason", "selection_size", "passed", "total"}``, copied from the
+    #: verification record.  Absent on records written before 93d82cba —
+    #: readers treat that as "not recorded", never as ``full``.  Without it
+    #: a scoped 8-test verify (07h, 2026-10-08) read to the train exactly
+    #: like a full-suite pass.
+    suite_scope: Optional[dict] = None
 
     def to_dict(self) -> dict:
         d = {
@@ -172,6 +179,8 @@ class BatchGateRecord:
             d["suite_source"] = self.suite_source
         if self.counts is not None:
             d["counts"] = dict(self.counts)
+        if self.suite_scope is not None:
+            d["suite_scope"] = dict(self.suite_scope)
         return d
 
 
@@ -314,6 +323,7 @@ def read_record(
                 writer=data.get("writer") or None,
                 flaky_owed=_optional_str_list(data.get("flaky_owed")),
                 counts=data.get("counts") if isinstance(data.get("counts"), dict) else None,
+                suite_scope=_optional_dict(data.get("suite_scope")),
             )
         # Fall through to legacy path.
     p = record_path(runtime_dir)
@@ -339,7 +349,12 @@ def read_record(
         writer=data.get("writer") or None,
         flaky_owed=_optional_str_list(data.get("flaky_owed")),
         counts=data.get("counts") if isinstance(data.get("counts"), dict) else None,
+        suite_scope=_optional_dict(data.get("suite_scope")),
     )
+
+
+def _optional_dict(value) -> Optional[dict]:
+    return dict(value) if isinstance(value, dict) else None
 
 
 def _optional_str_list(value) -> Optional[list]:
