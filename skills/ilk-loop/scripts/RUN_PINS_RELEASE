@@ -1,0 +1,3 @@
+Marker: this runner pins to its own release dir.
+Read by bounce_daemons.sh and release_train.py to tell a pinned loop from an
+unpinned one.

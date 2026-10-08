@@ -15,9 +15,18 @@ set -Eeuo pipefail
 
 _ILK_SCRIPT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-source "${_ILK_SCRIPT_DIR}/_ilk_skill_root.sh"
-_SKILL_ROOT="$(ilk_skill_root)"
-export ILK_SKILL_HOME="$_SKILL_ROOT"
+# Release-run pin: when launched from a release dir with the marker,
+# resolve _SKILL_ROOT from the physical release path so the run never
+# follows a mid-flight `current` symlink flip.
+if [[ "$_ILK_SCRIPT_DIR" == */.ilk/releases/*/skills/ilk-loop/scripts && -f "$_ILK_SCRIPT_DIR/RUN_PINS_RELEASE" ]]; then
+    _SKILL_ROOT="$(cd -P "$_ILK_SCRIPT_DIR/../.." && pwd -P)"
+    export ILK_SKILL_HOME="$_SKILL_ROOT"
+    export ILK_RUN_RELEASE_DIR="$(cd -P "$_SKILL_ROOT/.." && pwd -P)"
+else
+    source "${_ILK_SCRIPT_DIR}/_ilk_skill_root.sh"
+    _SKILL_ROOT="$(ilk_skill_root)"
+    export ILK_SKILL_HOME="$_SKILL_ROOT"
+fi
 
 # Steer-hook functions (invoke_steer_hook) — operator interjections + pause gate.
 source "${_ILK_SCRIPT_DIR}/steer_hook.sh"
@@ -64,8 +73,10 @@ ITER_BUDGET_EXHAUSTED=0
 
 # ----- Selfmod skill home (ILK_SKILL_HOME) -----------------------------------
 # In selfmod mode, the worker session's skill root must point at the worktree's
-# skills dir, not the live clone.  ILK_SKILL_HOME is exported above (pinned by
-# realpath).  The selfmod override at the end of the file may replace it after
+# skills dir, not the live clone.  ILK_SKILL_HOME is exported above (pinned to
+# the physical release dir when the runner carries RUN_PINS_RELEASE; otherwise
+# resolved through _ilk_skill_root.sh).  The selfmod override at the end of the
+# file may replace it after
 # SELFMOD_WORKTREE_PATH is set by a sourcing test harness.
 
 # ----- Selfmod guard: check_edit_path ----------------------------------------

@@ -90,10 +90,6 @@ def _parse_kv(output: str) -> dict[str, str]:
 
 # ── AC-1: with marker → release pins ─────────────────────────────────────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a run follows the current symlink",
-)
 def test_release_run_pins_with_marker(tmp_path: Path) -> None:
     """AC-1: with marker, ILK_SKILL_HOME == physical release skills dir."""
     tree = _build_release_tree(tmp_path, marker=True)
@@ -196,10 +192,6 @@ echo "ILK_RUN_RELEASE_DIR=${{ILK_RUN_RELEASE_DIR:-<empty>}}"
 
 # ── AC-4: RUN_PINS_RELEASE exists in repo ────────────────────────────────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="marker file does not exist at base",
-)
 def test_run_pins_release_marker_exists() -> None:
     """AC-4: RUN_PINS_RELEASE exists in the repo."""
     marker = _SCRIPTS / "RUN_PINS_RELEASE"
