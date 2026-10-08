@@ -1925,3 +1925,101 @@ class TestTheRealLintAcceptsThePlannersArgv:
         )
 
         assert "lint-exit-2" not in result.get("problems", []), result
+
+
+# ── 9888c62b: refusals accumulate until the rail drops the row ──────────────
+
+
+class TestAttemptsAccumulate:
+    """Each refusal ADDS one attempt; the second one makes rank() drop the row.
+
+    Before 9888c62b every refusal SET autoplan_attempts to 1, so rank()'s
+    ``>= 2`` rail never tripped and one stale row was re-planned 5 times on
+    2026-10-08.
+    """
+
+    def _plan_once(self, mod, tmp_path, data_root, toolkit, manager_home,
+                   plans_dir, run_id, stale_reason=None):
+        stub_claude = _make_stub_claude(
+            tmp_path, model="claude-opus-test", write_nothing=True,
+            stale_reason=stale_reason)
+        lint, preflight = _make_stub_lint_preflight(tmp_path)
+        return mod.plan(
+            candidate_id="sig-abc123",
+            project_key="test-project",
+            run_id=run_id,
+            data_root=data_root,
+            toolkit_repo=str(toolkit),
+            manager_home=str(manager_home),
+            claude_cmd=[sys.executable, str(stub_claude)],
+            lint_cmd=[sys.executable, str(lint)],
+            preflight_cmd=[sys.executable, str(preflight)],
+            env_overrides={
+                "ILK_PLANS_DIR": str(plans_dir),
+                "ILK_REPO_DIR": str(toolkit),
+                "ILK_MARKER": str(tmp_path / "claude-marker.txt")},
+        )
+
+    def _setup(self, tmp_path):
+        mod = _load_module()
+        data_root = _build_fake_data_root(tmp_path)
+        toolkit = _build_fake_toolkit(tmp_path, data_root)
+        manager_home = _build_fake_manager_home(tmp_path)
+        launcher = data_root / "projects" / "test-project" / "runtime" / "launcher"
+        launcher.mkdir(parents=True, exist_ok=True)
+        (launcher / "last-launch.json").write_text(
+            json.dumps({"project_path": str(toolkit)}) + "\n",
+            encoding="utf-8")
+        backlog_dir = data_root / "ilk-skills-improvements"
+        backlog_dir.mkdir(parents=True, exist_ok=True)
+        _save_candidates(backlog_dir, [_make_candidate()])
+        plans_dir = data_root / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
+        return mod, data_root, toolkit, manager_home, backlog_dir, plans_dir
+
+    def test_two_refusals_count_two_and_rank_drops_the_row(self, tmp_path):
+        mod, data_root, toolkit, mh, backlog_dir, plans_dir = self._setup(tmp_path)
+        from autoplan_rails import rank
+
+        for run_id in ("run-001", "run-002"):
+            result = self._plan_once(mod, tmp_path, data_root, toolkit, mh,
+                                     plans_dir, run_id)
+            assert result["reason"] == "no-master", result
+
+        cand = [c for c in _load_candidates(backlog_dir)
+                if c["id"] == "sig-abc123"][0]
+        assert cand["relations"]["autoplan_attempts"] == 2
+        assert [c["id"] for c in rank(_load_candidates(backlog_dir))] == []
+
+    def test_stale_refusal_blocks_the_row_with_its_reason(self, tmp_path):
+        mod, data_root, toolkit, mh, backlog_dir, plans_dir = self._setup(tmp_path)
+        from autoplan_rails import rank
+
+        result = self._plan_once(mod, tmp_path, data_root, toolkit, mh,
+                                 plans_dir, "run-001",
+                                 stale_reason="fixed in abc123")
+        assert result["reason"] == "stale fixed in abc123", result
+
+        cand = [c for c in _load_candidates(backlog_dir)
+                if c["id"] == "sig-abc123"][0]
+        assert cand["relations"]["autoplan_attempts"] == 1
+        assert cand["relations"]["autoplan_blocked"] == "stale fixed in abc123"
+        assert rank(_load_candidates(backlog_dir)) == []
+
+    def test_mark_candidate_increment_adds_to_the_stored_count(self, tmp_path):
+        _load_module()
+        from autoplan_rails import mark_candidate
+        backlog_dir = tmp_path / "backlog"
+        backlog_dir.mkdir()
+        _save_candidates(backlog_dir, [
+            _make_candidate(cid="a", autoplan_attempts=1),
+            _make_candidate(cid="b"),
+        ])
+        for _ in range(2):
+            mark_candidate("a", increment={"autoplan_attempts": 1},
+                           backlog_dir=backlog_dir)
+        mark_candidate("b", increment={"autoplan_attempts": 1},
+                       backlog_dir=backlog_dir)
+        by_id = {c["id"]: c for c in _load_candidates(backlog_dir)}
+        assert by_id["a"]["relations"]["autoplan_attempts"] == 3
+        assert by_id["b"]["relations"]["autoplan_attempts"] == 1

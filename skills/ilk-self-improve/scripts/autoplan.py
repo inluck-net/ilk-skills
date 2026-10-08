@@ -494,15 +494,7 @@ def tick(
             # Increment autoplan_attempts on the candidate
             cand_id = inflight.get("candidate")
             if cand_id:
-                try:
-                    backlog_dir = _backlog_dir(data_root)
-                    mark_candidate(
-                        cand_id,
-                        relations={"autoplan_attempts": 1},
-                        backlog_dir=backlog_dir,
-                    )
-                except (KeyError, ValueError):
-                    pass
+                _increment_attempts(data_root, cand_id)
         return _result("autoplan-refused")
 
     # 5. Busy
@@ -882,7 +874,10 @@ def plan(
                         _write_plan_refused(
                             data_root, f"stale {reason}", candidate_id
                         )
-                        _increment_attempts(data_root, candidate_id)
+                        _increment_attempts(
+                            data_root, candidate_id,
+                            blocked_reason=f"stale {reason}",
+                        )
                         result = {
                             "decision": "refused",
                             "reason": f"stale {reason}",
@@ -1224,13 +1219,23 @@ def _write_plan_refused(data_root: Path, reason: str,
                 reason=reason, candidate=candidate_id)
 
 
-def _increment_attempts(data_root: Path, candidate_id: str) -> None:
-    """Increment autoplan_attempts on a candidate."""
+def _increment_attempts(data_root: Path, candidate_id: str,
+                        blocked_reason: str | None = None) -> None:
+    """Add 1 to autoplan_attempts on a candidate, under the backlog lock.
+
+    A *blocked_reason* (a planner "stale" refusal) also sets
+    ``autoplan_blocked``: the evidence no longer reproduces, so the row must
+    not be re-planned on the next start.
+    """
     try:
         backlog_dir = _backlog_dir(data_root)
         mark_candidate(
             candidate_id,
-            relations={"autoplan_attempts": 1},
+            relations=(
+                {"autoplan_blocked": blocked_reason}
+                if blocked_reason else None
+            ),
+            increment={"autoplan_attempts": 1},
             backlog_dir=backlog_dir,
         )
     except (KeyError, ValueError):

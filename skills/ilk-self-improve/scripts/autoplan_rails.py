@@ -445,9 +445,15 @@ def mark_candidate(
     *,
     status: str | None = None,
     relations: dict | None = None,
+    increment: dict | None = None,
     backlog_dir: Path | None = None,
 ) -> dict:
     """Under the lock, strict read, update one entry, atomic write.
+
+    *relations* overwrites keys; *increment* adds each value to the stored
+    count (missing or non-int counts as 0), read and written under the same
+    lock.  A set-to-1 counter never reached rank()'s ``>= 2`` rail
+    (backlog 9888c62bd85cfb82).
 
     Returns the updated entry dict.  Raises ``KeyError`` for unknown *entry_id*
     (writes nothing).
@@ -477,6 +483,14 @@ def mark_candidate(
         if relations is not None:
             existing_rels = target.get("relations", {})
             existing_rels.update(relations)
+            target["relations"] = existing_rels
+        if increment is not None:
+            existing_rels = target.get("relations", {})
+            for key, by in increment.items():
+                cur = existing_rels.get(key, 0)
+                if not isinstance(cur, int) or isinstance(cur, bool):
+                    cur = 0
+                existing_rels[key] = cur + by
             target["relations"] = existing_rels
 
         # Atomic write.
