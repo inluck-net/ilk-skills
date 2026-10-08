@@ -59,10 +59,6 @@ def _section5(text: str) -> str:
 # ── AC-1: no line of commands/ilk.md contains ship_transition.py --ship ─────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base commands/ilk.md:207 still has 'ship_transition.py --ship <slug>'",
-)
 class TestAC1NoShipCommandInIlkMd:
     """commands/ilk.md must not contain a ``ship_transition.py --ship`` command."""
 
@@ -77,10 +73,6 @@ class TestAC1NoShipCommandInIlkMd:
 # ── AC-2: the refusal appears verbatim in §7 ───────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base §7 does not quote the worker-session refusal message",
-)
 class TestAC2RefusalQuotedInIlkMd:
     """§7 must contain the exact text ``ship_transition.py`` emits when it
     refuses a worker session."""
@@ -109,10 +101,6 @@ class TestAC2RefusalQuotedInIlkMd:
 # ── AC-3: no line pairs status with through `ship_transition.py` ────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base commands/ilk.md:82-83 still pairs 'status' with 'through ship_transition.py'",
-)
 class TestAC3NoStatusThroughShipTransition:
     """No line of commands/ilk.md contains both ``status`` and
     ``through `ship_transition.py` ``."""
@@ -130,10 +118,6 @@ class TestAC3NoStatusThroughShipTransition:
 # ── AC-4: subplan-template Step N has no --ship, no by hand, has driver ──────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base subplan-template Step N has ship command block and by-hand fallback",
-)
 class TestAC4SubplanTemplateNoShip:
     """subplan-template.md Step N section must not contain ``--ship`` or
     ``by hand``, and must contain ``driver``."""
@@ -160,10 +144,6 @@ class TestAC4SubplanTemplateNoShip:
 # ── AC-5: ilk-plan.md "Sequenced steps" bullet ──────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base ilk-plan.md Sequenced steps bullet does not forbid ship steps",
-)
 class TestAC5IlkPlanForbidsShipSteps:
     """commands/ilk-plan.md "Sequenced steps" bullet must contain ``No step``
     and ``ship_transition.py``."""

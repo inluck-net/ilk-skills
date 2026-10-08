@@ -588,7 +588,10 @@ Once approved, write all files in one batch under the
   - Sequenced steps (one bullet list per step, ending with a commit line
     in the `<type>(<scope>): <summary> [plan:<slug>#step-N]` format).
     Each step must only use tools the step-4b probe confirms are
-    available to the loop.
+    available to the loop. No step tells the worker to ship, run
+    `ship_transition.py`, or write a `#ship` commit. The driver ships
+    after the last step's gate passes, and a worker-session ship is
+    refused.
   - Empty "Findings" section (loop fills during execution)
   - Reference reading section (any docs the executor should pre-load)
 

@@ -80,8 +80,8 @@ For each step:
    (`~/.ilk-data/projects/<key>/plans/`) — that file edit is NOT a
    commit in any member repo (plans live outside SCM).
 4. The only parts of a sub-plan file a worker may edit are `current_step`,
-   `last_updated` (and `status` only through `ship_transition.py`) in the
-   frontmatter, plus anything under `## Findings`. Everything else — including
+   `last_updated` in the frontmatter, plus anything under `## Findings`.
+   The `status` field is never the worker's to edit — the driver ships. Everything else — including
    `local_checks` — is the planner's surface. Touching anything above
    `## Findings` ends the iteration immediately (`plan-amended`). Touching
    any `local_checks` also stops the run: the runner restores gates from
@@ -204,15 +204,19 @@ Stop and hand back to the human when ANY of these is true:
      `关联 commit` field — use the ilk-lark-tickets skill.
   2. Any other edit made at ship time, such as a known-defects status line,
      is committed **before** the ship, under the last step's trailer.
-  3. Ship only through
-     `python3 <skill-root>/ilk-loop/scripts/ship_transition.py --ship <slug> --plans-dir <plans dir> --repo <repo>`.
-     Never edit `status:` and never author a `#ship` commit by hand.
-     never set `shipped` while the declared gate is red — if gate
-     failures are genuinely pre-existing and unrelated, record the
-     unrelated failing node ids and the proposed re-scoped gate command
-     under `## Findings`, and leave the sub-plan `in-progress` — do NOT
-     override or rationalize a red gate as acceptable. A sub-plan with a
-     red declared gate must stay `in-progress` until the gate is green.
+  3. The worker does not ship. It commits the last step and ends its turn.
+     The driver runs the declared gate after the turn and, only when the
+     gate is green, ships through `ship_transition.py`.
+     In a worker session `ship_transition.py` refuses with:
+     `ship is the driver's — end your turn after the last step's commit`.
+     A refusal is the answer. Never look for or run another copy of the
+     script: an older release under `~/.ilk/releases/`, or a test copy
+     under `/tmp` or `/private/tmp`. Never author a `#ship` commit.
+     Never edit `status:`. A red declared gate leaves the sub-plan
+     `in-progress`, with the failing ids and any proposed re-scoped gate
+     under `## Findings` — do NOT override or rationalize a red gate as
+     acceptable. A sub-plan with a red declared gate must stay
+     `in-progress` until the gate is green.
      A `batch_verification: true` sub-plan is shipped only by the driver.
      The worker never ships it, never edits its `status:` or
      `current_step`, and ends its turn after shipping the work sub-plan.
