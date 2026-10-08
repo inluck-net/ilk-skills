@@ -349,6 +349,7 @@ def mark_master(
     replaced_auto = False
     replaced_cand = False
     replaced_run = False
+    replaced_priority = False
 
     for line in lines:
         key = line.split(":")[0].strip() if ":" in line else ""
@@ -361,6 +362,9 @@ def mark_master(
         elif key == "autoplan_run":
             new_lines.append(f"autoplan_run: {run_id}\n")
             replaced_run = True
+        elif key == "priority":
+            new_lines.append(f"priority: 0\n")
+            replaced_priority = True
         else:
             new_lines.append(line)
 
@@ -374,6 +378,8 @@ def mark_master(
         new_lines.append(f"autoplan_candidate: {candidate_id}\n")
     if not replaced_run:
         new_lines.append(f"autoplan_run: {run_id}\n")
+    if not replaced_priority:
+        new_lines.append(f"priority: 0\n")
 
     new_text = "---" + "".join(new_lines) + rest
     tmp = master_path.with_suffix(master_path.suffix + ".tmp")

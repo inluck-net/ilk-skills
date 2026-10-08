@@ -34,6 +34,7 @@ AUDIT_KINDS: tuple[str, ...] = (
     "autoplan-queued",
     "autoplan-drafted",
     "autoplan-refused",
+    "autoplan-resumed",
     "dry-period-drafted",
     "master-parked-dead-work-tree",
 )

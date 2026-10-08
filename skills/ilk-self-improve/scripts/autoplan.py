@@ -53,11 +53,12 @@ from scheduler_scan import resolve_repo_path  # noqa: E402
 
 # ── constants (judgment calls — see MASTER) ────────────────────────────────
 
-IDLE_CYCLES_N = 6
-MIN_HOURS_BETWEEN_STARTS_K = 6
+IDLE_CYCLES_N = 3  # judgment call: 3 because debounce only; the draft-authoring and queued-master checks already detect owner work; wrong if an auto-planned master collides with a session-planned one more than once a week
+REFUSED_BACKOFF_MIN = 60  # judgment call: 60 min because a refused start costs minutes (04:19: 2.5 min) and the per-candidate cap of 2 attempts bounds retries; wrong if refused starts exceed MAX_STARTS_PER_DAY on most days
+MAX_STARTS_PER_DAY = 8  # judgment call: 8 because the planner home is an official-quota account; 8 sessions ≤ 8 × 45 min worst case; wrong if the triage home hits its quota on a capped day
 PLAN_TIMEOUT_S = 2700
 INIT_TIMEOUT_S = 120
-RECENT_AUTHORING_MIN = 60
+RECENT_AUTHORING_MIN = 20  # judgment call: 20 min because drafts are what a session is writing; queued/active are already counted and shipped ones are the runner's own status writes; wrong if a planner start collides with a session writing a plan
 MAX_CONSECUTIVE_DRAFTS = 2
 
 # Refusal reasons that should only write one audit row per consecutive streak.
@@ -134,28 +135,21 @@ def _find_toolkit_project(data_root: Path) -> tuple[str | None, str | None]:
 
 
 def _is_busy(data_root: Path) -> bool:
-    """Check if the system is busy (resets idle count to 0)."""
+    """Check if the system is busy (resets idle count to 0).
+
+    train.lock is fleet-wide (a train anywhere is busy).
+    running.pid, runnable queued/active master and recent-authoring checks
+    apply only to the toolkit project (other projects' loops no longer block
+    self-improvement; the release train waits for a quiet fleet itself (R2b)).
+    """
     projects_dir = data_root / "projects"
     if not projects_dir.is_dir():
         return False
 
+    # Fleet-wide: train.lock anywhere is busy
     for d in sorted(projects_dir.iterdir()):
         if not d.is_dir():
             continue
-
-        # Check running.pid
-        running_pid = d / "runtime" / "launcher" / "running.pid"
-        if running_pid.is_file():
-            pid_data = _read_json(running_pid)
-            # running.pid is just a number, not JSON
-            try:
-                pid = int(running_pid.read_text(encoding="utf-8").strip())
-                if _pid_alive(pid):
-                    return True
-            except (ValueError, OSError):
-                pass
-
-        # Check train.lock
         train_lock = d / "runtime" / "release" / "train.lock"
         if train_lock.is_file():
             try:
@@ -165,43 +159,62 @@ def _is_busy(data_root: Path) -> bool:
             except (ValueError, OSError):
                 pass
 
-        # Check for queued/active master with runnable sub-plan
-        repo = resolve_repo_path(d, d.name)
-        if repo is None:
-            continue
-        # Plans dir: look for it via the project's data dir
-        plans_dir = _find_plans_dir_for_project(d, repo)
-        if plans_dir is None:
-            continue
+    # Toolkit-scoped checks
+    toolkit_key, _ = _find_toolkit_project(data_root)
+    if toolkit_key is None:
+        return False
 
-        for master in sorted(plans_dir.glob("MASTER-*.md")):
-            try:
-                fm = parse_frontmatter(master.read_text(encoding="utf-8-sig"))
-            except OSError:
-                continue
-            # Skip auto-planned masters — they're checked at threshold
-            if fm.get("auto_planned", "").strip().lower() == "true":
-                continue
-            status = normalize_master_status(fm.get("status", ""))
-            if status in ("active", "queued"):
-                if master_has_runnable(master, plans_dir):
-                    return True
+    toolkit_dir = projects_dir / toolkit_key
 
-        # Check recently modified MASTER (session authoring)
-        cutoff = _now() - RECENT_AUTHORING_MIN * 60
-        for master in sorted(plans_dir.glob("MASTER-*.md")):
-            try:
-                if master.stat().st_mtime > cutoff:
-                    # Skip auto-planned masters
-                    try:
-                        fm = parse_frontmatter(master.read_text(encoding="utf-8-sig"))
-                        if fm.get("auto_planned", "").strip().lower() == "true":
-                            continue
-                    except OSError:
-                        pass
-                    return True
-            except OSError:
-                continue
+    # Check running.pid (toolkit only)
+    running_pid = toolkit_dir / "runtime" / "launcher" / "running.pid"
+    if running_pid.is_file():
+        try:
+            pid = int(running_pid.read_text(encoding="utf-8").strip())
+            if _pid_alive(pid):
+                return True
+        except (ValueError, OSError):
+            pass
+
+    # Check for queued/active master with runnable sub-plan (toolkit only)
+    repo = resolve_repo_path(toolkit_dir, toolkit_dir.name)
+    if repo is None:
+        return False
+    plans_dir = _find_plans_dir_for_project(toolkit_dir, repo)
+    if plans_dir is None:
+        return False
+
+    for master in sorted(plans_dir.glob("MASTER-*.md")):
+        try:
+            fm = parse_frontmatter(master.read_text(encoding="utf-8-sig"))
+        except OSError:
+            continue
+        # Skip auto-planned masters — they're checked at threshold
+        if fm.get("auto_planned", "").strip().lower() == "true":
+            continue
+        status = normalize_master_status(fm.get("status", ""))
+        if status in ("active", "queued"):
+            if master_has_runnable(master, plans_dir):
+                return True
+
+    # Check recently modified DRAFT master (session authoring, toolkit only)
+    # Only draft masters count: queued/active are already counted above and
+    # shipped ones are the runner's own status writes.
+    cutoff = _now() - RECENT_AUTHORING_MIN * 60
+    for master in sorted(plans_dir.glob("MASTER-*.md")):
+        try:
+            if master.stat().st_mtime > cutoff:
+                try:
+                    fm = parse_frontmatter(master.read_text(encoding="utf-8-sig"))
+                    if fm.get("auto_planned", "").strip().lower() == "true":
+                        continue
+                    status = normalize_master_status(fm.get("status", ""))
+                    if status == "draft":
+                        return True
+                except OSError:
+                    pass
+        except OSError:
+            continue
 
     return False
 
@@ -439,9 +452,28 @@ def tick(
     if disabled_file.exists():
         return _result("disabled")
 
-    # 2. Paused
+    # 2. Paused (with expiry support)
     if paused_file.exists():
-        return _result("paused")
+        paused_data = _read_json(paused_file)
+        # Unparseable JSON or missing until → fail closed (stay paused)
+        if paused_data is None or not paused_data.get("until"):
+            return _result("paused")
+        try:
+            from datetime import datetime, timezone
+            until_dt = datetime.fromisoformat(paused_data["until"])
+            if until_dt.tzinfo is None:
+                until_dt = until_dt.replace(tzinfo=timezone.utc)
+            expired = until_dt.timestamp() <= _now()
+        except (ValueError, TypeError):
+            return _result("paused")
+        if expired:
+            # Pause expired: remove and audit, then fall through
+            if not dry_run:
+                paused_file.unlink(missing_ok=True)
+                write_audit("autoplan-resumed", "ilk-skills",
+                            root=data_root, reason="pause expired")
+        else:
+            return _result("paused")
 
     # 3. Toolkit project
     project_key, err = _find_toolkit_project(data_root)
@@ -493,11 +525,29 @@ def tick(
     if _has_auto_planned_in_flight(data_root):
         return _result("auto-planned-in-flight")
 
-    # Rate limit
+    # Daily cap
+    today = time.strftime("%Y-%m-%d")
+    starts_day = state.get("starts_day")
+    starts_today = state.get("starts_today", 0)
+    if starts_day != today:
+        starts_today = 0
+
+    if starts_today >= MAX_STARTS_PER_DAY:
+        return _result("rate-limited", detail="daily-cap")
+
+    # Outcome-based pacing (replaces MIN_HOURS_BETWEEN_STARTS_K)
     last_start = state.get("last_start")
-    if last_start:
-        hours_since = (_now() - last_start) / 3600
-        if hours_since < MIN_HOURS_BETWEEN_STARTS_K:
+    last_outcome = state.get("last_outcome")
+    if last_start and last_outcome == "refused":
+        minutes_since = (_now() - last_start) / 60
+        if minutes_since < REFUSED_BACKOFF_MIN:
+            return _result("rate-limited")
+    # queued/drafted → no time limit (auto-planned-in-flight and
+    # MAX_CONSECUTIVE_DRAFTS still apply)
+    # missing last_outcome (older state) → treat as refused
+    if last_start and last_outcome is None:
+        minutes_since = (_now() - last_start) / 60
+        if minutes_since < REFUSED_BACKOFF_MIN:
             return _result("rate-limited")
 
     # Bad home
@@ -611,6 +661,13 @@ def tick(
     state["last_start"] = _now()
     state["idle_cycles"] = 0
     state["last_refusal"] = None
+    # Increment daily start counter
+    today = time.strftime("%Y-%m-%d")
+    if state.get("starts_day") != today:
+        state["starts_day"] = today
+        state["starts_today"] = 1
+    else:
+        state["starts_today"] = state.get("starts_today", 0) + 1
     _write_json(state_file, state)
 
     return _result("started", candidate=selected["id"], run_id=run_id)
@@ -913,6 +970,7 @@ def plan(
                 # outcome is not a failed draft).
                 state = _read_json(autoplan_dir / "state.json") or {}
                 state["consecutive_drafts"] = 0
+                state["last_outcome"] = "drafted"
                 _write_json(autoplan_dir / "state.json", state)
                 result = {"decision": "drafted", "master": master_path.name,
                           "draft_only": True}
@@ -931,6 +989,7 @@ def plan(
                             candidate=candidate_id, master=master_path.name)
                 state = _read_json(autoplan_dir / "state.json") or {}
                 state["consecutive_drafts"] = 0
+                state["last_outcome"] = "queued"
                 _write_json(autoplan_dir / "state.json", state)
                 result = {"decision": "queued", "master": master_path.name}
         else:
@@ -949,6 +1008,7 @@ def plan(
             state = _read_json(autoplan_dir / "state.json") or {}
             consecutive = state.get("consecutive_drafts", 0) + 1
             state["consecutive_drafts"] = consecutive
+            state["last_outcome"] = "drafted"
             _write_json(autoplan_dir / "state.json", state)
 
             if consecutive >= MAX_CONSECUTIVE_DRAFTS:
@@ -972,6 +1032,14 @@ def plan(
 
     finally:
         inflight_file.unlink(missing_ok=True)
+        # Record last_outcome for outcome-based pacing in tick()
+        if result.get("decision") == "refused":
+            try:
+                st = _read_json(autoplan_dir / "state.json") or {}
+                st["last_outcome"] = "refused"
+                _write_json(autoplan_dir / "state.json", st)
+            except (OSError, TypeError):
+                pass
 
 
 # ── probe ──────────────────────────────────────────────────────────────────

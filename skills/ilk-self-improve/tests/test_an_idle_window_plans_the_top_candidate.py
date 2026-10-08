@@ -266,7 +266,7 @@ def _read_events(data_root: Path, event: str | None = None) -> list[dict]:
 
 
 class TestAC1:
-    """Five idle ticks give idle 1/6..5/6; the sixth starts the planner."""
+    """Two idle ticks give idle 1/3..2/3; the third starts the planner."""
 
     def test_idle_count_increments(self, tmp_path):
         """tick returns idle <n>/<N> until the threshold."""
@@ -306,8 +306,8 @@ class TestAC1:
                      "ILK_MARKER": str(marker)},
             )
 
-        # Tick 5 times: should get idle 1/6 .. 5/6
-        for i in range(1, 6):
+        # Tick 2 times: should get idle 1/3 .. 2/3
+        for i in range(1, 3):
             result = mod.tick(
                 data_root=data_root,
                 manager_home=str(manager_home),
@@ -316,7 +316,7 @@ class TestAC1:
             assert result["decision"] == "idle"
             assert result["idle_cycles"] == i
 
-        # Tick 6: should start
+        # Tick 3: should start
         result = mod.tick(
             data_root=data_root,
             manager_home=str(manager_home),
@@ -436,7 +436,7 @@ class TestAC2:
         assert result["decision"] == "busy"
 
     def test_recent_master_resets(self, tmp_path):
-        """A MASTER modified in the last RECENT_AUTHORING_MIN minutes gives busy."""
+        """A MASTER modified in the last RECENT_AUTHORING_MIN minutes gives busy (now 20 min, draft-only)."""
         mod = _load_module()
         data_root = _build_fake_data_root(tmp_path)
         toolkit = _build_fake_toolkit(tmp_path, data_root)
@@ -499,7 +499,7 @@ class TestAC3:
 
         # Set idle count at threshold
         state_file = data_root / "autoplan" / "state.json"
-        state_file.write_text(json.dumps({"idle_cycles": 6}) + "\n", encoding="utf-8")
+        state_file.write_text(json.dumps({"idle_cycles": 3}) + "\n", encoding="utf-8")
 
         result = mod.tick(data_root=data_root, manager_home=str(manager_home))
         assert result["decision"] == "disabled"
@@ -536,13 +536,13 @@ class TestAC3:
 
         # Set idle count at threshold
         state_file = data_root / "autoplan" / "state.json"
-        state_file.write_text(json.dumps({"idle_cycles": 6}) + "\n", encoding="utf-8")
+        state_file.write_text(json.dumps({"idle_cycles": 3}) + "\n", encoding="utf-8")
 
         result = mod.tick(data_root=data_root, manager_home=str(manager_home))
         assert result["decision"] == "paused"
 
     def test_rate_limited_at_threshold(self, tmp_path):
-        """A start less than K hours ago gives rate-limited."""
+        """A refused start less than REFUSED_BACKOFF_MIN ago gives rate-limited."""
         mod = _load_module()
         data_root = _build_fake_data_root(tmp_path)
         toolkit = _build_fake_toolkit(tmp_path, data_root)
@@ -562,12 +562,13 @@ class TestAC3:
         backlog_dir.mkdir(parents=True, exist_ok=True)
         _save_candidates(backlog_dir, [_make_candidate()])
 
-        # Write last_start 1 hour ago
+        # Write last_start 30 min ago with refused outcome
         state_file = data_root / "autoplan" / "state.json"
-        one_hour_ago = time.time() - 3600
+        thirty_min_ago = time.time() - 30 * 60
         state_file.write_text(json.dumps({
-            "idle_cycles": 6,
-            "last_start": one_hour_ago,
+            "idle_cycles": 3,
+            "last_start": thirty_min_ago,
+            "last_outcome": "refused",
         }) + "\n", encoding="utf-8")
 
         result = mod.tick(data_root=data_root, manager_home=str(manager_home))
@@ -605,7 +606,7 @@ class TestAC3:
 
         # Set idle count at threshold
         state_file = data_root / "autoplan" / "state.json"
-        state_file.write_text(json.dumps({"idle_cycles": 6}) + "\n", encoding="utf-8")
+        state_file.write_text(json.dumps({"idle_cycles": 3}) + "\n", encoding="utf-8")
 
         result = mod.tick(data_root=data_root, manager_home=str(manager_home))
         assert result["decision"] == "auto-planned-in-flight"
@@ -636,7 +637,7 @@ class TestAC3:
 
         # Set idle count at threshold
         state_file = data_root / "autoplan" / "state.json"
-        state_file.write_text(json.dumps({"idle_cycles": 6}) + "\n", encoding="utf-8")
+        state_file.write_text(json.dumps({"idle_cycles": 3}) + "\n", encoding="utf-8")
 
         # First tick: bad-home
         result = mod.tick(data_root=data_root, manager_home=str(bad_home))
@@ -674,7 +675,7 @@ class TestAC3:
 
         # Set idle count at threshold
         state_file = data_root / "autoplan" / "state.json"
-        state_file.write_text(json.dumps({"idle_cycles": 6}) + "\n", encoding="utf-8")
+        state_file.write_text(json.dumps({"idle_cycles": 3}) + "\n", encoding="utf-8")
 
         # Snapshot before
         before = _snapshot_data_root(data_root)
@@ -749,7 +750,7 @@ class TestAC4:
 
         # Set idle count at threshold
         state_file = data_root / "autoplan" / "state.json"
-        state_file.write_text(json.dumps({"idle_cycles": 6}) + "\n", encoding="utf-8")
+        state_file.write_text(json.dumps({"idle_cycles": 3}) + "\n", encoding="utf-8")
 
         result = mod.tick(
             data_root=data_root,
@@ -1221,7 +1222,7 @@ class TestAC7:
         # Next tick should return paused
         # First reset idle count
         state_file = data_root / "autoplan" / "state.json"
-        state_file.write_text(json.dumps({"idle_cycles": 6}) + "\n", encoding="utf-8")
+        state_file.write_text(json.dumps({"idle_cycles": 3}) + "\n", encoding="utf-8")
 
         result = mod.tick(data_root=data_root, manager_home=str(manager_home))
         assert result["decision"] == "paused"
@@ -1775,15 +1776,15 @@ class TestCliTickAndGatedSpawn:
             # Return a fake process with a pid so inflight.json is written.
             return FakeProc()
 
-        # Run enough idle ticks to reach the start branch (threshold is 5).
+        # Run enough idle ticks to reach the start branch (threshold is 3).
         # dry_run=False is required so the idle_cycles counter persists.
-        # The first 5 ticks use popen_fn (test-mode) since they never reach
-        # the start branch. The 6th tick uses popen_fn=None (real mode).
+        # The first 2 ticks use popen_fn (test-mode) since they never reach
+        # the start branch. The 3rd tick uses popen_fn=None (real mode).
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(subprocess, "Popen", recording_popen)
 
-            # Drive 5 idle ticks (dry_run=False to persist counter).
-            for i in range(5):
+            # Drive 2 idle ticks (dry_run=False to persist counter).
+            for i in range(2):
                 result = mod.tick(
                     data_root=data_root,
                     manager_home=str(manager_home),
@@ -1794,7 +1795,7 @@ class TestCliTickAndGatedSpawn:
                     f"Tick {i+1} expected 'idle', got {result['decision']}"
                 )
 
-            # The 6th tick in real mode (popen_fn=None, dry_run=False).
+            # The 3rd tick in real mode (popen_fn=None, dry_run=False).
             # This is the one that should spawn autoplan.py plan.
             popen_calls.clear()  # reset — only the real spawn counts
             result = mod.tick(

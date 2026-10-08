@@ -168,7 +168,6 @@ def _read_audit_rows(data_root: Path, kind: str | None = None) -> list[dict]:
 # ── AC-1: busy scope ─────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="the planner waits for an idle fleet")
 def test_ac1_running_pid_in_other_not_busy(tmp_path):
     """A live running.pid in `other` → _is_busy False."""
     mod = _load_module()
@@ -215,7 +214,6 @@ def test_ac1_train_lock_in_other_busy(tmp_path):
 # ── AC-2: authoring filter ───────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="the planner waits for an idle fleet")
 def test_ac2_shipped_master_recently_not_busy(tmp_path):
     """A toolkit `shipped` master with mtime now → not busy."""
     mod = _load_module()
@@ -247,7 +245,6 @@ def test_ac2_draft_master_10min_ago_busy(tmp_path):
     assert mod._is_busy(data_root) is True
 
 
-@pytest.mark.xfail(strict=True, reason="the planner waits for an idle fleet")
 def test_ac2_draft_master_30min_ago_not_busy(tmp_path):
     """A toolkit `draft` master with mtime 30 min ago → not busy."""
     mod = _load_module()
@@ -268,7 +265,6 @@ def test_ac2_draft_master_30min_ago_not_busy(tmp_path):
 # ── AC-3: idle threshold ────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="the planner waits for an idle fleet")
 def test_ac3_three_idle_ticks_reach_threshold(tmp_path):
     """Three idle ticks reach the threshold (IDLE_CYCLES_N=3)."""
     mod = _load_module()
@@ -285,7 +281,7 @@ def test_ac3_three_idle_ticks_reach_threshold(tmp_path):
     assert result2["idle_cycles"] == 2
 
     # Third tick: at threshold, should attempt a start (or hit another gate).
-    # With no candidate/backlog, expect no-candidate or similar.
+    # With no candidate/backlog, expect backlog-unreadable or similar.
     result3 = mod.tick(data_root=data_root)
     assert result3["decision"] != "idle"
 
@@ -293,7 +289,6 @@ def test_ac3_three_idle_ticks_reach_threshold(tmp_path):
 # ── AC-4: outcome-based pacing ──────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="the planner waits for an idle fleet")
 def test_ac4_refused_30min_ago_rate_limited(tmp_path):
     """last_outcome: refused 30 min ago → rate-limited (REFUSED_BACKOFF_MIN=60)."""
     mod = _load_module()
@@ -351,7 +346,6 @@ def test_ac4_queued_5min_ago_not_rate_limited(tmp_path):
 # ── AC-5: daily cap ──────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="the planner waits for an idle fleet")
 def test_ac5_starts_today_8_rate_limited(tmp_path):
     """starts_today: 8 for today's date → rate-limited with daily-cap."""
     mod = _load_module()
@@ -394,7 +388,6 @@ def test_ac5_yesterdays_date_not_capped(tmp_path):
 # ── AC-6: yield priority ────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="the planner waits for an idle fleet")
 def test_ac6_yield_priority_0(tmp_path):
     """A stubbed plan that writes a master yields priority: 0."""
     mod = _load_module()
@@ -451,7 +444,6 @@ def test_ac6_yield_priority_0(tmp_path):
 # ── AC-7: pause expiry ──────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="the planner waits for an idle fleet")
 def test_ac7_pause_expired_removed(tmp_path):
     """paused.json with `until` 1 min ago → removed, audit row, tick proceeds."""
     mod = _load_module()

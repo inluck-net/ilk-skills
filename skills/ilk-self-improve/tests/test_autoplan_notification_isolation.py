@@ -44,7 +44,7 @@ def _world(tmp_path: Path) -> tuple[Path, Path, Path]:
         encoding="utf-8",
     )
     (data_root / "autoplan" / "state.json").write_text(
-        json.dumps({"idle_cycles": 6}) + "\n", encoding="utf-8"
+        json.dumps({"idle_cycles": 3}) + "\n", encoding="utf-8"
     )
 
     manager_home = tmp_path / ".claude-worker-xxx"
