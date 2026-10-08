@@ -27,6 +27,16 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+# ── Path setup ──────────────────────────────────────────────────────────────
+# The scheduler runs this file as a script (scheduler.sh:596), so sys.path[0]
+# is ilk-ship/scripts and ilk_paths is not importable without this.  The tests
+# never noticed: the root conftest puts every scripts dir on sys.path.
+
+_HERE = Path(__file__).resolve().parent
+_LOOP_SCRIPTS = _HERE.parent.parent / "ilk-loop" / "scripts"
+if str(_LOOP_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_LOOP_SCRIPTS))
+
 # ── Public API ──────────────────────────────────────────────────────────────
 
 
@@ -387,9 +397,10 @@ def main() -> int:
     project = Path(args.project).resolve()
     run_id = args.run_id
 
-    # Resolve data_dir from ILK_DATA_HOME
-    from ilk_paths import resolve_data_dir
-    data_dir = resolve_data_dir(project)
+    # Resolve data_dir from ILK_DATA_HOME (ilk_paths has no resolve_data_dir;
+    # the name this called never existed, so the CLI raised on every run).
+    from ilk_paths import project_data_dir, project_key
+    data_dir = project_data_dir(project_key(project))
 
     result = audit(project=project, data_dir=data_dir, run_id=run_id)
 

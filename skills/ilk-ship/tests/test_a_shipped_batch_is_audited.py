@@ -523,3 +523,32 @@ class TestAC7SchedulerWiring:
         assert "skip-audit-failed" in func_body, (
             "must log skip-audit-failed when audit fails"
         )
+
+# ── The CLI runs as the scheduler runs it (owner, 2026-10-08) ────────────────
+# v0.9.168 shipped a main() that imported a nonexistent ilk_paths.resolve_data_dir
+# and never put ilk-loop/scripts on sys.path; every in-process test passed because
+# the root conftest does.  The scheduler (scheduler.sh:596) swallowed the
+# traceback as verdict=error and refused every release train.
+
+
+def test_the_cli_runs_as_a_plain_script(tmp_path: Path) -> None:
+    """`python3 -I batch_audit.py --json` prints a verdict, with no conftest path."""
+    script = Path(__file__).resolve().parent.parent / "scripts" / "batch_audit.py"
+    repo = _make_git_repo(tmp_path)
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(tmp_path),
+        "ILK_DATA_HOME": str(tmp_path / ".ilk-data"),
+    }
+    cp = subprocess.run(
+        [sys.executable, "-I", str(script), "--project", str(repo),
+         "--run-id", "20261008-000000", "--json"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        env=env, cwd=str(tmp_path), timeout=60,
+    )
+    assert "Traceback" not in cp.stderr, cp.stderr
+    verdict = json.loads(cp.stdout).get("verdict")
+    # main(): pass -> 0, fail -> 1, unmeasured -> 2.
+    assert {"pass": 0, "fail": 1, "unmeasured": 2}.get(verdict) == cp.returncode, (
+        f"verdict={verdict} rc={cp.returncode}\nstdout: {cp.stdout}\nstderr: {cp.stderr}"
+    )
