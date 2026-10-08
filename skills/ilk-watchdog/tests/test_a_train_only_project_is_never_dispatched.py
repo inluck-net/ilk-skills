@@ -56,7 +56,8 @@ def test_train_only_entry_is_offered_but_not_dispatched(tmp_path: Path) -> None:
     data_home = tmp_path / ".ilk-data"
     pd = _shipped_project(data_home, repo)
     env = {**os.environ, "HOME": str(tmp_path), "ILK_DATA_HOME": str(data_home),
-           "ILK_SKILL_HOME": str(SKILLS_DIR), "ILK_AUTOPLAN": "0"}
+           "ILK_SKILL_HOME": str(SKILLS_DIR), "ILK_AUTOPLAN": "0",
+           "ILK_BATCH_AUDIT": "0"}  # test-only: skip audit, test train logic
     env.pop("ILK_DATA_DIR", None)
 
     r = subprocess.run(["bash", str(SCHEDULER), "--once", "--dry-run"],

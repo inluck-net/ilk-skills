@@ -55,6 +55,7 @@ def _make_env(tmp_path: Path, data_home: Path, *, extra: dict[str, str] | None =
         "HOME": str(tmp_path),
         "ILK_DATA_HOME": str(data_home),
         "ILK_SKILL_HOME": str(SKILLS_DIR),
+        "ILK_BATCH_AUDIT": "0",  # test-only: skip audit, test train logic
     }
     env.pop("ILK_DATA_DIR", None)
     if extra:
