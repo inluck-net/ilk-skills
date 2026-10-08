@@ -512,6 +512,9 @@ the terminal record out of the per-iteration de-dup while staying numeric
 - **`collect.py`** — `_classify_core` checks for `record_type="run_exit"`
   and reads its `stop_reason` in preference to the last per-iteration
   record's (which may be empty due to D1).
+- **`collect.py`** — `_iteration_records` excludes the `run_exit` record
+  from every iteration count, the per-iteration table, duration statistics,
+  the last-iteration tail and `iter_at_stop`.
 
 #### Invariants
 
