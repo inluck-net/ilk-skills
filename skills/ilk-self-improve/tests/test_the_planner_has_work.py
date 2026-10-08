@@ -85,14 +85,13 @@ def _days_ago(days: int) -> str:
 class TestAC1:
     """rank admits fresh supervisor rows, rejects stale and dateless ones."""
 
-    @pytest.mark.xfail(strict=True, reason="rank admits only triage")
     def test_supervisor_seen_3_days_ago_is_eligible(self):
         """An open supervisor row seen 3 days ago is eligible."""
         entry = _make_candidate(
             cid="sup-fresh", source="supervisor",
             first_seen=_days_ago(30), last_seen=_days_ago(3),
         )
-        ranked = autoplan_rails.rank([entry])
+        ranked = autoplan_rails.rank([entry], now=NOW)
         ids = [e["id"] for e in ranked]
         assert "sup-fresh" in ids
 
@@ -102,7 +101,7 @@ class TestAC1:
             cid="sup-stale", source="supervisor",
             first_seen=_days_ago(30), last_seen=_days_ago(20),
         )
-        ranked = autoplan_rails.rank([entry])
+        ranked = autoplan_rails.rank([entry], now=NOW)
         ids = [e["id"] for e in ranked]
         assert "sup-stale" not in ids
 
@@ -113,7 +112,7 @@ class TestAC1:
             first_seen="not-a-date",
         )
         entry.pop("last_seen", None)
-        ranked = autoplan_rails.rank([entry])
+        ranked = autoplan_rails.rank([entry], now=NOW)
         ids = [e["id"] for e in ranked]
         assert "sup-nodate" not in ids
 
@@ -130,7 +129,7 @@ class TestAC2:
             cid="triage-old", source="triage",
             first_seen=_days_ago(60),
         )
-        ranked = autoplan_rails.rank([entry])
+        ranked = autoplan_rails.rank([entry], now=NOW)
         ids = [e["id"] for e in ranked]
         assert "triage-old" in ids
 
@@ -141,7 +140,6 @@ class TestAC2:
 class TestAC3:
     """rank orders by source tier: triage 0, supervisor 1, feedback 2."""
 
-    @pytest.mark.xfail(strict=True, reason="rank admits only triage")
     def test_triage_before_supervisor_before_feedback(self):
         """Triage sorts first, then supervisor, then feedback."""
         entries = [
@@ -155,7 +153,7 @@ class TestAC3:
                 first_seen=_days_ago(30), last_seen=_days_ago(3),
             ),
         ]
-        ranked = autoplan_rails.rank(entries)
+        ranked = autoplan_rails.rank(entries, now=NOW)
         ids = [e["id"] for e in ranked]
         assert ids.index("triage-row") < ids.index("supervisor-row") < ids.index("feedback-row")
 
@@ -169,14 +167,14 @@ class TestAC4:
     def test_unsourced_row_not_eligible(self):
         """A row with no source key is never eligible."""
         entry = _make_candidate(cid="no-source", source="unsourced")
-        ranked = autoplan_rails.rank([entry])
+        ranked = autoplan_rails.rank([entry], now=NOW)
         ids = [e["id"] for e in ranked]
         assert "no-source" not in ids
 
     def test_handoff_row_not_eligible(self):
         """A handoff-* source row is never eligible."""
         entry = _make_candidate(cid="handoff-row", source="handoff-session-42")
-        ranked = autoplan_rails.rank([entry])
+        ranked = autoplan_rails.rank([entry], now=NOW)
         ids = [e["id"] for e in ranked]
         assert "handoff-row" not in ids
 
@@ -190,13 +188,13 @@ class TestAC5:
     def test_autoplan_attempts_2_excludes(self):
         """An entry with autoplan_attempts >= 2 is excluded."""
         entry = _make_candidate(cid="exhausted", autoplan_attempts=2)
-        ranked = autoplan_rails.rank([entry])
+        ranked = autoplan_rails.rank([entry], now=NOW)
         ids = [e["id"] for e in ranked]
         assert "exhausted" not in ids
 
     def test_autoplan_blocked_excludes(self):
         """An entry with autoplan_blocked is excluded."""
         entry = _make_candidate(cid="blocked", autoplan_blocked=True)
-        ranked = autoplan_rails.rank([entry])
+        ranked = autoplan_rails.rank([entry], now=NOW)
         ids = [e["id"] for e in ranked]
         assert "blocked" not in ids

@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -141,30 +142,79 @@ def _load_kernel_cached() -> dict:
 
 # ── 3. rank ──────────────────────────────────────────────────────────────────
 
+# Sources admitted by rank, in priority order (lower index = higher priority).
+# Triage has no freshness gate; all others require last_seen (or first_seen)
+# within FRESH_DAYS of now.  Judgment call: 14 days — basis: 33+32+12 fresh
+# rows vs 3 triage; stale ones are refused by the planner itself (AUTOPLAN:
+# stale), cost ~2.5 min, back off 1 h, and stop after 2 attempts per row.
+# Wrong if more than half of non-triage starts end stale over a week; then
+# shorten the window.
+ELIGIBLE_SOURCES = ("triage", "supervisor", "owner-session", "feedback", "session")
+FRESH_DAYS = 14
 
-def rank(entries: list[dict]) -> list[dict]:
+# Source tier for sorting (lower = higher priority).
+_SOURCE_TIER = {
+    "triage": 0,
+    "supervisor": 1,
+    "owner-session": 1,
+    "feedback": 2,
+    "session": 2,
+}
+
+
+def _parse_date(s: str) -> datetime | None:
+    """Parse an ISO-8601 timestamp string, returning a tz-aware datetime or None."""
+    if not s or not isinstance(s, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(s)
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def rank(entries: list[dict], *, now: datetime | None = None) -> list[dict]:
     """Filter and rank eligible autoplan candidates.
 
-    Eligible: ``status == "open"``, ``source == "triage"``,
+    Eligible: ``status == "open"``, ``source in ELIGIBLE_SOURCES``,
     ``relations.autoplan_attempts < 2``, no ``relations.autoplan_blocked``.
+    For every source except ``triage``, ``last_seen`` (else ``first_seen``)
+    must parse and be within ``FRESH_DAYS`` of *now*.  An unparseable date
+    on a non-triage row makes it ineligible (fail closed).
 
-    Sort: has escalations > 0 desc, urgent desc, seen_count desc,
-    first_seen asc, id asc.
+    Sort: source tier first (triage 0, supervisor/owner-session 1,
+    feedback/session 2), then has escalations > 0 desc, urgent desc,
+    seen_count desc, first_seen asc, id asc.
     """
+    if now is None:
+        now = datetime.now(timezone.utc)
+
     eligible = []
     for e in entries:
         if e.get("status") != "open":
             continue
-        if e.get("source") != "triage":
+        source = e.get("source")
+        if source not in ELIGIBLE_SOURCES:
             continue
         rel = e.get("relations", {})
         if rel.get("autoplan_attempts", 0) >= 2:
             continue
         if rel.get("autoplan_blocked"):
             continue
+        # Freshness gate: triage has no date requirement.
+        if source != "triage":
+            date_str = e.get("last_seen") or e.get("first_seen", "")
+            dt = _parse_date(date_str)
+            if dt is None:
+                continue  # fail closed: unparseable → ineligible
+            if (now - dt).days > FRESH_DAYS:
+                continue  # stale
         eligible.append(e)
 
     eligible.sort(key=lambda e: (
+        _SOURCE_TIER.get(e.get("source", ""), 99),
         -(e.get("relations", {}).get("escalations", 0) > 0),
         -(e.get("relations", {}).get("urgent", False)),
         -e.get("seen_count", 0),
