@@ -264,6 +264,39 @@ if [[ "$CHECK_ONLY" -eq 0 && "${ILK_BOUNCE_ALLOW_DURING_RUN:-0}" != "1" ]]; then
 "
   done < <(pgrep -f 'run_ilk_loop_claude\.(sh|ps1)' 2>/dev/null || true)
 
+  # ── Drop pinned loops (release-pinned runners are safe to bounce through) ──
+  _pinned_loops_filter="${BASH_SOURCE[0]%/*}/pinned_loops.py"
+  if [[ -n "$_running_loops" && -r "$_pinned_loops_filter" ]]; then
+    _filter_input=""
+    while IFS= read -r _fpid; do
+      [[ -n "$_fpid" ]] || continue
+      _fcmd="$(ps -p "$_fpid" -o command= 2>/dev/null || true)"
+      _filter_input="${_filter_input}${_fpid}	${_fcmd}
+"
+    done <<< "$_running_loops"
+    _filtered_pids="$(printf '%s' "$_filter_input" | python3 "$_pinned_loops_filter" filter 2>/dev/null)" || true
+    if [[ -n "$_filtered_pids" ]]; then
+      _pinned_count=$(( $(printf '%s\n' "$_running_loops" | grep -c . || true) - $(printf '%s\n' "$_filtered_pids" | grep -c . || true) ))
+      if [[ "$_pinned_count" -gt 0 ]]; then
+        echo "bouncing despite ${_pinned_count} pinned loop(s): pids $(printf '%s\n' "$_running_loops" | grep -vF -f <(printf '%s\n' "$_filtered_pids") | tr '\n' ' ')" >&2
+      fi
+      _running_loops="$_filtered_pids"
+    else
+      # Filter returned nothing (all pinned) or failed — if all pinned, clear;
+      # if the filter failed (empty _filtered_pids with non-empty input), fail closed.
+      if [[ -n "$_running_loops" ]]; then
+        # Check if filter succeeded (exit 0 with empty output = all pinned)
+        _filter_test="$(printf '%s' "$_filter_input" | python3 "$_pinned_loops_filter" filter 2>/dev/null; echo "rc=$?")"
+        if [[ "$_filter_test" == "rc=0" ]]; then
+          _pinned_count=$(printf '%s\n' "$_running_loops" | grep -c . || true)
+          echo "bouncing despite ${_pinned_count} pinned loop(s): all pinned" >&2
+          _running_loops=""
+        fi
+        # else: filter failed → fail closed, keep _running_loops as-is
+      fi
+    fi
+  fi
+
   _running_count=0
   if [[ -n "$_running_loops" ]]; then
     _running_count=$(printf '%s\n' "$_running_loops" | grep -c . || true)

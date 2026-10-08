@@ -1041,6 +1041,10 @@ def _live_loops_local() -> list[int]:
     - dead pids (``os.kill(pid, 0)`` raises ``OSError``),
     - pids whose ``ps -o command=`` contains ``grep``.
 
+    Pinned loops (release runners with ``RUN_PINS_RELEASE``) are dropped
+    via ``pinned_loops.unpinned``.  On import failure, keeps every pid
+    (fail closed).
+
     Returns an empty list when no live loops are found.
     """
     # Build the pgrep pattern from parts so this module's own argv never matches.
@@ -1060,7 +1064,7 @@ def _live_loops_local() -> list[int]:
 
     my_pid = os.getpid()
     parent_pid = os.getppid()
-    live: list[int] = []
+    entries: list[tuple[int, str]] = []
 
     for line in result.stdout.strip().splitlines():
         try:
@@ -1085,7 +1089,19 @@ def _live_loops_local() -> list[int]:
             cmd = ""
         if "grep" in cmd:
             continue
-        live.append(pid)
+        entries.append((pid, cmd))
+
+    # Drop pinned loops (release runners with RUN_PINS_RELEASE marker).
+    try:
+        import importlib.util as _ilu
+        _pl_path = Path(__file__).resolve().parents[2] / "ilk-watchdog" / "scripts" / "pinned_loops.py"
+        _pl_spec = _ilu.spec_from_file_location("pinned_loops", str(_pl_path))
+        _pl_mod = _ilu.module_from_spec(_pl_spec)
+        _pl_spec.loader.exec_module(_pl_mod)
+        live = _pl_mod.unpinned(entries)
+    except Exception:
+        # Import failure → fail closed, keep every pid.
+        live = [pid for pid, _ in entries]
 
     return live
 
@@ -1099,6 +1115,11 @@ def _live_loops_remote(
     Uses the same pgrep pattern as ``_live_loops_local`` but runs over
     ``ssh_runner``.  rc 0 → parse pids, rc 1 → [], anything else → None
     (treated as busy).
+
+    Pinned loops (release runners with ``RUN_PINS_RELEASE``) are dropped:
+    for each candidate release dir, the marker is checked with one ssh call
+    (``ls <dir>/skills/ilk-loop/scripts/RUN_PINS_RELEASE``).  A non-zero or
+    unreachable answer keeps the pid (fail closed).
     """
     _PGREP_PATTERN = "run_ilk_loop_claude" + r"\.(sh|ps1)"
     result = run(host, ["pgrep", "-f", _PGREP_PATTERN], timeout=10)
@@ -1110,7 +1131,33 @@ def _live_loops_remote(
                 pids.append(int(line.strip()))
             except ValueError:
                 continue
-        return pids
+
+        # Drop pinned loops: get each pid's command and check the marker.
+        try:
+            import importlib.util as _ilu
+            _pl_path = Path(__file__).resolve().parents[2] / "ilk-watchdog" / "scripts" / "pinned_loops.py"
+            _pl_spec = _ilu.spec_from_file_location("pinned_loops_remote", str(_pl_path))
+            _pl_mod = _ilu.module_from_spec(_pl_spec)
+            _pl_spec.loader.exec_module(_pl_mod)
+            _release_dir_of = _pl_mod.release_dir_of
+
+            filtered: list[int] = []
+            for pid in pids:
+                ps_result = run(host, ["ps", "-o", "command=", "-p", str(pid)], timeout=5)
+                cmd = ps_result.get("stdout", "").strip()
+                d = _release_dir_of(cmd)
+                if d is not None:
+                    # Check marker with an ssh call; non-zero → keep pid (fail closed).
+                    marker_path = f"{d}/skills/ilk-loop/scripts/RUN_PINS_RELEASE"
+                    ls_result = run(host, ["ls", marker_path], timeout=5)
+                    if ls_result.get("rc", -1) == 0:
+                        continue  # marker exists → pinned → drop
+                filtered.append(pid)
+            return filtered
+        except Exception:
+            # Import or unexpected failure → fail closed, keep every pid.
+            return pids
+
     if rc == 1:
         return []
     return None  # unreachable or error → treat as busy
