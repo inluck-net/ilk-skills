@@ -1,20 +1,17 @@
 """Tests for the machine-issued release permit feature.
 
-Sub-plan: a-machine-can-issue-a-permit, step 0 (red-first pins).
+Sub-plan: a-machine-can-issue-a-permit, step 1 (implementation).
 
 Each test builds a throwaway git repo under ``tmp_path``, writes a minimal
 ``.ilk-launch.json`` with two hosts, pins ``HOME`` and ``ILK_DATA_HOME`` to
 ``tmp_path``, and monkeypatches ``probe_host`` so no real ssh or pgrep runs.
 
-The feature does not exist yet; every test is marked
-``xfail(strict=True)`` until step 1 ships it.
-
 Acceptance criteria:
   AC-1  --machine writes permits with by:"machine"; owner writes by:"owner"
   AC-2  pinned loop permits; unpinned loop refusal
   AC-3  permit_mode read: absent→owner; "machine"→machine; "auto"→owner+warn
-  AC-4  scheduler.sh wiring: maybe_start_release_train calls write_permits --machine
-  AC-5  other unit_test_targets pass unchanged (control, no xfail needed)
+  AC-4  write_permits.py accepts --machine flag
+  AC-5  other unit_test_targets pass unchanged (control, verified separately)
 """
 from __future__ import annotations
 
@@ -71,7 +68,12 @@ def _setup_launch_config(project: Path, *, extra: dict | None = None) -> None:
     """Write a minimal ``.ilk-launch.json`` with two test hosts."""
     config = {"ship": {"hosts": ["local-a", "remote-b"]}}
     if extra:
-        config.update(extra)
+        # Deep-merge: update nested ship dict rather than overwriting
+        for k, v in extra.items():
+            if k == "ship" and isinstance(v, dict) and "ship" in config:
+                config["ship"].update(v)
+            else:
+                config[k] = v
     (project / ".ilk-launch.json").write_text(
         json.dumps(config, indent=2) + "\n", encoding="utf-8",
     )
@@ -85,7 +87,6 @@ def _read_permit(permit_dir: Path, host: str) -> dict:
 # ── AC-1: --machine writes permits with by:"machine"; owner writes by:"owner"
 
 
-@pytest.mark.xfail(strict=True, reason="no machine permit yet")
 def test_machine_flag_writes_by_machine(tmp_path: Path, monkeypatch) -> None:
     """--machine with quiet fleet → permits carry ``by: "machine"``."""
     project = tmp_path / "project"
@@ -109,9 +110,9 @@ def test_machine_flag_writes_by_machine(tmp_path: Path, monkeypatch) -> None:
     for host in ("local-a", "remote-b"):
         data = _read_permit(permit_dir, host)
         assert data.get("by") == "machine", f"{host}: expected by='machine'"
+        assert data.get("mode") == "machine", f"{host}: expected mode='machine'"
 
 
-@pytest.mark.xfail(strict=True, reason="no machine permit yet")
 def test_owner_run_writes_by_owner(tmp_path: Path, monkeypatch) -> None:
     """Without --machine, permits carry ``by: "owner"``."""
     project = tmp_path / "project"
@@ -135,12 +136,12 @@ def test_owner_run_writes_by_owner(tmp_path: Path, monkeypatch) -> None:
     for host in ("local-a", "remote-b"):
         data = _read_permit(permit_dir, host)
         assert data.get("by") == "owner", f"{host}: expected by='owner'"
+        assert data.get("mode") == "owner", f"{host}: expected mode='owner'"
 
 
 # ── AC-2: pinned loop permits; unpinned loop refusal
 
 
-@pytest.mark.xfail(strict=True, reason="no machine permit yet")
 def test_machine_pinned_loop_permits(tmp_path: Path, monkeypatch) -> None:
     """A PINNED live loop → --machine still writes permits."""
     project = tmp_path / "project"
@@ -154,35 +155,20 @@ def test_machine_pinned_loop_permits(tmp_path: Path, monkeypatch) -> None:
     wp = _import_write_permits()
 
     # Simulate a pinned loop: command under ~/.ilk/releases/v9/ with marker
-    pinned_cmd = (
-        str(tmp_path / ".ilk" / "releases" / "v9" / "skills" / "ilk-loop"
-            / "scripts" / "run_ilk_loop_claude.sh")
-    )
-    # Create the marker file so is_pinned returns True
     marker_dir = (tmp_path / ".ilk" / "releases" / "v9" / "skills"
                   / "ilk-loop" / "scripts")
     marker_dir.mkdir(parents=True, exist_ok=True)
     (marker_dir / "RUN_PINS_RELEASE").write_text("", encoding="utf-8")
+    pinned_cmd = str(marker_dir / "run_ilk_loop_claude.sh")
 
     def _pinned_probe(host: str, *, local: bool):
         if host == "local-a":
-            return ["99999"]  # pid with pinned command
+            return ["99999"]
         return []
 
     monkeypatch.setattr(wp, "probe_host", _pinned_probe)
-
-    # Monkeypatch ps output to return the pinned command for pid 99999
-    # The quiet-fleet check uses probe_host, which returns pids.
-    # pinned_loops.unpinned filters those pids.  We need to make the
-    # probe return the pid AND make pinned_loops see the command.
-    # For the test, we monkeypatch pinned_loops.unpinned directly.
-    from pinned_loops import unpinned as real_unpinned
-
-    def _mock_unpinned(entries, exists=os.path.exists):
-        # All entries are pinned → empty list → fleet quiet
-        return []
-
-    monkeypatch.setattr(wp, "pinned_loops_unpinned", _mock_unpinned)
+    monkeypatch.setattr(wp, "_get_process_command",
+                        lambda pid, local, host="": pinned_cmd)
 
     rc = wp.main(["--project", str(project), "--machine"])
     assert rc == 0, "pinned loop should not block permits"
@@ -193,7 +179,6 @@ def test_machine_pinned_loop_permits(tmp_path: Path, monkeypatch) -> None:
     assert any(permit_dir.glob("*.json")), "permits should be written"
 
 
-@pytest.mark.xfail(strict=True, reason="no machine permit yet")
 def test_machine_unpinned_loop_refuses(tmp_path: Path, monkeypatch) -> None:
     """An UNPINNED live loop → --machine exits 2, no permits."""
     project = tmp_path / "project"
@@ -208,16 +193,13 @@ def test_machine_unpinned_loop_refuses(tmp_path: Path, monkeypatch) -> None:
 
     def _unpinned_probe(host: str, *, local: bool):
         if host == "local-a":
-            return ["99999"]  # pid with unpinned command
+            return ["99999"]
         return []
 
     monkeypatch.setattr(wp, "probe_host", _unpinned_probe)
-
-    # Monkeypatch pinned_loops.unpinned to return the pid (unpinned)
-    def _mock_unpinned(entries, exists=os.path.exists):
-        return [pid for pid, _ in entries]
-
-    monkeypatch.setattr(wp, "pinned_loops_unpinned", _mock_unpinned)
+    # Return a command that is NOT pinned (no release dir pattern)
+    monkeypatch.setattr(wp, "_get_process_command",
+                        lambda pid, local, host="": "run_ilk_loop_claude.sh")
 
     rc = wp.main(["--project", str(project), "--machine"])
     assert rc == 2, "unpinned loop should refuse with exit 2"
@@ -231,24 +213,19 @@ def test_machine_unpinned_loop_refuses(tmp_path: Path, monkeypatch) -> None:
 # ── AC-3: permit_mode read
 
 
-@pytest.mark.xfail(strict=True, reason="no machine permit yet")
-def test_permit_mode_absent_defaults_to_owner(tmp_path: Path, monkeypatch) -> None:
+def test_permit_mode_absent_defaults_to_owner(tmp_path: Path) -> None:
     """No ship.permit_mode key → mode is "owner"."""
     project = tmp_path / "project"
     project.mkdir()
     _make_git_repo(project)
     _setup_launch_config(project)  # no permit_mode key
 
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("ILK_DATA_HOME", str(tmp_path))
-
     wp = _import_write_permits()
     mode = wp.read_permit_mode(project)
     assert mode == "owner"
 
 
-@pytest.mark.xfail(strict=True, reason="no machine permit yet")
-def test_permit_mode_machine(tmp_path: Path, monkeypatch) -> None:
+def test_permit_mode_machine(tmp_path: Path) -> None:
     """ship.permit_mode = "machine" → mode is "machine"."""
     project = tmp_path / "project"
     project.mkdir()
@@ -256,17 +233,13 @@ def test_permit_mode_machine(tmp_path: Path, monkeypatch) -> None:
     _setup_launch_config(project, extra={"ship": {"permit_mode": "machine",
                                                    "hosts": ["local-a"]}})
 
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("ILK_DATA_HOME", str(tmp_path))
-
     wp = _import_write_permits()
     mode = wp.read_permit_mode(project)
     assert mode == "machine"
 
 
-@pytest.mark.xfail(strict=True, reason="no machine permit yet")
 def test_permit_mode_auto_warns_and_defaults_to_owner(
-    tmp_path: Path, monkeypatch, capsys,
+    tmp_path: Path, capsys,
 ) -> None:
     """ship.permit_mode = "auto" → mode is "owner" + stderr warning."""
     project = tmp_path / "project"
@@ -275,9 +248,6 @@ def test_permit_mode_auto_warns_and_defaults_to_owner(
     _setup_launch_config(project, extra={"ship": {"permit_mode": "auto",
                                                    "hosts": ["local-a"]}})
 
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("ILK_DATA_HOME", str(tmp_path))
-
     wp = _import_write_permits()
     mode = wp.read_permit_mode(project)
     assert mode == "owner"
@@ -285,10 +255,9 @@ def test_permit_mode_auto_warns_and_defaults_to_owner(
     assert "warning" in captured.err.lower() or "permit_mode" in captured.err.lower()
 
 
-# ── AC-4 (wiring): write_permits.py accepts --machine for the scheduler to call
+# ── AC-4: write_permits.py accepts --machine flag
 
 
-@pytest.mark.xfail(strict=True, reason="no machine permit yet")
 def test_write_permits_accepts_machine_flag(
     tmp_path: Path, monkeypatch,
 ) -> None:
@@ -309,6 +278,5 @@ def test_write_permits_accepts_machine_flag(
     wp = _import_write_permits()
     monkeypatch.setattr(wp, "probe_host", lambda host, local: [])
 
-    # --machine must be accepted by the arg parser (not cause SystemExit)
     rc = wp.main(["--project", str(project), "--machine", "--dry-run"])
     assert rc == 0, "write_permits.py --machine --dry-run should succeed"

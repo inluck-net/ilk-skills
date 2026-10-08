@@ -617,8 +617,45 @@ print('true' if r.get('ok') else r.get('reason', 'permit check failed'))
 " 2>/dev/null)" || permit_ok="permit check error"
 
   if [[ "$permit_ok" != "true" ]]; then
-    write_scheduler_log "skip-permits" "$key" "$permit_ok"
-    return 1
+    # Machine mode: try to issue permits automatically after audit pass.
+    local _permit_mode
+    _permit_mode="$("$PYTHON" -c "
+import json, sys
+try:
+    cfg = json.load(open(sys.argv[1]))
+    print(cfg.get('ship', {}).get('permit_mode', 'owner'))
+except: print('owner')
+" "$repo/.ilk-launch.json" 2>/dev/null)" || _permit_mode="owner"
+    _permit_mode="${_permit_mode//$'\r'/}"
+    _permit_mode="${_permit_mode//$'\n'/}"
+
+    if [[ "$_permit_mode" == "machine" && "$audit_verdict" == "pass" ]]; then
+      local _write_rc
+      "$PYTHON" "${_ILK_SCRIPT_DIR}/../../ilk-ship/scripts/write_permits.py" \
+        --project "$repo" --machine 2>&1
+      _write_rc=$?
+      if [[ "$_write_rc" -eq 0 ]]; then
+        write_scheduler_log "permits-issued-by-machine" "$key" ""
+        # Re-check permits after issuing
+        permit_ok="$("$PYTHON" -c "
+import sys; sys.path.insert(0, '$(dirname "$_RELEASE_TRAIN_DISPATCH")')
+from release_train_dispatch import check_permits_for_dispatch
+from pathlib import Path
+r = check_permits_for_dispatch(Path('$data_dir'), Path('$repo'))
+print('true' if r.get('ok') else r.get('reason', 'permit check failed'))
+" 2>/dev/null)" || permit_ok="permit recheck error"
+        if [[ "$permit_ok" != "true" ]]; then
+          write_scheduler_log "skip-permits" "$key" "machine permit recheck failed: $permit_ok"
+          return 1
+        fi
+      else
+        write_scheduler_log "skip-permits" "$key" "machine permit refused (exit $_write_rc)"
+        return 1
+      fi
+    else
+      write_scheduler_log "skip-permits" "$key" "$permit_ok"
+      return 1
+    fi
   fi
 
   # Start release_train.py run --project <path> detached

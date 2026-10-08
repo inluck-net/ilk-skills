@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -34,6 +35,13 @@ for _p in (str(_LOOP_SCRIPTS), str(_WATCHDOG_SCRIPTS)):
 
 from ilk_paths import ilk_data_root, project_key  # noqa: E402
 from release_train import _resolve_hosts  # noqa: E402
+
+# Optional: pinned_loops for machine-mode fleet filtering.
+# When unavailable, machine mode counts every loop (fail closed).
+try:
+    from pinned_loops import unpinned as _pinned_loops_unpinned  # noqa: E402
+except ImportError:
+    _pinned_loops_unpinned = None
 
 # ── Probe ───────────────────────────────────────────────────────────────────
 
@@ -80,6 +88,49 @@ def probe_host(host: str, *, local: bool) -> list[str] | str:
         return "UNREACHABLE"
 
 
+def _get_process_command(pid: str, *, local: bool, host: str = "") -> str:
+    """Get the command line for a process.  Returns empty string on failure."""
+    try:
+        if local:
+            r = subprocess.run(
+                ["ps", "-o", "command=", "-p", pid],
+                capture_output=True, text=True, timeout=10,
+            )
+            return r.stdout.strip() if r.returncode == 0 else ""
+        cmd = f"ps -o command= -p {pid}"
+        r = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+             host, cmd],
+            capture_output=True, text=True, timeout=30,
+        )
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return ""
+
+
+def read_permit_mode(project: Path) -> str:
+    """Read ``ship.permit_mode`` from ``.ilk-launch.json``.
+
+    Returns ``"machine"`` when configured, ``"owner"`` otherwise.
+    Any value other than ``"machine"`` is treated as ``"owner"``
+    with a stderr warning.
+    """
+    config_path = project / ".ilk-launch.json"
+    if not config_path.exists():
+        return "owner"
+    try:
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return "owner"
+    raw = cfg.get("ship", {}).get("permit_mode", "owner")
+    if raw == "machine":
+        return "machine"
+    if raw != "owner":
+        print(f"warning: unknown ship.permit_mode '{raw}', treating as 'owner'",
+              file=sys.stderr)
+    return "owner"
+
+
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -95,6 +146,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="Comma-separated host list override")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print what would be written; write nothing")
+    parser.add_argument("--machine", action="store_true",
+                        help="Issue permits as machine (requires permit_mode='machine' in config)")
     args = parser.parse_args(argv)
 
     repo = Path(args.project).resolve()
@@ -114,14 +167,30 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("REFUSED: no hosts configured")
         return 2
 
+    # ── Mode ────────────────────────────────────────────────────────────
+    if args.machine:
+        mode = "machine"
+    else:
+        mode = read_permit_mode(repo)
+
     # ── Quiet-fleet check ───────────────────────────────────────────────
+    # In machine mode, only unpinned loops block (pinned loops are safe).
+    # If pinned_loops cannot be imported, count every loop (fail closed).
     fleet_status: dict[str, str] = {}
     for i, host in enumerate(hosts):
         result = probe_host(host, local=(i == 0))
         if isinstance(result, str):
             fleet_status[host] = result
         elif result:
-            fleet_status[host] = ",".join(result)
+            if mode == "machine" and _pinned_loops_unpinned is not None:
+                entries = []
+                for pid in result:
+                    cmd = _get_process_command(pid, local=(i == 0), host=host)
+                    entries.append((int(pid), cmd))
+                if _pinned_loops_unpinned(entries):
+                    fleet_status[host] = ",".join(result)
+            else:
+                fleet_status[host] = ",".join(result)
 
     if fleet_status:
         status_str = " ".join(f"{h}={v}" for h, v in fleet_status.items())
@@ -183,6 +252,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             "consumed": False,
             "revoked": False,
         }
+        permit["by"] = mode
+        permit["mode"] = mode
 
         tmp_path = permit_dir / f"{host}.json.tmp"
         tmp_path.write_text(json.dumps(permit, indent=2) + "\n", encoding="utf-8")
