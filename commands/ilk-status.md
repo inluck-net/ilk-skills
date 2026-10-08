@@ -61,6 +61,18 @@ python "<skill-root>\ilk-loop\scripts\loop_status.py"
 > This is informational, not an error. Agents must not re-raise it or skip
 > downstream checks because of it.
 
+### 1b2. RSI status (toolkit project only)
+
+When the project is the toolkit project (it has `commands/ilk-plan.md` at its
+root), run the RSI switch status:
+
+```bash
+python3 "<skill-root>/ilk-self-improve/scripts/rsi_switch.py" status
+```
+
+Print its one line as-is. `rsi_switch.py status` exits 0 and prints a line
+even when `paused.json` is corrupt (it reads `RSI: paused (unreadable pause file)`).
+
 ### 1c. Rich progress dashboard
 
 Only run this step if step 1b resolved to exit code 1. Pass the project
