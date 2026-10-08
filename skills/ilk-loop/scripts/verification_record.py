@@ -204,6 +204,35 @@ _GLOBAL_PATTERNS = (
 )
 
 
+#: Release-path files outside the safety-kernel list.  The kernel list names
+#: the runner, ship scripts and gates; the scheduler is not on it, but every
+#: loop on the host runs it (07h changed it under a scoped verify).
+RELEASE_PATH_EXTRA = ("skills/ilk-watchdog/scripts/scheduler.sh",)
+
+
+def release_path_hits(paths: list[str]) -> list[str]:
+    """The *paths* on the toolkit's release path, sorted.
+
+    Release path = this toolkit's safety-kernel list (both tiers) plus
+    ``RELEASE_PATH_EXTRA``.  One definition for both ends of 93d82cba: the
+    verify widens to full scope on a hit, and the release train refuses a
+    verify not recorded as full over a hit.  An unreadable kernel list counts
+    every path as a hit — a list the code cannot read is not one it can call
+    clean.
+    """
+    scripts = Path(__file__).resolve().parent
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    try:
+        from safety_kernel import check_paths, load  # noqa: E402
+        kernel = load(scripts.parents[2])
+    except Exception:
+        return sorted(set(paths))
+    hits = {h["path"] for h in check_paths(paths, kernel=kernel)}
+    hits.update(p for p in paths if p in RELEASE_PATH_EXTRA)
+    return sorted(hits)
+
+
 def _is_global_change(path: str) -> bool:
     """True if *path* touches conftest, fixtures, or build config."""
     norm = path.replace("\\", "/").lower()
@@ -293,6 +322,16 @@ def compute_suite_scope(project: Path, base_sha: str) -> dict:
         first = next(p for p in changed if _is_global_change(p))
         return {"mode": "full", "count": 0,
                 "reason": f"diff touches conftest/fixtures/build config: {first}"}
+
+    # The release path widens to full (93d82cba): the train refuses a verify
+    # not recorded as full over these files, so a scoped selection here could
+    # never be released.  The batch's one suite must be the full one.
+    rp_hits = release_path_hits(changed)
+    if rp_hits:
+        reason = f"diff touches the release path: {rp_hits[0]}"
+        if len(rp_hits) > 1:
+            reason += f" (+{len(rp_hits) - 1} more)"
+        return {"mode": "full", "count": 0, "reason": reason}
 
     # Map each changed module to the test files that cover it.
     #

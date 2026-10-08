@@ -406,13 +406,6 @@ def _proof_payload(**kwargs: object) -> dict:
     return {k: v for k, v in kwargs.items() if v is not None}
 
 
-#: Release-path files outside the safety kernel list.  The kernel list
-#: already names the runner, ship scripts and gates; the scheduler is not on
-#: it but every loop on the host runs it (07h changed it under a scoped
-#: verify).
-_RELEASE_PATH_EXTRA = ("skills/ilk-watchdog/scripts/scheduler.sh",)
-
-
 def _scope_summary(scope: dict | None) -> dict:
     """A batch record's suite_scope, with ``mode: unrecorded`` when absent."""
     if not isinstance(scope, dict) or not scope.get("mode"):
@@ -435,24 +428,19 @@ def _scope_phrase(scope: dict) -> str:
 def _release_path_hits(project: Path, base: str, head: str) -> list[str]:
     """Files in ``base..head`` that are on the release path.
 
-    Release path = the safety-kernel list (both tiers) plus
-    ``_RELEASE_PATH_EXTRA``.  An unreadable diff counts as a hit: a range
-    the train cannot list is not one it can call clean.
+    Release path as ``verification_record.release_path_hits`` defines it
+    (the one definition the verify's scope also widens on).  An unreadable
+    diff counts as a hit: a range the train cannot list is not one it can
+    call clean.
     """
     if str(_LOOP_SCRIPTS) not in sys.path:
         sys.path.insert(0, str(_LOOP_SCRIPTS))
-    from safety_kernel import check_paths, load as load_kernel  # noqa: E402
+    from verification_record import release_path_hits  # noqa: E402
 
     r = _git(project, "diff", "--name-only", base, head)
     if r.returncode != 0:
         return [f"<git diff {base}..{head[:12]} failed>"]
-    paths = [p for p in r.stdout.splitlines() if p.strip()]
-    # The toolkit's own list, named explicitly: load()'s default repo
-    # resolves to <toolkit>/skills, one level short.
-    kernel = load_kernel(_LOOP_SCRIPTS.parents[2])
-    hits = {h["path"] for h in check_paths(paths, kernel=kernel)}
-    hits.update(p for p in paths if p in _RELEASE_PATH_EXTRA)
-    return sorted(hits)
+    return release_path_hits([p for p in r.stdout.splitlines() if p.strip()])
 
 
 def prove(project: Path, data_dir: Path) -> dict:
