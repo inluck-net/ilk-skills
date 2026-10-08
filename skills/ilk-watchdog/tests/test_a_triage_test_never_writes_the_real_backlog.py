@@ -200,10 +200,6 @@ def _dir_is_empty(path: Path) -> bool:
 # ── AC-1: run_triage on the model path ───────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base leaks candidate+audit to ambient root instead of pinned root",
-)
 def test_ac1_run_triage_leaks_to_ambient(tmp_path, monkeypatch):
     """AC-1: run_triage writes candidate and audit to pinned root, not ambient.
 
@@ -277,10 +273,6 @@ def test_ac1_run_triage_leaks_to_ambient(tmp_path, monkeypatch):
 # ── AC-2: plain-red three-run scenario ──────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base leaks candidates+audit to ambient root across three runs",
-)
 def test_ac2_plain_red_three_run_leaks_to_ambient(tmp_path, monkeypatch):
     """AC-2: the plain-red three-run scenario replayed with ambient pin.
 
@@ -373,10 +365,6 @@ def test_ac2_plain_red_three_run_leaks_to_ambient(tmp_path, monkeypatch):
 # ── AC-3: emit with explicit backlog_dir ─────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base leaks audit row to ambient root when backlog_dir is explicit",
-)
 def test_ac3_emit_explicit_backlog_dir_leaks_audit(tmp_path, monkeypatch):
     """AC-3: emit with explicit backlog_dir.
 

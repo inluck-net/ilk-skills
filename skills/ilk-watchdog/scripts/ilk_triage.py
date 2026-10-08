@@ -735,7 +735,7 @@ def run_triage(
                 outcome=outcome,
                 decision=decision,
                 evidence=evidence,
-                backlog_dir=None,
+                backlog_dir=data_root / "ilk-skills-improvements",
             )
         except Exception as exc:
             try:

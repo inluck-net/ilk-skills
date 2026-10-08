@@ -141,9 +141,11 @@ def emit(
         raise ValueError(f"outcome must be 'applied' or 'escalated', got {outcome!r}")
 
     if backlog_dir is None:
-        backlog_dir = ilk_data_root() / "ilk-skills-improvements"
+        root = ilk_data_root()
+        backlog_dir = root / "ilk-skills-improvements"
     else:
         backlog_dir = Path(backlog_dir)
+        root = backlog_dir.parent
 
     sig = signature(evidence, decision)
 
@@ -274,8 +276,7 @@ def emit(
         lock_fd.close()
 
     # Write audit row
-    data_root = ilk_data_root()
-    data_dir = data_root / "projects" / project_key
+    data_dir = root / "projects" / project_key
     write_audit(
         "candidate-emitted",
         project_key,
