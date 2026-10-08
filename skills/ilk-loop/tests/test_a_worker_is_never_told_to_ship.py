@@ -166,10 +166,6 @@ class TestAC5IlkPlanForbidsShipSteps:
 # ── AC-6: §5 red-gate ownership rule ─────────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="base §5 does not contain the red-gate ownership rule",
-)
 class TestAC6RedGateOwnership:
     """§5 of commands/ilk.md must contain the key phrases from the red-gate
     ownership rule: ``narrower``, ``earlier step``, ``pre-existing``,

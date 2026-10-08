@@ -96,6 +96,19 @@ For each step:
    the work. If the gate is genuinely wrong, write the proposed replacement
    command under `## Findings` and continue. The planner or operator applies it
    between runs.
+7. **A red gate is owned until a measurement says otherwise.**
+   (a) A rerun narrower than the declared gate is not the gate, and its green
+     is not evidence. Narrower means dropping a file, adding `-k`, or adding
+     `--deselect`.
+   (b) A failure caused by an earlier step of the same sub-plan or batch is
+     owned by this work, never "pre-existing".
+   (c) "Pre-existing" needs the failing node ids rerun at the iteration's base
+     commit in a detached worktree (`git worktree add --detach <tmp> <base>`,
+     then `git worktree remove --force <tmp>`). A pass there means owned. Write
+     the ids and the at-base result under `## Findings`; then either fix the
+     work or leave the sub-plan `in-progress`.
+   Measured: gh-resolve `20261006-191934` re-ran without `tests/test_claim.py`
+   and called step-1-owned failures "pre-existing".
 
 ### Running tests / long commands during a step
 
