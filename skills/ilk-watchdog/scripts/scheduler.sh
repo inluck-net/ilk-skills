@@ -176,6 +176,7 @@ WATCHDOG_SCRIPT="${_ILK_SCRIPT_DIR}/watchdog.sh"
 DIGEST_SCRIPT="${DIGEST_SCRIPT:-${_SKILL_ROOT}/ilk-loop/scripts/ilk_digest.py}"
 AUTOPLAN_PY="${AUTOPLAN_PY:-${_ILK_SCRIPT_DIR}/../../ilk-self-improve/scripts/autoplan.py}"
 REPEAT_FAILURE_PY="${REPEAT_FAILURE_PY:-${_ILK_SCRIPT_DIR}/../../ilk-loop/scripts/repeat_failure.py}"
+BACKLOG_SYNC_PY="${BACKLOG_SYNC_PY:-${_ILK_SCRIPT_DIR}/../../ilk-feedback/scripts/backlog_sync.py}"
 PARK_DEAD_MASTER_SCRIPT="${_ILK_SCRIPT_DIR}/park_dead_master.py"
 
 SCHEDULER_LOG_DIR="$(ilk_data_dir)/logs"
@@ -838,6 +839,44 @@ file_repeated_failures() {
   return 0
 }
 
+sync_remote_backlogs() {
+  # Pull remote hosts' backlog rows into the local backlog.
+  # Runs once per cycle in maybe_tick_autoplan; never fails the cycle.
+  # Skipped when DRY_RUN is true or BACKLOG_SYNC_PY is missing.
+  if [[ "${DRY_RUN:-false}" == true ]]; then
+    return 0
+  fi
+  if [[ ! -f "$BACKLOG_SYNC_PY" ]]; then
+    return 0
+  fi
+  local _sync_out _sync_rc=0
+  _sync_out=$("$PYTHON" "$BACKLOG_SYNC_PY" --auto 2>&1) || _sync_rc=$?
+  if [[ $_sync_rc -ne 0 || -n "$_sync_out" ]]; then
+    # Log unless every host is throttled or not-rsi-host
+    local _should_log="false"
+    if [[ $_sync_rc -ne 0 ]]; then
+      _should_log="true"
+    elif echo "$_sync_out" | "$PYTHON" -c "
+import sys, json
+data = json.load(sys.stdin)
+if isinstance(data, dict):
+    sys.exit(0 if data.get('status') in ('not-rsi-host', 'throttled') else 1)
+if isinstance(data, list):
+    sys.exit(0 if all(r.get('status') in ('ok', 'self', 'throttled') for r in data) else 1)
+sys.exit(1)
+" 2>/dev/null; then
+      _should_log="false"
+    else
+      _should_log="true"
+    fi
+    if [[ "$_should_log" == "true" ]]; then
+      local _sync_snippet="${_sync_out:0:200}"
+      write_scheduler_log "backlog-sync" "" "$_sync_snippet"
+    fi
+  fi
+  return 0
+}
+
 progress_signature_for_project() {
   # Echo a signature of the project's plan progress.  Two launches with the
   # same signature made no progress between them.
@@ -1101,6 +1140,9 @@ maybe_tick_autoplan() {
   if [[ ! -f "$AUTOPLAN_PY" ]]; then
     return 0
   fi
+
+  # Pull remote hosts' backlog rows before the autoplan tick.
+  sync_remote_backlogs
 
   local _tick_log_dir
   _tick_log_dir="$(ilk_data_dir)/autoplan"

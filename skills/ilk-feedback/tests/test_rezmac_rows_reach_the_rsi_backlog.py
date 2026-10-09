@@ -439,7 +439,6 @@ def test_ac8_correct_ssh_argv(backlog_dir, state_dir):
 # ── AC-9: scheduler hook ────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="backlog_sync not built")
 def test_ac9_scheduler_hook_returns_0_on_stub_exit_4(tmp_path):
     """The sync_remote_backlogs shell function, extracted from
     scheduler.sh, returns 0 when BACKLOG_SYNC_PY points at a stub that

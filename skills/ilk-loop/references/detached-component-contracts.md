@@ -3251,3 +3251,37 @@ The row carries every field `scheduler.sh` reads, plus `train_only`:
    `sentinel_all_shipped`; a failure sentinel (`local_checks_failed`,
    `error`, etc.) produces no `train_only` row — the project is
    excluded as before.
+
+## Contract 12: Improvement backlog cross-host sync (`backlog_sync.py`)
+
+### Purpose
+
+The improvement backlog (`~/.ilk-data/ilk-skills-improvements/candidates.json`)
+is per-host. Autoplan runs only on the RSI host (chad-mbp). This module pulls
+remote hosts' rows over ssh, merges them tagged with `relations.origin_host`,
+and writes the local file only when both sides parsed.
+
+### Who writes
+
+- **`backlog_sync.pull()`** — the only cross-host writer. It writes only from
+  a strict read (`triage_backlog.read_backlog_strict`), tags
+  `relations.origin_host`, and never writes to the remote.
+
+### Who reads
+
+- **`improvement_backlog.load()`** — reads the merged backlog.
+- **`autoplan.py`** — reads candidates for planning.
+
+### Invariants
+
+1. **Never write from a lenient read.** `improvement_backlog._load_raw` returns
+   `[]` on a decode error. `backlog_sync` uses `read_backlog_strict` which
+   raises on a corrupt file, so a merge never wipes rows.
+2. **Never write to the remote.** The only remote command is
+   `hostname; cat ~/.ilk-data/ilk-skills-improvements/candidates.json`.
+3. **Tag origin_host.** Every row pulled from a remote host gets
+   `relations.origin_host` set to that host's name. Never as a top-level key.
+4. **Never change status.** The local host owns `status` (planned/shipped).
+   Remote rows refresh `seen_count`, `last_seen`, `title`, `gap`, `evidence`
+   but never `status`.
+5. **Throttle.** At most one pull per host per 30 minutes (configurable).
