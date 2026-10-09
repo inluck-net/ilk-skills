@@ -140,14 +140,64 @@ def git_root(start: Path) -> Path | None:
     put every resolver worktree under one key and one runner (ilk #44).  That
     walk-back was meant only for the selfmod worktree, which release-layout
     hosts no longer create.
+
+    Host compatibility switch: when ``<ilk data root>/host-compat.json`` says
+    ``{"linked_worktree_key": "clone"}``, a linked worktree resolves to its
+    main clone again (the v0.9.179 keying).  It lets a host whose consumer is
+    not yet safe with per-worktree keys (gh-resolve before batch 42 on rezmac)
+    run current ilk.  Remove the file to get the default back.
     """
     cur = Path(start).resolve()
     while True:
-        if (cur / ".git").exists():
+        git_entry = cur / ".git"
+        if git_entry.exists():
+            if git_entry.is_file() and _linked_worktree_keys_follow_clone():
+                original_root = _worktree_main_clone(git_entry, cur)
+                if original_root is not None:
+                    return original_root
             return cur
         if cur.parent == cur:
             return None
         cur = cur.parent
+
+
+#: Host switch file, under the ilk data root.  See git_root.
+HOST_COMPAT_FILE = "host-compat.json"
+
+
+def _linked_worktree_keys_follow_clone() -> bool:
+    """True only when the host compat file says linked_worktree_key == "clone".
+
+    Any other value, a missing file or an unreadable one means the default
+    (each linked worktree is its own project).
+    """
+    try:
+        data = json.loads((ilk_data_root() / HOST_COMPAT_FILE).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get("linked_worktree_key") == "clone"
+
+
+def _worktree_main_clone(git_entry: Path, cur: Path) -> Path | None:
+    """The main clone a linked worktree's ``.git`` file points at, or None.
+
+    The pre-v0.9.180 walk-back, unchanged: the gitdir is
+    ``<original>/.git/worktrees/<name>``.
+    """
+    try:
+        content = git_entry.read_text().strip()
+    except OSError:
+        return None
+    if not content.startswith("gitdir:"):
+        return None
+    gitdir = Path(content[len("gitdir:"):].strip())
+    git_dir = gitdir.parent.parent
+    if git_dir.name != ".git":
+        return None
+    original_root = git_dir.parent
+    if original_root != cur and original_root.exists():
+        return original_root
+    return None
 
 
 def meta_root(start: Path) -> Path | None:
