@@ -2617,6 +2617,32 @@ raise SystemExit(0)
 ' "$sub_file" "$step"
 }
 
+# rollback_pointer_past_red <results-file>
+# A red step gate pins current_step to that step.  For every attributable
+# blocking record (slug, step) whose sub-plan's current_step is past it,
+# write current_step back to that step and say so.  Without this, a worker's
+# +1 bump survived its own red gate: gh-resolve run 20261009-170157 ended
+# local_checks_failed at pointer 2 with step 1 red, and the next run gated
+# only step 2 and shipped (backlog aba1019c).
+rollback_pointer_past_red() {
+  local results_file="$1"
+  [[ -s "$results_file" ]] || return 0
+  local targets slug step cur
+  targets=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/blocking_checks.py" \
+    "$results_file" --targets 2>/dev/null) || return 0
+  while read -r slug step; do
+    [[ -n "$slug" && "$step" =~ ^[0-9]+$ ]] || continue
+    cur=$(_read_subplan_current_step "$slug") || continue
+    [[ "$cur" =~ ^[0-9]+$ ]] || continue
+    if (( cur > step )); then
+      if _write_subplan_current_step "$slug" "$step"; then
+        echo "  [pointer] $slug: current_step $cur -> $step (step $step's gate is red)"
+      fi
+    fi
+  done <<< "$targets"
+  return 0
+}
+
 # _subplan_is_shipped <slug> — exit 0 when the sub-plan's frontmatter status
 # is shipped.  (_read_subplan_field reads integer fields only.)
 _subplan_is_shipped() {
@@ -7034,6 +7060,9 @@ print('false')
                   _retry_stop_reason="local_checks_failed"
                 fi
               fi
+
+              # A red step never leaves the pointer past it, stop or retry.
+              rollback_pointer_past_red "$local_checks_results"
 
               if [[ "$_should_stop" == "true" ]]; then
                 iter_stop_reason="$_retry_stop_reason"
