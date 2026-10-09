@@ -655,14 +655,17 @@ print('true' if r.get('ok') else r.get('reason', 'permit check failed'))
 " 2>/dev/null)" || permit_ok="permit recheck error"
         if [[ "$permit_ok" != "true" ]]; then
           write_scheduler_log "skip-permits" "$key" "machine permit recheck failed: $permit_ok"
+          $PYTHON "${_ILK_SCRIPT_DIR}/permit_request.py" record --data-dir "$data_dir" --run-id "$run_id" --reason "$permit_ok" || true
           return 1
         fi
       else
         write_scheduler_log "skip-permits" "$key" "machine permit refused (exit $_write_rc)"
+        $PYTHON "${_ILK_SCRIPT_DIR}/permit_request.py" record --data-dir "$data_dir" --run-id "$run_id" --reason "machine permit refused (exit $_write_rc)" || true
         return 1
       fi
     else
       write_scheduler_log "skip-permits" "$key" "$permit_ok"
+      $PYTHON "${_ILK_SCRIPT_DIR}/permit_request.py" record --data-dir "$data_dir" --run-id "$run_id" --reason "$permit_ok" || true
       return 1
     fi
   fi
@@ -677,6 +680,7 @@ print('true' if r.get('ok') else r.get('reason', 'permit check failed'))
   "$PYTHON" "$_SPAWN_DETACHED" --log "$log_file" "$PYTHON" "$_RELEASE_TRAIN_SCRIPT" run --project "$repo" &
 
   write_scheduler_log "release-train-started" "$key" "run_id=$run_id pid=$!"
+  $PYTHON "${_ILK_SCRIPT_DIR}/permit_request.py" clear --data-dir "$data_dir" || true
   return 0
 }
 

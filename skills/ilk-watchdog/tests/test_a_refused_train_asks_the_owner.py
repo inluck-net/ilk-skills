@@ -73,7 +73,6 @@ def _isolate_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 # ── AC-1: record × 3 → True on the 3rd, False on the 4th, passes == 4 ─────
 
 
-@_PIN
 def test_record_third_consecutive_refusal_triggers_request(tmp_path: Path) -> None:
     """AC-1: record × 3 with same run_id → False, False, True. 4th → False."""
     from permit_request import record
@@ -101,7 +100,6 @@ def test_record_third_consecutive_refusal_triggers_request(tmp_path: Path) -> No
 # ── AC-2: new run_id resets ─────────────────────────────────────────────────
 
 
-@_PIN
 def test_new_run_id_resets_state(tmp_path: Path) -> None:
     """AC-2: a new run_id after a request starts over."""
     from permit_request import record
@@ -128,7 +126,6 @@ def test_new_run_id_resets_state(tmp_path: Path) -> None:
 # ── AC-3: clear removes the file; pending then returns None ─────────────────
 
 
-@_PIN
 def test_clear_removes_file_and_pending_returns_none(tmp_path: Path) -> None:
     """AC-3: clear removes the file, pending then returns None."""
     from permit_request import clear, pending, record
@@ -152,7 +149,6 @@ def test_clear_removes_file_and_pending_returns_none(tmp_path: Path) -> None:
 # ── AC-4: CLI output ────────────────────────────────────────────────────────
 
 
-@_PIN
 def test_cli_third_record_prints_request(tmp_path: Path) -> None:
     """AC-4: the 3rd record prints 'request'; others print nothing. All exit 0."""
     script = WATCHDOG_SCRIPTS / "permit_request.py"
@@ -179,7 +175,6 @@ def test_cli_third_record_prints_request(tmp_path: Path) -> None:
 # ── AC-5: structural wiring in scheduler.sh ─────────────────────────────────
 
 
-@_PIN
 def test_scheduler_sh_has_permit_request_calls() -> None:
     """AC-5: scheduler.sh has permit_request.py record after each skip-permits
     and clear after release-train-started."""
