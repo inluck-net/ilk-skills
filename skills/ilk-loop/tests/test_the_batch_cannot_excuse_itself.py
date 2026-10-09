@@ -106,6 +106,14 @@ def _has_flaky_owed(gate_json: Path, node_id: str) -> bool:
 
 # ── fixtures ─────────────────────────────────────────────────────────────────
 
+@pytest.fixture(autouse=True)
+def _pinned_data_root(tmp_path: Path, monkeypatch):
+    """The ledger resolves through ilk_data_root(); keep it under tmp_path."""
+    root = tmp_path / "ilk-data"
+    monkeypatch.setenv("ILK_DATA_HOME", str(root))
+    monkeypatch.setenv("ILK_DATA_DIR", str(root))
+
+
 @pytest.fixture()
 def repo(tmp_path: Path):
     """A tmp git repo with passing test + ship config at base."""

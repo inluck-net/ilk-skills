@@ -84,6 +84,9 @@ def test_batch_cannot_excuse_its_own_red(
     tmp_path: Path, monkeypatch
 ) -> None:
     """A test that passes at base and fails at head is attributed as owned."""
+    # The ledger resolves through ilk_data_root(); keep it under tmp_path.
+    monkeypatch.setenv("ILK_DATA_HOME", str(tmp_path / "ilk-data"))
+    monkeypatch.setenv("ILK_DATA_DIR", str(tmp_path / "ilk-data"))
     repo = _init_repo(tmp_path)
     _write_test(repo, "test_x.py", "def test_a(): assert True\n")
     _write_ship_config(repo)
