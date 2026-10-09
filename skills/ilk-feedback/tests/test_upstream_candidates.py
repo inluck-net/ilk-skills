@@ -558,12 +558,15 @@ class TestCLINewFields:
         """add --kind bug --source supervisor --relation commit=abc → list --source finds it."""
         env = {**os.environ, "ILK_DATA_HOME": str(backlog_env)}
 
-        # Add entry via CLI
+        # Add entry via CLI.  The fixture row is one the admission gate
+        # accepts (an anchored gap and a fix for kind=bug) so the test keeps
+        # proving what it claims: that --kind/--source/--relation are stored.
         result = subprocess.run(
             [sys.executable, str(_SCRIPT), "add",
-             "--title", "CLI test bug",
-             "--gap", "CLI gap",
+             "--title", "CLI test bug for the backlog",
+             "--gap", "CLI gap, see scheduler.sh:615",
              "--kind", "bug",
+             "--proposed-fix", "the add branch should record its origin",
              "--source", "supervisor",
              "--relation", "commit=abc123",
              "--relation", "run_id=r42"],
