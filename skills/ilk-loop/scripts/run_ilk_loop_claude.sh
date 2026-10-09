@@ -1291,7 +1291,19 @@ get_active_subplan_targets() {
                    elif ((.status // "") | ascii_downcase) == "pending" then 1
                    else 2 end)}
     ] | sort_by(.__p) | .[0]
-    | if . == null then empty else "\(.slug)\t\(.current_step)" end
+    | if . == null then empty else
+        # A discharged sub-plan has current_step == estimated_steps, one past
+        # its last step.  Gate (and record) its FINAL step: ship_integrity
+        # only accepts a pass row for step estimated_steps-1, so a row for
+        # the past-the-end step reverted issue-8006 on every launch (rezmac
+        # 2026-10-09, 6 runs, a full convex suite each).
+        # loop_status emits both fields as strings ("4"); "?" or absent
+        # values fall through unchanged.
+        (try (.current_step | tonumber) catch null) as $cs
+        | (try (.estimated_steps | tonumber) catch null) as $es
+        | (if $cs != null and $es != null and $es > 0 and $cs >= $es
+           then $es - 1 else .current_step end) as $step
+        | "\(.slug)\t\($step)" end
   ' 2>/dev/null) || return 0
   [[ -n "$line" ]] || return 0
   slug="${line%%$'\t'*}"
