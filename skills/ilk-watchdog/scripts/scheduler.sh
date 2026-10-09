@@ -175,6 +175,7 @@ NOTIFY_PY="${_SKILL_ROOT}/ilk-watchdog/scripts/ilk_notify.py"
 WATCHDOG_SCRIPT="${_ILK_SCRIPT_DIR}/watchdog.sh"
 DIGEST_SCRIPT="${DIGEST_SCRIPT:-${_SKILL_ROOT}/ilk-loop/scripts/ilk_digest.py}"
 AUTOPLAN_PY="${AUTOPLAN_PY:-${_ILK_SCRIPT_DIR}/../../ilk-self-improve/scripts/autoplan.py}"
+REPEAT_FAILURE_PY="${REPEAT_FAILURE_PY:-${_ILK_SCRIPT_DIR}/../../ilk-loop/scripts/repeat_failure.py}"
 PARK_DEAD_MASTER_SCRIPT="${_ILK_SCRIPT_DIR}/park_dead_master.py"
 
 SCHEDULER_LOG_DIR="$(ilk_data_dir)/logs"
@@ -815,6 +816,26 @@ no_progress_state_file() {
   # this bound does not live in a directory that may not exist.
   local project_data_dir="$1"
   echo "${project_data_dir}/runtime/launcher/no-progress.json"
+}
+
+file_repeated_failures() {
+  # Detect and file repeated failures as improvement backlog rows.
+  # Runs once per dispatch; never blocks dispatch on failure.
+  local key="$1" project_data_dir="$2"
+  local _rf_out _rf_rc=0
+  _rf_out=$("$PYTHON" "$REPEAT_FAILURE_PY" --project-data "$project_data_dir" --file 2>&1) || _rf_rc=$?
+  if [[ $_rf_rc -ne 0 ]]; then
+    local _rf_snippet="${_rf_out:0:200}"
+    write_scheduler_log "repeat-detector-failed" "$key" "exit $_rf_rc: $_rf_snippet"
+  else
+    # Parse filed ids from the JSON output
+    local _rf_filed
+    _rf_filed=$(echo "$_rf_out" | "$PYTHON" -c "import sys,json; d=json.load(sys.stdin); print(' '.join(d.get('filed',[])))" 2>/dev/null) || true
+    if [[ -n "$_rf_filed" ]]; then
+      write_scheduler_log "repeat-filed" "$key" "$_rf_filed"
+    fi
+  fi
+  return 0
 }
 
 progress_signature_for_project() {
@@ -1704,6 +1725,8 @@ except: pass
         # Measured on rezmac: 93 projects bounded this way, one of them at 375.
         local _np_file _np_count _np_sig _np_updated _np_cur _np_ack
         local _np_progressed="false" _np_clean="false" _np_new _np_decision
+        # File repeated failures once per dispatch (before no-progress verdict).
+        [[ "$DRY_RUN" != true ]] && file_repeated_failures "$key" "$path"
         _np_file="$(no_progress_state_file "$path")"
         read -r _np_count _np_sig _np_updated <<<"$(read_no_progress_state "$_np_file")"
         _np_cur="$(progress_signature_for_project "$path")"

@@ -928,6 +928,9 @@ after each gate check.
 
 **Readers:** `ship_integrity.check_final_step_gate` — merges this file's
 rows with the current iteration's results to find qualifying pass rows.
+`repeat_failure.detect` — reads gate rows to find red-gate repeats
+(consecutive runs whose last gate at the same step is fail/error with the
+same head_sha).
 
 **No-gate-ran scoping (added 2026-09-29):** The final-step gate check runs
 for ALL newly-shipped sub-plans, including those whose gate was skipped
@@ -1319,6 +1322,8 @@ Fields:
 - **`run_ilk_loop_claude.sh`** — `revert_notice.read_revert_rows()` +
   `assemble_revert_notice()` to build the prompt injection. Only rows whose
   slug is still not shipped are included.
+- **`repeat_failure.detect`** — reads revert rows to find revert repeats
+  (consecutive runs with matching site, from_step, ship_commit).
 
 ### Invariants
 

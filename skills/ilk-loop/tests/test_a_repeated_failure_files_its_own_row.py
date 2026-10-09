@@ -442,7 +442,6 @@ def test_ac6_unreadable_json_line_exits_3(project_dir, backlog_dir):
 # ── AC-7: scheduler hook ────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="repeat_failure not built")
 def test_ac7_scheduler_hook_returns_0_on_stub_exit_3(project_dir, tmp_path):
     """The file_repeated_failures shell function, extracted from
     scheduler.sh, returns 0 when REPEAT_FAILURE_PY points at a stub
