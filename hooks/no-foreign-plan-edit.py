@@ -11,6 +11,8 @@ Scope:
   * Bash ``git commit`` whose message contains ``[plan:<other>#…]`` ⇒ deny.
   * Bash ``git reset`` / ``git rebase`` ⇒ deny (a worker never rewrites
     history).
+  * Skill ``ilk-*`` other than ilk, ilk-loop and ilk-status ⇒ deny (a worker
+    does one step through the loop skill, never the planner).
 
 The deny message names the target: "this iteration's sub-plan is <slug>;
 <path> belongs to another sub-plan."
@@ -236,6 +238,11 @@ def _foreign_plan_tag(msg: str, own_slug: str) -> bool:
 
 _HISTORY_REWRITE = frozenset({"reset", "rebase"})
 
+#: The ilk-* skills a worker may open mid-iteration: the loop skill and the
+#: read-only status view.  Measured on ilk-skills logs *202610*: ilk 57,
+#: ilk-status 14, ilk-plan 5 (each a misroute).
+_WORKER_SKILLS = frozenset({"ilk", "ilk-loop", "ilk-status"})
+
 
 def _rewrites_history(cmd: str) -> bool:
     """True if the Bash command contains ``git reset`` or ``git rebase``."""
@@ -265,11 +272,27 @@ def main() -> int:
     if not own_slug:
         return 0
 
+    tool_name = event.get("tool_name", "")
+
+    # ── Skill ────────────────────────────────────────────────────────────
+    # A worker runs one step through the loop skill.  The planner and the
+    # other ilk-* skills act on whatever master is newest, with no one-step
+    # contract (backlog a134fac5: run 20261009-212756 opened ilk-plan and
+    # shipped another master's sub-plan).
+    if tool_name == "Skill":
+        name = str((event.get("tool_input") or {}).get("skill", ""))
+        base = name.rsplit(":", 1)[-1]
+        if base.startswith("ilk") and base not in _WORKER_SKILLS:
+            _deny(
+                f"this iteration's sub-plan is {own_slug}; a loop worker "
+                f"does not open {name}. Use Skill(ilk) to do the one step "
+                f"at current_step, then end your turn."
+            )
+        return 0
+
     plans = _plans_dir(event)
     if plans is None:
         return 0  # can't resolve ⇒ allow (must never wedge a worker)
-
-    tool_name = event.get("tool_name", "")
 
     # ── Edit / Write / MultiEdit / NotebookEdit ──────────────────────────
     if tool_name in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
