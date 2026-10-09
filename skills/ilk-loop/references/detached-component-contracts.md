@@ -201,6 +201,15 @@ are deliberately not guarded: on a resolver key gh-resolve's daemons pause,
 un-park and create them while the runner is live, and a master created during
 the turn is never touched.
 
+The same master's registered sub-plans get a narrower guard
+(`subplan_status_snapshot.py`): after the turn, a sub-plan `status:` that
+changed **and** is outside the reader vocabulary (`pending`, `ready`,
+`in-progress`, `shipped`, `blocked`, `skipped-by-operator`) is put back to its
+pre-dispatch value and logged as `[status-guard]`. Examples are `complete`, or
+`queued` on a sub-plan. That is not a terminal state, because the restore
+repairs the plan. In-vocabulary changes are left to ship_transition,
+quarantine and one-ship enforcement.
+
 | Field | Written by | Meaning |
 |---|---|---|
 | `parked_at` | every park | local time, `YYYY-MM-DDTHH:MM:SS` |

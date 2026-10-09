@@ -6289,7 +6289,7 @@ print(json.dumps({
     # ILK_MASTER pin).  Other masters on the key are not this run's to guard:
     # on a resolver key gh-resolve's daemons legitimately pause, un-park and
     # create them while this runner is live (gh-resolve-59, 2026-09-29).
-    local _master_snap_file="" _master_tampered=0 _snap_master=""
+    local _master_snap_file="" _master_tampered=0 _snap_master="" _status_snap_file=""
     if [[ "$GATE_FIRST_GREEN" -eq 0 && "$GATE_FIRST_NO_DISPATCH" -eq 0 ]]; then
       # Capture, then parse: loop_status exits 1 when work is pending (its
       # normal answer), which under pipefail would wipe a piped result.
@@ -6303,6 +6303,15 @@ print(json.dumps({
              --master "$_snap_master" >/dev/null; then
         echo "  ! [master-snapshot] could not snapshot this run's master (${_snap_master:-unresolved}) — a worker edit to it will NOT be detected this iteration" >&2
         _master_snap_file=""
+      fi
+      # Sub-plan statuses of the same master: a worker-written status outside
+      # the state machine (`complete`, `queued`) is restored after the turn
+      # (backlog aba1019c).
+      _status_snap_file="${RUN_LOG_DIR}/subplan-status-snapshot-${i}.json"
+      if [[ -z "$_snap_master" ]] || ! python3 "${_SKILL_ROOT}/ilk-loop/scripts/subplan_status_snapshot.py" take \
+             --plans-dir "$(get_plans_dir)" --master "$_snap_master" --out "$_status_snap_file" >/dev/null; then
+        echo "  ! [status-guard] could not snapshot sub-plan statuses (${_snap_master:-unresolved}) — an unknown status a worker writes will NOT be restored this iteration" >&2
+        _status_snap_file=""
       fi
     fi
 
@@ -6401,6 +6410,19 @@ print(json.dumps({
         _master_tampered=1
         echo "  ! [ship-integrity VIOLATION] the worker changed master state; restored to the pre-dispatch snapshot (rc=${_ms_rc}):" >&2
         echo "$_ms_out" >&2
+      fi
+    fi
+
+    # Sub-plan status restore: a status outside the state machine is put
+    # back to its pre-dispatch value.  Logged, not a violation: the restore
+    # fully repairs the state, and ending the run would cost smoothness.
+    if [[ -n "$_status_snap_file" && -f "$_status_snap_file" ]]; then
+      local _ss_out _ss_rc=0
+      _ss_out=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/subplan_status_snapshot.py" restore \
+                  --plans-dir "$(get_plans_dir)" --snapshot "$_status_snap_file" 2>&1) || _ss_rc=$?
+      [[ -n "$_ss_out" ]] && echo "$_ss_out"
+      if [[ $_ss_rc -eq 2 ]]; then
+        echo "  ! [status-guard] restore failed (rc=2) — sub-plan statuses are unverified this iteration" >&2
       fi
     fi
 
