@@ -3294,3 +3294,81 @@ and writes the local file only when both sides parsed.
    Remote rows refresh `seen_count`, `last_seen`, `title`, `gap`, `evidence`
    but never `status`.
 5. **Throttle.** At most one pull per host per 30 minutes (configurable).
+
+---
+
+## Contract 13: Permit-request state (`runtime/permit-request.json`)
+
+### Purpose
+
+When a release train is refused for missing permits, the scheduler records
+each refusal. After 3 consecutive refusals for the same `run_id`, a permit
+request is surfaced to the owner via `status_all.py` and the xbar panel.
+This contract defines the on-disk state file that tracks consecutive
+refusals and signals when the owner should be asked.
+
+### Format
+
+```json
+{
+  "run_id": "20261010-120000",
+  "passes": 3,
+  "requested_at": "2026-10-10T12:15:00+00:00",
+  "reason": "missing permit for host chad-mbp"
+}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `run_id` | string | The run identifier whose train was refused |
+| `passes` | int | Count of consecutive refusals for this `run_id` |
+| `requested_at` | string or null | ISO-8601 timestamp when `passes` reached the threshold (3); `null` before that |
+| `reason` | string | The refusal reason from `release_train_dispatch.check_permits_for_dispatch` |
+
+### Who writes
+
+- **`permit_request.py` `record()`** — the sole writer. Creates or updates
+  the file atomically (write to tmp + `os.replace`). Increments `passes`;
+  sets `requested_at` when `passes >= 3` and `requested_at` is null.
+- **`permit_request.py` `clear()`** — deletes the file. Called after a
+  train successfully starts (`release-train-started`).
+
+### Who reads
+
+- **`status_all.py`** — `resolve_project_status` calls
+  `permit_request.pending(data_dir)`. When a request is pending
+  (`requested_at` is set), the entry gains a `permit_request` field
+  containing the `reason`. Otherwise the key is absent.
+- **`render_xbar.py`** — when `permit_request` is present, renders
+  `--train waiting for a permit: <reason> | color=orange`.
+- **`scheduler.sh`** — invokes `permit_request.py record` after each
+  `skip-permits` log, and `permit_request.py clear` after
+  `release-train-started`.
+
+### Lifecycle
+
+1. Scheduler encounters a permit refusal → calls `permit_request.py record`.
+2. `record()` increments `passes`. On the 3rd call (`passes == 3`), sets
+   `requested_at` and returns `True`.
+3. Scheduler sees `True` → logs `permit-request` and calls
+   `invoke_ilk_notify "permit-request"`.
+4. `status_all.py` reads `pending()` → entry carries `permit_request`.
+5. xbar renders the waiting line.
+6. Owner provides a permit → train starts → scheduler calls
+   `permit_request.py clear` → file removed → `pending()` returns `None`.
+7. A new `run_id` resets the counter: `passes = 1`, `requested_at = null`.
+
+### Invariants
+
+1. **Atomic writes.** `_write` writes to a tmp file and uses `os.replace`
+   so readers never see a partial file.
+2. **`clear` on a missing file is a no-op.** `clear()` checks `is_file()`
+   before unlinking.
+3. **Absent file = no pending request.** `pending()` returns `None` when
+   the file does not exist. `status_all.py` omits the `permit_request`
+   key entirely in this case (not `null`, absent).
+4. **New run_id resets.** When `record()` sees a `run_id` different from
+   the stored one, it starts a fresh record with `passes = 1`.
+5. **Threshold is 3.** `requested_at` is set exactly when `passes == 3`
+   and `requested_at` is null. A 4th call increments `passes` to 4 but
+   does not re-set `requested_at`.
