@@ -195,7 +195,7 @@ helper is idempotent — running it twice does not duplicate files.
 2. Exit code 0  → done, tell the user, stop.
    Exit code 1  → there is a next pending sub-plan; loop_status prints its path.
 3. Read the master plan + the next sub-plan.
-4. Execute exactly the next step (or a few consecutive ones if context allows).
+4. Execute exactly ONE step: the one at `current_step`. One turn, one step.
 5. After each step:
      - commit with message containing  [plan:<slug>#step-N]
      - run the step's declared gate (the runner injects the commands into
@@ -208,8 +208,12 @@ helper is idempotent — running it twice does not duplicate files.
        `baseline_red` entry
      - if green is not reachable, end the turn with the failing ids written
        to the sub-plan's Findings section
-     - bump `current_step` in sub-plan front-matter
+     - bump `current_step` in sub-plan front-matter by exactly one (N -> N+1),
+       never more; `status:` is the driver's field: never write it (there is
+       no `complete` state; `shipped` is written only by the driver)
      - commit:  chore(plans): bump <slug> current_step to <N+1>
+     - end your turn. Do not start step N+1: the next step runs in a fresh
+       turn, after the driver has gated this one
 6. When current_step reaches estimated_steps:
      - transition every listed ticket in the tracker to the next state
        (use the ilk-lark-tickets skill if it's a Lark Bitable)

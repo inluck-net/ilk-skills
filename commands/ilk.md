@@ -63,9 +63,11 @@ happen, without scrolling.
 
 ## 5. Execute the next step
 
-Execute exactly one step from the sub-plan (the one at `current_step`).
-You MAY execute several consecutive steps in the same chat IF you have
-clear context capacity AND the steps are tightly related — use judgement.
+Execute exactly one step from the sub-plan (the one at `current_step`),
+then end your turn. Never start the next step in the same turn, however
+small it looks: the driver gates and records each step only when a turn
+ends, so a multi-step turn is invisible for up to the whole iteration bound
+and its later steps go ungated (retro 2026-10-09).
 
 For each step:
 

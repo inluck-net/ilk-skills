@@ -6155,7 +6155,9 @@ Rules:
 - While any is red: fix the code (or fix a test-infra fault), commit with 'test-infra:' in the body if fixing a test, then rerun.
 - End your turn ONLY when all are green.
 - Never weaken or delete an assertion. Never add a deselect or baseline_red entry.
-- If green is not reachable, end your turn with the failing ids written to the sub-plan's Findings section."
+- If green is not reachable, end your turn with the failing ids written to the sub-plan's Findings section.
+- When green: bump current_step from ${_wgn_step} to the next step (exactly +1), commit that bump, and END YOUR TURN.
+- Do not start the next step in this turn. Never write the sub-plan's status: field."
           fi
         fi
       fi
