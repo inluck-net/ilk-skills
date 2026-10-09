@@ -188,6 +188,67 @@ def is_blacklisted(project_data_dir: str | os.PathLike, now: dt.datetime | None 
     return res
 
 
+#: Seconds after a failed run ends during which the scheduler waits for its
+#: postmortem before dispatching again.  Judgment call: the watchdog polls
+#: every 60 s (watchdog.sh POLL_INTERVAL_SEC) and gh-resolve run
+#: 20261009-212756's postmortem landed 110 s after the run ended; 300 s is
+#: that plus margin and costs at most one 5-min scheduler pass.  Wrong if a
+#: postmortem ever lands later than this.
+POSTMORTEM_GRACE_S = 300
+
+#: Sentinel states that are not a failure, so nothing waits on a postmortem.
+_NO_WAIT_STATES = frozenset({"running", "all-shipped", "already-shipped", "shipped"})
+
+
+def _parse_sentinel_time(s: str | None) -> dt.datetime | None:
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            t = dt.datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+        return t if t.tzinfo else t.replace(tzinfo=dt.datetime.now().astimezone().tzinfo)
+    return None
+
+
+def awaiting_postmortem(project_data_dir: str | os.PathLike,
+                        now: dt.datetime | None = None,
+                        grace_s: int = POSTMORTEM_GRACE_S) -> dict | None:
+    """The terminal run whose postmortem the scheduler should wait for, or None.
+
+    The blacklist is read from postmortem files the watchdog writes after the
+    run exits.  Dispatching before that file exists relaunched gh-resolve run
+    20261009-222337 onto the same red one second before 212756's postmortem
+    (ilk-skills #30; same 1 s margin on 2026-09-14).
+
+    Waits only while all of these hold: the sentinel names a run_id in a
+    failure state, ``postmortems/<run_id>.md`` does not exist, and the run
+    ended less than ``grace_s`` ago.  A run that never gets a postmortem stops
+    blocking once the grace window has passed, so it cannot wedge the project.
+    """
+    sentinel = Path(project_data_dir) / "runtime" / "launcher" / "last-exit.json"
+    try:
+        data = json.loads(sentinel.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    state = str(data.get("state") or "")
+    run_id = str(data.get("run_id") or "")
+    if not run_id or not state or state in _NO_WAIT_STATES:
+        return None
+    if (_postmortems_dir(project_data_dir) / f"{run_id}.md").exists():
+        return None
+    ended = _parse_sentinel_time(data.get("ended_at"))
+    if ended is None:
+        return None
+    now = now or dt.datetime.now(dt.timezone.utc)
+    waited = (now - ended).total_seconds()
+    if waited >= grace_s:
+        return None
+    return {"run_id": run_id, "state": state,
+            "ended_at": data.get("ended_at"), "wait_s": int(grace_s - waited)}
+
+
 def write_resume_ack(project_data_dir: str | os.PathLike, cleared_at: str | None = None) -> Path:
     """Write the resolve-ack sentinel (atomic, BOM-free). Returns the path."""
     if cleared_at is None:
@@ -218,7 +279,14 @@ def main() -> int:
     p_ack.add_argument("--project", required=True)
     p_ack.add_argument("--cleared-at", default=None, help="ISO timestamp (default: now).")
 
+    p_wait = sub.add_parser("awaiting", help="Print whether a failed run's postmortem is still due.")
+    p_wait.add_argument("--project", required=True)
+
     args = parser.parse_args()
+    if args.cmd == "awaiting":
+        r = awaiting_postmortem(args.project)
+        print(json.dumps({"awaiting": r is not None, **(r or {})}))
+        return 0
     if args.cmd == "check":
         print(json.dumps(is_blacklisted(args.project)))
         return 0

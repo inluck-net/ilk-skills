@@ -1484,6 +1484,24 @@ if h: print(h)
       local repo="${repo_paths[$i]}"
       local master_name="${master_names[$i]}"
 
+      # A failed run's postmortem is what blacklists it.  Until that file
+      # exists (bounded by POSTMORTEM_GRACE_S), dispatching relaunches onto
+      # the same red: ilk-skills #30, gh-resolve 22:23:27 vs postmortem
+      # 22:23:28 on 2026-10-09.
+      local _await_json
+      _await_json="$($PYTHON "${_SKILL_ROOT}/ilk-watchdog/scripts/blacklist_status.py" awaiting --project "$path" 2>/dev/null)" || _await_json=""
+      if [[ "$_await_json" == *'"awaiting": true'* ]]; then
+        local _await_run
+        _await_run="$($PYTHON -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('run_id',''), d.get('state',''), 'wait', str(d.get('wait_s',''))+'s')" "$_await_json" 2>/dev/null)" || _await_run=""
+        if [[ "$DRY_RUN" == true && "$ONCE" == true ]]; then
+          echo "{\"decision\":\"skip-awaiting-postmortem\",\"key\":\"$key\"}"
+        else
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] skip-awaiting-postmortem: $key ($_await_run)"
+        fi
+        write_scheduler_log "skip-awaiting-postmortem" "$key" "$_await_run"
+        continue
+      fi
+
       # blacklist / backoff skip — postmortem set is FRESH this cycle (never
       # accumulated); $blacklist_skip holds only transient backoffs.
       local pm_epoch bo_epoch skip_decision=""
