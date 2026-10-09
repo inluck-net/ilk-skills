@@ -1,7 +1,8 @@
 """Pins: a hand-filed backlog row carries its evidence.
 
 Sub-plan: an-admitted-row-carries-its-evidence (step 0 pins; step 1 built the
-admission gate and stepped AC-1..AC-5, AC-8 out of their xfail markers).
+admission gate and stepped AC-1..AC-5, AC-8 out of their xfail markers;
+step 2 added the overlap listing and stepped AC-6 out).
 Drives the ``improvement_backlog`` CLI in a subprocess (``sys.executable``,
 script path derived from ``__file__``) with a hermetic data root: ``HOME``,
 ``ILK_DATA_HOME`` and ``ILK_DATA_DIR`` are all ``tmp_path``-derived, so
@@ -19,7 +20,7 @@ AC-4: a bug with no fix is refused with ``no-proposed-fix``; the
 AC-5: a real row (d61afe74f26dd73d's own strings) passes the
     admission gate and is filed. The pin asserts both that
     ``validate_candidate`` admits the row and that the CLI files it.
-AC-6 (xfail until step 2): filing lists the open rows that name the same file,
+AC-6: filing lists the open rows that name the same file,
     skips wontfix rows, and prints the ``1 row(s)`` footer.
 AC-7 (control, green at base): automated writers are unchanged — ``add_candidate``
     still files a row with no refusal.
@@ -218,7 +219,6 @@ def test_ac5_a_real_row_passes(tmp_path):
 # ── AC-6 ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="admission gate not built")
 def test_ac6_filing_lists_the_open_rows_naming_the_same_file(tmp_path):
     import improvement_backlog
 

@@ -397,6 +397,66 @@ def validate_candidate(
 
 
 # ---------------------------------------------------------------------------
+# Overlap detection (hand-filing)
+# ---------------------------------------------------------------------------
+
+#: File tokens named in a ``gap`` whose basenames can tie two rows to the
+#: same file.  The alternation order is the binding Design's own
+#: ``[\w./-]+\.(?:py|sh|md|json|jsonl|ps1|yml|yaml)``.
+_FILE_TOKEN_RE = re.compile(
+    r"[\w./-]+\.(?:py|sh|md|json|jsonl|ps1|yml|yaml)"
+)
+
+
+def _file_basename(path: str) -> str:
+    """Basename of a file anchor: text before any ``:``, then after the last ``/``."""
+    return path.split(":", 1)[0].rsplit("/", 1)[-1]
+
+
+def overlapping_rows(
+    entries,
+    *,
+    evidence_file: str,
+    gap: str,
+    exclude_id: str = "",
+) -> list[dict]:
+    """Return the open/planned rows whose gap or evidence names the same file.
+
+    *names* is the basename of *evidence_file* (when non-empty) plus every
+    basename of a file token in *gap*.  A row overlaps when its
+    ``evidence.file`` basename is in *names*, or any name occurs (substring)
+    in its ``gap``.  *exclude_id* drops the just-filed row.
+
+    Pure: no I/O, no state.  Accepts raw dicts or ``Entry`` objects.
+    Returns the overlapping rows as raw dicts.
+    """
+    names: set[str] = set()
+    if evidence_file:
+        names.add(_file_basename(evidence_file))
+    for m in _FILE_TOKEN_RE.finditer(gap or ""):
+        names.add(_file_basename(m.group(0)))
+    if not names:
+        return []
+
+    out: list[dict] = []
+    for e in entries:
+        row = e.to_dict() if hasattr(e, "to_dict") else e
+        if row.get("id") == exclude_id:
+            continue
+        status = row.get("status") or "open"
+        if status not in ("open", "planned"):
+            continue
+        ev_file = (row.get("evidence") or {}).get("file") or ""
+        if ev_file and _file_basename(ev_file) in names:
+            out.append(row)
+            continue
+        row_gap = row.get("gap") or ""
+        if any(name in row_gap for name in names):
+            out.append(row)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # CLI (for debugging/manual inspection)
 # ---------------------------------------------------------------------------
 
@@ -481,6 +541,24 @@ def main() -> int:
             relations=relations or None,
         )
         print(json.dumps(entry.to_dict(), indent=2, ensure_ascii=False))
+        # List overlapping open/planned rows that name the same file.
+        overlaps = overlapping_rows(
+            _load_raw(_backlog_dir()),
+            evidence_file=evidence.get("file", ""),
+            gap=args.gap,
+            exclude_id=entry.id,
+        )
+        for row in overlaps[:10]:
+            print(
+                f"overlap: {row['id']} {row['status']} {row['title']}",
+                file=sys.stderr,
+            )
+        if overlaps:
+            print(
+                f"overlap: {len(overlaps)} row(s) name the same file; "
+                "add --relation overlaps=<id> if one is the same defect",
+                file=sys.stderr,
+            )
         return 0
 
     if args.cmd == "list":
