@@ -28,6 +28,12 @@ This skill is a **planner**, not an executor. It produces a plan; a human
 releases it (`draft` → `queued`). The loop runs the batch in the selfmod
 worktree because it edits the toolkit itself. It does NOT auto-apply changes.
 
+## Priority
+
+A smoothness regression (a pipeline that was smooth and now stalls, relaunches
+onto the same red, ships a red step, or cannot release) goes ahead of every
+backlog row. See `docs/standards/operating-principles.md` section 1.
+
 ## Workflow
 
 1. Run `build_task.py` to read open candidates from the improvement backlog.

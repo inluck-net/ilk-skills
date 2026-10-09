@@ -267,6 +267,7 @@ install.ps1       Windows installer
 | [SECURITY.md](SECURITY.md) | Reporting, and what this toolkit does to your machine |
 | [CHANGELOG.md](CHANGELOG.md) | Release highlights |
 | [`docs/architecture/integration-surface.md`](docs/architecture/integration-surface.md) | The consumer-facing surface for external tools |
+| [`docs/standards/operating-principles.md`](docs/standards/operating-principles.md) | Standing owner rules: a smooth pipeline comes first; when ilk upgrades freely |
 | [`docs/standards/`](docs/standards/agentskills-io.md) | agentskills.io references and per-skill compliance |
 
 ## Contributing
