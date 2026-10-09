@@ -4777,6 +4777,35 @@ def lint_redfirst_step0_per_step_gate_demands_green(text: str, slug: str) -> lis
     return findings
 
 
+
+#: ``xfail(strict=True ...)`` with its argument list, up to the closing paren.
+_STRICT_XFAIL_CALL = re.compile(r"xfail\(\s*strict\s*=\s*True[^)]*\)")
+
+
+def lint_strict_pin_names_its_failure(text: str, slug: str) -> list[str]:
+    """Warn when step 0 pins with a strict xfail that names no expected failure.
+
+    A bare ``xfail(strict=True)`` accepts ANY exception as the expected red, so
+    a broken pin (a JSONDecodeError, a TypeError, a fixture error) passes step
+    0 as "not built yet".  gh-resolve 09b, 2026-10-09: that pin then had to be
+    fixed in step 1, which its pin-diff gate forbids (backlog b212f859).
+    Naming the failure with ``raises=`` turns an unrelated exception red while
+    fixing the pin is still legal.
+    """
+    step0 = _extract_step_section(_strip_frontmatter(text), 0)
+    if not step0:
+        return []
+    bare = [m.group(0) for m in _STRICT_XFAIL_CALL.finditer(step0)
+            if "raises" not in m.group(0)]
+    if not bare:
+        return []
+    return [
+        f"{slug}: step 0 pins with `{bare[0]}`, which accepts any exception as "
+        f"the expected failure. Name it: xfail(strict=True, raises=(AssertionError, "
+        f"ImportError, AttributeError), ...) or narrower, so a broken pin fails "
+        f"step 0 while fixing it is still allowed."
+    ]
+
 ALL_CHECKS = (
     lint_gate_budget,
     lint_verification_attribution_unmeasured,
@@ -4806,6 +4835,7 @@ ALL_CHECKS = (
     lint_gate_placeholder_unresolved,
     lint_redfirst_step0_under_frontmatter_gate,
     lint_redfirst_step0_per_step_gate_demands_green,
+    lint_strict_pin_names_its_failure,
     lint_gate_first_requires_a_gate,
     lint_no_diff_step,
     lint_exit_status_discarded,

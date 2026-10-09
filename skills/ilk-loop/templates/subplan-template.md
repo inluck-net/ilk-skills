@@ -236,11 +236,18 @@ local_checks:
 
 > **Red-first step-0 rule.** If this step's purpose is to *record* failing
 > tests (the gate command is designed to exit non-zero), the gate MUST NOT
-> demand exit 0.  **Preferred:** mark the pins with `@pytest.mark.xfail(strict=True)`
+> demand exit 0.  **Preferred:** mark the pins with `@pytest.mark.xfail(strict=True, raises=...)`
 > — the gate stays a plain `pytest <file> -q`, and `strict=True` makes the pin
-> fail (XPASS) the moment the fix lands, so it cannot outlive its purpose:
+> fail (XPASS) the moment the fix lands, so it cannot outlive its purpose.
+> **Name the expected failure with `raises=`**: a bare strict xfail accepts
+> ANY exception, so a broken pin (a JSONDecodeError, a TypeError) passes step
+> 0 as "not built yet" and later steps may not be allowed to fix it
+> (gh-resolve 09b, 2026-10-09). `raises=(AssertionError, ImportError,
+> AttributeError)` covers "symbol missing" and "behaviour wrong"; narrow it
+> when you can:
 > ```python
-> @pytest.mark.xfail(strict=True, reason="reproduces the bug")
+> @pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError),
+>                    reason="reproduces the bug")
 > def test_the_bug():
 >     ...
 > ```

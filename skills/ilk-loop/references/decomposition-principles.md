@@ -299,7 +299,10 @@ Surfaced by the QC lint pass before sub-plans go to the loop:
   Real case: gh-resolve `a-terminal-run-keeps-its-unshipped-commits` step 0,
   commit `b0b129b` — body reads "Red-first: 4 failed, 2 passed of 6 tests",
   yet `current_step` advanced to 3 with `--run-local-checks` active.
-  **Preferred fix:** mark the pins `@pytest.mark.xfail(strict=True, reason="...")`.
+  **Preferred fix:** mark the pins `@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError), reason="...")`,
+  naming the expected failure: a bare strict xfail accepts any exception, so a
+  broken pin passes step 0 as red (gh-resolve 09b, 2026-10-09; plan_lint
+  `lint_strict_pin_names_its_failure` warns).
   The gate stays a plain `pytest <file> -q`, and `strict=True` makes the pin
   fail (XPASS) the moment the fix lands, so it cannot outlive its purpose.
   **Alternative:** gate on the **red count** instead of exit 0.  A command
