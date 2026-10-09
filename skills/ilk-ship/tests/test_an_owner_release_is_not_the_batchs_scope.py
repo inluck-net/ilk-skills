@@ -83,11 +83,6 @@ def _check_scope(repo: Path, base_sha: str, sub_plans: list[dict]) -> dict:
 class TestAC1TaggedOwnerExcluded:
     """AC-1: a tagged owner release mid-batch is excluded from scope."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=(AssertionError, ImportError, AttributeError, TypeError),
-        reason="not built yet",
-    )
     def test_tagged_owner_release_excluded(self, tmp_path: Path) -> None:
         """Tagged owner commit to CHANGELOG.md excluded; ok is True with
         '1 tagged commit(s) excluded' in detail."""

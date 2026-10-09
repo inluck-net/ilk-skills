@@ -115,15 +115,46 @@ def _check_scope(project: Path, base_sha: str | None, sub_plans: list[dict]) -> 
     # commit in base..HEAD the end is unknown, so fall back to HEAD.
     end = _batch_end_sha(project, base_sha, [sp.get("slug", "") for sp in sub_plans]) or "HEAD"
 
-    # Get changed files
+    # Get changed files, excluding commits tagged with a version tag.
+    # Owner releases (changelog bumps, version tags) land inside the batch
+    # range but are not part of the batch's scope.  A commit is excluded
+    # when `git tag --contains <sha> --list 'v*'` prints anything.
     try:
-        result = subprocess.run(
-            ["git", "diff", "--name-only", f"{base_sha}..{end}"],
+        revs = subprocess.run(
+            ["git", "rev-list", "--no-merges", f"{base_sha}..{end}"],
             cwd=project, capture_output=True, text=True, check=True,
-        )
-        changed_files = [f for f in result.stdout.strip().split("\n") if f]
+        ).stdout.strip().split("\n")
+        revs = [r for r in revs if r]
     except subprocess.CalledProcessError:
         return {"name": "scope", "ok": False, "detail": "git diff failed"}
+
+    changed_files: set[str] = set()
+    tagged_excluded = 0
+    for sha in revs:
+        # Check if this commit itself is tagged with a version tag.
+        # `--points-at` matches only the commit the tag refs, not every
+        # commit in the tag's history (which `--contains` would).
+        try:
+            tags = subprocess.run(
+                ["git", "tag", "--points-at", sha, "--list", "v*"],
+                cwd=project, capture_output=True, text=True, check=True,
+            ).stdout.strip()
+        except subprocess.CalledProcessError:
+            return {"name": "scope", "ok": False, "detail": "git diff failed"}
+        if tags:
+            tagged_excluded += 1
+            continue
+        # Collect this commit's changed files
+        try:
+            diff_out = subprocess.run(
+                ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha],
+                cwd=project, capture_output=True, text=True, check=True,
+            ).stdout.strip()
+        except subprocess.CalledProcessError:
+            return {"name": "scope", "ok": False, "detail": "git diff failed"}
+        for f in diff_out.split("\n"):
+            if f:
+                changed_files.add(f)
 
     # Check each changed file against scope_paths
     violations = []
@@ -147,7 +178,10 @@ def _check_scope(project: Path, base_sha: str | None, sub_plans: list[dict]) -> 
             "ok": False,
             "detail": f"{len(violations)} file(s) outside scope: {', '.join(violations[:5])}",
         }
-    return {"name": "scope", "ok": True, "detail": f"{len(changed_files)} files in scope"}
+    detail = f"{len(changed_files)} files in scope"
+    if tagged_excluded:
+        detail += f"; {tagged_excluded} tagged commit(s) excluded"
+    return {"name": "scope", "ok": True, "detail": detail}
 
 
 def _batch_end_sha(project: Path, base_sha: str, slugs: list[str]) -> str | None:
