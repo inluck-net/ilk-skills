@@ -154,7 +154,6 @@ def detect(
     Pure: reads no files, writes nothing.
     """
     repeats: list[Repeat] = []
-    seen_keys: set[tuple] = set()
 
     # ── revert repeats ───────────────────────────────────────────────────
     by_slug_reverts: dict[str, list[dict[str, Any]]] = {}
@@ -186,20 +185,18 @@ def detect(
                     ):
                         step = ra.get("from_step")
                         sig = ("revert", slug, ra["site"], step, ra["ship_commit"])
-                        if sig not in seen_keys:
-                            seen_keys.add(sig)
-                            repeats.append(
-                                Repeat(
-                                    kind="revert",
-                                    slug=slug,
-                                    step=step,
-                                    run_a=a_id,
-                                    run_b=b_id,
-                                    signature_key=sig,
-                                    row_a=ra,
-                                    row_b=rb,
-                                )
+                        repeats.append(
+                            Repeat(
+                                kind="revert",
+                                slug=slug,
+                                step=step,
+                                run_a=a_id,
+                                run_b=b_id,
+                                signature_key=sig,
+                                row_a=ra,
+                                row_b=rb,
                             )
+                        )
 
     # ── red-gate repeats ─────────────────────────────────────────────────
     latest = _latest_per_step(gate_rows)
@@ -229,17 +226,15 @@ def detect(
                 if not sha_a or sha_a != sha_b:
                     continue
                 sig = ("red-gate", slug, step, sha_a)
-                if sig not in seen_keys:
-                    seen_keys.add(sig)
-                    repeats.append(
-                        Repeat(
-                            kind="red-gate",
-                            slug=slug,
-                            step=step,
-                            run_a=a_id,
-                            run_b=b_id,
-                            signature_key=sig,
-                            row_a=ra,
+                repeats.append(
+                    Repeat(
+                        kind="red-gate",
+                        slug=slug,
+                        step=step,
+                        run_a=a_id,
+                        run_b=b_id,
+                        signature_key=sig,
+                        row_a=ra,
                             row_b=rb,
                         )
                     )
