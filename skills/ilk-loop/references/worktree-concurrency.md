@@ -35,6 +35,13 @@ directories never collide:
     └── …
 ```
 
+> **Pin and history.** A directory carrying `.ilk-project-root`
+> (presence-only) is its own project root, whatever is above it. For a linked
+> worktree that is the default anyway. From 2026-09-21 (`32795f80`) to v0.9.179,
+> `git_root` instead walked every linked worktree back to its main clone. All
+> worktrees of a clone then shared one key, one `run.lock` and one runner
+> (ilk #44). v0.9.180 removed that walk-back.
+
 > **Windows**: the same layout lives under `%USERPROFILE%\.ilk-data\projects\`,
 > e.g. `C:\Users\<you>\.ilk-data\projects\c-path-to-proj-feat-x\plans\`.
 > The key derivation lower-cases the path and replaces non-alphanumeric

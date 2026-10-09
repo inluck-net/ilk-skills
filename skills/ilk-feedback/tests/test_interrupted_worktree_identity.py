@@ -94,10 +94,14 @@ def interrupted_worktree(tmp_path: Path):
     return clone, worktree, launcher, env, tail_marker
 
 
-@pytest.mark.parametrize("use_worktree", [False, True])
-def test_default_feedback_selects_interrupted_worktree_run(interrupted_worktree, use_worktree: bool) -> None:
+def test_default_feedback_selects_interrupted_worktree_run(interrupted_worktree) -> None:
+    # The fixture records the worktree's run under the CLONE's key: the shape
+    # of runs made while every linked worktree shared its clone's key
+    # (2026-09-21..v0.9.179).  Since ilk #44 a linked worktree is its own
+    # project, so these records are reached by querying the clone; a query from
+    # the worktree resolves the worktree's own (here empty) project.
     clone, worktree, launcher, env, tail_marker = interrupted_worktree
-    query = worktree if use_worktree else clone
+    query = clone
     result = subprocess.run(
         [sys.executable, str(COLLECT), "--project-path", str(query), "--quiet"],
         env=env,

@@ -133,32 +133,17 @@ ProjectKind = Literal["single", "meta"]
 def git_root(start: Path) -> Path | None:
     """First ancestor of `start` that contains a `.git` (dir or file).
 
-    For git worktrees, resolves back to the original project root by
-    parsing the `.git` file's `gitdir:` entry. This ensures that
-    selfmod worktrees (under `~/.ilk-data/projects/<key>/runtime/`)
-    resolve to the same project key as the original project.
+    A linked worktree (`.git` is a file) is its own root, so it gets its own
+    project key, plans dir, runtime dir and run lock — the contract in
+    references/worktree-concurrency.md.  From 2026-09-21 (32795f80) to
+    v0.9.179 this followed the `gitdir:` entry back to the main clone, which
+    put every resolver worktree under one key and one runner (ilk #44).  That
+    walk-back was meant only for the selfmod worktree, which release-layout
+    hosts no longer create.
     """
     cur = Path(start).resolve()
     while True:
-        git_entry = cur / ".git"
-        if git_entry.exists():
-            # If this is a worktree (`.git` is a file, not a directory),
-            # parse the gitdir entry to find the original project root.
-            if git_entry.is_file():
-                try:
-                    content = git_entry.read_text().strip()
-                    if content.startswith("gitdir:"):
-                        gitdir = Path(content[len("gitdir:"):].strip())
-                        # The gitdir is typically `<original>/.git/worktrees/<name>`
-                        # Walk up from gitdir to find the `.git` directory.
-                        # gitdir.parent = worktrees, gitdir.parent.parent = .git
-                        git_dir = gitdir.parent.parent
-                        if git_dir.name == ".git":
-                            original_root = git_dir.parent
-                            if original_root != cur and original_root.exists():
-                                return original_root
-                except (OSError, ValueError):
-                    pass
+        if (cur / ".git").exists():
             return cur
         if cur.parent == cur:
             return None
@@ -282,16 +267,9 @@ def find_project_root(start: Path) -> tuple[Path | None, ProjectKind]:
     `.git` ancestor, "meta" when a valid `.ilk-meta.json` marker covers
     `start`, else `(None, "single")`.
 
-    Why the default still resolves worktrees to their clone
-    ------------------------------------------------------
-    `git_root` walks a linked worktree back to its main clone so that
-    selfmod worktrees under `~/.ilk-data/projects/<key>/runtime/` share
-    the original project's key, plans dir and runtime state — the loop
-    editing its own toolkit must not fork its state. That stays the
-    default. Pinning is opt-in and explicit: a directory carrying
-    `.ilk-project-root` is its own project root (and reports kind
-    "single"), while a directory without one resolves exactly as it did
-    before this seam existed.
+    A linked worktree is its own root (see `git_root`).  `.ilk-project-root`
+    pins any directory as its own root; for a linked worktree that is now the
+    default, so the pin is redundant there but harmless.
     """
     p = pin_root(start)
     if p is not None:

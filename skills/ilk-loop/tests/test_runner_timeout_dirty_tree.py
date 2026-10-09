@@ -1405,8 +1405,8 @@ class TestPinReachesTheDriver:
 
     AC-1: `get_plans_dir` on a pinned worktree returns the pinned external
           plans dir.
-    AC-2: same, unpinned ⇒ the clone's plans dir (regression guard).
-    AC-3: `REPOS` is the pinned worktree when pinned, the clone when not.
+    AC-2: same, unpinned ⇒ the worktree's own plans dir (ilk #44).
+    AC-3: `REPOS` is the worktree, pinned or not.
     """
 
     def test_ac1_get_plans_dir_returns_the_pinned_external_plans_dir(self, tmp_path: Path, env: dict) -> None:
@@ -1426,10 +1426,11 @@ class TestPinReachesTheDriver:
             f"got {got!r}, expected {str(plans)!r}"
         )
 
-    def test_ac2_get_plans_dir_unpinned_returns_the_clone_plans_dir(self, tmp_path: Path, env: dict) -> None:
-        """Regression guard: without a pin the worktree still resolves to the clone."""
+    def test_ac2_get_plans_dir_unpinned_returns_the_worktrees_own_plans_dir(self, tmp_path: Path, env: dict) -> None:
+        """Without a pin the worktree is its own project (ilk #44, inverted 2026-10-09)."""
         clone, worktree = _init_clone_with_worktree(tmp_path, pinned=False)
         env = _isolated_data_env(env, tmp_path)
+        # The clone has plans too; the worktree must NOT pick them up.
         clone_plans = clone / "docs" / "plans"
         clone_plans.mkdir(parents=True, exist_ok=True)
         (clone_plans / "MASTER-2026-09-22-test.md").write_text(
@@ -1439,12 +1440,15 @@ class TestPinReachesTheDriver:
             "# Test master\n",
             encoding="utf-8",
         )
+        info = _ilk_paths_json(worktree, env)
+        assert info["project_root"] == str(worktree), info["project_root"]
+        plans = _seed_external_plans(Path(env["ILK_DATA_HOME"]), info["project_key"])
 
         got = _run_get_plans_dir(worktree, env)
 
-        assert got == str(clone_plans), (
-            f"unpinned worktree must still resolve to the clone's plans dir, "
-            f"got {got!r}, expected {str(clone_plans)!r}"
+        assert got == str(plans), (
+            f"an unpinned worktree must resolve to its own external plans dir, "
+            f"got {got!r}, expected {str(plans)!r} (not the clone's {str(clone_plans)!r})"
         )
 
     def test_ac3_repos_is_the_pinned_worktree(self, tmp_path: Path, env: dict) -> None:
@@ -1459,14 +1463,14 @@ class TestPinReachesTheDriver:
             f"(expected {[str(worktree)]!r})"
         )
 
-    def test_ac3_repos_is_the_clone_when_unpinned(self, tmp_path: Path, env: dict) -> None:
-        """Regression guard: without a pin REPOS is still the clone."""
+    def test_ac3_repos_is_the_worktree_when_unpinned(self, tmp_path: Path, env: dict) -> None:
+        """Without a pin REPOS is the worktree itself (ilk #44, inverted 2026-10-09)."""
         clone, worktree = _init_clone_with_worktree(tmp_path, pinned=False)
         env = _isolated_data_env(env, tmp_path)
 
         repos = _run_discover_repos(worktree, env)
 
-        assert repos == [str(clone)], (
-            f"unpinned worktree must resolve REPOS to the clone, got {repos!r} "
-            f"(expected {[str(clone)]!r})"
+        assert repos == [str(worktree)], (
+            f"an unpinned worktree must resolve REPOS to itself, got {repos!r} "
+            f"(expected {[str(worktree)]!r})"
         )

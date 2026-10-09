@@ -239,36 +239,31 @@ def _make_clone_with_linked_worktree(tmp_path: Path):
     return clone, worktree
 
 
-def test_a_linked_worktree_without_a_marker_resolves_to_its_clone(
+def test_a_linked_worktree_without_a_marker_is_its_own_project(
     tmp_path: Path,
 ) -> None:
-    """AC-3 — the selfmod invariant, captured before there is any way to break it.
+    """A linked worktree is its own root and key, with or without a marker.
 
-    A caller holding a worktree path gets the CLONE's root and the CLONE's
-    key.  Without this, a caller registering a worktree writes plans under the
-    clone's key and neither half can dispatch (measured on rezmac, 2026-09-22),
-    and the loop's timeout safety net is sent to the wrong tree.
+    Inverted 2026-10-09 (ilk #44).  This used to pin the opposite (worktree ->
+    clone), the behaviour 32795f80 introduced for the selfmod worktree.  It put
+    every resolver worktree under one key, one run.lock and one runner.
+    worktree-concurrency.md always promised one key per worktree.
     """
     clone, worktree = _make_clone_with_linked_worktree(tmp_path)
-    assert not (worktree / PIN_MARKER).exists(), (
-        "precondition: this pin is the no-marker case; the marker is step 1's seam"
-    )
+    assert not (worktree / PIN_MARKER).exists(), "precondition: the no-marker case"
 
-    # The clone's own key is the reference the worktree must agree with — and
-    # the value step 2 must prove a pin cannot move.
     assert resolve_project_key(clone) == project_key(clone)
 
     root, kind = find_project_root(worktree)
     assert root is not None, "a linked worktree must resolve to a project root"
-    assert root.resolve() == clone.resolve(), (
-        "a worktree without a marker must resolve to its clone, not to itself "
-        "— selfmod worktrees share the original project's state directory; "
-        "got %r for worktree %r" % (root, worktree)
+    assert root.resolve() == worktree.resolve(), (
+        "a worktree without a marker is its own project root; got %r for %r"
+        % (root, worktree)
     )
     assert kind == "single"
-    assert resolve_project_key(worktree) == project_key(clone), (
-        "the worktree's key must be the clone's key, or its plans/runtime/log "
-        "state forks away from the project it is editing"
+    assert resolve_project_key(worktree) == project_key(worktree.resolve())
+    assert resolve_project_key(worktree) != project_key(clone), (
+        "a worktree must not share its clone's key (one run.lock -> one runner)"
     )
 
 
