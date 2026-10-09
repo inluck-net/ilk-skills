@@ -1,14 +1,14 @@
 """Rezmac's backlog rows reach the RSI host's backlog.
 
-Sub-plan rezmac-rows-reach-the-rsi-backlog, step 0 (red-first pins).
+Sub-plan rezmac-rows-reach-the-rsi-backlog.
 
 The backlog is per host. chad-mbp's autoplan reads only its own
 `candidates.json`. This module pulls rezmac's rows over ssh, merges
 them tagged with `origin_host`, and writes the local file only when
 both sides parsed.
 
-AC-1..AC-9 pin the contract before `backlog_sync.py` is built.
-Every test is xfail(strict=True) until step 1 removes the markers.
+AC-1..AC-8 test the merge and pull logic.  AC-9 tests the scheduler hook
+(stays xfail until step 2).
 
 HOME and ILK_DATA_HOME are both pinned to tmp_path (§23 half-pinned trap).
 """
@@ -67,7 +67,6 @@ def _read_candidates(backlog_dir: Path) -> list[dict]:
 # ── AC-1: merge adds ────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="backlog_sync not built")
 def test_ac1_merge_adds_remote_rows(backlog_dir):
     """With local [a] and remote [a', b] (a' has same id as a but different
     status and seen_count 9), merge_remote returns added == [b.id].
@@ -150,7 +149,6 @@ def test_ac1_merge_adds_remote_rows(backlog_dir):
 # ── AC-2: merge refreshes rezmac rows only ──────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="backlog_sync not built")
 def test_ac2_merge_refreshes_rezmac_rows(backlog_dir):
     """A local row with relations.origin_host == "rezmac" and seen_count 1,
     merged with a remote row of the same id with seen_count 3 and
@@ -209,7 +207,6 @@ def test_ac2_merge_refreshes_rezmac_rows(backlog_dir):
 # ── AC-3: idempotent ────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="backlog_sync not built")
 def test_ac3_merge_idempotent(backlog_dir):
     """Merging the same remote twice gives an equal list and an empty
     added the second time."""
@@ -250,7 +247,6 @@ def test_ac3_merge_idempotent(backlog_dir):
 # ── AC-4: unreachable ≠ 0 rows ──────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="backlog_sync not built")
 def test_ac4_unreachable_returns_status_unreachable(backlog_dir, state_dir):
     """With an injected runner that returns exit 255, pull() returns
     status == "unreachable" with no remote_rows key. The local file is
@@ -283,7 +279,6 @@ def test_ac4_unreachable_returns_status_unreachable(backlog_dir, state_dir):
 # ── AC-5: unreadable ────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="backlog_sync not built")
 def test_ac5_unreadable_remote_body(backlog_dir, state_dir):
     """A remote body '{oops' gives status == 'unreadable'. The local file
     is byte-equal before and after."""
@@ -311,7 +306,6 @@ def test_ac5_unreadable_remote_body(backlog_dir, state_dir):
     assert before == after, "file changed after unreadable"
 
 
-@pytest.mark.xfail(strict=True, reason="backlog_sync not built")
 def test_ac5_unreadable_local_file(backlog_dir, state_dir):
     """A local candidates.json that is not a JSON list gives
     status == 'unreadable'."""
@@ -339,7 +333,6 @@ def test_ac5_unreadable_local_file(backlog_dir, state_dir):
 # ── AC-6: self ──────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="backlog_sync not built")
 def test_ac6_self_hostname_skips(backlog_dir, state_dir):
     """A runner whose first output line equals socket.gethostname() gives
     status == 'self' and no write."""
@@ -371,7 +364,6 @@ def test_ac6_self_hostname_skips(backlog_dir, state_dir):
 # ── AC-7: throttle ──────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="backlog_sync not built")
 def test_ac7_throttle_prevents_second_pull(backlog_dir, state_dir):
     """A second pull() within 30 minutes of an ok returns throttled without
     invoking the runner. --force pulls."""
@@ -417,7 +409,6 @@ def test_ac7_throttle_prevents_second_pull(backlog_dir, state_dir):
 # ── AC-8: argv ──────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="backlog_sync not built")
 def test_ac8_correct_ssh_argv(backlog_dir, state_dir):
     """The runner receives exactly the expected ssh argv."""
     import backlog_sync
