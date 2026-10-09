@@ -2742,6 +2742,12 @@ count_step_headings() {
   python3 -c '
 import re, sys
 body = open(sys.argv[1], encoding="utf-8").read()
+# Steps live above ## Findings.  A worker note headed "### Step 1 ..." under
+# Findings is not a step: counting it stalled a gh-resolve verify ~1 h
+# (2026-10-10, green-base-batch-verify counted 3 of 2).
+cut = re.search(r"^##\s+Findings\b", body, re.MULTILINE)
+if cut:
+    body = body[:cut.start()]
 pat = re.compile(r"^###\s+Step\s+(\d+)(?!\d)", re.MULTILINE)
 matches = pat.findall(body)
 print(len(matches))
@@ -2892,6 +2898,12 @@ attempt_gate_first_fast_path() {
     local new_step=$((step + 1))
     local total_steps
     total_steps=$(count_step_headings "$slug") || total_steps=0
+    local est_steps
+    est_steps=$(_read_subplan_field "$slug" "estimated_steps") || est_steps=0
+    if [[ "$est_steps" =~ ^[0-9]+$ && "$new_step" -eq "$est_steps" && "$total_steps" -ne "$est_steps" ]]; then
+      echo "  [gate-first] $slug: final step $step is green but the sub-plan has $total_steps step" \
+        "headings, so the driver cannot ship it (estimated_steps $est_steps)" >&2
+    fi
     if [[ "$total_steps" -gt 0 && "$new_step" -eq "$total_steps" ]]; then
       local plans_dir repo ship_script
       plans_dir=$(_gate_first_plans_dir) || return 0
