@@ -15,6 +15,10 @@ Scope:
 The deny message names the target: "this iteration's sub-plan is <slug>;
 <path> belongs to another sub-plan."
 
+The plans directory is the worker's project's (``find_plans_dir`` from the
+event's ``cwd``).  With ``ILK_MASTER`` set, a MASTER file other than that one
+is foreign too.
+
 Env override: ``ILK_PLANS_DIR`` — if set, used as the plans directory instead
 of resolving via ``ilk_paths.find_plans_dir``.  Exists for test isolation.
 """
@@ -30,12 +34,18 @@ from pathlib import Path
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
-def _plans_dir() -> Path | None:
-    """Resolve the plans directory.
+def _plans_dir(event: dict | None = None) -> Path | None:
+    """Resolve the plans directory of the project the worker is working in.
 
-    Order: ``ILK_PLANS_DIR`` env var → ``ilk_paths.find_plans_dir`` from the
-    hook's own location.  Returns ``None`` when the directory cannot be
-    determined (the hook allows — it must never wedge a worker).
+    Order: ``ILK_PLANS_DIR`` env var -> ``ilk_paths.find_plans_dir`` from the
+    event's ``cwd`` -> from this process's cwd -> from the hook's own location.
+    Returns ``None`` when the directory cannot be determined (the hook allows
+    -- it must never wedge a worker).
+
+    The project comes first.  Installed, this file lives under
+    ``~/.ilk/releases/<tag>/``, which is not a git repo, so resolving from the
+    hook's location alone returned None and allowed every foreign edit
+    (gh-resolve run 20261009-212756, 21:41).
     """
     override = os.environ.get("ILK_PLANS_DIR")
     if override:
@@ -43,19 +53,33 @@ def _plans_dir() -> Path | None:
         if p.is_dir():
             return p
 
-    # Derive from this file's location: hooks/no-foreign-plan-edit.py → repo
-    # root → ilk_paths.find_plans_dir
     repo_root = Path(__file__).resolve().parent.parent
     scripts = repo_root / "skills" / "ilk-loop" / "scripts"
-    if scripts.is_dir():
+    if not scripts.is_dir():
+        return None
+    if str(scripts) not in sys.path:
         sys.path.insert(0, str(scripts))
+    try:
+        from ilk_paths import find_plans_dir  # type: ignore[import-untyped]
+    except Exception:
+        return None
+
+    starts: list[Path] = []
+    cwd = (event or {}).get("cwd")
+    if cwd:
+        starts.append(Path(cwd))
+    try:
+        starts.append(Path.cwd())
+    except OSError:
+        pass
+    starts.append(repo_root)
+    for start in starts:
         try:
-            from ilk_paths import find_plans_dir  # type: ignore[import-untyped]
-            result, _source = find_plans_dir(repo_root)
-            if result is not None:
-                return result
+            result, _source = find_plans_dir(start)
         except Exception:
-            pass
+            continue
+        if result is not None:
+            return result
     return None
 
 
@@ -102,7 +126,11 @@ def _is_foreign_plan(target: Path, plans: Path, own_slug: str) -> bool:
         return False
     slug = _slug_of(target)
     if slug is None:
-        return False  # MASTER files are not owned by any sub-plan
+        # A MASTER file.  With the run pinned to a master, every other
+        # master is foreign (run 20261009-212756 edited MASTER-...-09d while
+        # pinned to 09b).  Unpinned, masters are not owned by any sub-plan.
+        own_master = os.environ.get("ILK_MASTER", "")
+        return bool(own_master) and target.name != own_master
     return slug != own_slug
 
 
@@ -237,7 +265,7 @@ def main() -> int:
     if not own_slug:
         return 0
 
-    plans = _plans_dir()
+    plans = _plans_dir(event)
     if plans is None:
         return 0  # can't resolve ⇒ allow (must never wedge a worker)
 
