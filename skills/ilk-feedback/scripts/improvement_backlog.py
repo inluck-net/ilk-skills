@@ -336,6 +336,67 @@ def list_entries(
 
 
 # ---------------------------------------------------------------------------
+# Admission control (hand-filed rows)
+# ---------------------------------------------------------------------------
+
+#: At least one of these anchors must appear in a hand-filed row's gap or
+#: evidence: a ``file:line``, a run id (``YYYYMMDD-HHMMSS``), a commit sha,
+#: or a clock time.
+ANCHOR_RE = re.compile(
+    r"[\w./-]+\.\w+:\d+"                  # file:line
+    r"|\b\d{8}-\d{6}\b"                   # run id
+    r"|\b[0-9a-f]{7,40}\b"                # commit sha
+    r"|\b\d{1,2}:\d{2}(?::\d{2})?\b"      # clock time
+)
+
+
+def validate_candidate(
+    *,
+    title: str,
+    kind: str,
+    gap: str,
+    evidence: dict | None,
+    proposed_fix: str,
+    no_fix_reason: str = "",
+) -> list[str]:
+    """Return the reason codes that make a hand-filed row inadmissible.
+
+    An empty list means the row is admitted.  Codes come back in a fixed
+    order — ``title-empty``, ``title-placeholder``, ``title-too-short``,
+    ``no-evidence-anchor``, ``no-proposed-fix`` — and only the ones that
+    fired.  Pure: no I/O, no state.
+
+    Automated writers do not go through here; they call ``add_candidate``
+    directly (MASTER-2026-10-09d judgment call (a)).
+    """
+    reasons: list[str] = []
+
+    t = (title or "").strip()
+    if not t:
+        reasons.append("title-empty")
+    elif t.endswith(" at -") or t.endswith("?"):
+        reasons.append("title-placeholder")
+
+    if "title-empty" not in reasons and len(t.split()) < 4:
+        reasons.append("title-too-short")
+
+    ev = evidence or {}
+    if not (ev.get("file") or ev.get("run_id")) and not ANCHOR_RE.search(
+        f"{gap} {json.dumps(ev)}"
+    ):
+        reasons.append("no-evidence-anchor")
+
+    if (
+        kind in ("bug", "escaped-bug")
+        and not (proposed_fix or "").strip()
+        and not (no_fix_reason or "").strip()
+    ):
+        reasons.append("no-proposed-fix")
+
+    return reasons
+
+
+# ---------------------------------------------------------------------------
 # CLI (for debugging/manual inspection)
 # ---------------------------------------------------------------------------
 
@@ -350,6 +411,8 @@ def main() -> int:
     sub_add.add_argument("--gap", required=True)
     sub_add.add_argument("--kind", default="toolkit", choices=KINDS)
     sub_add.add_argument("--proposed-fix", default="")
+    sub_add.add_argument("--no-fix-yet", default="",
+                         help="Why a bug/escaped-bug has no proposed fix yet")
     sub_add.add_argument("--leverage", default="medium")
     sub_add.add_argument("--severity", default="medium")
     sub_add.add_argument("--source", default="", help="Origin (e.g. feedback, supervisor, lark)")
@@ -366,7 +429,13 @@ def main() -> int:
     sub_list.add_argument("--source", default=None, help="Filter by source")
     sub_list.add_argument("--json", action="store_true")
 
-    args = parser.parse_args()
+    argv = sys.argv[1:]
+    # Bare flags mean "add": the filing criteria are invoked as
+    # ``--title … --gap …`` without the subcommand.  An explicit
+    # subcommand (or -h) is left alone.
+    if argv and argv[0] not in ("add", "list", "-h", "--help"):
+        argv = ["add", *argv]
+    args = parser.parse_args(argv)
 
     if args.cmd == "add":
         evidence: dict[str, Any] = {}
@@ -384,6 +453,22 @@ def main() -> int:
             if "=" in rel:
                 k, v = rel.split("=", 1)
                 relations[k] = v
+        if args.no_fix_yet:
+            relations["no_fix_yet"] = args.no_fix_yet
+        reasons = validate_candidate(
+            title=args.title,
+            kind=args.kind,
+            gap=args.gap,
+            evidence=evidence,
+            proposed_fix=args.proposed_fix,
+            no_fix_reason=args.no_fix_yet,
+        )
+        if reasons:
+            print(
+                json.dumps({"status": "refused", "reasons": reasons}),
+                file=sys.stderr,
+            )
+            return 2
         entry = add_candidate(
             title=args.title,
             kind=args.kind,

@@ -1,6 +1,7 @@
-"""Red-first pins: a hand-filed backlog row carries its evidence.
+"""Pins: a hand-filed backlog row carries its evidence.
 
-Sub-plan: an-admitted-row-carries-its-evidence (step 0).
+Sub-plan: an-admitted-row-carries-its-evidence (step 0 pins; step 1 built the
+admission gate and stepped AC-1..AC-5, AC-8 out of their xfail markers).
 Drives the ``improvement_backlog`` CLI in a subprocess (``sys.executable``,
 script path derived from ``__file__``) with a hermetic data root: ``HOME``,
 ``ILK_DATA_HOME`` and ``ILK_DATA_DIR`` are all ``tmp_path``-derived, so
@@ -8,22 +9,21 @@ nothing reads or writes ``~/.ilk-data/ilk-skills-improvements/``.
 
 ``<B>`` below is ``<ILK_DATA_HOME>/ilk-skills-improvements/candidates.json``.
 
-AC-1 (red at base): a placeholder title is refused with ``title-placeholder``
+AC-1: a placeholder title is refused with ``title-placeholder``
     and nothing is written.
-AC-2 (red at base): a title under four words is refused with ``title-too-short``.
-AC-3 (red at base): a gap with no anchor is refused with ``no-evidence-anchor``;
+AC-2: a title under four words is refused with ``title-too-short``.
+AC-3: a gap with no anchor is refused with ``no-evidence-anchor``;
     the same call plus ``--file``/``--line`` is admitted and ``<B>`` holds 1 row.
-AC-4 (red at base): a bug with no fix is refused with ``no-proposed-fix``; the
+AC-4: a bug with no fix is refused with ``no-proposed-fix``; the
     same call plus ``--no-fix-yet`` is admitted and the row records the reason.
-AC-5 (red at base): a real row (d61afe74f26dd73d's own strings) passes the
-    admission gate and is filed. The validator half is what makes this pin red
-    at base — the CLI success path accepts anything today — so the pin asserts
-    both that ``validate_candidate`` admits the row and that the CLI files it.
-AC-6 (red at base): filing lists the open rows that name the same file, skips
-    wontfix rows, and prints the ``1 row(s)`` footer.
+AC-5: a real row (d61afe74f26dd73d's own strings) passes the
+    admission gate and is filed. The pin asserts both that
+    ``validate_candidate`` admits the row and that the CLI files it.
+AC-6 (xfail until step 2): filing lists the open rows that name the same file,
+    skips wontfix rows, and prints the ``1 row(s)`` footer.
 AC-7 (control, green at base): automated writers are unchanged — ``add_candidate``
     still files a row with no refusal.
-AC-8 (red at base): ``validate_candidate`` is pure and returns reason codes.
+AC-8: ``validate_candidate`` is pure and returns reason codes.
 """
 
 from __future__ import annotations
@@ -117,7 +117,6 @@ def _set_status(backlog_dir: Path, entry_id: str, status: str) -> None:
 # ── AC-1 ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="admission gate not built")
 def test_ac1_placeholder_title_is_refused(tmp_path):
     rc, out, err = _run_cli(
         tmp_path,
@@ -132,7 +131,6 @@ def test_ac1_placeholder_title_is_refused(tmp_path):
 # ── AC-2 ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="admission gate not built")
 def test_ac2_short_title_is_refused(tmp_path):
     rc, out, err = _run_cli(
         tmp_path,
@@ -147,7 +145,6 @@ def test_ac2_short_title_is_refused(tmp_path):
 # ── AC-3 ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="admission gate not built")
 def test_ac3_row_without_an_anchor_is_refused(tmp_path):
     title = "the train is never offered after a draft"
     rc, out, err = _run_cli(tmp_path, "--title", title, "--gap", "no train starts")
@@ -169,7 +166,6 @@ def test_ac3_row_without_an_anchor_is_refused(tmp_path):
 # ── AC-4 ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="admission gate not built")
 def test_ac4_bug_without_a_fix_is_refused_unless_no_fix_yet(tmp_path):
     argv = [
         "--kind", "bug",
@@ -193,7 +189,6 @@ def test_ac4_bug_without_a_fix_is_refused_unless_no_fix_yet(tmp_path):
 # ── AC-5 ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="admission gate not built")
 def test_ac5_a_real_row_passes(tmp_path):
     from improvement_backlog import validate_candidate
 
@@ -287,7 +282,6 @@ def test_ac7_automated_writers_are_unchanged(tmp_path):
 # ── AC-8 ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="admission gate not built")
 def test_ac8_validate_candidate_is_pure():
     from improvement_backlog import validate_candidate
 
