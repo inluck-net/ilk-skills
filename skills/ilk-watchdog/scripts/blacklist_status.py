@@ -12,6 +12,9 @@ the resolve-ack override):
   not a blacklist class (e.g. a later ``clean-success`` run), NOT blacklisted —
   a clean run un-blacklists, even if an older stuck postmortem exists.
 - If the newest postmortem IS a blacklist class:
+  - the sentinel's ``run_id`` is lexically greater than the postmortem's
+    ``run_id`` -> NOT blacklisted (a later run completed, so the postmortem is
+    stale; incident 20261009-143942).
   - ``now >= generated_at + BACKOFF_MIN`` -> NOT blacklisted (auto-expired; the
     existing 60-min behavior, unchanged).
   - a resolve-ack exists with ``cleared_at >= generated_at`` -> NOT blacklisted
@@ -102,6 +105,36 @@ def latest_postmortem(project_data_dir: str | os.PathLike) -> tuple[str | None, 
     return fm.get("classification"), fm.get("generated_at"), fm.get("master", "")
 
 
+def latest_postmortem_run_id(project_data_dir: str | os.PathLike) -> str | None:
+    """Return the ``run_id`` of the NEWEST postmortem, or None.
+
+    Uses the front-matter ``run_id``; falls back to the file stem.
+    """
+    pm_dir = _postmortems_dir(project_data_dir)
+    if not pm_dir.is_dir():
+        return None
+    mds = [p for p in pm_dir.glob("*.md") if p.is_file()]
+    if not mds:
+        return None
+    newest = max(mds, key=lambda p: p.stat().st_mtime)
+    fm = _parse_frontmatter(newest)
+    return fm.get("run_id") or newest.stem
+
+
+def last_exit_run_id(project_data_dir: str | os.PathLike) -> str | None:
+    """Read the ``run_id`` from ``last-exit.json``, or None.
+
+    Returns None on a missing file, bad JSON, or absent ``run_id``.
+    """
+    sentinel = Path(project_data_dir) / "runtime" / "launcher" / "last-exit.json"
+    try:
+        data = json.loads(sentinel.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    run_id = data.get("run_id") if isinstance(data, dict) else None
+    return str(run_id) if run_id else None
+
+
 def _parse_dt(s: str | None) -> dt.datetime | None:
     if not s:
         return None
@@ -154,6 +187,18 @@ def is_blacklisted(project_data_dir: str | os.PathLike, now: dt.datetime | None 
 
     if classification not in BLACKLIST_CLASSES:
         res["reason"] = "latest-not-blacklist-class"
+        return res
+
+    # Stale-postmortem check: if the sentinel names a later run than the
+    # postmortem, the blacklist is from a run that already ended.  Incident
+    # 20261009-143942 — a run with no postmortem of its own inherited the
+    # previous run's blacklist class.
+    pm_run_id = latest_postmortem_run_id(project_data_dir)
+    sentinel_run_id = last_exit_run_id(project_data_dir)
+    if sentinel_run_id and pm_run_id and sentinel_run_id > pm_run_id:
+        res["stale_postmortem_run_id"] = pm_run_id
+        res["last_run_id"] = sentinel_run_id
+        res["reason"] = "stale-postmortem"
         return res
 
     gen = _parse_dt(generated_at)

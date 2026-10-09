@@ -1,13 +1,8 @@
 """Tests for stale-postmortem blacklist decision.
 
 A postmortem older than the last run's sentinel should not blacklist
-the next run.  AC-1 is the new behaviour (xfail-strict until step 1);
+the next run.  AC-1 is the new behaviour (built in step 1);
 AC-2..AC-5 are controls that pass at base.
-
-Red-first: AC-1 asserts behaviour that does NOT hold at base
-(``is_blacklisted`` does not yet consult ``last-exit.json``).  Marked
-``xfail(strict=True)`` so the suite is green at base and turns red when
-the implementation lands.
 
 Hermetic: ``tmp_path`` project data dirs; injected fixed ``now``; never
 touches the real ~/.ilk-data.
@@ -89,11 +84,6 @@ def _write_sentinel(data_dir: Path, run_id: str, state: str = "local_checks_fail
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=(AssertionError, ImportError, AttributeError, TypeError),
-    reason="not built yet",
-)
 def test_ac1_stale_postmortem_not_blacklisted(tmp_path: Path) -> None:
     """AC-1: postmortem 20261009-133401 with local-checks-stuck, and
     last-exit run_id 20261009-143942 (newer).  Not blacklisted, with
@@ -105,6 +95,8 @@ def test_ac1_stale_postmortem_not_blacklisted(tmp_path: Path) -> None:
     result = bl.is_blacklisted(data_dir, now=NOW)
     assert result["blacklisted"] is False
     assert result["reason"] == "stale-postmortem"
+    assert result["stale_postmortem_run_id"] == PM_RUN_ID
+    assert result["last_run_id"] == "20261009-143942"
 
 
 def test_ac2_own_run_blacklisted(tmp_path: Path) -> None:
