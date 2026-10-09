@@ -849,14 +849,15 @@ sync_remote_backlogs() {
   if [[ ! -f "$BACKLOG_SYNC_PY" ]]; then
     return 0
   fi
+  local _py="${PYTHON:-python3}"
   local _sync_out _sync_rc=0
-  _sync_out=$("$PYTHON" "$BACKLOG_SYNC_PY" --auto 2>&1) || _sync_rc=$?
+  _sync_out=$("$_py" "$BACKLOG_SYNC_PY" --auto 2>&1) || _sync_rc=$?
   if [[ $_sync_rc -ne 0 || -n "$_sync_out" ]]; then
     # Log unless every host is throttled or not-rsi-host
     local _should_log="false"
     if [[ $_sync_rc -ne 0 ]]; then
       _should_log="true"
-    elif echo "$_sync_out" | "$PYTHON" -c "
+    elif echo "$_sync_out" | "$_py" -c "
 import sys, json
 data = json.load(sys.stdin)
 if isinstance(data, dict):
