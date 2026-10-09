@@ -3940,6 +3940,15 @@ if m:
       _si_args+=("--gate-results-file" "$lc_file" "--slug" "$_enrich_slug")
     fi
     si_out=$(python3 "$ship_integrity_script" "${_si_args[@]}" 2>&1) || si_exit=$?
+    # A check that could not RUN is unavailable, not a violation.  The script
+    # is checked once at entry, but gates run for minutes in this loop, and a
+    # release prune deleted it under gh-resolve run 20261010-003018: python's
+    # "can't open file" exit 2 was read as a violation and reverted a
+    # legitimately shipped sub-plan.
+    if [[ $si_exit -ne 0 && ! -f "$ship_integrity_script" ]]; then
+      echo "  [ship-integrity] $(basename "$f"): check UNAVAILABLE (${ship_integrity_script} is gone) — not reverted" >&2
+      continue
+    fi
     if [[ $si_exit -eq 0 && "$si_out" == *"WARN RECORD ABSENT"* ]]; then
       echo "  [ship-integrity WARN] $(basename "$f"): $si_out" >&2
     fi

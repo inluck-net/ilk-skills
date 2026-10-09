@@ -10,6 +10,8 @@ Releases root: $ILK_RELEASES_ROOT (default ~/.ilk/releases)
 Pointers: current and previous are symlinks in the releases root's parent.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -77,8 +79,50 @@ def _flip_current(root: Path, new_target: Path) -> None:
     _atomic_symlink(current, str(new_target))
 
 
-def _prune(root: Path) -> None:
-    """Keep the last KEEP_RELEASES release dirs by extracted_at. Never prune current/previous targets."""
+def _live_runner_refs() -> str | None:
+    """Every path a live ilk runner names: its argv plus its open files.
+
+    A pinned runner runs every helper from its own release dir for its whole
+    life, and pinning resolves the physical path (``cd -P``), so argv alone can
+    show the ``current`` symlink instead.  bash keeps the script it runs open,
+    so ``lsof`` names the physical release.  Returns None when this cannot be
+    measured; the caller then prunes nothing.
+    """
+    try:
+        r = subprocess.run(["pgrep", "-f", r"run_ilk_loop_claude\.(sh|ps1)"],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode == 1:
+        return ""
+    if r.returncode != 0:
+        return None
+    pids = [p for p in r.stdout.split() if p.isdigit() and int(p) != os.getpid()]
+    if not pids:
+        return ""
+    try:
+        argv = subprocess.run(["ps", "-ww", "-o", "command=", "-p", ",".join(pids)],
+                              capture_output=True, text=True, timeout=10)
+        files = subprocess.run(["lsof", "-n", "-Fn", "-p", ",".join(pids)],
+                               capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    # lsof exits 1 when one pid exited between pgrep and here; its other
+    # output is still good.  No output at all is unmeasured.
+    if not files.stdout:
+        return None
+    return argv.stdout + "\n" + files.stdout
+
+
+def _prune(root: Path, live_refs=_live_runner_refs) -> None:
+    """Keep the last KEEP_RELEASES release dirs by extracted_at. Never prune
+    current/previous targets, nor a release a live runner is running from.
+
+    gh-resolve run 20261010-003018 ran pinned to v0.9.184; deploying v0.9.189
+    pruned that dir under it, and its next helper call failed with "can't open
+    file .../ship_integrity.py", read as a ship-integrity violation that
+    reverted a shipped sub-plan.
+    """
     parent = _parent(root)
     current_target = ""
     previous_target = ""
@@ -106,9 +150,20 @@ def _prune(root: Path) -> None:
             continue
 
     releases.sort(key=lambda x: x[0], reverse=True)
+    if len(releases) <= KEEP_RELEASES:
+        return
+
+    refs = live_refs()
+    if refs is None:
+        print("ilk_release: cannot tell which releases live runners use; pruning nothing",
+              file=sys.stderr)
+        return
 
     for _, d, d_str in releases[KEEP_RELEASES:]:
         if d_str in protected:
+            continue
+        if d_str + "/" in refs or str(d.resolve()) + "/" in refs:
+            print(f"ilk_release: keeping {d.name} (a live runner uses it)", file=sys.stderr)
             continue
         # Make writable before removing
         for dirpath, dirnames, filenames in os.walk(d):
