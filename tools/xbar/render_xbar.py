@@ -438,6 +438,11 @@ def render_xbar(
             lines.append(f"--parked: {e['parked_reason']}")
         if e.get("steer_paused_reason"):
             lines.append(f"--paused: {e['steer_paused_reason']}")
+        # Permit-request waiting line (AC-7): when a release train has been
+        # refused 3+ times, the owner needs to provide a permit.  Shows the
+        # reason so the owner knows what's blocked.
+        if e.get("permit_request"):
+            lines.append(f"--train waiting for a permit: {e['permit_request']}")
 
         # Failed-check alert (AC-3): when the sentinel carries
         # failed_check, show which check failed and override the

@@ -208,7 +208,6 @@ def test_scheduler_sh_has_permit_request_calls() -> None:
 # ── AC-6: status_all field ──────────────────────────────────────────────────
 
 
-@_PIN
 def test_status_all_entry_has_permit_request_when_requested(tmp_path: Path) -> None:
     """AC-6: a project with a requested record yields entry.permit_request == reason."""
     from permit_request import record
@@ -240,7 +239,9 @@ def test_status_all_entry_has_permit_request_when_requested(tmp_path: Path) -> N
         "---\nmaster_plan: 2026-10-10a-test\nbatch_date: 2026-10-10\nstatus: shipped\n---\n\n# Test\n"
     )
 
-    # Record a permit request
+    # Record 3 consecutive refusals to trigger a permit request
+    record(data_dir, "test-run-001", "consumed permit for host chad-mbp")
+    record(data_dir, "test-run-001", "consumed permit for host chad-mbp")
     record(data_dir, "test-run-001", "consumed permit for host chad-mbp")
 
     # Run status_all — env inherits ILK_DATA_HOME from fixture
@@ -258,7 +259,6 @@ def test_status_all_entry_has_permit_request_when_requested(tmp_path: Path) -> N
 # ── AC-7: xbar line ─────────────────────────────────────────────────────────
 
 
-@_PIN
 def test_xbar_renders_permit_request_line() -> None:
     """AC-7: render_xbar on an entry with permit_request outputs the line."""
     from render_xbar import render_xbar

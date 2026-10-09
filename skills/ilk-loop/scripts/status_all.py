@@ -1041,6 +1041,16 @@ def resolve_project_status(project_dir: Path, *,
     repo_path = _resolve_repo_path(project_dir, key)
     orphaned = bool(repo_path) and not Path(repo_path).exists()
 
+    # Permit-request state (AC-6): when a release train has been refused
+    # 3+ times for missing permits, permit_request.py writes a state file.
+    # status_all reads it so the tray/xbar can show the owner what's blocked.
+    permit_request_reason = None
+    try:
+        from permit_request import pending as _permit_pending
+        permit_request_reason = _permit_pending(project_dir)
+    except (ImportError, OSError):
+        pass
+
     # Roles block: per-registry-role provider state for the tray's Models
     # section.  Design: provider-switching-and-quota-fallback.md §10, AC1.
     # Providers block: all available CCSwitch providers for the tray's
@@ -1056,7 +1066,7 @@ def resolve_project_status(project_dir: Path, *,
     if providers is None:
         providers = _providers_block()
 
-    return {
+    result = {
         "project_key": key,
         "path": str(project_dir),
         "repo_path": repo_path,
@@ -1084,6 +1094,11 @@ def resolve_project_status(project_dir: Path, *,
         **liveness,
         **blocked,
     }
+    # Only include permit_request when a request is actually pending.
+    # Absent (not null) when there is no pending request — AC-6.
+    if permit_request_reason is not None:
+        result["permit_request"] = permit_request_reason
+    return result
 
 
 # ── main ────────────────────────────────────────────────────────────
